@@ -177,6 +177,12 @@ class Ctx:
             self.args.schedule_seed,
         )
         kept = [b for b in blocks if b["task"] in self.task_ids]
+        # trials kept from an earlier run (a splice) are not part of this run's schedule; their slot fields stay
+        skip = set(getattr(self.args, "skip_trials", None) or [])
+        if skip:
+            for block in kept:
+                block["entries"] = [e for e in block["entries"] if e["trial_id"] not in skip]
+            kept = [b for b in kept if b["entries"]]
         index = 0
         for block in kept:
             for entry in block["entries"]:
@@ -596,25 +602,17 @@ def real_capture_check(ctx: "Ctx", arm: str) -> tuple[str, str, str]:
         if source in ca.CUA_ARMS:
             ensure_agent_daemon(ctx, source)
         elif source in ca.RAW_ARMS:
-            ensure_agent_daemon(ctx, ca.RAW_FALLBACK)
-            fallback = ca.CUA_BUILDS[ca.RAW_FALLBACK]
+            settings: dict[str, Any] = {"trial_id": "preflight", "foreground_grant": False, "coverage": {}}
+            if source in ca.RAW_FALLBACK_ARMS:
+                ensure_agent_daemon(ctx, ca.RAW_FALLBACK)
+                fallback = ca.CUA_BUILDS[ca.RAW_FALLBACK]
+                settings["driver"] = {
+                    "socket": fallback.socket,
+                    "bin": str(fallback.bin),
+                    "session": "raw-preflight",
+                }
             ca.RAW_TRIAL.parent.mkdir(parents=True, exist_ok=True)
-            ca.RAW_TRIAL.write_text(
-                json.dumps(
-                    {
-                        "trial_id": "preflight",
-                        "foreground_grant": False,
-                        "coverage": {},
-                        "driver": {
-                            "socket": fallback.socket,
-                            "bin": str(fallback.bin),
-                            "session": "raw-preflight",
-                        },
-                    }
-                )
-                + "\n",
-                "utf-8",
-            )
+            ca.RAW_TRIAL.write_text(json.dumps(settings) + "\n", "utf-8")
         if arm in cxn.ARMS:
             entry = cxn.server_entry(path, arm)
             command, args, env = entry["command"], entry["args"], entry["env"]
@@ -933,7 +931,7 @@ OPERATIONAL_OPTIONS = {
     *("command", "run_id", "runs_dir", "ledger", "ledger_who", "cutoff_utc", "budget_cap_usd"),
     *("seven_day_stop", "disk_floor_gb", "ignore_hold", "no_model_preflight", "offline"),
     *("allow_non_terminal", "allow_codex_arms", "allow_unknown_quota", "claude_bin"),
-    *("arms", "tasks", "only_arm", "only_task", "phase1_runs", "phase2_runs"),
+    *("arms", "tasks", "only_arm", "only_task", "phase1_runs", "phase2_runs", "skip_trials"),
     *("cua_bin", "cua_skills", "pins", "build_dir", "codex_cu_mcp"),
 }
 
@@ -1059,6 +1057,10 @@ def raw_linux_summary(log: Path, dest: Path) -> dict[str, Any]:
         "driver_tools": {t: sum(1 for d in driver if d.get("tool") == t) for t in sorted({str(d.get("tool")) for d in driver})},
         "driver_by_pid": driver_by_pid,
         "fallback": bool(actions),
+        "routes": {
+            r: sum(int((c.get("routes") or {}).get(r, 0)) for c in calls)
+            for r in sorted({r for c in calls for r in (c.get("routes") or {})})
+        },
         "raw_tool_s": round(sum(float(c.get("elapsed_s") or 0) for c in calls), 2),
         "driver_tool_s": round(sum(float(d.get("elapsed_s") or 0) for d in driver), 2),
     }
@@ -1189,7 +1191,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             SOURCE_ARM.get(arm) in ca.CUA_ARMS
         ):  # A23: Cua Driver under Codex uses that build's daemon
             ensure_agent_daemon(ctx, SOURCE_ARM[arm])
-        elif SOURCE_ARM.get(arm) in ca.RAW_ARMS:
+        elif SOURCE_ARM.get(arm) in ca.RAW_FALLBACK_ARMS:
             ensure_agent_daemon(ctx, ca.RAW_FALLBACK)  # raw.driver's fallback: the main build's daemon
         if getattr(args, "park_pointer", False):
             row["pointer_parked"] = (
@@ -1264,7 +1266,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             ca.RAW_LOG.parent.mkdir(parents=True, exist_ok=True)
             ca.RAW_LOG.unlink(missing_ok=True)
             fallback = ca.CUA_BUILDS[ca.RAW_FALLBACK]
-            settings = {
+            settings: dict[str, Any] = {
                 "trial_id": entry["trial_id"],
                 "foreground_grant": grant,
                 "coverage": (
@@ -1272,12 +1274,13 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
                 )
                 or {},
                 "user_apps": list(ca.RAW_USER_APPS) if condition == "background" else [],
-                "driver": {
+            }
+            if SOURCE_ARM.get(arm, arm) in ca.RAW_FALLBACK_ARMS:
+                settings["driver"] = {
                     "socket": fallback.socket,
                     "bin": str(fallback.bin),
                     "session": f"raw-{entry['trial_id']}-a{attempt}",
-                },
-            }
+                }
             ca.RAW_TRIAL.write_text(json.dumps(settings) + "\n", "utf-8")
             shutil.copy(ca.RAW_TRIAL, artifacts / "raw-trial.json")
         recording = ctx.recorder.start(trial_dir / "rec") if ctx.recorder else False
@@ -2762,9 +2765,8 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
     for arm in [a for a in ctx.arm_names if a in pia.ARMS] if with_models and not offline else []:
         try:
             source = pia.SOURCE_ARM[arm]
-            ensure_agent_daemon(
-                ctx, ca.RAW_FALLBACK if source in ca.RAW_ARMS else source
-            )
+            if source != ca.RAW_MACOS_ARM:  # raw-macos has no Cua Driver
+                ensure_agent_daemon(ctx, ca.RAW_FALLBACK if source in ca.RAW_ARMS else source)
             status, detail = pia.init_check(
                 arm,
                 ctx.mcp[arm][0],
@@ -2823,6 +2825,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="explicit task ids, in this order (default: priority order of all MB tasks)",
     )
     p.add_argument("--only-task", default=None)
+    p.add_argument(
+        "--skip-trials",
+        nargs="*",
+        default=[],
+        help="trial ids not to run (kept from an earlier run, to be spliced with this one)",
+    )
     p.add_argument(
         "--task-set",
         default="v2",
@@ -3101,7 +3109,7 @@ def setup_arms(ctx: Ctx) -> None:
             or arm in {SOURCE_ARM.get(a) for a in ctx.arm_names}
             or (
                 arm == ca.RAW_FALLBACK
-                and set(ca.RAW_ARMS) & {SOURCE_ARM.get(a) for a in ctx.arm_names}
+                and set(ca.RAW_FALLBACK_ARMS) & {SOURCE_ARM.get(a) for a in ctx.arm_names}
             )
         },
         pins=pins,

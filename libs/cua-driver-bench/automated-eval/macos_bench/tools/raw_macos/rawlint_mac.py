@@ -4,15 +4,15 @@
 """Static background-use lint for raw-macos scripts (the `pi-raw-macos` bench arm).
 
 A script is Python that drives macOS through the `raw` runtime: the Accessibility API (AXUIElement through pyobjc),
-per-process event posting (CGEventPostToPid) and read-back helpers. Before it runs, `lint(source)` walks its AST and
-returns findings. Each finding names a rule, the line, what the rule protects, where Cua Driver's macOS contract
-states it, and a background-safe alternative.
+per-process event posting (CGEventPostToPid), CoreGraphics screenshots and read-back helpers. Nothing else: the arm
+has no Cua Driver, and any call path to it (``raw.driver``, its CLI, its socket) is blocked (rule DRV1). Before it
+runs, `lint(source)` walks its AST and returns findings. Each finding names a rule, the line, what the rule
+protects, where Cua Driver's macOS contract states it, and a background-safe alternative.
 
 Severity:
 * ``block``: the script does not run (the GUI-only side doors, code the lint cannot read).
 * ``granted``: blocked unless the harness granted foreground to this trial (the task definition's
-  ``foreground_grant``, in the foreground condition). The driver's foreground route is an explicit, authorized
-  escalation (``delivery_mode:"foreground"``), never automatic; the grant is that authorization, given per task by
+  ``foreground_grant``, in the foreground condition). The grant is an explicit authorization, given per task by
   the harness, never by the model.
 * ``warn``: the script runs; the finding is returned with the result.
 
@@ -58,8 +58,8 @@ RULES: dict[str, Rule] = {
             f"{MACOS_MD}:48-53 (cliclick and CGEventPost at the HID tap move the real cursor); {MACOS_MD}:237-242 "
             f"(self-check 2: does this move the user's real cursor?); {MACOS_MD}:692-700 (desktop-target pointer input "
             "over a background app is refused unless foreground is authorized)",
-            "Use the element's AX action (raw.ax.perform(el, 'AXPress')) or set its value; for a pixel click on a "
-            "background window use raw.post_click(pid, x, y), which posts to that process only.",
+            "Use the element's AX action (raw.ax.perform(el, 'AXPress')) or set its value (raw.set_text); for a pixel "
+            "click on a background window use raw.post_click(pid, x, y), which posts to that process only.",
         ),
         Rule(
             "MB2",
@@ -80,7 +80,8 @@ RULES: dict[str, Rule] = {
             "AppKit can make its window key and take the user's keystrokes.",
             f"{MACOS_MD}:619-630 (background dispatch keeps the user's front window key); {MAC}/key_focus_guard.rs:4-19 "
             "(the driver guards and hands back key focus the target takes)",
-            "Set the field's AXValue directly (raw.ax.set(el, 'AXValue', text)); that needs no focus.",
+            "Set the field's text with raw.set_text(el, text): it writes AXValue, and only if the field ignores that it "
+            "focuses the field inside its own app and types, checking that the user's window kept key focus.",
         ),
         Rule(
             "MB4",
@@ -90,7 +91,7 @@ RULES: dict[str, Rule] = {
             "their window: their typing is interrupted or changed.",
             f"{MACOS_MD}:9-25 (background actions must preserve the user's frontmost app); {MACOS_MD}:997 (keys are "
             "posted to the exact window addressed, which is made key without a raise)",
-            "Post to the target app's pid (raw.post_key(target_pid, ...)) or set the field's AXValue.",
+            "Post to the target app's pid (raw.post_key(target_pid, ...)) or set the field's text (raw.set_text).",
         ),
         Rule(
             "MB5",
@@ -111,7 +112,8 @@ RULES: dict[str, Rule] = {
             f"{MACOS_MD}:83-93 (the AXMenuBar rule); {MACOS_MD}:632-649 (menus opened in the background take key focus "
             "and lift the window)",
             "Press an in-window control with the same command, or run the menu command with "
-            "raw.driver('invoke_menu', {pid, window_id, path}), which resolves it without opening the menu.",
+            "raw.menu(pid, ['File', 'Save']), which finds the item in the menu bar without opening a menu and "
+            "presses it.",
         ),
         Rule(
             "MB7",
@@ -121,8 +123,9 @@ RULES: dict[str, Rule] = {
             "button open a menu that steals key focus from the user's window and lifts the target window over it while "
             "it is open.",
             f"{MACOS_MD}:632-649; {MAC}/key_focus_guard.rs:4-28",
-            "Choose the item with raw.driver('set_value', {pid, window_id, element_token, value}) on the pop-up: the "
-            "driver opens the menu under its key-focus guard and hands key focus back.",
+            "Choose a web <select> with raw.select(el, 'Label'): it types the label into the closed control and the "
+            "menu never opens. A native AppKit pop-up lists its items only while its menu is open, so raw.select on "
+            "one opens it and needs the trial's grant; without it there is no background route.",
         ),
         Rule(
             "MB8",
@@ -142,14 +145,14 @@ RULES: dict[str, Rule] = {
             "Set the field's AXValue, or press the control that does the same.",
         ),
         Rule(
-            "MB10",
-            "Cua Driver foreground delivery",
-            "granted",
-            'raw.driver with delivery_mode "foreground", scope "desktop" or bring_to_front activates the target, '
-            "moves the real pointer or sends to the frontmost app.",
-            f"{MACOS_MD}:702-712 (background is the default, foreground the explicit last resort); {MACOS_MD}:149-151 "
-            "(the narrow carve-out: foreground only when authorized)",
-            "Use the driver's default background delivery, or an AX route.",
+            "DRV1",
+            "Cua Driver",
+            "block",
+            "This arm uses only macOS's own APIs. Cua Driver (raw.driver, its CLI or its daemon socket) is not part "
+            "of it.",
+            "the arm's definition (raw macOS APIs only; tools/raw_macos/raw_mac.py)",
+            "Use raw.ax, raw.find / raw.dump / raw.el, raw.set_text, raw.select, raw.set_cell, raw.menu and the "
+            "per-process events.",
         ),
         Rule(
             "MB11",
@@ -169,8 +172,7 @@ RULES: dict[str, Rule] = {
             "Bench v2 is GUI-only: no shell, process, file, network or library loading from a computer-use script.",
             "libs/cua-driver-bench/automated-eval/macos_bench/bench_v2.py:188-211 (EXEC_PATTERNS, the GUI-only "
             "guard)",
-            "Use only the raw runtime: raw.ax, raw.post_click / post_key, raw.driver(...) with a GUI tool, "
-            "raw.windows(), raw.screenshot().",
+            "Use only the raw runtime: raw.ax, raw.post_click / post_key, raw.windows(), raw.screenshot().",
         ),
         Rule(
             "GUI2",
@@ -188,8 +190,8 @@ RULES: dict[str, Rule] = {
             "An action that the API accepted is not a confirmed effect.",
             f"{CONTRACT}:149-152 (native API acceptance alone does not justify confirmed); {MACOS_MD}:185-199 "
             "(verify by re-reading the tree)",
-            "After the last action, read the element back (raw.ax.get(el, 'AXValue'), raw.describe, raw.dump) or take "
-            "raw.screenshot() and return it.",
+            "After the last action, read the element back (raw.ax.get(el, 'AXValue'), raw.describe, raw.dump, "
+            "raw.text) or take raw.screenshot() and return it.",
         ),
     )
 }
@@ -236,6 +238,7 @@ NAMES: dict[str, str] = {
         "MB5",
     ),
     "AXShowMenu": "MB7",
+    "driver": "DRV1",
     **dict.fromkeys(
         ("setString_forType_", "writeObjects_", "clearContents", "setData_forType_"), "MB8"
     ),
@@ -266,6 +269,9 @@ STRINGS: dict[str, str] = {
     "CGSSetActiveSpace": "MB11",
     "SLSSetActiveSpace": "MB11",
     "SLPS": "MB11",
+    "cua-driver": "DRV1",
+    "cua_driver": "DRV1",
+    "CuaDriver": "DRV1",
     "CGSOrderWindow": "MB11",
     "SLSOrderWindow": "MB11",
     "_SLPSSetFrontProcess": "MB11",
@@ -295,56 +301,6 @@ IMPORT_OK = {
     "enum",
     "raw",
 }
-# Cua Driver tools a script may call through raw.driver (the fallback for apps AX covers only in part). GUI reads and
-# actions only: no launch/kill, shell, files, clipboard writes, config, recording, scripts or browser CDP.
-DRIVER_READS = {
-    "list_windows",
-    "list_apps",
-    "get_window_state",
-    "get_desktop_state",
-    "get_screen_size",
-    "get_cursor_position",
-    "zoom",
-    "parse_visual_regions",
-    "clipboard_read",
-    "verify_state",
-}
-DRIVER_ACTIONS = {
-    "click",
-    "double_click",
-    "right_click",
-    "type_text",
-    "set_value",
-    "press_key",
-    "hotkey",
-    "scroll",
-    "drag",
-    "invoke_menu",
-    "move_cursor",
-    "mouse_button_down",
-    "mouse_drag",
-    "mouse_button_up",
-    "set_window_frame",
-    "bring_to_front",
-}
-DRIVER_TOOLS = DRIVER_READS | DRIVER_ACTIONS
-DRIVER_FOREGROUND_TOOLS = {"bring_to_front"}
-
-
-def driver_foreground(tool: str, args: dict) -> str | None:
-    """Why this driver call is foreground delivery (needs the trial's grant), or None for a background call."""
-    if tool in DRIVER_FOREGROUND_TOOLS:
-        return f"{tool} activates the window"
-    if args.get("delivery_mode") == "foreground":
-        return f'{tool} with delivery_mode "foreground"'
-    if args.get("scope") == "desktop":
-        return f'{tool} with scope "desktop"'
-    target = args.get("target")
-    if isinstance(target, dict) and target.get("kind") == "desktop":
-        return f"{tool} with a desktop target"
-    return None
-
-
 # Names that reach past the runtime: pyobjc and the frameworks themselves, the CPython C API, the loader.
 ESCAPES = {
     "objc",
@@ -389,6 +345,10 @@ ACTIONS = {
     "post_scroll",
     "pointer_drag",
     "pointer_move",
+    "set_text",
+    "select",
+    "set_cell",
+    "menu",
 }
 READS = {
     "get",
@@ -404,6 +364,8 @@ READS = {
     "cursor",
     "children",
     "focused",
+    "text",
+    "el",
 }
 
 
@@ -515,6 +477,8 @@ class _Walker(ast.NodeVisitor):
                 return  # only os.system, not a local called "system"
         if rule == "MB2" and name == "activate" and not isinstance(node, ast.Attribute):
             return  # a local called "activate"
+        if rule == "DRV1" and isinstance(node, ast.Name):
+            return  # a local called "driver"; raw.driver and getattr(raw, "driver") still hit
         if rule:
             self.add(rule, node, name)
 
@@ -564,7 +528,7 @@ class _Walker(ast.NodeVisitor):
             for needle, rule in STRINGS.items():
                 if needle in value:
                     self.add(rule, node, f"string {needle!r}")
-            if value in NAMES and NAMES[value] != "GUI1" and value != "activate":
+            if value in NAMES and NAMES[value] != "GUI1" and value not in ("activate", "driver"):
                 self.add(NAMES[value], node, f"name {value!r} in a string")
             if value.startswith("_") and value.strip("_") and value.isidentifier():
                 self.add("GUI2", node, f"private name {value!r} in a string")
@@ -600,10 +564,8 @@ class _Walker(ast.NodeVisitor):
             )
             if right:
                 self.add("MB7", node, "raw.post_click with button='right' opens a context menu")
-        if func in {"raw.post_key", "raw.driver"}:
+        if func == "raw.post_key":
             self.keys(node)
-        if func == "raw.driver":
-            self.driver(node)
         self.generic_visit(node)
 
     def keys(self, node: ast.Call) -> None:
@@ -616,36 +578,6 @@ class _Walker(ast.NodeVisitor):
                 keys = [str(_const_str(e)).lower() for e in child.elts]
                 if combo(keys) in FOCUS_COMBOS:
                     self.add("MB9", node, "keys " + "+".join(keys))
-
-    def driver(self, node: ast.Call) -> None:
-        """raw.driver(tool, {args}): the literal parts; the runtime checks the call again with its real values."""
-        tool = _const_str(node.args[0]) if node.args else None
-        if tool is None:
-            return
-        if tool not in DRIVER_TOOLS:
-            self.add("GUI1", node, f"raw.driver({tool!r}) is not a GUI tool offered to scripts")
-            return
-        args: dict = {}
-        if len(node.args) > 1 and isinstance(node.args[1], ast.Dict):
-            for k, v in zip(node.args[1].keys, node.args[1].values):
-                key = _const_str(k) if k is not None else None
-                if not key:
-                    continue
-                if isinstance(v, ast.Dict):
-                    args[key] = {
-                        _const_str(kk): _const_str(vv)
-                        for kk, vv in zip(v.keys, v.values)
-                        if kk is not None
-                    }
-                elif _const_str(v) is not None:
-                    args[key] = _const_str(v)
-        why = driver_foreground(tool, args)
-        if why:
-            self.add("MB10", node, f"raw.driver: {why}")
-        if tool in DRIVER_ACTIONS:
-            self.last_action = max(self.last_action, _pos(node))
-        else:
-            self.last_read = max(self.last_read, _pos(node))
 
 
 def lint(source: str, granted: bool = False) -> Report:

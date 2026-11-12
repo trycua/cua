@@ -12,12 +12,13 @@ What a script gets (``raw``):
   ``post_scroll``. They reach one process and never move the real cursor.
 * Foreground pointer routes for a trial with the harness's grant: ``pointer_move``, ``pointer_click``,
   ``pointer_drag`` (CGEventPost at the HID tap: the real cursor moves).
-* Read-back helpers only: ``apps``, ``windows``, ``front``, ``cursor``, ``find``, ``describe``, ``dump``,
-  ``screenshot``.
-* ``raw.driver(tool, args)``: the main build's Cua Driver over its daemon socket, the fallback for what AX does not
-  reach.
+* Read-back helpers: ``apps``, ``windows``, ``front``, ``cursor``, ``find``, ``describe``, ``dump`` (compact, or
+  scoped to a query), ``text`` (an element's visible text only), ``screenshot``.
+* Value helpers built only from the calls above, one per control kind the AX value write alone does not reach:
+  ``set_text`` (a text field), ``select`` (a pop-up or web ``<select>``), ``set_cell`` (a LibreOffice Calc cell),
+  ``menu`` (a menu-bar command without opening the menu). Each reads the control back and says how it was set.
 
-There is no click-by-name or type-by-name helper: every action is the script's own AX or event call.
+Nothing here calls Cua Driver: only macOS's own APIs (ApplicationServices, Quartz, AppKit through pyobjc).
 
 The hook (``Watch``) samples the frontmost app, the top on-screen window, the focused app's focused window and
 element, and the real cursor every 50 ms while the script runs, and reports every change.
@@ -28,7 +29,6 @@ from __future__ import annotations
 import base64
 import json
 import os
-import subprocess
 import threading
 import time
 from pathlib import Path
@@ -52,7 +52,7 @@ class State:
         self.granted = os.environ.get("RAW_GRANT") == "1"
         # apps the harness names as the user's (the bench's "User activity" window): posted input there is MB4
         self.user_apps = {a for a in (os.environ.get("RAW_USER_APPS") or "").split(",") if a}
-        self.driver_calls: list[dict[str, Any]] = []
+        self.routes: dict[str, int] = {}  # which route each value helper used
         self.raw_actions: dict[str, int] = {}  # AX actions/sets and posted events per app name
         self.runtime_blocked: list[str] = []
         self.runtime_warned: list[str] = []
@@ -88,6 +88,10 @@ class State:
         name = app_name(pid) if pid else "?"
         with self.lock:
             self.raw_actions[name] = self.raw_actions.get(name, 0) + 1
+
+    def route(self, name: str) -> None:
+        with self.lock:
+            self.routes[name] = self.routes.get(name, 0) + 1
 
 
 STATE = State()
@@ -586,32 +590,298 @@ class Raw:
             parts.append("actions=" + "/".join(a.removeprefix("AX") for a in actions))
         return " ".join(parts)
 
-    def dump(self, root: Any, depth: int = 14, limit: int = 400, menus: bool = False) -> str:
-        """An indented text tree of ``root`` (``describe`` per node). The app's menu bar is left out unless
+    def dump(
+        self,
+        root: Any,
+        depth: int = 14,
+        limit: int = 400,
+        menus: bool = False,
+        full: bool = False,
+        query: str | None = None,
+    ) -> str:
+        """An indented text tree of ``root``. Compact by default: unlabelled wrapper groups are skipped (their
+        children move up), text is one quoted line, and every element you can act on gets a ref ``[n]`` that
+        ``raw.el(n)`` returns in this or a later call. ``query`` keeps only the lines whose text contains it (with
+        refs). ``full=True`` is the old one-``describe``-per-node tree. The menu bar is left out unless
         ``menus=True``."""
         lines: list[str] = []
+        refs = _Refs.load()
+        pid = self.ax.pid(root)
+        base = _path_of(root, pid)
+        needle = query.casefold() if query else None
 
-        def walk(el: Any, level: int) -> None:
+        def walk(el: Any, level: int, path: list[int]) -> None:
             if el is None or len(lines) >= limit or level > depth:
                 return
-            if not menus and level and _ax_get(el, "AXRole") == "AXMenuBar":
+            role = _ax_get(el, "AXRole")
+            if not menus and path and role == "AXMenuBar":
                 return
-            lines.append("  " * level + self.describe(el))
             kids = _ax_get(el, "AXChildren") or []
+            skip = not full and path and _is_wrapper(el, role)
+            if not skip:
+                line = self.describe(el) if full else _compact(el, role)
+                if not full and (_actionable(el, role) or role in TEXT_INPUTS):
+                    line = f"[{refs.add(pid, base + path, el)}] " + line
+                if needle is None or needle in line.casefold():
+                    lines.append(("" if needle else "  " * level) + line)
             if len(kids) > MAX_CHILDREN:
                 lines.append(
                     "  " * (level + 1)
                     + f"... {len(kids)} children (only the first {MAX_CHILDREN} are walked)"
                 )
-            for child in kids[:MAX_CHILDREN]:
+            for i, child in enumerate(kids[:MAX_CHILDREN]):
                 if len(lines) >= limit:
                     return
-                walk(child, level + 1)
+                walk(child, level if skip else level + 1, path + [i])
+
+        walk(root, 0, [])
+        refs.save()
+        if len(lines) >= limit:
+            lines.append(f"... cut at {limit} lines (pass a smaller root, query=, or limit=)")
+        return "\n".join(lines)
+
+    def el(self, ref: int) -> Any:
+        """The element behind ref ``[n]`` of an earlier ``raw.dump`` in this task. Raises LookupError when it is
+        gone (dump again)."""
+        return _Refs.load().resolve(int(ref))
+
+    def text(self, root: Any, limit: int = 300) -> list[str]:
+        """The visible text under ``root`` in reading order (static text, headings, links, field values), each
+        string once. The cheapest way to read a page, a message or a table."""
+        out: list[str] = []
+        seen: set[str] = set()
+
+        def walk(el: Any, d: int) -> None:
+            if el is None or len(out) >= limit or d > 40:
+                return
+            role = _ax_get(el, "AXRole")
+            if role in ("AXMenuBar", "AXMenu"):
+                return
+            if role in TEXT_ROLES or role in TEXT_INPUTS:
+                for attr in ("AXValue", "AXTitle", "AXDescription"):
+                    v = _ax_get(el, attr)
+                    if isinstance(v, str) and v.strip() and v not in seen:
+                        seen.add(v)
+                        out.append(v)
+                        break
+            for child in (_ax_get(el, "AXChildren") or [])[:MAX_CHILDREN]:
+                walk(child, d + 1)
 
         walk(root, 0)
-        if len(lines) >= limit:
-            lines.append(f"... cut at {limit} nodes")
-        return "\n".join(lines)
+        return out
+
+    # ---------------------------------------------------------------- value helpers (AX and per-process events only)
+
+    def set_text(self, el: Any, text: str, typed: bool | None = None) -> dict[str, Any]:
+        """Put ``text`` in a text field and read it back. First an AXValue write; if the field does not show the
+        text afterwards (web views, browser address bars), the field is focused inside its own app, its text
+        selected (cmd+a) and ``text`` typed as key events posted to that app's pid. ``typed=True`` goes straight to
+        typing. A LibreOffice Calc cell goes through ``set_cell``. Returns the route and the value read back."""
+        text = str(text)
+        pid = self.ax.pid(el)
+        STATE.to_user(pid, "set_text")
+        role = _ax_get(el, "AXRole")
+        if role in MENU_OPENERS:
+            STATE.check(
+                "MB6" if role == "AXMenuBarItem" else "MB7",
+                f"raw.set_text on {role} (use raw.select)",
+            )
+        if _calc_cell(el):
+            return self.set_cell(pid, str(_ax_get(el, "AXTitle")), text)
+        if typed is None:
+            typed = _chromium(pid) and not _in_web_area(el)
+        if not typed:
+            STATE.count(pid)
+            AX.AXUIElementSetAttributeValue(el, "AXValue", text)
+            time.sleep(0.15)
+            if _text_of(el) == text:
+                STATE.route("set_text:ax_value")
+                return {"route": "ax_value", "value": text}
+        before = focus_sample()
+        _focus_in_app(el)
+        self.post_key(pid, ["cmd", "a"])
+        self.post_text(pid, text)
+        time.sleep(0.25)
+        value = _text_of(el)
+        _note_focus(before, "set_text")
+        STATE.route("set_text:typed")
+        return {"route": "typed", "value": value, "ok": value == text}
+
+    def select(self, el: Any, label: str) -> dict[str, Any]:
+        """Choose ``label`` in a pop-up button, web ``<select>`` or combo box and read the choice back.
+        A web ``<select>`` (Chrome, Electron, web views) is focused inside the page and ``label`` typed into it, so
+        its menu never opens. A combo box takes an AXValue write. A native AppKit pop-up lists its items only while
+        its menu is open, and opening it takes key focus and raises the window (rule MB7): that needs the trial's
+        foreground grant."""
+        label = str(label)
+        pid = self.ax.pid(el)
+        role = _ax_get(el, "AXRole")
+        STATE.to_user(pid, "select")
+        if _chosen(el) == label.casefold():
+            return {"route": "already", "value": label}
+        if role == "AXComboBox":
+            STATE.count(pid)
+            AX.AXUIElementSetAttributeValue(el, "AXValue", label)
+            time.sleep(0.2)
+            STATE.route("select:ax_value")
+            return {"route": "ax_value", "value": _ax_get(el, "AXValue")}
+        if role != "AXPopUpButton":
+            raise ValueError(f"raw.select needs an AXPopUpButton or AXComboBox, not {role}")
+        if _in_web_area(el):
+            before = focus_sample()
+            _focus_in_app(el)
+            self.post_text(pid, label)
+            deadline = time.monotonic() + 1.0
+            while time.monotonic() < deadline and _chosen(el) != label.casefold():
+                time.sleep(0.05)
+            _note_focus(before, "select")
+            STATE.route("select:typeahead")
+            value = _ax_get(el, "AXValue")
+            return {"route": "typeahead", "value": value, "ok": _chosen(el) == label.casefold()}
+        STATE.check("MB7", "raw.select on a native pop-up opens its menu")
+        return self._pick_from_menu(el, pid, label)
+
+    def _pick_from_menu(self, el: Any, pid: int, label: str) -> dict[str, Any]:
+        """Open a native pop-up's menu (AXPress on its own thread: the call blocks while the menu tracks), press the
+        matching item as soon as it is listed, and close the menu if nothing matched."""
+        STATE.count(pid)
+        AX.AXUIElementSetMessagingTimeout(el, 0.5)
+        opener = threading.Thread(
+            target=AX.AXUIElementPerformAction, args=(el, "AXPress"), daemon=True
+        )
+        opener.start()
+        deadline = time.monotonic() + 2.5
+        items: list[Any] = []
+        hit = None
+        while time.monotonic() < deadline and hit is None:
+            items = _menu_items(el)
+            hit = next(
+                (
+                    i
+                    for i in items
+                    if str(_ax_get(i, "AXTitle") or "").casefold() == label.casefold()
+                ),
+                None,
+            )
+            time.sleep(0.02)
+        if hit is None:
+            for child in _ax_get(el, "AXChildren") or []:
+                AX.AXUIElementPerformAction(child, "AXCancel")
+            opener.join(1.0)
+            names = [str(_ax_get(i, "AXTitle") or "") for i in items]
+            raise LookupError(f"no item {label!r} in the pop-up; it lists {names}")
+        AX.AXUIElementPerformAction(hit, "AXPress")
+        opener.join(1.0)
+        time.sleep(0.2)
+        STATE.route("select:menu")
+        return {
+            "route": "menu",
+            "value": _ax_get(el, "AXValue"),
+            "ok": _chosen(el) == label.casefold(),
+        }
+
+    def set_cell(
+        self, pid: int, cell: str, value: str, window: str | None = None
+    ) -> dict[str, Any]:
+        """Write ``value`` into cell ``cell`` ("H4") of the visible sheet of LibreOffice Calc process ``pid`` and
+        read it back. Calc ignores AX writes to a cell and posted keys while it is in the background, so this selects
+        the cell through AX, puts the text in the formula bar's input line and presses the bar's Accept button.
+        ``window``: part of the document window's title when several are open. Only cells on screen can be
+        selected; switch sheets by pressing the sheet's tab (an AXRadioButton) first."""
+        pid, cell, value = int(pid), str(cell).upper(), str(value)
+        STATE.to_user(pid, "set_cell")
+        win = _calc_window(pid, window)
+        table = next(iter(self.find(win, role="AXTable", limit=1)), None)
+        if table is None:
+            raise LookupError("no sheet (AXTable) in that window")
+        target = next(
+            (c for c in _ax_get(table, "AXChildren") or [] if _ax_get(c, "AXTitle") == cell), None
+        )
+        if target is None:
+            raise LookupError(f"cell {cell} is not on screen in this sheet")
+        STATE.count(pid)
+        AX.AXUIElementSetAttributeValue(table, "AXFocused", True)
+        AX.AXUIElementSetAttributeValue(target, "AXSelected", True)
+        AX.AXUIElementSetAttributeValue(target, "AXFocused", True)
+        deadline = time.monotonic() + 1.5
+        while time.monotonic() < deadline and _calc_name_box(win) != cell:
+            time.sleep(0.05)
+        if _calc_name_box(win) != cell:
+            raise RuntimeError(
+                f"Calc did not select {cell} (name box shows {_calc_name_box(win)!r}); a dialog may be open"
+            )
+        line = _calc_input_line(win)
+        if line is None:
+            raise LookupError("no formula bar input line in that window")
+        current = str(_ax_get(line, "AXValue") or "")
+        if current:
+            AX.AXUIElementSetAttributeValue(
+                line,
+                "AXSelectedTextRange",
+                AX.AXValueCreate(AX.kAXValueCFRangeType, (0, len(current))),
+            )
+        AX.AXUIElementSetAttributeValue(line, "AXSelectedText", value)
+        accept = None
+        deadline = time.monotonic() + 1.5
+        while time.monotonic() < deadline and accept is None:
+            bar = _formula_bar(win)
+            accept = (
+                next(iter(self.find(bar, role="AXButton", title="Accept", limit=1)), None)
+                if bar is not None
+                else None
+            )
+            time.sleep(0.05)
+        if accept is None:
+            raise RuntimeError("the formula bar did not enter edit mode (no Accept button)")
+        AX.AXUIElementPerformAction(accept, "AXPress")
+        time.sleep(0.3)
+        table = next(iter(self.find(win, role="AXTable", limit=1)), table)
+        after = next(
+            (c for c in _ax_get(table, "AXChildren") or [] if _ax_get(c, "AXTitle") == cell), None
+        )
+        got = str(_ax_get(after, "AXValue") or "") if after is not None else None
+        STATE.route("set_cell:formula_bar")
+        return {"route": "formula_bar", "cell": cell, "value": got, "ok": got == value}
+
+    def menu(self, pid: int, path: list[str]) -> dict[str, Any]:
+        """Run a menu-bar command of process ``pid`` (``["File", "Save"]``) without opening any menu: the item is
+        found in the app's AXMenuBar and pressed. Fails if an item on the path is missing or disabled."""
+        pid = int(pid)
+        STATE.to_user(pid, "menu")
+        node = _ax_get(AX.AXUIElementCreateApplication(pid), "AXMenuBar")
+        if node is None:
+            raise LookupError(f"{app_name(pid)} exposes no menu bar")
+        for depth, name in enumerate(path):
+            kids = _ax_get(node, "AXChildren") or []
+            if depth and kids and _ax_get(kids[0], "AXRole") == "AXMenu":
+                kids = _ax_get(kids[0], "AXChildren") or []
+            hit = next((k for k in kids if str(_ax_get(k, "AXTitle") or "") == name), None)
+            if hit is None:
+                hit = next(
+                    (
+                        k
+                        for k in kids
+                        if str(_ax_get(k, "AXTitle") or "").casefold().rstrip(".…")
+                        == name.casefold().rstrip(".…")
+                    ),
+                    None,
+                )
+            if hit is None:
+                have = [str(_ax_get(k, "AXTitle") or "") for k in kids if _ax_get(k, "AXTitle")]
+                raise LookupError(
+                    f"menu item {name!r} not found under {path[:depth]}; there: {have[:40]}"
+                )
+            node = hit
+        if _ax_get(node, "AXRole") != "AXMenuItem":
+            raise ValueError("the path must end at a menu item, not a menu-bar title")
+        if _ax_get(node, "AXEnabled") is False:
+            raise RuntimeError(
+                f"menu item {path} is disabled while {app_name(pid)} is in the background"
+            )
+        STATE.count(pid)
+        err = int(AX.AXUIElementPerformAction(node, "AXPress"))
+        STATE.route("menu:press_item")
+        return {"route": "press_item", "ax_error": err}
 
     def screenshot(
         self, window_id: int | None = None, region: tuple[int, int, int, int] | None = None
@@ -803,67 +1073,6 @@ class Raw:
         STATE.count(front_pid())
         return f"dragged the real cursor from ({x0}, {y0}) to ({x1}, {y1})"
 
-    # ---------------------------------------------------------------- the Cua Driver fallback
-
-    def driver(self, tool: str, args: dict | None = None, image: bool = False) -> Any:
-        """Call one Cua Driver tool (GUI reads and actions only) and return its JSON result. Screenshots in the
-        result are dropped unless ``image=True``, which returns them to you as images."""
-        tool = str(tool)
-        args = dict(args or {})
-        if tool not in lint.DRIVER_TOOLS:
-            STATE.refuse("GUI1", f"raw.driver({tool!r})")
-        why = lint.driver_foreground(tool, args)
-        if why:
-            STATE.check("MB10", f"raw.driver: {why}")
-        if tool in ("press_key", "hotkey"):
-            keys = args.get("keys") or ([args["key"]] if args.get("key") else [])
-            if lint.combo([str(k).lower() for k in keys]) in lint.FOCUS_COMBOS:
-                STATE.check("MB9", f"raw.driver {tool} " + "+".join(map(str, keys)))
-        socket, session, binary = (
-            os.environ.get(k) for k in ("RAW_DRIVER_SOCKET", "RAW_DRIVER_SESSION", "RAW_DRIVER_BIN")
-        )
-        if not (socket and binary):
-            raise RuntimeError("no Cua Driver is configured for this trial")
-        args.setdefault("session", session or "raw-macos")
-        entry: dict[str, Any] = {"tool": tool, "pid": args.get("pid"), "foreground": bool(why)}
-        shot = (
-            STATE.image_dir / f"drv-{len(STATE.driver_calls) + 1}.png"
-            if (image and STATE.image_dir)
-            else None
-        )
-        argv = [
-            binary,
-            "call",
-            "--socket",
-            socket,
-            *(["--screenshot-out-file", str(shot)] if shot else []),
-            tool,
-            json.dumps(args),
-        ]
-        started = time.monotonic()
-        try:
-            done = subprocess.run(argv, capture_output=True, text=True, timeout=90)
-        finally:
-            entry["elapsed_s"] = round(time.monotonic() - started, 3)
-        text = done.stdout.strip()
-        try:
-            result: Any = json.loads(text) if text else {}
-        except ValueError:
-            result = {"text": text[-6000:]}
-        entry["ok"] = done.returncode == 0
-        if isinstance(result, dict):
-            for key in [k for k in result if k.endswith("_png_b64") or k.endswith("image_b64")]:
-                result.pop(key)
-        if shot is not None and shot.is_file():
-            STATE.images.append(shot)
-            if isinstance(result, dict):
-                result["screenshot"] = f"returned as image {len(STATE.images)}"
-        with STATE.lock:
-            STATE.driver_calls.append(entry)
-        if done.returncode != 0:
-            raise RuntimeError(f"cua-driver {tool} failed: {(done.stderr.strip() or text)[-1500:]}")
-        return result
-
     def sleep(self, seconds: float) -> None:
         time.sleep(min(float(seconds), 30.0))
 
@@ -871,6 +1080,294 @@ class Raw:
 # An app's AX tree can be huge (a spreadsheet table lists every cell); the helpers walk at most this many children
 # of one node, so a tree read ends. A script's own loop is the script's business.
 MAX_CHILDREN = 1000
+
+# ------------------------------------------------------------------ compact dumps and refs
+
+TEXT_ROLES = ("AXStaticText", "AXHeading", "AXLink", "AXCell")
+TEXT_INPUTS = ("AXTextField", "AXTextArea", "AXComboBox", "AXSearchField")
+# Roles an agent acts on even when they list no action (set a value, select).
+ACTABLE_ROLES = (
+    "AXButton",
+    "AXPopUpButton",
+    "AXMenuButton",
+    "AXCheckBox",
+    "AXRadioButton",
+    "AXComboBox",
+    "AXRow",
+    "AXSlider",
+    "AXIncrementor",
+    "AXTab",
+    "AXLink",
+    "AXMenuItem",
+    "AXDisclosureTriangle",
+    "AXOutline",
+    "AXTable",
+)
+WRAPPERS = ("AXGroup", "AXScrollArea", "AXSplitGroup", "AXLayoutArea", "AXUnknown")
+PASSIVE_ACTIONS = ("AXShowMenu", "AXScrollToVisible")
+
+
+def _label_parts(el: Any) -> list[str]:
+    out = []
+    for attr in ("AXTitle", "AXDescription", "AXPlaceholderValue"):
+        v = _ax_get(el, attr)
+        if isinstance(v, str) and v.strip() and v not in out:
+            out.append(v)
+    return out
+
+
+def _actions(el: Any) -> list[str]:
+    err, names = AX.AXUIElementCopyActionNames(el, None)
+    return [a for a in (names or []) if a not in PASSIVE_ACTIONS] if err == 0 else []
+
+
+def _actionable(el: Any, role: Any) -> bool:
+    return role in ACTABLE_ROLES or bool(_actions(el))
+
+
+def _is_wrapper(el: Any, role: Any) -> bool:
+    """A layout node with nothing of its own to say: no label, no value, no action."""
+    if role not in WRAPPERS or _label_parts(el) or _actions(el):
+        return False
+    v = _ax_get(el, "AXValue")
+    return v in (None, "")
+
+
+def _short(v: Any, n: int = 160) -> str:
+    s = str(v).replace("\n", " ")
+    return repr(s if len(s) <= n else s[: n - 1] + "…")
+
+
+def _compact(el: Any, role: Any) -> str:
+    """One short line: role, label, value, state flags, non-press actions."""
+    parts = [str(role or "?").removeprefix("AX")]
+    sub = _ax_get(el, "AXSubrole")
+    if sub in (
+        "AXDialog",
+        "AXSystemDialog",
+        "AXApplicationDialog",
+        "AXSearchField",
+        "AXSecureTextField",
+    ):
+        parts[0] += "/" + str(sub).removeprefix("AX")
+    labels = _label_parts(el)
+    v = _ax_get(el, "AXValue")
+    if role in TEXT_ROLES and isinstance(v, str) and not labels:
+        parts.append(_short(v, 300))
+    else:
+        if labels:
+            parts.append(_short(" / ".join(labels), 120))
+        if v is not None and v != "" and not isinstance(v, bool):
+            parts.append("= " + _short(_py(v), 200))
+    flags = [n for n, a in (("disabled", "AXEnabled"),) if _ax_get(el, a) is False]
+    flags += [
+        n
+        for n, a in (
+            ("focused", "AXFocused"),
+            ("selected", "AXSelected"),
+            ("expanded", "AXExpanded"),
+        )
+        if _ax_get(el, a) is True
+    ]
+    if role in ("AXCheckBox", "AXRadioButton") and v in (0, 1, True, False):
+        flags.append("on" if v else "off")
+        parts = [p for p in parts if not p.startswith("= ")]
+    if flags:
+        parts.append("(" + ",".join(flags) + ")")
+    acts = [a.removeprefix("AX") for a in _actions(el) if a != "AXPress"]
+    if acts:
+        parts.append("actions=" + "/".join(acts))
+    return " ".join(parts)
+
+
+def _path_of(el: Any, pid: int) -> list[int]:
+    """Child indexes from the app element down to ``el``."""
+    path: list[int] = []
+    node = el
+    for _ in range(64):
+        if _ax_get(node, "AXRole") == "AXApplication":
+            return list(reversed(path))
+        parent = _ax_get(node, "AXParent")
+        if parent is None:
+            break
+        kids = list(_ax_get(parent, "AXChildren") or [])
+        try:
+            path.append(kids.index(node))
+        except ValueError:
+            break
+        node = parent
+    return list(reversed(path)) if _ax_get(node, "AXRole") == "AXApplication" else []
+
+
+class _Refs:
+    """Numbered element refs that outlive one script: pid, child-index path from the app, role and label. A ref is
+    resolved by walking the path again and checking role and label; a moved element is found by role and label."""
+
+    def __init__(self, path: Path | None, data: dict[str, Any]) -> None:
+        self.path, self.data = path, data
+        self.by_key = {(v["pid"], tuple(v["path"])): int(k) for k, v in data.items()}
+
+    @classmethod
+    def load(cls) -> "_Refs":
+        name = os.environ.get("RAW_REFS")
+        path = Path(name) if name else None
+        data: dict[str, Any] = {}
+        if path is not None and path.is_file():
+            try:
+                data = json.loads(path.read_text("utf-8"))
+            except ValueError:
+                data = {}
+        return cls(path, data)
+
+    def add(self, pid: int, path: list[int], el: Any) -> int:
+        key = (pid, tuple(path))
+        n = self.by_key.get(key)
+        entry = {
+            "pid": pid,
+            "path": path,
+            "role": _ax_get(el, "AXRole"),
+            "label": _label_parts(el)[:1],
+        }
+        if n is None:
+            n = max((int(k) for k in self.data), default=0) + 1
+            self.by_key[key] = n
+        self.data[str(n)] = entry
+        return n
+
+    def save(self) -> None:
+        if self.path is not None:
+            self.path.write_text(json.dumps(self.data), "utf-8")
+
+    def resolve(self, n: int) -> Any:
+        entry = self.data.get(str(n))
+        if entry is None:
+            raise LookupError(f"no ref [{n}] in this task; dump first")
+        node = AX.AXUIElementCreateApplication(int(entry["pid"]))
+        for i in entry["path"]:
+            kids = _ax_get(node, "AXChildren") or []
+            if i >= len(kids):
+                node = None
+                break
+            node = kids[i]
+        if (
+            node is not None
+            and _ax_get(node, "AXRole") == entry["role"]
+            and _label_parts(node)[:1] == entry["label"]
+        ):
+            return node
+        if entry["label"]:
+            hits = Raw().find(
+                AX.AXUIElementCreateApplication(int(entry["pid"])),
+                role=entry["role"],
+                title=entry["label"][0],
+                limit=2,
+            )
+            if len(hits) == 1:
+                return hits[0]
+        raise LookupError(f"ref [{n}] ({entry['role']} {entry['label']}) is gone; dump again")
+
+
+# ------------------------------------------------------------------ value-helper internals
+
+
+def _text_of(el: Any) -> str:
+    v = _ax_get(el, "AXValue")
+    return v if isinstance(v, str) else ("" if v is None else str(v))
+
+
+def _chosen(el: Any) -> str:
+    v = _ax_get(el, "AXValue")
+    if not isinstance(v, str) or not v:
+        v = _ax_get(el, "AXTitle")
+    return str(v or "").strip().casefold()
+
+
+def _in_web_area(el: Any) -> bool:
+    node = el
+    for _ in range(40):
+        node = _ax_get(node, "AXParent")
+        if node is None:
+            return False
+        if _ax_get(node, "AXRole") == "AXWebArea":
+            return True
+    return False
+
+
+def _chromium(pid: int) -> bool:
+    app = AppKit.NSRunningApplication.runningApplicationWithProcessIdentifier_(int(pid))
+    bid = str(app.bundleIdentifier() or "").lower() if app is not None else ""
+    return "chrome" in bid or "chromium" in bid or "electron" in bid
+
+
+def _focus_in_app(el: Any) -> None:
+    """Move the app's own keyboard focus to ``el`` (AXFocused). In a background app this does not activate it or make
+    its window key (checked in the bench guest); the caller compares the user's front app and key window after."""
+    AX.AXUIElementSetAttributeValue(el, "AXFocused", True)
+    time.sleep(0.12)
+
+
+def _note_focus(before: dict[str, Any], what: str) -> None:
+    after = focus_sample()
+    if after["front"] != before["front"] or after["key_window"] != before["key_window"]:
+        with STATE.lock:
+            STATE.runtime_warned.append(f"MB3: {what} moved the user's front app or key window")
+
+
+def _menu_items(popup: Any) -> list[Any]:
+    out: list[Any] = []
+    for child in _ax_get(popup, "AXChildren") or []:
+        if _ax_get(child, "AXRole") == "AXMenu":
+            out += list(_ax_get(child, "AXChildren") or [])
+    return out
+
+
+def _calc_cell(el: Any) -> bool:
+    parent = _ax_get(el, "AXParent")
+    return (
+        _ax_get(el, "AXRole") == "AXTextField"
+        and parent is not None
+        and _ax_get(parent, "AXRole") == "AXTable"
+        and app_name(Raw().ax.pid(el)) == "LibreOffice"
+    )
+
+
+def _calc_window(pid: int, title: str | None) -> Any:
+    windows = _ax_get(AX.AXUIElementCreateApplication(int(pid)), "AXWindows") or []
+    for w in windows:
+        t = str(_ax_get(w, "AXTitle") or "")
+        if (title is None or title.casefold() in t.casefold()) and Raw().find(
+            w, role="AXTable", limit=1, depth=12
+        ):
+            return w
+    raise LookupError(
+        f"no Calc document window{' titled ' + repr(title) if title else ''} with a sheet"
+    )
+
+
+def _formula_bar(win: Any) -> Any:
+    return next(
+        iter(Raw().find(win, role="AXToolbar", title="Formula Tool Bar", limit=1, depth=8)), None
+    )
+
+
+def _calc_name_box(win: Any) -> str:
+    bar = _formula_bar(win)
+    box = next(iter(Raw().find(bar, role="AXComboBox", limit=1)), None) if bar is not None else None
+    return str(_ax_get(box, "AXValue") or "").strip().upper() if box is not None else ""
+
+
+def _calc_input_line(win: Any) -> Any:
+    bar = _formula_bar(win)
+    group = (
+        next(iter(Raw().find(bar, role="AXGroup", title="Input line", limit=1)), None)
+        if bar is not None
+        else None
+    )
+    return (
+        next(iter(Raw().find(group, role="AXTextArea", limit=1)), None)
+        if group is not None
+        else None
+    )
 
 
 def make() -> Raw:

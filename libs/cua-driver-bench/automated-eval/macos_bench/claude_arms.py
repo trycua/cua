@@ -362,7 +362,8 @@ RAW_TRIAL = RAW_LOG.parent / "trial.json"
 # same driver the pi-cua-driver-main arm gets.
 RAW_FALLBACK = "cc-cua-driver-main"
 # The raw-macos prototype: the same shape on macOS (tools/raw_macos): Python against the Accessibility API and
-# per-process event posting (pyobjc), the same lint/hook design, the same per-trial file and the same fallback.
+# per-process event posting (pyobjc), the same lint/hook design and per-trial file, and no Cua Driver at all (no
+# fallback: its lint blocks any call path to the driver).
 # Its runner needs pyobjc and its own TCC grants, so it runs on RAW_MACOS_PYTHON (a venv in the bench guest).
 RAW_MACOS_ARM = "cc-raw-macos"
 RAW_MACOS_ADAPTER = ADAPTER_TOOLS / "raw_macos" / "raw_mcp_mac.py"
@@ -372,6 +373,8 @@ RAW_MACOS_PYTHON = Path(os.environ.get("CDB_RAW_MACOS_PYTHON") or Path.home() / 
 RAW_LINUX_DIFF_ARM = "cc-raw-linux-diff"
 RAW_LINUX_ARMS = (RAW_LINUX_ARM, RAW_LINUX_DIFF_ARM)
 RAW_ARMS = (*RAW_LINUX_ARMS, RAW_MACOS_ARM)
+# The raw arms whose scripts may fall back to Cua Driver (raw.driver): the harness starts the fallback daemon for these.
+RAW_FALLBACK_ARMS = RAW_LINUX_ARMS
 # The app whose window plays the user in the background condition; raw-macos refuses input posted to it.
 RAW_USER_APPS = ("Bench Sentinel",)
 ADAPTER_ARMS = {
@@ -459,9 +462,9 @@ ARM_DESCRIPTIONS = {
     "foreground granted per task by the harness (tools/raw_linux), no skill",
     RAW_LINUX_DIFF_ARM: "The cc-raw-linux setup, except a re-dump of the same root in a trial returns only what "
     "changed since the last dump (tools/raw_linux, RAW_DUMP_DIFF=1)",
-    RAW_MACOS_ARM: "One run_script tool (server cua) running Python against the macOS Accessibility API and "
-    "per-process event posting behind a background-use lint and runtime hook, with raw.driver(...) to the main "
-    "build's Cua Driver as the fallback; foreground granted per task by the harness (tools/raw_macos), no skill",
+    RAW_MACOS_ARM: "One run_script tool (server cua) running Python against the macOS Accessibility API, "
+    "per-process event posting and CoreGraphics capture behind a background-use lint and runtime hook, with no Cua "
+    "Driver; foreground granted per task by the harness (tools/raw_macos), no skill",
     "cc-codex-cu": "Claude Code + Codex computer-use cua_repl MCP (server codex-cu), no skill",
     "cc-codex-cu-1007-browser": "Claude Code + Codex 26.1007.21159 cua_repl MCP (server codex-cu), surfaces browser+computer, no skill (Amendment 10)",
     "cc-claude-cu-helper": "Claude Code + "
@@ -475,13 +478,13 @@ ARM_DESCRIPTIONS = {
 
 RAW_MACOS_ADDENDUM = (
     "\n\nrun_script is your only tool: every read and every action is one Python script against the macOS "
-    "desktop's low-level APIs (the Accessibility API through `raw.ax`, events posted to one process through "
-    "`raw.post_click`/`raw.post_key`); its description lists what is available and the background rules the script is "
-    "checked against. To look, `return raw.dump(raw.ax.app(pid))` or take `raw.screenshot(window_id)`. To act, use AX "
-    "actions and values on the elements you found, use loops and if/else, and `return` what you need to check the "
-    "result. Where an app's AX tree does not reach what you need, call the Cua Driver from the same script with "
-    "`raw.driver(tool, args)`. A blocked or failed script comes back with the rule or the traceback; fix it and run it "
-    "again.\n"
+    "desktop's own APIs (the Accessibility API through `raw.ax`, events posted to one process through "
+    "`raw.post_click`/`raw.post_key`, window capture); its description lists what is available and the background "
+    "rules the script is checked against. To look, `return raw.dump(raw.ax.app(pid))` (refs `[n]` there are "
+    "`raw.el(n)` later), `raw.text(el)` or `raw.screenshot(window_id)`. To act, use AX actions and the value helpers "
+    "(`raw.set_text`, `raw.select`, `raw.set_cell`, `raw.menu`) on the elements you found, use loops and if/else, and "
+    "`return` what you need to check the result. A blocked or failed script comes back with the rule or the traceback; "
+    "fix it and run it again.\n"
     'Pass "timeout_ms": 120000 on every run_script call.\n'
 )
 

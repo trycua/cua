@@ -137,7 +137,7 @@ def run(source: str, image_dir: Path) -> dict[str, Any]:
         out["stdout"] = printed.getvalue()[-4000:]
         out["runtime_blocked"] = list(raw_mac.STATE.runtime_blocked)
         out["runtime_warned"] = list(raw_mac.STATE.runtime_warned)
-        out["driver_calls"] = list(raw_mac.STATE.driver_calls)
+        out["routes"] = dict(raw_mac.STATE.routes)
         out["raw_actions"] = dict(raw_mac.STATE.raw_actions)
         out["images"] = [str(p) for p in raw_mac.STATE.images]
     return out

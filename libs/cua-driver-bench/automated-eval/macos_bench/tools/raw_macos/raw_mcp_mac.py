@@ -3,7 +3,8 @@
 # Copyright (c) 2026 Cua AI, Inc.
 
 """Stdio MCP server of the `pi-raw-macos` bench arm: one tool, run_script, that runs Python against the macOS
-Accessibility API and per-process event posting, with Cua Driver only as the fallback a script calls itself.
+Accessibility API, per-process event posting and CoreGraphics capture. No Cua Driver: the arm uses macOS's own APIs
+only, and the lint blocks any call path to the driver (rule DRV1).
 
 Each call: the background-use lint (rawlint_mac.py) reads the script; a blocked script is returned unrun with the
 rule, its source and a background-safe alternative. A script that passes runs in a fresh runner process
@@ -16,8 +17,9 @@ Cua Driver's own re-exec does), so the Accessibility, Screen Recording and PostE
 binary apply, not those of whatever started the agent.
 
 Environment: RAW_LOG (call log path), RAW_TMP (scratch directory for screenshots), PYTHON (interpreter for the
-runner), RAW_TRIAL (the per-trial JSON the harness writes before each trial: the foreground grant, the per-app AX
-coverage labels, and the Cua Driver socket, binary and session for raw.driver). The trial file is read on every call.
+runner), RAW_TRIAL (the per-trial JSON the harness writes before each trial: its id, the foreground grant, the
+per-app AX coverage labels and the user's apps). The trial file is read on every call. Element refs from raw.dump live
+in RAW_TMP/refs-<trial id>.json, so a later call of the same trial can use them.
 """
 
 from __future__ import annotations
@@ -46,72 +48,68 @@ DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS = 30_000, 120_000
 
 DESCRIPTION = """\
 Run one Python script against the macOS desktop. The script body runs inside a function, so `return` a value \
-(JSON-able) to see it; print() output is returned too. Each call is a fresh process: nothing persists between calls.
+(JSON-able) to see it; print() output is returned too. Each call is a fresh process: nothing persists between calls \
+except element refs from raw.dump.
 
-Two routes, in one script if you like:
-1. Raw macOS APIs (cheap, background-safe): the Accessibility API and events posted to one process. You find, act \
-on and read back elements yourself.
-2. Cua Driver, `raw.driver(tool, args)`: the fallback for apps whose AX tree does not reach what you need \
-(spreadsheet cells, canvas, web content that ignores AX actions). Same tools and arguments as the Cua Driver MCP \
-tools; the result is returned to the script as a dict. GUI tools only: list_windows, list_apps, get_window_state, \
-get_desktop_state, get_screen_size, get_cursor_position, zoom, parse_visual_regions, clipboard_read, verify_state, \
-click, double_click, right_click, type_text, set_value, press_key, hotkey, scroll, drag, invoke_menu, move_cursor, \
-mouse_button_down, mouse_drag, mouse_button_up, set_window_frame, bring_to_front. Typical: \
-`s = raw.driver("get_window_state", {"pid": p, "window_id": w}); return s["tree_markdown"]`, then \
-`raw.driver("click", {"pid": p, "window_id": w, "element_token": "<token from the tree>"})` or \
-`raw.driver("type_text", {"pid": p, "window_id": w, "element_token": t, "text": "..."})`. The driver acts only on \
-a window it has read in this task: call get_window_state on that window first (its tokens and pixel frame are what \
-click and type_text use; x, y are window-local points from that read). `image=True` returns the driver's \
-screenshot to you. A failed driver call raises with the driver's message.
-
-Which route: start with raw AX for an app labelled "full" below. For an app labelled "partial", use raw where its \
-tree has the control, and raw.driver where it does not or where a raw action had no effect. Read back either way.
+Everything goes through macOS's own APIs: the Accessibility API, events posted to one process, and window capture. \
+There is no other automation layer to call.
 {coverage}
 
-Raw API (global `raw`):
-- AX: raw.ax.app(pid) -> the app element; raw.ax.get(el, "AXValue"), raw.ax.names(el), raw.ax.actions(el), \
-raw.ax.children(el), raw.ax.settable(el, attr), raw.ax.at(x, y) (element at a screen point), raw.ax.pid(el). \
-Act: raw.ax.perform(el, "AXPress") (also AXIncrement, AXDecrement, AXConfirm, AXCancel, AXPick, AXShowAlternateUI); \
-raw.ax.set(el, "AXValue", "text") for text fields, combo boxes and sliders, raw.ax.set(el, "AXSelected", True) for \
-rows and tabs. Both return the AX error code (0 = accepted). Useful attributes: AXRole, AXSubrole, AXTitle, \
-AXDescription, AXValue, AXHelp (tooltip text), AXEnabled, AXFocused, AXPosition, AXSize, AXWindows, AXMainWindow, \
-AXChildren, AXRows, AXSelectedRows, AXSheets, AXMenuBar.
-- raw.find(root, role=None, title=None, contains=None) -> elements whose AXRole matches ("AXButton", \
-"AXTextField", "AXPopUpButton", "AXCheckBox", "AXMenuItem", "AXRow", "AXStaticText", "AXSheet", "AXWindow") and \
-whose title, description, value, identifier or help equals `title` or contains `contains`; raw.describe(el) -> one \
-line; raw.dump(root, depth=14) -> text tree.
+Read (cheap first):
 - raw.apps() -> [{pid, name, bundle_id, active, hidden}]; raw.windows(pid=None) -> on-screen windows front to back \
-[{window_id, pid, app, title, layer, frame:(x,y,w,h)}] (layer 0 = normal windows); raw.front() -> the frontmost app \
-and its key window; raw.cursor().
-- raw.screenshot(window_id=None, region=None) -> the PNG is returned to you as an image (a window is captured even \
-when it is behind others).
-- Events to one process (the real cursor does not move): raw.post_click(pid, x, y, button="left", count=1), \
-raw.post_key(pid, ["cmd", "s"]) or raw.post_key(pid, "return"), raw.post_text(pid, "text") (to that app's focused \
-field), raw.post_scroll(pid, x, y, dy). Screen coordinates, top-left origin. Many apps ignore posted clicks while \
-in the background: prefer AX actions and read back.
-- Foreground pointer (the real cursor moves): raw.pointer_move(x, y), raw.pointer_click(x, y), \
+[{window_id, pid, app, title, layer, frame:(x,y,w,h)}]; raw.front() -> the user's frontmost app and key window.
+- raw.dump(root, depth=14, limit=400, query=None) -> a compact text tree: wrapper groups are folded away, and every \
+element you can act on carries a ref `[n]`; `raw.el(n)` returns that element in this or any later call of the task. \
+`query="Save"` returns only the matching lines (with refs). Dump a window or a found subtree, not the whole app, \
+when the app is big. `full=True` gives every node with frames and actions.
+- raw.text(root) -> the visible strings under root in reading order (static text, headings, links, field values): \
+the cheapest way to read a message, a page or a list.
+- raw.find(root, role=None, title=None, contains=None) -> elements by AXRole ("AXButton", "AXTextField", \
+"AXPopUpButton", "AXCheckBox", "AXRadioButton", "AXRow", "AXStaticText", "AXTable", "AXWebArea") and by exact \
+title/description/value (`title`) or a substring (`contains`); raw.describe(el) -> one line.
+- raw.ax: raw.ax.app(pid) (asks Chromium/Electron apps for their web-content tree), raw.ax.get(el, "AXValue"), \
+raw.ax.names(el), raw.ax.actions(el), raw.ax.children(el), raw.ax.settable(el, attr), raw.ax.at(x, y), raw.ax.pid(el).
+- raw.screenshot(window_id=None, region=None) -> the PNG comes back to you as an image (a window is captured even \
+behind others).
+
+Act:
+- raw.ax.perform(el, "AXPress") for buttons, links, checkboxes, radio buttons, rows, tabs, menu items (also \
+AXIncrement, AXDecrement, AXConfirm, AXCancel, AXPick); raw.ax.set(el, "AXSelected", True) for rows and tabs. \
+Both return the AX error code (0 = accepted, not proof).
+- raw.set_text(el, "text") -> {route, value}: sets a text field and reads it back. It writes AXValue; where the app \
+ignores that (web views, a browser address bar) it focuses the field inside that app and types the text as key \
+events to the app's pid. Follow with raw.post_key(pid, "return") to submit an address bar.
+- raw.select(el, "Label") -> {route, value}: chooses an option of an AXPopUpButton or AXComboBox. A web <select> \
+(Chrome, Electron, web views) gets the label typed into it and its menu never opens.
+- raw.set_cell(pid, "H4", "text", window=None) -> {value, ok}: writes one LibreOffice Calc cell (on screen in the \
+visible sheet) through the formula bar. Calc ignores AX writes to cells and posted keys while it is in the \
+background, so this is the route. Change sheets by pressing the sheet tab (AXRadioButton) first.
+- raw.menu(pid, ["File", "Save"]) -> runs a menu-bar command without opening the menu.
+- Events to one process (the real cursor does not move): raw.post_key(pid, "return") or raw.post_key(pid, \
+["cmd", "s"]), raw.post_text(pid, "text") (to that app's focused element), raw.post_click(pid, x, y, \
+button="left", count=1), raw.post_scroll(pid, x, y, dy). Screen coordinates, top-left origin. Many apps ignore \
+posted clicks while in the background: prefer AX actions.
+- Foreground pointer (moves the real cursor): raw.pointer_move(x, y), raw.pointer_click(x, y), \
 raw.pointer_drag(x0, y0, x1, y1). raw.sleep(s).
 
 Background contract (checked before the script runs, and again while it runs):
 - The user's frontmost app, key window, focused element, window order and real cursor must stay as they are. \
 Foreground routes: raw.pointer_*, AXRaise, setting AXFrontmost / AXMain / AXFocused / AXFocusedUIElement / \
-AXMinimized / AXHidden, and raw.driver with delivery_mode "foreground", a desktop scope or target, or bring_to_front.
+AXMinimized / AXHidden through raw.ax.set (raw.set_text and raw.select move focus only inside the target app and \
+check that the user's window kept it).
 - {grant}
+- Menus are foreground too: AXShowMenu, and AXPress on an AXPopUpButton, AXMenuButton or AXMenuBarItem, open a menu \
+that takes key focus from the user's window and lifts the target window over it. A native AppKit pop-up lists its \
+items only while its menu is open and ignores an AXValue write, so raw.select on one opens it and needs the grant. \
+Run menu-bar commands with raw.menu.
 - Always blocked: launching or opening apps (open, NSWorkspace, AppleScript, osascript), shells, files, network, \
-pyobjc and framework imports, private window-server calls.
-- Menus are foreground too: AXShowMenu, and AXPress on an AXPopUpButton, AXMenuButton or AXMenuBarItem, open a \
-menu that takes key focus from the user's window and lifts the target window. An AppKit pop-up lists its items \
-only while open and refuses an AXValue write, so choose an item with \
-`raw.driver("set_value", {"pid": p, "window_id": w, "element_token": t, "value": "High"})` (the driver opens it \
-under its key-focus guard and hands focus back), and run menu-bar commands with `raw.driver("invoke_menu", ...)`. \
-Get the token from `raw.driver("get_window_state", {"pid": p, "window_id": w})`: its tree rows read \
-`[3] AXPopUpButton = "Low" (Priority)` and the token is `"<snapshot_id>:3"`.
+pyobjc and framework imports, private window-server calls, and Cua Driver in any form.
 - Warned: cmd+L, cmd+shift+G and tab-switching shortcuts make apps activate themselves; clipboard writes replace \
 what the user copied.
 - Not available: files, processes, network and other imports (json, re, math, time, itertools, collections, \
 functools, string, textwrap are importable); eval/exec, private attributes, getattr with computed names.
-- An action the API accepted is not proof it worked: read the element back (raw.ax.get, raw.describe, a \
-screenshot, a driver get_window_state) before you report success.
+- An action the API accepted is not proof it worked: read the element back (raw.ax.get, raw.text, raw.dump with a \
+query, a screenshot) before you report success.
 """
 GRANTED = (
     "This trial grants foreground: the routes above are allowed when no background route works (a real hover, a "
@@ -123,9 +121,9 @@ NOT_GRANTED = (
 
 
 def trial() -> dict:
-    """The harness's per-trial settings (grant, coverage labels, driver), or the safe default: no grant, no driver."""
+    """The harness's per-trial settings (id, grant, coverage labels, user apps), or the safe default: no grant."""
     if TRIAL is None or not TRIAL.is_file():
-        return {"foreground_grant": False, "coverage": {}, "driver": None}
+        return {"trial_id": "none", "foreground_grant": False, "coverage": {}}
     return json.loads(TRIAL.read_text("utf-8"))
 
 
@@ -169,14 +167,10 @@ def _log(entry: dict) -> None:
 def runner_env(settings: dict) -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if k not in {"RAW_LOG", "RAW_TRIAL", "RAW_GRANT"}}
     env["RAW_GRANT"] = "1" if settings.get("foreground_grant") is True else "0"
-    driver = settings.get("driver") or {}
-    for key, name in (
-        ("socket", "RAW_DRIVER_SOCKET"),
-        ("bin", "RAW_DRIVER_BIN"),
-        ("session", "RAW_DRIVER_SESSION"),
-    ):
-        if driver.get(key):
-            env[name] = str(driver[key])
+    trial_id = "".join(
+        c for c in str(settings.get("trial_id") or "none") if c.isalnum() or c in "-_."
+    )
+    env["RAW_REFS"] = str(TMP / f"refs-{trial_id}.json")
     env["RAW_USER_APPS"] = ",".join(settings.get("user_apps") or [])
     return env
 
@@ -292,7 +286,8 @@ def run_script(script: str, timeout_ms: int | None) -> tuple[list[dict], bool, d
                 " (this trial grants foreground)."
                 if granted
                 else ". This trial does not grant foreground: if your script caused this, use a background route "
-                "(an AX action or value, an event posted to the app's pid, or raw.driver with default delivery)."
+                "(an AX action or value, raw.set_text / raw.select / raw.set_cell / raw.menu, or an event posted to "
+                "the app's pid)."
             )
         )
     for item in result.get("runtime_blocked") or []:
@@ -323,14 +318,13 @@ def run_script(script: str, timeout_ms: int | None) -> tuple[list[dict], bool, d
             granted
             and (
                 any(f.get("severity") == "granted" for f in result.get("lint") or [])
-                or any(c.get("foreground") for c in result.get("driver_calls") or [])
                 or any(
-                    w.split(":")[0] in {"MB1", "MB2", "MB3", "MB4", "MB10"}
+                    w.split(":")[0] in {"MB1", "MB2", "MB3", "MB4", "MB6", "MB7"}
                     for w in result.get("runtime_warned") or []
                 )
             )
         ),
-        "driver_calls": result.get("driver_calls") or [],
+        "routes": result.get("routes") or {},
         "raw_actions": result.get("raw_actions") or {},
         "runtime_blocked": result.get("runtime_blocked") or [],
         "runtime_warned": result.get("runtime_warned") or [],
@@ -361,8 +355,8 @@ def serve() -> None:
                         "protocolVersion": "2024-11-05",
                         "capabilities": {"tools": {}},
                         "serverInfo": {"name": "cua", "version": "raw-macos-prototype"},
-                        "instructions": "One tool, run_script: Python against the macOS Accessibility API and "
-                        "per-process events. Read its description first.",
+                        "instructions": "One tool, run_script: Python against the macOS Accessibility API, "
+                        "per-process events and window capture. Read its description first.",
                     }
                 }
             )

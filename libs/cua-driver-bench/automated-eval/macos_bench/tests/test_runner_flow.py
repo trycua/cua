@@ -1212,6 +1212,16 @@ class FinalizeTest(unittest.TestCase):
             self.assertEqual(seen, [True])
             self.assertFalse(raw.exists())
 
+    def test_skip_trials_leaves_them_out_of_the_schedule(self) -> None:
+        """A splice keeps some trials from an earlier run: they are not scheduled, and the rest keep their slots."""
+        with tempfile.TemporaryDirectory() as tmp:
+            full = [e["trial_id"] for e in core.flat_entries(make_ctx(tmp).blocks())]
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_ctx(tmp, skip_trials=[full[0]])
+            entries = core.flat_entries(ctx.blocks())
+        self.assertEqual([e["trial_id"] for e in entries], full[1:])
+        self.assertTrue(all(e["trial_id"] != full[0] for e in entries))
+
     def test_resume_skips_final_ids_only(self) -> None:
         rows = [
             {"trial_id": "a", "final": True},

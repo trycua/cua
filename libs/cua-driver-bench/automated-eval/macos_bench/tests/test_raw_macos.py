@@ -38,13 +38,6 @@ class LintTest(unittest.TestCase):
             ('raw.ax.set(el, "AXFocused", True)', "MB3"),
             ("raw.pointer_move(10, 10)", "MB1"),
             ("raw.pointer_drag(1, 2, 3, 4)", "MB1"),
-            ('raw.driver("move_cursor", {"x": 1, "y": 2, "scope": "desktop"})', "MB10"),
-            (
-                'raw.driver("click", {"pid": 1, "x": 1, "y": 2, "delivery_mode": "foreground"})',
-                "MB10",
-            ),
-            ('raw.driver("bring_to_front", {"pid": 1})', "MB10"),
-            ('raw.driver("click", {"x": 1, "y": 2, "target": {"kind": "desktop"}})', "MB10"),
             ('raw.ax.perform(pop, "AXShowMenu")', "MB7"),
             ('raw.post_click(1, 10, 20, button="right")', "MB7"),
             ('raw.post_click(1, 10, 20, "right")', "MB7"),
@@ -63,7 +56,6 @@ class LintTest(unittest.TestCase):
             ('x = "osascript -e beep"', "MB5"),
             ('x = "tell application \\"Finder\\" to activate"', "MB5"),
             ("open('/etc/passwd')", "GUI1"),
-            ('raw.driver("launch_app", {"name": "Terminal"})', "GUI1"),
             ("eval('1')", "GUI2"),
             ("getattr(raw, name)", "GUI2"),
             ("raw.ax._x", "GUI2"),
@@ -78,7 +70,6 @@ class LintTest(unittest.TestCase):
     def test_warnings_run(self):
         for source, rule in (
             ('raw.post_key(1, ["cmd", "l"])', "MB9"),
-            ('raw.driver("hotkey", {"pid": 1, "keys": ["cmd", "2"]})', "MB9"),
             ("pb.setString_forType_(s, t)", "MB8"),
         ):
             with self.subTest(source=source):
@@ -97,6 +88,36 @@ class LintTest(unittest.TestCase):
         found, ok = rules("activate = 1\nsystem = 2\nreturn activate + system")
         self.assertTrue(ok)
         self.assertEqual(found, set())
+
+    def test_no_call_path_to_cua_driver(self):
+        """The arm is raw macOS APIs only: any route to Cua Driver is blocked, with or without the grant."""
+        for source in (
+            'raw.driver("get_window_state", {"pid": 1, "window_id": 2})',
+            'raw.driver("click", {"pid": 1, "element_token": "s1:3"})',
+            "d = raw.driver\nd('click', {})",
+            "f = getattr(raw, 'driver')",
+            'x = "/Applications/CuaDriver.app/Contents/MacOS/cua-driver"',
+            'x = "~/.cua-driver/cua-driver.sock"',
+            "import cua_driver",
+        ):
+            with self.subTest(source=source):
+                found, ok = rules(source + READ, granted=True)
+                self.assertFalse(ok)
+                self.assertTrue(found & {"DRV1", "GUI1"}, found)
+
+    def test_value_helpers_are_actions_that_want_a_read_back(self):
+        for source in (
+            'raw.set_text(el, "x")',
+            'raw.select(el, "High")',
+            'raw.set_cell(1, "H4", "x")',
+            'raw.menu(1, ["File", "Save"])',
+        ):
+            with self.subTest(source=source):
+                found, ok = rules(source)
+                self.assertTrue(ok)
+                self.assertIn("VR1", found)
+                found, _ = rules(source + "\nreturn raw.text(el)")
+                self.assertNotIn("VR1", found)
 
     def test_every_rule_cites_a_source(self):
         for rule in lint.RULES.values():

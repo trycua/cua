@@ -21,6 +21,10 @@ import Foundation
 /// with no escape codes, and a region logs its last line every
 /// `pipedInterval` instead of redrawing.
 ///
+/// A process whose stdout carries a protocol (`lume serve --mcp`) calls
+/// `reserveStdout()`: from then on every line goes to stderr and progress
+/// is logged as piped lines there.
+///
 /// Progress is info-level output: below `minLevel` info, regions draw
 /// nothing and their final lines are dropped, as log lines are.
 final class Console: @unchecked Sendable {
@@ -80,6 +84,8 @@ final class Console: @unchecked Sendable {
     private let lock = NSLock()
     private var regions: [RegionState] = []
     private var nextId = 0
+    /// Set once stdout carries a protocol; nothing else may write there.
+    private var stdoutReserved = false
     /// Lines the regions take on screen right now.
     private var drawn = 0
 
@@ -105,8 +111,20 @@ final class Console: @unchecked Sendable {
 
     // MARK: Log lines
 
+    /// Sends every later line to stderr, for a process whose stdout is a protocol.
+    func reserveStdout() {
+        lock.withLock {
+            write(.out, eraseSequence())
+            stdoutReserved = true
+        }
+    }
+
+    /// Whether regions redraw in place (stdout is a terminal Lume may draw on).
+    private var drawsInPlace: Bool { stdoutIsTerminal && !stdoutReserved }
+
     func log(_ level: Logger.Level, _ message: String, metadata: Logger.Metadata = [:]) {
-        let stream: Stream = level >= .warning ? .err : .out
+        let reserved = lock.withLock { stdoutReserved }
+        let stream: Stream = level >= .warning || reserved ? .err : .out
         let terminal = stream == .out ? stdoutIsTerminal : stderrIsTerminal
         let meta = metadata.keys.sorted().map { " \($0)=\(metadata[$0]!)" }.joined()
         let line: String
@@ -150,7 +168,7 @@ final class Console: @unchecked Sendable {
         lock.withLock {
             guard let index = regions.firstIndex(where: { $0.id == id }) else { return }
             regions[index].lines = lines
-            if stdoutIsTerminal {
+            if drawsInPlace {
                 write(.out, eraseSequence() + drawSequence())
             } else if let interval = regions[index].pipedInterval, let last = lines.last {
                 let t = now()
@@ -167,7 +185,7 @@ final class Console: @unchecked Sendable {
         lock.withLock {
             guard let index = regions.firstIndex(where: { $0.id == id }) else { return }
             regions.remove(at: index)
-            if stdoutIsTerminal, drawn > 0 { write(.out, eraseSequence() + drawSequence()) }
+            if drawsInPlace, drawn > 0 { write(.out, eraseSequence() + drawSequence()) }
         }
         if let final, showsProgress { log(.info, final) }
     }
@@ -175,7 +193,7 @@ final class Console: @unchecked Sendable {
     // MARK: Drawing (callers hold `lock`)
 
     private func emit(_ stream: Stream, _ text: String) {
-        guard stdoutIsTerminal, drawn > 0 || !regions.isEmpty else {
+        guard drawsInPlace, drawn > 0 || !regions.isEmpty else {
             write(stream, text)
             return
         }

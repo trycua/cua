@@ -233,6 +233,30 @@ struct ConsolePipedTests {
     }
 }
 
+// MARK: - Reserved stdout
+
+struct ConsoleReservedStdoutTests {
+    @Test("once stdout carries a protocol, logs and progress go to stderr only")
+    func reservedStdoutStaysClean() {
+        for terminal in [true, false] {
+            let screen = Screen()
+            let clock = Clock()
+            let c = console(screen, terminal: terminal, clock: clock)
+            let region = c.region(.transfer, pipedInterval: 0)
+            region.update(["  0/2 layers"])
+            c.reserveStdout()
+            c.log(.info, "Pulling x:1")
+            region.update(["  1/2 layers"])
+            region.end(final: "Downloaded 1.0 GB in 9s")
+            let afterReserve = screen.writes.drop { $0.0 == .out || $0.1.isEmpty }
+            #expect(afterReserve.allSatisfy { $0.0 == .err })
+            #expect(afterReserve.map(\.1).joined().contains("Pulling x:1"))
+            #expect(afterReserve.map(\.1).joined().contains("Downloaded 1.0 GB in 9s"))
+            #expect(!afterReserve.map(\.1).joined().contains("\u{1B}["))
+        }
+    }
+}
+
 // MARK: - Levels
 
 struct ConsoleLevelTests {

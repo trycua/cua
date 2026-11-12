@@ -316,9 +316,14 @@ impl ToolDef {
         let risk = crate::authorization::risk_metadata_json(&self.name);
         // Tools that most often need a guide point at `get_guide`, so an agent
         // that never reads the skill still learns where the guidance lives.
+        let deprecation = crate::deprecation::lookup(&self.name);
         let description = match crate::guide::description_hint(&self.name) {
             Some(hint) => format!("{} {hint}", self.description),
             None => self.description.clone(),
+        };
+        let description = match deprecation {
+            Some(entry) => format!("{} {description}", entry.description_prefix()),
+            None => description,
         };
         let mut entry = serde_json::json!({
             "name": self.name,
@@ -333,6 +338,12 @@ impl ToolDef {
             "capabilities": caps,
             "risk": risk,
         });
+        if let Some(entry_deprecation) = deprecation {
+            entry
+                .as_object_mut()
+                .expect("tool list entry is an object")
+                .insert("deprecated".into(), entry_deprecation.list_marker());
+        }
         // Advertise the refusal envelope alongside the success shape. MCP
         // holds every `structuredContent` we emit — refusals included — to
         // the advertised schema, and a success-only schema made strict
@@ -2663,6 +2674,10 @@ impl ToolRegistry {
         // exit-code matching and recording paths keep treating the alias
         // as a distinct call site.
         let name = resolved_name;
+
+        if let Some(deprecation) = crate::deprecation::lookup(resolved_name) {
+            result.content.push(Content::text(deprecation.notice()));
+        }
 
         if let (Some(history), Some(pending)) = (self.history.as_ref(), pending_history) {
             history.finish_action(
@@ -5251,6 +5266,93 @@ resources:
             1,
             "must refuse before invocation"
         );
+    }
+
+    #[tokio::test]
+    async fn deprecated_tools_still_work_and_say_when_they_go() {
+        // replay_trajectory refuses calls without a `dir` before it runs, so the
+        // dispatch half of this test covers the tools that take no arguments.
+        for entry in crate::deprecation::DEPRECATED_TOOLS
+            .iter()
+            .filter(|entry| entry.tool != "replay_trajectory")
+        {
+            let hits = Arc::new(AtomicUsize::new(0));
+            let mut registry = super::ToolRegistry::new();
+            registry.register(Box::new(ArgumentProbe {
+                hits: hits.clone(),
+                last_args: Arc::new(Mutex::new(None)),
+                def: super::ToolDef {
+                    name: entry.tool.into(),
+                    description: "test tool".into(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                    read_only: true,
+                    destructive: false,
+                    idempotent: true,
+                    open_world: false,
+                },
+            }));
+            let registry = Arc::new(registry);
+
+            let result = registry
+                .invoke_with_context(entry.tool, serde_json::json!({}), standard_context())
+                .await;
+            assert_ne!(result.is_error, Some(true), "{}: {result:?}", entry.tool);
+            assert_eq!(
+                hits.load(Ordering::SeqCst),
+                1,
+                "{} must still run",
+                entry.tool
+            );
+            let notices = result
+                .content
+                .iter()
+                .filter_map(|content| match content {
+                    Content::Text { text, .. } => Some(text.as_str()),
+                    _ => None,
+                })
+                .filter(|text| text.starts_with("Deprecated: "))
+                .collect::<Vec<_>>();
+            assert_eq!(notices, [entry.notice().as_str()], "{}", entry.tool);
+
+            let listed = registry.tools_list();
+            let listed = &listed["tools"][0];
+            assert_eq!(listed["deprecated"]["removal_after"], "2026-11-26");
+            assert!(listed["description"]
+                .as_str()
+                .unwrap()
+                .starts_with("DEPRECATED, removed in the first release after 26 Nov 2026"));
+        }
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(ArgumentProbe {
+            hits,
+            last_args: Arc::new(Mutex::new(None)),
+            def: super::ToolDef {
+                name: "get_window_state".into(),
+                description: "test tool".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: true,
+                destructive: false,
+                idempotent: true,
+                open_world: false,
+            },
+        }));
+        let registry = Arc::new(registry);
+        let result = registry
+            .invoke_with_context(
+                "get_window_state",
+                serde_json::json!({}),
+                standard_context(),
+            )
+            .await;
+        assert!(result.content.iter().all(|content| match content {
+            Content::Text { text, .. } => !text.starts_with("Deprecated: "),
+            _ => true,
+        }));
+        assert!(registry.tools_list()["tools"][0]
+            .get("deprecated")
+            .is_none());
     }
 
     #[tokio::test]

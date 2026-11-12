@@ -145,17 +145,12 @@ theme animations.
 
 ## Page compound actions
 
-The public `page` tool contains seven operations:
+The public `page` tool is read-only and contains two operations:
 
 | Resolved action key                   | Effect                                    | Platform note                                              |
 | ------------------------------------- | ----------------------------------------- | ---------------------------------------------------------- |
 | `page.get_text`                       | Read visible page text                    | Cross-platform                                             |
 | `page.query_dom`                      | Query elements with a CSS selector        | Cross-platform                                             |
-| `page.execute_javascript`             | Execute JavaScript                        | Cross-platform where a supported page backend is available |
-| `page.click_element`                  | Click a CSS-selected element              | Cross-platform                                             |
-| `page.insert_text`                    | Insert text at current DOM focus          | macOS implementation currently documented                  |
-| `page.type_keystrokes`                | Dispatch durable per-character key events | macOS implementation currently documented                  |
-| `page.enable_javascript_apple_events` | Enable Safari JavaScript automation       | macOS only                                                 |
 
 ## Typed browser actions
 
@@ -237,7 +232,7 @@ public tool names.
 |  27 | `set_config`               | Configuration               | All                                   | Config update                                                         |
 |  28 | `get_accessibility_tree`   | Inspection                  | All                                   | Desktop accessibility inspect                                         |
 |  29 | `zoom`                     | Inspection                  | All                                   | Zoom/crop                                                             |
-|  30 | `page`                     | Page/DOM                    | All, with operation-specific limits   | Use the seven page operation icons                                    |
+|  30 | `page`                     | Page/DOM                    | All, with operation-specific limits   | Use the two page operation icons                                    |
 |  31 | `get_browser_state`        | Typed browser               | All                                   | Bind or snapshot                                                      |
 |  32 | `browser_prepare`          | Typed browser               | All                                   | Browser preparation/profile                                           |
 |  33 | `browser_navigate`         | Typed browser               | All                                   | Navigate                                                              |

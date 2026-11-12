@@ -22,7 +22,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 | [`invoke_menu`](#invoke_menu) | Resolve an exact application-menu path one live native level at a time and invoke its final item through accessibility APIs. | macOS, Linux, Windows |
 | [`debug_window_info`](#debug_window_info) | Diagnostic: dump everything cua-driver sees about a pid's top-level windows from the daemon's session perspective. | Windows |
 | [`get_window_state`](#get_window_state) | Snapshot a window: the accessibility tree plus a screenshot. | macOS, Linux, Windows |
-| [`get_accessibility_tree`](#get_accessibility_tree) | Return a lightweight snapshot of the desktop: running regular apps and on-screen visible windows with their bounds, z-order, and owner pid. | macOS, Linux, Windows |
+| [`get_accessibility_tree`](#get_accessibility_tree) | DEPRECATED, removed in the first release after 26 Nov 2026. | macOS, Linux, Windows |
 | [`verify_state`](#verify_state) | Deterministically verify bounded predicates against one exact window. | macOS, Linux, Windows |
 | [`parse_visual_regions`](#parse_visual_regions) | Parse one immutable registered capture into model-neutral text and icon regions. | macOS, Linux, Windows |
 | [`get_desktop_state`](#get_desktop_state) | Capture the full display. | macOS, Linux, Windows |
@@ -550,21 +550,21 @@ Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
 <Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
 <Tab value="macOS">
 
-Return a lightweight snapshot of the desktop: running regular apps and on-screen visible windows with their bounds, z-order, and owner pid.
+DEPRECATED, removed in the first release after 26 Nov 2026. Instead: list_windows and list_apps for what is open, and get_window_state for one window's accessibility tree. Return a lightweight snapshot of the desktop: running regular apps and on-screen visible windows with their bounds, z-order, and owner pid.
 
 For the full AX subtree of a single window (with interactive element indices you can click by), use `get_window_state` instead: that's the heavy per-window tool. This one is a fast discovery read that needs no TCC grants.
 
 </Tab>
 <Tab value="Linux">
 
-Return a lightweight snapshot of the desktop: running processes and on-screen visible windows with their bounds and owner pid.
+DEPRECATED, removed in the first release after 26 Nov 2026. Instead: list_windows and list_apps for what is open, and get_window_state for one window's accessibility tree. Return a lightweight snapshot of the desktop: running processes and on-screen visible windows with their bounds and owner pid.
 
 For the full AT-SPI subtree of a single window (with interactive element indices you can click by), use get_window_state instead: this is a fast discovery read.
 
 </Tab>
 <Tab value="Windows">
 
-Return a lightweight snapshot of the desktop: running processes and on-screen visible windows with their bounds and owner pid.
+DEPRECATED, removed in the first release after 26 Nov 2026. Instead: list_windows and list_apps for what is open, and get_window_state for one window's accessibility tree. Return a lightweight snapshot of the desktop: running processes and on-screen visible windows with their bounds and owner pid.
 
 For the full UIA subtree of a single window (with interactive element indices you can click by), use get_window_state instead: this is a fast discovery read.
 

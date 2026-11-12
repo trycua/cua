@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.36.0](https://github.com/trycua/cua/compare/cua-spaces-v0.35.0...cua-spaces-v0.36.0) (2026-11-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cua-driver:** the `page` tool no longer accepts `execute_javascript`, `click_element`, `insert_text`, `type_keystrokes` or `enable_javascript_apple_events`; use the typed `browser_*` tools.
+
+### Features
+
+* **cua-driver:** deprecate replay_trajectory, install_ffmpeg, get_accessibility_tree ([#7483](https://github.com/trycua/cua/issues/7483)) ([b13430e](https://github.com/trycua/cua/commit/b13430e04a8a71cf933266a047c9e88e9573d3b9))
+
 ## [0.35.0](https://github.com/trycua/cua/compare/cua-spaces-v0.34.6...cua-spaces-v0.35.0) (2026-11-12)
 
 

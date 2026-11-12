@@ -20,6 +20,7 @@ from release_attribution import (
     find_previous_tag,
     is_perception_only_diff,
     linked_issue_numbers,
+    load_changelog_addenda,
     login_from_email,
     merge_contributors,
     GitHubClient,
@@ -1207,3 +1208,65 @@ def test_no_release_metadata_only_pulls_are_not_required_changelog_entries(tmp_p
         }
     )
     assert [change["pr"] for change in result["changes"]] == [12]
+
+
+def test_changelog_addenda_accept_a_pull_request_the_tag_carries_but_the_changelog_lacks(
+    tmp_path: Path,
+):
+    git(tmp_path, "init")
+    git(tmp_path, "config", "user.name", "Release Test")
+    git(tmp_path, "config", "user.email", "release@example.com")
+    changelog = "libs/cua-driver/rust/CHANGELOG.md"
+    _commit(tmp_path, "libs/cua-driver/rust/VERSION", "0.8.1\n", "chore: seed fixture")
+    git(tmp_path, "tag", "cua-driver-rs-v0.8.1")
+    cited = _commit(tmp_path, "libs/cua-driver/rust/a.txt", "a\n", "fix(cua-driver): a (#12)")
+    late = _commit(tmp_path, "libs/cua-driver/rust/b.txt", "b\n", "fix(cua-driver): b (#13)")
+    _commit(
+        tmp_path,
+        changelog,
+        "## [0.8.2] (2026-07-16)\n\n* **cua-driver:** a (#12)\n",
+        "chore(main): release cua-driver-rs 0.8.2",
+    )
+    head = git(tmp_path, "rev-parse", "HEAD")
+    config = {
+        "bots": [],
+        "coauthorOverrides": {},
+        "ignoredCoauthorEmails": [],
+        "identityOverrides": {},
+        "internalHandles": ["maintainer"],
+        "optOutHandles": [],
+    }
+
+    def manifest(addenda):
+        return build_manifest(
+            repo_root=tmp_path,
+            repository="trycua/cua",
+            product="cua-driver-rs",
+            display_name="Cua Driver",
+            version="0.8.2",
+            tag="cua-driver-rs-v0.8.2",
+            previous_tag="cua-driver-rs-v0.8.1",
+            release_ref="HEAD",
+            expected_sha=head,
+            paths=("libs/cua-driver",),
+            changelog_path=tmp_path / changelog,
+            attribution_config=config,
+            github=LabeledPullsGitHub({cited: (12, []), late: (13, [])}),
+            changelog_addenda=addenda,
+        )
+
+    with pytest.raises(ReleaseError, match=r"missing pull requests: \[13\]"):
+        manifest(None)
+    result = manifest({13: "merged after the release PR was built"})
+    assert sorted(change["pr"] for change in result["changes"]) == [12, 13]
+
+    addenda = tmp_path / "addenda.json"
+    addenda.write_text(
+        json.dumps({"cua-driver-rs-v0.8.2": {"pull_requests": {"13": "late merge"}}})
+    )
+    assert load_changelog_addenda(addenda, "cua-driver-rs-v0.8.2") == {13: "late merge"}
+    assert load_changelog_addenda(addenda, "cua-driver-rs-v0.8.3") == {}
+    assert load_changelog_addenda(None, "cua-driver-rs-v0.8.2") == {}
+    addenda.write_text(json.dumps({"t": {"pull_requests": {"13": " "}}}))
+    with pytest.raises(ReleaseError, match="needs a numeric pull request and a reason"):
+        load_changelog_addenda(addenda, "t")

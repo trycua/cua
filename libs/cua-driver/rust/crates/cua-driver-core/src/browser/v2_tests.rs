@@ -112,6 +112,8 @@ pub(super) struct FixtureState {
     /// A trusted `mouseReleased` changes the target's semantic readback.
     trusted_click_changes_readback: bool,
     dom_click_readback_available: bool,
+    /// `DOM.resolveNode` answers a CDP error.
+    resolve_node_fails: bool,
     dom_click_stall_after: Option<usize>,
     dom_click_generation: u64,
     dom_click_focused: bool,
@@ -164,6 +166,7 @@ impl Default for FixtureState {
             dom_click_changes_readback: true,
             trusted_click_changes_readback: false,
             dom_click_readback_available: true,
+            resolve_node_fails: false,
             dom_click_stall_after: None,
             dom_click_generation: 0,
             dom_click_focused: false,
@@ -817,6 +820,9 @@ fn fixture_handler(state: SharedState) -> MockHandler {
             }
             "DOM.focus" | "Emulation.setFocusEmulationEnabled" | "Input.insertText" => {
                 MockReply::ok(json!({}))
+            }
+            "DOM.resolveNode" if st.resolve_node_fails => {
+                MockReply::err(-32000, "No node with given id")
             }
             "DOM.resolveNode" => MockReply::ok(json!({
                 "object": { "objectId": format!("obj-{}", call.params["backendNodeId"]) }
@@ -4443,4 +4449,31 @@ async fn trusted_coordinate_click_has_no_target_to_read_back() {
     .expect("public browser click result");
     let public = serde_json::to_value(public).expect("serialize public result");
     assert_eq!(public["effect"], "unverifiable", "{public}");
+}
+
+#[tokio::test]
+async fn trusted_ref_click_whose_node_does_not_resolve_is_unverifiable_without_evidence() {
+    let f = fixture_with(|state| {
+        state.trusted_click_changes_readback = true;
+        state.resolve_node_fails = true;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref, "session": SESSION
+        }))
+        .await;
+
+    assert!(result.content.iter().any(|content| matches!(
+        content,
+        Content::Text { text, .. } if text.contains("semantic target readback was unavailable")
+    )));
+    let public = public_click_result(&result);
+    assert_eq!(public["effect"], "unverifiable", "{public}");
+    assert!(public["evidence"].is_null(), "{public}");
+    assert_eq!(recorded_calls(&f, "Input.dispatchMouseEvent").len(), 2);
 }

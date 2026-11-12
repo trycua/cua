@@ -1593,6 +1593,7 @@ impl Tool for BrowserClickTool {
             }
             None => None,
         };
+        let ref_targeted = backend_node_id.is_some();
 
         if let Err(error) = conn
             .call(
@@ -1691,10 +1692,16 @@ impl Tool for BrowserClickTool {
         });
         let Some(open) = opened else {
             let text = format!("clicked ({x:.0}, {y:.0}) in {tab_id}");
-            let Some(object_id) = readback_object else {
+            if !ref_targeted {
                 return ToolResult::text(text).with_structured(structured);
+            }
+            let observation = match readback_object.as_deref() {
+                Some(object_id) => observe_dom_click(conn, cdp, object_id, before).await,
+                None => DomClickObservation {
+                    effect: effect_from_value_readback(false, false, false),
+                    readback_available: false,
+                },
             };
-            let observation = observe_dom_click(conn, cdp, &object_id, before).await;
             let text = match observation.effect {
                 ActionEffect::Confirmed => {
                     format!("{text}; bounded semantic readback confirmed a target-state change")

@@ -685,15 +685,14 @@ def real_capture_check(ctx: "Ctx", arm: str) -> tuple[str, str, str]:
             if source in ca.RAW_ARMS:
                 if set(tools) != {"run_script"}:
                     raise RuntimeError(f"unexpected {source} tools/list")
-                result = call(
-                    "run_script",
-                    {
-                        # the capture, and one raw.driver round trip to the fallback daemon
-                        "script": "raw.screenshot()\nw = raw.driver('list_windows', {})\n"
-                        "return [len(raw.windows()), len(w.get('windows') or [])]",
-                        "timeout_ms": 60000,
-                    },
+                script = (
+                    # the capture, and one raw.driver round trip to the fallback daemon
+                    "raw.screenshot()\nw = raw.driver('list_windows', {})\n"
+                    "return [len(raw.windows()), len(w.get('windows') or [])]"
+                    if source in ca.RAW_FALLBACK_ARMS
+                    else "raw.screenshot()\nreturn len(raw.windows())"  # raw-macos: no driver
                 )
+                result = call("run_script", {"script": script, "timeout_ms": 60000})
                 image = next(
                     (b for b in result.get("content") or [] if b.get("type") == "image"), None
                 )

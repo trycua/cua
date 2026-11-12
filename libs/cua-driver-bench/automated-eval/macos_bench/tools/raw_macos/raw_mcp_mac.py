@@ -83,7 +83,8 @@ events to the app's pid. Follow with raw.post_key(pid, "return") to submit an ad
 (Chrome, Electron, web views) gets the label typed into it and its menu never opens.
 - raw.set_cell(pid, "H4", "text", window=None) -> {value, ok}: writes one LibreOffice Calc cell (on screen in the \
 visible sheet) through the formula bar. Calc ignores AX writes to cells and posted keys while it is in the \
-background, so this is the route. Change sheets by pressing the sheet tab (AXRadioButton) first.
+background, so this is the route. Change sheets by pressing the sheet tab (AXRadioButton) first. LibreOffice \
+sometimes crashes on these writes (its own bug): save with raw.menu(pid, ["File", "Save"]) after a batch of cells.
 - raw.menu(pid, ["File", "Save"]) -> runs a menu-bar command without opening the menu.
 - Events to one process (the real cursor does not move): raw.post_key(pid, "return") or raw.post_key(pid, \
 ["cmd", "s"]), raw.post_text(pid, "text") (to that app's focused element), raw.post_click(pid, x, y, \

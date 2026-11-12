@@ -26,7 +26,7 @@
   },
   "ax_coverage": {
     "Ledger Lantern Mail (Electron)": "partial",
-    "LibreOffice Calc": "partial",
-    "GnuCash (GTK on macOS)": "partial"
+    "LibreOffice Calc (no per-cell AXValue writes; raw.set_cell writes through the formula bar)": "partial",
+    "GnuCash (GTK on macOS; AX exposes only its menu bar, posted input does not reach it in the background)": "none"
   }
 }

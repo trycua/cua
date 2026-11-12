@@ -25,6 +25,6 @@
   },
   "ax_coverage": {
     "Copperfield Mail, Signal Quay Chat, Daymark Calendar (Electron)": "partial",
-    "LibreOffice Calc (cells behind one AXTable; no per-cell AXValue writes)": "partial"
+    "LibreOffice Calc (cells behind one AXTable; no per-cell AXValue writes; raw.set_cell writes through the formula bar)": "partial"
   }
 }

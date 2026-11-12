@@ -353,7 +353,10 @@ def _py(value: Any) -> Any:
         (AX.kAXValueCGPointType, lambda v: (v.x, v.y)),
         (AX.kAXValueCGSizeType, lambda v: (v.width, v.height)),
         (AX.kAXValueCGRectType, lambda v: (v.origin.x, v.origin.y, v.size.width, v.size.height)),
-        (AX.kAXValueCFRangeType, lambda v: (v.location, v.length)),
+        (
+            AX.kAXValueCFRangeType,
+            lambda v: tuple(v) if isinstance(v, tuple) else (v.location, v.length),
+        ),
     ):
         if type_id == kind:
             ok, struct = AX.AXValueGetValue(value, kind, None)
@@ -784,64 +787,100 @@ class Raw:
         self, pid: int, cell: str, value: str, window: str | None = None
     ) -> dict[str, Any]:
         """Write ``value`` into cell ``cell`` ("H4") of the visible sheet of LibreOffice Calc process ``pid`` and
-        read it back. Calc ignores AX writes to a cell and posted keys while it is in the background, so this selects
-        the cell through AX, puts the text in the formula bar's input line and presses the bar's Accept button.
-        ``window``: part of the document window's title when several are open. Only cells on screen can be
-        selected; switch sheets by pressing the sheet's tab (an AXRadioButton) first."""
+        read it back; ``value=""`` clears it. Calc ignores AX writes to a cell and posted keys while it is in the
+        background, so this selects the cell through AX, clears a non-empty cell with Sheet > Clear Cells (its dialog's
+        OK), types the text into the formula bar's input line and presses the bar's Accept button. ``window``: part of
+        the document window's title when several are open. Only cells on screen can be selected; switch sheets by
+        pressing the sheet's tab (an AXRadioButton) first."""
         pid, cell, value = int(pid), str(cell).upper(), str(value)
         STATE.to_user(pid, "set_cell")
         win = _calc_window(pid, window)
+        STATE.count(pid)
+        self._calc_select(win, cell)
+        cleared = False
+        if _calc_cell_value(win, cell):
+            self._calc_clear(pid, win, cell)
+            cleared = True
+            self._calc_select(win, cell)
+        if value:
+            line = _calc_settled_line(win)
+            # Only an insert into an empty input line: replacing a selection there, or writing before Calc has
+            # moved to the cell, aborts soffice (ImpEditEngine::ImpDeleteSelection, traced in the bench guest).
+            # an explicit caret at 0 first: without it the insert used a stale edit selection about 1 write in 10
+            AX.AXUIElementSetAttributeValue(
+                line, "AXSelectedTextRange", AX.AXValueCreate(AX.kAXValueCFRangeType, (0, 0))
+            )
+            time.sleep(0.2)
+            line = _calc_input_line(win) or line
+            AX.AXUIElementSetAttributeValue(line, "AXSelectedText", value)
+            time.sleep(0.3)
+            accept = _calc_wait_button(win, "Accept")
+            if accept is None:
+                if (
+                    AppKit.NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
+                    is None
+                ):
+                    raise RuntimeError(
+                        "LibreOffice quit during the cell write (its accessibility text path crashes now and then "
+                        "on macOS); its unsaved changes are gone"
+                    )
+                raise RuntimeError("the formula bar did not enter edit mode (no Accept button)")
+            AX.AXUIElementPerformAction(accept, "AXPress")
+            time.sleep(0.5)
+        got = _calc_cell_value(win, cell)
+        STATE.route("set_cell:formula_bar")
+        return {
+            "route": "formula_bar",
+            "cell": cell,
+            "cleared": cleared,
+            "value": got,
+            "ok": got == value,
+        }
+
+    def _calc_select(self, win: Any, cell: str) -> None:
         table = next(iter(self.find(win, role="AXTable", limit=1)), None)
         if table is None:
             raise LookupError("no sheet (AXTable) in that window")
-        target = next(
-            (c for c in _ax_get(table, "AXChildren") or [] if _ax_get(c, "AXTitle") == cell), None
-        )
+        target = _calc_cell_el(table, cell)
         if target is None:
             raise LookupError(f"cell {cell} is not on screen in this sheet")
-        STATE.count(pid)
-        AX.AXUIElementSetAttributeValue(table, "AXFocused", True)
-        AX.AXUIElementSetAttributeValue(target, "AXSelected", True)
-        AX.AXUIElementSetAttributeValue(target, "AXFocused", True)
+        for el, attr in ((table, "AXFocused"), (target, "AXSelected"), (target, "AXFocused")):
+            AX.AXUIElementSetAttributeValue(el, attr, True)
+            time.sleep(0.1)
         deadline = time.monotonic() + 1.5
         while time.monotonic() < deadline and _calc_name_box(win) != cell:
             time.sleep(0.05)
+        time.sleep(0.3)
         if _calc_name_box(win) != cell:
             raise RuntimeError(
                 f"Calc did not select {cell} (name box shows {_calc_name_box(win)!r}); a dialog may be open"
             )
-        line = _calc_input_line(win)
-        if line is None:
-            raise LookupError("no formula bar input line in that window")
-        current = str(_ax_get(line, "AXValue") or "")
-        if current:
-            AX.AXUIElementSetAttributeValue(
-                line,
-                "AXSelectedTextRange",
-                AX.AXValueCreate(AX.kAXValueCFRangeType, (0, len(current))),
+
+    def _calc_clear(self, pid: int, win: Any, cell: str) -> None:
+        self.menu(pid, ["Sheet", "Clear Cells…"])
+        dialog = None
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and dialog is None:
+            dialog = next(
+                (
+                    w
+                    for w in _ax_get(AX.AXUIElementCreateApplication(pid), "AXWindows") or []
+                    if str(_ax_get(w, "AXTitle") or "") == "Delete Contents"
+                ),
+                None,
             )
-        AX.AXUIElementSetAttributeValue(line, "AXSelectedText", value)
-        accept = None
-        deadline = time.monotonic() + 1.5
-        while time.monotonic() < deadline and accept is None:
-            bar = _formula_bar(win)
-            accept = (
-                next(iter(self.find(bar, role="AXButton", title="Accept", limit=1)), None)
-                if bar is not None
-                else None
-            )
-            time.sleep(0.05)
-        if accept is None:
-            raise RuntimeError("the formula bar did not enter edit mode (no Accept button)")
-        AX.AXUIElementPerformAction(accept, "AXPress")
-        time.sleep(0.3)
-        table = next(iter(self.find(win, role="AXTable", limit=1)), table)
-        after = next(
-            (c for c in _ax_get(table, "AXChildren") or [] if _ax_get(c, "AXTitle") == cell), None
-        )
-        got = str(_ax_get(after, "AXValue") or "") if after is not None else None
-        STATE.route("set_cell:formula_bar")
-        return {"route": "formula_bar", "cell": cell, "value": got, "ok": got == value}
+            time.sleep(0.1)
+        if dialog is None:
+            raise RuntimeError("Sheet > Clear Cells did not open its dialog")
+        ok = next(iter(self.find(dialog, role="AXButton", title="OK", limit=1)), None)
+        if ok is None:
+            raise RuntimeError("the Delete Contents dialog has no OK button")
+        AX.AXUIElementPerformAction(ok, "AXPress")
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and _calc_cell_value(win, cell):
+            time.sleep(0.1)
+        if _calc_cell_value(win, cell):
+            raise RuntimeError(f"could not clear {cell}")
 
     def menu(self, pid: int, path: list[str]) -> dict[str, Any]:
         """Run a menu-bar command of process ``pid`` (``["File", "Save"]``) without opening any menu: the item is
@@ -1220,17 +1259,22 @@ class _Refs:
         return cls(path, data)
 
     def add(self, pid: int, path: list[int], el: Any) -> int:
+        """The ref of this element: the same number as before when the same element sits at the same place, else a
+        new number (a number never changes what it points to)."""
         key = (pid, tuple(path))
-        n = self.by_key.get(key)
         entry = {
             "pid": pid,
             "path": path,
             "role": _ax_get(el, "AXRole"),
             "label": _label_parts(el)[:1],
         }
-        if n is None:
-            n = max((int(k) for k in self.data), default=0) + 1
-            self.by_key[key] = n
+        n = self.by_key.get(key)
+        if n is not None:
+            old = self.data[str(n)]
+            if old["role"] == entry["role"] and old["label"] == entry["label"]:
+                return n
+        n = max((int(k) for k in self.data), default=0) + 1
+        self.by_key[key] = n
         self.data[str(n)] = entry
         return n
 
@@ -1354,6 +1398,52 @@ def _calc_name_box(win: Any) -> str:
     bar = _formula_bar(win)
     box = next(iter(Raw().find(bar, role="AXComboBox", limit=1)), None) if bar is not None else None
     return str(_ax_get(box, "AXValue") or "").strip().upper() if box is not None else ""
+
+
+def _calc_settled_line(win: Any) -> Any:
+    """The formula bar's input line once it reads empty with the caret at 0 on two reads in a row: Calc has moved
+    its edit engine to the selected (empty) cell. Writing earlier is the crash this waits out."""
+    deadline = time.monotonic() + 2.0
+    calm = 0
+    line = None
+    while time.monotonic() < deadline and calm < 2:
+        line = _calc_input_line(win)
+        if line is None:
+            raise LookupError("no formula bar input line in that window")
+        rng = _py(_ax_get(line, "AXSelectedTextRange"))
+        calm = calm + 1 if not _ax_get(line, "AXValue") and rng in (None, (0, 0)) else 0
+        time.sleep(0.15)
+    if calm < 2:
+        raise RuntimeError("the formula bar's input line did not settle on the empty cell")
+    time.sleep(0.2)
+    return _calc_input_line(win)
+
+
+def _calc_cell_el(table: Any, cell: str) -> Any:
+    return next(
+        (c for c in _ax_get(table, "AXChildren") or [] if _ax_get(c, "AXTitle") == cell), None
+    )
+
+
+def _calc_cell_value(win: Any, cell: str) -> str:
+    table = next(iter(Raw().find(win, role="AXTable", limit=1)), None)
+    el = _calc_cell_el(table, cell) if table is not None else None
+    return str(_ax_get(el, "AXValue") or "") if el is not None else ""
+
+
+def _calc_wait_button(win: Any, title: str, wait: float = 1.5) -> Any:
+    deadline = time.monotonic() + wait
+    while time.monotonic() < deadline:
+        bar = _formula_bar(win)
+        hit = (
+            next(iter(Raw().find(bar, role="AXButton", title=title, limit=1)), None)
+            if bar is not None
+            else None
+        )
+        if hit is not None:
+            return hit
+        time.sleep(0.05)
+    return None
 
 
 def _calc_input_line(win: Any) -> Any:

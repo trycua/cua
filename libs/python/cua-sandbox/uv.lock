@@ -544,7 +544,7 @@ wheels = [
 
 [[package]]
 name = "cua-sandbox"
-version = "0.10.1"
+version = "0.10.2"
 source = { editable = "." }
 dependencies = [
     { name = "cua" },
@@ -587,7 +587,7 @@ dev = [
 requires-dist = [
     { name = "cua", editable = "../../cua/python" },
     { name = "cua-core", specifier = ">=0.1.18,<0.4.0" },
-    { name = "cua-driver", marker = "extra == 'driver'", specifier = "==0.37.0" },
+    { name = "cua-driver", marker = "extra == 'driver'", specifier = ">=0.37.0,<0.48" },
     { name = "grpcio", specifier = "==1.78.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.10" },

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.47.22](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.21...cua-driver-rs-v0.47.22) (2026-11-12)
+
+
+### Bug Fixes
+
+* **cua-driver:** start the GTK3 disabled-control case's behavioral video ([#7498](https://github.com/trycua/cua/issues/7498)) ([c5a3022](https://github.com/trycua/cua/commit/c5a3022e4ba3298a2801bd59befc3d5fc532e8ee)), closes [#7487](https://github.com/trycua/cua/issues/7487)
+
 ## [0.47.21](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.20...cua-driver-rs-v0.47.21) (2026-11-12)
 
 

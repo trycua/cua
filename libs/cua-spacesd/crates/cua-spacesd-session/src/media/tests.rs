@@ -1053,6 +1053,32 @@ async fn a_rate_limited_keyframe_request_is_retried_while_a_viewer_waits() {
     assert!(recovered[0].keyframe);
 }
 
+#[tokio::test]
+async fn concurrent_limited_keyframe_requests_reach_the_encoder_once() {
+    let fixture = fixture();
+    let opened = open(&fixture, params(display())).await;
+    tokio::time::sleep(Duration::from_millis(1_100)).await;
+    let before = fixture.capture.keyframe_requests.load(Ordering::SeqCst);
+    let start = Arc::new(std::sync::Barrier::new(8));
+    let callers: Vec<_> = (0..8)
+        .map(|_| {
+            let session = opened.session.clone();
+            let start = start.clone();
+            std::thread::spawn(move || {
+                start.wait();
+                session.request_keyframe_limited();
+            })
+        })
+        .collect();
+    for caller in callers {
+        caller.join().unwrap();
+    }
+    assert_eq!(
+        fixture.capture.keyframe_requests.load(Ordering::SeqCst),
+        before + 1
+    );
+}
+
 fn desktop_audio(source_ids: Vec<String>) -> AudioRequest {
     AudioRequest {
         downlink: true,

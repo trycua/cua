@@ -151,10 +151,8 @@ test(
       const driver = CuaDriver.connect(socketPath)
       const expectedMethods = [
         "startSession",
-        "escalateSession",
         "getSession",
         "listSessions",
-        "getSessionState",
         "endSession",
         "getDesktopState",
         "listApps",

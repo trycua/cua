@@ -1,9 +1,9 @@
 {
   "serverName": "cua-driver",
   "outputSchemaCountByPlatform": {
-    "darwin": 35,
-    "linux": 39,
-    "win32": 35
+    "darwin": 33,
+    "linux": 37,
+    "win32": 33
   },
   "baseTools": [
     "bring_to_front",

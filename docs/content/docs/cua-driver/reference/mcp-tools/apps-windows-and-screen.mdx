@@ -424,6 +424,8 @@ A new snapshot of the same (pid, window_id) replaces the previous one and stales
 
 Refusals: `window_id_not_found`; `window_owner_pid_mismatch` names the real `owner_pid` (sandboxed Open/Save panels belong to a panel service). `degraded_reason` `ax_window_unresolved` or `ax_app_launching` (the latter with `truncation_reason: app_lookup_timeout`) means an empty tree: re-snapshot, or act with `delivery_mode:"foreground"`. `degraded_reason` `screen_locked` means the screen saver, display sleep or a lock hid every window from accessibility: wake and unlock the Mac, then re-snapshot; foreground input would reach the lock screen. `px_frame_mismatch` / `px_capture_unavailable` omit the unprovable screenshot; the AX payload stays valid.
 
+INTERACTION CONTEXT: structuredContent.interaction_context says whether this window still receives input. `status` `blocked` (a sheet or modal window: `related_surfaces[].relation` `modal_child` or `blocks_target`) or `superseded` (a window it owns holds focus: `supersedes_target`) comes with `next_call`, the get_window_state call for that surface; act there instead of retrying this window. `none_observed` covers the app's own windows only (`scope`); `focus_elsewhere` names another focused window. `unobservable` means the window set could not be read: after a verified ineffective action, inspect with get_desktop_state.
+
 **macOS parameters**
 
 | Parameter | Type | Default | Description |
@@ -462,6 +464,8 @@ TIME BUDGET: `timeout_ms` (default 1000) bounds the whole AT-SPI walk. When omit
 SCREENSHOT SCALE: the screenshot is delivered at or below 1.15 megapixels (long edge &lt;= max_image_dimension, 1568 by default), because larger images are downsized before a model reads them and its pixel coordinates would then be uniformly short. Element `screenshot_frame`s and x/y for the pointer tools are pixels of the delivered screenshot (`frame` stays in screen coordinates, as on every platform); `frame_scale` &lt; 1 reports the downsizing. An explicit per-call `max_image_dimension` (0 = native) replaces this cap.
 
 POPUP MENUS: a context menu / popover / combo list is an override-redirect window that list_windows never shows. A click or right_click that opened one names it in its result (`popup: {window_id, bounds, title}`); pass that window_id here to walk the popup's own AT-SPI toplevel so its menu items get element indices (then click them by element_token). Omitting window_id while a popup of this pid is open walks that popup.
+
+INTERACTION CONTEXT: structuredContent.interaction_context says whether this window still receives input. `status` `blocked` (a modal dialog: `related_surfaces[].relation` `modal_child` or `blocks_target`) or `superseded` (a dialog it owns holds focus: `supersedes_target`) comes with `next_call`, the get_window_state call for that surface; act there instead of retrying this window. `none_observed` covers the app's own windows only (`scope`); `focus_elsewhere` names another focused window. `unobservable` means the window set could not be read (always on Wayland, which exposes no window set): after a verified ineffective action, inspect with get_desktop_state.
 
 **Linux parameters**
 
@@ -505,6 +509,8 @@ Uses `IUIAutomationCacheRequest` to batch-fetch all element properties in a sing
 Optional `max_elements` / `max_depth` bound the UIA walk (Electron / large web apps produce 10k+ element trees). Markdown and structured elements are truncated identically. `elements_complete` is false when a bound skips a node or subtree; ending exactly at a bound remains complete. Default: `max_elements` 250, depth ≤25.
 
 CHROMIUM COVERAGE: a browser-owned permission bubble can be composited outside the requested native window. Chromium-family snapshots therefore describe this limit in structuredContent.capture_coverage. After a verified ineffective window action, call escalate_session, take a fresh get_desktop_state snapshot, act explicitly in desktop scope if needed, then verify with another fresh desktop snapshot. This is separate from page JavaScript dialogs, which remain on browser_dialog.
+
+INTERACTION CONTEXT: structuredContent.interaction_context says whether this window still receives input. `status` `blocked` (a modal dialog: `related_surfaces[].relation` `modal_child` or `blocks_target`) or `superseded` (a dialog it owns holds focus: `supersedes_target`) comes with `next_call`, the get_window_state call for that surface; act there instead of retrying this window. `none_observed` covers the app's own windows only (`scope`); `focus_elsewhere` names another focused window. `unobservable` means the window set could not be read: after a verified ineffective action, inspect with get_desktop_state.
 
 Windows requires no special permissions.
 

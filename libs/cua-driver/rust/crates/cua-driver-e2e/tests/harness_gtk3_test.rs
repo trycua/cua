@@ -1494,6 +1494,162 @@ fn run_catalog_row(row: CatalogRow) {
     });
 }
 
+/// A GTK3 modal dialog transient for the harness window: on X11 the owner's
+/// snapshot names it as the blocking `modal_child` with a `next_call` that
+/// reads it, acting there closes it, and the owner is free again. Native
+/// Wayland exposes no window set, so the owner reports `unobservable` with
+/// the desktop recovery route instead (#2589).
+#[test]
+#[ignore]
+fn harness_gtk3_modal_dialog_interaction_context() {
+    // The case is the read of interaction_context. The dialog is opened
+    // through the AT-SPI action (background delivery), which runs no focus
+    // transaction: a foreground click would try to give focus back to the
+    // window the new modal dialog has just taken it from.
+    run_case(
+        native_readonly_case(
+            "gtk3",
+            "modal_dialog_interaction_context",
+            Targeting::Ax,
+            DriverRoute::AxRead,
+            vec![OracleKind::AxState],
+        ),
+        |pid, window_id, driver| {
+            let wayland = platform_linux::wayland::is_wayland();
+            let before = interaction_context(driver, pid, window_id);
+            assert_eq!(
+                before["status"],
+                if wayland {
+                    "unobservable"
+                } else {
+                    "none_observed"
+                },
+                "{before}"
+            );
+            let pre = snapshot(driver, pid, window_id);
+            let open = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64, "window_id": window_id,
+                    "element_token": element_token(&pre, "btn-open-modal-dialog"),
+                    "delivery_mode": "background"
+                }),
+            );
+            assert!(!open.is_error(), "open the modal dialog: {}", open.text());
+            wait_for_state(driver, pid, window_id, "modal_dialog_open=True");
+
+            if wayland {
+                let context = interaction_context(driver, pid, window_id);
+                assert_eq!(context["status"], "unobservable", "{context}");
+                assert!(context.get("next_call").is_none(), "{context}");
+                assert_eq!(
+                    context["recovery"]["inspect"], "get_desktop_state",
+                    "{context}"
+                );
+                return Observation::delivered(vec![OracleKind::AxState], Evidence::default());
+            }
+
+            let blocked = wait_for_interaction(driver, pid, window_id, "blocked");
+            let surfaces = blocked["related_surfaces"].as_array().expect("surfaces");
+            assert_eq!(surfaces.len(), 1, "{blocked}");
+            assert_eq!(surfaces[0]["relation"], "modal_child", "{blocked}");
+            let dialog = surfaces[0]["window_id"].as_u64().expect("dialog window_id");
+            assert_ne!(dialog, window_id, "{blocked}");
+            assert_eq!(
+                blocked["next_call"],
+                serde_json::json!({
+                    "tool": "get_window_state",
+                    "arguments": {"pid": pid as i64, "window_id": dialog}
+                }),
+                "{blocked}"
+            );
+            // The named surface is the X11 window transient for the target.
+            assert_eq!(
+                platform_linux::x11::transient_for(dialog),
+                Some(window_id),
+                "{blocked}"
+            );
+
+            let dialog_state = snapshot(driver, pid, dialog);
+            assert!(
+                !dialog_state.is_error(),
+                "follow next_call: {}",
+                dialog_state.text()
+            );
+            assert!(
+                dialog_state.tree_text().contains("MODAL_DIALOG_MARKER_v1"),
+                "next_call did not read the dialog: {}",
+                dialog_state.tree_text()
+            );
+            // Close it the way its title-bar button does, with the ICCCM
+            // WM_DELETE_WINDOW request. A driver click on a Close button would
+            // leave the recorder no window for that turn's after-capture.
+            request_x11_close(dialog);
+            wait_for_state(driver, pid, window_id, "modal_dialog_open=False");
+            let cleared = wait_for_interaction(driver, pid, window_id, "none_observed");
+            assert!(cleared.get("next_call").is_none(), "{cleared}");
+            Observation::delivered(vec![OracleKind::AxState], Evidence::default())
+        },
+    );
+}
+
+/// Send `WM_PROTOCOLS`/`WM_DELETE_WINDOW` to `xid`, as a window manager does
+/// for its close button.
+fn request_x11_close(xid: u64) {
+    use x11rb::protocol::xproto::{ClientMessageEvent, ConnectionExt as _, EventMask};
+    let window = u32::try_from(xid).expect("X11 window id");
+    let (conn, _) = x11rb::connect(None).expect("connect to the X server");
+    let atom = |name: &str| {
+        conn.intern_atom(false, name.as_bytes())
+            .expect("intern atom")
+            .reply()
+            .expect("intern atom reply")
+            .atom
+    };
+    let (protocols, delete) = (atom("WM_PROTOCOLS"), atom("WM_DELETE_WINDOW"));
+    let event = ClientMessageEvent::new(32, window, protocols, [delete, 0, 0, 0, 0]);
+    // `check` waits for the server to process the request; a bare flush
+    // can drop it when the connection closes right after.
+    conn.send_event(false, window, EventMask::NO_EVENT, event)
+        .expect("send WM_DELETE_WINDOW")
+        .check()
+        .expect("deliver WM_DELETE_WINDOW");
+}
+
+fn interaction_context(driver: &mut McpDriver, pid: u32, window_id: u64) -> serde_json::Value {
+    let state = driver.call(
+        "get_window_state",
+        serde_json::json!({"pid": pid as i64, "window_id": window_id, "include_screenshot": false}),
+    );
+    assert!(
+        !state.is_error(),
+        "get_window_state {window_id}: {}",
+        state.text()
+    );
+    state.structured()["interaction_context"].clone()
+}
+
+/// Poll a window until its `interaction_context.status` is `expected`.
+fn wait_for_interaction(
+    driver: &mut McpDriver,
+    pid: u32,
+    window_id: u64,
+    expected: &str,
+) -> serde_json::Value {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let context = interaction_context(driver, pid, window_id);
+        if context["status"] == expected {
+            return context;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "window {window_id} interaction_context never became {expected}: {context}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 /// A pid-only read picks the window `list_windows` reports for that pid, on
 /// every session type.
 #[test]

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! Exact-window certification for macOS `bring_to_front`.
+//! Exact-window certification for macOS `bring_to_front`, and for the
+//! `get_window_state` `interaction_context` of the same fixture windows.
 //!
 //! The assertions deliberately do not consume cua-driver's `list_windows` or
 //! internal verifier. System Events independently reports the frontmost process
@@ -472,6 +473,166 @@ fn sheet_and_parent_ids_both_reach_the_sheet_and_the_sheet_snapshot_is_isolated(
     );
     assert!(!result.is_error(), "set_value in the sheet: {}", result.raw);
     wait_for_sheet_field(target.pid, "token", "set_value in the sheet");
+}
+
+fn interaction_state(driver: &mut McpDriver, pid: u32, window_id: u32) -> serde_json::Value {
+    let state = driver.call(
+        "get_window_state",
+        serde_json::json!({
+            "pid": pid, "window_id": window_id,
+            "include_screenshot": false, "tree_format": "elements",
+        }),
+    );
+    assert!(
+        !state.is_error(),
+        "get_window_state {window_id}: {}",
+        state.raw
+    );
+    state.structured().clone()
+}
+
+fn element_token(state: &serde_json::Value, label: &str) -> String {
+    state["elements"]
+        .as_array()
+        .expect("elements")
+        .iter()
+        .find(|element| element["label"] == label)
+        .and_then(|element| element["element_token"].as_str())
+        .unwrap_or_else(|| panic!("no {label:?} element: {state}"))
+        .to_owned()
+}
+
+/// Poll a window until its `interaction_context.status` is `expected`.
+fn wait_for_interaction(
+    driver: &mut McpDriver,
+    pid: u32,
+    window_id: u32,
+    expected: &str,
+) -> serde_json::Value {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let state = interaction_state(driver, pid, window_id);
+        if state["interaction_context"]["status"] == expected {
+            return state;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "window {window_id} interaction_context never became {expected}: {}",
+            state["interaction_context"]
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// A window-scoped snapshot of a sheet's parent names the sheet as the
+/// blocking surface, while an ordinary sibling of the same app is not told
+/// to escalate (#2589).
+#[test]
+#[ignore]
+fn sheet_parent_snapshot_names_the_blocking_sheet_but_a_sibling_does_not() {
+    let mut driver = McpDriver::spawn_macos_daemon_proxy_named("macos-interaction-sheet")
+        .expect("start installed macOS daemon proxy");
+    let target = launch(&mut driver, Some("sheet"));
+    let windows = wait_for_window_ids(&target, &["main", "secondary", "sheet"]);
+    let (parent, secondary, sheet) = (windows["main"], windows["secondary"], windows["sheet"]);
+
+    let context = interaction_state(&mut driver, target.pid, parent)["interaction_context"].clone();
+    assert_eq!(context["status"], "blocked", "{context}");
+    assert_eq!(
+        context["related_surfaces"],
+        serde_json::json!([{
+            "relation": "modal_child", "pid": target.pid, "window_id": sheet, "focused": true
+        }]),
+        "{context}"
+    );
+    assert_eq!(
+        context["next_call"],
+        serde_json::json!({
+            "tool": "get_window_state",
+            "arguments": {"pid": target.pid, "window_id": sheet}
+        })
+    );
+
+    let context =
+        interaction_state(&mut driver, target.pid, secondary)["interaction_context"].clone();
+    assert_eq!(context["status"], "none_observed", "{context}");
+    assert!(context.get("next_call").is_none(), "{context}");
+}
+
+/// The complete loop on an application-modal dialog: act in one window, see
+/// the dialog that now blocks it, act on the dialog through `next_call`, and
+/// see the window free again, with the app's own window list as the oracle.
+#[test]
+#[ignore]
+fn app_modal_dialog_is_detected_acted_on_and_cleared() {
+    let mut driver = McpDriver::spawn_macos_daemon_proxy_named("macos-interaction-app-modal")
+        .expect("start installed macOS daemon proxy");
+    let target = launch(&mut driver, Some("app-modal"));
+    let windows = wait_for_window_ids(&target, &["main", "secondary"]);
+    let (main, secondary) = (windows["main"], windows["secondary"]);
+    let before: Vec<u32> = cg_windows()
+        .into_iter()
+        .filter(|window| window.pid == target.pid && window.layer == 0)
+        .map(|window| window.id)
+        .collect();
+
+    let state = interaction_state(&mut driver, target.pid, secondary);
+    assert_eq!(
+        state["interaction_context"]["status"], "none_observed",
+        "{}",
+        state["interaction_context"]
+    );
+    let open = driver.call(
+        "click",
+        serde_json::json!({
+            "pid": target.pid, "window_id": secondary,
+            "element_token": element_token(&state, "Open dialog"),
+        }),
+    );
+    assert!(!open.is_error(), "open the dialog: {}", open.raw);
+
+    let blocked = wait_for_interaction(&mut driver, target.pid, secondary, "blocked");
+    let context = &blocked["interaction_context"];
+    let surfaces = context["related_surfaces"].as_array().expect("surfaces");
+    assert_eq!(surfaces.len(), 1, "{context}");
+    assert_eq!(surfaces[0]["relation"], "blocks_target", "{context}");
+    let dialog = surfaces[0]["window_id"].as_u64().expect("dialog id") as u32;
+    assert!(
+        !before.contains(&dialog)
+            && cg_windows()
+                .iter()
+                .any(|window| window.pid == target.pid && window.id == dialog),
+        "the named surface is not the newly opened window: {context}"
+    );
+    assert_eq!(context["next_call"]["arguments"]["window_id"], dialog);
+    // Application-modal: the other window is blocked by the same dialog.
+    let main_context =
+        interaction_state(&mut driver, target.pid, main)["interaction_context"].clone();
+    assert_eq!(main_context["status"], "blocked", "{main_context}");
+    assert_eq!(main_context["next_call"]["arguments"]["window_id"], dialog);
+
+    let dialog_state = interaction_state(&mut driver, target.pid, dialog);
+    assert_eq!(
+        dialog_state["interaction_context"]["status"], "none_observed",
+        "the dialog does not block itself: {}",
+        dialog_state["interaction_context"]
+    );
+    let close = driver.call(
+        "click",
+        serde_json::json!({
+            "pid": target.pid, "window_id": dialog,
+            "element_token": element_token(&dialog_state, "Close dialog"),
+        }),
+    );
+    assert!(!close.is_error(), "close the dialog: {}", close.raw);
+
+    wait_for_interaction(&mut driver, target.pid, secondary, "none_observed");
+    assert!(
+        !cg_windows()
+            .iter()
+            .any(|window| window.pid == target.pid && window.id == dialog),
+        "the dialog is still on screen"
+    );
 }
 
 #[test]

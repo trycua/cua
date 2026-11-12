@@ -676,20 +676,35 @@ pub fn focused_element_window_id_of_pid(pid: i32) -> Option<u32> {
 ///
 /// `element` must be valid, and the caller must release every returned element.
 pub unsafe fn copy_children(element: AXUIElementRef) -> Vec<AXUIElementRef> {
+    copy_children_or_error(element).unwrap_or_default()
+}
+
+/// [`copy_children`], with a failed read kept apart from no children: an
+/// element without children answers `kAXErrorNoValue` or an empty array.
+///
+/// # Safety
+///
+/// `element` must be valid, and the caller must release every returned element.
+pub unsafe fn copy_children_or_error(
+    element: AXUIElementRef,
+) -> Result<Vec<AXUIElementRef>, AXError> {
     let attr = CFStr::new("AXChildren");
     let mut value: CFTypeRef = std::ptr::null();
     let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
-    if err != kAXErrorSuccess || value.is_null() {
-        return vec![];
+    if err == kAXErrorNoValue || (err == kAXErrorSuccess && value.is_null()) {
+        return Ok(vec![]);
+    }
+    if err != kAXErrorSuccess {
+        return Err(err);
     }
     let cf_array_type_id = CFArray::<CFTypeRef>::type_id();
     if core_foundation::base::CFGetTypeID(value) != cf_array_type_id {
         CFRelease(value);
-        return vec![];
+        return Err(kAXErrorIllegalArgument);
     }
     let arr = CFArray::<CFTypeRef>::wrap_under_create_rule(value as _);
     let ax_type_id = AXUIElementGetTypeID();
-    (0..arr.len())
+    Ok((0..arr.len())
         .filter_map(|i| {
             let item = *arr.get(i)?;
             if core_foundation::base::CFGetTypeID(item) == ax_type_id {
@@ -700,7 +715,7 @@ pub unsafe fn copy_children(element: AXUIElementRef) -> Vec<AXUIElementRef> {
                 None
             }
         })
-        .collect()
+        .collect())
 }
 
 /// Copy an AX element-valued attribute. The returned element is retained and

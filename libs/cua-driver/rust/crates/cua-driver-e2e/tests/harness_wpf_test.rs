@@ -1469,6 +1469,8 @@ fn harness_wpf_modal_messagebox() {
         vec![OracleKind::AxState],
         |pid, wid, driver| {
             focus_harness(driver, pid, wid);
+            let before = interaction_context(driver, pid, wid);
+            assert_eq!(before["status"], "none_observed", "{before}");
             let snap = snapshot(driver, pid, wid);
             let idx = ax::element_index_by_id(snap.text(), "btn-open-msgbox")
                 .expect("btn-open-msgbox not in snapshot");
@@ -1505,12 +1507,35 @@ fn harness_wpf_modal_messagebox() {
             let modal_wid = modal["window_id"].as_u64().unwrap();
             println!("modal window_id={}", modal_wid);
 
-            // Walk the modal's UIA tree — expect OK and Cancel buttons.
+            // The owner's snapshot names the MessageBox as the surface that
+            // blocks it, and points at it (#2589).
+            let blocked = wait_for_interaction(driver, pid, wid, "blocked");
+            let surfaces = blocked["related_surfaces"].as_array().expect("surfaces");
+            assert_eq!(surfaces.len(), 1, "{blocked}");
+            assert_eq!(surfaces[0]["relation"], "modal_child", "{blocked}");
+            assert_eq!(surfaces[0]["window_id"], modal_wid, "{blocked}");
+            assert_eq!(
+                blocked["next_call"],
+                serde_json::json!({
+                    "tool": "get_window_state",
+                    "arguments": {"pid": pid as i64, "window_id": modal_wid}
+                }),
+                "{blocked}"
+            );
+
+            // Follow next_call. Walk the modal's UIA tree — expect OK and
+            // Cancel buttons; the modal does not block itself.
             let modal_snap = driver.call(
                 "get_window_state",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": modal_wid, "capture_mode": "ax"
                 }),
+            );
+            assert_eq!(
+                modal_snap.structured()["interaction_context"]["status"],
+                "none_observed",
+                "{}",
+                modal_snap.structured()["interaction_context"]
             );
             let modal_text = modal_snap.text();
             assert!(
@@ -1545,8 +1570,14 @@ fn harness_wpf_modal_messagebox() {
                 "dismiss message box failed: {}",
                 dismiss.text()
             );
-            std::thread::sleep(Duration::from_millis(400));
-            println!("✅ harness_wpf_modal_messagebox: opened + parsed + dismissed");
+            wait_for_interaction(driver, pid, wid, "none_observed");
+            assert!(
+                !window_listed(driver, pid, modal_wid),
+                "the MessageBox is still listed after Cancel"
+            );
+            println!(
+                "✅ harness_wpf_modal_messagebox: opened + blocked + parsed + dismissed + clear"
+            );
             vec![OracleKind::AxState]
         },
     );
@@ -1593,6 +1624,43 @@ fn harness_wpf_owned_popup() {
                 .expect("Harness Owned Popup window not found in list_windows");
             let owned_wid = owned["window_id"].as_u64().unwrap();
 
+            // Opening the popup leaves the main window in the foreground on
+            // the runner, so the owner still receives input.
+            if foreground_window() == wid {
+                let context = interaction_context(driver, pid, wid);
+                assert_eq!(context["status"], "none_observed", "{context}");
+            }
+            // Once the non-modal window it owns holds focus, the owner's
+            // snapshot says input now goes there (#2589).
+            let raised = driver.call(
+                "bring_to_front",
+                serde_json::json!({"pid": pid as i64, "window_id": owned_wid}),
+            );
+            assert!(
+                !raised.is_error(),
+                "focus the owned popup: {}",
+                raised.text()
+            );
+            assert_eq!(
+                foreground_window(),
+                owned_wid,
+                "the owned popup is not foreground: {}",
+                win32_windows(pid)
+            );
+            let superseded = wait_for_interaction(driver, pid, wid, "superseded");
+            assert_eq!(
+                superseded["related_surfaces"],
+                serde_json::json!([{
+                    "relation": "supersedes_target", "pid": pid as i64,
+                    "window_id": owned_wid, "focused": true
+                }]),
+                "{superseded}"
+            );
+            assert_eq!(
+                superseded["next_call"]["arguments"]["window_id"], owned_wid,
+                "{superseded}"
+            );
+
             let owned_snap = driver.call(
                 "get_window_state",
                 serde_json::json!({
@@ -1609,6 +1677,220 @@ fn harness_wpf_owned_popup() {
             vec![OracleKind::AxState]
         },
     );
+}
+
+/// A modal dialog with no title blocks its owner, but `get_window_state`
+/// cannot address an untitled HWND, so the owner's snapshot must not name it
+/// in `next_call`: the relation is `unobservable` with the desktop recovery
+/// route, and clears once the dialog closes (#2589).
+#[test]
+#[ignore]
+fn harness_wpf_untitled_modal_dialog_is_unobservable() {
+    run_foreground_case(
+        "untitled_modal_dialog",
+        Targeting::Ax,
+        DriverRoute::WindowsSendInput,
+        vec![OracleKind::AxState],
+        |pid, wid, driver| {
+            focus_harness(driver, pid, wid);
+            let before = interaction_context(driver, pid, wid);
+            assert_eq!(before["status"], "none_observed", "{before}");
+            let snap = snapshot(driver, pid, wid);
+            let idx = ax::element_index_by_id(snap.text(), "btn-open-untitled-dialog")
+                .expect("btn-open-untitled-dialog not in snapshot");
+            let open = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64, "window_id": wid, "element_token": snap.element_token(idx),
+                    "delivery_mode": "foreground"
+                }),
+            );
+            assert!(
+                !open.is_error(),
+                "open untitled dialog failed: {}",
+                open.text()
+            );
+
+            let context = wait_for_interaction(driver, pid, wid, "unobservable");
+            assert!(context.get("next_call").is_none(), "{context}");
+            assert_eq!(
+                context["recovery"]["inspect"], "get_desktop_state",
+                "{context}"
+            );
+
+            // The dialog is real, owned by the main window, and untitled;
+            // get_window_state refuses it, so naming it would mislead.
+            let dialog = untitled_owned_window(pid, wid).expect("untitled dialog HWND");
+            let refused = driver.call(
+                "get_window_state",
+                serde_json::json!({"pid": pid as i64, "window_id": dialog, "capture_mode": "ax"}),
+            );
+            // The lookup refusal, not some unrelated failure: an untitled
+            // HWND is not a window get_window_state knows.
+            assert!(
+                refused.is_error()
+                    && refused
+                        .text()
+                        .contains(&format!("No window with window_id {dialog} exists")),
+                "get_window_state did not refuse the untitled HWND as unknown: {}",
+                refused.text()
+            );
+
+            close_window(dialog);
+            wait_for_interaction(driver, pid, wid, "none_observed");
+            assert!(
+                untitled_owned_window(pid, wid).is_none(),
+                "the untitled dialog is still open"
+            );
+            println!("✅ harness_wpf_untitled_modal_dialog_is_unobservable");
+            vec![OracleKind::AxState]
+        },
+    );
+}
+
+fn interaction_context(driver: &mut McpDriver, pid: u32, wid: u64) -> serde_json::Value {
+    let state = snapshot(driver, pid, wid);
+    assert!(
+        !state.is_error(),
+        "get_window_state {wid}: {}",
+        state.text()
+    );
+    state.structured()["interaction_context"].clone()
+}
+
+/// Poll a window until its `interaction_context.status` is `expected`.
+fn wait_for_interaction(
+    driver: &mut McpDriver,
+    pid: u32,
+    wid: u64,
+    expected: &str,
+) -> serde_json::Value {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let context = interaction_context(driver, pid, wid);
+        if context["status"] == expected {
+            return context;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "window {wid} interaction_context never became {expected}: {context}; win32: {}",
+            win32_windows(pid)
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn window_listed(driver: &mut McpDriver, pid: u32, wid: u64) -> bool {
+    let resp = driver.call("list_windows", serde_json::json!({"pid": pid as i64}));
+    resp.structured()["windows"]
+        .as_array()
+        .is_some_and(|windows| windows.iter().any(|w| w["window_id"].as_u64() == Some(wid)))
+}
+
+/// A visible, untitled top-level window of `pid` owned by `owner`, read
+/// straight from Win32 as the oracle the driver is checked against.
+fn untitled_owned_window(pid: u32, owner: u64) -> Option<u64> {
+    use windows::core::BOOL;
+    use windows::Win32::Foundation::{LPARAM, TRUE};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindow, GetWindowTextLengthW, GetWindowThreadProcessId, IsWindowVisible,
+        GW_OWNER,
+    };
+    struct Search {
+        pid: u32,
+        owner: u64,
+        found: Option<u64>,
+    }
+    unsafe extern "system" fn visit(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let search = &mut *(lparam.0 as *mut Search);
+        let mut pid = 0;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        let owner = GetWindow(hwnd, GW_OWNER).map_or(0, |owner| owner.0 as usize as u64);
+        if pid == search.pid
+            && owner == search.owner
+            && IsWindowVisible(hwnd).as_bool()
+            && GetWindowTextLengthW(hwnd) == 0
+        {
+            search.found = Some(hwnd.0 as usize as u64);
+        }
+        TRUE
+    }
+    let mut search = Search {
+        pid,
+        owner,
+        found: None,
+    };
+    unsafe {
+        let _ = EnumWindows(Some(visit), LPARAM(&mut search as *mut Search as isize));
+    }
+    search.found
+}
+
+fn foreground_window() -> u64 {
+    unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() }.0 as usize as u64
+}
+
+/// The foreground window and every visible top-level window of `pid` with
+/// its owner, enabled state and title length, read straight from Win32.
+fn win32_windows(pid: u32) -> String {
+    use windows::core::BOOL;
+    use windows::Win32::Foundation::{LPARAM, TRUE};
+    use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetForegroundWindow, GetWindow, GetWindowTextLengthW,
+        GetWindowThreadProcessId, IsWindowVisible, GW_OWNER,
+    };
+    struct Search {
+        pid: u32,
+        rows: Vec<String>,
+    }
+    unsafe extern "system" fn visit(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let search = &mut *(lparam.0 as *mut Search);
+        let mut pid = 0;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if pid == search.pid && IsWindowVisible(hwnd).as_bool() {
+            let owner = GetWindow(hwnd, GW_OWNER).map_or(0, |owner| owner.0 as usize as u64);
+            search.rows.push(format!(
+                "{{hwnd {} owner {} enabled {} title_len {}}}",
+                hwnd.0 as usize,
+                owner,
+                IsWindowEnabled(hwnd).as_bool(),
+                GetWindowTextLengthW(hwnd)
+            ));
+        }
+        TRUE
+    }
+    let mut search = Search {
+        pid,
+        rows: Vec::new(),
+    };
+    let foreground = unsafe { GetForegroundWindow() };
+    let mut foreground_pid = 0;
+    unsafe {
+        GetWindowThreadProcessId(foreground, Some(&mut foreground_pid));
+        let _ = EnumWindows(Some(visit), LPARAM(&mut search as *mut Search as isize));
+    }
+    format!(
+        "foreground {} (pid {foreground_pid}); {}",
+        foreground.0 as usize,
+        search.rows.join(" ")
+    )
+}
+
+fn close_window(hwnd: u64) {
+    use windows::Win32::Foundation::{LPARAM, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{IsWindow, PostMessageW, WM_CLOSE};
+    unsafe { PostMessageW(Some(HWND(hwnd as *mut _)), WM_CLOSE, WPARAM(0), LPARAM(0)) }
+        .expect("post WM_CLOSE to the untitled dialog");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        let live = unsafe { IsWindow(Some(HWND(hwnd as *mut _))) };
+        if !live.as_bool() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    panic!("the untitled dialog did not close");
 }
 
 #[test]

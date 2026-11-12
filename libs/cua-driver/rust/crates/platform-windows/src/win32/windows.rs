@@ -309,6 +309,80 @@ fn window_info_by_handle(hwnd: u64) -> Option<WindowInfo> {
     })
 }
 
+/// The other visible top-level windows of `pid` with their `GW_OWNER` chain,
+/// for `get_window_state`'s `interaction_context`. Modality comes from
+/// `modal_by_disabled_owner`; `None` when it cannot be established, or when
+/// a modal or focused window has no title to address it by. Blocking.
+pub(crate) fn interaction_facts(
+    pid: u32,
+    target: u64,
+) -> cua_driver_core::window_inspection::InteractionFacts {
+    use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    let foreground = unsafe { GetForegroundWindow() }.0 as usize as u64;
+    // Every visible top-level window of the pid, titled or not: an untitled
+    // dialog is as modal as a titled one.
+    let hwnds = visible_top_level_windows(pid);
+    let enabled = |hwnd: u64| unsafe { IsWindowEnabled(HWND(hwnd as *mut _)) }.as_bool();
+    let owned: Vec<(u64, Option<u64>)> = hwnds
+        .into_iter()
+        .map(|hwnd| {
+            let owner = unsafe { GetWindow(HWND(hwnd as *mut _), GW_OWNER) }
+                .ok()
+                .filter(|owner| !owner.0.is_null())
+                .map(|owner| owner.0 as usize as u64);
+            (hwnd, owner)
+        })
+        .collect();
+    let modal =
+        cua_driver_core::window_inspection::modal_by_disabled_owner(target, &owned, enabled)?;
+    let owned: Vec<_> = owned
+        .into_iter()
+        .map(
+            |(hwnd, owner)| cua_driver_core::window_inspection::OwnedWindow {
+                pid: i64::from(pid),
+                window_id: hwnd,
+                owner,
+                modal: modal.contains(&hwnd),
+                focused: hwnd == foreground,
+            },
+        )
+        .collect();
+    // get_window_state addresses titled windows only.
+    cua_driver_core::window_inspection::keep_addressable(
+        cua_driver_core::window_inspection::related_by_owner_chain(target, &owned),
+        |hwnd| window_info_by_handle(hwnd).is_some(),
+    )
+}
+
+/// Every visible, non-minimized top-level HWND of `pid`, in z-order. Unlike
+/// [`list_windows_via_win32`], untitled windows are kept.
+fn visible_top_level_windows(pid: u32) -> Vec<u64> {
+    struct Collect {
+        pid: u32,
+        hwnds: Vec<u64>,
+    }
+    unsafe extern "system" fn collect(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let state = &mut *(lparam.0 as *mut Collect);
+        if IsWindowVisible(hwnd).as_bool() && !IsIconic(hwnd).as_bool() {
+            let mut pid = 0;
+            GetWindowThreadProcessId(hwnd, Some(&mut pid));
+            if pid == state.pid {
+                state.hwnds.push(hwnd.0 as usize as u64);
+            }
+        }
+        TRUE
+    }
+    let mut state = Collect {
+        pid,
+        hwnds: Vec::new(),
+    };
+    unsafe {
+        let _ = EnumWindows(Some(collect), LPARAM(&mut state as *mut Collect as isize));
+    }
+    state.hwnds
+}
+
 pub(crate) fn list_windows_via_win32(filter_pid: Option<u32>) -> Vec<WindowInfo> {
     let mut windows = enumerate_via_enum_windows();
     if let Some(pid) = filter_pid {

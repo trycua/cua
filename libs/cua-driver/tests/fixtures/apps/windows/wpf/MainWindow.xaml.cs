@@ -123,6 +123,21 @@ public partial class MainWindow : Window
             MessageBoxImage.Information);
     }
 
+    private void OnOpenUntitledDialogClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Window
+        {
+            Owner = this,
+            Title = "",
+            Width = 320,
+            Height = 140,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ShowInTaskbar = false,
+            Content = new TextBlock { Text = "UNTITLED_DIALOG_MARKER_v1", Margin = new Thickness(16) },
+        };
+        dialog.ShowDialog();
+    }
+
     private void OnOpenOwnedClick(object sender, RoutedEventArgs e)
     {
         var owned = new OwnedPopupWindow

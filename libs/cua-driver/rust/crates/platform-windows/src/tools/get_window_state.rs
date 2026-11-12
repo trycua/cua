@@ -202,6 +202,15 @@ impl Tool for GetWindowStateTool {
                 then verify with another fresh desktop snapshot. \
                 This is separate from page JavaScript dialogs, which remain on \
                 browser_dialog.\n\n\
+                INTERACTION CONTEXT: structuredContent.interaction_context says whether this \
+                window still receives input. `status` `blocked` (a modal dialog: \
+                `related_surfaces[].relation` `modal_child` or `blocks_target`) or `superseded` \
+                (a dialog it owns holds focus: `supersedes_target`) comes with `next_call`, the \
+                get_window_state call for that surface; act there instead of retrying this \
+                window. `none_observed` covers the app's own windows only (`scope`); \
+                `focus_elsewhere` names another focused window. `unobservable` means the window \
+                set could not be read: after a verified ineffective action, inspect with \
+                get_desktop_state.\n\n\
                 Windows requires no special permissions.".into(),
             input_schema: cua_driver_core::window_state_view::extend_input_schema(json!({"type":"object","required":["pid","window_id"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
@@ -773,6 +782,17 @@ impl Tool for GetWindowStateTool {
                     .with_structured(structured);
                 }
 
+                if !display_only {
+                    let facts = tokio::task::spawn_blocking(move || {
+                        crate::win32::interaction_facts(pid, hwnd)
+                    })
+                    .await
+                    .unwrap_or(None);
+                    cua_driver_core::window_inspection::mark_interaction_context(
+                        &mut structured,
+                        &facts,
+                    );
+                }
                 if display_only {
                     cua_driver_core::window_state_view::mark_display_only(&mut structured);
                 }

@@ -38,7 +38,9 @@ fn def() -> &'static ToolDef {
             \n\
             A new snapshot of the same (pid, window_id) replaces the previous one and stales its tokens (`invalidated_snapshot_ids`). `include_screenshot:false` returns the tree only and keeps the last screenshot's pixel frame while the window keeps its size; `include_accessibility_tree:false` returns only the screenshot and keeps the current snapshot's rows and tokens valid (use it, not `max_elements:1`, when you just need to look); adding `display_only:true` (live previews) also leaves the pixel frame alone. The tree can lie on some surfaces (Electron, Catalyst, virtualized rows with `h:1` frames): cross-check the screenshot, and use pixel x,y at action time only for elements missing from the tree.\n\
             \n\
-            Refusals: `window_id_not_found`; `window_owner_pid_mismatch` names the real `owner_pid` (sandboxed Open/Save panels belong to a panel service). `degraded_reason` `ax_window_unresolved` or `ax_app_launching` (the latter with `truncation_reason: app_lookup_timeout`) means an empty tree: re-snapshot, or act with `delivery_mode:\"foreground\"`. `degraded_reason` `screen_locked` means the screen saver, display sleep or a lock hid every window from accessibility: wake and unlock the Mac, then re-snapshot; foreground input would reach the lock screen. `px_frame_mismatch` / `px_capture_unavailable` omit the unprovable screenshot; the AX payload stays valid.".into(),
+            Refusals: `window_id_not_found`; `window_owner_pid_mismatch` names the real `owner_pid` (sandboxed Open/Save panels belong to a panel service). `degraded_reason` `ax_window_unresolved` or `ax_app_launching` (the latter with `truncation_reason: app_lookup_timeout`) means an empty tree: re-snapshot, or act with `delivery_mode:\"foreground\"`. `degraded_reason` `screen_locked` means the screen saver, display sleep or a lock hid every window from accessibility: wake and unlock the Mac, then re-snapshot; foreground input would reach the lock screen. `px_frame_mismatch` / `px_capture_unavailable` omit the unprovable screenshot; the AX payload stays valid.\n\
+            \n\
+            INTERACTION CONTEXT: structuredContent.interaction_context says whether this window still receives input. `status` `blocked` (a sheet or modal window: `related_surfaces[].relation` `modal_child` or `blocks_target`) or `superseded` (a window it owns holds focus: `supersedes_target`) comes with `next_call`, the get_window_state call for that surface; act there instead of retrying this window. `none_observed` covers the app's own windows only (`scope`); `focus_elsewhere` names another focused window. `unobservable` means the window set could not be read: after a verified ineffective action, inspect with get_desktop_state.".into(),
         input_schema: cua_driver_core::window_state_view::extend_input_schema(serde_json::json!({
             "type": "object",
             "required": ["pid", "window_id"],
@@ -920,6 +922,14 @@ impl Tool for GetWindowStateTool {
                 cua_driver_core::window_inspection::BrowserChromeCaptureCoverage::MayBeIncomplete,
             ),
         );
+        if !display_only {
+            let facts = tokio::task::spawn_blocking(move || {
+                crate::ax::exact_target::interaction_facts(pid, window_id)
+            })
+            .await
+            .unwrap_or(None);
+            cua_driver_core::window_inspection::mark_interaction_context(&mut structured, &facts);
+        }
         if display_only {
             cua_driver_core::window_state_view::mark_display_only(&mut structured);
         }

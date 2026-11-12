@@ -83,6 +83,11 @@ pub fn list_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
     list_windows_inner(filter_pid).unwrap_or_default()
 }
 
+/// [`list_windows`], with a failed read kept apart from an empty list.
+pub fn try_list_windows(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {
+    list_windows_inner(filter_pid)
+}
+
 /// Whether the X server still knows a window by this id.
 pub fn window_exists(xid: u64) -> bool {
     let Ok(xid) = u32::try_from(xid) else {
@@ -498,6 +503,16 @@ pub fn transient_for(xid: u64) -> Option<u64> {
 /// could set to anything.
 pub fn list_cross_pid_transient_windows(pid: u32) -> Vec<WindowInfo> {
     list_cross_pid_transient_windows_with(pid, list_windows(None), transient_for)
+}
+
+/// [`list_cross_pid_transient_windows`], with a failed read kept apart from
+/// an empty list.
+pub fn try_list_cross_pid_transient_windows(pid: u32) -> Result<Vec<WindowInfo>> {
+    Ok(list_cross_pid_transient_windows_with(
+        pid,
+        try_list_windows(None)?,
+        transient_for,
+    ))
 }
 
 fn list_cross_pid_transient_windows_with(

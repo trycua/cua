@@ -503,6 +503,25 @@ mod tests {
     }
 
     #[test]
+    fn the_setup_script_runs_cua_spacesd_only_when_its_published_checksum_matches() {
+        let ps = setup_script(WindowsArch::Arm64, "0.15.5");
+        assert!(
+            ps.contains("\"$Url.sha256\""),
+            "the published checksum is fetched"
+        );
+        assert!(ps.contains("Get-FileHash -Algorithm SHA256"));
+        assert!(ps.contains("SHA-256 mismatch"));
+        // A mismatch removes the file and is an error, never a pass.
+        let at = ps.find("SHA-256 mismatch").unwrap();
+        assert!(ps[..at].contains("Remove-Item -Force $Exe"));
+        assert!(ps.find("$ok = $true").unwrap() > at);
+        // Only https, only github.com's releases.
+        for u in spacesd_urls(WindowsArch::Arm64, "0.15.5") {
+            assert!(u.starts_with("https://github.com/trycua/cua/releases/download/"));
+        }
+    }
+
+    #[test]
     fn the_data_disc_carries_both_files() {
         let disc = data_disc(&opts("11", WindowsArch::Amd64, "User"));
         let text = String::from_utf8_lossy(&disc);

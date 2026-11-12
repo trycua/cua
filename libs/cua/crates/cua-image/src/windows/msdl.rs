@@ -78,6 +78,25 @@ pub fn sku_id(json: &str) -> Option<String> {
     })
 }
 
+/// Whether `url` is an https link on a Microsoft domain (`microsoft.com` or a
+/// subdomain). The ISO is only ever fetched from there: the link comes out of
+/// a web service's JSON answer, so it is checked, not trusted.
+pub fn is_microsoft_https(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("https://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if authority.is_empty() || authority.contains(['@', '\\', ' ']) {
+        return false;
+    }
+    let host = authority
+        .split(':')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    host == "microsoft.com" || host.ends_with(".microsoft.com")
+}
+
 /// The download link and product name in a `GetProductDownloadLinksBySku` answer.
 pub fn download_link(json: &str) -> std::result::Result<(String, String), String> {
     let v: serde_json::Value = serde_json::from_str(json).map_err(|e| e.to_string())?;
@@ -97,6 +116,11 @@ pub fn download_link(json: &str) -> std::result::Result<(String, String), String
         .get("Uri")
         .and_then(|u| u.as_str())
         .ok_or("no link in the answer")?;
+    if !is_microsoft_https(url) {
+        return Err(format!(
+            "the download link is not an https link on a Microsoft domain ({url:?}); refusing it"
+        ));
+    }
     let name = o
         .get("ProductDisplayName")
         .and_then(|u| u.as_str())
@@ -244,6 +268,36 @@ mod tests {
 
     const PAGE: &str = r#"<select><option value="">Select Download</option><option value="3816">Windows 11 (multi-edition ISO for Arm64)</option></select>
 <table><tbody><tr><th>Country Locale</th><th>Hash Code</th></tr><tr><td>English  International  64-bit</td><td>500BCB6F272B7C455156470EA06816F558F13B885723F84EE9EAB7534C7DEE61</td></tr><tr><td>English  64-bit</td><td>8992F2D2CFD2FA647E579E9EB31FC21F34DA8333C29B6170FDE17D2ED6623E9C</td></tr></tbody></table>"#;
+
+    #[test]
+    fn only_https_links_on_microsoft_domains_are_followed() {
+        for ok in [
+            "https://software.download.prss.microsoft.com/x.iso?t=1",
+            "https://download.microsoft.com/a",
+            "https://MICROSOFT.com/a",
+        ] {
+            assert!(is_microsoft_https(ok), "{ok}");
+        }
+        for bad in [
+            "http://software.download.prss.microsoft.com/x.iso",
+            "https://microsoft.com.evil.example/x.iso",
+            "https://evil.example/microsoft.com/x.iso",
+            "https://notmicrosoft.com/x.iso",
+            "https://software.download.prss.microsoft.com@evil.example/x.iso",
+            "https://evil.example\\@x.microsoft.com/",
+            "ftp://x.microsoft.com/x",
+            "//x.microsoft.com/x",
+            "",
+        ] {
+            assert!(!is_microsoft_https(bad), "{bad}");
+        }
+        let evil = r#"{"ProductDownloadOptions":[{"Uri":"https://evil.example/w.iso","ProductDisplayName":"Windows 11"}]}"#;
+        assert!(
+            download_link(evil)
+                .unwrap_err()
+                .contains("Microsoft domain")
+        );
+    }
 
     #[test]
     fn the_edition_and_checksum_come_from_the_page() {

@@ -107,6 +107,20 @@ prompts and blocks the daemon), and installs a **disk guard** task (below 3 GB f
 logs and writes `C:\ProgramData\cua\disk-low.txt`). On your own consumer ISO, `CUA_WINDOWS_EDITION`
 selects an edition by name (`Windows 11 Pro` also gets the generic Pro key).
 
+## What is downloaded, and how it is checked
+
+| File | From | Check |
+|------|------|-------|
+| Windows 11 ARM64 ISO (consumer media) | The link Microsoft's download service returns; it must be `https` on `microsoft.com` or a subdomain, else it is refused | SHA-256 from Microsoft's download page, compared after the download and for a cached copy |
+| Windows 10, Server 2019 and 2025 ISOs (x64 evaluation media) | `go.microsoft.com` links from the Evaluation Center | None: Microsoft publishes no hash for them, so they rely on TLS to Microsoft. A cached copy must match the hash recorded when it was downloaded |
+| Your own ISO (`--iso`) | Your disk | `CUA_WINDOWS_ISO_SHA256` when you set it |
+| virtio-win drivers | Fedora's archive, release `0.1.302-1` by its versioned URL | Pinned SHA-256 in `build.rs`; a mismatch deletes the file and fails the create |
+| `cua-spacesd.exe` | The GitHub release, inside the guest | The `.sha256` the release publishes beside the binary: missing or different means the file is not run and the install fails |
+
+The `cua-spacesd` check proves the file is the one the release published (it catches a corrupted or swapped download); it does not defend against a compromised release, which is what the release's sigstore bundles are for.
+
+The local administrator account has no password and signs in automatically. That matches the published Windows image: the guest is reachable only through the host's forwarded ports (the network gateway's published ports on the host's loopback), not from your network. Set a password inside the guest if you expose it.
+
 ## Runtimes and hosts
 
 `--kind` and `--runtime` keep their meaning: a Windows image is a VM, runtime `qemu`

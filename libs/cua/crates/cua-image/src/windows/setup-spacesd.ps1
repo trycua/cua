@@ -31,9 +31,23 @@ foreach ($Url in $Urls) {
     for ($i = 1; $i -le 6 -and -not $ok; $i++) {
         try {
             Invoke-WebRequest -Uri $Url -OutFile $Exe -UseBasicParsing
-            if ((Get-Item $Exe).Length -gt 1MB) { $ok = $true; "downloaded $Url" }
+            if ((Get-Item $Exe).Length -le 1MB) { throw "the download is too small to be cua-spacesd" }
+            # The release publishes the SHA-256 beside each binary. It has to be
+            # there and it has to match: a missing or different one means the file
+            # is not run (fail closed).
+            $Sum = (Invoke-WebRequest -Uri "$Url.sha256" -UseBasicParsing).Content
+            if ($Sum -is [byte[]]) { $Sum = [System.Text.Encoding]::ASCII.GetString($Sum) }
+            if ("$Sum".Trim() -notmatch '^([0-9a-fA-F]{64})(\s|$)') { throw "no SHA-256 published for $Url" }
+            $Want = $Matches[1]
+            $Got = (Get-FileHash -Algorithm SHA256 -Path $Exe).Hash
+            if ($Got -ne $Want) {
+                Remove-Item -Force $Exe
+                throw "SHA-256 mismatch for $Url (published $Want, got $Got)"
+            }
+            $ok = $true; "downloaded $Url (SHA-256 $Got matches the published one)"
         } catch {
             "download of $Url failed: $($_.Exception.Message)"
+            Remove-Item -Force $Exe -ErrorAction SilentlyContinue
             # A release without this build (404) is not worth retrying: next URL.
             if ($_.Exception.Response -and [int]$_.Exception.Response.StatusCode -eq 404) { break }
             Start-Sleep -Seconds ($i * 5)

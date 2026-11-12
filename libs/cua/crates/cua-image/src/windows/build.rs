@@ -34,9 +34,57 @@ pub const EMULATED_INSTALL_TIMEOUT: Duration = Duration::from_secs(12 * 60 * 60)
 /// A build lock older than this is a crashed build's.
 const STALE_LOCK: Duration = Duration::from_secs(4 * 60 * 60);
 
-/// virtio-win drivers (storage, network) for the install, from Fedora.
-pub const VIRTIO_URL: &str =
-    "https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso";
+/// The virtio-win drivers (storage, network) for the install, from Fedora's
+/// archive: one release, by its versioned URL, checked against the SHA-256 of
+/// that file (the "stable" URL moves, so it cannot be checked). Updating the
+/// drivers is changing both lines.
+pub const VIRTIO_VERSION: &str = "0.1.302-1";
+pub const VIRTIO_URL: &str = "https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/archive-virtio/virtio-win-0.1.302-1/virtio-win.iso";
+#[cfg(not(test))]
+pub const VIRTIO_SHA256: &str = "303f7ae40dad495d6ae474fdc571df58958a4dbc5c37a522d80f9a203867949d";
+/// The tests' fake download writes `virtio`.
+#[cfg(test)]
+pub const VIRTIO_SHA256: &str = "28f995f87d1b9a1e4572b9e8143902d8f47c6557aab3054d1c8698f9e0940ee8";
+
+/// The virtio-win disc at `path`, intact: a cached one must match `sha256`
+/// (else it is downloaded again), and a download that does not match is
+/// deleted and refused, so nothing unchecked is ever handed to the installer.
+pub(crate) async fn ensure_virtio(
+    fetcher: &dyn IsoFetcher,
+    path: &Path,
+    url: &str,
+    sha256: &str,
+) -> Result<()> {
+    if path.is_file() {
+        if iso::sha256_file(path).is_ok_and(|got| got.eq_ignore_ascii_case(sha256)) {
+            return Ok(());
+        }
+        tracing::warn!(
+            "cached {}: not the pinned drivers; downloading again",
+            path.display()
+        );
+        let _ = std::fs::remove_file(path);
+    }
+    iso::download_reporting(
+        fetcher,
+        url,
+        path,
+        "Downloading the Windows drivers for the virtual computer",
+        (0.40, 0.45),
+        &mut |_| {},
+    )
+    .await?;
+    let got = iso::sha256_file(path)?;
+    if !got.eq_ignore_ascii_case(sha256) {
+        let _ = std::fs::remove_file(path);
+        return Err(ImageError::Digest {
+            what: format!("the virtio-win drivers ({VIRTIO_VERSION})"),
+            expected: sha256.to_string(),
+            actual: got,
+        });
+    }
+    Ok(())
+}
 
 /// Where the images live: `$CUA_HOME/images/windows`.
 #[derive(Clone, Debug)]
@@ -356,17 +404,7 @@ pub async fn ensure_base_with(
     std::fs::create_dir_all(&work)?;
     std::fs::create_dir_all(layout.iso_dir())?;
     let virtio = layout.iso_dir().join("virtio-win.iso");
-    if !virtio.is_file() {
-        iso::download_reporting(
-            fetcher,
-            VIRTIO_URL,
-            &virtio,
-            "Downloading the Windows drivers for the virtual computer",
-            (0.40, 0.45),
-            &mut |_| {},
-        )
-        .await?;
-    }
+    ensure_virtio(fetcher, &virtio, VIRTIO_URL, VIRTIO_SHA256).await?;
     // The newest cua-spacesd with a Windows build (the pinned one when GitHub
     // cannot be read).
     let spacesd = fetcher
@@ -586,6 +624,36 @@ mod tests {
         assert!(x.contains("Windows 11 Pro") && x.contains("VK7JG"));
     }
     use std::sync::Mutex;
+
+    #[test]
+    fn the_virtio_drivers_are_pinned_to_a_version_and_a_checksum() {
+        assert!(VIRTIO_URL.starts_with("https://fedorapeople.org/"));
+        assert!(VIRTIO_URL.contains(&format!("virtio-win-{VIRTIO_VERSION}/")));
+        assert!(!VIRTIO_URL.contains("stable-virtio"));
+        assert_eq!(VIRTIO_SHA256.len(), 64);
+    }
+
+    #[tokio::test]
+    async fn drivers_that_do_not_match_the_checksum_are_deleted_and_refused() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("virtio-win.iso");
+        // The fake download writes `virtio`: the test's pinned value matches it.
+        ensure_virtio(&NoNet, &p, VIRTIO_URL, VIRTIO_SHA256)
+            .await
+            .unwrap();
+        // A different pin refuses what was downloaded, and keeps nothing.
+        let e = ensure_virtio(&NoNet, &p, VIRTIO_URL, &"0".repeat(64))
+            .await
+            .unwrap_err();
+        assert!(matches!(e, ImageError::Digest { .. }), "{e}");
+        assert!(!p.exists());
+        // A cached file that does not match is replaced, one that does is kept.
+        std::fs::write(&p, b"tampered").unwrap();
+        ensure_virtio(&NoNet, &p, VIRTIO_URL, VIRTIO_SHA256)
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&p).unwrap(), b"virtio");
+    }
 
     struct NoNet;
     #[async_trait]

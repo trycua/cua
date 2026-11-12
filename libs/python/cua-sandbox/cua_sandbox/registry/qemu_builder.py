@@ -43,9 +43,10 @@ from cua_sandbox.builder.windows_unattend import (
 logger = logging.getLogger(__name__)
 
 WORK_DIR = cua_home() / "cua-sandbox" / "qemu-builder"
-VIRTIO_ISO_URL = (
-    "https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso"
-)
+# One virtio-win release by its versioned URL, checked against its SHA-256 (the
+# "stable" URL moves). Keep in step with libs/cua/crates/cua-image/src/windows/build.rs.
+VIRTIO_ISO_URL = "https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/archive-virtio/virtio-win-0.1.302-1/virtio-win.iso"
+VIRTIO_ISO_SHA256 = "303f7ae40dad495d6ae474fdc571df58958a4dbc5c37a522d80f9a203867949d"
 CHUNK_SIZE = 500 * 1024 * 1024  # 500 MB chunks for OCI layers
 
 
@@ -71,9 +72,26 @@ class QEMUImageConfig:
 
 
 def download_virtio_iso(work_dir: Optional[Path] = None) -> Path:
-    """Download virtio-win.iso from Fedora."""
+    """Download virtio-win.iso from Fedora; refuse (and delete) one that is not the pinned release."""
     dest = (work_dir or WORK_DIR) / "virtio-win.iso"
-    return download_file(VIRTIO_ISO_URL, dest, "virtio-win.iso")
+
+    def sha256() -> str:
+        h = hashlib.sha256()
+        with open(dest, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        return h.hexdigest()
+
+    if dest.is_file() and sha256() != VIRTIO_ISO_SHA256:
+        dest.unlink()
+    path = download_file(VIRTIO_ISO_URL, dest, "virtio-win.iso")
+    got = sha256()
+    if got != VIRTIO_ISO_SHA256:
+        dest.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"virtio-win.iso does not match the pinned release (expected {VIRTIO_ISO_SHA256}, got {got})"
+        )
+    return path
 
 
 # ── Disk creation ───────────────────────────────────────────────────────────

@@ -208,8 +208,10 @@ request run.
 
 | Workflow | Runs in the queue | Waits for the run after merge |
 | --- | --- | --- |
-| `CI: cua SDK` | `rust (windows-latest)` | `rust (macos-26)`, the macOS smoke jobs |
 | `E2E: Cua Driver release gate` (gated paths) | every Linux lane; Windows native, capture and installer | Windows shared Electron + Tauri (the PR's quick lane ran its Electron cells), hosted macOS, standalone browsers |
+
+`CI: cua SDK` is not in the list: its Windows rust leg takes longer than the queue's timeout (its long test step
+compiles for 26 to 31 minutes and runs for about 17), so it runs after merge.
 
 The gate judges each queue run in addition to the pull request's run, never instead of it, so a queue run whose
 jobs were all skipped cannot hide a failing pull request run. The repository variable `CI_QUEUE_RUNS` set to

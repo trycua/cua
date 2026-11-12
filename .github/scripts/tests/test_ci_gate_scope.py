@@ -387,11 +387,10 @@ def test_merge_queue_runs_only_the_queue_workflows(tmp_path):
                        env={**os.environ, 'GITHUB_OUTPUT': str(out)})
         return dict(line.split('=', 1) for line in out.read_text().splitlines())['skip']
     driver = ['libs/cua-driver/rust/crates/cua-driver-core/src/browser.rs']
-    # A queue workflow runs when the change reaches it, and skips when it does not.
-    assert decide('ci-cua-sdk.yml', SPACES_CORE) == 'false'
+    # A queue workflow runs when the change reaches it.
     assert decide('e2e-cua-driver-release-gate.yml', driver) == 'false'
-    assert decide('ci-cua-sdk.yml', ['apps/cua-spaces-web/src/main.ts']) == 'true'
     # Any other workflow skips in the queue, even one the change reaches (the gate reads its pull request run).
+    assert decide('ci-cua-sdk.yml', SPACES_CORE) == 'true'
     assert decide('ci-rust-linux.yml', SPACES_CORE) == 'true'
     assert decide('ci-quick.yml', SPACES_CORE) == 'true'
 
@@ -399,7 +398,7 @@ def test_merge_queue_runs_only_the_queue_workflows(tmp_path):
 def test_every_queue_workflow_exists_and_has_the_quick_stage():
     names = {w.name for w in WORKFLOWS}
     queue = scope.queue_workflows(CFG)
-    assert queue == {'ci-cua-sdk.yml', 'e2e-cua-driver-release-gate.yml'}
+    assert queue == {'e2e-cua-driver-release-gate.yml'}
     for name in queue:
         assert name in names
         jobs = yaml.safe_load((scope.WORKFLOWS / name).read_text())['jobs']

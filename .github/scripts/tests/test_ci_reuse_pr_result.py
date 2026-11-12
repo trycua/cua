@@ -430,15 +430,10 @@ def test_cua_sdk_rust_linux_leg_is_sharded_behind_the_reused_check_name():
     # Both run exactly when the old Linux leg did: never when the subset is reused on a full run.
     assert wf["jobs"]["rust-linux"]["if"].split("&&", 3)[3] == wf["jobs"]["rust-linux-result"]["if"].split("&&", 3)[3]
     assert "needs.reuse.outputs.pr_subset == 'true'" in wf["jobs"]["rust-linux"]["if"]
-    # The macOS and Windows legs stay in `rust`, on full runs only; the merge queue runs the Windows leg.
+    # The macOS and Windows legs stay in `rust`, on full runs only.
     job = wf["jobs"]["rust"]
-    assert literals(job["strategy"]["matrix"]["os"]) == [["windows-latest"], ["macos-26", "windows-latest"]]
-    assert "github.event_name == 'merge_group'" in job["strategy"]["matrix"]["os"]
+    assert literals(job["strategy"]["matrix"]["os"]) == [["macos-26", "windows-latest"]]
     assert "ci:full" in job["if"]
-    # Every other job of the workflow stays out of the merge queue: the pull request ran it.
-    for name, other in wf["jobs"].items():
-        if name not in ("quick", "rust"):
-            assert "github.event_name != 'merge_group'" in other["if"], name
 
 
 def test_cua_sdk_rust_tests_are_built_once_and_run_from_the_archive():

@@ -429,9 +429,8 @@
   }
  },
  "queue": {
-  "why": "Workflows that also run in the merge queue, on the merged result, when the change reaches them. Each runs there only its push-only jobs that fit the queue timeout (the pull request ran the rest); the gate judges the queue run in addition to the pull request run.",
+  "why": "Workflows that also run in the merge queue, on the merged result, when the change reaches them. Each runs there only its push-only jobs that fit the queue timeout (the pull request ran the rest); the gate judges the queue run in addition to the pull request run. CI: cua SDK is not here: its Windows rust leg takes more than the queue's 60 minutes.",
   "workflows": [
-   "ci-cua-sdk.yml",
    "e2e-cua-driver-release-gate.yml"
   ]
  }

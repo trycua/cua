@@ -68,6 +68,18 @@ extern "C" {
         attribute: CFStringRef,
         value: *mut CFTypeRef,
     ) -> AXError;
+    pub fn AXUIElementGetAttributeValueCount(
+        element: AXUIElementRef,
+        attribute: CFStringRef,
+        count: *mut isize,
+    ) -> AXError;
+    pub fn AXUIElementCopyAttributeValues(
+        element: AXUIElementRef,
+        attribute: CFStringRef,
+        index: isize,
+        max_values: isize,
+        values: *mut CFArrayRef,
+    ) -> AXError;
     pub fn AXUIElementCopyAttributeNames(
         element: AXUIElementRef,
         names: *mut CFArrayRef,
@@ -94,6 +106,7 @@ extern "C" {
         element: AXUIElementRef,
         timeout_in_seconds: f32,
     ) -> AXError;
+    pub fn AXUIElementGetPid(element: AXUIElementRef, pid: *mut i32) -> AXError;
     pub fn AXUIElementGetTypeID() -> CFTypeID;
     pub fn AXIsProcessTrusted() -> bool;
     /// `AXIsProcessTrustedWithOptions(options)` — when called with

@@ -236,6 +236,8 @@ fn assert_tools_list_schema_shape(mut d: RawDriver) {
         "press_key",
         "hotkey",
         "scroll",
+        // Foreground may activate the window and open menus (Linux).
+        "invoke_menu",
         "browser_dialog",
         // Trusted browser input may activate the browser window (Linux
         // Chromium); foreground accepts that.

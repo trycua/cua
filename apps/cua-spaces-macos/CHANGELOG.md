@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.34.3](https://github.com/trycua/cua/compare/cua-spaces-v0.34.2...cua-spaces-v0.34.3) (2026-11-12)
+
+
+### Bug Fixes
+
+* **vmm:** gate container-only code so cua-vmm builds with any backend feature set ([#7433](https://github.com/trycua/cua/issues/7433)) ([6637de4](https://github.com/trycua/cua/commit/6637de44fb669fea965ee0197ced5ac6a95cf11e))
+
 ## [0.34.2](https://github.com/trycua/cua/compare/cua-spaces-v0.34.1...cua-spaces-v0.34.2) (2026-11-12)
 
 

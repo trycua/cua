@@ -226,6 +226,18 @@ class HarnessWindow(Gtk.Window):
         self.popover.set_border_width(10)
         self.popover.add(Gtk.Label(label="POPOVER_MARKER_v1"))
 
+        # ── modal dialog ──────────────────────────────────────────────────
+        # Transient for this window with the modal hint, so X11 sees
+        # WM_TRANSIENT_FOR and _NET_WM_STATE_MODAL. Shown, not run(), so the
+        # main loop keeps serving AT-SPI while it is open.
+        section(root, "modal dialog")
+        open_dialog = aid(Gtk.Button(label="Open Modal Dialog"), "btn-open-modal-dialog")
+        open_dialog.connect("clicked", self.on_open_modal_dialog)
+        root.pack_start(open_dialog, False, False, 0)
+        self.dialog_status = Gtk.Label(label="modal_dialog_open=False", xalign=0)
+        root.pack_start(self.dialog_status, False, False, 0)
+        self.modal_dialog = None
+
         # ── exit ──────────────────────────────────────────────────────────
         ext = aid(Gtk.Button(label="Exit"), "btn-exit")
         ext.connect("clicked", lambda *_: Gtk.main_quit())
@@ -357,6 +369,21 @@ class HarnessWindow(Gtk.Window):
     def on_open_popover(self, *_):
         self.popover.show_all()
         self.popover_status.set_text("popover_open=True")
+
+    def on_open_modal_dialog(self, *_):
+        if self.modal_dialog is not None:
+            return
+        dialog = Gtk.Dialog(title="Harness Modal Dialog", transient_for=self, modal=True)
+        dialog.get_content_area().add(Gtk.Label(label="MODAL_DIALOG_MARKER_v1"))
+        dialog.connect("response", self.on_modal_dialog_response)
+        self.modal_dialog = dialog
+        dialog.show_all()
+        self.dialog_status.set_text("modal_dialog_open=True")
+
+    def on_modal_dialog_response(self, dialog, _response):
+        dialog.destroy()
+        self.modal_dialog = None
+        self.dialog_status.set_text("modal_dialog_open=False")
 
 
 TASK_STATE_ENV = "CUA_GTK3_TASK_STATE"

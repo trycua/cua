@@ -153,7 +153,13 @@ fn headline(verdict: Verdict, noop: bool, said: &str, look: &str) -> String {
     let said = said.trim();
     let (first, rest) = said.split_once('\n').unwrap_or((said, ""));
     let first = first.trim().trim_end_matches('.');
-    let clipped: String = first.chars().take(SAID_LIMIT).collect();
+    // Only a headline that ends with the read to make is clipped, so that read
+    // survives a batch's cut; the full line follows it.
+    let clipped: String = if verdict.needs_a_look() {
+        first.chars().take(SAID_LIMIT).collect()
+    } else {
+        first.to_owned()
+    };
     let cut = clipped.len() < first.len();
     let what = if cut {
         format!("{clipped}…")
@@ -171,8 +177,7 @@ fn headline(verdict: Verdict, noop: bool, said: &str, look: &str) -> String {
             format!("{word}: {what}; only part of it was delivered. Look first: {look}")
         }
     };
-    // A long first line keeps its full wording on the next line.
-    if cut && verdict.needs_a_look() {
+    if cut {
         out.push('\n');
         out.push_str(first);
     }
@@ -261,6 +266,14 @@ mod tests {
             "{headline}"
         );
         assert_eq!(next, long);
+    }
+
+    #[test]
+    fn a_confirmed_long_line_is_kept_whole() {
+        let long = "y".repeat(400);
+        let mut result = action(&long, json!({ "effect": "confirmed", "evidence": [] }));
+        annotate("click", &mut result);
+        assert_eq!(first_text(&result), format!("CONFIRMED: {long}."));
     }
 
     #[test]

@@ -455,10 +455,15 @@ jobs:
         with:
           components: clippy, rustfmt
           targets: wasm32-unknown-unknown
+      # save-always: the save is the last step, with always(), so a test failure or the timeout keeps the
+      # warm compile. A save on success only never saved on main (this job had not passed since
+      # 26 Oct), and every run compiled about 30 minutes from nothing.
       - uses: ./.github/actions/rust-cache
+        id: cache
         with:
           workspaces: libs/cua
           shared-key: libs-cua-test
+          save-always: "true"
       - name: Test Spaces discovery and post-create directory failures
         run: cargo test --locked -p cua-spaces --test relay --test cloud_discovery -- --test-threads=4
       - name: Test the mesh, and its scale budgets (offline or unresponsive computers never hold up the rest)
@@ -512,6 +517,12 @@ jobs:
       - name: Disk left after the build
         if: always() && runner.os == 'Linux'
         run: df -h / && du -sh target
+      - uses: ./.github/actions/rust-cache-save
+        if: ${{ always() && steps.cache.outputs.save == 'true' }}
+        with:
+          key: ${{ steps.cache.outputs.key }}
+          dir: ${{ steps.cache.outputs.dir }}
+          exact-hit: ${{ steps.cache.outputs.exact-hit }}
 
   # What a release publishes to crates.io (cd-cua-sdk.yml): cua-sdk,
   # cua-spacesd-client and every workspace crate they need, packaged and

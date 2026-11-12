@@ -125,11 +125,14 @@ an error, and it is never sent for a step that already runs inside `run_steps`
 or `run_script`. The logic is in `rust/crates/cua-driver-core/src/batch_nudge.rs`.
 
 `suspected_noop` is advisory. It means a bounded readable state remained
-unchanged, not that the action failed. For a ref-targeted browser DOM click,
-the readback covers bounded semantic and form state on the target plus the
-document URL. An unchanged DOM click readback remains `unverifiable`, with
-readback evidence: effects elsewhere on the page can be invisible to that
-readback, so verify the expected postcondition before retrying.
+unchanged, not that the action failed. For a ref-targeted `browser_click`,
+on both the `dom_event` and `trusted` routes, the readback covers bounded
+semantic and form state on the target plus the document URL. A change in it
+reports `confirmed` with `value_readback` evidence. An unchanged readback
+remains `unverifiable`, with readback evidence: effects elsewhere on the page
+can be invisible to that readback, so verify the expected postcondition before
+retrying. A missing readback, a click that opens a page dialog, and a
+coordinate-targeted click carry no readback evidence and stay `unverifiable`.
 
 ## Window target resolution
 

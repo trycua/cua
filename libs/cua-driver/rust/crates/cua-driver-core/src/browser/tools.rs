@@ -26,6 +26,7 @@ use crate::tool_args::ArgsExt;
 use super::cdp_ws::CdpConnection;
 use super::download::BrowserDownloadTool;
 use super::engine::{BrowserEngine, BrowserTabScreenshot, DIALOG_SUBSCRIPTION_TIMEOUT};
+use super::input::{ref_point, trusted_ref_point};
 use super::platform::{
     BrowserVisualActionKind, PrepareAction, PrepareProfile, PrepareProfileMode, PrepareRequest,
     PrepareStrategy,
@@ -1410,33 +1411,17 @@ impl Tool for BrowserClickTool {
             };
             // Cursor feedback is best-effort and visual-only. A missing box
             // must not turn a valid DOM-event action into a refusal.
-            let _ = conn
-                .call(
-                    Some(cdp),
-                    "DOM.scrollIntoViewIfNeeded",
-                    json!({ "backendNodeId": backend }),
-                )
-                .await;
-            if let Ok(box_model) = conn
-                .call(
-                    Some(cdp),
-                    "DOM.getBoxModel",
-                    json!({ "backendNodeId": backend }),
-                )
-                .await
-            {
-                if let Some((x, y)) = quad_center(&box_model) {
-                    self.engine
-                        .visualize_browser_action(
-                            &session,
-                            &validated,
-                            cdp,
-                            x,
-                            y,
-                            BrowserVisualActionKind::Click,
-                        )
-                        .await;
-                }
+            if let Ok((x, y)) = ref_point(conn, cdp, backend).await {
+                self.engine
+                    .visualize_browser_action(
+                        &session,
+                        &validated,
+                        cdp,
+                        x,
+                        y,
+                        BrowserVisualActionKind::Click,
+                    )
+                    .await;
             }
             let before =
                 read_dom_click_state(conn, cdp, &object_id, DOM_CLICK_BASELINE_DEADLINE).await;
@@ -1505,44 +1490,12 @@ impl Tool for BrowserClickTool {
         }
 
         // Trusted route: resolve a click point, then Input.dispatchMouseEvent.
+        // A ref's point must hit-test to the ref, or the event lands elsewhere.
         let (x, y) = match (backend_node_id, coords) {
-            (Some(backend), _) => {
-                // Best effort scroll-into-view; ignore failure (older Chromium).
-                let _ = conn
-                    .call(
-                        Some(cdp),
-                        "DOM.scrollIntoViewIfNeeded",
-                        json!({ "backendNodeId": backend }),
-                    )
-                    .await;
-                let box_model = match conn
-                    .call(
-                        Some(cdp),
-                        "DOM.getBoxModel",
-                        json!({ "backendNodeId": backend }),
-                    )
-                    .await
-                {
-                    Ok(v) => v,
-                    Err(_) => {
-                        return BrowserRefusal::new(
-                            BrowserRefusalCode::BrowserRefStale,
-                            "the ref's node has no layout box — it left the DOM or is hidden",
-                        )
-                        .to_tool_result()
-                    }
-                };
-                match quad_center(&box_model) {
-                    Some(pt) => pt,
-                    None => {
-                        return BrowserRefusal::new(
-                            BrowserRefusalCode::BrowserRefStale,
-                            "the ref's node returned an unusable layout box",
-                        )
-                        .to_tool_result()
-                    }
-                }
-            }
+            (Some(backend), _) => match trusted_ref_point(conn, cdp, backend).await {
+                Ok(point) => point,
+                Err(refusal) => return refusal.to_tool_result(),
+            },
             (None, Some(pt)) => pt,
             (None, None) => unreachable!("validated above"),
         };
@@ -1706,21 +1659,6 @@ fn dialog_block(dialog: &super::cdp_ws::CdpDialogState) -> Value {
         "dialog_id": dialog_capability_id(dialog.generation),
         "resolvable": !dialog.detached,
     })
-}
-
-/// Center of the content quad from a `DOM.getBoxModel` result.
-fn quad_center(box_model: &Value) -> Option<(f64, f64)> {
-    let quad = box_model.get("model")?.get("content")?.as_array()?;
-    if quad.len() < 8 {
-        return None;
-    }
-    let nums: Vec<f64> = quad.iter().filter_map(Value::as_f64).collect();
-    if nums.len() < 8 {
-        return None;
-    }
-    let xs = [nums[0], nums[2], nums[4], nums[6]];
-    let ys = [nums[1], nums[3], nums[5], nums[7]];
-    Some((xs.iter().sum::<f64>() / 4.0, ys.iter().sum::<f64>() / 4.0))
 }
 
 /// Synthetic click for `input_route:"dom_event"`, evaluated ON the ref's node.
@@ -2146,33 +2084,17 @@ impl Tool for BrowserTypeTool {
 
         // Give the recording a visual target before text delivery. Keep this
         // best-effort: editability/input semantics never depend on the overlay.
-        let _ = conn
-            .call(
-                Some(cdp),
-                "DOM.scrollIntoViewIfNeeded",
-                json!({ "backendNodeId": entry.backend_node_id }),
-            )
-            .await;
-        if let Ok(box_model) = conn
-            .call(
-                Some(cdp),
-                "DOM.getBoxModel",
-                json!({ "backendNodeId": entry.backend_node_id }),
-            )
-            .await
-        {
-            if let Some((x, y)) = quad_center(&box_model) {
-                self.engine
-                    .visualize_browser_action(
-                        &session,
-                        &validated,
-                        cdp,
-                        x,
-                        y,
-                        BrowserVisualActionKind::Type,
-                    )
-                    .await;
-            }
+        if let Ok((x, y)) = ref_point(conn, cdp, entry.backend_node_id).await {
+            self.engine
+                .visualize_browser_action(
+                    &session,
+                    &validated,
+                    cdp,
+                    x,
+                    y,
+                    BrowserVisualActionKind::Type,
+                )
+                .await;
         }
 
         let requested_chars = text.chars().count();

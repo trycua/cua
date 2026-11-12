@@ -15,7 +15,9 @@ sys.path.insert(0, str(HERE / "tools" / "raw_linux"))
 import rawlint  # noqa: E402
 import runner  # noqa: E402
 
-ESC = 'raw.escalate_foreground("the toolbar only appears on a real hover")\n'
+def granted(source: str) -> "rawlint.Report":
+    """Lint as on a task whose definition grants foreground (MB-09/10/11)."""
+    return rawlint.lint(source, granted=True)
 
 
 def rules(source: str) -> list[tuple[str, str]]:
@@ -23,8 +25,8 @@ def rules(source: str) -> list[tuple[str, str]]:
 
 
 class RawLintTest(unittest.TestCase):
-    def assertBlocked(self, source: str, rule: str) -> None:
-        report = rawlint.lint(source)
+    def assertBlocked(self, source: str, rule: str, grant: bool = False) -> None:
+        report = rawlint.lint(source, granted=grant)
         self.assertFalse(report.ok, source)
         self.assertIn(rule, {f.rule for f in report.blocked}, source)
         text = report.render()
@@ -41,7 +43,7 @@ class RawLintTest(unittest.TestCase):
         )
         self.assertEqual(rules(src), [])
 
-    def test_pointer_focus_and_key_theft_block_without_escalation(self):
+    def test_pointer_focus_and_key_theft_block_without_the_tasks_grant(self):
         cases = {
             "raw.xtst.XTestFakeMotionEvent(raw.dpy, -1, 5, 5, 0)": "BG1",
             "raw.xtst.XTestFakeButtonEvent(raw.dpy, 1, 1, 0)": "BG1",
@@ -63,17 +65,43 @@ class RawLintTest(unittest.TestCase):
             with self.subTest(src=src):
                 self.assertBlocked(src + "\nreturn raw.pointer()", rule)
 
-    def test_escalation_admits_pointer_focus_and_keys_but_never_grabs(self):
-        report = rawlint.lint(ESC + 'raw.xdotool("mousemove", 5, 5)\nreturn raw.pointer()')
+    def test_the_tasks_grant_admits_pointer_focus_and_keys_but_never_grabs(self):
+        report = granted('raw.xdotool("mousemove", 5, 5)\nreturn raw.pointer()')
         self.assertTrue(report.ok)
-        self.assertEqual(report.escalation_reason, "the toolbar only appears on a real hover")
-        self.assertIn("FOREGROUND (declared)", report.render())
-        self.assertBlocked(ESC + "raw.x11.XGrabKeyboard(raw.dpy, raw.root, 1, 1, 1, 0)", "BG4")
-        self.assertBlocked(ESC + "raw.x11.XGrabServer(raw.dpy)", "BG4")
+        self.assertIn("FOREGROUND (granted by the task)", report.render())
+        self.assertBlocked("raw.x11.XGrabKeyboard(raw.dpy, raw.root, 1, 1, 1, 0)", "BG4", grant=True)
+        self.assertBlocked("raw.x11.XGrabServer(raw.dpy)", "BG4", grant=True)
 
-    def test_escalation_needs_a_literal_reason(self):
-        self.assertBlocked("r = 'x'\nraw.escalate_foreground(r)\nraw.xdotool('click', 1)", "GUI2")
-        self.assertBlocked("raw.escalate_foreground('')\nraw.xdotool('click', 1)", "GUI2")
+    def test_the_script_cannot_grant_itself_foreground(self):
+        # the old self-declaration is gone: it is an unknown helper, and the pointer call stays blocked
+        src = 'raw.escalate_foreground("I need the pointer")\nraw.xdotool("click", 1)\nreturn raw.pointer()'
+        self.assertBlocked(src, "BG1")
+        self.assertIn("this task does not grant foreground", rawlint.lint(src).render())
+
+    def test_driver_fallback_background_calls_pass_and_foreground_needs_the_grant(self):
+        ok = 'r = raw.driver("click", {"pid": 1, "element_token": "s1:2"})\nreturn raw.driver("get_window_state", {"pid": 1})'
+        self.assertEqual(rules(ok), [])
+        for src in (
+            'raw.driver("click", {"pid": 1, "x": 5, "y": 5, "delivery_mode": "foreground"})',
+            'raw.driver("move_cursor", {"x": 5, "y": 5, "scope": "desktop"})',
+            'raw.driver("bring_to_front", {"pid": 1})',
+        ):
+            with self.subTest(src=src):
+                self.assertBlocked(src + "\nreturn raw.pointer()", "BG10")
+                self.assertTrue(granted(src + "\nreturn raw.pointer()").ok)
+        for tool in ("launch_app", "kill_app", "run_script", "clipboard_write", "set_config", "browser_navigate"):
+            with self.subTest(tool=tool):
+                self.assertBlocked(f'raw.driver("{tool}", {{}})\nreturn 1', "GUI1", grant=True)
+        # a driver action needs a read-back like a raw one
+        self.assertIn("VR1", {f.rule for f in rawlint.lint('raw.driver("click", {"pid": 1, "element_token": "s1:2"})').findings})
+
+    def test_driver_foreground_classifier(self):
+        self.assertIsNone(rawlint.driver_foreground("click", {"pid": 1}))
+        self.assertIsNone(rawlint.driver_foreground("type_text", {"delivery_mode": "background"}))
+        self.assertTrue(rawlint.driver_foreground("hotkey", {"keys": ["a"], "scope": "desktop"}))
+        self.assertTrue(rawlint.driver_foreground("drag", {"delivery_mode": "foreground"}))
+        self.assertTrue(rawlint.driver_foreground("bring_to_front", {}))
+        self.assertLessEqual(rawlint.DRIVER_FOREGROUND_TOOLS, rawlint.DRIVER_ACTIONS)
 
     def test_gui_only_side_doors_block(self):
         for src in (
@@ -116,7 +144,7 @@ class RawLintTest(unittest.TestCase):
             with self.subTest(src=src):
                 self.assertFalse(rawlint.lint(src).ok, src)
 
-    def test_xdotool_chains_need_an_escalation(self):
+    def test_xdotool_chains_need_the_grant(self):
         # a chain would let a later key command go to the focused window (verifier round 5)
         src = 'raw.xdotool("key", "--window", "123", "a", "key", "b")\nreturn raw.pointer()'
         self.assertBlocked(src, "BG9")
@@ -125,16 +153,15 @@ class RawLintTest(unittest.TestCase):
         both = 'raw.xdotool("key", "--window", "1", "a", "key", "--window", "1", "b")\nreturn raw.pointer()'
         self.assertEqual({f.rule for f in rawlint.lint(both).findings}, {"BG6", "BG9"})
         # the pilot's escalated drag: mousemove + mousedown in one call
-        drag = (
-            ESC + 'raw.xdotool("mousemove", "300", "797", "mousedown", "1")\nreturn raw.pointer()'
-        )
-        self.assertTrue(rawlint.lint(drag).ok)
+        drag = 'raw.xdotool("mousemove", "300", "797", "mousedown", "1")\nreturn raw.pointer()'
+        self.assertTrue(granted(drag).ok)
+        self.assertFalse(rawlint.lint(drag).ok)
         self.assertTrue(rawlint.lint('raw.xdotool("search", "--name", "BenchLab")').ok)
         # a chained click is an action: without a later read it gets the read-back warning
-        clicks = rawlint.lint(ESC + 'raw.xdotool("mousemove", "5", "5", "click", "1")')
+        clicks = granted('raw.xdotool("mousemove", "5", "5", "click", "1")')
         self.assertIn("VR1", {f.rule for f in clicks.findings})
         # an argument equal to a command name is read as a command (documented; errs toward refusing)
-        self.assertFalse(rawlint.lint(ESC + 'raw.xdotool("type", "--window", "5", "exec")').ok)
+        self.assertFalse(granted('raw.xdotool("type", "--window", "5", "exec")').ok)
         self.assertLessEqual(set(rawlint.XDOTOOL), rawlint.XDOTOOL_COMMANDS)
 
     def test_warnings_run(self):
@@ -155,7 +182,7 @@ class RawLintTest(unittest.TestCase):
     def test_every_rule_cites_a_source_and_an_alternative(self):
         for rule in rawlint.RULES.values():
             self.assertTrue(rule.source and rule.instead and rule.why, rule.id)
-            self.assertIn(rule.severity, {"block", "escalatable", "warn"})
+            self.assertIn(rule.severity, {"block", "granted", "warn"})
         used = (
             set(rawlint.NAMES.values())
             | set(rawlint.STRINGS.values())
@@ -202,12 +229,65 @@ class RunnerPolicyTest(unittest.TestCase):
             with self.assertRaises(AttributeError, msg=name):
                 runner._guarded_getattr(Box(), name)
 
-    def test_lint_refused_script_reports_no_escalation(self):
-        src = 'if False:\n    raw.escalate_foreground("never runs")\nraw.x11.XGrabServer(raw.dpy)'
-        out = runner.run(src, Path("/nonexistent"))
+    def test_runner_takes_the_grant_from_the_harness_environment_only(self):
+        src = 'raw.xdotool("click", 1)\nreturn raw.pointer()'
+        with mock.patch.dict("os.environ", {"RAW_GRANT": "0"}):
+            out = runner.run(src, Path("/nonexistent"))
         self.assertTrue(out["lint_blocked"])
-        self.assertIsNone(out["escalated"])
+        self.assertFalse(out["granted"])
+        with mock.patch.dict("os.environ", {"RAW_GRANT": "yes"}):  # only the exact value "1" grants
+            self.assertTrue(runner.run(src, Path("/nonexistent"))["lint_blocked"])
+        out = runner.run("raw.x11.XGrabServer(raw.dpy)", Path("/nonexistent"))
         self.assertIn("BG4", out["lint_text"])
+
+
+class TrialSettingsTest(unittest.TestCase):
+    """raw_mcp reads the harness's per-trial file; a missing file is the safe default."""
+
+    def test_missing_trial_file_grants_nothing(self):
+        import raw_mcp
+
+        with mock.patch.object(raw_mcp, "TRIAL", Path("/nonexistent/trial.json")):
+            settings = raw_mcp.trial()
+        self.assertFalse(settings["foreground_grant"])
+        self.assertEqual(raw_mcp.runner_env(settings)["RAW_GRANT"], "0")
+        self.assertNotIn("RAW_DRIVER_SOCKET", raw_mcp.runner_env(settings))
+
+    def test_grant_and_driver_reach_the_runner(self):
+        import raw_mcp
+
+        settings = {
+            "foreground_grant": True,
+            "coverage": {"LibreOffice Calc": "partial"},
+            "driver": {"socket": "/tmp/s.sock", "bin": "/x/cua-driver", "session": "raw-t"},
+        }
+        env = raw_mcp.runner_env(settings)
+        self.assertEqual(
+            (env["RAW_GRANT"], env["RAW_DRIVER_SOCKET"], env["RAW_DRIVER_BIN"], env["RAW_DRIVER_SESSION"]),
+            ("1", "/tmp/s.sock", "/x/cua-driver", "raw-t"),
+        )
+        self.assertEqual(raw_mcp.runner_env({"foreground_grant": "true"})["RAW_GRANT"], "0")
+        text = raw_mcp.description(settings)
+        self.assertIn("LibreOffice Calc: partial", text)
+        self.assertIn("This task grants foreground", text)
+        self.assertIn("does not grant foreground", raw_mcp.description({}))
+
+
+class TaskGrantTest(unittest.TestCase):
+    """The per-task grant in the task definitions: only the real hover/drag tasks get it."""
+
+    def test_grants(self):
+        import json
+
+        import bench_v2 as v2
+
+        specs = {p.parent.name: json.loads(p.read_text()) for p in (HERE / "probes").glob("*/task.json")}
+        got = {t for t in v2.V2_TASKS if v2.foreground_grant(specs[t])}
+        self.assertEqual(got, {"MB-09", "MB-10", "MB-11"})
+        for t in v2.V2_TASKS:
+            self.assertEqual(v2.foreground_grant_problems(t, specs[t]), [], t)
+        self.assertFalse(v2.foreground_grant({"foreground_grant": {"granted": "yes", "reason": "x"}}))
+        self.assertTrue(v2.foreground_grant_problems("X", {"foreground_grant": True}))
 
 
 if __name__ == "__main__":

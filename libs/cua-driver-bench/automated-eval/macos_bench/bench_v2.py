@@ -134,7 +134,31 @@ def validate_tasks(
             )
         if spec.get("status") == "dropped":
             problems.append(f"{tid}: dropped")
+        problems += foreground_grant_problems(tid, spec)
     return problems
+
+
+def foreground_grant(spec: dict[str, Any]) -> bool:
+    """The task's harness-side foreground grant (raw-linux arm): pointer, focus and key routes are allowed only
+    when the task definition grants them. A task without the field grants nothing."""
+    grant = spec.get("foreground_grant")
+    return isinstance(grant, dict) and grant.get("granted") is True
+
+
+def foreground_grant_problems(tid: str, spec: dict[str, Any]) -> list[str]:
+    grant = spec.get("foreground_grant")
+    if grant is None:
+        return []
+    if (
+        not isinstance(grant, dict)
+        or not isinstance(grant.get("granted"), bool)
+        or not str(grant.get("reason") or "").strip()
+    ):
+        return [f"{tid}: foreground_grant must be {{granted: bool, reason: text}}"]
+    labels = spec.get("atspi_coverage", {})
+    if not isinstance(labels, dict) or not all(v in {"full", "partial", "none"} for v in labels.values()):
+        return [f"{tid}: atspi_coverage labels must be full, partial or none"]
+    return []
 
 
 # ------------------------------------------------------------------ GUI-only

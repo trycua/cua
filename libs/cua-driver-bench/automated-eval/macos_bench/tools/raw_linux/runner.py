@@ -18,6 +18,7 @@ import builtins
 import contextlib
 import io
 import json
+import os
 import sys
 import traceback
 from pathlib import Path
@@ -87,7 +88,7 @@ def _guarded_import(
 def run(source: str, image_dir: Path) -> dict[str, Any]:
     out: dict[str, Any] = {"ok": False, "lint": [], "lint_blocked": False}
     try:
-        report = rawlint.lint(source)
+        report = rawlint.lint(source, granted=os.environ.get("RAW_GRANT") == "1")
     except SyntaxError as error:
         out["error"] = f"SyntaxError: {error.msg} (line {error.lineno})"
         return out
@@ -96,9 +97,7 @@ def run(source: str, image_dir: Path) -> dict[str, Any]:
         for f in report.findings
     ]
     out["lint_text"] = report.render()
-    out["escalated"] = (
-        None  # set only from what the script executes (raw.STATE), never from the source
-    )
+    out["granted"] = report.granted
     if not report.ok:
         out["lint_blocked"] = True
         out["error"] = "blocked by the background-use lint; nothing was run"
@@ -150,8 +149,8 @@ def run(source: str, image_dir: Path) -> dict[str, Any]:
         out["stdout"] = printed.getvalue()[-4000:]
         out["runtime_blocked"] = list(raw.STATE.runtime_blocked)
         out["runtime_warned"] = list(raw.STATE.runtime_warned)
-        # only an escalation the script actually executed counts; a declaration in dead code is not one
-        out["escalated"] = raw.STATE.escalated
+        out["driver_calls"] = list(raw.STATE.driver_calls)
+        out["raw_actions"] = dict(raw.STATE.raw_actions)
         out["images"] = [str(p) for p in raw.STATE.images]
     return out
 

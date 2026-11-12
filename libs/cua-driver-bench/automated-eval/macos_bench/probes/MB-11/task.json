@@ -15,5 +15,12 @@
     "--mode",
     "tooltip"
   ],
-  "coverage_caveat": "Codex computer-use API has no hover or pointer-move tool; report separately."
+  "coverage_caveat": "Codex computer-use API has no hover or pointer-move tool; report separately.",
+  "foreground_grant": {
+    "granted": true,
+    "reason": "a real hover: the tooltip only shows under the real pointer; libs/cua-driver/rust/crates/platform-linux/src/input/mod.rs:585-609 (no background pointer route on Xvfb); libs/cua-driver/rust/Skills/cua-driver/LINUX.md:26-31 (foreground only when authorized)"
+  },
+  "atspi_coverage": {
+    "BenchLab (GTK3; AT-SPI app name 'BenchLab')": "full"
+  }
 }

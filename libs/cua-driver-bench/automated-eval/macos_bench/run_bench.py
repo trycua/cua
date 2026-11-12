@@ -595,6 +595,26 @@ def real_capture_check(ctx: "Ctx", arm: str) -> tuple[str, str, str]:
         path, _ = ctx.mcp[arm]
         if source in ca.CUA_ARMS:
             ensure_agent_daemon(ctx, source)
+        elif source == ca.RAW_LINUX_ARM:
+            ensure_agent_daemon(ctx, ca.RAW_LINUX_FALLBACK)
+            fallback = ca.CUA_BUILDS[ca.RAW_LINUX_FALLBACK]
+            ca.RAW_LINUX_TRIAL.parent.mkdir(parents=True, exist_ok=True)
+            ca.RAW_LINUX_TRIAL.write_text(
+                json.dumps(
+                    {
+                        "trial_id": "preflight",
+                        "foreground_grant": False,
+                        "coverage": {},
+                        "driver": {
+                            "socket": fallback.socket,
+                            "bin": str(fallback.bin),
+                            "session": "raw-preflight",
+                        },
+                    }
+                )
+                + "\n",
+                "utf-8",
+            )
         if arm in cxn.ARMS:
             entry = cxn.server_entry(path, arm)
             command, args, env = entry["command"], entry["args"], entry["env"]
@@ -669,7 +689,12 @@ def real_capture_check(ctx: "Ctx", arm: str) -> tuple[str, str, str]:
                     raise RuntimeError("unexpected raw-linux tools/list")
                 result = call(
                     "run_script",
-                    {"script": "raw.screenshot()\nreturn len(raw.windows())", "timeout_ms": 60000},
+                    {
+                        # the capture, and one raw.driver round trip to the fallback daemon
+                        "script": "raw.screenshot()\nw = raw.driver('list_windows', {})\n"
+                        "return [len(raw.windows()), len(w.get('windows') or [])]",
+                        "timeout_ms": 60000,
+                    },
                 )
                 image = next(
                     (b for b in result.get("content") or [] if b.get("type") == "image"), None
@@ -976,6 +1001,14 @@ def resume_conflicts(ctx: Ctx) -> list[str]:
     return sorted(set(conflicts))
 
 
+# Cua Driver tools that act (raw.driver), for the fallback count; the rest are reads. Same set as tools/raw_linux/rawlint.
+DRIVER_ACTIONS = {
+    "click", "double_click", "right_click", "type_text", "set_value", "press_key", "hotkey", "scroll", "drag",
+    "invoke_menu", "move_cursor", "mouse_button_down", "mouse_drag", "mouse_button_up", "set_window_frame",
+    "bring_to_front",
+}
+
+
 def raw_linux_summary(log: Path, dest: Path) -> dict[str, Any]:
     """Move the raw-linux call log into the trial and count its background findings per call."""
     calls: list[dict[str, Any]] = []
@@ -987,24 +1020,47 @@ def raw_linux_summary(log: Path, dest: Path) -> dict[str, Any]:
             except ValueError:
                 continue
     rules: dict[str, int] = {}
+    blocked_rules: dict[str, int] = {}
+    raw_by_app: dict[str, int] = {}
+    driver = [d for c in calls for d in c.get("driver_calls") or []]
     for call in calls:
         for finding in call.get("lint") or []:
             rules[finding["rule"]] = rules.get(finding["rule"], 0) + 1
+            if call.get("lint_blocked") and finding.get("severity") in {"block", "granted"}:
+                blocked_rules[finding["rule"]] = blocked_rules.get(finding["rule"], 0) + 1
+        for app, n in (call.get("raw_actions") or {}).items():
+            raw_by_app[app] = raw_by_app.get(app, 0) + int(n)
+    actions = [d for d in driver if d.get("tool") in DRIVER_ACTIONS]
+    driver_by_pid: dict[str, dict[str, int]] = {}
+    for d in driver:
+        key = str(d.get("pid") or "none")
+        slot = driver_by_pid.setdefault(key, {"actions": 0, "reads": 0})
+        slot["actions" if d.get("tool") in DRIVER_ACTIONS else "reads"] += 1
     return {
         "calls": len(calls),
         "ok": sum(1 for c in calls if c.get("ok")),
+        "granted": any(c.get("granted") for c in calls),
         "lint_blocked": sum(1 for c in calls if c.get("lint_blocked")),
         "lint_rules": rules,
-        "escalated": sum(1 for c in calls if c.get("escalated") and not c.get("lint_blocked")),
+        "lint_blocked_rules": blocked_rules,
+        "foreground_used": sum(1 for c in calls if c.get("foreground_used")),
         "runtime_blocked": sum(len(c.get("runtime_blocked") or []) for c in calls),
-        # the runtime hook saw the pointer, focus, active window or stacking change in a script that did not
-        # declare a foreground escalation: a violation the lint missed
-        "runtime_caught": sum(
-            1 for c in calls if c.get("watch_changed") and not c.get("escalated")
-        ),
-        "runtime_changed_escalated": sum(
-            1 for c in calls if c.get("watch_changed") and c.get("escalated")
-        ),
+        # the runtime hook saw the pointer, focus, active window or stacking change during a script on a task that
+        # does not grant foreground: an app's own change or a violation the lint missed (the row cannot tell)
+        "runtime_caught": sum(1 for c in calls if c.get("watch_changed") and not c.get("granted")),
+        "runtime_changed_granted": sum(1 for c in calls if c.get("watch_changed") and c.get("granted")),
+        "raw_actions": sum(raw_by_app.values()),
+        "raw_actions_by_app": raw_by_app,
+        "driver_calls": len(driver),
+        "driver_actions": len(actions),
+        "driver_reads": len(driver) - len(actions),
+        "driver_failed": sum(1 for d in driver if not d.get("ok")),
+        "driver_foreground": sum(1 for d in driver if d.get("foreground")),
+        "driver_tools": {t: sum(1 for d in driver if d.get("tool") == t) for t in sorted({str(d.get("tool")) for d in driver})},
+        "driver_by_pid": driver_by_pid,
+        "fallback": bool(actions),
+        "raw_tool_s": round(sum(float(c.get("elapsed_s") or 0) for c in calls), 2),
+        "driver_tool_s": round(sum(float(d.get("elapsed_s") or 0) for d in driver), 2),
     }
 
 
@@ -1024,12 +1080,11 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
     sentinel_front = True if bench_v2 else bool(spec.get("sentinel_frontmost", True))
     condition = getattr(args, "condition", "foreground") if bench_v2 else None  # Amendment 15
     # Per-build Cua Driver identity (Amendment 3); arm B rows keep the 0.34.0 values of the recorder build.
-    build_versions = (
-        {}
-        if SOURCE_ARM.get(arm, arm) == ca.RAW_LINUX_ARM  # no Cua Driver in this arm
-        else (ctx.versions.get("builds") or {}).get(SOURCE_ARM.get(arm, arm))
-        or (ctx.versions.get("builds") or {}).get("cc-cua-driver", {})
-    )
+    build_versions = (ctx.versions.get("builds") or {}).get(
+        ca.RAW_LINUX_FALLBACK  # raw-linux's fallback driver is the main build
+        if SOURCE_ARM.get(arm, arm) == ca.RAW_LINUX_ARM
+        else SOURCE_ARM.get(arm, arm)
+    ) or (ctx.versions.get("builds") or {}).get("cc-cua-driver", {})
     trial_dir = ctx.run_dir / "trials" / entry["trial_id"] / f"a{attempt}"
     shutil.rmtree(trial_dir, ignore_errors=True)
     artifacts = trial_dir / "artifacts"
@@ -1135,7 +1190,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         ):  # A23: Cua Driver under Codex uses that build's daemon
             ensure_agent_daemon(ctx, SOURCE_ARM[arm])
         elif SOURCE_ARM.get(arm) == ca.RAW_LINUX_ARM:
-            stop_agent_daemons(ctx)  # no Cua Driver (and no driver overlay) during a raw-linux trial
+            ensure_agent_daemon(ctx, ca.RAW_LINUX_FALLBACK)  # raw.driver's fallback: the main build's daemon
         if getattr(args, "park_pointer", False):
             row["pointer_parked"] = (
                 None  # set even when park_pointer raises, so the row shows the attempt
@@ -1199,9 +1254,23 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         (artifacts / "prompt.txt").write_text(prompt, "utf-8")
         (artifacts / "argv.json").write_text(json.dumps(argv, indent=2) + "\n", "utf-8")
         raw_arm = SOURCE_ARM.get(arm, arm) == ca.RAW_LINUX_ARM
+        row["foreground_grant"] = v2.foreground_grant(spec)  # every arm: the task's grant, for comparison
         if raw_arm:
             ca.RAW_LINUX_LOG.parent.mkdir(parents=True, exist_ok=True)
             ca.RAW_LINUX_LOG.unlink(missing_ok=True)
+            fallback = ca.CUA_BUILDS[ca.RAW_LINUX_FALLBACK]
+            settings = {
+                "trial_id": entry["trial_id"],
+                "foreground_grant": v2.foreground_grant(spec),
+                "coverage": spec.get("atspi_coverage") or {},
+                "driver": {
+                    "socket": fallback.socket,
+                    "bin": str(fallback.bin),
+                    "session": f"raw-{entry['trial_id']}-a{attempt}",
+                },
+            }
+            ca.RAW_LINUX_TRIAL.write_text(json.dumps(settings) + "\n", "utf-8")
+            shutil.copy(ca.RAW_LINUX_TRIAL, artifacts / "raw-trial.json")
         recording = ctx.recorder.start(trial_dir / "rec") if ctx.recorder else False
         row["recording_started"] = bool(recording)
         sentinel.toggle_armed()
@@ -2682,8 +2751,9 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
     for arm in [a for a in ctx.arm_names if a in pia.ARMS] if with_models and not offline else []:
         try:
             source = pia.SOURCE_ARM[arm]
-            if source in ca.CUA_BUILDS:
-                ensure_agent_daemon(ctx, source)
+            ensure_agent_daemon(
+                ctx, ca.RAW_LINUX_FALLBACK if source == ca.RAW_LINUX_ARM else source
+            )
             status, detail = pia.init_check(
                 arm,
                 ctx.mcp[arm][0],
@@ -3018,6 +3088,10 @@ def setup_arms(ctx: Ctx) -> None:
             if arm in ctx.arm_names
             or arm == "cc-cua-driver"
             or arm in {SOURCE_ARM.get(a) for a in ctx.arm_names}
+            or (
+                arm == ca.RAW_LINUX_FALLBACK
+                and ca.RAW_LINUX_ARM in {SOURCE_ARM.get(a) for a in ctx.arm_names}
+            )
         },
         pins=pins,
         system_prompt_sha256=hashlib.sha256(ca.SYSTEM_PROMPT.encode()).hexdigest(),

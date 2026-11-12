@@ -6,15 +6,18 @@
 What a script gets (all through the global ``raw``):
 
 * ``raw.Atspi``: the GObject-introspection AT-SPI 2 module (``gi.repository.Atspi``), unmodified except that
-  ``generate_mouse_event`` / ``generate_keyboard_event`` refuse unless the script declared a foreground escalation,
-  and ``grab_focus`` is logged.
+  ``generate_mouse_event`` / ``generate_keyboard_event`` refuse unless the task grants foreground, and
+  ``grab_focus`` is logged. Semantic actions (Action, EditableText, Value, Selection) are counted per app.
 * ``raw.x11``, ``raw.xtst``, ``raw.xi``: libX11, libXtst and libXi through ctypes, with ``raw.dpy`` an open Display.
-  Pointer, focus, raise and key functions refuse unless escalated; grabs always refuse.
+  Pointer, focus, raise and key functions refuse unless the task grants foreground; grabs always refuse.
 * ``raw.xdotool(*args)``: the xdotool CLI, subcommands checked against the same rules.
 * Helpers (read-back only, no input): ``raw.windows()``, ``raw.app(name)``, ``raw.find(...)``, ``raw.dump(...)``,
   ``raw.screenshot(...)``, ``raw.pointer()``, ``raw.active_window()``, ``raw.sleep(s)``.
-* ``raw.escalate_foreground(reason)``: the script's explicit foreground request (the lint reads it statically; this
-  call only records it).
+* ``raw.driver(tool, args)``: one Cua Driver tool call (the fallback for apps AT-SPI covers only in part), through
+  the trial's driver daemon and session. Foreground delivery needs the task's grant, like the raw routes.
+
+Foreground is granted by the harness per task (RAW_GRANT=1 in the runner's environment, from the task definition),
+never by the script.
 
 The runtime hook (``Watch``) samples the real pointer, the core focus, the active window and the top of the
 stacking order every 50 ms while the script runs, and reports every change. It does not undo anything.
@@ -24,6 +27,8 @@ from __future__ import annotations
 
 import ctypes
 import ctypes.util
+import json
+import os
 import shutil
 import subprocess
 import threading
@@ -289,7 +294,9 @@ class _X:
 
 class State:
     def __init__(self) -> None:
-        self.escalated: str | None = None
+        self.granted = os.environ.get("RAW_GRANT") == "1"
+        self.driver_calls: list[dict[str, Any]] = []
+        self.raw_actions: dict[str, int] = {}  # semantic AT-SPI actions per app name
         self.runtime_blocked: list[str] = []
         self.runtime_warned: list[str] = []
         self.images: list[Path] = []
@@ -310,9 +317,9 @@ class State:
         if rule_id is None:
             return
         rule = rawlint.RULES[rule_id]
-        if rule.severity == "block" or (rule.severity == "escalatable" and not self.escalated):
+        if rule.severity == "block" or (rule.severity == "granted" and not self.granted):
             self.refuse(rule_id, what)
-        if rule.severity == "warn" or (rule.severity == "escalatable" and self.escalated):
+        if rule.severity == "warn" or (rule.severity == "granted" and self.granted):
             with self.lock:
                 self.runtime_warned.append(f"{rule.id}: {what}")
 
@@ -376,6 +383,27 @@ def _guard_gi() -> None:
             return _real(self)
 
         cls.grab_focus = grab
+    for cls, names in (
+        (Atspi.Action, ("do_action",)),
+        (Atspi.EditableText, ("set_text_contents", "insert_text", "delete_text", "paste_text")),
+        (Atspi.Value, ("set_current_value",)),
+        (Atspi.Selection, ("select_child", "deselect_child", "select_all")),
+    ):
+        for name in names:
+            real = getattr(cls, name, None)
+            if real is None:
+                continue
+
+            def counted(acc: Any, *args: Any, _real: Any = real, **kwargs: Any) -> Any:
+                try:
+                    app = acc.get_application().get_name() or "?"
+                except Exception:  # noqa: BLE001
+                    app = "?"
+                with STATE.lock:
+                    STATE.raw_actions[app] = STATE.raw_actions.get(app, 0) + 1
+                return _real(acc, *args, **kwargs)
+
+            setattr(cls, name, counted)
 
 
 # ------------------------------------------------------------------ the runtime hook
@@ -475,6 +503,11 @@ class Watch:
 # ------------------------------------------------------------------ the script's API
 
 
+# A spreadsheet's table reports every cell of the sheet as a child (LibreOffice: over a billion); the helpers walk at
+# most this many children of one node, so a tree read ends. A script's own loop is the script's business.
+MAX_CHILDREN = 1000
+
+
 class Raw:
     Atspi = Atspi
     Blocked = Blocked
@@ -488,12 +521,55 @@ class Raw:
         self._x = _X()
         self._xdotool = shutil.which("xdotool") or "/usr/bin/xdotool"
 
-    # declarations
-    def escalate_foreground(self, reason: str) -> None:
-        """Declare that this script needs the real pointer, focus or keyboard (the lint reads the literal)."""
-        if not str(reason).strip():
-            raise Blocked("escalate_foreground needs a reason")
-        STATE.escalated = str(reason).strip()
+    # the Cua Driver fallback
+    def driver(self, tool: str, args: dict | None = None, image: bool = False) -> Any:
+        """Call one Cua Driver tool (GUI reads and actions only) and return its JSON result. Screenshots in the
+        result are dropped unless ``image=True``, which returns them to you as images."""
+        tool = str(tool)
+        args = dict(args or {})
+        if tool not in rawlint.DRIVER_TOOLS:
+            STATE.refuse("GUI1", f"raw.driver({tool!r})")
+        why = rawlint.driver_foreground(tool, args)
+        if why:
+            STATE.check("BG10", f"raw.driver: {why}")
+        socket, session, binary = (os.environ.get(k) for k in ("RAW_DRIVER_SOCKET", "RAW_DRIVER_SESSION", "RAW_DRIVER_BIN"))
+        if not (socket and binary):
+            raise RuntimeError("no Cua Driver is configured for this trial")
+        args["session"] = session or "raw-linux"
+        entry: dict[str, Any] = {"tool": tool, "pid": args.get("pid"), "foreground": bool(why)}
+        started = time.monotonic()
+        try:
+            done = subprocess.run(
+                [binary, "call", "--socket", socket, tool, json.dumps(args)],
+                capture_output=True,
+                text=True,
+                timeout=90,
+            )
+        finally:
+            entry["elapsed_s"] = round(time.monotonic() - started, 3)
+        text = done.stdout.strip()
+        try:
+            result: Any = json.loads(text) if text else {}
+        except ValueError:
+            result = {"text": text[-4000:]}
+        entry["ok"] = done.returncode == 0
+        if isinstance(result, dict):
+            refusal = result.get("refusal") or {}
+            entry["refusal"] = refusal.get("code") if isinstance(refusal, dict) else None
+            for key in [k for k in result if k.endswith("_png_b64") or k.endswith("image_b64")]:
+                data = result.pop(key)
+                if image and STATE.image_dir is not None and isinstance(data, str):
+                    import base64
+
+                    path = STATE.image_dir / f"shot-{len(STATE.images) + 1}.png"
+                    path.write_bytes(base64.b64decode(data))
+                    STATE.images.append(path)
+                    result[key.replace("_b64", "")] = f"returned as image {len(STATE.images)}"
+        with STATE.lock:
+            STATE.driver_calls.append(entry)
+        if done.returncode != 0:
+            raise RuntimeError(f"cua-driver {tool} failed: {(done.stderr.strip() or text)[-1500:]}")
+        return result
 
     # reads
     def sleep(self, seconds: float) -> None:
@@ -565,7 +641,9 @@ class Raw:
                 count = node.get_child_count()
             except Exception:  # noqa: BLE001
                 return
-            for i in range(count):
+            for i in range(min(count, MAX_CHILDREN)):
+                if len(out) >= limit:
+                    return
                 walk(node.get_child_at_index(i), depth + 1)
 
         walk(root, 0)
@@ -632,7 +710,11 @@ class Raw:
                 count = node.get_child_count()
             except Exception:  # noqa: BLE001
                 return
-            for i in range(count):
+            if count > MAX_CHILDREN:
+                lines.append("  " * (level + 1) + f"... {count} children (only the first {MAX_CHILDREN} are walked)")
+            for i in range(min(count, MAX_CHILDREN)):
+                if len(lines) >= limit:
+                    return
                 walk(node.get_child_at_index(i), level + 1)
 
         walk(root, 0)

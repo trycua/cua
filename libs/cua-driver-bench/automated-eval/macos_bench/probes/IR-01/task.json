@@ -17,5 +17,12 @@
     "irmodal"
   ],
   "separate_run": true,
-  "coverage_caveat": "Interruptions are simulated inside BenchLab (sheets, a non-activating panel, a WKWebView overlay); none is a real system prompt. Amendment 14."
+  "coverage_caveat": "Interruptions are simulated inside BenchLab (sheets, a non-activating panel, a WKWebView overlay); none is a real system prompt. Amendment 14.",
+  "foreground_grant": {
+    "granted": false,
+    "reason": "a background route exists (AT-SPI actions or the driver's background delivery)"
+  },
+  "atspi_coverage": {
+    "BenchLab (GTK3; AT-SPI app name 'BenchLab')": "full"
+  }
 }

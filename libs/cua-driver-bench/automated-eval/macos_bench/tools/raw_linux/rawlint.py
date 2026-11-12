@@ -11,9 +11,10 @@ background-safe alternative.
 Severity:
 * ``block``: the script does not run. Used for pointer, focus and keyboard theft (the background contract), grabs,
   and the bench's GUI-only side doors.
-* ``escalatable``: blocked unless the script declares ``raw.escalate_foreground("<reason>")``. The driver's own
-  foreground route is an explicit, authorized escalation (``delivery_mode:"foreground"``), never automatic; the
-  declaration is its equivalent here and is reported in every result.
+* ``granted``: blocked unless the harness granted foreground to this task (the task definition's
+  ``foreground_grant``). The driver's own foreground route is an explicit, authorized escalation
+  (``delivery_mode:"foreground"``), never automatic; the grant is that authorization, given per task by the harness,
+  never by the model.
 * ``warn``: the script runs; the finding is returned with the result.
 
 The lint cannot prove a script safe (an app may move focus by itself, a value may be computed at run time), so the
@@ -41,7 +42,7 @@ CONTRACT = "libs/cua-driver/docs/action-result-contract.md"
 class Rule:
     id: str
     title: str
-    severity: str  # block | escalatable | warn
+    severity: str  # block | granted | warn
     why: str
     source: str
     instead: str
@@ -53,32 +54,31 @@ RULES: dict[str, Rule] = {
         Rule(
             "BG1",
             "real pointer motion or button",
-            "escalatable",
+            "granted",
             "XTest, XWarpPointer, xdotool mousemove/click and Atspi.generate_mouse_event move or press the user's "
             "real (core) pointer. Background input must not move it; only an explicit desktop/foreground request does.",
             f"{INPUT_RS}:4-15 (no XTest fallback: it delivers to the focused window); "
             f"{DRV}/crates/platform-linux/src/tools/move_cursor.rs:45 (only scope=desktop moves the real pointer); "
             f"{LINUX_MD}:26-31 (foreground is an authorized escalation, never automatic)",
-            "Use the element's AT-SPI Action (Atspi.Action.do_action(acc, i)), EditableText or Value interface. "
-            "If the task needs a real hover or drag and no accessible route exists, call "
-            'raw.escalate_foreground("<why the background route is unavailable>") first.',
+            "Use the element's AT-SPI Action (Atspi.Action.do_action(acc, i)), EditableText or Value interface, or a "
+            "background raw.driver action. A real hover or drag is allowed only on a task that grants foreground.",
         ),
         Rule(
             "BG2",
             "focus, raise or activate",
-            "escalatable",
+            "granted",
             "XSetInputFocus, XRaiseWindow/XMapRaised, a _NET_ACTIVE_WINDOW or _NET_RESTACK_WINDOW request, wmctrl -a "
             "and xdotool windowactivate/windowfocus/windowraise take focus from the user's window or raise over it.",
             f"{LINUX_MD}:19-20 (background input must not activate or raise the target); "
             f"{DRV}/crates/platform-linux/src/input/focus_guard.rs:4-12 (core focus, active window and top of "
             "stacking must be left as found)",
             "Address the element directly through AT-SPI (do_action, set_text_contents, set_current_value); these "
-            "need no focus. Activate only after raw.escalate_foreground(...) when no background route exists.",
+            "need no focus. Activation is allowed only on a task that grants foreground.",
         ),
         Rule(
             "BG3",
             "keys to whatever is focused",
-            "escalatable",
+            "granted",
             "XTestFakeKeyEvent, Atspi.generate_keyboard_event and xdotool key/type/keydown/keyup without --window "
             "deliver to the focused window, which is the user's, not the target.",
             f"{INPUT_RS}:4-15; {LINUX_MD}:29-31 (if activation cannot be proven, refuse instead of sending keys to "
@@ -99,7 +99,7 @@ RULES: dict[str, Rule] = {
         Rule(
             "BG5",
             "Wayland or portal input to the compositor focus",
-            "escalatable",
+            "granted",
             "libei/RemoteDesktop portal input, ydotool and wtype inject into the compositor's focus; there is no "
             "per-window background target on Wayland.",
             f"{DRV}/crates/platform-linux/src/input/delivery.rs:15-23",
@@ -139,8 +139,8 @@ RULES: dict[str, Rule] = {
             "Bench v2 is GUI-only: no shell, process, file, network or library loading from a computer-use script.",
             "libs/cua-driver-bench/automated-eval/macos_bench/bench_v2.py:164-187 (EXEC_PATTERNS, the GUI-only "
             "guard)",
-            "Use only the raw runtime: raw.Atspi, raw.X11/raw.Xtst handles, raw.xdotool(...), raw.windows(), "
-            "raw.screenshot().",
+            "Use only the raw runtime: raw.Atspi, raw.x11/raw.xtst handles, raw.xdotool(...), raw.driver(...) "
+            "with a GUI tool, raw.windows(), raw.screenshot().",
         ),
         Rule(
             "GUI2",
@@ -154,11 +154,21 @@ RULES: dict[str, Rule] = {
         Rule(
             "BG9",
             "chained xdotool commands",
-            "escalatable",
+            "granted",
             "xdotool runs every command in a chain; a later key or pointer command does not get the first "
             "command's --window and goes to the focused window or the real pointer.",
             f"{INPUT_RS}:4-15 (keys go to the addressed window, never to whatever is focused)",
-            "Make one raw.xdotool call per command. Chains are allowed after raw.escalate_foreground(...).",
+            "Make one raw.xdotool call per command. Chains are allowed only on a task that grants foreground.",
+        ),
+        Rule(
+            "BG10",
+            "Cua Driver foreground delivery",
+            "granted",
+            "raw.driver with delivery_mode \"foreground\", scope \"desktop\" or bring_to_front activates the target, "
+            "moves the real pointer or sends to the focused application.",
+            f"{DRV}/crates/platform-linux/src/input/delivery.rs:4-23 (background is the default, foreground an "
+            f"explicit choice); {LINUX_MD}:26-31",
+            "Use the driver's default background delivery, or an AT-SPI route.",
         ),
         Rule(
             "VR1",
@@ -234,8 +244,8 @@ STRINGS: dict[str, str] = {
     "wtype": "BG5",
     "libei": "BG5",
 }
-# Every xdotool subcommand. raw.xdotool runs one command per call: a second subcommand in the arguments (xdotool's
-# command chaining) is refused, so each command's own --window decides its delivery.
+# Every xdotool subcommand. A second subcommand in one raw.xdotool call (xdotool's command chaining) is BG9, so each
+# command's own --window decides its delivery.
 XDOTOOL_COMMANDS = set(
     "click getactivewindow getmouselocation getwindowfocus getwindowname getwindowpid getwindowgeometry key keydown "
     "keyup mousedown mousemove mousemove_relative mouseup search selectwindow set_desktop set_desktop_for_window "
@@ -270,6 +280,53 @@ IMPORT_OK = {
     "enum",
     "raw",
 }
+# Cua Driver tools a script may call through raw.driver (the fallback for apps AT-SPI covers only in part). GUI reads
+# and actions only: no launch/kill, shell, files, clipboard writes, config, recording, scripts or browser CDP.
+DRIVER_READS = {
+    "list_windows",
+    "list_apps",
+    "get_window_state",
+    "get_desktop_state",
+    "get_screen_size",
+    "get_cursor_position",
+    "zoom",
+    "parse_visual_regions",
+    "clipboard_read",
+    "verify_state",
+}
+DRIVER_ACTIONS = {
+    "click",
+    "double_click",
+    "right_click",
+    "type_text",
+    "set_value",
+    "press_key",
+    "hotkey",
+    "scroll",
+    "drag",
+    "invoke_menu",
+    "move_cursor",
+    "mouse_button_down",
+    "mouse_drag",
+    "mouse_button_up",
+    "set_window_frame",
+    "bring_to_front",
+}
+DRIVER_TOOLS = DRIVER_READS | DRIVER_ACTIONS
+DRIVER_FOREGROUND_TOOLS = {"bring_to_front"}
+
+
+def driver_foreground(tool: str, args: dict) -> str | None:
+    """Why this driver call is foreground delivery (needs the task's grant), or None for a background call."""
+    if tool in DRIVER_FOREGROUND_TOOLS:
+        return f"{tool} activates the window"
+    if args.get("delivery_mode") == "foreground":
+        return f'{tool} with delivery_mode "foreground"'
+    if args.get("scope") == "desktop":
+        return f'{tool} with scope "desktop"'
+    return None
+
+
 # Names that reach past the runtime: other GObject modules (GLib/Gio spawn processes, Gdk warps the pointer), the
 # CPython C API through ctypes, and the gi loader itself. Scripts get Atspi as a global and need none of these.
 ESCAPES = {
@@ -352,11 +409,11 @@ class Finding:
     def severity(self) -> str:
         return RULES[self.rule].severity
 
-    def render(self, escalated: bool) -> str:
+    def render(self, granted: bool) -> str:
         r = RULES[self.rule]
         tag = {
             "block": "BLOCKED",
-            "escalatable": "FOREGROUND (declared)" if escalated else "BLOCKED",
+            "granted": "FOREGROUND (granted by the task)" if granted else "BLOCKED (this task does not grant foreground)",
             "warn": "WARNING",
         }[r.severity]
         return (
@@ -368,15 +425,14 @@ class Finding:
 @dataclass
 class Report:
     findings: list[Finding]
-    escalated: bool
-    escalation_reason: str | None
+    granted: bool  # the harness's per-task foreground grant, not anything the script says
 
     @property
     def blocked(self) -> list[Finding]:
         return [
             f
             for f in self.findings
-            if f.severity == "block" or (f.severity == "escalatable" and not self.escalated)
+            if f.severity == "block" or (f.severity == "granted" and not self.granted)
         ]
 
     @property
@@ -391,10 +447,8 @@ class Report:
             if not self.ok
             else "Background-use lint: the script ran with these findings."
         )
-        if self.escalated:
-            head += f' Foreground escalation declared: "{self.escalation_reason}".'
         body = "\n".join(
-            f.render(self.escalated) for f in sorted(self.findings, key=lambda f: f.line)
+            f.render(self.granted) for f in sorted(self.findings, key=lambda f: f.line)
         )
         return f"{head}\n{body}"
 
@@ -438,8 +492,6 @@ def _pos(node: ast.AST) -> tuple[int, int]:
 class _Walker(ast.NodeVisitor):
     def __init__(self) -> None:
         self.findings: list[Finding] = []
-        self.escalation: str | None = None
-        self.escalated = False
         self.last_action: tuple[int, int] = (0, 0)
         self.last_read: tuple[int, int] = (0, 0)
         self.seen: set[tuple[str, int]] = set()
@@ -536,13 +588,6 @@ class _Walker(ast.NodeVisitor):
             and last != "getattr"
         ):
             self.add("GUI2", node, f"{last}")
-        if last == "escalate_foreground":
-            reason = _const_str(node.args[0]) if node.args else None
-            if reason and reason.strip():
-                self.escalated = True
-                self.escalation = reason.strip()
-            else:
-                self.add("GUI2", node, "raw.escalate_foreground needs a literal reason string")
         if last == "getattr" and len(node.args) >= 2:
             attr = _const_str(node.args[1])
             if attr is None:
@@ -553,7 +598,31 @@ class _Walker(ast.NodeVisitor):
                     self.add("GUI2", node, f"getattr {attr!r}")
         if last == "xdotool":
             self.xdotool(node)
+        if func == "raw.driver":
+            self.driver(node)
         self.generic_visit(node)
+
+    def driver(self, node: ast.Call) -> None:
+        """raw.driver(tool, {args}): the literal parts; the runtime checks the call again with its real values."""
+        tool = _const_str(node.args[0]) if node.args else None
+        if tool is None:
+            return  # computed tool name: the runtime checks it
+        if tool not in DRIVER_TOOLS:
+            self.add("GUI1", node, f"raw.driver({tool!r}) is not a GUI tool offered to scripts")
+            return
+        args: dict = {}
+        if len(node.args) > 1 and isinstance(node.args[1], ast.Dict):
+            for k, v in zip(node.args[1].keys, node.args[1].values):
+                key, value = (_const_str(k) if k is not None else None), _const_str(v)
+                if key and value is not None:
+                    args[key] = value
+        why = driver_foreground(tool, args)
+        if why:
+            self.add("BG10", node, f"raw.driver: {why}")
+        if tool in DRIVER_ACTIONS:
+            self.last_action = max(self.last_action, _pos(node))
+        else:
+            self.last_read = max(self.last_read, _pos(node))
 
     def xdotool(self, node: ast.Call) -> None:
         args = [_const_str(a) for a in node.args]
@@ -580,8 +649,9 @@ class _Walker(ast.NodeVisitor):
             self.last_action = max(self.last_action, _pos(node))
 
 
-def lint(source: str) -> Report:
-    """Findings for one script. A syntax error is returned as the caller's problem, not a finding."""
+def lint(source: str, granted: bool = False) -> Report:
+    """Findings for one script on a task with or without the harness's foreground grant. A syntax error is returned
+    as the caller's problem, not a finding."""
     tree = ast.parse(source, "<script>", "exec")
     walker = _Walker()
     walker.visit(tree)
@@ -591,7 +661,7 @@ def lint(source: str) -> Report:
             ast.Constant(value=None, lineno=walker.last_action[0]),
             "no read after the last action on this line",
         )
-    return Report(walker.findings, walker.escalated, walker.escalation)
+    return Report(walker.findings, granted)
 
 
 def rules_markdown() -> str:

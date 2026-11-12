@@ -14,5 +14,14 @@
   "sentinel_frontmost": false,
   "timeout_s": 360,
   "max_turns": 45,
-  "separate_run": true
+  "separate_run": true,
+  "foreground_grant": {
+    "granted": false,
+    "reason": "a background route exists (AT-SPI actions or the driver's background delivery)"
+  },
+  "atspi_coverage": {
+    "Ledger Lantern Mail (Electron; AT-SPI app name 'electron')": "full",
+    "LibreOffice Calc (AT-SPI app name 'soffice'; cells sit behind one 'document spreadsheet' node)": "partial",
+    "GnuCash (AT-SPI app name 'gnucash'; register rows and page tabs without actions)": "partial"
+  }
 }

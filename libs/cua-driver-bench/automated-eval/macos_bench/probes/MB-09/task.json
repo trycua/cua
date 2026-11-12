@@ -13,5 +13,12 @@
   "app_args": [
     "--mode",
     "listdrag"
-  ]
+  ],
+  "foreground_grant": {
+    "granted": true,
+    "reason": "a real drag-and-drop: the list has no accessible move action; libs/cua-driver/rust/crates/platform-linux/src/input/mod.rs:585-609 (no background pointer route on Xvfb); libs/cua-driver/rust/Skills/cua-driver/LINUX.md:26-31 (foreground only when authorized)"
+  },
+  "atspi_coverage": {
+    "BenchLab (GTK3; AT-SPI app name 'BenchLab')": "full"
+  }
 }

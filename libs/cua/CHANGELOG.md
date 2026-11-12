@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.25.0](https://github.com/trycua/cua/compare/cua-sdk-v0.24.2...cua-sdk-v0.25.0) (2026-11-12)
+
+
+### Features
+
+* **spaces:** setup shows each agent connection step live, connects Cua Driver and sets up This Mac (CUA-4067) ([#7389](https://github.com/trycua/cua/issues/7389)) ([d2c5abb](https://github.com/trycua/cua/commit/d2c5abbb3b4b4cbece4079ad59da74e99dc7b473))
+
+
+### Bug Fixes
+
+* **cua-vmm:** run the engine helper's chroot from PATH and build sandbox overlays on 24.04 ([#7409](https://github.com/trycua/cua/issues/7409)) ([10cd739](https://github.com/trycua/cua/commit/10cd739d46db34a0373245531c8219babf606c1f))
+
 ## [0.24.2](https://github.com/trycua/cua/compare/cua-sdk-v0.24.1...cua-sdk-v0.24.2) (2026-11-11)
 
 

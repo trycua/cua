@@ -627,8 +627,14 @@ class Raw:
         STATE.to_user(pid, "posted click")
         if button == "right":
             STATE.check("MB7", "posted right-click (opens a context menu)")
-        hit = self.ax.at(x, y)
-        role = _ax_get(hit, "AXRole") if hit is not None else None
+        # hit-test inside the target app, not the screen: the point may be covered by another app's window
+        err, hit = AX.AXUIElementCopyElementAtPosition(self.ax.app(pid), float(x), float(y), None)
+        role = _ax_get(hit, "AXRole") if err == 0 and hit is not None else None
+        if err != 0 and not STATE.granted:
+            STATE.check(
+                "MB7",
+                f"posted click at ({x}, {y}): no element of {app_name(pid)} found there to check",
+            )
         if role in MENU_OPENERS:
             STATE.check("MB6" if role == "AXMenuBarItem" else "MB7", f"posted click on {role}")
         down, up, btn = MOUSE[button]

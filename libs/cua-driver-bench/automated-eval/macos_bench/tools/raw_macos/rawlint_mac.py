@@ -157,7 +157,9 @@ RULES: dict[str, Rule] = {
             "block",
             "SkyLight/CGS private functions switch Spaces, reorder windows of other apps or steal key focus; the raw "
             "runtime does not expose them.",
-            f"{MAC}/input/skylight.rs:4-20 (the driver's own SkyLight use is scoped and guarded); {MACOS_MD}:619-630",
+            f"{MAC}/input/skylight.rs:4-20 (the driver's one SkyLight path: per-pid posting with an authentication "
+            f"envelope); {MACOS_MD}:619-630 (its focus-without-raise recipe); {MACOS_MD}:800-803 (do not inject raw "
+            "CGEvents or use shell activation)",
             "Use AX and raw.post_click / raw.post_key, which post to one process.",
         ),
         Rule(

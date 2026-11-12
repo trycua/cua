@@ -10,7 +10,9 @@
 //!   (case-insensitive) and AXPress it.  AppKit and Chromium popups publish
 //!   their items only while the menu is open, so the menu is opened for the
 //!   selection and closed again.  Safari `<select>` elements are set through
-//!   `osascript do JavaScript` instead.
+//!   `osascript do JavaScript` instead.  In the background no menu is opened
+//!   while another app's window covers the popup's window: the menu would
+//!   bring the window above the user's, so the call is refused.
 //!
 //! * **Everything else**: Write `AXValue` directly (sliders, steppers, native
 //!   text fields that expose a settable AXValue).
@@ -49,7 +51,7 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "set_value".into(),
-        description: "Set an element's value by `element_token`. A popup button / select dropdown: selects the menu item whose title or value matches `value` (case-insensitive). Safari `<select>` is set through the DOM; AppKit and Chromium popups list items only while open, so the menu is opened, the item pressed and the menu closed again (in the background the user's front window keeps key focus). An unknown value lists the options. Any other element: writes AXValue (sliders, steppers, date pickers, native text fields).\n\
+        description: "Set an element's value by `element_token`. A popup button / select dropdown: selects the menu item whose title or value matches `value` (case-insensitive). Safari `<select>` is set through the DOM; a background Chromium `<select>` is chosen by typing the option's label into the closed control. AppKit popups list items only while open, so the menu is opened, the item pressed and the menu closed again. In the background a menu is never opened while another app's window covers the popup's window, because opening it brings the window above the user's: the call is refused with `background_unavailable` (reason `popup_menu_would_raise_window`) and nothing changes. If the app raises its window or activates itself anyway, the driver puts the user's window back and reports it in `user_disturbance`. An unknown value lists the options. Any other element: writes AXValue (sliders, steppers, date pickers, native text fields).\n\
             \n\
             A Finder file name cell (list or icon view, not being edited) is renamed through Finder's scripting interface with Finder left in the background, and the new name is read back from disk; the value is the full new name with its extension. macOS may prompt for Automation consent; with serve --no-automation-prompts, ungranted consent refuses with automation_consent_required. Finder's Get Info `Name` field is refused with `file_name_needs_rename`. For free-form text in web inputs use `type_text_chars`: WebKit ignores AXValue writes.".into(),
         input_schema: serde_json::json!({
@@ -223,6 +225,8 @@ impl Tool for SetValueTool {
         // child option which can trigger app activation in some setups.
         let prior_front = apps::frontmost_pid();
         let snapshot = WindowChangeDetector::snapshot(prior_front);
+        let undone_before = crate::key_focus_guard::undone();
+        let value_for_refusal = value.clone();
 
         let result = focus_guard::with_focus_suppressed(
             Some(pid),
@@ -244,6 +248,7 @@ impl Tool for SetValueTool {
         .await;
 
         let changes = snapshot.detect_async().await;
+        let disturbance = disturbance_note(undone_before, crate::key_focus_guard::undone());
 
         match result {
             Ok(Ok(outcome)) if outcome.not_applied && !ax_echo_surface => {
@@ -265,6 +270,10 @@ impl Tool for SetValueTool {
                 if let Some(edited) = outcome.document_edited {
                     structured["document_key_edit_sent"] = serde_json::json!(edited);
                 }
+                if let Some((note, report)) = disturbance {
+                    msg.push_str(note);
+                    structured["user_disturbance"] = report;
+                }
                 if ax_echo_surface {
                     structured["escalation"] = serde_json::json!({
                         "recommended": "px",
@@ -275,10 +284,61 @@ impl Tool for SetValueTool {
                 }
                 ToolResult::text(msg).with_structured(structured)
             }
-            Ok(Err(e)) => ToolResult::error(format!("set_value failed: {e}")),
+            Ok(Err(e)) => match e.downcast_ref::<PopupMenuWouldRaise>() {
+                Some(refused) => super::menu_raise::refusal(
+                    pid,
+                    window_id,
+                    &super::menu_raise::describe(
+                        Some(refused.element_index),
+                        "AXPopUpButton",
+                        &refused.title,
+                    ),
+                    super::menu_raise::Menu::Popup,
+                    &format!("choosing \"{value_for_refusal}\""),
+                    Some(&refused.current),
+                ),
+                None => ToolResult::error(format!("set_value failed: {e}")),
+            },
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
+}
+
+/// What the caller is told when the app raised its window over the user's, or
+/// activated itself, during the call and the driver put the user's window
+/// back. The counters are daemon-wide, so another action finishing at the
+/// same moment can be counted too; the report says "during this call".
+fn disturbance_note(
+    before: crate::key_focus_guard::Undone,
+    after: crate::key_focus_guard::Undone,
+) -> Option<(&'static str, serde_json::Value)> {
+    let raised = after.raises > before.raises;
+    let activated = after.activations > before.activations;
+    if !raised && !activated {
+        return None;
+    }
+    let note = match (raised, activated) {
+        (true, false) => {
+            " Note: the app brought its window above the user's window during this call; \
+             Cua Driver put the user's window back on top."
+        }
+        (false, true) => {
+            " Note: the app made itself the active app during this call; Cua Driver made the \
+             user's app active again."
+        }
+        _ => {
+            " Note: the app came to the front during this call; Cua Driver put the user's \
+             window back on top and made their app active again."
+        }
+    };
+    Some((
+        note,
+        serde_json::json!({
+            "window_raised": raised,
+            "app_activated": activated,
+            "restored": true,
+        }),
+    ))
 }
 
 // ── File name cells ──────────────────────────────────────────────────────────
@@ -938,6 +998,63 @@ pub(super) fn chromium_select_open_refusal(
     }))
 }
 
+/// Why a background popup was left unchanged: choosing in it would open its
+/// menu, and the menu raises its window over the user's window.
+#[derive(Debug)]
+struct PopupMenuWouldRaise {
+    element_index: usize,
+    title: String,
+    current: String,
+}
+
+impl std::fmt::Display for PopupMenuWouldRaise {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "popup menu would raise its window")
+    }
+}
+
+impl std::error::Error for PopupMenuWouldRaise {}
+
+/// Refusal for a background press or show-menu on `element` when it would
+/// open a popup menu that raises the window: a Chromium `<select>` always
+/// (its window stays raised), any other popup button while another app's
+/// window covers its window.
+pub(super) fn background_popup_open_refusal(
+    pid: i32,
+    window_id: u32,
+    element_index: Option<usize>,
+    element: AXUIElementRef,
+) -> Option<cua_driver_core::protocol::ToolResult> {
+    if unsafe { copy_string_attr(element, "AXRole") }.as_deref() != Some("AXPopUpButton") {
+        return None;
+    }
+    if is_chromium_web_select(pid, window_id, element) {
+        return Some(chromium_select_open_refusal(
+            pid,
+            window_id,
+            element_index,
+            element,
+        ));
+    }
+    if popup_menu_is_open(element) || !crate::key_focus_guard::menu_open_would_raise(pid, window_id)
+    {
+        return None;
+    }
+    let current = unsafe { copy_string_attr(element, "AXValue") }.unwrap_or_default();
+    Some(super::menu_raise::refusal(
+        pid,
+        window_id,
+        &super::menu_raise::describe(
+            element_index,
+            "AXPopUpButton",
+            &super::menu_raise::label(element),
+        ),
+        super::menu_raise::Menu::Popup,
+        "opening it",
+        Some(&current),
+    ))
+}
+
 /// How long the page may take to apply a type-ahead selection.
 const TYPEAHEAD_SETTLE: std::time::Duration = std::time::Duration::from_millis(800);
 
@@ -1052,6 +1169,18 @@ fn select_popup_option(
         // the items as soon as they appear: the menu, and with it the key
         // focus it holds, stays open for the shortest time.
         let already_open = popup_menu_is_open(element);
+        // Opening the menu of a background app raises the popup's window over
+        // the user's window until the guard puts it back, a frame or two
+        // later. No accessibility route chooses an AppKit item without the
+        // menu, so leave the popup as it is and say why.
+        if !already_open && crate::key_focus_guard::menu_open_would_raise(pid, window_id) {
+            release_options(&options);
+            return Err(anyhow::Error::new(PopupMenuWouldRaise {
+                element_index,
+                title: super::menu_raise::label(element),
+                current: unsafe { copy_string_attr(element, "AXValue") }.unwrap_or_default(),
+            }));
+        }
         let closed_titles = if already_open {
             Vec::new()
         } else {
@@ -1597,5 +1726,36 @@ mod tests {
             outcome.detail,
             "📨 Sent (unverified) AXValue on [4] AXTextField."
         );
+    }
+
+    #[test]
+    fn a_raise_put_back_during_the_call_is_reported() {
+        use crate::key_focus_guard::Undone;
+        let before = Undone {
+            raises: 4,
+            activations: 2,
+        };
+        assert!(super::disturbance_note(before, before).is_none());
+        let (note, report) = super::disturbance_note(
+            before,
+            Undone {
+                raises: 5,
+                activations: 2,
+            },
+        )
+        .expect("raise reported");
+        assert!(note.contains("above the user's window"), "{note}");
+        assert_eq!(report["window_raised"], true);
+        assert_eq!(report["app_activated"], false);
+        assert_eq!(report["restored"], true);
+        let (_, report) = super::disturbance_note(
+            before,
+            Undone {
+                raises: 4,
+                activations: 3,
+            },
+        )
+        .expect("activation reported");
+        assert_eq!(report["app_activated"], true);
     }
 }

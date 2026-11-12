@@ -71,6 +71,14 @@ fn every_hint_variant_stays_within_the_length_limit() {
             json!({"code": "background_unavailable", "reason": "pointer_reading_toolkit"}),
         ),
         (
+            "set_value",
+            json!({"code": "background_unavailable", "reason": "popup_menu_would_raise_window"}),
+        ),
+        (
+            "right_click",
+            json!({"code": "background_unavailable", "reason": "context_menu_would_raise_window"}),
+        ),
+        (
             "click",
             json!({"code": "background_unavailable", "reason": "windowserver_connection_invalid"}),
         ),

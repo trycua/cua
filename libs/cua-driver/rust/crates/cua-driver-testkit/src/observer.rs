@@ -72,6 +72,10 @@ pub struct FocusEvent {
 pub struct DesktopJournal {
     pub focus_events: Vec<FocusEvent>,
     pub leaked_input_events: Vec<String>,
+    /// Moments the target window sat above the foreground window while the
+    /// action ran, even if it was back below by the end. A raise that is put
+    /// back a frame later is still on the user's screen.
+    pub transient_raises: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -100,6 +104,9 @@ pub trait ObserverBackend {
     fn snapshot(&self, target: TargetWindow) -> Result<DesktopSnapshot, ObserverError>;
     fn start_journal(&mut self) -> Result<(), ObserverError>;
     fn drain_journal(&mut self) -> Result<DesktopJournal, ObserverError>;
+    /// The window the next journal watches for transient raises. Backends
+    /// that cannot sample window order ignore it.
+    fn watch_target(&mut self, _target: TargetWindow) {}
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -167,6 +174,7 @@ impl<B: ObserverBackend> DesktopObserver<B> {
         action: impl FnOnce() -> R,
     ) -> Result<(R, ObservationDelta), ObserverError> {
         let before = self.backend.snapshot(self.target)?;
+        self.backend.watch_target(self.target);
         self.backend.start_journal()?;
         let result = action();
         if !self.settle.is_zero() {
@@ -223,6 +231,10 @@ fn evaluate(
                 }
             }
             OracleKind::ZOrder => match (before.target_z.rank(), after.target_z.rank()) {
+                _ if !journal.transient_raises.is_empty() => Some(format!(
+                    "target rose above the foreground window during the action: {:?}",
+                    journal.transient_raises
+                )),
                 (Some(before_rank), Some(after_rank)) if after_rank <= before_rank => None,
                 (Some(_), Some(_)) => Some(format!(
                     "target rose from {:?} to {:?}",
@@ -388,6 +400,7 @@ pub mod windows {
             Ok(DesktopJournal {
                 focus_events: self.events.lock().expect("focus journal lock").clone(),
                 leaked_input_events: Vec::new(),
+                transient_raises: Vec::new(),
             })
         }
     }
@@ -568,6 +581,7 @@ pub mod macos {
     struct WindowRow {
         id: u64,
         pid: u32,
+        layer: i64,
         on_screen: bool,
         bounds: Bounds,
     }
@@ -575,6 +589,8 @@ pub mod macos {
     pub struct MacosObserver {
         stop: Arc<AtomicBool>,
         events: Arc<Mutex<Vec<FocusEvent>>>,
+        raises: Arc<Mutex<Vec<String>>>,
+        target: Option<TargetWindow>,
         sampler: Option<JoinHandle<()>>,
     }
 
@@ -583,9 +599,27 @@ pub mod macos {
             Self {
                 stop: Arc::new(AtomicBool::new(false)),
                 events: Arc::new(Mutex::new(Vec::new())),
+                raises: Arc::new(Mutex::new(Vec::new())),
+                target: None,
                 sampler: None,
             }
         }
+    }
+
+    /// Whether the target window sits above `front`'s frontmost normal window
+    /// in a front-to-back window list. `None` when either is not on screen.
+    fn target_above_front(rows: &[WindowRow], target: u64, front: u32) -> Option<bool> {
+        let target_index = rows
+            .iter()
+            .position(|row| row.id == target && row.on_screen)?;
+        let front_index = rows.iter().position(|row| {
+            row.pid == front
+                && row.layer == 0
+                && row.on_screen
+                && row.bounds.width > 1.0
+                && row.bounds.height > 1.0
+        })?;
+        Some(target_index < front_index)
     }
 
     impl Default for MacosObserver {
@@ -646,10 +680,26 @@ pub mod macos {
             }
             self.stop.store(false, Ordering::Release);
             self.events.lock().expect("focus journal lock").clear();
+            self.raises.lock().expect("raise journal lock").clear();
             let stop = Arc::clone(&self.stop);
             let events = Arc::clone(&self.events);
+            let raises = Arc::clone(&self.raises);
+            // Watch the window order only when the target starts below the
+            // foreground window: a raise that is put back about 20 ms later
+            // (a background app opening a menu) is still on screen, and the
+            // before/after comparison cannot see it.
+            let front_at_start = frontmost_pid();
+            let watched = self.target.filter(|target| {
+                front_at_start.is_some_and(|front| {
+                    front != target.pid as u64
+                        && target_above_front(&window_rows(), target.native_id, front as u32)
+                            == Some(false)
+                })
+            });
             self.sampler = Some(std::thread::spawn(move || {
+                let started = std::time::Instant::now();
                 let mut previous = frontmost_pid();
+                let mut raised = false;
                 while !stop.load(Ordering::Acquire) {
                     let current = frontmost_pid();
                     if current != previous {
@@ -659,7 +709,20 @@ pub mod macos {
                         });
                         previous = current;
                     }
-                    std::thread::sleep(Duration::from_millis(10));
+                    if let (Some(target), Some(front)) = (watched, front_at_start) {
+                        let above =
+                            target_above_front(&window_rows(), target.native_id, front as u32)
+                                == Some(true);
+                        if above && !raised {
+                            raises.lock().expect("raise journal lock").push(format!(
+                                "window {} above pid {front} at +{} ms",
+                                target.native_id,
+                                started.elapsed().as_millis()
+                            ));
+                        }
+                        raised = above;
+                    }
+                    std::thread::sleep(Duration::from_millis(2));
                 }
             }));
             Ok(())
@@ -675,7 +738,12 @@ pub mod macos {
             Ok(DesktopJournal {
                 focus_events: self.events.lock().expect("focus journal lock").clone(),
                 leaked_input_events: Vec::new(),
+                transient_raises: self.raises.lock().expect("raise journal lock").clone(),
             })
+        }
+
+        fn watch_target(&mut self, target: TargetWindow) {
+            self.target = Some(target);
         }
     }
 
@@ -786,6 +854,7 @@ pub mod macos {
             unsafe { CFDictionary::wrap_under_get_rule(item.cast()) };
         let id = number(&dictionary, "kCGWindowNumber")? as u64;
         let pid = number(&dictionary, "kCGWindowOwnerPID")? as u32;
+        let layer = number(&dictionary, "kCGWindowLayer").unwrap_or(0);
         let on_screen = boolean(&dictionary, "kCGWindowIsOnscreen").unwrap_or(false);
         let bounds = dictionary_value(&dictionary, "kCGWindowBounds")
             .and_then(|value| {
@@ -810,6 +879,7 @@ pub mod macos {
         Some(WindowRow {
             id,
             pid,
+            layer,
             on_screen,
             bounds,
         })
@@ -1139,6 +1209,7 @@ pub mod linux {
             Ok(DesktopJournal {
                 focus_events: self.events.lock().expect("focus journal lock").clone(),
                 leaked_input_events: Vec::new(),
+                transient_raises: Vec::new(),
             })
         }
     }
@@ -2056,10 +2127,31 @@ mod tests {
                     },
                 ],
                 leaked_input_events: Vec::new(),
+                transient_raises: Vec::new(),
             },
         );
         assert!(delta.passed().is_empty());
         assert!(delta.violations()[0].contains("transiently"));
+    }
+
+    #[test]
+    fn a_raise_put_back_before_the_end_still_fails_z_order() {
+        let before = snapshot(10, TargetZ::BackgroundOccluded, (100.0, 100.0));
+        let delta = evaluate(
+            ObserverCapabilities {
+                z_order: true,
+                ..ObserverCapabilities::default()
+            },
+            &[OracleKind::ZOrder],
+            before.clone(),
+            before,
+            DesktopJournal {
+                transient_raises: vec!["window 7 above pid 10 at +274 ms".to_owned()],
+                ..DesktopJournal::default()
+            },
+        );
+        assert!(delta.passed().is_empty());
+        assert!(delta.violations()[0].contains("during the action"));
     }
 
     #[test]
@@ -2101,6 +2193,7 @@ mod tests {
             DesktopJournal {
                 focus_events: Vec::new(),
                 leaked_input_events: vec!["keydown:A".to_owned()],
+                transient_raises: Vec::new(),
             },
         );
         assert_eq!(delta.passed(), &[OracleKind::Focus]);

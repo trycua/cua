@@ -382,9 +382,10 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     harness_appkit_right_click_px_background \
     harness_appkit_double_click_px_foreground \
     harness_appkit_double_click_px_background \
-    harness_appkit_popup_click_keeps_front_key_focus_background \
-    harness_appkit_popup_set_value_keeps_front_key_focus_background \
-    harness_appkit_context_menu_keeps_front_key_focus_background \
+    harness_appkit_popup_click_background_never_raises_the_window \
+    harness_appkit_popup_set_value_background_never_raises_the_window \
+    harness_appkit_popup_set_value_after_bring_to_front \
+    harness_appkit_context_menu_background_never_raises_the_window \
     harness_appkit_slider_drag_px_foreground \
     harness_appkit_window_capture_ignores_pointer_outside_window \
       harness_appkit_slider_drag_px_background; do

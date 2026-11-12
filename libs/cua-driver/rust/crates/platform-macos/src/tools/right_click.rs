@@ -40,7 +40,12 @@ fn def() -> &'static ToolDef {
                to the pid. Driver converts image-pixel → screen-point internally. \
                `modifier` forces the CGEvent path (AX actions don't propagate modifier keys).\n\n\
              Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is \
-             required with `x`, `y`; an `element_token` carries its own pid."
+             required with `x`, `y`; an `element_token` carries its own pid.\n\n\
+             In the background, a target that opens a context menu (it lists `show_menu`) or a \
+             popup's menu is not right-clicked while another app's window covers its window: \
+             the menu would bring the window above the user's. The call is refused with \
+             `background_unavailable` (reason `context_menu_would_raise_window`); use the \
+             app's menu bar (`invoke_menu`) or a keyboard shortcut."
             .into(),
         input_schema: serde_json::json!({
             "type": "object",
@@ -147,6 +152,25 @@ impl Tool for RightClickTool {
                 return refusal;
             }
 
+            // A context menu opened in the background raises its window over
+            // the user's while another app covers it: refuse instead.
+            let menu_guard = element_guard.clone();
+            let refusal = tokio::task::spawn_blocking(move || {
+                super::menu_raise::background_menu_refusal(
+                    pid,
+                    wid,
+                    Some(idx),
+                    menu_guard.as_ptr() as AXUIElementRef,
+                    true,
+                )
+            })
+            .await
+            .ok()
+            .flatten();
+            if let Some(refusal) = refusal {
+                return refusal;
+            }
+
             // The context menu steals key focus from the user's app when the
             // target is in the background; the guard hands it back.
             let result = tokio::task::spawn_blocking(move || {
@@ -218,6 +242,32 @@ impl Tool for RightClickTool {
         } else {
             None
         };
+
+        // A background right-click that opens a context menu (or a popup's
+        // menu) raises the window over the user's while another app covers
+        // it: refuse before the cursor moves.
+        if let Some(menu_wid) = window_id.filter(|_| !delivery_mode.is_foreground()) {
+            let refusal = tokio::task::spawn_blocking(move || unsafe {
+                let element =
+                    crate::ax::bindings::element_at_screen_position(pid, screen_x, screen_y)?;
+                let refusal = crate::ax::exact_target::element_window_id(element)
+                    .is_some_and(|window| window.is(menu_wid))
+                    .then(|| {
+                        super::menu_raise::background_menu_refusal(
+                            pid, menu_wid, None, element, true,
+                        )
+                    })
+                    .flatten();
+                core_foundation::base::CFRelease(element as _);
+                refusal
+            })
+            .await
+            .ok()
+            .flatten();
+            if let Some(refusal) = refusal {
+                return refusal;
+            }
+        }
 
         // Pin overlay above the target window before animating.
         if let Some(wid) = window_id {

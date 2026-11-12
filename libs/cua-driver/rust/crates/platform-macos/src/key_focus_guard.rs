@@ -127,6 +127,67 @@ pub fn target_window_above_front(target: i32, front: i32) -> bool {
     target_above_front(target, front)
 }
 
+/// Whether opening a menu in `window_id` of the background app `pid` would
+/// raise that window over another app's window.
+///
+/// A menu that opens in an app that is not frontmost (a popup button, a
+/// `<select>`) makes WindowServer order the menu's window group to the front,
+/// and that group includes the window the menu belongs to. [`restore_order_now`]
+/// puts the user's window back about 20 ms later, but the raise is on screen
+/// for a frame or two first, so a background action must not open such a
+/// menu. Nothing is raised when the app is frontmost or when no other app's
+/// window sits above `window_id`.
+pub fn menu_open_would_raise(pid: i32, window_id: u32) -> bool {
+    if crate::apps::frontmost_pid() == Some(pid) {
+        return false;
+    }
+    window_below_another_app(
+        &crate::windows::on_screen_windows_any_layer(),
+        pid,
+        window_id,
+    )
+}
+
+fn window_below_another_app(
+    windows: &[crate::windows::WindowInfo],
+    pid: i32,
+    window_id: u32,
+) -> bool {
+    let Some(target) = windows
+        .iter()
+        .find(|w| w.window_id == window_id && w.pid == pid && w.is_on_screen)
+    else {
+        return false;
+    };
+    windows.iter().any(|w| {
+        w.pid != pid
+            && w.layer == 0
+            && w.is_on_screen
+            && w.bounds.width > 1.0
+            && w.bounds.height > 1.0
+            && w.z_index > target.z_index
+    })
+}
+
+/// How often the guard has undone a background target's raise or
+/// self-activation since the daemon started. An action compares these before
+/// and after to tell the caller that the user's window was disturbed and put
+/// back.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Undone {
+    /// The target's window was raised over the user's window and put back.
+    pub raises: u64,
+    /// The target activated itself and the user's app was made active again.
+    pub activations: u64,
+}
+
+pub fn undone() -> Undone {
+    Undone {
+        raises: RESTORED.load(Ordering::Relaxed),
+        activations: REVERTED.load(Ordering::Relaxed) + crate::focus_steal::restores(),
+    }
+}
+
 fn restore_front_if_raised(target: i32, front: i32) -> bool {
     if crate::apps::frontmost_pid() != Some(front) || !target_above_front(target, front) {
         return false;
@@ -839,6 +900,21 @@ mod tests {
         assert!(!target_above_front_in(&menu_only, 42, 7));
         // Without a window of either app there is nothing to restore.
         assert!(!target_above_front_in(&[win(42, 0, 9)], 42, 7));
+    }
+
+    #[test]
+    fn a_menu_would_raise_a_window_that_another_app_covers() {
+        // The target's window 3 sits under the user's window 5.
+        let covered = [win(42, 0, 3), win(7, 0, 5)];
+        assert!(window_below_another_app(&covered, 42, 3));
+        // Already in front of every other app's window: nothing moves.
+        let on_top = [win(7, 0, 3), win(42, 0, 5)];
+        assert!(!window_below_another_app(&on_top, 42, 5));
+        // The target's own windows, menus and the menu bar do not count.
+        let own_and_menus = [win(42, 0, 3), win(42, 0, 4), win(7, 101, 6), win(7, 25, 7)];
+        assert!(!window_below_another_app(&own_and_menus, 42, 3));
+        // A window that is not on screen is not judged here.
+        assert!(!window_below_another_app(&covered, 42, 99));
     }
 
     /// The target's tap hides only the driver's own id lookup: AppKit closes

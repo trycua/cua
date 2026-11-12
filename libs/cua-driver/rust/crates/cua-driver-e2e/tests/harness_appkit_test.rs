@@ -34,7 +34,7 @@ use std::time::{Duration, Instant};
 use cua_driver_testkit::ax::{element_index_by_id, element_index_containing, has_id, looks_empty};
 use cua_driver_testkit::e2e::{
     execute_case, native_background_case, native_foreground_case, native_readonly_case,
-    recording_evidence, DriverRoute, Evidence, Observation, OracleKind, Targeting,
+    recording_evidence, DriverRoute, Evidence, Observation, OracleKind, RefusalCode, Targeting,
 };
 use cua_driver_testkit::observer::{NativeObserver, ObserverBackend, TargetWindow};
 use cua_driver_testkit::sentinel::{run_with_background_oracles, ForegroundSentinel};
@@ -2558,78 +2558,144 @@ fn harness_appkit_slider_drag_px_background() {
     });
 }
 
-/// popup_select: a background AXPress opens the NSPopUpButton's menu. The menu
-/// steals key focus from the front app, so the background oracles (the
-/// foreground sentinel must not blur) check that the driver hands it back.
-/// The menu stays open and its item is chosen through accessibility.
+/// Run `action` on the AppKit fixture element `element_id` while the
+/// foreground sentinel covers the fixture, and require a
+/// `background_unavailable` refusal with `reason` that left `unchanged` in the
+/// fixture and never raised the window, not even for a frame.
+fn run_background_menu_refusal(
+    action: &str,
+    element_id: &str,
+    unchanged: &str,
+    reason: &str,
+    call: impl FnOnce(&mut McpDriver, u32, u64, String) -> ToolResponse,
+) {
+    let case = native_background_case("appkit", action, Targeting::Ax, DriverRoute::MacosAxAction)
+        .expecting_refusal(vec![RefusalCode::BackgroundUnavailable]);
+    run_case(case, |pid, wid, driver| {
+        let (refused, passed) = run_with_background_oracles(
+            driver,
+            TargetWindow {
+                pid,
+                native_id: wid,
+            },
+            |driver| {
+                let pre = snapshot_elements(driver, pid, wid);
+                assert!(
+                    pre.tree_text().contains(unchanged),
+                    "fixture is missing {unchanged}:\n{}",
+                    pre.tree_text()
+                );
+                let refused = call(driver, pid, wid, element_token_by_id(&pre, element_id));
+                std::thread::sleep(Duration::from_millis(250));
+                assert!(
+                    snapshot_elements(driver, pid, wid)
+                        .tree_text()
+                        .contains(unchanged),
+                    "a refused menu action changed the fixture: {}",
+                    refused.raw
+                );
+                refused
+            },
+        )
+        .unwrap_or_else(|error| panic!("background desktop contract failed: {error}"));
+        assert!(
+            refused.is_error(),
+            "a menu in a covered background window was opened instead of refused: {}",
+            refused.raw
+        );
+        assert_eq!(
+            refused.structured()["code"],
+            "background_unavailable",
+            "{}",
+            refused.raw
+        );
+        assert_eq!(refused.structured()["reason"], reason, "{}", refused.raw);
+        let mut passed = passed;
+        passed.push(OracleKind::FixtureState);
+        Observation::refused(
+            RefusalCode::BackgroundUnavailable,
+            passed,
+            refused.text(),
+            Evidence::default(),
+        )
+    });
+}
+
+/// popup_select through set_value in the background. AppKit lists a popup's
+/// items only while its menu is open, and opening the menu of an app that is
+/// not frontmost raises its window over the user's window for a frame or two
+/// before the driver can put it back. So set_value must refuse instead, and
+/// the window must never rise, even transiently (the z-order oracle samples
+/// the window order while the action runs).
 #[test]
 #[ignore]
-fn harness_appkit_popup_click_keeps_front_key_focus_background() {
-    run_background_case(
-        "popup_click",
-        DriverRoute::MacosAxAction,
-        |pid, wid, driver| {
-            let pre = snapshot_elements(driver, pid, wid);
-            assert!(
-                pre.tree_text().contains("popup_value=Choose a team"),
-                "popup fixture missing:\n{}",
-                pre.tree_text()
-            );
-            let opened = driver.call(
-                "click",
+fn harness_appkit_popup_set_value_background_never_raises_the_window() {
+    run_background_menu_refusal(
+        "popup_set_value",
+        "pop-team",
+        "popup_value=Choose a team",
+        "popup_menu_would_raise_window",
+        |driver, pid, wid, token| {
+            driver.call(
+                "set_value",
                 serde_json::json!({
                     "pid": pid as i64,
                     "window_id": wid,
-                    "element_token": element_token_by_id(&pre, "pop-team"),
-                    "delivery_mode": "background"
+                    "element_token": token,
+                    "value": "Finance"
                 }),
-            );
-            assert!(!opened.is_error(), "popup click failed: {}", opened.text());
-
-            let open = snapshot_elements(driver, pid, wid);
-            let item = element_index_containing(open.tree_text(), "AXMenuItem \"Research\"")
-                .unwrap_or_else(|| {
-                    panic!("open popup lists no Research item:\n{}", open.tree_text())
-                });
-            let chosen = driver.call(
-                "click",
-                serde_json::json!({
-                    "pid": pid as i64,
-                    "window_id": wid,
-                    "element_token": open.element_token(item),
-                    "delivery_mode": "background"
-                }),
-            );
-            assert!(
-                !chosen.is_error(),
-                "menu item click failed: {}",
-                chosen.text()
-            );
-
-            let deadline = Instant::now() + Duration::from_secs(2);
-            loop {
-                if snapshot_elements(driver, pid, wid)
-                    .tree_text()
-                    .contains("popup_value=Research")
-                {
-                    break;
-                }
-                assert!(Instant::now() < deadline, "popup selection did not land");
-                std::thread::sleep(Duration::from_millis(100));
-            }
+            )
         },
     );
 }
 
-/// popup_select through set_value: the driver opens the menu, presses the
-/// matching item and closes it, while the front window keeps key status.
+/// popup_select through a background click: pressing the popup would open the
+/// same menu, so it is refused the same way.
 #[test]
 #[ignore]
-fn harness_appkit_popup_set_value_keeps_front_key_focus_background() {
-    run_background_case(
-        "popup_set_value",
-        DriverRoute::MacosAxValue,
+fn harness_appkit_popup_click_background_never_raises_the_window() {
+    run_background_menu_refusal(
+        "popup_click",
+        "pop-team",
+        "popup_value=Choose a team",
+        "popup_menu_would_raise_window",
+        |driver, pid, wid, token| {
+            driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "element_token": token,
+                    "delivery_mode": "background"
+                }),
+            )
+        },
+    );
+}
+
+/// The route the refusal names: with the user's agreement the window comes
+/// forward (bring_to_front), and set_value then opens the menu, presses the
+/// item and closes the menu.
+#[test]
+#[ignore]
+fn harness_appkit_popup_set_value_after_bring_to_front() {
+    run_case(
+        native_foreground_case(
+            "appkit",
+            "popup_set_value",
+            Targeting::Ax,
+            DriverRoute::MacosAxAction,
+        ),
         |pid, wid, driver| {
+            let fronted = driver.call(
+                "bring_to_front",
+                serde_json::json!({ "pid": pid as i64, "window_id": wid }),
+            );
+            assert!(
+                !fronted.is_error(),
+                "bring_to_front failed: {}",
+                fronted.text()
+            );
             let pre = snapshot_elements(driver, pid, wid);
             let set = driver.call(
                 "set_value",
@@ -2648,58 +2714,31 @@ fn harness_appkit_popup_set_value_keeps_front_key_focus_background() {
                     .contains("popup_value=Finance"),
                 "popup set_value did not land"
             );
+            Observation::delivered_with_fixture_state(Vec::new())
         },
     );
 }
 
 /// context_menu through right_click (AXShowMenu) in the background: the menu
-/// steals key focus like a popup does; the front window must keep it.
+/// would raise the covered window over the user's, so it is refused and the
+/// window never rises.
 #[test]
 #[ignore]
-fn harness_appkit_context_menu_keeps_front_key_focus_background() {
-    run_background_case(
+fn harness_appkit_context_menu_background_never_raises_the_window() {
+    run_background_menu_refusal(
         "context_menu",
-        DriverRoute::MacosAxAction,
-        |pid, wid, driver| {
-            let pre = snapshot_elements(driver, pid, wid);
-            let shown = driver.call(
+        "btn-context",
+        "menu_action=none",
+        "context_menu_would_raise_window",
+        |driver, pid, wid, token| {
+            driver.call(
                 "right_click",
                 serde_json::json!({
                     "pid": pid as i64,
                     "window_id": wid,
-                    "element_token": element_token_by_id(&pre, "btn-context")
+                    "element_token": token
                 }),
-            );
-            assert!(!shown.is_error(), "context menu failed: {}", shown.text());
-            let open = snapshot_elements(driver, pid, wid);
-            let item = element_index_containing(open.tree_text(), "AXMenuItem \"Copy\"")
-                .unwrap_or_else(|| {
-                    panic!(
-                        "open context menu lists no Copy item:\n{}",
-                        open.tree_text()
-                    )
-                });
-            let chosen = driver.call(
-                "click",
-                serde_json::json!({
-                    "pid": pid as i64,
-                    "window_id": wid,
-                    "element_token": open.element_token(item),
-                    "delivery_mode": "background"
-                }),
-            );
-            assert!(
-                !chosen.is_error(),
-                "context item click failed: {}",
-                chosen.text()
-            );
-            std::thread::sleep(Duration::from_millis(250));
-            assert!(
-                snapshot_elements(driver, pid, wid)
-                    .tree_text()
-                    .contains("menu_action=Copy"),
-                "context menu item did not fire"
-            );
+            )
         },
     );
 }

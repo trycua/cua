@@ -274,7 +274,7 @@ class TrialSettingsTest(unittest.TestCase):
 
 
 class TaskGrantTest(unittest.TestCase):
-    """The per-task grant in the task definitions: only the real hover/drag tasks get it."""
+    """The per-task grant in the task definitions: only tasks with no background route on the X11 lane get it."""
 
     def test_grants(self):
         import json
@@ -283,7 +283,9 @@ class TaskGrantTest(unittest.TestCase):
 
         specs = {p.parent.name: json.loads(p.read_text()) for p in (HERE / "probes").glob("*/task.json")}
         got = {t for t in v2.V2_TASKS if v2.foreground_grant(specs[t])}
-        self.assertEqual(got, {"MB-09", "MB-10", "MB-11"})
+        # hover/drag/tooltip (no background pointer route on Xvfb) and the spreadsheet tasks (no background keyboard
+        # route on Xvfb, and Calc cells have no EditableText); the BenchLab interruption tasks have AT-SPI routes
+        self.assertEqual(got, {"MB-09", "MB-10", "MB-11", "CDB-G02", "CDB-G03"})
         for t in v2.V2_TASKS:
             self.assertEqual(v2.foreground_grant_problems(t, specs[t]), [], t)
         self.assertFalse(v2.foreground_grant({"foreground_grant": {"granted": "yes", "reason": "x"}}))

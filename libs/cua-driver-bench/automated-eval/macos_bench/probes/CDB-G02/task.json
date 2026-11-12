@@ -16,8 +16,8 @@
   "max_turns": 45,
   "separate_run": true,
   "foreground_grant": {
-    "granted": false,
-    "reason": "a background route exists (AT-SPI actions or the driver's background delivery)"
+    "granted": true,
+    "reason": "keys into spreadsheet and ledger cells: LibreOffice Calc cells have no AT-SPI EditableText and the X11 background keyboard route needs uinput, which Xvfb cannot hot-add (Cua Driver's own refusal on this lane); libs/cua-driver/rust/Skills/cua-driver/LINUX.md:26-31 (foreground only when authorized and the background route is unavailable)"
   },
   "atspi_coverage": {
     "Copperfield Mail, Signal Quay Chat, Daymark Calendar (Electron; AT-SPI app name 'electron', one per window)": "full",

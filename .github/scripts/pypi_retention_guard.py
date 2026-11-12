@@ -57,10 +57,12 @@ except ImportError:  # pragma: no cover - pip always vendors it
 MIN_AGE_DAYS = 90
 ANNOUNCE_DAYS = 30
 
-# Every PyPI project trycua publishes. A release of any of them may require
-# another one in requires_dist.
+# Every PyPI project trycua publishes (names not on PyPI yet are skipped). A
+# release of any of them may require another one in requires_dist. Add new
+# projects here; --also-project covers a one-off.
 OUR_PROJECTS = (
     "cua", "cua-cli", "cua-driver", "cua-sdk", "cua-agent", "cua-core", "cua-computer",
+    "cua-computer-server", "cua-mcp-server", "cua-auto", "cua-fleet",
     "cua-sandbox", "cua-sandbox-apps", "cua-som", "cua-bench", "cua-bench-ui",
     "cua-bench-rl", "cua-bench-s1", "cua-e2b", "cua-s1",
 )
@@ -329,6 +331,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--today", type=dt.date.fromisoformat, default=dt.datetime.now(dt.timezone.utc).date())
     ap.add_argument("--announced-on", type=dt.date.fromisoformat)
     ap.add_argument("--announcement-url")
+    ap.add_argument("--also-project", action="append", default=[],
+                    help="another PyPI project whose requires_dist to check (repeatable)")
     args = ap.parse_args(argv)
 
     versions, announced_on, url = read_delete_list(args.delete_list)
@@ -343,6 +347,7 @@ def main(argv: list[str] | None = None) -> int:
         problems = check(
             args.project, versions, today=args.today, announced_on=announced_on,
             announcement_text=text, fetch=pypi_fetch, repo_roots=roots,
+            projects=(*OUR_PROJECTS, *args.also_project),
         )
     except (OSError, subprocess.CalledProcessError, ValueError) as e:
         print(f"pypi-retention-guard: cannot verify ({e}); refusing", file=sys.stderr)

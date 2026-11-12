@@ -3727,10 +3727,11 @@ fn permission_status_text(structured: &serde_json::Value, cli_name: &str) -> Str
             }
         }
         None => {
-            if structured.get("direct_capture_verification").is_some() {
+            if let Some(day) = direct_capture_verified_on(structured) {
                 let _ = writeln!(
                     out,
-                    "Test screenshot:                             ✅ worked last time it was checked"
+                    "Test screenshot:                             ✅ worked on {day} \
+                     (checked by `{cli_name} permissions grant`)"
                 );
             } else if sr {
                 let _ = writeln!(
@@ -3750,10 +3751,38 @@ fn permission_status_text(structured: &serde_json::Value, cli_name: &str) -> Str
             "These are the permissions of the app Cua Driver runs inside."
         );
     }
-    if !(ax && sr) {
+    let direct_capture_unverified = structured.get("direct_capture_status")
+        == Some(&serde_json::json!("not_checked"))
+        && direct_capture_verified_on(structured).is_none();
+    if !(ax && sr) || direct_capture_unverified {
         let _ = writeln!(out, "Next: run `{cli_name} permissions grant`.");
     }
     out
+}
+
+/// The UTC day of the last successful `permissions grant` test screenshot.
+/// The platform clears this record whenever a later probe fails.
+fn direct_capture_verified_on(structured: &serde_json::Value) -> Option<&str> {
+    structured
+        .get("direct_capture_verification")?
+        .get("verified_at")?
+        .as_str()?
+        .get(..10)
+}
+
+/// Whether an earlier `permissions grant` had already recorded a working
+/// test screenshot, read from the status taken before this run's probe. A
+/// record means macOS may have answered from its saved consent without asking.
+#[cfg(any(target_os = "macos", test))]
+fn permission_grant_direct_capture_history(before: &serde_json::Value) -> String {
+    match direct_capture_verified_on(before) {
+        Some(day) => format!(
+            "A test screenshot had already worked on {day}, so macOS may not have asked again."
+        ),
+        None => {
+            "This is the first working test screenshot recorded for this Cua Driver.".to_owned()
+        }
+    }
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -4131,7 +4160,11 @@ fn run_permissions_grant() {
             .as_ref()
             .is_some_and(permission_grant_is_ready)
         {
-            println!("\n✅ All set. Cua Driver can now use this Mac.");
+            if let Some(before) = staged_status.as_ref() {
+                println!("\n{}", permission_grant_direct_capture_history(before));
+            }
+            println!("`{cli_name} permissions status` now shows when this check last worked.");
+            println!("✅ All set. Cua Driver can now use this Mac.");
             return;
         }
 
@@ -6351,6 +6384,59 @@ mod tests {
         assert!(!answers_for_cua_driver(&host));
         // No per-app permissions (not macOS): nothing to misattribute.
         assert!(answers_for_cua_driver(&serde_json::json!({})));
+    }
+
+    #[test]
+    fn permission_status_text_says_when_direct_capture_was_last_verified() {
+        let verified = serde_json::json!({
+            "accessibility": true,
+            "screen_recording": true,
+            "screen_recording_capturable": null,
+            "direct_capture_status": "not_checked",
+            "direct_capture_verification": {
+                "source": "permissions_grant",
+                "verified_at": "2026-08-05T09:30:00Z",
+                "bundle_id": "com.trycua.driver.local"
+            },
+            "source": {"attribution": "driver-daemon"},
+        });
+        let text = permission_status_text(&verified, "cua-driver-local");
+        assert!(
+            text.contains(
+                "Test screenshot:                             ✅ worked on 2026-08-05 \
+                 (checked by `cua-driver-local permissions grant`)"
+            ),
+            "{text}"
+        );
+
+        let unverified = serde_json::json!({
+            "accessibility": true,
+            "screen_recording": true,
+            "screen_recording_capturable": null,
+            "direct_capture_status": "not_checked",
+        });
+        let text = permission_status_text(&unverified, "cua-driver-local");
+        assert!(text.contains("Test screenshot:                             not checked yet"));
+        assert!(text.contains("Next: run `cua-driver-local permissions grant`."));
+    }
+
+    #[test]
+    fn permission_grant_says_whether_direct_capture_was_verified_before() {
+        let earlier = serde_json::json!({
+            "direct_capture_verification": {
+                "source": "permissions_grant",
+                "verified_at": "2026-08-05T09:30:00Z",
+                "bundle_id": "com.trycua.driver"
+            }
+        });
+        assert_eq!(
+            permission_grant_direct_capture_history(&earlier),
+            "A test screenshot had already worked on 2026-08-05, so macOS may not have asked again."
+        );
+        assert_eq!(
+            permission_grant_direct_capture_history(&serde_json::json!({})),
+            "This is the first working test screenshot recorded for this Cua Driver."
+        );
     }
 
     #[test]

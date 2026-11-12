@@ -20,6 +20,9 @@ import Foundation
 /// (a file, CI, `lume serve` logs), every line is `[timestamp] LEVEL: text`
 /// with no escape codes, and a region logs its last line every
 /// `pipedInterval` instead of redrawing.
+///
+/// Progress is info-level output: below `minLevel` info, regions draw
+/// nothing and their final lines are dropped, as log lines are.
 final class Console: @unchecked Sendable {
     enum Stream { case out, err }
 
@@ -72,6 +75,7 @@ final class Console: @unchecked Sendable {
     private let width: @Sendable () -> Int?
     private let height: @Sendable () -> Int?
     private let now: @Sendable () -> Date
+    private let minLevel: @Sendable () -> Logger.Level
 
     private let lock = NSLock()
     private var regions: [RegionState] = []
@@ -86,6 +90,7 @@ final class Console: @unchecked Sendable {
         width: @escaping @Sendable () -> Int? = { Console.terminalSize()?.width },
         height: @escaping @Sendable () -> Int? = { Console.terminalSize()?.height },
         now: @escaping @Sendable () -> Date = { Date() },
+        minLevel: @escaping @Sendable () -> Logger.Level = { Logger.minLevel },
         write: @escaping @Sendable (Stream, String) -> Void = Console.writeToProcess
     ) {
         self.stdoutIsTerminal = stdoutIsTerminal
@@ -94,6 +99,7 @@ final class Console: @unchecked Sendable {
         self.width = width
         self.height = height
         self.now = now
+        self.minLevel = minLevel
         self.write = write
     }
 
@@ -136,7 +142,10 @@ final class Console: @unchecked Sendable {
         }
     }
 
+    private var showsProgress: Bool { minLevel() <= .info }
+
     private func update(_ id: Int, _ lines: [String]) {
+        guard showsProgress else { return }
         var piped: String?
         lock.withLock {
             guard let index = regions.firstIndex(where: { $0.id == id }) else { return }
@@ -158,9 +167,9 @@ final class Console: @unchecked Sendable {
         lock.withLock {
             guard let index = regions.firstIndex(where: { $0.id == id }) else { return }
             regions.remove(at: index)
-            if stdoutIsTerminal { write(.out, eraseSequence() + drawSequence()) }
+            if stdoutIsTerminal, drawn > 0 { write(.out, eraseSequence() + drawSequence()) }
         }
-        if let final { log(.info, final) }
+        if let final, showsProgress { log(.info, final) }
     }
 
     // MARK: Drawing (callers hold `lock`)

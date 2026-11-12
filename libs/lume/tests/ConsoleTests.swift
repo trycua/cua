@@ -72,11 +72,11 @@ private final class Clock: @unchecked Sendable {
 
 private func console(
     _ screen: Screen, terminal: Bool = true, width: Int = 120, height: Int = 40,
-    clock: Clock = Clock()
+    clock: Clock = Clock(), minLevel: Logger.Level = .info
 ) -> Console {
     Console(
         stdoutIsTerminal: terminal, stderrIsTerminal: terminal, color: false,
-        width: { width }, height: { height }, now: { clock.now },
+        width: { width }, height: { height }, now: { clock.now }, minLevel: { minLevel },
         write: { screen.write($0, $1) })
 }
 
@@ -234,6 +234,20 @@ struct ConsolePipedTests {
 }
 
 // MARK: - Levels
+
+struct ConsoleLevelTests {
+    @Test("above info, progress writes nothing, on a terminal or piped")
+    func progressFollowsTheLevel() {
+        for terminal in [true, false] {
+            let screen = Screen()
+            let c = console(screen, terminal: terminal, minLevel: .error)
+            let region = c.region(.transfer, pipedInterval: 0)
+            region.update(["  1/2 layers"])
+            region.end(final: "Downloaded 1.0 GB in 9s")
+            #expect(screen.writes.isEmpty)
+        }
+    }
+}
 
 struct LoggerLevelTests {
     @Test("LUME_LOG_LEVEL names map to levels, warn included")

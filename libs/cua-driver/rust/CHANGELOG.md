@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.47.15](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.14...cua-driver-rs-v0.47.15) (2026-11-12)
+
+
+### Bug Fixes
+
+* **cua-driver:** pass delivery_mode foreground in the GTK3 invoke_menu foreground harness ([#7401](https://github.com/trycua/cua/issues/7401)) ([36351a6](https://github.com/trycua/cua/commit/36351a6648d33d14c8b80b9814f911d5e9206a8c))
+* **cua-driver:** submit a macOS single-line field with its own Return on background type_text ([#7352](https://github.com/trycua/cua/issues/7352)) ([3310229](https://github.com/trycua/cua/commit/33102290344d40c8d30bebf5100aac609bee030b))
+
 ## [0.47.14](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.13...cua-driver-rs-v0.47.14) (2026-11-11)
 
 

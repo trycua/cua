@@ -113,7 +113,9 @@ impl Tool for StartRecordingTool {
                 consent dialog unless the portal accepts a grant saved by an \
                 earlier recording; startup waits up to about 93 s for the \
                 grant and the first frame, plus cleanup if it fails; needs \
-                the system PipeWire client library and ffmpeg on PATH). \
+                a build with the `portal-capture` feature, which the \
+                released Linux binaries and the Nix package have, as well \
+                as the system PipeWire client library and ffmpeg on PATH). \
                 Unsupported combinations report the exact limitation in \
                 `last_error`.\n\n\
                 State persists for the life of the daemon; a restart \

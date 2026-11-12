@@ -78,7 +78,7 @@ jobs:
 
   reuse:
     needs: quick
-    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) && needs.quick.outputs.skip != 'true' }}
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) && needs.quick.outputs.skip != 'true' && github.event_name != 'merge_group' }}
     name: reuse PR results
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -113,7 +113,7 @@ jobs:
             --subset "pr_subset=rust (ubuntu-latest)|rust lint (ubuntu-latest)|rust lint (macos-26)|rust lint (windows-latest)|crates.io dry run|spaces e2e (ubuntu-latest)|bindings drift (ubuntu-latest)|kotlin compile|build SDK (linux, release)|build test fixtures (linux)|build cua and cua-spaces CLIs (linux)|python smoke (ubuntu-latest)|node smoke (ubuntu-latest)|browser (wasm32) build + smoke"
 
   rust-lint:
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.quick.outputs.skip != 'true' }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.quick.outputs.skip != 'true' && github.event_name != 'merge_group' }}
     name: rust lint (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     needs: [quick, reuse]
@@ -210,7 +210,7 @@ jobs:
   # macOS and Windows keep their platform linkers; swapping them is not safe
   # without a run on each OS.
   rust-linux-build:
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && !((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && needs.reuse.outputs.pr_subset == 'true') && needs.quick.outputs.skip != 'true' }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && !((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && needs.reuse.outputs.pr_subset == 'true') && needs.quick.outputs.skip != 'true' && github.event_name != 'merge_group' }}
     name: rust linux build
     runs-on: ubuntu-latest
     needs: [quick, reuse]
@@ -268,7 +268,7 @@ jobs:
           retention-days: 1
 
   rust-linux:
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && !((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && needs.reuse.outputs.pr_subset == 'true') && needs.quick.outputs.skip != 'true' }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && !((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && needs.reuse.outputs.pr_subset == 'true') && needs.quick.outputs.skip != 'true' && github.event_name != 'merge_group' }}
     name: rust linux shard ${{ matrix.shard }}/3
     runs-on: ubuntu-latest
     needs: [quick, reuse, rust-linux-build]
@@ -387,7 +387,7 @@ jobs:
   # The check that stood for the whole Linux leg before it was sharded
   # (named in the reuse subset above).
   rust-linux-result:
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && !((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && needs.reuse.outputs.pr_subset == 'true') && needs.quick.outputs.skip != 'true' }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && !((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && needs.reuse.outputs.pr_subset == 'true') && needs.quick.outputs.skip != 'true' && github.event_name != 'merge_group' }}
     name: rust (ubuntu-latest)
     runs-on: ubuntu-latest
     needs: [quick, reuse, rust-linux]
@@ -403,7 +403,7 @@ jobs:
   # The pool_model checks no longer run on pull requests, so a night or main run
   # that fails on them must be heard: one issue, updated on every failure.
   rust-linux-nightly-report:
-    if: ${{ failure() && github.event_name == 'schedule' && needs.quick.outputs.skip != 'true' }}
+    if: ${{ failure() && github.event_name == 'schedule' && needs.quick.outputs.skip != 'true' && github.event_name != 'merge_group' }}
     name: open or update the nightly issue
     needs: [quick, rust-linux]
     runs-on: ubuntu-latest
@@ -437,7 +437,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON('["macos-26","windows-latest"]') }}
+        # The merge queue runs only the Windows leg (push-only, and the one main kept breaking); the
+        # macOS leg runs after merge, as before.
+        os: ${{ fromJSON(github.event_name == 'merge_group' && '["windows-latest"]' || '["macos-26","windows-latest"]') }}
     defaults:
       run:
         working-directory: libs/cua
@@ -520,7 +522,7 @@ jobs:
   # (a path dependency without a version, a file embedded from outside the
   # crate, a dependency on an unpublished crate).
   crates-dry-run:
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' && needs.quick.outputs.skip != 'true' }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' && needs.quick.outputs.skip != 'true' && github.event_name != 'merge_group' }}
     name: crates.io dry run
     runs-on: ubuntu-latest
     needs: [quick, reuse]
@@ -543,7 +545,7 @@ jobs:
   # cua-spacesd server core in process. A standalone workspace so libs/cua
   # never depends on the driver workspace (see the boundary check above).
   spaces-e2e:
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.quick.outputs.skip != 'true' }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.quick.outputs.skip != 'true' && github.event_name != 'merge_group' }}
     name: spaces e2e (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     needs: [quick, reuse]
@@ -583,7 +585,7 @@ jobs:
           RUST_MIN_STACK: "8388608"
 
   bindings:
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.quick.outputs.skip != 'true' }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.quick.outputs.skip != 'true' && github.event_name != 'merge_group' }}
     name: bindings drift (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     needs: [quick, reuse]
@@ -619,7 +621,7 @@ jobs:
           cargo run --locked -q -p cua-spaces --bin cua-spaces-control-fixtures -- --check
 
   kotlin:
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' && needs.quick.outputs.skip != 'true' }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' && needs.quick.outputs.skip != 'true' && github.event_name != 'merge_group' }}
     # The generated binding must compile (an exported `close` once clashed
     # with AutoCloseable.close; uniffi.toml renames such methods).
     name: kotlin compile
@@ -637,7 +639,7 @@ jobs:
   # compile all of them: 45-55 minutes cold on a 2-vCPU runner). macOS and
   # Windows legs (ci:full) still build their own.
   build-sdk:
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' && needs.quick.outputs.skip != 'true' }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' && needs.quick.outputs.skip != 'true' && github.event_name != 'merge_group' }}
     name: build SDK (linux, release)
     runs-on: ubuntu-latest
     needs: [quick, reuse]
@@ -667,7 +669,7 @@ jobs:
           compression-level: 1
 
   build-fixtures:
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' && needs.quick.outputs.skip != 'true' }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' && needs.quick.outputs.skip != 'true' && github.event_name != 'merge_group' }}
     name: build test fixtures (linux)
     runs-on: ubuntu-latest
     needs: [quick, reuse]
@@ -697,7 +699,7 @@ jobs:
           compression-level: 1
 
   build-cli:
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' && needs.quick.outputs.skip != 'true' }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' && needs.quick.outputs.skip != 'true' && github.event_name != 'merge_group' }}
     name: build cua and cua-spaces CLIs (linux)
     runs-on: ubuntu-latest
     needs: [quick, reuse]
@@ -727,7 +729,7 @@ jobs:
           compression-level: 1
 
   python:
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.build-sdk.result != 'failure' && needs.build-sdk.result != 'cancelled' && needs.build-fixtures.result != 'failure' && needs.build-fixtures.result != 'cancelled' && needs.build-cli.result != 'failure' && needs.build-cli.result != 'cancelled' && needs.quick.outputs.skip != 'true' }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.build-sdk.result != 'failure' && needs.build-sdk.result != 'cancelled' && needs.build-fixtures.result != 'failure' && needs.build-fixtures.result != 'cancelled' && needs.build-cli.result != 'failure' && needs.build-cli.result != 'cancelled' && needs.quick.outputs.skip != 'true' && github.event_name != 'merge_group' }}
     name: python smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     needs: [quick, reuse, build-sdk, build-fixtures, build-cli]
@@ -801,7 +803,7 @@ jobs:
             --with "$WHEEL" --with "$CLI_WHEEL" --with-editable . pytest -q -p no:cacheprovider tests/test_conformance.py
 
   node:
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.build-sdk.result != 'failure' && needs.build-sdk.result != 'cancelled' && needs.build-fixtures.result != 'failure' && needs.build-fixtures.result != 'cancelled' && needs.build-cli.result != 'failure' && needs.build-cli.result != 'cancelled' && needs.quick.outputs.skip != 'true' }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.build-sdk.result != 'failure' && needs.build-sdk.result != 'cancelled' && needs.build-fixtures.result != 'failure' && needs.build-fixtures.result != 'cancelled' && needs.build-cli.result != 'failure' && needs.build-cli.result != 'cancelled' && needs.quick.outputs.skip != 'true' && github.event_name != 'merge_group' }}
     name: node smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     needs: [quick, reuse, build-sdk, build-fixtures, build-cli]
@@ -862,7 +864,7 @@ jobs:
           npm --prefix typescript/integrations/pi-durable test
 
   browser:
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' && needs.quick.outputs.skip != 'true' }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' && needs.quick.outputs.skip != 'true' && github.event_name != 'merge_group' }}
     name: browser (wasm32) build + smoke
     runs-on: ubuntu-latest
     needs: [quick, reuse, build-fixtures]
@@ -907,7 +909,7 @@ jobs:
   swift:
     name: swift smoke (macOS)
     needs: quick
-    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')))) && needs.quick.outputs.skip != 'true' }}
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')))) && needs.quick.outputs.skip != 'true' && github.event_name != 'merge_group' }}
     runs-on: macos-26
     # Cold, the release cua-sdk build alone nears 45 minutes on macos-26.
     timeout-minutes: 60

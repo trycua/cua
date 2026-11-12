@@ -270,7 +270,7 @@ describe("New Space wizard", () => {
   });
 
   it("offers Windows on a Mac and picks the build it runs (Windows 11)", () => {
-    renderWizard();
+    renderWizard({ hostArch: "arm64" });
     const tile = screen.getByRole("button", { name: /^Windows/ });
     expect(tile).not.toHaveTextContent("coming soon");
     expect(tile).toBeEnabled();
@@ -483,7 +483,7 @@ describe("QEMU VMs", () => {
     runOn("local");
     pick("ghcr.io/trycua/windows:2022");
     expect(continueButton()).toBeDisabled();
-    expect(screen.getByRole("alert")).toHaveTextContent("cannot run QEMU Spaces");
+    expect(screen.getByRole("alert")).toHaveTextContent("Needs QEMU");
     pick("ghcr.io/trycua/linux:24.04-disk");
     expect(continueButton()).toBeDisabled();
     pick("ghcr.io/trycua/linux:24.04");
@@ -497,7 +497,7 @@ describe("QEMU VMs", () => {
     runOn("local");
     pick("ghcr.io/trycua/windows:2022");
     expect(continueButton()).toBeDisabled();
-    expect(screen.getByRole("alert")).toHaveTextContent("cannot run QEMU Spaces");
+    expect(screen.getByRole("alert")).toHaveTextContent("Needs QEMU");
     pick("ghcr.io/trycua/macos:26");
     expect(continueButton()).toBeEnabled();
     pick("ghcr.io/trycua/linux:24.04");

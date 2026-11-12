@@ -4532,6 +4532,31 @@ class _UniffiFfiConverterTypeHotkeyInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeDesktopScope.write(value.scope, buf)
         _UniffiFfiConverterOptionalString.write(value.session, buf)
 
+class _UniffiFfiConverterOptionalTypeInputDeliveryMode(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeInputDeliveryMode.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeInputDeliveryMode.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeInputDeliveryMode.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
 @dataclass
 class InvokeMenuInput:
     """
@@ -4541,23 +4566,26 @@ class InvokeMenuInput:
     macOS, three periods in a label also match the ellipsis character that
     native menu titles use (`Save As...` finds `Save As…`).
 """
-    def __init__(self, *, pid:int, window_id:int, path:typing.List[str], session:typing.Optional[str]):
+    def __init__(self, *, pid:int, window_id:int, path:typing.List[str], delivery_mode:typing.Optional[InputDeliveryMode], session:typing.Optional[str]):
         self.pid = pid
         self.window_id = window_id
         self.path = path
+        self.delivery_mode = delivery_mode
         self.session = session
 
 
 
 
     def __str__(self):
-        return "InvokeMenuInput(pid={}, window_id={}, path={}, session={})".format(self.pid, self.window_id, self.path, self.session)
+        return "InvokeMenuInput(pid={}, window_id={}, path={}, delivery_mode={}, session={})".format(self.pid, self.window_id, self.path, self.delivery_mode, self.session)
     def __eq__(self, other):
         if self.pid != other.pid:
             return False
         if self.window_id != other.window_id:
             return False
         if self.path != other.path:
+            return False
+        if self.delivery_mode != other.delivery_mode:
             return False
         if self.session != other.session:
             return False
@@ -4570,6 +4598,7 @@ class _UniffiFfiConverterTypeInvokeMenuInput(_UniffiConverterRustBuffer):
             pid=_UniffiFfiConverterUInt32.read(buf),
             window_id=_UniffiFfiConverterUInt64.read(buf),
             path=_UniffiFfiConverterSequenceString.read(buf),
+            delivery_mode=_UniffiFfiConverterOptionalTypeInputDeliveryMode.read(buf),
             session=_UniffiFfiConverterOptionalString.read(buf),
         )
 
@@ -4578,6 +4607,7 @@ class _UniffiFfiConverterTypeInvokeMenuInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterUInt32.check_lower(value.pid)
         _UniffiFfiConverterUInt64.check_lower(value.window_id)
         _UniffiFfiConverterSequenceString.check_lower(value.path)
+        _UniffiFfiConverterOptionalTypeInputDeliveryMode.check_lower(value.delivery_mode)
         _UniffiFfiConverterOptionalString.check_lower(value.session)
 
     @staticmethod
@@ -4585,6 +4615,7 @@ class _UniffiFfiConverterTypeInvokeMenuInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterUInt32.write(value.pid, buf)
         _UniffiFfiConverterUInt64.write(value.window_id, buf)
         _UniffiFfiConverterSequenceString.write(value.path, buf)
+        _UniffiFfiConverterOptionalTypeInputDeliveryMode.write(value.delivery_mode, buf)
         _UniffiFfiConverterOptionalString.write(value.session, buf)
 
 @dataclass

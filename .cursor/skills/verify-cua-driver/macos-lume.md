@@ -34,7 +34,7 @@ The runner stops at exit 2 when the seed lacks one of these. The seed steps are 
 
 - **Tk 8.6 or later** (`require_modern_tk`). Apple's `/usr/bin/python3` has Tk 8.5.9. `brew install python-tk` puts Homebrew's `python3` first; the current seed has Tk 9.1.
 - **Terminal → System Events Automation** ("Terminal cannot control System Events").
-- **Terminal Accessibility** ("grant Terminal Accessibility in the seed"). The switch in System Settings looks on before it is saved. It persists only after the admin-password dialog accepts the guest password; then the runner's `AXRole` probe returns `AXApplication`. With no human at the display, the guest's own `cua-driver-local` can do the clicks and typing over SSH.
+- **Terminal Accessibility** ("grant Terminal Accessibility in the seed"). The switch in System Settings looks on before it is saved. It persists only after the admin-password dialog accepts the guest password; then the runner's `AXRole` probe returns `AXApplication`. With no human at the display, the guest's own `cua-driver-local` can do the clicks and typing over SSH, but only from an unrestricted daemon (`open -n -g /Applications/CuaDriverLocal.app --args serve --permission-mode unrestricted --dangerously-bypass-approvals`): every other mode refuses input to the password dialog with `security_prompt_protected`.
 - **CuaDriverLocal** Accessibility, Screen Recording, direct capture and a stable signing identity.
 
 ## Host notes

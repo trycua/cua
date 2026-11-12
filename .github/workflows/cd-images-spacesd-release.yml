@@ -117,6 +117,7 @@ jobs:
       packages: write
       actions: read
       issues: write
+      pull-requests: read
     with:
       publish: true
       spacesd_source: release

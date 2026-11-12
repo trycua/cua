@@ -20,9 +20,9 @@ use super::impl_::{
     keyboard_window_center, named_session_cursor_key, prove_token_element, resolve_cursor_key,
     resolve_element_local_coords, reveal_pointer_action_for, screenshot_scale,
     spawn_blocking_bounded, spawn_isolated_hyprland, stale_observed_element,
-    unavailable_chromium_background, unavailable_gtk_pointer_background,
-    unavailable_wayland_focused_input_background, unavailable_webkit_background,
-    window_local_to_screen, window_screen_center, ToolState,
+    synthetic_pointer_is_dropped, unavailable_chromium_background,
+    unavailable_synthetic_pointer_background, unavailable_wayland_focused_input_background,
+    unavailable_webkit_background, window_local_to_screen, window_screen_center, ToolState,
 };
 
 /// Wheel detents for a compositor scroll: one per line. On niri a page is
@@ -687,7 +687,7 @@ impl Tool for ScrollTool {
         if let Some(refusal) = unavailable_webkit_background(pid, delivery) {
             return refusal;
         }
-        if let Some(refusal) = unavailable_gtk_pointer_background(pid, delivery) {
+        if let Some(refusal) = unavailable_synthetic_pointer_background(pid, delivery) {
             return refusal;
         }
 
@@ -783,6 +783,15 @@ impl Tool for ScrollTool {
                                 Err(error) if crate::input::is_uinput_unavailable(&error) => {
                                     return Err(error)
                                 }
+                                // GTK, Qt and VCL drop the synthetic Button4-7
+                                // fallback: report the failed wheel instead of
+                                // a scroll that moved nothing (#7369).
+                                Err(error) if synthetic_pointer_is_dropped(pid) => {
+                                    return Err(error.context(
+                                        "the agent pointer's wheel was not delivered, and this \
+                                         app drops synthetic wheel events",
+                                    ))
+                                }
                                 Err(e) => tracing::warn!("MPX scroll fell back to XSendEvent: {e}"),
                             }
                         }
@@ -829,9 +838,14 @@ impl Tool for ScrollTool {
         };
         match result {
             Ok(Ok(())) => ToolResult::text(format!(
-                "Scrolled {direction} {amount} ticks (delivery_mode={mode_label})."
+                "Sent {amount} wheel detent(s) {direction} (delivery_mode={mode_label}); the \
+                 scroll position is not verified, so confirm it from fresh state."
             ))
-            .with_structured(json!({ "verified": false, "delivery_mode": mode_label })),
+            .with_structured(json!({
+                "verified": false,
+                "effect": "unverifiable",
+                "delivery_mode": mode_label,
+            })),
             Ok(Err(e)) => input_error_result(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }

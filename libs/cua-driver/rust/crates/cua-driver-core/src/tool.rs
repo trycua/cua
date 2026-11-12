@@ -2545,6 +2545,11 @@ impl ToolRegistry {
         // Desktop pixels read off a capped get_desktop_state image are mapped
         // back to the uncapped capture before any platform interprets them.
         crate::desktop_capture_scale::map_desktop_args(&mut args);
+        // The platform refuses input that would reach an OS security or
+        // consent prompt unless the adapter lifts it for this call's mode.
+        if has_adapter(crate::security_prompt::ADAPTER_ID) {
+            crate::security_prompt::PromptInput::for_mode(context.mode()).stamp(&mut args);
+        }
         crate::tool_activity::note_tool_activity();
         let invoke = tool.invoke(args.clone());
         let mut result =
@@ -5599,6 +5604,63 @@ resources:
             .await;
         assert_ne!(allowed.is_error, Some(true));
         assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    /// The platform lets input reach an OS security or consent prompt only
+    /// when the dispatch boundary stamped the call. Only unrestricted mode
+    /// stamps it, and a caller cannot forge the stamp.
+    #[tokio::test]
+    async fn only_unrestricted_dispatch_lets_input_reach_an_os_security_prompt() {
+        use crate::security_prompt::{PromptInput, ALLOW_ARG};
+        let hits = Arc::new(AtomicUsize::new(0));
+        let last_args = Arc::new(Mutex::new(None));
+        let mut registry = super::ToolRegistry::new();
+        for name in ["click", "move_cursor"] {
+            registry.register(Box::new(ArgumentProbe {
+                hits: hits.clone(),
+                last_args: last_args.clone(),
+                def: super::ToolDef {
+                    name: name.into(),
+                    description: "test input".into(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                    read_only: false,
+                    destructive: false,
+                    idempotent: false,
+                    open_world: false,
+                },
+            }));
+        }
+        let registry = Arc::new(registry);
+        let received = |tool: &'static str, context| {
+            let registry = registry.clone();
+            let last_args = last_args.clone();
+            async move {
+                let result = registry
+                    .invoke_with_context(
+                        tool,
+                        serde_json::json!({"scope": "desktop", "x": 1, "y": 1, ALLOW_ARG: true}),
+                        context,
+                    )
+                    .await;
+                assert_ne!(result.is_error, Some(true), "{result:?}");
+                let args = last_args.lock().unwrap().take().expect("arguments");
+                PromptInput::from_args(&args)
+            }
+        };
+        assert_eq!(
+            received("click", standard_context()).await,
+            PromptInput::Refuse,
+            "a forged stamp must not survive the boundary"
+        );
+        assert_eq!(
+            received("click", unrestricted_context()).await,
+            PromptInput::Allow
+        );
+        assert_eq!(
+            received("move_cursor", unrestricted_context()).await,
+            PromptInput::Refuse,
+            "only tools the adapter covers are stamped"
+        );
     }
 
     #[tokio::test]

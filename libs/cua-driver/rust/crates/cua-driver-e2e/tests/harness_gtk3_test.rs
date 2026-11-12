@@ -523,6 +523,78 @@ fn harness_gtk3_stale_element_token_fails_closed() {
     );
 }
 
+/// A `GtkOverlay` banner drawn over a button: a foreground element click on the
+/// banner presses the banner, and on X11 a click on the covered button is
+/// refused with the banner named instead of pressing the banner by accident.
+#[test]
+#[ignore]
+fn harness_gtk3_foreground_click_respects_overlay_stacking() {
+    run_case(
+        native_foreground_case(
+            "gtk3",
+            "overlay_stacking",
+            Targeting::Ax,
+            DriverRoute::LinuxXTest,
+        ),
+        |pid, window_id, driver| {
+            let first = snapshot(driver, pid, window_id);
+            if DisplayServer::current() == DisplayServer::X11 {
+                let covered = element_token(&first, "btn-overlay-covered");
+                let refused = driver.call(
+                    "click",
+                    serde_json::json!({
+                        "pid": pid as i64,
+                        "window_id": window_id,
+                        "element_token": covered,
+                        "delivery_mode": "foreground"
+                    }),
+                );
+                assert!(
+                    refused.is_error(),
+                    "a press on the covered button was sent: {}",
+                    refused.text()
+                );
+                assert_eq!(
+                    refused.structured()["reason"].as_str(),
+                    Some("point_owned_by_another_element"),
+                    "{}",
+                    refused.text()
+                );
+                assert!(
+                    refused.text().contains("btn-overlay-banner"),
+                    "the refusal names the wrong owner: {}",
+                    refused.text()
+                );
+                std::thread::sleep(Duration::from_millis(250));
+                assert!(
+                    snapshot(driver, pid, window_id)
+                        .tree_text()
+                        .contains("overlay_action=none"),
+                    "the refused click still pressed something"
+                );
+            }
+            let second = snapshot(driver, pid, window_id);
+            let banner = element_token(&second, "btn-overlay-banner");
+            let pressed = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": window_id,
+                    "element_token": banner,
+                    "delivery_mode": "foreground"
+                }),
+            );
+            assert!(
+                !pressed.is_error(),
+                "banner click failed: {}",
+                pressed.text()
+            );
+            wait_for_state(driver, pid, window_id, "overlay_action=banner");
+            Observation::delivered_with_fixture_state(Vec::new())
+        },
+    );
+}
+
 #[test]
 #[ignore]
 fn harness_gtk3_invoke_menu_live_path() {
@@ -539,7 +611,8 @@ fn harness_gtk3_invoke_menu_live_path() {
                 serde_json::json!({
                     "pid": pid,
                     "window_id": window_id,
-                    "path": ["Window", "Arrange", "Missing"]
+                    "path": ["Window", "Arrange", "Missing"],
+                    "delivery_mode": "foreground"
                 }),
             );
             assert!(refused.is_error(), "missing menu path was accepted");
@@ -567,7 +640,8 @@ fn harness_gtk3_invoke_menu_live_path() {
                 serde_json::json!({
                     "pid": pid,
                     "window_id": window_id,
-                    "path": ["Window", "Arrange", "Left"]
+                    "path": ["Window", "Arrange", "Left"],
+                    "delivery_mode": "foreground"
                 }),
             );
             assert!(

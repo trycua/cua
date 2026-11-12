@@ -266,9 +266,65 @@ pub struct DoctorReport {
     pub vz: Option<VzReport>,
 }
 
+/// Whether gVisor (`runsc`) is usable for containers on this host: the one
+/// answer `cua runtime doctor` and `cua runtime setup runsc` share, so they
+/// cannot disagree.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RunscState {
+    /// Registered with the container engine, or provided by the built-in
+    /// Linux runtime. The text says which.
+    Ready(String),
+    /// A running engine without runsc, and a plan that installs it.
+    Installable(String),
+    /// Not usable and not installable by cua: the reason, with what to do.
+    Unavailable(String),
+}
+
 impl DoctorReport {
     pub fn backend(&self, kind: BackendKind) -> Option<&BackendStatus> {
         self.backends.iter().find(|b| b.backend == kind)
+    }
+
+    /// gVisor's state. The container backend being ready only means an
+    /// engine answers; runsc is a separate component of it (an engine with
+    /// only runc runs containers without gVisor).
+    pub fn runsc(&self) -> RunscState {
+        let container = self.backend(BackendKind::Container);
+        if container.is_some_and(|b| b.ready) && self.container.gvisor {
+            return RunscState::Ready("runsc is registered with the container engine".into());
+        }
+        if let Some(b) = container.filter(|b| b.ready) {
+            if b.provisionable && !b.provisioning.is_empty() {
+                return RunscState::Installable(b.provisioning.join("; "));
+            }
+            return RunscState::Unavailable(format!(
+                "runsc is not registered and cua cannot install it here: {}",
+                self.container
+                    .gvisor_provisioning
+                    .as_deref()
+                    .unwrap_or("no install path for this engine")
+            ));
+        }
+        // Without an engine of its own, the built-in Linux runtime (a VM
+        // with gVisor) serves containers on a Mac; on Windows it runs runc.
+        if self.host.os != HostOs::Windows
+            && self.backend(BackendKind::Managed).is_some_and(|b| b.ready)
+        {
+            return RunscState::Ready("gVisor runs in the built-in Linux runtime".into());
+        }
+        let why = container.map_or_else(
+            || "no container engine on this host".to_string(),
+            |b| {
+                let mut s = b.detail.clone();
+                if !b.missing.is_empty() {
+                    s.push_str(&format!("; missing: {}", b.missing.join(", ")));
+                }
+                s
+            },
+        );
+        RunscState::Unavailable(format!(
+            "runsc needs a running Docker-compatible container engine first ({why})"
+        ))
     }
 }
 

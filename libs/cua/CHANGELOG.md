@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.25.0](https://github.com/trycua/cua/compare/cua-sdk-v0.24.2...cua-sdk-v0.25.0) (2026-11-12)
+
+
+### Features
+
+* **spaces:** setup shows each agent connection step live, connects Cua Driver and sets up This Mac (CUA-4067) ([#7389](https://github.com/trycua/cua/issues/7389)) ([d2c5abb](https://github.com/trycua/cua/commit/d2c5abbb3b4b4cbece4079ad59da74e99dc7b473))
+
+
+### Bug Fixes
+
+* **cua-vmm:** run the engine helper's chroot from PATH and build sandbox overlays on 24.04 ([#7409](https://github.com/trycua/cua/issues/7409)) ([10cd739](https://github.com/trycua/cua/commit/10cd739d46db34a0373245531c8219babf606c1f))
+
+## [0.24.2](https://github.com/trycua/cua/compare/cua-sdk-v0.24.1...cua-sdk-v0.24.2) (2026-11-11)
+
+
+### Bug Fixes
+
+* **cua-vmm:** boot cold when a guest cannot take a restored identity; one readiness budget per start ([#7354](https://github.com/trycua/cua/issues/7354)) ([82412af](https://github.com/trycua/cua/commit/82412afdca85c7fca0ca3c63d1be3f080fb0e9c2))
+
+## [0.24.1](https://github.com/trycua/cua/compare/cua-sdk-v0.24.0...cua-sdk-v0.24.1) (2026-11-11)
+
+
+### Bug Fixes
+
+* **runtime:** setup runsc no longer says already available on a runc-only Docker ([#7314](https://github.com/trycua/cua/issues/7314)) ([bc640ca](https://github.com/trycua/cua/commit/bc640ca8186aed9999f98596decf4b5a9cd9a607))
+
+## [0.24.0](https://github.com/trycua/cua/compare/cua-sdk-v0.23.0...cua-sdk-v0.24.0) (2026-11-11)
+
+
+### Features
+
+* **spaces:** closing the window keeps Cua Spaces running, Quit stops the background service ([#7136](https://github.com/trycua/cua/issues/7136)) ([4af5875](https://github.com/trycua/cua/commit/4af587598509724ca1c716cbda5092d13794b8ea))
+
 ## [0.23.0](https://github.com/trycua/cua/compare/cua-sdk-v0.22.0...cua-sdk-v0.23.0) (2026-11-10)
 
 

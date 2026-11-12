@@ -8,6 +8,8 @@
 #
 #   libs/cua/crates/cua-media-codec/scripts/linux-test.sh [--bench]
 set -euo pipefail
+# macOS shells default to 256 open files, too few for the cua-spaces test binaries (see scripts/ci/tests/test_nofile_limit.py).
+[ "$(ulimit -Sn)" = unlimited ] || [ "$(ulimit -Sn)" -ge 10240 ] || ulimit -Sn 10240 2>/dev/null || ulimit -Sn "$(ulimit -Hn)" 2>/dev/null || true # nofile-limit
 repo="$(cd "$(dirname "$0")/../../../../.." && pwd)"
 bench="${1:-}"
 # Big debug test binaries OOM GNU ld at 4 GiB: line-tables-only debug info,

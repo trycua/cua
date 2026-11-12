@@ -112,7 +112,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends genisoimage qemu-utils qemu-system-x86 ovmf
-          sudo chmod 666 /dev/kvm
+          "$GITHUB_WORKSPACE/scripts/images/enable-kvm.sh" --require
           cd libs/images
           linux/build-spacesd-linux.sh amd64
           ./build.sh linux --tag e2e --outputs rootfs,disk --out "$HOME/.cache/cua-images-e2e"

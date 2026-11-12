@@ -679,12 +679,38 @@ impl QemuRuntime {
         kvm: &std::io::Result<()>,
         sudo: impl Fn() -> bool,
     ) -> Result<String> {
+        self.accel_for_policy(arch, kvm, sudo, kvm_required())
+    }
+
+    /// `require_kvm`: a same-architecture guest on Linux must get KVM, so
+    /// software emulation (TCG) is an error rather than a slow fallback.
+    fn accel_for_policy(
+        &self,
+        arch: Arch,
+        kvm: &std::io::Result<()>,
+        sudo: impl Fn() -> bool,
+        require_kvm: bool,
+    ) -> Result<String> {
         if let Some(accel) = &self.cfg.accel {
             return Ok(accel.clone());
         }
         let accel = host::qemu_accel_with(host::HostOs::current(), arch, kvm, sudo, |message| {
             tracing::warn!("{message}")
         })?;
+        if require_kvm
+            && accel == "tcg"
+            && arch == Arch::host()
+            && host::HostOs::current() == host::HostOs::Linux
+        {
+            let why = match kvm {
+                Err(e) => host::kvm_hint(e),
+                Ok(()) => "KVM is not usable".to_string(),
+            };
+            return Err(VmmError::missing(
+                "KVM",
+                format!("{KVM_REQUIRED_ENV} is set, so TCG emulation is refused: {why}"),
+            ));
+        }
         if let Err(e) = kvm
             && accel == "tcg"
             && arch == Arch::host()
@@ -1143,7 +1169,12 @@ impl QemuRuntime {
                     tracing::warn!(sandbox = %st.name, error = %e, "port forwarder failed; launching again with pasta's forwards");
                     attempt += 1;
                 }
-                Err(e) if st.accel == "kvm" && self.cfg.accel.is_none() && kvm_stalled(&e) => {
+                Err(e)
+                    if st.accel == "kvm"
+                        && self.cfg.accel.is_none()
+                        && !kvm_required()
+                        && kvm_stalled(&e) =>
+                {
                     tracing::warn!(
                         sandbox = %st.name,
                         "KVM did not start a vCPU (QEMU stopped answering QMP; see `dmesg` for kvm errors), so retrying under slow TCG emulation"
@@ -2237,6 +2268,28 @@ impl QemuRuntime {
     }
 }
 
+/// What is left of a start's readiness budget (see [`QemuRuntime::start`]).
+#[derive(Clone, Copy, Debug)]
+struct Budget(tokio::time::Instant);
+
+impl Budget {
+    fn new(total: Duration) -> Self {
+        Self(tokio::time::Instant::now() + total)
+    }
+
+    fn left(&self) -> Duration {
+        self.0
+            .saturating_duration_since(tokio::time::Instant::now())
+    }
+
+    /// `spec` with what is left as its `ready_timeout`.
+    fn spec(&self, spec: &StartSpec) -> StartSpec {
+        let mut s = spec.clone();
+        s.ready_timeout = self.left();
+        s
+    }
+}
+
 /// Guest OS and firmware for a new x86 instance. What the caller said wins;
 /// what it left open comes from the disk's partition table, so any
 /// containerDisk boots without per-image flags: a GPT with an ESP and no BIOS
@@ -2623,6 +2676,15 @@ fn is_port_conflict(stderr: &str) -> bool {
         || stderr.contains("Could not set up host forwarding rule")
 }
 
+/// Set (`1`/`true`) by CI lanes that must run under hardware acceleration:
+/// QEMU then fails instead of falling back to TCG, which boots a desktop
+/// image several times slower and turns a missing /dev/kvm into a timeout.
+const KVM_REQUIRED_ENV: &str = "CUA_REQUIRE_KVM";
+
+fn kvm_required() -> bool {
+    std::env::var(KVM_REQUIRED_ENV).is_ok_and(|v| matches!(v.trim(), "1" | "true" | "yes"))
+}
+
 fn kvm_stalled(e: &VmmError) -> bool {
     matches!(e, VmmError::Qmp(m) if m.contains("timed out"))
 }
@@ -2970,6 +3032,13 @@ impl Runtime for QemuRuntime {
                 Err(e) => return Err(e),
             }
         };
+        // One readiness budget from here, with the image present (as the
+        // SDK measures it): a golden recording, a restore with its identity
+        // renewal, a cold boot after a failed restore and the probes share
+        // it. Each used to get all of `ready_timeout` again, so a start
+        // could take twice the budget and leave the caller's own wait for
+        // cua-spacesd none of it.
+        let budget = Budget::new(spec.ready_timeout);
 
         // The start spec's policy for a new VM (or one with none kept); a
         // kept one wins (`set_egress` changed it since).
@@ -2997,7 +3066,7 @@ impl Runtime for QemuRuntime {
             crate::progress::report(crate::progress::Progress::phase(
                 crate::progress::Phase::Booting,
             ));
-            match self.golden(&st, spec, backing, &key).await {
+            match self.golden(&st, &budget.spec(spec), backing, &key).await {
                 Ok(snap) => self.adopt_snapshot(&mut st, &snap).await?,
                 Err(e) => {
                     tracing::warn!(error = %e, "could not record a golden QEMU snapshot; booting cold")
@@ -3039,7 +3108,9 @@ impl Runtime for QemuRuntime {
             ));
             let dir = self.dir(&st.name);
             if let Some(snap) = st.restore_from.clone()
-                && let Err(e) = self.restore_memory(&mut st, spec, &snap).await
+                && let Err(e) = self
+                    .restore_memory(&mut st, &budget.spec(spec), &snap)
+                    .await
             {
                 let _ = self.force_stop(&mut st, Duration::ZERO).await;
                 // No room on this host: the snapshot is fine.
@@ -3092,7 +3163,9 @@ impl Runtime for QemuRuntime {
                 crate::progress::Phase::WaitingForServices,
             ));
         }
-        let ready = self.wait_probes(&st, &inst.endpoints, spec).await;
+        let ready = self
+            .wait_probes(&st, &inst.endpoints, &budget.spec(spec))
+            .await;
         // Booted (or restored) and answering, or not going to: from here on
         // the VM counts what it really uses, not what it was expected to.
         self.release(&st.name);
@@ -4862,6 +4935,23 @@ mod tests {
         );
     }
 
+    /// Every phase of a start (golden recording, restore, cold boot,
+    /// probes) gets what is left of one budget, never the whole budget
+    /// again: a spent budget leaves the next phase nothing.
+    #[tokio::test]
+    async fn phases_of_a_start_share_one_readiness_budget() {
+        let spec =
+            StartSpec::new("a", ImageSource::Existing).ready_timeout(Duration::from_secs(60));
+        let budget = Budget::new(spec.ready_timeout);
+        let first = budget.spec(&spec).ready_timeout;
+        assert!(first <= Duration::from_secs(60) && first > Duration::from_secs(59));
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        assert!(budget.spec(&spec).ready_timeout < first);
+        assert_eq!(budget.spec(&spec).name, "a");
+        let spent = Budget::new(Duration::ZERO);
+        assert_eq!(spent.spec(&spec).ready_timeout, Duration::ZERO);
+    }
+
     #[test]
     fn no_desktop_means_no_display_hardware() {
         let s = StartSpec::new("a", ImageSource::Existing);
@@ -4988,6 +5078,30 @@ mod tests {
         );
         let missing = Err(std::io::ErrorKind::NotFound.into());
         assert_eq!(r.accel_for(Arch::host(), &missing).unwrap(), "tcg");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn required_kvm_refuses_tcg_instead_of_falling_back() {
+        let tmp = tempfile::tempdir().unwrap();
+        let r = rt(tmp.path());
+        let missing = Err(std::io::ErrorKind::NotFound.into());
+        assert_eq!(
+            r.accel_for_policy(Arch::host(), &missing, || true, false)
+                .unwrap(),
+            "tcg"
+        );
+        let error = r
+            .accel_for_policy(Arch::host(), &missing, || true, true)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(KVM_REQUIRED_ENV), "{error}");
+        assert!(error.contains("/dev/kvm is missing"), "{error}");
+        assert_eq!(
+            r.accel_for_policy(Arch::host(), &Ok(()), || true, true)
+                .unwrap(),
+            "kvm"
+        );
     }
 
     #[test]

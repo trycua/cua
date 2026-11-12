@@ -5304,6 +5304,7 @@ mod visibility_tests {
             })],
             covers_window: true,
             window_rect: Some((0, 0, 800, 600)),
+            related: None,
         };
         let note = overlays.follow_up(5).unwrap();
         assert!(
@@ -5338,6 +5339,7 @@ mod visibility_tests {
             popups: vec![],
             covers_window: false,
             window_rect: Some((0, 0, 800, 600)),
+            related: None,
         };
         let note = overlays.follow_up(5).unwrap();
         assert!(

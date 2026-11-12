@@ -32,15 +32,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 // ── workspace paths ──────────────────────────────────────────────────────────
 
-fn webview_exe() -> PathBuf {
-    if let Ok(p) = std::env::var("HARNESS_WEBVIEW_EXE") {
-        let pb = PathBuf::from(p);
-        if pb.exists() {
-            return pb;
-        }
-    }
-    harness_app("harness-webview", "CuaTestHarness.WebView.exe")
-}
 fn electron_exe() -> PathBuf {
     if let Ok(p) = std::env::var("HARNESS_ELECTRON_EXE") {
         let pb = PathBuf::from(p);

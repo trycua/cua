@@ -311,34 +311,19 @@ fn window_info_by_handle(hwnd: u64) -> Option<WindowInfo> {
 
 /// The other visible top-level windows of `pid` with their `GW_OWNER` chain,
 /// for `get_window_state`'s `interaction_context`. Modality comes from
-/// `modal_by_disabled_owner`; `None` when it cannot be established. The enumeration
-/// skips untitled windows, so a disabled target's last active popup is added
-/// too. Blocking.
+/// `modal_by_disabled_owner`; `None` when it cannot be established.
+/// Blocking.
 pub(crate) fn interaction_facts(
     pid: u32,
     target: u64,
 ) -> cua_driver_core::window_inspection::InteractionFacts {
     use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
-    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetLastActivePopup};
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
     let foreground = unsafe { GetForegroundWindow() }.0 as usize as u64;
-    let mut hwnds: Vec<u64> = list_windows_via_win32(Some(pid))
-        .into_iter()
-        .filter(|window| window.is_on_screen)
-        .map(|window| window.hwnd)
-        .collect();
+    // Every visible top-level window of the pid, titled or not: an untitled
+    // dialog is as modal as a titled one.
+    let hwnds = visible_top_level_windows(pid);
     let enabled = |hwnd: u64| unsafe { IsWindowEnabled(HWND(hwnd as *mut _)) }.as_bool();
-    if !enabled(target) {
-        let target_hwnd = HWND(target as *mut _);
-        let popup = unsafe { GetLastActivePopup(target_hwnd) };
-        let popup_id = popup.0 as usize as u64;
-        if popup_id != target
-            && unsafe { IsWindowVisible(popup) }.as_bool()
-            && window_owner_pid(popup_id) == Some(pid)
-            && !hwnds.contains(&popup_id)
-        {
-            hwnds.push(popup_id);
-        }
-    }
     let owned: Vec<(u64, Option<u64>)> = hwnds
         .into_iter()
         .map(|hwnd| {
@@ -366,6 +351,34 @@ pub(crate) fn interaction_facts(
     Some(cua_driver_core::window_inspection::related_by_owner_chain(
         target, &owned,
     ))
+}
+
+/// Every visible, non-minimized top-level HWND of `pid`, in z-order. Unlike
+/// [`list_windows_via_win32`], untitled windows are kept.
+fn visible_top_level_windows(pid: u32) -> Vec<u64> {
+    struct Collect {
+        pid: u32,
+        hwnds: Vec<u64>,
+    }
+    unsafe extern "system" fn collect(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let state = &mut *(lparam.0 as *mut Collect);
+        if IsWindowVisible(hwnd).as_bool() && !IsIconic(hwnd).as_bool() {
+            let mut pid = 0;
+            GetWindowThreadProcessId(hwnd, Some(&mut pid));
+            if pid == state.pid {
+                state.hwnds.push(hwnd.0 as usize as u64);
+            }
+        }
+        TRUE
+    }
+    let mut state = Collect {
+        pid,
+        hwnds: Vec::new(),
+    };
+    unsafe {
+        let _ = EnumWindows(Some(collect), LPARAM(&mut state as *mut Collect as isize));
+    }
+    state.hwnds
 }
 
 pub(crate) fn list_windows_via_win32(filter_pid: Option<u32>) -> Vec<WindowInfo> {

@@ -73,12 +73,15 @@ def release(tag: str, draft: bool = False, prerelease: bool = False) -> dict:
 
 
 # A monorepo release list where the repo-wide Latest is another component and
-# a draft carries the highest Lume version. The highest published stable Lume
-# release is 1.10.0, which also checks numeric rather than lexical ordering.
+# drafts carry the highest Lume versions. The expected picks (1.10.0 over
+# 1.9.0, build 10 over build 3) differ from lexical ordering.
 MONOREPO_RELEASES = [
     release("cua-driver-rs-v9.0.0"),
     release("lume-v1.11.0", draft=True),
     release("nightly-lume-v1.12.0-nightly.20261101.3", prerelease=True),
+    release("nightly-lume-v1.12.0-nightly.20261101.10", prerelease=True),
+    release("nightly-lume-v1.12.0-nightly.20261031.20", prerelease=True),
+    release("nightly-lume-v1.13.0-nightly.20261102.1", draft=True, prerelease=True),
     release("lume-v1.9.0"),
     release("lume-v1.10.0"),
     release("lume-v1.10.0-rc.1"),
@@ -104,7 +107,7 @@ def test_lume_version_override_wins_over_the_baked_version(tmp_path: Path):
     ("channel", "expected"),
     [
         ("stable", "lume-v1.10.0"),
-        ("nightly", "nightly-lume-v1.12.0-nightly.20261101.3"),
+        ("nightly", "nightly-lume-v1.12.0-nightly.20261101.10"),
     ],
 )
 def test_lume_api_fallback_picks_the_highest_lume_release_not_repo_latest(

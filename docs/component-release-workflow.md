@@ -243,9 +243,10 @@ git show origin/main:libs/lume/src/Update/VersionCheck.swift | \
 Require the exact tagged GitHub release, notarized archives, baked installer
 version, and updater tag prefix and canonical installer path to agree. Lume
 releases are published with `make_latest: false`, so they never move the
-repository-wide Latest release. The installer resolves `LUME_VERSION`, then the
-baked version, then the highest published `lume-v*` release from the release
-list; it never reads `/releases/latest`.
+repository-wide Latest release. The installer resolves `LUME_VERSION` first.
+On the stable channel it then uses the baked version, and on the nightly channel
+it picks the highest published `nightly-lume-v*` release from the release list.
+Neither path reads `/releases/latest`.
 
 ## Failure recovery
 

@@ -12,9 +12,6 @@ license = { text = "MIT" }
 authors = [
     { name = "TryCua", email = "gh@trycua.com" }
 ]
-classifiers = [
-    "License :: OSI Approved :: MIT License",
-]
 dependencies = [
     "pywebview>=5.3",
     "aiohttp>=3.9.0",

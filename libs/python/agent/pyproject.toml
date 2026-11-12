@@ -12,9 +12,6 @@ license = { text = "MIT" }
 authors = [
     { name = "TryCua", email = "gh@trycua.com" }
 ]
-classifiers = [
-    "License :: OSI Approved :: MIT License",
-]
 dependencies = [
     "httpx>=0.27.0",
     "aiohttp>=3.9.3",

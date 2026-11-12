@@ -505,6 +505,16 @@ pub fn list_cross_pid_transient_windows(pid: u32) -> Vec<WindowInfo> {
     list_cross_pid_transient_windows_with(pid, list_windows(None), transient_for)
 }
 
+/// [`list_cross_pid_transient_windows`], with a failed read kept apart from
+/// an empty list.
+pub fn try_list_cross_pid_transient_windows(pid: u32) -> Result<Vec<WindowInfo>> {
+    Ok(list_cross_pid_transient_windows_with(
+        pid,
+        try_list_windows(None)?,
+        transient_for,
+    ))
+}
+
 fn list_cross_pid_transient_windows_with(
     pid: u32,
     all_windows: Vec<WindowInfo>,

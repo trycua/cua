@@ -236,11 +236,13 @@ fn window_overlays(pid: u32, xid: u64) -> WindowOverlays {
     let active = crate::x11::active_window();
     // A window list that could not be read hides any blocker: it stays
     // unobservable rather than reading as "nothing related".
-    let (own_windows, listed) = match crate::x11::try_list_windows(Some(pid)) {
-        Ok(windows) => (windows, true),
-        Err(_) => (Vec::new(), false),
-    };
-    let cross_pid = crate::x11::list_cross_pid_transient_windows(pid);
+    let own_windows = crate::x11::try_list_windows(Some(pid));
+    let cross_pid = crate::x11::try_list_cross_pid_transient_windows(pid);
+    let listed = own_windows.is_ok() && cross_pid.is_ok();
+    let (own_windows, cross_pid) = (
+        own_windows.unwrap_or_default(),
+        cross_pid.unwrap_or_default(),
+    );
     out.related = listed.then(|| {
         let owned: Vec<_> = own_windows
             .iter()

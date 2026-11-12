@@ -146,6 +146,41 @@ pub fn related_by_owner_chain(target: u64, windows: &[OwnedWindow]) -> Vec<Relat
         .collect()
 }
 
+/// Which owned windows are modal on Win32, where `DialogBox` and an owned
+/// `MessageBox` disable their owner while they run: a disabled owner with
+/// exactly one visible owned window is blocked by that window. With several
+/// (a dialog beside a modeless palette), Win32 does not say which one is
+/// modal, and a disabled target owning none is blocked by something not
+/// listed: both are `None`, so the caller reports the relation as
+/// unobservable.
+pub fn modal_by_disabled_owner(
+    target: u64,
+    windows: &[(u64, Option<u64>)],
+    enabled: impl Fn(u64) -> bool,
+) -> Option<Vec<u64>> {
+    let mut owners: Vec<u64> = windows.iter().filter_map(|(_, owner)| *owner).collect();
+    owners.sort_unstable();
+    owners.dedup();
+    let mut modal = Vec::new();
+    for owner in owners.into_iter().filter(|owner| !enabled(*owner)) {
+        let mut owned = windows
+            .iter()
+            .filter(|(_, window_owner)| *window_owner == Some(owner));
+        match (owned.next(), owned.next()) {
+            (Some((hwnd, _)), None) => modal.push(*hwnd),
+            _ => return None,
+        }
+    }
+    if !enabled(target)
+        && !windows
+            .iter()
+            .any(|(hwnd, owner)| *owner == Some(target) && modal.contains(hwnd))
+    {
+        return None;
+    }
+    Some(modal)
+}
+
 /// The facts behind one [`interaction_context`] decision. `None` means the
 /// platform could not enumerate the application's windows or their state, so
 /// absence of a related surface proves nothing.
@@ -419,6 +454,31 @@ mod tests {
             })
             .collect();
         assert_eq!(relations, vec![(3, "modal_child"), (8, "blocks_target")]);
+    }
+
+    #[test]
+    fn a_disabled_owners_only_owned_window_is_modal() {
+        // Target 1 is disabled by its dialog 3; window 5 is an unrelated
+        // enabled top-level window.
+        let windows = [(1, None), (3, Some(1)), (5, None)];
+        assert_eq!(
+            modal_by_disabled_owner(1, &windows, |hwnd| hwnd != 1),
+            Some(vec![3])
+        );
+        // An enabled owner's tool window is not modal.
+        assert_eq!(modal_by_disabled_owner(1, &windows, |_| true), Some(vec![]));
+    }
+
+    #[test]
+    fn a_dialog_beside_a_palette_or_an_unseen_blocker_is_unknown() {
+        // Disabled owner 1 owns dialog 3 and modeless palette 2.
+        let windows = [(1, None), (2, Some(1)), (3, Some(1))];
+        assert_eq!(modal_by_disabled_owner(1, &windows, |hwnd| hwnd != 1), None);
+        // The target is disabled but owns nothing visible.
+        assert_eq!(
+            modal_by_disabled_owner(1, &[(1, None)], |hwnd| hwnd != 1),
+            None
+        );
     }
 
     #[test]

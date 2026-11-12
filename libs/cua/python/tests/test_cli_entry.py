@@ -21,7 +21,25 @@ def test_the_cli_comes_from_the_cua_cli_package() -> None:
     exe = _cli.binary()
     if exe is None:  # an SDK-only install
         return
-    assert exe.is_file() and exe.parent.name == "bin" and exe.parent.parent.name == "cua_cli"
+    import cua_cli
+
+    assert exe.is_file()
+    if cua_cli.release() is None:  # a wheel with the binary inside
+        assert exe.parent.name == "bin" and exe.parent.parent.name == "cua_cli"
+
+
+def test_a_failed_download_says_how_to_work_offline(monkeypatch, capsys) -> None:
+    class FetchError(RuntimeError):
+        pass
+
+    def fail():
+        raise FetchError("cannot download https://example.test/x: offline")
+
+    monkeypatch.setattr(_cli, "binary", fail)
+    monkeypatch.setattr(_cli, "_fetch_error", lambda: FetchError)
+    assert _cli.main() == 1
+    err = capsys.readouterr().err
+    assert "offline" in err and "CUA_CLI_BINARY" in err and "CUA_CLI_DOWNLOAD_BASE" in err
 
 
 def test_the_cli_is_handed_the_wheel_spacesd(monkeypatch, tmp_path) -> None:

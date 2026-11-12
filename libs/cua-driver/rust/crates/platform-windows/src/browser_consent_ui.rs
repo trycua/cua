@@ -311,6 +311,7 @@ where
             is_trusted_prompt_node(nodes, node)
                 && node.control_type == "Button"
                 && node.actions.iter().any(|action| action == "invoke")
+                && node.enabled != Some(false)
                 && node.element_ptr != 0
                 && node.rect.is_some()
         }) {

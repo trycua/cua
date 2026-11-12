@@ -193,6 +193,17 @@ class DetectTest(unittest.TestCase):
         self.assertEqual(rc["packages"]["hyprland"]["version"], "0.56.2-9")
         self.assertTrue(rc["needs_omarchy_repo"])
 
+    def test_omarchy_repo_shadows_arch_hyprland_on_edge(self):
+        # Edge's mirror carries Arch's hyprland -1; Omarchy's repo carries the rebuilt -2 the plugin pins.
+        fake = mirrors(edge=tracked(hyprland="0.57.2-1"))
+        fake.routes["https://pkgs.omarchy.org/edge/"] = omarchy_db(
+            pins={**EDGE_PINS, "hyprland": "0.57.2-2"}, extra={"hyprland": ("0.57.2-2", "e" * 64)})
+        edge = channels.detect(["omarchy-edge"], fetcher=fake)["channels"]["omarchy-edge"]
+        self.assertEqual(edge["packages"]["hyprland"], {"version": "0.57.2-2", "sha256": "e" * 64, "repo": "omarchy"})
+        self.assertTrue(edge["omarchy_plugin"]["installable"])
+        self.assertEqual(edge["omarchy_plugin"]["broken_pins"], {})
+        self.assertTrue(edge["needs_omarchy_repo"])
+
     def test_missing_tracked_package_is_an_error(self):
         packages = tracked()
         del packages["aquamarine"]
@@ -302,6 +313,12 @@ class QualifyTest(unittest.TestCase):
         self.assertLess(conf.index("[omarchy]"), conf.index("[core]"))
         self.assertIn("https://rc-mirror.omarchy.org/$repo/os/$arch", conf)
         self.assertNotIn("[omarchy]", qualify.pacman_conf("omarchy-edge", with_omarchy=False))
+
+    def test_every_omarchy_channel_lists_omarchy_first(self):
+        for channel in ("omarchy-edge", "omarchy-rc", "omarchy-stable"):
+            conf = qualify.pacman_conf(channel, with_omarchy=True)
+            self.assertLess(conf.index("[omarchy]"), conf.index("[core]"), channel)
+            self.assertLess(conf.index("[omarchy]"), conf.index("[extra]"), channel)
 
     def test_overall_status(self):
         passing = {"build": {"status": "pass"}, "ctest": {"status": "pass"},

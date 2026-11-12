@@ -1,5 +1,44 @@
 # Changelog
 
+## [0.27.0](https://github.com/trycua/cua/compare/cua-sdk-v0.26.0...cua-sdk-v0.27.0) (2026-11-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cua-driver:** the `page` tool no longer accepts `execute_javascript`, `click_element`, `insert_text`, `type_keystrokes` or `enable_javascript_apple_events`; use the typed `browser_*` tools.
+
+### Features
+
+* **cua-driver:** deprecate replay_trajectory, install_ffmpeg, get_accessibility_tree ([#7483](https://github.com/trycua/cua/issues/7483)) ([b13430e](https://github.com/trycua/cua/commit/b13430e04a8a71cf933266a047c9e88e9573d3b9))
+
+## [0.26.0](https://github.com/trycua/cua/compare/cua-sdk-v0.25.2...cua-sdk-v0.26.0) (2026-11-12)
+
+
+### Features
+
+* **cua-sdk:** ship cua-cli on PyPI as a thin wheel that fetches the signed CLI ([#7474](https://github.com/trycua/cua/issues/7474)) ([b890fca](https://github.com/trycua/cua/commit/b890fcada5e762fa5bd2820548ae1fffa63f452c))
+
+
+### Bug Fixes
+
+* **cua-driver:** deprecate Computer History, removal after 26 Nov 2026 ([#7478](https://github.com/trycua/cua/issues/7478)) ([0b6922b](https://github.com/trycua/cua/commit/0b6922bad2363be5215c9e527307c2ff6657b3be))
+* **cua-driver:** render macOS cursors on every display and remove all action marks ([#7458](https://github.com/trycua/cua/issues/7458)) ([8fb8d67](https://github.com/trycua/cua/commit/8fb8d67e3bdecd3b030298c945929efe4f02cb77))
+
+## [0.25.2](https://github.com/trycua/cua/compare/cua-sdk-v0.25.1...cua-sdk-v0.25.2) (2026-11-12)
+
+
+### Bug Fixes
+
+* **vmm:** gate container-only code so cua-vmm builds with any backend feature set ([#7433](https://github.com/trycua/cua/issues/7433)) ([6637de4](https://github.com/trycua/cua/commit/6637de44fb669fea965ee0197ced5ac6a95cf11e))
+* **vmm:** skip resolv.conf removal for containers without one ([#7429](https://github.com/trycua/cua/issues/7429)) ([4a5f90b](https://github.com/trycua/cua/commit/4a5f90baf4478943f08c8b38724c7ee8b06d7667))
+
+## [0.25.1](https://github.com/trycua/cua/compare/cua-sdk-v0.25.0...cua-sdk-v0.25.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* **spaces:** forward create_space CPU and memory limits ([#7428](https://github.com/trycua/cua/issues/7428)) ([f2201ac](https://github.com/trycua/cua/commit/f2201ac55ce19fb513c4b53569d04d2016bce4b8))
+
 ## [0.25.0](https://github.com/trycua/cua/compare/cua-sdk-v0.24.2...cua-sdk-v0.25.0) (2026-11-12)
 
 

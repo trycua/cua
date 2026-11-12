@@ -69,7 +69,7 @@ Screenshots, accessibility trees, verification and visual regions of a window. [
 | Tool | Description | Platforms |
 | --- | --- | --- |
 | <span id="get_window_state"></span>[`get_window_state`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#get_window_state) | Snapshot a window: the accessibility tree plus a screenshot. | macOS, Linux, Windows |
-| <span id="get_accessibility_tree"></span>[`get_accessibility_tree`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#get_accessibility_tree) | Return a lightweight snapshot of the desktop: running regular apps and on-screen visible windows with their bounds, z-order, and owner pid. | macOS, Linux, Windows |
+| <span id="get_accessibility_tree"></span>[`get_accessibility_tree`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#get_accessibility_tree) | DEPRECATED, removed in the first release after 26 Nov 2026. | macOS, Linux, Windows |
 | <span id="verify_state"></span>[`verify_state`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#verify_state) | Deterministically verify bounded predicates against one exact window. | macOS, Linux, Windows |
 | <span id="parse_visual_regions"></span>[`parse_visual_regions`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#parse_visual_regions) | Parse one immutable registered capture into model-neutral text and icon regions. | macOS, Linux, Windows |
 
@@ -157,7 +157,7 @@ Read and act on web pages, and prepare and navigate browsers. [Reference](/cua-d
 
 | Tool | Description | Platforms |
 | --- | --- | --- |
-| <span id="page"></span>[`page`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#page) | Legacy browser compatibility tool. | macOS, Linux, Windows |
+| <span id="page"></span>[`page`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#page) | Read-only legacy browser compatibility tool: read a page's text or query its DOM. | macOS, Linux, Windows |
 | <span id="get_browser_state"></span>[`get_browser_state`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#get_browser_state) | Read-only browser inspection. | macOS, Linux, Windows |
 | <span id="browser_prepare"></span>[`browser_prepare`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#browser_prepare) | Attach the browser tools to a browser. | macOS, Linux, Windows |
 | <span id="browser_navigate"></span>[`browser_navigate`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#browser_navigate) | Navigate one tab of an exactly-bound browser target to a new URL (http/https/about only). | macOS, Linux, Windows |
@@ -209,8 +209,8 @@ Record and replay trajectories. [Reference](/cua-driver/reference/mcp-tools/batc
 | <span id="start_recording"></span>[`start_recording`](/cua-driver/reference/mcp-tools/batch-recording-and-settings#start_recording) | Start trajectory recording for the calling session. | macOS, Linux, Windows |
 | <span id="stop_recording"></span>[`stop_recording`](/cua-driver/reference/mcp-tools/batch-recording-and-settings#stop_recording) | Stop trajectory recording. | macOS, Linux, Windows |
 | <span id="get_recording_state"></span>[`get_recording_state`](/cua-driver/reference/mcp-tools/batch-recording-and-settings#get_recording_state) | Report the current trajectory recorder state: whether recording is enabled, the output directory (when enabled), and the 1-based counter for the next turn folder that will be written. | macOS, Linux, Windows |
-| <span id="replay_trajectory"></span>[`replay_trajectory`](/cua-driver/reference/mcp-tools/batch-recording-and-settings#replay_trajectory) | Replay a recorded trajectory by re-invoking every turn's tool call in lexical order. | macOS, Linux, Windows |
-| <span id="install_ffmpeg"></span>[`install_ffmpeg`](/cua-driver/reference/mcp-tools/batch-recording-and-settings#install_ffmpeg) | Install the ffmpeg binary used by start_recording's video capture (Linux/Windows; macOS records natively and needs no ffmpeg). | macOS, Linux, Windows |
+| <span id="replay_trajectory"></span>[`replay_trajectory`](/cua-driver/reference/mcp-tools/batch-recording-and-settings#replay_trajectory) | DEPRECATED, removed in the first release after 26 Nov 2026. | macOS, Linux, Windows |
+| <span id="install_ffmpeg"></span>[`install_ffmpeg`](/cua-driver/reference/mcp-tools/batch-recording-and-settings#install_ffmpeg) | DEPRECATED, removed in the first release after 26 Nov 2026. | macOS, Linux, Windows |
 
 ## Configuration and maintenance tools
 

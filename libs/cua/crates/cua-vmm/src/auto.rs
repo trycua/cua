@@ -484,6 +484,8 @@ pub async fn doctor() -> DoctorReport {
     // Apple silicon cannot nest macOS VMs: a Mac that is itself a virtual
     // machine (`kern.hv_vmm_present`, so `kern.hv_support` is 0) cannot run Lume.
     let mac_is_vm = host::mac_virtualization_supported() == Some(false);
+    // Only the `lume` block below mutates it.
+    #[cfg_attr(not(feature = "lume"), allow(unused_mut))]
     let mut lume = LumeReport {
         supported_host: lume_host_supported(host_os, host_arch, mac_is_vm),
         binary: lume_binary(),
@@ -547,6 +549,8 @@ pub async fn doctor() -> DoctorReport {
     };
 
     // Containers.
+    // Only the `container` block below mutates it.
+    #[cfg_attr(not(feature = "container"), allow(unused_mut))]
     let mut container = ContainerReport::default();
     let mut container_status = BackendStatus {
         backend: BackendKind::Container,

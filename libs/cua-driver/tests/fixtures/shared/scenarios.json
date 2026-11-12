@@ -619,6 +619,15 @@
     }
    },
    {
+    "id": "disabled_control",
+    "kind": "toggle",
+    "description": "Opt-in (CUA_GTK3_DISABLED_CONTROL=1): an insensitive GtkCheckButton. Tests that get_window_state publishes it with enabled: false and that its token writers are refused as element_disabled without changing it. disabled_checked= label.",
+    "controls": {
+     "checkbox_aid": "chk-disabled",
+     "status_label_text": "disabled_checked="
+    }
+   },
+   {
     "id": "context_menu",
     "kind": "context_menu",
     "description": "Right-click opens a GtkMenu (Cut/Copy/Paste). menu_action= label.",

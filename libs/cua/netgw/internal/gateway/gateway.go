@@ -63,8 +63,8 @@ type Gateway struct {
 	dns     *resolver
 	// The names the resolver answered for each address ([bindings]).
 	bound *bindings
-	ports   *forwarder.PortsForwarder
-	pool    *tap.IPPool
+	ports *forwarder.PortsForwarder
+	pool  *tap.IPPool
 	// The VM's tree (nil: none): its running members, by tree address.
 	tree *tree.Peers
 

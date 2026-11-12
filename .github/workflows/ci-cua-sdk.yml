@@ -455,8 +455,8 @@ jobs:
         with:
           components: clippy, rustfmt
           targets: wasm32-unknown-unknown
-      # save-always: the save is the last step, with always(), so a test failure or the timeout keeps the
-      # warm compile. A save on success only never saved on main (this job had not passed since
+      # save-always: the save is the last step, with always(), so a failed or timed-out test step keeps
+      # the warm compile. A save on success only never saved on main (this job had not passed since
       # 26 Oct), and every run compiled about 30 minutes from nothing.
       - uses: ./.github/actions/rust-cache
         id: cache
@@ -479,6 +479,9 @@ jobs:
         # one at a time.
         run: cargo test --locked -p cua-spaces --test scale -- --test-threads=1 --nocapture
       - name: Test (embedded, daemon over UDS and loopback, CLI, cluster, Cua Spaces extensions)
+        # A step that runs out of time fails, and the cache save below still runs; a job that runs out
+        # is cancelled with it. The first steps take up to 12 minutes cold, so this leaves the save its time.
+        timeout-minutes: 42
         run: >
           cargo test --locked --no-fail-fast -p cua-sdk -p cua-daemon-core -p cua-daemon -p cua-cli -p cua-spacesd-client
           -p cua-cluster -p cua-spaces-cluster

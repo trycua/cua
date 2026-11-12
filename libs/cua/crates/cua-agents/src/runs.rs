@@ -493,9 +493,11 @@ pub fn valid_home_name(name: &str) -> bool {
 
 /// Whether [`Agents::start`] must look for a credential in the guest: not
 /// when the caller passed one of the harness's keys, nor with a custom
-/// endpoint (a proxy may need none).
+/// endpoint (a proxy may need none). Hermes's generated connection config
+/// can also name a keyless endpoint, before its file is written to the guest.
 fn needs_probe(h: &Harness, opts: &RunOptions) -> bool {
     opts.endpoint.is_none()
+        && !(h.id == "hermes" && opts.hermes_config.is_some())
         && !h
             .keys
             .iter()
@@ -2001,6 +2003,30 @@ mod tests {
             ..Default::default()
         };
         assert!(!needs_probe(h, &o));
+    }
+
+    #[test]
+    fn a_keyless_saved_hermes_endpoint_skips_the_probe() {
+        let connected = cua_connections::Connected {
+            provider: "custom".into(),
+            fields: BTreeMap::from([
+                ("base_url".into(), "http://localhost:8000/v1".into()),
+                ("model".into(), "qwen".into()),
+                ("wire".into(), "openai-chat".into()),
+            ]),
+            ..Default::default()
+        };
+        let picks = cua_connections::hermes::select(&[connected], &|_| false);
+        let opts = RunOptions {
+            hermes_config: cua_connections::hermes::config_yaml(&picks),
+            ..Default::default()
+        };
+        let hermes = harness::harness("hermes").unwrap();
+        assert!(opts.hermes_config.is_some());
+        assert!(opts.env.is_empty() && opts.endpoint.is_none());
+        assert!(!needs_probe(hermes, &opts));
+        assert!(needs_probe(hermes, &RunOptions::default()));
+        assert!(needs_probe(harness::harness("opencode").unwrap(), &opts));
     }
 
     /// Every MCP session of one run names the run, so the guest draws one

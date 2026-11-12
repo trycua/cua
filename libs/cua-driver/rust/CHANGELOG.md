@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.47.16](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.15...cua-driver-rs-v0.47.16) (2026-11-12)
+
+
+### Bug Fixes
+
+* **cua-driver:** Linux hit test picks the GTK3 overlay drawn on top ([#7400](https://github.com/trycua/cua/issues/7400)) ([7dbc78d](https://github.com/trycua/cua/commit/7dbc78d1e7d70e86befa45a2f09e33cc3c9b9b59))
+
 ## [0.47.15](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.14...cua-driver-rs-v0.47.15) (2026-11-12)
 
 

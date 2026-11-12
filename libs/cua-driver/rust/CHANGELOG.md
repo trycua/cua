@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.47.19](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.18...cua-driver-rs-v0.47.19) (2026-11-12)
+
+
+### Bug Fixes
+
+* **cua-driver:** load libxkbcommon's 1.0 text functions at run time so the driver starts on Ubuntu 20.04 ([#6498](https://github.com/trycua/cua/issues/6498)) ([b9e38d1](https://github.com/trycua/cua/commit/b9e38d1ac1eb9e5683e0b7394ecf50b360da2881))
+
 ## [0.47.18](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.17...cua-driver-rs-v0.47.18) (2026-11-12)
 
 

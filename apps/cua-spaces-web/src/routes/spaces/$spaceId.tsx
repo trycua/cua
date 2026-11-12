@@ -286,7 +286,10 @@ function SpaceDetailPage() {
   // command, open the help page, or the details) instead of Try again.
   const createFix = space.progress?.fix;
   const fixLink = createFix?.linkUrl
-    ? () => void Promise.resolve(openExternal(createFix.linkUrl!)).catch((e: unknown) => toast(t("computers.page.open_page_failed"), { description: message(e), type: "error" }))
+    ? () =>
+        void Promise.resolve(openExternal(createFix.linkUrl!)).catch((e: unknown) =>
+          toast(t("computers.page.open_page_failed"), { description: message(e), type: "error" }),
+        )
     : undefined;
   const fix = createFix
     ? () =>

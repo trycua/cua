@@ -2544,6 +2544,7 @@ mod tests {
                 gpu: false,
                 host: None,
                 host_name: None,
+                parent: None,
             },
         );
         let row = |s: &CreatesState| pending_space(&s.pending[0]).progress.unwrap();
@@ -2673,6 +2674,7 @@ mod tests {
                 gpu: false,
                 host: None,
                 host_name: None,
+                parent: None,
             },
         );
         let mut last = 0;

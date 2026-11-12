@@ -224,7 +224,12 @@ async function startNativeHost(showRoute: (route: string) => void, globalShortcu
         return r.canceled ? null : r.filePaths;
       },
       chooseIso: async (win) => {
-        const options = { properties: ["openFile" as const], filters: [{ name: "Windows disc image", extensions: ["iso"] }], title: "Choose the Windows ISO you downloaded from Microsoft", buttonLabel: "Use This ISO" };
+        const options = {
+          properties: ["openFile" as const],
+          filters: [{ name: "Windows disc image", extensions: ["iso"] }],
+          title: "Choose the Windows ISO you downloaded from Microsoft",
+          buttonLabel: "Use This ISO",
+        };
         const r = win instanceof BrowserWindow ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
         return r.canceled ? null : (r.filePaths[0] ?? null);
       },

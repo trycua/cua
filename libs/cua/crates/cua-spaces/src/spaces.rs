@@ -2723,10 +2723,11 @@ impl Spaces {
         }
         let sink = opts.progress.take().map(|p| p.0);
         let (key, on) = self.create_key(&mut opts)?;
-        // A Mac cannot create a Windows VM locally yet. With the `windows-kvm`
-        // experiment on, the selected remote host may be a Linux or Windows
-        // machine that can run it, so the coordinator's local restriction
-        // applies only to local placement. Off: it applies everywhere.
+        // A Mac creates a Windows VM locally only from an image it has a native
+        // build of (Windows 11 on Apple silicon); an image it could only
+        // emulate is refused. With the `windows-kvm` experiment on, the
+        // selected remote host may be a Linux or Windows machine that can run
+        // it, so this check applies only to local placement. Off: everywhere.
         if on == On::Local || !cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::WindowsKvm)
         {
             refuse_windows_on_mac(opts.image.as_deref(), cfg!(target_os = "macos"))?;
@@ -4504,7 +4505,7 @@ async fn wait_serving(space: &Space, deadline: tokio::time::Instant) {
 
 /// Why a Windows image this Mac could only emulate is refused (Server on
 /// Apple silicon, say): in words, with the image that runs natively.
-pub(crate) const WINDOWS_COMING_SOON: &str = "This Mac runs ARM64 Windows at full speed. This image is x64 Windows, which it could only emulate, taking hours. Use Windows 11 (windows:11).";
+pub(crate) const WINDOWS_EMULATION_ONLY: &str = "This Mac runs ARM64 Windows at full speed. This image is x64 Windows, which it could only emulate, taking hours. Use Windows 11 (windows:11).";
 
 /// A Mac creates a Windows VM locally only from an image built on this Mac
 /// that has a build for its architecture (`windows:11`: ARM64 Windows on Apple
@@ -4542,7 +4543,7 @@ fn refuse_windows_on_mac_for(
     if runs_here {
         return Ok(());
     }
-    Err(Error::invalid(WINDOWS_COMING_SOON))
+    Err(Error::invalid(WINDOWS_EMULATION_ONLY))
 }
 
 /// Passes `result` through; on an error runs `teardown` (best effort),

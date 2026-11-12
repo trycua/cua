@@ -53,6 +53,7 @@ pub use overlay::*;
 pub use persistent::*;
 pub use sandbox::*;
 pub use share::*;
+#[cfg(feature = "spaces")]
 pub use spaces::*;
 pub use spacesd::*;
 pub use telemetry::*;

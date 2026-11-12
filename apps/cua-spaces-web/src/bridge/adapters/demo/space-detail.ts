@@ -94,7 +94,15 @@ export function demoSpaceDetailHandlers({
   state,
   findRow,
 }: DemoContext): DemoHandlers<
-  "spaces.usage" | "spaces.reach" | "spaces.windows" | "stream.pip" | "spaces.thumbnail" | "spaces.chooseFiles" | "spaces.droppedFiles" | "spaces.sendFiles" | "windows.chooseIso"
+  | "spaces.usage"
+  | "spaces.reach"
+  | "spaces.windows"
+  | "stream.pip"
+  | "spaces.thumbnail"
+  | "spaces.chooseFiles"
+  | "spaces.droppedFiles"
+  | "spaces.sendFiles"
+  | "windows.chooseIso"
 > {
   return {
     "spaces.usage": ({ spaceId }) => {

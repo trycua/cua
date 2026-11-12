@@ -269,11 +269,13 @@ describe("New Space wizard", () => {
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
   });
 
-  it("shows Windows as coming soon on a Mac and cannot pick it", () => {
+  it("offers Windows on a Mac and picks the build it runs (Windows 11)", () => {
     renderWizard();
     const tile = screen.getByRole("button", { name: /^Windows/ });
-    expect(tile).toHaveTextContent("coming soon");
-    expect(tile).toBeDisabled();
+    expect(tile).not.toHaveTextContent("coming soon");
+    expect(tile).toBeEnabled();
+    fireEvent.click(tile);
+    expect(imageField()).toHaveValue("ghcr.io/trycua/windows:11");
   });
 
   it("the OS tiles pick that system's first image", () => {

@@ -73,7 +73,7 @@
         "fields": [
           "os: System",
           "image: Image [ghcr.io/org/app:tag]",
-          "placement: Run on !This Mac cannot run QEMU Spaces.",
+          "placement: Run on !Needs QEMU, which is not installed on this Mac.",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
           "connect-cloud: Connect a cloud…"
@@ -94,7 +94,7 @@
         "memoryText": "8 GB",
         "nameInvalid": false,
         "placement": "local",
-        "placementError": "This Mac cannot run QEMU Spaces.",
+        "placementError": "Needs QEMU, which is not installed on this Mac.",
         "placements": [
           "local"
         ],
@@ -854,7 +854,7 @@
         "fields": [
           "os: System",
           "image: Image [ghcr.io/org/app:tag]",
-          "placement: Run on !This Mac cannot run QEMU Spaces.",
+          "placement: Run on !Needs QEMU, which is not installed on this Mac.",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
           "connect-cloud: Connect a cloud…"
@@ -875,7 +875,7 @@
         "memoryText": "8 GB",
         "nameInvalid": false,
         "placement": "local",
-        "placementError": "This Mac cannot run QEMU Spaces.",
+        "placementError": "Needs QEMU, which is not installed on this Mac.",
         "placements": [
           "local"
         ],
@@ -910,7 +910,7 @@
         "fields": [
           "os: System",
           "image: Image [ghcr.io/org/app:tag] !Use lowercase letters in the image name.",
-          "placement: Run on !This Mac cannot run QEMU Spaces.",
+          "placement: Run on !Needs QEMU, which is not installed on this Mac.",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
           "connect-cloud: Connect a cloud…"
@@ -931,7 +931,7 @@
         "memoryText": "8 GB",
         "nameInvalid": false,
         "placement": "local",
-        "placementError": "This Mac cannot run QEMU Spaces.",
+        "placementError": "Needs QEMU, which is not installed on this Mac.",
         "placements": [
           "local"
         ],
@@ -965,7 +965,7 @@
         "fields": [
           "os: System",
           "image: Image [ghcr.io/org/app:tag] !An image reference has no spaces.",
-          "placement: Run on !This Mac cannot run QEMU Spaces.",
+          "placement: Run on !Needs QEMU, which is not installed on this Mac.",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
           "connect-cloud: Connect a cloud…"
@@ -986,7 +986,7 @@
         "memoryText": "8 GB",
         "nameInvalid": false,
         "placement": "local",
-        "placementError": "This Mac cannot run QEMU Spaces.",
+        "placementError": "Needs QEMU, which is not installed on this Mac.",
         "placements": [
           "local"
         ],
@@ -1020,7 +1020,7 @@
         "fields": [
           "os: System",
           "image: Image [ghcr.io/org/app:tag] !This image is not published yet.",
-          "placement: Run on !This Mac cannot run QEMU Spaces.",
+          "placement: Run on !Needs QEMU, which is not installed on this Mac.",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
           "connect-cloud: Connect a cloud…"
@@ -1041,7 +1041,7 @@
         "memoryText": "8 GB",
         "nameInvalid": false,
         "placement": "local",
-        "placementError": "This Mac cannot run QEMU Spaces.",
+        "placementError": "Needs QEMU, which is not installed on this Mac.",
         "placements": [
           "local"
         ],

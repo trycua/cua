@@ -465,6 +465,7 @@ pub async fn doctor() -> DoctorReport {
                 ))
             }
             HostOs::Linux => QemuPackageManager::detect().map(|(manager, _)| manager.render()),
+            #[cfg(feature = "qemu")]
             HostOs::Windows => windows_qemu_step(host::which("winget").is_some()),
             _ => None,
         };
@@ -1198,6 +1199,7 @@ pub fn select(req: &SelectRequest, report: &DoctorReport) -> Result<Selection> {
                     // Windows is never emulated unless the person accepted it:
                     // the refusal comes now, before an ISO is downloaded or a
                     // disk is made, not when the VM would start.
+                    #[cfg(feature = "qemu")]
                     if req.os == GuestOs::Windows
                         && accel == "tcg"
                         && !crate::qemu::software_emulation_allowed()
@@ -1240,6 +1242,7 @@ pub fn select(req: &SelectRequest, report: &DoctorReport) -> Result<Selection> {
 }
 
 /// What setup runs to get QEMU onto a Windows PC: winget, when the PC has it.
+#[cfg(feature = "qemu")]
 pub(crate) fn windows_qemu_step(has_winget: bool) -> Option<String> {
     has_winget.then(|| {
         format!(
@@ -1289,6 +1292,7 @@ fn lume_builtin_allowed() -> bool {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "qemu")]
     #[test]
     fn a_windows_pc_with_winget_can_have_qemu_set_up() {
         assert_eq!(

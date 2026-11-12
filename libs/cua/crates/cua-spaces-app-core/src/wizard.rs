@@ -2277,8 +2277,8 @@ pub fn reduce(state: &WizardState, action: &WizardAction, env: &WizardEnv) -> Wi
 
 /// [`reduce`] in a shell on `os`. Continue is allowed by the view the person
 /// sees ([`view_on`]), so the shell must name its system here too: judged as
-/// a Mac, the Windows image is "coming soon" and Continue silently did
-/// nothing on a Windows PC.
+/// a Mac, an image built for a Mac's processor looks refused and Continue
+/// silently did nothing on a Windows PC.
 pub fn reduce_on(
     state: &WizardState,
     action: &WizardAction,
@@ -3656,10 +3656,9 @@ pub fn placement_options_on(
 /// Why an x64 Windows image does not run on a Mac with Apple silicon.
 const WINDOWS_ARM_ONLY_ON_MAC: &str = "This Mac runs ARM64 Windows at full speed. This image is x64 Windows, which it could only emulate, taking hours. Choose Windows 11.";
 
-/// The Windows tile's title on a Mac host.
-const WINDOWS_SOON_TITLE: &str = "Windows (coming soon)";
-/// Its tooltip.
-const WINDOWS_SOON_DETAIL: &str = "Windows Spaces are coming soon on Mac.";
+/// Why Windows is not offered on a Mac whose processor Cua cannot read: the
+/// build to install depends on it (ARM64 on Apple silicon, x64 on Intel).
+const WINDOWS_MAC_ARCH_UNKNOWN: &str = "Cua could not tell which processor this Mac has, so it cannot pick the Windows build to install.";
 
 /// The wizard as drawn.
 pub fn view(state: &WizardState, env: &WizardEnv) -> WizardView {
@@ -3760,11 +3759,12 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
             f.value = kind.label().into();
         }
     }
-    let windows_soon = os == SpaceOs::Macos
+    // A Windows image this Mac has no build for (x64 Server on Apple silicon).
+    let windows_blocked = os == SpaceOs::Macos
         && image.os == SpaceOs::Windows
         && !windows_runs_on_this_mac(&image, env);
     let can_continue = image.os != SpaceOs::Unknown
-        && !windows_soon
+        && !windows_blocked
         && match state.step {
             0 => placeable && placement_ready && image_error.is_none(),
             1 => disk.error.is_none() && resource_edit.as_ref().is_none_or(|e| e.error.is_none()),
@@ -3791,21 +3791,21 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
             })
             .flatten();
         // Windows Spaces on a Mac: offered where an image built here has a build
-        // for this Mac (Windows 11 on Apple silicon), shown but not chosen
-        // elsewhere.
-        let soon = host_os == SpaceOs::Macos
+        // for this Mac (Windows 11 on Apple silicon). Greyed out, with why, on
+        // a Mac whose processor is unknown.
+        let no_build = host_os == SpaceOs::Macos
             && os == SpaceOs::Windows
             && !images.iter().any(|i| windows_runs_on_this_mac(i, env));
         Tile {
             id: os.as_str().into(),
-            title: if soon { WINDOWS_SOON_TITLE } else { title }.into(),
-            detail: if soon {
-                WINDOWS_SOON_DETAIL.to_string()
+            title: title.into(),
+            detail: if no_build {
+                WINDOWS_MAC_ARCH_UNKNOWN.to_string()
             } else {
                 why.clone().unwrap_or_else(|| detail.into())
             },
             pressed: pressed_os == Some(os),
-            enabled: !soon && images.iter().any(|i| i.os == os) && why.is_none(),
+            enabled: !no_build && images.iter().any(|i| i.os == os) && why.is_none(),
         }
     })
     .collect();
@@ -3867,6 +3867,15 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
                 {
                     // Cua never installs QEMU on Windows: say what to get.
                     WINDOWS_QEMU_MISSING.to_string()
+                } else if image.local == Some(LocalEngine::Qemu)
+                    && os == SpaceOs::Macos
+                    && image.os == SpaceOs::Windows
+                {
+                    // Windows on a Mac runs in QEMU with Apple's hypervisor.
+                    match why {
+                        Some(why) => format!("Needs QEMU: {why}."),
+                        None => "Needs QEMU, which is not installed on this Mac.".to_string(),
+                    }
                 } else {
                     match why {
                         Some(why) => {
@@ -3885,7 +3894,7 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
     });
     // A Windows image this Mac could only emulate (Server, or Windows 10, on
     // Apple silicon): said in words, with the one that runs natively.
-    let windows_hint = (windows_soon
+    let windows_hint = (windows_blocked
         && image.os == SpaceOs::Windows
         && images.iter().any(|i| windows_runs_on_this_mac(i, env)))
     .then(|| WINDOWS_ARM_ONLY_ON_MAC.to_string());
@@ -4921,7 +4930,8 @@ mod tests {
             "{:?}",
             v.placement_error
         );
-        // A Mac whose architecture is not known keeps the old guard.
+        // A Mac whose processor is not known cannot pick a build: greyed out
+        // with why, never "coming soon".
         let unknown = WizardEnv {
             host_arch: None,
             ..env()
@@ -4935,8 +4945,44 @@ mod tests {
         );
         let mac = view_on(&u, &unknown, SpaceOs::Macos);
         let tile = mac.os_tiles.iter().find(|t| t.id == "windows").unwrap();
-        assert!(!tile.enabled && tile.title.contains("coming soon"));
+        assert!(!tile.enabled && tile.title == "Windows", "{tile:?}");
+        assert_eq!(tile.detail, WINDOWS_MAC_ARCH_UNKNOWN);
         assert!(!mac.can_continue);
+        // QEMU not ready on a Mac that has a build: Continue waits with the
+        // reason, and the tile stays selectable.
+        let no_qemu = WizardEnv {
+            local_backends: Some(vec!["container".into()]),
+            ..env()
+        };
+        let q = reduce(
+            &initial(&no_qemu),
+            &WizardAction::ChooseOs {
+                os: SpaceOs::Windows,
+            },
+            &no_qemu,
+        );
+        let v = view_on(&q, &no_qemu, SpaceOs::Macos);
+        assert!(v.os_tiles.iter().any(|t| t.id == "windows" && t.enabled));
+        assert!(!v.can_continue);
+        assert!(
+            v.placement_error
+                .as_deref()
+                .is_some_and(|m| m.starts_with("Needs QEMU")),
+            "{:?}",
+            v.placement_error
+        );
+        let ready = WizardEnv {
+            local_backends: Some(vec!["qemu".into()]),
+            ..env()
+        };
+        let r = reduce(
+            &initial(&ready),
+            &WizardAction::ChooseOs {
+                os: SpaceOs::Windows,
+            },
+            &ready,
+        );
+        assert!(view_on(&r, &ready, SpaceOs::Macos).can_continue);
         let win = view_on(&s, &e, SpaceOs::Windows);
         let tile = win.os_tiles.iter().find(|t| t.id == "windows").unwrap();
         assert_eq!(tile.title, "Windows");

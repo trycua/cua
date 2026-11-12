@@ -964,7 +964,7 @@ mod tests {
         std::os::unix::fs::symlink(&real, dl.join("Win11_Arm64.iso")).unwrap();
         #[cfg(not(unix))]
         std::fs::copy(&real, dl.join("Win11_Arm64.iso")).unwrap();
-        assert!(detect_iso(&[dl.clone()], WindowsArch::Arm64).is_some());
+        assert!(detect_iso(std::slice::from_ref(&dl), WindowsArch::Arm64).is_some());
         assert!(detect_iso(&[dl], WindowsArch::Amd64).is_none());
     }
 

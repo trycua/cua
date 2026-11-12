@@ -155,17 +155,15 @@ async fn attribute_changes_are_chmod_and_writes_are_write() {
     make_dir(&c, &dir).await;
     let mut stream = watch(&c, &dir, false).await;
 
-    // `touch` of a new file: create plus an attribute change, never a write.
+    // `touch` of a new file: a create, never a write. GNU touch also sets
+    // the new file's times (an attribute change under inotify); uutils
+    // touch, Ubuntu's default since 25.10, does not.
     run_sh(&c, &format!("touch '{dir}/new.txt'")).await;
     let seen = settled(&c, &mut stream, &dir).await;
     assert!(
         seen.contains(&k("new.txt", FsEventType::Create)),
         "{seen:?}"
     );
-    // inotify reports the new file's times as their own change; FSEvents
-    // folds them into the creation.
-    #[cfg(target_os = "linux")]
-    assert!(seen.contains(&k("new.txt", FsEventType::Chmod)), "{seen:?}");
     assert!(
         !seen.contains(&k("new.txt", FsEventType::Write)),
         "{seen:?}"

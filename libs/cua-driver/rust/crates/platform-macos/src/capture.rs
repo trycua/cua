@@ -623,31 +623,100 @@ fn cgimage_to_rgba(
     image: &screencapturekit::screenshot_manager::CGImage,
     label: &str,
 ) -> anyhow::Result<RgbaFrame> {
-    use screencapturekit::screenshot_manager::CGImageExt;
-
-    let w = checked_image_dim(image.width(), "CGImage width")?;
-    let h = checked_image_dim(image.height(), "CGImage height")?;
-
-    let rgba = image
-        .rgba_data()
-        .map_err(|e| anyhow::anyhow!("CGImage::rgba_data failed for {label}: {e}"))?;
-
-    let expected_len = (w as u64)
-        .checked_mul(h as u64)
-        .and_then(|n| n.checked_mul(4))
-        .ok_or_else(|| anyhow::anyhow!("RGBA byte length overflow for {w}x{h}"))?;
-    if rgba.len() as u64 != expected_len {
-        anyhow::bail!(
-            "CGImage RGBA length {} != {w}*{h}*4 ({expected_len}) for {label}",
-            rgba.len()
-        );
-    }
-
+    let width = checked_image_dim(image.width(), "CGImage width")?;
+    let height = checked_image_dim(image.height(), "CGImage height")?;
+    let rgba = cgimage_premultiplied_rgba(image.as_ptr(), width, height, label)?;
     Ok(RgbaFrame {
-        width: w,
-        height: h,
+        width,
+        height,
         rgba,
     })
+}
+
+#[repr(C)]
+struct VImageBuffer {
+    data: *mut std::ffi::c_void,
+    height: std::ffi::c_ulong,
+    width: std::ffi::c_ulong,
+    row_bytes: usize,
+}
+
+#[repr(C)]
+struct VImageCgImageFormat {
+    bits_per_component: u32,
+    bits_per_pixel: u32,
+    color_space: *const std::ffi::c_void,
+    bitmap_info: u32,
+    version: u32,
+    decode: *const f64,
+    rendering_intent: i32,
+}
+
+const KV_IMAGE_NO_ALLOCATE: u32 = 512;
+
+#[link(name = "Accelerate", kind = "framework")]
+extern "C" {
+    fn vImageBuffer_InitWithCGImage(
+        buffer: *mut VImageBuffer,
+        format: *mut VImageCgImageFormat,
+        background_color: *const f64,
+        image: *const std::ffi::c_void,
+        flags: u32,
+    ) -> isize;
+}
+
+/// Convert a `CGImageRef` of any pixel layout to tightly packed premultiplied
+/// RGBA8 in device RGB, through vImage.
+///
+/// Drawing the image into a bitmap context yields the same bytes, but
+/// CoreGraphics then keeps its own copy of the pixels in a cache it expects
+/// to be purgeable. On Apple silicon the allocator can place that copy in a
+/// block the process freed earlier, which cannot be made purgeable, so every
+/// large capture stays resident until the system runs short of memory.
+fn cgimage_premultiplied_rgba(
+    image: *const std::ffi::c_void,
+    width: u32,
+    height: u32,
+    label: &str,
+) -> anyhow::Result<Vec<u8>> {
+    use core_graphics::base::kCGImageAlphaPremultipliedLast;
+    use core_graphics::color_space::CGColorSpace;
+    use foreign_types::ForeignType;
+
+    let row_bytes = width as usize * 4;
+    let mut rgba = vec![0u8; row_bytes * height as usize];
+    let color_space = CGColorSpace::create_device_rgb();
+    let mut format = VImageCgImageFormat {
+        bits_per_component: 8,
+        bits_per_pixel: 32,
+        color_space: color_space.as_ptr().cast::<std::ffi::c_void>(),
+        bitmap_info: kCGImageAlphaPremultipliedLast,
+        version: 0,
+        decode: std::ptr::null(),
+        rendering_intent: 0,
+    };
+    let mut buffer = VImageBuffer {
+        data: rgba.as_mut_ptr().cast::<std::ffi::c_void>(),
+        height: std::ffi::c_ulong::from(height),
+        width: std::ffi::c_ulong::from(width),
+        row_bytes,
+    };
+    // SAFETY: `image` is a live CGImageRef of `width`x`height`, `buffer`
+    // describes `rgba` exactly, and `KV_IMAGE_NO_ALLOCATE` makes vImage write
+    // into it. `color_space` outlives the call.
+    let status = unsafe {
+        vImageBuffer_InitWithCGImage(
+            &mut buffer,
+            &mut format,
+            std::ptr::null(),
+            image,
+            KV_IMAGE_NO_ALLOCATE,
+        )
+    };
+    if status != 0 {
+        anyhow::bail!("vImageBuffer_InitWithCGImage failed for {label} with status {status}");
+    }
+    Ok(rgba)
 }
 
 enum CaptureIdentityValidation {
@@ -901,47 +970,29 @@ fn screenshot_window_bytes_skylight(window_id: u32) -> anyhow::Result<CapturedIm
     core_cgimage_to_rgba(&image, &format!("window {window_id}")).map(CapturedImage::Rgba)
 }
 
-/// Read a CoreGraphics image of any pixel layout as straight-alpha RGBA8 by
-/// drawing it into an RGBA8 bitmap. Fails on a fully transparent image, which
-/// is what WindowServer hands back for a window with no backing store.
+/// Read a CoreGraphics image of any pixel layout as straight-alpha RGBA8.
+/// Fails on a fully transparent image, which is what WindowServer hands back
+/// for a window with no backing store.
 fn core_cgimage_to_rgba(
     image: &core_graphics::image::CGImage,
     label: &str,
 ) -> anyhow::Result<RgbaFrame> {
-    use core_graphics::base::{kCGBitmapByteOrder32Big, kCGImageAlphaPremultipliedLast};
-    use core_graphics::color_space::CGColorSpace;
-    use core_graphics::context::CGContext;
-    use core_graphics::geometry::{CGPoint, CGRect, CGSize};
+    use foreign_types::ForeignType;
 
-    let w = checked_image_dim(image.width(), "CGImage width")?;
-    let h = checked_image_dim(image.height(), "CGImage height")?;
-    let (wu, hu) = (w as usize, h as usize);
-    let mut context = CGContext::create_bitmap_context(
-        None,
-        wu,
-        hu,
-        8,
-        wu * 4,
-        &CGColorSpace::create_device_rgb(),
-        kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big,
-    );
-    context.draw_image(
-        CGRect::new(
-            &CGPoint::new(0.0, 0.0),
-            &CGSize::new(f64::from(w), f64::from(h)),
-        ),
-        image,
-    );
-    let mut rgba = context.data().to_vec();
-    if rgba.len() != wu * hu * 4 {
-        anyhow::bail!("bitmap length {} != {w}*{h}*4 for {label}", rgba.len());
-    }
+    let width = checked_image_dim(image.width(), "CGImage width")?;
+    let height = checked_image_dim(image.height(), "CGImage height")?;
+    let mut rgba = cgimage_premultiplied_rgba(
+        image.as_ptr().cast::<std::ffi::c_void>(),
+        width,
+        height,
+        label,
+    )?;
     if !unpremultiply_rgba(&mut rgba) {
         anyhow::bail!("capture of {label} is fully transparent (no window content)");
     }
     Ok(RgbaFrame {
-        width: w,
-        height: h,
+        width,
+        height,
         rgba,
     })
 }

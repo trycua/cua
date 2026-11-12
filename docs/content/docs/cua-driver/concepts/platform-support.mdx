@@ -52,10 +52,10 @@ registry cannot be probed, `wf-recorder` reports its own startup diagnostics.
 
 The portal route checks for ffmpeg and loads `libpipewire-0.3` only when recording
 starts. With those prerequisites present, it opens a monitor-consent dialog
-unless the portal accepts a saved grant. Startup budgets about 93 seconds for
-portal setup, consent (up to 60 seconds), and the first encoded frame. Refusal,
-missing prerequisites, or timeout appears in `last_error`; inspect `video_active`
-rather than treating a successful `start_recording` response as proof of video.
+unless the portal accepts a saved grant. `start_recording` can wait more than a
+minute for the answer and the first encoded frame. Refusal, missing
+prerequisites, or timeout appears in `last_error`; inspect `video_active` rather
+than treating a successful `start_recording` response as proof of video.
 
 X11 window capture supports packed 16-, 24-, and 32-bit TrueColor and
 DirectColor images. DirectColor capture reads the window's current colormap for

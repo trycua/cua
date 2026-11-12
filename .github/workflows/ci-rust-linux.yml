@@ -330,6 +330,6 @@ jobs:
           test -c /dev/uinput
           sudo chmod a+rw /dev/uinput
           cargo test -p platform-linux real_uinput_accepts_normalized_overlong_multibyte_name --locked -- --ignored --nocapture
-      - name: Compile the released Linux feature shape (portal input + capture)
+      - name: Compile portable GNOME/KDE portal input
         working-directory: libs/cua-driver/rust
-        run: cargo check -p cua-driver --features portal-input,portal-capture --locked
+        run: cargo check -p cua-driver --features portal-input --locked

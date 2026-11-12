@@ -317,11 +317,11 @@ for consent and loads `libpipewire-0.3` only when a portal recording starts.
 
 `start_recording` with `record_video:true` asks the user to choose a monitor in
 the desktop's consent dialog unless the portal accepts a saved restore token.
-Startup budgets about 93 seconds for setup, consent (up to 60 seconds), and
-the first encoded frame. Let the user answer; do not start another recording
-while the dialog is pending. Inspect `video_active` and `last_error` for denial,
-missing prerequisites, or timeout. Portal-backed GNOME recording remains an
-evidence gap; selecting that route does not establish successful video capture.
+The call can wait more than a minute for the answer and the first encoded
+frame. Let the user answer; do not start another recording while the dialog is
+pending. Inspect `video_active` and `last_error` for denial, missing
+prerequisites, or timeout. Portal-backed GNOME recording remains an evidence
+gap; selecting that route does not establish successful video capture.
 
 Standard Wayland has no general client protocol for raw input to an arbitrary
 occluded surface. Background AX actions can still deliver through AT-SPI, and

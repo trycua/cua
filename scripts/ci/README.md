@@ -224,13 +224,11 @@ scripts/ci/linux/preflight-rust-e2e.sh
 ```
 
 These commands report the architecture, display or input desktop, session bus
-where applicable, recording tools, checkout SHA, the PipeWire/SPA headers and
-libclang that GNOME/KDE desktop runs build against, and an already-built driver
+where applicable, recording tools, checkout SHA, and an already-built driver
 version (not its source identity). They do not build fixtures, request
 permissions, start the Driver, or write or clear E2E artifacts. A missing
-binary, build header, or optional browser does not fail the lightweight check.
-The commands cannot establish AX/UIA, capture, permission, video, fixture, or
-browser behavior.
+binary or optional browser does not fail the lightweight check. The commands
+cannot establish AX/UIA, capture, permission, video, fixture, or browser behavior.
 The canonical runner's strict environment preflight still proves those before
 any behavioral rows.
 If `CUA_E2E_SOURCE_SHA` is set, the lightweight check fails when it differs

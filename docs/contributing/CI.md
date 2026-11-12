@@ -2,7 +2,7 @@
 
 Every pull request must pass one required check, **CI: gate** (`ci-gate`). The gate waits for the other
 pull request workflows and passes when they pass. This page explains which of those workflows it waits for,
-and the two checks in front of them: the quick stage and, for agent pull requests, the `local-ci` sign-off.
+and the check in front of them: the quick stage, which is also every pull request's sign-off.
 
 ## Run the checks locally first: `bin/ci`
 
@@ -44,7 +44,7 @@ bin/ci --only rust-fmt,lockfiles
 to `git` (set `CUA_CI_BASH` to another `bash.exe`). It never uses `bash` from `PATH`: there that is usually
 `C:\Windows\System32\bash.exe`, which is WSL, and would run the checks inside a Linux distribution.
 It runs in UTF-8 mode and gives the checks a `python3`. Cargo checks need the MSVC toolchain; on a shared PC
-use `--quick`. The sign-off is the same (`python bin\ci --signoff`; its description ends with `(win32)`).
+use `--quick`. `python bin\ci --signoff` works the same (its description ends with `(win32)`).
 
 ### Disk safety
 
@@ -86,35 +86,26 @@ Agent machines install the hook; for everyone else it is opt-in. The hook goes i
 whether it does. Prefer `CUA_SKIP_LOCAL_CI=1` to `git push --no-verify`, which also skips every other
 pre-push hook. `CUA_LOCAL_CI_ARGS="--quick"` changes what the hook runs.
 
-### Local sign-off: `bin/ci --signoff`
+### Sign-off
 
-After a green run on a clean tree, `bin/ci --signoff` sets the `local-ci` commit status on `HEAD` through
-`gh api`. If the commit is not on GitHub yet, push and run it again: it reuses the green run. It refuses to
-sign off a run that failed or skipped a check. Sign off again after every new commit.
+`ci-gate` requires a sign-off on the head commit of **every pull request**, whoever opens it and wherever the
+branch lives: a successful `CI: Quick` run (`ci-quick.yml`, which runs `bin/ci --quick`) on the head commit in
+GitHub Actions. It is a `pull_request` job with a read-only token and no secrets, so it is safe on fork code. A
+first-time contributor's run needs a maintainer to approve it. Release Please pull requests are exempt. The
+author, labels and commit trailers are not read, and the `agent` label is only for filtering.
 
-`ci-gate` requires a sign-off on the head commit of **every pull request**, whoever opens it. The author,
-labels and commit trailers are not read.
+Branches of this repository used to need a `local-ci` commit status instead, set by a Mac runner after it ran
+the same `bin/ci --quick`. That runner had one queue, and waiting for it was often the gate's slowest step,
+while it never failed a commit that `CI: Quick` passed. The gate no longer reads that status.
 
-- **A branch of this repository** (members and agents): a successful `local-ci` status. Our Mac runner sets
-  it after `bin/ci --quick` (`ci-remote-sweep` starts that run for each such PR), or you set it with
-  `bin/ci --signoff`. When it is missing the gate says "Run bin/ci --quick and bin/ci --signoff on this head
-  commit."
-- **A fork** (community): fork code never runs on our Macs. The sign-off is a successful `CI: Quick` run
-  (`ci-quick.yml`, which runs `bin/ci --quick`) on the head commit in GitHub Actions: a `pull_request` job
-  with a read-only token and no secrets. A first-time contributor's run needs a maintainer to approve it.
+The requirement is **report-only** until the repository variable `REQUIRE_LOCAL_CI` is `true`, which makes it
+blocking. It is the only switch. After a failure, fix it and push; a green `CI: Quick` rerun reruns the gate
+(see "When a rerun turns green").
 
-The `agent` label is only for filtering; it does not change the gate.
-
-The requirement is **report-only** at first: the gate prints that line as a warning and passes. Setting the
-repository variable `REQUIRE_LOCAL_CI` to `true` makes it blocking. It is the only switch. When blocking, the
-gate polls for the status for five minutes, so signing off right after the push is enough; after a failure,
-sign off and rerun the gate job.
-
-How it authenticates: `bin/ci --signoff` calls `gh api` with whatever credential `gh` uses on that machine
-(`gh auth login` or `GH_TOKEN`), which needs permission to write commit statuses on the repository. It
-reads the result of the last green run from `.git/bin-ci/last-run.json` in that checkout, so run `bin/ci`
-and `bin/ci --signoff` in the same checkout. The status is an ordinary commit status (context `local-ci`)
-on a commit SHA, so another machine or credential can set it, as long as the checks passed on that commit.
+`bin/ci --signoff` still sets the `local-ci` commit status on `HEAD` after a green local run, through `gh api`
+with whatever credential `gh` uses on that machine. It reads the last green run from `.git/bin-ci/last-run.json`
+in that checkout and refuses a run that failed or skipped a check. Reviewers may read it as evidence that the
+author ran `bin/ci`; no required check depends on it.
 
 ## Quick stage
 
@@ -213,7 +204,7 @@ at once: it does not wait for the rest of that job's run (unless the failure is 
 queue this drops a failing entry within about a minute, so the entries behind it are not held until the queue's
 60-minute timeout.
 [`ci-gate-recheck.yml`](../../.github/workflows/ci-gate-recheck.yml) reruns the gate when a workflow it waits for
-completes green (a first run or a rerun) or the `local-ci` sign-off turns green, if the newest gate run for that
+completes green (a first run or a rerun; the sign-off, `CI: Quick`, is one of them), if the newest gate run for that
 commit failed before that result arrived and the commit is still the head of an open pull request without a
 hold label. So rerunning a failed job is enough: the gate turns green by itself when everything is green. The
 rerun keeps the check name `ci-gate`, so branch protection and auto-merge are unchanged. The recheck's list of
@@ -307,12 +298,11 @@ The nightly **Flaky job scan** files a `flaky` issue for each job that failed an
   `flaky.sh run` plus the `flaky-upload` action, or `timings.py` plus `ci-timings-upload`.
 - **Weekly report.** `ci-weekly-report.yml` rewrites ONE issue, "CI speed this week", every Monday
   (`.github/scripts/ci_weekly_report.py`): push to green, green to merged, the `ci-gate` tail split into
-  "waiting for the `local-ci` sign-off" and "other", release-PR wait, CD time per workflow, and the slowest
+  "waiting for the `local-ci` sign-off" (pull requests from before the gate stopped reading it) and "other", release-PR wait, CD time per workflow, and the slowest
   test files. Run it by hand with `gh workflow run ci-weekly-report.yml`.
 - **The gate tail.** After the last other workflow finishes, `ci-gate` needs one confirming listing (10 s once
-  everything is complete) and then the `local-ci` sign-off, polled every 15 s for up to 75 minutes. A long tail is
-  almost always the sign-off queue on the Mac runner or a quarantined-flake rerun, not a poll interval; the
-  weekly report shows which.
+  everything is complete) and then reads the sign-off, which `CI: Quick` has already set by then. A long tail is
+  a quarantined-flake rerun, not a poll interval; the weekly report shows which.
 
 ## Urgent-fix lane
 

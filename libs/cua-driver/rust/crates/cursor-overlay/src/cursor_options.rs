@@ -139,9 +139,7 @@ impl CursorOptions {
     }
 
     const fn to_u8(self) -> u8 {
-        (self.float as u8) << 1
-            | self.rotate.to_bits() << 2
-            | (self.halo as u8) << 4
+        (self.float as u8) << 1 | self.rotate.to_bits() << 2 | (self.halo as u8) << 4
     }
 
     const fn from_u8(value: u8) -> Self {

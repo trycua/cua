@@ -39,9 +39,8 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use cursor_overlay::{
-    CursorConfig, CursorKey, KeyedOverlayCommand, MotionConfig, MsgOutcome,
-    OverlayCommand, OverlayMsg, RenderEntry, RenderStateCore, ScreenFrame, SurfaceGeometry,
-    ZOrderEnforcer,
+    CursorConfig, CursorKey, KeyedOverlayCommand, MotionConfig, MsgOutcome, OverlayCommand,
+    OverlayMsg, RenderEntry, RenderStateCore, ScreenFrame, SurfaceGeometry, ZOrderEnforcer,
 };
 
 // ── Arrival-signal channels (one waiter slot per cursor key) ──────────────

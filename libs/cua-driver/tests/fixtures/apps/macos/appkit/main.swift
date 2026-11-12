@@ -88,6 +88,9 @@ let kSecondaryWindowTitle = "CuaTestHarness AppKit Secondary"
 let kSheetWindowTitle = "CuaTestHarness AppKit Sheet"
 let kSheetInputAID = "txt-sheet"
 let kFloatingWindowTitle = "CuaTestHarness AppKit Floating"
+let kModalDialogTitle = "CuaTestHarness AppKit Modal"
+let kOpenModalAID = "btn-open-modal"
+let kCloseModalAID = "btn-close-modal"
 let kTaskStateEnv = "CUA_APPKIT_TASK_STATE"
 let kTaskStateSchema = "cua.appkit_task_state_v1"
 let kNoteFieldAID = "txt-note"
@@ -938,6 +941,7 @@ final class BringToFrontMatrixWindows {
     let secondary: NSWindow
     var sheet: NSWindow?
     var floating: NSPanel?
+    var modal: AppModalOpener?
 
     init(parent: NSWindow, mode: String) {
         secondary = NSWindow(
@@ -971,6 +975,12 @@ final class BringToFrontMatrixWindows {
             if let field {
                 candidate.makeFirstResponder(field)
             }
+        } else if mode == "app-modal" {
+            // The secondary window's button opens an application-modal
+            // dialog, blocking every window until its own button closes it.
+            let opener = AppModalOpener()
+            secondary.contentView = opener.openerView()
+            modal = opener
         } else if mode == "floating" {
             let candidate = NSPanel(
                 contentRect: NSRect(x: 180, y: 180, width: 320, height: 140),
@@ -982,6 +992,51 @@ final class BringToFrontMatrixWindows {
             candidate.orderFront(nil)
             floating = candidate
         }
+    }
+}
+
+final class AppModalOpener: NSObject {
+    let dialog: NSWindow
+
+    override init() {
+        dialog = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 320, height: 140),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        dialog.title = kModalDialogTitle
+        dialog.isReleasedWhenClosed = false
+        dialog.isRestorable = false
+        super.init()
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 140))
+        let close = NSButton(title: "Close dialog", target: self, action: #selector(closeDialog))
+        close.frame = NSRect(x: 100, y: 50, width: 120, height: 32)
+        close.setAccessibilityIdentifier(kCloseModalAID)
+        content.addSubview(close)
+        dialog.contentView = content
+    }
+
+    func openerView() -> NSView {
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 240))
+        let open = NSButton(title: "Open dialog", target: self, action: #selector(openDialog))
+        open.frame = NSRect(x: 140, y: 100, width: 140, height: 32)
+        open.setAccessibilityIdentifier(kOpenModalAID)
+        content.addSubview(open)
+        return content
+    }
+
+    @objc func openDialog() {
+        // Start the modal loop once the press has returned, so the
+        // accessibility action that pressed the button gets its reply.
+        perform(#selector(runDialog), with: nil, afterDelay: 0.2)
+    }
+
+    @objc func runDialog() {
+        dialog.center()
+        NSApp.runModal(for: dialog)
+    }
+
+    @objc func closeDialog() {
+        NSApp.stopModal()
+        dialog.orderOut(nil)
     }
 }
 

@@ -31,7 +31,8 @@ fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "right_click".into(),
         description:
-            "Right-click against a target pid. Two addressing modes:\n\n\
+            "Right-click (open the context menu) on an element by `element_token` (preferred, works in the background) or at window pixels `x, y`. Pass exactly one.\n\n\
+             Two addressing modes:\n\n\
              - `element_token` (from the last `get_window_state` snapshot) — \
                performs `AXShowMenu` on the cached element. Pure AX RPC, works on backgrounded / \
                hidden windows, no cursor move or focus steal. Requires a prior \

@@ -13,7 +13,7 @@ cua-driver describe click
 
 Check the resolved executable as well as the version; an installation may have intentional wrappers or multiple products. Preserve them. The client's version alone does not identify an already-running daemon. If the service is mismatched or missing, inspect its existing owner before starting or restarting anything.
 
-Use the advertised `tools/list` contract over MCP. Tool names are `snake_case`; CLI management commands are `kebab-case`. Inspect only unfamiliar tools instead of loading every schema. Descriptions may lag implementation: capability discovery proves advertised shape, while fresh application state proves behavior.
+Use the advertised `tools/list` contract over MCP. Tool names are `snake_case`; CLI management commands are `kebab-case`. Inspect only unfamiliar tools instead of loading every schema: the default list is compact, and `get_guide({tool})` returns one tool's full docs (`CUA_DRIVER_TOOL_PROFILE=full` lists every tool). Descriptions may lag implementation: capability discovery proves advertised shape, while fresh application state proves behavior.
 
 | Client                                     | State ownership                                                                      |
 | ------------------------------------------ | ------------------------------------------------------------------------------------ |

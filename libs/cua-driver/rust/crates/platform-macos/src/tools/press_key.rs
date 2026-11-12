@@ -220,7 +220,8 @@ fn delivery_failed(error: anyhow::Error) -> ToolResult {
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "press_key".into(),
-        description: "Press and release one key. `delivery_mode` as in click/type_text.\n\
+        description: "Press and release one key (return, tab, escape, arrows, f1-f12, a letter or digit), optionally with `modifiers`. Prefer an `element_token` so the element is focused first; the default `background` delivery does not raise the window. A target whose focus cannot be confirmed is refused and no key is sent.\n\n\
+            `delivery_mode` as in click/type_text.\n\
             - `background` (default): posts to the pid without raising the window; with `element_token` it focuses that element first.\n\
             - `foreground`: fronts the exact window (needs `window_id`), sends a real HID key transition (Chromium content, inline editors, menu equivalents), then restores the prior app.\n\
             \n\

@@ -15,8 +15,8 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "list_apps".into(),
-        description: "List macOS apps — both currently running and installed-but-not-running — \
-            with per-app state flags:\n\n\
+        description: "List macOS apps, running and installed, with each app's pid and running/active state. Use it for \"is X installed?\" or \"is X running?\"; for an open app's pid and window_id call `list_windows({app})` instead.\n\n\
+            Per-app state flags:\n\n\
             - running: is a process for this app live? (pid is 0 when false)\n\
             - active: is it the system-frontmost app? (implies running)\n\
             - launch_path: filesystem path to the `.app` bundle, when known. \

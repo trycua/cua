@@ -123,4 +123,4 @@ Load on demand; do not reabsorb these into this file:
 - [BROWSER.md](BROWSER.md): exact page binding and typed browser actions; only when the requested method permits them.
 - [RECORDING.md](RECORDING.md): capture lifecycle, artifact checks, replay limits.
 - [EMBEDDING.md](EMBEDDING.md): trusted application-host integration, not routine GUI operation.
-- `get_guide({topic})`: an MCP tool that returns the drag, browser, permissions, batching and menus sections of these files on demand, with no skill install or resource read. `overview` returns this file.
+- `get_guide({topic})`: an MCP tool that returns the drag, browser, permissions, batching and menus sections of these files on demand, with no skill install or resource read. `overview` returns this file. `get_guide({tool})` returns one tool's full description and parameters: the default tool list is compact (the `agent` profile, shortened docs), and hidden tools stay callable by name. `CUA_DRIVER_TOOL_PROFILE=full` lists every tool and `CUA_DRIVER_TOOL_DOCS=full` lists full docs.

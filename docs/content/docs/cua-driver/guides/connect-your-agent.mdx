@@ -83,6 +83,20 @@ loop instead, see [Gemini](/cua-driver/guides/gemini). MiniMax documents setups 
   `standard`, allows input to every app.
 </Callout>
 
+## Choose how many tools the agent sees
+
+An agent harness that loads every tool schema on every request pays for each one in tokens. By default
+`cua-driver mcp` lists the 34 everyday tools with short descriptions, and nothing is removed: the
+other tools stay callable by name, and any tool's full docs are one `get_guide({tool: "click"})` call
+away. Two settings, in the client's `env` block or in `~/.cua-driver/config.json`, change the default:
+
+| Setting | Values | Default |
+| --- | --- | --- |
+| `CUA_DRIVER_TOOL_PROFILE` (config key `tool_profile`) | `agent`, `full`, or `agent,<group>` with groups `browser`, `recording`, `cursor`, `session`, `admin`, `desktop` | `agent` |
+| `CUA_DRIVER_TOOL_DOCS` (config key `tool_docs`) | `compact`, `full` | `compact` |
+
+The environment variable wins over the config key. `cua-driver describe <tool>` always prints the full docs.
+
 ## Install the agent skill
 
 The skill teaches an agent to pick tools, address elements, keep focus, and

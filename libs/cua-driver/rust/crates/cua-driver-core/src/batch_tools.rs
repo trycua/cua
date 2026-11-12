@@ -161,17 +161,8 @@ impl Tool for RunStepsTool {
     fn def(&self) -> &ToolDef {
         DEF.get_or_init(|| ToolDef {
             name: RUN_STEPS_TOOL.into(),
-            description: "The default way to act: run one or more action tools in ONE call, in \
-                order, stop at the first failure, and (with `observe`) get what changed in the \
-                same response. Use it whenever you know the next action(s) and would otherwise \
-                re-read the window after them: fill three fields, click, and see the result in \
-                one call instead of five. Even a single step plus `observe:{}` replaces an \
-                action call followed by a get_window_state call. \
-                Each step is `{tool, args}` where `tool` is one of click, double_click, \
-                right_click, set_value, type_text, press_key, hotkey, scroll, drag, move_cursor \
-                and `args` are exactly that tool's arguments. `pid` and `window_id` (or `app`/\
-                `window`) on run_steps itself are the default window of every step that names \
-                none. Reads (get_window_state, zoom) do not run between steps: one there is \
+            description: "The default way to act: run one or more actions in ONE call, in order, stopping at the first failure. Each step is `{tool, args}`; `tool` is one of click, double_click, right_click, set_value, type_text, press_key, hotkey, scroll, drag, move_cursor. `pid` and `window_id` on run_steps are the default window of every step. Add `observe:{}` to get what changed in the same response instead of a separate get_window_state call. Element tokens come from an earlier get_window_state; a step that changes the UI can stale later tokens.\n\n\
+                Use it whenever you know the next action(s) and would otherwise re-read the window after them: fill three fields, click, and see the result in one call instead of five. `args` are exactly that tool's arguments; `app`/`window` may replace `pid`/`window_id`. Steps that name no window use the run_steps default. Reads (get_window_state, zoom) do not run between steps: one there is \
                 skipped; a get_window_state last is the `observe`, a zoom last runs after it. \
                 Steps pass the same checks as direct calls. Element tokens and element_index values come from a \
                 get_window_state read before the batch; a step that changes the UI can \

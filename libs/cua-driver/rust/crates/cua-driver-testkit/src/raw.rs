@@ -55,12 +55,19 @@ impl RawDriver {
     /// skips rather than fails, unless `CUA_TEST_REQUIRE_DRIVER_BIN=1` makes a
     /// missing binary panic.
     pub fn spawn() -> Option<Self> {
-        Self::spawn_daemon_backed(driver_binary(), false, &[])
+        Self::spawn_daemon_backed(driver_binary(), false, &[], true)
+    }
+
+    /// Like [`Self::spawn`], but the MCP client sees the default `tools/list`
+    /// (the `agent` profile with compact docs) instead of the full surface the
+    /// other helpers pin for contract tests.
+    pub fn spawn_default_surface() -> Option<Self> {
+        Self::spawn_daemon_backed(driver_binary(), false, &[], false)
     }
 
     /// Spawn through the exact binary selected by the caller.
     pub fn spawn_with_binary(bin: impl Into<PathBuf>) -> Option<Self> {
-        Self::spawn_daemon_backed(bin.into(), false, &[])
+        Self::spawn_daemon_backed(bin.into(), false, &[], true)
     }
 
     /// Spawn the daemon-backed driver with an explicit test environment.
@@ -68,7 +75,7 @@ impl RawDriver {
     /// Permission-mode tests use this to model a trusted host's launch-time
     /// configuration without mutating the test process environment.
     pub fn spawn_with_env(env: &[(&str, &str)]) -> Option<Self> {
-        Self::spawn_daemon_backed(driver_binary(), false, env)
+        Self::spawn_daemon_backed(driver_binary(), false, env, true)
     }
 
     /// Spawn a daemon-backed raw driver with the certified platform overlay
@@ -76,13 +83,14 @@ impl RawDriver {
     /// tests use this deliberately; ordinary protocol tests keep the
     /// no-overlay daemon so they remain headless.
     pub fn spawn_with_overlay_and_env(env: &[(&str, &str)]) -> Option<Self> {
-        Self::spawn_daemon_backed(driver_binary(), true, env)
+        Self::spawn_daemon_backed(driver_binary(), true, env, true)
     }
 
     fn spawn_daemon_backed(
         bin: PathBuf,
         overlay_enabled: bool,
         env: &[(&str, &str)],
+        full_surface: bool,
     ) -> Option<Self> {
         if !ensure_driver_binary(&bin) {
             return None;
@@ -99,6 +107,7 @@ impl RawDriver {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
+        pin_tool_surface(&mut command, full_surface);
         daemon.apply_state_root(&mut command);
         let mut child = spawn_in_job(&mut command)
             .inspect_err(|e| eprintln!("[testkit] driver spawn failed: {e}"))
@@ -142,6 +151,7 @@ impl RawDriver {
         // the same isolation from the developer's installed-product state.
         let state_root = IsolatedStateRoot::for_env(&[])?;
         let mut command = Command::new(&bin);
+        pin_tool_surface(&mut command, true);
         command
             .args(args)
             .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false")
@@ -178,5 +188,20 @@ impl RawDriver {
             .read_line(&mut line)
             .expect("read response line");
         serde_json::from_str(line.trim()).expect("parse JSON response")
+    }
+}
+
+/// Contract tests read the whole tool surface: pin the full profile and full
+/// docs for the MCP client process. The default-surface helper leaves both
+/// unset (and clears any inherited value) so it sees what an agent sees.
+fn pin_tool_surface(command: &mut Command, full_surface: bool) {
+    if full_surface {
+        command
+            .env("CUA_DRIVER_TOOL_PROFILE", "full")
+            .env("CUA_DRIVER_TOOL_DOCS", "full");
+    } else {
+        command
+            .env_remove("CUA_DRIVER_TOOL_PROFILE")
+            .env_remove("CUA_DRIVER_TOOL_DOCS");
     }
 }

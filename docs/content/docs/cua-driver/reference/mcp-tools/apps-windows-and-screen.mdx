@@ -13,18 +13,18 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
 | Tool | Description | Platforms |
 | --- | --- | --- |
-| [`list_apps`](#list_apps) | List macOS apps, both currently running and installed-but-not-running, with per-app state flags: - running: is a process for this app live? | macOS, Linux, Windows |
+| [`list_apps`](#list_apps) | List macOS apps, running and installed, with each app's pid and running/active state. | macOS, Linux, Windows |
 | [`list_windows`](#list_windows) | List top-level windows known to WindowServer, including off-screen ones (minimized, other Space, hidden): layer-0 only without `pid`, every layer with `pid`. | macOS, Linux, Windows |
-| [`launch_app`](#launch_app) | Launch a macOS app in the background: the target does NOT come to the foreground. | macOS, Linux, Windows |
+| [`launch_app`](#launch_app) | Launch a macOS app in the background; it does NOT come to the foreground. | macOS, Linux, Windows |
 | [`kill_app`](#kill_app) | Force-terminate a process by pid (kill -9 equivalent on macOS / Linux; taskkill /F equivalent on Windows). | macOS, Linux, Windows |
-| [`bring_to_front`](#bring_to_front) | Persistently activate an app and leave it in the foreground. | macOS, Linux, Windows |
+| [`bring_to_front`](#bring_to_front) | Activate an app (or one window) and leave it in the foreground. | macOS, Linux, Windows |
 | [`set_window_frame`](#set_window_frame) | Set one exact top-level window's frame in the desktop-coordinate space reported by list_windows and verify the resulting geometry through an independent readback. | macOS, Linux, Windows |
 | [`invoke_menu`](#invoke_menu) | Resolve an exact application-menu path one live native level at a time and invoke its final item through accessibility APIs. | macOS, Linux, Windows |
 | [`debug_window_info`](#debug_window_info) | Diagnostic: dump everything cua-driver sees about a pid's top-level windows from the daemon's session perspective. | Windows |
-| [`get_window_state`](#get_window_state) | Snapshot a window: the accessibility tree plus a screenshot. | macOS, Linux, Windows |
+| [`get_window_state`](#get_window_state) | Snapshot a window: its accessibility tree plus a screenshot. | macOS, Linux, Windows |
 | [`get_accessibility_tree`](#get_accessibility_tree) | Return a lightweight snapshot of the desktop: running regular apps and on-screen visible windows with their bounds, z-order, and owner pid. | macOS, Linux, Windows |
 | [`verify_state`](#verify_state) | Deterministically verify bounded predicates against one exact window. | macOS, Linux, Windows |
-| [`parse_visual_regions`](#parse_visual_regions) | Parse one immutable registered capture into model-neutral text and icon regions. | macOS, Linux, Windows |
+| [`parse_visual_regions`](#parse_visual_regions) | Parse a screenshot into text and icon regions. | macOS, Linux, Windows |
 | [`get_desktop_state`](#get_desktop_state) | Capture the full display. | macOS, Linux, Windows |
 | [`get_screen_size`](#get_screen_size) | Return the logical size of the main display in points plus its backing scale factor. | macOS, Linux, Windows |
 | [`get_cursor_position`](#get_cursor_position) | Return the current mouse cursor position in screen points (origin top-left). | macOS, Linux, Windows |
@@ -49,7 +49,9 @@ Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
 <Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
 <Tab value="macOS">
 
-List macOS apps, both currently running and installed-but-not-running, with per-app state flags:
+List macOS apps, running and installed, with each app's pid and running/active state. Use it for "is X installed?" or "is X running?"; for an open app's pid and window_id call `list_windows({app})` instead.
+
+Per-app state flags:
 
 - running: is a process for this app live? (pid is 0 when false)
 - active: is it the system-frontmost app? (implies running)
@@ -171,7 +173,7 @@ Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
 <Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
 <Tab value="macOS">
 
-Launch a macOS app in the background: the target does NOT come to the foreground.
+Launch a macOS app in the background; it does NOT come to the foreground. Pass `bundle_id` (preferred) or `name`. Returns the pid and a `windows` array, ready for `get_window_state`. Single-instance apps hand every caller the same window.
 
 Provide either `bundle_id` (preferred: unambiguous, e.g. `com.apple.calculator`) or `name` (e.g. "Calculator", or the absolute `.app` path from `list_apps` `launch_path`). If both are given, bundle_id wins.
 
@@ -292,7 +294,9 @@ Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
 <Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
 <Tab value="macOS">
 
-Persistently activate an app and leave it in the foreground. Most input does not need this; use it only for a focus-proxy surface that must remain foreground across interactions. With window_id, success means the exact ordinary macOS window was independently verified as the frontmost process's focused window and the front window of that process on the display it sits on. `exact_window_effect.frontmost_ordinary` additionally reports whether it is first in the global WindowServer layer-0 order; another application (an always-raised utility window, another display's front window) can hold that spot without the requested window losing keyboard focus, so it is reported and not required. Request acceptance alone is reported as a partial result, never as activation. This DOES steal foreground and does NOT restore the previously frontmost application.
+Activate an app (or one window) and leave it in the foreground. Most input does not need this: use it only for a surface that must stay in front across interactions. It DOES steal foreground and does NOT restore the previous app.
+
+With window_id, success means the exact ordinary macOS window was independently verified as the frontmost process's focused window and the front window of that process on the display it sits on. `exact_window_effect.frontmost_ordinary` additionally reports whether it is first in the global WindowServer layer-0 order; another application (an always-raised utility window, another display's front window) can hold that spot without the requested window losing keyboard focus, so it is reported and not required. Request acceptance alone is reported as a partial result, never as activation. This DOES steal foreground and does NOT restore the previously frontmost application.
 
 **macOS parameters**
 
@@ -413,7 +417,9 @@ Effect: read-only. Platforms: macOS, Linux, Windows.
 <Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
 <Tab value="macOS">
 
-Snapshot a window: the accessibility tree plus a screenshot. By default the tree is ONE compact Markdown rendering (`tree_format:"markdown"`): a row `[N]` is addressed with `element_token` `<snapshot_id>:N`, where `snapshot_id` is in the response header and in structuredContent. `tree_format:"elements"` returns the structured `elements` array instead (`element_index`, `element_token`, `role`, `label`, `value`, `actions`, `frame`, `parent_index`, `depth`); `"both"` returns both (about twice the size). Pass the token to click, type_text, press_key, etc.
+Snapshot a window: its accessibility tree plus a screenshot. Pass a row's `element_token` (`<snapshot_id>:N`) to click, type_text and the other actions. Start narrow with `query` or `max_elements`, and re-read after acting with `since:"latest"`, which returns only what changed.
+
+By default the tree is ONE compact Markdown rendering (`tree_format:"markdown"`): a row `[N]` is addressed with `element_token` `<snapshot_id>:N`, where `snapshot_id` is in the response header and in structuredContent. `tree_format:"elements"` returns the structured `elements` array instead (`element_index`, `element_token`, `role`, `label`, `value`, `actions`, `frame`, `parent_index`, `depth`); `"both"` returns both (about twice the size). Pass the token to click, type_text, press_key, etc.
 
 START NARROW: a read walks at most 250 nodes by default and says `Tree truncated at max_elements=…` (`truncated:true`) when it stops; raise `max_elements`, or use `query` (case-insensitive substring; matching rows plus ancestors) and `max_depth`. Indices and tokens stay valid for the whole snapshot. `verbose:true` adds `_note` and the full `background_input` report; `full_output:true` restores the previous full response (both representations, all metadata, ≤2 000 nodes).
 
@@ -602,9 +608,27 @@ Effect: read-only. Platforms: macOS, Linux, Windows.
 
 ### `parse_visual_regions`
 
+Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
+
+<Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
+<Tab value="macOS">
+
+Parse a screenshot into text and icon regions. Pass the `capture_id` returned by `get_window_state` or `get_desktop_state`. Use it when the accessibility tree misses the surface; the regions are model-neutral, so act on them with pixel coordinates.
+
+</Tab>
+<Tab value="Linux">
+
 Parse one immutable registered capture into model-neutral text and icon regions.
 
-Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
+</Tab>
+<Tab value="Windows">
+
+Parse one immutable registered capture into model-neutral text and icon regions.
+
+</Tab>
+</Tabs>
+
+**Parameters on every platform**
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |

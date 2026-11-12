@@ -397,7 +397,9 @@ pub(crate) fn contracts() -> Vec<ToolContract> {
     vec![ToolContract {
         name: ParseVisualRegionsInput::TOOL_NAME.into(),
         description:
-            "Parse one immutable registered capture into model-neutral text and icon regions."
+            "Parse a screenshot into text and icon regions. Pass the `capture_id` returned by \
+             `get_window_state` or `get_desktop_state`. Use it when the accessibility tree misses \
+             the surface; the regions are model-neutral, so act on them with pixel coordinates."
                 .into(),
         platforms: ALL_PLATFORMS.to_vec(),
         aliases: Vec::new(),

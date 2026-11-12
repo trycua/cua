@@ -319,7 +319,10 @@ impl ToolDef {
         // Tools that most often need a guide point at `get_guide`, so an agent
         // that never reads the skill still learns where the guidance lives.
         let description = match crate::guide::description_hint(&self.name) {
-            Some(hint) => format!("{} {hint}", self.description),
+            Some(hint) => match self.description.split_once("\n\n") {
+                Some((lead, rest)) => format!("{lead} {hint}\n\n{rest}"),
+                None => format!("{} {hint}", self.description),
+            },
             None => self.description.clone(),
         };
         let mut entry = serde_json::json!({
@@ -1571,7 +1574,9 @@ impl ToolRegistry {
         self.register(Box::new(ListSessionsTool));
         self.register(Box::new(GetSessionStateTool));
         self.register(Box::new(EndSessionTool));
-        self.register(Box::new(crate::guide::GetGuideTool));
+        self.register(Box::new(crate::guide::GetGuideTool::new(
+            self.replay_registry.clone(),
+        )));
         self.register_batch_tools();
     }
 

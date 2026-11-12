@@ -210,7 +210,10 @@ impl McpDriver {
             // remain deterministic and must not send CI traffic to PostHog.
             // A test that exercises telemetry can explicitly override this
             // through `spawn_with_env` / `spawn_named_with_env` below.
-            .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false");
+            .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false")
+            // Contract tests read the whole tool surface.
+            .env("CUA_DRIVER_TOOL_PROFILE", "full")
+            .env("CUA_DRIVER_TOOL_DOCS", "full");
         if let Some(daemon) = &daemon {
             cmd.args(["mcp", "--socket", &daemon.socket]);
             daemon.apply_state_root(&mut cmd);

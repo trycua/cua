@@ -53,11 +53,11 @@ List, launch, quit, front and arrange apps and windows. [Reference](/cua-driver/
 
 | Tool | Description | Platforms |
 | --- | --- | --- |
-| <span id="list_apps"></span>[`list_apps`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#list_apps) | List macOS apps, both currently running and installed-but-not-running, with per-app state flags: - running: is a process for this app live? | macOS, Linux, Windows |
+| <span id="list_apps"></span>[`list_apps`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#list_apps) | List macOS apps, running and installed, with each app's pid and running/active state. | macOS, Linux, Windows |
 | <span id="list_windows"></span>[`list_windows`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#list_windows) | List top-level windows known to WindowServer, including off-screen ones (minimized, other Space, hidden): layer-0 only without `pid`, every layer with `pid`. | macOS, Linux, Windows |
-| <span id="launch_app"></span>[`launch_app`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#launch_app) | Launch a macOS app in the background: the target does NOT come to the foreground. | macOS, Linux, Windows |
+| <span id="launch_app"></span>[`launch_app`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#launch_app) | Launch a macOS app in the background; it does NOT come to the foreground. | macOS, Linux, Windows |
 | <span id="kill_app"></span>[`kill_app`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#kill_app) | Force-terminate a process by pid (kill -9 equivalent on macOS / Linux; taskkill /F equivalent on Windows). | macOS, Linux, Windows |
-| <span id="bring_to_front"></span>[`bring_to_front`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#bring_to_front) | Persistently activate an app and leave it in the foreground. | macOS, Linux, Windows |
+| <span id="bring_to_front"></span>[`bring_to_front`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#bring_to_front) | Activate an app (or one window) and leave it in the foreground. | macOS, Linux, Windows |
 | <span id="set_window_frame"></span>[`set_window_frame`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#set_window_frame) | Set one exact top-level window's frame in the desktop-coordinate space reported by list_windows and verify the resulting geometry through an independent readback. | macOS, Linux, Windows |
 | <span id="invoke_menu"></span>[`invoke_menu`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#invoke_menu) | Resolve an exact application-menu path one live native level at a time and invoke its final item through accessibility APIs. | macOS, Linux, Windows |
 | <span id="debug_window_info"></span>[`debug_window_info`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#debug_window_info) | Diagnostic: dump everything cua-driver sees about a pid's top-level windows from the daemon's session perspective. | Windows |
@@ -68,10 +68,10 @@ Screenshots, accessibility trees, verification and visual regions of a window. [
 
 | Tool | Description | Platforms |
 | --- | --- | --- |
-| <span id="get_window_state"></span>[`get_window_state`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#get_window_state) | Snapshot a window: the accessibility tree plus a screenshot. | macOS, Linux, Windows |
+| <span id="get_window_state"></span>[`get_window_state`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#get_window_state) | Snapshot a window: its accessibility tree plus a screenshot. | macOS, Linux, Windows |
 | <span id="get_accessibility_tree"></span>[`get_accessibility_tree`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#get_accessibility_tree) | Return a lightweight snapshot of the desktop: running regular apps and on-screen visible windows with their bounds, z-order, and owner pid. | macOS, Linux, Windows |
 | <span id="verify_state"></span>[`verify_state`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#verify_state) | Deterministically verify bounded predicates against one exact window. | macOS, Linux, Windows |
-| <span id="parse_visual_regions"></span>[`parse_visual_regions`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#parse_visual_regions) | Parse one immutable registered capture into model-neutral text and icon regions. | macOS, Linux, Windows |
+| <span id="parse_visual_regions"></span>[`parse_visual_regions`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#parse_visual_regions) | Parse a screenshot into text and icon regions. | macOS, Linux, Windows |
 
 ## Screen tools
 
@@ -98,8 +98,8 @@ Double-click and right-click by element or pixel. [Reference](/cua-driver/refere
 
 | Tool | Description | Platforms |
 | --- | --- | --- |
-| <span id="double_click"></span>[`double_click`](/cua-driver/reference/mcp-tools/click-and-type#double_click) | Double-click at (x, y) or on an AX element identified by element_token. | macOS, Linux, Windows |
-| <span id="right_click"></span>[`right_click`](/cua-driver/reference/mcp-tools/click-and-type#right_click) | Right-click against a target pid. | macOS, Linux, Windows |
+| <span id="double_click"></span>[`double_click`](/cua-driver/reference/mcp-tools/click-and-type#double_click) | Double-click an AX element by `element_token` (preferred, works in the background) or at window pixels `x, y` for surfaces missing from the tree. | macOS, Linux, Windows |
+| <span id="right_click"></span>[`right_click`](/cua-driver/reference/mcp-tools/click-and-type#right_click) | Right-click (open the context menu) on an element by `element_token` (preferred, works in the background) or at window pixels `x, y`. | macOS, Linux, Windows |
 
 ## Pointer tools
 
@@ -108,8 +108,8 @@ Drag, scroll, move the pointer, and press or release buttons. [Reference](/cua-d
 | Tool | Description | Platforms |
 | --- | --- | --- |
 | <span id="drag"></span>[`drag`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#drag) | Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local screenshot pixels: the same space get_window_state returns. | macOS, Linux, Windows |
-| <span id="scroll"></span>[`scroll`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#scroll) | Scroll the target pid. | macOS, Linux, Windows |
-| <span id="move_cursor"></span>[`move_cursor`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#move_cursor) | Move a cursor to (x, y). | macOS, Linux, Windows |
+| <span id="scroll"></span>[`scroll`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#scroll) | Scroll a window or element. | macOS, Linux, Windows |
+| <span id="move_cursor"></span>[`move_cursor`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#move_cursor) | Move the agent cursor overlay to (x, y). | macOS, Linux, Windows |
 | <span id="mouse_button_down"></span>[`mouse_button_down`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#mouse_button_down) | Press and hold a mouse button at (x,y) via background X11 delivery. | Linux |
 | <span id="mouse_button_up"></span>[`mouse_button_up`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#mouse_button_up) | Release a previously-held mouse button via background X11 delivery. | Linux |
 | <span id="mouse_drag"></span>[`mouse_drag`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#mouse_drag) | Move a previously-held mouse button to a new point via background X11 delivery. | Linux |
@@ -121,7 +121,7 @@ Type text into a field or window. [Reference](/cua-driver/reference/mcp-tools/cl
 
 | Tool | Description | Platforms |
 | --- | --- | --- |
-| <span id="type_text"></span>[`type_text`](/cua-driver/reference/mcp-tools/click-and-type#type_text) | Insert text via `AXSetAttribute(kAXSelectedText)` into the element given by `element_token`, or the pid's focused element. | macOS, Linux, Windows |
+| <span id="type_text"></span>[`type_text`](/cua-driver/reference/mcp-tools/click-and-type#type_text) | Type text into the element given by `element_token`, or the pid's focused element. | macOS, Linux, Windows |
 
 ## Key and shortcut tools
 
@@ -129,8 +129,8 @@ Press keys and keyboard shortcuts. [Reference](/cua-driver/reference/mcp-tools/c
 
 | Tool | Description | Platforms |
 | --- | --- | --- |
-| <span id="press_key"></span>[`press_key`](/cua-driver/reference/mcp-tools/click-and-type#press_key) | Press and release one key. | macOS, Linux, Windows |
-| <span id="hotkey"></span>[`hotkey`](/cua-driver/reference/mcp-tools/click-and-type#hotkey) | Press a key combination: e.g. | macOS, Linux, Windows |
+| <span id="press_key"></span>[`press_key`](/cua-driver/reference/mcp-tools/click-and-type#press_key) | Press and release one key (return, tab, escape, arrows, f1-f12, a letter or digit), optionally with `modifiers`. | macOS, Linux, Windows |
+| <span id="hotkey"></span>[`hotkey`](/cua-driver/reference/mcp-tools/click-and-type#hotkey) | Press a key combination, e.g. | macOS, Linux, Windows |
 
 ## Value and clipboard tools
 
@@ -148,7 +148,7 @@ Run several action tools, or a script that drives them, in one call. [Reference]
 
 | Tool | Description | Platforms |
 | --- | --- | --- |
-| <span id="run_steps"></span>[`run_steps`](/cua-driver/reference/mcp-tools/batch-recording-and-settings#run_steps) | The default way to act: run one or more action tools in ONE call, in order, stop at the first failure, and (with `observe`) get what changed in the same response. | macOS, Linux, Windows |
+| <span id="run_steps"></span>[`run_steps`](/cua-driver/reference/mcp-tools/batch-recording-and-settings#run_steps) | The default way to act: run one or more actions in ONE call, in order, stopping at the first failure. | macOS, Linux, Windows |
 | <span id="run_script"></span>[`run_script`](/cua-driver/reference/mcp-tools/batch-recording-and-settings#run_script) | Run a JavaScript program that drives apps through Cua Driver, in ONE call: loops, conditions, reads and checks between actions, and only the result comes back. | macOS, Linux, Windows |
 
 ## Page tools
@@ -157,9 +157,9 @@ Read and act on web pages, and prepare and navigate browsers. [Reference](/cua-d
 
 | Tool | Description | Platforms |
 | --- | --- | --- |
-| <span id="page"></span>[`page`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#page) | Legacy browser compatibility tool. | macOS, Linux, Windows |
-| <span id="get_browser_state"></span>[`get_browser_state`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#get_browser_state) | Read-only browser inspection. | macOS, Linux, Windows |
-| <span id="browser_prepare"></span>[`browser_prepare`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#browser_prepare) | Attach the browser tools to a browser. | macOS, Linux, Windows |
+| <span id="page"></span>[`page`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#page) | Legacy browser tool: read-only `get_text` and `query_dom` on a page. | macOS, Linux, Windows |
+| <span id="get_browser_state"></span>[`get_browser_state`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#get_browser_state) | Read-only inspection of a browser page: the route for any web page in Chrome, Edge or Brave. | macOS, Linux, Windows |
+| <span id="browser_prepare"></span>[`browser_prepare`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#browser_prepare) | Attach the browser tools to a running Chrome, Edge or Brave. | macOS, Linux, Windows |
 | <span id="browser_navigate"></span>[`browser_navigate`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#browser_navigate) | Navigate one tab of an exactly-bound browser target to a new URL (http/https/about only). | macOS, Linux, Windows |
 
 ## Browser input tools
@@ -168,7 +168,7 @@ Exact browser input over CDP: clicks, typing, pointer, dialogs, files and downlo
 
 | Tool | Description | Platforms |
 | --- | --- | --- |
-| <span id="browser_click"></span>[`browser_click`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#browser_click) | Click a page element (by ref) or viewport coordinates in an exactly-bound tab. | macOS, Linux, Windows |
+| <span id="browser_click"></span>[`browser_click`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#browser_click) | Click a page element by `ref` (from `get_browser_state`) or by viewport coordinates, in an exactly-bound tab. | macOS, Linux, Windows |
 | <span id="browser_type"></span>[`browser_type`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#browser_type) | Type text into an exactly-bound tab via the Input domain. | macOS, Linux, Windows |
 | <span id="browser_select"></span>[`browser_select`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#browser_select) | Select one option of a native HTML &lt;select&gt; ref on an exactly-bound tab without opening its popup. | macOS, Linux, Windows |
 | <span id="browser_pointer"></span>[`browser_pointer`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#browser_pointer) | Perform hover, right-click, double-click, scroll, or drag in an exactly-bound browser tab. | macOS, Linux, Windows |
@@ -224,4 +224,4 @@ Configuration, permissions, health, updates, extensions and on-demand guides. [R
 | <span id="health_report"></span>[`health_report`](/cua-driver/reference/mcp-tools/batch-recording-and-settings#health_report) | Single-call end-to-end driver diagnostics. | macOS, Linux, Windows |
 | <span id="check_for_update"></span>[`check_for_update`](/cua-driver/reference/mcp-tools/batch-recording-and-settings#check_for_update) | Check the saved stable/nightly Cua Driver channel for a release on GitHub. | macOS, Linux, Windows |
 | <span id="install_extension"></span>[`install_extension`](/cua-driver/reference/mcp-tools/batch-recording-and-settings#install_extension) | Preview or install one Driver-managed optional extension. | macOS, Linux, Windows |
-| <span id="get_guide"></span>[`get_guide`](/cua-driver/reference/mcp-tools/batch-recording-and-settings#get_guide) | Read Cua Driver guidance on demand, taken from the guide bundled with this driver (no skill install needed). | macOS, Linux, Windows |
+| <span id="get_guide"></span>[`get_guide`](/cua-driver/reference/mcp-tools/batch-recording-and-settings#get_guide) | Read Cua Driver guidance on demand, from the guide bundled with this driver. | macOS, Linux, Windows |

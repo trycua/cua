@@ -23,6 +23,10 @@ const FILES: &[(&str, &str)] = &[
         include_str!("../../../Skills/cua-driver/BROWSER.md"),
     ),
     (
+        "DEMONSTRATION.md",
+        include_str!("../../../Skills/cua-driver/DEMONSTRATION.md"),
+    ),
+    (
         "EMBEDDING.md",
         include_str!("../../../Skills/cua-driver/EMBEDDING.md"),
     ),

@@ -122,5 +122,6 @@ Load on demand; do not reabsorb these into this file:
 - Current host only: [MACOS.md](MACOS.md), [WINDOWS.md](WINDOWS.md), or [LINUX.md](LINUX.md). Other platform files may be absent from a host-filtered installation.
 - [BROWSER.md](BROWSER.md): exact page binding and typed browser actions; only when the requested method permits them.
 - [RECORDING.md](RECORDING.md): capture lifecycle, artifact checks, replay limits.
+- [DEMONSTRATION.md](DEMONSTRATION.md): turning a recorded human demonstration (`start_demonstration`) into a reusable skill.
 - [EMBEDDING.md](EMBEDDING.md): trusted application-host integration, not routine GUI operation.
 - `get_guide({topic})`: an MCP tool that returns the drag, browser, permissions, batching and menus sections of these files on demand, with no skill install or resource read. `overview` returns this file.

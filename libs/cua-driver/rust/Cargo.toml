@@ -17,6 +17,7 @@ members = [
     "crates/cursor-theme-cli",
     "crates/pip-preview",
     "crates/cua-perception",
+    "crates/input-capture",
 ]
 
 [workspace.package]

@@ -20,6 +20,8 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 | [`get_recording_state`](#get_recording_state) | Report the current trajectory recorder state: whether recording is enabled, the output directory (when enabled), and the 1-based counter for the next turn folder that will be written. | macOS, Linux, Windows |
 | [`replay_trajectory`](#replay_trajectory) | Replay a recorded trajectory by re-invoking every turn's tool call in lexical order. | macOS, Linux, Windows |
 | [`install_ffmpeg`](#install_ffmpeg) | Install the ffmpeg binary used by start_recording's video capture (Linux/Windows; macOS records natively and needs no ffmpeg). | macOS, Linux, Windows |
+| [`start_demonstration`](#start_demonstration) | Call only after the user explicitly asks to record a human demonstration. | macOS, Linux, Windows |
+| [`stop_demonstration`](#stop_demonstration) | Stop human input capture, remove the recording border, and write the trajectory and summary artifacts. | macOS, Linux, Windows |
 | [`get_config`](#get_config) | Return the current cua-driver-rs configuration. | macOS, Linux, Windows |
 | [`set_config`](#set_config) | Update cua-driver-rs configuration. | macOS, Linux, Windows |
 | [`check_permissions`](#check_permissions) | Report TCC permission status for Accessibility and Screen Recording. | macOS, Linux, Windows |
@@ -120,7 +122,7 @@ Effect: destructive. Platforms: macOS, Linux, Windows.
 
 ## Recording tools
 
-Record and replay trajectories.
+Record and replay trajectories, and record human demonstrations.
 
 ### `start_recording`
 
@@ -227,6 +229,35 @@ Effect: destructive. Platforms: macOS, Linux, Windows.
 | --- | --- | --- | --- |
 | <span id="install_ffmpeg--confirm"></span>`confirm` | `boolean` |  | Run the install command. Without it, only the planned command is reported. |
 | <span id="install_ffmpeg--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+
+### `start_demonstration`
+
+Call only after the user explicitly asks to record a human demonstration. Start observing human input on one foreground window (Windows and macOS; other platforms refuse as unsupported). A red border is shown before capture starts. The border hides and input is ignored when the target loses foreground or rendering stops. Typed input content is never retained, but screenshots can contain text visible in the target window. Call stop_demonstration when the human finishes.
+
+Effect: mutating. Platforms: macOS, Linux, Windows.
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="start_demonstration--output_dir"></span>`output_dir` | `string` |  | New or empty output directory. Defaults to a unique directory under the system temporary directory. |
+| <span id="start_demonstration--pid"></span>`pid` | `integer` | required | Process id returned by list_windows. |
+| <span id="start_demonstration--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="start_demonstration--window_id"></span>`window_id` | `integer` | required | Window id returned by list_windows. |
+
+**Example arguments**
+
+```json
+{"pid":1,"window_id":1}
+```
+
+### `stop_demonstration`
+
+Stop human input capture, remove the recording border, and write the trajectory and summary artifacts. Calling this without an active demonstration is a no-op.
+
+Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="stop_demonstration--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 
 ## Configuration and maintenance tools
 

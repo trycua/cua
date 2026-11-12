@@ -261,8 +261,8 @@ export const MCP_CATEGORIES: Array<McpCategory & { tools: string[] }> = [
   {
     slug: 'recording',
     title: 'Recording tools',
-    summary: 'Record and replay trajectories',
-    tools: ['start_recording', 'stop_recording', 'get_recording_state', 'replay_trajectory', 'install_ffmpeg'],
+    summary: 'Record and replay trajectories, and record human demonstrations',
+    tools: ['start_recording', 'stop_recording', 'get_recording_state', 'replay_trajectory', 'install_ffmpeg', 'start_demonstration', 'stop_demonstration'],
   },
   {
     slug: 'maintenance',

@@ -1331,6 +1331,8 @@ pub struct ToolRegistry {
     approval_broker: Arc<crate::consent::ApprovalBroker>,
     protected_resource_grants: Arc<crate::consent::ProtectedResourceGrants>,
     protected_resource_ownership: Arc<crate::consent::ProtectedResourceOwnershipStore>,
+    /// Human input capture is independent from executable tool-call recording.
+    pub demonstrations: Arc<crate::demonstration::DemonstrationManager>,
 }
 
 impl ToolRegistry {
@@ -1350,9 +1352,11 @@ impl ToolRegistry {
         ));
         let protected_resource_ownership =
             Arc::new(crate::consent::ProtectedResourceOwnershipStore::default());
+        let demonstrations = Arc::new(crate::demonstration::DemonstrationManager::new());
         let weak_grants = Arc::downgrade(&protected_resource_grants);
         let weak_ownership = Arc::downgrade(&protected_resource_ownership);
         let weak_captures = Arc::downgrade(&capture_service);
+        let weak_demonstrations = Arc::downgrade(&demonstrations);
         let session_end_hook =
             crate::session::register_scoped_session_end_hook(move |session_id| {
                 crate::agent_cursor::forget_input_origin(session_id);
@@ -1367,6 +1371,12 @@ impl ToolRegistry {
                 }
                 if let Some(captures) = weak_captures.upgrade() {
                     captures.retire_session_id(session_id);
+                }
+                if let Some(demonstrations) = weak_demonstrations.upgrade() {
+                    let session_id = session_id.to_owned();
+                    std::thread::spawn(move || {
+                        let _ = demonstrations.stop_owner(&session_id);
+                    });
                 }
                 let Some(grants) = weak_grants.upgrade() else {
                     return;
@@ -1407,6 +1417,7 @@ impl ToolRegistry {
             approval_broker,
             protected_resource_grants,
             protected_resource_ownership,
+            demonstrations,
         }
     }
 
@@ -1540,6 +1551,12 @@ impl ToolRegistry {
             self.replay_registry.clone(),
         )));
         self.register(Box::new(crate::recording_tools::InstallFfmpegTool));
+        self.register(Box::new(
+            crate::demonstration_tools::StartDemonstrationTool::new(self.demonstrations.clone()),
+        ));
+        self.register(Box::new(
+            crate::demonstration_tools::StopDemonstrationTool::new(self.demonstrations.clone()),
+        ));
     }
 
     /// Install the encrypted history hook and its two permission-gated,
@@ -2490,6 +2507,8 @@ impl ToolRegistry {
                     | "stop_recording"
                     | "get_recording_state"
                     | "replay_trajectory"
+                    | "start_demonstration"
+                    | "stop_demonstration"
                     | "run_steps"
                     | "run_script"
                     | "start_session"

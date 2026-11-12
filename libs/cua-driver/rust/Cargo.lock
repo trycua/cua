@@ -1297,6 +1297,7 @@ dependencies = [
  "icu_normalizer",
  "image",
  "indexmap",
+ "input-capture",
  "jsonschema",
  "keyring",
  "libc",
@@ -2383,6 +2384,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4250ce6452e92010fdf7268ccc5d14faa80bb12fc741938534c58f16804e03c7"
 dependencies = [
  "hybrid-array",
+]
+
+[[package]]
+name = "input-capture"
+version = "0.47.19"
+dependencies = [
+ "anyhow",
+ "core-foundation",
+ "objc2 0.5.2",
+ "objc2-foundation 0.2.2",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tracing",
+ "windows 0.58.0",
 ]
 
 [[package]]

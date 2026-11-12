@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.34.2](https://github.com/trycua/cua/compare/cua-spaces-v0.34.1...cua-spaces-v0.34.2) (2026-11-12)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.25.0 in Cua Spaces ([#7426](https://github.com/trycua/cua/issues/7426)) ([0c1891b](https://github.com/trycua/cua/commit/0c1891bffabaae8a47aa058d8687d034e8037647))
+* **vmm:** skip resolv.conf removal for containers without one ([#7429](https://github.com/trycua/cua/issues/7429)) ([4a5f90b](https://github.com/trycua/cua/commit/4a5f90baf4478943f08c8b38724c7ee8b06d7667))
+
 ## [0.34.1](https://github.com/trycua/cua/compare/cua-spaces-v0.34.0...cua-spaces-v0.34.1) (2026-11-12)
 
 

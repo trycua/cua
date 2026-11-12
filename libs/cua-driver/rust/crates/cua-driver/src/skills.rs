@@ -1714,50 +1714,20 @@ mod tests {
         }
     }
 
-    const HISTORY_CONSULTATION_POLICY: &[&str] = &[
-        "continue, resume, or recall prior Cua work",
-        "call `history_status` first",
-        "one bounded initial",
-        "before broad application or window discovery",
-        "metadata only as a lead",
-        "verify current state",
-        "Content, geometry, arguments, results, and user intent",
-        "remain unknown",
-        "session or sequence boundary",
-        "never broaden a query to reconstruct excluded fields",
-        "either tool is absent",
-        "access is denied",
-        "query is empty",
-        "history is unhealthy",
-        "unrelated tasks merely because the tools are advertised",
-        "never mutate history",
-        "lifecycle or settings",
-    ];
-
-    fn assert_history_consultation_policy(skill: &str, source: &str) {
-        let normalized = skill.split_whitespace().collect::<Vec<_>>().join(" ");
-        for required in HISTORY_CONSULTATION_POLICY {
-            assert!(
-                normalized.contains(required),
-                "{source} lost required history consultation guidance: {required}"
-            );
-        }
-    }
-
     #[test]
-    fn bundled_skill_keeps_conditional_history_consultation_policy() {
+    fn bundled_skill_does_not_send_agents_to_deprecated_history() {
         let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let skill = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/SKILL.md"))
             .expect("canonical skill must be readable");
 
         assert!(
-            skill.lines().any(|line| {
-                line.starts_with("description:")
-                    && line.contains("continue, resume, or recall recent Cua activity")
-            }),
-            "skill frontmatter must trigger for recent Cua activity continuation"
+            !skill.contains("history_status") && !skill.contains("history_query"),
+            "Computer History is deprecated; the skill must not tell agents to call it"
         );
-        assert_history_consultation_policy(&skill, "canonical skill");
+        assert!(
+            !skill.contains("recall recent Cua activity"),
+            "skill frontmatter must not trigger on history recall"
+        );
     }
 
     #[test]

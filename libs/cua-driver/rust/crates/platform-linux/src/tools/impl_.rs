@@ -1016,6 +1016,47 @@ pub(crate) async fn prove_token_element(
     token_element_for(tool, xid, *element_index, element.clone(), proof).map(Some)
 }
 
+/// Re-read the token element's AT-SPI state and refuse a disabled one before
+/// any cursor or input work, as macOS does (`element_disabled`). The snapshot's
+/// `enabled` can be stale. An object that cannot be read is left to the
+/// tool's own stale-token handling.
+pub(crate) async fn refuse_if_disabled(
+    pid: u32,
+    resolved: &cua_driver_core::element_token::ResolvedElement<
+        crate::atspi::snapshot::CachedElement,
+    >,
+    tool: &str,
+) -> Option<ToolResult> {
+    let cua_driver_core::element_token::ResolvedElement::Element {
+        window_id, element, ..
+    } = resolved
+    else {
+        return None;
+    };
+    let (window_id, observed) = (*window_id, element.clone());
+    let enabled =
+        tokio::task::spawn_blocking(move || crate::atspi::element_enabled_observed(&observed))
+            .await
+            .ok()?
+            .ok()?;
+    (enabled == Some(false)).then(|| element_disabled_refusal(pid, window_id, tool))
+}
+
+pub(crate) fn element_disabled_refusal(pid: u32, window_id: u64, tool: &str) -> ToolResult {
+    ToolResult::error(format!(
+        "refusing {tool}: the target reports it is not enabled (AT-SPI state has neither \
+         Enabled nor Sensitive), so the app would ignore it. Nothing was sent. Snapshot \
+         again and act once the element reports enabled"
+    ))
+    .with_structured(json!({
+        "code": "element_disabled",
+        "effect": "refused",
+        "pid": pid,
+        "window_id": window_id,
+        "action": tool,
+    }))
+}
+
 pub(crate) fn token_element_for(
     tool: &str,
     xid: u64,

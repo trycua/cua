@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.47.18](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.17...cua-driver-rs-v0.47.18) (2026-11-12)
+
+
+### Bug Fixes
+
+* **hyprland-plugin:** list [omarchy] first in the omarchy-edge requalify channel ([#7442](https://github.com/trycua/cua/issues/7442)) ([377b0fe](https://github.com/trycua/cua/commit/377b0fee21559d770bbb7fe6a772de2a7611a371))
+
 ## [0.47.17](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.16...cua-driver-rs-v0.47.17) (2026-11-12)
 
 

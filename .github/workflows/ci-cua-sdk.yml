@@ -432,8 +432,10 @@ jobs:
     # runners are mapped here.
     runs-on: ${{ matrix.os }}
     needs: [quick, reuse]
-    # Tests only: lint runs in rust-lint, in parallel.
-    timeout-minutes: 60
+    # Tests only: lint runs in rust-lint, in parallel. Windows needs more than an hour: its long test
+    # step alone compiles for 26 to 31 minutes (warm or cold; the link dominates) and runs for about 17,
+    # after about 9 minutes of earlier steps.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -481,7 +483,7 @@ jobs:
       - name: Test (embedded, daemon over UDS and loopback, CLI, cluster, Cua Spaces extensions)
         # A step that runs out of time fails, and the cache save below still runs; a job that runs out
         # is cancelled with it. The first steps take up to 12 minutes cold, so this leaves the save its time.
-        timeout-minutes: 42
+        timeout-minutes: 65
         run: >
           cargo test --locked --no-fail-fast -p cua-sdk -p cua-daemon-core -p cua-daemon -p cua-cli -p cua-spacesd-client
           -p cua-cluster -p cua-spaces-cluster

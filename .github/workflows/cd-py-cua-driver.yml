@@ -1,9 +1,11 @@
 name: "CD: Cua Driver SDK packages"
 
-# Triggered after a Cua Driver release to publish version-locked Python wheels
-# and the TypeScript SDK plus its platform-native npm packages. Only trycua/cua
-# publishes to PyPI and npm; any other repository (trycua/cua-staging) runs
-# `twine check` and `npm publish --dry-run` instead.
+# Triggered after a Cua Driver release to build version-locked Python wheels
+# and publish the TypeScript SDK plus its platform-native npm packages. The
+# wheels are attached to the GitHub release; they reach PyPI only through
+# pypi-promote.yml (weekly, or by hand: docs/pypi-publishing.md). Only
+# trycua/cua publishes to npm; any other repository (trycua/cua-staging) runs
+# `npm publish --dry-run` instead.
 
 on:
   workflow_dispatch:
@@ -204,8 +206,10 @@ jobs:
           path: libs/cua-driver/python/dist/*.whl
           if-no-files-found: error
 
-  # Publish all wheels to PyPI
-  publish-pypi:
+  # Attach the wheels to the GitHub release. PyPI gets them only when
+  # pypi-promote.yml promotes this release (docs/pypi-publishing.md), so a
+  # PyPI outage or the project size cap never leaves a release without wheels.
+  attach-wheels:
     needs: [get-version, build-wheels]
     runs-on: ubuntu-latest
     permissions:
@@ -218,31 +222,17 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: List wheels to publish
+      - name: Check the wheels
         run: |
           ls -lh dist/
-
-      - name: Install twine
-        run: |
-          python -m pip install --upgrade pip
-          pip install twine
-
-      - name: Publish to PyPI
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
-        run: |
+          python -m pip install --upgrade pip twine
           python -m twine check --strict dist/*.whl
-          if [ "$CANONICAL" = true ]; then
-            python -m twine upload --skip-existing --verbose dist/*
-          else
-            echo "::notice::$GITHUB_REPOSITORY is not trycua/cua: wheels checked, not uploaded to PyPI (DRY RUN)"
-          fi
+
       - name: Attach Python wheels to the Cua Driver release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          sha256sum dist/*.whl | sort > dist/python-sdk-checksums.txt
+          (cd dist && sha256sum -- *.whl | sort > python-sdk-checksums.txt)
           gh release upload "${{ needs.get-version.outputs.tag }}" dist/* --clobber --repo "$GITHUB_REPOSITORY"
 
   build-npm:

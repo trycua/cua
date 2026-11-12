@@ -1,4 +1,4 @@
-# Hyprland plugin requalification, 2026-11-11T22:46:01Z
+# Hyprland plugin requalification, 2026-11-12T06:48:02Z
 
 CI requalification of the Cua Hyprland plugin per Hyprland build. Not native certification and not a package: the reviewed kit/profile process stays the release gate.
 
@@ -52,7 +52,7 @@ CI requalification of the Cua Hyprland plugin per Hyprland build. Not native cer
 
 Upstream Hyprland: [v0.57.2](https://github.com/hyprwm/Hyprland/releases/tag/v0.57.2) (packaged).
 
-Omarchy `cua-hyprland-plugin 0.47.8-2` on omarchy-edge: installable.
+Omarchy `cua-hyprland-plugin 0.47.8-3` on omarchy-edge: NOT installable.
 
 Omarchy `cua-hyprland-plugin 0.33.2-3` on omarchy-rc: installable.
 

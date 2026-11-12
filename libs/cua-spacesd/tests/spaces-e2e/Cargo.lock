@@ -6254,13 +6254,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13bee6c73da26345c729282832b60b0363cf3dd9f4bfd81d8551b7a1c889a113"
 
 [[package]]
-name = "pip-preview"
-version = "0.47.19"
-dependencies = [
- "serde_json",
-]
-
-[[package]]
 name = "piper"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6317,7 +6310,6 @@ dependencies = [
  "libloading",
  "memmap2",
  "meval",
- "pip-preview",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -6362,7 +6354,6 @@ dependencies = [
  "objc2-app-kit 0.2.2",
  "objc2-foundation 0.2.2",
  "objc2-quartz-core 0.2.2",
- "pip-preview",
  "screencapturekit",
  "security-framework 3.7.0",
  "serde",
@@ -6390,7 +6381,6 @@ dependencies = [
  "cursor-overlay",
  "getrandom 0.4.3",
  "image",
- "pip-preview",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

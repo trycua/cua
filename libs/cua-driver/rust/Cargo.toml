@@ -15,7 +15,6 @@ members = [
     "crates/cursor-overlay",
     "crates/cua-cursor-motion",
     "crates/cursor-theme-cli",
-    "crates/pip-preview",
     "crates/cua-perception",
 ]
 

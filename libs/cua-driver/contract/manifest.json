@@ -780,124 +780,6 @@
       }
     },
     {
-      "name": "escalate_session",
-      "description": "Deprecated compatibility tool for legacy capture-scope sessions. New callers select window or desktop modality on each action. No deescalate_session tool exists.",
-      "platforms": [
-        "macos",
-        "windows",
-        "linux"
-      ],
-      "capabilities": [
-        "session.capture_scope.escalate"
-      ],
-      "annotations": {
-        "read_only": false,
-        "destructive": false,
-        "idempotent": false,
-        "open_world": false
-      },
-      "schema_mode": "canonical_runtime",
-      "cursor_semantics": {
-        "action": "system"
-      },
-      "input_schema": {
-        "additionalProperties": true,
-        "properties": {
-          "detail": {
-            "description": "Optional bounded diagnostic detail. Never use secrets or page content.",
-            "maxLength": 200,
-            "type": "string"
-          },
-          "reason": {
-            "description": "Why the window-scoped attempt failed and desktop capture is needed.",
-            "enum": [
-              "ax_tree_pixel_mismatch",
-              "background_delivery_failed",
-              "foreground_ineffective",
-              "no_window_target",
-              "other"
-            ],
-            "type": "string"
-          },
-          "session": {
-            "description": "Public label of the legacy capture-scope session to escalate.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "session",
-          "reason"
-        ],
-        "type": "object"
-      },
-      "success_output_schema": {
-        "additionalProperties": true,
-        "properties": {
-          "capture_scope": {
-            "enum": [
-              "auto",
-              "window",
-              "desktop"
-            ],
-            "type": "string"
-          },
-          "desktop_capture_authorized": {
-            "type": "boolean"
-          },
-          "desktop_unlocked": {
-            "type": "boolean"
-          },
-          "effective_scope": {
-            "enum": [
-              "window",
-              "desktop"
-            ],
-            "type": "string"
-          },
-          "escalation_detail": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "escalation_reason": {
-            "anyOf": [
-              {
-                "enum": [
-                  "ax_tree_pixel_mismatch",
-                  "background_delivery_failed",
-                  "foreground_ineffective",
-                  "no_window_target",
-                  "other"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "session": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "session",
-          "capture_scope",
-          "effective_scope",
-          "desktop_capture_authorized",
-          "desktop_unlocked",
-          "escalation_reason",
-          "escalation_detail"
-        ],
-        "type": "object"
-      }
-    },
-    {
       "name": "get_agent_cursor_state",
       "description": "Return the session cursor's theme, semantic playback, position, visibility, and motion.",
       "platforms": [
@@ -1504,105 +1386,6 @@
           "recording_active",
           "idle_seconds",
           "expires_in_seconds"
-        ],
-        "type": "object"
-      }
-    },
-    {
-      "name": "get_session_state",
-      "description": "Deprecated compatibility alias that reads a live legacy session's capture policy. Use get_session for lifecycle state.",
-      "platforms": [
-        "macos",
-        "windows",
-        "linux"
-      ],
-      "capabilities": [
-        "session.capture_scope.read"
-      ],
-      "annotations": {
-        "read_only": true,
-        "destructive": false,
-        "idempotent": true,
-        "open_world": false
-      },
-      "schema_mode": "canonical_runtime",
-      "cursor_semantics": {
-        "action": "system"
-      },
-      "input_schema": {
-        "additionalProperties": true,
-        "properties": {
-          "session": {
-            "description": "Optional public label. When omitted, inspect the caller's attached\nimplicit session.",
-            "type": "string"
-          }
-        },
-        "required": [],
-        "type": "object"
-      },
-      "success_output_schema": {
-        "additionalProperties": true,
-        "properties": {
-          "capture_scope": {
-            "enum": [
-              "auto",
-              "window",
-              "desktop"
-            ],
-            "type": "string"
-          },
-          "desktop_capture_authorized": {
-            "type": "boolean"
-          },
-          "desktop_unlocked": {
-            "type": "boolean"
-          },
-          "effective_scope": {
-            "enum": [
-              "window",
-              "desktop"
-            ],
-            "type": "string"
-          },
-          "escalation_detail": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "escalation_reason": {
-            "anyOf": [
-              {
-                "enum": [
-                  "ax_tree_pixel_mismatch",
-                  "background_delivery_failed",
-                  "foreground_ineffective",
-                  "no_window_target",
-                  "other"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "session": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "session",
-          "capture_scope",
-          "effective_scope",
-          "desktop_capture_authorized",
-          "desktop_unlocked",
-          "escalation_reason",
-          "escalation_detail"
         ],
         "type": "object"
       }
@@ -5184,33 +4967,6 @@
             ],
             "type": "string"
           },
-          "escalation_detail": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "escalation_reason": {
-            "anyOf": [
-              {
-                "enum": [
-                  "ax_tree_pixel_mismatch",
-                  "background_delivery_failed",
-                  "foreground_ineffective",
-                  "no_window_target",
-                  "other"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "revived": {
             "type": "boolean"
           },
@@ -5224,8 +4980,6 @@
           "effective_scope",
           "desktop_capture_authorized",
           "desktop_unlocked",
-          "escalation_reason",
-          "escalation_detail",
           "active",
           "revived"
         ],

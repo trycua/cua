@@ -206,12 +206,6 @@
     },
     {
      "default_value": false,
-     "help": "Show a small always-on-top window with the latest post-action screenshot and a one-line label (macOS only).",
-     "name": "experimental-pip",
-     "short_name": null
-    },
-    {
-     "default_value": false,
      "help": "Select unrestricted mode and acknowledge its risk.",
      "name": "dangerously-bypass-approvals",
      "short_name": null
@@ -357,14 +351,6 @@
      "name": "idle-hide-ms",
      "short_name": null,
      "type": "Number"
-    },
-    {
-     "default_value": null,
-     "help": "Size and optional top-left origin of the experimental preview window: WxH or WxH+X+Y (default 480x360, top-right of the main display).",
-     "is_optional": true,
-     "name": "experimental-pip-geometry",
-     "short_name": null,
-     "type": "String"
     }
    ],
    "subcommands": []

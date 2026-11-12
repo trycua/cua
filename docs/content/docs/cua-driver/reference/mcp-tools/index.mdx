@@ -202,7 +202,7 @@ Show, animate and style the agent cursor. [Reference](/cua-driver/reference/mcp-
 
 ## Recording tools
 
-Record and replay trajectories. [Reference](/cua-driver/reference/mcp-tools/batch-recording-and-settings#recording-tools).
+Record and replay trajectories, and record human demonstrations. [Reference](/cua-driver/reference/mcp-tools/batch-recording-and-settings#recording-tools).
 
 | Tool | Description | Platforms |
 | --- | --- | --- |
@@ -211,6 +211,8 @@ Record and replay trajectories. [Reference](/cua-driver/reference/mcp-tools/batc
 | <span id="get_recording_state"></span>[`get_recording_state`](/cua-driver/reference/mcp-tools/batch-recording-and-settings#get_recording_state) | Report the current trajectory recorder state: whether recording is enabled, the output directory (when enabled), and the 1-based counter for the next turn folder that will be written. | macOS, Linux, Windows |
 | <span id="replay_trajectory"></span>[`replay_trajectory`](/cua-driver/reference/mcp-tools/batch-recording-and-settings#replay_trajectory) | Replay a recorded trajectory by re-invoking every turn's tool call in lexical order. | macOS, Linux, Windows |
 | <span id="install_ffmpeg"></span>[`install_ffmpeg`](/cua-driver/reference/mcp-tools/batch-recording-and-settings#install_ffmpeg) | Install the ffmpeg binary used by start_recording's video capture (Linux/Windows; macOS records natively and needs no ffmpeg). | macOS, Linux, Windows |
+| <span id="start_demonstration"></span>[`start_demonstration`](/cua-driver/reference/mcp-tools/batch-recording-and-settings#start_demonstration) | Call only after the user explicitly asks to record a human demonstration. | macOS, Linux, Windows |
+| <span id="stop_demonstration"></span>[`stop_demonstration`](/cua-driver/reference/mcp-tools/batch-recording-and-settings#stop_demonstration) | Stop human input capture, remove the recording border, and write the trajectory and summary artifacts. | macOS, Linux, Windows |
 
 ## Configuration and maintenance tools
 

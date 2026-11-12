@@ -316,15 +316,17 @@ try {
   const ubrn = join(
     typescriptRoot,
     "node_modules",
-    ".bin",
-    process.platform === "win32" ? "ubrn.cmd" : "ubrn",
+    "uniffi-bindgen-react-native",
+    "bin",
+    "cli.cjs",
   )
   if (!existsSync(ubrn)) {
     throw new Error("missing pinned UBRN generator; run npm ci in libs/cua-driver/typescript")
   }
   run(
-    ubrn,
+    process.execPath,
     [
+      ubrn,
       "generate",
       "napi",
       "bindings",

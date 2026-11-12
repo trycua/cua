@@ -48,6 +48,10 @@ jobs:
             /.github/ci-areas.json
             /.github/scripts/ci_gate_scope.py
             /.github/scripts/ci_graph.py
+            /.github/scripts/release_attribution.py
+            /.github/scripts/release_queue_preflight.py
+            /.github/release-attribution-config.json
+            /.github/releases/changelog-addenda.json
             /.github/flaky/quarantine.json
             /.github/scripts/flaky/flaky.py
             Cargo.toml
@@ -93,6 +97,49 @@ jobs:
           # The files API stops at 3000 entries; a PR that large waits on everything.
           if (( $(wc -l < "$RUNNER_TEMP/files.txt") >= 3000 )); then echo ".github/too-many-files" > "$RUNNER_TEMP/files.txt"; fi
           python3 base/.github/scripts/ci_gate_scope.py --labels "$labels" --body-file "$RUNNER_TEMP/pr-body.txt" < "$RUNNER_TEMP/files.txt"
+      # A release PR is built from main at one moment. A pull request that merges before it does
+      # is in the tag but not in the changelog, and the release workflow's attribution preflight
+      # then fails after tagging (cua-driver-rs 0.47.20, #7483). The queue commit is main plus
+      # the release PR, so this runs the same check on it, from the base commit's scripts, and
+      # fails the required gate: the release PR leaves the queue and Release Please rebuilds it.
+      # It does not depend on CI_QUEUE_RUNS.
+      - name: Find out whether the queued pull request is a release PR
+        id: release_queue
+        if: ${{ github.event_name == 'merge_group' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          QUEUE_REF: ${{ github.event.merge_group.head_ref }}
+        run: |
+          set -euo pipefail
+          [[ "$QUEUE_REF" =~ /pr-([0-9]+) ]] || { echo "::error::cannot read the pull request from $QUEUE_REF"; exit 1; }
+          head=$(gh api "repos/$GITHUB_REPOSITORY/pulls/${BASH_REMATCH[1]}" --jq '[.head.repo.full_name, .head.ref] | join(" ")')
+          if [[ "$head" == "$GITHUB_REPOSITORY release-please--branches--"* ]]; then
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Check out the queue commit with its history
+        if: ${{ steps.release_queue.outputs.release == 'true' }}
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          path: queue
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Check that the changelog lists every pull request in the queued release
+        if: ${{ steps.release_queue.outputs.release == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+        run: |
+          set -euo pipefail
+          if ! python3 base/.github/scripts/release_queue_preflight.py \
+              --repo-root queue --control base \
+              --repository "$GITHUB_REPOSITORY" \
+              --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA" \
+              --output-dir "$RUNNER_TEMP/release-manifests"; then
+            echo "::error title=release changelog is stale::main gained pull requests after this release PR was built, so its changelog would not list them and the release would fail after tagging. The release PR leaves the queue; Release Please rebuilds it. If it does not, dispatch Release: Prepare component releases."
+            exit 1
+          fi
       # Every pull request needs a sign-off on its head commit. Which one depends on where the code lives:
       #  - A branch of this repository (members and agents, any author): a `local-ci` commit status, set
       #    by `bin/ci --signoff` (or our Mac CI runner, which `ci-remote-sweep` starts for each such PR)

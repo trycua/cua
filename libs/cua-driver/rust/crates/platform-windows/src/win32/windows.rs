@@ -309,6 +309,55 @@ fn window_info_by_handle(hwnd: u64) -> Option<WindowInfo> {
     })
 }
 
+/// The other visible top-level windows of `pid` with their `GW_OWNER` chain,
+/// for `get_window_state`'s `interaction_context`. A window is modal when
+/// its owner is disabled: `DialogBox` and an owned `MessageBox` disable the
+/// owner for as long as they run. The enumeration skips untitled windows, so
+/// a disabled target's last active popup is added too. Blocking.
+pub(crate) fn interaction_facts(
+    pid: u32,
+    target: u64,
+) -> cua_driver_core::window_inspection::InteractionFacts {
+    use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetLastActivePopup};
+    let foreground = unsafe { GetForegroundWindow() }.0 as usize as u64;
+    let mut hwnds: Vec<u64> = list_windows_via_win32(Some(pid))
+        .into_iter()
+        .filter(|window| window.is_on_screen)
+        .map(|window| window.hwnd)
+        .collect();
+    let target_hwnd = HWND(target as *mut _);
+    if !unsafe { IsWindowEnabled(target_hwnd) }.as_bool() {
+        let popup = unsafe { GetLastActivePopup(target_hwnd) };
+        let popup_id = popup.0 as usize as u64;
+        if popup_id != target
+            && unsafe { IsWindowVisible(popup) }.as_bool()
+            && window_owner_pid(popup_id) == Some(pid)
+            && !hwnds.contains(&popup_id)
+        {
+            hwnds.push(popup_id);
+        }
+    }
+    let owned: Vec<_> = hwnds
+        .into_iter()
+        .map(|hwnd| {
+            let owner = unsafe { GetWindow(HWND(hwnd as *mut _), GW_OWNER) }
+                .ok()
+                .filter(|owner| !owner.0.is_null());
+            cua_driver_core::window_inspection::OwnedWindow {
+                pid: i64::from(pid),
+                window_id: hwnd,
+                owner: owner.map(|owner| owner.0 as usize as u64),
+                modal: owner.is_some_and(|owner| !unsafe { IsWindowEnabled(owner) }.as_bool()),
+                focused: hwnd == foreground,
+            }
+        })
+        .collect();
+    Some(cua_driver_core::window_inspection::related_by_owner_chain(
+        target, &owned,
+    ))
+}
+
 pub(crate) fn list_windows_via_win32(filter_pid: Option<u32>) -> Vec<WindowInfo> {
     let mut windows = enumerate_via_enum_windows();
     if let Some(pid) = filter_pid {

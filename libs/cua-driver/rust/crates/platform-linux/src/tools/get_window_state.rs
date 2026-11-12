@@ -233,7 +233,25 @@ fn window_overlays(pid: u32, xid: u64) -> WindowOverlays {
             .is_some_and(|target| rects_intersect(rect, target))
     };
     let mut covers = false;
-    for window in crate::x11::list_windows(Some(pid)) {
+    let active = crate::x11::active_window();
+    let own_windows = crate::x11::list_windows(Some(pid));
+    let cross_pid = crate::x11::list_cross_pid_transient_windows(pid);
+    let owned: Vec<_> = own_windows
+        .iter()
+        .chain(&cross_pid)
+        .filter(|window| window.is_on_screen && window.width > 0 && window.height > 0)
+        .map(|window| cua_driver_core::window_inspection::OwnedWindow {
+            pid: i64::from(window.pid.unwrap_or(pid)),
+            window_id: window.xid,
+            owner: crate::x11::transient_for(window.xid),
+            modal: crate::x11::window_is_modal(window.xid),
+            focused: active == Some(window.xid),
+        })
+        .collect();
+    out.related = Some(cua_driver_core::window_inspection::related_by_owner_chain(
+        xid, &owned,
+    ));
+    for window in own_windows {
         if window.xid == xid || !window.is_on_screen || window.width == 0 || window.height == 0 {
             continue;
         }
@@ -257,7 +275,7 @@ fn window_overlays(pid: u32, xid: u64) -> WindowOverlays {
     // resolving to one of pid's own windows is the correlation signal (see
     // `list_cross_pid_transient_windows`); such entries are tagged with
     // `owning_pid` so callers can tell it apart from a same-process dialog.
-    for window in crate::x11::list_cross_pid_transient_windows(pid) {
+    for window in cross_pid {
         if window.xid == xid || !window.is_on_screen || window.width == 0 || window.height == 0 {
             continue;
         }
@@ -385,7 +403,16 @@ impl Tool for GetWindowStateTool {
                 {window_id, bounds, title}`); pass that window_id here to walk the \
                 popup's own AT-SPI toplevel so its menu items get element indices \
                 (then click them by element_token). Omitting window_id while a popup \
-                of this pid is open walks that popup.".into(),
+                of this pid is open walks that popup.\n\n\
+                INTERACTION CONTEXT: structuredContent.interaction_context says whether this \
+                window still receives input. `status` `blocked` (a modal dialog: \
+                `related_surfaces[].relation` `modal_child` or `blocks_target`) or `superseded` \
+                (a dialog it owns holds focus: `supersedes_target`) comes with `next_call`, the \
+                get_window_state call for that surface; act there instead of retrying this \
+                window. `none_observed` covers the app's own windows only (`scope`); \
+                `focus_elsewhere` names another focused window. `unobservable` means the window \
+                set could not be read (always on Wayland, which exposes no window set): after a \
+                verified ineffective action, inspect with get_desktop_state.".into(),
             input_schema: cua_driver_core::window_state_view::extend_input_schema(json!({"type":"object","required":["pid"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
                 "pid":{"type":"integer","description":"Process ID that owns the window."},
@@ -1093,6 +1120,12 @@ impl Tool for GetWindowStateTool {
                 }
                 if overlays.covers_window {
                     structured["screenshot_composited"] = json!(true);
+                }
+                if !display_only {
+                    cua_driver_core::window_inspection::mark_interaction_context(
+                        &mut structured,
+                        &overlays.related,
+                    );
                 }
                 if let Some(note) = overlays.follow_up(pid) {
                     structured["follow_up"] = json!(note);

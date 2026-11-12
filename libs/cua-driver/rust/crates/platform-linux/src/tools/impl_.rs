@@ -764,6 +764,9 @@ pub(crate) struct WindowOverlays {
     pub(crate) popups: Vec<serde_json::Value>,
     pub(crate) covers_window: bool,
     pub(crate) window_rect: Option<(i32, i32, u32, u32)>,
+    /// The pid's windows and cross-pid transients with their owner chain,
+    /// for `interaction_context`. `None` when they were not enumerated.
+    pub(crate) related: cua_driver_core::window_inspection::InteractionFacts,
 }
 
 impl WindowOverlays {

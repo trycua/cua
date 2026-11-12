@@ -46,13 +46,34 @@ class QuickLane(unittest.TestCase):
 
     def test_merge_queue_runs_the_lanes_that_fit_its_timeout_on_gated_paths(self):
         decide = job(GATE, "decide")
-        self.assertIn('compare/${QUEUE_BASE}...${QUEUE_HEAD}', decide)
+        self.assertIn('files=$(compare_files "$QUEUE_BASE" "$QUEUE_HEAD")', decide)
         self.assertIn('emit true queue "merge queue touching gated paths', decide)
         self.assertIn('emit false queue "merge queue without gated paths"', decide)
         self.assertIn('emit true queue "merge queue, changed files unreadable" queue', decide)
         # Linux runs every lane; Windows all but shared Electron + Tauri; macOS and the browsers run after merge.
         self.assertIn("needs.decide.outputs.lanes != 'queue'", job(GATE, "macos"))
         self.assertIn("needs.decide.outputs.lanes != 'queue'", job(GATE, "browsers"))
+
+    def test_changed_files_read_in_part_count_as_unreadable(self):
+        import os
+        import subprocess
+        import tempfile
+        decide = job(GATE, "decide")
+        helper = decide[decide.index("compare_files() {"):]
+        helper = helper[:helper.index("\n          }\n") + len("\n          }\n")]
+        def files(stub):
+            with tempfile.TemporaryDirectory() as d:
+                gh = Path(d) / "gh"
+                gh.write_text("#!/bin/bash\n" + stub + "\n")
+                gh.chmod(0o755)
+                return subprocess.run(["bash", "-c", helper + 'compare_files a b'], capture_output=True, text=True,
+                                      env={**os.environ, "PATH": f"{d}:{os.environ['PATH']}", "REPO": "o/r"},
+                                      check=True).stdout.split()
+        self.assertEqual(files("printf 'a.rs\\nb.rs\\n'"), ["a.rs", "b.rs"])
+        # A page that fails after others printed, and a list the API cut off at 300, are not a file list.
+        self.assertEqual(files("printf 'a.rs\\n'; exit 1"), [])
+        self.assertEqual(files("seq 300"), [])
+        self.assertEqual(len(files("seq 299")), 299)
 
     def test_browser_lanes_are_full_only_and_do_not_fail_the_quick_result(self):
         self.assertIn("needs.decide.outputs.lanes != 'quick'", job(GATE, "browsers"))

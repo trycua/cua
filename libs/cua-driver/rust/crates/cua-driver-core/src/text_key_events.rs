@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Host-chosen key events for desktop-scope typed text (macOS only).
 //!
 //! The macOS adapter types desktop-scope text as Unicode payloads on key code

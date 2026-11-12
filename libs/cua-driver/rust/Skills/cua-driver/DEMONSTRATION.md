@@ -3,7 +3,7 @@
 > A demonstration-to-skill workflow. Record a human performing a task on a
 > window, then author a reusable `SKILL.md` from the resulting trajectory.
 > Generalization happens
-> in natural language — the skill describes *intent*, not pixel coordinates, so
+> in natural language. The skill describes *intent*, not pixel coordinates, so
 > it replays against a live screen rather than a brittle coordinate script.
 >
 > Recording how demonstration mode works + its security model lives in
@@ -13,24 +13,24 @@
 
 Call `stop_demonstration`. It writes, next to the `turn-*/` folders:
 
-- **`TRAJECTORY.md`** — readable action prose; screenshots referenced by
+- **`TRAJECTORY.md`**: readable action prose; screenshots referenced by
   **relative path**, only a few key frames embedded inline. Read THIS, not the
-  raw `action.json` tree — it will not blow up your context with base64.
-- **`SUMMARY.json`** — action count, duration, completeness, dropped-event and
+  raw `action.json` tree. It will not blow up your context with base64.
+- **`SUMMARY.json`**: action count, duration, completeness, dropped-event and
   screenshot-failure counts, and the action histogram.
-- **`DEMONSTRATION.json`** — schema and driver versions, target identity,
+- **`DEMONSTRATION.json`**: schema and driver versions, target identity,
   timestamps, stop reason, and capture completeness.
 
 ## 2. Read the trajectory and identify the task
 
 Read `TRAJECTORY.md`. Open at most one or two of the linked
-`turn-*/screenshot.png` / `click.png` frames — only when an action's intent is
+`turn-*/screenshot.png` / `click.png` frames, and only when an action's intent is
 unclear from the prose. Determine:
 
 - **What goal** the demonstration accomplishes (a sentence).
 - **The inputs** that varied or would vary across runs (names, dates, file
   paths, search terms). These become `{placeholders}`.
-- **The meaningful steps** — collapse incidental turns (stray clicks, scrolls to
+- **The meaningful steps**. Collapse incidental turns (stray clicks, scrolls to
   bring something into view, redacted typing that was just navigation) into
   intent. Several low-level turns often map to one semantic step.
 
@@ -49,8 +49,8 @@ description: Use when <trigger>. Do NOT use when <anti-trigger>.
 <one-line overview of what the task accomplishes>
 
 ## Inputs
-- `{placeholder_one}` — what it is
-- `{placeholder_two}` — what it is
+- `{placeholder_one}`: what it is
+- `{placeholder_two}`: what it is
 
 ## Steps
 1. Open <app/URL>
@@ -59,21 +59,21 @@ description: Use when <trigger>. Do NOT use when <anti-trigger>.
 4. <...>
 
 ## Verification
-- <how to confirm success — what on screen proves the task completed>
+- <how to confirm success: what on screen proves the task completed>
 - <brief recovery note if a step doesn't land>
 ```
 
 ### Rules (what makes a skill good, not just correct)
 
 - **Frontmatter is two keys only**: `name` and `description`. The `description`
-  is a routing signal — front-load "Use when…"/"Do NOT use when…", not a
+  is a routing signal. Front-load "Use when…"/"Do NOT use when…", not a
   summary. All "when to use" info goes here, not in the body.
 - **Steps are semantic, never coordinates.** Write "Click the **Save** button",
   not "click at (412, 880)". Recorded pixel coordinates are in the trajectory
   for reference, but a coordinate-replay skill breaks on any layout change.
   Refer to elements by visible name/role.
 - **Generalize literal text into `{placeholders}`.** Default capture records
-  only `text entered (redacted)` — never invent the literal value; represent it
+  only `text entered (redacted)`. Never invent the literal value; represent it
   as an input under `## Inputs`.
 - **Never invent or hardcode secrets.** Text input events are always redacted,
   but screenshots can contain visible content. Review them before sharing and
@@ -92,7 +92,7 @@ description: Use when <trigger>. Do NOT use when <anti-trigger>.
 
 ## Where skills go
 
-cua-driver itself does not pick a skills directory for you — write the
+cua-driver itself does not pick a skills directory for you. Write the
 `SKILL.md` wherever your harness loads skills from (e.g. Claude Code
 `~/.claude/skills/<name>/`). The recording's
 `output_dir` is a fine staging spot; copy the finished skill into your harness's

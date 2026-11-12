@@ -3,10 +3,17 @@
 # modulemap) for the Swift package's `.binaryTarget`.
 #
 # Usage: scripts/build-xcframework.sh [--ios] [--out DIR] [--zip]
+#        scripts/build-xcframework.sh --slice TRIPLE [--out DIR]
+#        scripts/build-xcframework.sh --assemble DIR [--ios] [--out DIR] [--zip]
 #   macOS slice: aarch64-apple-darwin plus x86_64-apple-darwin when that
 #                rust target is installed (lipo'd into one universal .a).
 #   --ios:       also aarch64-apple-ios and an iOS simulator slice.
 #   --zip:       zip it and print the SwiftPM checksum (release upload).
+#   --slice:     build one rust target only and leave its libcua_sdk.a in
+#                DIR/slices/TRIPLE (release CI builds the four targets on
+#                parallel runners: each takes about 25 minutes).
+#   --assemble:  build nothing; take DIR/TRIPLE/libcua_sdk.a for every target
+#                and create the xcframework (the CI job that joins the slices).
 # Uses `xcodebuild -create-xcframework` when Xcode is present and writes the
 # (documented, stable) XCFramework layout by hand otherwise.
 set -euo pipefail
@@ -17,11 +24,15 @@ cua_root="$(cd "$swift_root/.." && pwd)"
 out="$swift_root/build"
 ios=0
 zip=0
+slice=""
+assemble=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --ios) ios=1 ;;
     --zip) zip=1 ;;
     --out) out="$2"; shift ;;
+    --slice) slice="$2"; shift ;;
+    --assemble) assemble="$2"; shift ;;
     *) echo "unknown argument $1" >&2; exit 2 ;;
   esac
   shift
@@ -33,8 +44,24 @@ build() {
   (cd "$cua_root" && cargo build --locked --release -p cua-sdk-native --target "$1")
 }
 
-mac_targets=(aarch64-apple-darwin)
-grep -qx x86_64-apple-darwin <<<"$installed" && mac_targets+=(x86_64-apple-darwin)
+if [[ -n $slice ]]; then
+  build "$slice"
+  mkdir -p "$out/slices/$slice"
+  cp "$target_dir/$slice/release/libcua_sdk.a" "$out/slices/$slice/libcua_sdk.a"
+  echo "built slice $out/slices/$slice/libcua_sdk.a"
+  exit 0
+fi
+# Where a target's static library is, and how it is produced.
+if [[ -n $assemble ]]; then
+  assemble="$(cd "$assemble" && pwd)"
+  build() { :; }
+  lib_of() { echo "$assemble/$1/libcua_sdk.a"; }
+  mac_targets=(aarch64-apple-darwin x86_64-apple-darwin)
+else
+  lib_of() { echo "$target_dir/$1/release/libcua_sdk.a"; }
+  mac_targets=(aarch64-apple-darwin)
+  grep -qx x86_64-apple-darwin <<<"$installed" && mac_targets+=(x86_64-apple-darwin)
+fi
 for t in "${mac_targets[@]}"; do build "$t"; done
 
 work="$(mktemp -d)"
@@ -50,7 +77,7 @@ module cua_sdkFFI {
 MAP
 
 libs=()
-for t in "${mac_targets[@]}"; do libs+=("$target_dir/$t/release/libcua_sdk.a"); done
+for t in "${mac_targets[@]}"; do libs+=("$(lib_of "$t")"); done
 mkdir -p "$work/macos"
 lipo -create "${libs[@]}" -output "$work/macos/libcua_sdk.a"
 mac_archs="$(lipo -archs "$work/macos/libcua_sdk.a" | tr ' ' '_')"
@@ -60,8 +87,8 @@ if [[ $ios == 1 ]]; then
   build aarch64-apple-ios
   build aarch64-apple-ios-sim
   mkdir -p "$work/ios" "$work/ios-sim"
-  cp "$target_dir/aarch64-apple-ios/release/libcua_sdk.a" "$work/ios/"
-  cp "$target_dir/aarch64-apple-ios-sim/release/libcua_sdk.a" "$work/ios-sim/"
+  cp "$(lib_of aarch64-apple-ios)" "$work/ios/"
+  cp "$(lib_of aarch64-apple-ios-sim)" "$work/ios-sim/"
   slices+=("ios|$work/ios/libcua_sdk.a|ios|arm64|")
   slices+=("ios-sim|$work/ios-sim/libcua_sdk.a|ios|arm64|simulator")
 fi

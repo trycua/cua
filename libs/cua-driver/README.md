@@ -5,7 +5,7 @@ Background computer-use driver for any agents. Speaks MCP over stdio; drives nat
 See [MCP protocol and skills](docs/mcp-protocol-and-skills.md) for the modern
 stdio profile, legacy compatibility, bundled skill resources, and HTTP limits.
 
-## Optional visual perception
+## Optional visual perception (frozen: no new work)
 
 The default MIT-licensed Driver works without model artifacts. An explicitly
 installed `cua-perception` extension can parse one retained native window or

@@ -83,6 +83,11 @@ pub fn list_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
     list_windows_inner(filter_pid).unwrap_or_default()
 }
 
+/// [`list_windows`], with a failed read kept apart from an empty list.
+pub fn try_list_windows(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {
+    list_windows_inner(filter_pid)
+}
+
 /// Whether the X server still knows a window by this id.
 pub fn window_exists(xid: u64) -> bool {
     let Ok(xid) = u32::try_from(xid) else {

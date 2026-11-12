@@ -310,10 +310,10 @@ fn window_info_by_handle(hwnd: u64) -> Option<WindowInfo> {
 }
 
 /// The other visible top-level windows of `pid` with their `GW_OWNER` chain,
-/// for `get_window_state`'s `interaction_context`. A window is modal when
-/// its owner is disabled: `DialogBox` and an owned `MessageBox` disable the
-/// owner for as long as they run. The enumeration skips untitled windows, so
-/// a disabled target's last active popup is added too. Blocking.
+/// for `get_window_state`'s `interaction_context`. `DialogBox` and an owned
+/// `MessageBox` disable their owner for as long as they run, and are its
+/// last active popup; see [`is_modal_popup`]. The enumeration skips untitled
+/// windows, so a disabled target's last active popup is added too. Blocking.
 pub(crate) fn interaction_facts(
     pid: u32,
     target: u64,
@@ -344,11 +344,18 @@ pub(crate) fn interaction_facts(
             let owner = unsafe { GetWindow(HWND(hwnd as *mut _), GW_OWNER) }
                 .ok()
                 .filter(|owner| !owner.0.is_null());
+            let modal = owner.is_some_and(|owner| {
+                is_modal_popup(
+                    hwnd,
+                    unsafe { IsWindowEnabled(owner) }.as_bool(),
+                    unsafe { GetLastActivePopup(owner) }.0 as usize as u64,
+                )
+            });
             cua_driver_core::window_inspection::OwnedWindow {
                 pid: i64::from(pid),
                 window_id: hwnd,
                 owner: owner.map(|owner| owner.0 as usize as u64),
-                modal: owner.is_some_and(|owner| !unsafe { IsWindowEnabled(owner) }.as_bool()),
+                modal,
                 focused: hwnd == foreground,
             }
         })
@@ -356,6 +363,14 @@ pub(crate) fn interaction_facts(
     Some(cua_driver_core::window_inspection::related_by_owner_chain(
         target, &owned,
     ))
+}
+
+/// An owned window is the modal one blocking its owner when the owner is
+/// disabled and the window is the owner's last active popup. A modeless
+/// palette of the same owner is not that popup while a dialog runs, so it is
+/// not reported as a blocker.
+fn is_modal_popup(hwnd: u64, owner_enabled: bool, owner_last_active_popup: u64) -> bool {
+    !owner_enabled && owner_last_active_popup == hwnd
 }
 
 pub(crate) fn list_windows_via_win32(filter_pid: Option<u32>) -> Vec<WindowInfo> {
@@ -652,6 +667,18 @@ pub fn resolve_uwp_app_pid(host_pid: u32, frame_hwnd: u64) -> Option<u32> {
         );
     }
     scan.app_pid
+}
+
+#[cfg(test)]
+mod modal_popup_tests {
+    #[test]
+    fn only_the_disabled_owners_last_active_popup_is_modal() {
+        // Owner 1 runs a dialog (3) and also owns a modeless palette (2).
+        assert!(super::is_modal_popup(3, false, 3));
+        assert!(!super::is_modal_popup(2, false, 3));
+        // An enabled owner has no modal popup, whatever was last active.
+        assert!(!super::is_modal_popup(2, true, 2));
+    }
 }
 
 #[cfg(test)]

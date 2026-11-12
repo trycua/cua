@@ -234,23 +234,28 @@ fn window_overlays(pid: u32, xid: u64) -> WindowOverlays {
     };
     let mut covers = false;
     let active = crate::x11::active_window();
-    let own_windows = crate::x11::list_windows(Some(pid));
+    // A window list that could not be read hides any blocker: it stays
+    // unobservable rather than reading as "nothing related".
+    let (own_windows, listed) = match crate::x11::try_list_windows(Some(pid)) {
+        Ok(windows) => (windows, true),
+        Err(_) => (Vec::new(), false),
+    };
     let cross_pid = crate::x11::list_cross_pid_transient_windows(pid);
-    let owned: Vec<_> = own_windows
-        .iter()
-        .chain(&cross_pid)
-        .filter(|window| window.is_on_screen && window.width > 0 && window.height > 0)
-        .map(|window| cua_driver_core::window_inspection::OwnedWindow {
-            pid: i64::from(window.pid.unwrap_or(pid)),
-            window_id: window.xid,
-            owner: crate::x11::transient_for(window.xid),
-            modal: crate::x11::window_is_modal(window.xid),
-            focused: active == Some(window.xid),
-        })
-        .collect();
-    out.related = Some(cua_driver_core::window_inspection::related_by_owner_chain(
-        xid, &owned,
-    ));
+    out.related = listed.then(|| {
+        let owned: Vec<_> = own_windows
+            .iter()
+            .chain(&cross_pid)
+            .filter(|window| window.is_on_screen && window.width > 0 && window.height > 0)
+            .map(|window| cua_driver_core::window_inspection::OwnedWindow {
+                pid: i64::from(window.pid.unwrap_or(pid)),
+                window_id: window.xid,
+                owner: crate::x11::transient_for(window.xid),
+                modal: crate::x11::window_is_modal(window.xid),
+                focused: active == Some(window.xid),
+            })
+            .collect();
+        cua_driver_core::window_inspection::related_by_owner_chain(xid, &owned)
+    });
     for window in own_windows {
         if window.xid == xid || !window.is_on_screen || window.width == 0 || window.height == 0 {
             continue;

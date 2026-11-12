@@ -48,6 +48,17 @@ impl DemonstrationManager {
         if active.is_some() {
             anyhow::bail!("a demonstration is already active");
         }
+        // Checked under the lock, as in `RecordingSession::start`: session end
+        // marks the owner ended before its hook calls `stop_owner`, so either
+        // this start sees the mark, or it holds the lock first and the hook
+        // reaps the capture it installs.
+        if let Some(owner) = config.owner.as_deref() {
+            if crate::session::is_session_ended(owner) {
+                anyhow::bail!(
+                    "session {owner} has ended; refusing to start a demonstration owned by a dead session"
+                );
+            }
+        }
         let output_dir = config.output_dir.clone();
         *active = Some(DemonstrationSession::start(config)?);
         Ok(output_dir)
@@ -277,6 +288,34 @@ mod tests {
         let manager = DemonstrationManager::new();
         assert!(manager.stop(None).unwrap().is_none());
         assert!(manager.stop_owner("missing").unwrap().is_none());
+    }
+
+    #[test]
+    fn start_for_an_ended_session_is_refused_before_capture() {
+        let owner = format!("demonstration-ended-owner-{}", std::process::id());
+        let parent = temp_dir("ended-owner");
+        let output_dir = parent.join("out");
+        let manager = DemonstrationManager::new();
+        // The losing interleaving: the session ends and its hook's
+        // `stop_owner` finds nothing before the in-flight start takes the lock.
+        crate::session::fire_session_end(&owner);
+        assert!(manager.stop_owner(&owner).unwrap().is_none());
+
+        let error = manager
+            .start(DemonstrationConfig {
+                pid: i64::from(std::process::id()),
+                window_id: 1,
+                output_dir: output_dir.clone(),
+                owner: Some(owner.clone()),
+            })
+            .unwrap_err();
+
+        assert!(error.to_string().contains("has ended"), "{error}");
+        assert!(
+            !output_dir.exists(),
+            "refused start must not touch output_dir"
+        );
+        assert!(manager.stop(None).unwrap().is_none());
     }
 
     #[test]

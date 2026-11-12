@@ -61,7 +61,14 @@ run("the phone against a local relay and a real machine daemon", () => {
     note("dev sign-in (token from the harness identity provider)", token.length > 20, `token of ${token.length} characters`);
 
     const key = signer();
-    const devices = new DeviceManager(relay, async () => token, () => key, "Test phone", undefined, "ios");
+    const devices = new DeviceManager(
+      relay,
+      async () => token,
+      () => key,
+      "Test phone",
+      undefined,
+      "ios",
+    );
     const enrolled = await devices.enroll();
     note("enroll this phone (device key made and signed by the real core)", enrolled.state === "enrolled", JSON.stringify(enrolled));
     expect(enrolled.state).toBe("enrolled");
@@ -69,20 +76,47 @@ run("the phone against a local relay and a real machine daemon", () => {
     note("device session", !!session, session ? "issued" : "none");
     expect(session).toBeTruthy();
 
-    const backend = createLiveBackend({ relay, token: async () => token, deviceSession: () => devices.session(), me: () => "acct:ada", deviceId: () => devices.id(), fetcher: nodeFetch as never });
+    const backend = createLiveBackend({
+      relay,
+      token: async () => token,
+      deviceSession: () => devices.session(),
+      me: () => "acct:ada",
+      deviceId: () => devices.id(),
+      fetcher: nodeFetch as never,
+    });
 
     const list = await backend.listSpaces();
     note("machines list", list.machines.length > 0, list.machines.map((m) => `${m.name} (${m.online ? "online" : "offline"})`).join(", "));
     expect(list.machines.some((m) => m.online)).toBe(true);
 
     const options = await backend.taskOptions!();
-    note("task options from the daemon", options.machines.length > 0, `agents: ${options.agents.map((a) => JSON.stringify(a)).join(" ") || "none"}; machines: ${options.machines.map((m) => `${m.name} canCreate=${m.canCreate}`).join(", ")}`);
+    note(
+      "task options from the daemon",
+      options.machines.length > 0,
+      `agents: ${options.agents.map((a) => JSON.stringify(a)).join(" ") || "none"}; machines: ${options.machines.map((m) => `${m.name} canCreate=${m.canCreate}`).join(", ")}`,
+    );
     expect(options.machines.length).toBeGreaterThan(0);
 
     const push = await backend.push!.status();
     note("push status (GET /v1/push)", true, JSON.stringify(push));
     // The body is the real core's `push.registration` (what the app sends), for a made-up APNs token on a sandbox build.
-    const reg = JSON.parse(core("push.registration", JSON.stringify({ input: { permission: "granted", token: "ab".repeat(32), deviceId: key.id, env: "sandbox", appId: "ai.cua.spaces.mobile", locale: "en", needsYou: true, done: true } }))) as { action: string; body: Record<string, unknown> };
+    const reg = JSON.parse(
+      core(
+        "push.registration",
+        JSON.stringify({
+          input: {
+            permission: "granted",
+            token: "ab".repeat(32),
+            deviceId: key.id,
+            env: "sandbox",
+            appId: "ai.cua.spaces.mobile",
+            locale: "en",
+            needsYou: true,
+            done: true,
+          },
+        }),
+      ),
+    ) as { action: string; body: Record<string, unknown> };
     expect(reg.action).toBe("register");
     await backend.push!.register(reg.body);
     note("push registration (PUT /v1/push/registrations, body from the core)", true, "accepted by the relay");

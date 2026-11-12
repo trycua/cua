@@ -371,7 +371,7 @@
     "ghcr.io/trycua/macos-sequoia:latest": {
       "reason": "legacy Lume macOS repos (copied into ghcr.io/trycua/macos:26 and :15); Lume, lumier and legacy-ref tests",
       "paths": [
-        "libs/cua/crates/cua-daemon/src/local.rs"
+        "libs/cua/crates/cua-daemon-core/src/local.rs"
       ]
     },
     "ghcr.io/trycua/macos-tahoe-cua:latest": {

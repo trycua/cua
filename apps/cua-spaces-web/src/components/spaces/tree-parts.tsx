@@ -23,7 +23,6 @@ const TONE: Record<TreeTone, string> = {
   busy: "bg-brand animate-pulse",
   offline: "bg-muted-foreground/50",
   stopped: "bg-muted-foreground/50",
-  waits: "bg-muted-foreground/50",
 };
 
 export function TreeDot({ tone, className }: { tone: TreeTone; className?: string }) {
@@ -37,7 +36,15 @@ export function PeopleFaces({ people, className }: { people: readonly string[]; 
   return (
     <span data-people={people.length} title={people.join(", ")} className={cn("inline-flex items-center", className)}>
       {people.slice(0, 3).map((name, i) => (
-        <span key={`${name}:${i}`} aria-hidden className={cn("flex size-5 items-center justify-center rounded-full text-[10px] font-semibold text-white ring-2 ring-background", avatarColor(name), i > 0 && "-ml-1")}>
+        <span
+          key={`${name}:${i}`}
+          aria-hidden
+          className={cn(
+            "flex size-5 items-center justify-center rounded-full text-[10px] font-semibold text-white ring-2 ring-background",
+            avatarColor(name),
+            i > 0 && "-ml-1",
+          )}
+        >
           {initial(name)}
         </span>
       ))}
@@ -64,7 +71,7 @@ function load(): ReadonlySet<string> {
   return cache;
 }
 
-/** Folds or unfolds a computer on the Spaces page (remembered on this device). */
+/** Folds or unfolds a computer on the Computers page (remembered on this device). */
 export function toggleCollapsed(key: string): void {
   const next = new Set(load());
   if (next.has(key)) next.delete(key);

@@ -1,0 +1,164 @@
+name: "CI: Hyprland plugin kit (Omarchy edge 0.57 and stable 0.56)"
+
+# Builds the reviewed profile kit for each Omarchy channel in an Arch container
+# on that channel's own packages, qualifies the package lifecycle (makepkg,
+# install, remove, reinstall, dependency refusal in isolated ALPM roots), and
+# loads the PACKAGED module into a headless Hyprland to run the background
+# input smoke (type and click into a window that does not hold focus) and the
+# released Cua Driver's list_windows, screenshot, type_text and click.
+#
+# Edge ships Hyprland 0.57.x and stable and rc stay on 0.56.2; one source and
+# one kit tooling must serve both (CUA-4078). This is CI evidence for the
+# kit, not native certification, and it never publishes anything.
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua-driver/hyprland-plugin/requalify/**"
+      - "libs/cua-driver/hyprland-plugin/packaging/release/**"
+      - ".github/workflows/ci-hyprland-plugin-kit.yml"
+  workflow_dispatch:
+    inputs:
+      driver_tag:
+        description: "Cua Driver release whose plugin source archive is packaged"
+        type: string
+        default: "cua-driver-rs-v0.47.8"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-hyprland-plugin-kit-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  REQUALIFY: libs/cua-driver/hyprland-plugin/requalify
+  PROFILES: libs/cua-driver/hyprland-plugin/packaging/release/profiles
+  DRIVER_TAG: ${{ inputs.driver_tag || 'cua-driver-rs-v0.47.8' }}
+  ARCH_IMAGE: archlinux:base-20260920.0.596911@sha256:f3691b4dde62ba4c4b6f0ae2c1fbf28e8c0c8c4b9a35c7e06dc1f70e21aa29f6
+
+jobs:
+  kit:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    name: ${{ matrix.channel }} (${{ matrix.profile }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - channel: omarchy-edge
+            profile: omarchy-edge-20261111
+          - channel: omarchy-stable
+            profile: omarchy-stable-20261111
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Reviewed plugin source archive for ${{ env.DRIVER_TAG }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=${DRIVER_TAG#cua-driver-rs-v}
+          mkdir -p "$RUNNER_TEMP/source-archive" "$RUNNER_TEMP/out"
+          gh release download "$DRIVER_TAG" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/source-archive" \
+            --pattern "cua-hyprland-plugin-${version}-*.tar.gz"
+          archive=$(ls "$RUNNER_TEMP"/source-archive/cua-hyprland-plugin-"${version}"-[0-9a-f]*[0-9a-f].tar.gz | grep -v -- '-build-kit' | head -1)
+          revision=$(basename "$archive" .tar.gz); revision=${revision##*-}
+          # The release's own digest for this asset and the tag's commit are the reviewed trust roots.
+          want=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$DRIVER_TAG" \
+                   --jq ".assets[] | select(.name == \"$(basename "$archive")\") | .digest" | sed 's/^sha256://')
+          have=$(sha256sum "$archive" | cut -d' ' -f1)
+          test -n "$want" && test "$want" = "$have"
+          test "$(git rev-parse "refs/tags/${DRIVER_TAG}^{commit}")" = "$revision"
+          {
+            echo "ARCHIVE=$archive"
+            echo "REVISION=$revision"
+            echo "DRIVER_VERSION=$version"
+          } >>"$GITHUB_ENV"
+      - name: Latest released Cua Driver (the smoke drives it)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+                  --jq '[.[] | select(.draft | not) | .tag_name | select(test("^cua-driver-rs-v[0-9]+[.][0-9]+[.][0-9]+$"))][0]')
+          version=${tag#cua-driver-rs-v}
+          mkdir -p "$RUNNER_TEMP/driver-dl"
+          curl -fsSL -o "$RUNNER_TEMP/driver-dl/d.tar.gz" \
+            "https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/cua-driver-rs-${version}-linux-x86_64.tar.gz"
+          tar -xzf "$RUNNER_TEMP/driver-dl/d.tar.gz" -C "$RUNNER_TEMP/driver-dl"
+          mv "$RUNNER_TEMP/driver-dl/cua-driver-rs-${version}-linux-x86_64" "$RUNNER_TEMP/driver"
+          echo "$version" >"$RUNNER_TEMP/driver/VERSION"
+          test -x "$RUNNER_TEMP/driver/cua-driver"
+      - name: Virtual DRM device (vkms) for the headless session
+        run: |
+          if ! sudo modprobe vkms 2>/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq "linux-modules-extra-$(uname -r)" >/dev/null 2>&1 || true
+            sudo modprobe vkms || echo "::warning::vkms unavailable on this runner"
+          fi
+          ls -l /dev/dri 2>/dev/null || true
+      - name: Build, qualify and smoke the kit in an Arch container
+        env:
+          CHANNEL: ${{ matrix.channel }}
+          PROFILE: ${{ matrix.profile }}
+        run: |
+          set -euo pipefail
+          reviewed=()
+          if [ -f "$PROFILES/$PROFILE.json" ]; then reviewed=(--reviewed "/repo/$PROFILES/$PROFILE.json"); fi
+          docker run --rm --privileged \
+            -v "$GITHUB_WORKSPACE:/repo:ro" \
+            -v "$ARCHIVE:/archive.tar.gz:ro" \
+            -v "$RUNNER_TEMP/driver:/driver:ro" \
+            -v "$RUNNER_TEMP/out:/out" \
+            -v /run/udev:/run/udev:ro \
+            -e CHANNEL -e REVISION -e DRIVER_VERSION -e PROFILE -e TOOLING_REVISION="$(git rev-parse HEAD)" \
+            "$ARCH_IMAGE" sh -euc '
+              pacman-key --init >/dev/null
+              pacman-key --populate archlinux >/dev/null
+              pacman -Syu --noconfirm --needed python >/dev/null
+              cp /archive.tar.gz "/tmp/cua-hyprland-plugin-${DRIVER_VERSION}-${REVISION}.tar.gz"
+              exec python3 /repo/libs/cua-driver/hyprland-plugin/requalify/kit_ci.py \
+                --channel "$CHANNEL" --repo /repo --tooling-revision "$TOOLING_REVISION" \
+                --archive "/tmp/cua-hyprland-plugin-${DRIVER_VERSION}-${REVISION}.tar.gz" \
+                --revision "$REVISION" --driver-version "$DRIVER_VERSION" \
+                --profile-id "$PROFILE" --kit-version 1.4.0 --package-release 2 \
+                '"${reviewed[*]}"' --out /out'
+          sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/out"
+          python3 - <<'PY' >>"$GITHUB_STEP_SUMMARY"
+          import json, os
+          r = json.load(open(os.environ["RUNNER_TEMP"] + "/out/result.json"))
+          print(f"### {os.environ['CHANNEL']}: {r['status']}")
+          print(f"- Hyprland `{r['measured']['hyprland']['package_version']}` (headers {r['measured']['hyprland']['header_version']})" if "measured" in r else "- environment not measured")
+          print(f"- steps: `{r['steps']}`")
+          print(f"- load: `{r['load']['status']}`, smoke: `{r['smoke']['status']}`")
+          if "reviewed_profile" in r:
+              print(f"- committed profile vs this channel: `{r['reviewed_profile']['verdict']}` {r['reviewed_profile']['reasons']}")
+          if "error" in r:
+              print(f"- error: {r['error']}")
+          PY
+          status=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "$RUNNER_TEMP/out/result.json")
+          echo "status: $status"
+          test "$status" != fail
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: hyprland-kit-${{ matrix.channel }}
+          path: |
+            ${{ runner.temp }}/out/result.json
+            ${{ runner.temp }}/out/candidate-profile.json
+            ${{ runner.temp }}/out/*.log
+            ${{ runner.temp }}/out/kit-bundle/*
+            ${{ runner.temp }}/out/lifecycle/RESULT.json
+            ${{ runner.temp }}/out/lifecycle/makepkg.log
+            ${{ runner.temp }}/out/session/*.json
+            ${{ runner.temp }}/out/session/*.log
+            ${{ runner.temp }}/out/session/*.txt
+            ${{ runner.temp }}/out/session/*.png
+          if-no-files-found: warn
+          retention-days: 90

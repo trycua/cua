@@ -60,9 +60,7 @@ function contentSecurityPolicy(dev: URL | null): string {
 
 /** Where the built web UI lives, falling back to the bundled placeholder page. */
 export function resolveWebRoot(): string {
-  const candidates = app.isPackaged
-    ? [path.join(process.resourcesPath, "web")]
-    : [path.resolve(app.getAppPath(), "../cua-spaces-web/dist")];
+  const candidates = app.isPackaged ? [path.join(process.resourcesPath, "web")] : [path.resolve(app.getAppPath(), "../cua-spaces-web/dist")];
   for (const dir of candidates) {
     if (existsSync(path.join(dir, "index.html"))) return dir;
   }
@@ -130,15 +128,7 @@ async function serveAsset(request: Request, root: string): Promise<Response> {
   });
 }
 
-const DROPPED_HEADERS = new Set([
-  "host",
-  "origin",
-  "referer",
-  "connection",
-  "content-length",
-  "accept-encoding",
-  "upgrade-insecure-requests",
-]);
+const DROPPED_HEADERS = new Set(["host", "origin", "referer", "connection", "content-length", "accept-encoding", "upgrade-insecure-requests"]);
 
 async function proxy(request: Request, target: URL, fallbackRoot: string): Promise<Response> {
   const url = new URL(request.url);

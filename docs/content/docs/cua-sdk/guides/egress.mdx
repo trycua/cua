@@ -1,11 +1,11 @@
 ---
 title: A Space's network
-description: What a Space can reach, enforced by the host outside the guest. With Secure Spaces on, the internet and its own tree, never this computer, your local network or cloud metadata.
+description: What a Space can reach, enforced by the host outside the guest. By default, the internet and its own tree, never this computer, your local network or cloud metadata.
 ---
 
-Secure Spaces is an [experiment](/spaces/guides/experiments) and is off until you turn it on with `cua experiments enable secure-spaces`. While it is off, Spaces keep the open network they have always had, and only the older allow and deny lists (see the last heading) apply. The rest of this page describes the experiment.
+Secure Spaces is always on and has no switch. It decides the network of new Spaces only: Spaces made before keep the network they have until their next start. An operator can force a process back to the old open network with the emergency override `CUA_SECURE_DEFAULT=0`; that is not a setting, and only the older allow and deny lists (see the last heading) apply while it is set.
 
-With Secure Spaces on, every Space starts on **Internet only**. It reaches the public internet and the other Spaces of its own tree. It can't reach this computer, your local network, cloud metadata endpoints, Spaces of other trees or the Cua daemon. The computer the Space runs on enforces this outside the guest, from its first instruction. Nothing in the guest, root included, can change it: there are no rules inside the guest to flush.
+Every Space starts on **Internet only**. It reaches the public internet and the other Spaces of its own tree. It can't reach this computer, your local network, cloud metadata endpoints, Spaces of other trees or the Cua daemon. The computer the Space runs on enforces this outside the guest, from its first instruction. Nothing in the guest, root included, can change it: there are no rules inside the guest to flush.
 
 ```python skip="local-vm"
 import cua
@@ -140,4 +140,4 @@ Choosing where a Space's internet leaves, the host's ports inside the Space, wha
 
 ## Spaces from before network settings
 
-Once Secure Spaces is on, a Space created before network settings moves to them at its next start: one with no egress policy gets `internet`, one with a policy gets `custom` with its lists kept, and one created with `network="none"` gets `none`. `cua network show` says so once. Turn the experiment off again and Spaces go back to the open network at their next start; nothing is deleted.
+A Space created before network settings moves to them at its next start: one with no egress policy gets `internet`, one with a policy gets `custom` with its lists kept, and one created with `network="none"` gets `none`. `cua network show` says so once.

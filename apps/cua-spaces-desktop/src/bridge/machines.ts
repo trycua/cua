@@ -62,7 +62,12 @@ export function machinesState(model: AppModel) {
   const devices = model.devices;
   return {
     // The web page reads the status as text.
-    thisMachine: sidebar.thisMachine ? { ...(encode(sidebar.thisMachine) as Record<string, unknown>), statusText: messageText({ code: sidebar.thisMachine.statusText.code, vars: Object.fromEntries(sidebar.thisMachine.statusText.vars) }) } : null,
+    thisMachine: sidebar.thisMachine
+      ? {
+          ...(encode(sidebar.thisMachine) as Record<string, unknown>),
+          statusText: messageText({ code: sidebar.thisMachine.statusText.code, vars: Object.fromEntries(sidebar.thisMachine.statusText.vars) }),
+        }
+      : null,
     sections: encode(sidebar.sections),
     devices: devices.snapshot === null ? null : encode(devices.view),
     accessNotice: encode(devices.accessNotice),

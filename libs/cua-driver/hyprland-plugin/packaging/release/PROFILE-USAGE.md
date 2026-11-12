@@ -40,8 +40,9 @@ changes runtime search paths or the desktop environment.
 
 The recipe checks exact native package versions, compositor and compiler bytes,
 GCC version/date and emitted ELF comment, the package-owned Hyprland header tree,
-and matching shared-runtime bytes. These profiles require Hyprland 0.56.2
-headers. CMake enables production input, disables experimental input and tracing,
+and matching shared-runtime bytes. A profile names exactly one measured Hyprland
+header version, `0.56.2` (Omarchy stable and rc) or `0.57.2` (Omarchy edge), and the
+package that ships it; the recipe builds with `CUA_HYPRLAND_EXPECTED_VERSION` set to that version. CMake enables production input, disables experimental input and tracing,
 and builds the bundled tests. Packaging runs CTest even with `--nocheck` or
 `--repackage`; skipping makepkg integrity checks does not skip the recipe checks.
 

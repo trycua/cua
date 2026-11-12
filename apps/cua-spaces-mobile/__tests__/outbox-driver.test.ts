@@ -13,7 +13,25 @@ beforeEach(() => jest.useFakeTimers());
 afterEach(() => jest.useRealTimers());
 
 const entry = (seq: number, text: string, clientId?: string): ThreadEntry =>
-  ({ seq, id: `e${seq}`, tsMs: 1_000, author: { kind: "person", id: "acct:you", name: "You" }, kind: "message", text, mentions: [], replyTo: null, task: null, attachments: [], approval: null, answer: null, noteFor: null, update: null, runsOnKeysOf: null, event: null, ...(clientId ? { clientId } : {}) }) as ThreadEntry;
+  ({
+    seq,
+    id: `e${seq}`,
+    tsMs: 1_000,
+    author: { kind: "person", id: "acct:you", name: "You" },
+    kind: "message",
+    text,
+    mentions: [],
+    replyTo: null,
+    task: null,
+    attachments: [],
+    approval: null,
+    answer: null,
+    noteFor: null,
+    update: null,
+    runsOnKeysOf: null,
+    event: null,
+    ...(clientId ? { clientId } : {}),
+  }) as ThreadEntry;
 
 /** A backend that records what the outbox asks of it. */
 function fakeBackend(over: Partial<Backend> = {}) {
@@ -26,7 +44,17 @@ function fakeBackend(over: Partial<Backend> = {}) {
       return entry(posts.length, text, o?.clientId ?? undefined);
     }),
     answer: jest.fn(async () => entry(99, "Approved")),
-    readThread: jest.fn(async () => ({ entries: [], live: { key: "", agents: [] }, cursor: 0, caughtUp: true, unread: 0, readSeq: 0, me: "acct:you", hasMoreBefore: false, role: "owner" })),
+    readThread: jest.fn(async () => ({
+      entries: [],
+      live: { key: "", agents: [] },
+      cursor: 0,
+      caughtUp: true,
+      unread: 0,
+      readSeq: 0,
+      me: "acct:you",
+      hasMoreBefore: false,
+      role: "owner",
+    })),
     ...over,
   } as unknown as Backend;
   return { b, posts };
@@ -112,7 +140,19 @@ describe("the outbox driver (the core's rules, run against a backend)", () => {
     await flush();
     await a.store.get("outbox"); // written
     // The next launch: the daemon has the message under its client id.
-    const second = fakeBackend({ readThread: jest.fn(async () => ({ entries: [entry(5, "was posting", "m1")], live: { key: "", agents: [] }, cursor: 5, caughtUp: true, unread: 0, readSeq: 5, me: "acct:you", hasMoreBefore: false, role: "owner" })) as never });
+    const second = fakeBackend({
+      readThread: jest.fn(async () => ({
+        entries: [entry(5, "was posting", "m1")],
+        live: { key: "", agents: [] },
+        cursor: 5,
+        caughtUp: true,
+        unread: 0,
+        readSeq: 5,
+        me: "acct:you",
+        hasMoreBefore: false,
+        role: "owner",
+      })) as never,
+    });
     const b2 = driver(second.b, testStore(kv));
     await b2.d.ready;
     await flush();

@@ -1,5 +1,98 @@
 # Changelog
 
+## [0.15.5](https://github.com/trycua/cua/compare/cua-spacesd-v0.15.4...cua-spacesd-v0.15.5) (2026-11-12)
+
+
+### Bug Fixes
+
+* **cua-driver:** load libxkbcommon's 1.0 text functions at run time so the driver starts on Ubuntu 20.04 ([#6498](https://github.com/trycua/cua/issues/6498)) ([b9e38d1](https://github.com/trycua/cua/commit/b9e38d1ac1eb9e5683e0b7394ecf50b360da2881))
+
+## [0.15.4](https://github.com/trycua/cua/compare/cua-spacesd-v0.15.3...cua-spacesd-v0.15.4) (2026-11-12)
+
+
+### Bug Fixes
+
+* **cua-spacesd:** request a keyframe while a viewer waits for one ([#7415](https://github.com/trycua/cua/issues/7415)) ([a8fa23c](https://github.com/trycua/cua/commit/a8fa23c124923a8889dd3cb3d35eb8aa0235ff0d))
+
+## [0.15.3](https://github.com/trycua/cua/compare/cua-spacesd-v0.15.2...cua-spacesd-v0.15.3) (2026-11-12)
+
+
+### Bug Fixes
+
+* **cua-vmm:** run the engine helper's chroot from PATH and build sandbox overlays on 24.04 ([#7409](https://github.com/trycua/cua/issues/7409)) ([10cd739](https://github.com/trycua/cua/commit/10cd739d46db34a0373245531c8219babf606c1f))
+
+## [0.15.2](https://github.com/trycua/cua/compare/cua-spacesd-v0.15.1...cua-spacesd-v0.15.2) (2026-11-11)
+
+
+### Bug Fixes
+
+* **cua-spacesd-doctor:** type into the form only after its entry holds keyboard focus ([#7322](https://github.com/trycua/cua/issues/7322)) ([0470fc6](https://github.com/trycua/cua/commit/0470fc64e2ad0486b655182a5cc6321711378223))
+
+## [0.15.1](https://github.com/trycua/cua/compare/cua-spacesd-v0.15.0...cua-spacesd-v0.15.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **cua-spacesd-doctor:** retry input.type once when nothing reached the entry ([#7290](https://github.com/trycua/cua/issues/7290)) ([6e7a5a4](https://github.com/trycua/cua/commit/6e7a5a4e0c3717eb2d12e2e81ae4dde9c6ba3126))
+
+
+### Performance Improvements
+
+* **cua-ci:** build cua-ci beside cua-sdk, not after it (CUA-3971) ([#7240](https://github.com/trycua/cua/issues/7240)) ([1d23545](https://github.com/trycua/cua/commit/1d23545a03689800046f5fd7ecf78c3d128dec61))
+
+## [0.15.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.14.0...cua-spacesd-v0.15.0) (2026-11-10)
+
+
+### Features
+
+* **spaces:** show a child Space's window in the parent's Stream section and stream it directly from the child ([#6819](https://github.com/trycua/cua/issues/6819)) ([5f09d89](https://github.com/trycua/cua/commit/5f09d890ad10a68c02de0cfd4e3fe24096537059))
+
+
+### Bug Fixes
+
+* **cua-spacesd:** remove the agent sandbox even when its setup fails ([#7232](https://github.com/trycua/cua/issues/7232)) ([7b8de09](https://github.com/trycua/cua/commit/7b8de092587a04926919b52e2dcb472a4e9e947a))
+* **volume:** a stalled sync never hangs an agent start or the mount (CUA-4002) ([#7237](https://github.com/trycua/cua/issues/7237)) ([7f4a358](https://github.com/trycua/cua/commit/7f4a35873a00a101563394f54f8497d1288a3c8b))
+
+
+### Performance Improvements
+
+* **cua:** split cua-daemon into cua-daemon-core and the server (CUA-3971) ([#7214](https://github.com/trycua/cua/issues/7214)) ([9058fbe](https://github.com/trycua/cua/commit/9058fbe9f873c5ccc038a8350472045869275895))
+
+## [0.14.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.13.0...cua-spacesd-v0.14.0) (2026-11-10)
+
+
+### Features
+
+* **spaces:** Child Spaces and Warm start are always on, their Labs switches are gone (CUA-3751) ([#6873](https://github.com/trycua/cua/issues/6873)) ([57942a0](https://github.com/trycua/cua/commit/57942a0e67625dffe0f79f9ea146395ff1cdac53))
+
+## [0.13.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.8...cua-spacesd-v0.13.0) (2026-11-09)
+
+
+### Features
+
+* **spaces-macos:** install-local.sh --development for fast dev-loop builds ([#7019](https://github.com/trycua/cua/issues/7019)) ([7f9f5c2](https://github.com/trycua/cua/commit/7f9f5c20440510a999851010c00034d2afd433d1))
+
+## [0.12.8](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.7...cua-spacesd-v0.12.8) (2026-11-09)
+
+
+### Bug Fixes
+
+* **cluster:** GPU jobs are admitted by free video memory and run on Windows hosts ([#6943](https://github.com/trycua/cua/issues/6943)) ([c62abf3](https://github.com/trycua/cua/commit/c62abf39ba407f385701b0a82a5a4d8b8eacc426))
+
+## [0.12.7](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.6...cua-spacesd-v0.12.7) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cua-driver:** give KWin windows exact bounds, stacking, capture and bring_to_front ([#6820](https://github.com/trycua/cua/issues/6820)) ([5ee57ab](https://github.com/trycua/cua/commit/5ee57ab5bba333f33e48df787b77d997cc1e8019))
+
+## [0.12.6](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.5...cua-spacesd-v0.12.6) (2026-11-07)
+
+
+### Bug Fixes
+
+* **spaces:** every agent message is appended to the thread, child Spaces work from inside a Space, and child agents show in the chat ([#6733](https://github.com/trycua/cua/issues/6733)) ([515371a](https://github.com/trycua/cua/commit/515371a48a616aea3bba5f0ea13e0863c8a26041))
+
 ## [0.12.5](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.4...cua-spacesd-v0.12.5) (2026-11-07)
 
 

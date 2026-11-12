@@ -1830,6 +1830,7 @@ pub(crate) fn capture_cli_completed(
         "diagnose" => "diagnose",
         "permissions" => "permissions",
         "autostart" => "autostart",
+        "kwin_capture" => "kwin_capture",
         "skills" => "skills",
         "extension" => "extension",
         "config" => "config",
@@ -1986,6 +1987,7 @@ fn fixed_cli_command(command: &str) -> &'static str {
         "diagnose" => "diagnose",
         "permissions" => "permissions",
         "autostart" => "autostart",
+        "kwin_capture" => "kwin_capture",
         "skills" => "skills",
         "extension" => "extension",
         "config" => "config",
@@ -2047,6 +2049,12 @@ fn fixed_cli_operation(command: &str, operation: &str) -> &'static str {
             "disable" => "disable",
             "status" => "status",
             "kick" => "kick",
+            _ => "other",
+        },
+        "kwin_capture" => match operation {
+            "status" => "status",
+            "on" => "on",
+            "off" => "off",
             _ => "other",
         },
         "skills" => match operation {
@@ -3852,8 +3860,8 @@ mod tests {
             ToolErrorClass, ToolOperation,
         };
         let properties = tool_completion_properties(ToolCompletionObservation {
-            tool_name: "page".into(),
-            operation: ToolOperation::InsertText,
+            tool_name: "browser_type".into(),
+            operation: ToolOperation::BrowserTypeInsertText,
             computer_action: true,
             success: true,
             error_class: ToolErrorClass::None,
@@ -3862,7 +3870,7 @@ mod tests {
             output_type: OutputType::Text,
             output_size_bucket: OutputSizeBucket::Under1KiB,
         });
-        assert_eq!(properties["operation"], "insert_text");
+        assert_eq!(properties["operation"], "browser_type_insert_text");
         assert_eq!(properties["computer_action"], true);
         let serialized = serde_json::to_string(&properties).unwrap();
         for forbidden in ["selector", "private typed text", "script"] {

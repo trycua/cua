@@ -467,7 +467,9 @@ async fn invoke_daemon_tool(
     });
 
     if let Some(sid) = &effective_session {
-        if !is_session_lifecycle_tool(&tool_name) && sdk.is_session_ended(sid) {
+        if !is_session_lifecycle_tool(&tool_name)
+            && sdk.is_session_ended(sid, req.session_id.as_deref())
+        {
             observe_daemon_error(observation, 1);
             // An unnamed call's lifecycle id is the transport session, which
             // is not a label the caller can pass back to start_session.
@@ -3086,6 +3088,135 @@ mod gate_tests {
         let _ = server.await;
         let _ = std::fs::remove_file(&socket);
     }
+
+    /// Each `cua-driver mcp` process is its own transport. A label its
+    /// sessions used must not stay poisoned for the next process once that
+    /// one has closed, while a live owner keeps its labels and its explicit
+    /// ends, and a label it ended explicitly still needs `start_session`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_closed_transports_session_labels_are_reusable() {
+        let _runtime_guard = crate::test_runtime_lock().lock().await;
+        PROBE_INVOCATIONS.store(0, Ordering::SeqCst);
+
+        let driver =
+            cua_driver_sdk::CuaDriver::create_for_host(cua_driver_sdk::DriverHostOptions {
+                cursor: cursor_overlay::CursorConfig {
+                    enabled: false,
+                    ..cursor_overlay::CursorConfig::default()
+                },
+                host_owns_permission_ux: false,
+                host_bundle_id: None,
+                claude_code_compatibility: false,
+                prepare_desktop_environment: false,
+                register_host_tools: Some(register_probe),
+                authorization_host: None,
+                activity_observer: None,
+            });
+        let sdk = crate::sdk_adapter::SdkAdapter::load(driver)
+            .await
+            .expect("SDK adapter");
+        let socket = format!(
+            "/tmp/cua-driver-label-test-{}-{}.sock",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let socket_for_server = socket.clone();
+        let server = tokio::spawn(async move {
+            let _ = run_serve(sdk, &socket_for_server, None).await;
+        });
+        for _ in 0..100 {
+            if std::path::Path::new(&socket).exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+
+        let send = |method: &str, name: Option<&str>, label: Option<&str>, transport: &str| {
+            let socket = socket.clone();
+            let request = DaemonRequest {
+                method: method.into(),
+                name: name.map(str::to_owned),
+                args: label.map(|label| serde_json::json!({ "session": label })),
+                session_id: Some(transport.to_owned()),
+                observation_origin: None,
+                client_kind: None,
+            };
+            async move {
+                tokio::task::spawn_blocking(move || send_request(&socket, &request))
+                    .await
+                    .unwrap()
+                    .expect("daemon response")
+            }
+        };
+        let ran = |resp: &cua_driver_core::daemon::DaemonResponse| {
+            resp.ok
+                && resp
+                    .result
+                    .as_ref()
+                    .and_then(|result| result.get("isError"))
+                    != Some(&serde_json::Value::Bool(true))
+        };
+        let (a, b, c) = (
+            "label-test-transport-a",
+            "label-test-transport-b",
+            "label-test-transport-c",
+        );
+
+        // Transport A uses two labels and explicitly ends one of them.
+        assert!(ran(&send("call", Some("probe"), Some("calc"), a).await));
+        assert!(ran(&send("call", Some("probe"), Some("done"), a).await));
+        assert!(ran(
+            &send("call", Some("end_session"), Some("done"), a).await
+        ));
+        let ended = send("call", Some("probe"), Some("done"), a).await;
+        assert!(
+            !ended.ok,
+            "an explicit end stays terminal for its live owner"
+        );
+        assert!(ended.error.as_deref().unwrap_or("").contains("has ended"));
+
+        // A's process exits: its control connection ends its transport.
+        assert!(send("session_end", None, None, a).await.ok);
+        let late = send("call", Some("probe"), Some("calc"), a).await;
+        assert!(
+            !late.ok,
+            "a late call from the closed transport stays refused"
+        );
+        assert_eq!(PROBE_INVOCATIONS.load(Ordering::SeqCst), 2);
+
+        // The next transport reuses the label A never ended.
+        assert!(ran(&send("call", Some("probe"), Some("calc"), b).await));
+        assert_eq!(PROBE_INVOCATIONS.load(Ordering::SeqCst), 3);
+
+        // The label A ended explicitly stays refused for ordinary calls after
+        // A closed, and any other transport may restart it with start_session.
+        let still_ended = send("call", Some("probe"), Some("done"), b).await;
+        assert!(!still_ended.ok, "{:?}", still_ended.result);
+        assert!(still_ended
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("start_session"));
+        assert!(ran(
+            &send("call", Some("start_session"), Some("done"), b).await
+        ));
+        assert!(ran(&send("call", Some("probe"), Some("done"), b).await));
+        assert_eq!(PROBE_INVOCATIONS.load(Ordering::SeqCst), 4);
+
+        // A label held by a live transport is not available to another one.
+        let foreign = send("call", Some("probe"), Some("calc"), c).await;
+        assert!(!ran(&foreign), "{:?}", foreign.result);
+        let foreign_start = send("call", Some("start_session"), Some("calc"), c).await;
+        assert!(!ran(&foreign_start), "{:?}", foreign_start.result);
+        assert_eq!(PROBE_INVOCATIONS.load(Ordering::SeqCst), 4);
+
+        let _ = send("shutdown", None, None, a).await;
+        let _ = server.await;
+        let _ = std::fs::remove_file(&socket);
+    }
 }
 
 #[cfg(test)]
@@ -3312,6 +3443,180 @@ mod permission_gate_tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         connection.session.close();
         sdk.shutdown().await.unwrap();
+    }
+
+    /// The `trusted_session_call` socket arm binds only for an embedded peer
+    /// whose process is the daemon's parent, so the daemon runs in a child
+    /// copy of this test binary and this process is that host. The child
+    /// starts with the gate pending and opens it when stdin says `open`.
+    #[cfg(unix)]
+    #[test]
+    fn socket_trusted_session_call_waits_for_the_permission_gate() {
+        use std::io::{BufRead as _, BufReader, Write as _};
+        const CHILD_SOCKET_ENV: &str = "CUA_DRIVER_TRUSTED_GATE_TEST_SOCKET";
+
+        if let Some(socket) = std::env::var_os(CHILD_SOCKET_ENV) {
+            let socket = socket.into_string().expect("UTF-8 socket path");
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            runtime.block_on(async {
+                let (driver, sdk, calls) = crate::probe_sdk().await;
+                driver.set_awaiting_permissions(true);
+                let opener = driver.clone();
+                std::thread::spawn(move || {
+                    for line in std::io::stdin().lock().lines() {
+                        if line.as_deref().is_ok_and(|line| line == "open") {
+                            opener.set_awaiting_permissions(false);
+                        }
+                    }
+                });
+                super::run_serve(sdk.clone(), &socket, None)
+                    .await
+                    .expect("serve");
+                assert_eq!(
+                    calls.load(Ordering::SeqCst),
+                    1,
+                    "only the call after the gate opened may run"
+                );
+                sdk.shutdown().await.unwrap();
+            });
+            return;
+        }
+
+        let directory = tempfile::Builder::new()
+            .prefix("cua-tg-")
+            .tempdir_in("/tmp")
+            .expect("socket directory");
+        let socket = directory.path().join("d.sock");
+        struct Reaped(std::process::Child);
+        impl Drop for Reaped {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let mut child = Reaped(
+            std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "serve::permission_gate_tests::socket_trusted_session_call_waits_for_the_permission_gate",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD_SOCKET_ENV, &socket)
+            .env(cua_driver_core::EMBEDDED_ENV, "1")
+            .env_remove(cua_driver_core::PARENT_LIVENESS_STDIN_ENV)
+            .env_remove("CUA_DRIVER_RS_MCP_HTTP_PORT")
+            .env_remove("CUA_DRIVER_ENVELOPE_HTTP_PORT")
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn embedded daemon"),
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !socket.exists() {
+            assert!(
+                std::time::Instant::now() < deadline && child.0.try_wait().unwrap().is_none(),
+                "embedded daemon never bound {}",
+                socket.display()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+
+        let stream = std::os::unix::net::UnixStream::connect(&socket).expect("connect");
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .unwrap();
+        let mut replies = BufReader::new(stream.try_clone().unwrap());
+        let mut send = |method: &str, name: Option<&str>, args: Option<serde_json::Value>| {
+            let request = super::DaemonRequest {
+                method: method.into(),
+                name: name.map(str::to_owned),
+                args,
+                session_id: None,
+                observation_origin: None,
+                client_kind: None,
+            };
+            let mut line = serde_json::to_string(&request).unwrap();
+            line.push('\n');
+            (&stream).write_all(line.as_bytes()).unwrap();
+            let mut reply = String::new();
+            replies.read_line(&mut reply).expect("daemon reply");
+            serde_json::from_str::<super::DaemonResponse>(&reply).expect("daemon response")
+        };
+        let tool_result = |reply: super::DaemonResponse| {
+            assert!(reply.ok, "{:?}", reply.error);
+            reply.result.expect("tool result")
+        };
+        let probe = || Some(serde_json::json!({}));
+
+        let bound = send(
+            "trusted_session_begin",
+            None,
+            Some(
+                serde_json::to_value(cua_driver_sdk::TrustedSessionOptions {
+                    public_session: "pending-trusted-socket".into(),
+                    mode: cua_driver_sdk::SessionPermissionMode::Standard,
+                    ttl_seconds: 60,
+                    idle_ttl_seconds: 30,
+                    capability_manifest_path: None,
+                    bounded_manifest_path: None,
+                })
+                .unwrap(),
+            ),
+        );
+        assert!(bound.ok, "parent peer must bind: {:?}", bound.error);
+
+        let pending = tool_result(send(
+            "trusted_session_call",
+            Some("get_screen_size"),
+            probe(),
+        ));
+        assert_eq!(refusal_code(&pending), Some("permissions_pending"));
+
+        let mut stdin = child.0.stdin.take().unwrap();
+        writeln!(stdin, "open").unwrap();
+        // A refused call never reaches the tool, so polling keeps the
+        // child's exactly-once count meaningful.
+        let opened = loop {
+            let result = tool_result(send(
+                "trusted_session_call",
+                Some("get_screen_size"),
+                probe(),
+            ));
+            if refusal_code(&result) != Some("permissions_pending") {
+                break result;
+            }
+            assert!(std::time::Instant::now() < deadline, "gate never opened");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        assert_eq!(refusal_code(&opened), None, "{opened}");
+        assert_eq!(opened["content"][0]["text"], "probe ran");
+
+        drop(replies);
+        drop(stream);
+        let socket = socket.to_str().unwrap().to_owned();
+        let _ = super::send_request(
+            &socket,
+            &super::DaemonRequest {
+                method: "shutdown".into(),
+                name: None,
+                args: None,
+                session_id: None,
+                observation_origin: None,
+                client_kind: None,
+            },
+        );
+        drop(stdin);
+        let status = loop {
+            if let Some(status) = child.0.try_wait().unwrap() {
+                break status;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "embedded daemon did not exit after shutdown"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        assert!(status.success(), "embedded daemon child failed: {status}");
     }
 }
 

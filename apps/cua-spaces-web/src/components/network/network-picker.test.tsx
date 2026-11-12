@@ -19,7 +19,10 @@ const WORKER = "local:swarm-worker-1";
 
 function open(id: string) {
   const adapter: DataAdapter = createDemoAdapter({ latencyMs: 0, network: new Set(["network"]) });
-  const router = createRouter({ routeTree: createRootRoute({ component: () => <NetworkSheet spaceName={(x) => x} /> }), history: createMemoryHistory({ initialEntries: ["/"] }) });
+  const router = createRouter({
+    routeTree: createRootRoute({ component: () => <NetworkSheet spaceName={(x) => x} /> }),
+    history: createMemoryHistory({ initialEntries: ["/"] }),
+  });
   render(
     <BridgeProvider adapter={adapter} core={noCore}>
       <RouterProvider router={router} />

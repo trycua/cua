@@ -358,8 +358,7 @@ export function createTauriSpacesBridge(): SpacesBridge {
   // Imported lazily so the browser/test bundle never touches Tauri globals.
   const core = import("@tauri-apps/api/core");
   const event = import("@tauri-apps/api/event");
-  const invoke = async <T>(command: string, args?: Record<string, unknown>) =>
-    (await core).invoke<T>(command, args);
+  const invoke = async <T>(command: string, args?: Record<string, unknown>) => (await core).invoke<T>(command, args);
   const on = async <T>(name: string, handler: (payload: T) => void) => {
     const { listen } = await event;
     return listen<T>(name, (e) => handler(e.payload));
@@ -372,8 +371,7 @@ export function createTauriSpacesBridge(): SpacesBridge {
     localStatus: () => invoke<LocalStatus>("local_status"),
     listSpaces: () => invoke<SpaceRow[]>("list_spaces"),
     spaceInfo: (spaceId) => invoke<SpaceRow>("space_info", { spaceId }),
-    addSpace: (url, token, name) =>
-      invoke<SpaceRow>("add_space", { url, token: token || null, name: name || null }),
+    addSpace: (url, token, name) => invoke<SpaceRow>("add_space", { url, token: token || null, name: name || null }),
     createSpace: (config, pendingId) =>
       invoke<SpaceRow>("create_space", { config: config ?? null, pendingId: pendingId ?? null }),
     onCreateProgress: (handler) => on<CreateProgress>("spaces:create-progress", handler),
@@ -390,8 +388,7 @@ export function createTauriSpacesBridge(): SpacesBridge {
       invoke<string>("space_screenshot", { spaceId, maxDimension: maxDimension ?? null }),
     openStream: (spaceId, target, options) =>
       invoke<StreamTicketInfo>("open_space_stream", { spaceId, target, options: options ?? null }),
-    closeStream: (spaceId, mediaSessionId) =>
-      invoke<void>("close_space_stream", { spaceId, mediaSessionId }),
+    closeStream: (spaceId, mediaSessionId) => invoke<void>("close_space_stream", { spaceId, mediaSessionId }),
     startHotspot: (spaceId) => invoke<HotspotStatus>("start_hotspot", { spaceId }),
     stopHotspot: () => invoke<HotspotStatus>("stop_hotspot"),
     hotspotStatus: () => invoke<HotspotStatus>("hotspot_status"),
@@ -412,24 +409,18 @@ export function createTauriSpacesBridge(): SpacesBridge {
           app: { id: appId, name: appName },
         },
       }),
-    launchAgentTerminal: (space, harness) =>
-      invoke<void>("launch_agent_terminal", { spaceId: space.id, harness }),
+    launchAgentTerminal: (space, harness) => invoke<void>("launch_agent_terminal", { spaceId: space.id, harness }),
     pinSpacePip: (space) => invoke<void>("pin_space_pip", { space }),
     unpinSpacePip: (spaceId) => invoke<void>("unpin_space_pip", { spaceId }),
-    setPipAspect: (spaceId, width, height) =>
-      invoke<void>("set_pip_aspect", { spaceId, width, height }),
+    setPipAspect: (spaceId, width, height) => invoke<void>("set_pip_aspect", { spaceId, width, height }),
     setWindowStream: (space, enabled) => invoke<void>("set_window_stream", { space, enabled }),
-    resizeStreamWindow: (width, height) =>
-      invoke<void>("resize_stream_window", { width, height }),
+    resizeStreamWindow: (width, height) => invoke<void>("resize_stream_window", { width, height }),
     openExternal: (url) => invoke<void>("open_external", { url }),
     beginSignIn: () => invoke<SignInStart>("begin_sign_in"),
     signOut: () => invoke<void>("sign_out"),
-    onSignedIn: (handler) =>
-      on<{ identity?: string } | null>("auth:signed-in", (p) => handler(p?.identity)),
+    onSignedIn: (handler) => on<{ identity?: string } | null>("auth:signed-in", (p) => handler(p?.identity)),
     onSignInFailed: (handler) =>
-      on<{ reason?: string } | null>("auth:sign-in-failed", (p) =>
-        handler(p?.reason ?? "Sign-in failed"),
-      ),
+      on<{ reason?: string } | null>("auth:sign-in-failed", (p) => handler(p?.reason ?? "Sign-in failed")),
     onSignedOut: (handler) => on<unknown>("auth:signed-out", () => handler()),
   };
 }

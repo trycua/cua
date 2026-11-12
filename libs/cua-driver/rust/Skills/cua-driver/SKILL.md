@@ -1,8 +1,8 @@
 ---
 name: cua-driver
-description: Drive a native GUI app (macOS, Windows, Linux) via the cua-driver CLI (default) or MCP server; snapshot its accessibility tree, act through snapshot-bound element tokens, native menu paths, exact window geometry, or pixel coordinates, and verify from fresh state. Use when the user asks you to operate, drive, automate, or perform a GUI task in a real application on the host, or to continue, resume, or recall recent Cua activity.
+description: Drive a native GUI app (macOS, Windows, Linux) via the cua-driver CLI (default) or MCP server; snapshot its accessibility tree, act through snapshot-bound element tokens, native menu paths, exact window geometry, or pixel coordinates, and verify from fresh state. Use when the user asks you to operate, drive, automate, or perform a GUI task in a real application on the host.
 metadata:
-  version: 0.42.1 # x-release-please-version
+  version: 0.47.23 # x-release-please-version
   openclaw:
     requires:
       bins:
@@ -39,7 +39,7 @@ The MCP server instructions carry the same rules, so they apply even when this f
 
 1. Start with a targeted read: `get_window_state({pid, window_id, query:"Save"})` returns about 2K chars where a full snapshot is about 42K. Bound large trees with `max_elements` / `max_depth`. Widen only if the target is missing.
 2. Act by `element_token`: row `[N]` of a read is `<snapshot_id>:N` (for example `"s0000002a:11"`, not `"11"`). Use pixels only for surfaces missing from the tree.
-3. Act through `run_steps` with `observe:{}`, even for a single step. It runs the steps, stops at the first failure, and returns only what changed since your last read, so you do not need a separate read after acting; see [Workflow](WORKFLOW.md#batch-known-actions). When the flow needs logic between actions (a loop, a branch on what the app shows, a retry), write it as one `run_script` instead; see [Workflow](WORKFLOW.md#script-a-flow).
+3. Act through `run_steps` with `observe:{}`, even for a single step, and put every action you already know in the same call (fill three fields, click, see the result: one call, not five). It stops at the first failure and returns only what changed since your last read, so never follow it with a separate read; see [Workflow](WORKFLOW.md#batch-known-actions). When the flow needs logic between actions (a loop, a branch on what the app shows, a retry), write it as one `run_script` instead; see [Workflow](WORKFLOW.md#script-a-flow).
 4. To re-read a window, pass `since:"latest"`: you get the changed rows, not the whole tree. To just look, use `include_accessibility_tree:false` where advertised (it keeps the current tokens valid). Do not use `max_elements:1` or a junk `query` to get a picture.
 5. Verify at checkpoints (after a meaningful state change, before finishing), not after every action. One `verify_state` or one targeted `get_window_state` is usually enough.
 
@@ -93,25 +93,6 @@ Check the installed version and advertised schema before using unfamiliar parame
 | Text did not visibly change                               | Reobserve before retrying; [text and value semantics](WORKFLOW.md#act-once)                                                                                         |
 | Browser setup, binding, or ref refused                    | [Browser recovery](BROWSER.md#recovery-rules)                                                                                                                       |
 | Any refusal, `unverifiable` or `suspected_noop`           | Read `hint` and make `next_call`; [Refusals and hints](WORKFLOW.md#refusals-and-hints)                                                                              |
-
-## Consult recent Cua activity only for continuation
-
-When both `history_status` and `history_query` are advertised and the user asks
-to continue, resume, or recall prior Cua work, call `history_status` first. If
-history is healthy and access is admitted, make one bounded initial
-`history_query` before broad application or window discovery. Treat returned
-metadata only as a lead and verify current state through the least intrusive
-appropriate source. Content, geometry, arguments, results, and user intent
-omitted from the metadata remain unknown.
-
-Make another bounded query only when the initial slice exposes a relevant
-session or sequence boundary; never broaden a query to reconstruct excluded
-fields.
-
-Continue without history when either tool is absent, access is denied, the
-query is empty, or history is unhealthy. Do not query history for unrelated
-tasks merely because the tools are advertised, and never mutate history
-lifecycle or settings.
 
 ## References
 

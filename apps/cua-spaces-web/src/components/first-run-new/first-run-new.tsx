@@ -2,64 +2,78 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * The new first run (Labs, "Try the new setup"; CUA-3318), phase 1 of the approved storyboard
+ * The first run (CUA-3318), phase 1 of the approved storyboard
  * (CUA-3193): drawn on the spaces.cua.ai hero (its starfield, keys, Outfit title, white button and
  * the Cua lockup). The words and choices are `lib/first-run-new.ts`; this file reads the app's state
- * (sign-in, the account's computers, this computer's agents and whether it can make a separate
- * computer) and draws the screens.
+ * (sign-in, adding this computer to the account, the account's ready computers and this computer's
+ * agents) and draws the screens.
  */
 
 import { useNavigate } from "@tanstack/react-router";
-import { CheckIcon, ChevronRightIcon, CopyIcon, LoaderCircleIcon, MonitorIcon, PlusIcon, ShieldIcon, UserPlusIcon } from "lucide-react";
-import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { CheckIcon, ChevronDownIcon, CircleAlertIcon, CopyIcon, LoaderCircleIcon } from "lucide-react";
+import { useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 
-import { folderLabel, isNeedsProof, newPendingId, useMachines, useSession, useSettings, useSpaces, type SignInPhase } from "@/bridge";
+import { folderLabel, isNeedsProof, useMachines, useSession, useSettings, type SignInPhase } from "@/bridge";
 import { BridgeContext } from "@/bridge/BridgeProvider";
-import { useAppPermissions, type AppPermissionsState } from "@/bridge/app-permissions";
+import { useAppPermissions } from "@/bridge/app-permissions";
+import { useLocalNetwork, type LocalNetworkState } from "@/bridge/local-network";
 import { readFirstRun, useFirstRunSaved, writeFirstRun } from "@/bridge/first-run";
 import { hostOs } from "@/bridge/host-os";
 import { useFirstSpaceOffers } from "@/bridge/new-space-hooks";
-import { readSavedOnboarding, writeSavedOnboarding } from "@/bridge/onboarding";
-import { extraName, spokenName } from "@/bridge/space-names";
+import { onboardingInitial, onboardingTelemetry, onboardingView, readSavedOnboarding, writeSavedOnboarding } from "@/bridge/onboarding";
 import { AddComputerSheet } from "@/components/add-computer-sheet";
-import { AppPermissionList } from "@/components/app-permissions";
+import { starsWord } from "./stars-word";
+import { AppPermissionList, LocalNetworkRow, type PermissionsView } from "@/components/app-permissions";
 import { AppMarkImage } from "@/components/agents/harness-mark";
-import { agoLabel, useRecentThreads } from "@/components/ask-first/pick-up";
+import { agoLabel, PICK_UP_LIMIT, recentThreads, useRecentThreads } from "@/components/ask-first/pick-up";
 import { CuaLogo } from "@/components/cua-logo";
+import { Switch } from "@/components/ui/switch";
 import { permissionsStepView, type PermissionsStepView } from "@/lib/app-permissions";
-import { addImportedTask, type AskTask } from "@/lib/ask-first";
+import { addImportedTask, hostSpaceId, type AskTask } from "@/lib/ask-first";
 import {
-  afterWhere,
+  addingView,
+  agentInfo,
   agentView,
-  chosenAgent,
+  CHECKLIST_WAITING,
+  checklistFromResult,
+  checklistRowView,
+  checklistSettled,
+  checklistView,
+  chosenAgents,
+  connectArgs,
+  connectedAgents,
+  connectPlan,
+  type ChecklistItem,
+  type ChecklistRowView,
+  type ChecklistState,
+  toggleAgentOff,
   dotStep,
+  furthestStep,
   INSTALL_PAGES,
   NEW_RUN_EMPTY,
-  nextView,
+  nextStepScreen,
   placeName,
-  reachedAfter,
+  readyComputers,
   readyView,
   signInView,
   stepDots,
-  togglePick,
+  stepOf,
   WELCOME,
-  whereView,
+  welcomeUsage,
   type AgentView,
-  type ComputerRow,
   type NewRunSaved,
-  type NextView,
   type ReadyView,
+  type RunFacts,
   type SignInView,
   type StepDot,
-  type WhereView,
+  type WelcomeUsage,
 } from "@/lib/first-run-new";
-import { spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 
 import { FloatKeys } from "./float-keys";
 import { CARD, GLASS_CHIP, GREY } from "./hero";
-import { OsMark } from "./os-marks";
 import { thisComputerText } from "@/lib/host-labels";
+import { hostStatusWhenOnline, thisMacSetupSteps } from "@/lib/this-mac-target";
 
 /* ---- The site's pieces ------------------------------------------------------------------ */
 
@@ -72,14 +86,48 @@ const GLASS_BUTTON =
   // design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
   "inline-flex h-12 items-center justify-center rounded-full bg-white/[0.08] px-6 text-[15px] font-semibold text-white shadow-[inset_0_0_0_1px_rgb(255_255_255/0.28)] backdrop-blur-md outline-none hover:bg-white/[0.14] focus-visible:ring-2 focus-visible:ring-[#5ec0e8]";
 /** The site's underlined text link, in white. */
-// design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
-const LINK = "font-semibold text-white underline decoration-white/50 underline-offset-[3px] outline-none hover:decoration-white focus-visible:ring-2 focus-visible:ring-[#5ec0e8] rounded-sm";
+const LINK =
+  // design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
+  "font-semibold text-white underline decoration-white/50 underline-offset-[3px] outline-none hover:decoration-white focus-visible:ring-2 focus-visible:ring-[#5ec0e8] rounded-sm";
 
 function Title({ children }: { children: ReactNode }) {
   return (
-    <h1 tabIndex={-1} data-onboarding-heading="" className="font-display text-[clamp(34px,min(4.9vw,6.6vh),76px)] leading-[0.98] font-semibold tracking-[-0.045em] text-balance text-white outline-none">
+    <h1
+      tabIndex={-1}
+      data-onboarding-heading=""
+      className="font-display text-[clamp(34px,min(4.9vw,6.6vh),76px)] leading-[1.04] font-semibold tracking-[-0.03em] text-balance text-white outline-none"
+    >
       {children}
     </h1>
+  );
+}
+
+// The headline as on cua.ai: its last word in the keys' gradient (Cua Blue, the lifted navy, terracotta),
+// arriving once as points of light that settle into it (stars-word.ts). Reduced motion: simply there.
+const SUPER_INK_STYLE = {
+  backgroundImage: "linear-gradient(90deg, #5ec0e8 0%, #6a8bb0 50%, #b5694b 100%)",
+  WebkitBackgroundClip: "text",
+  backgroundClip: "text",
+  color: "transparent",
+  WebkitTextFillColor: "transparent",
+} as const;
+
+function SuperTitle({ text }: { text: string }) {
+  const word = useRef<HTMLSpanElement>(null);
+  const cut = text.lastIndexOf(" ");
+  useEffect(() => {
+    const el = word.current;
+    const host = el?.closest<HTMLElement>("[data-new-first-run]");
+    if (!el || !host || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    return starsWord(el, host);
+  }, []);
+  return (
+    <>
+      {text.slice(0, cut + 1)}
+      <span ref={word} className="inline-block">
+        <span style={SUPER_INK_STYLE}>{text.slice(cut + 1)}</span>
+      </span>
+    </>
   );
 }
 
@@ -89,7 +137,7 @@ function Line({ children }: { children: ReactNode }) {
 
 function Check({ on }: { on: boolean }) {
   return on ? (
-    <span className="flex size-[22px] shrink-0 items-center justify-center rounded-full bg-white text-[#0a152d]" data-check="on">
+    <span className="flex size-[22px] shrink-0 items-center justify-center rounded-full bg-[#5ec0e8] text-[#050607]" data-check="on">
       <CheckIcon className="size-[13px]" strokeWidth={3} />
     </span>
   ) : (
@@ -97,25 +145,37 @@ function Check({ on }: { on: boolean }) {
   );
 }
 
-function Mark({ os }: { os: ComputerRow["os"] }) {
-  return <span className="flex size-7 shrink-0 items-center justify-center text-white">{os ? <OsMark os={os} className="h-[17px] w-auto" /> : <MonitorIcon className="size-4" />}</span>;
-}
-
 /** A row in the card: picked rows are lit; `disabled` rows are greyed, with no check and no hover. */
-function Row({ icon, name, sub, picked, disabled, onClick, extra, check = true, ...rest }: { icon: ReactNode; name: string; sub: ReactNode; picked?: boolean; disabled?: boolean; onClick?: () => void; extra?: ReactNode; check?: boolean } & Record<`data-${string}`, string | undefined>) {
+function Row({
+  icon,
+  name,
+  sub,
+  picked,
+  disabled,
+  onClick,
+  extra,
+  check = true,
+  ...rest
+}: { icon: ReactNode; name: string; sub: ReactNode; picked?: boolean; disabled?: boolean; onClick?: () => void; extra?: ReactNode; check?: boolean } & Record<
+  `data-${string}`,
+  string | undefined
+>) {
   const body = (
     <>
       {icon}
       <span className="min-w-0 flex-1 text-left">
-        <span className="block text-[15px] leading-5 font-medium text-white">{name}</span>
+        <span className={cn("block text-[15px] leading-5 font-medium transition-colors", check && !picked && onClick ? "text-white/60" : "text-white")}>
+          {name}
+        </span>
         <span className={cn("flex items-center gap-1.5 text-[13.5px] leading-[19px] font-medium", GREY)}>{sub}</span>
       </span>
       {extra}
       {check && !disabled ? <Check on={Boolean(picked)} /> : null}
     </>
   );
+  // Picked is said by the check alone (Cua Blue) and the name at full white; no box around the row.
   // design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
-  const cls = cn("flex w-full items-center gap-3 rounded-[14px] px-3 py-[7px]", picked && "bg-white/10 shadow-[inset_0_0_0_1px_rgb(255_255_255/0.5)]", disabled && "pointer-events-none cursor-not-allowed opacity-40");
+  const cls = cn("flex w-full items-center gap-3 rounded-[12px] px-3 py-[9px]", disabled && "pointer-events-none cursor-not-allowed opacity-40");
   if (!onClick || disabled)
     return (
       <div className={cls} aria-disabled={disabled || undefined} {...rest}>
@@ -123,14 +183,19 @@ function Row({ icon, name, sub, picked, disabled, onClick, extra, check = true, 
       </div>
     );
   return (
-    <div role="checkbox" aria-checked={Boolean(picked)} tabIndex={0} className={cn(cls, "cursor-pointer outline-none hover:bg-white/[0.06] focus-visible:ring-2 focus-visible:ring-[#5ec0e8]")} onClick={onClick} onKeyDown={(e) => (e.key === " " || e.key === "Enter") && (e.preventDefault(), onClick())} {...rest}>
+    <div
+      role="checkbox"
+      aria-checked={Boolean(picked)}
+      tabIndex={0}
+      className={cn(cls, "cursor-pointer outline-none hover:bg-white/[0.06] focus-visible:ring-2 focus-visible:ring-[#5ec0e8]")}
+      onClick={onClick}
+      onKeyDown={(e) => (e.key === " " || e.key === "Enter") && (e.preventDefault(), onClick())}
+      {...rest}
+    >
       {body}
     </div>
   );
 }
-
-const Divider = () => <div className="mx-3 my-1.5 h-px bg-white/[0.14]" />;
-const Label = ({ children }: { children: ReactNode }) => <div className={cn("px-3 pt-3 pb-1 text-[12.5px] font-semibold tracking-[0.02em]", GREY)}>{children}</div>;
 
 /** How far above the footer the content fades out. */
 const FADE_PX = 28;
@@ -170,7 +235,12 @@ function useFadeUnder(scroller: RefObject<HTMLElement | null>, screen: string) {
     const update = () => {
       frame = 0;
       const footer = main.querySelector<HTMLElement>("[data-new-run-footer]");
-      const above = footer ? [...(footer.parentElement?.children ?? [])].filter((el): el is HTMLElement => el instanceof HTMLElement && el !== footer && Boolean(el.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING)) : [];
+      const above = footer
+        ? [...(footer.parentElement?.children ?? [])].filter(
+            (el): el is HTMLElement =>
+              el instanceof HTMLElement && el !== footer && Boolean(el.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING),
+          )
+        : [];
       for (const el of [...masked]) if (!above.includes(el)) clear(el);
       if (!footer) return;
       const top = footer.getBoundingClientRect().top;
@@ -205,6 +275,35 @@ function useFadeUnder(scroller: RefObject<HTMLElement | null>, screen: string) {
       for (const el of [...masked]) clear(el);
     };
   }, [scroller, screen]);
+}
+
+/** How far the content may run under the action row before "More below" shows, in px. */
+const MORE_SLACK = 8;
+
+/**
+ * Whether the screen's content runs on below the window (a short window: a 13" MacBook with the Dock, a small
+ * external display). The fade under the action row alone hid that there was more, so a row could be missed; the page
+ * then shows "More below", which scrolls to it.
+ */
+export function useMoreBelow(scroller: RefObject<HTMLElement | null>, screen: string): boolean {
+  const [more, setMore] = useState(false);
+  useLayoutEffect(() => {
+    const main = scroller.current;
+    if (!main) return;
+    const update = () => setMore(main.scrollHeight - main.scrollTop - main.clientHeight > MORE_SLACK);
+    update();
+    main.addEventListener("scroll", update, { passive: true });
+    window.addEventListener("resize", update);
+    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
+    ro?.observe(main);
+    if (main.firstElementChild) ro?.observe(main.firstElementChild);
+    return () => {
+      main.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+      ro?.disconnect();
+    };
+  }, [scroller, screen]);
+  return more;
 }
 
 /**
@@ -249,11 +348,51 @@ export function StepDots({ dots, onGo }: { dots: StepDot[]; onGo: (i: number, vi
 
 /* ---- The screens (drawn from their views, so tests draw every state) --------------------- */
 
-export function WelcomeScreen({ onAdd }: { onAdd: () => void }) {
+export function WelcomeScreen({
+  onAdd,
+  usage,
+  onUsage,
+  onUsageLink,
+}: {
+  onAdd: () => void;
+  usage?: WelcomeUsage | null;
+  onUsage?: (on: boolean) => void;
+  onUsageLink?: () => void;
+}) {
   return (
     <div data-new-run="welcome">
-      <Title>{WELCOME.title}</Title>
+      <Title>
+        <SuperTitle text={WELCOME.title} />
+      </Title>
       <Line>{WELCOME.line}</Line>
+      {usage ? (
+        // Before anything is sent: the hosts hold every usage event until the run leaves this screen.
+        <div
+          className={cn("mt-6 flex max-w-[520px] items-start gap-3 text-[13px] leading-[19px] font-medium", GREY)}
+          data-new-run-usage={usage.on ? "on" : "off"}
+        >
+          {/* The switch sits in a box one text line tall, so it centres on the label line whatever the font metrics. */}
+          <span className="flex h-[19px] shrink-0 items-center">
+            <Switch
+              checked={usage.on}
+              disabled={!usage.enabled}
+              onCheckedChange={(on) => onUsage?.(on)}
+              aria-label={usage.label}
+              data-new-run-usage-switch=""
+            />
+          </span>
+          <span className="min-w-0">
+            <span className="block text-white">{usage.label}</span>
+            <span className="block" data-new-run-usage-notice="">
+              {usage.notice}{" "}
+              <button type="button" className="underline underline-offset-2 hover:text-white" onClick={onUsageLink} data-new-run-usage-link="">
+                {usage.linkLabel}
+              </button>
+            </span>
+            {usage.help ? <span className="block">{usage.help}</span> : null}
+          </span>
+        </div>
+      ) : null}
       <Actions>
         <button type="button" className={WHITE_BUTTON} onClick={onAdd} data-onboarding-primary="">
           {WELCOME.primary}
@@ -263,7 +402,23 @@ export function WelcomeScreen({ onAdd }: { onAdd: () => void }) {
   );
 }
 
-export function SignInScreen({ view, onTryAgain, onUseCode, onOpen }: { view: SignInView; onTryAgain: () => void; onUseCode: () => void; onOpen: (url: string) => void }) {
+export function SignInScreen({
+  view,
+  onTryAgain,
+  onUseCode,
+  onOpen,
+}: {
+  view: SignInView;
+  onTryAgain: () => void;
+  onUseCode: () => void;
+  onOpen: (url: string) => void;
+}) {
+  // The code line waits 12 s: most sign-ins finish in the browser before then.
+  const [codeHint, setCodeHint] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setCodeHint(true), 12_000);
+    return () => clearTimeout(t);
+  }, []);
   return (
     <div data-new-run="signin" data-state={view.state}>
       <Title>{view.title}</Title>
@@ -284,11 +439,23 @@ export function SignInScreen({ view, onTryAgain, onUseCode, onOpen }: { view: Si
           {view.waiting}
         </div>
       ) : null}
+      {/* While the browser is still the way in, the code is only for a browser on another device: a quiet
+          line that shows after a while, not a second button. Once sign-in failed it is a button again. */}
+      {view.useCode && view.state === "waiting" && codeHint ? (
+        <p className={cn("mt-4 text-[14px]", GREY)} data-new-run-code-hint="">
+          Browser on another device?{" "}
+          <button type="button" className="underline underline-offset-2 hover:text-white" onClick={onUseCode} data-new-run-use-code="">
+            Use a code instead
+          </button>
+        </p>
+      ) : null}
       <Actions className="flex flex-wrap items-center gap-3">
-        <button type="button" className={view.tryAgainPrimary ? WHITE_BUTTON : GLASS_BUTTON} onClick={onTryAgain} data-new-run-try-again="">
-          {view.tryAgain}
-        </button>
-        {view.useCode ? (
+        {view.tryAgain ? (
+          <button type="button" className={view.tryAgainPrimary ? WHITE_BUTTON : GLASS_BUTTON} onClick={onTryAgain} data-new-run-try-again="">
+            {view.tryAgain}
+          </button>
+        ) : null}
+        {view.useCode && (view.state === "failed" || view.state === "add-failed") ? (
           <button type="button" className={GLASS_BUTTON} onClick={onUseCode} data-new-run-use-code="">
             {view.useCode}
           </button>
@@ -298,181 +465,49 @@ export function SignInScreen({ view, onTryAgain, onUseCode, onOpen }: { view: Si
   );
 }
 
-export function WhereScreen({
+export function AgentScreen({
   view,
-  onToggle,
-  onAddThis,
-  onSignIn,
-  onAddAnother,
-  onSeparate,
+  onPick,
   onContinue,
+  onLater,
+  onInstall,
+  busy,
 }: {
-  view: WhereView;
-  onToggle: (id: string) => void;
-  onAddThis: (action: "add" | "retry-add" | "use-code") => void;
-  onSignIn: () => void;
-  onAddAnother: () => void;
-  onSeparate: () => void;
+  view: AgentView;
+  onPick: (id: string) => void;
   onContinue: () => void;
+  onLater: () => void;
+  onInstall: (agent: "claude-code" | "codex") => void;
+  busy: boolean;
 }) {
-  const t = view.thisRow;
-  const sep = view.separate;
-  const fold = view.offlineFold;
-  const [showOffline, setShowOffline] = useState(false);
-  const other = (o: ComputerRow) => <Row key={o.id} icon={<Mark os={o.os} />} name={o.name} sub={o.sub} picked={o.picked} disabled={o.disabled} onClick={() => onToggle(o.id)} data-new-run-computer={o.id} data-offline={o.disabled ? "" : undefined} />;
-  return (
-    <div data-new-run="where">
-      <div data-new-run-content="">
-        <Title>{view.title}</Title>
-        <Line>{view.line}</Line>
-        <div className={cn(CARD, "mt-[min(28px,3vh)]")} data-new-run-computers="">
-          <Row
-            icon={<Mark os={hostOs()} />}
-            name={t.name}
-            sub={
-              <>
-                {t.model && t.modelFirst ? <span>{t.model} ·</span> : null}
-                {t.tick ? <CheckIcon aria-hidden className="size-[13px] text-white" strokeWidth={2.6} /> : null}
-                <span className={t.tick ? "text-white" : undefined} data-new-run-this-status="">
-                  {t.status}
-                </span>
-                {t.model && !t.modelFirst ? <span>· {t.model}</span> : null}
-              </>
-            }
-            picked={t.picked}
-            onClick={() => onToggle("this")}
-            extra={
-              t.action ? (
-                <button
-                  type="button"
-                  className={cn(GLASS_CHIP, "mr-1 h-[30px] px-3.5 text-[13.5px]")}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onAddThis(t.action!.id);
-                  }}
-                  data-new-run-add-this={t.action.id}
-                >
-                  {t.action.label}
-                </button>
-              ) : null
-            }
-            data-new-run-computer="this"
-          />
-          {view.others ? (
-            <>
-              <Label>{view.othersLabel}</Label>
-              {view.others.length ? (
-                <>
-                  {(fold ? view.others.filter((o) => !o.offline) : view.others).map(other)}
-                  {fold ? (
-                    <>
-                      <button
-                        type="button"
-                        aria-expanded={showOffline}
-                        // design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
-                        className="flex w-full items-center gap-3 rounded-[14px] px-3 py-[7px] text-left outline-none hover:bg-white/[0.06] focus-visible:ring-2 focus-visible:ring-[#5ec0e8]"
-                        onClick={() => setShowOffline((v) => !v)}
-                        data-new-run-offline-fold={fold.rows.length}
-                      >
-                        <span className="flex size-7 shrink-0 items-center justify-center text-white">
-                          <ChevronRightIcon className={cn("size-4 transition-transform motion-reduce:transition-none", showOffline && "rotate-90")} strokeWidth={2.2} />
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block text-[15px] leading-5 font-medium text-white">{fold.label}</span>
-                          <span className={cn("block text-[13.5px] leading-[19px] font-medium", GREY)}>{fold.sub}</span>
-                        </span>
-                      </button>
-                      {showOffline ? fold.rows.map(other) : null}
-                    </>
-                  ) : null}
-                </>
-              ) : (
-                <p className={cn("px-3 pt-1 pb-2 text-[13.5px] leading-[19px] font-medium", GREY)} data-new-run-none="">
-                  {view.emptyLine}
-                </p>
-              )}
-            </>
-          ) : null}
-          {view.addAnother ? (
-            <>
-              <Divider />
-              {/* design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages */}
-              <button type="button" className="flex w-full items-center gap-3 rounded-[14px] px-3 py-2 text-left outline-none hover:bg-white/[0.06] focus-visible:ring-2 focus-visible:ring-[#5ec0e8]" onClick={onAddAnother} data-new-run-add-another="">
-                <span className="flex size-7 shrink-0 items-center justify-center rounded-full text-white shadow-[inset_0_0_0_1px_rgb(255_255_255/0.28)]">
-                  <PlusIcon className="size-4" strokeWidth={2.2} />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[15px] leading-5 font-medium text-white">{view.addAnother.title}</span>
-                  <span className={cn("block text-[13.5px] leading-[19px] font-medium", GREY)}>{view.addAnother.sub}</span>
-                </span>
-              </button>
-            </>
-          ) : null}
-          {view.signInLine ? (
-            <>
-              <Divider />
-              <p className={cn("px-3 pt-2.5 pb-3 text-[14px] leading-5 font-medium", GREY)} data-new-run-sign-in-line="">
-                <button type="button" className={LINK} onClick={onSignIn}>
-                  {view.signInLine.link}
-                </button>
-                {view.signInLine.rest}
-              </p>
-            </>
-          ) : null}
-        </div>
-        <div className="mt-[min(18px,2vh)] max-w-[480px] px-[18px]" data-new-run-separate={sep.state} data-disabled={sep.disabled ? "" : undefined}>
-          <div className={cn("flex items-center gap-2 text-[14px] leading-5 font-semibold", sep.disabled ? GREY : "text-white")}>
-            <OsMark os="linux" className="h-[15px] w-4 shrink-0" />
-            {sep.disabled || sep.state !== "offer" ? (
-              <span>{sep.title}</span>
-            ) : (
-              <button type="button" className={LINK} onClick={onSeparate} data-new-run-separate-open="">
-                {sep.title}
-              </button>
-            )}
-          </div>
-          <p className={cn("mt-[3px] pl-6 text-[13.5px] leading-[19px] font-medium", GREY)}>{sep.sub}</p>
-          {sep.action ? (
-            <div className="mt-2 pl-6">
-              <button type="button" className={cn(GLASS_CHIP, "h-[30px] px-3.5 text-[13.5px]")} onClick={onSeparate} data-new-run-separate-action="">
-                {sep.action}
-              </button>
-            </div>
-          ) : null}
-        </div>
-      </div>
-      <Actions>
-        <button type="button" className={WHITE_BUTTON} disabled={!view.continueEnabled} onClick={onContinue} data-onboarding-primary="">
-          Continue
-        </button>
-      </Actions>
-    </div>
-  );
-}
-
-export function AgentScreen({ view, onPick, onContinue, onInstall, busy }: { view: AgentView; onPick: (id: string) => void; onContinue: () => void; onInstall: (agent: "claude-code" | "codex") => void; busy: boolean }) {
+  const later = view.later ? (
+    <button type="button" className={cn(LINK, "text-[15px]")} disabled={busy} onClick={onLater} data-new-run-agent-later="">
+      {view.later}
+    </button>
+  ) : null;
   return (
     <div data-new-run="agent" data-state={view.state}>
       <Title>{view.title}</Title>
       {view.line ? <Line>{view.line}</Line> : null}
       {view.agents.length ? (
         <div className={cn(CARD, "mt-[min(28px,3vh)]")} data-new-run-agents="">
-          <div className={cn("flex items-center gap-2 px-3 pt-2 pb-2 text-[12.5px] font-semibold tracking-[0.02em]", GREY)}>
-            <OsMark os={hostOs()} className="h-3 w-auto" />
-            {view.label}
-          </div>
           {view.agents.map((a) => (
             <Row
               key={a.id}
               icon={<span className="flex size-7 shrink-0 items-center justify-center">{<AppMarkImage agent={a.id} className="size-5" />}</span>}
               name={a.name}
-              sub={a.maker}
+              sub={<span data-new-run-agent-where="">{a.where}</span>}
               picked={a.picked}
-              onClick={view.state === "several" ? () => onPick(a.id) : undefined}
+              onClick={() => onPick(a.id)}
               data-new-run-agent={a.id}
             />
           ))}
         </div>
+      ) : null}
+      {view.note ? (
+        <p className={cn("mt-3 max-w-[480px] text-[13.5px] font-medium", GREY)} data-new-run-agent-note="">
+          {view.note}
+        </p>
       ) : null}
       {view.error ? (
         <p role="alert" className="mt-3 max-w-[480px] text-[13.5px] font-medium text-white" data-new-run-agent-error="">
@@ -489,16 +524,103 @@ export function AgentScreen({ view, onPick, onContinue, onInstall, busy }: { vie
             <button type="button" className={cn(LINK, "text-[15px]")} onClick={() => onInstall("codex")} data-new-run-install="codex">
               {view.install.secondary}
             </button>
+            {later}
           </Actions>
         </>
       ) : (
         // Shown (greyed) while the agents are still being looked for, so it doesn't pop in once they're found.
-        <Actions>
+        <Actions className="flex flex-wrap items-center gap-6">
           <button type="button" className={WHITE_BUTTON} disabled={!view.continueEnabled || busy} onClick={onContinue} data-onboarding-primary="">
             {busy ? "Setting up…" : "Continue"}
           </button>
+          {later}
         </Actions>
       )}
+    </div>
+  );
+}
+
+/** A checklist row's mark: done in Cua Blue, a spinner while it runs, a ring while it waits, an alert when it needs you. */
+function RowMark({ status }: { status: ChecklistRowView["status"] }) {
+  if (status === "done") return <Check on />;
+  if (status === "running")
+    return (
+      <span className="flex size-[22px] shrink-0 items-center justify-center" data-check="running">
+        <LoaderCircleIcon aria-hidden className="size-[18px] animate-spin text-white/80 motion-reduce:animate-none" />
+      </span>
+    );
+  if (status === "waiting") return <Check on={false} />;
+  return (
+    <span className="flex size-[22px] shrink-0 items-center justify-center" data-check="attention">
+      <CircleAlertIcon aria-hidden className="size-[19px] text-white" />
+    </span>
+  );
+}
+
+/**
+ * Step 3 after Continue (CUA-4067): one row per thing Cua does, live, each saying what and where in plain words. A
+ * row that failed says why and has its own Retry; Cua Driver without its permissions has Allow; Codex's sign-in has
+ * Get a code. Continue waits only for nothing to be running; a row left as it is can be done later in Settings.
+ */
+export function ChecklistScreen({
+  view,
+  rows,
+  onAction,
+  onContinue,
+}: {
+  view: { title: string; line: string };
+  rows: ChecklistRowView[];
+  onAction: (key: string, action: NonNullable<ChecklistRowView["action"]>["id"]) => void;
+  onContinue: (() => void) | null;
+}) {
+  const shown = rows.filter((r) => r.status !== "skipped");
+  return (
+    <div data-new-run="agent" data-state="connecting">
+      <Title>{view.title}</Title>
+      <Line>{view.line}</Line>
+      <ul className={cn(CARD, "mt-[min(28px,3vh)]")} data-new-run-checklist="" aria-live="polite">
+        {shown.map((r) => (
+          <li key={r.key} className="flex items-start gap-3 px-3 py-[9px]" data-checklist-row={r.key} data-status={r.status}>
+            <span className="flex shrink-0 pt-px">
+              <RowMark status={r.status} />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span
+                className={cn("block text-[15px] leading-5 font-medium text-pretty break-words", r.status === "waiting" ? "text-white/55" : "text-white")}
+                data-checklist-text=""
+              >
+                {r.text}
+              </span>
+              {r.sub ? (
+                <span
+                  className={cn(
+                    "mt-0.5 block text-[13.5px] leading-[19px] font-medium text-pretty break-words select-text",
+                    r.status === "failed" ? "text-white/85" : GREY,
+                  )}
+                  data-checklist-sub=""
+                >
+                  {r.sub}
+                </span>
+              ) : null}
+            </span>
+            {r.action ? (
+              <button
+                type="button"
+                className={cn(LINK, "mt-px shrink-0 text-[14px]")}
+                onClick={() => onAction(r.key, r.action!.id)}
+                data-checklist-action={r.action.id}
+              >
+                {r.action.label}
+              </button>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+      <Actions className="flex flex-wrap items-center gap-6">
+        <button type="button" className={WHITE_BUTTON} disabled={!onContinue} onClick={() => onContinue?.()} data-onboarding-primary="">
+          {onContinue ? "Continue" : "Setting up…"}
+        </button>
+      </Actions>
     </div>
   );
 }
@@ -506,19 +628,48 @@ export function AgentScreen({ view, onPick, onContinue, onInstall, busy }: { vie
 /**
  * "Pick up where you left off" (CUA-3319): 2 to 4 of the person's recent chats with their agents on
  * this computer, each with **Continue in Cua**, which opens it in a new Home task with what was said
- * so far. Nothing runs until they send. Hidden when there are none. Only each chat's title, folder
- * and time are read here; its messages are read when it is picked.
+ * so far. Nothing runs until they send. Only the chats of `agents` (the agent picked in setup) are
+ * listed; all three agents' when none are named. While they are read, two quiet grey rows hold the
+ * place; hidden when there are none. Only each chat's title, folder and time are read here; its
+ * messages are read when it is picked.
  */
-export function PickUpWhereYouLeftOff({ onContinue, place = thisComputerText(), className }: { onContinue: (task: AskTask) => void; place?: string; className?: string }) {
-  const threads = useRecentThreads();
-  if (!threads?.length) return null;
+export function PickUpWhereYouLeftOff({
+  onContinue,
+  agents,
+  place = thisComputerText(),
+  className,
+}: {
+  onContinue: (task: AskTask) => void;
+  agents?: readonly string[];
+  place?: string;
+  className?: string;
+}) {
+  const threads = useRecentThreads(PICK_UP_LIMIT, agents);
+  if (threads && !threads.length) return null;
   return (
-    <section aria-labelledby="pick-up-heading" className={cn("w-full", className)} data-pick-up="">
+    <section
+      aria-labelledby="pick-up-heading"
+      aria-busy={threads ? undefined : true}
+      className={cn("w-full", className)}
+      data-pick-up=""
+      data-pick-up-loading={threads ? undefined : ""}
+    >
       <h2 id="pick-up-heading" className="text-[15px] font-semibold text-white">
         Pick up where you left off
       </h2>
       <ul className={cn(CARD, "mt-2.5 max-w-[600px]")}>
-        {threads.map((t) => {
+        {threads === null
+          ? [0, 1].map((i) => (
+              <li key={i} aria-hidden className="flex items-center gap-3 px-3 py-2.5" data-pick-up-placeholder="">
+                <span className="size-7 shrink-0 rounded-full bg-white/[0.06]" />
+                <span className="min-w-0 flex-1 space-y-1.5 py-0.5">
+                  <span className="block h-3.5 w-[55%] rounded-full bg-white/[0.08]" />
+                  <span className="block h-3 w-[35%] rounded-full bg-white/[0.05]" />
+                </span>
+              </li>
+            ))
+          : null}
+        {(threads ?? []).map((t) => {
           const folder = folderLabel(t.cwd);
           const when = agoLabel(t.lastActiveMs);
           return (
@@ -530,7 +681,12 @@ export function PickUpWhereYouLeftOff({ onContinue, place = thisComputerText(), 
                 <span className="block truncate text-[15px] leading-5 font-medium text-white">{t.title}</span>
                 <span className={cn("block truncate text-[13.5px] leading-[19px] font-medium", GREY)}>{folder ? `${folder}, ${when}` : when}</span>
               </span>
-              <button type="button" className={cn(GLASS_CHIP, "h-[30px] shrink-0 px-3 text-[13.5px]")} onClick={() => onContinue(addImportedTask(t))} data-pick-up-continue="">
+              <button
+                type="button"
+                className={cn(GLASS_CHIP, "h-[30px] shrink-0 px-3 text-[13.5px]")}
+                onClick={() => onContinue(addImportedTask(t))}
+                data-pick-up-continue=""
+              >
                 Continue in Cua
               </button>
             </li>
@@ -542,9 +698,26 @@ export function PickUpWhereYouLeftOff({ onContinue, place = thisComputerText(), 
   );
 }
 
-export function ReadyScreen({ view, agent, onDone, onContinueChat, place }: { view: ReadyView; agent: string; onDone: () => void; onContinueChat?: (task: AskTask) => void; place?: string }) {
+export function ReadyScreen({
+  view,
+  agent,
+  agents,
+  onDone,
+  onContinueChat,
+  onCopied,
+  place,
+}: {
+  view: ReadyView;
+  agent: string;
+  agents?: readonly string[];
+  onDone: () => void;
+  onContinueChat?: (task: AskTask) => void;
+  onCopied?: () => void;
+  place?: string;
+}) {
   const [copied, setCopied] = useState(false);
   const copy = () => {
+    onCopied?.();
     void navigator.clipboard?.writeText(view.command).catch(() => {});
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
@@ -553,8 +726,11 @@ export function ReadyScreen({ view, agent, onDone, onContinueChat, place }: { vi
     <div data-new-run="ready">
       <Title>{view.title}</Title>
       <Line>{view.line}</Line>
-      {/* design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages */}
-      <div className="mt-7 flex w-full max-w-[600px] items-center gap-3 rounded-[20px] bg-white/[0.08] py-2.5 pr-2.5 pl-4 shadow-[inset_0_0_0_1px_rgb(255_255_255/0.28)] backdrop-blur-md" data-new-run-command="">
+      <div
+        // design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
+        className="mt-7 flex w-full max-w-[600px] items-center gap-3 rounded-[20px] bg-white/[0.08] py-2.5 pr-2.5 pl-4 shadow-[inset_0_0_0_1px_rgb(255_255_255/0.28)] backdrop-blur-md"
+        data-new-run-command=""
+      >
         <AppMarkImage agent={agent} className="size-4 shrink-0" />
         <code className="min-w-0 flex-1 truncate font-mono text-[14.5px] text-white select-text">
           <span className={GREY}>$ </span>
@@ -565,8 +741,10 @@ export function ReadyScreen({ view, agent, onDone, onContinueChat, place }: { vi
           {copied ? "Copied" : view.copy}
         </button>
       </div>
-      {/* The person's own recent chats on this computer (CUA-3319), hidden when there are none. */}
-      {onContinueChat ? <PickUpWhereYouLeftOff className="mt-[min(28px,3vh)]" place={place} onContinue={onContinueChat} /> : null}
+      {/* The person's own recent chats with the agent they picked (CUA-3319), hidden when there are none. */}
+      {onContinueChat ? (
+        <PickUpWhereYouLeftOff className="mt-[min(28px,3vh)]" agents={agents?.length ? agents : [agent]} place={place} onContinue={onContinueChat} />
+      ) : null}
       <Actions>
         <button type="button" className={WHITE_BUTTON} onClick={onDone} data-onboarding-primary="">
           {view.done}
@@ -576,62 +754,107 @@ export function ReadyScreen({ view, agent, onDone, onContinueChat, place }: { vi
   );
 }
 
-export function NextScreen({ view, onRow, onDone, apps }: { view: NextView; onRow: (id: NextView["rows"][number]["id"]) => void; onDone: () => void; apps?: ReactNode }) {
-  const ICON = { invite: UserPlusIcon, "add-computer": MonitorIcon, apps: ShieldIcon } as const;
-  return (
-    <div data-new-run="next">
-      <Title>{view.title}</Title>
-      <Line>{view.line}</Line>
-      <div className={cn(CARD, "mt-[min(28px,3vh)]")} data-new-run-next="">
-        {view.rows.map((r) => {
-          const Icon = ICON[r.id];
-          return (
-            <div key={r.id}>
-              {/* design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages */}
-              <button type="button" className="flex w-full items-center gap-3 rounded-[14px] px-3 py-2.5 text-left outline-none hover:bg-white/[0.06] focus-visible:ring-2 focus-visible:ring-[#5ec0e8]" onClick={() => onRow(r.id)} data-new-run-next-row={r.id}>
-                <span className="flex size-7 shrink-0 items-center justify-center rounded-full text-white shadow-[inset_0_0_0_1px_rgb(255_255_255/0.28)]">
-                  <Icon className="size-3.5" />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[15px] leading-5 font-medium text-white">{r.title}</span>
-                  <span className={cn("block text-[13.5px] leading-[19px] font-medium", GREY)}>{r.sub}</span>
-                </span>
-                <ChevronRightIcon className={cn("size-4 shrink-0", GREY)} />
-              </button>
-              {r.id === "apps" ? apps : null}
-            </div>
-          );
-        })}
-      </div>
-      <Actions>
-        <button type="button" className={WHITE_BUTTON} onClick={onDone} data-onboarding-primary="">
-          {view.done}
-        </button>
-      </Actions>
-    </div>
-  );
-}
-
-/** 2b, on a Mac: Cua Spaces' two permissions (the same rows as the Cua Driver page), each with Allow, and Later. Never blocks the run. */
-export function PermissionsScreen({ view, perms, onContinue }: { view: PermissionsStepView; perms: Pick<AppPermissionsState, "data" | "allow">; onContinue: () => void }) {
+/**
+ * 2b, on a Mac: Cua Spaces' two permissions (the same rows as the Cua Driver page), each with Allow, and Later. A Mac
+ * that runs macOS Spaces also gets Local Network (`net`), asked here so the first macOS Space just starts. Never blocks
+ * the run.
+ */
+export function PermissionsScreen({
+  view,
+  perms,
+  net,
+  appName,
+  onContinue,
+}: {
+  view: PermissionsStepView;
+  perms: PermissionsView;
+  net?: LocalNetworkState | null;
+  appName?: string;
+  onContinue: () => void;
+}) {
   return (
     <div data-new-run="permissions">
       <Title>{view.title}</Title>
       <Line>{view.line}</Line>
-      <AppPermissionList perms={perms} variant="hero" className="mt-[min(28px,3vh)]" footer={view.note} />
-      <Actions>
-        <button type="button" className={view.primary.white ? WHITE_BUTTON : GLASS_BUTTON} onClick={onContinue} data-onboarding-primary="" data-new-run-permissions-next={view.primary.label}>
+      <AppPermissionList
+        perms={perms}
+        variant="hero"
+        className="mt-[min(28px,3vh)]"
+        footer={view.note}
+        extra={net?.available ? <LocalNetworkRow net={net} appName={appName ?? "Cua Spaces"} /> : null}
+      />
+      <Actions className="flex items-center gap-x-6">
+        <button
+          type="button"
+          className={cn("shrink-0", view.primary.white ? WHITE_BUTTON : GLASS_BUTTON)}
+          onClick={onContinue}
+          data-onboarding-primary=""
+          data-new-run-permissions-next={view.primary.label}
+        >
           {view.primary.label}
         </button>
+        {view.stillOff && view.missing[0] ? (
+          // What is still off, by name: on a short window its row can be below the fold, so pressing this shows it.
+          <button
+            type="button"
+            className={cn(LINK, "line-clamp-2 min-w-0 text-left text-[14px] leading-tight font-medium text-white/85")}
+            onClick={() => showRow(view.missing[0]!.id)}
+            data-new-run-still-off=""
+          >
+            {view.stillOff}
+          </button>
+        ) : null}
       </Actions>
     </div>
   );
 }
 
+/** Scrolls a permission row into view and puts the focus on its Allow (or the row itself once there is none). */
+function showRow(id: string): void {
+  const row = document.querySelector<HTMLElement>(`[data-app-permission="${id}"]`);
+  if (!row) return;
+  const reduce = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  row.scrollIntoView?.({ block: "center", behavior: reduce ? "auto" : "smooth" });
+  const target = row.querySelector<HTMLElement>("button") ?? row;
+  if (target === row && !row.hasAttribute("tabindex")) row.tabIndex = -1;
+  target.focus({ preventScroll: true });
+}
+
 /* ---- The page ------------------------------------------------------------------------- */
 
-/** The daemon's refusal on a Mac that can't run virtual computers (`cua_create_failure::preflight::MAC_UNSUPPORTED`). */
-const CANT_RUN = /can['\u2019]t run (Spaces itself|virtual computers)/i;
+/** The page's side padding (`px-16`) and the copy column's widest (`max-w-[600px]`), in px. */
+const PAGE_PAD = 64;
+const COPY_MAX = 600;
+/**
+ * Where the copy column ends, from the left. The keys show only on windows 860px and wider, where the column is
+ * always at its widest, so the keys never cover the text, the buttons or the links (the action rows run to the
+ * column's full width: "Install Claude Code", "Install Codex instead", "Install later").
+ */
+export const COPY_RIGHT = PAGE_PAD + COPY_MAX;
+
+/**
+ * The usage data's name for each screen (`schema::FIRST_RUN_STEPS`), so the onboarding funnel keeps its steps:
+ * Ready ends the run and is counted by its finish, not as a step.
+ */
+const FUNNEL_STEP: Partial<Record<NewRunScreenName, string>> = {
+  welcome: "welcome",
+  signin: "sign_in",
+  permissions: "permissions",
+  agent: "connect_agent",
+  ready: "ready",
+};
+
+/** The picked agent as a usage-event word (`claude-code` is sent as `claude_code`); the core drops any it doesn't know. */
+const agentWord = (agent: string | null) => (agent ?? "none").replaceAll("-", "_");
+
+/** Usage events never get in the way of the run. */
+function track(send: () => void): void {
+  try {
+    send();
+  } catch {
+    // An older core that reads the state differently: no event.
+  }
+}
 
 /** The new first run's whole page. */
 export function NewFirstRun() {
@@ -643,34 +866,94 @@ export function NewFirstRun() {
   const session = useSession();
   const machines = useMachines();
   const settings = useSettings();
-  const spaces = useSpaces();
   const offers = useFirstSpaceOffers();
   const savedAll = useFirstRunSaved();
   const s: NewRunSaved = { ...NEW_RUN_EMPTY, ...(savedAll.newRun ?? {}) };
   const save = (patch: Partial<NewRunSaved>) => {
     const prev = { ...NEW_RUN_EMPTY, ...(readFirstRun().newRun ?? {}) };
-    const reached = patch.screen ? reachedAfter(reachedAfter(prev.reached, prev.screen), patch.screen) : prev.reached;
-    writeFirstRun({ newRun: { ...prev, ...patch, reached } });
+    const reachedStep = patch.screen ? furthestStep(furthestStep(prev.reachedStep, prev.screen), patch.screen) : prev.reachedStep;
+    writeFirstRun({ newRun: { ...prev, ...patch, reachedStep } });
   };
   const go = (screen: NewRunScreenName) => save({ screen });
 
+  // Step 3's checklist once Continue was pressed (CUA-4067): the rows, in order, and where each stands.
+  const [checklist, setChecklist] = useState<{ agents: string[]; items: ChecklistItem[]; states: Record<string, ChecklistState> } | null>(null);
+  // Which steps this run shows (`runSteps`): the step dots and every move to the next step read the same facts.
+  // On a Mac, Cua Spaces' permissions (and Local Network, where macOS Spaces runs here) are read from the first step
+  // on, so the dots know whether the permissions step asks anything; it is left out when every one is already on.
+  // Once the run leaves the first step the answer is kept (`s.permissions`), so turning them on on that step doesn't
+  // change the dots under it.
+  const readPermissions = os === "macos" && (stepOf(s.screen) === "computer" || s.screen === "permissions" || (s.screen === "agent" && checklist !== null));
+  const perms = useAppPermissions(readPermissions);
+  const net = useLocalNetwork(readPermissions);
+  const permissionsNow: RunFacts["permissions"] = perms.loading
+    ? null
+    : !perms.available
+      ? "skip"
+      : !perms.allGranted
+        ? "ask"
+        : net.loading
+          ? null
+          : net.available && !net.granted
+            ? "ask"
+            : "skip";
+  const facts: RunFacts = { os, permissions: stepOf(s.screen) === "computer" ? permissionsNow : (s.permissions ?? permissionsNow) };
+  /** The first step is done (signed in and added) or skipped: on to the next step this run shows. */
+  const leaveFirstStep = () => {
+    const permissions = os === "macos" ? (permissionsNow ?? "ask") : undefined;
+    const screen = nextStepScreen({ os, permissions: permissions ?? null }, "welcome") ?? "agent";
+    save(permissions ? { screen, permissions } : { screen });
+  };
+
   const signedIn = Boolean(session.data?.signedIn);
   const phase: SignInPhase = session.data?.signIn ?? { kind: "idle" };
-  const [now, setNow] = useState(() => Date.now());
+  // Signed in, with no browser sign-in under way: only then may this computer join the account. A sign-in that
+  // runs (the browser hasn't confirmed yet) is waited for, even when an older session still says signed in.
+  const signingIn = phase.kind === "starting" || phase.kind === "waiting";
+  const authed = signedIn && !signingIn;
   const [found, setFound] = useState<string[] | null>(null);
-  const [agentPick, setAgentPick] = useState<string | null>(s.agent);
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
-  const [thisState, setThisState] = useState<"adding" | "added" | "failed">("adding");
+  // This computer joining the account, once signed in: `idle` until the sign-in finishes.
+  const [thisState, setThisState] = useState<"idle" | "adding" | "added" | "failed">("idle");
   const [addError, setAddError] = useState<string | null>(null);
   const [addNeedsProof, setAddNeedsProof] = useState(false);
-  const [explain, setExplain] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   // "Use a code from another computer": the sheet opens on "Enter a code".
   const [addEnter, setAddEnter] = useState(false);
-  const [appsOpen, setAppsOpen] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
   useFadeUnder(mainRef, s.screen);
+  const moreBelow = useMoreBelow(mainRef, s.screen);
+
+  // The onboarding funnel (`cua_onboarding_*`): the run starts once, then each screen counts when it shows.
+  const core = ctx?.core ?? null;
+  const telemetry = settings.data?.telemetry ?? null;
+  const funnelState = (c: NonNullable<typeof core>) => ({
+    ...onboardingInitial(c, session.data?.identity ?? null),
+    step: s.screen === "welcome" || s.screen === "signin" ? ("welcome" as const) : ("agents" as const),
+    runCounted: true,
+    telemetry: telemetry ? onboardingTelemetry(telemetry) : null,
+  });
+  // Screen 1's usage line, in the core's words (the same as Settings, Privacy).
+  const usage =
+    s.screen === "welcome" && core && telemetry
+      ? welcomeUsage(onboardingView(core, { ...onboardingInitial(core, null), step: "welcome", telemetry: onboardingTelemetry(telemetry) }))
+      : null;
+  const runStarted = useRef(false);
+  useEffect(() => {
+    if (runStarted.current || !store || !core || !telemetry) return;
+    runStarted.current = true;
+    track(() => store.trackOnboarding({ ...onboardingInitial(core, null), telemetry: onboardingTelemetry(telemetry) }, { type: "start" }));
+  }, [store, core, telemetry]);
+  useEffect(() => {
+    const step = FUNNEL_STEP[s.screen];
+    // The Ready screen's events name the picked agent (a fixed word; the core drops anything else).
+    if (store && step) track(() => store.trackFirstRunStep(step, "step_viewed", s.screen === "ready" ? agentWord(s.agent) : "none"));
+  }, [store, s.screen]);
+  const funnel = (action: string, detail = "none") => {
+    const step = FUNNEL_STEP[s.screen];
+    if (store && step) track(() => store.trackFirstRunStep(step, action, detail));
+  };
 
   // A new screen: focus moves to its title, so a screen reader reads it. Moved with the arrow keys on the
   // step dots, focus stays on the dots instead.
@@ -678,7 +961,8 @@ export function NewFirstRun() {
   useEffect(() => {
     const keep = dotFocus.current;
     dotFocus.current = null;
-    const el = keep !== null ? document.querySelector<HTMLElement>(`[data-step-dot="${keep}"]`) : document.querySelector<HTMLElement>("[data-onboarding-heading]");
+    const el =
+      keep !== null ? document.querySelector<HTMLElement>(`[data-step-dot="${keep}"]`) : document.querySelector<HTMLElement>("[data-onboarding-heading]");
     el?.focus();
   }, [s.screen]);
 
@@ -689,10 +973,7 @@ export function NewFirstRun() {
       started.current = false;
       return;
     }
-    if (signedIn) {
-      save({ screen: "where", addedInRun: true });
-      return;
-    }
+    if (signedIn) return;
     if (!started.current && phase.kind === "idle") {
       started.current = true;
       void session.signIn().catch(() => {});
@@ -702,7 +983,7 @@ export function NewFirstRun() {
 
   // Back from the browser: read the sign-in again at once, so one that finished
   // (or failed) there shows now, not on the next host push.
-  const waitingOnSignIn = s.screen === "signin" && (phase.kind === "starting" || phase.kind === "waiting");
+  const waitingOnSignIn = s.screen === "signin" && signingIn;
   const refreshSession = useRef(session.refresh);
   refreshSession.current = session.refresh;
   useEffect(() => {
@@ -718,7 +999,8 @@ export function NewFirstRun() {
     };
   }, [waitingOnSignIn]);
 
-  // Screen 2, signed in: this computer joins the account (once; the store also does it on sign-in).
+  // Signed in: this computer joins the account on the sign-in screen (the store also does it on sign-in), then setup
+  // goes on. There is no step to pick where agents work: they can use every ready computer (Francesco, 8 Nov 2026).
   const addRun = useRef(0);
   const addThis = async () => {
     if (!store) return setThisState("added");
@@ -736,19 +1018,22 @@ export function NewFirstRun() {
     }
   };
   useEffect(() => {
-    if (s.screen === "where" && signedIn) void addThis();
+    if (s.screen !== "signin" || !authed) return;
+    if (thisState === "idle") void addThis();
+    else if (thisState === "added") leaveFirstStep();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [s.screen, signedIn]);
+  }, [s.screen, authed, thisState]);
 
-  // The account's computers, read again while screen 2 shows.
+  // A run saved on the removed "Pick where your agents work" step goes on from the step after the sign-in.
   useEffect(() => {
-    if (s.screen !== "where" || !signedIn) return;
+    if (s.screen === "where") leaveFirstStep();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s.screen]);
+
+  // The account's computers, read again for Ready, which names every ready one.
+  useEffect(() => {
+    if ((s.screen !== "agent" && s.screen !== "ready") || !signedIn) return;
     void machines.refresh().catch(() => {});
-    const t = setInterval(() => {
-      setNow(Date.now());
-      void machines.refresh().catch(() => {});
-    }, 10_000);
-    return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [s.screen, signedIn]);
 
@@ -771,137 +1056,208 @@ export function NewFirstRun() {
     };
   }, [s.screen, adapter]);
 
-  // 2b and screen 6's apps row: Cua Spaces' permissions, read while they show. A host with none to give (not a
-  // Mac, an older app) has no step: it goes on to the coding agent.
-  const perms = useAppPermissions(s.screen === "permissions" || (s.screen === "next" && appsOpen));
+  // 2b: Cua Spaces' permissions (`perms`, read above). A host with none to give (an older app) has no step: it goes
+  // on to the coding agent, and the dots drop the step. A Mac that runs macOS Spaces also needs Local Network (`net`):
+  // asked on the same step, so the issue never shows up later on its page, and its first macOS Space just starts.
+  const afterPermissions = nextStepScreen(facts, "permissions") ?? "agent";
   useEffect(() => {
-    if (s.screen === "permissions" && !perms.loading && !perms.available) go("agent");
+    if (s.screen === "permissions" && !perms.loading && !perms.available) save({ screen: afterPermissions, permissions: "skip" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [s.screen, perms.loading, perms.available]);
 
-  // The separate computer: this page's create, followed in the Spaces list.
+  // Ready's line to try asks for a separate Linux computer only where this one can make it (CUA-3150, idea D).
+  // Making one lives in New Space and Home's picker, not in setup.
   const linux = offers.offers.find((o) => o.id === "linux") ?? null;
-  const made = useMemo(() => {
-    if (explain) return { phase: "explain" as const, name: null, error: null, id: null };
-    if (!s.separatePendingId) return { phase: "none" as const, name: null, error: null, id: null };
-    const id = store?.createdId(s.separatePendingId) ?? s.separatePendingId;
-    const row = spaces.data?.find((x) => x.id === id);
-    if (!row) return { phase: "making" as const, name: null, error: null, id: null };
-    const st = spaceState(row);
-    const name = spokenName(row.name);
-    if (st === "failed") return { phase: "failed" as const, name, error: row.progress?.error ?? null, id: row.id };
-    return { phase: st === "creating" ? ("making" as const) : ("ready" as const), name, error: null, id: row.id };
-  }, [explain, s.separatePendingId, spaces.data, store]);
-  // A Mac that can't run virtual computers is only known when the daemon refuses the create (#6323): then
-  // the option turns grey with the plain sentence, instead of a failure.
-  const cantRun = made.phase === "failed" && CANT_RUN.test(made.error ?? "");
-  const canMakeSeparate = cantRun ? false : !offers.known ? null : Boolean(linux && !linux.blocked);
-  const separate = cantRun ? { phase: "none" as const, name: null, error: null, id: null } : made;
+  const canMakeSeparate = !offers.known ? null : Boolean(linux && !linux.blocked);
 
-  const makeSeparate = () => {
-    if (!linux || linux.blocked) return;
-    // On a Mac, our one line first; the ask itself is the daemon's, before the create (#6009).
-    if (os === "macos" && !explain && separate.phase !== "failed") return setExplain(true);
-    setExplain(false);
-    const pendingId = newPendingId();
-    save({ separatePendingId: pendingId, picks: [...new Set([...s.picks, `pending:${pendingId}`])] });
-    spaces.createSpace({ ...linux.args, name: extraName("linux", spaces.data ?? []), os: linux.os, notifyWhenReady: true }, pendingId).catch(() => {
-      // The Spaces list shows the failure; the line reads it from there.
-    });
-  };
+  /** Ready's computers: this one, then every ready computer in the account (signed out: this one only). */
+  const computers = signedIn ? readyComputers(machines.data ?? null) : ["this"];
 
-  const whereInput = {
-    os,
-    signedIn,
-    thisState: signedIn ? thisState : ("signed-out" as const),
-    addedInRun: s.addedInRun,
-    addError,
-    addNeedsProof,
-    model: machines.data?.find((m) => m.current)?.model ?? null,
-    machines: machines.data ?? null,
-    picks: s.picks,
-    canMakeSeparate,
-    separateBlocked: linux?.blocked ?? null,
-    separate,
-    now,
-  };
-  const where = whereView(whereInput);
+  const agentsOff = s.agentsOff ?? [];
+  const agentScreen = agentView({ os, found, off: agentsOff, error: connectError });
+  const setRow = (key: string, state: ChecklistState) => setChecklist((c) => (c ? { ...c, states: { ...c.states, [key]: state } } : c));
+  const running: ChecklistState = { status: "running", where: null, line: null };
+  const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-  /** The picked computers' names for screen 4: this computer, the others, then the separate computer. */
-  const pickedNames = (): string[] => {
-    const out: string[] = [];
-    for (const p of s.picks) {
-      if (p === "this") out.push("this");
-      else if (p.startsWith("pending:")) {
-        if (separate.name) out.push(separate.name);
-      } else {
-        const m = machines.data?.find((x) => x.id === p);
-        if (m?.online) out.push(m.name);
+  /**
+   * This computer, set up to run the agents' jobs: the same steps as Home's Set up (`thisMacSetupSteps`: added to the
+   * account, sharing on, its desktop shared), then a wait until its host service says it's back online. Sharing the
+   * desktop restarts that service, and a job sent while it reconnects couldn't reach this computer (#7161).
+   */
+  const runThisComputer = async (key: string) => {
+    if (!adapter) return;
+    setRow(key, running);
+    const read = () => adapter.call("host.status", {}).catch(() => null);
+    try {
+      for (const step of thisMacSetupSteps(await read())) {
+        if (step === "add") {
+          if (!(await (store?.addThisComputer(session.data?.identity ?? null) ?? Promise.resolve(false))))
+            throw new Error(store?.thisMachine.get().setupError?.message ?? `${placeName(os)} couldn't be added to your account.`);
+        } else await adapter.call("host.action", { action: step });
       }
+      const after = await hostStatusWhenOnline(read, { timeoutMs: 30_000 });
+      if (!hostSpaceId(after)) throw new Error(after?.error ?? "Its desktop isn't shared yet. Try again.");
+      if (after?.online === false) throw new Error(`${placeName(os)} didn't come back online yet. Try again in a moment.`);
+      setRow(key, { status: "done", where: null, line: null });
+      void machines.refresh().catch(() => {});
+    } catch (e) {
+      setRow(key, { status: "failed", where: null, line: message(e) });
     }
-    return out.length ? out : ["this"];
   };
 
-  const agent = chosenAgent(found, agentPick);
-  const agentScreen = agentView({ os, found, picked: agentPick, error: connectError });
+  /** One agent's part, on its own (`connectArgs`): Continue runs them one by one, Retry runs one again. */
+  const runPart = async (item: ChecklistItem) => {
+    if (!adapter || !item.agent || item.part === "this-computer") return;
+    setRow(item.key, running);
+    try {
+      const results = await adapter.call("agents.connect", connectArgs(item.agent, item.part));
+      const state = checklistFromResult(
+        item.part,
+        results.find((r) => r.agent === item.agent),
+      );
+      // A part the host doesn't have (an app that carries no Cua Driver) leaves no row.
+      setRow(item.key, state ?? { status: "skipped", where: null, line: null });
+    } catch (e) {
+      setRow(item.key, { status: "failed", where: null, line: message(e) });
+    }
+  };
+
+  const runItem = (item: ChecklistItem) => (item.part === "this-computer" ? runThisComputer(item.key) : runPart(item));
+
+  /** Codex's sign-in made for Cua: a code to enter on its page (opened here), then saved to Keyvault once entered. */
+  const runCode = async (item: ChecklistItem) => {
+    if (!adapter || !item.agent) return;
+    try {
+      const started = await adapter.call("agents.signInStart", { agent: item.agent });
+      setRow(item.key, { status: "needs_code", where: null, line: null, code: { code: started.code, url: started.url } });
+      open(started.url);
+      const r = await adapter.call("agents.signInWait", { id: started.id });
+      setRow(
+        item.key,
+        r.imported ? { status: "done", where: "Keyvault", line: null } : { status: "failed", where: null, line: r.line ?? "The sign-in didn't finish." },
+      );
+    } catch (e) {
+      setRow(item.key, { status: "failed", where: null, line: message(e) });
+    }
+  };
+
   const continueAgent = async () => {
-    if (!agent || !adapter || connecting) return;
+    const agents = chosenAgents(found, agentsOff);
+    if (!adapter || connecting) return;
+    // Nothing ticked: the same as Choose later.
+    if (!agents.length) return void agentsLater();
     setConnecting(true);
     setConnectError(null);
-    try {
-      // The same connect as Settings and the old first run: Cua's tools in the agent's settings, and its sign-in kept.
-      const viaConnect = await adapter.call("agents.connect", { agents: [agent], signIn: true }).then(
-        () => true,
-        () => false,
-      );
-      const rows = viaConnect ? await adapter.call("agents.setup", {}) : await adapter.call("agents.configure", { agents: [agent] });
-      const row = rows.find((r) => r.agent === agent);
-      if (!row?.configured) {
-        setConnectError(`Cua couldn't add itself to ${row?.name ?? "the agent"}'s settings.${row?.detail ? ` ${row.detail}` : ""}`);
-        return;
-      }
-      save({ agent, screen: "ready" });
-    } catch (e) {
-      setConnectError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setConnecting(false);
+    // Ready's "Pick up where you left off": the picked agents' chats are read while Cua connects, so the list is
+    // there when the screen shows (CUA-3319).
+    void recentThreads(adapter, agents, PICK_UP_LIMIT);
+    const started = performance.now();
+    const items = connectPlan({ agents, driver: os === "macos", thisComputer: signedIn });
+    setChecklist({ agents, items, states: Object.fromEntries(items.map((i) => [i.key, CHECKLIST_WAITING])) });
+    // One row at a time, in order: this computer first (it restarts its service), the sign-ins last.
+    for (const item of items) await runItem(item);
+    console.info(`first run: ${agents.join(", ")} connected in ${Math.round(performance.now() - started)} ms`);
+    setConnecting(false);
+  };
+
+  /** A row's button: Retry runs its step again; Allow opens the permission that is off; Get a code signs in. */
+  const checklistAction = (key: string, action: NonNullable<ChecklistRowView["action"]>["id"]) => {
+    const item = checklist?.items.find((i) => i.key === key);
+    if (!item) return;
+    if (action === "retry") return void runItem(item);
+    if (action === "code") return void runCode(item);
+    if (action === "open") {
+      const url = checklist?.states[key]?.code?.url;
+      if (url) open(url);
+      return;
     }
+    const off = perms.data?.permissions.find((p) => !p.granted);
+    if (off) void perms.allow(off.id).catch(() => {});
+    else void runItem(item);
+  };
+
+  // Back from System Settings: a Cua Driver row waiting for its permissions is checked again.
+  const recheck = useRef<() => void>(() => {});
+  recheck.current = () => {
+    for (const item of checklist?.items ?? []) if (checklist?.states[item.key]?.status === "needs_permission") void runItem(item);
+  };
+  useEffect(() => {
+    if (!checklist) return;
+    const again = () => recheck.current();
+    window.addEventListener("focus", again);
+    return () => window.removeEventListener("focus", again);
+  }, [checklist !== null]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Continue from the checklist: Ready names the agents whose tools went in; none went in, setup ends on Home. */
+  const leaveChecklist = () => {
+    if (!checklist) return;
+    const connected = connectedAgents(checklist.agents, checklist.states);
+    if (!connected.length) return void finish();
+    // Ready's line to try uses the first one that has a command to type.
+    const primary = connected.find((id) => agentInfo(id).command) ?? connected[0]!;
+    save({ agent: primary, connected, screen: nextStepScreen(facts, "agent") ?? "ready" });
+  };
+  const checklistStates = checklist ? checklist.items.map((i) => checklist.states[i.key] ?? CHECKLIST_WAITING) : [];
+  const checklistRows = checklist ? checklist.items.map((i) => checklistRowView(i, checklist.states[i.key] ?? CHECKLIST_WAITING, os)) : [];
+
+  // Choose later: setup is done without connecting an agent; Settings, Connections does it any time.
+  const agentsLater = () => {
+    funnel("step_skipped", "later");
+    void finish();
   };
 
   const open = (url: string) => void session.openExternal(url).catch(() => {});
 
   const leave = () => {
+    funnel("step_skipped", "step");
+    if (store && core) track(() => store.trackOnboardingSkipped(funnelState(core)));
     session.cancelSignIn();
     writeSavedOnboarding({ ...readSavedOnboarding(), skipped: true });
     writeFirstRun({ finishedLater: true });
-    void navigate({ to: "/spaces" });
+    // Home is where the app opens (CUA-3551), so leaving setup early lands there too.
+    void navigate({ to: "/home" });
   };
   const skip = () => {
     if (s.screen === "welcome" || s.screen === "signin") {
+      funnel("step_skipped", "step");
       session.cancelSignIn();
-      go("where");
+      leaveFirstStep();
     } else leave();
   };
-  const finish = async () => {
+  const finished = async () => {
+    if (store && core) track(() => store.trackOnboardingFinished(funnelState(core)));
     await session.completeOnboarding(thisState === "added" && signedIn ? "host" : "client").catch(() => {});
-    writeFirstRun({ finishedLater: false, todosClosed: false });
+    // Setup ends on Home, ready for the first job; the rest is asked for there once that job is done (CUA-3150, C).
+    const offer = readFirstRun().restOffer === "dismissed" ? ("dismissed" as const) : ("waiting" as const);
+    writeFirstRun({ finishedLater: false, todosClosed: false, restOffer: offer, restSinceMs: Date.now() });
+  };
+  const finish = async () => {
+    await finished();
     await navigate({ to: "/home" });
   };
   // Continue in Cua (CUA-3319): setup is done and the picked chat opens as a Home task. Nothing runs until the person sends.
   const continueChat = async (task: AskTask) => {
-    await session.completeOnboarding(thisState === "added" && signedIn ? "host" : "client").catch(() => {});
-    writeFirstRun({ finishedLater: false, todosClosed: false });
+    await finished();
     await navigate({ to: "/home/$taskId", params: { taskId: task.id } });
   };
+  // A run saved on the old last screen ("Now bring the rest in") finishes now: that screen lives on Home.
+  const finishing = useRef(false);
+  useEffect(() => {
+    if (s.screen !== "next" || finishing.current) return;
+    finishing.current = true;
+    void finish();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s.screen]);
 
+  // Add this computer: the browser sign-in, waited for on 1b. Already signed in (Reset & Show, a session kept
+  // from before): no second sign-in in the browser; 1b adds this computer with the session there is.
   const startSignIn = () => {
     started.current = true;
     go("signin");
-    void session.signIn().catch(() => {});
+    if (!signedIn) void session.signIn().catch(() => {});
   };
 
-  const accountUrl = settings.data?.accountUrl ?? "https://app.cua.ai";
-  const dots = stepDots(s.screen, reachedAfter(s.reached, s.screen));
+  const dots = stepDots(facts, s.screen, furthestStep(s.reachedStep, s.screen));
   const goDot = (i: number, viaKey: boolean) => {
     const to = dots?.[i]?.to;
     if (!to) return;
@@ -909,22 +1265,40 @@ export function NewFirstRun() {
     if (viaKey) dotFocus.current = i;
     go(to);
   };
-  const showSkip = s.screen === "welcome" || s.screen === "signin" || s.screen === "where" || s.screen === "agent";
+  const showSkip = s.screen === "welcome" || s.screen === "signin" || s.screen === "agent";
 
   let body: ReactNode = null;
   switch (s.screen) {
     case "welcome":
-      body = <WelcomeScreen onAdd={startSignIn} />;
+      body = (
+        <WelcomeScreen
+          onAdd={startSignIn}
+          usage={usage}
+          onUsage={(on) => void settings.updateSetting("telemetry", on).catch(() => {})}
+          onUsageLink={() => usage && open(usage.linkUrl)}
+        />
+      );
       break;
     case "signin":
       body = (
         <SignInScreen
-          view={signInView(phase, session.data?.signInUrl ?? null)}
+          view={
+            authed
+              ? addingView({ os, state: thisState === "failed" ? "failed" : "adding", error: addError, needsProof: addNeedsProof })
+              : signInView(phase, session.data?.signInUrl ?? null)
+          }
           onTryAgain={() => {
+            if (authed) return void addThis();
             session.cancelSignIn();
             void session.signIn().catch(() => {});
           }}
           onUseCode={() => {
+            // Adding this computer wants a code from another computer: the sheet opens on "Enter a code".
+            if (authed) {
+              setAddEnter(true);
+              setAddOpen(true);
+              return;
+            }
             session.cancelSignIn();
             void session.signIn({ code: true }).catch(() => {});
           }}
@@ -932,70 +1306,70 @@ export function NewFirstRun() {
         />
       );
       break;
-    case "where":
+    case "permissions":
       body = (
-        <WhereScreen
-          view={where}
-          onToggle={(id) => save({ picks: togglePick(s.picks, id, where.others ?? []) })}
-          onAddThis={(action) => {
-            if (action === "use-code") {
-              setAddEnter(true);
-              setAddOpen(true);
-            } else if (signedIn) void addThis();
-            else startSignIn();
-          }}
-          onSignIn={startSignIn}
-          onAddAnother={() => setAddOpen(true)}
-          onSeparate={makeSeparate}
-          onContinue={() => go(afterWhere(os))}
+        <PermissionsScreen
+          view={permissionsStepView({
+            appName: perms.data?.appName ?? "Cua Spaces",
+            allGranted: perms.allGranted,
+            off: perms.data?.permissions.filter((p) => !p.granted).map((p) => p.id),
+            localNetwork: !net.available ? "none" : net.granted ? "on" : net.denied ? "denied" : "off",
+          })}
+          perms={perms}
+          net={net}
+          appName={perms.data?.appName ?? "Cua Spaces"}
+          onContinue={() => go(afterPermissions)}
         />
       );
       break;
-    case "permissions":
-      body = <PermissionsScreen view={permissionsStepView({ appName: perms.data?.appName ?? "Cua Spaces", allGranted: perms.allGranted })} perms={perms} onContinue={() => go("agent")} />;
-      break;
     case "agent":
-      body = (
+      body = checklist ? (
+        <ChecklistScreen
+          view={checklistView(checklistStates)}
+          rows={checklistRows}
+          onAction={checklistAction}
+          onContinue={!connecting && checklistSettled(checklistStates) ? leaveChecklist : null}
+        />
+      ) : (
         <AgentScreen
           view={agentScreen}
           busy={connecting}
-          onPick={(id) => {
-            setAgentPick(id);
-            save({ agent: id });
-          }}
+          onPick={(id) => save({ agentsOff: toggleAgentOff(agentsOff, id) })}
           onContinue={() => void continueAgent()}
+          onLater={agentsLater}
           onInstall={(a) => open(INSTALL_PAGES[a])}
         />
       );
       break;
     case "ready":
       body = s.agent ? (
-        <ReadyScreen view={readyView({ os, agent: s.agent, computers: pickedNames() })} agent={s.agent} place={placeName(os)} onDone={() => go("next")} onContinueChat={(task) => void continueChat(task)} />
+        <ReadyScreen
+          view={readyView({ os, agent: s.agent, agents: s.connected, computers, canMakeSeparate })}
+          agent={s.agent}
+          agents={s.connected}
+          place={placeName(os)}
+          onDone={() => {
+            funnel("step_completed", agentWord(s.agent));
+            void finish();
+          }}
+          onContinueChat={(task) => {
+            funnel("step_chat_picked_up", agentWord(s.agent));
+            void continueChat(task);
+          }}
+          onCopied={() => funnel("step_command_copied", agentWord(s.agent))}
+        />
       ) : null;
       break;
-    case "next": {
-      body = (
-        <NextScreen
-          view={nextView({ os })}
-          onRow={(id) => {
-            if (id === "invite") open(`${accountUrl}/team`);
-            else if (id === "add-computer") setAddOpen(true);
-            else setAppsOpen((o) => !o);
-          }}
-          onDone={() => void finish()}
-          apps={
-            // design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
-            appsOpen ? <AppPermissionList perms={perms} variant="hero" inset className="mx-3 mb-2 border-t border-white/[0.14] pt-2 pl-7" /> : null
-          }
-        />
-      );
-      break;
-    }
   }
 
   return (
-    <div className="dark relative flex h-full flex-col overflow-hidden bg-[#050607] text-white" data-window-surface="#050607" data-new-first-run="" data-step={s.screen}>
-      <FloatKeys copyRight={544} />
+    <div
+      className="dark relative flex h-full flex-col overflow-hidden bg-[#050607] text-white"
+      data-window-surface="#050607"
+      data-new-first-run=""
+      data-step={s.screen}
+    >
+      <FloatKeys copyRight={COPY_RIGHT} />
       {/* A fixed height, with or without Skip for now, so the content under it never moves between steps. */}
       <header className="relative z-30 box-content flex h-9 shrink-0 items-center justify-between pt-[calc(var(--titlebar-height,0px)+12px)] pr-16 pb-2 pl-16">
         <span className="flex items-center gap-1.5" data-new-run-logo="">
@@ -1010,13 +1384,35 @@ export function NewFirstRun() {
       </header>
       {/* Every screen starts at the same height under the header (never centred: screens differ in height, and a
           centred one moved the title and the button between steps). The screen fills the area, so its action row
-          (`Actions`) sits at the bottom of it; content longer than the window scrolls above that row. */}
-      <main ref={mainRef} className="relative z-20 flex min-h-0 flex-1 flex-col overflow-y-auto px-16" data-new-run-main="">
-        <div className="flex w-full max-w-[600px] shrink-0 grow flex-col pt-[clamp(16px,8vh,96px)] *:flex *:grow *:flex-col">{body}</div>
+          (`Actions`) sits at the bottom of it; content longer than the window scrolls above that row. On windows taller
+          than 1000px the area stops at 860px, so the button stays near the text instead of the far bottom edge. */}
+      <main ref={mainRef} className="relative z-20 flex min-h-0 flex-1 flex-col scroll-y-stable px-16" data-new-run-main="">
+        {/* px-16 and max-w-[600px] are PAGE_PAD and COPY_MAX: change them together, they keep the keys off the copy. */}
+        <div className="flex w-full max-w-[600px] shrink-0 grow flex-col pt-[clamp(16px,8vh,96px)] *:flex *:grow *:flex-col [@media(min-height:1000px)]:max-h-[860px]">
+          {body}
+        </div>
       </main>
       {/* The dots' row keeps its height on the screens without dots, so the area above it keeps its height too. */}
       <div className="relative z-20 flex h-[38px] shrink-0 flex-col justify-end" data-new-run-dots-row="">
         {dots ? <StepDots dots={dots} onGo={goDot} /> : null}
+        {moreBelow ? (
+          <div className="pointer-events-none absolute bottom-[3px] left-16 flex w-[min(600px,calc(100%-128px))] justify-end">
+            <button
+              type="button"
+              className={cn(GLASS_CHIP, "pointer-events-auto h-8 gap-1 px-3 text-[13.5px]")}
+              onClick={() => {
+                const main = mainRef.current;
+                if (!main) return;
+                const reduce = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+                main.scrollBy({ top: Math.max(120, main.clientHeight * 0.6), behavior: reduce ? "auto" : "smooth" });
+              }}
+              data-new-run-more-below=""
+            >
+              More below
+              <ChevronDownIcon aria-hidden className="size-3.5" />
+            </button>
+          </div>
+        ) : null}
       </div>
       <AddComputerSheet
         open={addOpen}

@@ -261,6 +261,7 @@ pub fn row_to_space(row: &SpaceRow, now: i64) -> Space {
         cloud_delete: text(&row.cloud).and(text(&row.cloud_delete)),
         access: Some(access),
         hidden: row.hidden,
+        parent: row.parent.clone(),
     }
 }
 
@@ -565,20 +566,20 @@ pub struct ListView {
     /// not empty yet (an app update restarting the daemon must not show it).
     pub empty: bool,
     /// One quiet line where the Spaces go while the list is not complete
-    /// ("Reaching 6 machines…"), below what is known so far.
+    /// ("Reaching 6 computers…"), below what is known so far.
     pub reaching_line: Option<String>,
 }
 
-/// The Spaces page's empty state and "Reaching N machines…" line, for
+/// The Spaces page's empty state and "Reaching N computers…" line, for
 /// every shell.
 pub fn list_view(input: ListViewInput) -> ListView {
     let reaching_line = if !input.loaded {
         Some("Loading Spaces…".to_string())
     } else if input.incomplete {
         Some(match input.reaching {
-            0 => "Reaching your machines…".to_string(),
-            1 => "Reaching 1 machine…".to_string(),
-            n => format!("Reaching {n} machines…"),
+            0 => "Reaching your computers…".to_string(),
+            1 => "Reaching 1 computer…".to_string(),
+            n => format!("Reaching {n} computers…"),
         })
     } else {
         None
@@ -616,16 +617,16 @@ mod tests {
             v(true, true, 6, 0),
             ListView {
                 empty: false,
-                reaching_line: Some("Reaching 6 machines…".into())
+                reaching_line: Some("Reaching 6 computers…".into())
             }
         );
         assert_eq!(
             v(true, true, 1, 2).reaching_line.as_deref(),
-            Some("Reaching 1 machine…")
+            Some("Reaching 1 computer…")
         );
         assert_eq!(
             v(true, true, 0, 0).reaching_line.as_deref(),
-            Some("Reaching your machines…")
+            Some("Reaching your computers…")
         );
         assert!(!v(true, true, 3, 0).empty);
         // Complete: empty only with no Space, and no line.
@@ -642,6 +643,7 @@ mod tests {
     fn row() -> SpaceRow {
         SpaceRow {
             hidden: false,
+            parent: None,
             id: "space://direct/10.0.0.5:3211".into(),
             name: "brave-otter".into(),
             display_name: None,
@@ -911,6 +913,7 @@ mod tests {
     fn mru_puts_the_most_recent_first() {
         let mk = |id: &str, t: i64| Space {
             hidden: false,
+            parent: None,
             id: id.into(),
             name: id.into(),
             os: SpaceOs::Linux,

@@ -952,7 +952,87 @@ mod imp {
     }
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+/// Windows: the host's memory (`GlobalMemoryStatusEx`) and a VM process's private
+/// bytes (`GetProcessMemoryInfo`), so admission and warm pools can see them.
+#[cfg(windows)]
+mod imp {
+    use super::{HostMemory, Pressure};
+    use std::path::Path;
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::ProcessStatus::{
+        GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS_EX,
+    };
+    use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+
+    pub fn process_private_bytes(pid: u32) -> Option<u64> {
+        unsafe {
+            let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if h.is_null() {
+                return None;
+            }
+            let mut c: PROCESS_MEMORY_COUNTERS_EX = std::mem::zeroed();
+            c.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32;
+            let ok =
+                GetProcessMemoryInfo(h, (&mut c as *mut PROCESS_MEMORY_COUNTERS_EX).cast(), c.cb);
+            CloseHandle(h);
+            (ok != 0).then_some(c.PrivateUsage as u64)
+        }
+    }
+
+    pub fn file_resident_bytes(_: &Path) -> Option<u64> {
+        None
+    }
+
+    pub fn host_memory() -> Option<HostMemory> {
+        let m = host_memory_of(unsafe {
+            let mut s: MEMORYSTATUSEX = std::mem::zeroed();
+            s.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+            if GlobalMemoryStatusEx(&mut s) == 0 {
+                return None;
+            }
+            (s.ullTotalPhys >> 20, s.ullAvailPhys >> 20)
+        });
+        Some(m)
+    }
+
+    /// [`HostMemory`] from `(total, available)` MiB: less than 15% available
+    /// is a warning, less than 7% critical.
+    pub fn host_memory_of((total_mb, available_mb): (u64, u64)) -> HostMemory {
+        let pct = available_mb.saturating_mul(100) / total_mb.max(1);
+        HostMemory {
+            total_mb,
+            available_mb,
+            compressed_mb: 0,
+            pressure: if pct < 7 {
+                Pressure::Critical
+            } else if pct < 15 {
+                Pressure::Warn
+            } else {
+                Pressure::Normal
+            },
+        }
+    }
+
+    pub fn hypervisor_slots() -> Option<super::HypervisorSlots> {
+        None
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn windows_memory_pressure_follows_what_is_left() {
+            assert_eq!(host_memory_of((16_000, 8_000)).pressure, Pressure::Normal);
+            assert_eq!(host_memory_of((16_000, 1_900)).pressure, Pressure::Warn);
+            assert_eq!(host_memory_of((16_000, 800)).pressure, Pressure::Critical);
+            assert!(host_memory().is_some_and(|m| m.total_mb > 0));
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 mod imp {
     use super::HostMemory;
     use std::path::Path;

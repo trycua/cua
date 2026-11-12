@@ -65,7 +65,14 @@ describe("Add an agent", () => {
     // Share with a person leads back to Share, where the page can share (once the Space's Share is read).
     await waitFor(() => expect(qa("[data-add-row]").map((r) => r.dataset.addRow)).toEqual(["start", "connect", "share"]));
     expect(q("[data-add-row='share']")?.textContent).toContain("Share with a person");
-    expect(qa("[data-add-agent-marks] [data-harness-mark]").map((m) => m.dataset.harnessMark)).toEqual(["hermes", "claude-code", "codex", "cursor", "openclaw", "t3code"]);
+    expect(qa("[data-add-agent-marks] [data-harness-mark]").map((m) => m.dataset.harnessMark)).toEqual([
+      "hermes",
+      "claude-code",
+      "codex",
+      "cursor",
+      "openclaw",
+      "t3code",
+    ]);
   });
 
   it("Start an agent here: Hermes, Claude Code, Codex, then OpenClaw; a free name; it joins asleep", async () => {
@@ -83,6 +90,33 @@ describe("Add an agent", () => {
     expect(row.dataset.memberStatus).toBe("asleep");
     expect(row.querySelector("[data-owner-badge]")?.getAttribute("data-owner-badge")).toBe("acct_ada");
     await found("[data-member-note='joined'][data-member-handle='openclaw']");
+  });
+
+  // Regression (first run): Start succeeded on a new account, and the first task failed with "Hermes
+  // needs a connected provider". The sheet says so before Start, in the core's words; with a key it says nothing.
+  it("says before Start that the agent needs a provider when none is connected", async () => {
+    await app({ joinRedeemMs: null, keys: "none" });
+    await openSheet("start");
+    const note = (await found("[data-start-needs-key]")).textContent ?? "";
+    expect(note).toMatch(/^Hermes Agent needs .* to work here\./);
+    cleanup();
+    await app({ joinRedeemMs: null, keys: "several" });
+    await openSheet("start");
+    await found("[data-start-harness='hermes']");
+    await new Promise((r) => setTimeout(r, 200));
+    expect(q("[data-start-needs-key]")).toBeNull();
+    // Keys not read yet: nothing said, rather than a guess.
+    cleanup();
+    await mountApp(path, {
+      failsCreates: false,
+      listsGhost: false,
+      demo: { joinRedeemMs: null, keys: "none" },
+      intercept: (op) => (op === "agentKeys.list" ? new Promise(() => {}) : undefined),
+    });
+    await openSheet("start");
+    await found("[data-start-harness='hermes']");
+    await new Promise((r) => setTimeout(r, 200));
+    expect(q("[data-start-needs-key]")).toBeNull();
   });
 
   it("Start refuses a name that is taken, in one line", async () => {
@@ -196,7 +230,17 @@ describe("the sheet, reused with a Space picker", () => {
     const demo = createDemoAdapter({ latencyMs: 0, stepMs: 0 });
     render(
       <BridgeProvider adapter={demo} core={await testCore()}>
-        <AddAgentSheet open onOpenChange={() => {}} space={{ id: "a", name: "ubuntu-build" }} spaces={[{ id: "a", name: "ubuntu-build" }, { id: "b", name: "design-review" }]} onSpaceChange={() => {}} role="owner" />
+        <AddAgentSheet
+          open
+          onOpenChange={() => {}}
+          space={{ id: "a", name: "ubuntu-build" }}
+          spaces={[
+            { id: "a", name: "ubuntu-build" },
+            { id: "b", name: "design-review" },
+          ]}
+          onSpaceChange={() => {}}
+          role="owner"
+        />
       </BridgeProvider>,
     );
     await found("[data-add-agent='pick']");

@@ -18,6 +18,7 @@ import { BridgeProvider, useBridge, useMachines, useSpaces, type SpacesHook } fr
 import { testCore } from "@/bridge/__tests__/testCore";
 import { ToastProvider } from "@/components/ui/toast";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { holdWarmStart } from "@/lib/prepare/store";
 import { routeTree } from "../routeTree.gen";
 
 export const LOCAL_NETWORK = "Local Network access is not available: cua cannot reach the VM at 192.168.64.45:3211 (No route to host (os error 65))";
@@ -28,7 +29,16 @@ export const GHOST_ID = "relay:mac-mini/space-46e0d8654707222d";
 /** jsdom has no matchMedia (the theme reads it) or ResizeObserver (the tiles' video slots). */
 export function stubBrowserApis(): void {
   beforeEach(() => {
-    window.matchMedia ??= ((query: string) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, dispatchEvent: () => false, onchange: null })) as unknown as typeof window.matchMedia;
+    window.matchMedia ??= ((query: string) => ({
+      matches: false,
+      media: query,
+      addEventListener() {},
+      removeEventListener() {},
+      addListener() {},
+      removeListener() {},
+      dispatchEvent: () => false,
+      onchange: null,
+    })) as unknown as typeof window.matchMedia;
     globalThis.ResizeObserver ??= class {
       observe() {}
       unobserve() {}
@@ -80,6 +90,10 @@ beforeAll(async () => {
  * throws `window is not defined`. Each test waits for them to go idle first. */
 const mounted: Array<{ state: { isLoading: boolean } }> = [];
 
+/** The warm home (Warm start) makes a Space of its own once the first run is over; a test that does not look at it holds it
+ * back (its own `beforeEach`, which runs after this one, lets it go). */
+beforeEach(() => holdWarmStart(true));
+
 afterEach(async () => {
   const routers = mounted.splice(0);
   const deadline = Date.now() + 3000;
@@ -113,7 +127,17 @@ export async function mountApp(path: string, host: TestHost = { failsCreates: tr
       if (own !== undefined) return own;
       const out = host.answer ? host.answer(op, await demo.call(op as never, args)) : await demo.call(op as never, args);
       if (op !== "spaces.list" || !host.listsGhost) return out;
-      const ghost = { id: GHOST_ID, name: NAME, provider: "relay", spacesdVersion: "", features: [], reachable: false, host: "mac-mini", hostName: "Mac mini", addedAt: new Date(Date.now() + 9_000).toISOString() };
+      const ghost = {
+        id: GHOST_ID,
+        name: NAME,
+        provider: "relay",
+        spacesdVersion: "",
+        features: [],
+        reachable: false,
+        host: "mac-mini",
+        hostName: "Mac mini",
+        addedAt: new Date(Date.now() + 9_000).toISOString(),
+      };
       return [...(out as unknown[]), ghost];
     }) as DataAdapter["call"],
   };
@@ -155,6 +179,15 @@ export async function mountApp(path: string, host: TestHost = { failsCreates: tr
  * Home's box starts on This Mac once it's in the account (5 Nov 2026). A test about a job that makes
  * a new Space picks that first, as a person would.
  */
+/** The where picker's new Linux Space row (its title is just "Linux", under "New Space on this Mac"). */
+export async function newLinuxRow(): Promise<HTMLElement> {
+  return waitFor(() => {
+    const row = screen.getAllByRole("menuitem").find((e) => e.textContent?.startsWith("LinuxGood for code"));
+    if (!row) throw new Error("no new Linux row yet");
+    return row;
+  });
+}
+
 export async function pickNewLinux(): Promise<void> {
   const trigger = await waitFor(() => {
     const el = document.querySelector<HTMLElement>('[data-picker="where"]');
@@ -164,7 +197,7 @@ export async function pickNewLinux(): Promise<void> {
   await act(async () => {
     fireEvent.click(trigger);
   });
-  const item = await screen.findByRole("menuitem", { name: /A new Linux computer on/ });
+  const item = await newLinuxRow();
   await act(async () => {
     fireEvent.click(item);
   });

@@ -47,10 +47,12 @@ struct WebUIHostTests {
     }
 
     @Test func coreRecordsEncodeAsPlainValues() {
-        let x = AppExperiments(cuaVolume: true, secureSpaces: false, childSpaces: false, askFirst: false, ciRunners: false, tcpShares: false, mobile: false, warmPools: false)
+        let x = AppExperiments(cuaVolume: true, ciRunners: false, tcpShares: false, mobile: false)
         let v = BridgeValue.encode(x) as? [String: Any]
         #expect(v?["cuaVolume"] as? Bool == true)
-        #expect(v?["secureSpaces"] as? Bool == false)
+        #expect(v?["ciRunners"] as? Bool == false)
+        // Secure Spaces and Ask first are always on: they have no switch to send.
+        for gone in ["secureSpaces", "askFirst"] { #expect(v?[gone] == nil, "\(gone)") }
         #expect(BridgeValue.encode(Optional<String>.none) is NSNull)
         #expect(BridgeValue.encode([1, 2]) as? [Int] == [1, 2])
         #expect(BridgeValue.encode(AppSignInPhase.idle) as? String == "idle")
@@ -384,6 +386,27 @@ struct WebUIHostTests {
         #expect(removed?.first { $0["agent"] as? String == "claude-code" }?["configured"] as? Bool == false)
     }
 
+    /// Setup's checklist (CUA-4067): `agents.connect` answers one result per
+    /// part, and runs one part on its own for a row's Retry. `driver` adds the
+    /// Cua Driver this app carries; a build without one (this test's) writes
+    /// none and answers no driver part rather than a failure.
+    @Test func connectAnswersEachPartAndRunsOneAlone() async throws {
+        let setup = FixtureAgentSetup()
+        let (bridge, _) = bridge(agentSetup: setup)
+        let all = try await bridge.handle("agents.connect", ["agents": ["claude-code"], "signIn": true]) as? [[String: Any]]
+        let parts = (all?.first?["parts"] as? [[String: Any]])?.compactMap { $0["part"] as? String }
+        #expect(parts == ["skills", "mcp", "sign_in"])
+        let mcpOnly = try await bridge.handle("agents.connect", ["agents": ["claude-code"], "signIn": false, "skills": false, "mcp": true])
+            as? [[String: Any]]
+        let mcp = (mcpOnly?.first?["parts"] as? [[String: Any]]) ?? []
+        #expect(mcp.compactMap { $0["part"] as? String } == ["mcp"])
+        #expect(mcp.first?["where"] as? String == "~/.claude.json")
+        let driverOnly = try await bridge.handle("agents.connect", ["agents": ["claude-code"], "signIn": false, "skills": false,
+                                                                    "mcp": false, "driver": true]) as? [[String: Any]]
+        #expect((driverOnly?.first?["parts"] as? [[String: Any]])?.isEmpty == true)
+        #expect(setup.lastDriver == nil)
+    }
+
     /// The page opens one notification and marks just that one read; the
     /// list carries the Space each entry is about (its Open Space).
     @Test func oneNotificationIsMarkedReadAndCarriesItsSpace() async throws {
@@ -445,6 +468,18 @@ struct WebUIHostTests {
         let (bridge, _) = bridge()
         let s = try await bridge.handle("settings.get", [:]) as? [String: Any]
         #expect(s?["accountUrl"] as? String == appAccountAppUrl())
+    }
+
+    /// Settings carry the channel and environment the app resolved, for the
+    /// title bar's "Local · Staging" tag.
+    @Test func settingsNameTheTarget() async throws {
+        let (bridge, _) = bridge()
+        let s = try await bridge.handle("settings.get", [:]) as? [String: Any]
+        let target = s?["target"] as? [String: Any]
+        let expected = appTarget()
+        #expect(target?["channel"] as? String == expected.channel)
+        #expect(target?["env"] as? String == expected.env)
+        #expect(target?["authHost"] as? String == expected.authHost)
     }
 
     /// Settings, Advanced's rows come with the page's first `settings.get`,

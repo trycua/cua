@@ -14,7 +14,10 @@ export function Bar({ fill, tone, className }: { fill: number; tone?: Meter["ton
     <div className={cn("h-1 overflow-hidden rounded-full bg-foreground/10", className)}>
       <div
         data-bar-fill={Math.round(fill * 100)}
-        className={cn("h-full rounded-full transition-[width] duration-500 ease-out", tone === "critical" ? "bg-destructive" : tone === "warning" ? "bg-warning" : "bg-brand-strong")}
+        className={cn(
+          "h-full rounded-full transition-[width] duration-500 ease-out",
+          tone === "critical" ? "bg-destructive" : tone === "warning" ? "bg-warning" : "bg-brand-strong",
+        )}
         style={{ width: `${Math.max(fill > 0 ? 2 : 0, fill * 100)}%` }}
       />
     </div>
@@ -53,23 +56,27 @@ export function CompactMeters({ meters, className }: { meters: Meter[]; classNam
  * the Cua key and "See what's using space" (the Spaces list, biggest
  * first). `compact` drops the second line, for inside a panel.
  */
-export function LowDiskWarning({ warning, compact = false, className }: { warning: { level: "low" | "critical"; title: string; detail: string }; compact?: boolean; className?: string }) {
+export function LowDiskWarning({
+  warning,
+  compact = false,
+  className,
+}: {
+  warning: { level: "low" | "critical"; title: string; detail: string };
+  compact?: boolean;
+  className?: string;
+}) {
   return (
     <div
       role="status"
       data-low-disk={warning.level}
-      className={cn(
-        "flex items-center gap-3 px-4 py-3",
-        warning.level === "critical" ? "bg-destructive/10" : "bg-warning/15",
-        className,
-      )}
+      className={cn("flex items-center gap-3 px-4 py-3", warning.level === "critical" ? "bg-destructive/10" : "bg-warning/15", className)}
     >
       <CuaKey size={24} />
       <div className="min-w-0 flex-1">
         <p className="text-[13px] font-semibold">{warning.title}</p>
         {compact ? null : <p className="mt-0.5 text-xs text-muted-foreground">{warning.detail}</p>}
       </div>
-      <Button size="sm" variant="secondary" data-see-space-use="" render={<Link to="/spaces" search={{ sort: "size" }} />}>
+      <Button size="sm" variant="secondary" data-see-space-use="" render={<Link to="/spaces" />}>
         See what’s using space
       </Button>
     </div>

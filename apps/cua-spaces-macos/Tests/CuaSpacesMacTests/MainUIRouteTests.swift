@@ -21,7 +21,7 @@ struct MainUIRouteTests {
                          onboarding: OnboardingModel(statePath: dir.appendingPathComponent("onboarding.json").path),
                          settingsPath: dir.appendingPathComponent("settings.json").path,
                          telemetry: FixtureTelemetry())
-        m.settings.experiments = AppExperiments(cuaVolume: true, secureSpaces: false, childSpaces: false, askFirst: false, ciRunners: false, tcpShares: false, mobile: false, warmPools: false)
+        m.settings.experiments = AppExperiments(cuaVolume: true, ciRunners: false, tcpShares: false, mobile: false)
         return m
     }
 
@@ -69,7 +69,7 @@ struct MainUIRouteTests {
     @Test func aNotificationOpensItsPage() {
         let ready = SpaceReadyNote.identifierPrefix + "local:aurora"
         #expect(MainUIRouter.route(forNotification: ready) == .space("local:aurora"))
-        #expect(MainUIRouter.route(forNotification: "device-abc").webPath == "/machines")
+        #expect(MainUIRouter.route(forNotification: "device-abc") == .home)
         #expect(MainUIRouter.route(forNotification: "agent-42") == .agents)
         #expect(MainUIRouter.route(forNotification: "other") == .home)
     }
@@ -151,7 +151,7 @@ struct MainUIRouteTests {
 
     @Test func theViewMenusPagesHaveTheirRoutes() {
         #expect(MainUIRouter.route(forNav: "nav.spaces") == .home)
-        #expect(MainUIRouter.route(forNav: "nav.machines")?.webPath == "/machines")
+        #expect(MainUIRouter.route(forNav: "nav.machines") == nil)
         #expect(MainUIRouter.route(forNav: "nav.agents")?.webPath == "/agents")
         #expect(MainUIRouter.route(forNav: "nav.keyvault")?.webPath == "/keyvault")
         #expect(MainUIRouter.route(forNav: "nav.settings") == .settings)

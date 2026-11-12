@@ -20,8 +20,8 @@ use super::impl_::{
     position_named_session_keyboard_cursor, prove_token_element, resolve_cursor_key,
     resolve_element_local_coords, spawn_blocking_bounded, stale_observed_element,
     unavailable_chromium_background, unavailable_gtk_keyboard_background,
-    unavailable_wayland_focused_input_background, unavailable_webkit_keyboard_background,
-    wm_chord_background, KeyRoute, ToolState,
+    unavailable_qt_shortcut_background, unavailable_wayland_focused_input_background,
+    unavailable_webkit_keyboard_background, wm_chord_background, KeyRoute, ToolState,
 };
 
 // ── hotkey ────────────────────────────────────────────────────────────────────
@@ -84,7 +84,7 @@ impl Tool for HotkeyTool {
             let display = keys.join("+");
             position_named_session_keyboard_cursor(&self.state, &args, 0, 0, None, None, false)
                 .await;
-            let wayland = crate::wayland::wayland_input_enabled();
+            let wayland = crate::wayland::is_wayland();
             let path = if wayland { "wayland_focused" } else { "xtest" };
             let result =
                 spawn_blocking_bounded("desktop hotkey", foreground_budget(1), move || {
@@ -257,6 +257,9 @@ impl Tool for HotkeyTool {
         if let Some(result) = wm_chord_background(pid, xid, &key, &mods, delivery).await {
             return result;
         }
+        if let Some(refusal) = unavailable_qt_shortcut_background(pid, xid, &mods, delivery) {
+            return refusal;
+        }
 
         let px = args.get("x").and_then(|value| value.as_f64());
         let py = args.get("y").and_then(|value| value.as_f64());
@@ -349,10 +352,7 @@ impl Tool for HotkeyTool {
         // Chromium renderer shortcuts need DOM focus established by a real
         // pointer event. Component.GrabFocus alone can report success while
         // the renderer still drops the virtual-keyboard chord.
-        if delivery.is_foreground()
-            && crate::wayland::wayland_input_enabled()
-            && is_chromium_embedder(pid)
-        {
+        if delivery.is_foreground() && crate::wayland::is_wayland() && is_chromium_embedder(pid) {
             if let Some(element) = token.clone() {
                 let coordinates = tokio::task::spawn_blocking(move || {
                     resolve_element_local_coords(pid, &element, Some(xid))
@@ -424,13 +424,19 @@ impl Tool for HotkeyTool {
             "hotkey",
             foreground_budget(1),
             move || -> anyhow::Result<KeyRoute> {
-                if crate::wayland::wayland_input_enabled() {
-                    // Native Wayland: route the modifier combo through wtype's
-                    // -M/-k/-m sequence — the closest equivalent to the X11
-                    // state-mask path. window_id is irrelevant once focused.
+                if crate::wayland::is_wayland() {
+                    // Native Wayland: focus the exact target, send the chord to
+                    // the focused surface, and give the focus back, as
+                    // press_key does.
                     let mut combo: Vec<String> = mods_for_wayland.clone();
                     combo.push(key_for_wayland.clone());
-                    return crate::wayland::hotkey(xid, &combo).map(|()| KeyRoute::Synthetic);
+                    return crate::interaction::with_target_foreground(
+                        pid,
+                        xid,
+                        crate::interaction::session_policy().key,
+                        || crate::wayland::hotkey_focused(&combo),
+                    )
+                    .map(|()| KeyRoute::Synthetic);
                 }
                 let m: Vec<&str> = mods.iter().map(String::as_str).collect();
                 // foreground: activate the target first, then inject the accelerator
@@ -441,7 +447,7 @@ impl Tool for HotkeyTool {
                     return crate::interaction::with_x11_foreground(
                         xid,
                         crate::input::ForegroundOptions::keyboard(),
-                        crate::interaction::RestoreMode::LeaveFocused,
+                        crate::interaction::session_policy().key,
                         || crate::input::send_key_xtest(&key, &m),
                     )
                     .map(|((), report)| KeyRoute::Foreground(report));

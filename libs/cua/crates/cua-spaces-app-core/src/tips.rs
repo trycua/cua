@@ -13,7 +13,7 @@
 //! | `power`       | Spaces page               | a stopped Space                           | none            | powering from a tile, Next tip, ×         |
 //! | `bulk-select` | Spaces page               | 3+ deletable stopped and a nearly full disk | Select stopped | a bulk delete, Next tip, ×                |
 //! | `share`       | Space page                | a running Space's page                    | Share…          | sharing any Space, Next tip, ×            |
-//! | `on-auto`     | sidebar                   | a second computer is online               | Copy (command)  | ×                                         |
+//! | `on-auto`     | (none: retired, the flag is in the CLI docs) |                                        |                 |                                           |
 //!
 //! The `try-agent` request names your own agent: the first connected of
 //! Hermes, Claude Code, Codex and Cursor (in that order, never Claude
@@ -339,23 +339,9 @@ pub fn view(place: TipPlace, facts: &TipFacts, state: &TipsState) -> Option<Tip>
             }
             None
         }
-        TipPlace::Sidebar => {
-            if facts.page_tip_shown || !facts.second_computer_online || !open("on-auto") {
-                return None;
-            }
-            let mut t = tip(
-                "on-auto",
-                place,
-                "New Spaces can go to whichever machine has room.".into(),
-                action(
-                    TipActionKind::CopyCommand,
-                    "Copy",
-                    Some(ON_AUTO_COMMAND.into()),
-                ),
-            );
-            t.code = Some(ON_AUTO_COMMAND.into());
-            Some(t)
-        }
+        // The sidebar's only tip was a CLI flag (`cua create --on auto`) with no
+        // matching control in the app: it lives in the CLI docs now.
+        TipPlace::Sidebar => None,
     }
 }
 
@@ -605,14 +591,8 @@ mod tests {
             second_computer_online: true,
             ..Default::default()
         };
-        let t = view(TipPlace::Sidebar, &f, &TipsState::default()).unwrap();
-        assert_eq!(t.id, "on-auto");
-        assert_eq!(t.text, "New Spaces can go to whichever machine has room.");
-        assert_eq!(t.code.as_deref(), Some("cua create --on auto"));
-        assert_eq!(t.action.kind, TipActionKind::CopyCommand);
-        assert_eq!(t.action.value.as_deref(), Some("cua create --on auto"));
-        assert_eq!(t.next, None);
-        assert_eq!(t.dont_show, None);
+        // No sidebar tip any more: the CLI flag it named is in the docs.
+        assert_eq!(view(TipPlace::Sidebar, &f, &TipsState::default()), None);
         let busy = TipFacts {
             page_tip_shown: true,
             ..f.clone()

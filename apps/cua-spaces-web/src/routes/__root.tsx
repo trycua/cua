@@ -21,6 +21,7 @@ import { ThisMacNudges } from "@/components/this-mac-nudges";
 import { useGlobalKeybindings } from "@/hooks/use-global-keybindings";
 import { useAgentSync } from "@/hooks/use-connected-apps";
 import { useNotificationToasts } from "@/hooks/use-notification-toasts";
+import { useStreamIntent } from "@/hooks/use-stream-intent";
 import { useThemeHostSync, useThemeSync } from "@/lib/theme";
 import { PrepareRoot } from "@/lib/prepare/use-prepare";
 import { useUiStore } from "@/stores/ui";
@@ -51,6 +52,7 @@ function RootBody() {
   useGlobalKeybindings();
   useFirstRun();
   useNotificationToasts();
+  useStreamIntent();
   useAgentSync();
   const sidebarOpen = useUiStore((s) => s.sidebarOpen);
   const { pathname } = useLocation();

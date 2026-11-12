@@ -387,6 +387,17 @@ pub fn element_showing_observed(element: &cache::CachedElement) -> Result<bool> 
     native::element_showing_ref(object_ref)
 }
 
+/// Whether the exact object a snapshot observed is enabled right now. `None`
+/// when it exposes no state set. Never re-walks.
+pub fn element_enabled_observed(element: &cache::CachedElement) -> Result<Option<bool>> {
+    let Some(object_ref) = element.object_ref.as_ref() else {
+        return Err(
+            native::CachedElementGone("observed element has no D-Bus address".into()).into(),
+        );
+    };
+    native::element_enabled_ref(object_ref)
+}
+
 /// Give an indexed AT-SPI element keyboard focus without activating its window.
 pub fn focus_element(pid: u32, idx: usize) -> Result<bool> {
     if let Some(observed) = cache::cached_element(pid, None, idx) {
@@ -470,7 +481,9 @@ pub fn perform_action_at_point_in(
                 if skip_focus_roles && is_focus_taking_role(&element.role) {
                     return Ok(None);
                 }
-                if native::is_container_role(&element.role) {
+                if native::is_container_role(&element.role)
+                    || native::is_web_document_role(&element.role)
+                {
                     // The cached snapshot's smallest covering element is a
                     // container (list / icon view / pane): its activation
                     // opens the current selection, not the item under the
@@ -541,12 +554,18 @@ fn select_option(object_ref: &native::ObjectRef, value: &str) -> Option<Result<(
     match native::select_option_ref(object_ref, value) {
         Ok(native::OptionPick::Picked { .. }) => Some(Ok(())),
         Ok(native::OptionPick::NoMatch { options }) => Some(Err(no_such_option(value, &options))),
-        Ok(native::OptionPick::Unavailable) => None,
+        Ok(native::OptionPick::NoOptions | native::OptionPick::Unavailable) => None,
         Err(error) => Some(Err(error)),
     }
 }
 
-fn no_such_option(value: &str, options: &[String]) -> anyhow::Error {
+pub(crate) fn no_such_option(value: &str, options: &[String]) -> anyhow::Error {
+    if options.is_empty() {
+        return anyhow::anyhow!(
+            "{}: no option {value:?}; it lists no options",
+            native::NO_SUCH_OPTION
+        );
+    }
     anyhow::anyhow!(
         "{}: no option {value:?}; options: {options:?}",
         native::NO_SUCH_OPTION
@@ -719,13 +738,9 @@ pub fn set_value_token(pid: u32, token: &TokenElement, value: &str) -> Result<()
 }
 
 /// The open popup of the token's combo box: activate the option `value`
-/// names. `Ok(None)` when the popup lists no options yet.
-pub fn activate_option_token(token: &TokenElement, value: &str) -> Result<Option<String>> {
-    match native::activate_option_ref(token.object()?, value)? {
-        native::OptionPick::Picked { name } => Ok(Some(name)),
-        native::OptionPick::NoMatch { options } => Err(no_such_option(value, &options)),
-        native::OptionPick::Unavailable => Ok(None),
-    }
+/// names.
+pub fn activate_option_token(token: &TokenElement, value: &str) -> Result<native::OptionPick> {
+    native::activate_option_ref(token.object()?, value)
 }
 
 /// Whether the popup of the token's combo box is open.
@@ -1059,6 +1074,7 @@ mod token_dispatch_tests {
                     path: path.into(),
                 }),
                 role: "text".into(),
+                disabled: false,
                 in_web_content: false,
                 bounds: None,
             },
@@ -1161,7 +1177,25 @@ mod bridge_disabled_reason_tests {
                 .stderr(Stdio::null())
                 .spawn()
                 .expect("spawn sleep");
-            Self(child)
+            // Built before polling so a timed-out wait still kills and reaps the child.
+            let sleeper = Self(child);
+            // `spawn` can return before the kernel has finished the child's exec,
+            // and until then its environ doesn't hold what it was given.
+            let expected = format!("NO_AT_BRIDGE={value}").into_bytes();
+            let environ = format!("/proc/{}/environ", sleeper.0.id());
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while !std::fs::read(&environ)
+                .unwrap_or_default()
+                .split(|&byte| byte == 0)
+                .any(|entry| entry == expected.as_slice())
+            {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "sleep never finished exec"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            sleeper
         }
     }
 

@@ -369,6 +369,9 @@ pub struct AppSpace {
     /// [`crate::spaces::openable_spaces`]). Its own page still opens. The
     /// SDK and `cua spaces ls` still return it, marked.
     pub hidden: bool,
+    /// The Space it is a child of (its id): the Spaces page nests it under that Space. Absent for a
+    /// top-level Space.
+    pub parent: Option<String>,
 }
 
 /// One row of the SDK's `list_spaces`.
@@ -436,6 +439,8 @@ pub struct AppSpaceRow {
     pub stop_reason: Option<String>,
     /// A relay Space: who owns it and who else has it.
     pub sharing: Option<AppSpaceSharingFacts>,
+    /// The Space it is a child of (its id), as the daemon records the tree; absent for a top-level Space.
+    pub parent: Option<String>,
 }
 
 /// Where new Spaces can be created.
@@ -541,7 +546,7 @@ pub struct AppListView {
     /// not empty yet (an app update restarting the daemon must not show it).
     pub empty: bool,
     /// One quiet line where the Spaces go while the list is not complete
-    /// ("Reaching 6 machines…"), below what is known so far.
+    /// ("Reaching 6 computers…"), below what is known so far.
     pub reaching_line: Option<String>,
 }
 
@@ -691,6 +696,8 @@ pub struct AppPendingCreate {
     pub host: Option<String>,
     /// That machine's name, for the row and for a failure that names it.
     pub host_name: Option<String>,
+    /// The Space it is a child of (an agent made it): the row nests under it.
+    pub parent: Option<String>,
     /// How many times the app ran this create again by itself: 0, or 1
     /// after a failure that usually passes ([`fail_decision`]).
     pub attempt: u32,
@@ -798,6 +805,8 @@ pub enum AppCreateAction {
         host: Option<String>,
         /// That machine's name.
         host_name: Option<String>,
+        /// The Space it is a child of (an agent made it): its id.
+        parent: Option<String>,
     },
     /// The SDK reported progress.
     Progress {
@@ -1402,6 +1411,18 @@ pub struct AppStreamRowAction {
     pub active: bool,
 }
 
+/// The Space a window row comes from.
+pub type AppStreamRowOrigin = core::spaces::stream::StreamRowOrigin;
+#[uniffi::remote(Record)]
+pub struct AppStreamRowOrigin {
+    /// The origin Space's id.
+    pub space_id: String,
+    /// Its name.
+    pub name: String,
+    /// Its OS mark (`os-macos`, ...): the core's artwork (`notch.osIconSvg`).
+    pub os_icon: String,
+}
+
 /// One row of the Stream section: one line.
 pub type AppStreamRow = core::spaces::stream::StreamRow;
 #[uniffi::remote(Record)]
@@ -1418,6 +1439,10 @@ pub struct AppStreamRow {
     pub resolution: Option<String>,
     /// The icon.
     pub icon: AppStreamRowIcon,
+    /// For a window another Space shows here: the Space it lives in, drawn
+    /// as its OS mark and name beside the label. Absent on a Space's own
+    /// rows (older shells ignore it).
+    pub origin: Option<AppStreamRowOrigin>,
     /// Icon buttons, in order.
     pub actions: Vec<AppStreamRowAction>,
 }
@@ -2278,6 +2303,18 @@ pub struct AppOpenApp {
     pub supported: bool,
 }
 
+/// Where a shown window lives.
+pub type AppRemoteWindowOrigin = core::teleport::windows::RemoteWindowOrigin;
+#[uniffi::remote(Record)]
+pub struct AppRemoteWindowOrigin {
+    /// The origin Space's id.
+    pub space_id: String,
+    /// Its name.
+    pub name: String,
+    /// Its OS (`macos`, `linux`, `windows`), when known.
+    pub os: String,
+}
+
 /// One of a Space's windows.
 pub type AppRemoteWindow = core::teleport::windows::RemoteWindow;
 #[uniffi::remote(Record)]
@@ -2301,6 +2338,9 @@ pub struct AppRemoteWindow {
     /// The owning process (what the SDK's `Space.app_icon` looks a macOS
     /// app up by), when the window list reports one.
     pub pid: Option<u32>,
+    /// The Space the picture comes from, when another Space shows this
+    /// window here (`stream_space_window`); absent on a Space's own windows.
+    pub origin: Option<AppRemoteWindowOrigin>,
 }
 
 /// One app's remote windows.
@@ -6999,17 +7039,6 @@ pub type AppExperiments = core::experiments::Experiments;
 pub struct AppExperiments {
     /// Cua Volume in the first run and Settings, Storage.
     pub cua_volume: bool,
-    /// Secure Spaces: a Space reaches the internet and nothing else on the
-    /// network unless it is opened. Off unless turned on; the daemon enforces
-    /// it (the switch is kept in the cua home).
-    pub secure_spaces: bool,
-    /// Child Spaces: a Space may make Spaces of its own. Off unless turned
-    /// on; the daemon enforces it (the switch is kept in the cua home).
-    pub child_spaces: bool,
-    /// Ask first: an agent asks on a card before something leaves its Space
-    /// (a push to GitHub). Off unless turned on; the daemon enforces it (the
-    /// switch is kept in the cua home).
-    pub ask_first: bool,
     /// CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
     /// and the CI Runners page). Off unless turned on; the daemon and the
     /// `cua` command enforce it (the switch is kept in the cua home).
@@ -7022,10 +7051,6 @@ pub struct AppExperiments {
     /// push events). Off unless turned on; the daemon enforces it (the switch
     /// is kept in the cua home).
     pub mobile: bool,
-    /// Warm pools: one Linux Space kept ready, with its coding apps
-    /// installed, so the next Create from Home starts at once. Off unless
-    /// turned on; the daemon enforces it (the switch is kept in the cua home).
-    pub warm_pools: bool,
 }
 
 /// A runtime the host found for one kind (the SDK's `RuntimeDetected`).
@@ -7195,6 +7220,13 @@ pub struct AppSettings {
     /// one is a connect, which shows its app again
     /// ([`crate::agent_menu::sync`]).
     pub agent_menu_seen: Vec<String>,
+    /// Settings, General, "When I close the window": closing the main
+    /// window leaves Cua Spaces and its background service running (on, the
+    /// default); off, it quits Cua Spaces, as Quit does.
+    pub close_window_keeps_running: bool,
+    /// "Don't show this again" on the notice that Cua Spaces keeps running
+    /// when the window closes, or the Settings switch turned off.
+    pub close_notice_off: bool,
 }
 
 /// A pressed key combination.
@@ -7310,6 +7342,13 @@ pub struct AppSettingsInput {
     /// Settings, General's Show tips switch: tips are on
     /// (`!AppSettings.tips.off`). A shell that does not say reads as on.
     pub show_tips: bool,
+    /// Settings, General's "When I close the window": the window's close
+    /// button keeps Cua Spaces running in the background (none: no rows; a
+    /// shell without a background service leaves them out).
+    pub close_window_keeps_running: Option<bool>,
+    /// The notice that Cua Spaces keeps running is on (shown with the row
+    /// above).
+    pub close_notice: bool,
 }
 
 /// How a Settings row draws.
@@ -7743,7 +7782,7 @@ pub struct AppHostSpacesAudit {
     pub detail: String,
 }
 
-/// The host's state as the "This machine" page reads it (the cua SDK's
+/// The host's state as the "This computer" page reads it (the cua SDK's
 /// `HostStatus`, flattened).
 pub type AppHostState = core::host::HostState;
 #[uniffi::remote(Record)]
@@ -7820,7 +7859,7 @@ pub struct AppHostState {
     pub account: Option<AppHostAccount>,
 }
 
-/// The account signed in to Cua in the app, as far as "This machine"
+/// The account signed in to Cua in the app, as far as "This computer"
 /// needs it.
 pub type AppHostAccount = core::host::HostAccount;
 #[uniffi::remote(Record)]
@@ -7846,7 +7885,7 @@ pub enum AppHostAccountStep {
     Resume,
 }
 
-/// What a "This machine" button does.
+/// What a "This computer" button does.
 pub type AppHostActionId = core::host::HostActionId;
 #[uniffi::remote(Enum)]
 pub enum AppHostActionId {
@@ -7941,7 +7980,7 @@ pub struct AppHostConfirm {
     pub cancel_label: String,
 }
 
-/// A "This machine" button.
+/// A "This computer" button.
 pub type AppHostAction = core::host::HostAction;
 #[uniffi::remote(Record)]
 pub struct AppHostAction {
@@ -7996,11 +8035,11 @@ pub struct AppHostSetupChoice {
     pub button_label: String,
 }
 
-/// The "This machine" page.
+/// The "This computer" page.
 pub type AppHostPanelView = core::host::HostPanelView;
 #[uniffi::remote(Record)]
 pub struct AppHostPanelView {
-    /// "This machine".
+    /// "This computer".
     pub title: String,
     /// One line: how it is shared, or that it is not.
     pub summary: String,
@@ -8181,7 +8220,7 @@ pub struct AppHostFormField {
 pub type AppHostFormView = core::host::HostFormView;
 #[uniffi::remote(Record)]
 pub struct AppHostFormView {
-    /// "Set up this machine".
+    /// "Set up this computer".
     pub title: String,
     /// One line: what setting up does.
     pub lede: String,
@@ -8451,7 +8490,7 @@ pub struct AppDevicesInput {
     pub enforce_after: Option<u64>,
     /// Machine ids to display names.
     pub machine_names: std::collections::HashMap<String, String>,
-    /// The account's relay machines, for the "New machine" confirm badge
+    /// The account's relay machines, for the "New computer" confirm badge
     /// (S5). Empty on a relay that predates it, or when this device cannot
     /// list them, same as `machine_names`.
     pub machines: Vec<AppMachineInput>,
@@ -10588,7 +10627,7 @@ pub type AppMachinesViewToggle = core::machines_view::MachinesViewToggle;
 pub struct AppMachinesViewToggle {
     /// `spaces` or `desktop`.
     pub id: String,
-    /// "Let other machines create Spaces here", "Let other machines control
+    /// "Let other computers create Spaces here", "Let other computers control
     /// this desktop".
     pub label: String,
     /// One line under it.
@@ -10622,7 +10661,7 @@ pub struct AppMachinesViewSpace {
     pub running: bool,
 }
 
-/// A machine's own desktop, listed first under "Spaces on this machine"
+/// A machine's own desktop, listed first under "Spaces on this computer"
 /// when it shares it, as any Space row (its name, system, status), with a
 /// quiet "Desktop" label. It is not one of the Spaces counted (the sidebar
 /// and the machine's line leave it out).
@@ -10729,7 +10768,8 @@ pub struct AppMachinesViewMachine {
     pub current: bool,
     /// Someone shares it with you (a team machine).
     pub team: bool,
-    /// The page's status line ("Online", "Offline").
+    /// The page's status line ("Online", "Offline"; "Online, 1 thing to
+    /// fix" when it has issues, so the words agree with the dot).
     pub status: String,
     /// After the status: who shares it ("Shared by your team").
     pub shared_by: Option<String>,
@@ -10749,7 +10789,7 @@ pub struct AppMachinesViewMachine {
     pub toggles: Vec<AppMachinesViewToggle>,
     /// Under read-only switches: where they change.
     pub toggles_note: Option<String>,
-    /// "Spaces on this machine".
+    /// "Spaces on this computer".
     pub spaces_title: String,
     /// The Spaces on it.
     pub spaces: Vec<AppMachinesViewSpace>,
@@ -10767,11 +10807,11 @@ pub struct AppMachinesViewMachine {
     pub remove: Option<AppMachinesViewRemove>,
 }
 
-/// "Remove old machines": every machine of the group that can go.
+/// "Remove old computers": every machine of the group that can go.
 pub type AppMachinesViewRemoveAll = core::machines_view::MachinesViewRemoveAll;
 #[uniffi::remote(Record)]
 pub struct AppMachinesViewRemoveAll {
-    /// "Remove old machines".
+    /// "Remove old computers".
     pub label: String,
     /// Asked first.
     pub confirm: AppHostConfirm,
@@ -10785,7 +10825,7 @@ pub type AppMachinesViewGroup = core::machines_view::MachinesViewGroup;
 pub struct AppMachinesViewGroup {
     /// `yours`, `old` or `team`.
     pub id: String,
-    /// "Your machines", "Offline for 30+ days (2)", "Team machines".
+    /// "Your computers", "Offline for 30+ days (2)", "Team computers".
     pub title: String,
     /// Collapsed until opened (the old machines).
     pub collapsed: bool,
@@ -10799,7 +10839,7 @@ pub struct AppMachinesViewGroup {
 pub type AppMachinesView = core::machines_view::MachinesView;
 #[uniffi::remote(Record)]
 pub struct AppMachinesView {
-    /// "3 machines, 2 online".
+    /// "3 computers, 2 online".
     pub summary: String,
     /// The list's groups (only those with machines).
     pub groups: Vec<AppMachinesViewGroup>,
@@ -10914,7 +10954,7 @@ pub type AppChecklistRow = core::checklist::ChecklistRow;
 pub struct AppChecklistRow {
     /// The step.
     pub step: AppChecklistStep,
-    /// "Add a machine".
+    /// "Add a computer".
     pub title: String,
     /// One line under the title.
     pub detail: String,
@@ -11145,6 +11185,21 @@ pub struct AppRelayUsageView {
     pub notice: Option<AppRelayAllowanceNotice>,
     /// Settings' plan card.
     pub plan_card: AppPlanCard,
+}
+
+/// Which build and deployment the app runs as, resolved by the host
+/// (`cua_home::channel::CuaChannel`, `cua_home::env::CuaEnv`).
+pub type AppTarget = core::environment_tag::Target;
+#[uniffi::remote(Record)]
+pub struct AppTarget {
+    /// `stable` or `local` (`CuaChannel`); anything else is Stable.
+    pub channel: String,
+    /// `prod` or `staging` (`CuaEnv::name`).
+    pub env: String,
+    /// The sign-in server's host (`auth.staging.cua.ai`), from the resolved
+    /// OIDC issuer, so an override (`CUA_OIDC_ISSUER`) shows as it is.
+    /// Empty: the environment's default.
+    pub auth_host: String,
 }
 
 /// Whose Space it is.

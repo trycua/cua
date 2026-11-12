@@ -53,24 +53,34 @@ public enum DriverService {
     public static let needsApproval =
         "Cua Spaces isn't allowed to run in the background, so Cua Driver can't start. Turn on Cua Spaces in System Settings > General > Login Items & Extensions, then choose Repair."
 
-    /// Registers the item when it isn't yet and starts it (`launchctl
-    /// kickstart`, `-k` when `restart`). Blocks: call off the main thread.
-    /// Returns why it couldn't, in plain words, or nil.
+    /// Registers the item so launchd has its job, and starts it
+    /// (`launchctl kickstart`, `-k` when `restart`). An item macOS still
+    /// counts as enabled but launchd has unloaded (`launchctl bootout`, a
+    /// crash while the app was replaced) is unregistered and registered
+    /// again (`LaunchAgentRegistration`), so launch and Repair heal it
+    /// without a logout. Blocks: call off the main thread. Returns why it
+    /// couldn't, in plain words, or nil.
     @discardableResult
     public static func start(restart: Bool) -> String? {
-        if service.status != .enabled {
-            do {
-                try service.register()
-            } catch {
-                if status() == .requiresApproval { return needsApproval }
-                return "Couldn't start Cua Driver in the background: \(error.localizedDescription)"
-            }
+        do {
+            let step = try register()
+            if step == .reregister { NSLog("cua-spaces: %@ was enabled but not loaded; registered it again", label) }
+        } catch {
+            if status() == .requiresApproval { return needsApproval }
+            return "Couldn't start Cua Driver in the background: \(error.localizedDescription)"
         }
         if status() == .requiresApproval { return needsApproval }
         if !kickstart(restart: restart) {
             return "Couldn't start Cua Driver in the background: launchd didn't start \(label)"
         }
         return nil
+    }
+
+    /// Registers the item, or registers it again when launchd lost its job.
+    @discardableResult
+    static func register() throws -> LaunchAgentRegistration.Step {
+        try LaunchAgentRegistration.ensureLoaded(LaunchAgentItem(plistName: plistName(info: Bundle.main.infoDictionary)),
+                                                 isLoaded: { LaunchAgentRegistration.isLoaded(label: label) })
     }
 
     /// `launchctl kickstart [-k] gui/<uid>/<label>`. False when launchctl
@@ -93,7 +103,7 @@ public enum DriverService {
         var failure: String?
         switch args.first {
         case "register":
-            do { try service.register() } catch { failure = error.localizedDescription }
+            do { try register() } catch { failure = error.localizedDescription }
         case "unregister":
             if service.status != .notRegistered {
                 do { try service.unregister() } catch {

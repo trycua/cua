@@ -386,7 +386,7 @@ ConvertTo-Json -InputObject $result -Compress`,
     if (this.virtualization) return this.virtualization;
     const r = await this.sys
       .powershell(
-        "$c = Get-CimInstance Win32_ComputerSystem; $p = Get-CimInstance Win32_Processor | Select-Object -First 1; \"$($c.HypervisorPresent)|$($p.VirtualizationFirmwareEnabled)\"",
+        '$c = Get-CimInstance Win32_ComputerSystem; $p = Get-CimInstance Win32_Processor | Select-Object -First 1; "$($c.HypervisorPresent)|$($p.VirtualizationFirmwareEnabled)"',
         15_000,
       )
       .catch(() => null);
@@ -409,7 +409,10 @@ ConvertTo-Json -InputObject $result -Compress`,
 /** `HypervisorPresent|VirtualizationFirmwareEnabled`. A running hypervisor
  * (Hyper-V, WSL 2) hides the firmware flag, so it counts as on. */
 export function parseVirtualization(stdout: string): WindowsRuntimeFacts["virtualization"] {
-  const [hypervisor, firmware] = stdout.trim().split("|").map((s) => s.trim().toLowerCase());
+  const [hypervisor, firmware] = stdout
+    .trim()
+    .split("|")
+    .map((s) => s.trim().toLowerCase());
   if (hypervisor === "true" || firmware === "true") return "on";
   if (firmware === "false") return "off";
   return "unknown";
@@ -449,7 +452,7 @@ export function nodeWindowsSystem(fetchImpl: typeof fetch = fetch): WindowsSyste
   const exec = (file: string, args: string[], timeoutMs: number) =>
     new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
       execFile(file, args, { timeout: timeoutMs, windowsHide: true, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
-        const code = error ? (typeof (error as { code?: unknown }).code === "number" ? ((error as { code: number }).code) : 1) : 0;
+        const code = error ? (typeof (error as { code?: unknown }).code === "number" ? (error as { code: number }).code : 1) : 0;
         resolve({ code, stdout: String(stdout), stderr: String(stderr) });
       });
     });

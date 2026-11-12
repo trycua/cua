@@ -845,7 +845,7 @@ pub(crate) fn resolve_element_local_coords(
 
     let xid = if let Some(x) = xid_hint {
         x
-    } else if crate::wayland::wayland_input_enabled() {
+    } else if crate::wayland::is_wayland() {
         crate::wayland::list_windows_dispatch(Some(pid))
             .into_iter()
             .next()
@@ -859,7 +859,7 @@ pub(crate) fn resolve_element_local_coords(
             .ok_or_else(|| anyhow::anyhow!("No windows for pid {pid}"))?
     };
 
-    if crate::wayland::wayland_input_enabled() {
+    if crate::wayland::is_wayland() {
         let (window_x, window_y, window_width, window_height) =
             crate::wayland::window_geometry(xid)
                 .ok_or_else(|| anyhow::anyhow!("No Wayland geometry for window {xid}"))?;
@@ -917,7 +917,7 @@ pub(crate) fn checked_element_local_coords(
     xid_hint: Option<u64>,
 ) -> anyhow::Result<(u64, f64, f64)> {
     let (xid, lx, ly) = resolve_element_local_coords(pid, token, xid_hint)?;
-    if crate::wayland::wayland_input_enabled() {
+    if crate::wayland::is_wayland() {
         return Ok((xid, lx, ly));
     }
     use x11rb::protocol::xproto::ConnectionExt as _;
@@ -1013,6 +1013,47 @@ pub(crate) async fn prove_token_element(
     .await
     .unwrap_or_else(|error| Err(anyhow::anyhow!("task error: {error}")));
     token_element_for(tool, xid, *element_index, element.clone(), proof).map(Some)
+}
+
+/// Re-read the token element's AT-SPI state and refuse a disabled one before
+/// any cursor or input work, as macOS does (`element_disabled`). The snapshot's
+/// `enabled` can be stale. An object that cannot be read is left to the
+/// tool's own stale-token handling.
+pub(crate) async fn refuse_if_disabled(
+    pid: u32,
+    resolved: &cua_driver_core::element_token::ResolvedElement<
+        crate::atspi::snapshot::CachedElement,
+    >,
+    tool: &str,
+) -> Option<ToolResult> {
+    let cua_driver_core::element_token::ResolvedElement::Element {
+        window_id, element, ..
+    } = resolved
+    else {
+        return None;
+    };
+    let (window_id, observed) = (*window_id, element.clone());
+    let enabled =
+        tokio::task::spawn_blocking(move || crate::atspi::element_enabled_observed(&observed))
+            .await
+            .ok()?
+            .ok()?;
+    (enabled == Some(false)).then(|| element_disabled_refusal(pid, window_id, tool))
+}
+
+pub(crate) fn element_disabled_refusal(pid: u32, window_id: u64, tool: &str) -> ToolResult {
+    ToolResult::error(format!(
+        "refusing {tool}: the target reports it is not enabled (AT-SPI state has neither \
+         Enabled nor Sensitive), so the app would ignore it. Nothing was sent. Snapshot \
+         again and act once the element reports enabled"
+    ))
+    .with_structured(json!({
+        "code": "element_disabled",
+        "effect": "refused",
+        "pid": pid,
+        "window_id": window_id,
+        "action": tool,
+    }))
 }
 
 pub(crate) fn token_element_for(
@@ -1332,6 +1373,13 @@ pub(crate) fn typing_budget(chars: usize, niri: bool) -> std::time::Duration {
     }
 }
 
+/// The budget of a `type_text` call that types `text`, whichever input route it
+/// takes. libei text with line breaks takes time between its parts.
+pub(crate) fn text_typing_budget(text: &str) -> std::time::Duration {
+    typing_budget(text.chars().count(), crate::wayland::niri::is_session())
+        + crate::wayland::text_pacing(text)
+}
+
 #[cfg(test)]
 #[test]
 fn niri_typing_outlasts_the_keyboard_deadline() {
@@ -1387,6 +1435,17 @@ pub(crate) fn input_error_result(e: anyhow::Error) -> ToolResult {
         return refusal;
     }
     match crate::input::foreground::error_code(&e) {
+        Some(code) if text.ends_with(crate::wayland::NOTHING_TYPED) => {
+            ToolResult::error(text.clone()).with_structured(json!({
+                "code": code,
+                "detail": text,
+                "effect": "none",
+                // Set here so it isn't the generic hint for this code, which
+                // blames a window that could not be brought forward.
+                "hint": "This text can't be typed right now, so nothing was sent. The detail says why.",
+                "suggestion": "Use set_value on the element, or clipboard_write and then hotkey ctrl+v.",
+            }))
+        }
         Some(code) => ToolResult::error(text.clone()).with_structured(json!({
             "code": code,
             "detail": text,
@@ -1401,6 +1460,28 @@ pub(crate) fn input_error_result(e: anyhow::Error) -> ToolResult {
         })),
         None => linux_input_error(e),
     }
+}
+
+#[cfg(test)]
+#[test]
+fn a_refused_text_says_why_instead_of_blaming_a_window() {
+    let mut refused =
+        input_error_result(crate::wayland::type_text_focused("abc\u{8}").unwrap_err());
+    cua_driver_core::recovery_hint::annotate(
+        "type_text",
+        &cua_driver_core::recovery_hint::Seed::from_args(&json!({})),
+        &mut refused,
+    );
+    assert_eq!(
+        refused.structured_content.unwrap(),
+        json!({
+            "code": "foreground_unavailable",
+            "detail": "foreground_unavailable: control character U+0008 cannot be typed; nothing was typed",
+            "effect": "none",
+            "hint": "This text can't be typed right now, so nothing was sent. The detail says why.",
+            "suggestion": "Use set_value on the element, or clipboard_write and then hotkey ctrl+v.",
+        })
+    );
 }
 
 #[cfg(test)]
@@ -1565,6 +1646,7 @@ mod pointer_argument_tests {
             focus_after: crate::input::FocusAfter::SamePid,
             window_change: Some("appeared: window 9 \"Brightness-Contrast\"".into()),
             window_change_owned: true,
+            menu_open: None,
         };
         let v = foreground_structured("x11_xtest_fg", report, serde_json::Map::new());
         assert_eq!(v["effect"], "confirmed");
@@ -1577,6 +1659,7 @@ mod pointer_argument_tests {
             focus_after: crate::input::FocusAfter::Target,
             window_change: None,
             window_change_owned: false,
+            menu_open: None,
         };
         let v = foreground_structured("x11_xtest_fg", quiet, serde_json::Map::new());
         assert_eq!(v["effect"], "unverifiable");
@@ -1588,6 +1671,7 @@ mod pointer_argument_tests {
             focus_after: crate::input::FocusAfter::Unknown,
             window_change: Some("closed: window 3 \"Format Cells\"".into()),
             window_change_owned: true,
+            menu_open: None,
         };
         let v = foreground_structured("x11_xtest_fg", closed, serde_json::Map::new());
         assert_eq!(v["effect"], "confirmed");
@@ -1602,6 +1686,7 @@ mod pointer_argument_tests {
             focus_after,
             window_change: Some("appeared: popup window 7 (200x300 at 1,2)".into()),
             window_change_owned: false,
+            menu_open: None,
         };
         let v = foreground_structured(
             "x11_xtest_fg",
@@ -1629,6 +1714,7 @@ mod pointer_argument_tests {
             focus_after: crate::input::FocusAfter::Elsewhere,
             window_change: None,
             window_change_owned: false,
+            menu_open: None,
         };
         let v = foreground_structured("x11_xtest_fg", lost, serde_json::Map::new());
         assert_eq!(v["effect"], "suspected_noop");
@@ -1891,6 +1977,176 @@ pub(crate) fn unavailable_gtk_keyboard_background(
     .then(|| background_keyboard_refusal(atspi_up()))
 }
 
+pub(crate) fn maps_indicate_qt(maps: &str) -> bool {
+    maps.contains("libQt5Gui") || maps.contains("libQt6Gui")
+}
+
+fn is_qt_process(pid: u32) -> bool {
+    fs::read_to_string(format!("/proc/{pid}/maps"))
+        .map(|maps| maps_indicate_qt(&maps))
+        .unwrap_or(false)
+}
+
+/// A modifier that turns a key into a shortcut chord. Shift alone only
+/// changes the character, so it is not one.
+fn is_shortcut_modifier(key: &str) -> bool {
+    is_modifier(key) && !key.eq_ignore_ascii_case("shift")
+}
+
+/// Qt matches `QShortcut` / `QAction` shortcuts only in its active window
+/// (`Qt::WindowShortcut` checks `QApplication::activeWindow()`). Synthetic
+/// `XSendEvent` keys reach an inactive Qt window and fire nothing, so on a
+/// host without the agent's own XI2 master keyboard (Xvfb, Xtigervnc, no
+/// writable `/dev/uinput`) a background chord to an inactive Qt window
+/// answered "Pressed" while nothing happened (trycua/cua#7370). The agent
+/// keyboard's focus does make Qt run the shortcut, so that route is kept.
+pub(crate) fn qt_shortcut_background_must_refuse(
+    foreground: bool,
+    agent_keyboard: bool,
+    qt: bool,
+    target_is_active: Option<bool>,
+    modifiers: &[String],
+) -> bool {
+    !foreground
+        && !agent_keyboard
+        && qt
+        && modifiers.iter().any(|key| is_shortcut_modifier(key))
+        && target_is_active != Some(true)
+}
+
+fn qt_shortcut_synthetic_is_lost(pid: u32, xid: u64, modifiers: &[String]) -> bool {
+    !crate::wayland::is_wayland()
+        && qt_shortcut_background_must_refuse(
+            false,
+            false,
+            is_qt_process(pid),
+            crate::x11::active_window().map(|active| active == xid),
+            modifiers,
+        )
+}
+
+pub(crate) fn unavailable_qt_shortcut_background(
+    pid: u32,
+    xid: u64,
+    modifiers: &[String],
+    delivery: crate::input::delivery::DeliveryMode,
+) -> Option<ToolResult> {
+    (!delivery.is_foreground()
+        && !crate::input::real_keyboard_input_available()
+        && qt_shortcut_synthetic_is_lost(pid, xid, modifiers))
+    .then(|| {
+        crate::input::delivery::background_unavailable_error(
+            crate::input::delivery::BackgroundUnavailable::QtInactiveWindowShortcut,
+        )
+    })
+}
+
+#[cfg(test)]
+mod qt_shortcut_tests {
+    use super::*;
+
+    fn mods(keys: &[&str]) -> Vec<String> {
+        keys.iter().map(|key| key.to_string()).collect()
+    }
+
+    #[test]
+    fn a_chord_to_an_inactive_qt_window_is_refused() {
+        // trycua/cua#7370: ctrl+m to an inactive Qt window answered "Pressed"
+        // while the QAction never fired.
+        assert!(qt_shortcut_background_must_refuse(
+            false,
+            false,
+            true,
+            Some(false),
+            &mods(&["ctrl"])
+        ));
+        for modifier in ["alt", "super", "Control", "meta"] {
+            assert!(
+                qt_shortcut_background_must_refuse(
+                    false,
+                    false,
+                    true,
+                    Some(false),
+                    &mods(&[modifier])
+                ),
+                "{modifier}"
+            );
+        }
+        // An active-window state the server cannot report is not a pass.
+        assert!(qt_shortcut_background_must_refuse(
+            false,
+            false,
+            true,
+            None,
+            &mods(&["ctrl"])
+        ));
+    }
+
+    #[test]
+    fn active_qt_windows_plain_keys_and_other_toolkits_keep_their_route() {
+        // The active Qt window matches its shortcuts (the reporter's control).
+        assert!(!qt_shortcut_background_must_refuse(
+            false,
+            false,
+            true,
+            Some(true),
+            &mods(&["ctrl"])
+        ));
+        // Shift only changes the character; plain keys go to the focus widget.
+        assert!(!qt_shortcut_background_must_refuse(
+            false,
+            false,
+            true,
+            Some(false),
+            &mods(&["shift"])
+        ));
+        assert!(!qt_shortcut_background_must_refuse(
+            false,
+            false,
+            true,
+            Some(false),
+            &[]
+        ));
+        // Foreground activates the window first; other toolkits are not Qt.
+        assert!(!qt_shortcut_background_must_refuse(
+            true,
+            false,
+            true,
+            Some(false),
+            &mods(&["ctrl"])
+        ));
+        assert!(!qt_shortcut_background_must_refuse(
+            false,
+            false,
+            false,
+            Some(false),
+            &mods(&["ctrl"])
+        ));
+        // The agent's own XI2 master keyboard focus makes Qt run the shortcut
+        // in an inactive window (measured on GNOME Xorg, Qt 6.4).
+        assert!(!qt_shortcut_background_must_refuse(
+            false,
+            true,
+            true,
+            Some(false),
+            &mods(&["ctrl"])
+        ));
+    }
+
+    #[test]
+    fn qt_is_recognised_from_its_gui_library() {
+        assert!(maps_indicate_qt(
+            "7f /usr/lib/x86_64-linux-gnu/libQt5Gui.so.5.15.13\n"
+        ));
+        assert!(maps_indicate_qt(
+            "7f /usr/lib/x86_64-linux-gnu/libQt6Gui.so.6.6.2\n"
+        ));
+        assert!(!maps_indicate_qt(
+            "7f /usr/lib/x86_64-linux-gnu/libgtk-3.so.0\n"
+        ));
+    }
+}
+
 /// Outcome of one background/foreground keyboard delivery on X11, funnelled
 /// through `spawn_blocking`'s success type so the tool can report the route.
 pub(crate) enum KeyRoute {
@@ -1935,17 +2191,18 @@ pub(crate) fn background_virtual_text(
     pid: u32,
     xid: u64,
     text: &str,
+    pacing: crate::input::TypePacing,
 ) -> anyhow::Result<crate::input::KeyboardDeliveryReport> {
     if let Some(popup) = crate::input::popup_of_pid(pid) {
-        match crate::input::send_popup_keyboard_text(popup.window, text) {
+        match crate::input::send_popup_keyboard_text_paced(popup.window, text, pacing) {
             Err(error) if error.is::<crate::input::PopupOwnerGone>() => {}
             delivered => return delivered,
         }
         return crate::input::send_keys_under_popup_grab(pid, popup, || {
-            crate::input::send_type_text_xtest(text)
+            crate::input::send_type_text_xtest_paced(text, pacing)
         });
     }
-    crate::input::send_virtual_keyboard_text(cursor_id, xid, text)
+    crate::input::send_virtual_keyboard_text_paced(cursor_id, xid, text, pacing)
 }
 
 pub(crate) fn is_popup_keyboard_grab(error: &anyhow::Error) -> bool {
@@ -1991,6 +2248,12 @@ pub(crate) fn background_key_route(
             {
                 return Err(error.context("virtual master keyboard delivery failed"));
             }
+            Err(error) if qt_shortcut_synthetic_is_lost(pid, xid, &owned_modifiers(modifiers)) => {
+                return Err(error.context(
+                    "virtual master keyboard delivery failed, and Qt drops a synthetic \
+                     shortcut sent to a window that is not active",
+                ));
+            }
             Err(error) => tracing::warn!("MPX keyboard fell back to XSendEvent: {error}"),
         }
     }
@@ -2007,6 +2270,10 @@ pub(crate) fn background_key_route(
         None => crate::input::send_key(xid, key, modifiers),
     }
     .map(|()| KeyRoute::Synthetic)
+}
+
+fn owned_modifiers(modifiers: &[&str]) -> Vec<String> {
+    modifiers.iter().map(|key| key.to_string()).collect()
 }
 
 const GRAB_FOCUS_FAILURE_PREFIX: &str = "grab_focus_failed";
@@ -2083,8 +2350,9 @@ pub(crate) fn key_route_result(action: &str, route: KeyRoute, mode_label: &str) 
     match route {
         KeyRoute::Foreground(report) => ToolResult::text(format!(
             "{action} as a real key event (delivery_mode=foreground, focus_after={}); \
-             not verified — confirm with a screenshot.",
-            report.focus_after.as_str()
+             not verified — confirm with a screenshot.{}",
+            report.focus_after.as_str(),
+            report.focus_note()
         ))
         .with_structured(foreground_structured(
             "key_events_fg",
@@ -2150,26 +2418,68 @@ pub(crate) fn key_route_result(action: &str, route: KeyRoute, mode_label: &str) 
     }
 }
 
-pub(crate) fn unavailable_gtk_pointer_background(
+/// Background pointer input (wheel, right / double click, drag) to a toolkit
+/// that discards synthetic `XSendEvent` pointer events (GTK, Qt, LibreOffice
+/// VCL) needs the agent's own XI2 master pointer. When this X server cannot
+/// hot-add it (Xvfb, Xtigervnc, no writable `/dev/uinput`), the only route
+/// left would report success while the toolkit drops the event, so refuse.
+/// Qt is the case trycua/cua#7369 caught: with XI 2.1 it reads the wheel only
+/// from XI2 scroll valuators and ignores core Button4/5 entirely.
+pub(crate) fn unavailable_synthetic_pointer_background(
     pid: u32,
     delivery: crate::input::delivery::DeliveryMode,
 ) -> Option<ToolResult> {
-    (!delivery.is_foreground()
-        && is_gtk_process(pid)
-        && !crate::wayland::is_inject_mode()
-        && !crate::input::real_pointer_input_available())
+    synthetic_pointer_background_must_refuse(
+        delivery.is_foreground(),
+        crate::wayland::is_inject_mode() || crate::input::real_pointer_input_available(),
+        synthetic_pointer_is_dropped(pid),
+    )
     .then(|| {
         crate::input::delivery::background_unavailable_error(
-            crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+            crate::input::delivery::BackgroundUnavailable::SyntheticPointerDropped,
         )
     })
+}
+
+pub(crate) fn synthetic_pointer_background_must_refuse(
+    foreground: bool,
+    real_pointer_route: bool,
+    drops_synthetic_pointer: bool,
+) -> bool {
+    !foreground && !real_pointer_route && drops_synthetic_pointer
+}
+
+#[cfg(test)]
+mod synthetic_pointer_tests {
+    use super::*;
+
+    #[test]
+    fn qt_and_vcl_wheel_needs_the_agent_pointer_like_gtk() {
+        // trycua/cua#7369: Qt (XI 2.1) reads the wheel from XI2 scroll
+        // valuators and ignores synthetic Button4/5. Without the agent's own
+        // pointer device every background wheel to it would be a silent no-op.
+        for maps in [
+            "7f /usr/lib/libQt5Gui.so.5\n",
+            "7f /usr/lib/libQt6Gui.so.6\n",
+            "7f /usr/lib/libgtk-3.so.0\n",
+            "7f /opt/libreoffice/program/libmergedlo.so\n",
+        ] {
+            assert!(maps_indicate_synthetic_pointer_dropped(maps), "{maps}");
+        }
+        assert!(synthetic_pointer_background_must_refuse(false, false, true));
+        assert!(!synthetic_pointer_background_must_refuse(false, true, true));
+        assert!(!synthetic_pointer_background_must_refuse(true, false, true));
+        assert!(!synthetic_pointer_background_must_refuse(
+            false, false, false
+        ));
+    }
 }
 
 pub(crate) fn unavailable_wayland_focused_input_background(
     delivery: crate::input::delivery::DeliveryMode,
     focus_free_inject_supported: bool,
 ) -> Option<ToolResult> {
-    (crate::wayland::wayland_input_enabled()
+    (crate::wayland::is_wayland()
         && !(focus_free_inject_supported && crate::wayland::is_inject_mode())
         && !delivery.is_foreground())
     .then(|| {
@@ -2185,10 +2495,10 @@ pub(crate) enum CoordinateContext {
     Screenshot(f64),
 }
 
-/// Chromium's X11 renderer drops synthetic input sent to an occluded,
-/// unfocused toplevel. Returning success here would be a silent loss, so all
-/// input tools expose the same typed refusal and leave foreground activation
-/// as the explicit escalation.
+/// Chromium's X11 renderer drops synthetic input sent to an unfocused
+/// toplevel. Returning success here would be a silent loss, so all input
+/// tools expose the same typed refusal and leave foreground activation as the
+/// explicit escalation. A plain left click still reaches it through AT-SPI.
 pub(crate) fn unavailable_chromium_background(
     pid: u32,
     delivery: crate::input::delivery::DeliveryMode,
@@ -2249,8 +2559,9 @@ pub(crate) enum PointerRoute {
     Atspi(crate::atspi::AtPointHit),
     /// Target-addressed synthetic `XSendEvent` (core-only toolkits).
     Synthetic,
-    /// Activated the window first and used XTest (delivery_mode=foreground).
-    Foreground,
+    /// Activated the window first and used XTest (delivery_mode=foreground);
+    /// the pid whose open menu kept the target focused.
+    Foreground { menu_open: Option<u32> },
     /// Native Wayland pointer route.
     Wayland,
 }
@@ -2262,7 +2573,7 @@ impl PointerRoute {
             Self::Mpx(_) => Some(crate::input::MPX_POINTER_PATH),
             Self::Atspi(_) => Some("x11_atspi"),
             Self::Synthetic => Some("x11_xsendevent"),
-            Self::Foreground => Some("x11_xtest_fg"),
+            Self::Foreground { .. } => Some("x11_xtest_fg"),
             Self::Wayland => None,
         }
     }
@@ -2400,6 +2711,9 @@ impl PointerRoute {
     /// Human-readable tail for the result text.
     pub(crate) fn text_suffix(&self, mode_label: &str) -> String {
         let mut text = self.text_suffix_inner(mode_label);
+        if let Self::Foreground { menu_open } = self {
+            text.push_str(&crate::input::foreground::menu_open_note(*menu_open));
+        }
         if let Self::Mpx(effect) = self {
             if let Some(popup) = effect.popups.last() {
                 text.push_str(&format!(
@@ -2750,7 +3064,7 @@ pub(crate) fn isolated_hyprland_background(delivery: crate::input::delivery::Del
 
 pub(crate) fn hyprland_foreground(delivery: crate::input::delivery::DeliveryMode) -> bool {
     delivery.is_foreground()
-        && crate::wayland::wayland_input_enabled()
+        && crate::wayland::is_wayland()
         && crate::wayland::hyprland::is_session()
 }
 
@@ -2831,9 +3145,7 @@ pub(crate) async fn wm_chord_background(
     modifiers: &[String],
     delivery: crate::input::delivery::DeliveryMode,
 ) -> Option<ToolResult> {
-    if delivery.is_foreground()
-        || crate::wayland::wayland_input_enabled()
-        || crate::wayland::is_inject_mode()
+    if delivery.is_foreground() || crate::wayland::is_wayland() || crate::wayland::is_inject_mode()
     {
         return None;
     }
@@ -3954,7 +4266,7 @@ pub(crate) async fn desktop_input_space() -> anyhow::Result<crate::wayland::Desk
             crate::interaction::policy::Scope::DesktopInput,
             crate::interaction::facts::Fact::Unknown("desktop input addresses no window".into()),
         )?;
-        if !crate::wayland::wayland_input_enabled() {
+        if !crate::wayland::is_wayland() {
             return Ok(crate::wayland::DesktopInputSpace::default());
         }
         crate::wayland::DesktopInputSpace::current()
@@ -4068,7 +4380,7 @@ pub(crate) fn explicit_keyboard_cursor_target(
     }
 
     let (x, y) = pixel_target?;
-    if crate::wayland::wayland_input_enabled() {
+    if crate::wayland::is_wayland() {
         return crate::wayland::window_geometry(xid)
             .map(|(wx, wy, _, _)| (f64::from(wx) + x.round(), f64::from(wy) + y.round()));
     }

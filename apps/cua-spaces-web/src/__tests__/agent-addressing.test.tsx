@@ -166,7 +166,10 @@ describe("the composer's chip", () => {
   it("shows who it goes to, says when they can't take it, and goes with the X or Backspace", async () => {
     const onRemove = vi.fn();
     const { container } = render(
-      <Composer {...props} addressee={{ handles: ["claude"], label: () => "Claude Code", problem: () => "Claude Code needs to be connected", onRemove, agentHandles }} />,
+      <Composer
+        {...props}
+        addressee={{ handles: ["claude"], label: () => "Claude Code", problem: () => "Claude Code needs to be connected", onRemove, agentHandles }}
+      />,
     );
     const chip = container.querySelector("[data-addressee-chip='claude']")!;
     expect(chip.hasAttribute("data-addressee-problem")).toBe(true);
@@ -181,7 +184,9 @@ describe("the composer's chip", () => {
   });
 
   it("steps aside while the text names an agent itself", () => {
-    const { container } = render(<Composer {...props} addressee={{ handles: ["claude"], label: () => "Claude Code", problem: () => null, onRemove: () => {}, agentHandles }} />);
+    const { container } = render(
+      <Composer {...props} addressee={{ handles: ["claude"], label: () => "Claude Code", problem: () => null, onRemove: () => {}, agentHandles }} />,
+    );
     const box = container.querySelector<HTMLTextAreaElement>("[data-composer]")!;
     expect(container.querySelector("[data-addressee]")).not.toBeNull();
     fireEvent.change(box, { target: { value: "@hermes hi", selectionStart: 10 } });

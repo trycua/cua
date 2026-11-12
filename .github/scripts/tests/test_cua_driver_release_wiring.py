@@ -7,6 +7,7 @@ import re
 import subprocess
 import tempfile
 import textwrap
+import tomllib
 import unittest
 
 
@@ -300,18 +301,17 @@ fi
         self.assertIn("git rebase --abort", replay)
         self.assertIn('--force-with-lease="refs/heads/$BRANCH:$REMOTE_HEAD"', workflow)
         self.assertNotIn("git push --force ", workflow)
-        self.assertIn("sync_driver_release_docs.py", workflow)
+        self.assertNotIn("sync_driver_release_docs.py", workflow)
         self.assertIn(
             "chore(cua-driver-rs): synchronize generated release files",
             workflow,
         )
-        self.assertIn("sync_lume_release_docs.py", workflow)
-        self.assertIn("chore(lume): synchronize release documentation", workflow)
-        self.assertIn(
-            "npx --yes pnpm@9.0.4 --dir docs install --frozen-lockfile --ignore-scripts",
-            workflow,
-        )
-        self.assertIn("runner.ts --library sandbox", workflow)
+        self.assertNotIn("sync_lume_release_docs.py", workflow)
+        self.assertIn("chore(lume): synchronize release files", workflow)
+        # Generated reference pages carry no release version, so a release
+        # never regenerates or re-stamps them (docs-version-stamp.test.ts).
+        self.assertNotIn("runner.ts --library sandbox", workflow)
+        self.assertNotIn("sync_bench_release_docs.py", workflow)
         self.assertNotIn("if: steps.release.outputs.prs_created == 'true'", workflow)
         self.assertNotIn("RELEASE_PRS: ${{ steps.release.outputs.prs }}", workflow)
 
@@ -332,8 +332,10 @@ fi
         self.assertIn("resolve_release_please_request.py", workflow)
         self.assertIn('"--path=$RELEASE_PATH"', workflow)
         self.assertIn('ARGS+=("--release-as=$RELEASE_AS")', workflow)
-        self.assertIn("release-please@17.3.0", workflow)
-        self.assertIn("EXPECTED_INTEGRITY=", workflow)
+        self.assertIn('.github/scripts/release_please.sh "${ARGS[@]}"', workflow)
+        runner = self.read(".github/scripts/release_please.sh")
+        self.assertIn("ENGINE_VERSION=17.3.0", runner)
+        self.assertIn("EXPECTED_INTEGRITY=", runner)
 
     def test_required_release_metadata_check_runs_for_every_pull_request(self) -> None:
         workflow = self.read(".github/workflows/ci-release-metadata.yml")
@@ -442,6 +444,16 @@ fi
                 workflow,
                 relative_path,
             )
+
+    def test_linux_unit_triggers_on_every_member_its_workspace_clippy_lints(self) -> None:
+        manifest = tomllib.loads(self.read("libs/cua-driver/rust/Cargo.toml"))
+        workflow = self.read(".github/workflows/ci-rust-linux.yml")
+        triggers = workflow.split("\n  workflow_dispatch:", 1)[0]
+        _, pull_request, push = re.split(r"\n  (?:pull_request|push):\n", triggers)
+        for member in manifest["workspace"]["members"]:
+            entry = f'      - "libs/cua-driver/rust/{member}/**"\n'
+            self.assertIn(entry, pull_request, member)
+            self.assertIn(entry, push, member)
 
     def test_release_please_keeps_release_version_sources_synced(self) -> None:
         config = self.read("release-please-config.json")
@@ -1129,7 +1141,7 @@ fi
         self.assertEqual(
             package["dependencies"],
             {
-                "@anthropic-ai/claude-code": "2.1.224",
+                "@anthropic-ai/claude-code": "2.1.322",
                 "@modelcontextprotocol/sdk": "1.30.0",
                 "@openai/codex": "0.146.1",
             },

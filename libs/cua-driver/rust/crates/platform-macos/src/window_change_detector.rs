@@ -139,6 +139,30 @@ impl Changes {
         }
     }
 
+    /// Add opened-window identity to an action's structured result:
+    /// `new_windows` for windows this action opened (the Linux result's
+    /// shape) and `earlier_new_windows` for those the previous action's
+    /// detached tail saw. Empty lists are omitted.
+    pub fn add_window_identity(&self, structured: &mut serde_json::Value) {
+        for (key, windows) in [
+            ("new_windows", &self.new_windows),
+            ("earlier_new_windows", &self.earlier_new_windows),
+        ] {
+            if !windows.is_empty() {
+                structured[key] = windows
+                    .iter()
+                    .map(|w| {
+                        serde_json::json!({
+                            "window_id": w.window_id,
+                            "pid": w.pid,
+                            "title": w.title,
+                        })
+                    })
+                    .collect();
+            }
+        }
+    }
+
     /// True when we found evidence that the action triggered a cross-app
     /// side-effect that required (or would have required) a foreground
     /// restore. Matches Swift's `Changes.needsRestore`.
@@ -684,6 +708,58 @@ mod tests {
         let c = Changes::no_change();
         assert_eq!(c.result_suffix(), "");
         assert!(!c.needs_restore());
+    }
+
+    #[test]
+    fn window_identity_keeps_earlier_and_current_windows_apart() {
+        let changes = Changes {
+            earlier_new_windows: vec![WindowEvent {
+                window_id: 101,
+                pid: 1001,
+                app_name: "Earlier".into(),
+                title: "Detached tail".into(),
+            }],
+            new_windows: vec![WindowEvent {
+                window_id: 202,
+                pid: 1002,
+                app_name: "Immediate".into(),
+                title: "Immediate window".into(),
+            }],
+            ..Changes::no_change()
+        };
+        let mut structured = serde_json::json!({ "effect": "unverifiable" });
+        changes.add_window_identity(&mut structured);
+        assert_eq!(
+            structured,
+            serde_json::json!({
+                "effect": "unverifiable",
+                "new_windows": [
+                    {"window_id": 202, "pid": 1002, "title": "Immediate window"}
+                ],
+                "earlier_new_windows": [
+                    {"window_id": 101, "pid": 1001, "title": "Detached tail"}
+                ]
+            })
+        );
+
+        let earlier_only = Changes {
+            new_windows: Vec::new(),
+            ..changes
+        };
+        let mut structured = serde_json::json!({});
+        earlier_only.add_window_identity(&mut structured);
+        assert!(structured.get("new_windows").is_none());
+        assert_eq!(structured["earlier_new_windows"][0]["window_id"], 101);
+
+        for empty in [
+            Changes::no_change(),
+            Changes::not_polled(),
+            Changes::deferred(),
+        ] {
+            let mut structured = serde_json::json!({});
+            empty.add_window_identity(&mut structured);
+            assert_eq!(structured, serde_json::json!({}));
+        }
     }
 
     #[test]

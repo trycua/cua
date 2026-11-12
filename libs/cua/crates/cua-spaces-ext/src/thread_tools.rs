@@ -341,6 +341,7 @@ pub(crate) async fn agent_add(
             harness: a.agent,
             space,
             model: a.model,
+            effort: a.effort,
             brief: a.brief,
             base_url: a.base_url,
             env_from_host: a.env_from_host,

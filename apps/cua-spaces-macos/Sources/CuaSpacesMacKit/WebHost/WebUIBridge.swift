@@ -72,7 +72,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "spaces.setPower", "spaces.delete", "spaces.rename", "spaces.deleteMany", "spaces.leave", "spaces.cancelCreate",
         // A Space's network, clipboard and Volume settings (the SDK's).
         "network.get", "network.set", "network.log", "network.ackNotice", "spaces.setAccess",
-        // Child Spaces (the Child Spaces experiment; the daemon refuses them while it is off).
+        // Child Spaces: the tree of Spaces, children, budgets and kept services.
         "spaces.tree", "children.set", "budget.get", "budget.set", "services.list", "services.control",
         "machines.list", "host.status",
         "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
@@ -80,6 +80,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "agents.status", "agents.connect", "agents.disconnect",
         // The coding agents' own recent chats on this Mac (person-only daemon tools, CUA-3319).
         "agents.recentThreads", "agents.threadHistory",
+        // An agent's own sign-in on another computer (person-only daemon tool agent_sign_in, CUA-3907).
+        "agents.computerSignIn",
         // An agent's device-code sign-in made for Cua (Codex), started and waited in two calls.
         "agents.signInStart", "agents.signInWait",
         // Start a run in a Space and reply to it (the daemon's agent_start, agent_message).
@@ -88,6 +90,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine",
         "agents.removeRoutine", "agents.allowComputer", "agents.revokeComputer",
         "agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.use", "agentKeys.rename", "agentKeys.shell", "agentKeys.fromShell",
+        "agentKeys.copySignIn",
         // Settings, Connections, GitHub: the daemon's github.* methods (WebUIBridge+Pages.swift).
         "github.status", "github.rescan", "github.use", "github.enable",
         // New Space's address form and Connect a cloud, Teleport and Share,
@@ -105,7 +108,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "devices.revoke", "devices.confirmMachine", "devices.createPairingCode", "devices.pairingCodes",
         "devices.revokePairingCode", "teams.list", "storage.get", "storage.run",
         "notifications.list", "notifications.markAllRead", "notifications.markRead",
-        "telemetry.track", "telemetry.linkNotice", "telemetry.acknowledgeLinkNotice", "crashReporting.config", "spaces.usage", "spaces.windows", "stream.pip",
+        "telemetry.track", "telemetry.linkNotice", "telemetry.acknowledgeLinkNotice", "crashReporting.config", "spaces.usage", "spaces.reach", "spaces.windows", "stream.pip",
         // A Space's thumbnail (WebUIBridge+Thumbnails.swift).
         "spaces.thumbnail",
         // A Space's drop well: Send file… and dropped files (WebUIBridge+Files.swift).
@@ -133,7 +136,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         // health checks (WebUIBridge+Pages.swift).
         "machines.rename", "machines.remove", "machines.checkHealth",
         // The account's default Space and where a new task goes now
-        // (WebUIBridge+Pages.swift; the Labs switch for Spaces as a tree).
+        // (WebUIBridge+Pages.swift; Settings, General).
         "spaces.settings", "spaces.setSettings", "spaces.resolveDefault",
         // The getting-started checklist: the app's one copy (`ChecklistModel`).
         "checklist.get", "checklist.send",
@@ -422,9 +425,13 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             if model.host.state == nil, model.servicesIn { await model.host.refresh() }
             // The permissions page also asks for Local Network: the daemon
             // checks it in the background (its connect makes macOS ask), and
-            // the page reads the answer on its next poll.
+            // the page reads the answer on its next poll. The first run lists
+            // the row first and checks only once the person pressed Allow
+            // (`localNetworkCheck: false` until then), so macOS's prompt comes
+            // right after the step's explanation, not before it.
             let localNetwork = (args["localNetwork"] as? Bool) == true
-            if localNetwork, model.servicesIn {
+            let check = (args["localNetworkCheck"] as? Bool) ?? localNetwork
+            if localNetwork, check, model.servicesIn {
                 Task { @MainActor [model] in await model.checkLocalNetworkFromDaemon() }
             }
             return hostStatus(localNetwork: localNetwork)
@@ -437,6 +444,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
 
         case "agents.recentThreads", "agents.threadHistory":
             return try await agentThreads(method, args)
+
+        case "agents.computerSignIn":
+            return try await computerSignIn(args)
 
         case "checklist.get": return ["state": model.checklist.stored]
         case "checklist.send":
@@ -607,6 +617,11 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         }
         model.onboarding.finish(mode: word == "host" ? .host : .client, launchAtLogin: args["launchAtLogin"] as? Bool)
         model.telemetrySink?.acknowledgeNotice()
+        // Local Network is not asked here: the first run's permissions step
+        // asks for it, with its reason, and a dialog as Home opens was a
+        // surprise with no context (device test, 10 Nov). Left off there,
+        // it is asked when it is needed: the first macOS Space on this Mac,
+        // or turning on Spaces from other computers (`askLocalNetworkForHosting`).
         return onboarding()
     }
 
@@ -695,6 +710,10 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             // The account app (CUA_ENV, CUA_ACCOUNT_APP_URL): the page's core
             // has no environment, so Upgrade's billing fallback names this one.
             "accountUrl": appAccountAppUrl(),
+            // The channel and environment this app runs as (CUA_CHANNEL,
+            // CUA_ENV, as cua-home resolves them): the page's title bar tag
+            // ("Local · Staging", the core's `environment.tag`).
+            "target": BridgeValue.encode(appTarget()),
             // The CLI this app installs and whether it is here (WebUIBridge+Cli.swift).
             "cli": cliSetting(),
             // Settings, Advanced's runtimes as read (`runtimes::RuntimesInput`):
@@ -879,7 +898,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         let persistent = model.persistent
         switch method {
         case "agents.list":
-            guard persistent.canCallTools else { throw Failure.unsupported("Agents need the cua daemon") }
+            guard persistent.canCallTools else { throw Failure.unsupported(serviceDownMessage) }
             return try await persistent.listAgents()
         case "agents.runs":
             let runs = AgentRunsModel(backend: model.backend, spaceId: try string(args, "spaceId"))
@@ -890,23 +909,23 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             case .loading: return [Any]()
             }
         case "agents.events":
-            guard persistent.canCallTools else { throw Failure.unsupported("A run's conversation needs the cua daemon") }
+            guard persistent.canCallTools else { throw Failure.unsupported(serviceDownMessage) }
             let cursor = (args["cursor"] as? NSNumber)?.uint64Value ?? 0
             let max = (args["max"] as? NSNumber)?.uint32Value
             return try await persistent.runEvents(space: try string(args, "spaceId"), runId: try string(args, "runId"),
                                                   cursor: cursor, max: max)
         case "agents.start":
             let spaceId = try string(args, "spaceId"), agent = try string(args, "agent"), prompt = try string(args, "prompt")
-            guard persistent.canCallTools else { throw Failure.unsupported("Starting a run needs the cua daemon") }
+            guard persistent.canCallTools else { throw Failure.unsupported(serviceDownMessage) }
             let text = { (key: String) in (args[key] as? String).flatMap { $0.isEmpty ? nil : $0 } }
             return try await persistent.startRun(space: spaceId, agent: agent, prompt: prompt, repo: text("repo"),
                                                  branch: text("branch"), model: text("model"),
                                                  envFromHost: (args["envFromHost"] as? [String]) ?? [],
                                                  cwd: text("cwd"), resumeSession: text("resumeSession"),
-                                                 resumeContext: text("resumeContext"))
+                                                 resumeContext: text("resumeContext"), effort: text("effort"))
         case "agents.message":
             let spaceId = try string(args, "spaceId"), runId = try string(args, "runId"), text = try string(args, "text")
-            guard persistent.canCallTools else { throw Failure.unsupported("Replying to a run needs the cua daemon") }
+            guard persistent.canCallTools else { throw Failure.unsupported(serviceDownMessage) }
             return try await persistent.sendMessage(space: spaceId, runId: runId, text: text,
                                                     force: (args["force"] as? Bool) ?? false)
         case "agents.pause", "agents.resume":
@@ -942,9 +961,18 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             guard let setup = model.agentSetup else { throw Failure.unsupported("Agent setup is not available in this build") }
             let signIn = (args["signIn"] as? Bool) ?? false
             do {
+                // `driver`: the Cua Driver this app carries goes in too, as one more part (setup's "Let agents use
+                // apps on this Mac" row). A build without one has no such part.
+                var driver: (embedded: EmbeddedDriver, entry: DriverConnect)?
+                if args["driver"] as? Bool == true { driver = await connectDriver() }
                 let out = try await setup.connectJson(agents: try strings(args, "agents"), signIn: signIn,
-                                                      skills: (args["skills"] as? Bool) ?? true, mcp: (args["mcp"] as? Bool) ?? true)
+                                                      skills: (args["skills"] as? Bool) ?? true, mcp: (args["mcp"] as? Bool) ?? true,
+                                                      driver: driver?.entry)
                 await model.reloadAgents()
+                // Written with both permissions on: a driver that isn't running yet starts, without holding the answer.
+                if let embedded = driver?.embedded, driver?.entry.permissionsGranted == true {
+                    Task { await self.startDriverIfNeeded(embedded) }
+                }
                 return try json(out)
             } catch let f as Failure { throw f }
             catch { throw Failure(code: "failed", message: LiveSpacesBackend.words(error)) }
@@ -989,7 +1017,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
     /// draws with the app core itself.
     func agentDetail(_ method: String, _ args: [String: Any]) async throws -> Any {
         let persistent = model.persistent
-        guard persistent.canCallTools else { throw Failure.unsupported("Agents need the cua daemon") }
+        guard persistent.canCallTools else { throw Failure.unsupported(serviceDownMessage) }
         switch method {
         case "agents.detail":
             var detail = try await persistent.detail(try string(args, "name"))

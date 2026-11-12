@@ -61,6 +61,8 @@ pub mod pointer_shape_map;
 #[cfg(target_os = "macos")]
 pub mod recording_hooks;
 #[cfg(target_os = "macos")]
+pub mod security_prompt;
+#[cfg(target_os = "macos")]
 pub mod session;
 #[cfg(all(test, target_os = "macos"))]
 mod step_latency_bench;

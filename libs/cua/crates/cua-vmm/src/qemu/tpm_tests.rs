@@ -180,6 +180,8 @@ fn launch_once_wiring() {
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
         }
         let output = std::process::Command::new(std::env::current_exe().unwrap())
+            // These tests are about launching QEMU, not the network gateway the secure default puts a VM behind.
+            .env("CUA_SECURE_DEFAULT", "0")
             .args([
                 "--exact",
                 "qemu::tpm_tests::launch_once_wiring_child",
@@ -531,6 +533,8 @@ fn cancelled_launch(late: bool) {
         ),
     );
     let output = std::process::Command::new(std::env::current_exe().unwrap())
+        // These tests are about launching QEMU, not the network gateway the secure default puts a VM behind.
+        .env("CUA_SECURE_DEFAULT", "0")
         .args([
             "--exact",
             "qemu::tpm_tests::cancelled_launch_child",
@@ -829,6 +833,8 @@ fn failed_start_holds_the_vm_through_its_cleanup() {
         ),
     );
     let output = std::process::Command::new(std::env::current_exe().unwrap())
+        // These tests are about launching QEMU, not the network gateway the secure default puts a VM behind.
+        .env("CUA_SECURE_DEFAULT", "0")
         .args([
             "--exact",
             "qemu::tpm_tests::failed_start_child",

@@ -23,9 +23,10 @@ import PackageDescription
 // framework that scripts/build-app.sh embeds in Contents/Frameworks and
 // scripts/build-release.sh signs from the inside out.
 //
-// PermissionFlow (MIT, pinned to a release) is the guide to Screen
-// Recording and Accessibility in System Settings: it opens the pane and
-// floats this app beside it to drag into the list (PermissionGuide.swift).
+// PermissionFlow (MIT, 2.11.4, vendored in Vendor/PermissionFlow with two
+// additions, see its README) is the guide to Screen Recording and
+// Accessibility in System Settings: it opens the pane and docks a panel
+// under it that says what to do there (PermissionGuide.swift).
 // Its strings ship as a SwiftPM resource bundle, which build-app.sh copies
 // into Contents/Resources like ours.
 //
@@ -51,7 +52,7 @@ let package = Package(
         .package(name: "CuaSpacesApp", path: "../../libs/spaces-app-swift"),
         .package(name: "CuaSpacesNotch", path: "../../libs/spaces-notch-swift"),
         .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.0"),
-        .package(url: "https://github.com/jaywcjlove/PermissionFlow", exact: "2.11.4"),
+        .package(name: "PermissionFlow", path: "Vendor/PermissionFlow"),
         .package(url: "https://github.com/getsentry/sentry-cocoa", exact: "9.31.0"),
     ],
     targets: [

@@ -237,6 +237,55 @@ export async function appAckShareRemovals(accountToken: string, asyncOpts_?: { s
     }
 
 /**
+ * Whether the pending row `id` is a create an agent asked for (Cancel and Remove act on the host's record).
+ */
+export function appAgentCreateIsAgents(id: string): boolean {
+    return FfiConverterBool.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_agent_create_is_agents(
+        FfiConverterString.lower(id, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * The person removed an agent's failed create from the list: it is not drawn again.
+ */
+export function appAgentCreateRemove(pendingId: string): void {uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => { nativeModule().uniffi_cua_spaces_ffi_fn_func_app_agent_create_remove(
+        FfiConverterString.lower(pendingId, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    );
+    }
+
+/**
+ * The actions that make the pending rows show the Spaces agents asked this
+ * computer to make (read from this computer's cua home, which the daemon writes):
+ * run each through `app_creates_reduce` on every list refresh.
+ */
+export function appAgentCreatesActions(state: AppCreatesState, nowMs: bigint): Array<AppCreateAction> {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterSequenceTypeAppCreateAction.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_agent_creates_actions(
+        FfiConverterTypeAppCreatesState.lower(state, nativeModule().rustbuffer_alloc),
+        FfiConverterInt64.lower(nowMs, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
  * The add or replace sheet.
  */
 export function appAgentKeyForm(input: AppAgentKeysInput, form: AppAgentKeyFormInput): AppAgentKeyFormView {
@@ -4546,7 +4595,7 @@ export function appSettingsInputFromJson(json: string): AppSettingsInput /*throw
 
 /**
  * Reads the settings file (defaults when missing or damaged). The
- * experiments the daemon enforces (Secure Spaces, Child Spaces, Ask first, CI runners, Public TCP shares, Phone app) are what
+ * experiments the daemon enforces (CI runners, Public TCP shares, Phone app) are what
  * the cua home keeps, so `cua experiments enable` shows in the app.
  */
 export function appSettingsLoad(path: string): AppSettings {
@@ -5489,6 +5538,29 @@ export function appStreamSection(input: AppStreamSectionInput): AppStreamSection
             /*caller:*/ (callStatus) => {
                 return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_stream_section(
         FfiConverterTypeAppStreamSectionInput.lower(input, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * Which build and deployment this app runs as: its channel (`stable` or
+ * `local`, `CuaChannel`), its environment (`prod` or `staging`, `CuaEnv`)
+ * and the host of the sign-in server it uses, resolved as every other part
+ * of the app resolves them. The web UI's title bar tag ("Local · Staging",
+ * the app core's `environment.tag`) is drawn from it, so every shell agrees.
+ */
+export function appTarget(): AppTarget {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeAppTarget.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_target(
                 callStatus);
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
@@ -12073,7 +12145,7 @@ export type AppChecklistRow = {
      */
     step: AppChecklistStep,
     /**
-     * "Add a machine".
+     * "Add a computer".
      */
     title: string,
     /**
@@ -13333,7 +13405,12 @@ export type AppSpace = {
      * [`crate::spaces::openable_spaces`]). Its own page still opens. The
      * SDK and `cua spaces ls` still return it, marked.
      */
-    hidden: boolean
+    hidden: boolean,
+    /**
+     * The Space it is a child of (its id): the Spaces page nests it under that Space. Absent for a
+     * top-level Space.
+     */
+    parent?: string
 }
 
 /**
@@ -13383,7 +13460,8 @@ const FfiConverterTypeAppSpace = (() => {
                 cloudPlace: FfiConverterOptionalString.read(from),
                 cloudDelete: FfiConverterOptionalString.read(from),
                 access: FfiConverterOptionalTypeAppSpaceAccess.read(from),
-                hidden: FfiConverterBool.read(from)
+                hidden: FfiConverterBool.read(from),
+                parent: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -13414,6 +13492,7 @@ const FfiConverterTypeAppSpace = (() => {
             FfiConverterOptionalString.write(value.cloudDelete, into);
             FfiConverterOptionalTypeAppSpaceAccess.write(value.access, into);
             FfiConverterBool.write(value.hidden, into);
+            FfiConverterOptionalString.write(value.parent, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.id) +
@@ -13442,7 +13521,8 @@ const FfiConverterTypeAppSpace = (() => {
              FfiConverterOptionalString.allocationSize(value.cloudPlace) +
              FfiConverterOptionalString.allocationSize(value.cloudDelete) +
              FfiConverterOptionalTypeAppSpaceAccess.allocationSize(value.access) +
-             FfiConverterBool.allocationSize(value.hidden);
+             FfiConverterBool.allocationSize(value.hidden) +
+             FfiConverterOptionalString.allocationSize(value.parent);
 
         }
     };
@@ -14629,23 +14709,6 @@ export type AppExperiments = {
      */
     cuaVolume: boolean,
     /**
-     * Secure Spaces: a Space reaches the internet and nothing else on the
-     * network unless it is opened. Off unless turned on; the daemon enforces
-     * it (the switch is kept in the cua home).
-     */
-    secureSpaces: boolean,
-    /**
-     * Child Spaces: a Space may make Spaces of its own. Off unless turned
-     * on; the daemon enforces it (the switch is kept in the cua home).
-     */
-    childSpaces: boolean,
-    /**
-     * Ask first: an agent asks on a card before something leaves its Space
-     * (a push to GitHub). Off unless turned on; the daemon enforces it (the
-     * switch is kept in the cua home).
-     */
-    askFirst: boolean,
-    /**
      * CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
      * and the CI Runners page). Off unless turned on; the daemon and the
      * `cua` command enforce it (the switch is kept in the cua home).
@@ -14662,13 +14725,7 @@ export type AppExperiments = {
      * push events). Off unless turned on; the daemon enforces it (the switch
      * is kept in the cua home).
      */
-    mobile: boolean,
-    /**
-     * Warm pools: one Linux Space kept ready, with its coding apps
-     * installed, so the next Create from Home starts at once. Off unless
-     * turned on; the daemon enforces it (the switch is kept in the cua home).
-     */
-    warmPools: boolean
+    mobile: boolean
 }
 
 /**
@@ -14693,34 +14750,22 @@ const FfiConverterTypeAppExperiments = (() => {
         read(from: RustBuffer): TypeName {
             return {
                 cuaVolume: FfiConverterBool.read(from),
-                secureSpaces: FfiConverterBool.read(from),
-                childSpaces: FfiConverterBool.read(from),
-                askFirst: FfiConverterBool.read(from),
                 ciRunners: FfiConverterBool.read(from),
                 tcpShares: FfiConverterBool.read(from),
-                mobile: FfiConverterBool.read(from),
-                warmPools: FfiConverterBool.read(from)
+                mobile: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterBool.write(value.cuaVolume, into);
-            FfiConverterBool.write(value.secureSpaces, into);
-            FfiConverterBool.write(value.childSpaces, into);
-            FfiConverterBool.write(value.askFirst, into);
             FfiConverterBool.write(value.ciRunners, into);
             FfiConverterBool.write(value.tcpShares, into);
             FfiConverterBool.write(value.mobile, into);
-            FfiConverterBool.write(value.warmPools, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterBool.allocationSize(value.cuaVolume) +
-             FfiConverterBool.allocationSize(value.secureSpaces) +
-             FfiConverterBool.allocationSize(value.childSpaces) +
-             FfiConverterBool.allocationSize(value.askFirst) +
              FfiConverterBool.allocationSize(value.ciRunners) +
              FfiConverterBool.allocationSize(value.tcpShares) +
-             FfiConverterBool.allocationSize(value.mobile) +
-             FfiConverterBool.allocationSize(value.warmPools);
+             FfiConverterBool.allocationSize(value.mobile);
 
         }
     };
@@ -19746,6 +19791,10 @@ export type AppPendingCreate = {
      */
     hostName?: string,
     /**
+     * The Space it is a child of (an agent made it): the row nests under it.
+     */
+    parent?: string,
+    /**
      * How many times the app ran this create again by itself: 0, or 1
      * after a failure that usually passes ([`fail_decision`]).
      */
@@ -19812,6 +19861,7 @@ const FfiConverterTypeAppPendingCreate = (() => {
                 gpu: FfiConverterBool.read(from),
                 host: FfiConverterOptionalString.read(from),
                 hostName: FfiConverterOptionalString.read(from),
+                parent: FfiConverterOptionalString.read(from),
                 attempt: FfiConverterUInt32.read(from),
                 retryPending: FfiConverterBool.read(from),
                 retriedSubclass: FfiConverterOptionalString.read(from),
@@ -19842,6 +19892,7 @@ const FfiConverterTypeAppPendingCreate = (() => {
             FfiConverterBool.write(value.gpu, into);
             FfiConverterOptionalString.write(value.host, into);
             FfiConverterOptionalString.write(value.hostName, into);
+            FfiConverterOptionalString.write(value.parent, into);
             FfiConverterUInt32.write(value.attempt, into);
             FfiConverterBool.write(value.retryPending, into);
             FfiConverterOptionalString.write(value.retriedSubclass, into);
@@ -19871,6 +19922,7 @@ const FfiConverterTypeAppPendingCreate = (() => {
              FfiConverterBool.allocationSize(value.gpu) +
              FfiConverterOptionalString.allocationSize(value.host) +
              FfiConverterOptionalString.allocationSize(value.hostName) +
+             FfiConverterOptionalString.allocationSize(value.parent) +
              FfiConverterUInt32.allocationSize(value.attempt) +
              FfiConverterBool.allocationSize(value.retryPending) +
              FfiConverterOptionalString.allocationSize(value.retriedSubclass) +
@@ -21591,7 +21643,7 @@ export type AppDevicesInput = {
      */
     machineNames: Map<string, string>,
     /**
-     * The account's relay machines, for the "New machine" confirm badge
+     * The account's relay machines, for the "New computer" confirm badge
      * (S5). Empty on a relay that predates it, or when this device cannot
      * list them, same as `machine_names`.
      */
@@ -27121,7 +27173,7 @@ const FfiConverterTypeAppHostSetupRequest = (() => {
 
 export type AppHostFormView = {
     /**
-     * "Set up this machine".
+     * "Set up this computer".
      */
     title: string,
     /**
@@ -27682,7 +27734,7 @@ const FfiConverterTypeAppHostSetupChoice = (() => {
 
 export type AppHostPanelView = {
     /**
-     * "This machine".
+     * "This computer".
      */
     title: string,
     /**
@@ -29189,7 +29241,7 @@ export type AppListView = {
     empty: boolean,
     /**
      * One quiet line where the Spaces go while the list is not complete
-     * ("Reaching 6 machines…"), below what is known so far.
+     * ("Reaching 6 computers…"), below what is known so far.
      */
     reachingLine?: string
 }
@@ -29976,7 +30028,7 @@ const FfiConverterTypeAppMachinesViewRemove = (() => {
 
 export type AppMachinesViewRemoveAll = {
     /**
-     * "Remove old machines".
+     * "Remove old computers".
      */
     label: string,
     /**
@@ -30036,7 +30088,7 @@ export type AppMachinesViewGroup = {
      */
     id: string,
     /**
-     * "Your machines", "Offline for 30+ days (2)", "Team machines".
+     * "Your computers", "Offline for 30+ days (2)", "Team computers".
      */
     title: string,
     /**
@@ -30298,7 +30350,7 @@ export type AppMachinesViewToggle = {
      */
     id: string,
     /**
-     * "Let other machines create Spaces here", "Let other machines control
+     * "Let other computers create Spaces here", "Let other computers control
      * this desktop".
      */
     label: string,
@@ -30640,7 +30692,8 @@ export type AppMachinesViewMachine = {
      */
     team: boolean,
     /**
-     * The page's status line ("Online", "Offline").
+     * The page's status line ("Online", "Offline"; "Online, 1 thing to
+     * fix" when it has issues, so the words agree with the dot).
      */
     status: string,
     /**
@@ -30678,7 +30731,7 @@ export type AppMachinesViewMachine = {
      */
     togglesNote?: string,
     /**
-     * "Spaces on this machine".
+     * "Spaces on this computer".
      */
     spacesTitle: string,
     /**
@@ -30826,7 +30879,7 @@ const FfiConverterTypeAppMachinesViewMachine = (() => {
 
 export type AppMachinesView = {
     /**
-     * "3 machines, 2 online".
+     * "3 computers, 2 online".
      */
     summary: string,
     /**
@@ -38783,6 +38836,62 @@ const FfiConverterTypeAppRememberedChoice = (() => {
     return new FFIConverter();
 })();
 
+export type AppRemoteWindowOrigin = {
+    /**
+     * The origin Space's id.
+     */
+    spaceId: string,
+    /**
+     * Its name.
+     */
+    name: string,
+    /**
+     * Its OS (`macos`, `linux`, `windows`), when known.
+     */
+    os: string
+}
+
+/**
+ * Generated factory for {@link AppRemoteWindowOrigin} record objects.
+ */
+export const AppRemoteWindowOrigin = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppRemoteWindowOrigin, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppRemoteWindowOrigin>,
+    });
+})();
+
+const FfiConverterTypeAppRemoteWindowOrigin = (() => {
+    type TypeName = AppRemoteWindowOrigin;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                spaceId: FfiConverterString.read(from),
+                name: FfiConverterString.read(from),
+                os: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.spaceId, into);
+            FfiConverterString.write(value.name, into);
+            FfiConverterString.write(value.os, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.spaceId) +
+             FfiConverterString.allocationSize(value.name) +
+             FfiConverterString.allocationSize(value.os);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type AppRemoteWindow = {
     /**
      * Stable key.
@@ -38820,7 +38929,12 @@ export type AppRemoteWindow = {
      * The owning process (what the SDK's `Space.app_icon` looks a macOS
      * app up by), when the window list reports one.
      */
-    pid?: number
+    pid?: number,
+    /**
+     * The Space the picture comes from, when another Space shows this
+     * window here (`stream_space_window`); absent on a Space's own windows.
+     */
+    origin?: AppRemoteWindowOrigin
 }
 
 /**
@@ -38852,7 +38966,8 @@ const FfiConverterTypeAppRemoteWindow = (() => {
                 targetEpoch: FfiConverterUInt64.read(from),
                 widthPx: FfiConverterOptionalUInt32.read(from),
                 heightPx: FfiConverterOptionalUInt32.read(from),
-                pid: FfiConverterOptionalUInt32.read(from)
+                pid: FfiConverterOptionalUInt32.read(from),
+                origin: FfiConverterOptionalTypeAppRemoteWindowOrigin.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -38865,6 +38980,7 @@ const FfiConverterTypeAppRemoteWindow = (() => {
             FfiConverterOptionalUInt32.write(value.widthPx, into);
             FfiConverterOptionalUInt32.write(value.heightPx, into);
             FfiConverterOptionalUInt32.write(value.pid, into);
+            FfiConverterOptionalTypeAppRemoteWindowOrigin.write(value.origin, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.id) +
@@ -38875,7 +38991,8 @@ const FfiConverterTypeAppRemoteWindow = (() => {
              FfiConverterUInt64.allocationSize(value.targetEpoch) +
              FfiConverterOptionalUInt32.allocationSize(value.widthPx) +
              FfiConverterOptionalUInt32.allocationSize(value.heightPx) +
-             FfiConverterOptionalUInt32.allocationSize(value.pid);
+             FfiConverterOptionalUInt32.allocationSize(value.pid) +
+             FfiConverterOptionalTypeAppRemoteWindowOrigin.allocationSize(value.origin);
 
         }
     };
@@ -40955,7 +41072,18 @@ export type AppSettings = {
      * one is a connect, which shows its app again
      * ([`crate::agent_menu::sync`]).
      */
-    agentMenuSeen: Array<string>
+    agentMenuSeen: Array<string>,
+    /**
+     * Settings, General, "When I close the window": closing the main
+     * window leaves Cua Spaces and its background service running (on, the
+     * default); off, it quits Cua Spaces, as Quit does.
+     */
+    closeWindowKeepsRunning: boolean,
+    /**
+     * "Don't show this again" on the notice that Cua Spaces keeps running
+     * when the window closes, or the Settings switch turned off.
+     */
+    closeNoticeOff: boolean
 }
 
 /**
@@ -40998,7 +41126,9 @@ const FfiConverterTypeAppSettings = (() => {
                 tips: FfiConverterTypeAppTipsState.read(from),
                 agentMenuShown: FfiConverterSequenceString.read(from),
                 agentMenuHidden: FfiConverterSequenceString.read(from),
-                agentMenuSeen: FfiConverterSequenceString.read(from)
+                agentMenuSeen: FfiConverterSequenceString.read(from),
+                closeWindowKeepsRunning: FfiConverterBool.read(from),
+                closeNoticeOff: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -41022,6 +41152,8 @@ const FfiConverterTypeAppSettings = (() => {
             FfiConverterSequenceString.write(value.agentMenuShown, into);
             FfiConverterSequenceString.write(value.agentMenuHidden, into);
             FfiConverterSequenceString.write(value.agentMenuSeen, into);
+            FfiConverterBool.write(value.closeWindowKeepsRunning, into);
+            FfiConverterBool.write(value.closeNoticeOff, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.hotkey) +
@@ -41043,7 +41175,9 @@ const FfiConverterTypeAppSettings = (() => {
              FfiConverterTypeAppTipsState.allocationSize(value.tips) +
              FfiConverterSequenceString.allocationSize(value.agentMenuShown) +
              FfiConverterSequenceString.allocationSize(value.agentMenuHidden) +
-             FfiConverterSequenceString.allocationSize(value.agentMenuSeen);
+             FfiConverterSequenceString.allocationSize(value.agentMenuSeen) +
+             FfiConverterBool.allocationSize(value.closeWindowKeepsRunning) +
+             FfiConverterBool.allocationSize(value.closeNoticeOff);
 
         }
     };
@@ -41886,7 +42020,18 @@ export type AppSettingsInput = {
      * Settings, General's Show tips switch: tips are on
      * (`!AppSettings.tips.off`). A shell that does not say reads as on.
      */
-    showTips: boolean
+    showTips: boolean,
+    /**
+     * Settings, General's "When I close the window": the window's close
+     * button keeps Cua Spaces running in the background (none: no rows; a
+     * shell without a background service leaves them out).
+     */
+    closeWindowKeepsRunning?: boolean,
+    /**
+     * The notice that Cua Spaces keeps running is on (shown with the row
+     * above).
+     */
+    closeNotice: boolean
 }
 
 /**
@@ -41929,7 +42074,9 @@ const FfiConverterTypeAppSettingsInput = (() => {
                 autoConnect: FfiConverterOptionalBoolean.read(from),
                 overflow: FfiConverterOptionalBoolean.read(from),
                 runtimes: FfiConverterOptionalTypeAppRuntimesInput.read(from),
-                showTips: FfiConverterBool.read(from)
+                showTips: FfiConverterBool.read(from),
+                closeWindowKeepsRunning: FfiConverterOptionalBoolean.read(from),
+                closeNotice: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -41953,6 +42100,8 @@ const FfiConverterTypeAppSettingsInput = (() => {
             FfiConverterOptionalBoolean.write(value.overflow, into);
             FfiConverterOptionalTypeAppRuntimesInput.write(value.runtimes, into);
             FfiConverterBool.write(value.showTips, into);
+            FfiConverterOptionalBoolean.write(value.closeWindowKeepsRunning, into);
+            FfiConverterBool.write(value.closeNotice, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterOptionalString.allocationSize(value.identity) +
@@ -41974,7 +42123,9 @@ const FfiConverterTypeAppSettingsInput = (() => {
              FfiConverterOptionalBoolean.allocationSize(value.autoConnect) +
              FfiConverterOptionalBoolean.allocationSize(value.overflow) +
              FfiConverterOptionalTypeAppRuntimesInput.allocationSize(value.runtimes) +
-             FfiConverterBool.allocationSize(value.showTips);
+             FfiConverterBool.allocationSize(value.showTips) +
+             FfiConverterOptionalBoolean.allocationSize(value.closeWindowKeepsRunning) +
+             FfiConverterBool.allocationSize(value.closeNotice);
 
         }
     };
@@ -44458,7 +44609,11 @@ export type AppSpaceRow = {
     /**
      * A relay Space: who owns it and who else has it.
      */
-    sharing?: AppSpaceSharingFacts
+    sharing?: AppSpaceSharingFacts,
+    /**
+     * The Space it is a child of (its id), as the daemon records the tree; absent for a top-level Space.
+     */
+    parent?: string
 }
 
 /**
@@ -44507,7 +44662,8 @@ const FfiConverterTypeAppSpaceRow = (() => {
                 cloudPlace: FfiConverterOptionalString.read(from),
                 cloudDelete: FfiConverterOptionalString.read(from),
                 stopReason: FfiConverterOptionalString.read(from),
-                sharing: FfiConverterOptionalTypeAppSpaceSharingFacts.read(from)
+                sharing: FfiConverterOptionalTypeAppSpaceSharingFacts.read(from),
+                parent: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -44537,6 +44693,7 @@ const FfiConverterTypeAppSpaceRow = (() => {
             FfiConverterOptionalString.write(value.cloudDelete, into);
             FfiConverterOptionalString.write(value.stopReason, into);
             FfiConverterOptionalTypeAppSpaceSharingFacts.write(value.sharing, into);
+            FfiConverterOptionalString.write(value.parent, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.id) +
@@ -44564,7 +44721,8 @@ const FfiConverterTypeAppSpaceRow = (() => {
              FfiConverterOptionalString.allocationSize(value.cloudPlace) +
              FfiConverterOptionalString.allocationSize(value.cloudDelete) +
              FfiConverterOptionalString.allocationSize(value.stopReason) +
-             FfiConverterOptionalTypeAppSpaceSharingFacts.allocationSize(value.sharing);
+             FfiConverterOptionalTypeAppSpaceSharingFacts.allocationSize(value.sharing) +
+             FfiConverterOptionalString.allocationSize(value.parent);
 
         }
     };
@@ -45056,6 +45214,62 @@ const FfiConverterTypeAppStreamRowIcon = (() => {
     return new FFIConverter();
 })();
 
+export type AppStreamRowOrigin = {
+    /**
+     * The origin Space's id.
+     */
+    spaceId: string,
+    /**
+     * Its name.
+     */
+    name: string,
+    /**
+     * Its OS mark (`os-macos`, ...): the core's artwork (`notch.osIconSvg`).
+     */
+    osIcon: string
+}
+
+/**
+ * Generated factory for {@link AppStreamRowOrigin} record objects.
+ */
+export const AppStreamRowOrigin = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppStreamRowOrigin, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppStreamRowOrigin>,
+    });
+})();
+
+const FfiConverterTypeAppStreamRowOrigin = (() => {
+    type TypeName = AppStreamRowOrigin;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                spaceId: FfiConverterString.read(from),
+                name: FfiConverterString.read(from),
+                osIcon: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.spaceId, into);
+            FfiConverterString.write(value.name, into);
+            FfiConverterString.write(value.osIcon, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.spaceId) +
+             FfiConverterString.allocationSize(value.name) +
+             FfiConverterString.allocationSize(value.osIcon);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export enum AppStreamRowActionId {
     /**
      * Picture in picture: the row's own stream in a floating panel.
@@ -45174,6 +45388,12 @@ export type AppStreamRow = {
      */
     icon: AppStreamRowIcon,
     /**
+     * For a window another Space shows here: the Space it lives in, drawn
+     * as its OS mark and name beside the label. Absent on a Space's own
+     * rows (older shells ignore it).
+     */
+    origin?: AppStreamRowOrigin,
+    /**
      * Icon buttons, in order.
      */
     actions: Array<AppStreamRowAction>
@@ -45206,6 +45426,7 @@ const FfiConverterTypeAppStreamRow = (() => {
                 help: FfiConverterString.read(from),
                 resolution: FfiConverterOptionalString.read(from),
                 icon: FfiConverterTypeAppStreamRowIcon.read(from),
+                origin: FfiConverterOptionalTypeAppStreamRowOrigin.read(from),
                 actions: FfiConverterSequenceTypeAppStreamRowAction.read(from)
             };
         }
@@ -45216,6 +45437,7 @@ const FfiConverterTypeAppStreamRow = (() => {
             FfiConverterString.write(value.help, into);
             FfiConverterOptionalString.write(value.resolution, into);
             FfiConverterTypeAppStreamRowIcon.write(value.icon, into);
+            FfiConverterOptionalTypeAppStreamRowOrigin.write(value.origin, into);
             FfiConverterSequenceTypeAppStreamRowAction.write(value.actions, into);
         }
         allocationSize(value: TypeName): number {
@@ -45225,6 +45447,7 @@ const FfiConverterTypeAppStreamRow = (() => {
              FfiConverterString.allocationSize(value.help) +
              FfiConverterOptionalString.allocationSize(value.resolution) +
              FfiConverterTypeAppStreamRowIcon.allocationSize(value.icon) +
+             FfiConverterOptionalTypeAppStreamRowOrigin.allocationSize(value.origin) +
              FfiConverterSequenceTypeAppStreamRowAction.allocationSize(value.actions);
 
         }
@@ -45360,6 +45583,64 @@ const FfiConverterTypeAppStreamSectionInput = (() => {
              FfiConverterOptionalString.allocationSize(value.osName) +
              FfiConverterSequenceString.allocationSize(value.open) +
              FfiConverterString.allocationSize(value.query);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppTarget = {
+    /**
+     * `stable` or `local` (`CuaChannel`); anything else is Stable.
+     */
+    channel: string,
+    /**
+     * `prod` or `staging` (`CuaEnv::name`).
+     */
+    env: string,
+    /**
+     * The sign-in server's host (`auth.staging.cua.ai`), from the resolved
+     * OIDC issuer, so an override (`CUA_OIDC_ISSUER`) shows as it is.
+     * Empty: the environment's default.
+     */
+    authHost: string
+}
+
+/**
+ * Generated factory for {@link AppTarget} record objects.
+ */
+export const AppTarget = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppTarget, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppTarget>,
+    });
+})();
+
+const FfiConverterTypeAppTarget = (() => {
+    type TypeName = AppTarget;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                channel: FfiConverterString.read(from),
+                env: FfiConverterString.read(from),
+                authHost: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.channel, into);
+            FfiConverterString.write(value.env, into);
+            FfiConverterString.write(value.authHost, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.channel) +
+             FfiConverterString.allocationSize(value.env) +
+             FfiConverterString.allocationSize(value.authHost);
 
         }
     };
@@ -56572,7 +56853,7 @@ export const AppCreateAction = (() => {
     type Start__interface = {
         tag: AppCreateAction_Tags.Start;
         inner:
-Readonly<{id: string; name: string; os: AppSpaceOs; provider: AppSpaceProvider; now: bigint; image?: string; kind?: AppSpaceKind; hostArch?: string; gpu: boolean; host?: string; hostName?: string}>
+Readonly<{id: string; name: string; os: AppSpaceOs; provider: AppSpaceProvider; now: bigint; image?: string; kind?: AppSpaceKind; hostArch?: string; gpu: boolean; host?: string; hostName?: string; parent?: string}>
     };
     /**
      * A create started: its row shows now.
@@ -56585,15 +56866,15 @@ Readonly<{id: string; name: string; os: AppSpaceOs; provider: AppSpaceProvider; 
         readonly [uniffiTypeNameSymbol] = "AppCreateAction";
         readonly tag = AppCreateAction_Tags.Start;
         readonly inner:
-Readonly<{id: string; name: string; os: AppSpaceOs; provider: AppSpaceProvider; now: bigint; image?: string; kind?: AppSpaceKind; hostArch?: string; gpu: boolean; host?: string; hostName?: string}>;
+Readonly<{id: string; name: string; os: AppSpaceOs; provider: AppSpaceProvider; now: bigint; image?: string; kind?: AppSpaceKind; hostArch?: string; gpu: boolean; host?: string; hostName?: string; parent?: string}>;
         constructor(
-inner: {id: string; name: string; os: AppSpaceOs; provider: AppSpaceProvider; now: bigint; image?: string; kind?: AppSpaceKind; hostArch?: string; gpu: boolean; host?: string; hostName?: string }) {
+inner: {id: string; name: string; os: AppSpaceOs; provider: AppSpaceProvider; now: bigint; image?: string; kind?: AppSpaceKind; hostArch?: string; gpu: boolean; host?: string; hostName?: string; parent?: string }) {
             super("AppCreateAction", "Start");
 
             this.inner = Object.freeze(inner);
         }
         static new(
-inner: {id: string; name: string; os: AppSpaceOs; provider: AppSpaceProvider; now: bigint; image?: string; kind?: AppSpaceKind; hostArch?: string; gpu: boolean; host?: string; hostName?: string }): Start_ {
+inner: {id: string; name: string; os: AppSpaceOs; provider: AppSpaceProvider; now: bigint; image?: string; kind?: AppSpaceKind; hostArch?: string; gpu: boolean; host?: string; hostName?: string; parent?: string }): Start_ {
             return new Start_(inner);
         }
 
@@ -57123,7 +57404,7 @@ const FfiConverterTypeAppCreateAction = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         read(from: RustBuffer): TypeName {
             switch (ordinalConverter.read(from)) {
-                case 1: return new AppCreateAction.Start({id: FfiConverterString.read(from), name: FfiConverterString.read(from), os: FfiConverterTypeAppSpaceOs.read(from), provider: FfiConverterTypeAppSpaceProvider.read(from), now: FfiConverterInt64.read(from), image: FfiConverterOptionalString.read(from), kind: FfiConverterOptionalTypeAppSpaceKind.read(from), hostArch: FfiConverterOptionalString.read(from), gpu: FfiConverterBool.read(from), host: FfiConverterOptionalString.read(from), hostName: FfiConverterOptionalString.read(from) });
+                case 1: return new AppCreateAction.Start({id: FfiConverterString.read(from), name: FfiConverterString.read(from), os: FfiConverterTypeAppSpaceOs.read(from), provider: FfiConverterTypeAppSpaceProvider.read(from), now: FfiConverterInt64.read(from), image: FfiConverterOptionalString.read(from), kind: FfiConverterOptionalTypeAppSpaceKind.read(from), hostArch: FfiConverterOptionalString.read(from), gpu: FfiConverterBool.read(from), host: FfiConverterOptionalString.read(from), hostName: FfiConverterOptionalString.read(from), parent: FfiConverterOptionalString.read(from) });
                 case 2: return new AppCreateAction.Progress({id: FfiConverterString.read(from), phase: FfiConverterString.read(from), fraction: FfiConverterOptionalFloat64.read(from), now: FfiConverterOptionalInt64.read(from), bytesDone: FfiConverterOptionalUInt64.read(from), bytesTotal: FfiConverterOptionalUInt64.read(from), bytesPerSecond: FfiConverterOptionalFloat64.read(from) });
                 case 3: return new AppCreateAction.CancelStart({id: FfiConverterString.read(from) });
                 case 4: return new AppCreateAction.CancelDone({id: FfiConverterString.read(from) });
@@ -57157,6 +57438,7 @@ const FfiConverterTypeAppCreateAction = (() => {
                     FfiConverterBool.write(inner.gpu, into);
                     FfiConverterOptionalString.write(inner.host, into);
                     FfiConverterOptionalString.write(inner.hostName, into);
+                    FfiConverterOptionalString.write(inner.parent, into);
                     return;
                 }
                 case AppCreateAction_Tags.Progress: {
@@ -57279,6 +57561,7 @@ const FfiConverterTypeAppCreateAction = (() => {
                     size += FfiConverterBool.allocationSize(inner.gpu);
                     size += FfiConverterOptionalString.allocationSize(inner.host);
                     size += FfiConverterOptionalString.allocationSize(inner.hostName);
+                    size += FfiConverterOptionalString.allocationSize(inner.parent);
                     return size;
                 }
                 case AppCreateAction_Tags.Progress: {
@@ -70848,6 +71131,9 @@ const FfiConverterOptionalTypeAppRelayUsageTeam = new FfiConverterOptional(FfiCo
 // FfiConverter for AppRelayAllowanceNotice | undefined
 const FfiConverterOptionalTypeAppRelayAllowanceNotice = new FfiConverterOptional(FfiConverterTypeAppRelayAllowanceNotice);
 
+// FfiConverter for AppRemoteWindowOrigin | undefined
+const FfiConverterOptionalTypeAppRemoteWindowOrigin = new FfiConverterOptional(FfiConverterTypeAppRemoteWindowOrigin);
+
 // FfiConverter for Array<AppRemoteWindow>
 const FfiConverterSequenceTypeAppRemoteWindow = new FfiConverterArray(FfiConverterTypeAppRemoteWindow);
 
@@ -70982,6 +71268,9 @@ const FfiConverterOptionalTypeAppSpaceSharingFacts = new FfiConverterOptional(Ff
 
 // FfiConverter for AppDriveCacheInput | undefined
 const FfiConverterOptionalTypeAppDriveCacheInput = new FfiConverterOptional(FfiConverterTypeAppDriveCacheInput);
+
+// FfiConverter for AppStreamRowOrigin | undefined
+const FfiConverterOptionalTypeAppStreamRowOrigin = new FfiConverterOptional(FfiConverterTypeAppStreamRowOrigin);
 
 // FfiConverter for Array<AppStreamRowAction>
 const FfiConverterSequenceTypeAppStreamRowAction = new FfiConverterArray(FfiConverterTypeAppStreamRowAction);
@@ -71169,6 +71458,9 @@ const FfiConverterOptionalTypeTeleportApproval = new FfiConverterOptional(FfiCon
 // FfiConverter for Array<AppAccountMenuItem>
 const FfiConverterSequenceTypeAppAccountMenuItem = new FfiConverterArray(FfiConverterTypeAppAccountMenuItem);
 
+// FfiConverter for Array<AppCreateAction>
+const FfiConverterSequenceTypeAppCreateAction = new FfiConverterArray(FfiConverterTypeAppCreateAction);
+
 // FfiConverter for AppAgentKeyConfirm | undefined
 const FfiConverterOptionalTypeAppAgentKeyConfirm = new FfiConverterOptional(FfiConverterTypeAppAgentKeyConfirm);
 
@@ -71340,6 +71632,15 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_ack_share_removals() !== 16071) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_ack_share_removals");
+    }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_agent_create_is_agents() !== 22242) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_agent_create_is_agents");
+    }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_agent_create_remove() !== 26467) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_agent_create_remove");
+    }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_agent_creates_actions() !== 65187) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_agent_creates_actions");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_agent_key_form() !== 42778) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_agent_key_form");
@@ -71962,7 +72263,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_input_from_json() !== 15437) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_input_from_json");
     }
-    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_load() !== 56775) {
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_load() !== 62088) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_load");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_page() !== 454) {
@@ -72096,6 +72397,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_stream_section() !== 40082) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_stream_section");
+    }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_target() !== 5718) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_target");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_teams() !== 64616) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_teams");
@@ -72821,6 +73125,7 @@ export default Object.freeze({
     FfiConverterTypeAppRememberedChoice,
     FfiConverterTypeAppRemoteWindow,
     FfiConverterTypeAppRemoteWindowGroup,
+    FfiConverterTypeAppRemoteWindowOrigin,
     FfiConverterTypeAppResourceEdit,
     FfiConverterTypeAppResourceEditView,
     FfiConverterTypeAppResourceField,
@@ -72926,12 +73231,14 @@ export default Object.freeze({
     FfiConverterTypeAppStreamRowActionId,
     FfiConverterTypeAppStreamRowIcon,
     FfiConverterTypeAppStreamRowKind,
+    FfiConverterTypeAppStreamRowOrigin,
     FfiConverterTypeAppStreamSection,
     FfiConverterTypeAppStreamSectionInput,
     FfiConverterTypeAppSuggestionGroup,
     FfiConverterTypeAppSwitcherTheme,
     FfiConverterTypeAppSystemNote,
     FfiConverterTypeAppTabView,
+    FfiConverterTypeAppTarget,
     FfiConverterTypeAppTeamInput,
     FfiConverterTypeAppTeamPersonInput,
     FfiConverterTypeAppTeamsInput,

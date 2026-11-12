@@ -45,17 +45,23 @@ describe("New Space's create", () => {
     expect(createCommand(STABLE, { ...macos, name: "studio", cpus: 4, memoryMb: 8192, diskGb: 80, gpu: "paravirtual" })).toBe(
       "cua spaces create ghcr.io/trycua/macos:26 --on local --kind vm --runtime lume --name studio --cpus 4 --memory-mb 8192 --disk-gb 80 --gpu paravirtual",
     );
-    expect(createCommand(LOCAL, { ...linux, kind: "vm", runtime: "qemu" })).toBe("cua-local spaces create ghcr.io/trycua/linux:24.04 --on local --kind vm --runtime qemu");
+    expect(createCommand(LOCAL, { ...linux, kind: "vm", runtime: "qemu" })).toBe(
+      "cua-local spaces create ghcr.io/trycua/linux:24.04 --on local --kind vm --runtime qemu",
+    );
   });
 
   it("runs on another of your machines, or in your cloud", () => {
-    expect(createCommand(STABLE, { ...linux, on: "host:0123abcd4567ef89" })).toBe("cua spaces create ghcr.io/trycua/linux:24.04 --on host:0123abcd4567ef89 --kind container");
+    expect(createCommand(STABLE, { ...linux, on: "host:0123abcd4567ef89" })).toBe(
+      "cua spaces create ghcr.io/trycua/linux:24.04 --on host:0123abcd4567ef89 --kind container",
+    );
     expect(createCommand(STABLE, { ...linux, on: "aws" })).toBe("cua spaces create ghcr.io/trycua/linux:24.04 --on aws --kind container");
     expect(createCommand(STABLE, { ...linux, on: "auto" })).toBe("cua spaces create ghcr.io/trycua/linux:24.04 --on auto --kind container");
   });
 
   it("quotes what the shell would split", () => {
-    expect(createCommand(STABLE, { ...linux, name: "Dan's box" })).toBe(`cua spaces create ghcr.io/trycua/linux:24.04 --on local --kind container --name 'Dan'\\''s box'`);
+    expect(createCommand(STABLE, { ...linux, name: "Dan's box" })).toBe(
+      `cua spaces create ghcr.io/trycua/linux:24.04 --on local --kind container --name 'Dan'\\''s box'`,
+    );
     expect(shellWord("plain-name_1")).toBe("plain-name_1");
     expect(shellWord("two words")).toBe("'two words'");
     expect(shellWord("")).toBe("''");

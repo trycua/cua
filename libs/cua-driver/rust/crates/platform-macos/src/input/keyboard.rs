@@ -12,7 +12,11 @@ use core_graphics::{
     event::{CGEvent, CGEventFlags},
     event_source::{CGEventSource, CGEventSourceStateID},
 };
+use cua_driver_core::security_prompt::PromptInput;
 use foreign_types::ForeignType;
+use std::sync::{Arc, Mutex};
+
+use super::input_source;
 
 const SCREEN_SHARING_BUNDLE_ID: &str = "com.apple.ScreenSharing";
 const SHIFT_KEY_CODE: u16 = 56;
@@ -90,20 +94,90 @@ fn control_key_for_char(ch: char) -> Option<u16> {
 /// uppercase char (e.g. 'E') is seen as Shift+e and the modifier leaks into
 /// the next character (Swift fix: event.flags = []).
 fn char_key_events(source: &CGEventSource, ch: char) -> anyhow::Result<(CGEvent, CGEvent)> {
-    let (key_code, payload) = match control_key_for_char(ch) {
-        Some(code) => (code, None),
-        None => (0, Some(ch.to_string())),
-    };
+    match control_key_for_char(ch) {
+        Some(code) => key_events(source, code, None),
+        None => key_events(source, 0, Some(ch.encode_utf8(&mut [0; 4]))),
+    }
+}
+
+fn key_events(
+    source: &CGEventSource,
+    key_code: u16,
+    payload: Option<&str>,
+) -> anyhow::Result<(CGEvent, CGEvent)> {
     let make = |down: bool| -> anyhow::Result<CGEvent> {
         let event = CGEvent::new_keyboard_event(source.clone(), key_code, down)
             .map_err(|_| anyhow::anyhow!("CGEvent keyboard event failed"))?;
-        if let Some(payload) = &payload {
+        if let Some(payload) = payload {
             event.set_string(payload);
         }
         event.set_flags(CGEventFlags::CGEventFlagNull);
         Ok(event)
     };
     Ok((make(true)?, make(false)?))
+}
+
+/// Most UTF-16 units one keyboard event may carry
+/// (`CGEventKeyboardSetUnicodeString` documents a 20-unit ceiling).
+pub const MAX_UNICODE_UNITS_PER_EVENT: usize = 16;
+
+/// One keyboard event pair of batched typing.
+#[derive(Debug, PartialEq, Eq)]
+pub enum TypingChunk<'a> {
+    /// Plain text carried as one Unicode payload on a single key pair.
+    Text(&'a str),
+    /// A control character sent as its real Return/Tab key.
+    Control(char),
+}
+
+/// Split `text` into the fewest key-event pairs: runs of ordinary characters
+/// of at most [`MAX_UNICODE_UNITS_PER_EVENT`] UTF-16 units (never splitting a
+/// character), with `\n`, `\r` and `\t` kept as their own real key presses.
+pub fn plan_chunks(text: &str) -> Vec<TypingChunk<'_>> {
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    let mut units = 0;
+    for (i, ch) in text.char_indices() {
+        if control_key_for_char(ch).is_some() {
+            if start < i {
+                chunks.push(TypingChunk::Text(&text[start..i]));
+            }
+            chunks.push(TypingChunk::Control(ch));
+            start = i + ch.len_utf8();
+            units = 0;
+            continue;
+        }
+        let n = ch.len_utf16();
+        if units + n > MAX_UNICODE_UNITS_PER_EVENT {
+            chunks.push(TypingChunk::Text(&text[start..i]));
+            start = i;
+            units = 0;
+        }
+        units += n;
+    }
+    if start < text.len() {
+        chunks.push(TypingChunk::Text(&text[start..]));
+    }
+    chunks
+}
+
+/// Type `text` to `pid` in batches: one key-down/key-up pair per
+/// [`TypingChunk`] instead of per character, with no inter-character sleep.
+/// A 100-character string costs about 7 pairs rather than 100.
+pub fn type_text_batched(pid: i32, text: &str) -> anyhow::Result<()> {
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
+    for chunk in plan_chunks(text) {
+        let (down, up) = match chunk {
+            TypingChunk::Text(run) => key_events(&source, 0, Some(run))?,
+            TypingChunk::Control(ch) => char_key_events(&source, ch)?,
+        };
+        post_keyboard_event(pid, &down);
+        key_gap_sleep();
+        post_keyboard_event(pid, &up);
+        key_gap_sleep();
+    }
+    Ok(())
 }
 
 /// Type a string character-by-character to `pid`.
@@ -123,7 +197,14 @@ pub fn type_text(pid: i32, text: &str) -> anyhow::Result<()> {
 
 /// Type a string character-by-character with an extra `inter_char_delay_ms`
 /// pause after each character (on top of the internal down/up key gap).
+///
+/// `inter_char_delay_ms == 0` selects [`type_text_batched`]: a caller that asks
+/// for no pacing gets the fast path; any positive delay keeps one event pair
+/// per character so debounce-sensitive fields see each key.
 pub fn type_text_with_delay(pid: i32, text: &str, inter_char_delay_ms: u64) -> anyhow::Result<()> {
+    if inter_char_delay_ms == 0 {
+        return type_text_batched(pid, text);
+    }
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
 
@@ -180,8 +261,8 @@ pub fn press_key_no_auth(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Res
 /// Callers must prove and temporarily activate the exact target window before
 /// invoking it; unlike the PID-routed helpers above, the HID queue itself has
 /// no process addressing.
-pub fn press_key_global(key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
-    use core_graphics::event::CGEventTapLocation;
+pub fn press_key_global(prompt: PromptInput, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
+    crate::security_prompt::refuse_frontmost_keys(prompt)?;
 
     // The HID queue reaches the frontmost app, which may be Screen Sharing.
     let key_code = target_key_code(crate::apps::frontmost_pid(), key, modifiers)?;
@@ -205,19 +286,8 @@ pub fn press_key_global(key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
             continue;
         }
         active_flags |= modifier_flag;
-        if let Err(error) = post_global_key(
-            &source,
-            modifier_code,
-            true,
-            active_flags,
-            CGEventTapLocation::HID,
-        ) {
-            release_global_modifiers(
-                &source,
-                &pressed_modifiers,
-                active_flags,
-                CGEventTapLocation::HID,
-            );
+        if let Err(error) = post_global_key(&source, modifier_code, true, active_flags) {
+            release_global_modifiers(&source, &pressed_modifiers, active_flags);
             return Err(error);
         }
         pressed_modifiers.push((modifier_code, modifier_flag));
@@ -225,29 +295,12 @@ pub fn press_key_global(key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
     }
 
     let result = (|| {
-        post_global_key(
-            &source,
-            key_code,
-            true,
-            active_flags,
-            CGEventTapLocation::HID,
-        )?;
+        post_global_key(&source, key_code, true, active_flags)?;
         key_gap_sleep();
-        post_global_key(
-            &source,
-            key_code,
-            false,
-            active_flags,
-            CGEventTapLocation::HID,
-        )
+        post_global_key(&source, key_code, false, active_flags)
     })();
 
-    release_global_modifiers(
-        &source,
-        &pressed_modifiers,
-        active_flags,
-        CGEventTapLocation::HID,
-    );
+    release_global_modifiers(&source, &pressed_modifiers, active_flags);
     result
 }
 
@@ -261,8 +314,6 @@ pub(super) fn with_global_modifier_keys<T>(
     modifiers: &[&str],
     gesture: impl FnOnce(CGEventFlags) -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
-    use core_graphics::event::CGEventTapLocation;
-
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     let mut active_flags = CGEventFlags::CGEventFlagNull;
@@ -279,14 +330,8 @@ pub(super) fn with_global_modifier_keys<T>(
             continue;
         }
         active_flags |= flag;
-        if let Err(error) = post_global_key(
-            &source,
-            key_code,
-            true,
-            active_flags,
-            CGEventTapLocation::HID,
-        ) {
-            release_global_modifiers(&source, &pressed, active_flags, CGEventTapLocation::HID);
+        if let Err(error) = post_global_key(&source, key_code, true, active_flags) {
+            release_global_modifiers(&source, &pressed, active_flags);
             return Err(error);
         }
         pressed.push((key_code, flag));
@@ -294,8 +339,57 @@ pub(super) fn with_global_modifier_keys<T>(
     }
 
     let result = gesture(active_flags);
-    release_global_modifiers(&source, &pressed, active_flags, CGEventTapLocation::HID);
+    release_global_modifiers(&source, &pressed, active_flags);
     result
+}
+
+/// Hand one key event to the global HID queue.
+fn post_hid_key(event: &CGEvent) {
+    #[cfg(test)]
+    if hid_sink::record() {
+        return;
+    }
+    event.post(core_graphics::event::CGEventTapLocation::HID);
+}
+
+/// Test seam for [`post_hid_key`]: while a [`hid_sink::Capture`] is live on
+/// this thread, key events are counted instead of posted.
+#[cfg(test)]
+pub(crate) mod hid_sink {
+    use std::cell::Cell;
+
+    thread_local! {
+        static POSTED: Cell<Option<usize>> = const { Cell::new(None) };
+    }
+
+    pub(crate) struct Capture;
+
+    impl Capture {
+        pub(crate) fn start() -> Self {
+            POSTED.with(|posted| posted.set(Some(0)));
+            Self
+        }
+
+        pub(crate) fn posted(&self) -> usize {
+            POSTED.with(|posted| posted.get().unwrap_or(0))
+        }
+    }
+
+    impl Drop for Capture {
+        fn drop(&mut self) {
+            POSTED.with(|posted| posted.set(None));
+        }
+    }
+
+    pub(super) fn record() -> bool {
+        POSTED.with(|posted| match posted.get() {
+            Some(count) => {
+                posted.set(Some(count + 1));
+                true
+            }
+            None => false,
+        })
+    }
 }
 
 fn post_global_key(
@@ -303,12 +397,11 @@ fn post_global_key(
     key_code: u16,
     key_down: bool,
     flags: CGEventFlags,
-    tap: core_graphics::event::CGEventTapLocation,
 ) -> anyhow::Result<()> {
     let event = CGEvent::new_keyboard_event(source.clone(), key_code, key_down)
         .map_err(|_| anyhow::anyhow!("CGEvent keyboard event creation failed"))?;
     event.set_flags(flags);
-    event.post(tap);
+    post_hid_key(&event);
     Ok(())
 }
 
@@ -316,13 +409,12 @@ fn release_global_modifiers(
     source: &CGEventSource,
     pressed: &[(u16, CGEventFlags)],
     mut active_flags: CGEventFlags,
-    tap: core_graphics::event::CGEventTapLocation,
 ) {
     for &(key_code, flag) in pressed.iter().rev() {
         active_flags.remove(flag);
         if let Ok(event) = CGEvent::new_keyboard_event(source.clone(), key_code, false) {
             event.set_flags(active_flags);
-            event.post(tap);
+            post_hid_key(&event);
         }
         key_gap_sleep();
     }
@@ -395,16 +487,20 @@ fn release_pid_modifiers(
 /// Type Unicode text into the frontmost application through the global HID
 /// queue. This is the desktop-scope counterpart to PID-routed `type_text` and
 /// mirrors computer-server's frontmost pynput typing behavior.
-pub fn type_text_global(text: &str, inter_char_delay_ms: u64) -> anyhow::Result<()> {
-    use core_graphics::event::CGEventTapLocation;
+pub fn type_text_global(
+    prompt: PromptInput,
+    text: &str,
+    inter_char_delay_ms: u64,
+) -> anyhow::Result<()> {
+    crate::security_prompt::refuse_frontmost_keys(prompt)?;
 
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     for ch in text.chars() {
         let (down, up) = char_key_events(&source, ch)?;
-        down.post(CGEventTapLocation::HID);
+        post_hid_key(&down);
         key_gap_sleep();
-        up.post(CGEventTapLocation::HID);
+        post_hid_key(&up);
         std::thread::sleep(std::time::Duration::from_millis(inter_char_delay_ms).max(key_gap()));
     }
     Ok(())
@@ -418,8 +514,12 @@ pub fn type_text_global(text: &str, inter_char_delay_ms: u64) -> anyhow::Result<
 /// Sharing forward virtual keycodes and modifier transitions, not the Unicode
 /// payload carried by keycode 0, so the ordinary text synthesis path cannot be
 /// used for them.
-pub fn type_text_physical_global(text: &str, inter_char_delay_ms: u64) -> anyhow::Result<()> {
-    use core_graphics::event::CGEventTapLocation;
+pub fn type_text_physical_global(
+    prompt: PromptInput,
+    text: &str,
+    inter_char_delay_ms: u64,
+) -> anyhow::Result<()> {
+    crate::security_prompt::refuse_frontmost_keys(prompt)?;
 
     // Validate the complete payload before posting its first event. A string
     // containing an unsupported character must fail without partially typing.
@@ -433,7 +533,7 @@ pub fn type_text_physical_global(text: &str, inter_char_delay_ms: u64) -> anyhow
             .map(|event| create_bare_keyboard_event(event.key_code, event.key_down))
             .collect::<anyhow::Result<Vec<_>>>()?;
         for cg_event in native_events {
-            cg_event.post(CGEventTapLocation::HID);
+            post_hid_key(&cg_event);
             key_gap_sleep();
         }
         let extra = std::time::Duration::from_millis(inter_char_delay_ms).saturating_sub(key_gap());
@@ -455,8 +555,13 @@ pub fn type_text_physical_global(text: &str, inter_char_delay_ms: u64) -> anyhow
 /// key carries no flags arrives as the bare key: `cmd+a` inserts a literal `a`.
 /// Remote-input clients such as Screen Sharing re-derive modifiers from the
 /// keycode transitions and ignore the flags, so both consumers are served.
-pub fn press_key_bare_global(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
-    use core_graphics::event::CGEventTapLocation;
+pub fn press_key_bare_global(
+    prompt: PromptInput,
+    pid: i32,
+    key: &str,
+    modifiers: &[&str],
+) -> anyhow::Result<()> {
+    crate::security_prompt::refuse_frontmost_keys(prompt)?;
 
     let key_code = target_key_code(pid, key, modifiers)?;
     let mut modifier_keys = Vec::new();
@@ -478,7 +583,7 @@ pub fn press_key_bare_global(pid: i32, key: &str, modifiers: &[&str]) -> anyhow:
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     for event in events {
-        event.post(CGEventTapLocation::HID);
+        post_hid_key(&event);
         key_gap_sleep();
     }
     Ok(())
@@ -919,10 +1024,16 @@ fn target_key_code(
     modifiers: &[&str],
 ) -> anyhow::Result<u16> {
     let screen_sharing = pid.into().is_some_and(is_screen_sharing_pid);
-    chord_key_code(key, modifiers, target_layout(screen_sharing).as_ref())
+    chord_key_code(key, modifiers, target_layout(screen_sharing).as_deref())
 }
 
-fn target_layout(screen_sharing: bool) -> Option<KeyLayout> {
+/// The virtual key `key` with `modifiers` presses on the current keyboard
+/// layout, as `press_key` and `hotkey` resolve it for a local app.
+pub fn layout_key_code(key: &str, modifiers: &[&str]) -> anyhow::Result<u16> {
+    target_key_code(None, key, modifiers)
+}
+
+fn target_layout(screen_sharing: bool) -> Option<Arc<KeyLayout>> {
     (!screen_sharing).then(current_layout).flatten()
 }
 
@@ -931,9 +1042,36 @@ fn target_layout(screen_sharing: bool) -> Option<KeyLayout> {
 /// character is.
 const TYPING_KEY_CODES: std::ops::RangeInclusive<u16> = 0..=50;
 
-/// The current keyboard layout, read with `UCKeyTranslate`, or `None` when it
-/// has no Unicode layout data.
-fn current_layout() -> Option<KeyLayout> {
+/// The current keyboard layout, or `None` when it has no Unicode layout data
+/// or could not be read with the thread affinity Text Input Sources requires
+/// (see [`super::input_source`]); chords then keep their US key positions.
+///
+/// In a process with a main run loop the layout is read once on the main
+/// queue and cached until the selected or enabled input sources change.
+fn current_layout() -> Option<Arc<KeyLayout>> {
+    static CACHE: Mutex<Option<(u64, Option<Arc<KeyLayout>>)>> = Mutex::new(None);
+
+    let generation = input_source::generation();
+    if input_source::can_cache() {
+        if let Some((cached, layout)) = CACHE.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            if *cached == generation {
+                return layout.clone();
+            }
+        }
+    }
+    input_source::run(move || {
+        let layout = read_current_layout().map(Arc::new);
+        if input_source::can_cache() {
+            *CACHE.lock().unwrap_or_else(|e| e.into_inner()) = Some((generation, layout.clone()));
+        }
+        layout
+    })
+    .flatten()
+}
+
+/// Read the current layout with `UCKeyTranslate`. Text Input Sources calls:
+/// only through [`input_source::run`].
+fn read_current_layout() -> Option<KeyLayout> {
     use core_foundation::base::{CFRelease, CFTypeRef};
     use core_foundation::data::{CFDataGetBytePtr, CFDataRef};
     use core_foundation::string::CFStringRef;
@@ -1036,6 +1174,48 @@ fn unknown_key_message(key: &str) -> String {
 mod tests {
     use super::*;
     use core_graphics::event::CGEventType;
+
+    /// Every global-HID key primitive checks for a security prompt before
+    /// its first event. Removing one of those checks fails here. Keys are
+    /// named by keycode-free names ("return") so the layout is not consulted.
+    #[test]
+    fn hid_key_primitives_send_nothing_to_a_security_prompt() {
+        use crate::security_prompt::{fixture::PromptShown, PromptProtected};
+        type Primitive = fn(PromptInput) -> anyhow::Result<()>;
+        let primitives: [(&str, Primitive); 4] = [
+            ("press_key_global", |prompt| {
+                press_key_global(prompt, "return", &["shift"])
+            }),
+            ("press_key_bare_global", |prompt| {
+                press_key_bare_global(prompt, -1, "return", &["cmd"])
+            }),
+            ("type_text_global", |prompt| {
+                type_text_global(prompt, "ab", 0)
+            }),
+            ("type_text_physical_global", |prompt| {
+                type_text_physical_global(prompt, "ab", 0)
+            }),
+        ];
+        let _prompt = PromptShown::start();
+        for (name, primitive) in primitives {
+            let capture = hid_sink::Capture::start();
+            let error = primitive(PromptInput::Refuse).expect_err(name);
+            assert_eq!(
+                error
+                    .downcast_ref::<PromptProtected>()
+                    .map(|p| p.owner.as_str()),
+                Some("SecurityAgent"),
+                "{name}: {error}"
+            );
+            assert_eq!(capture.posted(), 0, "{name} typed into the prompt");
+            drop(capture);
+
+            // Unrestricted mode lifts the refusal: the same keys go out.
+            let capture = hid_sink::Capture::start();
+            primitive(PromptInput::Allow).unwrap_or_else(|error| panic!("{name}: {error}"));
+            assert!(capture.posted() > 0, "{name} sent nothing when allowed");
+        }
+    }
 
     #[test]
     fn common_key_spellings_resolve_to_one_key() {
@@ -1431,7 +1611,7 @@ mod tests {
     fn screen_sharing_chords_keep_us_positions() {
         assert!(target_layout(true).is_none());
         assert_eq!(
-            chord_key_code("a", &["cmd"], target_layout(true).as_ref()).unwrap(),
+            chord_key_code("a", &["cmd"], target_layout(true).as_deref()).unwrap(),
             0
         );
     }
@@ -1446,7 +1626,7 @@ mod tests {
             if layout.plain.iter().all(|&(_, typed)| typed != letter) {
                 continue;
             }
-            let code = chord_key_code(&letter.to_string(), &[], Some(&layout)).unwrap();
+            let code = chord_key_code(&letter.to_string(), &[], Some(&*layout)).unwrap();
             assert!(layout.plain.contains(&(code, letter)), "{letter}");
         }
     }
@@ -1456,5 +1636,92 @@ mod tests {
         assert!(is_screen_sharing_bundle_id("com.apple.ScreenSharing"));
         assert!(!is_screen_sharing_bundle_id("com.apple.screensharing"));
         assert!(!is_screen_sharing_bundle_id("com.microsoft.rdc.macos"));
+    }
+}
+
+#[cfg(test)]
+mod chunk_tests {
+    use super::*;
+
+    #[test]
+    fn short_text_is_one_pair() {
+        assert_eq!(plan_chunks("hello"), vec![TypingChunk::Text("hello")]);
+    }
+
+    #[test]
+    fn controls_split_runs_and_stay_real_keys() {
+        assert_eq!(
+            plan_chunks("a\tb\n"),
+            vec![
+                TypingChunk::Text("a"),
+                TypingChunk::Control('\t'),
+                TypingChunk::Text("b"),
+                TypingChunk::Control('\n'),
+            ]
+        );
+    }
+
+    #[test]
+    fn long_text_chunks_never_exceed_the_unit_limit_and_round_trip() {
+        let text = "x".repeat(100) + "é😀日本語" + &"y".repeat(33);
+        let chunks = plan_chunks(&text);
+        let mut joined = String::new();
+        for c in &chunks {
+            let TypingChunk::Text(t) = c else { panic!() };
+            assert!(t.encode_utf16().count() <= MAX_UNICODE_UNITS_PER_EVENT);
+            joined.push_str(t);
+        }
+        assert_eq!(joined, text);
+        assert!(chunks.len() < text.chars().count() / 8);
+    }
+
+    #[test]
+    fn astral_characters_are_not_split() {
+        let text = "😀".repeat(9); // 18 units
+        let chunks = plan_chunks(&text);
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0], TypingChunk::Text(&"😀".repeat(8)));
+    }
+
+    #[test]
+    fn empty_text_is_no_chunks() {
+        assert!(plan_chunks("").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod bench {
+    use super::*;
+
+    /// Micro-benchmark: wall time to post a 100-character string to `pid`,
+    /// paced (the old 30 ms default) versus batched. Run with
+    /// `CUA_BENCH_PID=<pid> cargo test -p platform-macos bench_type_text_posting -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn bench_type_text_posting() {
+        let pid: i32 = std::env::var("CUA_BENCH_PID")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .expect("set CUA_BENCH_PID to a running app's pid");
+        let text = "The quick brown fox jumps over the lazy dog. 0123456789 hello there, world! Cua Driver type_text bench.";
+        assert!(text.chars().count() >= 100);
+        for (label, delay) in [
+            ("paced (before, delay_ms=30)", 30u64),
+            ("batched (after, delay_ms=0)", 0),
+        ] {
+            let mut ms: Vec<f64> = (0..9)
+                .map(|_| {
+                    let t = std::time::Instant::now();
+                    type_text_with_delay(pid, text, delay).unwrap();
+                    t.elapsed().as_secs_f64() * 1000.0
+                })
+                .collect();
+            ms.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            println!(
+                "{label}: p50 {:.0} ms over {} chars",
+                ms[ms.len() / 2],
+                text.chars().count()
+            );
+        }
     }
 }

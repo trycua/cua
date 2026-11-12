@@ -38,15 +38,15 @@ const summary: Array<[string, string]> = [
 ];
 
 test('results page documents every golden key, with #: descriptions', () => {
-  const page = resultsPage(docs(summary), '1.0.0');
+  const page = resultsPage(docs(summary));
   assert.ok(page.includes('| `task` | `int` | Task `name`. |'));
   // A summary row without its own description falls back to the JobResult field.
   assert.ok(page.includes('| `results[].task` | `int` | Task `name`. |'));
 });
 
 test('a key missing from the docs or the golden fails generation', () => {
-  assert.throws(() => resultsPage(docs(summary.slice(0, 3)), '1.0.0'), /Undocumented: targets/);
-  assert.throws(() => resultsPage(docs([...summary, ['extra', 'x']]), '1.0.0'), /not in the golden: extra/);
+  assert.throws(() => resultsPage(docs(summary.slice(0, 3))), /Undocumented: targets/);
+  assert.throws(() => resultsPage(docs([...summary, ['extra', 'x']])), /not in the golden: extra/);
 });
 
 test('reST markup becomes Markdown', () => {

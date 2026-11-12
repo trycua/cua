@@ -22,8 +22,8 @@ use serde::{Deserialize, Serialize};
 /// The Settings row's label.
 pub const ROW_LABEL: &str = "Remote use";
 
-/// What remote hours are, in plain words: where the term first shows (the
-/// Free plan card, `cua usage`). The relay meters the time an account has
+/// What remote hours are, in plain words: the tooltip on Settings' remote
+/// hours bar and `cua usage` (not in the plan card's sentence). The relay meters the time an account has
 /// at least one live session through it; a computer used from itself never
 /// goes through the relay.
 pub const REMOTE_HOURS_MEANING: &str = "Remote hours: time spent using your computers from somewhere else (your laptop, phone or an agent on another computer). Using a computer from itself is free.";
@@ -43,9 +43,9 @@ pub const PRO_SESSIONS: u32 = 5;
 /// See [`PRO_SESSIONS`].
 pub const PRO_HOURS: u32 = 200;
 
-/// One plain line on Pro's plan card for people who pay monthly. The Billing
-/// page checks the plan and shows the switch only to monthly payers, with the
-/// exact charge from Stripe; the card says nothing it cannot back up.
+/// One plain line for people who pay monthly. It belongs on the Billing page,
+/// which checks the plan and shows the switch only to monthly payers, with the
+/// exact charge from Stripe; the app's plan card no longer says it.
 pub const PRO_YEARLY_NOTE: &str = "Paying monthly? Switching to yearly saves $36 a year.";
 
 /// Where Pro is bought, on the account app.
@@ -447,16 +447,13 @@ pub fn plan_card(u: &RelayUsage, account_app: &str) -> PlanCard {
     };
     let (detail, primary, secondary) = match kind {
         "free" => (
-            format!(
-                "{}. {REMOTE_HOURS_MEANING}",
-                allowance(u.live_sessions_limit, u.hours_limit)
-            ),
+            format!("{}.", allowance(u.live_sessions_limit, u.hours_limit)),
             Some(link("Get Pro", BUY_PRO_PATH)),
             Some(link("Start a team", BUY_TEAMS_PATH)),
         ),
         "pro" => (
             format!(
-                "{}, for you. Teams adds team-owned computers, roles and device approval. {PRO_YEARLY_NOTE}",
+                "{}, for you. Teams adds team-owned computers, roles and device approval.",
                 allowance(u.live_sessions_limit, u.hours_limit)
             ),
             Some(PlanLink {
@@ -666,7 +663,7 @@ mod tests {
     }
 
     #[test]
-    fn pro_plan_card_mentions_yearly_once_and_links_to_billing() {
+    fn pro_plan_card_leaves_yearly_to_billing_and_links_there() {
         let pro = RelayUsage {
             plan: "pro".into(),
             live_sessions_limit: Some(5),
@@ -674,12 +671,8 @@ mod tests {
             ..free()
         };
         let card = plan_card(&pro, "https://app.cua.ai/");
-        assert!(
-            card.detail
-                .ends_with("Paying monthly? Switching to yearly saves $36 a year."),
-            "{}",
-            card.detail
-        );
+        // The yearly switch is the Billing page's to offer, not the app's.
+        assert!(!card.detail.contains(PRO_YEARLY_NOTE), "{}", card.detail);
         // The mention is plain: no urgency, no pressure.
         let d = card.detail.to_lowercase();
         for w in [
@@ -770,7 +763,7 @@ mod tests {
         assert_eq!((f.plan.as_str(), f.label.as_str()), ("free", "Free plan"));
         assert_eq!(
             f.detail,
-            "2 computers in use at once and 20 remote hours a month. Remote hours: time spent using your computers from somewhere else (your laptop, phone or an agent on another computer). Using a computer from itself is free."
+            "2 computers in use at once and 20 remote hours a month."
         );
         let p = f.primary.unwrap();
         assert_eq!(

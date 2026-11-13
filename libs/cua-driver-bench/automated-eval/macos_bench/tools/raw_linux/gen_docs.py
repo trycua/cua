@@ -278,6 +278,7 @@ def _xml_doc(node: ET.Element) -> str:
     org.gtk.GDBus.DocString annotations and <doc:doc> blocks are kept."""
     parts = [a.get("value") or "" for a in node.findall("annotation")
              if a.get("name") == "org.gtk.GDBus.DocString"]
+    parts += ["".join(d.itertext()) for d in node.findall("{http://www.freedesktop.org/dbus/1.0/doc.dtd}doc")]
     return " ".join(parts)
 
 
@@ -287,7 +288,10 @@ def parse_dbus(path: Path, source: str) -> Iterator[dict]:
     comments = {}
     for m in re.finditer(r"<!--(.*?)-->\s*<(interface|method|signal|property)\s+name=\"([^\"]+)\"", raw, re.S):
         comments[(m.group(2), m.group(3))] = text(m.group(1))
-    root = ET.fromstring(re.sub(r"<!DOCTYPE[^>]*>", "", raw))
+    raw = re.sub(r"<!DOCTYPE[^>]*>", "", raw)
+    if "xmlns:doc" not in raw:  # freedesktop doc:doc blocks, sometimes used without their namespace declared
+        raw = re.sub(r"<node\b", '<node xmlns:doc="http://www.freedesktop.org/dbus/1.0/doc.dtd"', raw, count=1)
+    root = ET.fromstring(raw)
     for iface in root.iter("interface"):
         iname = iface.get("name")
         yield entry(f"dbus:{iname}", "dbus-interface", source, f"interface {iname}",

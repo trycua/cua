@@ -45,6 +45,17 @@ import Quartz
 import rawlint_mac as lint
 
 AX.AXUIElementSetMessagingTimeout(AX.AXUIElementCreateSystemWide(), 3.0)
+# pyobjc loads framework names lazily, and a first lookup from two threads at once (the hook's sampler and the script,
+# or the key-focus guard) raised KeyError('AXUIElementGetPid') in the bench guest; resolve the shared ones up front
+for _name in (
+    "AXUIElementGetPid",
+    "AXUIElementCopyAttributeValue",
+    "AXUIElementCreateApplication",
+    "AXUIElementPerformAction",
+):
+    getattr(AX, _name)
+for _name in ("CGWindowListCopyWindowInfo", "CGEventGetLocation", "CGEventCreate"):
+    getattr(Quartz, _name)
 
 
 class Blocked(RuntimeError):
@@ -1518,6 +1529,8 @@ class _KeyFocusGuard:
         self.released: list[int] = []  # the theft ids handed back
         self.scanned = False
         self.restores = 0
+        self.interrupted = False
+        self.menu_seen = False  # the target's menu window was on screen during the pick
         self.thread: threading.Thread | None = None
         self.stolen_at = 0.0
         self.held_ms: int | None = None  # how long the target held key focus before the release
@@ -1530,6 +1543,7 @@ class _KeyFocusGuard:
     def _on_event(self, proxy: Any, etype: int, event: Any, refcon: Any) -> Any:
         if etype in _TAP_DISABLED:
             if self.port and not self.done.is_set():
+                self.interrupted = True  # a notice may have passed while the tap was off
                 _CG.CGEventTapEnable(self.port, True)
             return event
         if etype != _FOCUS_NOTICE or not event:
@@ -1577,12 +1591,19 @@ class _KeyFocusGuard:
             self.restore()
             time.sleep(0.005)
 
+    def _watch_menu(self) -> None:
+        while not self.done.is_set() and not self.menu_seen:
+            if _menu_up(self.target):
+                self.menu_seen = True
+            time.sleep(0.005)
+
     def start(self) -> bool:
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
         self.ready.wait(2.0)
         if self.port:
             threading.Thread(target=self._watch_order, daemon=True).start()
+            threading.Thread(target=self._watch_menu, daemon=True).start()
         return bool(self.port)
 
     def restore(self) -> None:
@@ -1619,9 +1640,21 @@ class _KeyFocusGuard:
             self.thread.join(1.0)
         problems = []
         with self.lock:
+            # fail closed: any gap in what the guard could see or attribute is refused, not assumed fine
             if self.stolen.is_set() and not self.released:
                 problems.append(
                     "the target's key-focus theft was not released (the user's window lost key focus)"
+                )
+            if self.menu_seen and not self.stolen.is_set():
+                problems.append(
+                    "the menu opened but the guard never saw it take key focus (the user's window may have lost it)"
+                )
+            if self.interrupted:
+                problems.append("the guard's event tap was interrupted while the menu was open")
+            if len(self.released) > 1:
+                # theft ids are session-wide and carry no pid: one of these may have been another app's
+                problems.append(
+                    f"{len(self.released)} key-focus thefts were live and released; only one was the target's"
                 )
             elif self.stolen.is_set():
                 # the user's app was never told, but keys typed in that moment went to the menu: report it

@@ -1532,6 +1532,8 @@ pub fn with_foreground_hid_activation(
     if prev_ok {
         unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
     }
+    // The raise put the target window over the agent cursor's overlay.
+    crate::cursor::overlay::request_repin();
 
     result
 }

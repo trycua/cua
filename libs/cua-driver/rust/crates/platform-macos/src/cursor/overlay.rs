@@ -98,6 +98,31 @@ static RENDER_LOOP_RUNNING: AtomicBool = AtomicBool::new(false);
 /// settles well inside it; a stalled render loop must never wedge a tool.
 const ARRIVAL_TIMEOUT: Duration = Duration::from_secs(8);
 
+/// Set when another window was raised over the overlay's pin target, so the
+/// render loop re-orders the overlay above it even though the target did not
+/// change and no cursor is animating.
+static REPIN_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// Re-order the overlay above its pinned window. Call after raising a window
+/// for input: the raise puts it over the normal-level overlay, and a resting
+/// cursor's parked render loop would otherwise leave it covered.
+pub(crate) fn request_repin() {
+    REPIN_REQUESTED.store(true, Ordering::Release);
+    if let Some(tx) = CMD_TX.get() {
+        let _ = tx.try_send(OverlayMsg::Wake);
+    }
+}
+
+/// Whether the render loop re-orders the overlay above `pinned` this frame.
+fn should_repin(
+    pinned: Option<u64>,
+    pin_changed: bool,
+    requested: bool,
+    repin_frames: u32,
+) -> bool {
+    pinned.is_some() && (pin_changed || requested || repin_frames >= 60)
+}
+
 pub(crate) fn is_overlay_window(window_id: u32) -> bool {
     window_id != 0 && OVERLAY_WINDOW_ID.load(Ordering::Acquire) == window_id
 }
@@ -1052,7 +1077,8 @@ fn render_loop(
             repin_frames += 1;
             let pin_changed = pinned_wid != last_pinned;
             last_pinned = pinned_wid;
-            if pinned_wid.is_some() && (pin_changed || repin_frames >= 60) {
+            let requested = REPIN_REQUESTED.swap(false, Ordering::AcqRel);
+            if should_repin(pinned_wid, pin_changed, requested, repin_frames) {
                 MacZOrderEnforcer { win_ptr }.reassert(pinned_wid);
                 repin_frames = 0;
             } else if raise_unpinned {
@@ -1496,6 +1522,18 @@ fn pixmap_to_cgimage(pixmap: &tiny_skia::Pixmap) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A raised target window must get the overlay back above it at once,
+    /// even with no pin change and a parked render loop; nothing re-orders
+    /// an overlay that has no pin target.
+    #[test]
+    fn a_requested_repin_reorders_the_overlay_above_its_target() {
+        assert!(should_repin(Some(7), false, true, 0));
+        assert!(should_repin(Some(7), true, false, 0));
+        assert!(should_repin(Some(7), false, false, 60));
+        assert!(!should_repin(Some(7), false, false, 1));
+        assert!(!should_repin(None, false, true, 60));
+    }
 
     /// A human-origin session (a Cua Spaces viewer's relayed input) never
     /// reaches the renderer; an agent's session does. The rule itself lives

@@ -371,7 +371,7 @@ def lookup(query: str, limit: int | None) -> tuple[list[dict], bool, dict]:
     started = time.monotonic()
     try:
         n = max(1, min(int(limit or 10), 30))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         n = 10  # a malformed limit falls back to the default rather than failing the call
     terms = list(dict.fromkeys(t for w in WORD.findall(query) for t in _split(w)))
     exact = {w.lower() for w in WORD.findall(query)}

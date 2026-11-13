@@ -4,8 +4,8 @@
 
 """Drive raw_mcp.py over stdio with fixed scripts against BenchLab (no model): the smoke test of the prototype.
 
-Usage: smoke_client.py RAW_MCP_PATH [granted|denied]   (an X11 + AT-SPI session with BenchLab and a Cua Driver
-daemon running; RAW_TRIAL names the per-trial file, which this client writes with the grant and the driver)
+Usage: smoke_client.py RAW_MCP_PATH [granted|denied]   (an X11 + AT-SPI session with BenchLab running; RAW_TRIAL
+names the per-trial file, which this client writes with the grant)
 """
 
 import os
@@ -27,20 +27,11 @@ SCRIPTS = {
         "raw.xtst.XTestFakeMotionEvent(raw.dpy, -1, 333, 222, 0)\n"
         "raw.x11.XFlush(raw.dpy)\nraw.sleep(0.3)\nreturn raw.pointer()"
     ),
-    "driver_read": (
-        'w = [w for w in raw.driver("list_windows", {})["windows"] if "Bench" in (w.get("title") or "")][0]\n'
-        's = raw.driver("get_window_state", {"pid": w["pid"], "window_id": w["window_id"]})\n'
-        'return {"keys": sorted(s)[:30], "tree": s["tree_markdown"][:1500]}'
-    ),
-    "driver_foreground": (
-        'raw.driver("move_cursor", {"x": 10, "y": 10, "scope": "desktop"})\nreturn raw.pointer()'
-    ),
-    "driver_off_list": 'raw.driver("launch_app", {"name": "xterm"})\nreturn 1',
-    "driver_computed_foreground": (
-        'm = "fore" + "ground"\n'
-        'w = [w for w in raw.driver("list_windows", {})["windows"] if "Bench" in (w.get("title") or "")][0]\n'
-        'raw.driver("press_key", {"pid": w["pid"], "window_id": w["window_id"], "key": "a", "delivery_mode": m})\n'
-        "return raw.pointer()"
+    "drv1": 'raw.driver("list_windows", {})\nreturn 1',
+    "drv1_getattr": 'getattr(raw, "driver")\nreturn 1',
+    "granted_helper_drag": (
+        'w = [w for w in raw.windows() if "Bench" in w["title"]][0]\n'
+        'r = raw.drag(100, 100, 120, 140, window_id=w["window_id"])\nreturn [r, raw.pointer()]'
     ),
     "lint_dynamic": 'sub = "mouse" + "move"\nraw.xdotool(sub, 50, 50)\nreturn raw.pointer()',
     # passes the lint (a plain local name the lint does not know), refused by the runtime guard at lookup
@@ -61,18 +52,6 @@ SCRIPTS = {
     ),
     "chain_no_escalation": 'raw.xdotool("key", "--window", "1", "a", "key", "b")\nreturn raw.pointer()',
     "granted_chain": 'raw.xdotool("mousemove", "700", "500", "mousemove", "710", "505")\nreturn raw.pointer()',
-    # the fallback acting: click Later on the banner through the driver (background AT-SPI route), then read back
-    "driver_act": (
-        'w = [w for w in raw.driver("list_windows", {})["windows"] if "Bench" in (w.get("title") or "")][0]\n'
-        's = raw.driver("get_window_state", {"pid": w["pid"], "window_id": w["window_id"]})\n'
-        'row = [l for l in s["tree_markdown"].splitlines() if "Later" in l or "Dismiss" in l]\n'
-        "if not row:\n    return 'no banner'\n"
-        'n = row[0].split("[", 1)[1].split("]", 1)[0]\n'
-        'r = raw.driver("click", {"pid": w["pid"], "window_id": w["window_id"], "element_token": s["snapshot_id"] + ":" + n})\n'
-        "raw.sleep(0.5)\n"
-        'a = raw.app("BenchLab")\n'
-        'return {"click": r.get("summary"), "delivery": r.get("delivery"), "buttons": [raw.describe(b) for b in raw.find(a, role="button")]}'
-    ),
     "private_handle": "f = raw.xtst._lib\nreturn 1",
     "act": (
         'a = raw.app("BenchLab")\n'
@@ -105,11 +84,6 @@ def main() -> int:
                 "trial_id": "smoke",
                 "foreground_grant": grant,
                 "coverage": {"BenchLab": "full"},
-                "driver": {
-                    "socket": os.environ["SMOKE_DRIVER_SOCKET"],
-                    "bin": os.environ["SMOKE_DRIVER_BIN"],
-                    "session": "raw-smoke",
-                },
             }
         )
     )

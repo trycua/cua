@@ -15,8 +15,8 @@ Every call is appended to RAW_LOG (JSONL) so the bench can count lint blocks and
 
 Environment: RAW_LOG (call log path), RAW_TMP (scratch directory for screenshots), PYTHON (interpreter for the
 runner, default this one), RAW_TRIAL (the per-trial JSON the harness writes before each trial: the task's
-foreground grant, the per-app AT-SPI coverage labels, and the Cua Driver socket, binary and session for raw.driver).
-The trial file is read on every call, so one server process serves every trial of a run.
+foreground grant and the per-app AT-SPI coverage labels). The trial file is read on every call, so one server
+process serves every trial of a run. RAW_ATSPI_TIMEOUT_MS passes through to the runner (raw.py).
 """
 
 from __future__ import annotations
@@ -46,21 +46,10 @@ DESCRIPTION = """\
 Run one Python script against the Linux desktop. The script body runs inside a function, so `return` a value \
 (JSON-able) to see it; print() output is returned too. Each call is a fresh process: nothing persists between calls.
 
-Two routes, in one script if you like:
-1. Raw AT-SPI (cheap, background-safe): you find, act on and read back elements yourself.
-2. Cua Driver, `raw.driver(tool, args)`: the fallback for apps whose AT-SPI tree does not reach what you need \
-(spreadsheet cells, canvas, custom widgets). Same tools and arguments as the Cua Driver MCP tools; the result is \
-returned to the script as a dict. GUI tools only: list_windows, list_apps, get_window_state, get_desktop_state, \
-get_screen_size, get_cursor_position, zoom, parse_visual_regions, clipboard_read, verify_state, click, \
-double_click, right_click, type_text, set_value, press_key, hotkey, scroll, drag, invoke_menu, move_cursor, \
-mouse_button_down, mouse_drag, mouse_button_up, set_window_frame, bring_to_front. Typical: \
-`s = raw.driver("get_window_state", {"pid": p, "window_id": w}); return s["tree_markdown"]`, then \
-`raw.driver("click", {"pid": p, "window_id": w, "element_token": "<snapshot_id>:<row>"})` or \
-`raw.driver("type_text", {"pid": p, "window_id": w, "element_token": t, "text": "..."})`. Screenshots are dropped \
-from driver results unless you pass `image=True`. A failed driver call raises with the driver's message.
-
-Which route: start with raw AT-SPI for an app labelled "full" below. For an app labelled "partial", use raw where \
-its tree has the control, and raw.driver where it does not or where a raw action had no effect. Read back either way.
+Only Linux's own APIs and tools: AT-SPI, X11/XTest and xdotool. There is no Cua Driver (rule DRV1). Start with \
+AT-SPI (cheap, background-safe): find, act on and read back elements yourself. Where an app's tree does not reach \
+what you need (spreadsheet cells, ledger registers, a drag), use the foreground helpers below if this task grants \
+foreground. Read back either way.
 {coverage}
 
 Raw API (global `raw`, plus `Atspi`):
@@ -75,6 +64,18 @@ get_state_set().contains(Atspi.StateType.SHOWING).
 showing=None) -> list of accessibles (role names as get_role_name() returns them, e.g. "button", "text", \
 "spin button", "combo box", "check box", "label", "menu item", "list item", "table cell"; dump a tree to see them); \
 raw.describe(acc) -> one line; raw.dump(root, depth=12) -> text tree of showing nodes.
+- raw.cells(table_or_app, "A1:F20") -> rows of cell text through the AT-SPI Table interface (LibreOffice Calc: \
+pass raw.app("soffice") or its [table]; one cell "B7" works too); raw.cell_name(row, col) -> "B7". Read-only.
+- Foreground helpers (only on a task that grants foreground; each activates the window, confirms it is active, \
+sends real XTest input through xdotool; when the script ends the previous active window is given back unless a \
+popup is open, so do a whole edit in one script; \
+coordinates are window coordinates, as in raw.screenshot(window_id), unless screen=True):
+  raw.activate(window_id); raw.key(window_id, "ctrl+Home", "Return", repeat=1) (xdotool key names: ctrl+s, \
+shift+Tab, Down, F2, Escape); raw.type_text(window_id, text) ("\\t" is Tab, "\\n" is Return); \
+raw.click(window_id, x, y, button=1, count=1); raw.scroll(window_id, x, y, clicks); \
+raw.drag(x1, y1, x2, y2, window_id=None, steps=20, duration=0.6, hold=0.3) (a real drag-and-drop).
+  LibreOffice Calc: go to a cell through the Name Box (raw.key(w, "ctrl+shift+F5"); raw.type_text(w, "B7\\n")), \
+then raw.type_text(w, "value\\tnext\\n") fills across; save with raw.key(w, "ctrl+s"); read back with raw.cells(raw.app("soffice"), "A1:F20").
 - raw.windows() -> [{window_id, title, pid, frame:(x,y,w,h)}] bottom to top; raw.pointer(); raw.active_window().
 - raw.screenshot(window_id=None, region=None) -> the PNG is returned to you as an image.
 - raw.x11, raw.xtst, raw.xi: libX11 / libXtst / libXi functions (ctypes calls with int and bytes arguments), raw.dpy \
@@ -86,8 +87,8 @@ Background contract (checked before the script runs, and again while it runs):
 - The user's real pointer, keyboard focus, active window and stacking must stay as they are. Foreground routes: \
 XTest motion/buttons/keys, XWarpPointer, Atspi.generate_mouse_event / generate_keyboard_event, xdotool \
 mousemove/click/key/type (without --window)/windowactivate/windowfocus/windowraise, XSetInputFocus, XRaiseWindow, \
-_NET_ACTIVE_WINDOW, wmctrl, Wayland/portal input, and raw.driver with delivery_mode "foreground", scope "desktop" \
-or bring_to_front. Grabs (XGrabKeyboard/Pointer/Key/Button/Server) are always blocked.
+_NET_ACTIVE_WINDOW, wmctrl, Wayland/portal input, and the foreground helpers (raw.activate, raw.key, \
+raw.type_text, raw.click, raw.scroll, raw.drag). Grabs (XGrabKeyboard/Pointer/Key/Button/Server) are always blocked.
 - {grant}
 - Prefer AT-SPI: Action.do_action for buttons/checks/menu items/combo boxes, EditableText.set_text_contents for \
 text, Value.set_current_value for spin buttons and sliders. These need no focus and no pointer.
@@ -98,19 +99,20 @@ Atspi.Selection.select_child(combo, i).
 collections, functools, string, textwrap are importable); eval/exec, private attributes, getattr with computed \
 names.
 - An action the API accepted is not proof it worked: read the element back (get_text, get_current_value, states, \
-a screenshot, a driver get_window_state) before you report success.
+a screenshot, raw.cells) before you report success.
 """
 GRANTED = (
     "This task grants foreground: the routes above are allowed when no background route works (a real hover, a "
-    "drag with no accessible action, a tooltip that only shows on hover). Each use is reported."
+    "drag with no accessible action, a tooltip that only shows on hover, keys into a spreadsheet or ledger cell). "
+    "Each use is reported."
 )
 NOT_GRANTED = "This task does not grant foreground: the routes above are blocked. Use a background route."
 
 
 def trial() -> dict:
-    """The harness's per-trial settings (grant, coverage labels, driver), or the safe default: no grant, no driver."""
+    """The harness's per-trial settings (grant, coverage labels), or the safe default: no grant."""
     if TRIAL is None or not TRIAL.is_file():
-        return {"foreground_grant": False, "coverage": {}, "driver": None}
+        return {"foreground_grant": False, "coverage": {}}
     return json.loads(TRIAL.read_text("utf-8"))
 
 
@@ -152,12 +154,12 @@ def _log(entry: dict) -> None:
 
 
 def runner_env(settings: dict) -> dict[str, str]:
-    env = {k: v for k, v in os.environ.items() if k not in {"RAW_LOG", "RAW_TRIAL", "RAW_GRANT"}}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in {"RAW_LOG", "RAW_TRIAL", "RAW_GRANT"} and not k.startswith("RAW_DRIVER_")
+    }
     env["RAW_GRANT"] = "1" if settings.get("foreground_grant") is True else "0"
-    driver = settings.get("driver") or {}
-    for key, name in (("socket", "RAW_DRIVER_SOCKET"), ("bin", "RAW_DRIVER_BIN"), ("session", "RAW_DRIVER_SESSION")):
-        if driver.get(key):
-            env[name] = str(driver[key])
     return env
 
 
@@ -203,7 +205,7 @@ def run_script(script: str, timeout_ms: int | None) -> tuple[list[dict], bool, d
                 " (this task grants foreground)."
                 if granted
                 else ". This task does not grant foreground: if your script caused this, use a background route "
-                "(do_action, set_text_contents, set_current_value, or raw.driver with default delivery)."
+                "(do_action, set_text_contents, set_current_value)."
             )
         )
     for item in result.get("runtime_blocked") or []:
@@ -233,14 +235,11 @@ def run_script(script: str, timeout_ms: int | None) -> tuple[list[dict], bool, d
         "lint": result.get("lint") or [],
         "granted": granted,
         "foreground_used": bool(
-            granted
-            and (
-                any(f.get("severity") == "granted" for f in result.get("lint") or [])
-                or any(c.get("foreground") for c in result.get("driver_calls") or [])
-            )
+            granted and any(f.get("severity") == "granted" for f in result.get("lint") or [])
         ),
-        "driver_calls": result.get("driver_calls") or [],
         "raw_actions": result.get("raw_actions") or {},
+        "routes": result.get("routes") or {},
+        "atspi_stalled": result.get("atspi_stalled") or {},
         "runtime_blocked": result.get("runtime_blocked") or [],
         "runtime_warned": result.get("runtime_warned") or [],
         "watch_changed": watch.get("changed") or [],

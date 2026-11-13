@@ -78,30 +78,63 @@ class RawLintTest(unittest.TestCase):
         self.assertBlocked(src, "BG1")
         self.assertIn("this task does not grant foreground", rawlint.lint(src).render())
 
-    def test_driver_fallback_background_calls_pass_and_foreground_needs_the_grant(self):
-        ok = 'r = raw.driver("click", {"pid": 1, "element_token": "s1:2"})\nreturn raw.driver("get_window_state", {"pid": 1})'
-        self.assertEqual(rules(ok), [])
+    def test_every_route_to_cua_driver_blocks_with_or_without_the_grant(self):
         for src in (
-            'raw.driver("click", {"pid": 1, "x": 5, "y": 5, "delivery_mode": "foreground"})',
-            'raw.driver("move_cursor", {"x": 5, "y": 5, "scope": "desktop"})',
-            'raw.driver("bring_to_front", {"pid": 1})',
+            'raw.driver("click", {"pid": 1})',
+            'raw.driver("get_window_state", {"pid": 1})',
+            'd = raw.driver\nd("list_windows", {})',
+            'getattr(raw, "driver")("list_windows", {})',
+            'raw.xdotool("search", "--name", "cua-driver")',
+            'x = "/tmp/cdb-bench-cua-main.sock"',
+            "import cua_driver",
+            "from cua_driver import tools",
         ):
-            with self.subTest(src=src):
-                self.assertBlocked(src + "\nreturn raw.pointer()", "BG10")
-                self.assertTrue(granted(src + "\nreturn raw.pointer()").ok)
-        for tool in ("launch_app", "kill_app", "run_script", "clipboard_write", "set_config", "browser_navigate"):
-            with self.subTest(tool=tool):
-                self.assertBlocked(f'raw.driver("{tool}", {{}})\nreturn 1', "GUI1", grant=True)
-        # a driver action needs a read-back like a raw one
-        self.assertIn("VR1", {f.rule for f in rawlint.lint('raw.driver("click", {"pid": 1, "element_token": "s1:2"})').findings})
+            for grant in (False, True):
+                with self.subTest(src=src, grant=grant):
+                    self.assertBlocked(src + "\nreturn 1", "DRV1", grant=grant)
+        # a local that happens to be called "driver" is not a route
+        self.assertNotIn("DRV1", {f.rule for f in rawlint.lint("driver = 3\nreturn driver").findings})
+        self.assertNotIn("DRV1", {f.rule for f in rawlint.lint('x = "driver"\nreturn x').findings})
+        self.assertNotIn("BG10", rawlint.RULES)
+        self.assertFalse(hasattr(rawlint, "DRIVER_TOOLS"))
 
-    def test_driver_foreground_classifier(self):
-        self.assertIsNone(rawlint.driver_foreground("click", {"pid": 1}))
-        self.assertIsNone(rawlint.driver_foreground("type_text", {"delivery_mode": "background"}))
-        self.assertTrue(rawlint.driver_foreground("hotkey", {"keys": ["a"], "scope": "desktop"}))
-        self.assertTrue(rawlint.driver_foreground("drag", {"delivery_mode": "foreground"}))
-        self.assertTrue(rawlint.driver_foreground("bring_to_front", {}))
-        self.assertLessEqual(rawlint.DRIVER_FOREGROUND_TOOLS, rawlint.DRIVER_ACTIONS)
+    def test_runtime_refuses_raw_driver_under_drv1(self):
+        """The runtime refuses raw.driver however it was reached (a name the lint could not see)."""
+        fake = mock.MagicMock()
+        with mock.patch.dict(sys.modules, {"gi": fake, "gi.repository": fake}):
+            sys.modules.pop("raw", None)
+            with mock.patch("ctypes.CDLL"), mock.patch("ctypes.util.find_library", return_value="x"):
+                import raw  # noqa: PLC0415
+
+                try:
+                    with self.assertRaises(raw.Blocked) as caught:
+                        raw.Raw.__getattr__(object.__new__(raw.Raw), "driver")
+                    self.assertIn("DRV1", str(caught.exception))
+                    with self.assertRaises(AttributeError):
+                        raw.Raw.__getattr__(object.__new__(raw.Raw), "no_such_helper")
+                finally:
+                    sys.modules.pop("raw", None)
+
+    def test_foreground_helpers_need_the_tasks_grant(self):
+        cases = {
+            "raw.activate(5)": "BG2",
+            'raw.key(5, "ctrl+s")': "BG3",
+            'raw.type_text(5, "B7\\n")': "BG3",
+            "raw.click(5, 10, 10)": "BG1",
+            "raw.scroll(5, 10, 10, 3)": "BG1",
+            "raw.drag(1, 2, 3, 4)": "BG1",
+            'getattr(raw, "drag")(1, 2, 3, 4)': "BG1",
+        }
+        for src, rule in cases.items():
+            with self.subTest(src=src):
+                self.assertBlocked(src + "\nreturn raw.screenshot()", rule)
+                self.assertTrue(granted(src + "\nreturn raw.screenshot()").ok)
+        # a helper action needs a read-back like a raw one; raw.cells is a read
+        self.assertIn("VR1", {f.rule for f in granted('raw.key(5, "ctrl+s")').findings})
+        self.assertEqual(granted('raw.type_text(5, "x")\nreturn raw.cells(a, "A1")').findings[0].rule, "BG3")
+        self.assertNotIn("VR1", {f.rule for f in granted('raw.type_text(5, "x")\nreturn raw.cells(a, "A1")').findings})
+        # reads and AT-SPI need no grant
+        self.assertTrue(rawlint.lint('return raw.cells(raw.app("soffice"), "A1:F9")').ok)
 
     def test_gui_only_side_doors_block(self):
         for src in (
@@ -251,26 +284,49 @@ class TrialSettingsTest(unittest.TestCase):
             settings = raw_mcp.trial()
         self.assertFalse(settings["foreground_grant"])
         self.assertEqual(raw_mcp.runner_env(settings)["RAW_GRANT"], "0")
-        self.assertNotIn("RAW_DRIVER_SOCKET", raw_mcp.runner_env(settings))
 
-    def test_grant_and_driver_reach_the_runner(self):
+    def test_grant_reaches_the_runner_and_no_driver_does(self):
         import raw_mcp
 
         settings = {
             "foreground_grant": True,
             "coverage": {"LibreOffice Calc": "partial"},
-            "driver": {"socket": "/tmp/s.sock", "bin": "/x/cua-driver", "session": "raw-t"},
+            "driver": {"socket": "/tmp/s.sock", "bin": "/x/cua-driver", "session": "raw-t"},  # an old trial file
         }
-        env = raw_mcp.runner_env(settings)
-        self.assertEqual(
-            (env["RAW_GRANT"], env["RAW_DRIVER_SOCKET"], env["RAW_DRIVER_BIN"], env["RAW_DRIVER_SESSION"]),
-            ("1", "/tmp/s.sock", "/x/cua-driver", "raw-t"),
-        )
+        with mock.patch.dict("os.environ", {"RAW_DRIVER_SOCKET": "/tmp/s.sock"}):
+            env = raw_mcp.runner_env(settings)
+        self.assertEqual(env["RAW_GRANT"], "1")
+        self.assertFalse([k for k in env if k.startswith("RAW_DRIVER_")])
         self.assertEqual(raw_mcp.runner_env({"foreground_grant": "true"})["RAW_GRANT"], "0")
         text = raw_mcp.description(settings)
         self.assertIn("LibreOffice Calc: partial", text)
         self.assertIn("This task grants foreground", text)
         self.assertIn("does not grant foreground", raw_mcp.description({}))
+        self.assertNotIn("raw.driver(", text)
+        self.assertIn("raw.cells", text)
+
+
+class CellRefTest(unittest.TestCase):
+    """raw.cells' A1 references (pure functions; no display needed)."""
+
+    def test_refs_round_trip(self):
+        fake = mock.MagicMock()
+        with mock.patch.dict(sys.modules, {"gi": fake, "gi.repository": fake}):
+            sys.modules.pop("raw", None)
+            with mock.patch("ctypes.CDLL"), mock.patch("ctypes.util.find_library", return_value="x"):
+                import raw  # noqa: PLC0415
+
+                try:
+                    self.assertEqual(raw._cell_ref("A1"), (0, 0))
+                    self.assertEqual(raw._cell_ref("b7"), (6, 1))
+                    self.assertEqual(raw._cell_ref("$AA$10"), (9, 26))
+                    for bad in ("7", "A0", "", "A1B"):
+                        with self.assertRaises(ValueError, msg=bad):
+                            raw._cell_ref(bad)
+                    for col in (0, 25, 26, 701, 702):
+                        self.assertEqual(raw._cell_ref(raw._col_name(col) + "1"), (0, col))
+                finally:
+                    sys.modules.pop("raw", None)
 
 
 class TaskGrantTest(unittest.TestCase):

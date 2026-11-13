@@ -11,13 +11,22 @@ What a script gets (all through the global ``raw``):
 * ``raw.x11``, ``raw.xtst``, ``raw.xi``: libX11, libXtst and libXi through ctypes, with ``raw.dpy`` an open Display.
   Pointer, focus, raise and key functions refuse unless the task grants foreground; grabs always refuse.
 * ``raw.xdotool(*args)``: the xdotool CLI, subcommands checked against the same rules.
-* Helpers (read-back only, no input): ``raw.windows()``, ``raw.app(name)``, ``raw.find(...)``, ``raw.dump(...)``,
+* Read-back helpers (no input): ``raw.windows()``, ``raw.app(name)``, ``raw.find(...)``, ``raw.dump(...)``,
+  ``raw.cells(table, "A1:F20")`` (a spreadsheet range through the AT-SPI Table interface),
   ``raw.screenshot(...)``, ``raw.pointer()``, ``raw.active_window()``, ``raw.sleep(s)``.
-* ``raw.driver(tool, args)``: one Cua Driver tool call (the fallback for apps AT-SPI covers only in part), through
-  the trial's driver daemon and session. Foreground delivery needs the task's grant, like the raw routes.
+* Foreground helpers (need the task's grant): ``raw.activate(window_id)``, ``raw.key(window_id, "ctrl+s")``,
+  ``raw.type_text(window_id, text)``, ``raw.click(window_id, x, y)``, ``raw.scroll(window_id, x, y, clicks)`` and
+  ``raw.drag(x1, y1, x2, y2)``. Each activates the target window, confirms it is active and injects XTest input
+  through xdotool. When the script ends, the runner hands the active window back to the one that had it before,
+  unless the input left a popup open.
+
+No Cua Driver: the arm has no route to it (rule DRV1, at lint and at run time).
 
 Foreground is granted by the harness per task (RAW_GRANT=1 in the runner's environment, from the task definition),
 never by the script.
+
+AT-SPI calls time out after RAW_ATSPI_TIMEOUT_MS (default 2000 ms) instead of D-Bus's 15 s, so one app that stopped
+answering on the bus costs a script seconds, not 15 s per call. Apps that time out are recorded per call.
 
 The runtime hook (``Watch``) samples the real pointer, the core focus, the active window and the top of the
 stacking order every 50 ms while the script runs, and reports every change. It does not undo anything.
@@ -279,6 +288,25 @@ class _X:
                 _X11.XFree(children)
         return tuple(sorted(out))
 
+    def within(self, window: int, top: int) -> bool:
+        """Whether ``window`` is ``top`` or one of its descendants (the WM frame is above ``top``, not below)."""
+        root, parent = Window(), Window()
+        children = ctypes.POINTER(Window)()
+        n = ctypes.c_uint()
+        for _ in range(32):
+            if window == top:
+                return True
+            if not window or window == self.root:
+                return False
+            if not _X11.XQueryTree(
+                self.dpy, window, ctypes.byref(root), ctypes.byref(parent), ctypes.byref(children), ctypes.byref(n)
+            ):
+                return False
+            if children:
+                _X11.XFree(children)
+            window = int(parent.value)
+        return False
+
     def clients(self) -> list[int]:
         _, v = self.prop(self.root, "_NET_CLIENT_LIST_STACKING")
         return [int(w) for w in v]
@@ -295,13 +323,18 @@ class _X:
 class State:
     def __init__(self) -> None:
         self.granted = os.environ.get("RAW_GRANT") == "1"
-        self.driver_calls: list[dict[str, Any]] = []
         self.raw_actions: dict[str, int] = {}  # semantic AT-SPI actions per app name
+        self.routes: dict[str, int] = {}  # foreground helper and cell-read uses, by helper
+        self.stalled: dict[int, str] = {}  # pid -> error, apps whose AT-SPI calls timed out
         self.runtime_blocked: list[str] = []
         self.runtime_warned: list[str] = []
         self.images: list[Path] = []
         self.image_dir: Path | None = None
         self.lock = threading.Lock()
+
+    def route(self, name: str) -> None:
+        with self.lock:
+            self.routes[name] = self.routes.get(name, 0) + 1
 
     def refuse(self, rule_id: str, what: str) -> None:
         rule = rawlint.RULES[rule_id]
@@ -506,6 +539,31 @@ class Watch:
 # A spreadsheet's table reports every cell of the sheet as a child (LibreOffice: over a billion); the helpers walk at
 # most this many children of one node, so a tree read ends. A script's own loop is the script's business.
 MAX_CHILDREN = 1000
+MAX_CELLS = 2000  # one raw.cells read
+# 0 keeps D-Bus's own 25 s method timeout (libatspi's default; a stalled app costs about 15 s in practice)
+ATSPI_TIMEOUT_MS = int(os.environ.get("RAW_ATSPI_TIMEOUT_MS") or 2000)
+
+
+def _cell_ref(ref: str) -> tuple[int, int]:
+    """'B7' -> (row 6, column 1)."""
+    ref = ref.strip().upper().replace("$", "")
+    letters = "".join(ch for ch in ref if ch.isalpha())
+    digits = ref[len(letters) :]
+    if not letters or not digits.isdigit() or int(digits) < 1:
+        raise ValueError(f"not a cell reference: {ref!r}")
+    col = 0
+    for ch in letters:
+        col = col * 26 + (ord(ch) - 64)
+    return int(digits) - 1, col - 1
+
+
+def _col_name(col: int) -> str:
+    name = ""
+    col += 1
+    while col:
+        col, rem = divmod(col - 1, 26)
+        name = chr(65 + rem) + name
+    return name
 
 
 class Raw:
@@ -520,58 +578,216 @@ class Raw:
         self.root = _X11.XDefaultRootWindow(self.dpy)
         self._x = _X()
         self._xdotool = shutil.which("xdotool") or "/usr/bin/xdotool"
+        self._restore_to: int | None = None  # the active window before the script's first foreground helper
+        self._popups_before: set[int] = set()
 
-    # the Cua Driver fallback
-    def driver(self, tool: str, args: dict | None = None, image: bool = False) -> Any:
-        """Call one Cua Driver tool (GUI reads and actions only) and return its JSON result. Screenshots in the
-        result are dropped unless ``image=True``, which returns them to you as images."""
-        tool = str(tool)
-        args = dict(args or {})
-        if tool not in rawlint.DRIVER_TOOLS:
-            STATE.refuse("GUI1", f"raw.driver({tool!r})")
-        why = rawlint.driver_foreground(tool, args)
-        if why:
-            STATE.check("BG10", f"raw.driver: {why}")
-        socket, session, binary = (os.environ.get(k) for k in ("RAW_DRIVER_SOCKET", "RAW_DRIVER_SESSION", "RAW_DRIVER_BIN"))
-        if not (socket and binary):
-            raise RuntimeError("no Cua Driver is configured for this trial")
-        args["session"] = session or "raw-linux"
-        entry: dict[str, Any] = {"tool": tool, "pid": args.get("pid"), "foreground": bool(why)}
-        started = time.monotonic()
-        try:
-            done = subprocess.run(
-                [binary, "call", "--socket", socket, tool, json.dumps(args)],
-                capture_output=True,
-                text=True,
-                timeout=90,
-            )
-        finally:
-            entry["elapsed_s"] = round(time.monotonic() - started, 3)
-        text = done.stdout.strip()
-        try:
-            result: Any = json.loads(text) if text else {}
-        except ValueError:
-            result = {"text": text[-4000:]}
-        entry["ok"] = done.returncode == 0
-        if isinstance(result, dict):
-            refusal = result.get("refusal") or {}
-            entry["refusal"] = refusal.get("code") if isinstance(refusal, dict) else None
-            for key in [k for k in result if k.endswith("_png_b64") or k.endswith("image_b64")]:
-                data = result.pop(key)
-                if image and STATE.image_dir is not None and isinstance(data, str):
-                    import base64
+    def __getattr__(self, name: str) -> Any:
+        if name == "driver":  # the fallback this arm does not have
+            STATE.refuse("DRV1", "raw.driver")
+        raise AttributeError(name)
 
-                    path = STATE.image_dir / f"shot-{len(STATE.images) + 1}.png"
-                    path.write_bytes(base64.b64decode(data))
-                    STATE.images.append(path)
-                    result[key.replace("_b64", "")] = f"returned as image {len(STATE.images)}"
-        with STATE.lock:
-            STATE.driver_calls.append(entry)
+    # foreground helpers: the granted routes Cua Driver's foreground delivery took, built from xdotool/XTest
+    def _run_xdotool(self, *argv: Any, timeout: float = 20) -> str:
+        done = subprocess.run(
+            [self._xdotool, *[str(a) for a in argv]], capture_output=True, text=True, timeout=timeout
+        )
         if done.returncode != 0:
-            raise RuntimeError(f"cua-driver {tool} failed: {(done.stderr.strip() or text)[-1500:]}")
-        return result
+            raise RuntimeError(
+                f"xdotool {' '.join(str(a) for a in argv[:3])} exited {done.returncode}: {done.stderr.strip()[:300]}"
+            )
+        return done.stdout.strip()
+
+    def _window(self, window_id: Any) -> int:
+        wid = int(window_id)
+        if wid not in self._x.clients():
+            raise RuntimeError(f"window {wid} is not a top-level client window; see raw.windows()")
+        return wid
+
+    def activate(self, window_id: int) -> dict[str, Any]:
+        """Make ``window_id`` the active window and wait (up to 3 s) until the WM confirms it and the input focus sits
+        inside it. Needs the task's grant (BG2). Returns {active, focus_ok}."""
+        return self._foreground("activate", "BG2", window_id, lambda: None)
+
+    def _activate(self, wid: int) -> dict[str, Any]:
+        deadline = time.monotonic() + 3.0
+        if self._x.active() != wid:
+            try:
+                self._run_xdotool("windowactivate", "--sync", wid, timeout=4)
+            except (RuntimeError, subprocess.TimeoutExpired):
+                self._run_xdotool("windowraise", wid)
+                self._run_xdotool("windowfocus", "--sync", wid, timeout=4)
+        while True:
+            active = self._x.active()
+            focus = self._x.focus()
+            # the core focus is on the toplevel or one of its children (a GTK/VCL focus proxy)
+            ok = active == wid and self._x.within(focus, wid)
+            if ok or time.monotonic() > deadline:
+                return {"active": active == wid, "focus_ok": ok}
+            time.sleep(0.05)
+
+    def _foreground(self, name: str, rule: str, window_id: Any, body: Any) -> dict[str, Any]:
+        STATE.check(rule, f"raw.{name}")
+        STATE.route(name)
+        if self._restore_to is None:
+            self._restore_to = self._x.active()
+            self._popups_before = set(self._x.popups())
+        out: dict[str, Any] = {}
+        if window_id is not None:
+            wid = self._window(window_id)
+            out.update(self._activate(wid))
+            if not out["active"]:
+                raise RuntimeError(f"window {wid} did not become active; nothing was sent")
+        body()
+        time.sleep(0.1)
+        return out
+
+    def restore_foreground(self) -> dict[str, Any] | None:
+        """At the end of a script that used a foreground helper: give the active window back to the window that had
+        it before, unless the input left a popup open (restoring would close it). Called by the runner."""
+        before = self._restore_to
+        if before is None:
+            return None
+        opened = sorted(set(self._x.popups()) - self._popups_before)
+        out = {"to": before, "restored": False, "popups_open": len(opened)}
+        if before and before != self._x.active() and not opened and before in self._x.clients():
+            try:
+                self._run_xdotool("windowactivate", "--sync", before, timeout=4)
+                out["restored"] = self._x.active() == before
+            except (RuntimeError, subprocess.TimeoutExpired):
+                pass
+        return out
+
+    def key(self, window_id: int, *keys: str, repeat: int = 1) -> dict[str, Any]:
+        """Press keys or chords in ``window_id``, in order (xdotool names: "ctrl+z", "Return", "Tab", "shift+Tab",
+        "Down", "F2"), ``repeat`` times. Foreground: needs the task's grant (BG3)."""
+        names = [str(k) for k in keys]
+        if not names:
+            raise RuntimeError("raw.key needs at least one key")
+        count = max(1, min(int(repeat), 200))
+        return self._foreground(
+            "key", "BG3", window_id,
+            lambda: self._run_xdotool("key", "--clearmodifiers", "--delay", 30, *(names * count), timeout=60),
+        )
+
+    def type_text(self, window_id: int, text: str) -> dict[str, Any]:
+        """Type ``text`` into the focused control of ``window_id`` ("\\t" is Tab, "\\n" is Return, sent as key
+        presses). Foreground: needs the task's grant (BG3)."""
+        text = str(text)
+
+        def body() -> None:
+            chunk = ""
+            for ch in text + "\0":
+                if ch in "\t\n\0":
+                    if chunk:
+                        self._run_xdotool("type", "--clearmodifiers", "--delay", 12, "--", chunk, timeout=110)
+                        chunk = ""
+                    if ch != "\0":
+                        self._run_xdotool("key", "--clearmodifiers", "Tab" if ch == "\t" else "Return")
+                        time.sleep(0.05)
+                else:
+                    chunk += ch
+
+        return self._foreground("type_text", "BG3", window_id, body)
+
+    def click(
+        self, window_id: int, x: int, y: int, button: int = 1, count: int = 1, screen: bool = False
+    ) -> dict[str, Any]:
+        """Click at (x, y) in ``window_id``: window coordinates (from the window's top-left, as in its screenshot),
+        or screen coordinates with ``screen=True``. ``button`` 1 left, 2 middle, 3 right; ``count`` 2 is a double
+        click. Foreground: needs the task's grant (BG1)."""
+        wid = self._window(window_id)
+        fx, fy, _, _ = self._x.geometry(wid)
+        sx, sy = (int(x), int(y)) if screen else (fx + int(x), fy + int(y))
+        return self._foreground(
+            "click", "BG1", wid,
+            lambda: (
+                self._run_xdotool("mousemove", "--sync", sx, sy),
+                self._run_xdotool("click", "--repeat", max(1, min(int(count), 3)), "--delay", 80, int(button)),
+            ),
+        )
+
+    def scroll(self, window_id: int, x: int, y: int, clicks: int, screen: bool = False) -> dict[str, Any]:
+        """Scroll at (x, y) in ``window_id``: ``clicks`` > 0 down, < 0 up. Foreground: needs the task's grant
+        (BG1)."""
+        wid = self._window(window_id)
+        fx, fy, _, _ = self._x.geometry(wid)
+        sx, sy = (int(x), int(y)) if screen else (fx + int(x), fy + int(y))
+        n = int(clicks)
+        return self._foreground(
+            "scroll", "BG1", wid,
+            lambda: (
+                self._run_xdotool("mousemove", "--sync", sx, sy),
+                self._run_xdotool("click", "--repeat", max(1, min(abs(n), 50)), "--delay", 40, 5 if n > 0 else 4),
+            ),
+        )
+
+    def drag(
+        self, x1: int, y1: int, x2: int, y2: int, window_id: int | None = None, steps: int = 20,
+        duration: float = 0.6, hold: float = 0.3, screen: bool = False,
+    ) -> dict[str, Any]:
+        """Press the left button at (x1, y1), move to (x2, y2) in ``steps`` steps over ``duration`` seconds, pause
+        ``hold`` seconds and release: a real drag-and-drop. With ``window_id`` the points are window coordinates
+        (unless ``screen=True``) and that window is activated first; without it they are screen coordinates.
+        Foreground: needs the task's grant (BG1)."""
+        ox = oy = 0
+        if window_id is not None and not screen:
+            ox, oy, _, _ = self._x.geometry(self._window(window_id))
+        a = (ox + int(x1), oy + int(y1))
+        b = (ox + int(x2), oy + int(y2))
+        n = max(2, min(int(steps), 200))
+
+        def body() -> None:
+            self._run_xdotool("mousemove", "--sync", *a)
+            self._run_xdotool("mousedown", 1)
+            try:
+                time.sleep(0.15)
+                for i in range(1, n + 1):
+                    self._run_xdotool(
+                        "mousemove", a[0] + (b[0] - a[0]) * i // n, a[1] + (b[1] - a[1]) * i // n
+                    )
+                    time.sleep(max(0.0, float(duration)) / n)
+                time.sleep(max(0.0, min(float(hold), 3.0)))
+            finally:
+                self._run_xdotool("mouseup", 1)
+
+        return self._foreground("drag", "BG1", window_id, body)
 
     # reads
+    def cells(self, table: Any, ref: str) -> list[list[str]]:
+        """The text of a spreadsheet range ("A1:F20", or one cell "B7") as rows of strings, read through the AT-SPI
+        Table interface of ``table`` (LibreOffice Calc: the [table] under 'document spreadsheet', or the app, whose
+        first table is used). Read-only; at most 2000 cells per call."""
+        STATE.route("cells")
+        if table is not None and table.get_table_iface() is None:
+            found = self.find(table, role="table", limit=1)
+            table = found[0] if found else None
+        if table is None:
+            raise RuntimeError("no AT-SPI table found")
+        first, _, last = str(ref).partition(":")
+        r1, c1 = _cell_ref(first)
+        r2, c2 = _cell_ref(last or first)
+        r1, r2 = sorted((r1, r2))
+        c1, c2 = sorted((c1, c2))
+        if (r2 - r1 + 1) * (c2 - c1 + 1) > MAX_CELLS:
+            raise RuntimeError(f"range {ref} is over {MAX_CELLS} cells; read it in parts")
+        rows = []
+        for r in range(r1, r2 + 1):
+            row = []
+            for c in range(c1, c2 + 1):
+                cell = Atspi.Table.get_accessible_at(table, r, c)
+                text = ""
+                if cell is not None:
+                    if cell.get_text_iface() is not None:
+                        text = Atspi.Text.get_text(cell, 0, -1) or ""
+                    else:
+                        text = cell.get_name() or ""
+                row.append(text)
+            rows.append(row)
+        return rows
+
+    def cell_name(self, row: int, col: int) -> str:
+        """Zero-based (row, col) -> "B7"."""
+        return f"{_col_name(int(col))}{int(row) + 1}"
     def sleep(self, seconds: float) -> None:
         time.sleep(min(float(seconds), 30.0))
 
@@ -603,11 +819,22 @@ class Raw:
             if a is None:
                 continue
             try:
-                if (pid is not None and a.get_process_id() == pid) or (
-                    name is not None and (a.get_name() or "").casefold() == name.casefold()
-                ):
+                app_pid = a.get_process_id()  # answered by the bus daemon, not the app
+                if pid is not None and app_pid == pid:
                     return a
-            except Exception:  # noqa: BLE001 - a dead app on the bus
+                if name is None or app_pid in STATE.stalled:
+                    continue
+                started = time.monotonic()
+                app_name = a.get_name() or ""
+                if time.monotonic() - started >= (ATSPI_TIMEOUT_MS or 25_000) / 1000 * 0.9:
+                    # an app that does not answer: skip it for the rest of this script
+                    with STATE.lock:
+                        STATE.stalled.setdefault(app_pid, "no answer within the AT-SPI timeout")
+                    continue
+                if app_name.casefold() == name.casefold():
+                    return a
+            except Exception as error:  # noqa: BLE001 - a dead or hung app on the bus
+                _note_stall(a, error)
                 continue
         return None
 
@@ -767,7 +994,21 @@ class Raw:
         return done.stdout.strip()
 
 
+def _note_stall(acc: Any, error: Exception) -> None:
+    """Record an app whose AT-SPI call timed out (its pid comes from the bus daemon, which still answers)."""
+    if "timeout" not in str(error).casefold():
+        return
+    try:
+        pid = int(acc.get_process_id())
+    except Exception:  # noqa: BLE001
+        pid = -1
+    with STATE.lock:
+        STATE.stalled.setdefault(pid, str(error)[:200])
+
+
 def make() -> Raw:
     Gdk.init([])
+    if ATSPI_TIMEOUT_MS > 0:
+        Atspi.set_timeout(ATSPI_TIMEOUT_MS, ATSPI_TIMEOUT_MS)
     _guard_gi()
     return Raw()

@@ -177,6 +177,12 @@ class Ctx:
             self.args.schedule_seed,
         )
         kept = [b for b in blocks if b["task"] in self.task_ids]
+        # trials kept from an earlier run (a splice) are not part of this run's schedule; their slot fields stay
+        skip = set(getattr(self.args, "skip_trials", None) or [])
+        if skip:
+            for block in kept:
+                block["entries"] = [e for e in block["entries"] if e["trial_id"] not in skip]
+            kept = [b for b in kept if b["entries"]]
         index = 0
         for block in kept:
             for entry in block["entries"]:
@@ -596,23 +602,10 @@ def real_capture_check(ctx: "Ctx", arm: str) -> tuple[str, str, str]:
         if source in ca.CUA_ARMS:
             ensure_agent_daemon(ctx, source)
         elif source == ca.RAW_LINUX_ARM:
-            ensure_agent_daemon(ctx, ca.RAW_LINUX_FALLBACK)
-            fallback = ca.CUA_BUILDS[ca.RAW_LINUX_FALLBACK]
+            stop_agent_daemons(ctx)  # no Cua Driver for this arm
             ca.RAW_LINUX_TRIAL.parent.mkdir(parents=True, exist_ok=True)
             ca.RAW_LINUX_TRIAL.write_text(
-                json.dumps(
-                    {
-                        "trial_id": "preflight",
-                        "foreground_grant": False,
-                        "coverage": {},
-                        "driver": {
-                            "socket": fallback.socket,
-                            "bin": str(fallback.bin),
-                            "session": "raw-preflight",
-                        },
-                    }
-                )
-                + "\n",
+                json.dumps({"trial_id": "preflight", "foreground_grant": False, "coverage": {}}) + "\n",
                 "utf-8",
             )
         if arm in cxn.ARMS:
@@ -690,9 +683,7 @@ def real_capture_check(ctx: "Ctx", arm: str) -> tuple[str, str, str]:
                 result = call(
                     "run_script",
                     {
-                        # the capture, and one raw.driver round trip to the fallback daemon
-                        "script": "raw.screenshot()\nw = raw.driver('list_windows', {})\n"
-                        "return [len(raw.windows()), len(w.get('windows') or [])]",
+                        "script": "raw.screenshot()\nreturn len(raw.windows())",
                         "timeout_ms": 60000,
                     },
                 )
@@ -933,7 +924,7 @@ OPERATIONAL_OPTIONS = {
     *("command", "run_id", "runs_dir", "ledger", "ledger_who", "cutoff_utc", "budget_cap_usd"),
     *("seven_day_stop", "disk_floor_gb", "ignore_hold", "no_model_preflight", "offline"),
     *("allow_non_terminal", "allow_codex_arms", "allow_unknown_quota", "claude_bin"),
-    *("arms", "tasks", "only_arm", "only_task", "phase1_runs", "phase2_runs"),
+    *("arms", "tasks", "only_arm", "only_task", "phase1_runs", "phase2_runs", "skip_trials"),
     *("cua_bin", "cua_skills", "pins", "build_dir", "codex_cu_mcp"),
 }
 
@@ -1001,14 +992,6 @@ def resume_conflicts(ctx: Ctx) -> list[str]:
     return sorted(set(conflicts))
 
 
-# Cua Driver tools that act (raw.driver), for the fallback count; the rest are reads. Same set as tools/raw_linux/rawlint.
-DRIVER_ACTIONS = {
-    "click", "double_click", "right_click", "type_text", "set_value", "press_key", "hotkey", "scroll", "drag",
-    "invoke_menu", "move_cursor", "mouse_button_down", "mouse_drag", "mouse_button_up", "set_window_frame",
-    "bring_to_front",
-}
-
-
 def raw_linux_summary(log: Path, dest: Path) -> dict[str, Any]:
     """Move the raw-linux call log into the trial and count its background findings per call."""
     calls: list[dict[str, Any]] = []
@@ -1022,7 +1005,7 @@ def raw_linux_summary(log: Path, dest: Path) -> dict[str, Any]:
     rules: dict[str, int] = {}
     blocked_rules: dict[str, int] = {}
     raw_by_app: dict[str, int] = {}
-    driver = [d for c in calls for d in c.get("driver_calls") or []]
+    stalled_pids = sorted({p for c in calls for p in (c.get("atspi_stalled") or {})})
     for call in calls:
         for finding in call.get("lint") or []:
             rules[finding["rule"]] = rules.get(finding["rule"], 0) + 1
@@ -1030,12 +1013,6 @@ def raw_linux_summary(log: Path, dest: Path) -> dict[str, Any]:
                 blocked_rules[finding["rule"]] = blocked_rules.get(finding["rule"], 0) + 1
         for app, n in (call.get("raw_actions") or {}).items():
             raw_by_app[app] = raw_by_app.get(app, 0) + int(n)
-    actions = [d for d in driver if d.get("tool") in DRIVER_ACTIONS]
-    driver_by_pid: dict[str, dict[str, int]] = {}
-    for d in driver:
-        key = str(d.get("pid") or "none")
-        slot = driver_by_pid.setdefault(key, {"actions": 0, "reads": 0})
-        slot["actions" if d.get("tool") in DRIVER_ACTIONS else "reads"] += 1
     return {
         "calls": len(calls),
         "ok": sum(1 for c in calls if c.get("ok")),
@@ -1051,16 +1028,17 @@ def raw_linux_summary(log: Path, dest: Path) -> dict[str, Any]:
         "runtime_changed_granted": sum(1 for c in calls if c.get("watch_changed") and c.get("granted")),
         "raw_actions": sum(raw_by_app.values()),
         "raw_actions_by_app": raw_by_app,
-        "driver_calls": len(driver),
-        "driver_actions": len(actions),
-        "driver_reads": len(driver) - len(actions),
-        "driver_failed": sum(1 for d in driver if not d.get("ok")),
-        "driver_foreground": sum(1 for d in driver if d.get("foreground")),
-        "driver_tools": {t: sum(1 for d in driver if d.get("tool") == t) for t in sorted({str(d.get("tool")) for d in driver})},
-        "driver_by_pid": driver_by_pid,
-        "fallback": bool(actions),
+        # foreground helper and cell-read uses (raw.key, raw.type_text, raw.click, raw.drag, raw.cells, ...)
+        "routes": {
+            r: sum(int((c.get("routes") or {}).get(r, 0)) for c in calls)
+            for r in sorted({r for c in calls for r in (c.get("routes") or {})})
+        },
+        "drv1_blocked": sum(1 for c in calls for f in c.get("lint") or [] if f.get("rule") == "DRV1")
+        + sum(1 for c in calls for b in c.get("runtime_blocked") or [] if str(b).startswith("DRV1")),
+        # calls in which an app's AT-SPI request hit the runner's timeout (an app not answering on the bus)
+        "atspi_stalled_calls": sum(1 for c in calls if c.get("atspi_stalled")),
+        "atspi_stalled_pids": stalled_pids,
         "raw_tool_s": round(sum(float(c.get("elapsed_s") or 0) for c in calls), 2),
-        "driver_tool_s": round(sum(float(d.get("elapsed_s") or 0) for d in driver), 2),
     }
 
 
@@ -1080,11 +1058,12 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
     sentinel_front = True if bench_v2 else bool(spec.get("sentinel_frontmost", True))
     condition = getattr(args, "condition", "foreground") if bench_v2 else None  # Amendment 15
     # Per-build Cua Driver identity (Amendment 3); arm B rows keep the 0.34.0 values of the recorder build.
-    build_versions = (ctx.versions.get("builds") or {}).get(
-        ca.RAW_LINUX_FALLBACK  # raw-linux's fallback driver is the main build
-        if SOURCE_ARM.get(arm, arm) == ca.RAW_LINUX_ARM
-        else SOURCE_ARM.get(arm, arm)
-    ) or (ctx.versions.get("builds") or {}).get("cc-cua-driver", {})
+    build_versions = (
+        {}
+        if SOURCE_ARM.get(arm, arm) == ca.RAW_LINUX_ARM  # no Cua Driver in this arm
+        else (ctx.versions.get("builds") or {}).get(SOURCE_ARM.get(arm, arm))
+        or (ctx.versions.get("builds") or {}).get("cc-cua-driver", {})
+    )
     trial_dir = ctx.run_dir / "trials" / entry["trial_id"] / f"a{attempt}"
     shutil.rmtree(trial_dir, ignore_errors=True)
     artifacts = trial_dir / "artifacts"
@@ -1190,7 +1169,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         ):  # A23: Cua Driver under Codex uses that build's daemon
             ensure_agent_daemon(ctx, SOURCE_ARM[arm])
         elif SOURCE_ARM.get(arm) == ca.RAW_LINUX_ARM:
-            ensure_agent_daemon(ctx, ca.RAW_LINUX_FALLBACK)  # raw.driver's fallback: the main build's daemon
+            stop_agent_daemons(ctx)  # no Cua Driver (and no driver overlay) during a raw-linux trial
         if getattr(args, "park_pointer", False):
             row["pointer_parked"] = (
                 None  # set even when park_pointer raises, so the row shows the attempt
@@ -1258,16 +1237,10 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         if raw_arm:
             ca.RAW_LINUX_LOG.parent.mkdir(parents=True, exist_ok=True)
             ca.RAW_LINUX_LOG.unlink(missing_ok=True)
-            fallback = ca.CUA_BUILDS[ca.RAW_LINUX_FALLBACK]
             settings = {
                 "trial_id": entry["trial_id"],
                 "foreground_grant": v2.foreground_grant(spec),
                 "coverage": spec.get("atspi_coverage") or {},
-                "driver": {
-                    "socket": fallback.socket,
-                    "bin": str(fallback.bin),
-                    "session": f"raw-{entry['trial_id']}-a{attempt}",
-                },
             }
             ca.RAW_LINUX_TRIAL.write_text(json.dumps(settings) + "\n", "utf-8")
             shutil.copy(ca.RAW_LINUX_TRIAL, artifacts / "raw-trial.json")
@@ -2751,9 +2724,10 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
     for arm in [a for a in ctx.arm_names if a in pia.ARMS] if with_models and not offline else []:
         try:
             source = pia.SOURCE_ARM[arm]
-            ensure_agent_daemon(
-                ctx, ca.RAW_LINUX_FALLBACK if source == ca.RAW_LINUX_ARM else source
-            )
+            if source == ca.RAW_LINUX_ARM:
+                stop_agent_daemons(ctx)  # no Cua Driver for this arm
+            elif source in ca.CUA_BUILDS:
+                ensure_agent_daemon(ctx, source)
             status, detail = pia.init_check(
                 arm,
                 ctx.mcp[arm][0],
@@ -2812,6 +2786,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="explicit task ids, in this order (default: priority order of all MB tasks)",
     )
     p.add_argument("--only-task", default=None)
+    p.add_argument(
+        "--skip-trials",
+        nargs="*",
+        default=[],
+        help="trial ids not to run (kept from an earlier run, to be spliced with this one)",
+    )
     p.add_argument(
         "--task-set",
         default="v2",
@@ -3088,10 +3068,6 @@ def setup_arms(ctx: Ctx) -> None:
             if arm in ctx.arm_names
             or arm == "cc-cua-driver"
             or arm in {SOURCE_ARM.get(a) for a in ctx.arm_names}
-            or (
-                arm == ca.RAW_LINUX_FALLBACK
-                and ca.RAW_LINUX_ARM in {SOURCE_ARM.get(a) for a in ctx.arm_names}
-            )
         },
         pins=pins,
         system_prompt_sha256=hashlib.sha256(ca.SYSTEM_PROMPT.encode()).hexdigest(),

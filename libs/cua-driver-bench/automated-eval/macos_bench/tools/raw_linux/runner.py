@@ -145,12 +145,17 @@ def run(source: str, image_dir: Path) -> dict[str, Any]:
         keep = [ln for ln in lines if "<script>" in ln or not ln.startswith("  File")]
         out["error"] = "\n".join(keep[-12:])
     finally:
+        try:
+            out["foreground_restore"] = handle.restore_foreground()
+        except Exception as error:  # noqa: BLE001
+            out["foreground_restore"] = {"error": str(error)[:200]}
         out["watch"] = watch.finish()
         out["stdout"] = printed.getvalue()[-4000:]
         out["runtime_blocked"] = list(raw.STATE.runtime_blocked)
         out["runtime_warned"] = list(raw.STATE.runtime_warned)
-        out["driver_calls"] = list(raw.STATE.driver_calls)
         out["raw_actions"] = dict(raw.STATE.raw_actions)
+        out["routes"] = dict(raw.STATE.routes)
+        out["atspi_stalled"] = {str(k): v for k, v in raw.STATE.stalled.items()}
         out["images"] = [str(p) for p in raw.STATE.images]
     return out
 

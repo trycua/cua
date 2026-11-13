@@ -355,12 +355,10 @@ BROWSER_USE_SERVER = "browseruse"
 RAW_LINUX_ARM = "cc-raw-linux"
 RAW_LINUX_ADAPTER = ADAPTER_TOOLS / "raw_linux" / "raw_mcp.py"
 RAW_LINUX_LOG = Path("/tmp/cdb-raw-linux/calls.jsonl")  # the session's private /tmp; moved into each trial
-# Per-trial settings the harness writes before each raw-linux trial (raw_mcp.trial): the task's foreground grant,
-# its AT-SPI coverage labels and the fallback Cua Driver (socket, binary, session).
+# Per-trial settings the harness writes before each raw-linux trial (raw_mcp.trial): the task's foreground grant and
+# its AT-SPI coverage labels. The arm has no Cua Driver: no daemon runs during its trials and its lint blocks any call
+# path to one (DRV1).
 RAW_LINUX_TRIAL = RAW_LINUX_LOG.parent / "trial.json"
-# The fallback driver is the main arm's build and daemon (same binary, run_script off), so raw.driver calls get the
-# same driver the pi-cua-driver-main arm gets.
-RAW_LINUX_FALLBACK = "cc-cua-driver-main"
 ADAPTER_ARMS = {
     "cc-agent-desktop": AGENT_DESKTOP_SERVER,
     "cc-browser-use": BROWSER_USE_SERVER,
@@ -427,8 +425,8 @@ ARM_DESCRIPTIONS = {
     "cc-cua-driver-script-only": "The script build with CUA_DRIVER_SCRIPT_ONLY=1: tools/list offers run_script alone "
     "(codemode), and the script-only addendum in the system prompt",
     RAW_LINUX_ARM: "One run_script tool (server cua) running Python against AT-SPI, Xlib/XTest and xdotool behind a "
-    "background-use lint and runtime hook, with raw.driver(...) to the main build's Cua Driver as the fallback; "
-    "foreground granted per task by the harness (tools/raw_linux), no skill",
+    "background-use lint and runtime hook, with no Cua Driver; foreground granted per task by the harness "
+    "(tools/raw_linux), no skill",
     "cc-codex-cu": "Claude Code + Codex computer-use cua_repl MCP (server codex-cu), no skill",
     "cc-codex-cu-1007-browser": "Claude Code + Codex 26.1007.21159 cua_repl MCP (server codex-cu), surfaces browser+computer, no skill (Amendment 10)",
     "cc-claude-cu-helper": "Claude Code + "
@@ -446,8 +444,9 @@ RAW_LINUX_ADDENDUM = (
     "its description lists what is available and the background rules the script is checked against. To look, "
     "`return raw.dump(raw.app(\"<App>\"))` or take `raw.screenshot(window_id)`. To act, use AT-SPI actions, "
     "EditableText and Value on the elements you found, use loops and if/else, and `return` what you need to check "
-    "the result. Where an app's AT-SPI tree does not reach what you need, call the Cua Driver from the same script "
-    "with `raw.driver(tool, args)`. A blocked or failed script comes back with the rule or the traceback; fix it and "
+    "the result. Where an app's AT-SPI tree does not reach what you need and the task grants foreground, use the "
+    "foreground helpers (`raw.key`, `raw.type_text`, `raw.click`, `raw.drag`) and read back with `raw.cells` or "
+    "`raw.screenshot`. A blocked or failed script comes back with the rule or the traceback; fix it and "
     "run it again.\n"
     'Pass "timeout_ms": 120000 on every run_script call.\n'
 )

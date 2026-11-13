@@ -4,7 +4,8 @@
 """Static background-use lint for raw-linux scripts (the `pi-raw-linux` bench arm).
 
 A script is Python source that drives Linux low-level APIs (AT-SPI through gi, Xlib/XTest through ctypes handles,
-xdotool) through the `raw` runtime. Before it runs, `lint(source)` walks its AST and returns findings. Each finding
+xdotool) through the `raw` runtime. Nothing else: the arm has no Cua Driver, and any call path to it (``raw.driver``,
+its CLI, its daemon socket, its Python package) is blocked (rule DRV1). Before it runs, `lint(source)` walks its AST and returns findings. Each finding
 names a rule, the line, what the rule protects, the source of the rule in Cua Driver's own contract, and a
 background-safe alternative.
 
@@ -12,9 +13,7 @@ Severity:
 * ``block``: the script does not run. Used for pointer, focus and keyboard theft (the background contract), grabs,
   and the bench's GUI-only side doors.
 * ``granted``: blocked unless the harness granted foreground to this task (the task definition's
-  ``foreground_grant``). The driver's own foreground route is an explicit, authorized escalation
-  (``delivery_mode:"foreground"``), never automatic; the grant is that authorization, given per task by the harness,
-  never by the model.
+  ``foreground_grant``). The grant is an explicit authorization, given per task by the harness, never by the model.
 * ``warn``: the script runs; the finding is returned with the result.
 
 The lint cannot prove a script safe (an app may move focus by itself, a value may be computed at run time), so the
@@ -60,8 +59,8 @@ RULES: dict[str, Rule] = {
             f"{INPUT_RS}:4-15 (no XTest fallback: it delivers to the focused window); "
             f"{DRV}/crates/platform-linux/src/tools/move_cursor.rs:45 (only scope=desktop moves the real pointer); "
             f"{LINUX_MD}:26-31 (foreground is an authorized escalation, never automatic)",
-            "Use the element's AT-SPI Action (Atspi.Action.do_action(acc, i)), EditableText or Value interface, or a "
-            "background raw.driver action. A real hover or drag is allowed only on a task that grants foreground.",
+            "Use the element's AT-SPI Action (Atspi.Action.do_action(acc, i)), EditableText or Value interface. A real "
+            "click, hover or drag (raw.click, raw.drag) is allowed only on a task that grants foreground.",
         ),
         Rule(
             "BG2",
@@ -73,7 +72,7 @@ RULES: dict[str, Rule] = {
             f"{DRV}/crates/platform-linux/src/input/focus_guard.rs:4-12 (core focus, active window and top of "
             "stacking must be left as found)",
             "Address the element directly through AT-SPI (do_action, set_text_contents, set_current_value); these "
-            "need no focus. Activation is allowed only on a task that grants foreground.",
+            "need no focus. Activation (raw.activate) is allowed only on a task that grants foreground.",
         ),
         Rule(
             "BG3",
@@ -84,7 +83,8 @@ RULES: dict[str, Rule] = {
             f"{INPUT_RS}:4-15; {LINUX_MD}:29-31 (if activation cannot be proven, refuse instead of sending keys to "
             "whatever is focused)",
             "Set text with the element's EditableText (set_text_contents / insert_text) or Value interface, or press "
-            "the button that the key would trigger through its AT-SPI Action.",
+            "the button that the key would trigger through its AT-SPI Action. raw.key / raw.type_text into an "
+            "activated window are allowed only on a task that grants foreground.",
         ),
         Rule(
             "BG4",
@@ -139,8 +139,19 @@ RULES: dict[str, Rule] = {
             "Bench v2 is GUI-only: no shell, process, file, network or library loading from a computer-use script.",
             "libs/cua-driver-bench/automated-eval/macos_bench/bench_v2.py:164-187 (EXEC_PATTERNS, the GUI-only "
             "guard)",
-            "Use only the raw runtime: raw.Atspi, raw.x11/raw.xtst handles, raw.xdotool(...), raw.driver(...) "
-            "with a GUI tool, raw.windows(), raw.screenshot().",
+            "Use only the raw runtime: raw.Atspi, raw.x11/raw.xtst handles, raw.xdotool(...), raw.windows(), "
+            "raw.screenshot().",
+        ),
+        Rule(
+            "DRV1",
+            "Cua Driver",
+            "block",
+            "This arm uses only Linux's own APIs and tools. Cua Driver (raw.driver, its CLI, its daemon socket or "
+            "its Python package) is not part of it.",
+            "the arm's definition (raw Linux APIs only; tools/raw_linux/raw.py)",
+            "Use raw.Atspi (Action, EditableText, Value, Selection, Table), raw.find / raw.dump / raw.cells, and on "
+            "a task that grants foreground raw.activate / raw.key / raw.type_text / raw.click / raw.scroll / "
+            "raw.drag.",
         ),
         Rule(
             "GUI2",
@@ -159,16 +170,6 @@ RULES: dict[str, Rule] = {
             "command's --window and goes to the focused window or the real pointer.",
             f"{INPUT_RS}:4-15 (keys go to the addressed window, never to whatever is focused)",
             "Make one raw.xdotool call per command. Chains are allowed only on a task that grants foreground.",
-        ),
-        Rule(
-            "BG10",
-            "Cua Driver foreground delivery",
-            "granted",
-            "raw.driver with delivery_mode \"foreground\", scope \"desktop\" or bring_to_front activates the target, "
-            "moves the real pointer or sends to the focused application.",
-            f"{DRV}/crates/platform-linux/src/input/delivery.rs:4-23 (background is the default, foreground an "
-            f"explicit choice); {LINUX_MD}:26-31",
-            "Use the driver's default background delivery, or an AT-SPI route.",
         ),
         Rule(
             "VR1",
@@ -230,6 +231,16 @@ NAMES: dict[str, str] = {
     **dict.fromkeys(("XSetSelectionOwner", "set_text" + "_clipboard"), "BG8"),
     **dict.fromkeys(("CDLL", "cdll", "PyDLL", "pydll", "LoadLibrary", "dlopen"), "GUI1"),
     **dict.fromkeys(("system", "popen", "spawnv", "execv", "execvp", "fork"), "GUI1"),
+    "driver": "DRV1",
+}
+# The runtime's foreground helpers (raw.<name>) and the rule each needs the grant under.
+HELPERS: dict[str, str] = {
+    "activate": "BG2",
+    "key": "BG3",
+    "type_text": "BG3",
+    "click": "BG1",
+    "scroll": "BG1",
+    "drag": "BG1",
 }
 # Text that names a forbidden request wherever it appears in a string (an atom, a command line).
 STRINGS: dict[str, str] = {
@@ -243,6 +254,10 @@ STRINGS: dict[str, str] = {
     "ydotool": "BG5",
     "wtype": "BG5",
     "libei": "BG5",
+    "cua-driver": "DRV1",
+    "cua_driver": "DRV1",
+    "CuaDriver": "DRV1",
+    "cdb-bench-cua": "DRV1",  # the bench's driver daemon sockets
 }
 # Every xdotool subcommand. A second subcommand in one raw.xdotool call (xdotool's command chaining) is BG9, so each
 # command's own --window decides its delivery.
@@ -280,53 +295,6 @@ IMPORT_OK = {
     "enum",
     "raw",
 }
-# Cua Driver tools a script may call through raw.driver (the fallback for apps AT-SPI covers only in part). GUI reads
-# and actions only: no launch/kill, shell, files, clipboard writes, config, recording, scripts or browser CDP.
-DRIVER_READS = {
-    "list_windows",
-    "list_apps",
-    "get_window_state",
-    "get_desktop_state",
-    "get_screen_size",
-    "get_cursor_position",
-    "zoom",
-    "parse_visual_regions",
-    "clipboard_read",
-    "verify_state",
-}
-DRIVER_ACTIONS = {
-    "click",
-    "double_click",
-    "right_click",
-    "type_text",
-    "set_value",
-    "press_key",
-    "hotkey",
-    "scroll",
-    "drag",
-    "invoke_menu",
-    "move_cursor",
-    "mouse_button_down",
-    "mouse_drag",
-    "mouse_button_up",
-    "set_window_frame",
-    "bring_to_front",
-}
-DRIVER_TOOLS = DRIVER_READS | DRIVER_ACTIONS
-DRIVER_FOREGROUND_TOOLS = {"bring_to_front"}
-
-
-def driver_foreground(tool: str, args: dict) -> str | None:
-    """Why this driver call is foreground delivery (needs the task's grant), or None for a background call."""
-    if tool in DRIVER_FOREGROUND_TOOLS:
-        return f"{tool} activates the window"
-    if args.get("delivery_mode") == "foreground":
-        return f'{tool} with delivery_mode "foreground"'
-    if args.get("scope") == "desktop":
-        return f'{tool} with scope "desktop"'
-    return None
-
-
 # Names that reach past the runtime: other GObject modules (GLib/Gio spawn processes, Gdk warps the pointer), the
 # CPython C API through ctypes, and the gi loader itself. Scripts get Atspi as a global and need none of these.
 ESCAPES = {
@@ -377,8 +345,14 @@ ACTIONS = {
     "generate_mouse_event",
     "generate_keyboard_event",
     "XSendEvent",
+    "key",
+    "type_text",
+    "click",
+    "scroll",
+    "drag",
 }
 READS = {
+    "cells",
     "get_text",
     "get_current_value",
     "get_state_set",
@@ -509,6 +483,8 @@ class _Walker(ast.NodeVisitor):
             # only as an attribute (os.system), not a plain local called "system"
             if not isinstance(node, ast.Attribute):
                 return
+        if rule == "DRV1" and isinstance(node, ast.Name):
+            return  # a local called "driver"; raw.driver and getattr(raw, "driver") still hit
         if rule:
             self.add(rule, node, f"{name}")
         if name in ACTIONS:
@@ -518,12 +494,16 @@ class _Walker(ast.NodeVisitor):
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
+            if "cua_driver" in alias.name:
+                self.add("DRV1", node, f"import {alias.name}")
             if alias.name not in IMPORT_OK:
                 self.add("GUI1", node, f"import {alias.name}")
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         mod = node.module or ""
+        if "cua_driver" in mod:
+            self.add("DRV1", node, f"from {mod} import ...")
         if mod not in IMPORT_OK:
             self.add("GUI1", node, f"from {mod} import ...")
         if mod == "ctypes":
@@ -536,6 +516,8 @@ class _Walker(ast.NodeVisitor):
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
         self.name_hit(node.attr, node)
+        if node.attr in HELPERS and _dotted(node.value) == "raw":
+            self.add(HELPERS[node.attr], node, f"raw.{node.attr}")
         if node.attr.startswith("_"):
             # private and dunder attributes reach the runtime's own unguarded handles (raw.x11._lib, type internals)
             self.add("GUI2", node, f"private attribute {node.attr}")
@@ -571,7 +553,7 @@ class _Walker(ast.NodeVisitor):
             for needle, rule in STRINGS.items():
                 if needle in value:
                     self.add(rule, node, f"string {needle!r}")
-            if value in NAMES and NAMES[value] != "GUI1":
+            if value in NAMES and NAMES[value] not in ("GUI1", "DRV1"):
                 self.add(NAMES[value], node, f"name {value!r} in a string")
             if value.startswith("_") and value.strip("_") and value.isidentifier():
                 self.add("GUI2", node, f"private name {value!r} in a string")
@@ -594,35 +576,13 @@ class _Walker(ast.NodeVisitor):
                 self.add("GUI2", node, "getattr with a computed name")
             else:
                 self.name_hit(attr, node)
+                if attr in HELPERS and node.args and _dotted(node.args[0]) == "raw":
+                    self.add(HELPERS[attr], node, f"getattr(raw, {attr!r})")
                 if attr.startswith("_") or attr in ESCAPES:
                     self.add("GUI2", node, f"getattr {attr!r}")
         if last == "xdotool":
             self.xdotool(node)
-        if func == "raw.driver":
-            self.driver(node)
         self.generic_visit(node)
-
-    def driver(self, node: ast.Call) -> None:
-        """raw.driver(tool, {args}): the literal parts; the runtime checks the call again with its real values."""
-        tool = _const_str(node.args[0]) if node.args else None
-        if tool is None:
-            return  # computed tool name: the runtime checks it
-        if tool not in DRIVER_TOOLS:
-            self.add("GUI1", node, f"raw.driver({tool!r}) is not a GUI tool offered to scripts")
-            return
-        args: dict = {}
-        if len(node.args) > 1 and isinstance(node.args[1], ast.Dict):
-            for k, v in zip(node.args[1].keys, node.args[1].values):
-                key, value = (_const_str(k) if k is not None else None), _const_str(v)
-                if key and value is not None:
-                    args[key] = value
-        why = driver_foreground(tool, args)
-        if why:
-            self.add("BG10", node, f"raw.driver: {why}")
-        if tool in DRIVER_ACTIONS:
-            self.last_action = max(self.last_action, _pos(node))
-        else:
-            self.last_read = max(self.last_read, _pos(node))
 
     def xdotool(self, node: ast.Call) -> None:
         args = [_const_str(a) for a in node.args]

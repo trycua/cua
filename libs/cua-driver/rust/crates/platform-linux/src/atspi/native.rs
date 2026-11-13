@@ -6246,7 +6246,9 @@ pub fn select_option_by_action_ref(object_ref: &ObjectRef, value: &str) -> Resul
         async {
             let conn = shared_connection().await?;
             live_accessible(conn, object_ref).await?;
-            let options = list_options(conn, &raw_ref(object_ref)).await;
+            // No options here, read or not, leaves the decision to the
+            // open-popup route, as for `select_option_ref`.
+            let options = list_options(conn, &raw_ref(object_ref)).await.options;
             if options.is_empty() {
                 return Ok(OptionPick::Unavailable);
             }
@@ -6318,7 +6320,7 @@ async fn selected_option_name(
     conn: &AccessibilityConnection,
     object_ref: &ObjectRef,
 ) -> Option<String> {
-    for option in list_options(conn, &raw_ref(object_ref)).await {
+    for option in list_options(conn, &raw_ref(object_ref)).await.options {
         let acc = call(accessible_for(conn, &option.oref)).await?.ok()?;
         if call(acc.get_state())
             .await

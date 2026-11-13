@@ -98,6 +98,8 @@ fn standalone_browser_completeness_html() -> String {
   <span id="standalone-upload-state" data-cua-id="standalone-upload-state">upload=0</span>
   <a id="standalone-download" data-cua-id="standalone-download" aria-label="standalone-download" href="/download" download>Download fixture</a>
   <span id="standalone-hover-state" data-cua-id="standalone-hover-state">hover=false</span>
+  <button id="cancel-drag" aria-label="cancel-drag" draggable="true">Cancel drag</button>
+  <span id="cancel-drag-state" data-cua-id="cancel-drag-state">idle</span>
 </fieldset>
 <script>
   const dialogState = document.getElementById('standalone-dialog-state');
@@ -123,6 +125,20 @@ fn standalone_browser_completeness_html() -> String {
     document.getElementById('standalone-hover-state').textContent = 'hover=true';
   });
   document.getElementById('drop-target').addEventListener('dragover', event => event.preventDefault());
+  const cancelDrag = document.getElementById('cancel-drag');
+  const cancelState = document.getElementById('cancel-drag-state');
+  let canceled = false;
+  let unexpectedDrop = false;
+  cancelDrag.addEventListener('dragstart', event => {
+    canceled = true;
+    event.preventDefault();
+  });
+  document.getElementById('drop-target').addEventListener('drop', () => {
+    if (canceled) unexpectedDrop = true;
+  });
+  document.addEventListener('pointerup', () => {
+    if (canceled) cancelState.textContent = unexpectedDrop ? 'unexpected-drop' : 'canceled-without-drop';
+  });
   document.getElementById('drop-target').addEventListener('drop', event => {
     event.preventDefault();
     document.getElementById('drag-status').textContent = 'drag_status=dropped';
@@ -5106,6 +5122,25 @@ fn run_pointer_actions(spec: &BrowserSpec) {
                 dragged.raw
             );
             wait_for_text(&fixture.server, "drag-status", "drag_status=dropped");
+            let canceled = fixture.driver.call(
+                "browser_pointer",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "ref": semantic_ref_by_name(&snapshot, "cancel-drag", "pointer"),
+                    "destination_ref": semantic_ref_by_name(&snapshot, "drop-target", "pointer"),
+                    "action": "drag",
+                    "input_route": "dom_event",
+                    "session": session,
+                }),
+            );
+            assert_eq!(canceled.action_effect(), Some("refused"), "{}", canceled.raw);
+            assert!(
+                canceled.text().contains("browser_action_unavailable"),
+                "{}",
+                canceled.raw
+            );
+            wait_for_text(&fixture.server, "cancel-drag-state", "canceled-without-drop");
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
         })
     });

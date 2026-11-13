@@ -12,6 +12,7 @@
 //!
 //! Run with:
 //! `cargo test -p cua-driver-e2e --test installed_app_calculator_macos_test -- --ignored --nocapture --test-threads=1`
+//! against a running installed daemon (`CUA_E2E_MACOS_DAEMON_SOCKET`).
 
 #![cfg(target_os = "macos")]
 
@@ -166,7 +167,10 @@ fn calculator_result_is_an_observation_that_verify_state_can_check() {
     // A fresh Calculator: an earlier run's history must not duplicate the result.
     drop(QuitCalculator);
     std::thread::sleep(Duration::from_millis(500));
-    let mut driver = McpDriver::spawn().expect("start a cua-driver daemon");
+    // The installed, TCC-authorized daemon: a raw test binary has no
+    // Accessibility grant of its own.
+    let mut driver = McpDriver::spawn_macos_daemon_proxy_named("installed-app-calculator")
+        .expect("start installed macOS daemon proxy");
     let _quit = QuitCalculator;
     let (pid, window_id) = launch_calculator(&mut driver);
 

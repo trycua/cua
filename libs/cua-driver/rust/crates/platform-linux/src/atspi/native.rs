@@ -2268,7 +2268,7 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
                     ));
                 }
             }
-            let act_str = v.actions.join(",");
+            let attrs = indexed_row_attrs(v.enabled, &v.actions);
             let val_part = match &v.value {
                 Some(val) if !val.is_empty() => format!(" value=\"{val}\""),
                 _ => String::new(),
@@ -2284,7 +2284,7 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
                 .map(|note| format!(" ({note})"))
                 .unwrap_or_default();
             md.push_str(&format!(
-                "{indent}- [{idx}] {role} \"{name}\"{desc}{val_part} [actions=[{act_str}]]{collapsed_note}{unlabelled_shown}
+                "{indent}- [{idx}] {role} \"{name}\"{desc}{val_part} [{attrs}]{collapsed_note}{unlabelled_shown}
 ",
                 role = v.role,
                 desc = description_shown.as_deref().unwrap_or(""),
@@ -2328,11 +2328,10 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
             idx += 1;
         } else if emit && !v.name.is_empty() && v.showing {
             md.push_str(&format!(
-                "{indent}- {role} = \"{name}\"{marker}
+                "{indent}- {role} = \"{name}\"
 ",
                 role = v.role,
                 name = v.name,
-                marker = passive_marker(&v.role, !v.actions.is_empty(), v.has_component, v.enabled),
             ));
         }
     }
@@ -2340,31 +2339,14 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
     (md, nodes)
 }
 
-/// Why a visible, named control is listed without an index. A disabled
-/// button is rendered as `- push button = "Restore" (disabled)` so a caller
-/// learns it must enable it (select something) rather than assume the tree
-/// dropped it.
-fn passive_marker(
-    role: &str,
-    has_action: bool,
-    has_component: bool,
-    enabled: Option<bool>,
-) -> &'static str {
-    let control = has_action
-        || (has_component
-            && matches!(
-                role.trim().to_ascii_lowercase().as_str(),
-                "button"
-                    | "push button"
-                    | "toggle button"
-                    | "menu item"
-                    | "check box"
-                    | "radio button"
-            ));
-    if control && enabled == Some(false) {
-        " (disabled)"
+/// The bracketed attributes of an indexed row: `enabled=false` for a disabled
+/// control (as on macOS), then its actions.
+fn indexed_row_attrs(enabled: Option<bool>, actions: &[String]) -> String {
+    let actions = format!("actions=[{}]", actions.join(","));
+    if enabled == Some(false) {
+        format!("enabled=false {actions}")
     } else {
-        ""
+        actions
     }
 }
 
@@ -2440,9 +2422,14 @@ fn is_enabled_state(state: &StateSet) -> bool {
 /// no Action even though a coordinate click on their bounds is operable. Keep
 /// every such control in the shared index space so physical-input fallbacks can
 /// address it without inventing pixels in the caller. Some GTK4 buttons expose
-/// only Component plus their control role; include those only when the state set
-/// positively verifies that they are enabled. Passive component-backed labels
-/// and containers remain outside the index.
+/// only Component plus their control role; include those too. Passive
+/// component-backed labels and containers remain outside the index, and so does
+/// a node whose state set could not be read.
+///
+/// A disabled control is indexed and published with `enabled: false`, as on
+/// macOS: enablement is state the caller needs to read (a form's Save button),
+/// not a reason to hide the row. The token writers refuse it
+/// (`tools::impl_::refuse_if_disabled`).
 ///
 /// This predicate is the single source of truth for the element-index space and
 /// MUST be applied identically in `render` and in every `action_nodes` filter
@@ -2471,16 +2458,15 @@ fn is_indexable_capabilities(
     enabled: Option<bool>,
 ) -> bool {
     let normalized_role = role.trim().to_ascii_lowercase();
-    let pixel_addressable_control = has_component
-        && enabled == Some(true)
-        && matches!(normalized_role.as_str(), "button" | "push button");
+    let pixel_addressable_control =
+        has_component && matches!(normalized_role.as_str(), "button" | "push button");
     !is_passive_role(&normalized_role)
         && (has_action
             || has_editable
             || has_value
             || has_selectable_state
             || pixel_addressable_control)
-        && enabled == Some(true)
+        && enabled.is_some()
 }
 
 // ── Public (sync) entry points ───────────────────────────────────────────────
@@ -4184,6 +4170,25 @@ pub fn element_showing_ref(object_ref: &ObjectRef) -> Result<bool> {
     )
 }
 
+/// Whether a snapshot-cached element is enabled right now, read from its own
+/// state set ([`is_enabled_state`]). `Ok(None)` when the toolkit exposes no
+/// state set.
+pub fn element_enabled_ref(object_ref: &ObjectRef) -> Result<Option<bool>> {
+    bounded_for(
+        REF_ACTION_BUDGET,
+        async {
+            let conn = shared_connection().await?;
+            let (acc, _) = live_accessible(conn, object_ref).await?;
+            match call(acc.get_state()).await {
+                Some(Ok(state)) => Ok(Some(is_enabled_state(&state))),
+                Some(Err(_)) => Ok(None),
+                None => Err(anyhow!("cached element did not answer in time")),
+            }
+        },
+        || Err(anyhow!("element_enabled (cached element) timed out")),
+    )
+}
+
 /// [`focus_element`] on a snapshot-cached element identity.
 pub fn focus_element_ref(object_ref: &ObjectRef) -> Result<bool> {
     bounded_for(
@@ -4278,11 +4283,15 @@ struct HitNode<'a> {
 /// Descend from `start` through `Component.GetAccessibleAtPoint(Window)` until
 /// the toolkit stops returning a deeper child. O(depth) round-trips instead of
 /// a full tree walk — this is how AT-SPI clients are meant to hit-test.
+///
+/// `stacking` says how far the toolkit's answer can be trusted where siblings
+/// overlap (see [`SiblingStacking`]).
 async fn descend_at_point<'a>(
     conn: &'a AccessibilityConnection,
     start: RawObjectRef,
     x: i32,
     y: i32,
+    stacking: SiblingStacking,
 ) -> Vec<HitNode<'a>> {
     let mut chain: Vec<HitNode<'a>> = Vec::new();
     let mut current = start;
@@ -4310,9 +4319,122 @@ async fn descend_at_point<'a>(
         if next.path.ends_with("/null") || next == current {
             break;
         }
+        let next = match stacking {
+            SiblingStacking::FirstMatch => later_sibling_on_top(conn, &current, &next, x, y)
+                .await
+                .unwrap_or(next),
+            SiblingStacking::Topmost => next,
+        };
         current = next;
     }
     chain
+}
+
+/// How a toolkit's `GetAccessibleAtPoint` picks among overlapping children.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SiblingStacking {
+    /// The answer is the child drawn on top.
+    Topmost,
+    /// ATK's container default (GTK 2 and 3): the *first* child, in child
+    /// order, whose extents contain the point. A `GtkOverlay` lists its main
+    /// child first and draws its overlays above it, so a banner shown over a
+    /// button answers with the button underneath.
+    FirstMatch,
+}
+
+impl SiblingStacking {
+    fn of_toolkit(name: &str, version: &str) -> Self {
+        let name = name.trim();
+        let gtk3_or_older = version
+            .trim()
+            .split('.')
+            .next()
+            .and_then(|major| major.parse::<u32>().ok())
+            .is_some_and(|major| major < 4);
+        if name.eq_ignore_ascii_case("gail") || (name.eq_ignore_ascii_case("gtk") && gtk3_or_older)
+        {
+            Self::FirstMatch
+        } else {
+            Self::Topmost
+        }
+    }
+
+    async fn of_app(app: &AccessibleProxy<'_>) -> Self {
+        let inner = app.inner();
+        let Some(application) = async {
+            atspi::proxy::application::ApplicationProxy::builder(inner.connection())
+                .cache_properties(zbus::proxy::CacheProperties::No)
+                .destination(inner.destination().to_owned())
+                .ok()?
+                .build()
+                .await
+                .ok()
+        }
+        .await
+        else {
+            return Self::Topmost;
+        };
+        let name = call(application.toolkit_name()).await.and_then(Result::ok);
+        let version = call(application.version()).await.and_then(Result::ok);
+        match (name, version) {
+            (Some(name), Some(version)) => Self::of_toolkit(&name, &version),
+            _ => Self::Topmost,
+        }
+    }
+}
+
+/// Overlapping siblings of one parent the stacking check reads at most; a
+/// container with more children (a list, a sheet) is not a stack.
+const STACKED_SIBLINGS_CAP: i32 = 32;
+
+/// For a [`SiblingStacking::FirstMatch`] toolkit: the last showing child of
+/// `parent` after `hit` whose extents contain the point, which the toolkit
+/// draws over `hit`. `None` keeps the toolkit's answer.
+async fn later_sibling_on_top(
+    conn: &AccessibilityConnection,
+    parent: &RawObjectRef,
+    hit: &RawObjectRef,
+    x: i32,
+    y: i32,
+) -> Option<RawObjectRef> {
+    let count = raw_child_count(conn.connection(), parent).await.ok()?;
+    if !(2..=STACKED_SIBLINGS_CAP).contains(&count) {
+        return None;
+    }
+    let index = call(accessible_for(conn, hit).await.ok()?.get_index_in_parent())
+        .await?
+        .ok()?;
+    if index < 0 {
+        return None;
+    }
+    let parent = accessible_for(conn, parent).await.ok()?;
+    for sibling in (index + 1..count).rev() {
+        let Some(Ok(child)) = call(parent.get_child_at_index(sibling)).await else {
+            continue;
+        };
+        let Some(raw) = RawObjectRef::from_atspi(&child) else {
+            continue;
+        };
+        let Ok(acc) = accessible_for(conn, &raw).await else {
+            continue;
+        };
+        let Some(Ok(proxies)) = call(acc.proxies()).await else {
+            continue;
+        };
+        let Some(Ok(component)) = call(proxies.component()).await else {
+            continue;
+        };
+        if !matches!(
+            call(component.contains(x, y, CoordType::Window)).await,
+            Some(Ok(true))
+        ) {
+            continue;
+        }
+        if matches!(call(acc.get_state()).await, Some(Ok(state)) if is_showing_state(&state)) {
+            return Some(raw);
+        }
+    }
+    None
 }
 
 impl PartialEq for RawObjectRef {
@@ -4374,8 +4496,9 @@ pub fn perform_action_at_point_in(
                 Some(ordinal) => seeds.get(ordinal).cloned().into_iter().collect(),
                 None => seeds,
             };
+            let stacking = SiblingStacking::of_app(&app).await;
             for seed in ordered {
-                let chain = descend_at_point(conn, seed, hit_x, hit_y).await;
+                let chain = descend_at_point(conn, seed, hit_x, hit_y, stacking).await;
                 if chain.len() <= 1 {
                     // The frame itself, or nothing: this top-level does not
                     // cover the point (or cannot hit-test). Try the next one.
@@ -4465,6 +4588,19 @@ pub(crate) fn at_point_toolkit_coords(
 #[cfg(test)]
 mod at_point_coords_tests {
     use super::at_point_toolkit_coords;
+
+    #[test]
+    fn only_gtk3_and_older_answer_at_point_with_the_first_matching_child() {
+        use super::SiblingStacking::{FirstMatch, Topmost};
+        let of = super::SiblingStacking::of_toolkit;
+        assert_eq!(of("gtk", "3.24.49"), FirstMatch);
+        assert_eq!(of("GAIL", "2.24.33"), FirstMatch);
+        assert_eq!(of("GTK", "4.14.4"), Topmost);
+        assert_eq!(of("gtk", ""), Topmost);
+        assert_eq!(of("Qt", "5.15.13"), Topmost);
+        assert_eq!(of("Chromium", "126.0"), Topmost);
+        assert_eq!(of("VCL", "3.24"), Topmost);
+    }
 
     #[test]
     fn only_vcl_measures_from_the_wm_frame() {
@@ -5398,6 +5534,7 @@ pub fn perform_action_at_point(
             for (i, v) in visited.iter().enumerate() {
                 if v.actions.is_empty()
                     || !v.has_component
+                    || v.enabled == Some(false)
                     || is_container_role(&v.role)
                     || is_web_document_role(&v.role)
                     || crate::at_point_policy::is_top_level_shell_role(&v.role)
@@ -5534,6 +5671,7 @@ pub fn perform_action_at_screen_point(
                 .into_iter()
                 .filter(|&(idx, ..)| {
                     !crate::at_point_policy::is_top_level_shell_role(&action_nodes[idx].role)
+                        && action_nodes[idx].enabled != Some(false)
                 })
                 .map(|(idx, x, y, w, h)| {
                     (idx, x, y, w, h, is_passive_role(&action_nodes[idx].role))
@@ -7656,8 +7794,8 @@ mod coord_tests {
     use super::{
         activation_index, before_snapshot_deadline, bounded_blocking,
         combine_wayland_content_offsets, counts_as_showing, hyprland_document_top_inset,
-        is_activation_action, is_enabled_state, is_indexable_capabilities, is_passive_role,
-        is_showing_state, is_web_process_bus, listing_state, passive_marker,
+        indexed_row_attrs, is_activation_action, is_enabled_state, is_indexable_capabilities,
+        is_passive_role, is_showing_state, is_web_process_bus, listing_state,
         prefer_authoritative_wayland_origin, project_screen_extents, rebase_renderer_window_offset,
         scoped_component_nodes, screen_extent_rebase, select_click_target, select_web_document,
         wayland_window_origin, ApplicationSelection,
@@ -7825,7 +7963,7 @@ mod coord_tests {
             true,
             Some(true)
         ));
-        assert!(!is_indexable_capabilities(
+        assert!(is_indexable_capabilities(
             "button",
             true,
             false,
@@ -7849,7 +7987,7 @@ mod coord_tests {
     }
 
     #[test]
-    fn hidden_and_disabled_controls_are_not_indexed_but_are_named() {
+    fn hidden_controls_are_not_listed_and_offscreen_ones_are_marked() {
         // `Showing` is the on-screen state.
         assert!(!is_showing_state(&StateSet::new(
             State::Enabled | State::Visible
@@ -7895,17 +8033,17 @@ mod coord_tests {
             "menu item",
             &StateSet::new(State::Enabled)
         ));
-        // A visible but insensitive button keeps a marker in the markdown.
+    }
+
+    #[test]
+    fn a_disabled_control_row_says_so() {
+        let click = vec!["click".to_owned()];
         assert_eq!(
-            passive_marker("push button", true, true, Some(false)),
-            " (disabled)"
+            indexed_row_attrs(Some(false), &click),
+            "enabled=false actions=[click]"
         );
-        assert_eq!(
-            passive_marker("push button", false, true, Some(false)),
-            " (disabled)"
-        );
-        assert_eq!(passive_marker("push button", true, true, Some(true)), "");
-        assert_eq!(passive_marker("label", false, true, Some(false)), "");
+        assert_eq!(indexed_row_attrs(Some(true), &click), "actions=[click]");
+        assert_eq!(indexed_row_attrs(None, &[]), "actions=[]");
     }
 
     #[test]
@@ -7935,11 +8073,20 @@ mod coord_tests {
 
     #[test]
     fn component_role_fallback_rejects_unverified_or_passive_nodes() {
-        for enabled in [None, Some(false)] {
-            assert!(!is_indexable_capabilities(
-                "button", false, false, false, false, true, enabled
-            ));
-        }
+        assert!(!is_indexable_capabilities(
+            "button", false, false, false, false, true, None
+        ));
+        // A disabled component-only button is indexed so its `enabled: false`
+        // can be read.
+        assert!(is_indexable_capabilities(
+            "button",
+            false,
+            false,
+            false,
+            false,
+            true,
+            Some(false)
+        ));
         assert!(!is_indexable_capabilities(
             "button",
             false,

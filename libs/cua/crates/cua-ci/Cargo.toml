@@ -44,7 +44,7 @@ libc = "0.2"
 security-framework = { version = "3", features = ["OSX_10_15"] }
 
 [dev-dependencies]
-axum.workspace = true
+axum = { workspace = true, features = ["json"] }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 tracing-subscriber.workspace = true

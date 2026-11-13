@@ -23,6 +23,7 @@ aws = ["cua-sdk/aws", "cua-spaces/s3", "cua-spaces-ext/s3"]
 cua-sdk = { workspace = true, features = ["local", "spaces", "host", "media", "byoc"] }
 cua-spaces-app-core = { workspace = true, features = ["keyvault-client", "installer", "telemetry"] }
 cua-spaces-ext.workspace = true
+cua-image.workspace = true
 cua-spaces = { path = "../cua-spaces" }
 cua-teleport.workspace = true
 cua-keyvault.workspace = true

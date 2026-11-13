@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.15.5](https://github.com/trycua/cua/compare/cua-spacesd-v0.15.4...cua-spacesd-v0.15.5) (2026-11-12)
+
+
+### Bug Fixes
+
+* **cua-driver:** load libxkbcommon's 1.0 text functions at run time so the driver starts on Ubuntu 20.04 ([#6498](https://github.com/trycua/cua/issues/6498)) ([b9e38d1](https://github.com/trycua/cua/commit/b9e38d1ac1eb9e5683e0b7394ecf50b360da2881))
+
+## [0.15.4](https://github.com/trycua/cua/compare/cua-spacesd-v0.15.3...cua-spacesd-v0.15.4) (2026-11-12)
+
+
+### Bug Fixes
+
+* **cua-spacesd:** request a keyframe while a viewer waits for one ([#7415](https://github.com/trycua/cua/issues/7415)) ([a8fa23c](https://github.com/trycua/cua/commit/a8fa23c124923a8889dd3cb3d35eb8aa0235ff0d))
+
+## [0.15.3](https://github.com/trycua/cua/compare/cua-spacesd-v0.15.2...cua-spacesd-v0.15.3) (2026-11-12)
+
+
+### Bug Fixes
+
+* **cua-vmm:** run the engine helper's chroot from PATH and build sandbox overlays on 24.04 ([#7409](https://github.com/trycua/cua/issues/7409)) ([10cd739](https://github.com/trycua/cua/commit/10cd739d46db34a0373245531c8219babf606c1f))
+
 ## [0.15.2](https://github.com/trycua/cua/compare/cua-spacesd-v0.15.1...cua-spacesd-v0.15.2) (2026-11-11)
 
 

@@ -84,6 +84,7 @@ fn exact_setup_checkbox<'a>(
             role_is(node, &["check box", "checkbox"])
                 && field_equals(node, descriptor.checkbox_label)
                 && !node.actions.is_empty()
+                && node.enabled != Some(false)
                 && node.element_index.is_some()
         })
         .collect::<Vec<_>>();
@@ -127,6 +128,7 @@ fn exact_omnibox<'a>(
         .filter(|node| {
             role_is(node, &["entry", "text"])
                 && field_equals(node, "Address and search bar")
+                && node.enabled != Some(false)
                 && node.element_index.is_some()
         })
         .collect::<Vec<_>>();

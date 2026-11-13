@@ -74,16 +74,6 @@ pub fn set_classified_screenshot_fn(
     let _ = SCREENSHOT_FN.set(Box::new(f));
 }
 
-/// Invoke the registered screenshot callback. Returns `None` when no
-/// callback was registered or when the platform capture failed. Used
-/// by the PiP push hook (and by anything else that wants to share the
-/// per-turn screenshot pipeline without duplicating the platform glue).
-pub fn screenshot_for(window_id: Option<u64>, pid: Option<i64>) -> Option<Vec<u8>> {
-    SCREENSHOT_FN
-        .get()
-        .and_then(|capture| capture(window_id, pid).png)
-}
-
 // ── Platform click-marker callback ───────────────────────────────────────────
 //
 // Takes (png_bytes, cx, cy) and returns modified PNG bytes with a red crosshair

@@ -6,6 +6,9 @@ description: >
   `gh release download` with the workflow token. On 8 and 9 Nov 2026 GitHub
   timed out unauthenticated release downloads for hours, and this step failed
   the `quick` job of 19 pull request runs, each of which then needed a rerun.
+  The gh fallback reads the same release CDN, which answered 504 for both, so
+  the last fallback builds the pinned version from proxy.golang.org with
+  `go install`.
 inputs:
   version:
     description: actionlint version, without the leading v
@@ -35,14 +38,25 @@ runs:
           echo "actionlint ${VERSION} is restored from the cache"
         else
           asset="actionlint_${VERSION}_linux_amd64.tar.gz"
+          # No --retry-delay: curl backs off 1, 2, 4 ... 32 s, about a minute in all.
+          fetched=true
           if ! curl --fail --silent --show-error --location \
-                --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 \
+                --retry 6 --retry-all-errors --retry-max-time 120 --connect-timeout 20 \
                 -o "$RUNNER_TEMP/$asset" \
                 "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/${asset}"; then
             echo "::warning::curl failed for actionlint ${VERSION}; falling back to gh release download"
-            gh release download "v${VERSION}" --repo rhysd/actionlint --pattern "$asset" --dir "$RUNNER_TEMP" --clobber
+            gh release download "v${VERSION}" --repo rhysd/actionlint --pattern "$asset" --dir "$RUNNER_TEMP" --clobber ||
+              fetched=false
           fi
-          tar xzf "$RUNNER_TEMP/$asset" -C "$dir" actionlint
+          if [ "$fetched" = true ]; then
+            tar xzf "$RUNNER_TEMP/$asset" -C "$dir" actionlint
+          else
+            echo "::warning::GitHub release downloads failed for actionlint ${VERSION}; building it from proxy.golang.org"
+            # The newest Go in the runner's tool cache, as scripts/images/install-release-tools.sh does.
+            cached_go="$(ls -d "${RUNNER_TOOL_CACHE:-/opt/hostedtoolcache}"/go/*/*/bin 2>/dev/null | sort -V | tail -1 || true)"
+            if [ -n "$cached_go" ] && [ -x "$cached_go/go" ]; then PATH="$cached_go:$PATH"; fi
+            GOBIN="$dir" go install "github.com/rhysd/actionlint/cmd/actionlint@v${VERSION}"
+          fi
         fi
         "$dir/actionlint" -version
         echo "$dir" >> "$GITHUB_PATH"

@@ -18,8 +18,8 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 | [`start_recording`](#start_recording) | Start trajectory recording for the calling session. | macOS, Linux, Windows |
 | [`stop_recording`](#stop_recording) | Stop trajectory recording. | macOS, Linux, Windows |
 | [`get_recording_state`](#get_recording_state) | Report the current trajectory recorder state: whether recording is enabled, the output directory (when enabled), and the 1-based counter for the next turn folder that will be written. | macOS, Linux, Windows |
-| [`replay_trajectory`](#replay_trajectory) | Replay a recorded trajectory by re-invoking every turn's tool call in lexical order. | macOS, Linux, Windows |
-| [`install_ffmpeg`](#install_ffmpeg) | Install the ffmpeg binary used by start_recording's video capture (Linux/Windows; macOS records natively and needs no ffmpeg). | macOS, Linux, Windows |
+| [`replay_trajectory`](#replay_trajectory) | DEPRECATED, removed in the first release after 26 Nov 2026. | macOS, Linux, Windows |
+| [`install_ffmpeg`](#install_ffmpeg) | DEPRECATED, removed in the first release after 26 Nov 2026. | macOS, Linux, Windows |
 | [`get_config`](#get_config) | Return the current cua-driver-rs configuration. | macOS, Linux, Windows |
 | [`set_config`](#set_config) | Update cua-driver-rs configuration. | macOS, Linux, Windows |
 | [`check_permissions`](#check_permissions) | Report TCC permission status for Accessibility and Screen Recording. | macOS, Linux, Windows |
@@ -195,7 +195,7 @@ Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
 
 ### `replay_trajectory`
 
-Replay a recorded trajectory by re-invoking every turn's tool call in lexical order. `dir` must point at a directory previously written by `start_recording`. Each `turn-NNNNN/` is parsed for `action.json`, and the recorded tool is called with its recorded `arguments` via the same dispatch path an MCP / CLI call uses.
+DEPRECATED, removed in the first release after 26 Nov 2026. Instead: call the recorded steps yourself with run_steps (replay clicks blindly from old coordinates; keep start_recording for recording). Replay a recorded trajectory by re-invoking every turn's tool call in lexical order. `dir` must point at a directory previously written by `start_recording`. Each `turn-NNNNN/` is parsed for `action.json`, and the recorded tool is called with its recorded `arguments` via the same dispatch path an MCP / CLI call uses.
 
 Caveats:
 - Element-token actions (`click({pid, element_token})` etc.) will fail because element tokens are per-snapshot and don't survive across sessions. Pixel clicks (`click({pid, x, y})`) and all keyboard tools replay cleanly. Failures are reported but don't stop replay unless `stop_on_error` is true.
@@ -219,7 +219,7 @@ Effect: destructive. Platforms: macOS, Linux, Windows.
 
 ### `install_ffmpeg`
 
-Install the ffmpeg binary used by start_recording's video capture (Linux/Windows; macOS records natively and needs no ffmpeg). Two-step and confirmed: called without `confirm` it only REPORTS the exact install command for this platform's package manager; pass `confirm: true` to actually run it. No-op if ffmpeg is already on PATH. ffmpeg is run as a separate process, never linked into the driver.
+DEPRECATED, removed in the first release after 26 Nov 2026. Instead: install ffmpeg with your package manager (brew install ffmpeg, winget install Gyan.FFmpeg, or apt/dnf/pacman install ffmpeg). Install the ffmpeg binary used by start_recording's video capture (Linux/Windows; macOS records natively and needs no ffmpeg). Two-step and confirmed: called without `confirm` it only REPORTS the exact install command for this platform's package manager; pass `confirm: true` to actually run it. No-op if ffmpeg is already on PATH. ffmpeg is run as a separate process, never linked into the driver.
 
 Effect: destructive. Platforms: macOS, Linux, Windows.
 
@@ -282,7 +282,7 @@ Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
 <Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
 <Tab value="macOS">
 
-Update cua-driver-rs configuration. Changes to max_image_dimension take effect immediately. The experimental_pip keys are persisted to ~/.cua-driver/config.json and take effect on the next daemon restart (the PiP backend is initialised once at startup).
+Update cua-driver-rs configuration. Changes to max_image_dimension take effect immediately.
 
 Note: capture_mode is a per-call param (on get_window_state / click), not a stored setting. Capture modality is selected by each action's target; the old capture_scope config key is retired.
 
@@ -290,14 +290,7 @@ Cursor motion defaults: cursor.motion.style, cursor.motion.timing and cursor.mot
 
 Agent cursor badge: cursor.badges is minimal (default), verbose or off, saved to ~/.cua-driver/config.json and applied to every cursor at once.
 
-Agent cursor extras: cursor.float (float at rest and while moving) and cursor.halo (soft glow) are on (default), off or default; cursor.marks (action marks) is on, off (default) or default; cursor.rotate is heading (default), lean, off or default. All are saved to ~/.cua-driver/config.json and applied to every cursor at once.
-
-**macOS parameters**
-
-| Parameter | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="set_config--macos--experimental_pip"></span>`experimental_pip` | `boolean` |  | Enable the experimental picture-in-picture preview window. Applies on next daemon restart. |
-| <span id="set_config--macos--experimental_pip_geometry"></span>`experimental_pip_geometry` | `string` |  | PiP window size + optional position in `WxH` or `WxH+X+Y` form (e.g. `320x200+24+24`). Applies on next daemon restart. |
+Agent cursor extras: cursor.float (float at rest and while moving) and cursor.halo (soft glow) are on (default), off or default; cursor.rotate is heading (default), lean, off or default. The cursor never draws action marks (cursor.marks is retired and ignored). All are saved to ~/.cua-driver/config.json and applied to every cursor at once.
 
 </Tab>
 <Tab value="Linux">
@@ -306,21 +299,17 @@ Update cua-driver-rs configuration. capture_mode / max_image_dimension take effe
 
 Pass each setting as its own field: `{"capture_mode": "som", "max_image_dimension": 0}`.
 
-The experimental_pip keys persist to ~/.cua-driver/config.json and apply on next daemon restart (the PiP backend is initialised once at startup; Linux ships only the trait stub today: see issue #1729).
-
 `cursor.motion.style`, `cursor.motion.timing` and `cursor.motion.effects.<name>` (`on`, `off`, or `default`) save the default cursor motion for sessions started afterwards. `cursor.motion: "default"` clears every saved cursor motion default.
 
 `cursor.badges` (`minimal` default, `verbose`, or `off`) sets the agent cursor badge for every cursor at once.
 
-`cursor.float` (float at rest and while moving) and `cursor.halo` (soft glow) are `on` (default), `off` or `default`; `cursor.marks` (action marks) is `on`, `off` (default) or `default`; `cursor.rotate` is `heading` (default), `lean`, `off` or `default`. All apply to every cursor at once.
+`cursor.float` (float at rest and while moving) and `cursor.halo` (soft glow) are `on` (default), `off` or `default`; `cursor.rotate` is `heading` (default), `lean`, `off` or `default`. All apply to every cursor at once. The cursor never draws action marks (`cursor.marks` is retired and ignored).
 
 **Linux parameters**
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="set_config--linux--capture_mode"></span>`capture_mode` | `"ax" \| "vision"` |  | Default capture mode for get_window_state. ("som"/"screenshot" still decode as deprecated aliases.). |
-| <span id="set_config--linux--experimental_pip"></span>`experimental_pip` | `boolean` |  | Enable the experimental PiP preview window (applies next restart; Linux backend stubbed). |
-| <span id="set_config--linux--experimental_pip_geometry"></span>`experimental_pip_geometry` | `string` |  | PiP window size + optional position in `WxH` or `WxH+X+Y` form. |
 
 </Tab>
 <Tab value="Windows">
@@ -330,12 +319,9 @@ Write a setting into the persistent driver config. Values take effect immediatel
 Known keys:
 - `capture_mode` (string: `vision` | `ax` | `som`); DEPRECATED and ignored; `get_window_state` always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect.
 - `max_image_dimension` (integer)
-- `experimental_pip` (boolean; persisted to config.json, applies on next daemon restart: Windows backend stubbed today, see issue #1729)
-- `experimental_pip_geometry` (string `WxH` or `WxH+X+Y`; persisted; applies on next daemon restart)
-
 - `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>` (`on`, `off`, or `default`): saved default cursor motion for sessions started afterwards. `cursor.motion: "default"` clears every saved cursor motion default.
 - `cursor.badges` (`minimal` default, `verbose`, or `off`): agent cursor badge; applies to every cursor at once.
-- `cursor.float` (float at rest and while moving), `cursor.halo` (soft glow): `on` (default), `off`, or `default`. `cursor.marks` (action marks): `on`, `off` (default), or `default`. `cursor.rotate`: `heading` (default), `lean`, `off`, or `default`. All apply to every cursor at once.
+- `cursor.float` (float at rest and while moving), `cursor.halo` (soft glow): `on` (default), `off`, or `default`. `cursor.rotate`: `heading` (default), `lean`, `off`, or `default`. All apply to every cursor at once. The cursor never draws action marks (`cursor.marks` is retired and ignored).
 
 Returns the full updated config in the same shape as `get_config`.
 
@@ -344,8 +330,6 @@ Returns the full updated config in the same shape as `get_config`.
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="set_config--windows--capture_mode"></span>`capture_mode` | `"ax" \| "vision"` |  | DEPRECATED and ignored: get_window_state always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect. ("som"/"screenshot" still decode as deprecated aliases.). |
-| <span id="set_config--windows--experimental_pip"></span>`experimental_pip` | `boolean` |  | Enables PiP preview (applies next restart). |
-| <span id="set_config--windows--experimental_pip_geometry"></span>`experimental_pip_geometry` | `string` |  | PiP window size + optional position. |
 
 </Tab>
 </Tabs>
@@ -357,7 +341,7 @@ Returns the full updated config in the same shape as `get_config`.
 | <span id="set_config--cursor-badges"></span>`cursor.badges` | `"minimal" \| "verbose" \| "off" \| "default"` |  | Agent cursor badge. minimal (default): no badge at rest; a brief chip for a foreground moment or a key combo, and the session name on hover or when two or more agent cursors are on screen. verbose: the earlier badge with the session name and delivery/target chips on every action. off: no badge. Applies immediately to every cursor. |
 | <span id="set_config--cursor-float"></span>`cursor.float` | `"on" \| "off" \| "default"` |  | Agent cursor float: a slow four-second sway, bob and slight tilt, at rest and while moving, that eases to zero on every arrival and holds there for the click, drag, drop, scroll or typing, so they land exactly upright on the hotspot. on (default). off: the cursor never floats and a resting overlay stops redrawing. Applies immediately to every cursor. |
 | <span id="set_config--cursor-halo"></span>`cursor.halo` | `"on" \| "off" \| "default"` |  | Agent cursor halo: a soft glow in the cursor's colour behind the arrow, so it is easier to follow on any background. on (default). off: no halo. Applies immediately to every cursor. |
-| <span id="set_config--cursor-marks"></span>`cursor.marks` | `"on" \| "off" \| "default"` |  | Agent cursor action marks: the small cue next to the arrow for observe, click, type, keys, scroll, drag, apps, files, recording and system calls, plus the focus box around a clicked element on macOS. off (default): a plain arrow. Applies immediately to every cursor. |
+| <span id="set_config--cursor-marks"></span>`cursor.marks` | `"on" \| "off" \| "default"` |  | Retired and ignored: the agent cursor never draws action marks, so it is always a plain arrow whatever the agent does. Still accepted so existing configs and callers keep working. |
 | <span id="set_config--cursor-motion"></span>`cursor.motion` | `"default"` |  | Pass `default` to clear every saved cursor motion default. |
 | <span id="set_config--cursor-motion-effects-glow"></span>`cursor.motion.effects.glow` | `"on" \| "off" \| "default"` |  | Saved default for the `glow` cursor effect: on, off, or default (the style's own). Omit the key to leave it unchanged. |
 | <span id="set_config--cursor-motion-effects-magnet"></span>`cursor.motion.effects.magnet` | `"on" \| "off" \| "default"` |  | Saved default for the `magnet` cursor effect: on, off, or default (the style's own). Omit the key to leave it unchanged. |

@@ -24,7 +24,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 | [`set_agent_cursor_motion`](#set_agent_cursor_motion) | Configure the movement style, timing, effects and visibility timing for a session cursor. | macOS, Linux, Windows |
 | [`set_agent_cursor_theme`](#set_agent_cursor_theme) | Select an already-installed cursor theme for a session. | macOS, Linux, Windows |
 | [`get_agent_cursor_state`](#get_agent_cursor_state) | Return the session cursor's theme, semantic playback, position, visibility, and motion. | macOS, Linux, Windows |
-| [`page`](#page) | Legacy browser compatibility tool. | macOS, Linux, Windows |
+| [`page`](#page) | Read-only legacy browser compatibility tool: read a page's text or query its DOM. | macOS, Linux, Windows |
 | [`get_browser_state`](#get_browser_state) | Read-only browser inspection. | macOS, Linux, Windows |
 | [`browser_prepare`](#browser_prepare) | Attach the browser tools to a browser. | macOS, Linux, Windows |
 | [`browser_navigate`](#browser_navigate) | Navigate one tab of an exactly-bound browser target to a new URL (http/https/about only). | macOS, Linux, Windows |
@@ -481,39 +481,27 @@ Read and act on web pages, and prepare and navigate browsers.
 
 ### `page`
 
-Legacy browser compatibility tool. Prefer get_browser_state and the typed browser_* tools for exact targeting, endpoint ownership, and consent. Read-only get_text and query_dom remain available by default. Mutating actions require the daemon operator to set CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1 before daemon startup (restart the daemon after changing it); this escape hatch does not provide the typed browser surface's exact binding or existing-profile grant guarantees. Supports Chrome, Brave, Edge, Safari (via AppleScript on macOS), Electron apps (via CDP), Chromium/Firefox on Windows (via UIA for read; CDP for execute_javascript when --remote-debugging-port is set), and WKWebView/Tauri/AT-SPI fallbacks.
+Read-only legacy browser compatibility tool: read a page's text or query its DOM. Prefer get_browser_state and the typed browser_* tools for exact targeting, endpoint ownership, and consent; use this tool to read Safari and Firefox pages, which the typed tools do not cover. It cannot run JavaScript, click, or type: those page actions were removed, so act with the browser_* tools. Supports Chrome, Brave, Edge, Safari (via AppleScript on macOS), Electron apps (via CDP), Chromium/Firefox on Windows (via UIA), and WKWebView/Tauri/AT-SPI fallbacks.
 
 Actions:
-- execute_javascript: Run JS and return the result.
 - get_text: Extract visible text from the page. On macOS, structuredContent.source identifies javascript, cdp, or ax_fallback; a successful AX fallback preserves the triggering error and truncation state in structuredContent.
 - query_dom: Find elements matching a CSS selector, with the same macOS fallback metadata contract as get_text.
-- click_element: Click a CSS-selected element AND animate the agent cursor to its on-screen center first (so the user sees what the agent is doing). Prefer over `execute_javascript('el.click()')` whenever you want visible cursor feedback.
-- insert_text: Insert `text` at whatever currently holds DOM focus in one native operation (CDP Input.insertText); no synthesized key events, but more durable than a one-shot execute_javascript write since rich-text editors already have to treat it like an IME commit. Try this before type_keystrokes on a contenteditable that discarded an execute_javascript write. Click/focus the target field first.
-- type_keystrokes: Type `text` via real per-character keystroke events into whatever currently holds DOM focus. Slower than insert_text but the most durable rung: use it when insert_text also gets discarded, or the editor's own keydown/keyup handlers need to see real keys. Click/focus the target field first.
-- enable_javascript_apple_events: macOS-only; patch the browser's Preferences to allow JS from Apple Events (Chrome/Brave/Edge, requires user confirmation and a browser restart).
 
 Effect: mutating. Platforms: macOS, Linux, Windows.
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="page--action"></span>`action` | `"execute_javascript" \| "get_text" \| "query_dom" \| "click_element" \| "insert_text" \| "type_keystrokes" \| "enable_javascript_apple_events"` | required | Action to perform. |
+| <span id="page--action"></span>`action` | `"get_text" \| "query_dom"` | required | Action to perform. |
 | <span id="page--attributes"></span>`attributes` | `string[]` |  | Element attributes to include in query_dom results. |
-| <span id="page--bundle_id"></span>`bundle_id` | `string` |  | Bundle ID of the browser. Required for enable_javascript_apple_events (macOS only). |
-| <span id="page--cdp_port"></span>`cdp_port` | `integer` |  | Optional, for execute_javascript/insert_text/type_keystrokes: use this exact CDP port instead of auto-discovering one from pid. Needed when the port was opened via the browser's own remote-debugging toggle rather than a launch-time flag, since that path may not answer the auto-discovery probe. Range: 1 to 65535. |
 | <span id="page--css_selector"></span>`css_selector` | `string` |  | CSS selector for query_dom (e.g. 'a', 'button', 'input', 'h1'-'h6', 'p', 'img', 'select', '*'). |
-| <span id="page--javascript"></span>`javascript` | `string` |  | JavaScript to execute. Required for execute_javascript. |
 | <span id="page--pid"></span>`pid` | `integer` |  | Target process ID. |
-| <span id="page--selector"></span>`selector` | `string` |  | CSS selector for click_element (e.g. 'button.submit', '#login a'). |
 | <span id="page--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
-| <span id="page--target_url_contains"></span>`target_url_contains` | `string` |  | Optional, for execute_javascript/insert_text/type_keystrokes: require exactly one browser tab whose URL contains this substring. Use this on a multi-tab browser: there's no built-in link between window_id and which tab a CDP call reaches. |
-| <span id="page--text"></span>`text` | `string` |  | Text to insert or type. Required for insert_text and type_keystrokes. The target field must already have DOM focus (click/focus it first). |
-| <span id="page--user_has_confirmed_enabling"></span>`user_has_confirmed_enabling` | `boolean` |  | Must be true to proceed with enable_javascript_apple_events. This will quit and relaunch the browser. |
 | <span id="page--window_id"></span>`window_id` | `integer` |  | Target window ID from list_windows. |
 
 **Example arguments**
 
 ```json
-{"action":"execute_javascript"}
+{"action":"get_text"}
 ```
 
 ### `get_browser_state`

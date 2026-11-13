@@ -1,0 +1,7 @@
+{
+  "cua-driver-rs-v0.47.20": {
+    "pull_requests": {
+      "7483": "Merged 3 minutes before the release PR and after Release Please built it, so the tag carries it and the immutable changelog section does not. The release notes list it because they come from git."
+    }
+  }
+}

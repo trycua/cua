@@ -48,6 +48,13 @@ on:
       - ".release-please-manifest.json"
       - "release-please-config.json"
 
+  # Cua Perception is frozen (no new work). Pull requests and main run one
+  # Linux smoke build plus the contract job; the Windows and macOS builds run
+  # weekly and on demand.
+  schedule:
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+
 permissions:
   contents: read
 
@@ -76,13 +83,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - target: linux-x64
-            os: ubuntu-latest
-          - target: macos-x64
-            os: macos-15-intel
-          - target: windows-x64
-            os: windows-latest
+        include: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '[{"target":"linux-x64","os":"ubuntu-latest"},{"target":"macos-x64","os":"macos-15-intel"},{"target":"windows-x64","os":"windows-latest"}]' || '[{"target":"linux-x64","os":"ubuntu-latest"}]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:

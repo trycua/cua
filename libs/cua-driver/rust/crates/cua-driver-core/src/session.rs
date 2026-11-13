@@ -28,7 +28,7 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
-use cua_driver_contract::{CaptureScope, EscalationReason};
+use cua_driver_contract::CaptureScope;
 
 pub const DEFAULT_SESSION_IDLE_TTL: Duration = Duration::from_secs(5 * 60);
 
@@ -192,7 +192,6 @@ pub trait SessionObserver: Send + Sync + 'static {
         transport: SessionTransport,
         computer_action: bool,
         capture_modality: Option<CaptureModality>,
-        escalation_reason: Option<EscalationReason>,
         outcome: &crate::server::ToolCompletionObservation,
     );
     fn on_session_ended(
@@ -309,7 +308,6 @@ pub struct SessionToolContext {
     transport: SessionTransport,
     computer_action: bool,
     capture_modality: Option<CaptureModality>,
-    escalation_reason: Option<EscalationReason>,
 }
 
 impl SessionToolContext {
@@ -320,7 +318,6 @@ impl SessionToolContext {
                 self.transport,
                 self.computer_action,
                 self.capture_modality,
-                self.escalation_reason,
                 outcome,
             );
         }
@@ -955,10 +952,6 @@ pub fn begin_tool_call_with_state(
             .or_else(|| crate::capture_scope::get_session(session_id).map(|state| state.policy))
             .unwrap_or_default()
     };
-    let escalation_reason = (tool_name == "escalate_session")
-        .then(|| args.get("reason").cloned())
-        .flatten()
-        .and_then(|value| serde_json::from_value(value).ok());
     let capture_modality = capture_modality_for(tool_name, args);
     if !is_end {
         if let Some(observer) = SESSION_OBSERVER.get() {
@@ -987,7 +980,6 @@ pub fn begin_tool_call_with_state(
             crate::server::tool_operation(tool_name, Some(args)),
         ),
         capture_modality,
-        escalation_reason,
     })
 }
 
@@ -2099,7 +2091,6 @@ mod tests {
             _: SessionTransport,
             _: bool,
             _: Option<CaptureModality>,
-            _: Option<EscalationReason>,
             _: &crate::server::ToolCompletionObservation,
         ) {
         }
@@ -3325,10 +3316,10 @@ mod tests {
         assert!(pointer.computer_action);
 
         let page_write = begin_tool_call(
-            "page",
+            "browser_type",
             &serde_json::json!({
                 "session": "test-action-page-write-CD34",
-                "action": "insert_text",
+                "mode": "insert_text",
                 "text": "not retained"
             }),
             true,
@@ -3362,23 +3353,6 @@ mod tests {
         )
         .unwrap();
         assert!(!state_read.computer_action);
-
-        let escalation = begin_tool_call(
-            "escalate_session",
-            &serde_json::json!({
-                "session": "test-action-escalate-IJ90",
-                "reason": "no_window_target",
-                "detail": "private free-form detail is not observed"
-            }),
-            true,
-            SessionTransport::Daemon,
-            SessionClientKind::TypescriptSdk,
-        )
-        .unwrap();
-        assert_eq!(
-            escalation.escalation_reason,
-            Some(EscalationReason::NoWindowTarget)
-        );
 
         assert_eq!(
             capture_modality_for(

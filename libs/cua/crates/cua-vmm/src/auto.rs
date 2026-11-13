@@ -465,6 +465,8 @@ pub async fn doctor() -> DoctorReport {
                 ))
             }
             HostOs::Linux => QemuPackageManager::detect().map(|(manager, _)| manager.render()),
+            #[cfg(feature = "qemu")]
+            HostOs::Windows => windows_qemu_step(host::which("winget").is_some()),
             _ => None,
         };
         if let Some(s) = step {
@@ -484,6 +486,8 @@ pub async fn doctor() -> DoctorReport {
     // Apple silicon cannot nest macOS VMs: a Mac that is itself a virtual
     // machine (`kern.hv_vmm_present`, so `kern.hv_support` is 0) cannot run Lume.
     let mac_is_vm = host::mac_virtualization_supported() == Some(false);
+    // Only the `lume` block below mutates it.
+    #[cfg_attr(not(feature = "lume"), allow(unused_mut))]
     let mut lume = LumeReport {
         supported_host: lume_host_supported(host_os, host_arch, mac_is_vm),
         binary: lume_binary(),
@@ -547,6 +551,8 @@ pub async fn doctor() -> DoctorReport {
     };
 
     // Containers.
+    // Only the `container` block below mutates it.
+    #[cfg_attr(not(feature = "container"), allow(unused_mut))]
     let mut container = ContainerReport::default();
     let mut container_status = BackendStatus {
         backend: BackendKind::Container,
@@ -1190,6 +1196,18 @@ pub fn select(req: &SelectRequest, report: &DoctorReport) -> Result<Selection> {
                     || q.provisionable
                     || arch != host.arch && report.qemu.installed(host.arch)
                 {
+                    // Windows is never emulated unless the person accepted it:
+                    // the refusal comes now, before an ISO is downloaded or a
+                    // disk is made, not when the VM would start.
+                    #[cfg(feature = "qemu")]
+                    if req.os == GuestOs::Windows
+                        && accel == "tcg"
+                        && !crate::qemu::software_emulation_allowed()
+                    {
+                        return Err(VmmError::invalid(crate::qemu::windows_emulation_message(
+                            arch, host.arch,
+                        )));
+                    }
                     let mut reason = format!("{:?} {arch} guest: QEMU with {accel}", req.os);
                     if accel == "tcg" {
                         reason.push_str(" (software emulation, slow; prefer an image for the host architecture)");
@@ -1221,6 +1239,17 @@ pub fn select(req: &SelectRequest, report: &DoctorReport) -> Result<Selection> {
             }
         },
     }
+}
+
+/// What setup runs to get QEMU onto a Windows PC: winget, when the PC has it.
+#[cfg(feature = "qemu")]
+pub(crate) fn windows_qemu_step(has_winget: bool) -> Option<String> {
+    has_winget.then(|| {
+        format!(
+            "winget install -e --id {}",
+            crate::qemu::WINDOWS_QEMU_WINGET_ID
+        )
+    })
 }
 
 /// How to get a container engine here.
@@ -1262,6 +1291,16 @@ fn lume_builtin_allowed() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "qemu")]
+    #[test]
+    fn a_windows_pc_with_winget_can_have_qemu_set_up() {
+        assert_eq!(
+            windows_qemu_step(true).as_deref(),
+            Some("winget install -e --id SoftwareFreedomConservancy.QEMU")
+        );
+        assert_eq!(windows_qemu_step(false), None);
+    }
 
     /// The disk-space source is process-wide: tests that read or fake it take turns.
     #[cfg(windows)]
@@ -1404,6 +1443,38 @@ mod tests {
         assert!(s.reason.contains("hvf"));
         let s = select(&req(ImageKind::Vm, GuestOs::Linux, Some(Arch::X86_64)), &r).unwrap();
         assert!(s.reason.contains("slow"));
+    }
+
+    #[test]
+    fn windows_arm64_on_apple_silicon_runs_accelerated_and_x64_is_refused_in_words() {
+        let r = report(true, true, true, true, HostOs::Macos);
+        // ARM64 Windows on an Apple silicon Mac: QEMU with HVF.
+        let s = select(&req(ImageKind::Vm, GuestOs::Windows, None), &r).unwrap();
+        assert_eq!(s.backend, BackendKind::Qemu);
+        assert!(
+            s.reason.contains("hvf") && !s.reason.contains("slow"),
+            "{}",
+            s.reason
+        );
+        let s = select(
+            &req(ImageKind::Vm, GuestOs::Windows, Some(Arch::Aarch64)),
+            &r,
+        )
+        .unwrap();
+        assert!(s.reason.contains("hvf"));
+        // x64 Windows there would be software emulation: refused with the way out.
+        let e = select(
+            &req(ImageKind::Vm, GuestOs::Windows, Some(Arch::X86_64)),
+            &r,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            e.contains("windows:11") && e.contains("software emulation"),
+            "{e}"
+        );
+        // Linux x64 there stays allowed (slow, flagged).
+        assert!(select(&req(ImageKind::Vm, GuestOs::Linux, Some(Arch::X86_64)), &r).is_ok());
     }
 
     #[test]

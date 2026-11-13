@@ -40,6 +40,7 @@ import re
 import tempfile
 import threading
 import time
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -2010,11 +2011,11 @@ def _clock(text: str) -> tuple[int, int, int] | None:
     return (hour, minute, second) if hour < 24 and minute < 60 and second < 60 else None
 
 
-def _number(text: str) -> float | None:
-    try:
-        return float(text.strip().replace(",", ""))
-    except ValueError:
-        return None
+def _number(text: str) -> Decimal | None:
+    """An exact plain decimal ("12", "-3.5", "1,000" with commas only as thousands groups), else None: anything
+    ambiguous (a decimal comma, an exponent) is not compared."""
+    m = re.fullmatch(r"\s*(-?)(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?\s*", text)
+    return Decimal(m.group(1) + m.group(2).replace(",", "") + (m.group(3) or "")) if m else None
 
 
 def _calc_shows(value: str, got: str) -> bool:

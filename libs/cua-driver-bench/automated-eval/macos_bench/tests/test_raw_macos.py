@@ -269,7 +269,9 @@ class CalcReadBackTest(unittest.TestCase):
             n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name in wanted
         ]
         self.assertEqual({n.name for n in nodes}, wanted)
-        ns: dict = {"re": re}
+        from decimal import Decimal
+
+        ns: dict = {"re": re, "Decimal": Decimal}
         exec(compile(ast.Module(nodes, []), "raw_mac.py", "exec"), ns)  # noqa: S102
         return ns["_calc_shows"]
 
@@ -285,6 +287,10 @@ class CalcReadBackTest(unittest.TestCase):
             ("'13:00", "01:00:00 PM", False),
             ("3", "4", False),
             ("1,000", "1000", True),
+            ("1,5", "15", False),  # a decimal comma is not compared
+            ("1.50", "1.5", True),
+            ("12345678901234567890", "12345678901234567891", False),
+            ("1e400", "1e401", False),
             ("", "", True),
             ("x", "", False),
         ):

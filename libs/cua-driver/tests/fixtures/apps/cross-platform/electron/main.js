@@ -35,6 +35,11 @@ if (!Number.isInteger(cdpPortNum) || cdpPortNum < 1 || cdpPortNum > 65535) {
 }
 const CDP_PORT = String(cdpPortNum);
 app.commandLine.appendSwitch('remote-debugging-port', CDP_PORT);
+// Chromium builds its accessibility tree lazily. Tests that read the page
+// through UI Automation (element geometry, page get_text) opt in to it here.
+if (process.env.CUA_E2E_FORCE_A11Y === '1') {
+  app.commandLine.appendSwitch('force-renderer-accessibility');
+}
 
 ipcMain.on('cua-e2e-config', event => {
   event.returnValue = { journalUrl: fixtureJournalUrl, sentinelMode };

@@ -95,6 +95,7 @@ fn run_web_case_with_preparation<P, F, R, O>(
         };
         let mut cmd = Command::new(&host_exe);
         cmd.env(env_var, &cdp_port_string)
+            .env("CUA_E2E_FORCE_A11Y", "1")
             .env("CUA_E2E_FIXTURE_JOURNAL_URL", journal.url())
             .stdout(Stdio::null())
             .stderr(Stdio::piped());

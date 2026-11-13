@@ -59,7 +59,6 @@ class LintTest(unittest.TestCase):
             ("eval('1')", "GUI2"),
             ("getattr(raw, name)", "GUI2"),
             ("raw.ax._x", "GUI2"),
-            ('x = "SkyLight"', "MB11"),
             ("ws.openURL_(u)", "MB5"),
         ):
             with self.subTest(source=source):
@@ -119,30 +118,44 @@ class LintTest(unittest.TestCase):
                 found, _ = rules(source + "\nreturn raw.text(el)")
                 self.assertNotIn("VR1", found)
 
-    def test_mb11_permits_only_the_key_focus_release(self):
-        # Zane, 13 Nov 2026: SLPSReleaseKeyFocusWithID is allowed; every other SkyLight/CGS name stays blocked
-        found, ok = rules('name = "SLPSReleaseKeyFocusWithID"' + READ)
-        self.assertNotIn("MB11", found)
-        self.assertTrue(ok)
+    def test_native_private_api_names_are_raw(self):
+        # Zane, 13 Nov 2026 13:38 SGT: any native macOS API, public or private, counts as raw; only Cua Driver is
+        # banned. Naming a SkyLight call is no finding (MB11 is retired) ...
+        self.assertNotIn("MB11", lint.RULES)
         for source in (
-            'x = "SLPSStealKeyFocusReturningID"',
-            'x = "SLPSReleaseKeyFocusWithID SLPSSetFrontProcessWithOptions"',
-            'x = "_SLPSSetFrontProcess"',
+            'name = "SLPSReleaseKeyFocusWithID"',
+            'name = "SLPSStealKeyFocusReturningID"',
+            'name = "SLPSPostEventRecordTo"',
+            'name = "SLEventPostToPid"',
             'x = "/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight"',
-            'x = "CGSOrderWindow"',
-            'x = "SLPSReleaseKeyFocusWithIDExtra"',
-            'x = "_SLPSReleaseKeyFocusWithID"',
         ):
             with self.subTest(source=source):
-                found, ok = rules(source + READ, granted=True)
-                self.assertIn("MB11", found)
-                self.assertFalse(ok)
-        # the name alone is not a route: loading SkyLight still takes ctypes, which GUI1 blocks
+                found, ok = rules(source + READ)
+                self.assertEqual(found, set())
+                self.assertTrue(ok)
+        # ... but a script still reaches the frameworks only through the raw runtime (GUI1), and Cua Driver stays out
         found, ok = rules(
-            "import ctypes\nctypes.CDLL(p).SLPSReleaseKeyFocusWithID(1)" + READ, granted=True
+            "import ctypes\nctypes.CDLL(p).SLEventPostToPid(1, e)" + READ, granted=True
         )
         self.assertIn("GUI1", found)
         self.assertFalse(ok)
+        found, ok = rules('x = "cua-driver"' + READ, granted=True)
+        self.assertIn("DRV1", found)
+        self.assertFalse(ok)
+
+    def test_window_key_route_is_a_plain_background_call(self):
+        found, ok = rules(
+            'raw.post_text(1, "scheduled", window_id=7)\nraw.post_key(1, "return", window_id=7)'
+            + READ
+        )
+        self.assertTrue(ok)
+        self.assertEqual(found, set())
+
+    def test_popup_open_keys(self):
+        # #7551: the runtime refuses these under MB7 when the target's focused element is a pop-up
+        self.assertEqual(set(lint.POPUP_OPEN_KEYS), {"down", "up", "space"})
+        self.assertIn("Down, Up or Space", lint.RULES["MB7"].why)
+        self.assertIn("raw.select", lint.RULES["MB7"].instead)
 
     def test_every_rule_cites_a_source(self):
         for rule in lint.RULES.values():

@@ -28,7 +28,6 @@ guest is disposable and the GUI-only guard still watches for side doors.
 from __future__ import annotations
 
 import ast
-import re
 from dataclasses import dataclass
 
 DRV = "libs/cua-driver/rust"
@@ -121,13 +120,13 @@ RULES: dict[str, Rule] = {
             "MB7",
             "open a popup, pull-down or context menu",
             "granted",
-            "AXShowMenu, AXPress on a pop-up or menu button, and a posted right-click or a posted click on such a "
-            "button open a menu that steals key focus from the user's window and lifts the target window over it while "
-            "it is open.",
+            "AXShowMenu, AXPress on a pop-up or menu button, a posted right-click or a posted click on such a "
+            "button, and a posted Down, Up or Space while a pop-up has keyboard focus open a menu that steals key focus "
+            "from the user's window and lifts the target window over it while it is open.",
             f"{MACOS_MD}:632-649; {MAC}/key_focus_guard.rs:4-28",
-            "Choose a web <select> with raw.select(el, 'Label'): it types the label into the closed control and the "
-            "menu never opens. A native AppKit pop-up lists its items only while its menu is open, so raw.select on "
-            "one opens it and needs the trial's grant; without it there is no background route.",
+            "Choose an option with raw.select(el, 'Label'): a web <select> gets the label typed into the closed "
+            "control and its menu never opens; a native AppKit pop-up is opened under the key-focus guard, which keeps "
+            "the user's window key and on top. Do not post Down, Up or Space to a focused pop-up: that opens its menu.",
         ),
         Rule(
             "MB8",
@@ -155,20 +154,6 @@ RULES: dict[str, Rule] = {
             "the arm's definition (raw macOS APIs only; tools/raw_macos/raw_mac.py)",
             "Use raw.ax, raw.find / raw.dump / raw.el, raw.set_text, raw.select, raw.set_cell, raw.menu and the "
             "per-process events.",
-        ),
-        Rule(
-            "MB11",
-            "Spaces and window-server private calls",
-            "block",
-            "SkyLight/CGS private functions switch Spaces, reorder windows of other apps or steal key focus; the raw "
-            "runtime does not expose them. One exception: SLPSReleaseKeyFocusWithID, which hands key focus back to the "
-            'user\'s app, is allowed (Zane, 13 Nov 2026: "lets allow it still since it is a macos api"); raw.select '
-            "makes that call itself for a background native pop-up.",
-            f"{MAC}/input/skylight.rs:4-20 (the driver's one SkyLight path: per-pid posting with an authentication "
-            f"envelope); {MACOS_MD}:619-630 (its focus-without-raise recipe); {MACOS_MD}:800-803 (do not inject raw "
-            f"CGEvents or use shell activation); {MAC}/key_focus_guard.rs:4-19 (the released call)",
-            "Use AX and raw.post_click / raw.post_key, which post to one process; choose a native pop-up with "
-            "raw.select, which releases the menu's key-focus theft for you.",
         ),
         Rule(
             "GUI1",
@@ -264,25 +249,17 @@ AX_SET: dict[str, str] = {
     "AXMinimized": "MB2",
 }
 AX_ACTION: dict[str, str] = {"AXRaise": "MB2", "AXShowMenu": "MB7"}
-# The one SkyLight call MB11 permits (Zane, 13 Nov 2026). A string naming exactly it is not a finding; any other
-# SkyLight or CGS name still is.
-MB11_ALLOWED = ("SLPSReleaseKeyFocusWithID",)
+# Keys that open the menu of a pop-up that has keyboard focus (MB7, checked at run time where the focus is known; #7551).
+POPUP_OPEN_KEYS = ("down", "up", "space")
 # Text that names a forbidden route wherever it appears in a string.
 STRINGS: dict[str, str] = {
     "osascript": "MB5",
     "System Events": "MB5",
     "tell application": "MB5",
     "/usr/bin/open": "MB5",
-    "SkyLight": "MB11",
-    "CGSSetActiveSpace": "MB11",
-    "SLSSetActiveSpace": "MB11",
-    "SLPS": "MB11",
     "cua-driver": "DRV1",
     "cua_driver": "DRV1",
     "CuaDriver": "DRV1",
-    "CGSOrderWindow": "MB11",
-    "SLSOrderWindow": "MB11",
-    "_SLPSSetFrontProcess": "MB11",
 }
 # Key combos that ask the receiving app to activate or switch tabs (MACOS.md:61-77).
 FOCUS_COMBOS = {
@@ -533,10 +510,6 @@ class _Walker(ast.NodeVisitor):
         if isinstance(value, bytes):
             value = value.decode("latin-1")
         if isinstance(value, str):
-            # only the exact name is exempt: a longer identifier that contains it is still checked
-            value = re.sub(
-                r"[A-Za-z0-9_]+", lambda m: "" if m.group(0) in MB11_ALLOWED else m.group(0), value
-            )
             for needle, rule in STRINGS.items():
                 if needle in value:
                     self.add(rule, node, f"string {needle!r}")

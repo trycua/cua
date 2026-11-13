@@ -78,21 +78,26 @@ Act:
 - raw.ax.perform(el, "AXPress") for buttons, links, checkboxes, radio buttons, rows, tabs, menu items (also \
 AXIncrement, AXDecrement, AXConfirm, AXCancel, AXPick); raw.ax.set(el, "AXSelected", True) for rows and tabs. \
 Both return the AX error code (0 = accepted, not proof).
-- raw.set_text(el, "text") -> {route, value}: sets a text field and reads it back. It writes AXValue; where the app \
-ignores that (web views, a browser address bar) it focuses the field inside that app and types the text as key \
-events to the app's pid. Follow with raw.post_key(pid, "return") to submit an address bar.
-- raw.select(el, "Label") -> {route, value}: chooses an option of an AXPopUpButton or AXComboBox. A web <select> \
-(Chrome, Electron, web views) gets the label typed into it and its menu never opens. A native AppKit pop-up is \
+- raw.set_text(el, "text") -> {route, value, ok}: sets a text field and reads it back. It writes AXValue; where the \
+app ignores that (web views, a browser address bar) it focuses the field inside that app, selects its text and types \
+over it as key events to the app's pid. Follow with raw.post_key(pid, "return") to submit an address bar.
+- raw.select(el, "Label") -> {route, value, ok}: chooses an option of an AXPopUpButton or AXComboBox. A web \
+<select> (Chrome, Electron, web views) gets the label typed into it and its menu never opens. A native AppKit pop-up is \
 opened and the item pressed, under the key-focus guard when the trial does not grant foreground.
-- raw.set_cell(pid, "H4", "text", window=None) -> {value, ok}: writes one LibreOffice Calc cell (on screen in the \
-visible sheet) through the formula bar. Calc ignores AX writes to cells and posted keys while it is in the \
-background, so this is the route. Change sheets by pressing the sheet tab (AXRadioButton) first. LibreOffice \
-sometimes crashes on these writes (its own bug): save with raw.menu(pid, ["File", "Save"]) after a batch of cells.
+- raw.set_cell(pid, "H4", "text", window=None, sheet=None) -> {value, ok}: writes one LibreOffice Calc cell (on \
+screen) by selecting it and typing the text plus Return through the window-key route below; "" clears it. \
+sheet="Controls" switches sheets first (Sheet > Navigate > To Next Sheet; pressing a sheet tab does nothing in the \
+background). Calc parses typed text: "13:00" becomes a time; start with ' to keep it as text. Close a dialog that \
+holds Calc's key focus (the "Welcome to LibreOffice!" window: press its AXCloseButton) first; the error names it. \
+Save with raw.menu(pid, ["File", "Save"]).
 - raw.menu(pid, ["File", "Save"]) -> runs a menu-bar command without opening the menu.
 - Events to one process (the real cursor does not move): raw.post_key(pid, "return") or raw.post_key(pid, \
 ["cmd", "s"]), raw.post_text(pid, "text") (to that app's focused element), raw.post_click(pid, x, y, \
 button="left", count=1), raw.post_scroll(pid, x, y, dy). Screen coordinates, top-left origin. Many apps ignore \
-posted clicks while in the background: prefer AX actions.
+posted clicks while in the background: prefer AX actions. Window-key route: raw.post_key(pid, keys, \
+window_id=w) and raw.post_text(pid, text, window_id=w) first make window w the app's key window without \
+activating or raising it (SkyLight focus records), then post through SLEventPostToPid. LibreOffice drops plain \
+posted keys in the background and takes these (Tab, Return and arrows move between its cells).
 - Foreground pointer (moves the real cursor): raw.pointer_move(x, y), raw.pointer_click(x, y), \
 raw.pointer_drag(x0, y0, x1, y1). raw.sleep(s).
 
@@ -108,10 +113,11 @@ items only while its menu is open and ignores an AXValue write: raw.select on on
 as is; without it raw.select opens it under a key-focus guard that keeps the user's window key and on top (it hands \
 the menu's key-focus theft back with SLPSReleaseKeyFocusWithID) and refuses under MB7 if anything stayed changed. \
 The runtime check reports the brief raise the guard put back; that is expected. Never press the pop-up or post keys \
-to it yourself. Run menu-bar commands with raw.menu.
+to it yourself: a posted Down, Up or Space while a pop-up has keyboard focus opens its menu and is refused (MB7). Run \
+menu-bar commands with raw.menu.
 - Always blocked: launching or opening apps (open, NSWorkspace, AppleScript, osascript), shells, files, network, \
-pyobjc and framework imports, private window-server calls (raw.select's own key-focus release is the one \
-exception), and Cua Driver in any form.
+pyobjc and framework imports in the script itself (use the raw.* helpers, which make the native calls, public and \
+private), and Cua Driver in any form.
 - Warned: cmd+L, cmd+shift+G and tab-switching shortcuts make apps activate themselves; clipboard writes replace \
 what the user copied.
 - Not available: files, processes, network and other imports (json, re, math, time, itertools, collections, \

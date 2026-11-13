@@ -9,18 +9,22 @@ What a script gets (``raw``):
   ``set``, ``names``, ``actions``, ``perform``, ``children``, ``at(x, y)``. ``set`` and ``perform`` check the
   focus/activation rules with the real attribute or action name.
 * Per-process event posting (CGEventPostToPid, Quartz): ``post_click``, ``post_key``, ``post_text``,
-  ``post_scroll``. They reach one process and never move the real cursor.
+  ``post_scroll``. They reach one process and never move the real cursor. ``post_key`` and ``post_text`` with
+  ``window_id=`` first make that window its app's key window without activating or raising it (SkyLight focus
+  records) and post through SLEventPostToPid, the route Cua Driver uses for apps such as LibreOffice that ignore
+  plain per-process keys while in the background.
 * Foreground pointer routes for a trial with the harness's grant: ``pointer_move``, ``pointer_click``,
   ``pointer_drag`` (CGEventPost at the HID tap: the real cursor moves).
 * Read-back helpers: ``apps``, ``windows``, ``front``, ``cursor``, ``find``, ``describe``, ``dump`` (compact, or
   scoped to a query), ``text`` (an element's visible text only), ``screenshot``.
 * Value helpers built only from the calls above, one per control kind the AX value write alone does not reach:
-  ``set_text`` (a text field), ``select`` (a native pop-up, guarded in the background, or a web ``<select>``), ``set_cell`` (a LibreOffice Calc cell),
-  ``menu`` (a menu-bar command without opening the menu). Each reads the control back and says how it was set.
+  ``set_text`` (a text field), ``select`` (a native pop-up, guarded in the background, or a web ``<select>``),
+  ``set_cell`` (a LibreOffice Calc cell, typed through the window-key route), ``menu`` (a menu-bar command without
+  opening the menu). Each reads the control back and says how it was set.
 
-Nothing here calls Cua Driver: only macOS's own APIs (ApplicationServices, Quartz, AppKit through pyobjc), plus one
-SkyLight call, SLPSReleaseKeyFocusWithID, that ``select`` uses to hand key focus back to the user while a background
-app's native pop-up menu is open (Zane, 13 Nov 2026: "lets allow it still since it is a macos api"; rule MB11).
+Nothing here calls Cua Driver: only macOS's own APIs, public and private (ApplicationServices, Quartz, AppKit through
+pyobjc, and SkyLight through ctypes). Zane, 13 Nov 2026 13:38 SGT: any native macOS API counts as raw; only Cua
+Driver is banned (rule DRV1).
 
 The hook (``Watch``) samples the frontmost app, the top on-screen window, the focused app's focused window and
 element, and the real cursor every 50 ms while the script runs, and reports every change.
@@ -700,10 +704,11 @@ class Raw:
     # ---------------------------------------------------------------- value helpers (AX and per-process events only)
 
     def set_text(self, el: Any, text: str, typed: bool | None = None) -> dict[str, Any]:
-        """Put ``text`` in a text field and read it back. First an AXValue write; if the field does not show the
-        text afterwards (web views, browser address bars), the field is focused inside its own app, its text
-        selected (cmd+a) and ``text`` typed as key events posted to that app's pid. ``typed=True`` goes straight to
-        typing. A LibreOffice Calc cell goes through ``set_cell``. Returns the route and the value read back."""
+        """Put ``text`` in a text field and read it back. First an AXValue write, read back for up to 1 s; if the
+        field does not show the text by then (web views, browser address bars), the field is focused inside its own
+        app, its whole text selected through AXSelectedTextRange and ``text`` typed over it as key events posted to
+        that app's pid. ``typed=True`` goes straight to typing. A LibreOffice Calc cell goes through ``set_cell``.
+        Returns the route, the value read back and ``ok`` (the value equals ``text``)."""
         text = str(text)
         pid = self.ax.pid(el)
         STATE.to_user(pid, "set_text")
@@ -720,17 +725,25 @@ class Raw:
         if not typed:
             STATE.count(pid)
             AX.AXUIElementSetAttributeValue(el, "AXValue", text)
-            time.sleep(0.15)
-            if _text_of(el) == text:
+            # An Electron field can echo the write later than 0.15 s; typing before the echo lands appended the
+            # text to it ("13:0013:00", #7584), so wait for it first.
+            if _wait_text(el, text, 1.0):
                 STATE.route("set_text:ax_value")
-                return {"route": "ax_value", "value": text}
+                return {"route": "ax_value", "value": text, "ok": True}
         _focus_in_app(el, "raw.set_text")
-        self.post_key(pid, ["cmd", "a"])
+        # Select what the field holds through AX: a posted cmd+a does not select in a background Electron field, and
+        # the typed text was appended (#7584).
+        current = _text_of(el)
+        AX.AXUIElementSetAttributeValue(
+            el,
+            "AXSelectedTextRange",
+            AX.AXValueCreate(AX.kAXValueCFRangeType, (0, len(current))),
+        )
+        time.sleep(0.1)
         self.post_text(pid, text)
-        time.sleep(0.25)
-        value = _text_of(el)
+        ok = _wait_text(el, text, 1.5)
         STATE.route("set_text:typed")
-        return {"route": "typed", "value": value, "ok": value == text}
+        return {"route": "typed", "value": _text_of(el), "ok": ok}
 
     def select(self, el: Any, label: str) -> dict[str, Any]:
         """Choose ``label`` in a pop-up button, web ``<select>`` or combo box and read the choice back.
@@ -754,14 +767,28 @@ class Raw:
         if role != "AXPopUpButton":
             raise ValueError(f"raw.select needs an AXPopUpButton or AXComboBox, not {role}")
         if _in_web_area(el):
-            _focus_in_app(el, "raw.select")
-            self.post_text(pid, label)
-            deadline = time.monotonic() + 1.0
-            while time.monotonic() < deadline and _chosen(el) != label.casefold():
-                time.sleep(0.05)
             STATE.route("select:typeahead")
-            value = _ax_get(el, "AXValue")
-            return {"route": "typeahead", "value": value, "ok": _chosen(el) == label.casefold()}
+            for attempt in range(2):
+                _typeahead_pause(pid)
+                _focus_in_app(el, "raw.select")
+                # the label goes to the select itself (a space in it is part of the type-ahead, not a menu key)
+                _post_chars(pid, label, _post_to_pid)
+                _typeahead_mark(pid)
+                deadline = time.monotonic() + 1.0
+                while time.monotonic() < deadline and _chosen(el) != label.casefold():
+                    time.sleep(0.05)
+                if _chosen(el) == label.casefold():
+                    return {"route": "typeahead", "value": _ax_get(el, "AXValue"), "ok": True}
+            return {
+                "route": "typeahead",
+                "value": _ax_get(el, "AXValue"),
+                "ok": False,
+                "next": (
+                    f"typing {label!r} into the closed control did not choose it (twice). Check the option's exact "
+                    "label (raw.dump the pop-up) and call raw.select again; do not press the pop-up or post "
+                    "Down, Up or Space to it: that opens its menu, which raises the window (MB7)"
+                ),
+            }
         if STATE.granted:
             STATE.check("MB7", "raw.select on a native pop-up opens its menu")
             return self._pick_from_menu(el, pid, label)
@@ -849,58 +876,87 @@ class Raw:
         }
 
     def set_cell(
-        self, pid: int, cell: str, value: str, window: str | None = None
+        self,
+        pid: int,
+        cell: str,
+        value: str,
+        window: str | None = None,
+        sheet: str | None = None,
     ) -> dict[str, Any]:
-        """Write ``value`` into cell ``cell`` ("H4") of the visible sheet of LibreOffice Calc process ``pid`` and
-        read it back; ``value=""`` clears it. Calc ignores AX writes to a cell and posted keys while it is in the
-        background, so this selects the cell through AX, clears a non-empty cell with Sheet > Clear Cells (its dialog's
-        OK), types the text into the formula bar's input line and presses the bar's Accept button. ``window``: part of
-        the document window's title when several are open. Only cells on screen can be selected; switch sheets by
-        pressing the sheet's tab (an AXRadioButton) first."""
+        """Write ``value`` into cell ``cell`` ("H4") of LibreOffice Calc process ``pid`` and read it back;
+        ``value=""`` clears it. ``sheet`` ("Controls") switches to that sheet first with the menu command
+        Sheet > Navigate > To Next / To Previous Sheet; pressing a sheet tab does nothing in the background.
+        ``window``: part of the document window's title when several are open. Calc ignores AX writes to a cell and
+        plain per-process keys while it is in the background, so this makes the document window Calc's key window
+        without activating or raising it (the window-key route of ``post_key(..., window_id=)``), selects the cell
+        through AX and types the value followed by Return. Calc parses what it is given as it would typed text
+        ("13:00" becomes a time and reads back as "01:00:00 PM"; start with ' to keep text). A dialog that holds
+        Calc's key focus ("Welcome to LibreOffice!") is named in the error: close it first. Only cells on screen can
+        be selected."""
         pid, cell, value = int(pid), str(cell).upper(), str(value)
         STATE.to_user(pid, "set_cell")
         win = _calc_window(pid, window)
         STATE.count(pid)
+        if sheet is not None:
+            self._calc_sheet(pid, win, str(sheet))
+        wid = _ax_window_id(pid, win)
+        _window_key(pid, wid, "raw.set_cell")
+        before = _calc_cell_value(win, cell)
         self._calc_select(win, cell)
-        cleared = False
-        if _calc_cell_value(win, cell):
-            self._calc_clear(pid, win, cell)
-            cleared = True
-            self._calc_select(win, cell)
+        _window_key(pid, wid, "raw.set_cell")
         if value:
-            line = _calc_settled_line(win)
-            # Only an insert into an empty input line: replacing a selection there, or writing before Calc has
-            # moved to the cell, aborts soffice (ImpEditEngine::ImpDeleteSelection, traced in the bench guest).
-            # an explicit caret at 0 first: without it the insert used a stale edit selection about 1 write in 10
-            AX.AXUIElementSetAttributeValue(
-                line, "AXSelectedTextRange", AX.AXValueCreate(AX.kAXValueCFRangeType, (0, 0))
-            )
-            time.sleep(0.2)
-            line = _calc_input_line(win) or line
-            AX.AXUIElementSetAttributeValue(line, "AXSelectedText", value)
-            time.sleep(0.3)
-            accept = _calc_wait_button(win, "Accept")
-            if accept is None:
-                if (
-                    AppKit.NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
-                    is None
-                ):
-                    raise RuntimeError(
-                        "LibreOffice quit during the cell write (its accessibility text path crashes now and then "
-                        "on macOS); its unsaved changes are gone"
-                    )
-                raise RuntimeError("the formula bar did not enter edit mode (no Accept button)")
-            AX.AXUIElementPerformAction(accept, "AXPress")
-            time.sleep(0.5)
+            self.post_text(pid, value, window_id=wid)
+            # AutoInput may have completed the text from the column (typing "blocked" over "blocked:LHP-C17"); the
+            # completion is selected, and forward delete removes it before Return enters the cell
+            self.post_key(pid, "forwarddelete", window_id=wid)
+            self.post_key(pid, "return", window_id=wid)
+        else:
+            # forward delete on a selected cell clears its contents without the Delete Contents dialog
+            self.post_key(pid, "forwarddelete", window_id=wid)
+        deadline = time.monotonic() + 1.5
         got = _calc_cell_value(win, cell)
-        STATE.route("set_cell:formula_bar")
-        return {
-            "route": "formula_bar",
+        while time.monotonic() < deadline and (
+            got == before and before != value or not _calc_shows(value, got)
+        ):
+            time.sleep(0.1)
+            got = _calc_cell_value(win, cell)
+        if AppKit.NSRunningApplication.runningApplicationWithProcessIdentifier_(pid) is None:
+            raise RuntimeError(
+                "LibreOffice quit during the cell write; its unsaved changes are gone"
+            )
+        STATE.route("set_cell:keys")
+        out = {
+            "route": "keys",
             "cell": cell,
-            "cleared": cleared,
             "value": got,
-            "ok": got == value,
+            "ok": _calc_shows(value, got),
+            "changed": got != before,
         }
+        if out["ok"] and got != value and not value.startswith("'"):
+            out["parsed"] = True  # Calc turned the text into a number, date or time
+        return out
+
+    def _calc_sheet(self, pid: int, win: Any, name: str) -> None:
+        """Show sheet ``name``: Sheet > Navigate > To Next Sheet (or Previous) until the sheet's table is shown."""
+        tabs = [
+            str(_ax_get(t, "AXTitle") or "") for t in self.find(win, role="AXRadioButton", limit=64)
+        ]
+        if name not in tabs:
+            raise LookupError(f"no sheet {name!r}; the sheet tabs are {tabs}")
+        want = f"Sheet {name}"
+        for direction in ("To Next Sheet", "To Previous Sheet"):
+            for _ in range(len(tabs)):
+                if _calc_table_title(win) == want:
+                    return
+                self.menu(pid, ["Sheet", "Navigate", direction])
+                deadline = time.monotonic() + 1.5
+                while time.monotonic() < deadline and _calc_table_title(win) == "":
+                    time.sleep(0.05)
+                time.sleep(0.2)
+        if _calc_table_title(win) != want:
+            raise RuntimeError(
+                f"could not switch to sheet {name!r} (shown: {_calc_table_title(win)!r})"
+            )
 
     def _calc_select(self, win: Any, cell: str) -> None:
         table = next(iter(self.find(win, role="AXTable", limit=1)), None)
@@ -921,32 +977,6 @@ class Raw:
             raise RuntimeError(
                 f"Calc did not select {cell} (name box shows {_calc_name_box(win)!r}); a dialog may be open"
             )
-
-    def _calc_clear(self, pid: int, win: Any, cell: str) -> None:
-        self.menu(pid, ["Sheet", "Clear Cells…"])
-        dialog = None
-        deadline = time.monotonic() + 3.0
-        while time.monotonic() < deadline and dialog is None:
-            dialog = next(
-                (
-                    w
-                    for w in _ax_get(AX.AXUIElementCreateApplication(pid), "AXWindows") or []
-                    if str(_ax_get(w, "AXTitle") or "") == "Delete Contents"
-                ),
-                None,
-            )
-            time.sleep(0.1)
-        if dialog is None:
-            raise RuntimeError("Sheet > Clear Cells did not open its dialog")
-        ok = next(iter(self.find(dialog, role="AXButton", title="OK", limit=1)), None)
-        if ok is None:
-            raise RuntimeError("the Delete Contents dialog has no OK button")
-        AX.AXUIElementPerformAction(ok, "AXPress")
-        deadline = time.monotonic() + 2.0
-        while time.monotonic() < deadline and _calc_cell_value(win, cell):
-            time.sleep(0.1)
-        if _calc_cell_value(win, cell):
-            raise RuntimeError(f"could not clear {cell}")
 
     def menu(self, pid: int, path: list[str]) -> dict[str, Any]:
         """Run a menu-bar command of process ``pid`` (``["File", "Save"]``) without opening any menu: the item is
@@ -1053,14 +1083,31 @@ class Raw:
         STATE.count(pid)
         return f"posted {button} click x{count} at ({x}, {y}) to {app_name(pid)}"
 
-    def post_key(self, pid: int, keys: list[str] | str) -> str:
-        """Post one key or combo (["cmd", "s"], "return") to process ``pid`` only (CGEventPostToPid)."""
+    def post_key(self, pid: int, keys: list[str] | str, window_id: int | None = None) -> str:
+        """Post one key or combo (["cmd", "s"], "return") to process ``pid`` only (CGEventPostToPid). With
+        ``window_id`` (one of ``pid``'s windows), that window is first made the app's key window without activating
+        or raising it, and the key goes through SLEventPostToPid: the route for apps that drop plain per-process
+        keys while in the background (LibreOffice)."""
         pid = int(pid)
         STATE.to_user(pid, "posted keys")
         combo = [keys] if isinstance(keys, str) else [str(k) for k in keys]
         lowered = [k.lower() for k in combo]
         if lint.combo(lowered) in lint.FOCUS_COMBOS:
             STATE.check("MB9", "keys " + "+".join(lowered))
+        if lowered and lowered[-1] in lint.POPUP_OPEN_KEYS:
+            role = _focused_popup(pid)
+            if role is not None:
+                # #7551: Down, Up or Space on a focused pop-up opens its menu, which takes key focus and raises the
+                # window; raw.select chooses the option without opening it
+                STATE.check(
+                    "MB7",
+                    f"posted {'+'.join(lowered)} to {app_name(pid)}, whose focused element is an {role} (opens its "
+                    "menu); choose the option with raw.select(el, 'Label')",
+                )
+        post = _post_to_pid
+        if window_id is not None:
+            _window_key(pid, int(window_id), "raw.post_key")
+            post = _sl_post_to_pid
         flags = 0
         for k in lowered[:-1]:
             if k not in FLAGS:
@@ -1072,23 +1119,30 @@ class Raw:
         for down in (True, False):
             ev = Quartz.CGEventCreateKeyboardEvent(None, KEYCODES[key], down)
             Quartz.CGEventSetFlags(ev, flags)
-            Quartz.CGEventPostToPid(pid, ev)
+            post(pid, ev)
             time.sleep(0.01)
         STATE.count(pid)
         return f"posted {'+'.join(combo)} to {app_name(pid)}"
 
-    def post_text(self, pid: int, text: str) -> str:
+    def post_text(self, pid: int, text: str, window_id: int | None = None) -> str:
         """Type text into process ``pid``'s focused field as unicode key events (CGEventPostToPid). Setting the
-        field's AXValue is usually simpler and does not depend on which field has focus."""
+        field's AXValue is usually simpler and does not depend on which field has focus. ``window_id``: as in
+        ``post_key``, for apps that drop plain per-process keys in the background."""
         pid = int(pid)
         STATE.to_user(pid, "posted text")
-        for ch in str(text):
-            for down in (True, False):
-                ev = Quartz.CGEventCreateKeyboardEvent(None, 0, down)
-                Quartz.CGEventKeyboardSetUnicodeString(ev, len(ch), ch)
-                Quartz.CGEventPostToPid(pid, ev)
-            time.sleep(0.005)
-        STATE.count(pid)
+        if " " in str(text):
+            role = _focused_popup(pid)
+            if role is not None:
+                STATE.check(
+                    "MB7",
+                    f"posted text with a space to {app_name(pid)}, whose focused element is an {role} (a space opens "
+                    "its menu); choose the option with raw.select(el, 'Label')",
+                )
+        post = _post_to_pid
+        if window_id is not None:
+            _window_key(pid, int(window_id), "raw.post_text")
+            post = _sl_post_to_pid
+        _post_chars(pid, str(text), post)
         return f"posted {len(text)} characters to {app_name(pid)}"
 
     def post_scroll(self, pid: int, x: float, y: float, dy: int, dx: int = 0) -> str:
@@ -1385,6 +1439,65 @@ def _text_of(el: Any) -> str:
     return v if isinstance(v, str) else ("" if v is None else str(v))
 
 
+def _wait_text(el: Any, text: str, wait: float) -> bool:
+    """Whether the field reads ``text`` within ``wait`` seconds."""
+    deadline = time.monotonic() + wait
+    while True:
+        if _text_of(el) == text:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+
+
+# Chromium keeps a <select>'s type-ahead buffer for about 1 s: a second label typed into another select of the same
+# page within that time was appended to the first and chose nothing about one time in two (CDB-G04 bg r5; 16/16 with a
+# 1.2 s gap in the bench guest). The last type-ahead time per pid is kept across scripts.
+_TYPEAHEAD_GAP_S = 1.2
+
+
+def _typeahead_file(pid: int) -> Path:
+    return Path(tempfile.gettempdir()) / f"raw-macos-typeahead-{int(pid)}"
+
+
+def _typeahead_pause(pid: int) -> None:
+    try:
+        last = float(_typeahead_file(pid).read_text().strip())
+    except (OSError, ValueError):
+        return
+    wait = last + _TYPEAHEAD_GAP_S - time.time()
+    if 0 < wait <= _TYPEAHEAD_GAP_S:
+        time.sleep(wait)
+
+
+def _typeahead_mark(pid: int) -> None:
+    try:
+        _typeahead_file(pid).write_text(repr(time.time()))
+    except OSError:
+        pass
+
+
+# Roles whose menu a posted Down, Up or Space opens when they have keyboard focus (#7551).
+POPUP_ROLES = ("AXPopUpButton", "AXMenuButton", "AXComboBox")
+
+
+def _focused_popup(pid: int) -> str | None:
+    """The role of ``pid``'s focused element if it is a pop-up, else None. The app's AXFocusedUIElement first; a
+    background Electron app reports none there (traced on Rillwatch Cases), so its focused window's pop-ups are then
+    asked for AXFocused themselves."""
+    app = AX.AXUIElementCreateApplication(int(pid))
+    el = _ax_get(app, "AXFocusedUIElement")
+    role = _ax_get(el, "AXRole") if el is not None else None
+    if role is not None:
+        return str(role) if role in POPUP_ROLES else None
+    win = _ax_get(app, "AXFocusedWindow")
+    for popup_role in POPUP_ROLES:
+        for popup in Raw().find(win, role=popup_role, limit=200) if win is not None else []:
+            if _ax_get(popup, "AXFocused") is True:
+                return popup_role
+    return None
+
+
 def _chosen(el: Any) -> str:
     v = _ax_get(el, "AXValue")
     if not isinstance(v, str) or not v:
@@ -1432,12 +1545,151 @@ def _focus_in_app(el: Any, what: str) -> None:
         )
 
 
-# ------------------------------------------------------------------ key-focus guard (background native pop-ups)
+# ------------------------------------------------------------------ SkyLight (window-key route, key-focus guard)
 
 _CG = ctypes.CDLL("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices")
 _CFL = ctypes.CDLL("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
 _SKYLIGHT = ctypes.CDLL("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight")
-# The one SkyLight call this runtime makes (MB11's exception).
+_SKYLIGHT.CGSMainConnectionID.restype = ctypes.c_uint32
+_SKYLIGHT.SLSGetWindowOwner.argtypes = [
+    ctypes.c_uint32,
+    ctypes.c_uint32,
+    ctypes.POINTER(ctypes.c_uint32),
+]
+_SKYLIGHT.SLSGetWindowOwner.restype = ctypes.c_int32
+_SKYLIGHT.SLSGetConnectionPSN.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
+_SKYLIGHT.SLSGetConnectionPSN.restype = ctypes.c_int32
+_SKYLIGHT.SLPSPostEventRecordTo.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+_SKYLIGHT.SLPSPostEventRecordTo.restype = ctypes.c_int32
+_SKYLIGHT.SLEventPostToPid.argtypes = [ctypes.c_int32, ctypes.c_void_p]
+_SKYLIGHT.SLEventPostToPid.restype = None
+_CG._AXUIElementGetWindow.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32)]
+_CG._AXUIElementGetWindow.restype = ctypes.c_int32
+# Pause between the key-window records: Calc drops the focus record while it still handles the defocus
+# (skylight.rs KEY_RECORD_SETTLE).
+_KEY_RECORD_SETTLE_S = 0.12
+
+
+def _post_chars(pid: int, text: str, post: Any) -> None:
+    """Unicode key events, one pair per character, to ``pid`` through ``post``."""
+    for ch in text:
+        for down in (True, False):
+            ev = Quartz.CGEventCreateKeyboardEvent(None, 0, down)
+            Quartz.CGEventKeyboardSetUnicodeString(ev, len(ch), ch)
+            post(pid, ev)
+        time.sleep(0.005)
+    STATE.count(pid)
+
+
+def _post_to_pid(pid: int, ev: Any) -> None:
+    Quartz.CGEventPostToPid(pid, ev)
+
+
+def _sl_post_to_pid(pid: int, ev: Any) -> None:
+    """SLEventPostToPid: the per-process post that goes through WindowServer's activity path (skylight.rs:8-11)."""
+    _SKYLIGHT.SLEventPostToPid(int(pid), ctypes.c_void_p(ev.__c_void_p__().value))
+
+
+def _ax_window_id(pid: int, win: Any) -> int:
+    """The CGWindowID of an AX window (_AXUIElementGetWindow)."""
+    wid = ctypes.c_uint32(0)
+    if _CG._AXUIElementGetWindow(ctypes.c_void_p(win.__c_void_p__().value), ctypes.byref(wid)) == 0:
+        return int(wid.value)
+    raise LookupError(f"no window id for {app_name(pid)}'s window {_ax_get(win, 'AXTitle')!r}")
+
+
+def _window_psn(pid: int, wid: int) -> Any:
+    """The process serial number of the window's owner (SLSGetWindowOwner, SLSGetConnectionPSN)."""
+    owner = ctypes.c_uint32(0)
+    psn = (ctypes.c_uint8 * 8)()
+    if (
+        _SKYLIGHT.SLSGetWindowOwner(_SKYLIGHT.CGSMainConnectionID(), int(wid), ctypes.byref(owner))
+        or not owner.value
+        or _SKYLIGHT.SLSGetConnectionPSN(owner.value, psn)
+    ):
+        raise LookupError(f"window {wid} of {app_name(pid)} has no owner process on this display")
+    return psn
+
+
+def _key_record(wid: int, kind: int, direction: int | None = None) -> Any:
+    """A 248-byte event record: kind 0x0d with direction 1 (focus) or 2 (defocus), or the make-key pair 0x01/0x02
+    (skylight.rs focus_record, make_key_window_record)."""
+    rec = (ctypes.c_uint8 * 0xF8)()
+    rec[0x04] = 0xF8
+    rec[0x08] = kind
+    rec[0x3C:0x40] = list(int(wid).to_bytes(4, "little"))
+    if direction is not None:
+        rec[0x8A] = direction
+    if kind in (0x01, 0x02):
+        rec[0x3A] = 0x10
+        for i in range(0x20, 0x30):
+            rec[i] = 0xFF
+    return rec
+
+
+def _focused_window_id(pid: int) -> int | None:
+    win = _ax_get(AX.AXUIElementCreateApplication(int(pid)), "AXFocusedWindow")
+    if win is None:
+        return None
+    try:
+        return _ax_window_id(pid, win)
+    except LookupError:
+        return None
+
+
+def _window_key(pid: int, wid: int, what: str) -> None:
+    """Make window ``wid`` of ``pid`` that app's key window without activating it or raising a window, the way Cua
+    Driver does for background keys (skylight.rs post_window_key_records): a defocus record for the app's current key
+    window, a focus record and the make-key pair for ``wid``, each sent to ``pid``'s process only. Confirmed by
+    re-reading the app's AXFocusedWindow; refused (no keys are sent) when another window, such as a dialog, keeps it.
+    The user's front app, key window and focused element are read before and after, and a change is refused under
+    MB3 as for any in-app focus move."""
+    pid, wid = int(pid), int(wid)
+    if not any(w["window_id"] == wid and w["pid"] == pid for w in window_list()):
+        raise LookupError(f"window {wid} is not an on-screen window of {app_name(pid)}")
+    current = _focused_window_id(pid)
+    if current == wid:
+        return
+    before = focus_sample()
+    if pid == before["front"]:
+        STATE.check("MB3", f"{what}: key window change inside {app_name(pid)}, the frontmost app")
+    STATE.to_user(pid, what)
+    psn = _window_psn(pid, wid)
+    for _ in range(
+        2
+    ):  # WindowServer delivers the records asynchronously; a second pass catches a busy app
+        if current is not None:
+            _SKYLIGHT.SLPSPostEventRecordTo(psn, _key_record(current, 0x0D, 2))
+            time.sleep(_KEY_RECORD_SETTLE_S)
+        _SKYLIGHT.SLPSPostEventRecordTo(psn, _key_record(wid, 0x0D, 1))
+        time.sleep(_KEY_RECORD_SETTLE_S)
+        for kind in (0x01, 0x02):
+            _SKYLIGHT.SLPSPostEventRecordTo(psn, _key_record(wid, kind))
+        deadline = time.monotonic() + 0.5
+        while time.monotonic() < deadline and _focused_window_id(pid) != wid:
+            time.sleep(0.04)
+        if _focused_window_id(pid) == wid:
+            break
+    STATE.route("window_key")
+    after = focus_sample()
+    moved = [k for k in ("front", "key_window", "focused") if after[k] != before[k]]
+    if moved:
+        STATE.check(
+            "MB3",
+            f"{what}: the user's {', '.join(moved)} changed after a key window change in {app_name(pid)}",
+        )
+    holder = _focused_window_id(pid)
+    if holder != wid:
+        title = next((w["title"] for w in window_list() if w["window_id"] == holder), "")
+        raise RuntimeError(
+            f"window {wid} of {app_name(pid)} did not become its key window, so no keys were sent: "
+            f"{('the window ' + repr(title)) if title else 'another window'} (window_id {holder}) holds key focus, "
+            "most likely a dialog. Close or answer it (raw.dump that window and press its button, or "
+            "raw.ax.perform(raw.ax.get(w, 'AXCloseButton'), 'AXPress') on it), then repeat the call"
+        )
+
+
+# Key-focus guard (background native pop-ups): SLPSReleaseKeyFocusWithID hands a menu's key-focus theft back.
 _release_key_focus = _SKYLIGHT.SLPSReleaseKeyFocusWithID
 _release_key_focus.argtypes = [ctypes.c_int32]
 _release_key_focus.restype = ctypes.c_int32
@@ -1469,8 +1721,8 @@ _FOCUS_NOTICE, _F_SUBTYPE, _F_THIEF, _LOST_KEY = 21, 64, 73, 0x4000
 _TAP_DISABLED = (0xFFFFFFFE, 0xFFFFFFFF)
 # Theft ids come from one session-wide counter (it was about 120 in the bench guest after a day of trials, and grows
 # by one per menu a background app opens). A release returns 0 for a live theft and 1010 otherwise, and a theft is
-# live only while its menu is open. Without SLPSStealKeyFocusReturningID (not allowed) the target's id is unknown, so
-# the guard releases ids upward from the last id it released (a hint kept across scripts) until it finds the live
+# live only while its menu is open. The guard predates the rule that allows SLPSStealKeyFocusReturningID, so the
+# target's id is unknown and the guard releases ids upward from the last id it released (a hint kept across scripts) until it finds the live
 # one, then a few past it; a scan costs about 0.1 ms per id.
 _THEFT_HINT = Path(tempfile.gettempdir()) / "raw-macos-theft-id"
 # start this far below the hint, in case the counter was reset (a WindowServer restart)
@@ -1731,64 +1983,32 @@ def _calc_name_box(win: Any) -> str:
     return str(_ax_get(box, "AXValue") or "").strip().upper() if box is not None else ""
 
 
-def _calc_settled_line(win: Any) -> Any:
-    """The formula bar's input line once it reads empty with the caret at 0 on two reads in a row: Calc has moved
-    its edit engine to the selected (empty) cell. Writing earlier is the crash this waits out."""
-    deadline = time.monotonic() + 2.0
-    calm = 0
-    line = None
-    while time.monotonic() < deadline and calm < 2:
-        line = _calc_input_line(win)
-        if line is None:
-            raise LookupError("no formula bar input line in that window")
-        rng = _py(_ax_get(line, "AXSelectedTextRange"))
-        calm = calm + 1 if not _ax_get(line, "AXValue") and rng in (None, (0, 0)) else 0
-        time.sleep(0.15)
-    if calm < 2:
-        raise RuntimeError("the formula bar's input line did not settle on the empty cell")
-    time.sleep(0.2)
-    return _calc_input_line(win)
-
-
 def _calc_cell_el(table: Any, cell: str) -> Any:
     return next(
         (c for c in _ax_get(table, "AXChildren") or [] if _ax_get(c, "AXTitle") == cell), None
     )
 
 
+def _calc_table_title(win: Any) -> str:
+    """The shown sheet's AXTable title, "Sheet <name>" (the tabs' AXValue does not follow the shown sheet)."""
+    table = next(iter(Raw().find(win, role="AXTable", limit=1)), None)
+    return str(_ax_get(table, "AXTitle") or "") if table is not None else ""
+
+
+def _calc_shows(value: str, got: str) -> bool:
+    """Whether a cell showing ``got`` holds ``value`` as typed: the text itself, or (for a number, date or time
+    Calc parsed) any non-empty display of it. A leading ' keeps text and is not shown."""
+    if value.startswith("'"):
+        return got == value[1:]
+    if got == value:
+        return True
+    return bool(got) and bool(value) and all(c.isdigit() or c in ":.,/- " for c in value)
+
+
 def _calc_cell_value(win: Any, cell: str) -> str:
     table = next(iter(Raw().find(win, role="AXTable", limit=1)), None)
     el = _calc_cell_el(table, cell) if table is not None else None
     return str(_ax_get(el, "AXValue") or "") if el is not None else ""
-
-
-def _calc_wait_button(win: Any, title: str, wait: float = 1.5) -> Any:
-    deadline = time.monotonic() + wait
-    while time.monotonic() < deadline:
-        bar = _formula_bar(win)
-        hit = (
-            next(iter(Raw().find(bar, role="AXButton", title=title, limit=1)), None)
-            if bar is not None
-            else None
-        )
-        if hit is not None:
-            return hit
-        time.sleep(0.05)
-    return None
-
-
-def _calc_input_line(win: Any) -> Any:
-    bar = _formula_bar(win)
-    group = (
-        next(iter(Raw().find(bar, role="AXGroup", title="Input line", limit=1)), None)
-        if bar is not None
-        else None
-    )
-    return (
-        next(iter(Raw().find(group, role="AXTextArea", limit=1)), None)
-        if group is not None
-        else None
-    )
 
 
 def make() -> Raw:

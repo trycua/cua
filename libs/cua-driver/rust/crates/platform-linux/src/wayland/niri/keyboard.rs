@@ -34,10 +34,10 @@ use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::fs::FileExt;
 use std::time::{Duration, Instant};
 
+use crate::wayland::xkb;
 use anyhow::{anyhow, bail, Context, Result};
 use wayland_client::protocol::{wl_callback, wl_keyboard, wl_registry, wl_seat};
 use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum};
-use xkbcommon::xkb;
 
 use super::super::text_keys::{
     chromium_receives, evdev_in, find_key, level_mods, refused, text_sym, with_line_feeds, xkb1,

@@ -3542,7 +3542,7 @@ dependencies = [
  "wayland-scanner",
  "x11",
  "x11rb",
- "xkbcommon",
+ "xkeysym",
  "zbus",
 ]
 
@@ -6198,17 +6198,6 @@ name = "x11rb-protocol"
 version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ea6fc2961e4ef194dcbfe56bb845534d0dc8098940c7e5c012a258bfec6701bd"
-
-[[package]]
-name = "xkbcommon"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7a974f48060a14e95705c01f24ad9c3345022f4d97441b8a36beb7ed5c4a02d"
-dependencies = [
- "libc",
- "memmap2",
- "xkeysym",
-]
 
 [[package]]
 name = "xkeysym"

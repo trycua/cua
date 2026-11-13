@@ -39,6 +39,7 @@ mod region_route;
 pub mod shell_helper;
 pub mod sway_ipc;
 mod text_keys;
+mod xkb;
 pub(crate) use text_keys::NOTHING_TYPED;
 mod virtual_keyboard;
 // RemoteDesktop/libei input is portable and ships in release binaries.

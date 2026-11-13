@@ -41,8 +41,8 @@ use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::wayland::xkb;
 use crossbeam_channel::{bounded, Receiver, Sender};
-use xkbcommon::xkb;
 
 use super::kwin_keystate::{lock_keys, LockKeys};
 use super::portal::RestoreToken;

@@ -13,7 +13,7 @@ build-backend = "hatchling.build"
 # pip removes the old `cua`. No dependency back on `cua`.
 [project]
 name = "cua-cli"
-version = "0.27.1"
+version = "0.27.2"
 description = "The cua command line (the Rust `cua` CLI) for the cua Python package"
 readme = "README.md"
 license = { text = "MIT" }

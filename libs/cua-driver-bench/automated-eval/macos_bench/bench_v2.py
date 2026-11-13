@@ -138,23 +138,28 @@ def validate_tasks(
     return problems
 
 
-def foreground_grant(spec: dict[str, Any]) -> bool:
-    """The task's harness-side foreground grant (raw-linux arm): pointer, focus and key routes are allowed only
-    when the task definition grants them. A task without the field grants nothing."""
-    grant = spec.get("foreground_grant")
+def foreground_grant(spec: dict[str, Any], macos: bool = False) -> bool:
+    """The task's harness-side foreground grant (raw arms): pointer, focus and key routes are allowed only when the
+    task definition grants them. A task without the field grants nothing. ``macos``: the raw-macos arm reads
+    ``foreground_grant_macos`` where the task has one (IR-01/IR-02's native AppKit pop-ups; Zane, 13 Nov 2026), else
+    ``foreground_grant``."""
+    grant = spec.get("foreground_grant_macos", spec.get("foreground_grant")) if macos else spec.get("foreground_grant")
     return isinstance(grant, dict) and grant.get("granted") is True
 
 
 def foreground_grant_problems(tid: str, spec: dict[str, Any]) -> list[str]:
-    grant = spec.get("foreground_grant")
-    if grant is None:
+    for field in ("foreground_grant", "foreground_grant_macos"):
+        grant = spec.get(field)
+        if grant is None:
+            continue
+        if (
+            not isinstance(grant, dict)
+            or not isinstance(grant.get("granted"), bool)
+            or not str(grant.get("reason") or "").strip()
+        ):
+            return [f"{tid}: {field} must be {{granted: bool, reason: text}}"]
+    if spec.get("foreground_grant") is None and spec.get("foreground_grant_macos") is None:
         return []
-    if (
-        not isinstance(grant, dict)
-        or not isinstance(grant.get("granted"), bool)
-        or not str(grant.get("reason") or "").strip()
-    ):
-        return [f"{tid}: foreground_grant must be {{granted: bool, reason: text}}"]
     for key in ("atspi_coverage", "ax_coverage"):
         labels = spec.get(key, {})
         if not isinstance(labels, dict) or not all(v in {"full", "partial", "none"} for v in labels.values()):

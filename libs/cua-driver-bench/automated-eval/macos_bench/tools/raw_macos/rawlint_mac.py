@@ -160,11 +160,14 @@ RULES: dict[str, Rule] = {
             "Spaces and window-server private calls",
             "block",
             "SkyLight/CGS private functions switch Spaces, reorder windows of other apps or steal key focus; the raw "
-            "runtime does not expose them.",
+            "runtime does not expose them. One exception: SLPSReleaseKeyFocusWithID, which hands key focus back to the "
+            'user\'s app, is allowed (Zane, 13 Nov 2026: "lets allow it still since it is a macos api"); raw.select '
+            "makes that call itself for a background native pop-up.",
             f"{MAC}/input/skylight.rs:4-20 (the driver's one SkyLight path: per-pid posting with an authentication "
             f"envelope); {MACOS_MD}:619-630 (its focus-without-raise recipe); {MACOS_MD}:800-803 (do not inject raw "
-            "CGEvents or use shell activation)",
-            "Use AX and raw.post_click / raw.post_key, which post to one process.",
+            f"CGEvents or use shell activation); {MAC}/key_focus_guard.rs:4-19 (the released call)",
+            "Use AX and raw.post_click / raw.post_key, which post to one process; choose a native pop-up with "
+            "raw.select, which releases the menu's key-focus theft for you.",
         ),
         Rule(
             "GUI1",
@@ -260,6 +263,9 @@ AX_SET: dict[str, str] = {
     "AXMinimized": "MB2",
 }
 AX_ACTION: dict[str, str] = {"AXRaise": "MB2", "AXShowMenu": "MB7"}
+# The one SkyLight call MB11 permits (Zane, 13 Nov 2026). A string naming exactly it is not a finding; any other
+# SkyLight or CGS name still is.
+MB11_ALLOWED = ("SLPSReleaseKeyFocusWithID",)
 # Text that names a forbidden route wherever it appears in a string.
 STRINGS: dict[str, str] = {
     "osascript": "MB5",
@@ -526,6 +532,8 @@ class _Walker(ast.NodeVisitor):
         if isinstance(value, bytes):
             value = value.decode("latin-1")
         if isinstance(value, str):
+            for name in MB11_ALLOWED:
+                value = value.replace(name, "")
             for needle, rule in STRINGS.items():
                 if needle in value:
                     self.add(rule, node, f"string {needle!r}")

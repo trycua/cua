@@ -15,10 +15,12 @@ What a script gets (``raw``):
 * Read-back helpers: ``apps``, ``windows``, ``front``, ``cursor``, ``find``, ``describe``, ``dump`` (compact, or
   scoped to a query), ``text`` (an element's visible text only), ``screenshot``.
 * Value helpers built only from the calls above, one per control kind the AX value write alone does not reach:
-  ``set_text`` (a text field), ``select`` (a pop-up or web ``<select>``), ``set_cell`` (a LibreOffice Calc cell),
+  ``set_text`` (a text field), ``select`` (a native pop-up, guarded in the background, or a web ``<select>``), ``set_cell`` (a LibreOffice Calc cell),
   ``menu`` (a menu-bar command without opening the menu). Each reads the control back and says how it was set.
 
-Nothing here calls Cua Driver: only macOS's own APIs (ApplicationServices, Quartz, AppKit through pyobjc).
+Nothing here calls Cua Driver: only macOS's own APIs (ApplicationServices, Quartz, AppKit through pyobjc), plus one
+SkyLight call, SLPSReleaseKeyFocusWithID, that ``select`` uses to hand key focus back to the user while a background
+app's native pop-up menu is open (Zane, 13 Nov 2026: "lets allow it still since it is a macos api"; rule MB11).
 
 The hook (``Watch``) samples the frontmost app, the top on-screen window, the focused app's focused window and
 element, and the real cursor every 50 ms while the script runs, and reports every change.
@@ -27,8 +29,10 @@ element, and the real cursor every 50 ms while the script runs, and reports ever
 from __future__ import annotations
 
 import base64
+import ctypes
 import json
 import os
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -177,6 +181,10 @@ def focus_sample() -> dict[str, Any]:
     }
 
 
+# Disturbances a helper saw and undid itself (the key-focus guard's window restores), for the hook's report.
+WATCH_NOTES: list[str] = []
+
+
 class Watch:
     """Samples the frontmost app, key window, focused element, top window and the real cursor every 50 ms."""
 
@@ -216,7 +224,9 @@ class Watch:
                 self.changes[key].append(after[key])
         moved = {k: v for k, v in self.changes.items() if v}
         b = self.before
-        lines = []
+        # what the key-focus guard saw and undid between two samples is a change too
+        lines = list(WATCH_NOTES)
+        changed = set(moved) | ({"top"} if WATCH_NOTES else set())
         if moved.get("front"):
             seen = ", ".join(app_name(p) for p in dict.fromkeys(moved["front"]))
             lines.append(f"frontmost app changed from {app_name(b['front'])} (seen: {seen})")
@@ -240,7 +250,7 @@ class Watch:
             lines.append(
                 f"real cursor moved from {b['cursor']} to {after['cursor']} ({len(moved['cursor'])} sample(s))"
             )
-        return {"before": b, "after": after, "changed": sorted(moved), "lines": lines}
+        return {"before": b, "after": after, "changed": sorted(changed), "lines": lines}
 
 
 def _has_web_area(el: Any, depth: int = 0, budget: list[int] | None = None) -> bool:
@@ -712,8 +722,9 @@ class Raw:
         """Choose ``label`` in a pop-up button, web ``<select>`` or combo box and read the choice back.
         A web ``<select>`` (Chrome, Electron, web views) is focused inside the page and ``label`` typed into it, so
         its menu never opens. A combo box takes an AXValue write. A native AppKit pop-up lists its items only while
-        its menu is open, and opening it takes key focus and raises the window (rule MB7): that needs the trial's
-        foreground grant."""
+        its menu is open, and opening it takes key focus and raises the window (rule MB7). On a trial with the
+        foreground grant it is opened and picked as is; otherwise the menu is opened under the key-focus guard
+        (``_pick_guarded``), and anything the guard could not undo is refused under MB7."""
         label = str(label)
         pid = self.ax.pid(el)
         role = _ax_get(el, "AXRole")
@@ -737,12 +748,44 @@ class Raw:
             STATE.route("select:typeahead")
             value = _ax_get(el, "AXValue")
             return {"route": "typeahead", "value": value, "ok": _chosen(el) == label.casefold()}
-        STATE.check("MB7", "raw.select on a native pop-up opens its menu")
-        return self._pick_from_menu(el, pid, label)
+        if STATE.granted:
+            STATE.check("MB7", "raw.select on a native pop-up opens its menu")
+            return self._pick_from_menu(el, pid, label)
+        return self._pick_guarded(el, pid, label)
 
-    def _pick_from_menu(self, el: Any, pid: int, label: str) -> dict[str, Any]:
+    def _pick_guarded(self, el: Any, pid: int, label: str) -> dict[str, Any]:
+        """A native pop-up in a background app, without the grant: open its menu and pick the item while the user's
+        app keeps key focus and its window stays on top, the way Cua Driver's key-focus guard does it
+        (platform-macos/src/key_focus_guard.rs:4-28). A tap on the user's app (CGEventTapCreateForPid) drops the
+        WindowServer notice that the target's menu took key focus; the theft is then released by id with
+        SLPSReleaseKeyFocusWithID (Zane, 13 Nov: allowed as a macOS API); if the target's window rose over the
+        user's, the user's own focused window is raised back (AXRaise on it). Anything the guard could not undo is
+        refused under MB7 after the fact, so it is reported."""
+        front = front_pid()
+        if not front or front == pid:
+            STATE.check("MB7", "raw.select on a native pop-up of the frontmost app opens its menu")
+            return self._pick_from_menu(el, pid, label)
+        guard = _KeyFocusGuard(front, pid)
+        if not guard.start():
+            STATE.refuse("MB7", "raw.select: the key-focus guard could not tap the user's app")
+        try:
+            result = self._pick_from_menu(el, pid, label, guard=guard)
+        finally:
+            problems = guard.finish()
+        STATE.route("select:menu_guarded")
+        result["route"] = "menu_guarded"
+        result["key_focus_released"] = len(guard.released)
+        result["window_restores"] = guard.restores
+        if problems:
+            STATE.refuse("MB7", "raw.select guarded pop-up: " + "; ".join(problems))
+        return result
+
+    def _pick_from_menu(
+        self, el: Any, pid: int, label: str, guard: "_KeyFocusGuard | None" = None
+    ) -> dict[str, Any]:
         """Open a native pop-up's menu (AXPress on its own thread: the call blocks while the menu tracks), press the
-        matching item as soon as it is listed, and close the menu if nothing matched."""
+        matching item as soon as it is listed, and close the menu if nothing matched. With ``guard``, the item is
+        pressed only after the guard has handed key focus back."""
         STATE.count(pid)
         AX.AXUIElementSetMessagingTimeout(el, 0.5)
         opener = threading.Thread(
@@ -763,6 +806,8 @@ class Raw:
                 None,
             )
             time.sleep(0.02)
+        if guard is not None:
+            guard.settle()
         if hit is None:
             for child in _ax_get(el, "AXChildren") or []:
                 AX.AXUIElementPerformAction(child, "AXCancel")
@@ -771,7 +816,9 @@ class Raw:
             raise LookupError(f"no item {label!r} in the pop-up; it lists {names}")
         AX.AXUIElementPerformAction(hit, "AXPress")
         opener.join(1.0)
-        time.sleep(0.2)
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and _chosen(el) != label.casefold():
+            time.sleep(0.05)
         STATE.route("select:menu")
         return {
             "route": "menu",
@@ -1361,6 +1408,219 @@ def _focus_in_app(el: Any, what: str) -> None:
             "MB3",
             f"{what}: the user's {', '.join(moved)} changed after an in-app focus in {app_name(pid)}",
         )
+
+
+# ------------------------------------------------------------------ key-focus guard (background native pop-ups)
+
+_CG = ctypes.CDLL("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices")
+_CFL = ctypes.CDLL("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+_SKYLIGHT = ctypes.CDLL("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight")
+# The one SkyLight call this runtime makes (MB11's exception).
+_release_key_focus = _SKYLIGHT.SLPSReleaseKeyFocusWithID
+_release_key_focus.argtypes = [ctypes.c_int32]
+_release_key_focus.restype = ctypes.c_int32
+_TAP_CB = ctypes.CFUNCTYPE(
+    ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_void_p
+)
+_CG.CGEventTapCreateForPid.argtypes = [
+    ctypes.c_int32,
+    ctypes.c_uint32,
+    ctypes.c_uint32,
+    ctypes.c_uint64,
+    _TAP_CB,
+    ctypes.c_void_p,
+]
+_CG.CGEventTapCreateForPid.restype = ctypes.c_void_p
+_CG.CGEventTapEnable.argtypes = [ctypes.c_void_p, ctypes.c_bool]
+_CG.CGEventGetIntegerValueField.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+_CG.CGEventGetIntegerValueField.restype = ctypes.c_int64
+_CFL.CFMachPortCreateRunLoopSource.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_long]
+_CFL.CFMachPortCreateRunLoopSource.restype = ctypes.c_void_p
+_CFL.CFMachPortInvalidate.argtypes = [ctypes.c_void_p]
+_CFL.CFRunLoopGetCurrent.restype = ctypes.c_void_p
+_CFL.CFRunLoopAddSource.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+_CFL.CFRunLoopStop.argtypes = [ctypes.c_void_p]
+_COMMON_MODES = ctypes.c_void_p.in_dll(_CFL, "kCFRunLoopCommonModes")
+
+# WindowServer focus notices (key_focus_guard.rs:325-333): event type 21, subtype field 64, thief pid field 73.
+_FOCUS_NOTICE, _F_SUBTYPE, _F_THIEF, _LOST_KEY = 21, 64, 73, 0x4000
+_TAP_DISABLED = (0xFFFFFFFE, 0xFFFFFFFF)
+# Theft ids come from one session-wide counter (it was about 120 in the bench guest after a day of trials, and grows
+# by one per menu a background app opens). A release returns 0 for a live theft and 1010 otherwise, and a theft is
+# live only while its menu is open. Without SLPSStealKeyFocusReturningID (not allowed) the target's id is unknown, so
+# the guard releases ids upward from the last id it released (a hint kept across scripts) until it finds the live
+# one, then a few past it; a scan costs about 0.1 ms per id.
+_THEFT_HINT = Path(tempfile.gettempdir()) / "raw-macos-theft-id"
+# start this far below the hint, in case the counter was reset (a WindowServer restart)
+_THEFT_BACK = 64
+_THEFT_AFTER = 16  # ids past the first live one, for a theft that landed just after it
+_THEFT_AHEAD = 10_000  # ids above the hint to look at before falling back to a scan from 1
+_THEFT_BUDGET_S = 2.0
+_MENU_LAYER = 101
+
+
+def _theft_hint() -> int:
+    try:
+        return max(1, int(_THEFT_HINT.read_text().strip()) - _THEFT_BACK)
+    except (OSError, ValueError):
+        return 1
+
+
+def _release_thefts() -> list[int]:
+    """Release the live key-focus thefts from the hint up: the first live id and any within _THEFT_AFTER of it. If the
+    hinted range (up to _THEFT_AHEAD ids) has none, the ids below it are scanned from 1 (the counter was reset)."""
+    deadline = time.monotonic() + _THEFT_BUDGET_S
+    hint = _theft_hint()
+    for start, end in ((hint, hint + _THEFT_AHEAD), (1, hint)):
+        released: list[int] = []
+        theft, stop = start, end
+        while theft < stop and time.monotonic() < deadline:
+            if _release_key_focus(theft) == 0:
+                released.append(theft)
+                stop = min(stop, theft + _THEFT_AFTER + 1)
+            theft += 1
+        if released:
+            try:
+                _THEFT_HINT.write_text(str(released[-1]))
+            except OSError:
+                pass
+            return released
+    return []
+
+
+def _target_above(target: int, front: int) -> bool:
+    """Whether a normal window of ``target`` sits above every normal window of ``front`` (front to back order)."""
+    for w in window_list():
+        if w["layer"] != 0 or w["frame"][2] <= 1 or w["frame"][3] <= 1:
+            continue
+        if w["pid"] == target:
+            return True
+        if w["pid"] == front:
+            return False
+    return False
+
+
+def _menu_up(pid: int) -> bool:
+    return any(w["pid"] == pid and w["layer"] >= _MENU_LAYER for w in window_list())
+
+
+class _KeyFocusGuard:
+    """Keeps the user's app key, and its window on top, while a background target's pop-up menu is open."""
+
+    def __init__(self, front: int, target: int) -> None:
+        self.front, self.target = int(front), int(target)
+        self.port: int | None = None
+        self.loop: int | None = None
+        self.ready = threading.Event()
+        self.stolen = threading.Event()  # the tap saw (and dropped) the target's theft
+        self.released: list[int] = []  # the theft ids handed back
+        self.scanned = False
+        self.restores = 0
+        self.done = threading.Event()
+        self.lock = threading.Lock()
+        # the user's own focused window, resolved once so a restore is one AX call
+        self.front_window = _ax_get(AX.AXUIElementCreateApplication(self.front), "AXFocusedWindow")
+        self.callback = _TAP_CB(self._on_event)  # kept alive for the tap's lifetime
+
+    def _on_event(self, proxy: Any, etype: int, event: Any, refcon: Any) -> Any:
+        if etype in _TAP_DISABLED:
+            if self.port:
+                _CG.CGEventTapEnable(self.port, True)
+            return event
+        if etype != _FOCUS_NOTICE or not event:
+            return event
+        lost = _CG.CGEventGetIntegerValueField(event, _F_SUBTYPE) == _LOST_KEY
+        if lost and _CG.CGEventGetIntegerValueField(event, _F_THIEF) == self.target:
+            self.stolen.set()
+            threading.Thread(target=self._release, daemon=True).start()
+            return None  # the user's app never hears it lost key focus
+        return event
+
+    def _release(self) -> None:
+        # Released before the menu window is on screen, AppKit orders the menu group to the front and lifts the
+        # target's window (key_focus_guard.rs:589-592), so wait for it first.
+        deadline = time.monotonic() + 0.15
+        while time.monotonic() < deadline and not _menu_up(self.target):
+            time.sleep(0.002)
+        self.restore()
+        released = _release_thefts()
+        with self.lock:
+            self.released = released
+            self.scanned = True
+
+    def _run(self) -> None:
+        port = _CG.CGEventTapCreateForPid(self.front, 0, 0, 1 << _FOCUS_NOTICE, self.callback, None)
+        if not port:
+            self.ready.set()
+            return
+        source = _CFL.CFMachPortCreateRunLoopSource(None, port, 0)
+        self.port, self.loop = port, _CFL.CFRunLoopGetCurrent()
+        _CFL.CFRunLoopAddSource(self.loop, source, _COMMON_MODES)
+        _CG.CGEventTapEnable(port, True)
+        self.ready.set()
+        _CFL.CFRunLoopRun()
+        _CFL.CFMachPortInvalidate(port)
+
+    def _watch_order(self) -> None:
+        # _release restores once the menu window is up; from then on this keeps the user's window on top for the rest
+        # of the pick, as the driver's order watch does (key_focus_guard.rs:208-215)
+        while not self.done.is_set() and not self.scanned:
+            time.sleep(0.005)
+        while not self.done.is_set():
+            self.restore()
+            time.sleep(0.005)
+
+    def start(self) -> bool:
+        threading.Thread(target=self._run, daemon=True).start()
+        self.ready.wait(2.0)
+        if self.port:
+            threading.Thread(target=self._watch_order, daemon=True).start()
+        return bool(self.port)
+
+    def restore(self) -> None:
+        """Raise the user's own focused window back above the target's (its app is already active, so key focus does
+        not move), the driver's put_front_window_back (key_focus_guard.rs:114-128)."""
+        if not _target_above(self.target, self.front):
+            return
+        win = self.front_window
+        if win is not None:
+            AX.AXUIElementPerformAction(win, "AXRaise")
+        with self.lock:
+            self.restores += 1
+
+    def settle(self) -> None:
+        """Before the item is pressed: wait until the theft was seen and released (up to 1 s)."""
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            with self.lock:
+                if self.scanned:
+                    return
+            time.sleep(0.01)
+
+    def finish(self) -> list[str]:
+        """Watch the window order for 1 s after the menu closed, stop the tap, and say what was not undone."""
+        # the order watcher keeps running; a late theft notice still goes through the tap
+        time.sleep(1.0)
+        self.done.set()
+        if self.loop:
+            _CFL.CFRunLoopStop(self.loop)
+        if self.port:
+            _CG.CGEventTapEnable(self.port, False)
+        problems = []
+        with self.lock:
+            if self.stolen.is_set() and not self.released:
+                problems.append(
+                    "the target's key-focus theft was not released (the user's window lost key focus)"
+                )
+            if self.restores:
+                # a raise the guard undid was still on screen for a moment: the hook reports it (WATCH_NOTES)
+                WATCH_NOTES.append(
+                    f"a window of {app_name(self.target)} rose over the user's window while its pop-up menu opened "
+                    f"and the key-focus guard put it back ({self.restores} time(s))"
+                )
+        if _target_above(self.target, self.front):
+            problems.append("the target's window is still above the user's window")
+        return problems
 
 
 def _menu_items(popup: Any) -> list[Any]:

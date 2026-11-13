@@ -80,7 +80,8 @@ Both return the AX error code (0 = accepted, not proof).
 ignores that (web views, a browser address bar) it focuses the field inside that app and types the text as key \
 events to the app's pid. Follow with raw.post_key(pid, "return") to submit an address bar.
 - raw.select(el, "Label") -> {route, value}: chooses an option of an AXPopUpButton or AXComboBox. A web <select> \
-(Chrome, Electron, web views) gets the label typed into it and its menu never opens.
+(Chrome, Electron, web views) gets the label typed into it and its menu never opens. A native AppKit pop-up is \
+opened and the item pressed, under the key-focus guard when the trial does not grant foreground.
 - raw.set_cell(pid, "H4", "text", window=None) -> {value, ok}: writes one LibreOffice Calc cell (on screen in the \
 visible sheet) through the formula bar. Calc ignores AX writes to cells and posted keys while it is in the \
 background, so this is the route. Change sheets by pressing the sheet tab (AXRadioButton) first. LibreOffice \
@@ -101,10 +102,14 @@ background target app and are refused (MB3) if the user's front app, key window 
 - {grant}
 - Menus are foreground too: AXShowMenu, and AXPress on an AXPopUpButton, AXMenuButton or AXMenuBarItem, open a menu \
 that takes key focus from the user's window and lifts the target window over it. A native AppKit pop-up lists its \
-items only while its menu is open and ignores an AXValue write, so raw.select on one opens it and needs the grant. \
-Run menu-bar commands with raw.menu.
+items only while its menu is open and ignores an AXValue write: raw.select on one opens it. With the grant it opens \
+as is; without it raw.select opens it under a key-focus guard that keeps the user's window key and on top (it hands \
+the menu's key-focus theft back with SLPSReleaseKeyFocusWithID) and refuses under MB7 if anything stayed changed. \
+The runtime check reports the brief raise the guard put back; that is expected. Never press the pop-up or post keys \
+to it yourself. Run menu-bar commands with raw.menu.
 - Always blocked: launching or opening apps (open, NSWorkspace, AppleScript, osascript), shells, files, network, \
-pyobjc and framework imports, private window-server calls, and Cua Driver in any form.
+pyobjc and framework imports, private window-server calls (raw.select's own key-focus release is the one \
+exception), and Cua Driver in any form.
 - Warned: cmd+L, cmd+shift+G and tab-switching shortcuts make apps activate themselves; clipboard writes replace \
 what the user copied.
 - Not available: files, processes, network and other imports (json, re, math, time, itertools, collections, \
@@ -114,7 +119,8 @@ query, a screenshot) before you report success.
 """
 GRANTED = (
     "This trial grants foreground: the routes above are allowed when no background route works (a real hover, a "
-    "drag-and-drop with no accessible action, a tooltip that only shows on hover). Each use is reported."
+    "drag-and-drop with no accessible action, a tooltip that only shows on hover, a native pop-up menu). Each use is "
+    "reported."
 )
 NOT_GRANTED = (
     "This trial does not grant foreground: the routes above are blocked. Use a background route."

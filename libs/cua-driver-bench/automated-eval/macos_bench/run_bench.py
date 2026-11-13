@@ -1256,10 +1256,10 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         (artifacts / "argv.json").write_text(json.dumps(argv, indent=2) + "\n", "utf-8")
         raw_arm = SOURCE_ARM.get(arm, arm) in ca.RAW_ARMS
         # every arm: the task's grant, for comparison. On macOS the background condition never grants foreground:
-        # its brief tells the agent to keep the user's window in front (bench_v2.BACKGROUND_BRIEF).
-        grant = v2.foreground_grant(spec) and not (
-            SOURCE_ARM.get(arm, arm) == ca.RAW_MACOS_ARM and condition == "background"
-        )
+        # its brief tells the agent to keep the user's window in front (bench_v2.BACKGROUND_BRIEF). The raw-macos arm
+        # reads the task's macOS grant where it has one (bench_v2.foreground_grant).
+        raw_macos = SOURCE_ARM.get(arm, arm) == ca.RAW_MACOS_ARM
+        grant = v2.foreground_grant(spec, macos=raw_macos) and not (raw_macos and condition == "background")
         row["foreground_grant"] = grant
         if raw_arm:
             ca.RAW_LOG.parent.mkdir(parents=True, exist_ok=True)

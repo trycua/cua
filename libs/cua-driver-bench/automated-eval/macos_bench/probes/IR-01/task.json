@@ -22,6 +22,10 @@
     "granted": false,
     "reason": "a background route exists (AT-SPI actions or the driver's background delivery)"
   },
+  "foreground_grant_macos": {
+    "granted": true,
+    "reason": "raw-macos arm, foreground condition only: the Team pop-up is a native AppKit pop-up whose items are listed only while its menu is open, and opening it takes key focus and raises the window (Zane, 13 Nov 2026 11:01 SGT: \"A yes sure\"); the background condition never grants foreground"
+  },
   "atspi_coverage": {
     "BenchLab (GTK3; AT-SPI app name 'BenchLab')": "full"
   },

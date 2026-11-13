@@ -119,10 +119,60 @@ class LintTest(unittest.TestCase):
                 found, _ = rules(source + "\nreturn raw.text(el)")
                 self.assertNotIn("VR1", found)
 
+    def test_mb11_permits_only_the_key_focus_release(self):
+        # Zane, 13 Nov 2026: SLPSReleaseKeyFocusWithID is allowed; every other SkyLight/CGS name stays blocked
+        found, ok = rules('name = "SLPSReleaseKeyFocusWithID"' + READ)
+        self.assertNotIn("MB11", found)
+        self.assertTrue(ok)
+        for source in (
+            'x = "SLPSStealKeyFocusReturningID"',
+            'x = "SLPSReleaseKeyFocusWithID SLPSSetFrontProcessWithOptions"',
+            'x = "_SLPSSetFrontProcess"',
+            'x = "/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight"',
+            'x = "CGSOrderWindow"',
+        ):
+            with self.subTest(source=source):
+                found, ok = rules(source + READ, granted=True)
+                self.assertIn("MB11", found)
+                self.assertFalse(ok)
+        # the name alone is not a route: loading SkyLight still takes ctypes, which GUI1 blocks
+        found, ok = rules(
+            "import ctypes\nctypes.CDLL(p).SLPSReleaseKeyFocusWithID(1)" + READ, granted=True
+        )
+        self.assertIn("GUI1", found)
+        self.assertFalse(ok)
+
     def test_every_rule_cites_a_source(self):
         for rule in lint.RULES.values():
             self.assertTrue(rule.source.strip(), rule.id)
             self.assertIn(rule.severity, {"block", "granted", "warn"})
+
+
+class MacGrantTest(unittest.TestCase):
+    """The raw-macos arm's per-task grant: the hover/drag tasks and, in the foreground condition, the IR tasks with a
+    native AppKit pop-up (Zane, 13 Nov 2026). Every other arm keeps the task's plain grant."""
+
+    def test_grants(self):
+        import json
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        import bench_v2 as v2
+
+        here = Path(__file__).resolve().parents[1]
+        specs = {
+            p.parent.name: json.loads(p.read_text()) for p in (here / "probes").glob("*/task.json")
+        }
+        mac = {t for t in v2.V2_TASKS if v2.foreground_grant(specs[t], macos=True)}
+        self.assertEqual(mac, {"MB-09", "MB-10", "MB-11", "IR-01", "IR-02"})
+        plain = {t for t in v2.V2_TASKS if v2.foreground_grant(specs[t])}
+        self.assertEqual(plain, {"MB-09", "MB-10", "MB-11"})
+        for t in v2.V2_TASKS:
+            self.assertEqual(v2.foreground_grant_problems(t, specs[t]), [], t)
+        bad = {"foreground_grant_macos": {"granted": True, "reason": ""}}
+        self.assertTrue(v2.foreground_grant_problems("X", bad))
+        self.assertFalse(
+            v2.foreground_grant({"foreground_grant_macos": {"granted": True, "reason": "x"}})
+        )
 
 
 if __name__ == "__main__":

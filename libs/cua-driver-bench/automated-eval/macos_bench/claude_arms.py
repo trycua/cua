@@ -367,12 +367,16 @@ RAW_FALLBACK = "cc-cua-driver-main"
 # Its runner needs pyobjc and its own TCC grants, so it runs on RAW_MACOS_PYTHON (a venv in the bench guest).
 RAW_MACOS_ARM = "cc-raw-macos"
 RAW_MACOS_ADAPTER = ADAPTER_TOOLS / "raw_macos" / "raw_mcp_mac.py"
+# The no-wrapper variant (Zane, 13 Nov 2026 16:08 SGT): the same server, lint, hook, grants and per-trial file, except
+# the script gets no raw.* runtime and imports the frameworks itself (RAW_NATIVE=1 in raw_mcp_mac.py).
+RAW_MACOS_NATIVE_ARM = "cc-raw-macos-native"
+RAW_MACOS_ARMS = (RAW_MACOS_ARM, RAW_MACOS_NATIVE_ARM)
 RAW_MACOS_PYTHON = Path(os.environ.get("CDB_RAW_MACOS_PYTHON") or Path.home() / "rmb/venv/bin/python")
 # The tree-diff variant of raw-linux: the same arm, except a re-dump of the same root in a trial returns only what
 # changed since the last one (RAW_DUMP_DIFF=1 in raw_mcp.py).
 RAW_LINUX_DIFF_ARM = "cc-raw-linux-diff"
 RAW_LINUX_ARMS = (RAW_LINUX_ARM, RAW_LINUX_DIFF_ARM)
-RAW_ARMS = (*RAW_LINUX_ARMS, RAW_MACOS_ARM)
+RAW_ARMS = (*RAW_LINUX_ARMS, *RAW_MACOS_ARMS)
 # The raw arms whose scripts may fall back to Cua Driver (raw.driver): the harness starts the fallback daemon for these.
 RAW_FALLBACK_ARMS = RAW_LINUX_ARMS
 # The app whose window plays the user in the background condition; raw-macos refuses input posted to it.
@@ -383,6 +387,7 @@ ADAPTER_ARMS = {
     RAW_LINUX_ARM: "cua",
     RAW_LINUX_DIFF_ARM: "cua",
     RAW_MACOS_ARM: "cua",
+    RAW_MACOS_NATIVE_ARM: "cua",
 }
 
 
@@ -414,7 +419,7 @@ def adapter_entry(arm: str) -> dict[str, Any]:
             },
         )
         return {"type": "stdio", "command": python, "args": ["-I", "-B", str(RAW_LINUX_ADAPTER)], "env": env}
-    elif arm == RAW_MACOS_ARM:
+    elif arm in RAW_MACOS_ARMS:
         python = str(RAW_MACOS_PYTHON)
         env = desktop.desktop_env(
             WORK / "raw-macos-home",
@@ -423,6 +428,7 @@ def adapter_entry(arm: str) -> dict[str, Any]:
                 "RAW_TMP": str(RAW_LOG.parent / "shots"),
                 "RAW_TRIAL": str(RAW_TRIAL),
                 "PYTHON": python,
+                "RAW_NATIVE": "1" if arm == RAW_MACOS_NATIVE_ARM else "0",
             },
         )
         return {"type": "stdio", "command": python, "args": ["-I", "-B", str(RAW_MACOS_ADAPTER)], "env": env}
@@ -465,6 +471,9 @@ ARM_DESCRIPTIONS = {
     RAW_MACOS_ARM: "One run_script tool (server cua) running Python against the macOS Accessibility API, "
     "per-process event posting and CoreGraphics capture behind a background-use lint and runtime hook, with no Cua "
     "Driver; foreground granted per task by the harness (tools/raw_macos), no skill",
+    RAW_MACOS_NATIVE_ARM: "The cc-raw-macos setup with no raw.* helper library: scripts import pyobjc frameworks and "
+    "ctypes and call macOS's APIs (public and private) directly, behind the same lint and runtime hook, no Cua Driver "
+    "(tools/raw_macos, RAW_NATIVE=1)",
     "cc-codex-cu": "Claude Code + Codex computer-use cua_repl MCP (server codex-cu), no skill",
     "cc-codex-cu-1007-browser": "Claude Code + Codex 26.1007.21159 cua_repl MCP (server codex-cu), surfaces browser+computer, no skill (Amendment 10)",
     "cc-claude-cu-helper": "Claude Code + "
@@ -485,6 +494,18 @@ RAW_MACOS_ADDENDUM = (
     "(`raw.set_text`, `raw.select`, `raw.set_cell`, `raw.menu`) on the elements you found, use loops and if/else, and "
     "`return` what you need to check the result. A blocked or failed script comes back with the rule or the traceback; "
     "fix it and run it again.\n"
+    'Pass "timeout_ms": 120000 on every run_script call.\n'
+)
+
+RAW_MACOS_NATIVE_ADDENDUM = (
+    "\n\nrun_script is your only tool: every read and every action is one Python script that calls the macOS "
+    "desktop's own APIs directly (import ApplicationServices for the Accessibility API, Quartz for events posted to "
+    "one process and window capture, AppKit, and ctypes for private frameworks); there is no helper library. Its "
+    "description lists what is available and the background rules the script is checked against. To look, walk the "
+    "AX tree of the app (AXUIElementCreateApplication(pid), AXChildren, AXRole, AXTitle, AXValue) and `return` a "
+    "compact summary, or write a PNG into SHOTS. To act, use AX actions and attribute writes and per-process events "
+    "on the elements you found, use loops and if/else, and `return` what you need to check the result. A blocked or "
+    "failed script comes back with the rule or the traceback; fix it and run it again.\n"
     'Pass "timeout_ms": 120000 on every run_script call.\n'
 )
 
@@ -519,6 +540,8 @@ def system_prompt_for(arm: str, *, browser: bool = False) -> str:
         return prompt + RAW_LINUX_ADDENDUM
     if arm == RAW_MACOS_ARM:
         return prompt + RAW_MACOS_ADDENDUM
+    if arm == RAW_MACOS_NATIVE_ARM:
+        return prompt + RAW_MACOS_NATIVE_ADDENDUM
     build = CUA_BUILDS.get(arm)
     if build is None:
         return prompt

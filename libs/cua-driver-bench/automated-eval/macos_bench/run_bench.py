@@ -690,6 +690,15 @@ def real_capture_check(ctx: "Ctx", arm: str) -> tuple[str, str, str]:
                     "raw.screenshot()\nw = raw.driver('list_windows', {})\n"
                     "return [len(raw.windows()), len(w.get('windows') or [])]"
                     if source in ca.RAW_FALLBACK_ARMS
+                    else "import Quartz\nimport AppKit\n"  # raw-macos-native: a capture written into SHOTS
+                    "img = Quartz.CGWindowListCreateImage(Quartz.CGRectInfinite, "
+                    "Quartz.kCGWindowListOptionOnScreenOnly, Quartz.kCGNullWindowID, "
+                    "Quartz.kCGWindowImageNominalResolution)\n"
+                    "d = Quartz.CGImageDestinationCreateWithURL("
+                    "AppKit.NSURL.fileURLWithPath_(SHOTS + '/p.png'), 'public.png', 1, None)\n"
+                    "Quartz.CGImageDestinationAddImage(d, img, None)\nQuartz.CGImageDestinationFinalize(d)\n"
+                    "return len(Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionOnScreenOnly, 0))"
+                    if source == ca.RAW_MACOS_NATIVE_ARM
                     else "raw.screenshot()\nreturn len(raw.windows())"  # raw-macos: no driver
                 )
                 result = call("run_script", {"script": script, "timeout_ms": 60000})
@@ -1258,7 +1267,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         # every arm: the task's grant, for comparison. On macOS the background condition never grants foreground:
         # its brief tells the agent to keep the user's window in front (bench_v2.BACKGROUND_BRIEF). The raw-macos arm
         # reads the task's macOS grant where it has one (bench_v2.foreground_grant).
-        raw_macos = SOURCE_ARM.get(arm, arm) == ca.RAW_MACOS_ARM
+        raw_macos = SOURCE_ARM.get(arm, arm) in ca.RAW_MACOS_ARMS
         grant = v2.foreground_grant(spec, macos=raw_macos) and not (raw_macos and condition == "background")
         row["foreground_grant"] = grant
         if raw_arm:
@@ -1269,7 +1278,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
                 "trial_id": entry["trial_id"],
                 "foreground_grant": grant,
                 "coverage": (
-                    spec.get("ax_coverage") if SOURCE_ARM.get(arm, arm) == ca.RAW_MACOS_ARM else spec.get("atspi_coverage")
+                    spec.get("ax_coverage") if SOURCE_ARM.get(arm, arm) in ca.RAW_MACOS_ARMS else spec.get("atspi_coverage")
                 )
                 or {},
                 "user_apps": list(ca.RAW_USER_APPS) if condition == "background" else [],
@@ -2764,7 +2773,7 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
     for arm in [a for a in ctx.arm_names if a in pia.ARMS] if with_models and not offline else []:
         try:
             source = pia.SOURCE_ARM[arm]
-            if source != ca.RAW_MACOS_ARM:  # raw-macos has no Cua Driver
+            if source not in ca.RAW_MACOS_ARMS:  # raw-macos has no Cua Driver
                 ensure_agent_daemon(ctx, ca.RAW_FALLBACK if source in ca.RAW_ARMS else source)
             status, detail = pia.init_check(
                 arm,

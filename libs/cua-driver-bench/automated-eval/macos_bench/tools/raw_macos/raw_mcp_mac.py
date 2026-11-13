@@ -45,6 +45,8 @@ TMP = Path(os.environ.get("RAW_TMP") or tempfile.mkdtemp(prefix="raw-macos-"))
 TMP.mkdir(parents=True, exist_ok=True)
 PYTHON = os.environ.get("PYTHON") or sys.executable
 DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS = 30_000, 120_000
+# The no-wrapper arm (pi-raw-macos-native): scripts call the frameworks directly, with no raw.* runtime
+NATIVE = os.environ.get("RAW_NATIVE") == "1"
 # raw_mac.GUARD_MARKER (raw_mac imports the frameworks, so the server does not import it)
 GUARD_MARKER = "key-focus-guard-open"
 
@@ -125,6 +127,53 @@ functools, string, textwrap are importable); eval/exec, private attributes, geta
 - An action the API accepted is not proof it worked: read the element back (raw.ax.get, raw.text, raw.dump with a \
 query, a screenshot) before you report success.
 """
+NATIVE_DESCRIPTION = """\
+Run one Python script against the macOS desktop. The script body runs inside a function, so `return` a value \
+(JSON-able) to see it; print() output is returned too. Each call is a fresh process: nothing persists between calls.
+
+Call macOS's own APIs directly; there is no helper library and no other automation layer. Any native macOS API, \
+public or private, is allowed. Import what you need: pyobjc's ApplicationServices / HIServices (the Accessibility \
+API: AXUIElementCreateApplication, AXUIElementCopyAttributeValue, AXUIElementSetAttributeValue, \
+AXUIElementPerformAction, AXUIElementCopyActionNames, ...), Quartz (CGWindowListCopyWindowInfo, \
+CGEventCreateKeyboardEvent, CGEventCreateMouseEvent, CGEventKeyboardSetUnicodeString, CGEventPostToPid, \
+CGWindowListCreateImage, CGImageDestination*), AppKit / Foundation (NSWorkspace.runningApplications, \
+NSRunningApplication), CoreFoundation, ScreenCaptureKit, objc, and ctypes for private frameworks and symbols (for \
+example ctypes.CDLL("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight") for SLEventPostToPid, \
+SLPSPostEventRecordTo, SLPSReleaseKeyFocusWithID, or _AXUIElementGetWindow in ApplicationServices). A pyobjc object's \
+pointer for ctypes is obj.__c_void_p__(). Also importable: json, re, math, time, itertools, collections, \
+functools, string, textwrap, dataclasses, typing, enum.
+{coverage}
+
+Screenshots: write PNG files into the directory named by the global SHOTS (for example with \
+CGWindowListCreateImage and CGImageDestinationCreateWithURL); each PNG there comes back to you as an image.
+
+Background contract (the script is checked before it runs, and a hook samples the user's frontmost app, key window, \
+focused element, top window and real cursor every 50 ms while it runs and reports every change):
+- The user's frontmost app, key window, focused element, window order and real cursor must stay as they are. \
+Foreground routes: events posted at the HID or session tap (CGEventPost) or cursor warps, which move or press the \
+real pointer; activating an app or AXRaise; writing AXFrontmost / AXMain / AXFocused / AXFocusedUIElement / \
+AXFocusedWindow / AXMainWindow / AXMinimized / AXHidden; opening a menu (AXShowMenu, AXPress on an AXPopUpButton, \
+AXMenuButton or AXMenuBarItem, a posted right-click, or a posted Down, Up or Space to a focused pop-up), which takes \
+key focus from the user's window and lifts the target window over it.
+- {grant}
+- Posting keys or clicks to the user's own app (the apps the task names as the user's) changes their work: post to \
+the target app's pid.
+- Always blocked: launching or opening apps (open, NSWorkspace open/launch, AppleScript, osascript, NSTask), shells, \
+processes, files, network, ctypes.pythonapi, eval/exec, dunder attributes other than __c_void_p__, getattr with \
+computed names, and Cua Driver in any form.
+- Warned: cmd+L, cmd+shift+G and tab-switching shortcuts make apps activate themselves; clipboard writes replace \
+what the user copied.
+- An action the API accepted is not proof it worked: read the element back (AXValue, the window's text, a \
+screenshot) before you report success.
+"""
+NATIVE_GRANTED = (
+    "This trial grants foreground: the foreground routes above are allowed when no background route works. Each "
+    "use is reported."
+)
+NATIVE_NOT_GRANTED = (
+    "This trial does not grant foreground: the routes above are not allowed. Use a background route (AX actions and "
+    "values, events posted to the target app's pid)."
+)
 GRANTED = (
     "This trial grants foreground: the routes above are allowed when no background route works (a real hover, a "
     "drag-and-drop with no accessible action, a tooltip that only shows on hover, a native pop-up menu). Each use is "
@@ -151,6 +200,9 @@ def description(settings: dict) -> str:
         if labels
         else "AX coverage of this task's apps: not measured."
     )
+    if NATIVE:
+        grant = NATIVE_GRANTED if settings.get("foreground_grant") else NATIVE_NOT_GRANTED
+        return NATIVE_DESCRIPTION.replace("{coverage}", coverage).replace("{grant}", grant)
     grant = GRANTED if settings.get("foreground_grant") else NOT_GRANTED
     return DESCRIPTION.replace("{coverage}", coverage).replace("{grant}", grant)
 
@@ -313,8 +365,12 @@ def run_script(script: str, timeout_ms: int | None) -> tuple[list[dict], bool, d
                 " (this trial grants foreground)."
                 if granted
                 else ". This trial does not grant foreground: if your script caused this, use a background route "
-                "(an AX action or value, raw.set_text / raw.select / raw.set_cell / raw.menu, or an event posted to "
-                "the app's pid)."
+                + (
+                    "(an AX action or value, or an event posted to the app's pid)."
+                    if NATIVE
+                    else "(an AX action or value, raw.set_text / raw.select / raw.set_cell / raw.menu, or an event "
+                    "posted to the app's pid)."
+                )
             )
         )
     for item in result.get("runtime_blocked") or []:
@@ -383,7 +439,9 @@ def serve() -> None:
                         "capabilities": {"tools": {}},
                         "serverInfo": {"name": "cua", "version": "raw-macos-prototype"},
                         "instructions": "One tool, run_script: Python against the macOS Accessibility API, "
-                        "per-process events and window capture. Read its description first.",
+                        "per-process events and window capture"
+                        + (", called directly (no helper library)" if NATIVE else "")
+                        + ". Read its description first.",
                     }
                 }
             )

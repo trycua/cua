@@ -309,6 +309,77 @@ ESCAPES = {
     "in_dll",
     "pyobjc_unicode",
 }
+# The no-wrapper arm (pi-raw-macos-native, RAW_NATIVE=1): scripts import the frameworks and call macOS's own APIs,
+# public and private, with no raw.* helpers (Zane, 13 Nov 2026 16:08 SGT; 13:38 SGT: any native macOS API is raw).
+# Framework loading is allowed; shells, processes, files, network and the CPython C API stay out (GUI1).
+NATIVE_IMPORTS = {
+    "objc",
+    "AppKit",
+    "Foundation",
+    "Quartz",
+    "ApplicationServices",
+    "HIServices",
+    "CoreFoundation",
+    "CoreText",
+    "CoreMedia",
+    "ScreenCaptureKit",
+    "PyObjCTools",
+    "ctypes",
+}
+NATIVE_ESCAPES = {"pythonapi", "PYFUNCTYPE", "ScriptingBridge"}
+# Process, file and network entry points a script could reach through ctypes or Foundation once frameworks load (GUI1)
+NATIVE_SIDE_DOORS = {
+    "posix_spawn",
+    "posix_spawnp",
+    "execve",
+    "execl",
+    "execlp",
+    "fopen",
+    "unlink",
+    "socket",
+    "connect",
+    "NSFileManager",
+    "NSFileHandle",
+    "NSPipe",
+    "NSURLSession",
+    "NSURLConnection",
+}
+# SkyLight/CPS calls that make a process frontmost (MB2, as SetFrontProcess)
+NATIVE_FRONT = {
+    "SLPSSetFrontProcessWithOptions",
+    "_SLPSSetFrontProcessWithOptions",
+    "CPSSetFrontProcess",
+}
+NATIVE_LOADERS = {"CDLL", "cdll", "LoadLibrary", "dlopen", "loadBundle"}
+# dunders that bridge pyobjc and ctypes; every other dunder stays blocked (GUI2)
+NATIVE_DUNDERS = {"__c_void_p__", "__pyobjc_object__"}
+# AX constants pyobjc exports for the attribute and action names the contract names (native AXUIElement* calls)
+AX_CONSTANTS = {
+    "kAXFrontmostAttribute": "AXFrontmost",
+    "kAXMainAttribute": "AXMain",
+    "kAXFocusedAttribute": "AXFocused",
+    "kAXFocusedUIElementAttribute": "AXFocusedUIElement",
+    "kAXFocusedWindowAttribute": "AXFocusedWindow",
+    "kAXMainWindowAttribute": "AXMainWindow",
+    "kAXHiddenAttribute": "AXHidden",
+    "kAXMinimizedAttribute": "AXMinimized",
+    "kAXRaiseAction": "AXRaise",
+    "kAXShowMenuAction": "AXShowMenu",
+}
+
+
+def import_ok(name: str, native: bool = False) -> bool:
+    if native:
+        return name != "raw" and (name in IMPORT_OK or name.split(".")[0] in NATIVE_IMPORTS)
+    return name in IMPORT_OK
+
+
+def private_ok(name: str, native: bool) -> bool:
+    """A name starting with _ the script may use: none in the wrapper arm; in the native arm a private API name
+    (one leading underscore, as _AXUIElementGetWindow) or a pyobjc/ctypes bridge dunder."""
+    return native and (name in NATIVE_DUNDERS or not name.startswith("__"))
+
+
 DYNAMIC = {
     "eval",
     "exec",
@@ -442,7 +513,8 @@ def _pos(node: ast.AST) -> tuple[int, int]:
 
 
 class _Walker(ast.NodeVisitor):
-    def __init__(self) -> None:
+    def __init__(self, native: bool = False) -> None:
+        self.native = native
         self.findings: list[Finding] = []
         self.last_action: tuple[int, int] = (0, 0)
         self.last_read: tuple[int, int] = (0, 0)
@@ -464,25 +536,39 @@ class _Walker(ast.NodeVisitor):
             return  # a local called "activate"
         if rule == "DRV1" and isinstance(node, ast.Name):
             return  # a local called "driver"; raw.driver and getattr(raw, "driver") still hit
+        if self.native and rule == "DRV1" and name == "driver":
+            return  # no raw.driver in the native arm; the driver's names, binary and socket still hit (STRINGS)
+        if self.native and name in NATIVE_LOADERS:
+            return  # framework loading is the native arm's point
+        if self.native and rule is None:
+            rule = "GUI1" if name in NATIVE_SIDE_DOORS else "MB2" if name in NATIVE_FRONT else None
         if rule:
             self.add(rule, node, name)
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
-            if alias.name not in IMPORT_OK:
+            if not import_ok(alias.name, self.native):
                 self.add("GUI1", node, f"import {alias.name}")
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        if (node.module or "") not in IMPORT_OK:
+        if node.level or not import_ok(node.module or "", self.native):
             self.add("GUI1", node, f"from {node.module} import ...")
+        for alias in node.names:  # from Quartz import CGEventPost: the imported name is the call
+            if self.native and alias.name in (NATIVE_SIDE_DOORS | NATIVE_FRONT):
+                self.name_hit(alias.name, node)
+            elif alias.name in NAMES and NAMES[alias.name] != "GUI1":
+                self.name_hit(
+                    alias.name,
+                    ast.Attribute(value=ast.Name(id="_"), attr=alias.name, lineno=node.lineno),
+                )
         self.generic_visit(node)
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
         self.name_hit(node.attr, node)
-        if node.attr.startswith("_"):
+        if node.attr.startswith("_") and not private_ok(node.attr, self.native):
             self.add("GUI2", node, f"private attribute {node.attr}")
-        elif node.attr in ESCAPES:
+        elif node.attr in self.escapes():
             self.add("GUI1", node, f"attribute {node.attr}")
         if node.attr in ACTIONS and _dotted(node.value) in {"raw", "raw.ax"}:
             self.last_action = max(self.last_action, _pos(node))
@@ -497,11 +583,13 @@ class _Walker(ast.NodeVisitor):
             self.add("GUI2", node, f"{node.id} used as a value")
         if node.id in DYNAMIC:
             self.add("GUI2", node, node.id)
-        elif node.id in ESCAPES:
+        elif node.id in self.escapes():
             self.add("GUI1", node, f"name {node.id}")
         elif node.id in FILE_CALLS:
             self.add("GUI1", node, f"{node.id}() reads or writes files")
         elif node.id in NAMES and NAMES[node.id] != "GUI1":
+            self.name_hit(node.id, node)
+        elif self.native and (node.id in NATIVE_SIDE_DOORS or node.id in NATIVE_FRONT):
             self.name_hit(node.id, node)
         self.generic_visit(node)
 
@@ -515,7 +603,12 @@ class _Walker(ast.NodeVisitor):
                     self.add(rule, node, f"string {needle!r}")
             if value in NAMES and NAMES[value] != "GUI1" and value not in ("activate", "driver"):
                 self.add(NAMES[value], node, f"name {value!r} in a string")
-            if value.startswith("_") and value.strip("_") and value.isidentifier():
+            if (
+                value.startswith("_")
+                and value.strip("_")
+                and value.isidentifier()
+                and not private_ok(value, self.native)
+            ):
                 self.add("GUI2", node, f"private name {value!r} in a string")
         self.generic_visit(node)
 
@@ -532,7 +625,9 @@ class _Walker(ast.NodeVisitor):
                 self.add("GUI2", node, "getattr with a computed name")
             else:
                 self.name_hit(attr, node)
-                if attr.startswith("_") or attr in ESCAPES:
+                if (
+                    attr.startswith("_") and not private_ok(attr, self.native)
+                ) or attr in self.escapes():
                     self.add("GUI2", node, f"getattr {attr!r}")
         if func == "raw.ax.set" and len(node.args) >= 2:
             attr = _const_str(node.args[1])
@@ -542,6 +637,17 @@ class _Walker(ast.NodeVisitor):
             action = _const_str(node.args[1])
             if action in AX_ACTION:
                 self.add(AX_ACTION[action], node, f"raw.ax.perform(..., {action!r})")
+        if (
+            self.native
+            and last in {"AXUIElementSetAttributeValue", "AXUIElementPerformAction"}
+            and len(node.args) >= 2
+        ):
+            name = _const_str(node.args[1])
+            if name is None and isinstance(node.args[1], (ast.Name, ast.Attribute)):
+                name = AX_CONSTANTS.get(_dotted(node.args[1]).rsplit(".", 1)[-1])
+            table = AX_SET if last == "AXUIElementSetAttributeValue" else AX_ACTION
+            if name in table:
+                self.add(table[name], node, f"{last}(..., {name!r})")
         if func == "raw.post_click":
             right = len(node.args) >= 4 and _const_str(node.args[3]) == "right"
             right = right or any(
@@ -552,6 +658,9 @@ class _Walker(ast.NodeVisitor):
         if func == "raw.post_key":
             self.keys(node)
         self.generic_visit(node)
+
+    def escapes(self) -> set[str]:
+        return NATIVE_ESCAPES if self.native else ESCAPES
 
     def keys(self, node: ast.Call) -> None:
         for child in ast.walk(node):
@@ -565,11 +674,12 @@ class _Walker(ast.NodeVisitor):
                     self.add("MB9", node, "keys " + "+".join(keys))
 
 
-def lint(source: str, granted: bool = False) -> Report:
-    """Findings for one script on a trial with or without the harness's foreground grant. A syntax error is the
-    caller's problem, not a finding."""
+def lint(source: str, granted: bool = False, native: bool = False) -> Report:
+    """Findings for one script on a trial with or without the harness's foreground grant. ``native``: the no-wrapper
+    arm's script (framework imports, ctypes and private API names allowed). A syntax error is the caller's problem,
+    not a finding."""
     tree = ast.parse(source, "<script>", "exec")
-    walker = _Walker()
+    walker = _Walker(native)
     walker.visit(tree)
     if walker.last_action > (0, 0) and walker.last_read <= walker.last_action:
         walker.add(

@@ -372,3 +372,95 @@ class Utf16Test(unittest.TestCase):
         for text, n in (("13:00", 5), ("", 0), ("a\U0001f600b", 4), ("\u00e9", 1)):
             with self.subTest(text=text):
                 self.assertEqual(env["_utf16_len"](text), n)
+
+
+def native(source: str, granted: bool = False) -> tuple[set[str], bool]:
+    report = lint.lint(source, granted=granted, native=True)
+    return {f.rule for f in report.findings}, report.ok
+
+
+class NativeLintTest(unittest.TestCase):
+    """The no-wrapper arm (Zane, 13 Nov 2026 16:08 SGT): scripts import the frameworks and call macOS's APIs, public
+    and private, directly; the background contract and the Cua Driver ban are unchanged."""
+
+    def test_framework_calls_run(self):
+        for source in (
+            "import ApplicationServices as AX\napp = AX.AXUIElementCreateApplication(1)\n"
+            "err, v = AX.AXUIElementCopyAttributeValue(app, 'AXWindows', None)\nreturn str(v)",
+            "from Quartz import CGEventPostToPid, CGEventCreateKeyboardEvent\n"
+            "e = CGEventCreateKeyboardEvent(None, 36, True)\nCGEventPostToPid(1, e)\nreturn 1",
+            "import ctypes\nsl = ctypes.CDLL('/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight')\n"
+            "sl.SLEventPostToPid(1, ctypes.c_void_p(e.__c_void_p__().value))\nreturn 1",
+            "import ctypes\ncg = ctypes.CDLL(p)\nf = cg._AXUIElementGetWindow\nreturn 1",
+            "import AppKit\nreturn [str(a.localizedName()) for a in "
+            "AppKit.NSWorkspace.sharedWorkspace().runningApplications()]",
+        ):
+            with self.subTest(source=source):
+                found, ok = native(source)
+                self.assertTrue(ok, found)
+                self.assertFalse(found & {"GUI1", "GUI2"}, found)
+        # the wrapper arm still blocks the same scripts
+        self.assertFalse(rules("import Quartz\nreturn 1")[1])
+
+    def test_background_contract_still_holds(self):
+        for source, rule in (
+            ("import Quartz\nQuartz.CGEventPost(0, e)\nreturn 1", "MB1"),
+            ("import Quartz\nQuartz.CGWarpMouseCursorPosition((1, 2))\nreturn 1", "MB1"),
+            ("import AppKit\napp.activateWithOptions_(0)\nreturn 1", "MB2"),
+            (
+                "import ctypes\nsl = ctypes.CDLL(p)\nsl.SLPSSetFrontProcessWithOptions(psn, 0, 0)\nreturn 1",
+                "MB2",
+            ),
+            (
+                "import ApplicationServices as AX\nAX.AXUIElementPerformAction(w, 'AXRaise')\nreturn 1",
+                "MB2",
+            ),
+            (
+                "import ApplicationServices as AX\nAX.AXUIElementPerformAction(w, AX.kAXRaiseAction)\nreturn 1",
+                "MB2",
+            ),
+            (
+                "import ApplicationServices as AX\nAX.AXUIElementSetAttributeValue(e, 'AXFocused', True)\nreturn 1",
+                "MB3",
+            ),
+            (
+                "from ApplicationServices import AXUIElementSetAttributeValue, kAXFrontmostAttribute\n"
+                "AXUIElementSetAttributeValue(a, kAXFrontmostAttribute, True)\nreturn 1",
+                "MB2",
+            ),
+            (
+                "import ApplicationServices as AX\nAX.AXUIElementPerformAction(p, 'AXShowMenu')\nreturn 1",
+                "MB7",
+            ),
+        ):
+            with self.subTest(source=source):
+                found, ok = native(source)
+                self.assertIn(rule, found)
+                self.assertFalse(ok)
+                self.assertTrue(native(source, granted=True)[1])
+
+    def test_side_doors_and_driver_stay_blocked(self):
+        for source in (
+            "import subprocess",
+            "import os",
+            "from . import x",
+            "import ctypes\nctypes.pythonapi.Py_Exit(0)",
+            "x.__class__",
+            "x.__dict__",
+            "open('/etc/passwd')",
+            "eval('1')",
+            "getattr(x, name)",
+            "import AppKit\nAppKit.NSWorkspace.sharedWorkspace().openURL_(u)",
+            "import Foundation\nFoundation.NSAppleScript.alloc()",
+            "import Foundation\nFoundation.NSTask.alloc()",
+            'x = "osascript"',
+            'x = "/Applications/CuaDriver.app/Contents/MacOS/cua-driver"',
+            "import cua_driver",
+            "import raw",
+            "import ctypes\nctypes.CDLL(None).posix_spawn(a, b)",
+            "import ctypes\nctypes.CDLL(None).system(b'ls')",
+            "from Foundation import NSFileManager",
+        ):
+            with self.subTest(source=source):
+                found, ok = native(source + "\nreturn 1", granted=True)
+                self.assertFalse(ok, (source, found))

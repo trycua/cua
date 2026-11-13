@@ -9,6 +9,11 @@ The MCP server starts one runner per run_script call (a fresh process, killed at
 cannot keep state between calls or outlive its call. The script body is wrapped in a function, so it may ``return`` a
 value. Builtins are restricted (no open, eval, exec, compile, input, breakpoint) and ``import`` only admits
 rawlint_mac.IMPORT_OK. The lint runs first; a blocked script never starts.
+
+With RAW_NATIVE=1 (the no-wrapper arm, pi-raw-macos-native) the script gets no ``raw`` runtime: it imports the
+frameworks itself (rawlint_mac.NATIVE_IMPORTS: pyobjc's AppKit, Quartz, ApplicationServices, ... and ctypes for
+private frameworks such as SkyLight) and calls macOS's APIs directly. Its globals carry ``SHOTS``, a directory path:
+every PNG the script writes there comes back to the model as an image. The hook (raw_mac.Watch) runs the same way.
 """
 
 from __future__ import annotations
@@ -53,13 +58,31 @@ def _jsonable(value: Any) -> Any:
         return str(value)
 
 
+NATIVE = os.environ.get("RAW_NATIVE") == "1"
+
+
 def _guarded_getattr(obj: Any, name: str, *default: Any) -> Any:
     """getattr for scripts: the same refusals as the lint, applied to the name the script computed."""
-    if not isinstance(name, str) or name.startswith("_") or name in rawlint.ESCAPES:
+    escapes = rawlint.NATIVE_ESCAPES if NATIVE else rawlint.ESCAPES
+    if (
+        not isinstance(name, str)
+        or (name.startswith("_") and not rawlint.private_ok(name, NATIVE))
+        or name in escapes
+    ):
         raise AttributeError(f"{name!r} is not available to raw-macos scripts (rule GUI2)")
     import raw_mac
 
     rule = rawlint.NAMES.get(name)
+    if NATIVE and (name in rawlint.NATIVE_LOADERS or (rule == "DRV1" and name == "driver")):
+        rule = None
+    if NATIVE and rule is None:
+        rule = (
+            "GUI1"
+            if name in rawlint.NATIVE_SIDE_DOORS
+            else "MB2"
+            if name in rawlint.NATIVE_FRONT
+            else None
+        )
     if rule in {"GUI1", "MB5"}:
         raw_mac.STATE.refuse(rule, f"getattr {name}")
     raw_mac.STATE.check(rule, f"getattr {name}")
@@ -69,9 +92,10 @@ def _guarded_getattr(obj: Any, name: str, *default: Any) -> Any:
 def _guarded_import(
     name: str, globals_: Any = None, locals_: Any = None, fromlist: Any = (), level: int = 0
 ) -> Any:
-    if name not in rawlint.IMPORT_OK or level:
+    if level or not rawlint.import_ok(name, NATIVE):
         raise ImportError(
-            f"import {name} is not available to raw-macos scripts (GUI-only, rule GUI1); use raw.*"
+            f"import {name} is not available to raw-macos scripts (GUI-only, rule GUI1)"
+            + ("" if NATIVE else "; use raw.*")
         )
     if name == "raw":
         return sys.modules["raw_runtime"]
@@ -81,7 +105,7 @@ def _guarded_import(
 def run(source: str, image_dir: Path) -> dict[str, Any]:
     out: dict[str, Any] = {"ok": False, "lint": [], "lint_blocked": False}
     try:
-        report = rawlint.lint(source, granted=os.environ.get("RAW_GRANT") == "1")
+        report = rawlint.lint(source, granted=os.environ.get("RAW_GRANT") == "1", native=NATIVE)
     except SyntaxError as error:
         out["error"] = f"SyntaxError: {error.msg} (line {error.lineno})"
         return out
@@ -99,8 +123,11 @@ def run(source: str, image_dir: Path) -> dict[str, Any]:
     import raw_mac  # the frameworks load only for a script that passed the lint
 
     raw_mac.STATE.image_dir = image_dir
-    handle = raw_mac.make()
-    sys.modules["raw_runtime"] = handle
+    handle = None if NATIVE else raw_mac.make()
+    if handle is not None:
+        sys.modules["raw_runtime"] = handle
+    shots = image_dir / "shots"
+    shots.mkdir(exist_ok=True)
     tree = ast.parse(source, "<script>", "exec")
     func = ast.FunctionDef(
         name="__script",
@@ -117,7 +144,11 @@ def run(source: str, image_dir: Path) -> dict[str, Any]:
     safe["getattr"] = _guarded_getattr
     for name in ("setattr", "delattr", "vars", "globals", "locals", "memoryview"):
         safe.pop(name, None)
-    env: dict[str, Any] = {"__builtins__": safe, "raw": handle, "__name__": "script"}
+    env: dict[str, Any] = (
+        {"__builtins__": safe, "SHOTS": str(shots), "__name__": "script"}
+        if NATIVE
+        else {"__builtins__": safe, "raw": handle, "__name__": "script"}
+    )
     exec(compile(module, "<script>", "exec"), env)  # noqa: S102 - the script, after the lint
     printed = io.StringIO()
     watch = raw_mac.Watch().start()
@@ -139,7 +170,9 @@ def run(source: str, image_dir: Path) -> dict[str, Any]:
         out["runtime_warned"] = list(raw_mac.STATE.runtime_warned)
         out["routes"] = dict(raw_mac.STATE.routes)
         out["raw_actions"] = dict(raw_mac.STATE.raw_actions)
-        out["images"] = [str(p) for p in raw_mac.STATE.images]
+        out["images"] = [str(p) for p in raw_mac.STATE.images] + [
+            str(p) for p in sorted(shots.glob("*.png"))[:8]
+        ]
     return out
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.36.4](https://github.com/trycua/cua/compare/cua-spaces-v0.36.3...cua-spaces-v0.36.4) (2026-11-13)
+
+
+### Bug Fixes
+
+* **spaces:** one Add a computer on the Computers tab ([#7538](https://github.com/trycua/cua/issues/7538)) ([34461d7](https://github.com/trycua/cua/commit/34461d7ac31ac70f53e5a9b0a99828fe7276cd6e))
+
 ## [0.36.3](https://github.com/trycua/cua/compare/cua-spaces-v0.36.2...cua-spaces-v0.36.3) (2026-11-12)
 
 

@@ -398,9 +398,19 @@ fn session_first_actions_show_pointer_and_badge_in_the_video() {
         );
         settle(ACTION_DWELL_MS);
 
-        // Ending the session hides its cursor, so the video's last frame is
-        // the desktop the overlay was drawn over: the fixture state the clicks
-        // left and the real pointer where the coordinate click put it.
+        // Park the cursor away from all three places before ending the
+        // session. macOS ScreenCaptureKit can drop the last two seconds of a
+        // clip, so the coordinate rest must not be the end of the video, and
+        // its last frame, the baseline, must not show the cursor at a place
+        // the oracle checks.
+        let places = [keyboard_point, semantic_point, coordinate_point];
+        let parking = parking_point((screen_width, screen_height), &places);
+        call_ok(
+            &mut driver,
+            "move_cursor",
+            serde_json::json!({"session": session, "x": parking.0, "y": parking.1}),
+        );
+        settle(ACTION_DWELL_MS);
         call_ok(
             &mut driver,
             "end_session",
@@ -415,7 +425,6 @@ fn session_first_actions_show_pointer_and_badge_in_the_video() {
             )
         });
 
-        let places = [keyboard_point, semantic_point, coordinate_point];
         for (index, a) in places.iter().enumerate() {
             for b in &places[index + 1..] {
                 assert!(
@@ -478,6 +487,27 @@ fn element_target(state: &ToolResponse, identifier: &str) -> (String, (f64, f64)
         state.element_token(index).to_owned(),
         (x + width / 2.0, y + height / 2.0),
     )
+}
+
+/// A screen point whose overlay footprint misses those of `places` and stays
+/// on screen.
+fn parking_point((width, height): (f64, f64), places: &[(f64, f64)]) -> (f64, f64) {
+    [
+        (0.25, 0.25),
+        (0.75, 0.25),
+        (0.25, 0.7),
+        (0.75, 0.7),
+        (0.5, 0.25),
+        (0.5, 0.7),
+    ]
+    .into_iter()
+    .map(|(x, y)| (width * x, height * y))
+    .find(|point| {
+        places
+            .iter()
+            .all(|place| !overlay_footprints_overlap(*place, *point))
+    })
+    .unwrap_or_else(|| panic!("no parking point clear of {places:?} on a {width}x{height} screen"))
 }
 
 /// Whether a cursor resting at `a` and one resting at `b` (screen points)

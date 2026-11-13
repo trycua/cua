@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.36.7](https://github.com/trycua/cua/compare/cua-spaces-v0.36.6...cua-spaces-v0.36.7) (2026-11-13)
+
+
+### Bug Fixes
+
+* **deps:** upgrade pillow to 13.0.0 and soupsieve to 4.1 (CVE-2026-128066, CVE-2026-128067, CVE-2026-126190) ([#7598](https://github.com/trycua/cua/issues/7598)) ([4d14f88](https://github.com/trycua/cua/commit/4d14f88d9482528ea0e9bdf2c7020d002bcd488d))
+
 ## [0.36.6](https://github.com/trycua/cua/compare/cua-spaces-v0.36.5...cua-spaces-v0.36.6) (2026-11-13)
 
 

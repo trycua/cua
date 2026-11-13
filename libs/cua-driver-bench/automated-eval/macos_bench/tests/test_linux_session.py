@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
@@ -449,7 +450,9 @@ class LinuxSessionSupervisorTest(unittest.TestCase):
             'env > "$CDB_SESSION_DIR/env.txt"; '
             'xdotool getdisplaygeometry > "$CDB_SESSION_DIR/geom.txt"; '
             'XAUTHORITY=/dev/null xdotool getdisplaygeometry; '
-            'echo $? > "$CDB_SESSION_DIR/noauth.txt"; exit 7',
+            'echo $? > "$CDB_SESSION_DIR/noauth.txt"; '
+            'python3 -c "from Xlib import display; display.Display().close()" '
+            '> "$CDB_SESSION_DIR/xlib.txt" 2>&1; echo $? >> "$CDB_SESSION_DIR/xlib.txt"; exit 7',
             AT_SPI_BUS_ADDRESS="unix:path=/nonexistent", WAYLAND_DISPLAY="wayland-9",
         )  # fmt: skip
         self.assertEqual(code, 7, out)
@@ -471,6 +474,10 @@ class LinuxSessionSupervisorTest(unittest.TestCase):
         if shutil.which("xdotool"):
             self.assertEqual((self.ev / "geom.txt").read_text().split(), ["1920", "1080"])
             self.assertNotEqual((self.ev / "noauth.txt").read_text().strip(), "0")
+        if importlib.util.find_spec("Xlib"):
+            # python-xlib reads only FamilyLocal + hostname entries from XAUTHORITY
+            xlib = (self.ev / "xlib.txt").read_text()
+            self.assertEqual(xlib.splitlines()[-1], "0", xlib)
         self.assertEqual(stat.S_IMODE(self.ev.stat().st_mode), 0o700)
         self._assert_reaped()
 

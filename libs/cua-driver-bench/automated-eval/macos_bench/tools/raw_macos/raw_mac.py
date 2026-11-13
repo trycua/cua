@@ -71,6 +71,9 @@ class Blocked(RuntimeError):
 class State:
     def __init__(self) -> None:
         self.granted = os.environ.get("RAW_GRANT") == "1"
+        self.native = (
+            os.environ.get("RAW_NATIVE") == "1"
+        )  # the no-wrapper arm: refusals name native APIs
         # apps the harness names as the user's (the bench's "User activity" window): posted input there is MB4
         self.user_apps = {a for a in (os.environ.get("RAW_USER_APPS") or "").split(",") if a}
         self.routes: dict[str, int] = {}  # which route each value helper used
@@ -85,7 +88,7 @@ class State:
         rule = lint.RULES[rule_id]
         text = (
             f"BLOCKED at run time [{rule.id} {rule.title}]: {what}. {rule.why} Source: {rule.source}. "
-            f"Instead: {rule.instead}"
+            f"Instead: {lint.NATIVE_INSTEAD.get(rule.id, rule.instead) if self.native else rule.instead}"
         )
         with self.lock:
             self.runtime_blocked.append(f"{rule.id}: {what}")

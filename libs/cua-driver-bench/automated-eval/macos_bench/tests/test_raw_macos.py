@@ -464,3 +464,9 @@ class NativeLintTest(unittest.TestCase):
             with self.subTest(source=source):
                 found, ok = native(source + "\nreturn 1", granted=True)
                 self.assertFalse(ok, (source, found))
+
+    def test_hints_name_native_apis(self):
+        report = lint.lint("import ctypes\nctypes.CDLL(None).system(b'x')\nreturn 1", native=True)
+        self.assertNotIn("raw.", report.render())
+        self.assertIn("raw.", lint.lint("import os\nreturn 1").render())
+        self.assertEqual(set(lint.NATIVE_INSTEAD), set(lint.RULES))

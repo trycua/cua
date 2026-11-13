@@ -186,6 +186,29 @@ RULES: dict[str, Rule] = {
     )
 }
 
+# The "instead" of each rule for the native arm, which has no raw.* helpers.
+NATIVE_INSTEAD: dict[str, str] = {
+    "MB1": "Use the element's AX action (AXUIElementPerformAction(el, 'AXPress')) or set its AXValue; for a pixel click "
+    "on a background window post the mouse events to that process only (CGEventPostToPid).",
+    "MB2": "Act on the element in its background window through AX (AXPress, AXValue); none of these needs the app in "
+    "front.",
+    "MB3": "Set the field's AXValue; where the app ignores that, focus the field inside its own background app and post "
+    "keys to that app's pid. A change to the user's front app, key window or focused element is still reported.",
+    "MB4": "Post to the target app's pid (CGEventPostToPid / SLEventPostToPid) or set the field's AXValue.",
+    "MB5": "The task's apps are already running: find them with NSWorkspace.runningApplications() or "
+    "CGWindowListCopyWindowInfo.",
+    "MB6": "Press an in-window control with the same command, or find the item in the app's AXMenuBar tree (its menu "
+    "items exist in AX while closed) and AXPress the item itself, without opening its menu.",
+    "MB7": "Choose an option without opening the menu (a web <select> takes typed characters while closed; a native "
+    "pop-up's items need its menu open, which takes key focus).",
+    "MB8": "Set text with AXValue instead.",
+    "MB9": "Set the field's AXValue, or press the control that does the same.",
+    "DRV1": "Call macOS's own APIs (ApplicationServices, Quartz, AppKit, ctypes for private frameworks).",
+    "GUI1": "Use only GUI APIs: the Accessibility API, events posted to a process, window lists and capture.",
+    "GUI2": "Call the API by its plain name.",
+    "VR1": "After the last action, read the element back (AXValue, the window's text) or write a screenshot into SHOTS.",
+}
+
 # Function and attribute names, matched on the final name anywhere in the script (a call, an alias or a getattr with
 # a constant). Exact names: no fuzzy matching.
 NAMES: dict[str, str] = {
@@ -435,8 +458,9 @@ class Finding:
     def severity(self) -> str:
         return RULES[self.rule].severity
 
-    def render(self, granted: bool) -> str:
+    def render(self, granted: bool, native: bool = False) -> str:
         r = RULES[self.rule]
+        instead = NATIVE_INSTEAD.get(r.id, r.instead) if native else r.instead
         tag = {
             "block": "BLOCKED",
             "granted": "FOREGROUND (granted by the task)"
@@ -446,7 +470,7 @@ class Finding:
         }[r.severity]
         return (
             f"{tag} [{r.id} {r.title}] line {self.line}: {self.detail}\n"
-            f"  rule: {r.why}\n  source: {r.source}\n  instead: {r.instead}"
+            f"  rule: {r.why}\n  source: {r.source}\n  instead: {instead}"
         )
 
 
@@ -454,6 +478,7 @@ class Finding:
 class Report:
     findings: list[Finding]
     granted: bool  # the harness's per-trial foreground grant, not anything the script says
+    native: bool = False  # the no-wrapper arm: its hints name native APIs, not raw.* helpers
 
     @property
     def blocked(self) -> list[Finding]:
@@ -476,7 +501,7 @@ class Report:
             else "Background-use lint: the script ran with these findings."
         )
         body = "\n".join(
-            f.render(self.granted) for f in sorted(self.findings, key=lambda f: f.line)
+            f.render(self.granted, self.native) for f in sorted(self.findings, key=lambda f: f.line)
         )
         return f"{head}\n{body}"
 
@@ -687,7 +712,7 @@ def lint(source: str, granted: bool = False, native: bool = False) -> Report:
             ast.Constant(value=None, lineno=walker.last_action[0]),
             "no read after the last action on this line",
         )
-    return Report(walker.findings, granted)
+    return Report(walker.findings, granted, native)
 
 
 def rules_markdown() -> str:

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -357,6 +358,30 @@ class ForegroundHelperTest(unittest.TestCase):
                         helper.key(5, "a")
                 finally:
                     sys.modules.pop("raw", None)
+
+
+class AtspiTimeoutTest(unittest.TestCase):
+    """The runner's AT-SPI timeouts from RAW_ATSPI_TIMEOUT_MS (no display needed)."""
+
+    def load(self, value: str | None) -> tuple[int, int]:
+        fake = mock.MagicMock()
+        env = {} if value is None else {"RAW_ATSPI_TIMEOUT_MS": value}
+        with mock.patch.dict(sys.modules, {"gi": fake, "gi.repository": fake}), mock.patch.dict("os.environ", env):
+            if value is None:
+                os.environ.pop("RAW_ATSPI_TIMEOUT_MS", None)
+            sys.modules.pop("raw", None)
+            with mock.patch("ctypes.CDLL"), mock.patch("ctypes.util.find_library", return_value="x"):
+                import raw  # noqa: PLC0415
+
+                try:
+                    return raw.ATSPI_TIMEOUT_MS, raw.SUSPECT_TIMEOUT_MS
+                finally:
+                    sys.modules.pop("raw", None)
+
+    def test_suspect_probe_never_exceeds_the_configured_timeout(self):
+        self.assertEqual(self.load(None), (2000, 300))
+        self.assertEqual(self.load("150"), (150, 150))
+        self.assertEqual(self.load("0"), (0, 300))  # 0 keeps D-Bus's default; raw.app then never shortens it
 
 
 class CellRefTest(unittest.TestCase):

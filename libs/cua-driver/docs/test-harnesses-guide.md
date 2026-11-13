@@ -522,8 +522,12 @@ need normal test output and logs; they do not need desktop video.
   posture. A 300 ms baseline precedes dispatch, and capture continues through
   external oracle collection. `trajectory.json` must finish with
   `behavior_video.status = "finalized"`.
-- Use `agent_cursor_showcase_test` for cursor review media. Shared behavior
-  matrix daemons deliberately use `--no-overlay` so synthetic cursor pixels do
+- Use `agent_cursor_showcase_test` for cursor review media. Its
+  `window-agent-cursor-first-actions-video` row reads its own MP4: a session's
+  first keyboard, semantic accessibility and coordinate actions must each show
+  the agent pointer, and the first must show the session badge too. It keeps
+  the baseline and per-action `cursor-oracle-*.png` frames beside the video.
+  Shared behavior matrix daemons deliberately use `--no-overlay` so synthetic cursor pixels do
   not contaminate action oracles; their videos prove tool behavior, not cursor
   rendering.
 - Windows hosted runs use `GetConsoleWindow` to select the inherited

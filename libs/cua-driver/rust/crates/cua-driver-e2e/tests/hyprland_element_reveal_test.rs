@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Live Hyprland regression: a background element click must reveal the
 //! agent-cursor overlay at the element's *proven output coordinates* (#3554).
 //!
@@ -10,8 +13,9 @@
 //!
 //! Preconditions: a live Hyprland session (native Wayland), the GTK3 harness
 //! (`CUA_TEST_APPS_ROOT` / `test-apps/harness-gtk3`), and a fixture window
-//! placed away from the output origin. Run under the shared desktop lock:
-//! `flock /tmp/cua-hyprland-live.lock -c '<cargo test command>'`.
+//! placed away from the output origin. Run it in the prepared native Hyprland
+//! desktop:
+//! `cargo test -p cua-driver-e2e --test hyprland_element_reveal_test -- --ignored`.
 
 #![cfg(target_os = "linux")]
 
@@ -118,7 +122,7 @@ fn centroid_in_points(image: &RgbaImage, output: &OutputGeometry) -> Option<(f64
 }
 
 #[test]
-#[ignore]
+#[ignore = "requires a live native Hyprland desktop, the GTK3 fixture, and the overlay debug square"]
 fn background_element_click_reveals_cursor_at_element_output_coordinates() {
     assert!(
         std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some(),

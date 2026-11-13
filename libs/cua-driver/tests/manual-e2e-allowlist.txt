@@ -15,6 +15,7 @@
 hyprland_foreground_test::foreground_action_refused_while_independent_virtual_pointer_holds_primary_grab | Manual native-Hyprland gate: needs a live Hyprland compositor with the Cua plugin; RFC 3550 foreground grab refusal
 hyprland_foreground_test::foreground_drag_focus_loss_does_not_release_into_successor | Manual native-Hyprland gate: needs a live Hyprland compositor with the Cua plugin; RFC 3550 drag focus-loss safety
 hyprland_foreground_test::foreground_drag_focus_loss_does_not_release_into_same_client_sibling | Manual native-Hyprland gate: needs a live Hyprland compositor with the Cua plugin; RFC 3550 drag focus-loss safety
+hyprland_element_reveal_test::background_element_click_reveals_cursor_at_element_output_coordinates | Manual native-Hyprland gate: needs a live Hyprland compositor and the overlay debug square; agent cursor reveals at the element's output coordinates (#3554)
 hyprland_native_observation_test::native_window_capture_and_background_ax_keep_exact_identity | Manual native-Hyprland gate: needs a live Hyprland compositor; exact-identity capture and owner-mismatch refusals
 kwin_native_capture_test::same_pid_same_title_windows_capture_exact_surfaces_without_a_helper | Manual native-KWin capture gate: needs a KWin Wayland session and Python GTK3; opens two fullscreen color fixtures to prove same-PID/title and occluded-window identity, and that raw input refuses
 

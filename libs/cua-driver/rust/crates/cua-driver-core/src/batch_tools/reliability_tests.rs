@@ -464,7 +464,11 @@ impl Tool for Rerender {
                 let row: usize = token[current.len()..].parse().unwrap();
                 let label = state.rows[row - 1].1.to_owned();
                 state.clicked.push(label.clone());
-                ToolResult::text(format!("clicked {label}"))
+                // A delivered click the fake cannot confirm, whose summary
+                // points at the foreground retry.
+                ToolResult::text(format!(
+                    "clicked {label}; Retry this action with delivery_mode:\"foreground\" if nothing changed"
+                ))
             }
             "list_windows" => ToolResult::text("windows").with_structured(json!({"windows": [{
                 "pid": 42, "window_id": 7, "app_name": "Daymark", "title": "Daymark",
@@ -492,7 +496,8 @@ fn rerender_registry(
                 description: "fake".into(),
                 input_schema: json!({"type": "object", "properties": {
                     "pid": {"type": "integer"}, "window_id": {"type": "integer"},
-                    "element_token": {"type": "string"}
+                    "element_token": {"type": "string"},
+                    "delivery_mode": {"type": "string"}
                 }}),
                 read_only: name != "click",
                 destructive: false,
@@ -535,6 +540,36 @@ async fn a_stale_element_token_is_found_again_by_its_role_and_label() {
         vec!["Cinder decision LHP-CINDER"]
     );
     assert!(text(&result).contains("went stale"), "{}", text(&result));
+}
+
+/// The re-found click delivers but cannot be confirmed, so `require_verified`
+/// makes it an error that names the foreground retry. The input already went
+/// out: the foreground fallback must not send it a third time.
+#[tokio::test]
+async fn a_refound_step_that_delivered_is_not_sent_again_in_the_foreground() {
+    let (registry, state) = rerender_registry(vec![("AXButton", "Aster kickoff")]);
+    crate::window_state_view::remember_for_test(
+        "s0000002e",
+        42,
+        7,
+        "- [0] AXWindow \"Daymark\"\n  - [5] AXButton \"Aster kickoff\" [actions=[press]]\n",
+    );
+    let result = registry
+        .invoke(
+            super::super::RUN_STEPS_TOOL,
+            json!({"foreground_fallback": true, "steps": [{"tool": "click", "args": {
+                "pid": 42, "window_id": 7, "element_token": "s0000002e:5", "require_verified": true
+            }}]}),
+        )
+        .await;
+    assert_eq!(result.is_error, Some(true), "{}", text(&result));
+    let structured = result.structured_content.unwrap();
+    assert_eq!(structured["steps"][0]["code"], "action_unverified");
+    assert_eq!(
+        state.lock().unwrap().clicked,
+        vec!["Aster kickoff"],
+        "delivered once, by the re-find, and never again"
+    );
 }
 
 #[tokio::test]

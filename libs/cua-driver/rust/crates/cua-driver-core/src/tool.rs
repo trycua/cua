@@ -787,6 +787,13 @@ pub(crate) fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -
             .entry(crate::post_action_wait::POST_ACTION_WAIT_ARG)
             .or_insert_with(crate::post_action_wait::schema);
     }
+    // Dispatch reads `require_verified` for every action tool (see
+    // `crate::require_verified`).
+    if crate::require_verified::accepts(tool_name) {
+        properties
+            .entry(crate::require_verified::REQUIRE_VERIFIED_ARG)
+            .or_insert_with(crate::require_verified::schema);
+    }
     if !crate::action_target::supports_typed_target(tool_name) {
         return schema;
     }
@@ -2028,6 +2035,21 @@ impl ToolRegistry {
             );
         }
         let unknown_argument = unknown_argument(tool.def(), &args);
+        // The strictness is the dispatcher's, not the tool's: read it here and
+        // apply it to the published result below.
+        let require_verified = if crate::require_verified::accepts(resolved_name) {
+            match crate::require_verified::from_args(resolved_name, &args) {
+                Ok(required) => required,
+                Err((message, structured)) => {
+                    return ToolResult::error(message).with_structured(structured)
+                }
+            }
+        } else {
+            false
+        };
+        if let Some(arguments) = args.as_object_mut() {
+            arguments.remove(crate::require_verified::REQUIRE_VERIFIED_ARG);
+        }
         if let Err(result) = crate::action_target::normalize_action_target(resolved_name, &mut args)
         {
             return result;
@@ -2656,6 +2678,16 @@ impl ToolRegistry {
                     "tool": resolved_name,
                     "detail": error,
                 }));
+            } else if require_verified {
+                if let Some((message, structured)) =
+                    result.structured_content.as_ref().and_then(|published| {
+                        crate::require_verified::unverified_error(resolved_name, published)
+                    })
+                {
+                    let action_record = result.action_record.take();
+                    result = ToolResult::error(message).with_structured(structured);
+                    result.action_record = action_record;
+                }
             }
         }
         if result.is_error != Some(true) {
@@ -6656,6 +6688,113 @@ resources:
         let after_end = registry.invoke_with_context("click", args, context).await;
         assert_eq!(after_end.is_error, Some(true));
         assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    /// Answers every call with the effect named in its `effect` argument,
+    /// with an accessibility readback behind a `confirmed` one, and records
+    /// the arguments it saw.
+    struct EffectProbe {
+        seen: Arc<Mutex<Vec<serde_json::Value>>>,
+        def: super::ToolDef,
+    }
+
+    #[async_trait::async_trait]
+    impl super::Tool for EffectProbe {
+        fn def(&self) -> &super::ToolDef {
+            &self.def
+        }
+
+        async fn invoke(&self, args: serde_json::Value) -> crate::protocol::ToolResult {
+            self.seen.lock().unwrap().push(args.clone());
+            let effect = args["effect"].as_str().unwrap_or("unverifiable");
+            let mut structured = serde_json::json!({ "effect": effect });
+            if effect == "confirmed" {
+                structured["evidence"] = serde_json::json!([
+                    {"kind": "accessibility_readback", "detail": "value read back"}
+                ]);
+            }
+            crate::protocol::ToolResult::text(format!("input delivered ({effect})"))
+                .with_structured(structured)
+        }
+    }
+
+    #[tokio::test]
+    async fn require_verified_turns_an_unconfirmed_action_into_an_error() {
+        use serde_json::json;
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(EffectProbe {
+            seen: seen.clone(),
+            def: super::ToolDef {
+                name: "click".into(),
+                description: "test input".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {"effect": {"type": "string"}},
+                    "additionalProperties": false
+                }),
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+        }));
+        let registry = Arc::new(registry);
+        let click = |args: serde_json::Value| {
+            let registry = registry.clone();
+            async move {
+                registry
+                    .invoke_with_context("click", args, standard_context())
+                    .await
+            }
+        };
+
+        // Without the flag an unconfirmed click stays a success.
+        let lenient = click(json!({"effect": "unverifiable"})).await;
+        assert_ne!(lenient.is_error, Some(true), "{lenient:?}");
+        assert_eq!(
+            lenient.structured_content.unwrap()["effect"],
+            "unverifiable"
+        );
+
+        // With it, every unconfirmed effect is an error that says the input
+        // went out and keeps the recovery hint.
+        for effect in ["unverifiable", "suspected_noop"] {
+            let strict = click(json!({"effect": effect, "require_verified": true})).await;
+            assert_eq!(strict.is_error, Some(true), "{effect}: {strict:?}");
+            let structured = strict.structured_content.as_ref().unwrap();
+            assert_eq!(structured["code"], "action_unverified", "{effect}");
+            assert_eq!(structured["execution_state"], "delivered");
+            assert_eq!(structured["effect"], effect);
+            assert!(structured["hint"].is_string(), "{effect}: {structured}");
+            assert_eq!(structured["summary"], format!("input delivered ({effect})"));
+            assert!(strict.action_record.is_some(), "history still records it");
+        }
+
+        // A confirmed click passes, and `false` is the default.
+        for args in [
+            json!({"effect": "confirmed", "require_verified": true}),
+            json!({"effect": "unverifiable", "require_verified": false}),
+        ] {
+            let result = click(args.clone()).await;
+            assert_ne!(result.is_error, Some(true), "{args}: {result:?}");
+        }
+
+        // The dispatcher consumes the flag; the tool never sees it.
+        assert!(seen
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|args| args.get("require_verified").is_none()));
+
+        // A non-boolean is refused before the tool runs.
+        let calls = seen.lock().unwrap().len();
+        let invalid = click(json!({"require_verified": "yes"})).await;
+        assert_eq!(
+            invalid.structured_content.unwrap()["code"],
+            "invalid_arguments"
+        );
+        assert_eq!(seen.lock().unwrap().len(), calls);
     }
 
     #[tokio::test]

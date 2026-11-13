@@ -263,6 +263,22 @@ const FOREGROUND_CONDITION: &str = "only if the user allows the window to come f
 /// Every refusal code that carries a hint, with the hint. Add a row here to
 /// cover a new code; the coverage test checks each row.
 static RULES: &[Rule] = &[
+    // `require_verified` turned an unconfirmed action into an error: the
+    // same advice as for the unconfirmed success it replaced.
+    Rule {
+        codes: &[crate::require_verified::ACTION_UNVERIFIED_CODE],
+        build: |c| {
+            let effect = match c.structured.get("effect").and_then(Value::as_str) {
+                Some("suspected_noop") => "suspected_noop",
+                _ => "unverifiable",
+            };
+            effect_hint(c, effect).unwrap_or_else(|| {
+                RecoveryHint::new(
+                    "The input was sent but not confirmed. Read what changed before repeating it.",
+                )
+            })
+        },
+    },
     // The input route is closed in the background.
     Rule {
         codes: &["background_unavailable", "background_occluded"],

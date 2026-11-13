@@ -975,21 +975,21 @@ async fn run_step(
 
         let mut result = registry.invoke(tool, args.clone()).await;
         let mut refound_note = None;
-        if result.is_error == Some(true) && tool == "click" {
+        if refused_before_delivery(&result) && tool == "click" {
             if let Some((menu_args, note)) = menu_bar_route(&args, &result) {
                 report["refound"] = json!(note);
                 result = registry.invoke("invoke_menu", menu_args).await;
                 refound_note = Some(note);
             }
         }
-        if result.is_error == Some(true) && refound_note.is_none() {
+        if refused_before_delivery(&result) && refound_note.is_none() {
             if let Some((retry, note)) = refind_stale_target(locator, &args, &result).await {
                 report["refound"] = json!(note);
                 result = registry.invoke(tool, retry).await;
                 refound_note = Some(note);
             }
         }
-        let wants_foreground = result.is_error == Some(true)
+        let wants_foreground = refused_before_delivery(&result)
             && wants_foreground(&result)
             && args.get("delivery_mode").is_none()
             && accepts(registry, tool, "delivery_mode");
@@ -1344,6 +1344,20 @@ fn fit_error_text(content: &mut Vec<Content>, budget: usize) {
              get_window_state for the full window]",
         ));
     }
+}
+
+/// Whether `result` is an error that sent no input. Every retry of a step is
+/// for this case only: a step whose input was delivered (`require_verified`
+/// on an unconfirmed action says `execution_state: "delivered"`) is never
+/// sent again, whichever attempt delivered it.
+fn refused_before_delivery(result: &ToolResult) -> bool {
+    result.is_error == Some(true)
+        && result
+            .structured_content
+            .as_ref()
+            .and_then(|value| value.get("execution_state"))
+            .and_then(Value::as_str)
+            != Some("delivered")
 }
 
 /// Whether a refusal names foreground delivery as the route that works:

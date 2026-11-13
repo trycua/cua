@@ -177,6 +177,8 @@ After two single action calls in a row in one session (not counting reads), the 
 
 When the postcondition is visibly satisfied, stop acting. For media, selection alone is not playback: check the title, playing/pause indicator, and elapsed progress after preroll/buffering. For closure, verify the requested window disappeared. State only what the evidence proves.
 
+To stop on any action the driver could not confirm, pass `require_verified: true` on the action (it works on every action tool, on every platform, and inside `run_steps` steps). An `unverifiable`, `suspected_noop` or `partial` result then comes back as an error with `code:"action_unverified"` and `execution_state:"delivered"`, keeping the `effect`, `summary`, `hint` and `next_call`. The input was still sent: read the target before repeating it.
+
 Never replay canceled, partial, or unknown actions automatically. An interrupted transport may have delivered input before losing its response. Report the interruption accurately and obtain fresh state before any further action.
 
 ## Filesystem outcomes and GUI fallbacks

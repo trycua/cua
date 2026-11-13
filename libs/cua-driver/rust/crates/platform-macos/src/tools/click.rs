@@ -518,7 +518,7 @@ impl ClickTool {
             };
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
-                    "✅ Sent screen-absolute {button_label} at desktop-pixel \
+                    "📨 Sent screen-absolute {button_label} at desktop-pixel \
                      ({sx_shot:.0},{sy_shot:.0}) → screen-point ({sx:.0},{sy:.0}) \
                      (desktop scope; not driver-verified)."
                 ))
@@ -801,7 +801,7 @@ impl ClickTool {
                 .await;
                 return match result {
                     Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Posted middle-click to pid {pid} at element [{idx}] center \
+                        "📨 Posted middle-click to pid {pid} at element [{idx}] center \
                          (background CGEvent; not driver-verified — confirm via screenshot)."
                     ))
                     .with_structured(serde_json::json!({ "path": "cgevent", "verified": false, "effect": "unverifiable" })),
@@ -1577,7 +1577,7 @@ impl ClickTool {
                     });
                     changes.add_window_identity(&mut structured);
                     ToolResult::text(format!(
-                        "✅ Posted {button_label} {target} ({}).{}",
+                        "📨 Posted {button_label} {target} ({}).{}",
                         super::pixel_route::delivery_note(route),
                         changes.result_suffix()
                     ))

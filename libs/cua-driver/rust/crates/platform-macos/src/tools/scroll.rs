@@ -591,7 +591,7 @@ impl Tool for ScrollTool {
             };
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
-                    "✅ Sent {direction} scroll by {by} × {amount} via pixel wheel at \
+                    "📨 Sent {direction} scroll by {by} × {amount} via pixel wheel at \
                      ({screen_x:.0}, {screen_y:.0}){mode_label} (background CGEvent; not \
                      driver-verified — confirm via screenshot).{}",
                     changes.result_suffix()
@@ -686,7 +686,7 @@ impl Tool for ScrollTool {
 
         match result {
             Ok(Ok(())) => ToolResult::text(format!(
-                "✅ Sent {direction} scroll by {by} × {amount} via keystroke \
+                "📨 Sent {direction} scroll by {by} × {amount} via keystroke \
                  (background; not driver-verified — confirm via screenshot).{}",
                 changes.result_suffix()
             ))

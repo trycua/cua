@@ -28,6 +28,7 @@ guest is disposable and the GUI-only guard still watches for side doors.
 from __future__ import annotations
 
 import ast
+import re
 from dataclasses import dataclass
 
 DRV = "libs/cua-driver/rust"
@@ -532,8 +533,10 @@ class _Walker(ast.NodeVisitor):
         if isinstance(value, bytes):
             value = value.decode("latin-1")
         if isinstance(value, str):
-            for name in MB11_ALLOWED:
-                value = value.replace(name, "")
+            # only the exact name is exempt: a longer identifier that contains it is still checked
+            value = re.sub(
+                r"[A-Za-z0-9_]+", lambda m: "" if m.group(0) in MB11_ALLOWED else m.group(0), value
+            )
             for needle, rule in STRINGS.items():
                 if needle in value:
                     self.add(rule, node, f"string {needle!r}")

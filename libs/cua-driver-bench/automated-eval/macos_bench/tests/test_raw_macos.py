@@ -130,6 +130,8 @@ class LintTest(unittest.TestCase):
             'x = "_SLPSSetFrontProcess"',
             'x = "/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight"',
             'x = "CGSOrderWindow"',
+            'x = "SLPSReleaseKeyFocusWithIDExtra"',
+            'x = "_SLPSReleaseKeyFocusWithID"',
         ):
             with self.subTest(source=source):
                 found, ok = rules(source + READ, granted=True)

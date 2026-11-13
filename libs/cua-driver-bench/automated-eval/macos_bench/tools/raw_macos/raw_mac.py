@@ -771,14 +771,15 @@ class Raw:
         try:
             result = self._pick_from_menu(el, pid, label, guard=guard)
         finally:
+            # also when the pick raised (no such item): what the guard could not undo is refused either way
             problems = guard.finish()
+            if problems:
+                STATE.refuse("MB7", "raw.select guarded pop-up: " + "; ".join(problems))
         STATE.route("select:menu_guarded")
         result["route"] = "menu_guarded"
         result["key_focus_released"] = len(guard.released)
         result["window_restores"] = guard.restores
         result["key_focus_held_ms"] = guard.held_ms
-        if problems:
-            STATE.refuse("MB7", "raw.select guarded pop-up: " + "; ".join(problems))
         return result
 
     def _pick_from_menu(

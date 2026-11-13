@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.49.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.3...cua-driver-rs-v0.49.4) (2026-11-13)
+
+
+### Bug Fixes
+
+* **cua-driver:** let Windows ffmpeg finish shutdown and stop shimmed encoders ([#7628](https://github.com/trycua/cua/issues/7628)) ([6380b25](https://github.com/trycua/cua/commit/6380b253745b3eef976c57e6bc283943f4487086))
+
 ## [0.49.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.2...cua-driver-rs-v0.49.3) (2026-11-13)
 
 

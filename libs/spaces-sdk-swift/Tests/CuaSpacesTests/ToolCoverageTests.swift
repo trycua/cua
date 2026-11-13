@@ -38,12 +38,12 @@ import Testing
         "thread_join_code_cancel", "thread_join_code_create", "thread_join_code_list",
         "thread_join_redeem", "thread_post", "thread_read", "thread_reply",
         "thread_settings",
-        // Person-only, and the contract's SDK symbol for both is `callTool`.
-        "agent_threads", "agent_thread_read",
+        // Person-only, and the contract's SDK symbol for each is `callTool`.
+        "agent_threads", "agent_thread_read", "agent_sign_in",
     ]
 
     @Test func testTheContractIsCompleteTools() {
-        XCTAssertEqual(Self.advertisedTools.count, 121)
+        XCTAssertEqual(Self.advertisedTools.count, 122)
         // The Python server's `local_rcdp` is gone; `stream_endpoint` mints a
         // media ticket for any provider, and `send_file` is new.
         XCTAssertFalse(Self.advertisedTools.contains("local_rcdp"))

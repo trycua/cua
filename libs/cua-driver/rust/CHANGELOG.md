@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.47.24](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.23...cua-driver-rs-v0.47.24) (2026-11-12)
+
+
+### Bug Fixes
+
+* **cua-driver:** require every native input tool to publish the action result ([#7507](https://github.com/trycua/cua/issues/7507)) ([01596ff](https://github.com/trycua/cua/commit/01596ffcbac5335013480da62ed317411c5a2ce3)), closes [#2885](https://github.com/trycua/cua/issues/2885)
+
+## [0.47.23](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.22...cua-driver-rs-v0.47.23) (2026-11-12)
+
+
+### Bug Fixes
+
+* **cua-driver:** classify trusted browser_click effects with target readback ([#7499](https://github.com/trycua/cua/issues/7499)) ([d17e70f](https://github.com/trycua/cua/commit/d17e70f5fb79385f03e02165042e22b1c2b08090))
+* **cua-driver:** declare each platform's accepted browser defaults ([#7504](https://github.com/trycua/cua/issues/7504)) ([52306ab](https://github.com/trycua/cua/commit/52306ab4517bba9eb3c2a2edb258471eedd69d46)), closes [#2884](https://github.com/trycua/cua/issues/2884)
+
 ## [0.47.22](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.21...cua-driver-rs-v0.47.22) (2026-11-12)
 
 

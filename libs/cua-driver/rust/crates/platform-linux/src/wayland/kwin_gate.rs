@@ -41,7 +41,13 @@ pub(crate) fn armed() -> bool {
 /// Whether KWin can bind input to `window_id`: the helper's input gate is
 /// loaded and the window is a KWin handle.
 pub(crate) fn ready(window_id: u64) -> bool {
-    kwin_capture::uuid_for(window_id).is_some() && kwin_helper::available()
+    bindable(window_id, kwin_helper::available())
+}
+
+/// Whether `window_id` is a KWin handle and `gate_loaded` says the helper's
+/// input gate is there to bind input to it.
+pub(crate) fn bindable(window_id: u64, gate_loaded: bool) -> bool {
+    gate_loaded && kwin_capture::uuid_for(window_id).is_some()
 }
 
 /// The refusal for a KWin window when the input gate is missing.

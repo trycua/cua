@@ -862,7 +862,9 @@ mod tests {
         // lands, so without the helper's input gate a KWin handle is refused.
         let window = ids().lock().unwrap().id_for("raw-input-refusal").unwrap();
         assert!(listed(window));
-        assert!(!super::super::kwin_gate::ready(window));
+        assert!(!super::super::kwin_gate::bindable(window, false));
+        assert!(super::super::kwin_gate::bindable(window, true));
+        assert!(!super::super::kwin_gate::bindable(window + 1_000_000, true));
         assert_eq!(
             super::super::kwin_gate::unavailable(window).to_string(),
             format!(

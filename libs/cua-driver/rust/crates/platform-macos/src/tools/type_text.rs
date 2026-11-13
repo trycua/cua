@@ -153,6 +153,7 @@ impl Tool for TypeTextTool {
             ) {
                 return synthesis_refusal_result("hid", &refusal, AxAttempt::NotAttempted);
             }
+            super::cursor_tools::position_desktop_keyboard_cursor(&self.state, &args).await;
             let prompt = PromptInput::from_args(&args);
             let result = tokio::task::spawn_blocking(move || {
                 crate::input::keyboard::type_text_global(prompt, &text, delay_ms)

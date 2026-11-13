@@ -1520,6 +1520,8 @@ pub fn with_foreground_hid_activation(
         if prev_ok {
             unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
         }
+        // The raise above may still have covered the agent cursor's overlay.
+        crate::cursor::overlay::request_repin();
         anyhow::bail!(
             "exact target window did not become focused for foreground HID delivery{}",
             focus_failure_hint(target_pid, target_wid)

@@ -971,6 +971,17 @@ final class BringToFrontMatrixWindows {
             if let field {
                 candidate.makeFirstResponder(field)
             }
+        } else if mode == "open-panel" {
+            // A native Open panel attached as a sheet, browsing a folder with
+            // enough files that its file browser alone outgrows a default
+            // read (issue #3351).
+            let panel = NSOpenPanel()
+            panel.canChooseDirectories = true
+            if let directory = ProcessInfo.processInfo.environment["CUA_HARNESS_OPEN_PANEL_DIR"] {
+                panel.directoryURL = URL(fileURLWithPath: directory)
+            }
+            sheet = panel
+            panel.beginSheetModal(for: parent) { _ in }
         } else if mode == "floating" {
             let candidate = NSPanel(
                 contentRect: NSRect(x: 180, y: 180, width: 320, height: 140),

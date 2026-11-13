@@ -324,3 +324,33 @@ test('loopback oversized response is refused', async () => {
     await server.close();
   }
 });
+test('loopback body that stalls past the timeout is a bounded timeout', async () => {
+  const hits: string[] = [];
+  const server: Server = createServer((req, res) => {
+    hits.push(req.url ?? '/');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.write('{"answers":');
+  });
+  const ready = deferred<void>();
+  server.listen(0, '127.0.0.1', () => ready.resolve());
+  await ready.promise;
+  const { port } = server.address() as AddressInfo;
+  try {
+    const model = new OpenJevDecisionModel({
+      baseUrl: `http://127.0.0.1:${port}`,
+      apiKey: '',
+      model: 'openjev',
+      timeoutMs: 200,
+    });
+    await assert.rejects(
+      model.score(request()),
+      (error: unknown) => error instanceof OpenJevError && error.code === 'timeout'
+    );
+    assert.deepEqual(hits, ['/v1/systemone']);
+  } finally {
+    server.closeAllConnections();
+    const closed = deferred<void>();
+    server.close(() => closed.resolve());
+    await closed.promise;
+  }
+});

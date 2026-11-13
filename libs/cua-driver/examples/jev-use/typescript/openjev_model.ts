@@ -102,33 +102,47 @@ export function openJevSystemOneUrl(baseUrl: string): string {
   return root.endsWith('/v1') ? root + '/systemone' : root + '/v1/systemone';
 }
 
+function transportError(error: unknown): OpenJevError {
+  if (error instanceof OpenJevError) return error;
+  const name = error instanceof Error ? error.name : '';
+  if (name === 'TimeoutError' || name === 'AbortError') {
+    return new OpenJevError('timeout', 'OpenJev request timed out');
+  }
+  return new OpenJevError(
+    'http_error',
+    name === 'TypeError'
+      ? 'OpenJev redirect or transport was refused'
+      : 'OpenJev endpoint is unreachable'
+  );
+}
+
 async function defaultTransport(
   url: string,
   payload: Readonly<Record<string, unknown>>,
   headers: Readonly<Record<string, string>>,
   timeoutMs: number
 ): Promise<unknown> {
-  let response: Response;
+  let text: string;
   try {
-    response = await fetch(url, {
+    const response = await fetch(url, {
       method: 'POST',
       headers: { ...headers },
       body: JSON.stringify(payload),
       redirect: 'error',
       signal: AbortSignal.timeout(timeoutMs),
     });
+    text = await readBoundedBody(response);
   } catch (error) {
-    const name = error instanceof Error ? error.name : '';
-    if (name === 'TimeoutError' || name === 'AbortError') {
-      throw new OpenJevError('timeout', 'OpenJev request timed out');
-    }
-    throw new OpenJevError(
-      'http_error',
-      name === 'TypeError'
-        ? 'OpenJev redirect or transport was refused'
-        : 'OpenJev endpoint is unreachable'
-    );
+    throw transportError(error);
   }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new OpenJevError('invalid_response', 'OpenJev response is not JSON');
+  }
+}
+
+async function readBoundedBody(response: Response): Promise<string> {
   if (!response.ok) {
     throw new OpenJevError(
       'http_error',
@@ -153,11 +167,7 @@ async function defaultTransport(
     chunks.push(decoder.decode(value, { stream: true }));
   }
   chunks.push(decoder.decode());
-  try {
-    return JSON.parse(chunks.join(''));
-  } catch {
-    throw new OpenJevError('invalid_response', 'OpenJev response is not JSON');
-  }
+  return chunks.join('');
 }
 
 function record(value: unknown, message: string): Record<string, unknown> {

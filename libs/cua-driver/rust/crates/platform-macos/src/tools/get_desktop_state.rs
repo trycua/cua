@@ -116,18 +116,15 @@ impl Tool for GetDesktopStateTool {
             )> {
                 // The agent reads this image, so the Driver's own cursor and
                 // session pill must not sit over the controls it is reading.
-                let (png, overlay_capture) =
-                    crate::capture::screenshot_display_bytes_excluding_overlay()?;
-                let full = crate::capture::png_dimensions(&png)?;
+                let (image, overlay_capture) =
+                    crate::capture::screenshot_display_image_excluding_overlay()?;
+                let full = image.dimensions()?;
                 // Capped image: later desktop-scope pixels from it are
                 // mapped back at dispatch and by its capture_id.
-                let png = match max_image_dimension {
-                    Some(cap) if full.0.max(full.1) > cap => {
-                        crate::capture::resize_png_if_needed(&png, cap)?
-                    }
-                    _ => png,
-                };
-                let (w, h) = crate::capture::png_dimensions(&png)?;
+                let (png, w, h) = image.encode(
+                    max_image_dimension.unwrap_or(0),
+                    cua_driver_core::image_utils::ScreenshotEncoding::Png,
+                )?;
                 if let Some(ref path) = out_file {
                     std::fs::write(path, &png)?;
                     Ok((png, Some(path.clone()), w, h, full, overlay_capture))

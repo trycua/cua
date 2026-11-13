@@ -39,7 +39,7 @@
 //! `screencapture -x <file>` captures the full main display. The agent-facing
 //! desktop capture instead uses a ScreenCaptureKit display filter that leaves
 //! the Driver's cursor overlay window out
-//! ([`screenshot_display_bytes_excluding_overlay`]); `screencapture` remains
+//! ([`screenshot_display_image_excluding_overlay`]); `screencapture` remains
 //! its fallback and reports that it could not exclude the overlay.
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
@@ -610,14 +610,6 @@ fn capture_window_from_plan(
 }
 
 /// Encode a ScreenCaptureKit `CGImage` as PNG after checking its geometry.
-fn cgimage_to_png(
-    image: &screencapturekit::screenshot_manager::CGImage,
-    label: &str,
-) -> anyhow::Result<Vec<u8>> {
-    let frame = cgimage_to_rgba(image, label)?;
-    cua_driver_core::image_utils::encode_rgba_to_png(&frame.rgba, frame.width, frame.height)
-}
-
 /// Read a ScreenCaptureKit `CGImage`'s RGBA pixels after checking its geometry.
 fn cgimage_to_rgba(
     image: &screencapturekit::screenshot_manager::CGImage,
@@ -1103,8 +1095,8 @@ impl cursor_overlay::capture_exclusion::OverlayCaptureExcluder for OverlayExclud
 ///
 /// `screencapture` cannot leave a window out and costs a process and a file,
 /// so it is only the fallback when ScreenCaptureKit fails.
-pub fn screenshot_display_bytes_excluding_overlay() -> anyhow::Result<(
-    Vec<u8>,
+pub fn screenshot_display_image_excluding_overlay() -> anyhow::Result<(
+    CapturedImage,
     cursor_overlay::capture_exclusion::AgentOverlayCapture,
 )> {
     use cursor_overlay::capture_exclusion::{capture_excluding_overlays, ResidualCheck};
@@ -1116,10 +1108,13 @@ pub fn screenshot_display_bytes_excluding_overlay() -> anyhow::Result<(
                 DISPLAY_CAPTURE_NATIVE_TIMEOUT,
                 || screenshot_main_display_sck(None),
             ) {
-                Ok(bytes) => Ok((bytes, ResidualCheck::Clean)),
+                Ok(frame) => Ok((CapturedImage::Rgba(frame), ResidualCheck::Clean)),
                 Err(error) => {
                     tracing::warn!("ScreenCaptureKit display capture failed: {error:#}");
-                    Ok((screenshot_display_bytes()?, ResidualCheck::Clean))
+                    Ok((
+                        CapturedImage::Png(screenshot_display_bytes()?),
+                        ResidualCheck::Clean,
+                    ))
                 }
             };
         };
@@ -1128,14 +1123,14 @@ pub fn screenshot_display_bytes_excluding_overlay() -> anyhow::Result<(
             DISPLAY_CAPTURE_NATIVE_TIMEOUT,
             move || screenshot_main_display_sck(Some(overlay_window_id)),
         ) {
-            Ok(bytes) => Ok((bytes, ResidualCheck::Clean)),
+            Ok(frame) => Ok((CapturedImage::Rgba(frame), ResidualCheck::Clean)),
             Err(error) => {
                 tracing::warn!(
                     "ScreenCaptureKit display capture without the overlay failed: {error:#}"
                 );
                 let bytes = screenshot_display_bytes()?;
                 Ok((
-                    bytes,
+                    CapturedImage::Png(bytes),
                     ResidualCheck::Residual {
                         reason: format!(
                             "ScreenCaptureKit could not capture the display without the \
@@ -1156,7 +1151,7 @@ pub fn screenshot_display_bytes_excluding_overlay() -> anyhow::Result<(
 /// `SCScreenshotManager.captureImage(in:)` would skip the shareable-content
 /// query, but macOS keeps the `CGImage` and `IOSurface` of every call alive
 /// for the life of the process.
-fn screenshot_main_display_sck(excluded_window_id: Option<u32>) -> anyhow::Result<Vec<u8>> {
+fn screenshot_main_display_sck(excluded_window_id: Option<u32>) -> anyhow::Result<RgbaFrame> {
     use core_graphics::display::CGMainDisplayID;
     use screencapturekit::prelude::{SCContentFilter, SCShareableContent, SCStreamConfiguration};
     use screencapturekit::screenshot_manager::SCScreenshotManager;
@@ -1207,7 +1202,7 @@ fn screenshot_main_display_sck(excluded_window_id: Option<u32>) -> anyhow::Resul
 
     let image = SCScreenshotManager::capture_image(&filter, &config)
         .map_err(|e| anyhow::anyhow!("SCScreenshotManager::capture_image failed: {e}"))?;
-    cgimage_to_png(&image, "main display")
+    cgimage_to_rgba(&image, "main display")
 }
 
 /// Skip an implicit capture that would make macOS show its one-time

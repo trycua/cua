@@ -43,7 +43,7 @@ cua-driver start_session '{"session":"run-1"}'
 cua-driver end_session '{"session":"run-1"}'
 ```
 
-Explicit targets own observation/input modality, not session configuration. There is no `deescalate_session`. Do not use retired `capture_scope` settings or legacy escalation-session tools in new workflows. Reserved fields such as `_session_id` belong to the transport, never to an agent.
+Explicit targets own observation/input modality, not session configuration. Do not use retired `capture_scope` settings; the `escalate_session` and `get_session_state` tools were removed, so choose window or desktop on each action and use `get_session` for session state. Reserved fields such as `_session_id` belong to the transport, never to an agent.
 
 Keep one controller per shared desktop. Separate sessions/cursors do not isolate global keyboard focus, physical input, a single-instance application, or another observer's snapshot cache. `creates_new_application_instance:true` requests a separate instance where supported; verify distinct processes/windows before concurrent work. For independent MCP work, use independent connections as well.
 
@@ -96,7 +96,7 @@ On Linux, ordinary `move_cursor({x,y})` moves only this synthetic cursor. The ex
 
 Pixel `click` already animates the cursor. Do not precede it with `move_cursor` at the same point: that adds a second glide. Use `move_cursor` to indicate a location without clicking or seed the cursor before accessibility actions.
 
-The default theme provides session-colored pointer/glow, action marks, and activity animations. Named sessions have stable palette colors. Native hosts own delivery/target badges separately from theme artwork; cursor state is scoped to the private lifecycle.
+The default theme is a session-colored pointer with a soft halo and never draws action marks. Named sessions have stable palette colors. Native hosts own delivery/target badges separately from theme artwork; cursor state is scoped to the private lifecycle.
 
 `set_agent_cursor_enabled` controls idle visibility. `set_agent_cursor_motion` takes `style` (`signature_arc` default, `spring_settle`, `magnetic`, `comet_swoop`, `adaptive`, `classic`), `timing` (`native`, `fitts`, `fixed`), `effects` (`trail`, `glow`, `magnet`, `ripple`, `squish` as `on`, `off`, or `default`; `default` restores the style default, and an omitted effect keeps its current setting), and the arc knobs `start_handle`, `end_handle`, `arc_size`, `arc_flow` (bezier styles) plus `spring` and `turn_radius` (`classic`) where advertised. Choose preinstalled artwork with `set_agent_cursor_theme`; `cursor_id` on input tools is not a theme selector. Never supply inline theme code or arbitrary source paths through agent tools. The trusted local `cursor-theme` workflow owns validation, compilation, preview, installation, and removal.
 

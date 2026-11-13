@@ -249,8 +249,8 @@ export const MCP_CATEGORIES: Array<McpCategory & { tools: string[] }> = [
   {
     slug: 'sessions',
     title: 'Session tools',
-    summary: 'Start, escalate, inspect and end lifecycle sessions',
-    tools: ['start_session', 'escalate_session', 'get_session', 'list_sessions', 'get_session_state', 'end_session'],
+    summary: 'Start, inspect and end lifecycle sessions',
+    tools: ['start_session', 'get_session', 'list_sessions', 'end_session'],
   },
   {
     slug: 'agent-cursor',

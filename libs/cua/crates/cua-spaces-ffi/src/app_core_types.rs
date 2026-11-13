@@ -133,6 +133,9 @@ pub enum AppCreateFixAction {
     OpenUrl,
     /// Opens the failed create's details (the diagnostic report to review).
     Details,
+    /// Asks for a Windows ISO the person downloaded (the host's file picker),
+    /// remembers it for the image, and runs the create again with it.
+    ChooseWindowsIso,
 }
 
 /// The fix for a create that keeps failing the same way: one plain
@@ -148,6 +151,13 @@ pub struct AppCreateFix {
     pub action: AppCreateFixAction,
     /// The command to copy or the page to open.
     pub value: Option<String>,
+    /// Keep Try again next to the button: the fix is something to do first
+    /// (download a file), after which the same create is tried again.
+    pub keep_retry: bool,
+    /// A second button beside the first: its words (with `link_url`).
+    pub link_label: Option<String>,
+    /// The page that second button opens.
+    pub link_url: Option<String>,
 }
 
 /// How a Space turns off: the SDK's `power` words.
@@ -3388,6 +3398,10 @@ pub struct AppSandboxImage {
     pub tier: Option<AppImageTier>,
     /// Offered in pickers.
     pub published: bool,
+    /// `windows-iso`: nothing is pulled; the image is built on this computer
+    /// on first use (an unattended Windows install). Offered in pickers
+    /// though not published.
+    pub local_build: Option<String>,
     /// The guest's distribution.
     pub distro: Option<AppImageDistro>,
     /// Platforms it is built for (`amd64`, `arm64`); empty when unknown.

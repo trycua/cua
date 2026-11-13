@@ -106,6 +106,7 @@ export const WEBKIT_PAGE_OPS = [
   "spaces.chooseFiles",
   "spaces.droppedFiles",
   "spaces.sendFiles",
+  "windows.chooseIso",
   "host.setUp",
   "host.joinWithCode",
   "host.action",
@@ -309,6 +310,7 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
     "spaces.chooseFiles": list("spaces.chooseFiles"),
     "spaces.droppedFiles": list("spaces.droppedFiles"),
     "spaces.sendFiles": list("spaces.sendFiles"),
+    "windows.chooseIso": call("windows.chooseIso"),
 
     "host.setUp": host("host.setUp"),
     "host.joinWithCode": ({ code, relay }) => request("host.joinWithCode", { code, relay: relay ?? null }),

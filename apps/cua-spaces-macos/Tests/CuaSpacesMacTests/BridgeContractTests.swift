@@ -361,6 +361,7 @@ struct BridgeContractTests {
         "spaces.add": "needs a running cua-spacesd at the address",
         "host.setUp": "installs the host service", "host.action": "changes the host service", "host.limits": "changes the host settings (HostBridgeTests covers hostLimitsChangeThroughTheHostModel)",
         "host.openSettings": "opens System Settings",
+        "windows.chooseIso": "opens a file picker; WebUIHostTests covers it",
         "host.joinWithCode": "runs the bundled cua; JoinWithCodeTests covers the arguments and bad args",
         "agents.events": "needs the daemon's agent_events; WebUIHostTests checks it is unsupported without it",
         "agents.start": "starts a coding agent through the daemon; WebUIHostTests checks it is unsupported without it",
@@ -643,10 +644,14 @@ enum JSONShape {
 struct BridgeValueFixTests {
     @Test("a fix action crosses the bridge in the case the core reads")
     func fixActionIsKebabCase() {
-        let fix = AppCreateFix(text: "Docker is not running.", label: "Copy command", action: .copyCommand, value: "open -a Docker")
+        let fix = AppCreateFix(text: "Docker is not running.", label: "Copy command", action: .copyCommand, value: "open -a Docker", keepRetry: false, linkLabel: nil, linkUrl: nil)
         let out = BridgeValue.encode(fix) as? [String: Any]
         #expect(out?["action"] as? String == "copy-command")
-        let url = AppCreateFix(text: "t", label: "l", action: .openUrl, value: "https://cua.ai")
+        let url = AppCreateFix(text: "t", label: "l", action: .openUrl, value: "https://cua.ai", keepRetry: false, linkLabel: nil, linkUrl: nil)
         #expect((BridgeValue.encode(url) as? [String: Any])?["action"] as? String == "open-url")
+        let iso = AppCreateFix(text: "t", label: "Choose Windows ISO...", action: .chooseWindowsIso, value: nil, keepRetry: true, linkLabel: "Download", linkUrl: "https://www.microsoft.com/software-download/windows11")
+        let encoded = BridgeValue.encode(iso) as? [String: Any]
+        #expect(encoded?["action"] as? String == "choose-windows-iso")
+        #expect(encoded?["keepRetry"] as? Bool == true)
     }
 }

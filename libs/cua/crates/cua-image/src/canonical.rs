@@ -7,7 +7,7 @@
 //! | OS | default | other versions |
 //! |---|---|---|
 //! | Linux | `ghcr.io/trycua/linux:24.04` | `ghcr.io/trycua/linux:<v>` |
-//! | Windows | `ghcr.io/trycua/windows:2022` | `ghcr.io/trycua/windows:<v>` |
+//! | Windows | `ghcr.io/trycua/windows:2022` | `windows:11`, `2025`, `2019`, `10`: built on this computer from an ISO ([`crate::windows`]) |
 //! | macOS | `ghcr.io/trycua/macos:26` (tahoe) | `macos:15` (sequoia), `macos:<v>` |
 //!
 //! Tiers (`<os-version>[-<tier>][-disk]`): no suffix is the full default
@@ -125,6 +125,8 @@ impl CanonicalOs {
             (Self::Macos, "tahoe") => "26".into(),
             (Self::Macos, "sequoia") => "15".into(),
             (Self::Linux, "noble") => "24.04".into(),
+            // `windows:server-2022`, `windows:win11`, ...: the table's id.
+            (Self::Windows, _) => crate::windows::normalize_version(version),
             _ => version.trim().to_string(),
         }
     }
@@ -474,6 +476,31 @@ pub fn is_canonical(image: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_versions_are_aliases() {
+        let none = |_: &str| None;
+        // Built from the tag: the local builds are in no registry, so a
+        // literal reference would be flagged by the docs image gate.
+        let image = |tag: &str| format!("{WINDOWS_REPO}:{tag}");
+        for (word, tag) in [
+            ("windows:11", "11"),
+            ("windows:win11", "11"),
+            ("windows:server-2022", "2022"),
+            ("windows:2025", "2025"),
+        ] {
+            assert_eq!(
+                alias_with(word, &none).map(|(r, _)| r),
+                Some(image(tag)),
+                "{word}"
+            );
+        }
+        // The word resolves without a catalog 404: unpublished local builds pass.
+        let r = resolve_word_with("windows:11", None, &none)
+            .unwrap()
+            .unwrap();
+        assert_eq!((r.0, r.1), (image("11"), CanonicalOs::Windows));
+    }
 
     #[test]
     fn os_tier_names_are_aliases() {

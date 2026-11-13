@@ -411,9 +411,9 @@ pub enum OverlayCommand {
     /// Keys of a combo the agent is pressing (such as `["cmd", "c"]`). The
     /// minimal badge shows it briefly; other badge modes ignore it.
     ShowKeyCombo(Vec<String>),
-    /// Show a focus-highlight rectangle around an AX-targeted element.
-    /// `[x, y, width, height]` in screen coordinates (top-left origin).
-    /// `None` clears the highlight.
+    /// Retired: the cursor draws no action marks, so no platform paints a
+    /// focus highlight any more and this command is ignored. The variant stays
+    /// so existing senders and platform matches keep compiling.
     ShowFocusRect(Option<[f64; 4]>),
 }
 

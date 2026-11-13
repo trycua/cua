@@ -206,6 +206,7 @@ impl Tool for HotkeyTool {
                 );
             };
             let display = raw_keys.join("+");
+            super::cursor_tools::position_desktop_keyboard_cursor(&self.state, &args).await;
             let prompt = PromptInput::from_args(&args);
             let result = tokio::task::spawn_blocking(move || {
                 let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();

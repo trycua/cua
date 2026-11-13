@@ -138,6 +138,8 @@ impl Cua {
     /// the relay account).
     #[uniffi::constructor]
     pub fn embedded(config: CuaConfig) -> Result<Arc<Self>> {
+        // `..Default::default()` fills the fields that only some feature sets add.
+        #[allow(clippy::needless_update)]
         let rc = RuntimeConfig {
             state_dir: config.state_dir.clone().map(PathBuf::from),
             local: None,

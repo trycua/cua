@@ -1,10 +1,10 @@
 {
   "libs/cua-driver/rust/crates/cua-perception": "0.2.2",
-  "libs/cua-driver": "0.47.18",
-  "libs/lume": "0.7.0",
-  "libs/python/cua-sandbox": "0.10.1",
-  "libs/cua": "0.25.2",
-  "libs/cua-spacesd": "0.15.4",
-  "apps/cua-spaces-macos": "0.34.4",
-  "libs/cua-bench": "0.4.1"
+  "libs/cua-driver": "0.49.0",
+  "libs/lume": "0.7.2",
+  "libs/python/cua-sandbox": "0.11.0",
+  "libs/cua": "0.27.2",
+  "libs/cua-spacesd": "0.16.0",
+  "apps/cua-spaces-macos": "0.36.5",
+  "libs/cua-bench": "0.4.2"
 }

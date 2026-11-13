@@ -26,6 +26,8 @@ export interface BridgeUi {
   setDropTargets?(window: unknown, targets: DropTargetRect[]): void;
   /** "Send file…": the native file picker over the calling window (files and folders, several); null when cancelled. */
   chooseFiles?(window: unknown): Promise<string[] | null>;
+  /** "Choose Windows ISO…": the native picker for one disc image (`.iso`) over the calling window; null when cancelled. */
+  chooseIso?(window: unknown): Promise<string | null>;
   /** Settings, Advanced's "Browse…": one program, over the calling window; null when cancelled. */
   chooseProgram?(window: unknown): Promise<string | null>;
   /** A Space's picture-in-picture panels (floating windows). */

@@ -1,5 +1,80 @@
 # Changelog
 
+## [0.36.5](https://github.com/trycua/cua/compare/cua-spaces-v0.36.4...cua-spaces-v0.36.5) (2026-11-13)
+
+
+### Bug Fixes
+
+* **cua-driver:** do not strip proc-macro dylibs in release builds ([#7540](https://github.com/trycua/cua/issues/7540)) ([8837363](https://github.com/trycua/cua/commit/8837363d65a36292c7692b5c9c37e77d44e9326d))
+
+## [0.36.4](https://github.com/trycua/cua/compare/cua-spaces-v0.36.3...cua-spaces-v0.36.4) (2026-11-13)
+
+
+### Bug Fixes
+
+* **spaces:** one Add a computer on the Computers tab ([#7538](https://github.com/trycua/cua/issues/7538)) ([34461d7](https://github.com/trycua/cua/commit/34461d7ac31ac70f53e5a9b0a99828fe7276cd6e))
+
+## [0.36.3](https://github.com/trycua/cua/compare/cua-spaces-v0.36.2...cua-spaces-v0.36.3) (2026-11-12)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.27.1 in Cua Spaces ([#7532](https://github.com/trycua/cua/issues/7532)) ([775fa27](https://github.com/trycua/cua/commit/775fa27508ff307ed44fc3b4c7bff835dbba0e7e))
+
+## [0.36.2](https://github.com/trycua/cua/compare/cua-spaces-v0.36.1...cua-spaces-v0.36.2) (2026-11-12)
+
+
+### Bug Fixes
+
+* **cua-spaces:** build the github_auth tests on Windows ([#7515](https://github.com/trycua/cua/issues/7515)) ([2319d45](https://github.com/trycua/cua/commit/2319d4561feb3086a8dc66edeb9cbd5eb509c5a5))
+* **spaces-macos:** bundle cua 0.27.0 in Cua Spaces ([#7500](https://github.com/trycua/cua/issues/7500)) ([0266f05](https://github.com/trycua/cua/commit/0266f05d4a325263aa59e6d2fb7c73e66d7e695a))
+* **spaces-macos:** bundle Cua Driver 0.47.22 in Cua Spaces ([#7518](https://github.com/trycua/cua/issues/7518)) ([2aab2f6](https://github.com/trycua/cua/commit/2aab2f60f62fb7350404a4296244633ce9bfc473))
+
+## [0.36.1](https://github.com/trycua/cua/compare/cua-spaces-v0.36.0...cua-spaces-v0.36.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.26.0 in Cua Spaces ([#7489](https://github.com/trycua/cua/issues/7489)) ([7a7dba0](https://github.com/trycua/cua/commit/7a7dba0971db6361dd23760c74beacd2060261b6))
+
+## [0.36.0](https://github.com/trycua/cua/compare/cua-spaces-v0.35.0...cua-spaces-v0.36.0) (2026-11-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cua-driver:** the `page` tool no longer accepts `execute_javascript`, `click_element`, `insert_text`, `type_keystrokes` or `enable_javascript_apple_events`; use the typed `browser_*` tools.
+
+### Features
+
+* **cua-driver:** deprecate replay_trajectory, install_ffmpeg, get_accessibility_tree ([#7483](https://github.com/trycua/cua/issues/7483)) ([b13430e](https://github.com/trycua/cua/commit/b13430e04a8a71cf933266a047c9e88e9573d3b9))
+
+## [0.35.0](https://github.com/trycua/cua/compare/cua-spaces-v0.34.6...cua-spaces-v0.35.0) (2026-11-12)
+
+
+### Features
+
+* **cua-sdk:** ship cua-cli on PyPI as a thin wheel that fetches the signed CLI ([#7474](https://github.com/trycua/cua/issues/7474)) ([b890fca](https://github.com/trycua/cua/commit/b890fcada5e762fa5bd2820548ae1fffa63f452c))
+
+
+### Bug Fixes
+
+* **cua-driver:** deprecate Computer History, removal after 26 Nov 2026 ([#7478](https://github.com/trycua/cua/issues/7478)) ([0b6922b](https://github.com/trycua/cua/commit/0b6922bad2363be5215c9e527307c2ff6657b3be))
+* **cua-driver:** render macOS cursors on every display and remove all action marks ([#7458](https://github.com/trycua/cua/issues/7458)) ([8fb8d67](https://github.com/trycua/cua/commit/8fb8d67e3bdecd3b030298c945929efe4f02cb77))
+
+## [0.34.6](https://github.com/trycua/cua/compare/cua-spaces-v0.34.5...cua-spaces-v0.34.6) (2026-11-12)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.47.19 in Cua Spaces ([#7465](https://github.com/trycua/cua/issues/7465)) ([d5e8f2c](https://github.com/trycua/cua/commit/d5e8f2cbf828fae530cb03bfa29cc451d5b24c41))
+
+## [0.34.5](https://github.com/trycua/cua/compare/cua-spaces-v0.34.4...cua-spaces-v0.34.5) (2026-11-12)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.47.18 in Cua Spaces ([#7445](https://github.com/trycua/cua/issues/7445)) ([18dfe55](https://github.com/trycua/cua/commit/18dfe55689b966ac2fcbc2e12e3c90c3a5b69847))
+
 ## [0.34.4](https://github.com/trycua/cua/compare/cua-spaces-v0.34.3...cua-spaces-v0.34.4) (2026-11-12)
 
 

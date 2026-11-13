@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/trycua/cua/compare/bench-v0.4.1...bench-v0.4.2) (2026-11-12)
+
+
+### Bug Fixes
+
+* **sandbox:** unpin cua-driver in the driver extra so installs resolve ([#7464](https://github.com/trycua/cua/issues/7464)) ([934d527](https://github.com/trycua/cua/commit/934d527c41320cd17461367f6fe171175eb2b978))
+
 ## [0.4.1](https://github.com/trycua/cua/compare/bench-v0.4.0...bench-v0.4.1) (2026-11-10)
 
 

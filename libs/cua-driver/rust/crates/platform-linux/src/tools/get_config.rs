@@ -33,7 +33,6 @@ impl Tool for GetConfigTool {
     }
     async fn invoke(&self, _args: Value) -> ToolResult {
         let cfg = self.state.config.read().unwrap();
-        let (pip_enabled, pip_geometry) = pip_preview::read_pip_keys_from_file();
         ToolResult::text("cua-driver-rs configuration").with_structured(json!({
             "version": env!("CARGO_PKG_VERSION"),
             "source_sha": option_env!("CUA_DRIVER_SOURCE_SHA"),
@@ -41,8 +40,6 @@ impl Tool for GetConfigTool {
             "capture_mode": cfg.capture_mode,
             "max_image_dimension": cfg.max_image_dimension,
             "cursor": cursor_overlay::cursor_options::saved_config_json(),
-            "experimental_pip": pip_enabled,
-            "experimental_pip_geometry": pip_geometry,
             "fast_path": cua_driver_core::fast_path::wire::config_value()
         }))
     }

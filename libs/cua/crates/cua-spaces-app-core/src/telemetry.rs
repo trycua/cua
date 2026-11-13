@@ -1893,6 +1893,7 @@ mod tests {
                     gpu: false,
                     host: None,
                     host_name: None,
+                    parent: None,
                 },
             );
             st.pending[0].phase = "preparing".into();

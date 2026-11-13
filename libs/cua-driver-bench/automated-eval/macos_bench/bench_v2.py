@@ -232,11 +232,16 @@ FRONT_GRACE_SAMPLES = (
 )
 
 
+# Tools whose input is a search query over static text and runs nothing (the raw-linux docs arm's lookup), so an
+# exec pattern in the query ("subprocess") is a word, not a route.
+SEARCH_ONLY_TOOLS = ("mcp__cua__lookup",)
+
+
 def scan_tool_use(name: str, tool_input: Any) -> tuple[list[str], list[str]]:
     """(violations, mentions) for one tool call."""
     if name in FORBIDDEN_BUILTINS:
         return [f"builtin:{name}"], []
-    if not name.startswith("mcp__"):
+    if not name.startswith("mcp__") or name in SEARCH_ONLY_TOOLS:
         return [], []
     text = "\n".join(_strings(tool_input))
     hard = [f"{name}:{p}" for p in EXEC_PATTERNS if p in text]

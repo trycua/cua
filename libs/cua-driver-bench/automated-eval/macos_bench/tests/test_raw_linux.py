@@ -689,6 +689,12 @@ class DocsArmTest(unittest.TestCase):
         self.assertIn("0 matching entries", none[0]["text"])
         self.assertFalse(failed)
 
+    def test_a_lookup_query_is_not_a_gui_only_violation(self):
+        import bench_v2 as v2
+
+        self.assertEqual(v2.scan_tool_use("mcp__cua__lookup", {"query": "subprocess bash -c"}), ([], []))
+        self.assertTrue(v2.scan_tool_use("mcp__cua__run_script", {"script": "import subprocess"})[0])
+
     def test_summary_counts_lookups_apart_from_scripts(self):
         import tempfile
 

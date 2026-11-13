@@ -491,6 +491,7 @@ struct Visited<'a> {
     /// tooltip there ("Play"/"Pause", "Look in"), GTK its tooltip text.
     description: String,
     value: Option<String>,
+    document_uri: Option<String>,
     checked: Option<bool>,
     enabled: Option<bool>,
     selected: Option<bool>,
@@ -1743,6 +1744,10 @@ async fn collect_visited_bounded_opts<'a>(
         };
         let focused = matches!(state_r.as_ref(), Some(Ok(s)) if s.contains(State::Focused));
         let role_lower = role.to_ascii_lowercase();
+        // Chromium puts the Document interface on nearly every node; only a
+        // document's own URI names the rendered page, so read it there alone.
+        let has_document = ifaces.contains(Interface::Document)
+            && matches!(role_lower.as_str(), "document web" | "document frame");
         let checked = if role_lower.contains("check") {
             state_r
                 .as_ref()
@@ -1788,8 +1793,9 @@ async fn collect_visited_bounded_opts<'a>(
         // and drop the borrow before `acc` moves into `visited`.
         let mut actions: Vec<String> = Vec::new();
         let mut value: Option<String> = None;
+        let mut document_uri: Option<String> = None;
         let mut text_content = String::new();
-        if has_action || has_value || has_text {
+        if has_action || has_value || has_text || has_document {
             if let Some(Ok(proxies)) = call(acc.proxies()).await {
                 if has_action {
                     if let Some(Ok(ap)) = call(proxies.action()).await {
@@ -1831,6 +1837,17 @@ async fn collect_visited_bounded_opts<'a>(
                                 text_content = t;
                             }
                         }
+                    }
+                }
+                if has_document {
+                    if let Some(Ok(document)) = call(proxies.document()).await {
+                        // Chromium maps AXTreeData.url to the standard ATK /
+                        // AT-SPI Document "URI" attribute. It is the rendered
+                        // destination, unlike localized names and titles.
+                        document_uri = call(document.get_attribute_value("URI"))
+                            .await
+                            .and_then(|result| result.ok())
+                            .filter(|uri| !uri.trim().is_empty());
                     }
                 }
             }
@@ -2002,6 +2019,7 @@ async fn collect_visited_bounded_opts<'a>(
             name,
             description,
             value,
+            document_uri,
             checked,
             enabled,
             selected,
@@ -2316,7 +2334,9 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
                 checked: v.checked,
                 enabled: v.enabled,
                 selected: v.selected,
+                focused: Some(v.focused),
                 description: (!description_parts.is_empty()).then(|| description_parts.join("; ")),
+                document_uri: v.document_uri.clone(),
                 actions: v.actions.clone(),
                 element_key: idx as u64,
                 identity: v.identity.clone(),

@@ -19,6 +19,7 @@ on:
       - "libs/cua-driver/rust/crates/platform-linux/**"
       - "libs/cua/crates/cua-cli/**"
       - "libs/cua/crates/cua-sdk/**"
+      - "libs/cua/crates/cua-sdk-native/**"
       - "libs/cua/crates/cua-spacesd-client/**"
       - ".github/actions/cua-sandbox/**"
       - ".github/actions/build-cua-under-test/**"
@@ -40,6 +41,7 @@ on:
       - "libs/cua-driver/rust/crates/platform-linux/**"
       - "libs/cua/crates/cua-cli/**"
       - "libs/cua/crates/cua-sdk/**"
+      - "libs/cua/crates/cua-sdk-native/**"
       - "libs/cua/crates/cua-spacesd-client/**"
       - ".github/actions/cua-sandbox/**"
       - ".github/actions/build-cua-under-test/**"
@@ -77,7 +79,10 @@ jobs:
     needs: quick
     if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) && needs.quick.outputs.skip != 'true' }}
     name: build ${{ matrix.component }}
-    runs-on: ubuntu-latest
+    # Built on the release of the image the binaries run in
+    # (ghcr.io/trycua/linux:24.04, glibc 2.39): an ubuntu-26.04 build needs
+    # glibc 2.43 and its injected cua-spacesd never starts.
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
       fail-fast: true

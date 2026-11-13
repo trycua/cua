@@ -32,7 +32,12 @@ export const tablesAsLists = (md: string) => {
       inTable = true; // the header row
       continue;
     }
-    const cells = line.trim().slice(1, -1).split("|").map((c) => c.trim()).filter(Boolean);
+    const cells = line
+      .trim()
+      .slice(1, -1)
+      .split("|")
+      .map((c) => c.trim())
+      .filter(Boolean);
     out.push(`- ${cells.join(", ")}`);
   }
   return out.join("\n");
@@ -53,9 +58,14 @@ export function NoticesDialog({ open, onOpenChange }: { open: boolean; onOpenCha
   useEffect(() => {
     if (!open || read !== null) return;
     const app = inMacApp()
-      ? fetch(MAC_APP_NOTICES_PATH).then((r) => (r.ok ? r.text() : null)).catch(() => null)
+      ? fetch(MAC_APP_NOTICES_PATH)
+          .then((r) => (r.ok ? r.text() : null))
+          .catch(() => null)
       : Promise.resolve(null);
-    const web = import("../../../../../legal/THIRD_PARTY_NOTICES.md?raw").then((m) => m.default as string, () => null);
+    const web = import("../../../../../legal/THIRD_PARTY_NOTICES.md?raw").then(
+      (m) => m.default as string,
+      () => null,
+    );
     void Promise.all([app, web]).then(([appText, webText]) => {
       setRead({ app: appText && tablesAsLists(stripComments(appText).replace(/^# .*\n+/, "")), web: webText && stripComments(webText) });
     });
@@ -66,9 +76,15 @@ export function NoticesDialog({ open, onOpenChange }: { open: boolean; onOpenCha
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPopup className="top-[8vh] flex max-h-[80vh] w-[min(640px,calc(100vw-2rem))] flex-col" data-notices>
-        <DialogTitle /* design-ok: full-width dialog header rule */ className="border-b px-5 py-3 text-[15px] font-semibold">{t("settings.notices.title")}</DialogTitle>
+        <DialogTitle /* design-ok: full-width dialog header rule */ className="border-b px-5 py-3 text-[15px] font-semibold">
+          {t("settings.notices.title")}
+        </DialogTitle>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 select-text">
-          {text === null ? <p className="text-[13px] text-muted-foreground">{t("settings.notices.loading")}</p> : <Markdown text={text} onOpenLink={(url) => void openExternal(url)} />}
+          {text === null ? (
+            <p className="text-[13px] text-muted-foreground">{t("settings.notices.loading")}</p>
+          ) : (
+            <Markdown text={text} onOpenLink={(url) => void openExternal(url)} />
+          )}
         </div>
         <div /* design-ok: full-width dialog footer */ className="flex justify-end border-t bg-muted/60 px-5 py-3">
           <Button onClick={() => onOpenChange(false)}>{t("settings.notices.done")}</Button>

@@ -154,12 +154,12 @@ jobs:
           workspaces: libs/cua
           key: cua-sandbox
 
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
 
       - name: Build the cua SDK library and the spacesd MockServer fixture
         working-directory: libs/cua
         run: |
-          cargo build --locked --release -p cua-sdk
+          cargo build --locked --release -p cua-sdk-native
           scripts/build-test-fixtures.sh
           node scripts/stage-uniffi-library.mjs --only=python
 

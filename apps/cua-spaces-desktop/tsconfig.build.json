@@ -1,0 +1,9 @@
+{
+  // The bundler's tsconfig (tsdown.config.mts): tsconfig.json without the
+  // `paths` mapping. `paths` makes the bundler load a package's directory by
+  // its `main` (a CommonJS build) and ignore its `exports`, so a default import
+  // such as i18next-icu's came out undefined at runtime. The packages are found
+  // through `resolve.modules` there instead, with `exports` honoured.
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "paths": {} }
+}

@@ -124,7 +124,7 @@ impl CreateKey {
 }
 
 /// `<home>/creating/<stem>.json`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub(crate) struct Journal {
     /// The sandbox (local) or claim name; for a local create, the key the
     /// crash recovery registers.
@@ -153,6 +153,23 @@ pub(crate) struct Journal {
     /// The name was generated for this create (not the caller's).
     #[serde(default)]
     pub generated: bool,
+}
+
+impl std::fmt::Debug for Journal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Journal")
+            .field("name", &self.name)
+            .field("token", &"<redacted>")
+            .field("pid", &self.pid)
+            .field("spacesd", &self.spacesd)
+            .field("started", &self.started)
+            .field("kind", &self.kind)
+            .field("id", &self.id)
+            .field("create_id", &self.create_id)
+            .field("made", &self.made)
+            .field("generated", &self.generated)
+            .finish()
+    }
 }
 
 fn yes() -> bool {

@@ -47,7 +47,8 @@ use xkbcommon::xkb;
 use super::kwin_keystate::{lock_keys, LockKeys};
 use super::portal::RestoreToken;
 use super::text_keys::{
-    chromium_receives, find_key, modifier_chords, refused, text_sym, with_line_feeds, EVDEV_OFFSET,
+    chromium_receives, find_key, modifier_chords, refused, text_sym, with_line_feeds, xkb1, Xkb1,
+    EVDEV_OFFSET,
 };
 use crate::input::action::Action;
 
@@ -1358,9 +1359,10 @@ impl EisState {
         text: &str,
         desktop: DesktopFacts,
     ) -> anyhow::Result<(Vec<TextStep>, Duration)> {
+        let xkb = xkb1()?;
         let text = with_line_feeds(text);
         for ch in text.chars() {
-            text_sym(ch)?;
+            text_sym(xkb, ch)?;
         }
         if self.device_with_interface("ei_keyboard").is_none() {
             if desktop.x11_app_may_have_focus {
@@ -1390,7 +1392,7 @@ impl EisState {
                 Some(map) => (map, keyboard_now(self.keyboard, desktop, map)?),
                 None => return Err(refused("the compositor announced no keyboard layout")),
             };
-            match plan_keys(&text, map, keyboard) {
+            match plan_keys(xkb, &text, map, keyboard) {
                 Ok(keys) => {
                     let steps = keys
                         .chunks(KEYS_PER_STEP)
@@ -1756,12 +1758,13 @@ fn types_sym(
 /// takes Shift. Modifier keys can depend on each other (Shift held first turns
 /// some AltGr keys into `Multi_key`), so both press orders are tried.
 fn typed_key(
+    xkb: &Xkb1,
     map: &xkb::Keymap,
     keyboard: KeyboardState,
     chords: &[Vec<u32>],
     sym: xkb::Keysym,
 ) -> Option<TypedKey> {
-    let (code, modifiers) = find_key(map, keyboard.group, sym, |code, _| {
+    let (code, modifiers) = find_key(xkb, map, keyboard.group, sym, |code, _| {
         chords.iter().find_map(|chord| {
             let reversed = chord.iter().rev().copied().collect();
             let order = [chord.clone(), reversed]
@@ -1777,6 +1780,7 @@ fn typed_key(
 /// produce right now is refused whole instead of arriving wrong or short.
 /// `keyboard` holds no modifier key: [`keyboard_now`] refuses one that does.
 fn plan_keys(
+    xkb: &Xkb1,
     text: &str,
     map: &xkb::Keymap,
     keyboard: KeyboardState,
@@ -1786,10 +1790,10 @@ fn plan_keys(
     let mut plan = Vec::with_capacity(text.len());
     let mut missing = String::new();
     for ch in text.chars() {
-        let sym = text_sym(ch)?;
+        let sym = text_sym(xkb, ch)?;
         let key = known
             .entry(ch)
-            .or_insert_with(|| typed_key(map, keyboard, &chords, sym));
+            .or_insert_with(|| typed_key(xkb, map, keyboard, &chords, sym));
         match key {
             Some(key) => plan.push(key.clone()),
             None if missing.contains(ch) => {}
@@ -2984,7 +2988,7 @@ mod key_plan_tests {
     }
 
     fn plan(text: &str) -> anyhow::Result<Vec<TypedKey>> {
-        plan_keys(text, &keymap(), KeyboardState::default())
+        plan_keys(xkb1().unwrap(), text, &keymap(), KeyboardState::default())
     }
 
     fn key(code: u32, modifiers: &[u32]) -> TypedKey {
@@ -3041,12 +3045,10 @@ mod key_plan_tests {
     #[test]
     fn a_key_is_never_offered_behind_a_command_modifier() {
         let find = |c: char| {
-            find_key(
-                &keymap(),
-                0,
-                xkb::utf32_to_keysym(u32::from(c)),
-                |_, mask| Some((mask.count_ones(), mask)),
-            )
+            let xkb = xkb1().unwrap();
+            find_key(xkb, &keymap(), 0, text_sym(xkb, c).unwrap(), |_, mask| {
+                Some((mask.count_ones(), mask))
+            })
         };
         assert_eq!(find('÷'), None);
         assert_eq!(find('a'), Some((30, 0)));
@@ -3077,7 +3079,7 @@ mod key_plan_tests {
             ..KeyboardState::default()
         };
         assert_eq!(
-            plan_keys("a", &keymap(), keyboard)
+            plan_keys(xkb1().unwrap(), "a", &keymap(), keyboard)
                 .unwrap_err()
                 .to_string(),
             "foreground_unavailable: the active keyboard layout has no key for \"a\". Use set_value \

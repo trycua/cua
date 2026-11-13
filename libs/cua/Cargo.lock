@@ -2320,7 +2320,7 @@ dependencies = [
 
 [[package]]
 name = "cua-agent-setup"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2339,7 +2339,7 @@ dependencies = [
 
 [[package]]
 name = "cua-agent-threads"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "chrono",
  "rusqlite",
@@ -2351,7 +2351,7 @@ dependencies = [
 
 [[package]]
 name = "cua-agents"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "base64 0.22.1",
  "cua-agent-setup",
@@ -2373,7 +2373,7 @@ dependencies = [
 
 [[package]]
 name = "cua-auth"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2396,7 +2396,7 @@ dependencies = [
 
 [[package]]
 name = "cua-bindgen"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "anyhow",
  "camino",
@@ -2408,7 +2408,7 @@ dependencies = [
 
 [[package]]
 name = "cua-byoc"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -2447,7 +2447,7 @@ dependencies = [
 
 [[package]]
 name = "cua-chaos"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "clap",
  "serde",
@@ -2458,7 +2458,7 @@ dependencies = [
 
 [[package]]
 name = "cua-chromium-storage"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "base64 0.22.1",
  "cua-teleport-bundle",
@@ -2473,13 +2473,12 @@ dependencies = [
 
 [[package]]
 name = "cua-ci"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "async-trait",
  "axum",
  "base64 0.22.1",
  "cua-home",
- "cua-sdk",
  "cua-vmm",
  "hex",
  "humantime",
@@ -2502,7 +2501,7 @@ dependencies = [
 
 [[package]]
 name = "cua-cli"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -2517,6 +2516,7 @@ dependencies = [
  "cua-ci",
  "cua-cluster",
  "cua-compat",
+ "cua-compat-cmd",
  "cua-contrib",
  "cua-crash",
  "cua-daemon",
@@ -2558,7 +2558,7 @@ dependencies = [
 
 [[package]]
 name = "cua-cluster"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2586,22 +2586,26 @@ dependencies = [
  "tonic",
  "tracing",
  "url",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "cua-compat"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "async-trait",
  "axum",
  "base64 0.22.1",
  "bytes",
  "cua-chaos",
+ "cua-cluster",
+ "cua-compat-cmd",
  "cua-home",
  "cua-image",
  "cua-proto",
  "cua-sandbox-core",
  "cua-sdk",
+ "cua-spaces",
  "cua-spacesd-client",
  "flate2",
  "futures-util",
@@ -2645,8 +2649,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-compat-cmd"
+version = "0.27.1"
+dependencies = [
+ "clap",
+ "cua-sdk",
+]
+
+[[package]]
 name = "cua-connections"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2655,7 +2667,7 @@ dependencies = [
 
 [[package]]
 name = "cua-contrib"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -2677,16 +2689,17 @@ dependencies = [
 
 [[package]]
 name = "cua-crash"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "cua-telemetry",
+ "regex-lite",
  "sentry",
  "serde_json",
 ]
 
 [[package]]
 name = "cua-create-failure"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "cua-telemetry",
  "serde",
@@ -2695,12 +2708,60 @@ dependencies = [
 
 [[package]]
 name = "cua-daemon"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "async-trait",
  "axum",
  "base64 0.22.1",
  "bytes",
+ "cua-agents",
+ "cua-cluster",
+ "cua-daemon-core",
+ "cua-disk",
+ "cua-home",
+ "cua-host",
+ "cua-image",
+ "cua-proto",
+ "cua-sandbox-core",
+ "cua-share",
+ "cua-snapshot-sync",
+ "cua-spaces",
+ "cua-spacesd-client",
+ "cua-vmm",
+ "flate2",
+ "futures-util",
+ "hmac 0.12.1",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "libc",
+ "pbjson-types",
+ "prost",
+ "rand 0.9.5",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
+ "tokio-tungstenite 0.29.0",
+ "tonic",
+ "tonic-web",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
+name = "cua-daemon-core"
+version = "0.27.1"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
  "cua-agents",
  "cua-byoc",
  "cua-cluster",
@@ -2719,16 +2780,12 @@ dependencies = [
  "cua-vmm",
  "flate2",
  "futures-util",
- "hmac 0.12.1",
  "http",
- "http-body-util",
  "humantime",
- "hyper",
  "hyper-util",
  "libc",
  "pbjson-types",
  "prost",
- "prost-types",
  "rand 0.9.5",
  "serde",
  "serde_json",
@@ -2737,13 +2794,8 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
- "tokio-stream",
- "tokio-tungstenite 0.29.0",
  "tonic",
- "tonic-prost",
- "tonic-web",
  "tower",
- "tower-http",
  "tracing",
  "tracing-subscriber",
  "url",
@@ -2751,7 +2803,7 @@ dependencies = [
 
 [[package]]
 name = "cua-disk"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "async-trait",
  "bollard",
@@ -2766,7 +2818,7 @@ dependencies = [
 
 [[package]]
 name = "cua-home"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "libc",
  "tempfile",
@@ -2775,7 +2827,7 @@ dependencies = [
 
 [[package]]
 name = "cua-host"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -2803,7 +2855,7 @@ dependencies = [
 
 [[package]]
 name = "cua-hotspot"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "futures-util",
  "tokio",
@@ -2811,7 +2863,7 @@ dependencies = [
 
 [[package]]
 name = "cua-icon-cache"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "cua-home",
  "hex",
@@ -2824,7 +2876,7 @@ dependencies = [
 
 [[package]]
 name = "cua-image"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2853,7 +2905,7 @@ dependencies = [
 
 [[package]]
 name = "cua-keyvault"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "argon2",
  "async-trait",
@@ -2882,7 +2934,7 @@ dependencies = [
 
 [[package]]
 name = "cua-logging"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "tracing",
  "tracing-appender",
@@ -2891,7 +2943,7 @@ dependencies = [
 
 [[package]]
 name = "cua-machine-seal"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "chacha20poly1305 0.11.0",
  "cua-home",
@@ -2907,7 +2959,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-client"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "cua-media-codec",
  "cua-media-protocol",
@@ -2917,7 +2969,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-codec"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "audiopus_sys",
  "criterion",
@@ -2938,7 +2990,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-protocol"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2946,7 +2998,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-transport"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "cua-media-protocol",
  "quinn",
@@ -2959,7 +3011,7 @@ dependencies = [
 
 [[package]]
 name = "cua-mesh"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "base64 0.22.1",
  "boringtun",
@@ -2995,7 +3047,7 @@ dependencies = [
 
 [[package]]
 name = "cua-microvm-init"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "base64 0.22.1",
  "libc",
@@ -3005,7 +3057,7 @@ dependencies = [
 
 [[package]]
 name = "cua-mock-llm"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "axum",
  "bytes",
@@ -3020,7 +3072,7 @@ dependencies = [
 
 [[package]]
 name = "cua-proto"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "pbjson",
  "pbjson-build",
@@ -3038,7 +3090,7 @@ dependencies = [
 
 [[package]]
 name = "cua-push"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -3059,7 +3111,7 @@ dependencies = [
 
 [[package]]
 name = "cua-replica-lab"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "async-trait",
  "cua-cluster",
@@ -3078,7 +3130,7 @@ dependencies = [
 
 [[package]]
 name = "cua-repo-cache"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "cua-home",
  "cua-telemetry",
@@ -3095,7 +3147,7 @@ dependencies = [
 
 [[package]]
 name = "cua-sandbox-core"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -3129,7 +3181,7 @@ dependencies = [
 
 [[package]]
 name = "cua-sdk"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -3140,6 +3192,7 @@ dependencies = [
  "cua-cluster",
  "cua-create-failure",
  "cua-daemon",
+ "cua-daemon-core",
  "cua-home",
  "cua-host",
  "cua-icon-cache",
@@ -3177,8 +3230,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-sdk-native"
+version = "0.27.1"
+dependencies = [
+ "cua-sdk",
+]
+
+[[package]]
 name = "cua-share"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "bytes",
  "cua-sandbox-core",
@@ -3206,7 +3266,7 @@ dependencies = [
 
 [[package]]
 name = "cua-snapshot-sync"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -3233,7 +3293,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spaces"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -3288,7 +3348,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spaces-app-core"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -3312,7 +3372,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spaces-cli"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -3322,6 +3382,8 @@ dependencies = [
  "cua-byoc",
  "cua-cli",
  "cua-cluster",
+ "cua-compat",
+ "cua-compat-cmd",
  "cua-contrib",
  "cua-daemon",
  "cua-home",
@@ -3355,7 +3417,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spaces-cluster"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -3391,7 +3453,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spaces-contract"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "schemars",
  "serde",
@@ -3400,7 +3462,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spaces-ext"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -3454,7 +3516,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spaces-ffi"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "base64 0.22.1",
  "cua-chromium-storage",
@@ -3489,7 +3551,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spaces-transcript"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "serde_json",
  "thiserror 2.0.20",
@@ -3497,7 +3559,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-client"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -3542,7 +3604,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-html5"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -3563,7 +3625,7 @@ dependencies = [
 
 [[package]]
 name = "cua-telemetry"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "cua-connections",
  "hex",
@@ -3578,7 +3640,7 @@ dependencies = [
 
 [[package]]
 name = "cua-teleport"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "aes 0.8.4",
  "block2 0.6.2",
@@ -3617,7 +3679,7 @@ dependencies = [
 
 [[package]]
 name = "cua-teleport-bundle"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "aes 0.8.4",
  "aes-gcm",
@@ -3637,7 +3699,7 @@ dependencies = [
 
 [[package]]
 name = "cua-viewer"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "apple-cf",
  "axum",
@@ -3672,7 +3734,7 @@ dependencies = [
 
 [[package]]
 name = "cua-vmm"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "async-trait",
  "backhand",
@@ -3710,7 +3772,7 @@ dependencies = [
 
 [[package]]
 name = "cua-volume"
-version = "0.17.0"
+version = "0.27.1"
 dependencies = [
  "async-trait",
  "aws-credential-types",

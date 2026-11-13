@@ -489,6 +489,7 @@ fn run_options(o: AgentRunOptions) -> Result<ca::RunOptions> {
             model: o.model.clone(),
         }),
         model: o.model,
+        effort: None,
         install: o.install,
         exit_when_idle: o.exit_when_idle,
         idle_exit_secs: None,

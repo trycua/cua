@@ -14,24 +14,10 @@
 //!   `Edit`, `h1`-`h6` → `Heading`, `li` → `ListItem`, etc.). `#id` /
 //!   `.class` / `[role=*]` filter the matches after the fact by reading the
 //!   element's `AutomationId` / IA2 attributes.  `[data-*]` is not
-//!   reachable via UIA/IA2 — that path errors with a pointer at
-//!   `execute_javascript`.
-//! - `execute_javascript` — two-tier:
-//!     1. **Bookmark-URL bypass** ([`super::page_bookmark::try_bookmark_exec`])
-//!        — uses UIA `ValuePattern::SetValue` on the Edit-favorite dialog's
-//!        URL field to install a `javascript:` bookmark, then UIA
-//!        `InvokePattern::Invoke` on the favorites-bar item to run it.
-//!        Result is read back from `document.title`.  Requires the
-//!        favorites bar to be visible (sent Ctrl+Shift+B if not) and a
-//!        pre-existing `cua-driver-eval` bookmark (creation flow is
-//!        described in the docs; not yet automated end-to-end).  Zero
-//!        config, no launch flag.
-//!     2. **CDP fallback** — uses the shared `cua_driver_core::cdp` helper.
-//!        Requires `--remote-debugging-port=N` and `CUA_DRIVER_CDP_PORT=N`.
-//!        Returns an actionable error if neither path works.
+//!   reachable via UIA/IA2 — that path errors.
 
 use async_trait::async_trait;
-use cua_driver_core::page::{ClickElementResult, PageBackend, PageReadResult};
+use cua_driver_core::page::{PageBackend, PageReadResult};
 
 use windows::core::Interface;
 use windows::Win32::Foundation::HWND;
@@ -88,276 +74,6 @@ impl PageBackend for WindowsPageBackend {
         .map_err(|e| anyhow::anyhow!("join error: {e}"))??;
         Ok(PageReadResult::text(content))
     }
-
-    async fn execute_javascript(
-        &self,
-        pid: i32,
-        window_id: u64,
-        javascript: &str,
-    ) -> anyhow::Result<String> {
-        // 1) Bookmark-based UIA exec — zero config, no launch flag needed.
-        //    Requires that a `cua-driver-eval` bookmark exists in the
-        //    Favorites bar (or that we can summon the bar and one already
-        //    sits there).  Any failure (favorites bar hidden + Ctrl+Shift+B
-        //    fails to summon, dialog drift, title-poll timeout) is logged
-        //    and falls through to the CDP path.
-        let bookmark_result = match u32::try_from(window_id) {
-            Ok(window_id) => {
-                super::page_bookmark::try_bookmark_exec(pid, window_id, javascript).await
-            }
-            Err(_) => Err(anyhow::anyhow!(
-                "window_id {window_id} is outside the legacy bookmark transport's u32 range"
-            )),
-        };
-        match bookmark_result {
-            Ok(v) => {
-                return Ok(format!("uia.bookmark_exec: {v}"));
-            }
-            Err(e) => tracing::debug!(
-                target: "page.execute_javascript",
-                "bookmark exec path failed: {e:?}; falling back to CDP"
-            ),
-        }
-
-        // 2) CDP fallback.  Discover CDP port from env.  Extracting
-        //    `--remote-debugging-port` from the process's command line is
-        //    PEB-reading territory; the conventional env var is good
-        //    enough for now and fails with an actionable message if
-        //    neither path applies.
-        let port: u16 = match std::env::var("CUA_DRIVER_CDP_PORT")
-            .ok()
-            .and_then(|s| s.parse::<u16>().ok())
-        {
-            Some(p) => p,
-            None => anyhow::bail!(
-                "Chromium's `execute_javascript` on Windows tried the bookmark-URL UIA \
-                 bypass and the CDP fallback. The bookmark path failed (see debug logs); \
-                 for the CDP path, relaunch the browser with `--remote-debugging-port=N` \
-                 and export CUA_DRIVER_CDP_PORT=N before starting cua-driver. \
-                 Alternatively, create a bookmark named `cua-driver-eval` (any URL — the \
-                 driver overwrites it on first use) in the Favorites bar to enable the \
-                 bookmark-URL bypass.  Or use `get_text` / `query_dom` for read-only access."
-            ),
-        };
-        let result = cua_driver_core::cdp::evaluate(port, javascript, true).await?;
-        Ok(format!("cdp.runtime.evaluate.user_gesture: {result}"))
-    }
-
-    async fn execute_javascript_targeted(
-        &self,
-        pid: i32,
-        window_id: u64,
-        javascript: &str,
-        cdp_port: Option<u16>,
-        target_url_contains: Option<&str>,
-    ) -> anyhow::Result<String> {
-        if cdp_port.is_none() && target_url_contains.is_none() {
-            return self.execute_javascript(pid, window_id, javascript).await;
-        }
-        let port = cdp_port
-            .or_else(|| {
-                std::env::var("CUA_DRIVER_CDP_PORT")
-                    .ok()
-                    .and_then(|value| value.parse::<u16>().ok())
-            })
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-            "targeted execute_javascript on Windows requires cdp_port or CUA_DRIVER_CDP_PORT"
-        )
-            })?;
-        let result =
-            cua_driver_core::cdp::evaluate_targeted(port, javascript, true, target_url_contains)
-                .await?;
-        Ok(format!("cdp.runtime.evaluate.user_gesture: {result}"))
-    }
-
-    async fn click_element(
-        &self,
-        pid: i32,
-        window_id: u64,
-        selector: &str,
-    ) -> anyhow::Result<ClickElementResult> {
-        // Two-step:
-        //   (1) JS to derive element center + viewport screen position.
-        //   (2) Animate cursor overlay to those screen coords + ClickPulse.
-        //   (3) JS to fire element.click().
-        //
-        // Steps 1 and 3 reuse self.execute_javascript so they take the same
-        // bookmark / CDP routing the agent already knows. Step 2 uses the
-        // existing overlay primitives (pin + animate_cursor_to + ClickPulse).
-
-        let selector_js = escape_js_string_literal(selector);
-
-        // Step 1 — query coords.
-        let probe_js = format!(
-            "(function(){{\
-                var el = document.querySelector('{selector_js}');\
-                if (!el) throw new Error('element_not_found:{selector_js}');\
-                var r = el.getBoundingClientRect();\
-                return JSON.stringify({{\
-                    vx: r.left + r.width/2,\
-                    vy: r.top  + r.height/2,\
-                    vw: r.width,\
-                    vh: r.height,\
-                    sx: window.screenX + (window.outerWidth - window.innerWidth)/2,\
-                    sy: window.screenY + (window.outerHeight - window.innerHeight),\
-                    dpr: window.devicePixelRatio || 1\
-                }});\
-            }})()"
-        );
-        let probe_raw = self.execute_javascript(pid, window_id, &probe_js).await?;
-        let probe_json = strip_dispatch_prefix(&probe_raw);
-
-        // The wrapper paths return the result JSON-stringified. The bookmark
-        // wrapper wraps the user expression's return in JSON.stringify(),
-        // and CDP's runtime.evaluate also serialises the JS return as a
-        // JSON-string when it's not a primitive — either way the inner
-        // string itself is JSON-encoded. We need to parse twice to get
-        // the actual coord object.
-        //
-        // Crucially, the first parse can SUCCEED as a Value::String (when
-        // the outer is a quoted JSON-string), so we can't rely on
-        // `.or_else(|_| ...)` to trigger the second decode — that branch
-        // only fires on a hard parse error. Inspect the parsed value and
-        // re-decode when it's a String.
-        let parsed: serde_json::Value = {
-            let first = serde_json::from_str::<serde_json::Value>(&probe_json).map_err(|e| {
-                anyhow::anyhow!(
-                    "click_element: could not parse coord JSON from probe (raw: {probe_raw:?}): {e}"
-                )
-            })?;
-            match first {
-                serde_json::Value::String(inner) => serde_json::from_str(&inner).map_err(|e| {
-                    anyhow::anyhow!(
-                        "click_element: inner JSON parse failed for double-encoded probe \
-                         response (raw: {probe_raw:?}): {e}"
-                    )
-                })?,
-                other => other,
-            }
-        };
-
-        // Required-field validation. The previous version defaulted any
-        // missing field to 0.0, which silently animated the visible cursor
-        // to (0,0) AND still fired element.click() — the click would still
-        // hit the DOM element correctly but the visual cursor would lie.
-        // For a fast-fail loud-error contract, require all four screen-
-        // coord inputs from the JS probe and reject anything missing/NaN.
-        // `dpr` retains its 1.0 default because devicePixelRatio is
-        // genuinely optional on the JS side (older webviews / unusual
-        // contexts may not expose it).
-        let require = |key: &str| -> Result<f64, anyhow::Error> {
-            parsed
-                .get(key)
-                .and_then(|v| v.as_f64())
-                .filter(|f| f.is_finite())
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "click_element: probe JSON missing/invalid required field '{key}' \
-                     (raw: {probe_raw:?}). All four of vx/vy/sx/sy must be finite numbers."
-                    )
-                })
-        };
-        let vx = require("vx")?;
-        let vy = require("vy")?;
-        let sx = require("sx")?;
-        let sy = require("sy")?;
-        let dpr = parsed
-            .get("dpr")
-            .and_then(|v| v.as_f64())
-            .filter(|f| f.is_finite() && *f > 0.0)
-            .unwrap_or(1.0);
-
-        let screen_x = sx + vx * dpr;
-        let screen_y = sy + vy * dpr;
-        // Element box in the same space as the click point; optional, so a
-        // probe without vw/vh just glides without a target rect.
-        let extent = |key: &str| {
-            parsed
-                .get(key)
-                .and_then(|v| v.as_f64())
-                .filter(|f| f.is_finite() && *f >= 0.0)
-        };
-        let target_rect = extent("vw").zip(extent("vh")).map(|(vw, vh)| {
-            let (w, h) = (vw * dpr, vh * dpr);
-            [screen_x - w / 2.0, screen_y - h / 2.0, w, h]
-        });
-
-        // Step 2 — drive the cursor overlay. Pin above the browser's root
-        // HWND so the overlay sits at z+1 of the page, glide, click-pulse.
-        // Inlined GA_ROOT lookup mirrors the helper in tools/impl_.rs but
-        // keeps page.rs from depending on a private symbol there.
-        let hwnd = window_id;
-        {
-            use windows::Win32::Foundation::HWND;
-            use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GA_ROOT};
-            let root = unsafe { GetAncestor(HWND(hwnd as *mut _), GA_ROOT) };
-            let pin_wid = if !root.0.is_null() {
-                root.0 as u64
-            } else {
-                hwnd
-            };
-            crate::overlay::send_command_default(cursor_overlay::OverlayCommand::PinAbove(pin_wid));
-        }
-        // The cross-platform `PageBackend::click_element` trait carries no
-        // caller `session`, so this drives the seeded `"default"` cursor rather
-        // than a per-session one. Threading session through the trait is a
-        // separate cross-platform change (tracked as a follow-up).
-        crate::overlay::animate_cursor_to_target(
-            "default".to_owned(),
-            screen_x,
-            screen_y,
-            target_rect,
-        )
-        .await;
-        crate::overlay::send_command_default(cursor_overlay::OverlayCommand::ClickPulse {
-            x: screen_x,
-            y: screen_y,
-        });
-
-        // Step 3 — fire the real click.
-        let click_js = format!(
-            "(function(){{\
-                var el = document.querySelector('{selector_js}');\
-                if (!el) throw new Error('element_not_found_on_click:{selector_js}');\
-                el.click();\
-                return 'clicked:{selector_js}';\
-            }})()"
-        );
-        let _ = self.execute_javascript(pid, window_id, &click_js).await?;
-
-        Ok(ClickElementResult {
-            screen_x,
-            screen_y,
-            viewport_x: vx,
-            viewport_y: vy,
-            message: format!(
-                "✅ click_element('{selector}') at screen ({screen_x:.0},{screen_y:.0}) on pid {pid}."
-            ),
-        })
-    }
-}
-
-/// Escape `s` for safe interpolation inside a single-quoted JS string
-/// literal. Backslash and apostrophe are the only characters that can
-/// break out of `'...'` after the opening quote; newlines also confuse
-/// the bookmark wrapper which strips them, so we replace with space.
-fn escape_js_string_literal(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('\'', "\\'")
-        .replace(['\r', '\n'], " ")
-}
-
-/// `execute_javascript` returns the raw JS result prefixed with the
-/// dispatch route (e.g. `"uia.bookmark_exec: ..."`, `"cdp.runtime.evaluate.user_gesture: ..."`).
-/// Strip that prefix so coord parsing sees the bare value.
-fn strip_dispatch_prefix(s: &str) -> String {
-    for prefix in &["uia.bookmark_exec: ", "cdp.runtime.evaluate.user_gesture: "] {
-        if let Some(rest) = s.strip_prefix(prefix) {
-            return rest.to_owned();
-        }
-    }
-    s.to_owned()
 }
 
 // ── implementation ────────────────────────────────────────────────────────
@@ -389,8 +105,7 @@ unsafe fn query_dom_blocking(
     if parsed.is_data_attr {
         anyhow::bail!(
             "`[data-*]` selectors are not reachable via UIA/IA2 on Windows. \
-             Use `execute_javascript` for full DOM access (requires the browser launched \
-             with `--remote-debugging-port`)."
+             Use get_browser_state and the browser_* tools for full DOM access."
         );
     }
 
@@ -677,8 +392,8 @@ fn parse_selector(sel: &str) -> anyhow::Result<ParsedSelector> {
             "`.class` selectors are not supported by the Windows UIA backend. \
              Use a simple tag (a, button, input, textarea, h1-h6, img, li, p, \
              span, select), a `tag#id` selector, an `[attr=value]` selector \
-             including `[role=…]`, or `execute_javascript` for full DOM access \
-             (requires the browser launched with `--remote-debugging-port`)."
+             including `[role=…]`, or get_browser_state and the browser_* tools \
+             for full DOM access."
         );
     }
     let (tag_clean, id_filter) = match tag.find('#') {
@@ -707,8 +422,7 @@ fn parse_selector(sel: &str) -> anyhow::Result<ParsedSelector> {
             "Selector '{sel}' is not supported by the Windows UIA backend. \
              Use a simple tag (a, button, input, textarea, h1-h6, img, li, p, \
              span, select), a `tag#id` selector, `[role=…]`, or \
-             `execute_javascript` for full DOM access (requires the browser \
-             launched with `--remote-debugging-port`)."
+             get_browser_state and the browser_* tools for full DOM access."
         );
     }
 

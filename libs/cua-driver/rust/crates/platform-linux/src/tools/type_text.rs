@@ -20,8 +20,8 @@ use super::impl_::{
     is_terminal_process, is_webkitgtk_embedder, isolated_hyprland_background,
     isolated_hyprland_refusal, isolated_hyprland_result, isolated_hyprland_task_error,
     named_session_cursor_key, position_named_session_keyboard_cursor, prove_token_element,
-    resolve_cursor_key, spawn_blocking_bounded, spawn_isolated_hyprland, stale_observed_element,
-    text_typing_budget, unavailable_chromium_background,
+    refuse_if_disabled, resolve_cursor_key, spawn_blocking_bounded, spawn_isolated_hyprland,
+    stale_observed_element, text_typing_budget, unavailable_chromium_background,
     unavailable_wayland_focused_input_background, unavailable_webkit_keyboard_background,
     values_agree, KeyRoute, ToolState,
 };
@@ -321,6 +321,9 @@ impl Tool for TypeTextTool {
             Ok(token) => token,
             Err(refusal) => return refusal,
         };
+        if let Some(refusal) = refuse_if_disabled(pid, &resolved, "type_text").await {
+            return refusal;
+        }
         let (resolved_elem_idx, resolved_window_id) = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element {
                 element_index,
@@ -858,8 +861,9 @@ impl Tool for TypeTextTool {
                     ToolResult::text(format!(
                         "Typed {text_len} character(s) as real key events \
                          (delivery_mode=foreground, focus_after={}); not verified — \
-                         confirm with a screenshot.",
-                        report.focus_after.as_str()
+                         confirm with a screenshot.{}",
+                        report.focus_after.as_str(),
+                        report.focus_note()
                     ))
                     .with_structured(foreground_structured(
                         "key_events_fg",

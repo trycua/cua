@@ -17,6 +17,9 @@ on:
       - main
     paths:
       - libs/cua/VERSION
+      # A bundle PR merging moves the marker on main, so any other open bundle
+      # PR is behind and would conflict. Re-run to rebuild it from main.
+      - apps/cua-spaces-macos/BUNDLED_CUA_VERSION
   workflow_dispatch:
 
 permissions:
@@ -57,17 +60,34 @@ jobs:
             exit 0
           fi
           BRANCH="chore/cua-spaces-bundle-cua-$VERSION"
-          if [[ -n "$(gh pr list --state open --head "$BRANCH" --json number -q '.[0].number')" ]]; then
-            echo "A bundle PR for cua $VERSION is already open"
-            exit 0
-          fi
+          # The marker holds one version, so a bundle PR for an older cua is
+          # superseded by this one. Close it instead of leaving it to conflict.
+          for OLD in $(gh pr list --state open --json number,headRefName \
+            -q ".[] | select(.headRefName | startswith(\"chore/cua-spaces-bundle-cua-\")) | select(.headRefName != \"$BRANCH\") | .number"); do
+            gh pr close "$OLD" --delete-branch \
+              --comment "Superseded: cua $VERSION is now the latest, and this PR records a single version."
+          done
+          EXISTING=$(gh pr list --state open --head "$BRANCH" --json number -q '.[0].number')
           git config user.name "trycua-release[bot]"
           git config user.email "trycua-release[bot]@users.noreply.github.com"
+          # Always build the branch from current main, so an open PR never
+          # conflicts after another bundle PR or release moved the marker.
           git checkout -B "$BRANCH"
           echo "$VERSION" > "$MARKER"
           git add "$MARKER"
           git commit -m "fix(spaces-macos): bundle cua $VERSION in Cua Spaces" \
             -m "cua $VERSION was released, and the Mac app bundles the cua it is built with. Merging this lets Release Please open the next Cua Spaces release, so the app and the machines running cua $VERSION match."
+          if [[ -n "$EXISTING" ]]; then
+            git fetch origin "$BRANCH"
+            if [[ "$(git rev-parse "HEAD^{tree}")" == "$(git rev-parse "origin/$BRANCH^{tree}")" ]] \
+              && git merge-base --is-ancestor origin/main "origin/$BRANCH"; then
+              echo "Bundle PR #$EXISTING is already up to date with main"
+              exit 0
+            fi
+            git push --force-with-lease="$BRANCH:origin/$BRANCH" origin "$BRANCH"
+            gh pr merge --auto --squash "$BRANCH"
+            exit 0
+          fi
           git push --force-with-lease origin "$BRANCH"
           gh pr create --base main --head "$BRANCH" \
             --title "fix(spaces-macos): bundle cua $VERSION in Cua Spaces" \

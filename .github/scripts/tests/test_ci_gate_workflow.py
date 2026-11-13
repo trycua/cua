@@ -39,7 +39,7 @@ def test_gate_wiring():
     # still leaves headroom over the longest gate run observed on main.
     assert GATE['jobs']['ci-gate']['timeout-minutes'] == 180
     assert '.workflow_id != $GITHUB_WORKFLOW_ID' in SCRIPT
-    assert 'list_runs "$sha" \'.event == "pull_request" or .event == "pull_request_target"\'' in SCRIPT
+    assert 'list_runs "$sha" \'.event == "pull_request"\'' in SCRIPT
     assert 'list_runs "$queue_sha" \'.event == "merge_group" and .conclusion != "skipped"\'' in SCRIPT
     assert 'claude-auto-fix|ci-release-reminder|review-cua-perception-candidates|/cla[.]yml($|@)' in SCRIPT
 
@@ -57,7 +57,7 @@ def filtered_runs(ignore_re):
     ]
     runs_json = json.dumps({'workflow_runs': [
         {'workflow_id': i + 1, 'id': 100 + i, 'name': path.rsplit('/', 1)[1], 'path': path,
-         'event': 'pull_request_target', 'conclusion': conclusion or None, 'status': status}
+         'event': 'pull_request', 'conclusion': conclusion or None, 'status': status}
         for i, (path, conclusion, status) in enumerate(paths)
     ]})
     script = ('api() { jq -r "${@: -1}" <<<"$RUNS_JSON"; }\n' + runs_src + 'runs\n')
@@ -89,6 +89,7 @@ MOCK = '''
 set -uo pipefail
 api() {
   case "$*" in
+    *'/check-runs?'*) printf 'check-runs\n' >&2; printf '%s' "${CHECK_RUNS:-}" ;;
     *'/jobs?'*)
       if [[ "$*" == *'/10/jobs?'* ]]; then
         printf '%s' "$OLDER_JOBS"
@@ -120,7 +121,7 @@ sleep() {
 
 
 def run_gate(rows, jobs='test\tsuccess', older_jobs=None, rows_dir=None,
-             max_sleeps=4, max_seconds=10**9, queue_ref=''):
+             max_sleeps=4, max_seconds=10**9, queue_ref='', check_runs='', extra_env=None):
     # Mirrors the runner: GitHub runs a bare `run:` step with `bash -e`. The mocked
     # sleep advances SECONDS, so the poll schedule is observable without waiting.
     return subprocess.run(
@@ -130,7 +131,8 @@ def run_gate(rows, jobs='test\tsuccess', older_jobs=None, rows_dir=None,
              'ROWS': rows, 'JOBS': jobs,
              'OLDER_JOBS': jobs if older_jobs is None else older_jobs,
              'ROWS_DIR': str(rows_dir) if rows_dir else '',
-             'MAX_SLEEPS': str(max_sleeps), 'MAX_SECONDS': str(max_seconds)},
+             'MAX_SLEEPS': str(max_sleeps), 'MAX_SECONDS': str(max_seconds),
+             'CHECK_RUNS': check_runs, **(extra_env or {})},
         capture_output=True, text=True, timeout=10,
     )
 
@@ -341,8 +343,14 @@ def test_quick_stage_decides_the_scope_from_the_base_commit_and_fails_closed():
     decide = steps['Decide whether this workflow runs']['run']
     assert 'set -euo pipefail' in decide
     assert 'python3 base/.github/scripts/ci_gate_scope.py --workflow' in decide
-    # Merge queue runs stay off (and ci-gate reads the pull request's results) until the switch is on.
+    # In the merge queue only the map's `queue` workflows run (--merge-queue); a base commit whose
+    # selector predates the flag runs nothing there.
     assert '"${QUEUE_RUNS:-}" != true' in decide and 'skip=true' in decide
+    assert "grep -q -- '--merge-queue' base/.github/scripts/ci_gate_scope.py" in decide
+    assert '--workflow "$workflow" "${queue_args[@]}"' in decide
+    # The selector is read on every event, so a merge queue run can ask it too.
+    for name in ('Check out the selector from the base commit', "Check out the change's manifests"):
+        assert 'if' not in steps[name], name
 
 
 LOCAL_CI_FAST = STEPS['Check the sign-off on the pull request (fail fast)']['run']
@@ -353,7 +361,7 @@ GH_STUB = """
 sleep() { :; }
 gh() {
   case "$*" in
-    *'/pulls/'*) printf '%s\\t%s\\n' "deadbeefcafe" "$HEAD_REPO" ;;
+    *'/pulls/'*) printf '%s\\t%s\\t%s\\t%s\\n' "deadbeefcafe" "$HEAD_REPO" "${HEAD_REF:-feat/x}" "${PR_LABELS:-}" ;;
     *'/statuses'*) echo statuses >> "$SOURCE"; printf '%s\\n' "$STATE" ;;
     *'/workflows/ci-quick.yml/runs'*) echo quick-run >> "$SOURCE"; printf '%s\\n' "$STATE" ;;
   esac
@@ -361,13 +369,13 @@ gh() {
 """
 
 
-def run_local_ci(head_repo='test/repo', state='', require='true'):
+def run_local_ci(head_repo='test/repo', state='', require='true', head_ref='feat/x', pr_labels=''):
     """Run the two sign-off steps in order, as the job does: the fast check, then the wait that is
     the last step. Returns the first failure, or the last result; `.source` is what was asked."""
     import tempfile
     with tempfile.NamedTemporaryFile('r+') as out, tempfile.NamedTemporaryFile('r+') as source:
         env = {**os.environ, 'PR_NUMBER': '7', 'QUEUE_REF': '', 'GITHUB_REPOSITORY': 'test/repo',
-               'HEAD_REPO': head_repo, 'STATE': state, 'SOURCE': source.name,
+               'HEAD_REPO': head_repo, 'HEAD_REF': head_ref, 'PR_LABELS': pr_labels, 'STATE': state, 'SOURCE': source.name,
                'REQUIRE_LOCAL_CI': require, 'GITHUB_OUTPUT': out.name}
         fast = subprocess.run(['bash', '-e', '-c', GH_STUB + LOCAL_CI_FAST], env=env,
                               capture_output=True, text=True, timeout=20)
@@ -387,9 +395,22 @@ def test_every_pull_request_needs_a_sign_off_whoever_opens_it():
     # The author, the labels and the commit trailers are not read: a branch of this repository
     # always needs the local-ci status, a fork always needs the CI: Quick run.
     assert 'author' not in LOCAL_CI_FAST.lower().replace('author:', '')
-    for word in ('labels', 'trailer', 'agent/'):
+    for word in ('trailer', 'agent/'):
         assert word not in LOCAL_CI_FAST
         assert word not in LOCAL_CI_WAIT
+
+
+RP_REF = 'release-please--branches--main--components--cua-spaces'
+
+
+def test_release_please_pull_request_is_exempt_from_the_sign_off():
+    ok = run_local_ci(head_ref=RP_REF, pr_labels='autorelease: pending')
+    assert ok.returncode == 0 and ok.source == []
+    # Branch prefix, label and a branch of this repository are all required.
+    for kwargs in ({'head_ref': RP_REF, 'pr_labels': 'other'},
+                   {'head_ref': 'feat/x', 'pr_labels': 'autorelease: pending'},
+                   {'head_ref': RP_REF, 'pr_labels': 'autorelease: pending', 'head_repo': 'fork/repo'}):
+        assert run_local_ci(**kwargs).returncode == 1, kwargs
 
 
 def test_branch_of_this_repo_needs_a_local_ci_status():
@@ -450,29 +471,104 @@ QUEUE_MOCK = MOCK.replace("""    *'head_sha='*)""", """    *'head_sha=queue'*) p
     *'head_sha='*)""")
 
 
-def run_queue_gate(rows, qrows, queue_runs, jobs='test\tsuccess'):
+def run_queue_gate(rows, qrows, jobs='test\tsuccess', check_runs=''):
     return subprocess.run(
         ['bash', '-e', '-c', QUEUE_MOCK + SCRIPT[SCRIPT.index('sha=$PR_SHA'):]],
         env={**os.environ, 'PR_SHA': '', 'QUEUE_REF': 'refs/heads/gh-readonly-queue/main/pr-7-abc',
-             'QUEUE_SHA': 'queue', 'QUEUE_RUNS': queue_runs, 'GITHUB_REPOSITORY': 'test/repo',
+             'QUEUE_SHA': 'queue', 'GITHUB_REPOSITORY': 'test/repo',
              'GITHUB_RUN_ID': '99', 'ROWS': rows, 'QROWS': qrows, 'JOBS': jobs, 'OLDER_JOBS': jobs,
-             'ROWS_DIR': '', 'MAX_SLEEPS': '6', 'MAX_SECONDS': str(10**9)},
+             'ROWS_DIR': '', 'MAX_SLEEPS': '6', 'MAX_SECONDS': str(10**9), 'CHECK_RUNS': check_runs},
         capture_output=True, text=True, timeout=10,
     )
 
 
-def test_merge_queue_judges_a_workflow_by_its_queue_run_when_queue_runs_are_on():
+def test_merge_queue_judges_the_queue_run_in_addition_to_the_pull_request_run():
     pr = '1\t11\tbuild\tsuccess\tcompleted\n2\t21\tlint\tsuccess\tcompleted'
     queue = '1\t12\tbuild\tfailure\tcompleted'
-    on = run_queue_gate(pr, queue, 'true', jobs='test\tfailure')
-    assert on.returncode == 1 and 'build: fail' in on.stdout
+    failing = run_queue_gate(pr, queue, jobs='test\tfailure')
+    assert failing.returncode == 1 and 'build (merge queue): fail' in failing.stdout
     # `lint` has no queue run, so its pull request result still counts.
-    assert 'lint:' in on.stdout
-    off = run_queue_gate(pr, queue, '')
-    assert off.returncode == 0 and 'build: pass' in off.stdout
+    assert 'lint:' in failing.stdout
+
+
+def test_a_green_queue_run_never_hides_a_failing_pull_request_run():
+    # The queue run of `build` passed, but the pull request run of the same workflow failed: both count.
+    pr = '1\t11\tbuild\tfailure\tcompleted'
+    queue = '1\t12\tbuild\tsuccess\tcompleted'
+    completed = run_queue_gate(pr, queue, jobs='test\tfailure')
+    assert completed.returncode == 1, completed.stdout
+    assert 'build: fail' in completed.stdout
 
 
 def test_merge_queue_passes_on_green_queue_runs():
-    completed = run_queue_gate('1\t11\tbuild\tsuccess\tcompleted', '1\t12\tbuild\tsuccess\tcompleted', 'true')
+    completed = run_queue_gate('1\t11\tbuild\tsuccess\tcompleted', '1\t12\tbuild\tsuccess\tcompleted')
     assert completed.returncode == 0, completed.stderr
     assert 'build: pass' in completed.stdout
+    assert 'build (merge queue): pass' in completed.stdout
+
+
+def test_merge_queue_without_queue_runs_reads_the_pull_request_runs():
+    # Every merge_group run skipped (listed with conclusion skipped, so filtered out): the pull request's result decides.
+    completed = run_queue_gate('1\t11\tbuild\tsuccess\tcompleted', '')
+    assert completed.returncode == 0, completed.stderr
+    assert 'build: pass' in completed.stdout and 'merge queue' not in completed.stdout
+
+
+# Fail fast (10 Nov 2026): a job that already failed in a run that is still going fails the gate at once.
+# The check-runs listing answers CHECK_RUNS as "<run id>\t<job id>\t<job name>" rows (the jq is mocked away).
+STILL_GOING = '1\t11\tbuild\tsuccess\tcompleted\n2\t21\tmacOS\t\tin_progress'
+
+
+def test_gate_fails_at_once_on_a_failed_job_in_a_run_that_is_still_going():
+    completed = run_gate(STILL_GOING, check_runs='21\t501\tapp core + FFI mirror gate', max_sleeps=100)
+    assert completed.returncode == 1, completed.stderr
+    assert 'macOS: fail (job app core + FFI mirror gate failed' in completed.stdout
+    # The first poll after the minimum window decides; no waiting for the macOS run to finish.
+    assert sleeps_of(completed) == [MIN_WINDOW]
+
+
+def test_merge_queue_gate_fails_at_once_on_the_pull_request_runs_failed_job():
+    # #7136: no queue run, so the queue entry is judged by the pull request's own runs; one of them
+    # had a failed job and a 180-minute job still running. The entry must leave the queue now.
+    completed = run_queue_gate(STILL_GOING, '', check_runs='21\t501\tapp core + FFI mirror gate')
+    assert completed.returncode == 1, completed.stderr
+    assert 'macOS: fail' in completed.stdout
+
+
+@pytest.mark.parametrize('check_runs', [
+    '',                                  # nothing failed yet
+    '11\t401\tlint',                    # a completed run: judged by the full verdict, not here
+    '77\t701\tunrelated',               # a run the gate does not wait on (another scope, an older run)
+])
+def test_gate_keeps_waiting_without_a_failed_job_in_a_run_it_waits_on(check_runs):
+    completed = run_gate(STILL_GOING, check_runs=check_runs, max_sleeps=6)
+    assert completed.returncode == 124
+    assert ': fail' not in completed.stdout
+
+
+def test_gate_only_reads_the_newest_run_of_a_workflow_that_is_still_going():
+    rows = '2\t20\tmacOS\t\tin_progress\n2\t21\tmacOS\t\tin_progress'
+    old = run_gate(rows, check_runs='20\t500\tbuild', max_sleeps=6)
+    assert old.returncode == 124 and ': fail' not in old.stdout
+    new = run_gate(rows, check_runs='21\t501\tbuild', max_sleeps=6)
+    assert new.returncode == 1 and 'macOS: fail' in new.stdout
+
+
+def test_gate_waits_for_the_full_verdict_on_a_quarantined_early_failure(tmp_path):
+    stub = tmp_path / 'flaky.py'
+    stub.write_text("import sys; sys.stdin.read(); print('all')\n")
+    completed = run_gate(STILL_GOING, check_runs='21\t501\tlinux-kvm (concurrent)', max_sleeps=6,
+                         extra_env={'FLAKY_PY': str(stub), 'QUARANTINE_FILE': 'q.json'})
+    assert completed.returncode == 124
+    assert ': fail' not in completed.stdout
+
+
+def test_fail_fast_reads_check_runs_at_most_once_a_minute():
+    completed = run_gate(STILL_GOING, max_sleeps=1000, max_seconds=3600)
+    assert completed.returncode == 124
+    reads = completed.stderr.count('check-runs')
+    assert 50 <= reads <= 61
+
+
+def test_gate_may_read_check_runs():
+    assert GATE['permissions']['checks'] == 'read'

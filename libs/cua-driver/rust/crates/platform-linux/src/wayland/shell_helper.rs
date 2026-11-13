@@ -30,7 +30,7 @@
 //! screen coords, no Wayland cursor). Reuses one session-bus connection on a
 //! dedicated runtime; preview frames do not spawn subprocesses or poll for exit.
 
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::MetadataExt;
 mod transport;
 use std::time::{Duration, Instant};
 
@@ -297,18 +297,8 @@ fn is_trusted_gnome_shell(pid: u32) -> bool {
     if comm.as_deref().map(str::trim) != Some("gnome-shell") {
         return false;
     }
-    let executable = std::fs::read_link(format!("/proc/{pid}/exe")).ok();
-    let metadata = executable
-        .as_ref()
-        .and_then(|path| std::fs::metadata(path).ok());
-    executable
-        .as_ref()
-        .and_then(|path| path.file_name())
-        .and_then(|name| name.to_str())
-        == Some("gnome-shell")
-        && metadata
-            .as_ref()
-            .is_some_and(|meta| meta.uid() == 0 && meta.permissions().mode() & 0o022 == 0)
+    crate::proc_fs::running_executable(pid)
+        .is_some_and(|exe| exe.is_system_program(&["gnome-shell"]))
 }
 
 /// The outcome of a per-window capture through the GNOME helper.
@@ -760,6 +750,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_shell_whose_binary_was_replaced_is_judged_by_its_running_image() {
+        use std::os::unix::fs::MetadataExt;
+        let (program, _before, after) =
+            crate::proc_fs::tests::replaced_program("gnome-shell", false).expect("spawn");
+        let pid = program.child.id();
+        let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).expect("comm");
+        assert_eq!(comm.trim(), "gnome-shell");
+        let root_owned = after.metadata.as_ref().expect("image").uid() == 0;
+        assert_eq!(is_trusted_gnome_shell(pid), root_owned);
+    }
+
+    #[test]
     fn preview_timestamp_does_not_change_pixels_or_frame_identity() {
         use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
         let first = B64.decode("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAE3RFWHRDcmVhdGlvbiBUaW1lAGZpcnN0muU4QwAAABl0RVh0U29mdHdhcmUAZ25vbWUtc2NyZWVuc2hvdO8Dvz4AAAAUSURBVHicY5SLqvjPwMDAwMQABQAczgHzr55lzgAAAABJRU5ErkJggg==").unwrap();
@@ -1162,7 +1164,8 @@ mod tests {
         assert!(EXTENSION_SOURCE.contains("const GLOW_PADDING = 24;"));
         assert!(EXTENSION_SOURCE.contains("function drawCursorGlowShape"));
         assert!(EXTENSION_SOURCE.contains("function glowPath"));
-        assert!(EXTENSION_SOURCE.contains("strokePath(cr, width, alpha, fillColor)"));
+        // The helper draws no action marks.
+        assert!(!EXTENSION_SOURCE.contains("function drawActionCue"));
         assert!(EXTENSION_SOURCE.contains("width + 1.5"));
         assert!(EXTENSION_SOURCE.contains("width - 1"));
         assert!(EXTENSION_SOURCE.contains("createGlowSurface(this._fillColor)"));

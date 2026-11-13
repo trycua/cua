@@ -71,6 +71,16 @@ pub const DIR: &str = "persistent";
 pub const LEASE_TTL: Duration = Duration::from_secs(10 * 60);
 /// Budget for one agent's share of a supervisor pass.
 pub(crate) const AGENT_TICK_BUDGET: Duration = Duration::from_secs(60);
+/// How long a start waits on Cua Volume before it starts without it: the
+/// home's lease, the agent's folder on the mounted volume (taking the
+/// volume, then the folder answering), and a copy of the home. Each waits
+/// on the store, and with replication on, on the other computer: while
+/// sync has stalled a start used to wait as long as sync did, then fail
+/// with "guest command failed (None)" (CUA-4002).
+const LEASE_TIMEOUT: Duration = Duration::from_secs(15);
+const VOLUME_READY_TIMEOUT: Duration = Duration::from_secs(20);
+const VOLUME_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+const COPY_FALLBACK_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Reads a JSON array file (`[]` when missing).
 pub(crate) fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<Vec<T>> {
@@ -146,6 +156,9 @@ pub struct AgentRecord {
     pub space: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Reasoning level the agent's runs take (Claude Code and Codex).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
     /// A custom model endpoint base URL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
@@ -183,6 +196,11 @@ pub struct AgentRecord {
     /// The last problem the supervisor hit (cleared on success).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+    /// Session 1's current run started without Cua Volume (it was not
+    /// answering): it works in a folder of its own and is never saved over
+    /// the home. Cleared by the next start that has the volume.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub home_offline: bool,
     /// The failed turn last notified (`<run>#<turn>`): one notification
     /// per failed turn, however many passes see its events.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -419,6 +437,7 @@ pub struct AgentSpec {
     pub harness: String,
     pub space: String,
     pub model: Option<String>,
+    pub effort: Option<String>,
     /// Standing instructions ([`AgentRecord::brief`]).
     pub brief: Option<String>,
     pub base_url: Option<String>,
@@ -436,6 +455,10 @@ pub struct Delivery {
     pub started: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub restored: Option<home::Transfer>,
+    /// Something the person should know about this start, in plain words
+    /// (it started without Cua Volume, and why).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notice: Option<String>,
 }
 
 /// What [`Persistent::pause`] did.
@@ -492,9 +515,13 @@ pub(crate) struct Live {
     setups: std::collections::HashSet<String>,
     /// Journal shippers of durable runs, by `<run>#<epoch>`.
     shippers: HashMap<String, crate::session_journal::Shipper>,
-    /// Runs started for a task whose "woke up and joined" note waits until
-    /// the agent is up: run id to the task's seq.
-    joining: HashMap<String, u64>,
+    /// Runs started for a task, until the agent is up: run id to the task's
+    /// seq and whether the start is a restart nobody asked for (only that
+    /// one says so in the thread; a start the person asked for shows as the
+    /// starting row).
+    joining: HashMap<String, (u64, bool)>,
+    /// Tasks put back after an agent stopped, whose next start is a restart.
+    restarted: std::collections::HashSet<u64>,
     /// Agent-to-agent wakes per Space ([`wake`]).
     wake: wake::LiveWake,
     /// Local Spaces some agent names that the registry does not have, and
@@ -711,6 +738,7 @@ impl Persistent {
             harness: h.id.into(),
             space,
             model: spec.model,
+            effort: spec.effort,
             base_url: spec.base_url,
             env_from_host: spec.env_from_host,
             env: spec.env,
@@ -726,6 +754,7 @@ impl Persistent {
             notify: true,
             saved_ms: 0,
             last_error: None,
+            home_offline: false,
             notified_error: None,
             sessions: 1,
             policy: Policy::default(),
@@ -983,30 +1012,118 @@ impl Persistent {
         }
     }
 
+    /// Gives the home's lease back, within [`LEASE_TIMEOUT`]: one the
+    /// store could not take back (sync stalled) runs out at its TTL.
     async fn release_lease(&self, name: &str) {
         let lease = self.live.lock().await.leases.remove(name);
         if let Some(l) = lease {
-            let _ = l.release(&self.drive).await;
+            let _ = tokio::time::timeout(LEASE_TIMEOUT, l.release(&self.drive)).await;
         }
     }
 
+    /// Renews the home's lease when half its TTL is gone. The store is
+    /// asked off the `live` lock (every start and message takes it) and
+    /// within [`LEASE_TIMEOUT`].
     async fn renew_lease(&self, name: &str) -> Result<()> {
-        let mut live = self.live.lock().await;
-        if let Some(l) = live.leases.get_mut(name)
-            && l.info.expires_ms < cua_volume::now_ms() + LEASE_TTL.as_millis() as u64 / 2
+        let due = {
+            let live = self.live.lock().await;
+            live.leases
+                .get(name)
+                .filter(|l| {
+                    l.info.expires_ms < cua_volume::now_ms() + LEASE_TTL.as_millis() as u64 / 2
+                })
+                .cloned()
+        };
+        let Some(mut lease) = due else {
+            return Ok(());
+        };
+        match tokio::time::timeout(
+            LEASE_TIMEOUT,
+            lease.renew(&self.drive, LEASE_TTL.as_millis() as u64),
+        )
+        .await
         {
-            l.renew(&self.drive, LEASE_TTL.as_millis() as u64)
-                .await
-                .drive()?;
+            Ok(r) => r.drive()?,
+            Err(_) => {
+                return Err(Error::Agent(format!(
+                    "Cua Volume didn't answer within {} s while keeping {name}'s home",
+                    LEASE_TIMEOUT.as_secs()
+                )));
+            }
+        }
+        if let Some(held) = self.live.lock().await.leases.get_mut(name) {
+            *held = lease;
         }
         Ok(())
+    }
+
+    /// Session 1's home on its Space's mounted Cua Volume for a start:
+    /// `Ok(Some(dir))` when the volume is the agent's and its folder
+    /// answers, `Ok(None)` when the Space has no volume for it (the home is
+    /// copied in and out), `Err(why)` when Cua Volume is not ready (not
+    /// taken or not answering in time; the volume is given back).
+    async fn ready_mounted_home(
+        &self,
+        rec: &AgentRecord,
+        agents: &Agents,
+    ) -> std::result::Result<Option<String>, String> {
+        let taken = tokio::time::timeout(
+            VOLUME_READY_TIMEOUT,
+            self.spaces.volume_for_agent(&rec.space, &rec.name),
+        )
+        .await;
+        let v = match taken {
+            Ok(Ok(Some(v))) => v,
+            Ok(Ok(None)) => return Ok(None),
+            Ok(Err(e)) => {
+                self.let_go_of_volume(rec);
+                return Err(e.to_string());
+            }
+            Err(_) => {
+                self.let_go_of_volume(rec);
+                return Err(format!(
+                    "Cua Volume didn't answer within {} s",
+                    VOLUME_READY_TIMEOUT.as_secs()
+                ));
+            }
+        };
+        let dir = format!("{}/agents/{}", v.mount_path.trim_end_matches('/'), rec.name);
+        match home::probe_mounted(agents.guest(), &dir, VOLUME_PROBE_TIMEOUT).await {
+            Ok(()) => Ok(Some(dir)),
+            Err(e) => {
+                self.let_go_of_volume(rec);
+                Err(format!("its folder on Cua Volume isn't answering: {e}"))
+            }
+        }
+    }
+
+    /// Gives `rec`'s Space its own view of the volume back, in the
+    /// background (it waits on the store).
+    fn let_go_of_volume(&self, rec: &AgentRecord) {
+        let (spaces, space, name) = (self.spaces.clone(), rec.space.clone(), rec.name.clone());
+        tokio::spawn(async move {
+            if let Err(e) = spaces.volume_release_agent(&space, &name).await {
+                tracing::warn!(agent = %name, "Cua Volume not given back to the Space yet: {e}");
+            }
+        });
     }
 
     /// The agent's home on its Space's mounted Cua Volume, when the Space
     /// has one this agent can hold (`<mount>/agents/<name>`); `None` means
     /// the home is copied in and out.
     async fn mounted_home(&self, rec: &AgentRecord) -> Option<String> {
-        match self.spaces.volume_for_agent(&rec.space, &rec.name).await {
+        let taken = tokio::time::timeout(
+            VOLUME_READY_TIMEOUT,
+            self.spaces.volume_for_agent(&rec.space, &rec.name),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            Err(Error::Agent(format!(
+                "Cua Volume didn't answer within {} s",
+                VOLUME_READY_TIMEOUT.as_secs()
+            )))
+        });
+        match taken {
             Ok(Some(v)) => {
                 return Some(format!(
                     "{}/agents/{}",
@@ -1042,6 +1159,11 @@ impl Persistent {
         let rec = self.get(name)?;
         self.not_external(&rec)?;
         let t0 = Instant::now();
+        // A run that started without the volume never has the home's
+        // files: saving it would remove them from the home.
+        if rec.home_offline {
+            return Ok(home::Transfer::offline(t0.elapsed().as_millis() as u64));
+        }
         let flushed = self
             .spaces
             .volume_flush_agent(&rec.space, &rec.name)
@@ -1114,8 +1236,22 @@ impl Persistent {
         }
         // A Space the host put to sleep wakes for the message.
         self.wake_space(&rec.space).await?;
+        // Why this run starts without Cua Volume, when it does: the volume
+        // did not answer in time (sync with the other computer stalled).
+        let mut offline: Option<String> = None;
         if k == 1 {
-            self.take_lease(&rec).await?;
+            match tokio::time::timeout(LEASE_TIMEOUT, self.take_lease(&rec)).await {
+                Ok(Ok(())) => {}
+                // Another machine works in the home: that is not a stall.
+                Ok(Err(e)) if e.tag() == "lease_held" => return Err(e),
+                Ok(Err(e)) => offline = Some(e.to_string()),
+                Err(_) => {
+                    offline = Some(format!(
+                        "Cua Volume didn't answer within {} s",
+                        LEASE_TIMEOUT.as_secs()
+                    ))
+                }
+            }
         }
         let agents = match self.agents_for(&rec.space).await {
             Ok(a) => a,
@@ -1139,34 +1275,67 @@ impl Persistent {
             Duration::from_secs(300),
         )
         .await;
-        let mounted = if k == 1 {
-            self.mounted_home(&rec).await
+        // Session 1 works on the mounted volume when its folder there
+        // answers; one that does not is a volume that is not ready.
+        let mut not_ready: Option<String> = None;
+        let mounted = if k == 1 && offline.is_none() {
+            match self.ready_mounted_home(&rec, &agents).await {
+                Ok(m) => m,
+                Err(why) => {
+                    not_ready = Some(why);
+                    None
+                }
+            }
         } else {
             None
         };
-        let home_dir = match &mounted {
+        let mut home_dir = match &mounted {
             Some(m) => Some(m.clone()),
             None if k > 1 => Some(session_home_dir(&agents, name, k)),
             None => None,
         };
-        let restored = match &mounted {
-            Some(_) => Ok(home::Transfer::mounted(t0.elapsed().as_millis() as u64)),
-            None => {
-                let dir = home_dir
-                    .clone()
-                    .unwrap_or_else(|| agents.agent_home_dir(&rec.name));
-                // The home comes back while the files every start shares
-                // (bridge, runner, skills) go in: they do not depend on it.
-                let (restored, _) = futures_util::future::join(
-                    home::restore(agents.guest(), &self.session(&rec), &rec.name, &dir),
-                    async {
-                        if let Some(h) = cua_agents::harness::harness(&rec.harness) {
-                            let _ = agents.prewarm(h, true).await;
-                        }
-                    },
-                )
-                .await;
-                restored
+        let restored = if mounted.is_some() {
+            Ok(home::Transfer::mounted(t0.elapsed().as_millis() as u64))
+        } else if offline.is_some() {
+            Ok(home::Transfer::offline(t0.elapsed().as_millis() as u64))
+        } else {
+            let dir = home_dir
+                .clone()
+                .unwrap_or_else(|| agents.agent_home_dir(&rec.name));
+            let session = self.session(&rec);
+            // The home comes back while the files every start shares
+            // (bridge, runner, skills) go in: they do not depend on it.
+            let copy = futures_util::future::join(
+                home::restore(agents.guest(), &session, &rec.name, &dir),
+                async {
+                    if let Some(h) = cua_agents::harness::harness(&rec.harness) {
+                        let _ = agents.prewarm(h, true).await;
+                    }
+                },
+            );
+            // A copy right after the volume did not answer, and a later
+            // session's (it takes no lease, which would have asked the
+            // store first), may wait on a stalled store: bounded, and
+            // without it the run starts without the volume.
+            if not_ready.is_some() || k > 1 {
+                match tokio::time::timeout(COPY_FALLBACK_TIMEOUT, copy).await {
+                    Ok((Ok(t), _)) => Ok(t),
+                    Ok((Err(e), _)) => {
+                        offline = Some(not_ready.take().unwrap_or_else(|| e.to_string()));
+                        Ok(home::Transfer::offline(t0.elapsed().as_millis() as u64))
+                    }
+                    Err(_) => {
+                        offline = Some(not_ready.take().unwrap_or_else(|| {
+                            format!(
+                                "Cua Volume didn't answer within {} s",
+                                COPY_FALLBACK_TIMEOUT.as_secs()
+                            )
+                        }));
+                        Ok(home::Transfer::offline(t0.elapsed().as_millis() as u64))
+                    }
+                }
+            } else {
+                copy.await.0
             }
         };
         let prepared_ms = phases::now_ms();
@@ -1177,6 +1346,15 @@ impl Persistent {
                 return Err(e);
             }
         };
+        if let Some(why) = &offline {
+            // A folder of its own on this computer: the home's copy here
+            // (if any) is not touched, and nothing of this run is saved
+            // over the home.
+            home_dir = Some(offline_home_dir(&agents, name, k));
+            tracing::warn!(agent = name, "starting without Cua Volume: {why}");
+            // An offline run never writes the home: its lease goes back.
+            self.release_writer(&rec).await;
+        }
         // Its env, its env_from_host keys, and the keys saved in Cua Spaces
         // that its harness reads.
         let (env, missing) = cua_spaces::agents::run_env(
@@ -1211,6 +1389,7 @@ impl Persistent {
                     env,
                     endpoint,
                     model: rec.model.clone(),
+                    effort: rec.effort.clone(),
                     home: Some(rec.name.clone()),
                     home_dir,
                     bridge: true,
@@ -1267,10 +1446,21 @@ impl Persistent {
             r.redrive = redrive;
             r.activity = None;
         })?;
+        if k == 1 {
+            let offline = offline.is_some();
+            self.update(&rec.name, |r| r.home_offline = offline)?;
+        }
+        let notice = offline.as_deref().map(|why| offline_notice(name, why));
+        if let Some(text) = &notice {
+            let _ = self
+                .thread_store(&rec.space)
+                .append(crate::thread::Draft::note("dispatch", None, text.clone()));
+        }
         Ok(Delivery {
             run_id: started.run_id,
             started: true,
             restored: Some(restored),
+            notice,
         })
     }
 
@@ -1373,6 +1563,7 @@ impl Persistent {
                         run_id: run.clone(),
                         started: false,
                         restored: None,
+                        notice: None,
                     });
                 }
                 // Failed, crashed, gone or unreadable: start fresh (the
@@ -2321,10 +2512,16 @@ impl Persistent {
             if text.is_empty() {
                 continue;
             }
-            // Already in the thread word for word (the agent posted it itself with `thread_reply`).
-            if recent.iter().any(|e| {
-                e.author.id == me.id && e.kind == EntryKind::Message && e.text.trim() == text
-            }) {
+            // Already in the thread word for word: the agent posted it itself with `thread_reply` in this
+            // turn. That is its latest message after the task it is answering; an identical message
+            // from an earlier task (or with other words said since) is a different message.
+            let floor = reply_to.unwrap_or(0);
+            if recent
+                .iter()
+                .rev()
+                .find(|e| e.seq > floor && e.author.id == me.id && e.kind == EntryKind::Message)
+                .is_some_and(|e| e.text.trim() == text)
+            {
                 continue;
             }
             let text = if check_text(&text).is_ok() {
@@ -2349,10 +2546,15 @@ impl Persistent {
         let Some(task) = rec.task.as_ref().map(|t| t.seq) else {
             return Ok(());
         };
-        let Ok(kids) = self.spaces.children(&rec.space) else {
-            return Ok(());
-        };
-        if kids.is_empty() {
+        let kids = self.spaces.children(&rec.space).unwrap_or_default();
+        // A create is told by the one member it is attributed to, on the task that member was on when it
+        // saw the create (not whichever task is current when a later pass runs).
+        cua_spaces::child_creates::claim(self.spaces.home_dir(), &rec.space, &rec.name, task);
+        let asked: Vec<_> = cua_spaces::child_creates::of(self.spaces.home_dir(), &rec.space)
+            .into_iter()
+            .filter(|e| e.agent == rec.name)
+            .collect();
+        if kids.is_empty() && asked.is_empty() {
             return Ok(());
         }
         let store = self.thread_store(&rec.space);
@@ -2360,7 +2562,73 @@ impl Persistent {
         let recent = store.read(last.saturating_sub(RECENT * 2), RECENT as usize * 2 + 1)?;
         let infos = self.spaces.list()?;
         let mut drafts = vec![];
+        // The creates the host ran for this agent: one note per step and per outcome (keyed, so a
+        // pass never repeats one), which the clients fold into one row each.
+        for e in &asked {
+            let base = format!("childc:{}:{}", e.key, e.started_ms);
+            let state = match e.state {
+                cua_spaces::child_creates::State::Creating => "creating",
+                cua_spaces::child_creates::State::Ready => "ready",
+                cua_spaces::child_creates::State::Failed => "failed",
+            };
+            let key = match e.state {
+                // A step posts again as it moves on (every 5 percent), so the row's bar keeps moving.
+                cua_spaces::child_creates::State::Creating => format!(
+                    "{base}:p:{}:{}",
+                    e.phase,
+                    e.percent.map_or(String::new(), |p| (p / 5 * 5).to_string())
+                ),
+                _ => format!("{base}:{state}"),
+            };
+            if recent
+                .iter()
+                .any(|r| r.client_id.as_deref() == Some(key.as_str()))
+            {
+                continue;
+            }
+            let os = &e.os;
+            let text = match e.state {
+                cua_spaces::child_creates::State::Creating => {
+                    format!("Creating the {} Space {}", os, e.name).replace("  ", " ")
+                }
+                cua_spaces::child_creates::State::Ready => format!("{} is ready", e.name),
+                cua_spaces::child_creates::State::Failed => format!(
+                    "Couldn't create the {} Space {}: {}. {} was told.",
+                    os,
+                    e.name,
+                    e.error.trim_end_matches('.').to_lowercase(),
+                    rec.name
+                )
+                .replace("  ", " "),
+            };
+            let space = if e.space.is_empty() {
+                format!("local:{}", e.key)
+            } else {
+                e.space.clone()
+            };
+            let mut d = Draft::event(
+                "child_space",
+                text,
+                json!({
+                    "kind": "child_space", "space": space, "key": format!("{}:{}", e.key, e.started_ms),
+                    "name": e.name, "os": os, "agent": rec.handle(), "state": state,
+                    "phase": e.phase, "percent": e.percent, "error": e.error,
+                    "started_ms": e.started_ms, "ended_ms": e.ended_ms,
+                }),
+            );
+            d.task_seq = Some(if e.task > 0 { e.task } else { task });
+            d.client_id = Some(key);
+            drafts.push(d);
+        }
+        let covered: std::collections::HashSet<&str> = asked
+            .iter()
+            .map(|e| e.space.as_str())
+            .filter(|s| !s.is_empty())
+            .collect();
         for id in kids {
+            if covered.contains(id.as_str()) {
+                continue;
+            }
             let key = format!("child:{id}");
             if recent
                 .iter()
@@ -2675,18 +2943,22 @@ impl Persistent {
                 self.thread_store(&rec.space).wake();
             }
         }
-        // "woke up and joined" says so once the agent is up (an agent that
-        // never gets there fails instead, and says that).
+        // A run restarted without the person asking says so once the agent
+        // is up (an agent that never gets there fails instead, and says
+        // that). A start the person asked for says nothing: its starting
+        // row already showed it.
         if agent_ready(&page.events)
-            && let Some(seq) = self.live.lock().await.joining.remove(&run)
+            && let Some((seq, restart)) = self.live.lock().await.joining.remove(&run)
         {
-            let _ = self
-                .thread_store(&rec.space)
-                .append(crate::thread::Draft::note(
-                    "dispatch",
-                    Some(seq),
-                    format!("{} woke up and joined", members::session_name(&rec)),
-                ));
+            let store = self.thread_store(&rec.space);
+            let words = store
+                .fold()
+                .ok()
+                .and_then(|f| f.tasks.get(&seq).map(|t| t.text.clone()))
+                .unwrap_or_default();
+            if let Some(text) = members::start_note(restart, &rec.name, &words) {
+                let _ = store.append(crate::thread::Draft::note("dispatch", Some(seq), text));
+            }
         }
         if failed.is_some() || ended.is_some() {
             self.live.lock().await.joining.remove(&run);
@@ -2779,6 +3051,26 @@ fn session_home_dir(agents: &Agents, name: &str, k: u32) -> String {
     format!("{}@{k}", agents.agent_home_dir(name))
 }
 
+/// The folder of a run that started without Cua Volume (next to the home's
+/// copy on this computer, which it leaves alone).
+fn offline_home_dir(agents: &Agents, name: &str, k: u32) -> String {
+    match k {
+        1 => format!("{}@offline", agents.agent_home_dir(name)),
+        k => format!("{}@{k}-offline", agents.agent_home_dir(name)),
+    }
+}
+
+/// What the person reads when `name` started without Cua Volume because
+/// of `why`.
+pub(crate) fn offline_notice(name: &str, why: &str) -> String {
+    format!(
+        "Cua Volume isn't answering on this computer right now, usually because sync with your \
+         other computers is stalled. {name} started anyway, without its saved files. What it does \
+         in this run stays on this computer and isn't saved to Cua Volume. Its next start uses \
+         Cua Volume again once sync is back. Details: {why}"
+    )
+}
+
 /// What a page of events says the turn is doing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Activity {
@@ -2787,6 +3079,30 @@ enum Activity {
     /// The turn ended: nothing.
     Cleared,
     Line(String),
+}
+
+/// An MCP tool's name (`mcp__cua__stream_space_window`) in plain words for the chip, or `None` for any other title.
+fn plain_tool(title: &str) -> Option<&'static str> {
+    // The harness looking up which tools it has: not something the person needs to read as a tool name.
+    if title == "ToolSearch" {
+        return Some("getting ready");
+    }
+    let name = title.rsplit("__").next().unwrap_or(title);
+    if !title.starts_with("mcp__") {
+        return None;
+    }
+    Some(match name {
+        "list_space_windows" => "looking at the windows",
+        "stream_space_window" => "showing a window",
+        "launch_space_app" => "opening an app",
+        "create_space" => "making a Space",
+        "delete_space" => "removing a Space",
+        "start_space" | "stop_space" => "changing a Space's power",
+        "list_spaces" => "looking at its Spaces",
+        "space_bash" => "running a command",
+        "thread_post" | "thread_reply" => "replying",
+        _ => return None,
+    })
 }
 
 /// The stage `events` put the turn in, in a few plain words: `installing`,
@@ -2808,6 +3124,8 @@ fn activity_line(events: &[ag::AgentEvent]) -> Activity {
                     "working".to_string()
                 } else if !cua_volume::scan::scan(one.as_bytes()).is_empty() {
                     "using a tool".to_string()
+                } else if let Some(plain) = plain_tool(&one) {
+                    plain.to_string()
                 } else {
                     format!("using {}", members::clip_line(&one, 48))
                 })
@@ -3255,5 +3573,25 @@ mod voice_tests {
         ] {
             assert!(!is_process_narration(ok), "{ok}");
         }
+    }
+}
+
+#[cfg(test)]
+mod plain_tool_tests {
+    use super::plain_tool;
+
+    #[test]
+    fn the_chip_names_what_the_agent_does_not_the_tool() {
+        assert_eq!(
+            plain_tool("mcp__cua__stream_space_window"),
+            Some("showing a window")
+        );
+        assert_eq!(
+            plain_tool("mcp__cua__launch_space_app"),
+            Some("opening an app")
+        );
+        assert_eq!(plain_tool("ToolSearch"), Some("getting ready"));
+        assert_eq!(plain_tool("Terminal"), None);
+        assert_eq!(plain_tool("mcp__other__thing"), None);
     }
 }

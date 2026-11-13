@@ -47,10 +47,12 @@ pub enum Command {
         /// `serve::default_socket_path()` when None.
         socket: Option<String>,
     },
-    /// `cua-driver connect`: connect Claude Code, Codex and Cursor.
+    /// `cua-driver connect`: connect Claude Code, Codex, Cursor and Factory Droid.
     Connect {
         clients: Vec<String>,
         dry_run: bool,
+        /// Switch an agent that uses another Cua Driver to this one.
+        replace: bool,
         json: bool,
     },
     McpConfig {
@@ -764,7 +766,7 @@ pub fn parse_command() -> Command {
         println!();
         println!("experimental options (default: off):");
         println!(
-            "  --experimental-history      Admit encrypted local Computer History for this daemon."
+            "  --experimental-history      Admit encrypted local Computer History (deprecated; removal after 26 Nov 2026)."
         );
         println!(
             "                              Capture remains off until `cua-driver history enable`."
@@ -886,6 +888,7 @@ pub fn parse_command() -> Command {
         Some("connect") => Command::Connect {
             clients: flag_values(&args, "--client"),
             dry_run: args.iter().any(|a| a == "--dry-run"),
+            replace: args.iter().any(|a| a == "--replace"),
             json: args.iter().any(|a| a == "--json"),
         },
         Some("mcp-config") => Command::McpConfig {
@@ -2109,10 +2112,11 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--socket", "type": "string", "description": "Override the required daemon socket path." }
               ] },
             { "name": "connect",
-              "description": "Connect Claude Code, Codex and Cursor to Cua Driver: add it to each agent that is installed and install the skill pack. Safe to run again.",
+              "description": "Connect Claude Code, Codex, Cursor and Factory Droid to Cua Driver: add it to each agent that is installed and install the skill pack. Safe to run again.",
               "args": [
-                  { "name": "--client", "type": "string", "description": "Connect only this agent (claude, codex or cursor). Repeat for several. Default: every agent found." },
+                  { "name": "--client", "type": "string", "description": "Connect only this agent (claude, codex, cursor or droid). Repeat for several. Default: every agent found." },
                   { "name": "--dry-run", "type": "flag", "description": "Show what would be connected without changing anything." },
+                  { "name": "--replace", "type": "flag", "description": "Switch an agent that uses another Cua Driver, such as the one inside Cua Spaces, to this one." },
                   { "name": "--json", "type": "flag", "description": "Emit machine-readable output." }
               ] },
             { "name": "mcp-config",
@@ -2802,6 +2806,9 @@ pub fn run_history_cmd(
         eprintln!("Unknown history subcommand '{subcommand}'. Valid: enable, disable, pause, resume, status, flush, list, show <sequence>, delete --yes");
         process::exit(64);
     }
+    if subcommand == "enable" {
+        eprintln!("notice: Computer History is deprecated and will be removed in the release after 26 Nov 2026. Use `cua-driver history delete --yes` to remove stored history.");
+    }
     if subcommand == "delete" && !confirmed {
         eprintln!("history delete destroys the encrypted files and their native credential-store key. Re-run with --yes.");
         process::exit(64);
@@ -3344,9 +3351,9 @@ fn run_recording_render(args: &[String]) {
 /// installer script — see [`crate::updater`] for why we go through the script
 /// instead of re-implementing the asset resolution + atomic swap + GC in Rust.
 pub fn run_update_cmd(apply: bool, json: bool) {
-    if crate::updater::is_pacman_managed() {
+    if let Some(owner) = crate::updater::update_owner() {
         print_check_update_state(
-            crate::version_check::check_update_state_with_ownership(false, true),
+            crate::version_check::check_update_state_with_owner(false, Some(owner)),
             json,
         );
         return;
@@ -3726,10 +3733,11 @@ fn permission_status_text(structured: &serde_json::Value, cli_name: &str) -> Str
             }
         }
         None => {
-            if structured.get("direct_capture_verification").is_some() {
+            if let Some(day) = direct_capture_verified_on(structured) {
                 let _ = writeln!(
                     out,
-                    "Test screenshot:                             ✅ worked last time it was checked"
+                    "Test screenshot:                             ✅ worked on {day} \
+                     (checked by `{cli_name} permissions grant`)"
                 );
             } else if sr {
                 let _ = writeln!(
@@ -3749,10 +3757,38 @@ fn permission_status_text(structured: &serde_json::Value, cli_name: &str) -> Str
             "These are the permissions of the app Cua Driver runs inside."
         );
     }
-    if !(ax && sr) {
+    let direct_capture_unverified = structured.get("direct_capture_status")
+        == Some(&serde_json::json!("not_checked"))
+        && direct_capture_verified_on(structured).is_none();
+    if !(ax && sr) || direct_capture_unverified {
         let _ = writeln!(out, "Next: run `{cli_name} permissions grant`.");
     }
     out
+}
+
+/// The UTC day of the last successful `permissions grant` test screenshot.
+/// The platform clears this record whenever a later probe fails.
+fn direct_capture_verified_on(structured: &serde_json::Value) -> Option<&str> {
+    structured
+        .get("direct_capture_verification")?
+        .get("verified_at")?
+        .as_str()?
+        .get(..10)
+}
+
+/// Whether an earlier `permissions grant` had already recorded a working
+/// test screenshot, read from the status taken before this run's probe. A
+/// record means macOS may have answered from its saved consent without asking.
+#[cfg(any(target_os = "macos", test))]
+fn permission_grant_direct_capture_history(before: &serde_json::Value) -> String {
+    match direct_capture_verified_on(before) {
+        Some(day) => format!(
+            "A test screenshot had already worked on {day}, so macOS may not have asked again."
+        ),
+        None => {
+            "This is the first working test screenshot recorded for this Cua Driver.".to_owned()
+        }
+    }
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -4130,7 +4166,11 @@ fn run_permissions_grant() {
             .as_ref()
             .is_some_and(permission_grant_is_ready)
         {
-            println!("\n✅ All set. Cua Driver can now use this Mac.");
+            if let Some(before) = staged_status.as_ref() {
+                println!("\n{}", permission_grant_direct_capture_history(before));
+            }
+            println!("`{cli_name} permissions status` now shows when this check last worked.");
+            println!("✅ All set. Cua Driver can now use this Mac.");
             return;
         }
 
@@ -4251,7 +4291,7 @@ pub fn run_kwin_capture_cmd(subcommand: &str, override_portal_deny: bool) {
 /// Inspect or persist the release channel. Selection never installs by itself;
 /// replacement remains explicit through `cua-driver update --apply`.
 pub fn run_channel_cmd(subcommand: &str, value: Option<&str>, json: bool) {
-    if crate::updater::is_pacman_managed() {
+    if let Some(owner) = crate::updater::update_owner() {
         if json {
             let current =
                 crate::release_channel::ReleaseChannel::from_version(env!("CARGO_PKG_VERSION"));
@@ -4261,11 +4301,11 @@ pub fn run_channel_cmd(subcommand: &str, value: Option<&str>, json: bool) {
                     "selected_channel": null,
                     "current_channel": current.map(|channel| channel.as_str()),
                     "current_version": env!("CARGO_PKG_VERSION"),
-                    "error": crate::updater::PACMAN_UPDATE_GUIDANCE,
+                    "error": owner.guidance(),
                 })
             );
         } else {
-            eprintln!("{}", crate::updater::PACMAN_UPDATE_GUIDANCE);
+            eprintln!("{}", owner.guidance());
         }
         process::exit(1);
     }
@@ -4695,11 +4735,11 @@ fn cli_docs_literal() -> serde_json::Value {
             },
             {
                 "name": "connect",
-                "abstract": "Connect Claude Code, Codex and Cursor to Cua Driver: add it to each agent that is installed and install the skill pack.",
-                "discussion": "Registers one server named cua-driver with each agent found (through the agent's own CLI, or by merging into Cursor's mcp.json without touching other entries) and installs the skill pack. An agent already connected, including under the older Claude Code name cua-computer-use, is left alone, so it is safe to run again. One agent failing does not stop the others; the exit code is non-zero only when an agent was found and none could be connected.",
+                "abstract": "Connect Claude Code, Codex, Cursor and Factory Droid to Cua Driver: add it to each agent that is installed and install the skill pack.",
+                "discussion": "Registers one server named cua-driver with each agent found (through the agent's own CLI, or by merging into Cursor's or Droid's mcp.json without touching other entries) and installs the skill pack. For Droid it also rates each action tool medium in ~/.factory/settings.json, so `droid exec --auto medium` runs them. An agent already connected, including under the older Claude Code name cua-computer-use, is left alone, so it is safe to run again. An agent whose cua-driver server launches a different Cua Driver, such as the one inside Cua Spaces, is reported as using another Cua Driver and left as is; --replace switches Claude Code, Codex and Cursor to this one the way Set up in Cua Spaces does, backing up the config file first. One agent failing does not stop the others; the exit code is non-zero only when an agent was found and none could be connected.",
                 "arguments": no_args,
-                "options": [{"name":"client","short_name":null,"help":"Connect only this agent (claude, codex or cursor). Repeat for several.","type":"String","default_value":null,"is_optional":true}],
-                "flags": [{"name":"dry-run","short_name":null,"help":"Show what would be connected without changing anything.","default_value":false},{"name":"json","short_name":null,"help":"Emit machine-readable output.","default_value":false}],
+                "options": [{"name":"client","short_name":null,"help":"Connect only this agent (claude, codex, cursor or droid). Repeat for several.","type":"String","default_value":null,"is_optional":true}],
+                "flags": [{"name":"dry-run","short_name":null,"help":"Show what would be connected without changing anything.","default_value":false},{"name":"replace","short_name":null,"help":"Switch an agent that uses another Cua Driver, such as the one inside Cua Spaces, to this one.","default_value":false},{"name":"json","short_name":null,"help":"Emit machine-readable output.","default_value":false}],
                 "subcommands": no_subcommands
             },
             {
@@ -4770,7 +4810,7 @@ fn cli_docs_literal() -> serde_json::Value {
                 "subcommands": [
                     {"name":"show","abstract":"Print the full config.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]},
                     {"name":"get","abstract":"Print one config key.","discussion":"","arguments":[{"name":"key","help":"Config key to read.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
-                    {"name":"set","abstract":"Set one config key.","discussion":"Cursor motion defaults are saved keys that apply to sessions started afterwards: cursor.motion.style (signature_arc, spring_settle, magnetic, comet_swoop, adaptive, classic), cursor.motion.timing (native, fitts, fixed) and cursor.motion.effects.<trail|glow|magnet|ripple|squish> (on, off, default). Use default for a key to clear it, or cursor.motion default to clear all. A start_session cursor_motion or a set_agent_cursor_motion call overrides the saved default. cursor.badges (minimal, verbose, off) sets the agent cursor badge for every cursor at once; minimal is the default. cursor.float (float at rest and while moving) and cursor.halo (soft glow) are on, off or default and on by default; cursor.marks (action marks) is on, off or default and off by default; cursor.rotate is heading (default), lean, off or default. All apply to every cursor at once.","arguments":[{"name":"key","help":"Config key to write.","type":"String","is_optional":false},{"name":"value","help":"Value to store.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
+                    {"name":"set","abstract":"Set one config key.","discussion":"Cursor motion defaults are saved keys that apply to sessions started afterwards: cursor.motion.style (signature_arc, spring_settle, magnetic, comet_swoop, adaptive, classic), cursor.motion.timing (native, fitts, fixed) and cursor.motion.effects.<trail|glow|magnet|ripple|squish> (on, off, default). Use default for a key to clear it, or cursor.motion default to clear all. A start_session cursor_motion or a set_agent_cursor_motion call overrides the saved default. cursor.badges (minimal, verbose, off) sets the agent cursor badge for every cursor at once; minimal is the default. cursor.float (float at rest and while moving) and cursor.halo (soft glow) are on, off or default and on by default; cursor.rotate is heading (default), lean, off or default. All apply to every cursor at once.","arguments":[{"name":"key","help":"Config key to write.","type":"String","is_optional":false},{"name":"value","help":"Value to store.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
                     {"name":"reset","abstract":"Reset config to defaults.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]}
                 ]
             },
@@ -5019,6 +5059,7 @@ const CLI_EXAMPLES: &[(&str, &[(&str, &str)])] = &[
         ("cua-driver connect", "Connect every agent found on this computer"),
         ("cua-driver connect --client claude --dry-run", "Show what would change for Claude Code"),
         ("cua-driver connect --json", "Print the result for each agent as JSON"),
+        ("cua-driver connect --replace", "Switch agents that use another Cua Driver to this one"),
     ]),
     ("mcp-config", &[
         ("cua-driver mcp-config", "Print a generic mcpServers entry"),
@@ -5529,7 +5570,7 @@ pub fn run_config_cmd(
                 Some(k) => k,
                 None => {
                     eprintln!("Usage: cua-driver config get <key>");
-                    eprintln!("Keys: capture_mode, max_image_dimension, version, platform, cursor.motion.style, cursor.motion.timing, cursor.badges, cursor.marks, cursor.float, cursor.halo, cursor.rotate");
+                    eprintln!("Keys: capture_mode, max_image_dimension, version, platform, cursor.motion.style, cursor.motion.timing, cursor.badges, cursor.float, cursor.halo, cursor.rotate");
                     process::exit(64);
                 }
             };
@@ -5558,7 +5599,7 @@ pub fn run_config_cmd(
                 );
             } else {
                 eprintln!("Unknown config key: {key}");
-                eprintln!("Available keys: capture_mode, max_image_dimension, version, platform, agent_cursor.enabled, cursor.motion.style, cursor.motion.timing, cursor.motion.effects, cursor.badges, cursor.marks, cursor.float, cursor.halo, cursor.rotate");
+                eprintln!("Available keys: capture_mode, max_image_dimension, version, platform, agent_cursor.enabled, cursor.motion.style, cursor.motion.timing, cursor.motion.effects, cursor.badges, cursor.float, cursor.halo, cursor.rotate");
                 process::exit(64);
             }
         }
@@ -5614,7 +5655,6 @@ pub fn run_config_cmd(
                 serde_json::json!({
                     "cursor.motion": "default",
                     "cursor.badges": "default",
-                    "cursor.marks": "default",
                     "cursor.float": "default",
                     "cursor.halo": "default",
                     "cursor.rotate": "default",
@@ -6189,8 +6229,8 @@ mod tests {
         ])));
         assert!(finite_computer_action_from_args(&args(&[
             "call",
-            "page",
-            r#"{"action":"insert_text","text":"private"}"#,
+            "browser_pointer",
+            r#"{"action":"hover","text":"private"}"#,
         ])));
         assert!(!finite_computer_action_from_args(&args(&[
             "call",
@@ -6349,6 +6389,59 @@ mod tests {
         assert!(!answers_for_cua_driver(&host));
         // No per-app permissions (not macOS): nothing to misattribute.
         assert!(answers_for_cua_driver(&serde_json::json!({})));
+    }
+
+    #[test]
+    fn permission_status_text_says_when_direct_capture_was_last_verified() {
+        let verified = serde_json::json!({
+            "accessibility": true,
+            "screen_recording": true,
+            "screen_recording_capturable": null,
+            "direct_capture_status": "not_checked",
+            "direct_capture_verification": {
+                "source": "permissions_grant",
+                "verified_at": "2026-08-05T09:30:00Z",
+                "bundle_id": "com.trycua.driver.local"
+            },
+            "source": {"attribution": "driver-daemon"},
+        });
+        let text = permission_status_text(&verified, "cua-driver-local");
+        assert!(
+            text.contains(
+                "Test screenshot:                             ✅ worked on 2026-08-05 \
+                 (checked by `cua-driver-local permissions grant`)"
+            ),
+            "{text}"
+        );
+
+        let unverified = serde_json::json!({
+            "accessibility": true,
+            "screen_recording": true,
+            "screen_recording_capturable": null,
+            "direct_capture_status": "not_checked",
+        });
+        let text = permission_status_text(&unverified, "cua-driver-local");
+        assert!(text.contains("Test screenshot:                             not checked yet"));
+        assert!(text.contains("Next: run `cua-driver-local permissions grant`."));
+    }
+
+    #[test]
+    fn permission_grant_says_whether_direct_capture_was_verified_before() {
+        let earlier = serde_json::json!({
+            "direct_capture_verification": {
+                "source": "permissions_grant",
+                "verified_at": "2026-08-05T09:30:00Z",
+                "bundle_id": "com.trycua.driver"
+            }
+        });
+        assert_eq!(
+            permission_grant_direct_capture_history(&earlier),
+            "A test screenshot had already worked on 2026-08-05, so macOS may not have asked again."
+        );
+        assert_eq!(
+            permission_grant_direct_capture_history(&serde_json::json!({})),
+            "This is the first working test screenshot recorded for this Cua Driver."
+        );
     }
 
     #[test]

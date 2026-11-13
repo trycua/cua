@@ -152,7 +152,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: dtolnay/rust-toolchain@1.97.1
-      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
       - name: Set up pasta (secure network)
         uses: ./.github/actions/setup-pasta
       - name: Host tools (QEMU, gVisor, crane, oras, skopeo)
@@ -174,7 +174,7 @@ jobs:
           echo "ASSUME=$assume" >>"$GITHUB_ENV"
       - name: cua CLI and the SDK binding for the smoke
         run: |
-          (cd libs/cua && cargo build --release -p cua-sdk -p cua-cli --features cua-cli/byoc)
+          (cd libs/cua && cargo build --release -p cua-sdk-native -p cua-cli --features cua-cli/byoc)
           cp libs/cua/target/release/libcua_sdk.so libs/cua/python/src/cua/
           install -m 0755 libs/cua/target/release/cua "$RUNNER_TEMP/cua"
           # The later jobs (index, verify, promote) reuse these instead of
@@ -280,10 +280,16 @@ jobs:
       STAMP: ${{ needs.meta.outputs.stamp }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       CARGO_BUILD_JOBS: "4"
+      # amd64 runners expose /dev/kvm: the containerdisk must boot under KVM
+      # (about 300 s from pull to ready). A TCG boot is several times slower,
+      # so the runtime refuses the fallback and says why instead of timing
+      # out. A failed smoke prints the guest console (smoke.py ConsoleTee)
+      # and keeps it in the evidence (verify/<tag>-console/).
+      CUA_REQUIRE_KVM: ${{ matrix.arch == 'amd64' && '1' || '' }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: dtolnay/rust-toolchain@1.97.1
-      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         if: inputs.promote_stamp == ''
         with:
@@ -295,6 +301,9 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends protobuf-compiler libprotobuf-dev
           scripts/images/install-release-tools.sh --free-disk
+      - name: Require KVM (amd64)
+        if: matrix.arch == 'amd64'
+        run: scripts/images/enable-kvm.sh --require
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         # This run's build job's CLI; a promote_stamp run has none and compiles it.
         continue-on-error: true
@@ -307,7 +316,7 @@ jobs:
             cp "$RUNNER_TEMP/bench-cli/libcua_sdk.so" libs/cua/python/src/cua/
             install -m 0755 "$RUNNER_TEMP/bench-cli/cua" "$RUNNER_TEMP/cua"
           else
-            (cd libs/cua && cargo build --release -p cua-sdk -p cua-cli --features cua-cli/byoc)
+            (cd libs/cua && cargo build --release -p cua-sdk-native -p cua-cli --features cua-cli/byoc)
             cp libs/cua/target/release/libcua_sdk.so libs/cua/python/src/cua/
             install -m 0755 libs/cua/target/release/cua "$RUNNER_TEMP/cua"
             rm -rf libs/cua/target

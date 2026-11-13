@@ -19,13 +19,13 @@ use super::impl_::{
     foreground_hyprland_refusal, foreground_structured, hyprland_foreground, input_error_result,
     isolated_hyprland_action, isolated_hyprland_background, isolated_hyprland_refusal,
     isolated_hyprland_result, isolated_hyprland_task_error, named_session_cursor_key,
-    non_ax_escalation, parse_mouse_button, prove_token_element, push_evidence, require_point_args,
-    resolve_cursor_key, resolve_element_local_coords, reveal_pointer_action_for,
-    reveal_pointer_action_target_for, screenshot_scale, spawn_blocking_bounded,
-    spawn_isolated_hyprland, synthetic_pointer_is_dropped, unavailable_chromium_background,
-    unavailable_wayland_focused_input_background, window_local_to_screen,
-    window_scope_unproven_refusal, with_pixel_points, x11_pixel_click_no_focus_steal, AimedPoint,
-    CoordinateContext, PointerRoute, ToolState,
+    non_ax_escalation, parse_mouse_button, prove_token_element, push_evidence, refuse_if_disabled,
+    require_point_args, resolve_cursor_key, resolve_element_local_coords,
+    reveal_pointer_action_for, reveal_pointer_action_target_for, screenshot_scale,
+    spawn_blocking_bounded, spawn_isolated_hyprland, synthetic_pointer_is_dropped,
+    unavailable_chromium_background, unavailable_wayland_focused_input_background,
+    window_local_to_screen, window_scope_unproven_refusal, with_pixel_points,
+    x11_pixel_click_no_focus_steal, AimedPoint, CoordinateContext, PointerRoute, ToolState,
 };
 
 #[cfg(test)]
@@ -102,6 +102,7 @@ mod token_window_scope_tests {
             identity: identity(path),
             object_ref: object_ref(path),
             role: "text".into(),
+            disabled: false,
             in_web_content: false,
             bounds: None,
         }
@@ -573,7 +574,7 @@ impl ClickTool {
                         let confirmed = report.window_change_confirms();
                         let result = ToolResult::text(format!(
                             "Clicked element [{idx}] (pid {pid}) with a real pointer click \
-                             (delivery_mode=foreground, focus_after={}){}{}",
+                             (delivery_mode=foreground, focus_after={}){}{}{}",
                             report.focus_after.as_str(),
                             if confirmed {
                                 format!("; {}.", report.window_change.as_deref().unwrap_or(""))
@@ -584,6 +585,7 @@ impl ClickTool {
                                 .as_deref()
                                 .map(|n| format!(" ({n})."))
                                 .unwrap_or_default(),
+                            report.focus_note(),
                         ))
                         .with_structured(foreground_structured(
                             "x11_xtest_fg",
@@ -679,12 +681,13 @@ impl ClickTool {
                             "Clicked element [{idx}] (pid {pid}) through its AT-SPI action \
                              \"{action}\" with the window activated (delivery_mode=foreground, \
                              path=ax_fg, focus_after={}): the element had no usable \
-                             on-screen bounds ({reason}), so no pointer was moved.{}",
+                             on-screen bounds ({reason}), so no pointer was moved.{}{}",
                             report.focus_after.as_str(),
                             match &report.window_change {
                                 Some(change) => format!(" {change}."),
                                 None => " Not verified — confirm with a screenshot.".to_owned(),
-                            }
+                            },
+                            report.focus_note()
                         ))
                         .with_structured(foreground_structured("ax_fg", report, extra))
                     }
@@ -1023,6 +1026,9 @@ impl Tool for ClickTool {
             Ok(token) => token,
             Err(refusal) => return refusal,
         };
+        if let Some(refusal) = refuse_if_disabled(pid, &resolved, "click").await {
+            return refusal;
+        }
         let elem_idx_resolved: Option<usize> = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } => {
                 Some(*element_index)
@@ -1385,8 +1391,9 @@ impl Tool for ClickTool {
                                 )
                             },
                         )
-                        .map(|(value, _report)| value)
-                        .map(|()| PointerRoute::Foreground)
+                        .map(|((), report)| PointerRoute::Foreground {
+                            menu_open: report.menu_open,
+                        })
                     } else if modifier_refs.is_empty() && !crate::wayland::is_wayland() {
                         x11_pixel_click_no_focus_steal(
                             &cursor_id_for_fallback,
@@ -1435,11 +1442,17 @@ impl Tool for ClickTool {
             };
         }
 
-        if !isolated_background {
-            if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
-                return refusal;
-            }
-        }
+        // Chromium drops background pointer events, but on X11 the AT-SPI
+        // action of the control under a plain left click still lands: that
+        // route tries it first and refuses only on a miss.
+        let plain_left = button == 1 && count == 1 && modifiers.is_empty();
+        let chromium_atspi_only = match (!isolated_background)
+            .then(|| unavailable_chromium_background(pid, delivery))
+            .flatten()
+        {
+            Some(refusal) if crate::wayland::is_wayland() || !plain_left => return refusal,
+            refusal => refusal.is_some(),
+        };
 
         // Coordinate-based path.
         if let Some(refusal) = require_point_args("click", &args) {
@@ -1468,24 +1481,43 @@ impl Tool for ClickTool {
         let native_refusal = (!isolated_background)
             .then(|| unavailable_wayland_focused_input_background(delivery, true))
             .flatten();
+        // The screenshot point the capture was bound to, before it is mapped.
+        let capture_point = (x, y);
         if desktop_frame {
             // Desktop pixels: no zoom/screenshot scaling; translated once below.
             if let Some(refusal) = native_refusal {
                 return refusal;
             }
-        } else if let Some(capture_id) = capture_id_arg {
+        } else if let Some(capture_id) = capture_id_arg.clone() {
             if let Some(refusal) = native_refusal {
                 return refusal;
             }
-            match crate::capture_action_frame::admit_window_click(
-                &self.state.capture_service,
-                &args,
-                &capture_id,
-                pid,
-                xid,
-                x,
-                y,
-            ) {
+            // A click that may still be refused after its point is mapped (a
+            // Chromium background click that finds no accessible control)
+            // must not spend the one-shot capture: the foreground retry
+            // reuses it. Spend it once the click is dispatched.
+            let admitted = if chromium_atspi_only {
+                crate::capture_action_frame::preview_window_click(
+                    &self.state.capture_service,
+                    &args,
+                    &capture_id,
+                    pid,
+                    xid,
+                    x,
+                    y,
+                )
+            } else {
+                crate::capture_action_frame::admit_window_click(
+                    &self.state.capture_service,
+                    &args,
+                    &capture_id,
+                    pid,
+                    xid,
+                    x,
+                    y,
+                )
+            };
+            match admitted {
                 Ok(point) => (x, y) = point,
                 Err(error) => return capture_admission_error(error),
             }
@@ -1613,7 +1645,8 @@ impl Tool for ClickTool {
         let modifiers_for_task = modifiers.clone();
         // delivery_mode: background (default) = no-focus-steal injection;
         // foreground = activate the target window (EWMH) first, then inject,
-        // then restore prior active. Mirrors macOS/Windows.
+        // then restore the prior active window unless the click opened a menu.
+        // Mirrors macOS/Windows.
         let fg_budget = foreground_budget(0);
         let result = spawn_blocking_bounded("foreground click", fg_budget, move || -> anyhow::Result<(&'static str, Option<crate::input::ForegroundReport>, Option<PointerRoute>, Option<crate::input::FocusGuardReport>)> {
             if crate::wayland::is_wayland() {
@@ -1666,8 +1699,10 @@ impl Tool for ClickTool {
                     // real pointer available, an entry / spin button / cell
                     // under the point is left to the MPX click below (its
                     // `doAction` would not focus it for a following type_text).
+                    // Chromium: an editable's action does not focus it for a
+                    // following type, so leave it to the refusal.
                     let real_click_for_focus_roles =
-                        crate::input::real_pointer_input_available();
+                        chromium_atspi_only || crate::input::real_pointer_input_available();
                     let (hit, guard) = crate::input::focus_guard::guarded(Some(pid), || {
                         Ok(crate::atspi::perform_action_at_point_in(
                             pid,
@@ -1682,6 +1717,9 @@ impl Tool for ClickTool {
                     if let Some(hit) = hit {
                         return Ok(("x11_atspi", Some(PointerRoute::Atspi(hit)), guard));
                     }
+                }
+                if chromium_atspi_only {
+                    return Ok(("background_unavailable_chromium", None, None));
                 }
                 if !fg
                     && !crate::input::real_pointer_input_available()
@@ -1758,10 +1796,35 @@ impl Tool for ClickTool {
         } else {
             "background"
         };
+        if chromium_atspi_only
+            && !matches!(
+                &result,
+                Ok(Ok(("background_unavailable_chromium", _, _, _)))
+            )
+        {
+            if let Some(capture_id) = capture_id_arg.as_deref() {
+                // Dispatched (or failed after dispatch): the capture is spent
+                // exactly as a plain admission would have spent it.
+                let _ = crate::capture_action_frame::admit_window_click(
+                    &self.state.capture_service,
+                    &args,
+                    capture_id,
+                    pid,
+                    xid,
+                    capture_point.0,
+                    capture_point.1,
+                );
+            }
+        }
         let outcome = match result {
             Ok(Ok(("background_unavailable", _, _, _))) => {
                 crate::input::delivery::background_unavailable_error(
                     crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+                )
+            }
+            Ok(Ok(("background_unavailable_chromium", _, _, _))) => {
+                crate::input::delivery::background_unavailable_error(
+                    crate::input::delivery::BackgroundUnavailable::ChromiumInput,
                 )
             }
             Ok(Ok(("background_unavailable_pointer", _, _, _))) => {
@@ -1795,16 +1858,19 @@ impl Tool for ClickTool {
                         "delivery_mode": mode_label,
                     }),
                 };
-                if let Some(report) = report {
-                    apply_foreground_report(&mut structured, &report);
+                if let Some(report) = &report {
+                    apply_foreground_report(&mut structured, report);
                 }
-                let suffix = match &route {
+                let mut suffix = match &route {
                     Some(route) => route.text_suffix(mode_label),
                     None => format!(
                         "(delivery_mode={mode_label}, path={path}); not verified — confirm \
                          with a screenshot."
                     ),
                 };
+                if let Some(report) = &report {
+                    suffix.push_str(&report.focus_note());
+                }
                 attach_focus_guard(
                     ToolResult::text(format!("Clicked at ({x:.1}, {y:.1}) × {count} {suffix}"))
                         .with_structured(structured),

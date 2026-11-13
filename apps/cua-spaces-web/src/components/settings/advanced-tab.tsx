@@ -23,7 +23,7 @@ import { thisComputerText } from "@/lib/host-labels";
 const SELF_HOSTED = "self-hosted";
 
 /** Experiments that stay as Labs. "Your cloud" and "Sharing" have no switch any more: the plan decides on the server. */
-const LABS = new Set(["experiment:cua_volume", "experiment:child_spaces", "experiment:ci_runners", "experiment:tcp_shares", "experiment:mobile", "experiment:warm_pools"]);
+const LABS = new Set(["experiment:cua_volume", "experiment:ci_runners", "experiment:tcp_shares", "experiment:mobile"]);
 
 /**
  * Settings, Advanced: the update channel (Stable or Nightly), Labs, which software runs Spaces on
@@ -40,7 +40,8 @@ export function AdvancedTab() {
   const runtimes = page?.sections.find((s) => s.id === "runtimes");
   const autoConnect = general?.rows.find((r) => r.id === "auto-connect");
   const overflow = general?.rows.find((r) => r.id === "placement-overflow");
-  const choose = (row: CoreRow, option: string) => void chooseSetting(row.id, option).catch(toastError(t("settings.advanced.change_failed", { setting: row.label })));
+  const choose = (row: CoreRow, option: string) =>
+    void chooseSetting(row.id, option).catch(toastError(t("settings.advanced.change_failed", { setting: row.label })));
 
   // Nothing is drawn until the host has answered for every group, so none of them pushes
   // another down as it arrives (a layout shift of the whole tab).
@@ -58,10 +59,7 @@ export function AdvancedTab() {
           {runtimes ? <RuntimeKindRows section={runtimes} onChoose={choose} /> : null}
           {autoConnect ? <CoreSettingsRow row={{ ...autoConnect, label: t("settings.advanced.auto_connect") }} onChoose={choose} /> : null}
           {overflow ? (
-            <CoreSettingsRow
-              row={{ ...overflow, label: t("settings.advanced.overflow", { computer: thisComputerText() }) }}
-              onChoose={choose}
-            />
+            <CoreSettingsRow row={{ ...overflow, label: t("settings.advanced.overflow", { computer: thisComputerText() }) }} onChoose={choose} />
           ) : null}
         </SettingsGroup>
       ) : null}
@@ -100,14 +98,24 @@ function UpdateChannel() {
     placeholder: null,
   };
   const note: CoreRow | null = updates.channelNote
-    ? { ...row, id: "update-channel-note", kind: "note", label: updates.channelNote, options: [], linkLabel: updates.downloadLabel ?? null, linkUrl: updates.downloadUrl ?? null }
+    ? {
+        ...row,
+        id: "update-channel-note",
+        kind: "note",
+        label: updates.channelNote,
+        options: [],
+        linkLabel: updates.downloadLabel ?? null,
+        linkUrl: updates.downloadUrl ?? null,
+      }
     : null;
   return (
     <SettingsGroup title={t("settings.advanced.updates")}>
       <CoreSettingsRow
         row={row}
         description={updates.channelHelp}
-        onChoose={(_, option) => void setAbout({ channel: option === "nightly" ? "nightly" : "stable" }).catch(toastError(t("settings.advanced.channel_failed")))}
+        onChoose={(_, option) =>
+          void setAbout({ channel: option === "nightly" ? "nightly" : "stable" }).catch(toastError(t("settings.advanced.channel_failed")))
+        }
       />
       {note ? <CoreSettingsRow row={note} /> : null}
     </SettingsGroup>
@@ -173,11 +181,9 @@ function Labs() {
   const rows = (data?.page?.sections.flatMap((s) => s.rows) ?? []).filter((r) => LABS.has(r.id));
   const note: Record<string, string> = {
     "experiment:cua_volume": t("settings.advanced.labs_cua_volume"),
-    "experiment:child_spaces": t("settings.advanced.labs_child_spaces"),
     "experiment:ci_runners": t("settings.advanced.labs_ci_runners"),
     "experiment:tcp_shares": t("settings.advanced.labs_tcp_shares"),
     "experiment:mobile": t("settings.advanced.labs_mobile"),
-    "experiment:warm_pools": t("settings.advanced.labs_warm_pools"),
   };
   if (!rows.length) return null;
   return (
@@ -207,7 +213,14 @@ function OwnConnection() {
     <SettingsGroup title={t("settings.advanced.connection")}>
       <AddComputerSheet open={enterCode} onOpenChange={setEnterCode} initialView="enter" />
       {form ? (
-        <HostSetupForm view={form} host={host} failure={host.setupError} progress={machines?.find((m) => m.current)?.hostProgress} onRetry={() => void host.retrySetUp()} onUseCode={() => setEnterCode(true)} />
+        <HostSetupForm
+          view={form}
+          host={host}
+          failure={host.setupError}
+          progress={machines?.find((m) => m.current)?.hostProgress}
+          onRetry={() => void host.retrySetUp()}
+          onUseCode={() => setEnterCode(true)}
+        />
       ) : (
         <SettingRow
           data-self-hosting=""

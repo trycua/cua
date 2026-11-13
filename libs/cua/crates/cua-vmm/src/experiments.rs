@@ -18,9 +18,6 @@ pub const EXPERIMENTS_DIR: &str = "experiments";
 /// An experiment: a feature that is still being built and is off by default.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Gate {
-    /// Child Spaces: a Space makes Spaces of its own through a channel only
-    /// it can reach, inside a budget for its tree (`cua spaces children`).
-    ChildSpaces,
     /// CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`).
     CiRunners,
     /// Public TCP shares: a raw TCP service in a Space (a game server) at a
@@ -33,44 +30,34 @@ pub enum Gate {
     /// Windows on KVM: Windows Spaces from a Mac coordinator on a Cua-managed
     /// AWS x86 pool host with nested KVM.
     WindowsKvm,
-    /// Warm pools: one prepared Linux Space is kept ready on this computer
-    /// (its coding apps already installed), so the next Create from Home
-    /// claims it instead of making one.
-    WarmPools,
 }
 
 impl Gate {
     /// Every experiment, in the order they are listed.
     pub const ALL: &'static [Gate] = &[
-        Gate::ChildSpaces,
         Gate::CiRunners,
         Gate::TcpShares,
         Gate::Mobile,
         Gate::WindowsKvm,
-        Gate::WarmPools,
     ];
 
     /// The stable name (`secure-spaces`): the file name, the CLI word.
     pub fn name(self) -> &'static str {
         match self {
-            Gate::ChildSpaces => "child-spaces",
             Gate::CiRunners => "ci-runners",
             Gate::TcpShares => "tcp-shares",
             Gate::Mobile => "mobile",
             Gate::WindowsKvm => "windows-kvm",
-            Gate::WarmPools => "warm-pools",
         }
     }
 
     /// The same name with underscores (`secure_spaces`): the app's id.
     pub fn id(self) -> &'static str {
         match self {
-            Gate::ChildSpaces => "child_spaces",
             Gate::CiRunners => "ci_runners",
             Gate::TcpShares => "tcp_shares",
             Gate::Mobile => "mobile",
             Gate::WindowsKvm => "windows_kvm",
-            Gate::WarmPools => "warm_pools",
         }
     }
 
@@ -83,21 +70,16 @@ impl Gate {
     /// The label people see.
     pub fn title(self) -> &'static str {
         match self {
-            Gate::ChildSpaces => "Child Spaces",
             Gate::CiRunners => "CI runners",
             Gate::TcpShares => "Public TCP shares",
             Gate::Mobile => "Phone app",
             Gate::WindowsKvm => "Windows on KVM",
-            Gate::WarmPools => "Warm start",
         }
     }
 
     /// One line on what it does.
     pub fn summary(self) -> &'static str {
         match self {
-            Gate::ChildSpaces => {
-                "A Space can make Spaces of its own, inside a budget, and keep a command running."
-            }
             Gate::CiRunners => {
                 "Run GitHub Actions jobs in a fresh Space each, on your computers, with `cua ci`."
             }
@@ -109,9 +91,6 @@ impl Gate {
             }
             Gate::WindowsKvm => {
                 "Windows Spaces from a Mac run on a Cua-managed cloud host with nested virtualization."
-            }
-            Gate::WarmPools => {
-                "Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once."
             }
         }
     }
@@ -132,9 +111,7 @@ impl Gate {
 
 /// Process-wide overrides, one per gate: 0 follows the environment and the
 /// file, 1 off, 2 on.
-static GATE_OVERRIDES: [AtomicU8; 6] = [
-    AtomicU8::new(0),
-    AtomicU8::new(0),
+static GATE_OVERRIDES: [AtomicU8; 4] = [
     AtomicU8::new(0),
     AtomicU8::new(0),
     AtomicU8::new(0),
@@ -163,9 +140,7 @@ pub struct Override {
 }
 
 /// One turn lock per gate (as many as [`GATE_OVERRIDES`]).
-static GATE_TURNS: [std::sync::Mutex<()>; 6] = [
-    std::sync::Mutex::new(()),
-    std::sync::Mutex::new(()),
+static GATE_TURNS: [std::sync::Mutex<()>; 4] = [
     std::sync::Mutex::new(()),
     std::sync::Mutex::new(()),
     std::sync::Mutex::new(()),
@@ -240,10 +215,11 @@ pub fn switch(home: &std::path::Path, gate: Gate) -> Option<bool> {
     Some(text.trim() == "on")
 }
 
-/// Switches that were experiments once and are now always on (Secure Spaces, Ask first). A file
+/// Switches that were experiments once and are now always on (Secure Spaces, Ask first, Child
+/// Spaces, Warm start). A file
 /// one of them left in `<home>/experiments` is ignored and removed by [`forget_retired`]; naming
 /// one in [`EXPERIMENTS_ENV`] does nothing.
-pub const RETIRED: &[&str] = &["secure-spaces", "ask-first"];
+pub const RETIRED: &[&str] = &["secure-spaces", "ask-first", "child-spaces", "warm-pools"];
 
 /// Removes the switch files of the [`RETIRED`] experiments from `home`, so a person who once
 /// turned one off keeps nothing of it. Missing files are fine; a test never touches the user's
@@ -301,17 +277,7 @@ mod tests {
     #[test]
     fn the_listing_has_no_retired_experiment_and_all_the_others() {
         let names: Vec<_> = Gate::ALL.iter().map(|g| g.name()).collect();
-        assert_eq!(
-            names,
-            [
-                "child-spaces",
-                "ci-runners",
-                "tcp-shares",
-                "mobile",
-                "windows-kvm",
-                "warm-pools"
-            ]
-        );
+        assert_eq!(names, ["ci-runners", "tcp-shares", "mobile", "windows-kvm"]);
         for retired in super::RETIRED {
             assert_eq!(Gate::parse(retired), None, "{retired}");
             assert_eq!(Gate::parse(&retired.replace('-', "_")), None, "{retired}");
@@ -354,24 +320,23 @@ mod tests {
 
     #[test]
     fn the_environment_list_names_experiments_on_or_off() {
-        let g = Gate::ChildSpaces;
+        let g = Gate::CiRunners;
         assert_eq!(super::env_says(None, g), None);
-        assert_eq!(super::env_says(Some("warm-pools"), g), None);
-        assert_eq!(super::env_says(Some("child-spaces"), g), Some(true));
-        assert_eq!(super::env_says(Some("a, Child_Spaces"), g), Some(true));
+        assert_eq!(super::env_says(Some("mobile"), g), None);
+        assert_eq!(super::env_says(Some("ci-runners"), g), Some(true));
+        assert_eq!(super::env_says(Some("a, CI_Runners"), g), Some(true));
         assert_eq!(
-            super::env_says(Some("child-spaces -child-spaces"), g),
+            super::env_says(Some("ci-runners -ci-runners"), g),
             Some(false)
         );
-        assert_eq!(super::env_says(Some("-child_spaces"), g), Some(false));
-        assert_eq!(Gate::parse("CHILD_SPACES"), Some(g));
+        assert_eq!(super::env_says(Some("-ci_runners"), g), Some(false));
+        assert_eq!(Gate::parse("CI_RUNNERS"), Some(g));
         assert_eq!(Gate::parse("nope"), None);
         assert_eq!(Gate::parse("Mobile"), Some(Gate::Mobile));
         assert_eq!(Gate::Mobile.id(), "mobile");
-        assert_eq!(Gate::parse("warm_pools"), Some(Gate::WarmPools));
-        assert_eq!(Gate::WarmPools.name(), "warm-pools");
-        assert_eq!(Gate::WarmPools.id(), "warm_pools");
         // A retired experiment named in the environment does nothing.
-        assert_eq!(super::env_says(Some("-secure-spaces"), g), None);
+        for retired in super::RETIRED {
+            assert_eq!(super::env_says(Some(&format!("-{retired}")), g), None);
+        }
     }
 }

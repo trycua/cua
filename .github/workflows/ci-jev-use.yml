@@ -39,6 +39,11 @@ on:
       - ".github/workflows/authorized-live-jev-use.yml"
       - ".github/workflows/authorized-live-jev-use-demo.yml"
       - "scripts/ci/windows/run-jev-use-elevated-autostart.ps1"
+  # Perception and jev-use are frozen (no new work). Pull requests and main run
+  # the quick, unit and Linux mock E2E jobs; the macOS, Windows and native
+  # harness jobs run weekly and on demand.
+  schedule:
+    - cron: "41 5 * * 1"
   workflow_dispatch:
 
 # Pull request code runs only on disposable GitHub-hosted runners. No job in
@@ -79,7 +84,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           version: "0.8.15"
           enable-cache: true
@@ -140,7 +145,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           version: "0.8.15"
           enable-cache: true
@@ -358,7 +363,7 @@ jobs:
   # Linux-only.
   released-driver-macos:
     needs: quick
-    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
+    if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: macOS released Driver mock E2E
     runs-on: macos-26
     timeout-minutes: 45
@@ -373,7 +378,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           version: "0.8.15"
           enable-cache: true
@@ -476,7 +481,7 @@ jobs:
   # the harness's own state file as the independent oracle.
   native-appkit-macos:
     needs: quick
-    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
+    if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: macOS native AppKit mock E2E
     runs-on: macos-26
     timeout-minutes: 45
@@ -491,7 +496,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           version: "0.8.15"
           enable-cache: true
@@ -630,7 +635,7 @@ jobs:
 
   released-driver-windows:
     needs: quick
-    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
+    if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: Windows released Driver mock E2E
     runs-on: windows-latest
     timeout-minutes: 45
@@ -648,7 +653,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           version: "0.8.15"
           enable-cache: true
@@ -746,7 +751,7 @@ jobs:
   # the harness's own state file as the independent oracle.
   native-wpf-windows:
     needs: quick
-    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
+    if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: Windows native WPF mock E2E
     runs-on: windows-latest
     timeout-minutes: 45
@@ -764,7 +769,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           version: "0.8.15"
           enable-cache: true
@@ -894,7 +899,7 @@ jobs:
   # own state file as the independent oracle.
   native-winui3-windows:
     needs: quick
-    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
+    if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: Windows native WinUI3 mock E2E
     runs-on: windows-latest
     timeout-minutes: 45
@@ -912,7 +917,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           version: "0.8.15"
           enable-cache: true
@@ -1043,7 +1048,7 @@ jobs:
   # would put the venv's python3 first on PATH).
   native-gtk3-linux:
     needs: quick
-    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
+    if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: Linux native GTK3 mock E2E
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -1059,7 +1064,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           version: "0.8.15"
           enable-cache: true

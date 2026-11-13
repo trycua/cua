@@ -84,3 +84,11 @@ tokio = { version = "1", features = ["full"] }
 serde_yaml_ng = "0.10"
 # Property tests of the network model (fail closed, tree intersection).
 proptest = "1"
+
+[[example]]
+name = "lume_warm"
+required-features = ["lume"]
+
+[[example]]
+name = "containerization_claim"
+required-features = ["containerization"]

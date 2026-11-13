@@ -50,7 +50,15 @@ function tauriHost(answers: Record<string, unknown> = {}, withEvents = true) {
 
 describe("tauri adapter: the one-time linking notice", () => {
   it("reads the notice from telemetry_link_notice and acknowledges with telemetry_acknowledge_link_notice", async () => {
-    const notice = { due: true, title: "We've updated how usage data works", body: "b", okLabel: "Got it", turnOffLabel: "Turn off usage data", detailsLabel: "What is collected", docsUrl: "https://cua.ai/docs/cua-sdk/concepts/telemetry" };
+    const notice = {
+      due: true,
+      title: "We've updated how usage data works",
+      body: "b",
+      okLabel: "Got it",
+      turnOffLabel: "Turn off usage data",
+      detailsLabel: "What is collected",
+      docsUrl: "https://cua.ai/docs/cua-sdk/concepts/telemetry",
+    };
     const { win, calls } = tauriHost({ telemetry_link_notice: notice });
     const a = createTauriAdapter(win);
     expect(await a.call("telemetry.linkNotice", {})).toEqual(notice);
@@ -117,7 +125,16 @@ describe("tauri adapter", () => {
     });
     const a = createTauriAdapter(win);
     for (const op of OPERATIONS) {
-      const teleport = { path: "/Applications/Slack.app", icon: { kind: "none" }, thumbnail: { kind: "none" }, entry: { json: "{}" }, plan: { json: "{}" }, consent: { approved: true }, files: [], sensitiveGroups: [] };
+      const teleport = {
+        path: "/Applications/Slack.app",
+        icon: { kind: "none" },
+        thumbnail: { kind: "none" },
+        entry: { json: "{}" },
+        plan: { json: "{}" },
+        consent: { approved: true },
+        files: [],
+        sensitiveGroups: [],
+      };
       const args = {
         config: {},
         pendingId: "p",
@@ -142,7 +159,9 @@ describe("tauri adapter", () => {
   it("maps agents onto agents_tool, list_space_agents and the agent setup commands", async () => {
     const { win, calls } = tauriHost({
       agents_tool: {
-        agents: [{ name: "ada", harness: "claude-code", space: "local:dev", paused: false, space_state: "running", run_id: "r1", saved_ms: 5, last_error: null }],
+        agents: [
+          { name: "ada", harness: "claude-code", space: "local:dev", paused: false, space_state: "running", run_id: "r1", saved_ms: 5, last_error: null },
+        ],
       },
       list_space_agents: [{ runId: "r1", agent: "claude-code", status: "idle", reason: "", summary: "fix", createdAt: 1, phase: "waiting", turn: 1 }],
       agent_setup_detect: [],
@@ -286,11 +305,27 @@ describe("electron adapter", () => {
     const ticket = { wsUrl: "ws://127.0.0.1:5123/v1/bridge/media?ticket=t", expiresAt: null };
     const { win, invoke } = electronHost(bridged(() => ({ ok: true, result: ticket })));
     expect(await createElectronAdapter(win).call("spaces.openStream", { spaceId: "local:a", tier: "tile" })).toEqual(ticket);
-    expect(invoke).toHaveBeenCalledWith(ELECTRON_BRIDGE_CHANNEL, expect.objectContaining({ method: "spaces.openStream", args: { spaceId: "local:a", tier: "tile" } }));
+    expect(invoke).toHaveBeenCalledWith(
+      ELECTRON_BRIDGE_CHANNEL,
+      expect.objectContaining({ method: "spaces.openStream", args: { spaceId: "local:a", tier: "tile" } }),
+    );
   });
 
   it("asks the shell for the relay allowance (the SwiftUI app does not read it yet)", async () => {
-    const usage = { metered: true, period: "2026-10", plan: "free", team: null, liveSessions: 1, liveSessionsLimit: 2, hoursUsed: 6.5, hoursLimit: 20, myHoursUsed: 6.5, softLimitReached: false, reasons: [], upgradeUrl: null };
+    const usage = {
+      metered: true,
+      period: "2026-10",
+      plan: "free",
+      team: null,
+      liveSessions: 1,
+      liveSessionsLimit: 2,
+      hoursUsed: 6.5,
+      hoursLimit: 20,
+      myHoursUsed: 6.5,
+      softLimitReached: false,
+      reasons: [],
+      upgradeUrl: null,
+    };
     const { win, invoke } = electronHost(bridged(() => ({ ok: true, result: usage })));
     expect(await createElectronAdapter(win).call("relay.usage", {})).toEqual(usage);
     expect(invoke).toHaveBeenCalledWith(ELECTRON_BRIDGE_CHANNEL, expect.objectContaining({ method: "relay.usage" }));
@@ -318,7 +353,12 @@ describe("electron adapter", () => {
   });
 
   it("names this machine for the shell's platform", async () => {
-    const { win } = electronHost(bridged((method) => ({ ok: true, result: method === "spaces.list" ? { loaded: true, selectedId: null, spaces: [] } : { devices: null, signedIn: false } })));
+    const { win } = electronHost(
+      bridged((method) => ({
+        ok: true,
+        result: method === "spaces.list" ? { loaded: true, selectedId: null, spaces: [] } : { devices: null, signedIn: false },
+      })),
+    );
     win.cuaDesktop!.platform = "win32";
     const rows = await createElectronAdapter(win).call("machines.list", {});
     expect(rows[0]).toMatchObject({ id: "this-mac", name: "This PC", os: "windows", current: true });
@@ -326,7 +366,9 @@ describe("electron adapter", () => {
 
   it("turns an error envelope into a HostError with its code", async () => {
     const { win } = electronHost(bridged(() => ({ ok: false, error: { message: "Touch ID was cancelled", code: "cancelled" } })));
-    const err = await createElectronAdapter(win).call("keyvault.setUnattended", { itemIds: ["k"], unattended: true }).catch((e: unknown) => e);
+    const err = await createElectronAdapter(win)
+      .call("keyvault.setUnattended", { itemIds: ["k"], unattended: true })
+      .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(HostError);
     expect(err).toMatchObject({ message: "Touch ID was cancelled", code: "cancelled" });
   });
@@ -337,7 +379,14 @@ describe("electron adapter", () => {
   });
 
   it("reads update.get and update.install from the host, and turns update.changed into the page's event", async () => {
-    const state = { status: "downloaded", currentVersion: "0.9.2", version: "0.9.3", percent: 100, notesUrl: "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3", message: null };
+    const state = {
+      status: "downloaded",
+      currentVersion: "0.9.2",
+      version: "0.9.3",
+      percent: 100,
+      notesUrl: "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3",
+      message: null,
+    };
     const asked: string[] = [];
     const { win, subs } = electronHost(bridged((method) => (asked.push(method), { ok: true, result: state })));
     const a = createElectronAdapter(win);
@@ -432,10 +481,33 @@ const settingsPage = {
       {
         id: "general",
         rows: [
-          { id: "notch", kind: "choice", label: "", enabled: true, options: [{ id: "show", label: "", active: false }, { id: "hide", label: "", active: true }] },
+          {
+            id: "notch",
+            kind: "choice",
+            label: "",
+            enabled: true,
+            options: [
+              { id: "show", label: "", active: false },
+              { id: "hide", label: "", active: true },
+            ],
+          },
         ],
       },
-      { id: "privacy", rows: [{ id: "telemetry", kind: "choice", label: "", enabled: true, options: [{ id: "on", label: "", active: false }, { id: "off", label: "", active: true }] }] },
+      {
+        id: "privacy",
+        rows: [
+          {
+            id: "telemetry",
+            kind: "choice",
+            label: "",
+            enabled: true,
+            options: [
+              { id: "on", label: "", active: false },
+              { id: "off", label: "", active: true },
+            ],
+          },
+        ],
+      },
     ],
   },
 };
@@ -446,7 +518,21 @@ const settingsWithLogin = {
   page: {
     ...settingsPage.page,
     sections: [
-      { id: "general", rows: [{ id: "launch-at-login", kind: "toggle", label: "", enabled: true, options: [{ id: "on", label: "", active: true }, { id: "off", label: "", active: false }] }] },
+      {
+        id: "general",
+        rows: [
+          {
+            id: "launch-at-login",
+            kind: "toggle",
+            label: "",
+            enabled: true,
+            options: [
+              { id: "on", label: "", active: true },
+              { id: "off", label: "", active: false },
+            ],
+          },
+        ],
+      },
       ...settingsPage.page.sections,
     ],
   },
@@ -459,7 +545,16 @@ describe("webkit adapter", () => {
     expect(sent[0]).toMatchObject({ method: "spaces.list", args: {} });
     expect(typeof sent[0]!.id).toBe("string");
     expect(rows).toEqual([
-      expect.objectContaining({ id: "relay:mac-mini/qa", provider: "relay", os: "windows", host: "mac-mini", power: "stop", powerState: "stopped", reachable: true, features: ["desktop_stream"] }),
+      expect.objectContaining({
+        id: "relay:mac-mini/qa",
+        provider: "relay",
+        os: "windows",
+        host: "mac-mini",
+        power: "stop",
+        powerState: "stopped",
+        reachable: true,
+        features: ["desktop_stream"],
+      }),
     ]);
   });
 
@@ -476,7 +571,8 @@ describe("webkit adapter", () => {
   });
 
   it("says the host's standing notice while it lasts (another app keeps its own daemon)", async () => {
-    let daemonNotice: string | null = "Another Cua Spaces app (/Applications/Cua Spaces.app, cua 0.4.0) is running and keeps starting its own daemon, so this app uses that one.";
+    let daemonNotice: string | null =
+      "Another Cua Spaces app (/Applications/Cua Spaces.app, cua 0.4.0) is running and keeps starting its own daemon, so this app uses that one.";
     const { win } = webkitHost(() => ok({ loaded: true, selectedId: null, spaces: [{ space: wkSpace, deleting: false }], rosterError: null, daemonNotice }));
     const a = createWebkitAdapter(win);
     expect(a.hostNotice?.()).toBeNull();
@@ -490,8 +586,26 @@ describe("webkit adapter", () => {
 
   it("keeps a failed create's reason from the host's own pending row", async () => {
     const error = "This Mac is already running two macOS VMs, the most Apple's macOS license allows at once.";
-    const failed = { id: "pending:abc", name: "macOS", os: "macos", status: "suspended", detail: error, lastUsedAt: 1, provider: "local", progress: { phase: "booting", permille: 900, label: "Failed", error, cancellable: false, cancelling: false } };
-    const { win } = webkitHost(() => ok({ loaded: true, selectedId: null, spaces: [{ space: failed, deleting: false }, { space: wkSpace, deleting: false }] }));
+    const failed = {
+      id: "pending:abc",
+      name: "macOS",
+      os: "macos",
+      status: "suspended",
+      detail: error,
+      lastUsedAt: 1,
+      provider: "local",
+      progress: { phase: "booting", permille: 900, label: "Failed", error, cancellable: false, cancelling: false },
+    };
+    const { win } = webkitHost(() =>
+      ok({
+        loaded: true,
+        selectedId: null,
+        spaces: [
+          { space: failed, deleting: false },
+          { space: wkSpace, deleting: false },
+        ],
+      }),
+    );
     const rows = await createWebkitAdapter(win).call("spaces.list", {});
     expect(rows[0]).toMatchObject({ id: "pending:abc", hostProgress: { label: "Failed", error } });
     // Only the host's creates carry it.
@@ -506,7 +620,11 @@ describe("webkit adapter", () => {
   });
 
   it("maps actions onto the host's methods and arguments", async () => {
-    const { win, sent } = webkitHost((req) => (req.method === "settings.get" || req.method === "settings.choose" ? ok(settingsPage) : ok({ availability: "ready", overview: { items: [] }, busy: false, error: null })));
+    const { win, sent } = webkitHost((req) =>
+      req.method === "settings.get" || req.method === "settings.choose"
+        ? ok(settingsPage)
+        : ok({ availability: "ready", overview: { items: [] }, busy: false, error: null }),
+    );
     const a = createWebkitAdapter(win);
     await a.call("spaces.setPower", { spaceId: "s1", on: true });
     await a.call("spaces.delete", { spaceId: "s1" });
@@ -566,17 +684,31 @@ describe("webkit adapter", () => {
         : req.method === "onboarding.get"
           ? ok({ completed: false, mode: "client" })
           : ok({
-            availability: "ready",
-            busy: false,
-            error: null,
-            overview: {
-              serverVerified: true,
-              namesVisible: true,
-              itemsTotal: 1,
-              status: { unlocked: true, osProtectorAvailable: true },
-              items: [{ id: "k1", kind: "cookie", providerId: "chrome", appDisplay: "Google Chrome", domain: "github.com", key: "s", blob: "x", identityProvider: false, policy: { allowedTargets: [], ttlSecs: 0, unattended: true }, createdMs: 1, updatedMs: 2 }],
-            },
-          }),
+              availability: "ready",
+              busy: false,
+              error: null,
+              overview: {
+                serverVerified: true,
+                namesVisible: true,
+                itemsTotal: 1,
+                status: { unlocked: true, osProtectorAvailable: true },
+                items: [
+                  {
+                    id: "k1",
+                    kind: "cookie",
+                    providerId: "chrome",
+                    appDisplay: "Google Chrome",
+                    domain: "github.com",
+                    key: "s",
+                    blob: "x",
+                    identityProvider: false,
+                    policy: { allowedTargets: [], ttlSecs: 0, unattended: true },
+                    createdMs: 1,
+                    updatedMs: 2,
+                  },
+                ],
+              },
+            }),
     );
     const a = createWebkitAdapter(win);
     expect((await a.call("session.get", {})).account).toMatchObject({ identity: "ada@example.com", authMode: "user" });
@@ -596,7 +728,17 @@ describe("webkit adapter", () => {
   });
 
   it("keeps this Mac local while it is not set up for access", async () => {
-    const mac = { id: "this-mac", name: "This computer", os: "macos", status: "suspended", detail: "Set up for access", lastUsedAt: 1, provider: null, sdk: null, power: null };
+    const mac = {
+      id: "this-mac",
+      name: "This computer",
+      os: "macos",
+      status: "suspended",
+      detail: "Set up for access",
+      lastUsedAt: 1,
+      provider: null,
+      sdk: null,
+      power: null,
+    };
     const { win } = webkitHost(() => ok({ loaded: true, selectedId: null, spaces: [{ space: mac, deleting: false }] }));
     const [row] = await createWebkitAdapter(win).call("spaces.list", {});
     expect(row).toMatchObject({ provider: "local", reachable: false, powerState: "suspended" });
@@ -604,7 +746,9 @@ describe("webkit adapter", () => {
 
   it("lists this Mac and the machines that provide Spaces", async () => {
     const { win } = webkitHost((req) =>
-      req.method === "spaces.list" ? ok({ loaded: true, selectedId: null, spaces: [{ space: wkSpace, deleting: false }] }) : ok({ devices: null, signedIn: false }),
+      req.method === "spaces.list"
+        ? ok({ loaded: true, selectedId: null, spaces: [{ space: wkSpace, deleting: false }] })
+        : ok({ devices: null, signedIn: false }),
     );
     const rows = await createWebkitAdapter(win).call("machines.list", {});
     expect(rows.map((r) => [r.id, r.via, Boolean(r.current)])).toEqual([
@@ -614,10 +758,27 @@ describe("webkit adapter", () => {
   });
 
   it("lists machines that share their own desktop, with presence and device details", async () => {
-    const desktop = { id: "relay:studio", name: "Studio", os: "linux", status: "suspended", detail: "Offline", lastUsedAt: 1, provider: "relay", sdk: null, power: null };
+    const desktop = {
+      id: "relay:studio",
+      name: "Studio",
+      os: "linux",
+      status: "suspended",
+      detail: "Offline",
+      lastUsedAt: 1,
+      provider: "relay",
+      sdk: null,
+      power: null,
+    };
     const { win } = webkitHost((req) =>
       req.method === "spaces.list"
-        ? ok({ loaded: true, selectedId: null, spaces: [{ space: wkSpace, deleting: false }, { space: desktop, deleting: false }] })
+        ? ok({
+            loaded: true,
+            selectedId: null,
+            spaces: [
+              { space: wkSpace, deleting: false },
+              { space: desktop, deleting: false },
+            ],
+          })
         : ok({
             thisMachine: { status: "local", statusText: "Local", detail: "Sharing · Relay" },
             devices: { rows: [{ id: "studio", name: "Studio", platform: "Linux", current: false, detail: "Linux · Enrolled", lastSeen: 1700000000 }] },
@@ -648,13 +809,38 @@ describe("webkit adapter", () => {
           return ok({ id: "pending:1", state: "cancelled", message: "" });
         case "host.status":
           return ok({
-            configured: true, mode: "relay", relayUrl: "https://relay.cua.ai", machineId: "m1", name: "Studio", sharing: true,
-            serviceInstalled: true, serviceRunning: true, serviceKind: "launchd", online: true, clients: [{ id: "a", email: null, name: "Ana", streams: 1 }],
+            configured: true,
+            mode: "relay",
+            relayUrl: "https://relay.cua.ai",
+            machineId: "m1",
+            name: "Studio",
+            sharing: true,
+            serviceInstalled: true,
+            serviceRunning: true,
+            serviceKind: "launchd",
+            online: true,
+            clients: [{ id: "a", email: null, name: "Ana", streams: 1 }],
             permissions: [{ id: "accessibility", title: "Accessibility", settingsUrl: null, instructions: "Turn on Cua Spaces", granted: false }],
-            error: null, shareDesktop: true, provideSpaces: false, maxSpaces: 0,
+            error: null,
+            shareDesktop: true,
+            provideSpaces: false,
+            maxSpaces: 0,
           });
         case "keyvault.approve":
-          return ok({ id: "g1", requestId: "req-1", callerFp: "fp", callerDisplay: "bot", items: ["i1"], targets: ["dev-1"], actions: [], createdMs: 1, notAfterMs: 2, usesLeft: null, revoked: false, agent: null });
+          return ok({
+            id: "g1",
+            requestId: "req-1",
+            callerFp: "fp",
+            callerDisplay: "bot",
+            items: ["i1"],
+            targets: ["dev-1"],
+            actions: [],
+            createdMs: 1,
+            notAfterMs: 2,
+            usesLeft: null,
+            revoked: false,
+            agent: null,
+          });
         case "keyvault.revokeGrant":
           return ok(2);
         default:
@@ -684,17 +870,41 @@ describe("webkit adapter", () => {
   it("passes waiting Keyvault requests through, tagged as the broker tags them", () => {
     const p = toPending({
       id: "req-1",
-      caller: { pid: 1, uid: 501, path: null, signing: { type: "adHoc", identifier: "bot", cdhash: "ab" }, firstParty: false, osVerified: true, launchedBy: null, verifiedName: null },
+      caller: {
+        pid: 1,
+        uid: 501,
+        path: null,
+        signing: { type: "adHoc", identifier: "bot", cdhash: "ab" },
+        firstParty: false,
+        osVerified: true,
+        launchedBy: null,
+        verifiedName: null,
+      },
       callerFp: "fp",
       callerDisplay: "bot",
-      request: { selectors: [{ type: "site", app: "chrome", site: "github.com" }, { type: "app", app: "slack" }], targets: ["dev-1"], actions: [], durationSecs: 600, uses: null, reason: "deploy", claimedName: null, agent: null },
+      request: {
+        selectors: [
+          { type: "site", app: "chrome", site: "github.com" },
+          { type: "app", app: "slack" },
+        ],
+        targets: ["dev-1"],
+        actions: [],
+        durationSecs: 600,
+        uses: null,
+        reason: "deploy",
+        claimedName: null,
+        agent: null,
+      },
       items: [],
       needsImport: [{ type: "login", site: "x.com" }],
       createdMs: 5,
     });
     expect(p.caller.signing).toEqual({ kind: "ad_hoc", identifier: "bot", cdhash: "ab" });
     expect(p.caller.os_verified).toBe(true);
-    expect(p.request.selectors).toEqual([{ kind: "site", app: "chrome", site: "github.com" }, { kind: "app", app: "slack" }]);
+    expect(p.request.selectors).toEqual([
+      { kind: "site", app: "chrome", site: "github.com" },
+      { kind: "app", app: "slack" },
+    ]);
     expect(p.request.duration_secs).toBe(600);
     expect(p.needs_import).toEqual([{ kind: "login", site: "x.com" }]);
     expect(p.caller_display).toBe("bot");
@@ -705,7 +915,19 @@ describe("webkit adapter", () => {
     const agent = { name: "ada", harness: "claude-code", space: "local:dev", paused: false, spaceState: "running", runId: "r1", savedMs: 0, lastError: null };
     const run = { runId: "r1", agent: "claude-code", status: "running", reason: "", summary: "Fix the tests", createdAt: 1, phase: "thinking", turn: 2 };
     const page = { run_id: "r1", status: "running", phase: "thinking", events: [], cursor: 4, caught_up: true };
-    const row = { agent: "codex", name: "Codex", installed: true, configured: true, detail: "", skillsInstalled: 3, skillsTotal: 3, mcpConfig: null, skillsDir: null, signIn: null, signedIn: false };
+    const row = {
+      agent: "codex",
+      name: "Codex",
+      installed: true,
+      configured: true,
+      detail: "",
+      skillsInstalled: 3,
+      skillsTotal: 3,
+      mcpConfig: null,
+      skillsDir: null,
+      signIn: null,
+      signedIn: false,
+    };
     const { win, sent } = webkitHost((req) => {
       switch (req.method) {
         case "agents.list":
@@ -742,42 +964,109 @@ describe("webkit adapter", () => {
 
   it("reads the host's unsupported answer (no daemon) as unsupported", async () => {
     const { win } = webkitHost(() => ({ ok: false, error: { code: "unsupported", message: "Agents need the cua daemon" } }));
-    const err = await createWebkitAdapter(win).call("agents.list", {}).catch((e: unknown) => e);
+    const err = await createWebkitAdapter(win)
+      .call("agents.list", {})
+      .catch((e: unknown) => e);
     expect(isUnsupported(err)).toBe(true);
   });
 
   it("puts this Mac's host status on its machine row", async () => {
     const host = {
-      configured: true, mode: "relay", relayUrl: null, directUrl: null, machineId: "m1", name: "Studio", sharing: true,
-      serviceInstalled: true, serviceRunning: true, serviceKind: "launchd", online: true, clients: [], permissions: [],
-      error: null, shareDesktop: true, provideSpaces: false, maxSpaces: 0,
+      configured: true,
+      mode: "relay",
+      relayUrl: null,
+      directUrl: null,
+      machineId: "m1",
+      name: "Studio",
+      sharing: true,
+      serviceInstalled: true,
+      serviceRunning: true,
+      serviceKind: "launchd",
+      online: true,
+      clients: [],
+      permissions: [],
+      error: null,
+      shareDesktop: true,
+      provideSpaces: false,
+      maxSpaces: 0,
     };
-    const { win } = webkitHost((req) => (req.method === "spaces.list" ? ok({ loaded: true, selectedId: null, spaces: [] }) : ok({ devices: null, signedIn: false, host })));
+    const { win } = webkitHost((req) =>
+      req.method === "spaces.list" ? ok({ loaded: true, selectedId: null, spaces: [] }) : ok({ devices: null, signedIn: false, host }),
+    );
     const [self] = await createWebkitAdapter(win).call("machines.list", {});
     expect(self!.host).toMatchObject({ configured: true, mode: "relay", machineId: "m1", service: { installed: true, running: true, kind: "launchd" } });
   });
 
   it("passes the core's whole host state through, the logs, the owner and the progress", async () => {
     const recentAccess = [{ atMs: 5, via: "relay", who: "bob@example.com", what: "desktop" }];
-    const providedSpaces = [{ relayMachine: "m2", localSpace: "s1", name: "QA", image: "ubuntu", os: "linux", kind: "container", createdBy: "bob", createdAtMs: 4 }];
+    const providedSpaces = [
+      { relayMachine: "m2", localSpace: "s1", name: "QA", image: "ubuntu", os: "linux", kind: "container", createdBy: "bob", createdAtMs: 4 },
+    ];
     const spacesAudit = [{ atMs: 3, action: "create", who: "bob", space: "QA", detail: "" }];
     const wk = {
-      configured: true, mode: "relay", relayUrl: "https://relay.cua.ai", directUrl: null, machineId: "m1", name: "Studio", sharing: false,
-      serviceInstalled: false, serviceRunning: false, serviceKind: "launchd", online: false, clients: [], permissions: [],
-      error: null, shareDesktop: true, provideSpaces: true, maxSpaces: 4, maxMacosVms: 2, recentAccess, accessLogError: "edited",
-      providedSpaces, spacesAudit, spacesAuditError: null, pausedSignedOut: true, owner: "user-1", ownerEmail: "ada@example.com",
-      account: null, progress: "Sign in to Cua in your browser to continue. Setup finishes on its own after that.",
+      configured: true,
+      mode: "relay",
+      relayUrl: "https://relay.cua.ai",
+      directUrl: null,
+      machineId: "m1",
+      name: "Studio",
+      sharing: false,
+      serviceInstalled: false,
+      serviceRunning: false,
+      serviceKind: "launchd",
+      online: false,
+      clients: [],
+      permissions: [],
+      error: null,
+      shareDesktop: true,
+      provideSpaces: true,
+      maxSpaces: 4,
+      maxMacosVms: 2,
+      recentAccess,
+      accessLogError: "edited",
+      providedSpaces,
+      spacesAudit,
+      spacesAuditError: null,
+      pausedSignedOut: true,
+      owner: "user-1",
+      ownerEmail: "ada@example.com",
+      account: null,
+      progress: "Sign in to Cua in your browser to continue. Setup finishes on its own after that.",
     };
-    const { win } = webkitHost((req) => (req.method === "spaces.list" ? ok({ loaded: true, selectedId: null, spaces: [] }) : req.method === "host.status" ? ok(wk) : ok({ devices: null, signedIn: false, host: wk })));
+    const { win } = webkitHost((req) =>
+      req.method === "spaces.list"
+        ? ok({ loaded: true, selectedId: null, spaces: [] })
+        : req.method === "host.status"
+          ? ok(wk)
+          : ok({ devices: null, signedIn: false, host: wk }),
+    );
     const a = createWebkitAdapter(win);
     const status = await a.call("host.status", {});
     expect(status).toMatchObject({
-      maxMacosVms: 2, recentAccess, accessLogError: "edited", providedSpaces, spacesAudit, spacesAuditError: null,
-      pausedSignedOut: true, owner: "user-1", ownerEmail: "ada@example.com", account: null, progress: wk.progress,
+      maxMacosVms: 2,
+      recentAccess,
+      accessLogError: "edited",
+      providedSpaces,
+      spacesAudit,
+      spacesAuditError: null,
+      pausedSignedOut: true,
+      owner: "user-1",
+      ownerEmail: "ada@example.com",
+      account: null,
+      progress: wk.progress,
     });
     // The core's state for `host.panel` keeps them all (the progress is the page's own).
     const state = hostState(status);
-    expect(state).toMatchObject({ maxMacosVms: 2, recentAccess, providedSpaces, spacesAudit, pausedSignedOut: true, owner: "user-1", ownerEmail: "ada@example.com", account: null });
+    expect(state).toMatchObject({
+      maxMacosVms: 2,
+      recentAccess,
+      providedSpaces,
+      spacesAudit,
+      pausedSignedOut: true,
+      owner: "user-1",
+      ownerEmail: "ada@example.com",
+      account: null,
+    });
     expect(state).not.toHaveProperty("progress");
     // The machine row carries it to the page, and the progress beside the panel.
     const [self] = await a.call("machines.list", {});
@@ -788,7 +1077,13 @@ describe("webkit adapter", () => {
   it("keeps the host's words for a failed setup and waits as long as the sign-in takes", async () => {
     vi.useFakeTimers();
     try {
-      const presented = { code: "failed", message: "Your Cua account isn’t signed in on this Mac. Sign in, then try again.", title: "Sign in to Cua", details: "Not signed in to Cua: the sign-in did not finish.", actionLabel: "Sign In" };
+      const presented = {
+        code: "failed",
+        message: "Your Cua account isn’t signed in on this Mac. Sign in, then try again.",
+        title: "Sign in to Cua",
+        details: "Not signed in to Cua: the sign-in did not finish.",
+        actionLabel: "Sign In",
+      };
       let answer!: (a: Answer) => void;
       const { win, sent } = webkitHost((req) => (req.method === "host.setUp" ? new Promise<Answer>((r) => (answer = r)) : ok(null)));
       const call = createWebkitAdapter(win, { timeoutMs: 1_000 }).call("host.setUp", { request: { mode: "relay" } });
@@ -862,22 +1157,63 @@ describe("webkit adapter", () => {
   });
 
   it("reads the host's own settings rows and picks their options with settings.choose", async () => {
-    const choice = (id: string, active: string) => ({ id, kind: "choice", label: "", enabled: true, options: ["auto", "builtin", "system"].map((o) => ({ id: o, label: o, active: o === active })) });
-    const toggle = (id: string, on: boolean) => ({ id, kind: "toggle", label: "", enabled: true, options: [{ id: "on", label: "On", active: on }, { id: "off", label: "Off", active: !on }] });
+    const choice = (id: string, active: string) => ({
+      id,
+      kind: "choice",
+      label: "",
+      enabled: true,
+      options: ["auto", "builtin", "system"].map((o) => ({ id: o, label: o, active: o === active })),
+    });
+    const toggle = (id: string, on: boolean) => ({
+      id,
+      kind: "toggle",
+      label: "",
+      enabled: true,
+      options: [
+        { id: "on", label: "On", active: on },
+        { id: "off", label: "Off", active: !on },
+      ],
+    });
     // The host's runtimes, as read (`runtimes::RuntimesInput`): passed through for the core.
     const runtimes = {
       os: "macos",
       hostArch: "arm64",
       localBackends: ["lume", "managed"],
       localDetails: {},
-      kinds: [{ kind: "container", source: "system", path: null, detected: [{ tool: "docker", name: "Docker", path: "/usr/local/bin/docker", version: "27.3.1" }], check: null, expected: ["Docker", "Podman"] }],
+      kinds: [
+        {
+          kind: "container",
+          source: "system",
+          path: null,
+          detected: [{ tool: "docker", name: "Docker", path: "/usr/local/bin/docker", version: "27.3.1" }],
+          check: null,
+          expected: ["Docker", "Podman"],
+        },
+      ],
     };
     const page = {
       runtimes,
       page: {
         title: "Settings",
         sections: [
-          { id: "general", rows: [toggle("auto-connect", false), toggle("placement-overflow", true)] },
+          {
+            id: "general",
+            rows: [
+              toggle("auto-connect", false),
+              toggle("placement-overflow", true),
+              {
+                id: "close-window",
+                kind: "choice",
+                label: "When I close the window",
+                enabled: true,
+                options: [
+                  { id: "keep", label: "Keep running in the background", active: false },
+                  { id: "quit", label: "Quit Cua Spaces", active: true },
+                ],
+              },
+              toggle("close-notice", true),
+            ],
+          },
           { id: "runtimes", rows: [choice("runtime:container", "system"), choice("runtime:vm", "builtin"), choice("runtime:microvm", "auto")] },
           {
             id: "keyvault",
@@ -897,6 +1233,8 @@ describe("webkit adapter", () => {
       runtimes: runtimes,
       autoConnect: false,
       overflow: true,
+      closeWindowKeepsRunning: false,
+      closeNotice: true,
       keyvaultAutoWipe: true,
       keyvaultUnlockPrompt: false,
       keyvaultSiteIcons: true,
@@ -912,6 +1250,8 @@ describe("webkit adapter", () => {
     expect((await createWebkitAdapter(bare).call("settings.get", {})).hostSettings).toEqual({
       runtimes: null,
       autoConnect: null,
+      closeWindowKeepsRunning: null,
+      closeNotice: null,
       overflow: null,
       keyvaultAutoWipe: null,
       keyvaultUnlockPrompt: null,
@@ -921,13 +1261,32 @@ describe("webkit adapter", () => {
   });
 
   it("maps Teleport's records onto the core's words, and keeps the host's keys for the plan and run", async () => {
-    const entry = { id: "com.apple.Safari", name: "Safari", capability: "installOnly", moves: ["appOnly", "appWithState"], sensitiveGroups: ["signIns"], providerId: "safari", lastUsedMs: 5 };
+    const entry = {
+      id: "com.apple.Safari",
+      name: "Safari",
+      capability: "installOnly",
+      moves: ["appOnly", "appWithState"],
+      sensitiveGroups: ["signIns"],
+      providerId: "safari",
+      lastUsedMs: 5,
+    };
     const { win, sent, emit } = webkitHost((req) => {
       switch (req.method) {
         case "teleport.catalog":
           return ok([entry]);
         case "teleport.plan":
-          return ok({ app: entry, spaceId: "s1", moves: "appWithState", steps: [{ kind: "install", summary: "Install" }], consent: [{ kind: "secret", key: "k", label: "L", detail: "", bytes: 2, sensitive: true }], sensitive: true, totalBytes: 2, warnings: [], relayUnsealed: false, json: "plan-1" });
+          return ok({
+            app: entry,
+            spaceId: "s1",
+            moves: "appWithState",
+            steps: [{ kind: "install", summary: "Install" }],
+            consent: [{ kind: "secret", key: "k", label: "L", detail: "", bytes: 2, sensitive: true }],
+            sensitive: true,
+            totalBytes: 2,
+            warnings: [],
+            relayUnsealed: false,
+            json: "plan-1",
+          });
         case "teleport.run":
           return ok({ appId: "com.apple.Safari", installed: [], sent: [], imported: [], skipped: [], launched: true });
         case "teleport.sites":
@@ -938,7 +1297,13 @@ describe("webkit adapter", () => {
     });
     const a = createWebkitAdapter(win);
     const [e] = await a.call("teleport.catalog", { spaceId: "s1" });
-    expect(e).toMatchObject({ capability: "install_only", moves: ["app_only", "app_with_state"], sensitiveGroups: ["sign_ins"], json: "com.apple.Safari", hostPath: null });
+    expect(e).toMatchObject({
+      capability: "install_only",
+      moves: ["app_only", "app_with_state"],
+      sensitiveGroups: ["sign_ins"],
+      json: "com.apple.Safari",
+      hostPath: null,
+    });
     const plan = await a.call("teleport.plan", { spaceId: "s1", entry: e!, move: "app_with_state", files: [], sensitiveGroups: ["sign_ins"] });
     expect(plan).toMatchObject({ moves: "app_with_state", json: "plan-1", consent: [{ kind: "secret", sensitive: true }] });
     const got: HostEvent[] = [];
@@ -946,8 +1311,14 @@ describe("webkit adapter", () => {
     const run = a.call("teleport.run", { spaceId: "s1", plan, consent: { approved: true, acknowledgeSensitive: true }, runId: "r1" });
     emit("teleport.progress", { runId: "r1", event: { step: 1, steps: 2, kind: "install", phase: "started", detail: "", doneBytes: 0, totalBytes: 2 } });
     expect((await run).launched).toBe(true);
-    expect(got).toEqual([{ type: "teleport.progress", runId: "r1", event: { step: 1, steps: 2, kind: "install", phase: "started", detail: "", doneBytes: 0, totalBytes: 2 } }]);
-    expect(await a.call("teleport.sites", { providerId: "safari" })).toMatchObject({ provider_id: "safari", app_display: "Safari", domains: [{ domain: "x.com", session_cookies: 1 }] });
+    expect(got).toEqual([
+      { type: "teleport.progress", runId: "r1", event: { step: 1, steps: 2, kind: "install", phase: "started", detail: "", doneBytes: 0, totalBytes: 2 } },
+    ]);
+    expect(await a.call("teleport.sites", { providerId: "safari" })).toMatchObject({
+      provider_id: "safari",
+      app_display: "Safari",
+      domains: [{ domain: "x.com", session_cookies: 1 }],
+    });
     expect(sent.map((r) => [r.method, r.args])).toEqual([
       ["teleport.catalog", { spaceId: "s1" }],
       ["teleport.plan", { spaceId: "s1", entry: { id: "com.apple.Safari" }, move: "app_with_state", files: [], sensitiveGroups: ["sign_ins"] }],
@@ -981,7 +1352,10 @@ describe("webkit adapter", () => {
       provider_id: "chrome",
       keyvault_initialized: true,
       default_profile: "Default",
-      profiles: [{ dir: "Default", last_used: false }, { dir: "Profile 1", account: "ada@work.example", last_used: true }],
+      profiles: [
+        { dir: "Default", last_used: false },
+        { dir: "Profile 1", account: "ada@work.example", last_used: true },
+      ],
       files: { state: "denied" },
       profile_empty: false,
     });
@@ -999,7 +1373,15 @@ describe("webkit adapter", () => {
   });
 
   it("asks the host for the one-time linking notice and sends the acknowledgement; no answer reads as none", async () => {
-    const notice = { due: true, title: "We've updated how usage data works", body: "b", okLabel: "Got it", turnOffLabel: "Turn off usage data", detailsLabel: "What is collected", docsUrl: "https://cua.ai/docs/cua-sdk/concepts/telemetry" };
+    const notice = {
+      due: true,
+      title: "We've updated how usage data works",
+      body: "b",
+      okLabel: "Got it",
+      turnOffLabel: "Turn off usage data",
+      detailsLabel: "What is collected",
+      docsUrl: "https://cua.ai/docs/cua-sdk/concepts/telemetry",
+    };
     const { win, sent } = webkitHost((req) => (req.method === "telemetry.linkNotice" ? ok(notice) : ok(null)));
     const a = createWebkitAdapter(win);
     expect(await a.call("telemetry.linkNotice", {})).toEqual(notice);
@@ -1017,7 +1399,12 @@ describe("webkit adapter", () => {
   it("runs New Space on the app's env and create, with its progress", async () => {
     vi.useFakeTimers();
     try {
-      const env = { defaultLocation: "local", localAvailable: true, maxCpus: 8, hosts: [{ id: "m1", name: "gamma-4 Mac Studio", via: "relay", online: true, os: "macos", limits: [] }] };
+      const env = {
+        defaultLocation: "local",
+        localAvailable: true,
+        maxCpus: 8,
+        hosts: [{ id: "m1", name: "gamma-4 Mac Studio", via: "relay", online: true, os: "macos", limits: [] }],
+      };
       const created = { ...wkSpace, id: "relay:m1/sandbox-1", name: "Sandbox 1", status: "running" };
       let finish: (a: Answer) => void = () => {};
       const { win, sent, emit } = webkitHost((req) => {
@@ -1027,7 +1414,14 @@ describe("webkit adapter", () => {
           case "spaces.create":
             return new Promise<Answer>((r) => (finish = r));
           case "spaces.list":
-            return ok({ loaded: true, selectedId: null, spaces: [{ space: { ...wkSpace, id: "pending:1" }, deleting: false }, { space: wkSpace, deleting: false }] });
+            return ok({
+              loaded: true,
+              selectedId: null,
+              spaces: [
+                { space: { ...wkSpace, id: "pending:1" }, deleting: false },
+                { space: wkSpace, deleting: false },
+              ],
+            });
           default:
             return ok(null);
         }
@@ -1064,7 +1458,17 @@ describe("webkit adapter", () => {
   });
 
   it("lists a relay machine and its enrolled device once, by the hostname it reported", async () => {
-    const desktop = { id: "relay:96fe", name: "gamma-4 Mac Studio", os: "macos", status: "running", detail: "", lastUsedAt: 1, provider: "relay", sdk: null, power: null };
+    const desktop = {
+      id: "relay:96fe",
+      name: "gamma-4 Mac Studio",
+      os: "macos",
+      status: "running",
+      detail: "",
+      lastUsedAt: 1,
+      provider: "relay",
+      sdk: null,
+      power: null,
+    };
     const { win } = webkitHost((req) =>
       req.method === "spaces.list"
         ? ok({ loaded: true, selectedId: null, spaces: [{ space: desktop, deleting: false }] })
@@ -1118,7 +1522,13 @@ describe("webkit adapter", () => {
             spaces: [
               // The SDK's own line, and the raw refusal an older SDK passes.
               { space: refused("gamma-4", "gamma-4 stopped sharing: ask its owner to Resume sharing (or run `cua host start` there)"), deleting: false },
-              { space: refused("studio", "cua-spacesd is not available: relay:studio has no cua-spacesd (gRPC: relay assertion refused: this machine stopped sharing)"), deleting: false },
+              {
+                space: refused(
+                  "studio",
+                  "cua-spacesd is not available: relay:studio has no cua-spacesd (gRPC: relay assertion refused: this machine stopped sharing)",
+                ),
+                deleting: false,
+              },
               // Any other failure to connect is not a refusal: offline.
               { space: refused("lab", "timed out"), deleting: false },
             ],
@@ -1202,7 +1612,9 @@ describe("keyvault management", () => {
   });
 
   it("a declined delete rejects as cancelled", async () => {
-    const { win } = webkitHost((req) => (req.method === "keyvault.delete" ? { ok: false, error: { code: "cancelled", message: "Delete cancelled" } } : ok(null)));
+    const { win } = webkitHost((req) =>
+      req.method === "keyvault.delete" ? { ok: false, error: { code: "cancelled", message: "Delete cancelled" } } : ok(null),
+    );
     await expect(createWebkitAdapter(win).call("keyvault.delete", { itemIds: ["k1"] })).rejects.toMatchObject({ code: "cancelled" });
   });
 
@@ -1212,7 +1624,10 @@ describe("keyvault management", () => {
     const a = createWebkitAdapter(win);
     expect(await a.call("teleport.remembered", { providerId: "chrome", spaceId: "s1" })).toEqual(["github.com", "linear.app"]);
     expect(await a.call("teleport.remembered", { providerId: "chrome", spaceId: "s2" })).toBeNull();
-    expect(sent.map((r) => r.args)).toEqual([{ providerId: "chrome", spaceId: "s1" }, { providerId: "chrome", spaceId: "s2" }]);
+    expect(sent.map((r) => r.args)).toEqual([
+      { providerId: "chrome", spaceId: "s1" },
+      { providerId: "chrome", spaceId: "s2" },
+    ]);
   });
 
   it("Tauri has no commands for them", async () => {

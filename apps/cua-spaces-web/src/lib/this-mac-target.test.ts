@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import type { HostStatus } from "@/bridge/contracts/host";
 
 import { otherComputerDesktops, type NewKind } from "./ask-first";
-import { homeDefaultWhere, thisMacReadiness, thisMacSetupSteps } from "./this-mac-target";
+import { homeDefaultWhere, hostStatusWhenOnline, thisMacReadiness, thisMacSetupSteps } from "./this-mac-target";
 
 const host = (over: Partial<HostStatus> = {}): HostStatus => ({
   configured: true,
@@ -57,7 +57,43 @@ describe("Set up on the chip", () => {
 describe("the switcher's other computers", () => {
   it("lists your other computers' desktops that are on, never this computer's own", () => {
     const row = (id: string, over: object = {}) => ({ id, name: id, os: "macos", status: "running", provider: "relay", ...over }) as never;
-    const list = otherComputerDesktops([row("this-mac", { status: "local" }), row("relay:m-here"), row("relay:mini"), row("relay:space-abc"), row("relay:off", { status: "suspended" })], "m-here");
+    const list = otherComputerDesktops(
+      [row("this-mac", { status: "local" }), row("relay:m-here"), row("relay:mini"), row("relay:space-abc"), row("relay:off", { status: "suspended" })],
+      "m-here",
+    );
     expect(list.map((s) => s.id)).toEqual(["relay:mini"]);
+  });
+});
+
+describe("a job on this computer right after Set up (CUA-3974)", () => {
+  /** A fake clock: `sleep` moves it, so nothing waits for real. */
+  const clock = () => {
+    let t = 0;
+    return { now: () => t, sleep: async (ms: number) => void (t += ms) };
+  };
+
+  it("waits while its sharing service restarts, then starts", async () => {
+    const reads = [host({ online: false }), host({ online: false }), host({ online: true })];
+    let n = 0;
+    const c = clock();
+    const status = await hostStatusWhenOnline(async () => reads[Math.min(n++, reads.length - 1)]!, { ...c, everyMs: 1_000 });
+    expect(status?.online).toBe(true);
+    expect(n).toBe(3);
+  });
+
+  it("starts at once when it's online, not set up, or unknown", async () => {
+    for (const s of [host({ online: true }), host({ online: null }), host({ configured: false, online: false }), null]) {
+      let n = 0;
+      await hostStatusWhenOnline(async () => (n++, s), clock());
+      expect(n).toBe(1);
+    }
+  });
+
+  it("gives up after the timeout and lets the start say why", async () => {
+    let n = 0;
+    const c = clock();
+    const status = await hostStatusWhenOnline(async () => (n++, host({ online: false })), { ...c, timeoutMs: 5_000, everyMs: 1_000 });
+    expect(status?.online).toBe(false);
+    expect(n).toBe(6);
   });
 });

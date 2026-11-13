@@ -1,2 +1,3 @@
 src/cua_cli/bin/
 dist/
+src/cua_cli/_release.json

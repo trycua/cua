@@ -31,34 +31,6 @@ inline constexpr bool foreground_modifier_key(std::uint32_t code) {
     }
 }
 
-// True when typing through `physical` produces the same keysyms as `canonical`
-// for every key the foreground KEY command can press (evdev 1-247, minus the
-// lock keys): at the base level, and with Shift held for non-modifier keys.
-// Options that only change Caps Lock or modifier chords, such as compose:caps
-// and shift:both_capslock_cancel, qualify. A different layout, or a remap of a
-// letter, digit, punctuation, or modifier key, does not. This compares fresh
-// states, so the human keyboard's current locks do not affect it.
-inline bool typing_keymap_equivalent(xkb_keymap* physical, xkb_keymap* canonical) {
-    if (!physical || !canonical) return false;
-    auto* actual = xkb_state_new(physical);
-    auto* expected = xkb_state_new(canonical);
-    bool equal = actual && expected;
-    constexpr xkb_keycode_t left_shift = 42 + 8;
-    for (int shifted = 0; equal && shifted < 2; ++shifted) {
-        if (shifted) {
-            xkb_state_update_key(actual, left_shift, XKB_KEY_DOWN);
-            xkb_state_update_key(expected, left_shift, XKB_KEY_DOWN);
-        }
-        for (std::uint32_t code = 1; equal && code <= 247; ++code) {
-            if (foreground_lock_key(code) || (shifted && foreground_modifier_key(code))) continue;
-            equal = xkb_state_key_get_one_sym(actual, code + 8) == xkb_state_key_get_one_sym(expected, code + 8);
-        }
-    }
-    if (actual) xkb_state_unref(actual);
-    if (expected) xkb_state_unref(expected);
-    return equal;
-}
-
 using ForegroundXkbState = std::unique_ptr<xkb_state, decltype(&xkb_state_unref)>;
 
 inline ForegroundXkbState foreground_xkb_state(xkb_keymap* map) {
@@ -199,6 +171,37 @@ inline ForegroundFailureReason foreground_chord_failure(xkb_keymap* physical, xk
     for (int i = 3; i >= 0; --i)
         if ((mods & (1u << i)) && keys[i] != code && !event(keys[i], XKB_KEY_UP)) return failure;
     return ForegroundFailureReason::none;
+}
+
+// The main-block keys Driver types ASCII text with: digits, letters, punctuation,
+// Tab, Return and Space (text_actions in Driver's hyprland_input.rs). Capitals and
+// shifted symbols add Shift; nothing else is sent for text.
+inline constexpr bool foreground_text_key(std::uint32_t code) {
+    return (code >= 2 && code <= 13) || (code >= 15 && code <= 28) || (code >= 30 && code <= 53 && code != 42) ||
+        code == 57;
+}
+
+// True when every chord Driver types text with passes foreground_chord_failure
+// with Num Lock off and on, the two keyboard states foreground typing admits, so
+// a type_text string is admitted or refused before its first key rather than
+// partway through. A different layout, or a remap of a key or of Shift that text
+// uses, refuses. Remaps of keys text never uses, such as ctrl:swapcaps,
+// compose:ralt or altwin:swap_alt_win, qualify, and the per-chord check still
+// refuses any requested chord whose meaning they change.
+inline bool typing_keymap_equivalent(xkb_keymap* physical, xkb_keymap* canonical) {
+    if (!physical || !canonical) return false;
+    const auto numlock = foreground_numlock_mask(physical);
+    for (std::uint32_t pass = 0; pass < (numlock ? 2u : 1u); ++pass) {
+        const std::array<std::uint32_t, 4> state{0, 0, pass ? numlock : 0, 0};
+        for (std::uint32_t code = 1; code <= 57; ++code) {
+            if (!foreground_text_key(code)) continue;
+            const bool shiftable = code != 15 && code != 28 && code != 57;
+            for (std::uint32_t mods = 0; mods <= (shiftable ? 1u : 0u); ++mods)
+                if (foreground_chord_failure(physical, canonical, code, mods, state) != ForegroundFailureReason::none)
+                    return false;
+        }
+    }
+    return true;
 }
 
 } // namespace cua::hyprland

@@ -12,6 +12,7 @@ use core_graphics::{
     event::{CGEvent, CGEventFlags},
     event_source::{CGEventSource, CGEventSourceStateID},
 };
+use cua_driver_core::security_prompt::PromptInput;
 use foreign_types::ForeignType;
 use std::sync::{Arc, Mutex};
 
@@ -260,8 +261,8 @@ pub fn press_key_no_auth(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Res
 /// Callers must prove and temporarily activate the exact target window before
 /// invoking it; unlike the PID-routed helpers above, the HID queue itself has
 /// no process addressing.
-pub fn press_key_global(key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
-    use core_graphics::event::CGEventTapLocation;
+pub fn press_key_global(prompt: PromptInput, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
+    crate::security_prompt::refuse_frontmost_keys(prompt)?;
 
     // The HID queue reaches the frontmost app, which may be Screen Sharing.
     let key_code = target_key_code(crate::apps::frontmost_pid(), key, modifiers)?;
@@ -285,19 +286,8 @@ pub fn press_key_global(key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
             continue;
         }
         active_flags |= modifier_flag;
-        if let Err(error) = post_global_key(
-            &source,
-            modifier_code,
-            true,
-            active_flags,
-            CGEventTapLocation::HID,
-        ) {
-            release_global_modifiers(
-                &source,
-                &pressed_modifiers,
-                active_flags,
-                CGEventTapLocation::HID,
-            );
+        if let Err(error) = post_global_key(&source, modifier_code, true, active_flags) {
+            release_global_modifiers(&source, &pressed_modifiers, active_flags);
             return Err(error);
         }
         pressed_modifiers.push((modifier_code, modifier_flag));
@@ -305,29 +295,12 @@ pub fn press_key_global(key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
     }
 
     let result = (|| {
-        post_global_key(
-            &source,
-            key_code,
-            true,
-            active_flags,
-            CGEventTapLocation::HID,
-        )?;
+        post_global_key(&source, key_code, true, active_flags)?;
         key_gap_sleep();
-        post_global_key(
-            &source,
-            key_code,
-            false,
-            active_flags,
-            CGEventTapLocation::HID,
-        )
+        post_global_key(&source, key_code, false, active_flags)
     })();
 
-    release_global_modifiers(
-        &source,
-        &pressed_modifiers,
-        active_flags,
-        CGEventTapLocation::HID,
-    );
+    release_global_modifiers(&source, &pressed_modifiers, active_flags);
     result
 }
 
@@ -341,8 +314,6 @@ pub(super) fn with_global_modifier_keys<T>(
     modifiers: &[&str],
     gesture: impl FnOnce(CGEventFlags) -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
-    use core_graphics::event::CGEventTapLocation;
-
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     let mut active_flags = CGEventFlags::CGEventFlagNull;
@@ -359,14 +330,8 @@ pub(super) fn with_global_modifier_keys<T>(
             continue;
         }
         active_flags |= flag;
-        if let Err(error) = post_global_key(
-            &source,
-            key_code,
-            true,
-            active_flags,
-            CGEventTapLocation::HID,
-        ) {
-            release_global_modifiers(&source, &pressed, active_flags, CGEventTapLocation::HID);
+        if let Err(error) = post_global_key(&source, key_code, true, active_flags) {
+            release_global_modifiers(&source, &pressed, active_flags);
             return Err(error);
         }
         pressed.push((key_code, flag));
@@ -374,8 +339,57 @@ pub(super) fn with_global_modifier_keys<T>(
     }
 
     let result = gesture(active_flags);
-    release_global_modifiers(&source, &pressed, active_flags, CGEventTapLocation::HID);
+    release_global_modifiers(&source, &pressed, active_flags);
     result
+}
+
+/// Hand one key event to the global HID queue.
+fn post_hid_key(event: &CGEvent) {
+    #[cfg(test)]
+    if hid_sink::record() {
+        return;
+    }
+    event.post(core_graphics::event::CGEventTapLocation::HID);
+}
+
+/// Test seam for [`post_hid_key`]: while a [`hid_sink::Capture`] is live on
+/// this thread, key events are counted instead of posted.
+#[cfg(test)]
+pub(crate) mod hid_sink {
+    use std::cell::Cell;
+
+    thread_local! {
+        static POSTED: Cell<Option<usize>> = const { Cell::new(None) };
+    }
+
+    pub(crate) struct Capture;
+
+    impl Capture {
+        pub(crate) fn start() -> Self {
+            POSTED.with(|posted| posted.set(Some(0)));
+            Self
+        }
+
+        pub(crate) fn posted(&self) -> usize {
+            POSTED.with(|posted| posted.get().unwrap_or(0))
+        }
+    }
+
+    impl Drop for Capture {
+        fn drop(&mut self) {
+            POSTED.with(|posted| posted.set(None));
+        }
+    }
+
+    pub(super) fn record() -> bool {
+        POSTED.with(|posted| match posted.get() {
+            Some(count) => {
+                posted.set(Some(count + 1));
+                true
+            }
+            None => false,
+        })
+    }
 }
 
 fn post_global_key(
@@ -383,12 +397,11 @@ fn post_global_key(
     key_code: u16,
     key_down: bool,
     flags: CGEventFlags,
-    tap: core_graphics::event::CGEventTapLocation,
 ) -> anyhow::Result<()> {
     let event = CGEvent::new_keyboard_event(source.clone(), key_code, key_down)
         .map_err(|_| anyhow::anyhow!("CGEvent keyboard event creation failed"))?;
     event.set_flags(flags);
-    event.post(tap);
+    post_hid_key(&event);
     Ok(())
 }
 
@@ -396,13 +409,12 @@ fn release_global_modifiers(
     source: &CGEventSource,
     pressed: &[(u16, CGEventFlags)],
     mut active_flags: CGEventFlags,
-    tap: core_graphics::event::CGEventTapLocation,
 ) {
     for &(key_code, flag) in pressed.iter().rev() {
         active_flags.remove(flag);
         if let Ok(event) = CGEvent::new_keyboard_event(source.clone(), key_code, false) {
             event.set_flags(active_flags);
-            event.post(tap);
+            post_hid_key(&event);
         }
         key_gap_sleep();
     }
@@ -475,16 +487,20 @@ fn release_pid_modifiers(
 /// Type Unicode text into the frontmost application through the global HID
 /// queue. This is the desktop-scope counterpart to PID-routed `type_text` and
 /// mirrors computer-server's frontmost pynput typing behavior.
-pub fn type_text_global(text: &str, inter_char_delay_ms: u64) -> anyhow::Result<()> {
-    use core_graphics::event::CGEventTapLocation;
+pub fn type_text_global(
+    prompt: PromptInput,
+    text: &str,
+    inter_char_delay_ms: u64,
+) -> anyhow::Result<()> {
+    crate::security_prompt::refuse_frontmost_keys(prompt)?;
 
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     for ch in text.chars() {
         let (down, up) = char_key_events(&source, ch)?;
-        down.post(CGEventTapLocation::HID);
+        post_hid_key(&down);
         key_gap_sleep();
-        up.post(CGEventTapLocation::HID);
+        post_hid_key(&up);
         std::thread::sleep(std::time::Duration::from_millis(inter_char_delay_ms).max(key_gap()));
     }
     Ok(())
@@ -498,8 +514,12 @@ pub fn type_text_global(text: &str, inter_char_delay_ms: u64) -> anyhow::Result<
 /// Sharing forward virtual keycodes and modifier transitions, not the Unicode
 /// payload carried by keycode 0, so the ordinary text synthesis path cannot be
 /// used for them.
-pub fn type_text_physical_global(text: &str, inter_char_delay_ms: u64) -> anyhow::Result<()> {
-    use core_graphics::event::CGEventTapLocation;
+pub fn type_text_physical_global(
+    prompt: PromptInput,
+    text: &str,
+    inter_char_delay_ms: u64,
+) -> anyhow::Result<()> {
+    crate::security_prompt::refuse_frontmost_keys(prompt)?;
 
     // Validate the complete payload before posting its first event. A string
     // containing an unsupported character must fail without partially typing.
@@ -513,7 +533,7 @@ pub fn type_text_physical_global(text: &str, inter_char_delay_ms: u64) -> anyhow
             .map(|event| create_bare_keyboard_event(event.key_code, event.key_down))
             .collect::<anyhow::Result<Vec<_>>>()?;
         for cg_event in native_events {
-            cg_event.post(CGEventTapLocation::HID);
+            post_hid_key(&cg_event);
             key_gap_sleep();
         }
         let extra = std::time::Duration::from_millis(inter_char_delay_ms).saturating_sub(key_gap());
@@ -535,8 +555,13 @@ pub fn type_text_physical_global(text: &str, inter_char_delay_ms: u64) -> anyhow
 /// key carries no flags arrives as the bare key: `cmd+a` inserts a literal `a`.
 /// Remote-input clients such as Screen Sharing re-derive modifiers from the
 /// keycode transitions and ignore the flags, so both consumers are served.
-pub fn press_key_bare_global(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
-    use core_graphics::event::CGEventTapLocation;
+pub fn press_key_bare_global(
+    prompt: PromptInput,
+    pid: i32,
+    key: &str,
+    modifiers: &[&str],
+) -> anyhow::Result<()> {
+    crate::security_prompt::refuse_frontmost_keys(prompt)?;
 
     let key_code = target_key_code(pid, key, modifiers)?;
     let mut modifier_keys = Vec::new();
@@ -558,7 +583,7 @@ pub fn press_key_bare_global(pid: i32, key: &str, modifiers: &[&str]) -> anyhow:
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     for event in events {
-        event.post(CGEventTapLocation::HID);
+        post_hid_key(&event);
         key_gap_sleep();
     }
     Ok(())
@@ -1149,6 +1174,48 @@ fn unknown_key_message(key: &str) -> String {
 mod tests {
     use super::*;
     use core_graphics::event::CGEventType;
+
+    /// Every global-HID key primitive checks for a security prompt before
+    /// its first event. Removing one of those checks fails here. Keys are
+    /// named by keycode-free names ("return") so the layout is not consulted.
+    #[test]
+    fn hid_key_primitives_send_nothing_to_a_security_prompt() {
+        use crate::security_prompt::{fixture::PromptShown, PromptProtected};
+        type Primitive = fn(PromptInput) -> anyhow::Result<()>;
+        let primitives: [(&str, Primitive); 4] = [
+            ("press_key_global", |prompt| {
+                press_key_global(prompt, "return", &["shift"])
+            }),
+            ("press_key_bare_global", |prompt| {
+                press_key_bare_global(prompt, -1, "return", &["cmd"])
+            }),
+            ("type_text_global", |prompt| {
+                type_text_global(prompt, "ab", 0)
+            }),
+            ("type_text_physical_global", |prompt| {
+                type_text_physical_global(prompt, "ab", 0)
+            }),
+        ];
+        let _prompt = PromptShown::start();
+        for (name, primitive) in primitives {
+            let capture = hid_sink::Capture::start();
+            let error = primitive(PromptInput::Refuse).expect_err(name);
+            assert_eq!(
+                error
+                    .downcast_ref::<PromptProtected>()
+                    .map(|p| p.owner.as_str()),
+                Some("SecurityAgent"),
+                "{name}: {error}"
+            );
+            assert_eq!(capture.posted(), 0, "{name} typed into the prompt");
+            drop(capture);
+
+            // Unrestricted mode lifts the refusal: the same keys go out.
+            let capture = hid_sink::Capture::start();
+            primitive(PromptInput::Allow).unwrap_or_else(|error| panic!("{name}: {error}"));
+            assert!(capture.posted() > 0, "{name} sent nothing when allowed");
+        }
+    }
 
     #[test]
     fn common_key_spellings_resolve_to_one_key() {

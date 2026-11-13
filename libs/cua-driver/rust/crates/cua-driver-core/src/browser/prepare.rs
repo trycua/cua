@@ -470,6 +470,28 @@ fn configure_linux_isolated_browser_command(
     }
 }
 
+/// Chromium switch that keeps a macOS browser away from the login keychain.
+///
+/// Chromium encrypts cookies and saved passwords with a key it reads from the
+/// "<Browser> Safe Storage" keychain item. Reading that item shows a
+/// SecurityAgent prompt whenever the launched binary is not on the item's
+/// access list or the keychain is locked, and every new process asks again,
+/// so repeated launches pile up prompts the user never asked for. A
+/// driver-owned profile holds no user data, so it uses Chromium's in-memory
+/// mock keychain instead (Playwright does the same). This is the macOS
+/// counterpart of `--password-store=basic` on Linux.
+///
+/// Never pass it to the user's own profile: its stored secrets are encrypted
+/// with the real key and would become unreadable. Existing profiles are only
+/// ever attached to their running browser, never launched by the driver.
+#[cfg(any(target_os = "macos", test))]
+const MACOS_MOCK_KEYCHAIN_SWITCH: &str = "--use-mock-keychain";
+
+#[cfg(target_os = "macos")]
+fn configure_macos_isolated_browser_command(command: &mut Command) {
+    command.arg(MACOS_MOCK_KEYCHAIN_SWITCH);
+}
+
 /// How much of Chromium's own sandbox the runtime carries. The image decides
 /// (libs/images/common/desktop/browser-sandbox.sh writes the variables into
 /// the session environment); nothing is guessed here.
@@ -497,6 +519,150 @@ fn linux_browser_sandbox(var: impl Fn(&str) -> Option<String>) -> LinuxBrowserSa
     } else {
         LinuxBrowserSandbox::Full
     }
+}
+
+/// The launch command for a driver-owned isolated browser on `profile`.
+///
+/// Refuses any directory that is not a driver-owned profile directly under
+/// `root`. The switches the launch adds (a mock keychain on macOS, a
+/// plain-text password store on Linux) would make a real profile's stored
+/// cookies and passwords unreadable, and the user's own profile is only ever
+/// attached to its already-running browser (`strategy=existing_profile`),
+/// never launched or relaunched by the driver.
+fn driver_owned_browser_command(
+    executable: &str,
+    root: &Path,
+    profile: &PreparedProfile,
+) -> Result<Command, BrowserRefusal> {
+    let under_root = profile.path.parent() == Some(root);
+    if !under_root || !profile_matches_marker(&profile.path, &profile.marker) {
+        return Err(BrowserRefusal::new(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            "refusing to launch a browser on a profile that is not proven driver-owned; \
+             attach to the user's own browser with strategy=existing_profile instead",
+        ));
+    }
+    Ok(isolated_browser_command(executable, &profile.path))
+}
+
+/// Consecutive failed isolated launches allowed before the driver backs off.
+const LAUNCH_FAILURES_BEFORE_BACKOFF: u32 = 3;
+/// First back-off once [`LAUNCH_FAILURES_BEFORE_BACKOFF`] is reached; it
+/// doubles with each further failure up to [`LAUNCH_MAX_BACKOFF`].
+const LAUNCH_FIRST_BACKOFF: Duration = Duration::from_secs(30);
+const LAUNCH_MAX_BACKOFF: Duration = Duration::from_secs(10 * 60);
+
+/// Circuit breaker for driver-owned isolated browser launches.
+///
+/// A browser that crashes at start, never becomes ready, or blocks on an OS
+/// prompt would otherwise be launched again on every retry, leaving one more
+/// process (and, on macOS, one more prompt) behind each time. After
+/// [`LAUNCH_FAILURES_BEFORE_BACKOFF`] consecutive failures, launches are
+/// refused with a clear error until an exponential back-off has passed; then
+/// one attempt is let through, and a success resets the count. An OS security
+/// prompt opens the breaker at once: retrying cannot answer it.
+#[derive(Default)]
+pub(crate) struct IsolatedLaunchBreaker {
+    state: Mutex<LaunchBreakerState>,
+}
+
+#[derive(Default)]
+struct LaunchBreakerState {
+    consecutive_failures: u32,
+    open_until: Option<Instant>,
+    last_failure: Option<String>,
+}
+
+/// How an isolated launch failed, for [`IsolatedLaunchBreaker`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LaunchFailure {
+    /// The browser failed to start, exited, or never became ready.
+    Browser,
+    /// An OS security prompt appeared; no retry can succeed until a person
+    /// deals with it.
+    SecurityPrompt,
+}
+
+fn launch_backoff(consecutive_failures: u32) -> Duration {
+    let doublings = consecutive_failures.saturating_sub(LAUNCH_FAILURES_BEFORE_BACKOFF);
+    LAUNCH_FIRST_BACKOFF
+        .checked_mul(1u32.checked_shl(doublings).unwrap_or(u32::MAX))
+        .unwrap_or(LAUNCH_MAX_BACKOFF)
+        .min(LAUNCH_MAX_BACKOFF)
+}
+
+impl IsolatedLaunchBreaker {
+    fn admit(&self, now: Instant) -> Result<(), BrowserRefusal> {
+        let state = self.state.lock().unwrap();
+        let Some(open_until) = state.open_until.filter(|until| now < *until) else {
+            return Ok(());
+        };
+        let retry_after = open_until.duration_since(now).as_secs().max(1);
+        let last = state.last_failure.as_deref().unwrap_or("unknown");
+        Err(BrowserRefusal::new(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!(
+                "Cua Driver stopped launching isolated browsers after {} failed launches in a row \
+                 (last failure: {last}). Fix the cause before retrying; the next launch is \
+                 allowed in {retry_after}s.",
+                state.consecutive_failures
+            ),
+        )
+        .with_detail(serde_json::json!({
+            "reason": "isolated_launch_backoff",
+            "consecutive_failures": state.consecutive_failures,
+            "retry_after_seconds": retry_after,
+            "last_failure": last,
+        })))
+    }
+
+    fn record_success(&self) {
+        *self.state.lock().unwrap() = LaunchBreakerState::default();
+    }
+
+    fn record_failure(&self, now: Instant, failure: LaunchFailure, message: &str) {
+        let mut state = self.state.lock().unwrap();
+        state.consecutive_failures = state.consecutive_failures.saturating_add(1);
+        if failure == LaunchFailure::SecurityPrompt {
+            state.consecutive_failures = state
+                .consecutive_failures
+                .max(LAUNCH_FAILURES_BEFORE_BACKOFF);
+        }
+        state.last_failure = Some(message.to_owned());
+        if state.consecutive_failures >= LAUNCH_FAILURES_BEFORE_BACKOFF {
+            state.open_until = Some(now + launch_backoff(state.consecutive_failures));
+        }
+    }
+}
+
+const SECURITY_PROMPT_REASON_OPEN: &str = "security_prompt_open";
+const SECURITY_PROMPT_REASON_APPEARED: &str = "security_prompt_appeared";
+
+/// Refusal for an isolated launch stopped by an OS security prompt (on macOS,
+/// a SecurityAgent window such as "wants to use your confidential information
+/// stored in ... in your keychain"). The driver never answers such prompts.
+fn security_prompt_refusal(already_open: bool) -> BrowserRefusal {
+    let (reason, message) = if already_open {
+        (
+            SECURITY_PROMPT_REASON_OPEN,
+            "A Keychain or password prompt is open, so Cua \
+             Driver did not launch a browser: another launch could add another prompt. Cua Driver \
+             never answers these prompts. Ask the user to deal with it (Deny is safe for a \
+             browser's Safe Storage prompt), then retry.",
+        )
+    } else {
+        (
+            SECURITY_PROMPT_REASON_APPEARED,
+            "A Keychain or password prompt appeared while Cua \
+             Driver was launching an isolated browser, so it stopped that browser and will not \
+             retry for now. Cua Driver launches isolated browsers with a mock keychain on macOS, \
+             so this browser build ignored that switch or another process raised the prompt. Cua \
+             Driver never answers these prompts. Ask the user to deal with it (Deny is safe for a \
+             browser's Safe Storage prompt).",
+        )
+    };
+    BrowserRefusal::new(BrowserRefusalCode::BrowserRouteUnavailable, message)
+        .with_detail(serde_json::json!({ "reason": reason }))
 }
 
 fn isolated_browser_command(executable: &str, profile: &Path) -> Command {
@@ -528,6 +694,8 @@ fn isolated_browser_command(executable: &str, profile: &Path) -> Command {
         let sandbox = linux_browser_sandbox(|name| std::env::var(name).ok());
         configure_linux_isolated_browser_command(&mut command, native_wayland, sandbox);
     }
+    #[cfg(target_os = "macos")]
+    configure_macos_isolated_browser_command(&mut command);
     let stderr = if std::env::var_os("CUA_E2E_BROWSER_STDERR").is_some() {
         Stdio::inherit()
     } else {
@@ -680,11 +848,17 @@ fn prepare_profile(profile: &PrepareProfile) -> Result<PreparedProfile, BrowserR
 async fn wait_for_spawned_endpoint(
     child: &mut dyn IsolatedBrowserProcess,
     profile: &Path,
+    security_prompt_open: &(dyn Fn() -> bool + Send + Sync),
 ) -> Result<OwnedEndpoint, BrowserRefusal> {
     let deadline = Instant::now() + Duration::from_secs(20);
     let port_file = profile.join("DevToolsActivePort");
     let mut observed_clean_launcher_exit = false;
     loop {
+        // A browser waiting on a keychain prompt can sit there until the
+        // timeout; stop as soon as the prompt shows instead.
+        if security_prompt_open() {
+            return Err(security_prompt_refusal(false));
+        }
         if let Some(status) = child.try_wait().map_err(|error| {
             BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
@@ -930,25 +1104,80 @@ impl BrowserEngine {
         } else {
             self.platform.isolated_browser_executable()?
         };
+        self.isolated_launch_breaker.admit(Instant::now())?;
+        // Never add a browser while an OS security prompt is waiting: each
+        // launch that reads a keychain secret would stack another one.
+        if self.platform.security_prompt_open() {
+            return Err(security_prompt_refusal(true));
+        }
         let prepared_profile = prepare_profile(profile_request)?;
-        let command = isolated_browser_command(&executable, &prepared_profile.path);
-        let mut child = self
+        let command =
+            match driver_owned_browser_command(&executable, &profile_root()?, &prepared_profile) {
+                Ok(command) => command,
+                Err(error) => {
+                    cleanup_created_profile(&prepared_profile);
+                    return Err(error);
+                }
+            };
+        let mut child = match self
             .platform
             .spawn_isolated_browser(command, &prepared_profile.path)
-            .inspect_err(|_| cleanup_created_profile(&prepared_profile))?;
-        let endpoint = match wait_for_spawned_endpoint(child.as_mut(), &prepared_profile.path).await
         {
-            Ok(endpoint) => {
-                match attest_spawned_endpoint(self, i64::from(child.id()), endpoint).await {
-                    Ok(endpoint) => endpoint,
-                    Err(error) => {
-                        cleanup_created_profile_as_browser(child.as_mut(), &prepared_profile);
-                        return Err(error);
+            Ok(child) => child,
+            Err(error) => {
+                cleanup_created_profile(&prepared_profile);
+                self.isolated_launch_breaker.record_failure(
+                    Instant::now(),
+                    LaunchFailure::Browser,
+                    &error.message,
+                );
+                return Err(error);
+            }
+        };
+        let platform = self.platform.clone();
+        let security_prompt_open = move || platform.security_prompt_open();
+        let launched = match wait_for_spawned_endpoint(
+            child.as_mut(),
+            &prepared_profile.path,
+            &security_prompt_open,
+        )
+        .await
+        {
+            Ok(endpoint) => attest_spawned_endpoint(self, i64::from(child.id()), endpoint)
+                .await
+                .and_then(|endpoint| {
+                    // Chromium reads its keychain secret during startup; a
+                    // prompt that showed up just before DevTools answered
+                    // still stops this launch.
+                    match security_prompt_open() {
+                        true => Err(security_prompt_refusal(false)),
+                        false => Ok(endpoint),
                     }
-                }
+                }),
+            Err(error) => Err(error),
+        };
+        let endpoint = match launched {
+            Ok(endpoint) => {
+                self.isolated_launch_breaker.record_success();
+                endpoint
             }
             Err(error) => {
                 cleanup_created_profile_as_browser(child.as_mut(), &prepared_profile);
+                let failure = if error
+                    .detail
+                    .as_ref()
+                    .and_then(|detail| detail["reason"].as_str())
+                    == Some(SECURITY_PROMPT_REASON_APPEARED)
+                {
+                    LaunchFailure::SecurityPrompt
+                } else {
+                    LaunchFailure::Browser
+                };
+                self.isolated_launch_breaker.record_failure(
+                    Instant::now(),
+                    failure,
+                    &error.message,
+                );
                 return Err(error);
             }
         };
@@ -2060,6 +2289,158 @@ mod tests {
         }
         #[cfg(target_os = "linux")]
         assert!(args.iter().any(|arg| arg == "--password-store=basic"));
+        // macOS: a driver-owned profile never touches the login keychain, so
+        // launching it can never raise a Keychain prompt.
+        assert_eq!(
+            args.iter().any(|arg| arg == MACOS_MOCK_KEYCHAIN_SWITCH),
+            cfg!(target_os = "macos")
+        );
+    }
+
+    fn temp_profile_root(label: &str) -> PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("cua-launch-guard-{label}-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    fn command_args(command: &Command) -> Vec<String> {
+        command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn only_driver_owned_profiles_get_a_launch_command() {
+        let root = temp_profile_root("owned");
+        let marker = ProfileMarker {
+            schema: PROFILE_SCHEMA.to_owned(),
+            mode: PrepareProfileMode::IsolatedNew,
+            name: None,
+        };
+        let owned = root.join("isolated-owned");
+        fs::create_dir(&owned).unwrap();
+        write_profile_marker(&owned, &marker).unwrap();
+        let profile = |path: &Path| PreparedProfile {
+            path: path.to_path_buf(),
+            created: true,
+            delete_on_cleanup: false,
+            marker: marker.clone(),
+        };
+
+        let command = driver_owned_browser_command("chromium-under-test", &root, &profile(&owned))
+            .expect("a marked profile under the root launches");
+        let args = command_args(&command);
+        assert!(args.contains(&format!("--user-data-dir={}", owned.display())));
+        assert_eq!(
+            args.iter().any(|arg| arg == MACOS_MOCK_KEYCHAIN_SWITCH),
+            cfg!(target_os = "macos")
+        );
+
+        // A directory without the ownership marker, such as the user's own
+        // browser profile, is never launched (with or without a mock keychain).
+        let unmarked = root.join("Default");
+        fs::create_dir(&unmarked).unwrap();
+        // A marked directory outside the driver's root is not driver-owned either.
+        let elsewhere = temp_profile_root("elsewhere");
+        let outside = elsewhere.join("isolated-outside");
+        fs::create_dir(&outside).unwrap();
+        write_profile_marker(&outside, &marker).unwrap();
+        for refused in [&unmarked, &outside, &root.join("missing")] {
+            let error =
+                driver_owned_browser_command("chromium-under-test", &root, &profile(refused))
+                    .expect_err("not a driver-owned profile");
+            assert_eq!(error.code, BrowserRefusalCode::BrowserRouteUnavailable);
+            assert!(
+                error.message.contains("existing_profile"),
+                "{}",
+                error.message
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(elsewhere).unwrap();
+    }
+
+    #[test]
+    fn the_launch_breaker_backs_off_after_repeated_failures() {
+        let breaker = IsolatedLaunchBreaker::default();
+        let start = Instant::now();
+        for _ in 1..LAUNCH_FAILURES_BEFORE_BACKOFF {
+            breaker
+                .admit(start)
+                .expect("early failures may retry at once");
+            breaker.record_failure(start, LaunchFailure::Browser, "exited before DevTools");
+        }
+        breaker.admit(start).unwrap();
+        breaker.record_failure(start, LaunchFailure::Browser, "exited before DevTools");
+
+        let refusal = breaker.admit(start).expect_err("breaker is open");
+        assert_eq!(refusal.code, BrowserRefusalCode::BrowserRouteUnavailable);
+        let detail = refusal.detail.unwrap();
+        assert_eq!(detail["reason"], "isolated_launch_backoff");
+        assert_eq!(
+            detail["consecutive_failures"],
+            LAUNCH_FAILURES_BEFORE_BACKOFF
+        );
+        assert_eq!(
+            detail["retry_after_seconds"],
+            LAUNCH_FIRST_BACKOFF.as_secs()
+        );
+        assert_eq!(detail["last_failure"], "exited before DevTools");
+        assert!(refusal.message.contains("exited before DevTools"));
+
+        // After the back-off one attempt goes through; failing again doubles it.
+        let later = start + LAUNCH_FIRST_BACKOFF;
+        breaker.admit(later).expect("half-open after the back-off");
+        breaker.record_failure(later, LaunchFailure::Browser, "timeout");
+        assert!(breaker.admit(later + LAUNCH_FIRST_BACKOFF).is_err());
+        assert!(breaker.admit(later + LAUNCH_FIRST_BACKOFF * 2).is_ok());
+
+        // A success closes it again.
+        breaker.record_success();
+        breaker.admit(later).unwrap();
+        breaker.record_failure(later, LaunchFailure::Browser, "timeout");
+        assert!(breaker.admit(later).is_ok());
+    }
+
+    #[test]
+    fn a_security_prompt_opens_the_launch_breaker_at_once() {
+        let breaker = IsolatedLaunchBreaker::default();
+        let now = Instant::now();
+        breaker.record_failure(now, LaunchFailure::SecurityPrompt, "keychain prompt");
+        assert!(breaker.admit(now).is_err());
+        assert!(breaker.admit(now + LAUNCH_FIRST_BACKOFF).is_ok());
+    }
+
+    #[test]
+    fn launch_backoff_doubles_up_to_its_cap() {
+        assert_eq!(
+            launch_backoff(LAUNCH_FAILURES_BEFORE_BACKOFF),
+            LAUNCH_FIRST_BACKOFF
+        );
+        assert_eq!(
+            launch_backoff(LAUNCH_FAILURES_BEFORE_BACKOFF + 1),
+            LAUNCH_FIRST_BACKOFF * 2
+        );
+        assert_eq!(
+            launch_backoff(LAUNCH_FAILURES_BEFORE_BACKOFF + 40),
+            LAUNCH_MAX_BACKOFF
+        );
+        assert_eq!(launch_backoff(u32::MAX), LAUNCH_MAX_BACKOFF);
+    }
+
+    #[test]
+    fn security_prompt_refusals_say_what_happened_and_never_answer() {
+        for (already_open, reason) in [
+            (true, SECURITY_PROMPT_REASON_OPEN),
+            (false, SECURITY_PROMPT_REASON_APPEARED),
+        ] {
+            let refusal = security_prompt_refusal(already_open);
+            assert_eq!(refusal.detail.unwrap()["reason"], reason);
+            assert!(refusal.message.contains("Keychain"));
+            assert!(refusal.message.contains("never answers"));
+        }
     }
 
     #[test]

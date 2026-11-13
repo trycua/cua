@@ -94,7 +94,9 @@ icons="$here/../cua-spaces/src-tauri/icons"
 # fetches them from the pinned cua-spacesd release).
 # CUA_CLI_BIN: the `cua` to bundle (default: the Cua Spaces build of `cua`,
 # `cargo build --release -p cua-spaces-cli`, when present).
-cli="${CUA_CLI_BIN:-${CARGO_TARGET_DIR:-$here/../../libs/cua/target}/release/cua-spaces-cli}"
+cli="${CUA_CLI_BIN:-${CARGO_TARGET_DIR:-$here/../../libs/cua/target}/${CUA_CARGO_PROFILE_DIR:-release}/cua-spaces-cli}"
+# CUA_CARGO_PROFILE_DIR: the Cargo profile directory of that build (default
+# release; dev-fast for install-local.sh --development).
 # CUA_SDK_DYLIB: another build of the library (a debug build for the
 # development Keyvault path, which a release library refuses).
 dylib="${CUA_SDK_DYLIB:-$here/../../libs/cua/swift/lib/libcua_sdk.dylib}"

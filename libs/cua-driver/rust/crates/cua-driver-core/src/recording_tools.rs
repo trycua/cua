@@ -225,8 +225,9 @@ impl Tool for StartRecordingTool {
                 } else if video_failed {
                     let err = state.last_error.clone().unwrap_or_else(|| "unknown".into());
                     let hint = if crate::video_ffmpeg::find_ffmpeg().is_none() {
-                        "\n\nffmpeg was not found. Call install_ffmpeg (then again with \
-                         confirm=true) to install it, then restart recording."
+                        "\n\nffmpeg was not found. Install it with your package manager \
+                         (brew install ffmpeg, winget install Gyan.FFmpeg, or \
+                         apt/dnf/pacman install ffmpeg), then restart recording."
                     } else {
                         ""
                     };

@@ -66,10 +66,7 @@ function AboutPage() {
 
   return (
     <div data-about="">
-      <SettingsGroup
-        title={t("settings.about.title")}
-        footer={<span data-about-copyright>{view.copyright}</span>}
-      >
+      <SettingsGroup title={t("settings.about.title")} footer={<span data-about-copyright>{view.copyright}</span>}>
         <SettingsRow
           label={<span data-about-title>{view.title}</span>}
           description={
@@ -139,7 +136,17 @@ function AboutPage() {
 }
 
 /** "Keep Cua Spaces up to date": one switch for checking, downloading and installing when you quit. */
-function UpdateRows({ updates: u, canChange, onChange, onCheck }: { updates: AboutUpdates; canChange: boolean; onChange: (on: boolean) => void; onCheck: () => void }) {
+function UpdateRows({
+  updates: u,
+  canChange,
+  onChange,
+  onCheck,
+}: {
+  updates: AboutUpdates;
+  canChange: boolean;
+  onChange: (on: boolean) => void;
+  onCheck: () => void;
+}) {
   const t = useT();
   return (
     <>

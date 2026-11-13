@@ -23,6 +23,27 @@ public final class DaemonSupervisor: @unchecked Sendable {
     /// daemon executables this app replaced once.
     public static let keepEnv = "CUA_DAEMON_KEEP"
 
+    /// Set while the app quits for good (`BackgroundService`): the daemon is
+    /// stopped and must not be started again by the supervision loop.
+    private let stopLock = NSLock()
+    private var stopping = false
+    var isStopping: Bool { stopLock.withLock { stopping } }
+    func stopSupervising() { stopLock.withLock { stopping = true } }
+    func resumeSupervising() { stopLock.withLock { stopping = false } }
+
+    /// Stops this app's daemon for Quit: `cua daemon stop` (bounded), then
+    /// kills what of this bundle's is still there. `nil` when none runs
+    /// afterwards, else why not.
+    public func stopForQuit(runner: CommandRunning = ProcessRunner()) -> String? {
+        stopSupervising()
+        let r = runner.run(cua, ["daemon", "stop"], timeout: 12)
+        for pid in Self.daemonPids(cuaHome: cuaHome) where isOwn(pid: UInt32(pid)) {
+            Self.stop(pid: pid)
+        }
+        if r.timedOut { return "`cua daemon stop` did not finish" }
+        return nil
+    }
+
     /// The bundled `cua`.
     public let cua: String
     private let lock = NSLock()
@@ -61,7 +82,61 @@ public final class DaemonSupervisor: @unchecked Sendable {
     ///
     /// Another app's daemon it replaced is remembered, so that daemon is kept
     /// when its app starts it again (`CUA_DAEMON_KEEP`).
+    ///
+    /// This app's daemon that an earlier launch of this app started (before
+    /// a quit and reopen, or before an update relaunched it) is started
+    /// again (`orphaned`): macOS decides Local Network for it in the name of
+    /// that launch, which is gone, so every connect to this Mac's macOS VMs
+    /// fails with "No route to host" whatever System Settings says.
     public func start(timeout: TimeInterval = 60) -> String? {
+        if isStopping { return "Cua Spaces is quitting" }
+        let error = startOnce(timeout: timeout)
+        guard error == nil, let orphan = orphaned() else { return error }
+        NSLog("Cua Spaces: the cua daemon (pid %d) belongs to an earlier launch of this app (macOS holds pid %d responsible); starting it again",
+              orphan.pid, orphan.responsible)
+        stopOwn()
+        return startOnce(timeout: timeout)
+    }
+
+    /// The process macOS holds responsible for `pid` (TCC and Local
+    /// Network decide in its name), when it can tell; tests replace it.
+    var responsiblePid: (Int32) -> Int32? = { DaemonSupervisor.liveResponsiblePid($0) }
+
+    /// `responsibility_get_pid_responsible_for_pid` (libsystem, what TCC
+    /// and nehelper use; the daemon reads its own the same way,
+    /// `cua_vmm::local_network`).
+    static func liveResponsiblePid(_ pid: Int32) -> Int32? {
+        typealias Fn = @convention(c) (pid_t) -> pid_t
+        guard let handle = dlopen(nil, RTLD_NOW),
+              let sym = dlsym(handle, "responsibility_get_pid_responsible_for_pid") else { return nil }
+        let r = unsafeBitCast(sym, to: Fn.self)(pid)
+        return r > 0 ? r : nil
+    }
+
+    /// This app's running daemon when macOS holds responsible for it a
+    /// process that is gone or is not this app's: one an earlier launch of
+    /// this app started (once that launch exits, macOS names the daemon
+    /// itself), or one started from a terminal. `nil` when it is this
+    /// launch's, or another live process of this app answers for it (its
+    /// service helper, whose `cua-spacesd` may start it), or it is another
+    /// app's, or either answer is unknown.
+    func orphaned() -> (pid: Int32, responsible: Int32)? {
+        guard let pid = Self.runningPid(cuaHome: cuaHome), kill(pid, 0) == 0, isOwn(pid: UInt32(pid)),
+              let mine = responsiblePid(getpid()), let theirs = responsiblePid(pid), theirs != mine,
+              theirs == pid || !isOwn(pid: UInt32(theirs)) else { return nil }
+        return (pid, theirs)
+    }
+
+    /// Stops this app's daemon: asks it (bounded), then kills what of this
+    /// bundle's is still starting or no longer answers.
+    private func stopOwn() {
+        _ = run(["daemon", "stop"], timeout: 15)
+        for pid in Self.daemonPids(cuaHome: cuaHome) where isOwn(pid: UInt32(pid)) {
+            Self.stop(pid: pid)
+        }
+    }
+
+    private func startOnce(timeout: TimeInterval) -> String? {
         let before = stranger()
         let error = run(["daemon", "start"], timeout: timeout)
         // Replaced: another daemon is named now, or that one is gone.
@@ -118,10 +193,7 @@ public final class DaemonSupervisor: @unchecked Sendable {
     /// starting or no longer answers (one stuck on a keychain read, say),
     /// then starts it. `nil` when it runs afterwards, else why not.
     public func restart(timeout: TimeInterval = 30) -> String? {
-        _ = run(["daemon", "stop"], timeout: 15)
-        for pid in Self.daemonPids(cuaHome: cuaHome) where isOwn(pid: UInt32(pid)) {
-            Self.stop(pid: pid)
-        }
+        stopOwn()
         return start(timeout: timeout)
     }
 
@@ -257,7 +329,7 @@ public final class DaemonSupervisor: @unchecked Sendable {
                     }
                 }
                 await wake.wait(for: failures == 0 ? interval : Self.backoff(failures))
-                if Task.isCancelled { return }
+                if Task.isCancelled || self.isStopping { return }
                 if await isUp() {
                     if reported { await report(nil) }
                     failures = 0

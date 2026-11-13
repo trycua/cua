@@ -141,7 +141,13 @@ export function RepoCacheGroup() {
             label={t("settings.repo_cache.clear")}
             description={t("settings.repo_cache.clear_help")}
             control={
-              <Button size="sm" variant="outline" data-setting-row="repo-cache-clear" disabled={busy || view.repos === 0} onClick={() => void run("repoCache.clear", {}, t("settings.repo_cache.clear_failed"))}>
+              <Button
+                size="sm"
+                variant="outline"
+                data-setting-row="repo-cache-clear"
+                disabled={busy || view.repos === 0}
+                onClick={() => void run("repoCache.clear", {}, t("settings.repo_cache.clear_failed"))}
+              >
                 {t("settings.repo_cache.clear")}
               </Button>
             }

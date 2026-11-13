@@ -14,7 +14,16 @@
  */
 
 import { isUnsupported, type DataAdapter } from "./adapter";
-import type { BlockedConnection, ClipboardMode, NetworkPreset, NetworkPreview, SpaceNetwork, SpaceSecurity, SpaceTopology, VolumeScope } from "./contracts/network";
+import type {
+  BlockedConnection,
+  ClipboardMode,
+  NetworkPreset,
+  NetworkPreview,
+  SpaceNetwork,
+  SpaceSecurity,
+  SpaceTopology,
+  VolumeScope,
+} from "./contracts/network";
 import type { NetworkEventWire, SpaceNetworkWire } from "./protocol";
 
 /** How long a read stays fresh. */
@@ -144,7 +153,11 @@ export function blockedFromWire(e: NetworkEventWire): BlockedConnection {
   };
 }
 
-const nameOf = (id: string) => id.slice(id.lastIndexOf(":") + 1).split("/").pop() ?? id;
+const nameOf = (id: string) =>
+  id
+    .slice(id.lastIndexOf(":") + 1)
+    .split("/")
+    .pop() ?? id;
 
 interface Entry {
   security: SpaceSecurity | null;

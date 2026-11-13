@@ -359,6 +359,9 @@ pub struct AppSpace {
     /// [`crate::spaces::openable_spaces`]). Its own page still opens. The
     /// SDK and `cua spaces ls` still return it, marked.
     pub hidden: bool,
+    /// The Space it is a child of (its id): the Spaces page nests it under that Space. Absent for a
+    /// top-level Space.
+    pub parent: Option<String>,
 }
 
 /// One row of the SDK's `list_spaces`.
@@ -426,6 +429,8 @@ pub struct AppSpaceRow {
     pub stop_reason: Option<String>,
     /// A relay Space: who owns it and who else has it.
     pub sharing: Option<AppSpaceSharingFacts>,
+    /// The Space it is a child of (its id), as the daemon records the tree; absent for a top-level Space.
+    pub parent: Option<String>,
 }
 
 /// Where new Spaces can be created.
@@ -681,6 +686,8 @@ pub struct AppPendingCreate {
     pub host: Option<String>,
     /// That machine's name, for the row and for a failure that names it.
     pub host_name: Option<String>,
+    /// The Space it is a child of (an agent made it): the row nests under it.
+    pub parent: Option<String>,
     /// How many times the app ran this create again by itself: 0, or 1
     /// after a failure that usually passes ([`fail_decision`]).
     pub attempt: u32,
@@ -788,6 +795,8 @@ pub enum AppCreateAction {
         host: Option<String>,
         /// That machine's name.
         host_name: Option<String>,
+        /// The Space it is a child of (an agent made it): its id.
+        parent: Option<String>,
     },
     /// The SDK reported progress.
     Progress {
@@ -1392,6 +1401,18 @@ pub struct AppStreamRowAction {
     pub active: bool,
 }
 
+/// The Space a window row comes from.
+pub type AppStreamRowOrigin = core::spaces::stream::StreamRowOrigin;
+#[uniffi::remote(Record)]
+pub struct AppStreamRowOrigin {
+    /// The origin Space's id.
+    pub space_id: String,
+    /// Its name.
+    pub name: String,
+    /// Its OS mark (`os-macos`, ...): the core's artwork (`notch.osIconSvg`).
+    pub os_icon: String,
+}
+
 /// One row of the Stream section: one line.
 pub type AppStreamRow = core::spaces::stream::StreamRow;
 #[uniffi::remote(Record)]
@@ -1408,6 +1429,10 @@ pub struct AppStreamRow {
     pub resolution: Option<String>,
     /// The icon.
     pub icon: AppStreamRowIcon,
+    /// For a window another Space shows here: the Space it lives in, drawn
+    /// as its OS mark and name beside the label. Absent on a Space's own
+    /// rows (older shells ignore it).
+    pub origin: Option<AppStreamRowOrigin>,
     /// Icon buttons, in order.
     pub actions: Vec<AppStreamRowAction>,
 }
@@ -2268,6 +2293,18 @@ pub struct AppOpenApp {
     pub supported: bool,
 }
 
+/// Where a shown window lives.
+pub type AppRemoteWindowOrigin = core::teleport::windows::RemoteWindowOrigin;
+#[uniffi::remote(Record)]
+pub struct AppRemoteWindowOrigin {
+    /// The origin Space's id.
+    pub space_id: String,
+    /// Its name.
+    pub name: String,
+    /// Its OS (`macos`, `linux`, `windows`), when known.
+    pub os: String,
+}
+
 /// One of a Space's windows.
 pub type AppRemoteWindow = core::teleport::windows::RemoteWindow;
 #[uniffi::remote(Record)]
@@ -2291,6 +2328,9 @@ pub struct AppRemoteWindow {
     /// The owning process (what the SDK's `Space.app_icon` looks a macOS
     /// app up by), when the window list reports one.
     pub pid: Option<u32>,
+    /// The Space the picture comes from, when another Space shows this
+    /// window here (`stream_space_window`); absent on a Space's own windows.
+    pub origin: Option<AppRemoteWindowOrigin>,
 }
 
 /// One app's remote windows.
@@ -6985,9 +7025,6 @@ pub type AppExperiments = core::experiments::Experiments;
 pub struct AppExperiments {
     /// Cua Volume in the first run and Settings, Storage.
     pub cua_volume: bool,
-    /// Child Spaces: a Space may make Spaces of its own. Off unless turned
-    /// on; the daemon enforces it (the switch is kept in the cua home).
-    pub child_spaces: bool,
     /// CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
     /// and the CI Runners page). Off unless turned on; the daemon and the
     /// `cua` command enforce it (the switch is kept in the cua home).
@@ -7000,10 +7037,6 @@ pub struct AppExperiments {
     /// push events). Off unless turned on; the daemon enforces it (the switch
     /// is kept in the cua home).
     pub mobile: bool,
-    /// Warm pools: one Linux Space kept ready, with its coding apps
-    /// installed, so the next Create from Home starts at once. Off unless
-    /// turned on; the daemon enforces it (the switch is kept in the cua home).
-    pub warm_pools: bool,
 }
 
 /// A runtime the host found for one kind (the SDK's `RuntimeDetected`).
@@ -7173,6 +7206,13 @@ pub struct AppSettings {
     /// one is a connect, which shows its app again
     /// ([`crate::agent_menu::sync`]).
     pub agent_menu_seen: Vec<String>,
+    /// Settings, General, "When I close the window": closing the main
+    /// window leaves Cua Spaces and its background service running (on, the
+    /// default); off, it quits Cua Spaces, as Quit does.
+    pub close_window_keeps_running: bool,
+    /// "Don't show this again" on the notice that Cua Spaces keeps running
+    /// when the window closes, or the Settings switch turned off.
+    pub close_notice_off: bool,
 }
 
 /// A pressed key combination.
@@ -7288,6 +7328,13 @@ pub struct AppSettingsInput {
     /// Settings, General's Show tips switch: tips are on
     /// (`!AppSettings.tips.off`). A shell that does not say reads as on.
     pub show_tips: bool,
+    /// Settings, General's "When I close the window": the window's close
+    /// button keeps Cua Spaces running in the background (none: no rows; a
+    /// shell without a background service leaves them out).
+    pub close_window_keeps_running: Option<bool>,
+    /// The notice that Cua Spaces keeps running is on (shown with the row
+    /// above).
+    pub close_notice: bool,
 }
 
 /// How a Settings row draws.

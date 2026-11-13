@@ -25,6 +25,7 @@ use crate::apps;
 use crate::focus_guard;
 use crate::input::mouse::DragButton;
 use crate::window_change_detector::WindowChangeDetector;
+use cua_driver_core::security_prompt::PromptInput;
 
 pub struct DragTool {
     pub state: Arc<ToolState>,
@@ -172,9 +173,11 @@ impl Tool for DragTool {
                 cursor_key.clone(),
                 cursor_overlay::OverlayCommand::SetPressed(true),
             );
+            let prompt = PromptInput::from_args(&args);
             let result = tokio::task::spawn_blocking(move || {
                 let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
                 crate::input::mouse::drag_at_xy_foreground_observed(
+                    prompt,
                     from_x,
                     from_y,
                     to_x,
@@ -210,7 +213,8 @@ impl Tool for DragTool {
                     "path": "hid",
                     "effect": "unverifiable"
                 })),
-                Ok(Err(error)) => ToolResult::error(format!("desktop drag failed: {error}")),
+                Ok(Err(error)) => crate::security_prompt::tool_result(&error)
+                    .unwrap_or_else(|| ToolResult::error(format!("desktop drag failed: {error}"))),
                 Err(error) => ToolResult::error(format!("desktop drag task failed: {error}")),
             };
         }
@@ -218,6 +222,10 @@ impl Tool for DragTool {
             Ok(v) => v,
             Err(e) => return e,
         };
+        let prompt = PromptInput::from_args(&args);
+        if let Err(refusal) = crate::security_prompt::refuse_pid(prompt, pid) {
+            return refusal;
+        }
         // Background (default): post the gesture to the exact window without
         // moving the pointer or raising it, after the focus-without-raise
         // prologue background clicks use. Foreground: briefly front the
@@ -440,6 +448,7 @@ impl Tool for DragTool {
                             wid,
                             || {
                                 crate::input::mouse::drag_at_xy_observed(
+                                    prompt,
                                     pid,
                                     from_sx,
                                     from_sy,
@@ -478,6 +487,7 @@ impl Tool for DragTool {
                         pid,
                         (from_sx, from_sy),
                         (to_sx, to_sy),
+                        (from_sx - from_lx, from_sy - from_ly),
                         wid,
                         duration_ms,
                         steps,
@@ -583,7 +593,8 @@ impl Tool for DragTool {
                 "effect": "unverifiable",
                 "focus_without_raise": focus_without_raise
             })),
-            Ok(Err(e)) => ToolResult::error(format!("drag failed: {e}")),
+            Ok(Err(e)) => crate::security_prompt::tool_result(&e)
+                .unwrap_or_else(|| ToolResult::error(format!("drag failed: {e}"))),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }

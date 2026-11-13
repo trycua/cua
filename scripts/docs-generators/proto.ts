@@ -123,7 +123,6 @@ export const MAX_WORDS = 12_000;
 export const MAX_BYTES = 100_000;
 const PROTO_DIR = path.join(REPO_ROOT, 'libs', 'cua', 'proto');
 const LIB_RS = path.join(REPO_ROOT, 'libs', 'cua', 'crates', 'cua-proto', 'src', 'lib.rs');
-const VERSION_FILE = path.join(REPO_ROOT, 'libs', 'cua', 'VERSION');
 
 /**
  * Every contract file belongs to exactly one page. A new .proto file fails
@@ -669,7 +668,6 @@ class Renderer {
 export function generateProtoReference(
   set: FileDescriptorSet,
   facts: ContractFacts,
-  version: string,
   pages: PageSpec[] = PAGES
 ): Map<string, string> {
   const r = new Renderer(set, pages, facts);
@@ -684,8 +682,7 @@ export function generateProtoReference(
         'The gRPC contracts of cua-spacesd (cua.env.v1) and the cua daemon (cua.daemon.v1): ports, routes, auth and every RPC.',
       generator,
       source,
-      version,
-      body: r.renderIndexBody(readHeader('cua-sdk/protocol/index.md', { version })),
+      body: r.renderIndexBody(readHeader('cua-sdk/protocol/index.md')),
     })
   );
   for (const spec of pages) {
@@ -697,7 +694,6 @@ export function generateProtoReference(
         description: spec.description,
         generator,
         source,
-        version,
         components: usesCallout ? ['Callout'] : [],
         body,
       })
@@ -715,8 +711,7 @@ function main(): void {
   console.log('cua gRPC contract reference generator');
   const set = buildDescriptorSet();
   const facts = parseContractFacts(fs.readFileSync(LIB_RS, 'utf-8'));
-  const version = fs.readFileSync(VERSION_FILE, 'utf-8').trim();
-  const files = generateProtoReference(set, facts, version);
+  const files = generateProtoReference(set, facts);
   const big = [...files].filter(
     ([f, c]) => f.endsWith('.mdx') && (wordCount(c) > MAX_WORDS || Buffer.byteLength(c) > MAX_BYTES)
   );

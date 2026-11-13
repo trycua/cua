@@ -248,6 +248,7 @@ impl Tool for RightClickTool {
             Ok(route) => route,
             Err(refusal) => return refusal,
         };
+        let prompt = cua_driver_core::security_prompt::PromptInput::from_args(&args);
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             let _key_focus = (!fg)
                 .then(|| crate::key_focus_guard::protect(pid))
@@ -258,7 +259,7 @@ impl Tool for RightClickTool {
                     // Warp the hardware pointer and post at the HID tap; see
                     // `pixel_route` for the cross-platform foreground contract.
                     return crate::input::mouse::click_at_xy_desktop_with_modifiers(
-                        screen_x, screen_y, 1, "right", &m,
+                        prompt, screen_x, screen_y, 1, "right", &m,
                     );
                 }
                 if let Some(wid) = window_id {
@@ -298,14 +299,17 @@ impl Tool for RightClickTool {
             .with_structured(serde_json::json!({
                 "path": super::pixel_route::path_label(route), "verified": false, "effect": "unverifiable"
             })),
-            Ok(Err(e)) if route == super::pixel_route::PixelClickRoute::ForegroundHid => {
-                super::pixel_route::foreground_unavailable(
-                    "Right-click",
-                    window_id.unwrap_or_default(),
-                    &e.to_string(),
-                )
-            }
-            Ok(Err(e)) => ToolResult::error(format!("Right-click failed: {e}")),
+            Ok(Err(e)) => match crate::security_prompt::tool_result(&e) {
+                Some(refusal) => refusal,
+                None if route == super::pixel_route::PixelClickRoute::ForegroundHid => {
+                    super::pixel_route::foreground_unavailable(
+                        "Right-click",
+                        window_id.unwrap_or_default(),
+                        &e.to_string(),
+                    )
+                }
+                None => ToolResult::error(format!("Right-click failed: {e}")),
+            },
             Err(e)     => ToolResult::error(format!("Task error: {e}")),
         }
     }

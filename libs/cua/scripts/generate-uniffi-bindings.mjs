@@ -166,6 +166,7 @@ function fingerprint() {
     }
   }
   walk(join(cuaRoot, "crates/cua-sdk"))
+  walk(join(cuaRoot, "crates/cua-sdk-native"))
   walk(join(cuaRoot, "crates/cua-bindgen"))
   for (const path of [
     "VERSION",
@@ -298,7 +299,7 @@ try {
           "--locked",
           ...(release ? ["--release"] : []),
           "-p",
-          "cua-sdk",
+          "cua-sdk-native",
           "--no-default-features",
           "--features",
           buildFeatures().join(","),

@@ -69,7 +69,8 @@ export const isThisMacDesktop = (space: Pick<Space, "id">): boolean => space.id 
  * This Mac's desktop while it is not shared: the host lists it `local` (the list rows read it as running)
  * only while the desktop is shared, and suspended otherwise.
  */
-export const isUnsharedDesktop = (space: Pick<Space, "id" | "status">): boolean => space.id === "this-mac" && space.status !== "local" && space.status !== "running";
+export const isUnsharedDesktop = (space: Pick<Space, "id" | "status">): boolean =>
+  space.id === "this-mac" && space.status !== "local" && space.status !== "running";
 
 /**
  * The rows of the Spaces list: your Spaces and the machines' desktops that are shared. This Mac's desktop
@@ -93,10 +94,19 @@ export function listedSpaces<T extends Pick<Space, "id" | "status" | "provider" 
 export const countedSpaces = <T extends Pick<Space, "id" | "status">>(listed: readonly T[]): T[] => listed.filter((s) => !isUnsharedDesktop(s));
 
 /** Running Spaces first, then the most recently used (Home, the Spaces page, the switcher and ⌘K). */
-export function orderSpaces<T extends Pick<Space, "id" | "status" | "power" | "lastUsedAt" | "provider" | "host"> & { progress?: Space["progress"] }>(spaces: readonly T[]): T[] {
-  // A machine's desktop follows the Spaces in its state (its "last used" is always now), and This Mac's unshared one is last.
+export function orderSpaces<T extends Pick<Space, "id" | "status" | "power" | "lastUsedAt" | "provider" | "host"> & { progress?: Space["progress"] }>(
+  spaces: readonly T[],
+): T[] {
+  // A machine's desktop follows the Spaces in its state, and This Mac's unshared one is last.
   const rank = (s: T) => (isUnsharedDesktop(s) ? 9 : ORDER[spaceState(s)] + (isMachineDesktop(s) ? 0.5 : 0));
-  return spaces.toSorted((a, b) => rank(a) - rank(b) || b.lastUsedAt - a.lastUsedAt);
+  // A desktop has no "last used": the host stamps it with the time it read the list (This Mac's
+  // with the time it composed it, another machine's with the time the registry answered), and
+  // those move apart on every poll. Sorted by it, desktops swapped tiles on each refresh; they keep
+  // a fixed order instead, This Mac first, then by id. Every tie ends on the id, so the order never
+  // depends on the order the host listed the rows in.
+  const used = (s: T) => (isMachineDesktop(s) ? 0 : s.lastUsedAt);
+  const mac = (s: T) => (isThisMacDesktop(s) ? 0 : 1);
+  return spaces.toSorted((a, b) => rank(a) - rank(b) || used(b) - used(a) || mac(a) - mac(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
 export type SpaceFilter = "all" | "running" | "stopped" | "creating";
@@ -239,10 +249,13 @@ export function powerPending(space: Pick<Space, "power">): string | null {
 /** This app can delete it: not this Mac itself, and not a cloud Space only deletable elsewhere. */
 export function canDelete(space: Pick<Space, "id" | "status" | "cloudDelete">): boolean {
   // A failed create is removed (`dismissCreate`), not deleted.
-  return !space.id.startsWith("pending:") && space.status !== "local" && space.id !== "this-mac" && space.status !== "deleting" && space.cloudDelete !== "elsewhere";
+  return (
+    !space.id.startsWith("pending:") && space.status !== "local" && space.id !== "this-mac" && space.status !== "deleting" && space.cloudDelete !== "elsewhere"
+  );
 }
 
-const PROVIDER = (provider: "relay" | "direct"): string => (provider === "relay" ? t("computers.status.provider_relay") : t("computers.status.provider_direct"));
+const PROVIDER = (provider: "relay" | "direct"): string =>
+  provider === "relay" ? t("computers.status.provider_relay") : t("computers.status.provider_direct");
 
 /** Where it runs, in words. */
 export function locationLabel(space: Pick<Space, "provider" | "cloudPlace">): string {

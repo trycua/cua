@@ -5,11 +5,36 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowDownCircleIcon, MonitorIcon, PictureInPicture2Icon, PlayIcon, SquareIcon, Trash2Icon, UserPlusIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import { hostResources, parseDropped, runCreateFix, spaceResources, useBridge, useResources, useDevices, useMachines, useSession, useShareSheet, useSpaceDetail, useSpaceFiles, useSpaces, useSpaceThread, useTeleport, type CreateReport, type Machine, type ResourcesSnapshot, type Space, type StreamRow, type ThreadView } from "@/bridge";
+import {
+  hostResources,
+  parseDropped,
+  runCreateFix,
+  spaceResources,
+  useBridge,
+  useResources,
+  useDevices,
+  useMachines,
+  useSession,
+  useShareSheet,
+  useSpaceDetail,
+  useSpaceFiles,
+  useSpaces,
+  useSpaceThread,
+  useTeleport,
+  type CreateReport,
+  type Machine,
+  type ResourcesSnapshot,
+  type Space,
+  type StreamRow,
+  type ThreadView,
+} from "@/bridge";
 import { DiagnosticReportDialog } from "@/components/diagnostic-report-dialog";
 import { OsIcon } from "@/components/os-icon";
 import { BackLink } from "@/components/back-link";
 import { EmptyState, Page } from "@/components/page";
+import { useChildren } from "@/components/children/use-children";
+import { parentIdOf } from "@/lib/space-tree";
+import { ChildSpacesSection, childrenEffect, childrenOfSpace, descendantCount } from "@/components/space-detail/child-spaces-section";
 import { AgentsSection } from "@/components/space-detail/agents-section";
 import { DropWell } from "@/components/space-detail/drop-well";
 import { FactList } from "@/components/space-detail/facts";
@@ -21,6 +46,7 @@ import { StreamSurface } from "@/components/space-detail/stream-surface";
 import { SpaceHeader } from "@/components/space-detail/space-header";
 import { SpaceCall } from "@/components/space-thread/space-call";
 import { ThisMacCall } from "@/components/space-detail/this-mac-desktop";
+import { useComputerActions } from "@/components/computers/computer-actions";
 import { StateLabel } from "@/components/state-dot";
 import { PageTip } from "@/components/tips";
 import { creatingThread } from "@/components/space-thread/queued";
@@ -36,10 +62,30 @@ import { thisComputerLabel, thisComputerText } from "@/lib/host-labels";
 import { THIS_COMPUTER } from "@/lib/machines";
 import { useSpaceVolumeError } from "@/lib/space-volume";
 import { volumeUnavailableNote } from "@/lib/volume-notes";
-import { canDelete, canPower, createError, isUnsharedDesktop, createProgress, machineName, powerLabel, powerPending, spacePlace, spaceState } from "@/lib/spaces";
+import {
+  canDelete,
+  canPower,
+  createError,
+  isUnsharedDesktop,
+  createProgress,
+  machineName,
+  powerLabel,
+  powerPending,
+  spacePlace,
+  spaceState,
+} from "@/lib/spaces";
 import { useSpaceLayout } from "@/components/space-thread/layout-mode";
 import { NetworkSheet } from "@/components/network/network-sheet";
-import { BlockedNotice, ExitDownNotice, NetworkNotice, NetworkRow, ParentLine, RunsOnMachinesRow, SecurityRows, WithClipboardPrompt } from "@/components/network/space-security";
+import {
+  BlockedNotice,
+  ExitDownNotice,
+  NetworkNotice,
+  NetworkRow,
+  ParentLine,
+  RunsOnMachinesRow,
+  SecurityRows,
+  WithClipboardPrompt,
+} from "@/components/network/space-security";
 import { VolumeGrantDialog } from "@/components/network/volume-grant-dialog";
 
 export const Route = createFileRoute("/spaces/$spaceId")({
@@ -88,6 +134,14 @@ function SpaceDetailPage() {
   const { data: session, openExternal } = useSession();
   const { core } = useBridge();
   const space = spaces?.find((s) => s.id === spaceId);
+  // A child Space belongs to its parent's tree: Back goes to the parent's page, and the header says whose child it is.
+  const tree = useChildren();
+  const parentId = space ? parentIdOf(space, tree) : undefined;
+  const parentSpace = parentId ? spaces?.find((s) => s.id === parentId) : undefined;
+  const parentRef = parentSpace ? { id: parentSpace.id, name: parentSpace.name } : null;
+  // What stopping or deleting this Space does to the Spaces made under it, said in the confirm.
+  const myKids = space ? childrenOfSpace(spaces ?? [], space.id, tree) : [];
+  const myTotal = space ? descendantCount(spaces ?? [], space.id, tree) : 0;
   // Apps and files dropped on this Space's notch tile: the same as a drop on the well (an app opens Teleport at it), once.
   const files = useSpaceFiles(space ?? { id: spaceId, name: spaceId });
   const droppedOnce = useRef<string[] | null>(null);
@@ -105,7 +159,9 @@ function SpaceDetailPage() {
   // device is not enrolled.
   const access = thisMachine?.accessNotice ?? null;
   const devices = useDevices();
-  const { detail, stream, windowsUnsupported, pip, query, setQuery, agents, copy } = useSpaceDetail(space, hostArch, { access });
+  const { detail, stream, windowsUnsupported, windowsLoaded, pip, query, setQuery, agents, copy } = useSpaceDetail(space, hostArch, { access });
+  // A computer's own desktop page also manages the computer: its page, and Remove.
+  const computer = useComputerActions(space?.id ?? spaceId);
   // Call view or thread view, remembered per Space.
   const [layout, setLayout] = useSpaceLayout(space?.id ?? "");
   const volumeError = useSpaceVolumeError(space, space ? spaceState(space) === "running" : false);
@@ -303,7 +359,11 @@ function SpaceDetailPage() {
         </Button>
       ) : null}
       {canDelete(space) ? (
-        <Button variant="outline" aria-label={t("computers.tile.power_label", { action: detail.deleteLabel, name: space.name })} onClick={() => setConfirm("delete")}>
+        <Button
+          variant="outline"
+          aria-label={t("computers.tile.power_label", { action: detail.deleteLabel, name: space.name })}
+          onClick={() => setConfirm("delete")}
+        >
           <Trash2Icon className="text-destructive" /> {detail.deleteLabel}
         </Button>
       ) : null}
@@ -315,11 +375,14 @@ function SpaceDetailPage() {
       {pending ? (
         <span className="text-xs">{pending}</span>
       ) : space.id === "this-mac" ? (
-        <StateLabel state={isUnsharedDesktop(space) ? "stopped" : "running"} word={isUnsharedDesktop(space) ? t("computers.row.not_sharing") : t("computers.tile.sharing")} />
+        <StateLabel
+          state={isUnsharedDesktop(space) ? "stopped" : "running"}
+          word={isUnsharedDesktop(space) ? t("computers.row.not_sharing") : t("computers.tile.sharing")}
+        />
       ) : (
         <StateLabel state={state} space={space} />
       )}
-      <ParentLine spaceId={space.id} />
+      {parentRef ? null : <ParentLine spaceId={space.id} />}
     </p>
   );
   const osMark = (
@@ -367,7 +430,11 @@ function SpaceDetailPage() {
               <DropWell
                 title={t("computers.page.teleport_title")}
                 space={space}
-                copy={{ caption: copy?.dropCaption ?? t("computers.page.drop_caption"), sendFile: copy?.sendFile ?? t("computers.page.send_file"), teleportApp: copy?.teleportApp ?? t("computers.page.teleport_app") }}
+                copy={{
+                  caption: copy?.dropCaption ?? t("computers.page.drop_caption"),
+                  sendFile: copy?.sendFile ?? t("computers.page.send_file"),
+                  teleportApp: copy?.teleportApp ?? t("computers.page.teleport_app"),
+                }}
                 onTeleport={teleportApp}
               />
             </div>
@@ -407,9 +474,7 @@ function SpaceDetailPage() {
         onOpenChange={(o) => !o && setConfirm(null)}
         title={t("computers.page.power_confirm_title", { action: turnOff, name: space.name })}
         description={
-          space.power?.control === "suspend"
-            ? t("computers.page.suspend_body")
-            : t("computers.page.shutdown_body")
+          (space.power?.control === "suspend" ? t("computers.page.suspend_body") : t("computers.page.shutdown_body")) + childrenEffect("stop", myKids, myTotal)
         }
         confirmLabel={turnOff}
         destructive={space.power?.control !== "suspend"}
@@ -419,7 +484,7 @@ function SpaceDetailPage() {
         open={confirm === "delete"}
         onOpenChange={(o) => !o && setConfirm(null)}
         title={detail.confirm.title}
-        description={detail.confirm.message}
+        description={detail.confirm.message + childrenEffect("delete", myKids, myTotal)}
         confirmLabel={detail.confirm.confirmLabel}
         cancelLabel={detail.confirm.cancelLabel}
         disabledReason={detail.confirm.confirmEnabled ? null : (detail.confirm.disabledReason ?? null)}
@@ -452,7 +517,10 @@ function SpaceDetailPage() {
   // A create still in progress has no thread yet: its progress shows on the classic page.
   // A Space being made for an Ask-first job: the same page in its creating state (progress on
   // the stage, the job queued in the thread); a failed create keeps the classic page's fixes.
-  const creating = space.id.startsWith("pending:") && (state !== "failed" || (preparing != null && preparing.phase !== "failed")) && (tasks.some((task) => task.pendingId === space.id) || preparing != null);
+  const creating =
+    space.id.startsWith("pending:") &&
+    (state !== "failed" || (preparing != null && preparing.phase !== "failed")) &&
+    (tasks.some((task) => task.pendingId === space.id) || preparing != null);
   const callThread = creating ? creatingThread(space.id) : thread;
   const later = t("computers.page.later");
   // This Mac's own desktop row: a Space's page as any other, with the share prompt where the stream would be.
@@ -466,9 +534,20 @@ function SpaceDetailPage() {
           identity={session?.signedIn ? (session.account.identity ?? null) : null}
           facts={detail.facts}
           more={sections}
-          header={<SpaceHeader back={<BackLink inline />} os={space.os} title={detail.title} place={place} />}
+          header={
+            <SpaceHeader
+              back={<BackLink inline parent={parentRef} />}
+              os={space.os}
+              title={detail.title}
+              place={place}
+              childOf={parentRef}
+              computerSettings={computer?.settings}
+              removeComputer={computer?.remove}
+            />
+          }
         />
         {dialogs}
+        {computer?.dialogs}
       </>
     );
   }
@@ -481,7 +560,8 @@ function SpaceDetailPage() {
           identity={session?.signedIn ? (session.account.identity ?? null) : null}
           header={
             <SpaceHeader
-              back={<BackLink inline />}
+              back={<BackLink inline parent={parentRef} />}
+              childOf={parentRef}
               os={space.os}
               title={detail.title}
               place={place}
@@ -489,21 +569,44 @@ function SpaceDetailPage() {
                 creating
                   ? { state: "pending", label: t("computers.page.being_made"), onClick: () => {} }
                   : canPower(space)
-                  ? pending
-                    ? { state: "pending", label: pending, onClick: () => {} }
-                    : state === "stopped"
-                      ? { state: "off", label: turnOn, onClick: start }
-                      : { state: "on", label: turnOff, onClick: () => setConfirm("stop") }
-                  : undefined
+                    ? pending
+                      ? { state: "pending", label: pending, onClick: () => {} }
+                      : state === "stopped"
+                        ? { state: "off", label: turnOn, onClick: start }
+                        : { state: "on", label: turnOff, onClick: () => setConfirm("stop") }
+                    : undefined
               }
               pip={
                 !creating && desktopPip
-                  ? { id: desktopRow!.id, label: desktopPip.help ?? t("computers.page.pop_out"), help: desktopPip.help ?? undefined, enabled: true, active: desktopPip.active, onClick: () => void onPip(desktopRow!) }
+                  ? {
+                      id: desktopRow!.id,
+                      label: desktopPip.help ?? t("computers.page.pop_out"),
+                      help: desktopPip.help ?? undefined,
+                      enabled: true,
+                      active: desktopPip.active,
+                      onClick: () => void onPip(desktopRow!),
+                    }
                   : undefined
               }
-              teleport={creating ? { label: t("computers.page.teleport_app_short"), help: later, enabled: false, onClick: () => {} } : teleportAction ? { label: teleportAction.label, help: teleportAction.help ?? undefined, enabled: teleportAction.enabled, onClick: teleportApp } : undefined}
-              share={creating ? { label: t("computers.page.share"), help: later, enabled: false, onClick: () => {} } : shareAction ? { label: shareAction.label, help: shareAction.help ?? undefined, enabled: shareAction.enabled, onClick: share } : undefined}
-              remove={!creating && canDelete(space) ? { label: detail.deleteLabel, enabled: true, onClick: () => setConfirm("delete") } : undefined}
+              teleport={
+                creating
+                  ? { label: t("computers.page.teleport_app_short"), help: later, enabled: false, onClick: () => {} }
+                  : teleportAction
+                    ? { label: teleportAction.label, help: teleportAction.help ?? undefined, enabled: teleportAction.enabled, onClick: teleportApp }
+                    : undefined
+              }
+              share={
+                creating
+                  ? { label: t("computers.page.share"), help: later, enabled: false, onClick: () => {} }
+                  : shareAction
+                    ? { label: shareAction.label, help: shareAction.help ?? undefined, enabled: shareAction.enabled, onClick: share }
+                    : undefined
+              }
+              remove={
+                !creating && !computer && canDelete(space) ? { label: detail.deleteLabel, enabled: true, onClick: () => setConfirm("delete") } : undefined
+              }
+              computerSettings={computer?.settings}
+              removeComputer={computer?.remove}
               dismiss={state === "failed" ? { label: t("computers.account.remove"), enabled: true, onClick: dismiss } : undefined}
             />
           }
@@ -529,8 +632,10 @@ function SpaceDetailPage() {
           creating={creating}
           facts={detail.facts}
           detailsExtra={<NetworkRow spaceId={space.id} />}
+          childSpaces={<ChildSpacesSection spaceId={space.id} spaceName={space.name} />}
           more={sections}
           windows={creating ? [] : (stream?.rows.filter((r) => r.kind === "window") ?? [])}
+          streamReady={!creating && Boolean(stream) && windowsLoaded}
           desktop={creating ? null : (desktopRow ?? null)}
           selected={shownRow?.id ?? null}
           onSelect={(row) => setShown(row.kind === "window" ? { spaceId: space.id, row: row.id } : null)}
@@ -540,6 +645,7 @@ function SpaceDetailPage() {
           owner={sharedOwner}
         />
         {dialogs}
+        {computer?.dialogs}
       </>
     );
   }
@@ -551,7 +657,9 @@ function SpaceDetailPage() {
         <div className="flex min-w-0 items-start gap-3">
           {osMark}
           <div className="min-w-0">
-            <h1 data-detail-title className="truncate text-[22px] leading-tight font-semibold tracking-[-0.01em]">{detail.title}</h1>
+            <h1 data-detail-title className="truncate text-[22px] leading-tight font-semibold tracking-[-0.01em]">
+              {detail.title}
+            </h1>
             {place}
           </div>
         </div>
@@ -573,7 +681,12 @@ function SpaceDetailPage() {
           // This computer's own screen: its switches live on its page.
           action={
             detail.isHost ? (
-              <Button variant="outline" size="sm" data-host-desktop-action="" render={<Link to="/spaces/computer/$computerId" params={{ computerId: THIS_COMPUTER }} />}>
+              <Button
+                variant="outline"
+                size="sm"
+                data-host-desktop-action=""
+                render={<Link to="/spaces/computer/$computerId" params={{ computerId: THIS_COMPUTER }} />}
+              >
                 {t("computers.page.open_named", { name: thisComputerLabel() })}
               </Button>
             ) : null
@@ -700,9 +813,7 @@ function surfaceState(
     return (
       <>
         <OsIcon os={space.os} className="mb-4 size-8 text-muted-foreground/30" />
-        <p className="text-[13px] text-muted-foreground">
-          {canPower(space) ? tr("computers.page.start_to_open") : tr("computers.page.stopped_no_start")}
-        </p>
+        <p className="text-[13px] text-muted-foreground">{canPower(space) ? tr("computers.page.start_to_open") : tr("computers.page.stopped_no_start")}</p>
         {canPower(space) ? (
           <Button className="mt-4" variant="outline" disabled={Boolean(pending)} onClick={onStart}>
             <PlayIcon /> {pending ?? startLabel}
@@ -732,16 +843,7 @@ function SpaceResources({ space, spaces, snapshot, machines }: { space: Space; s
     const r = sameComputer(s) ? spaceResources(snapshot, s.id) : null;
     return r ? [r] : [];
   });
-  return (
-    <SpaceResourcesPanel
-      space={mine}
-      name={space.name}
-      host={host}
-      computer={computer}
-      spaces={onComputer}
-      baseName={systemName(space.osPrettyName)}
-    />
-  );
+  return <SpaceResourcesPanel space={mine} name={space.name} host={host} computer={computer} spaces={onComputer} baseName={systemName(space.osPrettyName)} />;
 }
 
 /** `stream.viewContext`'s answer (camelCase). */

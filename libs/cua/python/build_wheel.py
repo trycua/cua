@@ -3,7 +3,7 @@
 cdylib) and of `cua-cli` (the `cua` CLI binary).
 
 The native library comes from `--library` (a CI artifact or a local
-`cargo build --release -p cua-sdk`) and the CLI from `--cli` (`cargo build
+`cargo build --release -p cua-sdk-native`) and the CLI from `--cli` (`cargo build
 --release -p cua-cli`); by default the host builds under
 libs/cua/target/release are used.
 
@@ -104,7 +104,7 @@ def main() -> None:
     lib_name = LIB_NAMES[system]
     library = args.library or (HERE.parent / "target" / "release" / lib_name)
     if not library.exists():
-        raise SystemExit(f"missing native library {library}; run cargo build --release -p cua-sdk")
+        raise SystemExit(f"missing native library {library}; run cargo build --release -p cua-sdk-native")
 
     for stale in LIB_NAMES.values():
         (PACKAGE / stale).unlink(missing_ok=True)

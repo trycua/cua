@@ -31,7 +31,9 @@ adds counts too.
 
 The same decision also gates execution (CUA-3856): every workflow with the
 shared `quick` stage (ci-quick.yml) runs `--workflow <file>` from the base
-commit and skips its heavy jobs when the workflow is not required. A workflow's
+commit and skips its heavy jobs when the workflow is not required. In the merge
+queue it adds `--merge-queue`, and only the workflows the map lists under
+`queue` can run there. A workflow's
 own `paths:` filter is only a cheap pre-filter; it must stay a superset of what
 the map requires (test_ci_gate_scope.py checks that).
 """
@@ -186,11 +188,18 @@ def scope(files: list[str], cfg: dict, graph: ci_graph.Graph | None = None) -> t
     return sorted(areas), (mapped | narrow) - needed
 
 
-def decide_workflow(workflow: str, files: list[str], cfg: dict, graph: ci_graph.Graph) -> int:
-    """The execution side of the same decision: one workflow, skip or run."""
+def queue_workflows(cfg: dict) -> set[str]:
+    """The workflows that run in the merge queue (`queue` in the map)."""
+    return set(cfg.get('queue', {}).get('workflows', []))
+
+
+def decide_workflow(workflow: str, files: list[str], cfg: dict, graph: ci_graph.Graph,
+                    merge_queue: bool = False) -> int:
+    """The execution side of the same decision: one workflow, skip or run. In the merge queue a workflow
+    outside the map's `queue` list always skips: the gate reads its pull request run instead."""
     workflow = Path(workflow).name
     areas, ignored = scope(files, cfg, graph)
-    skip = workflow in ignored
+    skip = workflow in ignored or (merge_queue and workflow not in queue_workflows(cfg))
     line = (f'{workflow}: ' + ('skip, ' if skip else 'run, ') + f'{len(files)} changed files, '
             f'areas: {", ".join(areas)}')
     print(line)
@@ -201,9 +210,11 @@ def decide_workflow(workflow: str, files: list[str], cfg: dict, graph: ci_graph.
     summary = os.environ.get('GITHUB_STEP_SUMMARY')
     if summary:
         with open(summary, 'a') as fh:
-            fh.write('### CI scope\n\n' + line + ('\n\nThe changed files do not reach this workflow '
-                     '(.github/ci-areas.json), so its jobs are skipped and ci-gate does not wait for it.\n'
-                     if skip else '\n'))
+            why = ('it is not in the merge queue list (`queue` in .github/ci-areas.json), so its jobs are '
+                   'skipped and ci-gate reads its pull request run' if workflow not in ignored else
+                   'the changed files do not reach this workflow (.github/ci-areas.json), so its jobs are '
+                   'skipped and ci-gate does not wait for it')
+            fh.write('### CI scope\n\n' + line + (f'\n\nHere {why}.\n' if skip else '\n'))
     return 0
 
 
@@ -246,12 +257,14 @@ def main() -> int:
     ap.add_argument('--labels', default='')
     ap.add_argument('--body-file', type=Path)
     ap.add_argument('--workflow', help='decide for one workflow file: writes skip=true|false')
+    ap.add_argument('--merge-queue', action='store_true',
+                    help='with --workflow: a merge queue run, where only the `queue` workflows run')
     args = ap.parse_args()
     cfg = load_map(args.map)
     files = [l.strip() for l in sys.stdin if l.strip()]
     graph = load_graph()
     if args.workflow:
-        return decide_workflow(args.workflow, files, cfg, graph)
+        return decide_workflow(args.workflow, files, cfg, graph, args.merge_queue)
     seeds, _, _ = affected_packages(files, cfg, graph)
     affected = graph.dependents(seeds)
     areas, ignored = scope(files, cfg, graph)

@@ -75,6 +75,9 @@ impl Tool for SetValueTool {
             Err(e) => return e,
         };
         let (index, window_id, admitted) = resolved.into_parts(None);
+        if let Some(refusal) = super::impl_::refuse_if_disabled(pid, &admitted, "set_value").await {
+            return refusal;
+        }
         let (Some(hwnd), Some(idx), Some(admitted)) = (window_id, index, admitted) else {
             return ToolResult::error("set_value requires an admitted element target.");
         };

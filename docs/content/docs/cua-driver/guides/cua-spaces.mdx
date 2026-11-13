@@ -1,0 +1,89 @@
+---
+title: Get Cua Driver with Cua Spaces
+description: Install Cua Spaces for Mac and get Cua Driver with it. What gets installed, how it updates, how permissions work, and how to check or repair it.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+On a Mac, the easiest way to get Cua Driver is to install Cua Spaces. Cua Spaces
+carries Cua Driver inside the app, runs it for you, keeps it up to date, and
+connects your coding agents to it.
+
+<Callout>
+  Cua Spaces for Mac needs macOS 26 or later. Cua Driver on its own works on
+  macOS 14 or later, Windows and Linux. See
+  [Install Cua Driver on its own](/cua-driver/quickstart#install-cua-driver-on-its-own).
+</Callout>
+
+## Get Cua Driver with Cua Spaces (recommended)
+
+1. **Install.** Download Cua Spaces from the [download page](https://cua.ai/download)
+   and open it, or run `curl -fsSL https://cua.ai/install.sh | sh`. See
+   [Install Cua Spaces](/spaces/guides/install).
+2. **Sign in.** Signing in is optional. **Add this computer** signs you in and
+   adds this Mac to your account, so your other computers can see it. **Skip
+   for now** keeps everything on this Mac.
+3. **Allow permissions.** Cua Spaces asks for Accessibility and Screen
+   Recording. Turn both on in System Settings.
+4. **Connect your agent.** The setup lists the coding agents it found, such as
+   Claude Code and Codex, each one ticked. Press **Continue** to connect them.
+   Later, open **Cua Driver** in the sidebar and press **Set up**.
+
+That is all. Ask your agent to use an app, and it uses Cua Driver.
+
+## How the install works
+
+**What is installed, and where.** Cua Driver is a file inside the Cua Spaces
+app: `Cua Spaces.app/Contents/Helpers/cua-driver`. You do not install it
+separately. Cua Spaces runs it in the background as its own login item, so it
+starts when you sign in to your Mac. You can turn it off with a switch on the
+**Cua Driver** page.
+
+**How it updates.** Cua Spaces ships the latest stable Cua Driver. When a new
+Cua Driver comes out, the Cua Spaces project picks it up and includes it in the
+next Cua Spaces release. To get it, update Cua Spaces. The app checks for
+updates by itself and shows **Update ready** in the sidebar. See
+[Updates](/spaces/guides/install#updates). Cua Driver has no separate updater
+inside Cua Spaces. The **Cua Driver** page shows the version you have.
+
+**How permissions work.** Because Cua Spaces starts Cua Driver, macOS gives
+Cua Driver the permissions you gave Cua Spaces. You allow Accessibility and
+Screen Recording once, for Cua Spaces. Cua Spaces does not add a CuaDriver
+entry to System Settings. If you also installed Cua Driver on its own, its
+CuaDriver entry stays, with its own permissions. Cua Spaces does not use them,
+so allow Cua Spaces even if you already allowed CuaDriver. The Cua Driver page
+lists both permissions and tells you if one is missing.
+
+**How your agents connect.** **Set up** adds Cua Driver to Claude Code and Codex.
+It writes their settings so they reach the Cua Driver that Cua Spaces runs. If
+an agent used another Cua Driver before, **Set up** switches it to this one.
+
+## Check or repair it
+
+Open Cua Spaces and choose **Cua Driver** in the sidebar, under Computers. The
+page shows:
+
+- Whether Cua Driver is running, and its version.
+- **Repair**, which connects your coding agents again, restarts Cua Driver and
+  tests it. Before the first setup, the button says **Set up**.
+- **Test now**, which has Cua Driver move the pointer on this Mac to check that
+  it works.
+- A switch, **Let agents use apps on this Mac**. Turn it off to stop all agents.
+- The two permissions, and the agents that are connected.
+
+If the page says Cua Driver can't start, check that Cua Spaces is allowed to run
+in the background: System Settings, General, Login Items & Extensions. Then
+press **Repair**.
+
+## What Cua Spaces adds
+
+Cua Driver in Cua Spaces is the same Cua Driver. Cua Spaces adds ways to use it
+with more than one computer: it lists your other computers and the Cua Driver
+on each, and it lets you share computers with your team. See
+[Cua Spaces](/spaces).
+
+## When to install Cua Driver on its own
+
+Use the [standalone install](/cua-driver/quickstart#install-cua-driver-on-its-own)
+if you don't want Cua Spaces, if your Mac runs a macOS older than 26, or if you
+use Windows or Linux. Cua Driver in Cua Spaces runs on macOS only.

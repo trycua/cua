@@ -46,7 +46,6 @@ with `set_config`:
 
 | Key | What it adds |
 | --- | --- |
-| `cursor.marks` | Action marks: a small cue next to the arrow while the agent observes, clicks, types, presses keys, scrolls, drags, manages apps, moves files, records, or makes system calls. Moves and clicks show the navigate and click marks. On macOS, a clicked element also gets a brief focus box. |
 | `cursor.float` | On by default. A slow sway, bob and slight tilt on a four-second loop, at rest (until the idle fade hides it) and while travelling. It is exactly zero for every click, drag start, drop, scroll and typing focus. |
 | `cursor.halo` | On by default. The soft glow behind the arrow body, in the cursor's color. |
 | `cursor.rotate` | `heading` by default: the tip points along the path. `lean`: the arrow tilts toward where it is going, at most 30° (15° while dragging). `off`: always upright. Both skip hops under 40 pt and are upright again before the cursor arrives, so clicks, typing and scrolling are always upright. `on` means `heading`. |
@@ -55,10 +54,14 @@ with `set_config`:
 | `cursor.motion.effects.squish` | The pointer shrinks briefly on each click and springs back. |
 
 The motion effects can also be set per session with `set_agent_cursor_motion`
-(see below). Every semantic mark inherits the float when both are on, so the
-pointer and mark move as one visual unit. Reduced-motion mode removes the
-float, rotation, and every motion effect (the halo stays), and keeps marks on their still frame.
-With `cursor.marks` off, custom themes also paint only their `idle` animation.
+(see below). Reduced-motion mode removes the float, rotation, and every
+motion effect (the halo stays).
+
+The cursor never draws action marks. Whatever the agent does (click, type,
+press keys, scroll, drag, open a menu), it stays the plain arrow, and custom
+themes paint only their `idle` animation. The old `cursor.marks` setting is
+retired: it is still accepted so existing configs and callers keep working,
+but it does nothing.
 
 The badge below the pointer follows the `cursor.badges` setting, which applies
 to every cursor at once:

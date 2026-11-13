@@ -20,8 +20,8 @@ on:
   pull_request:
     paths:
       - "libs/cua/crates/cua-vmm/src/cloudinit.rs"
-      - "libs/cua/crates/cua-daemon/src/guest_identity.rs"
-      - "libs/cua/crates/cua-daemon/src/local.rs"
+      - "libs/cua/crates/cua-daemon-core/src/guest_identity.rs"
+      - "libs/cua/crates/cua-daemon-core/src/local.rs"
       - "libs/cua/crates/cua-sdk/tests/vm_ready_after_boot.rs"
       - "libs/images/common/boot-qemu.sh"
       - ".github/workflows/nightly-qemu-ready.yml"
@@ -73,7 +73,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends qemu-utils qemu-system-x86 ovmf genisoimage
-          sudo chmod 666 /dev/kvm
+          "$GITHUB_WORKSPACE/scripts/images/enable-kvm.sh" --require
       - name: Cold VM Spaces are usable the moment create returns
         working-directory: libs/cua
         env:

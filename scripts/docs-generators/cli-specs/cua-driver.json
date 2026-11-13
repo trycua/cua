@@ -789,9 +789,9 @@
    ]
   },
   {
-   "abstract": "Connect Claude Code, Codex and Cursor to Cua Driver: add it to each agent that is installed and install the skill pack.",
+   "abstract": "Connect Claude Code, Codex, Cursor and Factory Droid to Cua Driver: add it to each agent that is installed and install the skill pack.",
    "arguments": [],
-   "discussion": "Registers one server named cua-driver with each agent found (through the agent's own CLI, or by merging into Cursor's mcp.json without touching other entries) and installs the skill pack. An agent already connected, including under the older Claude Code name cua-computer-use, is left alone, so it is safe to run again. One agent failing does not stop the others; the exit code is non-zero only when an agent was found and none could be connected.",
+   "discussion": "Registers one server named cua-driver with each agent found (through the agent's own CLI, or by merging into Cursor's or Droid's mcp.json without touching other entries) and installs the skill pack. For Droid it also rates each action tool medium in ~/.factory/settings.json, so `droid exec --auto medium` runs them. An agent already connected, including under the older Claude Code name cua-computer-use, is left alone, so it is safe to run again. An agent whose cua-driver server launches a different Cua Driver, such as the one inside Cua Spaces, is reported as using another Cua Driver and left as is; --replace switches Claude Code, Codex and Cursor to this one the way Set up in Cua Spaces does, backing up the config file first. One agent failing does not stop the others; the exit code is non-zero only when an agent was found and none could be connected.",
    "examples": [
     {
      "command": "cua-driver connect",
@@ -804,6 +804,10 @@
     {
      "command": "cua-driver connect --json",
      "description": "Print the result for each agent as JSON"
+    },
+    {
+     "command": "cua-driver connect --replace",
+     "description": "Switch agents that use another Cua Driver to this one"
     }
    ],
    "flags": [
@@ -811,6 +815,12 @@
      "default_value": false,
      "help": "Show what would be connected without changing anything.",
      "name": "dry-run",
+     "short_name": null
+    },
+    {
+     "default_value": false,
+     "help": "Switch an agent that uses another Cua Driver, such as the one inside Cua Spaces, to this one.",
+     "name": "replace",
      "short_name": null
     },
     {
@@ -824,7 +834,7 @@
    "options": [
     {
      "default_value": null,
-     "help": "Connect only this agent (claude, codex or cursor). Repeat for several.",
+     "help": "Connect only this agent (claude, codex, cursor or droid). Repeat for several.",
      "is_optional": true,
      "name": "client",
      "short_name": null,
@@ -1071,7 +1081,7 @@
        "type": "String"
       }
      ],
-     "discussion": "Cursor motion defaults are saved keys that apply to sessions started afterwards: cursor.motion.style (signature_arc, spring_settle, magnetic, comet_swoop, adaptive, classic), cursor.motion.timing (native, fitts, fixed) and cursor.motion.effects.<trail|glow|magnet|ripple|squish> (on, off, default). Use default for a key to clear it, or cursor.motion default to clear all. A start_session cursor_motion or a set_agent_cursor_motion call overrides the saved default. cursor.badges (minimal, verbose, off) sets the agent cursor badge for every cursor at once; minimal is the default. cursor.float (float at rest and while moving) and cursor.halo (soft glow) are on, off or default and on by default; cursor.marks (action marks) is on, off or default and off by default; cursor.rotate is heading (default), lean, off or default. All apply to every cursor at once.",
+     "discussion": "Cursor motion defaults are saved keys that apply to sessions started afterwards: cursor.motion.style (signature_arc, spring_settle, magnetic, comet_swoop, adaptive, classic), cursor.motion.timing (native, fitts, fixed) and cursor.motion.effects.<trail|glow|magnet|ripple|squish> (on, off, default). Use default for a key to clear it, or cursor.motion default to clear all. A start_session cursor_motion or a set_agent_cursor_motion call overrides the saved default. cursor.badges (minimal, verbose, off) sets the agent cursor badge for every cursor at once; minimal is the default. cursor.float (float at rest and while moving) and cursor.halo (soft glow) are on, off or default and on by default; cursor.rotate is heading (default), lean, off or default. All apply to every cursor at once.",
      "examples": [
       {
        "command": "cua-driver config set max_image_dimension 1568",
@@ -2438,6 +2448,5 @@
    "meaning": "Usage error: an unknown or missing subcommand or argument, or conflicting flags (for example `revoke` without exactly one of `--session` or `--all`, or an authorization flag passed to `mcp`)."
   }
  ],
- "name": "cua-driver",
- "version": "0.45.1"
+ "name": "cua-driver"
 }

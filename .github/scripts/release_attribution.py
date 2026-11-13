@@ -1353,6 +1353,29 @@ def extract_changelog_section(changelog: Path, version: str) -> str:
     return match.group(0).rstrip() + "\n"
 
 
+def load_changelog_addenda(path: Path | None, tag: str) -> dict[int, str]:
+    """Pull requests a reviewed file on main accepts as tagged but not in the changelog.
+
+    A pull request that merges after Release Please built its PR is in the tag
+    but not in the immutable changelog. The file lives in the release-control
+    checkout (main), never in the tag, so a reviewed PR is the only way to add
+    an entry. Each entry needs a reason. The release notes still list the pull
+    request because they come from git.
+    """
+    if path is None:
+        return {}
+    entry = json.loads(path.read_text()).get(tag) or {}
+    pulls = entry.get("pull_requests") or {}
+    if not isinstance(pulls, dict):
+        raise ReleaseError(f"{path}: {tag} pull_requests must map a number to a reason")
+    result: dict[int, str] = {}
+    for number, reason in pulls.items():
+        if not str(number).isdigit() or not isinstance(reason, str) or not reason.strip():
+            raise ReleaseError(f"{path}: {tag} needs a numeric pull request and a reason")
+        result[int(number)] = reason.strip()
+    return result
+
+
 def changelog_references_change(
     changelog_section: str,
     pull_number: int,
@@ -1396,6 +1419,7 @@ def build_manifest(
     release_metadata_paths: Sequence[str] = (),
     asset_dir: Path | None = None,
     channel: str = "stable",
+    changelog_addenda: Mapping[int, str] | None = None,
 ) -> dict[str, Any]:
     if channel not in {"stable", "nightly"}:
         raise ReleaseError(f"unsupported release channel: {channel}")
@@ -1502,7 +1526,8 @@ def build_manifest(
             {
                 int(change["pr"])
                 for change in changes
-                if not changelog_references_change(
+                if int(change["pr"]) not in (changelog_addenda or {})
+                and not changelog_references_change(
                     changelog_content,
                     int(change["pr"]),
                     pull_commits[int(change["pr"])],
@@ -1859,6 +1884,7 @@ def collect_command(args: argparse.Namespace) -> None:
         release_metadata_paths=args.release_metadata_path,
         asset_dir=args.asset_dir.resolve() if args.asset_dir else None,
         channel=args.channel,
+        changelog_addenda=load_changelog_addenda(args.changelog_addenda, args.tag),
     )
     write_json(args.output, manifest)
     print(f"wrote {args.output} with {len(manifest['changes'])} changes")
@@ -2028,6 +2054,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="version or changelog file a no-release release-control PR may edit",
     )
     collect.add_argument("--changelog", type=Path, required=True)
+    collect.add_argument(
+        "--changelog-addenda",
+        type=Path,
+        help="reviewed JSON on main naming pull requests a tag carries that its changelog lacks",
+    )
     collect.add_argument(
         "--config", type=Path, default=Path(".github/release-attribution-config.json")
     )

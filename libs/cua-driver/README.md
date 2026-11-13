@@ -5,7 +5,7 @@ Background computer-use driver for any agents. Speaks MCP over stdio; drives nat
 See [MCP protocol and skills](docs/mcp-protocol-and-skills.md) for the modern
 stdio profile, legacy compatibility, bundled skill resources, and HTTP limits.
 
-## Optional visual perception
+## Optional visual perception (frozen: no new work)
 
 The default MIT-licensed Driver works without model artifacts. An explicitly
 installed `cua-perception` extension can parse one retained native window or
@@ -39,6 +39,23 @@ see the extension contract for the stable codes.
 
 **[Documentation](https://cua.ai/docs/cua-driver)** - Installation, guides, and API reference.
 
+## Get Cua Driver
+
+**Get Cua Driver with Cua Spaces (recommended on a Mac).** Cua Spaces for Mac
+(macOS 26 or later) carries Cua Driver, runs it in the background, keeps it up
+to date and connects Claude Code and Codex to it. Download it from
+[cua.ai/download](https://cua.ai/download). Permissions are granted to Cua Spaces,
+and its Cua Driver page shows whether Cua Driver is running, with **Repair** and
+**Test now**. See [how the install works](https://cua.ai/docs/cua-driver/guides/cua-spaces).
+
+**Install Cua Driver on its own.** For Windows, Linux, older macOS, or if you
+don't want Cua Spaces:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"   # macOS and Linux
+irm https://cua.ai/driver/install.ps1 | iex                       # Windows (PowerShell)
+```
+
 ## Integration surfaces
 
 - **Cua as an agent MCP or CLI:** MCP-capable agents connect directly to
@@ -56,6 +73,8 @@ suffix. MCP remains implemented by the `cua-driver` executable as the
 runtime-neutral agent boundary.
 
 ## Computer History macOS preview
+
+> **Deprecated.** Computer History is deprecated. It is off by default, agents are no longer told to call `history_status` or `history_query`, and both tools will be removed in the release after 26 Nov 2026. To remove stored data, run `cua-driver history delete --yes`.
 
 Nightly macOS builds can provide an opt-in, encrypted history of actions
 performed through Cua Driver. The preview stores a strict metadata allowlist,

@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.4.4](https://github.com/trycua/cua/compare/bench-v0.4.3...bench-v0.4.4) (2026-11-13)
+
+
+### Bug Fixes
+
+* **deps:** upgrade pillow to 13.0.0 and soupsieve to 4.1 (CVE-2026-128066, CVE-2026-128067, CVE-2026-126190) ([#7598](https://github.com/trycua/cua/issues/7598)) ([4d14f88](https://github.com/trycua/cua/commit/4d14f88d9482528ea0e9bdf2c7020d002bcd488d))
+
+## [0.4.3](https://github.com/trycua/cua/compare/bench-v0.4.2...bench-v0.4.3) (2026-11-13)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** let the driver extra install Cua Driver 0.48 and 0.49 ([#7588](https://github.com/trycua/cua/issues/7588)) ([db29132](https://github.com/trycua/cua/commit/db29132bcf91da170cd7fd98fe7129db08d80c91))
+
+## [0.4.2](https://github.com/trycua/cua/compare/bench-v0.4.1...bench-v0.4.2) (2026-11-12)
+
+
+### Bug Fixes
+
+* **sandbox:** unpin cua-driver in the driver extra so installs resolve ([#7464](https://github.com/trycua/cua/issues/7464)) ([934d527](https://github.com/trycua/cua/commit/934d527c41320cd17461367f6fe171175eb2b978))
+
 ## [0.4.1](https://github.com/trycua/cua/compare/bench-v0.4.0...bench-v0.4.1) (2026-11-10)
 
 

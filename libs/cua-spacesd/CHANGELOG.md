@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.16.1](https://github.com/trycua/cua/compare/cua-spacesd-v0.16.0...cua-spacesd-v0.16.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* **cua-spacesd:** note that the release build installs cross targets for the pinned toolchain ([#7578](https://github.com/trycua/cua/issues/7578)) ([fccd2eb](https://github.com/trycua/cua/commit/fccd2eb27faab70b3a6b7b3cc7a4d840b4f914fd))
+
+## [0.16.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.15.5...cua-spacesd-v0.16.0) (2026-11-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cua-driver:** removed the `escalate_session` and `get_session_state` MCP tools and SDK methods, the `EscalateSessionInput`, `GetSessionStateInput` and `EscalationReason` types, the `escalation_reason` and `escalation_detail` fields of the `start_session` result, the `experimental_pip` and `experimental_pip_geometry` config keys, and the picture-in-picture preview window.
+
+### Features
+
+* **cua-driver:** remove picture-in-picture preview and deprecated session tools ([#7481](https://github.com/trycua/cua/issues/7481)) ([d2fb9e2](https://github.com/trycua/cua/commit/d2fb9e24f0fdf2673aa89911b859bd2661311c14))
+
+## [0.15.5](https://github.com/trycua/cua/compare/cua-spacesd-v0.15.4...cua-spacesd-v0.15.5) (2026-11-12)
+
+
+### Bug Fixes
+
+* **cua-driver:** load libxkbcommon's 1.0 text functions at run time so the driver starts on Ubuntu 20.04 ([#6498](https://github.com/trycua/cua/issues/6498)) ([b9e38d1](https://github.com/trycua/cua/commit/b9e38d1ac1eb9e5683e0b7394ecf50b360da2881))
+
+## [0.15.4](https://github.com/trycua/cua/compare/cua-spacesd-v0.15.3...cua-spacesd-v0.15.4) (2026-11-12)
+
+
+### Bug Fixes
+
+* **cua-spacesd:** request a keyframe while a viewer waits for one ([#7415](https://github.com/trycua/cua/issues/7415)) ([a8fa23c](https://github.com/trycua/cua/commit/a8fa23c124923a8889dd3cb3d35eb8aa0235ff0d))
+
+## [0.15.3](https://github.com/trycua/cua/compare/cua-spacesd-v0.15.2...cua-spacesd-v0.15.3) (2026-11-12)
+
+
+### Bug Fixes
+
+* **cua-vmm:** run the engine helper's chroot from PATH and build sandbox overlays on 24.04 ([#7409](https://github.com/trycua/cua/issues/7409)) ([10cd739](https://github.com/trycua/cua/commit/10cd739d46db34a0373245531c8219babf606c1f))
+
+## [0.15.2](https://github.com/trycua/cua/compare/cua-spacesd-v0.15.1...cua-spacesd-v0.15.2) (2026-11-11)
+
+
+### Bug Fixes
+
+* **cua-spacesd-doctor:** type into the form only after its entry holds keyboard focus ([#7322](https://github.com/trycua/cua/issues/7322)) ([0470fc6](https://github.com/trycua/cua/commit/0470fc64e2ad0486b655182a5cc6321711378223))
+
 ## [0.15.1](https://github.com/trycua/cua/compare/cua-spacesd-v0.15.0...cua-spacesd-v0.15.1) (2026-11-10)
 
 

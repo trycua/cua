@@ -66,7 +66,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends genisoimage qemu-utils qemu-system-x86 ovmf
-          sudo chmod 666 /dev/kvm
+          "$GITHUB_WORKSPACE/scripts/images/enable-kvm.sh" --require
       - name: Build cua and channel_bench
         working-directory: libs/cua
         run: |

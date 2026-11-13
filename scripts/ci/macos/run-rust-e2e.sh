@@ -3,6 +3,8 @@
 # macOS harness tests use the installed, TCC-authorized cua-driver daemon path.
 # The install must embed CUA_DRIVER_SOURCE_SHA; the Lume wrapper owns that step.
 set -euo pipefail
+# macOS shells default to 256 open files, too few for the cua-spaces test binaries (see scripts/ci/tests/test_nofile_limit.py).
+[ "$(ulimit -Sn)" = unlimited ] || [ "$(ulimit -Sn)" -ge 10240 ] || ulimit -Sn 10240 2>/dev/null || ulimit -Sn "$(ulimit -Hn)" 2>/dev/null || true # nofile-limit
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
@@ -423,6 +425,9 @@ EOF
       --nocapture --test-threads=1
     run_test installed-app-textedit-hotkey-sibling cargo test -p cua-driver-e2e --test installed_app_textedit_macos_test -- \
       --ignored --exact foreground_window_hotkey_reaches_an_unfocused_sibling_of_the_frontmost_app \
+      --nocapture --test-threads=1
+    run_test installed-app-screen-sharing cargo test -p cua-driver-e2e --test screen_sharing_macos_test -- \
+      --ignored --exact foreground_type_text_reaches_a_minimized_screen_sharing_window \
       --nocapture --test-threads=1
     # These rows assert through System Events and CoreGraphics oracles rather
     # than typed matrix results, so they must not leave unowned trajectories.

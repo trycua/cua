@@ -70,6 +70,8 @@ env:
 
 jobs:
   detect:
+    # Copies of this repo (private mirrors) must never run or file issues.
+    if: github.repository == 'trycua/cua'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:

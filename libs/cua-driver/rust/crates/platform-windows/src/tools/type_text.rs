@@ -103,6 +103,7 @@ impl Tool for TypeTextTool {
                 Ok(hwnd) => hwnd,
                 Err(error) => return ToolResult::error(error.to_string()),
             };
+            position_keyboard_cursor(&self.state, &args, hwnd, None).await;
             let text_len = text.chars().count();
             if args.get("element_token").is_none()
                 && args.get("x").is_none()
@@ -150,6 +151,9 @@ impl Tool for TypeTextTool {
             Err(e) => return e,
         };
         let (elem_idx, hwnd_opt, admitted) = resolved.into_parts(args.opt_u64("window_id"));
+        if let Some(refusal) = super::impl_::refuse_if_disabled(pid, &admitted, "type_text").await {
+            return refusal;
+        }
         let delivery = DeliveryMode::from_args(&args);
 
         // ── px form: focus by pixel-click, then type into the focused element ──

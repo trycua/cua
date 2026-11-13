@@ -11,7 +11,7 @@ import type { RiskyRequest } from "../ops/nudges";
 import { demoAgentThreads } from "./demo/agent-threads";
 import { demoAgentSignIn } from "./demo/agent-sign-in";
 import { Emitter, HostError, UnsupportedOperationError, type DataAdapter } from "../adapter";
-import type { AgentSetupRow, ConnectionReport, PersistentAgent } from "../contracts/agents";
+import type { AgentSetupRow, ConnectionReport, ConnectPartResult, ConnectResult, PersistentAgent } from "../contracts/agents";
 import type { MachineRow, OnboardingState } from "../contracts/host";
 import type { KvItem } from "../contracts/keyvault";
 import type { UpdateState } from "../contracts/settings";
@@ -165,7 +165,7 @@ export interface DemoOptions {
    * built-in Linux runtime does not start; later attempts work,
    * `?demo=create-fail-runtime`) or `disk` (every create is short of disk
    * space, `?demo=create-fail-disk`). */
-  failCreates?: "runtime-once" | "disk" | "unsupported";
+  failCreates?: "runtime-once" | "disk" | "unsupported" | "windows-limited";
   /** The CLI the demo host reports: the released app's `cua` on PATH unless
    * set; `local` is a Local build's (`?demo=cli-local`), `missing` one
    * not installed (`?demo=cli-missing`). */
@@ -234,6 +234,9 @@ export const DEMO_CREATE_FAILURES = {
   /** The daemon's refusal on a Mac that can't run virtual computers (#6323, `?demo=create-fail-unsupported`). */
   unsupported:
     "This Mac can't run Spaces itself, because it can't run virtual computers. That happens when the Mac is itself a virtual machine, or is an older Intel Mac. Add another computer to your account, or link your own cloud, and create the Space there.",
+  /** Microsoft refuses the Windows download until a disc image is chosen (`?demo=create-fail-windows`). */
+  windowsLimited:
+    "local runtime: build failed at windows iso: Microsoft is limiting Windows downloads from this network (Sentinel marked this request as rejected.) right now. Try again in about 42 minutes, or download the Windows ISO yourself (https://www.microsoft.com/software-download/windows11arm64) and save it in your Downloads folder: Cua finds it. With the command line: cua sb create windows:11 --iso ~/Downloads/<the file>.iso",
   disk: "not enough disk space to pull ghcr.io/trycua/macos:26: it needs about 30.0 GB and cua keeps 5.0 GB free, but only 12.4 GB is available on /Users/me/.lume (run `cua cache prune` to free space, or lower CUA_DISK_MIN_FREE)",
 } as const;
 
@@ -419,7 +422,9 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
         ? "disk"
         : flags.has("create-fail-unsupported")
           ? "unsupported"
-          : undefined,
+          : flags.has("create-fail-windows")
+            ? "windows-limited"
+            : undefined,
     ...(flags.has("intel-mac") ? { platform: { os: "macos" as const, arch: "amd64" as const } } : {}),
     ...(flags.has("linux-pc") ? { platform: { os: "linux" as const, arch: "amd64" as const } } : {}),
     ...(flags.has("update-ready")
@@ -489,6 +494,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     identity: options.signedIn === false ? undefined : DEMO_IDENTITY,
     onboarding: { completed: options.onboarded !== false, mode: options.onboarded === false ? null : "client" },
     creates: new Map(),
+    windowsIsoChosen: false,
     agents: demoPersistentAgents(now()),
     // A named allowance is for showing the prompts, which wait for no agent run.
     runs: options.usage ? [] : demoRunRecords(now()),
@@ -658,9 +664,11 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
             ? DEMO_CREATE_FAILURES.disk
             : options.failCreates === "unsupported"
               ? DEMO_CREATE_FAILURES.unsupported
-              : options.failCreates === "runtime-once" && createAttempts++ === 0
-                ? DEMO_CREATE_FAILURES.runtime
-                : null;
+              : options.failCreates === "windows-limited" && !state.windowsIsoChosen
+                ? DEMO_CREATE_FAILURES.windowsLimited
+                : options.failCreates === "runtime-once" && createAttempts++ === 0
+                  ? DEMO_CREATE_FAILURES.runtime
+                  : null;
         if (failure) {
           for (const fraction of [0, 0.3]) {
             emit({ type: "spaces.createProgress", progress: { pendingId, phase: "preparing", fraction, detail: "preparing", space: id } });
@@ -1062,21 +1070,23 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     },
     "agents.setup": () => state.agentSetup.map((r) => ({ ...r, ...(options.noAgents ? { installed: false } : {}) })),
     "agents.status": () => options.connections ?? demoConnections(state.agentSetup, state.imported, now()),
-    "agents.connect": async ({ agents, signIn, skills, mcp }) => {
+    "agents.connect": async ({ agents, signIn, skills, mcp, driver }) => {
       await wait(step);
-      // Only Cua's skills or only its MCP server (an app's page's switches).
-      const part = skills === false || mcp === false;
+      const wantSkills = skills !== false;
+      const wantMcp = mcp !== false;
+      // Only Cua's skills or only its MCP server (an app's page's switches, or one row of setup's checklist).
+      const part = !wantSkills || !wantMcp;
       // `?demo=agents-readonly`: an app whose config Cua can't write fails, as with `agents.configure`.
       state.agentSetup = state.agentSetup.map((r) =>
-        r.installed && agents.includes(r.agent)
+        r.installed && agents.includes(r.agent) && (wantSkills || wantMcp)
           ? state.readOnlyAgents.includes(r.agent)
             ? { ...r, configured: false, skillsInstalled: 0, detail: "Permission denied (os error 13)" }
             : part
               ? {
                   ...r,
-                  configured: false,
-                  skillsInstalled: skills === false ? 0 : r.skillsTotal,
-                  detail: skills === false ? "MCP server set up" : "Skills set up",
+                  configured: r.configured || (wantMcp && r.skillsInstalled === r.skillsTotal),
+                  skillsInstalled: wantSkills ? r.skillsTotal : r.skillsInstalled,
+                  detail: wantSkills ? "Skills set up" : "MCP server set up",
                 }
               : { ...r, configured: true, skillsInstalled: r.skillsTotal, detail: "Skills and MCP server set up" }
           : r,
@@ -1092,29 +1102,64 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
         ];
         emit({ type: "agents.changed" });
       }
+      // Cua Driver uses this Mac's Screen Recording and Accessibility (`driver.permissions`).
+      const driverPermissions = state.host.permissions.filter((p) => p.id === "screen-recording" || p.id === "accessibility").every((p) => p.granted);
       return agents.map((agent) => {
         const row = state.agentSetup.find((r) => r.agent === agent);
-        if (row && state.readOnlyAgents.includes(agent)) {
-          return { agent, tools_ok: false, tools_line: `Couldn't add Cua to ${row.mcpConfig ?? agent}: Permission denied (os error 13)`, sign_in: null };
-        }
-        const copyable = agent === "hermes" || (agent === "claude-code" && claudeFound) || (agent === "codex" && Boolean(row?.signedIn));
+        const readOnly = Boolean(row && state.readOnlyAgents.includes(agent));
+        const where = row?.mcpConfig ?? null;
+        const parts: ConnectPartResult[] = [];
+        const denied = `Couldn't write ${where ?? agent}: Permission denied (os error 13)`;
+        if (wantSkills)
+          parts.push(
+            row?.skillsDir
+              ? { part: "skills", status: readOnly ? "failed" : "done", where: row.skillsDir, line: readOnly ? denied : null }
+              : { part: "skills", status: "skipped", where: null, line: `${row?.name ?? agent} doesn't use skills` },
+          );
+        if (wantMcp)
+          parts.push(
+            where
+              ? { part: "mcp", status: readOnly ? "failed" : "done", where, line: readOnly ? denied : null }
+              : { part: "mcp", status: "skipped", where: null, line: `${row?.name ?? agent} doesn't use MCP servers` },
+          );
+        if (driver && where)
+          parts.push(
+            readOnly
+              ? { part: "driver", status: "failed", where, line: denied }
+              : driverPermissions
+                ? { part: "driver", status: "done", where, line: null }
+                : { part: "driver", status: "needs_permission", where, line: "Allow Screen Recording and Accessibility so agents can see and use apps." },
+          );
+        const copyable = (agent === "claude-code" && claudeFound) || agent === "hermes";
         if (signIn && copyable && !state.imported.includes(agent)) state.imported = [...state.imported, agent];
+        const sign_in: ConnectResult["sign_in"] =
+          !signIn || !["hermes", "claude-code", "codex"].includes(agent)
+            ? null
+            : copyable
+              ? { imported: { source: agent, env: "", label: "", expires_ms: null, added_ms: now() }, refused: null, line: null }
+              : agent === "claude-code"
+                ? {
+                    imported: null,
+                    refused: "not_signed_in",
+                    line: "Claude Code isn't signed in on This Mac. Run `claude auth login` in Terminal, then try again.",
+                  }
+                : { imported: null, refused: "not_yet", line: "Codex signs in with a code made for Cua." };
+        if (signIn)
+          parts.push(
+            !sign_in
+              ? { part: "sign_in", status: "skipped", where: null, line: `${row?.name ?? agent} has no sign-in to save` }
+              : sign_in.imported
+                ? { part: "sign_in", status: "done", where: "Keyvault", line: null }
+                : { part: "sign_in", status: "failed", where: null, line: sign_in.line },
+          );
+        if (readOnly)
+          return { agent, tools_ok: false, tools_line: `Couldn't add Cua to ${where ?? agent}: Permission denied (os error 13)`, sign_in: null, parts };
         return {
           agent,
           tools_ok: Boolean(row?.installed),
-          tools_line: row?.installed ? null : `Couldn't add Cua to ${row?.mcpConfig ?? agent}`,
-          sign_in:
-            !signIn || !["hermes", "claude-code", "codex"].includes(agent)
-              ? null
-              : copyable
-                ? { imported: { source: agent, env: "", label: "", expires_ms: null, added_ms: now() }, refused: null, line: null }
-                : agent === "claude-code"
-                  ? {
-                      imported: null,
-                      refused: "not_signed_in",
-                      line: "Claude Code isn't signed in on This Mac. Run `claude auth login` in Terminal, then try again.",
-                    }
-                  : { imported: null, refused: "not_signed_in", line: "No ChatGPT sign-in on This Mac yet." },
+          tools_line: row?.installed ? null : `Couldn't add Cua to ${where ?? agent}`,
+          sign_in,
+          parts,
         };
       });
     },
@@ -1311,6 +1356,8 @@ export interface DemoState
   identity: string | undefined;
   onboarding: OnboardingState;
   creates: Map<string, { cancelled: boolean }>;
+  /** A Windows disc image was chosen (`windows.chooseIso`). */
+  windowsIsoChosen: boolean;
   agents: PersistentAgent[];
   runs: DemoRunRecord[];
   agentSetup: AgentSetupRow[];

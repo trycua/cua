@@ -2097,6 +2097,13 @@ fn harness_appkit_disabled_control_is_published_and_its_press_refused() {
                         "{tool} on a disabled control was not refused as element_disabled: {}",
                         refused.raw
                     );
+                    assert!(
+                        refused.text().contains("\nNext: ")
+                            && refused.structured()["hint"].is_string()
+                            && refused.structured()["next_call"]["tool"] == "get_window_state",
+                        "{tool} refusal gave no next step: {}",
+                        refused.raw
+                    );
                 }
 
                 std::thread::sleep(Duration::from_millis(200));

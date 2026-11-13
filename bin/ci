@@ -865,7 +865,7 @@ def static_checks(changes: Changes, ctx: "Context") -> List[Check]:
                       ci=(("ci-cua-spaces-macos.yml", "node libs/spaces-app-swift/scripts/generate-bindings.mjs --check --skip-build"),)))
 
     # Self-tests for this tool and the CI helper scripts.
-    if changes.touches(r"^(bin/ci$|scripts/ci/|scripts/spdx-headers\.py$|\.github/workflows/)"):
+    if changes.touches(r"^(bin/ci$|scripts/ci/|scripts/spdx-headers\.py$|\.github/workflows/|.*\.sh$)"):
         add(Check("bin-ci-tests", "bin/ci tests and workflow sync", "python3 -m unittest discover -s scripts/ci/tests -q && python3 bin/ci --verify-sync",
                   ci=(("ci-test-scripts.yml", "python3 -m unittest discover -s scripts/ci/tests"),)))
     if changes.touches(r"^\.github/scripts/"):
@@ -976,6 +976,14 @@ def rust_checks(changes: Changes, ctx: "Context") -> List[Check]:
                          clippy_cmd, cwd=root,
                          tools=("cargo",), group=group, tier="build",
                          hint="fix the warnings above; `cargo clippy --fix --allow-dirty` applies the machine-applicable ones"))
+        if root == "libs/cua" and (changes.full or "cua-vmm" in names):
+            # cua-vmm's backends are features; other crates build it with only some on
+            # (cua-ci: just `lume`), so each one alone must lint clean.
+            vmm = "cargo clippy --locked -p cua-vmm --all-targets --no-default-features"
+            out.append(Check(f"rust-vmm-features:{root}", "clippy -D warnings (cua-vmm, each backend feature alone)",
+                             " && ".join(f"{vmm}{f} -- -D warnings" for f in ("", " --features lume", " --features container")),
+                             cwd=root, tools=("cargo",), group=group, tier="build",
+                             hint="gate code that needs a backend feature with #[cfg(feature = \"...\")] (and its else path)"))
         lane = windows_lane(root)
         if lane:
             args, lane_pkgs = lane

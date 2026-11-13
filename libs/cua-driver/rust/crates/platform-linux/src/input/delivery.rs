@@ -67,25 +67,35 @@ pub enum BackgroundUnavailable {
     /// No libei backend (built without `portal-input`, or the portal session
     /// was denied / unavailable). Input has no actuator at all.
     NoLibeiBackend,
+    /// The menu's items only exist once the menu is open, and opening a
+    /// toolkit menu grabs the user's keyboard and pointer for as long as it
+    /// stays open: the user's keystrokes would land in the menu instead of in
+    /// their own window (trycua/cua#7371).
+    MenuOpenGrabsKeyboard,
     /// X11/Chromium does not accept synthetic pointer or keyboard input
     /// addressed to an unfocused window without briefly moving focus, which
     /// background delivery forbids.
     ChromiumInput,
+    /// An XInput2 toolkit (GTK, Qt, LibreOffice VCL) discards synthetic
+    /// XSendEvent pointer input, and this X server has no real
+    /// target-addressed pointer backend (Xvfb / Xtigervnc cannot hot-add the
+    /// agent's uinput pointer), so a wheel or button event would be lost
+    /// (trycua/cua#7369).
+    SyntheticPointerDropped,
     /// The remaining backend can only inject into the globally focused widget.
     FocusedInputOnly,
     /// WebKitGTK rejects synthetic XSendEvent input and no real target-addressed
     /// pointer backend is available in this session.
     WebKitSyntheticInput,
+    /// Qt runs a shortcut in an inactive window only for the agent's own XI2
+    /// master keyboard, which this host cannot add; a synthetic chord arrives
+    /// and fires nothing (trycua/cua#7370).
+    QtInactiveWindowShortcut,
 }
 
 impl BackgroundUnavailable {
     fn code(self) -> &'static str {
-        match self {
-            Self::NoLibeiBackend => "background_unavailable",
-            Self::ChromiumInput => "background_unavailable",
-            Self::FocusedInputOnly => "background_unavailable",
-            Self::WebKitSyntheticInput => "background_unavailable",
-        }
+        "background_unavailable"
     }
     fn detail(self) -> &'static str {
         match self {
@@ -94,17 +104,33 @@ impl BackgroundUnavailable {
                  portal-input, or the xdg-desktop-portal RemoteDesktop session was \
                  unavailable/denied): synthetic input has no actuator"
             }
+            Self::MenuOpenGrabsKeyboard => {
+                "this menu only publishes its items once it is open, and an open menu takes the \
+                 keyboard and pointer from the user until it closes, so their typing would be lost"
+            }
             Self::ChromiumInput => {
                 "Chromium/Electron drops synthetic pointer and keyboard events sent to \
                  a window that does not have the input focus. In the background only \
                  accessibility actions reach it: a left click on a button, link or \
                  other control, by element_token or at its pixel"
             }
+            Self::SyntheticPointerDropped => {
+                "this app reads pointer and wheel input only from real input devices and discards \
+                 synthetic events, and this display server cannot add the agent's own pointer \
+                 device, so the event would be lost"
+            }
             Self::FocusedInputOnly => {
                 "the requested target has no focus-free input backend; the remaining input route can only deliver to the globally focused widget"
             }
             Self::WebKitSyntheticInput => {
                 "WebKitGTK rejects synthetic XSendEvent input and this session has no real target-addressed pointer backend"
+            }
+            Self::QtInactiveWindowShortcut => {
+                "Qt runs a keyboard shortcut sent to a window that is not active only when it \
+                 comes from the agent's own keyboard device, and this display server cannot add \
+                 one (it needs a writable /dev/uinput, which Xvfb and Xtigervnc never offer); \
+                 the synthetic chord would arrive and trigger nothing. For a command that is in \
+                 a menu, invoke_menu runs it in the background"
             }
         }
     }

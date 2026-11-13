@@ -60,6 +60,8 @@ on:
       - "scripts/ci/**"
       - "scripts/spdx-headers.py"
       - "bin/ci"
+      # The open-files guard (scripts/ci/tests/test_nofile_limit.py) reads every shell script.
+      - "**/*.sh"
       - "scripts/ci/macos/**"
       - "libs/cua-driver/tests/perception-demo/**"
       - "libs/cua-s1/ci/**"

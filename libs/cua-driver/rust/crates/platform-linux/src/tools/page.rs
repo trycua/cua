@@ -4,9 +4,7 @@
 //! Linux implementation of the cross-platform `PageBackend` trait.
 //!
 //! Read paths use AT-SPI via the existing `walk_tree` infrastructure
-//! (`crate::atspi`). `execute_javascript` calls the shared
-//! `cua_driver_core::cdp` helper — Chromium/Electron must be launched with
-//! `--remote-debugging-port=N` for that to succeed.
+//! (`crate::atspi`).
 
 use async_trait::async_trait;
 use cua_driver_core::page::{PageBackend, PageReadResult};
@@ -55,8 +53,7 @@ impl PageBackend for LinuxPageBackend {
         if selector.contains("[data-") {
             anyhow::bail!(
                 "`[data-*]` selectors are not reachable via AT-SPI on Linux. \
-                 Use `execute_javascript` for full DOM access (requires the browser \
-                 launched with `--remote-debugging-port`)."
+                 Use get_browser_state and the browser_* tools for full DOM access."
             );
         }
 
@@ -74,8 +71,8 @@ impl PageBackend for LinuxPageBackend {
             anyhow::bail!(
                 "Selector '{selector}' is not supported by Linux AT-SPI role mapping. \
                  Use a simple tag selector (a, button, input, textarea, h1-h6, img, li, \
-                 p, select, *), or `execute_javascript` for full DOM access (requires the \
-                 browser launched with `--remote-debugging-port`)."
+                 p, select, *), or get_browser_state and the browser_* tools for full \
+                 DOM access."
             );
         }
         let lines: Vec<String> = result
@@ -106,56 +103,6 @@ impl PageBackend for LinuxPageBackend {
             lines.join("\n")
         };
         Ok(PageReadResult::text(content))
-    }
-
-    async fn execute_javascript(
-        &self,
-        _pid: i32,
-        _window_id: u64,
-        javascript: &str,
-    ) -> anyhow::Result<String> {
-        let port: u16 = match std::env::var("CUA_DRIVER_CDP_PORT")
-            .ok()
-            .and_then(|s| s.parse::<u16>().ok())
-        {
-            Some(p) => p,
-            None => anyhow::bail!(
-                "Chromium's `execute_javascript` on Linux requires the browser launched \
-                 with `--remote-debugging-port=N`. Relaunch the browser with the flag and \
-                 export CUA_DRIVER_CDP_PORT=N before starting cua-driver, or use \
-                 `get_text` / `query_dom` for read-only access."
-            ),
-        };
-        let result = cua_driver_core::cdp::evaluate(port, javascript, true).await?;
-        Ok(format!("cdp.runtime.evaluate.user_gesture: {result}"))
-    }
-
-    async fn execute_javascript_targeted(
-        &self,
-        pid: i32,
-        window_id: u64,
-        javascript: &str,
-        cdp_port: Option<u16>,
-        target_url_contains: Option<&str>,
-    ) -> anyhow::Result<String> {
-        if cdp_port.is_none() && target_url_contains.is_none() {
-            return self.execute_javascript(pid, window_id, javascript).await;
-        }
-        let port = cdp_port
-            .or_else(|| {
-                std::env::var("CUA_DRIVER_CDP_PORT")
-                    .ok()
-                    .and_then(|value| value.parse::<u16>().ok())
-            })
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "targeted execute_javascript on Linux requires cdp_port or CUA_DRIVER_CDP_PORT"
-                )
-            })?;
-        let result =
-            cua_driver_core::cdp::evaluate_targeted(port, javascript, true, target_url_contains)
-                .await?;
-        Ok(format!("cdp.runtime.evaluate.user_gesture: {result}"))
     }
 }
 

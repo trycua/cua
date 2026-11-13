@@ -59,6 +59,11 @@ pub struct CatalogEntry {
     /// the Lume runtime does on first use) and is pulled once it is published.
     #[serde(default)]
     pub derived_from: Option<String>,
+    /// How this image is made on the user's machine when nothing is pulled:
+    /// `windows-iso` installs Windows unattended from an ISO on first use
+    /// ([`crate::windows`]). Such an entry resolves while `published` is false.
+    #[serde(default)]
+    pub local_build: Option<String>,
 }
 
 /// The guest distribution a catalog entry names (`distro`).
@@ -130,7 +135,7 @@ pub fn find(reference: &str) -> Option<&'static CatalogEntry> {
 /// so do the ones built on the user's machine ([`derived_from`]).
 pub fn require_published(reference: String) -> Result<String> {
     match find(&reference) {
-        Some(e) if !e.published && e.derived_from.is_none() => {
+        Some(e) if !e.published && e.derived_from.is_none() && e.local_build.is_none() => {
             Err(ImageError::NotPublished { reference })
         }
         _ => Ok(reference),
@@ -283,6 +288,28 @@ mod tests {
     }
 
     #[test]
+    fn windows_local_builds_resolve_while_unpublished() {
+        let built: Vec<_> = entries()
+            .iter()
+            .filter(|e| e.local_build.is_some())
+            .collect();
+        assert!(built.len() >= 2);
+        for e in built {
+            assert_eq!(e.os, "windows");
+            assert!(!e.published, "{}", e.reference);
+            assert_eq!(e.local_build.as_deref(), Some("windows-iso"));
+            let tag = e.reference.rsplit(':').next().unwrap();
+            assert!(crate::windows::lookup(tag).is_some_and(|v| v.builds_locally()));
+            assert!(require_published(e.reference.clone()).is_ok());
+            // The create path reads the guest OS from here: a local build has
+            // no image metadata to say it is Windows.
+            assert_eq!(catalog_os(&e.reference).as_deref(), Some("windows"));
+        }
+        // The published default is pulled, never built.
+        assert!(find("ghcr.io/trycua/windows:2022").is_some_and(|e| e.local_build.is_none()));
+    }
+
+    #[test]
     fn every_entry_names_its_distro() {
         for e in entries() {
             let d = e
@@ -323,6 +350,7 @@ mod tests {
             sizes: None,
             gpu: None,
             derived_from: None,
+            local_build: None,
             distro: Some(Distro {
                 id: id.into(),
                 name: n.into(),

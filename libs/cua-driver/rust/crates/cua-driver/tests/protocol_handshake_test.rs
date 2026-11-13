@@ -132,3 +132,47 @@ fn page_unknown_action_error() {
         "error text should mention 'Unknown action': {text}"
     );
 }
+
+#[test]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn deprecated_tools_are_marked_in_tools_list() {
+    let Some(mut d) = RawDriver::spawn() else {
+        return;
+    };
+
+    d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    d.recv();
+    d.send(&serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}));
+    let resp = d.recv();
+    let tools = resp["result"]["tools"].as_array().expect("tools array");
+
+    for name in [
+        "replay_trajectory",
+        "install_ffmpeg",
+        "get_accessibility_tree",
+    ] {
+        let tool = tools
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .unwrap_or_else(|| panic!("{name} must still be served until its removal"));
+        assert_eq!(tool["deprecated"]["removal_after"], "2026-11-26", "{name}");
+        assert!(
+            tool["deprecated"]["replacement"]
+                .as_str()
+                .is_some_and(|text| !text.is_empty()),
+            "{name} must name its replacement"
+        );
+        assert!(
+            tool["description"]
+                .as_str()
+                .unwrap()
+                .starts_with("DEPRECATED, removed in the first release after 26 Nov 2026"),
+            "{name}: {}",
+            tool["description"]
+        );
+    }
+    let page = tools.iter().find(|tool| tool["name"] == "page").unwrap();
+    assert!(page.get("deprecated").is_none());
+    let click = tools.iter().find(|tool| tool["name"] == "click").unwrap();
+    assert!(click.get("deprecated").is_none());
+}

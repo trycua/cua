@@ -16,6 +16,8 @@
 //!   Past that the viewer stops sending dependent frames and resumes on a
 //!   keyframe. A client that stops acking for 4 s is stalled and is probed
 //!   with one keyframe every 2 s.
+//! - A viewer waiting for a keyframe with room in its ack window asks for
+//!   one on every maintenance tick (the session rate limits the asks).
 //! - Packed/PNG frames are independent: the queue keeps only the newest one.
 //!
 //! Audio keeps at most 200 ms per track; the oldest packet is dropped past
@@ -447,6 +449,20 @@ impl ViewerShared {
                         needs_keyframe = true;
                     }
                 }
+            }
+            // A viewer that could take a frame but is waiting for a keyframe
+            // keeps asking: the drop that set the wait may not have asked (ack
+            // window), or its ask was swallowed by the session's rate limit.
+            let window_open = !queues.ack.enabled
+                || (queues.ack.stalled_since.is_none()
+                    && queues.ack.in_flight.len() < ack_allowance(&queues.ack));
+            if self.codec == VideoCodec::H264
+                && queues.awaiting_keyframe
+                && window_open
+                && queues.close.is_none()
+                && !queues.terminated
+            {
+                needs_keyframe = true;
             }
         }
         if notify {

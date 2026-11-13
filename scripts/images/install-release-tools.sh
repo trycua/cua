@@ -27,6 +27,16 @@ if [ "$PUSH_ONLY" = 0 ]; then
 fi
 sudo apt-get update -qq
 sudo apt-get install -y -qq --no-install-recommends "${pkgs[@]}"
+# oras needs Go 1.25 or later and the runner's default `go` is older, so `go install` would
+# download a newer toolchain through proxy.golang.org. That 404s for hours after each Go patch
+# release (go1.26.11 on 10 Nov 2026 failed every image release job). The hosted image already
+# carries newer Go releases in its tool cache: use the newest one and never download a toolchain.
+cached_go="$(ls -d "${RUNNER_TOOL_CACHE:-/opt/hostedtoolcache}"/go/*/*/bin 2>/dev/null | sort -V | tail -1 || true)"
+if [ -n "$cached_go" ] && [ -x "$cached_go/go" ]; then
+    export PATH="$cached_go:$PATH" GOTOOLCHAIN=local
+    [ -n "${GITHUB_PATH:-}" ] && echo "$cached_go" >>"$GITHUB_PATH"
+fi
+go version
 gobin="$(go env GOPATH)/bin"
 command -v crane >/dev/null || go install github.com/google/go-containerregistry/cmd/crane@v0.20.6
 command -v oras >/dev/null || go install oras.land/oras/cmd/oras@v1.3.0
@@ -40,7 +50,7 @@ for tool in crane oras; do
 done
 if [ "$PUSH_ONLY" = 0 ]; then
     # KVM for the VM lanes when the runner exposes it; gVisor as a docker runtime.
-    if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+    "$HERE/enable-kvm.sh"
     "$HERE/install-gvisor.sh"
 fi
 if [ "$FREE" = 1 ]; then

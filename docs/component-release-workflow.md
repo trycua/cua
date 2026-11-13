@@ -241,10 +241,12 @@ git show origin/main:libs/lume/src/Update/VersionCheck.swift | \
 ```
 
 Require the exact tagged GitHub release, notarized archives, baked installer
-version, and updater tag prefix and canonical installer path to agree. Unlike
-Cua Driver, Lume's installer may use the repository-wide latest release as a
-fallback after its explicit and baked-version paths; verify the exact tagged
-release and baked version rather than relying on that fallback alone.
+version, and updater tag prefix and canonical installer path to agree. Lume
+releases are published with `make_latest: false`, so they never move the
+repository-wide Latest release. The installer resolves `LUME_VERSION` first.
+On the stable channel it then uses the baked version, and on the nightly channel
+it picks the highest published `nightly-lume-v*` release from the release list.
+Neither path reads `/releases/latest`.
 
 ## Failure recovery
 
@@ -252,6 +254,14 @@ release and baked version rather than relying on that fallback alone.
   job. Do not publish partial artifacts.
 - If current release-control code can safely recover an immutable tag, fix that
   code on `main` and rerun the supported workflow dispatch for the same tag.
+- If the attribution preflight fails with `changelog section is missing pull
+  requests: [N]`, a pull request merged after Release Please built the release
+  PR. The merge queue now catches this before the tag (the `ci-gate` step
+  "Check that the changelog lists every pull request in the queued release").
+  For a tag that already exists, add the pull request with a reason to
+  `.github/releases/changelog-addenda.json` (read from main, never the tag),
+  merge that, and rerun the workflow dispatch with `rebuild_tag` and
+  `rebuild_sha`.
 - If tagged product code or package contents are wrong, land a product fix and
   release a new version. Never move the existing tag.
 - If a registry publish partially succeeds, inventory each exact package and

@@ -432,8 +432,10 @@ jobs:
     # runners are mapped here.
     runs-on: ${{ matrix.os }}
     needs: [quick, reuse]
-    # Tests only: lint runs in rust-lint, in parallel.
-    timeout-minutes: 60
+    # Tests only: lint runs in rust-lint, in parallel. Both legs need more than an hour: the long test
+    # step compiles for 24 to 31 minutes on Windows and about 51 on macOS (warm or cold; the link
+    # dominates), then runs for 13 to 17, after 8 to 12 minutes of earlier steps.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -455,10 +457,15 @@ jobs:
         with:
           components: clippy, rustfmt
           targets: wasm32-unknown-unknown
+      # save-always: the save is the last step, with always(), so a failed or timed-out test step keeps
+      # the warm compile. A save on success only never saved on main (this job had not passed since
+      # 26 Oct), and every run compiled about 30 minutes from nothing.
       - uses: ./.github/actions/rust-cache
+        id: cache
         with:
           workspaces: libs/cua
           shared-key: libs-cua-test
+          save-always: "true"
       - name: Test Spaces discovery and post-create directory failures
         run: cargo test --locked -p cua-spaces --test relay --test cloud_discovery -- --test-threads=4
       - name: Test the mesh, and its scale budgets (offline or unresponsive computers never hold up the rest)
@@ -474,6 +481,9 @@ jobs:
         # one at a time.
         run: cargo test --locked -p cua-spaces --test scale -- --test-threads=1 --nocapture
       - name: Test (embedded, daemon over UDS and loopback, CLI, cluster, Cua Spaces extensions)
+        # A step that runs out of time fails, and the cache save below still runs; a job that runs out
+        # is cancelled with it. The first steps take up to 12 minutes cold, so this leaves the save its time.
+        timeout-minutes: 95
         run: >
           cargo test --locked --no-fail-fast -p cua-sdk -p cua-daemon-core -p cua-daemon -p cua-cli -p cua-spacesd-client
           -p cua-cluster -p cua-spaces-cluster
@@ -512,6 +522,12 @@ jobs:
       - name: Disk left after the build
         if: always() && runner.os == 'Linux'
         run: df -h / && du -sh target
+      - uses: ./.github/actions/rust-cache-save
+        if: ${{ always() && steps.cache.outputs.save == 'true' }}
+        with:
+          key: ${{ steps.cache.outputs.key }}
+          dir: ${{ steps.cache.outputs.dir }}
+          exact-hit: ${{ steps.cache.outputs.exact-hit }}
 
   # What a release publishes to crates.io (cd-cua-sdk.yml): cua-sdk,
   # cua-spacesd-client and every workspace crate they need, packaged and
@@ -767,7 +783,7 @@ jobs:
         with:
           workspaces: libs/cua
           key: cua-sdk-python
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
       # The wheel ships the MIT `cua`; the suite also runs the daemon of the
       # Cua Spaces build (cua-spaces-cli), a Unix-socket test skipped on Windows.
       - name: Build the SDK, fixtures and CLIs

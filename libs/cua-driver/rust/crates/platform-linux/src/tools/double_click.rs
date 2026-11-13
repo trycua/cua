@@ -16,9 +16,9 @@ use super::{
         checked_element_local_coords, coordinate_frame_schema, desktop_frame_requested,
         desktop_frame_unmapped, desktop_to_window_local, element_screen_center_and_rect,
         foreground_budget, hyprland_foreground, input_error_result, prove_token_element,
-        require_point_args, resolve_cursor_key, reveal_pointer_action_for,
+        refuse_if_disabled, require_point_args, resolve_cursor_key, reveal_pointer_action_for,
         reveal_pointer_action_target_for, screenshot_scale, spawn_blocking_bounded,
-        unavailable_chromium_background, unavailable_gtk_pointer_background,
+        unavailable_chromium_background, unavailable_synthetic_pointer_background,
         unavailable_wayland_focused_input_background, unavailable_webkit_background,
         window_local_to_screen, with_pixel_points, x11_pixel_click_no_focus_steal, AimedPoint,
         PointerRoute, ToolState,
@@ -77,7 +77,7 @@ impl Tool for DoubleClickTool {
         if let Some(refusal) = unavailable_webkit_background(pid, delivery) {
             return refusal;
         }
-        if let Some(refusal) = unavailable_gtk_pointer_background(pid, delivery) {
+        if let Some(refusal) = unavailable_synthetic_pointer_background(pid, delivery) {
             return refusal;
         }
         if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, true) {
@@ -102,6 +102,9 @@ impl Tool for DoubleClickTool {
             Ok(token) => token,
             Err(refusal) => return refusal,
         };
+        if let Some(refusal) = refuse_if_disabled(pid, &resolved, "double_click").await {
+            return refusal;
+        }
         let window_id_resolved: Option<u64> = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => {
                 Some(*window_id)

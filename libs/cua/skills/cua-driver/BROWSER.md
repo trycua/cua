@@ -488,11 +488,11 @@ AX/PX ladder for browser chrome.
 The legacy `page` tool remains a compatibility surface for older clients. Do
 not start new browser workflows with it: its backend and trust semantics are
 less precise than the typed browser tools, and it does not replace exact
-window binding. Its mutations are disabled by default. Only a trusted daemon
-operator can enable the temporary compatibility path with
-`CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1` before daemon startup. Restart Cua
-Driver after changing the flag. It does not add typed endpoint ownership,
-capabilities, or existing-profile consent.
+window binding. It is read-only: only `get_text` and `query_dom` remain, and
+they are the way to read Safari and Firefox pages. Its page actions (run
+JavaScript, click, type) were removed, along with the
+`CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS` switch; act on a page with the typed
+`browser_*` tools.
 
 ## Support boundaries
 

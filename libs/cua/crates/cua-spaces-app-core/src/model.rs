@@ -500,6 +500,9 @@ pub enum CreateFixAction {
     OpenUrl,
     /// Opens the failed create's details (the diagnostic report to review).
     Details,
+    /// Asks for a Windows ISO the person downloaded (the host's file picker),
+    /// remembers it for the image, and runs the create again with it.
+    ChooseWindowsIso,
 }
 
 /// The fix for a create that keeps failing the same way: one plain
@@ -516,6 +519,16 @@ pub struct CreateFix {
     /// The command to copy or the page to open.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
+    /// Keep Try again next to the button: the fix is something to do first
+    /// (download a file), after which the same create is tried again.
+    #[serde(default)]
+    pub keep_retry: bool,
+    /// A second button beside the first: its words (with `link_url`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link_label: Option<String>,
+    /// The page that second button opens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link_url: Option<String>,
 }
 
 /// One row of the SDK's `list_spaces`.

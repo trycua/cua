@@ -14,6 +14,7 @@ use cua_driver_core::browser::{
     BrowserProduct, BrowserRefusal, BrowserRefusalCode, BrowserSetupDescriptor,
     EXISTING_PROFILE_SETUP_READY_TIMEOUT,
 };
+use cua_driver_core::security_prompt::PromptInput;
 
 use crate::ax::bindings::{
     copy_binary_attr, copy_string_attr, element_screen_center, focused_element_of_pid,
@@ -1185,7 +1186,9 @@ impl SetupUiHandle {
                                             );
                                         }
                                         crate::input::mouse::click_at_xy_desktop_preserving_cursor(
-                                            x, y,
+                                            PromptInput::Refuse,
+                                            x,
+                                            y,
                                         )?;
                                         std::thread::sleep(Duration::from_millis(60));
                                         Ok(())
@@ -1707,7 +1710,11 @@ fn set_remote_debugging(
                                         "the exact address field did not own keyboard focus"
                                     );
                                 }
-                                crate::input::keyboard::press_key_global("a", &["cmd"])?;
+                                crate::input::keyboard::press_key_global(
+                                    PromptInput::Refuse,
+                                    "a",
+                                    &["cmd"],
+                                )?;
                                 std::thread::sleep(Duration::from_millis(30));
                                 crate::input::keyboard::type_text(pid, descriptor.setup_url)?;
                                 // The omnibox applies queued keystrokes
@@ -1729,7 +1736,11 @@ fn set_remote_debugging(
                                         descriptor.setup_url.chars().count()
                                     );
                                 }
-                                crate::input::keyboard::press_key_global("return", &[])?;
+                                crate::input::keyboard::press_key_global(
+                                    PromptInput::Refuse,
+                                    "return",
+                                    &[],
+                                )?;
                                 std::thread::sleep(Duration::from_millis(100));
                                 Ok(())
                             },
@@ -1855,7 +1866,11 @@ fn set_remote_debugging(
                                             "the approved browser lost foreground before the setup click"
                                         );
                                     }
-                                    crate::input::mouse::click_at_xy_desktop_preserving_cursor(x, y)?;
+                                    crate::input::mouse::click_at_xy_desktop_preserving_cursor(
+                                        PromptInput::Refuse,
+                                        x,
+                                        y,
+                                    )?;
                                     std::thread::sleep(Duration::from_millis(60));
                                     Ok(())
                                 },

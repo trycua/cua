@@ -241,14 +241,11 @@ async fn check_screen_capture_capability() -> CheckEntry {
     // we use for ax_capability, but the consumer-facing message and
     // hint differ so future drift between the two doesn't break either
     // contract.
-    let x11_ok = tokio::task::spawn_blocking(probe_x11_connect)
+    let root = tokio::task::spawn_blocking(probe_x11_root_read)
         .await
-        .unwrap_or(false);
-    if x11_ok {
-        return CheckEntry::pass(
-            NAME_SCREEN_CAPTURE_CAPABILITY,
-            "X11 reachable; screen capture path is functional.",
-        );
+        .unwrap_or(X11RootRead::Unreachable);
+    if let Some(entry) = x11_capture_entry(root) {
+        return entry;
     }
     let hint = if crate::desktop::desktop() != crate::desktop::Desktop::X11 {
         "Pure Wayland session: opt into the experimental Wayland backend by \
@@ -261,6 +258,48 @@ async fn check_screen_capture_capability() -> CheckEntry {
         "X11 is not reachable; screen capture will fail.",
         hint,
     )
+}
+
+/// What a one-pixel read of the X11 root window found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum X11RootRead {
+    Readable,
+    /// The server refused the read (rootless Xwayland).
+    Unreadable,
+    Unreachable,
+}
+
+/// The X11 capture verdict, or `None` when X11 is not reachable.
+fn x11_capture_entry(root: X11RootRead) -> Option<CheckEntry> {
+    match root {
+        X11RootRead::Readable => Some(CheckEntry::pass(
+            NAME_SCREEN_CAPTURE_CAPABILITY,
+            "X11 reachable and the root window is readable; screen capture path is functional.",
+        )),
+        X11RootRead::Unreadable => Some(CheckEntry::pass(
+            NAME_SCREEN_CAPTURE_CAPABILITY,
+            "X11 reachable, but the root window cannot be read (rootless Xwayland); \
+             desktop capture composes the X11 windows only. Native Wayland windows \
+             are missing from it, and X11 windows under them show through; set \
+             CUA_DRIVER_RS_ENABLE_WAYLAND=1 for compositor capture where the \
+             compositor offers it.",
+        )),
+        X11RootRead::Unreachable => None,
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn probe_x11_root_read() -> X11RootRead {
+    match crate::capture::x11_root_unreadable() {
+        Ok(false) => X11RootRead::Readable,
+        Ok(true) => X11RootRead::Unreadable,
+        Err(_) => X11RootRead::Unreachable,
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn probe_x11_root_read() -> X11RootRead {
+    X11RootRead::Unreachable
 }
 
 /// The KWin adapter's switch, as the capture dispatch reads it.
@@ -758,6 +797,28 @@ mod tests {
 
     const TURN_ON_AGAIN: &str = "KWin 6.7 and older refuse this executable and capture \
          falls back; run `cua-driver kwin-capture on` again.";
+
+    #[test]
+    fn an_unreadable_x11_root_is_named_instead_of_reported_as_plain_functional() {
+        let readable = x11_capture_entry(X11RootRead::Readable).unwrap();
+        assert_eq!(readable.status, CheckStatus::Pass);
+        assert!(
+            readable.message.contains("root window is readable"),
+            "{}",
+            readable.message
+        );
+
+        let unreadable = x11_capture_entry(X11RootRead::Unreadable).unwrap();
+        assert_eq!(unreadable.status, CheckStatus::Pass);
+        assert!(
+            unreadable.message.contains("root window cannot be read")
+                && unreadable.message.contains("composes the X11 windows"),
+            "{}",
+            unreadable.message
+        );
+
+        assert!(x11_capture_entry(X11RootRead::Unreachable).is_none());
+    }
 
     #[test]
     fn kwin_capture_on_is_reported_as_the_first_capture_tier() {

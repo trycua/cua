@@ -169,7 +169,7 @@ jobs:
         run: bash libs/cua-spacesd/packaging/release/debian-build-deps.sh
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: dtolnay/rust-toolchain@1.97.1
         with:
           targets: ${{ matrix.target }}
       - name: Build
@@ -226,7 +226,7 @@ jobs:
           ref: ${{ needs.version.outputs.ref }}
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: dtolnay/rust-toolchain@1.97.1
         with:
           targets: aarch64-apple-darwin, x86_64-apple-darwin
       - name: Build arm64 and x86_64
@@ -385,7 +385,7 @@ jobs:
           ref: ${{ needs.version.outputs.ref }}
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: dtolnay/rust-toolchain@1.97.1
         with:
           targets: x86_64-pc-windows-msvc
       - uses: ./.github/actions/rust-cache

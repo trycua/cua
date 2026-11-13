@@ -342,6 +342,11 @@ pub struct SandboxImage {
     pub tier: Option<ImageTier>,
     /// Offered in pickers.
     pub published: bool,
+    /// `windows-iso`: nothing is pulled; the image is built on this computer
+    /// on first use (an unattended Windows install). Offered in pickers
+    /// though not published.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_build: Option<String>,
     /// The guest's distribution.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub distro: Option<ImageDistro>,
@@ -444,7 +449,9 @@ fn base_catalog() -> &'static Catalog {
             .collect();
         let images: Vec<SandboxImage> = all
             .iter()
-            .filter(|i| i.published && offered.contains(&i.group.as_str()))
+            .filter(|i| {
+                (i.published || i.local_build.is_some()) && offered.contains(&i.group.as_str())
+            })
             .cloned()
             .collect();
         let groups = file
@@ -497,6 +504,7 @@ fn with_external(base: &Catalog, runtimes: &[ExternalRuntimeInfo]) -> Catalog {
                 local: Some(LocalEngine::External(r.name.clone())),
                 tier: None,
                 published: true,
+                local_build: None,
                 distro: None,
                 arch: r.arch.clone(),
                 sizes: None,
@@ -597,6 +605,12 @@ pub fn image_distro(image_ref: &str) -> Option<ImageDistro> {
     catalog_fact(image_ref, |i| i.distro.clone()).flatten()
 }
 
+/// Whether the catalog lists `image_ref` as built on this computer on first
+/// use (`local_build`) rather than pulled.
+pub fn image_builds_locally(image_ref: &str) -> bool {
+    catalog_fact(image_ref, |i| i.local_build.is_some()).unwrap_or(false)
+}
+
 /// Container or VM, as the catalog lists `image_ref`.
 pub fn image_kind(image_ref: &str) -> Option<SpaceKind> {
     catalog_fact(image_ref, |i| i.variant)
@@ -684,7 +698,8 @@ pub fn validate_image_ref(text: &str) -> Option<String> {
         return Some("An image reference has no spaces.".into());
     }
     if let Some(e) = catalog().all.iter().find(|i| i.image_ref == r) {
-        return (!e.published).then(|| "This image is not published yet.".into());
+        return (!e.published && e.local_build.is_none())
+            .then(|| "This image is not published yet.".into());
     }
     let (name_tag, digest) = match r.split_once('@') {
         Some((n, d)) => (n, Some(d)),
@@ -1441,6 +1456,26 @@ fn lume_needs_apple_silicon(image: &SandboxImage, env: &WizardEnv) -> bool {
     image.local == Some(LocalEngine::Lume) && arch_word(env.host_arch.as_deref()) == Some("amd64")
 }
 
+/// Whether `image` has a build for this machine's architecture (an image that
+/// lists none, or a machine whose architecture is unknown, passes).
+fn has_build_for_host(image: &SandboxImage, env: &WizardEnv) -> bool {
+    match arch_word(env.host_arch.as_deref()) {
+        Some(a) => image.arch.is_empty() || image.arch.iter().any(|x| x == a),
+        None => true,
+    }
+}
+
+/// Windows on a Mac: only an image built on this computer (`windows:11`) with
+/// a build for the Mac's architecture runs (ARM64 Windows 11 on Apple
+/// silicon, hardware accelerated). The published Server image is x64 and a
+/// Mac with Apple silicon could only emulate it.
+fn windows_runs_on_this_mac(image: &SandboxImage, env: &WizardEnv) -> bool {
+    image.os == SpaceOs::Windows
+        && image.local_build.is_some()
+        && arch_word(env.host_arch.as_deref()).is_some()
+        && has_build_for_host(image, env)
+}
+
 /// The first machine of yours that can run `image` now (online, not at a
 /// limit, the right OS).
 fn usable_host<'a>(image: &SandboxImage, env: &'a WizardEnv) -> Option<&'a SpaceHost> {
@@ -2154,6 +2189,7 @@ fn image_of(state: &WizardState) -> SandboxImage {
             summary: String::new(),
             tier: None,
             published: false,
+            local_build: None,
             distro: None,
             arch: vec![],
             sizes: None,
@@ -2241,8 +2277,8 @@ pub fn reduce(state: &WizardState, action: &WizardAction, env: &WizardEnv) -> Wi
 
 /// [`reduce`] in a shell on `os`. Continue is allowed by the view the person
 /// sees ([`view_on`]), so the shell must name its system here too: judged as
-/// a Mac, the Windows image is "coming soon" and Continue silently did
-/// nothing on a Windows PC.
+/// a Mac, an image built for a Mac's processor looks refused and Continue
+/// silently did nothing on a Windows PC.
 pub fn reduce_on(
     state: &WizardState,
     action: &WizardAction,
@@ -2259,9 +2295,16 @@ pub fn reduce_on(
         WizardAction::ChooseOs { os } => {
             s.microvm = false;
             let images = &catalog().images;
+            // Of the system's images, the first this machine has a build for
+            // (Windows 11 on an Apple silicon Mac, not the x64 Server image).
             let first = images
                 .iter()
-                .find(|i| i.os == *os && can_place(i, s.placement))
+                .find(|i| i.os == *os && can_place(i, s.placement) && has_build_for_host(i, env))
+                .or_else(|| {
+                    images
+                        .iter()
+                        .find(|i| i.os == *os && can_place(i, s.placement))
+                })
                 .or_else(|| images.iter().find(|i| i.os == *os))
                 .map(|i| i.image_ref.clone());
             if let Some(r) = first {
@@ -3610,10 +3653,12 @@ pub fn placement_options_on(
     out
 }
 
-/// The Windows tile's title on a Mac host.
-const WINDOWS_SOON_TITLE: &str = "Windows (coming soon)";
-/// Its tooltip.
-const WINDOWS_SOON_DETAIL: &str = "Windows Spaces are coming soon on Mac.";
+/// Why an x64 Windows image does not run on a Mac with Apple silicon.
+const WINDOWS_ARM_ONLY_ON_MAC: &str = "This Mac runs ARM64 Windows at full speed. This image is x64 Windows, which it could only emulate, taking hours. Choose Windows 11.";
+
+/// Why Windows is not offered on a Mac whose processor Cua cannot read: the
+/// build to install depends on it (ARM64 on Apple silicon, x64 on Intel).
+const WINDOWS_MAC_ARCH_UNKNOWN: &str = "Cua could not tell which processor this Mac has, so it cannot pick the Windows build to install.";
 
 /// The wizard as drawn.
 pub fn view(state: &WizardState, env: &WizardEnv) -> WizardView {
@@ -3714,9 +3759,12 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
             f.value = kind.label().into();
         }
     }
-    let windows_soon = os == SpaceOs::Macos && image.os == SpaceOs::Windows;
+    // A Windows image this Mac has no build for (x64 Server on Apple silicon).
+    let windows_blocked = os == SpaceOs::Macos
+        && image.os == SpaceOs::Windows
+        && !windows_runs_on_this_mac(&image, env);
     let can_continue = image.os != SpaceOs::Unknown
-        && !windows_soon
+        && !windows_blocked
         && match state.step {
             0 => placeable && placement_ready && image_error.is_none(),
             1 => disk.error.is_none() && resource_edit.as_ref().is_none_or(|e| e.error.is_none()),
@@ -3742,18 +3790,22 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
                 reasons.into_iter().next()
             })
             .flatten();
-        // Windows Spaces are not offered from a Mac yet: shown, not chosen.
-        let soon = host_os == SpaceOs::Macos && os == SpaceOs::Windows;
+        // Windows Spaces on a Mac: offered where an image built here has a build
+        // for this Mac (Windows 11 on Apple silicon). Greyed out, with why, on
+        // a Mac whose processor is unknown.
+        let no_build = host_os == SpaceOs::Macos
+            && os == SpaceOs::Windows
+            && !images.iter().any(|i| windows_runs_on_this_mac(i, env));
         Tile {
             id: os.as_str().into(),
-            title: if soon { WINDOWS_SOON_TITLE } else { title }.into(),
-            detail: if soon {
-                WINDOWS_SOON_DETAIL.to_string()
+            title: title.into(),
+            detail: if no_build {
+                WINDOWS_MAC_ARCH_UNKNOWN.to_string()
             } else {
                 why.clone().unwrap_or_else(|| detail.into())
             },
             pressed: pressed_os == Some(os),
-            enabled: !soon && images.iter().any(|i| i.os == os) && why.is_none(),
+            enabled: !no_build && images.iter().any(|i| i.os == os) && why.is_none(),
         }
     })
     .collect();
@@ -3815,6 +3867,15 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
                 {
                     // Cua never installs QEMU on Windows: say what to get.
                     WINDOWS_QEMU_MISSING.to_string()
+                } else if image.local == Some(LocalEngine::Qemu)
+                    && os == SpaceOs::Macos
+                    && image.os == SpaceOs::Windows
+                {
+                    // Windows on a Mac runs in QEMU with Apple's hypervisor.
+                    match why {
+                        Some(why) => format!("Needs QEMU: {why}."),
+                        None => "Needs QEMU, which is not installed on this Mac.".to_string(),
+                    }
                 } else {
                     match why {
                         Some(why) => {
@@ -3831,6 +3892,13 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
             }
         }
     });
+    // A Windows image this Mac could only emulate (Server, or Windows 10, on
+    // Apple silicon): said in words, with the one that runs natively.
+    let windows_hint = (windows_blocked
+        && image.os == SpaceOs::Windows
+        && images.iter().any(|i| windows_runs_on_this_mac(i, env)))
+    .then(|| WINDOWS_ARM_ONLY_ON_MAC.to_string());
+    let placement_error = windows_hint.or(placement_error);
     let mut kind_tiles: Vec<Tile> = [SpaceKind::Container, SpaceKind::Vm]
         .into_iter()
         .map(|k| {
@@ -4830,7 +4898,7 @@ mod tests {
     }
 
     #[test]
-    fn windows_is_coming_soon_on_a_mac_and_cannot_continue() {
+    fn windows_on_a_mac_is_the_image_built_here_and_server_is_refused_in_words() {
         let e = env();
         let s = reduce(
             &initial(&e),
@@ -4839,10 +4907,82 @@ mod tests {
             },
             &e,
         );
+        // Apple silicon: the Windows tile is offered, and its image is Windows
+        // 11 (ARM64, built here), not the x64 Server image.
         let mac = view_on(&s, &e, SpaceOs::Macos);
         let tile = mac.os_tiles.iter().find(|t| t.id == "windows").unwrap();
-        assert!(!tile.enabled && tile.title.contains("coming soon"));
+        assert!(tile.enabled && tile.title == "Windows", "{tile:?}");
+        assert_eq!(mac.image.image_ref, "ghcr.io/trycua/windows:11");
+        // Server 2022 is x64: refused with the reason and the way out.
+        let server = reduce(
+            &s,
+            &WizardAction::ChooseImage {
+                image_ref: "ghcr.io/trycua/windows:2022".into(),
+            },
+            &e,
+        );
+        let v = view_on(&server, &e, SpaceOs::Macos);
+        assert!(!v.can_continue);
+        assert!(
+            v.placement_error
+                .as_deref()
+                .is_some_and(|m| m.contains("Choose Windows 11")),
+            "{:?}",
+            v.placement_error
+        );
+        // A Mac whose processor is not known cannot pick a build: greyed out
+        // with why, never "coming soon".
+        let unknown = WizardEnv {
+            host_arch: None,
+            ..env()
+        };
+        let u = reduce(
+            &initial(&unknown),
+            &WizardAction::ChooseOs {
+                os: SpaceOs::Windows,
+            },
+            &unknown,
+        );
+        let mac = view_on(&u, &unknown, SpaceOs::Macos);
+        let tile = mac.os_tiles.iter().find(|t| t.id == "windows").unwrap();
+        assert!(!tile.enabled && tile.title == "Windows", "{tile:?}");
+        assert_eq!(tile.detail, WINDOWS_MAC_ARCH_UNKNOWN);
         assert!(!mac.can_continue);
+        // QEMU not ready on a Mac that has a build: Continue waits with the
+        // reason, and the tile stays selectable.
+        let no_qemu = WizardEnv {
+            local_backends: Some(vec!["container".into()]),
+            ..env()
+        };
+        let q = reduce(
+            &initial(&no_qemu),
+            &WizardAction::ChooseOs {
+                os: SpaceOs::Windows,
+            },
+            &no_qemu,
+        );
+        let v = view_on(&q, &no_qemu, SpaceOs::Macos);
+        assert!(v.os_tiles.iter().any(|t| t.id == "windows" && t.enabled));
+        assert!(!v.can_continue);
+        assert!(
+            v.placement_error
+                .as_deref()
+                .is_some_and(|m| m.starts_with("Needs QEMU")),
+            "{:?}",
+            v.placement_error
+        );
+        let ready = WizardEnv {
+            local_backends: Some(vec!["qemu".into()]),
+            ..env()
+        };
+        let r = reduce(
+            &initial(&ready),
+            &WizardAction::ChooseOs {
+                os: SpaceOs::Windows,
+            },
+            &ready,
+        );
+        assert!(view_on(&r, &ready, SpaceOs::Macos).can_continue);
         let win = view_on(&s, &e, SpaceOs::Windows);
         let tile = win.os_tiles.iter().find(|t| t.id == "windows").unwrap();
         assert_eq!(tile.title, "Windows");
@@ -5024,7 +5164,8 @@ mod tests {
 
     #[test]
     fn every_offered_image_has_sizes() {
-        for i in picker_images() {
+        // A local build has no published size: it is measured on first use.
+        for i in picker_images().iter().filter(|i| i.local_build.is_none()) {
             let s = i
                 .sizes
                 .as_ref()
@@ -5444,7 +5585,11 @@ mod tests {
     #[test]
     fn catalog_is_the_shared_image_list() {
         let images = picker_images();
-        assert!(images.iter().all(|i| i.published));
+        assert!(
+            images
+                .iter()
+                .all(|i| i.published || i.local_build.is_some())
+        );
         assert_eq!(images[0].image_ref, "ghcr.io/trycua/linux:24.04");
         assert!(picker_groups().iter().all(|g| !g.images.is_empty()));
     }
@@ -5607,10 +5752,14 @@ mod tests {
             "each cloud is its own entry: no second menu"
         );
         // Systems and kinds it cannot run are greyed out with why.
-        let soon = v.os_tiles.iter().find(|t| t.id == "windows").unwrap();
-        assert!(!soon.enabled);
-        assert_eq!(soon.title, "Windows (coming soon)");
-        assert_eq!(soon.detail, "Windows Spaces are coming soon on Mac.");
+        let win = v.os_tiles.iter().find(|t| t.id == "windows").unwrap();
+        assert!(!win.enabled);
+        assert_eq!(win.title, "Windows");
+        assert!(
+            win.detail.starts_with("Windows on AWS is not offered yet."),
+            "{}",
+            win.detail
+        );
         // Off a Mac, the cloud's own reason shows.
         let v_linux = view_on(&s, &e, SpaceOs::Linux);
         let win = v_linux.os_tiles.iter().find(|t| t.id == "windows").unwrap();
@@ -6795,7 +6944,7 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .filter(|i| i["published"].as_bool() == Some(true))
+            .filter(|i| i["published"].as_bool() == Some(true) || i["local_build"].is_string())
             .filter_map(|i| i["ref"].as_str().map(str::to_string))
             .collect();
         for r in refs("slim").iter().chain(refs("").iter()) {
@@ -6861,11 +7010,19 @@ mod tests {
         // the text, nothing is highlighted; Down highlights the first match.
         s = act(&s, WizardAction::SetImageText { text: "win".into() });
         let v = view(&s, &env());
-        assert_eq!(rows(&v), ["ghcr.io/trycua/windows:2022"]);
+        assert_eq!(
+            rows(&v),
+            [
+                "ghcr.io/trycua/windows:2022",
+                "ghcr.io/trycua/windows:11",
+                "ghcr.io/trycua/windows:2025",
+                "ghcr.io/trycua/windows:2019",
+                "ghcr.io/trycua/windows:10"
+            ]
+        );
         assert!(pressed_os(&v).is_empty(), "typing unselects the OS");
         assert!(!v.image_field.groups[0].rows[0].highlighted);
         s = act(&s, WizardAction::MoveImageSuggestion { delta: 1 });
-        s = act(&s, WizardAction::MoveImageSuggestion { delta: 5 });
         s = act(&s, WizardAction::PickImageSuggestion);
         let v = view(&s, &env());
         assert_eq!(v.image.image_ref, "ghcr.io/trycua/windows:2022");

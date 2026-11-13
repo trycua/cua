@@ -169,6 +169,17 @@ impl QmpClient {
         Ok(())
     }
 
+    /// Save the framebuffer as a binary PPM (P6) file: raw pixels a caller can
+    /// look at without decoding PNG.
+    pub async fn screendump_ppm(&mut self, path: &Path) -> Result<()> {
+        self.execute(
+            "screendump",
+            Some(json!({ "filename": path.display().to_string(), "format": "ppm" })),
+        )
+        .await?;
+        Ok(())
+    }
+
     /// Press and release a combination of QEMU qcodes (e.g. `["ctrl","alt","delete"]`).
     pub async fn send_keys(&mut self, qcodes: &[&str]) -> Result<()> {
         let keys: Vec<Value> = qcodes

@@ -7273,6 +7273,28 @@ export function teleport(cua: CuaLike): TeleportLike {
     ));
     }
 
+/**
+ * Checks the ISO at `path` for the Windows image `image` and remembers it
+ * for that image's next build.
+ */
+export function windowsUseIso(image: string, path: string): WindowsIsoChoice {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeWindowsIsoChoice.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_windows_use_iso(
+        FfiConverterString.lower(image, nativeModule().rustbuffer_alloc),
+        FfiConverterString.lower(path, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
 const stringConverter = (() => {
     const encoder = new TextEncoder();
     const decoder = new TextDecoder();
@@ -12616,7 +12638,12 @@ export enum AppCreateFixAction {
     /**
      * Opens the failed create's details (the diagnostic report to review).
      */
-    Details = "details"
+    Details = "details",
+    /**
+     * Asks for a Windows ISO the person downloaded (the host's file picker),
+     * remembers it for the image, and runs the create again with it.
+     */
+    ChooseWindowsIso = "chooseWindowsIso"
 }
 
 const FfiConverterTypeAppCreateFixAction = (() => {
@@ -12628,6 +12655,7 @@ const FfiConverterTypeAppCreateFixAction = (() => {
                 case 1: return AppCreateFixAction.CopyCommand;
                 case 2: return AppCreateFixAction.OpenUrl;
                 case 3: return AppCreateFixAction.Details;
+                case 4: return AppCreateFixAction.ChooseWindowsIso;
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -12636,6 +12664,7 @@ const FfiConverterTypeAppCreateFixAction = (() => {
                 case AppCreateFixAction.CopyCommand: return ordinalConverter.write(1, into);
                 case AppCreateFixAction.OpenUrl: return ordinalConverter.write(2, into);
                 case AppCreateFixAction.Details: return ordinalConverter.write(3, into);
+                case AppCreateFixAction.ChooseWindowsIso: return ordinalConverter.write(4, into);
             }
         }
         allocationSize(value: TypeName): number {
@@ -12661,7 +12690,20 @@ export type AppCreateFix = {
     /**
      * The command to copy or the page to open.
      */
-    value?: string
+    value?: string,
+    /**
+     * Keep Try again next to the button: the fix is something to do first
+     * (download a file), after which the same create is tried again.
+     */
+    keepRetry: boolean,
+    /**
+     * A second button beside the first: its words (with `link_url`).
+     */
+    linkLabel?: string,
+    /**
+     * The page that second button opens.
+     */
+    linkUrl?: string
 }
 
 /**
@@ -12688,7 +12730,10 @@ const FfiConverterTypeAppCreateFix = (() => {
                 text: FfiConverterString.read(from),
                 label: FfiConverterString.read(from),
                 action: FfiConverterTypeAppCreateFixAction.read(from),
-                value: FfiConverterOptionalString.read(from)
+                value: FfiConverterOptionalString.read(from),
+                keepRetry: FfiConverterBool.read(from),
+                linkLabel: FfiConverterOptionalString.read(from),
+                linkUrl: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -12696,12 +12741,18 @@ const FfiConverterTypeAppCreateFix = (() => {
             FfiConverterString.write(value.label, into);
             FfiConverterTypeAppCreateFixAction.write(value.action, into);
             FfiConverterOptionalString.write(value.value, into);
+            FfiConverterBool.write(value.keepRetry, into);
+            FfiConverterOptionalString.write(value.linkLabel, into);
+            FfiConverterOptionalString.write(value.linkUrl, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.text) +
              FfiConverterString.allocationSize(value.label) +
              FfiConverterTypeAppCreateFixAction.allocationSize(value.action) +
-             FfiConverterOptionalString.allocationSize(value.value);
+             FfiConverterOptionalString.allocationSize(value.value) +
+             FfiConverterBool.allocationSize(value.keepRetry) +
+             FfiConverterOptionalString.allocationSize(value.linkLabel) +
+             FfiConverterOptionalString.allocationSize(value.linkUrl);
 
         }
     };
@@ -18909,6 +18960,12 @@ export type AppSandboxImage = {
      */
     published: boolean,
     /**
+     * `windows-iso`: nothing is pulled; the image is built on this computer
+     * on first use (an unattended Windows install). Offered in pickers
+     * though not published.
+     */
+    localBuild?: string,
+    /**
      * The guest's distribution.
      */
     distro?: AppImageDistro,
@@ -18957,6 +19014,7 @@ const FfiConverterTypeAppSandboxImage = (() => {
                 local: FfiConverterOptionalTypeAppLocalEngine.read(from),
                 tier: FfiConverterOptionalTypeAppImageTier.read(from),
                 published: FfiConverterBool.read(from),
+                localBuild: FfiConverterOptionalString.read(from),
                 distro: FfiConverterOptionalTypeAppImageDistro.read(from),
                 arch: FfiConverterSequenceString.read(from),
                 sizes: FfiConverterOptionalTypeAppImageSizes.read(from),
@@ -18974,6 +19032,7 @@ const FfiConverterTypeAppSandboxImage = (() => {
             FfiConverterOptionalTypeAppLocalEngine.write(value.local, into);
             FfiConverterOptionalTypeAppImageTier.write(value.tier, into);
             FfiConverterBool.write(value.published, into);
+            FfiConverterOptionalString.write(value.localBuild, into);
             FfiConverterOptionalTypeAppImageDistro.write(value.distro, into);
             FfiConverterSequenceString.write(value.arch, into);
             FfiConverterOptionalTypeAppImageSizes.write(value.sizes, into);
@@ -18990,6 +19049,7 @@ const FfiConverterTypeAppSandboxImage = (() => {
              FfiConverterOptionalTypeAppLocalEngine.allocationSize(value.local) +
              FfiConverterOptionalTypeAppImageTier.allocationSize(value.tier) +
              FfiConverterBool.allocationSize(value.published) +
+             FfiConverterOptionalString.allocationSize(value.localBuild) +
              FfiConverterOptionalTypeAppImageDistro.allocationSize(value.distro) +
              FfiConverterSequenceString.allocationSize(value.arch) +
              FfiConverterOptionalTypeAppImageSizes.allocationSize(value.sizes) +
@@ -41012,7 +41072,18 @@ export type AppSettings = {
      * one is a connect, which shows its app again
      * ([`crate::agent_menu::sync`]).
      */
-    agentMenuSeen: Array<string>
+    agentMenuSeen: Array<string>,
+    /**
+     * Settings, General, "When I close the window": closing the main
+     * window leaves Cua Spaces and its background service running (on, the
+     * default); off, it quits Cua Spaces, as Quit does.
+     */
+    closeWindowKeepsRunning: boolean,
+    /**
+     * "Don't show this again" on the notice that Cua Spaces keeps running
+     * when the window closes, or the Settings switch turned off.
+     */
+    closeNoticeOff: boolean
 }
 
 /**
@@ -41055,7 +41126,9 @@ const FfiConverterTypeAppSettings = (() => {
                 tips: FfiConverterTypeAppTipsState.read(from),
                 agentMenuShown: FfiConverterSequenceString.read(from),
                 agentMenuHidden: FfiConverterSequenceString.read(from),
-                agentMenuSeen: FfiConverterSequenceString.read(from)
+                agentMenuSeen: FfiConverterSequenceString.read(from),
+                closeWindowKeepsRunning: FfiConverterBool.read(from),
+                closeNoticeOff: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -41079,6 +41152,8 @@ const FfiConverterTypeAppSettings = (() => {
             FfiConverterSequenceString.write(value.agentMenuShown, into);
             FfiConverterSequenceString.write(value.agentMenuHidden, into);
             FfiConverterSequenceString.write(value.agentMenuSeen, into);
+            FfiConverterBool.write(value.closeWindowKeepsRunning, into);
+            FfiConverterBool.write(value.closeNoticeOff, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.hotkey) +
@@ -41100,7 +41175,9 @@ const FfiConverterTypeAppSettings = (() => {
              FfiConverterTypeAppTipsState.allocationSize(value.tips) +
              FfiConverterSequenceString.allocationSize(value.agentMenuShown) +
              FfiConverterSequenceString.allocationSize(value.agentMenuHidden) +
-             FfiConverterSequenceString.allocationSize(value.agentMenuSeen);
+             FfiConverterSequenceString.allocationSize(value.agentMenuSeen) +
+             FfiConverterBool.allocationSize(value.closeWindowKeepsRunning) +
+             FfiConverterBool.allocationSize(value.closeNoticeOff);
 
         }
     };
@@ -41943,7 +42020,18 @@ export type AppSettingsInput = {
      * Settings, General's Show tips switch: tips are on
      * (`!AppSettings.tips.off`). A shell that does not say reads as on.
      */
-    showTips: boolean
+    showTips: boolean,
+    /**
+     * Settings, General's "When I close the window": the window's close
+     * button keeps Cua Spaces running in the background (none: no rows; a
+     * shell without a background service leaves them out).
+     */
+    closeWindowKeepsRunning?: boolean,
+    /**
+     * The notice that Cua Spaces keeps running is on (shown with the row
+     * above).
+     */
+    closeNotice: boolean
 }
 
 /**
@@ -41986,7 +42074,9 @@ const FfiConverterTypeAppSettingsInput = (() => {
                 autoConnect: FfiConverterOptionalBoolean.read(from),
                 overflow: FfiConverterOptionalBoolean.read(from),
                 runtimes: FfiConverterOptionalTypeAppRuntimesInput.read(from),
-                showTips: FfiConverterBool.read(from)
+                showTips: FfiConverterBool.read(from),
+                closeWindowKeepsRunning: FfiConverterOptionalBoolean.read(from),
+                closeNotice: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -42010,6 +42100,8 @@ const FfiConverterTypeAppSettingsInput = (() => {
             FfiConverterOptionalBoolean.write(value.overflow, into);
             FfiConverterOptionalTypeAppRuntimesInput.write(value.runtimes, into);
             FfiConverterBool.write(value.showTips, into);
+            FfiConverterOptionalBoolean.write(value.closeWindowKeepsRunning, into);
+            FfiConverterBool.write(value.closeNotice, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterOptionalString.allocationSize(value.identity) +
@@ -42031,7 +42123,9 @@ const FfiConverterTypeAppSettingsInput = (() => {
              FfiConverterOptionalBoolean.allocationSize(value.autoConnect) +
              FfiConverterOptionalBoolean.allocationSize(value.overflow) +
              FfiConverterOptionalTypeAppRuntimesInput.allocationSize(value.runtimes) +
-             FfiConverterBool.allocationSize(value.showTips);
+             FfiConverterBool.allocationSize(value.showTips) +
+             FfiConverterOptionalBoolean.allocationSize(value.closeWindowKeepsRunning) +
+             FfiConverterBool.allocationSize(value.closeNotice);
 
         }
     };
@@ -54686,6 +54780,65 @@ const FfiConverterTypeTeleportWindowDragEvent = (() => {
              FfiConverterOptionalTypeTeleportCatalogEntry.allocationSize(value.app) +
              FfiConverterOptionalTypeAppLogicalRect.allocationSize(value.startFrame) +
              FfiConverterOptionalTypeAppLogicalRect.allocationSize(value.frame);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * What [`windows_use_iso`] answers.
+ */
+export type WindowsIsoChoice = {
+    /**
+     * The file is usable and remembered.
+     */
+    ok: boolean,
+    /**
+     * The file's name when `ok`.
+     */
+    name: string,
+    /**
+     * Why the file cannot be used, in plain words; empty when `ok`.
+     */
+    problem: string
+}
+
+/**
+ * Generated factory for {@link WindowsIsoChoice} record objects.
+ */
+export const WindowsIsoChoice = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<WindowsIsoChoice, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<WindowsIsoChoice>,
+    });
+})();
+
+const FfiConverterTypeWindowsIsoChoice = (() => {
+    type TypeName = WindowsIsoChoice;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                ok: FfiConverterBool.read(from),
+                name: FfiConverterString.read(from),
+                problem: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterBool.write(value.ok, into);
+            FfiConverterString.write(value.name, into);
+            FfiConverterString.write(value.problem, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterBool.allocationSize(value.ok) +
+             FfiConverterString.allocationSize(value.name) +
+             FfiConverterString.allocationSize(value.problem);
 
         }
     };
@@ -72488,6 +72641,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_teleport() !== 49330) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_teleport");
     }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_windows_use_iso() !== 42760) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_windows_use_iso");
+    }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_constructor_appcliinstaller_for_executable() !== 63498) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_constructor_appcliinstaller_for_executable");
     }
@@ -73222,5 +73378,6 @@ export default Object.freeze({
     FfiConverterTypeTeleportWindowDragEvent,
     FfiConverterTypeTeleportWindowDragListener,
     FfiConverterTypeTeleportWindowDragMonitor,
+    FfiConverterTypeWindowsIsoChoice,
   }
 });

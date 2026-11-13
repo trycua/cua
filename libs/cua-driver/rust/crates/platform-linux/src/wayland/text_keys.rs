@@ -7,9 +7,11 @@
 
 use std::borrow::Cow;
 use std::ops::RangeInclusive;
+use std::sync::OnceLock;
 
 use anyhow::{anyhow, Result};
 use xkbcommon::xkb;
+use xkbcommon::xkb::ffi as xkb_ffi;
 
 /// An evdev code is its xkb keycode minus this.
 pub(in crate::wayland) const EVDEV_OFFSET: u32 = 8;
@@ -70,6 +72,33 @@ pub(in crate::wayland) fn refused(detail: impl std::fmt::Display) -> anyhow::Err
     anyhow!("foreground_unavailable: {detail}; {NOTHING_TYPED}")
 }
 
+super::dynamic_library::entry_points! { Xkb1, xkb_ffi, {
+    xkb_utf32_to_keysym: fn(u32) -> u32;
+    xkb_keymap_key_get_mods_for_level: fn(*mut xkb_ffi::xkb_keymap, u32, u32, u32, *mut u32, usize) -> usize;
+}}
+
+/// libxkbcommon 1.0's two functions typing needs. Importing them would stop
+/// cua-driver and the SDK library from loading at all with an older
+/// libxkbcommon, such as Ubuntu 20.04's 0.10, so they are looked up at run time
+/// and typing refuses without them.
+pub(in crate::wayland) fn xkb1() -> Result<&'static Xkb1> {
+    // The process already links libxkbcommon.so.0, and opening it again returns
+    // that library, also when the SDK library was loaded RTLD_LOCAL. Its symbols
+    // cannot change, so a failure is cached as well.
+    static LOADED: OnceLock<Result<Xkb1>> = OnceLock::new();
+    LOADED
+        .get_or_init(|| load_xkb1("libxkbcommon.so.0"))
+        .as_ref()
+        .map_err(|error| anyhow!("{error}"))
+}
+
+fn load_xkb1(soname: &str) -> Result<Xkb1> {
+    // SAFETY: libxkbcommon has no load-time initialisers with preconditions.
+    unsafe { Xkb1::open(soname) }.map_err(|_| {
+        refused("typing needs libxkbcommon 1.0 or later (libxkbcommon0 on Debian and Ubuntu)")
+    })
+}
+
 /// `text` with every line ending a line feed, so a Windows line ending is one
 /// press of Return on every compositor.
 pub(in crate::wayland) fn with_line_feeds(text: &str) -> Cow<'_, str> {
@@ -83,7 +112,7 @@ pub(in crate::wayland) fn with_line_feeds(text: &str) -> Cow<'_, str> {
 /// The keysym that types `c`. A line feed and a tab are the Return and Tab
 /// keys; any other control character is refused, so it never runs as a command
 /// in the app (`\u{8}` would press Backspace).
-pub(in crate::wayland) fn text_sym(c: char) -> Result<xkb::Keysym> {
+pub(in crate::wayland) fn text_sym(xkb: &Xkb1, c: char) -> Result<xkb::Keysym> {
     match c {
         '\n' => Ok(xkb::Keysym::Return),
         '\t' => Ok(xkb::Keysym::Tab),
@@ -91,7 +120,8 @@ pub(in crate::wayland) fn text_sym(c: char) -> Result<xkb::Keysym> {
             "control character U+{:04X} cannot be typed",
             u32::from(c)
         ))),
-        c => match xkb::utf32_to_keysym(u32::from(c)) {
+        // SAFETY: xkb_utf32_to_keysym takes any value and reads nothing else.
+        c => match xkb::Keysym::new(unsafe { (xkb.xkb_utf32_to_keysym)(u32::from(c)) }) {
             sym if sym.raw() == 0 => Err(refused(format!("U+{:04X} has no keysym", u32::from(c)))),
             sym => Ok(sym),
         },
@@ -101,21 +131,33 @@ pub(in crate::wayland) fn text_sym(c: char) -> Result<xkb::Keysym> {
 /// `text` as it goes out on a route that types by itself, such as `wtype`: refused
 /// if any of it can't be typed, with line endings made line feeds.
 pub(in crate::wayland) fn typable_text(text: &str) -> Result<Cow<'_, str>> {
+    let xkb = xkb1()?;
     let text = with_line_feeds(text);
     for c in text.chars() {
-        text_sym(c)?;
+        text_sym(xkb, c)?;
     }
     Ok(text)
 }
 
 pub(in crate::wayland) fn level_mods(
+    xkb: &Xkb1,
     map: &xkb::Keymap,
     code: xkb::Keycode,
     layout: u32,
     level: u32,
 ) -> Vec<u32> {
     let mut masks = [0_u32; 32];
-    let count = map.key_get_mods_for_level(code, layout, level, &mut masks);
+    // SAFETY: `map` holds a live keymap, and `masks` has room for `masks.len()` masks.
+    let count = unsafe {
+        (xkb.xkb_keymap_key_get_mods_for_level)(
+            map.get_raw_ptr(),
+            code.raw(),
+            layout,
+            level,
+            masks.as_mut_ptr(),
+            masks.len(),
+        )
+    };
     masks.iter().take(count).copied().collect()
 }
 
@@ -138,6 +180,7 @@ fn command_modifiers(map: &xkb::Keymap) -> u32 {
 /// returns how many modifiers it takes and its own answer, which comes back with
 /// the key's evdev code.
 pub(in crate::wayland) fn find_key<T>(
+    xkb: &Xkb1,
     map: &xkb::Keymap,
     group: u32,
     sym: xkb::Keysym,
@@ -151,7 +194,7 @@ pub(in crate::wayland) fn find_key<T>(
             if map.key_get_syms_by_level(code, group, level) != [sym] {
                 continue;
             }
-            for mask in level_mods(map, code, group, level) {
+            for mask in level_mods(xkb, map, code, group, level) {
                 if mask & commands != 0 {
                     continue;
                 }
@@ -221,4 +264,46 @@ pub(in crate::wayland) fn modifier_chords(map: &xkb::Keymap, group: u32) -> Vec<
         .collect();
     chords.sort_by_key(Vec::len);
     chords
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_missing_library_names_the_requirement() {
+        assert_eq!(
+            load_xkb1("libxkbcommon-cua-test-absent.so.0")
+                .err()
+                .expect("no such library")
+                .to_string(),
+            "foreground_unavailable: typing needs libxkbcommon 1.0 or later (libxkbcommon0 on \
+             Debian and Ubuntu); nothing was typed"
+        );
+    }
+
+    #[test]
+    fn the_crate_does_not_require_libxkbcommon_1_0() {
+        // Keep both typing paths live so dead-code elimination cannot hide a
+        // load-time requirement in them.
+        std::hint::black_box(text_sym as *const ());
+        std::hint::black_box(level_mods as *const ());
+        let exe = std::env::current_exe().unwrap();
+        let output = std::process::Command::new("readelf")
+            .arg("--version-info")
+            .arg(&exe)
+            .output()
+            .expect("readelf (binutils) is needed to inspect the test binary");
+        assert!(
+            output.status.success(),
+            "readelf failed for {}",
+            exe.display()
+        );
+        let versions = String::from_utf8_lossy(&output.stdout);
+        let xkb = versions
+            .split("File: ")
+            .find(|entry| entry.starts_with("libxkbcommon.so.0 "))
+            .expect("the test binary links libxkbcommon");
+        assert!(!xkb.contains("Name: V_1.0.0 "), "{xkb}");
+    }
 }

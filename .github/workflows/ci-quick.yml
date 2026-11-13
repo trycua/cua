@@ -25,8 +25,10 @@ name: "CI: Quick"
 # fails: never a silent pass. Push, schedule and manual runs skip `quick`, so they run in full.
 #
 # Merge queue: the scope is the diff between the queue's base and the queue commit, so the lanes the
-# queued pull requests touch run on the merged result. Until the repository variable CI_QUEUE_RUNS is
-# "true", a merge_group run skips everything and ci-gate keeps reading the pull request's own results.
+# queued pull requests touch run on the merged result. Only the workflows listed under `queue` in the base
+# commit's area map run there (each runs only its push-only jobs that fit the queue timeout); every other
+# merge_group run skips and ci-gate reads the pull request's own result for it. The repository variable
+# CI_QUEUE_RUNS set to "true" runs every workflow the change reaches instead.
 
 on:
   pull_request:
@@ -65,7 +67,6 @@ jobs:
       # The selector, the map and the base manifests come from the base commit, as in ci-gate.yml, so a
       # pull request cannot narrow its own checks by editing them (and any .github/** change runs all).
       - name: Check out the selector from the base commit
-        if: github.event_name == 'pull_request' || vars.CI_QUEUE_RUNS == 'true'
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
@@ -81,7 +82,6 @@ jobs:
             pnpm-workspace.yaml
           sparse-checkout-cone-mode: false
       - name: Check out the change's manifests
-        if: github.event_name == 'pull_request' || vars.CI_QUEUE_RUNS == 'true'
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           path: head
@@ -103,10 +103,17 @@ jobs:
           set -euo pipefail
           workflow=${WORKFLOW_REF%%@*}
           workflow=${workflow##*/}
+          # In the merge queue only the workflows the base commit's map lists under `queue` run (--merge-queue);
+          # CI_QUEUE_RUNS=true runs every workflow the change reaches. A base whose selector predates
+          # --merge-queue runs nothing in the queue, as before.
+          queue_args=()
           if [[ "$GITHUB_EVENT_NAME" == merge_group && "${QUEUE_RUNS:-}" != true ]]; then
-            echo "Merge queue runs are off (CI_QUEUE_RUNS); ci-gate reads the pull request's results."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
+            if ! grep -q -- '--merge-queue' base/.github/scripts/ci_gate_scope.py; then
+              echo "Merge queue runs are off (CI_QUEUE_RUNS); ci-gate reads the pull request's results."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            queue_args=(--merge-queue)
           fi
           # Both names of a renamed file (--no-renames), like the pull request files API.
           git -C head fetch --no-tags --depth=1 --filter=blob:none origin "$BASE_SHA"
@@ -118,7 +125,7 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          python3 base/.github/scripts/ci_gate_scope.py --workflow "$workflow" < "$RUNNER_TEMP/files.txt"
+          python3 base/.github/scripts/ci_gate_scope.py --workflow "$workflow" "${queue_args[@]}" < "$RUNNER_TEMP/files.txt"
 
   quick:
     name: quick
@@ -145,7 +152,7 @@ jobs:
         if: steps.marker.outputs.cache-hit != 'true'
         # The npm that wrote the committed package-lock.json files.
         run: npm install -g npm@11.19.1
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         if: steps.marker.outputs.cache-hit != 'true'
         with:
           enable-cache: true

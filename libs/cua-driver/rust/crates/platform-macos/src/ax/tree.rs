@@ -47,6 +47,10 @@ pub const DEFAULT_MAX_ELEMENTS: usize = 2_000;
 /// indefinitely.
 const AX_MESSAGING_TIMEOUT_SECONDS: f32 = 2.0;
 
+/// Most windows of one app a walk brings up to date (see
+/// [`super::enablement::flush_pending_web_updates`]).
+const MAX_WEB_FLUSH_WINDOWS: usize = 4;
+
 unsafe fn set_messaging_timeout(element: AXUIElementRef) {
     let _ = AXUIElementSetMessagingTimeout(element, AX_MESSAGING_TIMEOUT_SECONDS);
 }
@@ -356,6 +360,17 @@ fn walk_tree_with_web_content(
             window_scope = Some(decision.scope);
             break (top_level, walk);
         };
+
+        // A hidden or covered Chromium window holds back the page changes of
+        // the last action until it is asked something; ask first so the walk
+        // reads the page as it is now.
+        if include_web_content {
+            for &child in walk_these.iter().take(MAX_WEB_FLUSH_WINDOWS) {
+                if copy_string_attr(child, "AXRole").as_deref() == Some("AXWindow") {
+                    super::enablement::flush_pending_web_updates(pid, child);
+                }
+            }
+        }
 
         // Walk each top-level child at depth 0.
         for child in walk_these {

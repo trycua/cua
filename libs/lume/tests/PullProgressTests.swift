@@ -33,7 +33,7 @@ private func makeTracker(clock: TestClock, interval: TimeInterval = 0.15) async
     -> (ProgressTracker, ProgressLog)
 {
     let tracker = ProgressTracker(
-        now: { clock.now }, emitInterval: interval, printsToTerminal: false)
+        now: { clock.now }, emitInterval: interval, console: nil)
     let log = ProgressLog()
     await tracker.setProgressHandler { log.append($0) }
     return (tracker, log)

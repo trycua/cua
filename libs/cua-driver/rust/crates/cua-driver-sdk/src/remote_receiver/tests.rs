@@ -274,7 +274,6 @@ async fn invalid_envelopes_never_reach_executor() {
         "read_file",
         "write_file",
         "start_session",
-        "escalate_session",
         "end_session",
         "session_end",
         "unknown_tool",

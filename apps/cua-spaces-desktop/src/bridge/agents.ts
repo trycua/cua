@@ -120,6 +120,7 @@ export function agentsMethods({ model }: BridgeContext): Handlers {
       needSetup();
       return JSON.parse(await model.agents.coding.setup!.connectionStatusJson(args.refresh === true));
     },
+    // `driver` (setup's Cua Driver row) is not asked for: this app carries no Cua Driver, so the answer has no driver part.
     "agents.connect": async (args) => {
       needSetup();
       const out = await model.agents.coding.setup!.connectJson(strings(args, "agents"), args.signIn === true, args.skills !== false, args.mcp !== false);

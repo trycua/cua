@@ -2723,10 +2723,11 @@ impl Spaces {
         }
         let sink = opts.progress.take().map(|p| p.0);
         let (key, on) = self.create_key(&mut opts)?;
-        // A Mac cannot create a Windows VM locally yet. With the `windows-kvm`
-        // experiment on, the selected remote host may be a Linux or Windows
-        // machine that can run it, so the coordinator's local restriction
-        // applies only to local placement. Off: it applies everywhere.
+        // A Mac creates a Windows VM locally only from an image it has a native
+        // build of (Windows 11 on Apple silicon); an image it could only
+        // emulate is refused. With the `windows-kvm` experiment on, the
+        // selected remote host may be a Linux or Windows machine that can run
+        // it, so this check applies only to local placement. Off: everywhere.
         if on == On::Local || !cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::WindowsKvm)
         {
             refuse_windows_on_mac(opts.image.as_deref(), cfg!(target_os = "macos"))?;
@@ -3320,6 +3321,14 @@ impl Spaces {
         let mut create = CreateOptions::new(ProviderKind::Local, &image).name(&name);
         create.kind = opts.kind;
         create.runtime = opts.runtime.clone();
+        // The catalog knows the guest OS of its images. A Windows disk built
+        // on this computer carries no metadata the runtime could read it from
+        // (on arm64 nothing is sniffed from the partitions), so without this
+        // it would boot as a Linux guest: no TPM, the wrong display and disk.
+        // (`CreateOptions` starts as `linux`, so this does not wait for empty.)
+        if let Some(os) = cua_image::catalog::catalog_os(&image) {
+            create.os = os;
+        }
         create.cpus = opts.cpus.unwrap_or(crate::local_load::DEFAULT_CPUS);
         create.memory_mb = opts
             .memory_mb
@@ -4494,22 +4503,47 @@ async fn wait_serving(space: &Space, deadline: tokio::time::Instant) {
     }
 }
 
-/// A Mac cannot create a Windows VM locally yet. Refuses a local create up
-/// front, in words a person can act on. Remote host placement is checked by
-/// the selected host instead.
-pub(crate) const WINDOWS_COMING_SOON: &str = "Windows Spaces are coming soon on Mac.";
+/// Why a Windows image this Mac could only emulate is refused (Server on
+/// Apple silicon, say): in words, with the image that runs natively.
+pub(crate) const WINDOWS_EMULATION_ONLY: &str = "This Mac runs ARM64 Windows at full speed. This image is x64 Windows, which it could only emulate, taking hours. Use Windows 11 (windows:11).";
 
+/// A Mac creates a Windows VM locally only from an image built on this Mac
+/// that has a build for its architecture (`windows:11`: ARM64 Windows on Apple
+/// silicon, hardware accelerated). Anything else is refused up front, in words
+/// a person can act on. Remote host placement is checked by the selected host
+/// instead.
 fn refuse_windows_on_mac(image: Option<&str>, host_is_mac: bool) -> Result<()> {
+    refuse_windows_on_mac_for(image, host_is_mac, cua_image::windows::WindowsArch::host())
+}
+
+fn refuse_windows_on_mac_for(
+    image: Option<&str>,
+    host_is_mac: bool,
+    arch: cua_image::windows::WindowsArch,
+) -> Result<()> {
     let windows = image.is_some_and(|i| {
         cua_image::catalog::catalog_os(i).as_deref() == Some("windows")
             || i.rsplit('/')
                 .next()
                 .is_some_and(|n| n.to_ascii_lowercase().starts_with("windows"))
     });
-    if host_is_mac && windows {
-        return Err(Error::invalid(WINDOWS_COMING_SOON));
+    if !(host_is_mac && windows) {
+        return Ok(());
     }
-    Ok(())
+    let runs_here = image
+        .and_then(|i| {
+            let full = if i.contains('/') {
+                Some(i.to_string())
+            } else {
+                cua_image::canonical::alias(i)
+            }?;
+            cua_image::windows::build::local_build_target(&full)
+        })
+        .is_some_and(|v| v.supports(arch));
+    if runs_here {
+        return Ok(());
+    }
+    Err(Error::invalid(WINDOWS_EMULATION_ONLY))
 }
 
 /// Passes `result` through; on an error runs `teardown` (best effort),
@@ -4694,13 +4728,28 @@ mod tests {
 
     #[test]
     fn a_windows_create_from_a_mac_is_refused_in_plain_words() {
-        for image in ["windows", "windows:2022", "ghcr.io/trycua/windows:2022"] {
-            let e = refuse_windows_on_mac(Some(image), true).unwrap_err();
-            assert!(e.to_string().contains("coming soon on Mac"), "{image}: {e}");
-            assert!(refuse_windows_on_mac(Some(image), false).is_ok());
+        // Apple silicon, whatever the CI host is.
+        const ARM: cua_image::windows::WindowsArch = cua_image::windows::WindowsArch::Arm64;
+        // Published Server is x64; Server 2025 has no ARM64 build.
+        for image in [
+            "windows",
+            "windows:2022",
+            "ghcr.io/trycua/windows:2022",
+            "windows:2025",
+        ] {
+            let e = refuse_windows_on_mac_for(Some(image), true, ARM).unwrap_err();
+            assert!(e.to_string().contains("Use Windows 11"), "{image}: {e}");
+            assert!(refuse_windows_on_mac_for(Some(image), false, ARM).is_ok());
         }
-        assert!(refuse_windows_on_mac(Some("ghcr.io/trycua/linux:24.04"), true).is_ok());
-        assert!(refuse_windows_on_mac(None, true).is_ok());
+        // Windows 11 is built here with a build for this host.
+        for image in ["windows:11", "ghcr.io/trycua/windows:11"] {
+            assert!(
+                refuse_windows_on_mac_for(Some(image), true, ARM).is_ok(),
+                "{image}"
+            );
+        }
+        assert!(refuse_windows_on_mac_for(Some("ghcr.io/trycua/linux:24.04"), true, ARM).is_ok());
+        assert!(refuse_windows_on_mac_for(None, true, ARM).is_ok());
     }
 
     #[test]

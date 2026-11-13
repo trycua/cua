@@ -158,7 +158,8 @@ plist's `EnvironmentVariables`, the unit, or the User environment.
 
 Some actions can't finish in the background. Today that means a drag that
 starts a macOS drag-and-drop session in a native window, such as reordering a
-list, because macOS follows the real pointer for those. By default the driver
+list, when the background hold below can't be made (another window covers the
+drop point, or the daemon has no graphic session). By default the driver
 refuses them with `background_unavailable`.
 
 To let the driver finish them, set `CUA_DRIVER_ALLOW_BRIEF_FOREGROUND=1` in
@@ -169,6 +170,32 @@ back. The result carries a `foreground_step` object that says whether both were
 restored, and the daemon log records the step. A call that passes
 `delivery_mode: "background"` explicitly is never escalated. Leave the
 variable unset on a Mac someone is using.
+
+### Background drag-and-drop (macOS)
+
+A background `drag` that starts a native drag-and-drop session (reordering a
+list, moving a file between windows, dragging an object onto a drop zone)
+finishes without moving the pointer, raising the window or changing the
+frontmost app. The driver keeps posting the gesture to the source app, holds
+the hardware button down at the pointer's current position, and releases it
+before the drop. A transparent shield window under the pointer absorbs that
+one press and release, so the app under the pointer never sees a click. This
+works whether or not the agent cursor is on.
+
+Limits:
+
+- The daemon needs a graphic session (a logged-in user, not SSH or a
+  LaunchDaemon).
+- The user has to leave the pointer alone for about two seconds. If the
+  pointer moves, the drag fails with an error instead of reporting a drop.
+- The drop point must not be covered by another window: a drop always lands in
+  the window on top at that point, so the driver refuses rather than drop into
+  the wrong window.
+
+When the hold can't be made, the drag falls back to the refusal above (or to
+the brief foreground step, if that is on). Set `CUA_DRIVER_BACKGROUND_DND=0`
+in the daemon's environment to turn the route off. Sliders, splitters and
+canvas drags don't use it.
 
 ## Update
 

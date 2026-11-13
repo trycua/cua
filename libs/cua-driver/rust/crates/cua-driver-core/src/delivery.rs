@@ -77,6 +77,38 @@ pub fn brief_foreground_flag(value: Option<&str>) -> bool {
     )
 }
 
+/// Environment variable that turns off the held-pointer route for native
+/// macOS drag-and-drop when set to `0`, `false`, `no` or `off` in the daemon's
+/// environment. The route is on by default: a background drag that starts a
+/// drag-and-drop session is driven by window-routed drags while the hardware
+/// button is held at the stationary pointer, so the drop lands without moving
+/// the pointer. See `platform-macos` `input::pointer_hold`.
+pub const BACKGROUND_DND_ENV: &str = "CUA_DRIVER_BACKGROUND_DND";
+
+/// The variable that turned the route on while it was experimental. Setting
+/// it to an off value still turns the route off.
+pub const LEGACY_BACKGROUND_DND_ENV: &str = "CUA_DRIVER_EXPERIMENTAL_BACKGROUND_DND";
+
+/// Whether the held-pointer route is on, given the two variables' values: on
+/// unless either is set to an off value.
+pub fn background_dnd_flag(value: Option<&str>, legacy: Option<&str>) -> bool {
+    let off = |value: Option<&str>| {
+        matches!(
+            value.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+            Some("0" | "false" | "no" | "off")
+        )
+    };
+    !(off(value) || off(legacy))
+}
+
+/// Whether the held-pointer drag-and-drop route is on for this daemon.
+pub fn background_dnd_enabled() -> bool {
+    background_dnd_flag(
+        std::env::var(BACKGROUND_DND_ENV).ok().as_deref(),
+        std::env::var(LEGACY_BACKGROUND_DND_ENV).ok().as_deref(),
+    )
+}
+
 /// Whether the call itself asked for background delivery by name, which opts
 /// it out of the brief foreground step.
 pub fn background_requested_explicitly(args: &Value) -> bool {
@@ -140,6 +172,18 @@ pub fn background_unavailable_result_with_suggestion(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn background_dnd_is_on_unless_turned_off() {
+        use super::background_dnd_flag;
+        assert!(background_dnd_flag(None, None));
+        assert!(background_dnd_flag(Some("1"), None));
+        assert!(background_dnd_flag(None, Some("1")));
+        assert!(!background_dnd_flag(Some("0"), None));
+        assert!(!background_dnd_flag(Some(" Off "), None));
+        assert!(!background_dnd_flag(None, Some("false")));
+    }
+
     #[test]
     fn brief_foreground_is_off_unless_explicitly_enabled() {
         for off in [

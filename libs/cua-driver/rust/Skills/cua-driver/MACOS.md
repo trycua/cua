@@ -728,10 +728,16 @@ A native `<input type="range">` in Chrome does not follow a background drag
 through CDP `Input.dispatchMouseEvent` with the button held.
 
 A drag that starts a macOS drag-and-drop session (reordering a list by drag
-and drop, moving a file, HTML5 `draggable` content) cannot drop in the
-background: macOS tracks those sessions with the real pointer. The driver
-sees the session start, releases at once, and returns
-`background_unavailable` with `reason: "drag_and_drop_session"`. Look for a
+and drop, moving a file, HTML5 `draggable` content) is tracked by macOS with
+the real pointer. The driver sees the session start, holds the hardware
+button at the pointer's current position (a transparent shield window under
+the pointer takes that press and release) and carries the session to the drop
+point; the pointer, the frontmost app and the window order stay put. It needs
+the user to leave the pointer alone for about two seconds, and the drop point
+must not be covered by another window (a drop lands in the window on top).
+When the hold can't be made, the driver releases at once and returns
+`background_unavailable` with `reason: "drag_and_drop_session"` (with
+`drop_point_covered: true` when a window covers the drop point). Look for a
 non-drag route first (Move Up/Down, a menu or context-menu command, a
 shortcut, cut and paste), then foreground if the user allows it.
 

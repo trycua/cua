@@ -36,6 +36,7 @@ import base64
 import ctypes
 import json
 import os
+import re
 import tempfile
 import threading
 import time
@@ -1094,6 +1095,11 @@ class Raw:
         lowered = [k.lower() for k in combo]
         if lint.combo(lowered) in lint.FOCUS_COMBOS:
             STATE.check("MB9", "keys " + "+".join(lowered))
+        post = _post_to_pid
+        if window_id is not None:
+            _window_key(pid, int(window_id), "raw.post_key")
+            post = _sl_post_to_pid
+        # checked where the keys go: after the key-window switch, so a pop-up focused in that window counts
         if lowered and lowered[-1] in lint.POPUP_OPEN_KEYS:
             role = _focused_popup(pid)
             if role is not None:
@@ -1104,10 +1110,6 @@ class Raw:
                     f"posted {'+'.join(lowered)} to {app_name(pid)}, whose focused element is an {role} (opens its "
                     "menu); choose the option with raw.select(el, 'Label')",
                 )
-        post = _post_to_pid
-        if window_id is not None:
-            _window_key(pid, int(window_id), "raw.post_key")
-            post = _sl_post_to_pid
         flags = 0
         for k in lowered[:-1]:
             if k not in FLAGS:
@@ -1130,6 +1132,10 @@ class Raw:
         ``post_key``, for apps that drop plain per-process keys in the background."""
         pid = int(pid)
         STATE.to_user(pid, "posted text")
+        post = _post_to_pid
+        if window_id is not None:
+            _window_key(pid, int(window_id), "raw.post_text")
+            post = _sl_post_to_pid
         if " " in str(text):
             role = _focused_popup(pid)
             if role is not None:
@@ -1138,10 +1144,6 @@ class Raw:
                     f"posted text with a space to {app_name(pid)}, whose focused element is an {role} (a space opens "
                     "its menu); choose the option with raw.select(el, 'Label')",
                 )
-        post = _post_to_pid
-        if window_id is not None:
-            _window_key(pid, int(window_id), "raw.post_text")
-            post = _sl_post_to_pid
         _post_chars(pid, str(text), post)
         return f"posted {len(text)} characters to {app_name(pid)}"
 
@@ -1995,14 +1997,39 @@ def _calc_table_title(win: Any) -> str:
     return str(_ax_get(table, "AXTitle") or "") if table is not None else ""
 
 
+def _clock(text: str) -> tuple[int, int, int] | None:
+    """(hour 0-23, minute, second) of "13:00", "13:00:00", "1:00 PM" or "01:00:00 PM", else None."""
+    m = re.fullmatch(r"\s*(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AaPp][Mm])?\s*", text)
+    if not m:
+        return None
+    hour, minute, second = int(m.group(1)), int(m.group(2)), int(m.group(3) or 0)
+    if m.group(4):
+        if not 1 <= hour <= 12:
+            return None
+        hour = hour % 12 + (12 if m.group(4).lower() == "pm" else 0)
+    return (hour, minute, second) if hour < 24 and minute < 60 and second < 60 else None
+
+
+def _number(text: str) -> float | None:
+    try:
+        return float(text.strip().replace(",", ""))
+    except ValueError:
+        return None
+
+
 def _calc_shows(value: str, got: str) -> bool:
-    """Whether a cell showing ``got`` holds ``value`` as typed: the text itself, or (for a number, date or time
-    Calc parsed) any non-empty display of it. A leading ' keeps text and is not shown."""
+    """Whether a cell showing ``got`` holds ``value`` as typed: the text itself; for a time or number Calc parsed, a
+    display of the same time or number ("13:00" shows as "01:00:00 PM"). A leading ' keeps text and is not shown.
+    Anything else Calc may have reformatted is not counted as confirmed."""
     if value.startswith("'"):
         return got == value[1:]
     if got == value:
         return True
-    return bool(got) and bool(value) and all(c.isdigit() or c in ":.,/- " for c in value)
+    want, have = _clock(value), _clock(got)
+    if want is not None:
+        return want == have
+    want_n, have_n = _number(value), _number(got)
+    return want_n is not None and have_n is not None and want_n == have_n
 
 
 def _calc_cell_value(win: Any, cell: str) -> str:

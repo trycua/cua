@@ -253,3 +253,40 @@ class GuardTimeoutTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CalcReadBackTest(unittest.TestCase):
+    """raw.set_cell's read-back: a time or number Calc reformatted counts only if it is the same value. The helpers
+    are pure, so they are loaded from raw_mac.py's source without the macOS frameworks it imports."""
+
+    def shows(self):
+        import ast
+        import re
+
+        source = (Path(lint.__file__).parent / "raw_mac.py").read_text()
+        wanted = {"_clock", "_number", "_calc_shows"}
+        nodes = [
+            n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name in wanted
+        ]
+        self.assertEqual({n.name for n in nodes}, wanted)
+        ns: dict = {"re": re}
+        exec(compile(ast.Module(nodes, []), "raw_mac.py", "exec"), ns)  # noqa: S102
+        return ns["_calc_shows"]
+
+    def test_read_back(self):
+        shows = self.shows()
+        for value, got, ok in (
+            ("cancelled", "cancelled", True),
+            ("13:00", "01:00:00 PM", True),
+            ("11:00", "11:00:00 AM", True),
+            ("12:00", "12:00:00 PM", True),
+            ("13:00", "09:00:00 AM", False),  # a write that did not land on an old time
+            ("'13:00", "13:00", True),
+            ("'13:00", "01:00:00 PM", False),
+            ("3", "4", False),
+            ("1,000", "1000", True),
+            ("", "", True),
+            ("x", "", False),
+        ):
+            with self.subTest(value=value, got=got):
+                self.assertEqual(shows(value, got), ok)

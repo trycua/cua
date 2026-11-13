@@ -552,7 +552,7 @@ def test_script_change_triggers_the_workflow(filename):
 
 # What each workflow's jobs install from a floating spec: the stamp must cover it.
 FLOATING = {
-    "ci-cua-spacesd.yml": {"rust-stable"},
+    "ci-cua-spacesd.yml": set(),
     "ci-cua-driver-contract-clients.yml": {"node-22", "python-3.12"},
     "ci-cua-sdk.yml": {"node-22", "uv", "python-standalone"},
 }

@@ -343,8 +343,14 @@ def test_quick_stage_decides_the_scope_from_the_base_commit_and_fails_closed():
     decide = steps['Decide whether this workflow runs']['run']
     assert 'set -euo pipefail' in decide
     assert 'python3 base/.github/scripts/ci_gate_scope.py --workflow' in decide
-    # Merge queue runs stay off (and ci-gate reads the pull request's results) until the switch is on.
+    # In the merge queue only the map's `queue` workflows run (--merge-queue); a base commit whose
+    # selector predates the flag runs nothing there.
     assert '"${QUEUE_RUNS:-}" != true' in decide and 'skip=true' in decide
+    assert "grep -q -- '--merge-queue' base/.github/scripts/ci_gate_scope.py" in decide
+    assert '--workflow "$workflow" "${queue_args[@]}"' in decide
+    # The selector is read on every event, so a merge queue run can ask it too.
+    for name in ('Check out the selector from the base commit', "Check out the change's manifests"):
+        assert 'if' not in steps[name], name
 
 
 LOCAL_CI_FAST = STEPS['Check the sign-off on the pull request (fail fast)']['run']
@@ -465,32 +471,47 @@ QUEUE_MOCK = MOCK.replace("""    *'head_sha='*)""", """    *'head_sha=queue'*) p
     *'head_sha='*)""")
 
 
-def run_queue_gate(rows, qrows, queue_runs, jobs='test\tsuccess', check_runs=''):
+def run_queue_gate(rows, qrows, jobs='test\tsuccess', check_runs=''):
     return subprocess.run(
         ['bash', '-e', '-c', QUEUE_MOCK + SCRIPT[SCRIPT.index('sha=$PR_SHA'):]],
         env={**os.environ, 'PR_SHA': '', 'QUEUE_REF': 'refs/heads/gh-readonly-queue/main/pr-7-abc',
-             'QUEUE_SHA': 'queue', 'QUEUE_RUNS': queue_runs, 'GITHUB_REPOSITORY': 'test/repo',
+             'QUEUE_SHA': 'queue', 'GITHUB_REPOSITORY': 'test/repo',
              'GITHUB_RUN_ID': '99', 'ROWS': rows, 'QROWS': qrows, 'JOBS': jobs, 'OLDER_JOBS': jobs,
              'ROWS_DIR': '', 'MAX_SLEEPS': '6', 'MAX_SECONDS': str(10**9), 'CHECK_RUNS': check_runs},
         capture_output=True, text=True, timeout=10,
     )
 
 
-def test_merge_queue_judges_a_workflow_by_its_queue_run_when_queue_runs_are_on():
+def test_merge_queue_judges_the_queue_run_in_addition_to_the_pull_request_run():
     pr = '1\t11\tbuild\tsuccess\tcompleted\n2\t21\tlint\tsuccess\tcompleted'
     queue = '1\t12\tbuild\tfailure\tcompleted'
-    on = run_queue_gate(pr, queue, 'true', jobs='test\tfailure')
-    assert on.returncode == 1 and 'build: fail' in on.stdout
+    failing = run_queue_gate(pr, queue, jobs='test\tfailure')
+    assert failing.returncode == 1 and 'build (merge queue): fail' in failing.stdout
     # `lint` has no queue run, so its pull request result still counts.
-    assert 'lint:' in on.stdout
-    off = run_queue_gate(pr, queue, '')
-    assert off.returncode == 0 and 'build: pass' in off.stdout
+    assert 'lint:' in failing.stdout
+
+
+def test_a_green_queue_run_never_hides_a_failing_pull_request_run():
+    # The queue run of `build` passed, but the pull request run of the same workflow failed: both count.
+    pr = '1\t11\tbuild\tfailure\tcompleted'
+    queue = '1\t12\tbuild\tsuccess\tcompleted'
+    completed = run_queue_gate(pr, queue, jobs='test\tfailure')
+    assert completed.returncode == 1, completed.stdout
+    assert 'build: fail' in completed.stdout
 
 
 def test_merge_queue_passes_on_green_queue_runs():
-    completed = run_queue_gate('1\t11\tbuild\tsuccess\tcompleted', '1\t12\tbuild\tsuccess\tcompleted', 'true')
+    completed = run_queue_gate('1\t11\tbuild\tsuccess\tcompleted', '1\t12\tbuild\tsuccess\tcompleted')
     assert completed.returncode == 0, completed.stderr
     assert 'build: pass' in completed.stdout
+    assert 'build (merge queue): pass' in completed.stdout
+
+
+def test_merge_queue_without_queue_runs_reads_the_pull_request_runs():
+    # Every merge_group run skipped (listed with conclusion skipped, so filtered out): the pull request's result decides.
+    completed = run_queue_gate('1\t11\tbuild\tsuccess\tcompleted', '')
+    assert completed.returncode == 0, completed.stderr
+    assert 'build: pass' in completed.stdout and 'merge queue' not in completed.stdout
 
 
 # Fail fast (10 Nov 2026): a job that already failed in a run that is still going fails the gate at once.
@@ -507,9 +528,9 @@ def test_gate_fails_at_once_on_a_failed_job_in_a_run_that_is_still_going():
 
 
 def test_merge_queue_gate_fails_at_once_on_the_pull_request_runs_failed_job():
-    # #7136: QUEUE_RUNS off, so the queue entry is judged by the pull request's own runs; one of them
+    # #7136: no queue run, so the queue entry is judged by the pull request's own runs; one of them
     # had a failed job and a 180-minute job still running. The entry must leave the queue now.
-    completed = run_queue_gate(STILL_GOING, '', '', check_runs='21\t501\tapp core + FFI mirror gate')
+    completed = run_queue_gate(STILL_GOING, '', check_runs='21\t501\tapp core + FFI mirror gate')
     assert completed.returncode == 1, completed.stderr
     assert 'macOS: fail' in completed.stdout
 

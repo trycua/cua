@@ -776,6 +776,7 @@ class Raw:
         result["route"] = "menu_guarded"
         result["key_focus_released"] = len(guard.released)
         result["window_restores"] = guard.restores
+        result["key_focus_held_ms"] = guard.held_ms
         if problems:
             STATE.refuse("MB7", "raw.select guarded pop-up: " + "; ".join(problems))
         return result
@@ -1516,6 +1517,9 @@ class _KeyFocusGuard:
         self.released: list[int] = []  # the theft ids handed back
         self.scanned = False
         self.restores = 0
+        self.thread: threading.Thread | None = None
+        self.stolen_at = 0.0
+        self.held_ms: int | None = None  # how long the target held key focus before the release
         self.done = threading.Event()
         self.lock = threading.Lock()
         # the user's own focused window, resolved once so a restore is one AX call
@@ -1524,7 +1528,7 @@ class _KeyFocusGuard:
 
     def _on_event(self, proxy: Any, etype: int, event: Any, refcon: Any) -> Any:
         if etype in _TAP_DISABLED:
-            if self.port:
+            if self.port and not self.done.is_set():
                 _CG.CGEventTapEnable(self.port, True)
             return event
         if etype != _FOCUS_NOTICE or not event:
@@ -1532,6 +1536,7 @@ class _KeyFocusGuard:
         lost = _CG.CGEventGetIntegerValueField(event, _F_SUBTYPE) == _LOST_KEY
         if lost and _CG.CGEventGetIntegerValueField(event, _F_THIEF) == self.target:
             self.stolen.set()
+            self.stolen_at = time.monotonic()
             threading.Thread(target=self._release, daemon=True).start()
             return None  # the user's app never hears it lost key focus
         return event
@@ -1547,6 +1552,7 @@ class _KeyFocusGuard:
         with self.lock:
             self.released = released
             self.scanned = True
+            self.held_ms = round((time.monotonic() - self.stolen_at) * 1000)
 
     def _run(self) -> None:
         port = _CG.CGEventTapCreateForPid(self.front, 0, 0, 1 << _FOCUS_NOTICE, self.callback, None)
@@ -1571,7 +1577,8 @@ class _KeyFocusGuard:
             time.sleep(0.005)
 
     def start(self) -> bool:
-        threading.Thread(target=self._run, daemon=True).start()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
         self.ready.wait(2.0)
         if self.port:
             threading.Thread(target=self._watch_order, daemon=True).start()
@@ -1602,15 +1609,24 @@ class _KeyFocusGuard:
         # the order watcher keeps running; a late theft notice still goes through the tap
         time.sleep(1.0)
         self.done.set()
-        if self.loop:
-            _CFL.CFRunLoopStop(self.loop)
+        # disable before the run loop ends: the tap thread invalidates the port on its way out
         if self.port:
             _CG.CGEventTapEnable(self.port, False)
+        if self.loop:
+            _CFL.CFRunLoopStop(self.loop)
+        if self.thread is not None:
+            self.thread.join(1.0)
         problems = []
         with self.lock:
             if self.stolen.is_set() and not self.released:
                 problems.append(
                     "the target's key-focus theft was not released (the user's window lost key focus)"
+                )
+            elif self.stolen.is_set():
+                # the user's app was never told, but keys typed in that moment went to the menu: report it
+                WATCH_NOTES.append(
+                    f"{app_name(self.target)}'s pop-up menu took key focus for {self.held_ms} ms before the "
+                    "key-focus guard handed it back to the user's window"
                 )
             if self.restores:
                 # a raise the guard undid was still on screen for a moment: the hook reports it (WATCH_NOTES)

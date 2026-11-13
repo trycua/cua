@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.1](https://github.com/trycua/cua/compare/cua-sdk-v0.27.0...cua-sdk-v0.27.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* **cua-spaces:** build the github_auth tests on Windows ([#7515](https://github.com/trycua/cua/issues/7515)) ([2319d45](https://github.com/trycua/cua/commit/2319d4561feb3086a8dc66edeb9cbd5eb509c5a5))
+
 ## [0.27.0](https://github.com/trycua/cua/compare/cua-sdk-v0.26.0...cua-sdk-v0.27.0) (2026-11-12)
 
 

@@ -197,7 +197,6 @@ the platform runtimes check later. Affected fields:
 
 | Tool                     | Field                       | Advertised bound     |
 | ------------------------ | --------------------------- | -------------------- |
-| `escalate_session`       | `detail`                    | `maxLength: 200`     |
 | `set_agent_cursor_theme` | `theme_id`                  | length 1 to 200      |
 | `set_window_frame`       | `pid`, `window_id`          | `minimum: 1`         |
 | `set_window_frame`       | `width`, `height`           | `minimum: 1`         |

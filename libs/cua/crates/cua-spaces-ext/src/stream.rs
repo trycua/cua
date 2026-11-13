@@ -112,6 +112,7 @@ impl MediaStream {
             }
         }
         cua_spacesd_client::transport::ensure_crypto_provider();
+        let timing = Instant::now();
         let (ws, _) = tokio_tungstenite::connect_async(request)
             .await
             .map_err(|e| match e {
@@ -120,6 +121,12 @@ impl MediaStream {
                 }
                 other => Error::Stream(format!("media socket: {other}")),
             })?;
+        tracing::debug!(
+            target: "cua::stream::timing",
+            hop = "connection_established",
+            ms = timing.elapsed().as_secs_f64() * 1e3,
+            "stream.open"
+        );
         let (mut tx, mut rx) = ws.split();
         let counters = Arc::new(Counters::default());
         let closed = Arc::new(AtomicBool::new(false));
@@ -162,6 +169,19 @@ impl MediaStream {
             tokio::spawn(async move {
                 let mut client = MediaClient::new(1);
                 let mut close = (1006u16, "socket ended".to_string());
+                // Per-hop clock of this open (`stream.open` at debug): the
+                // first packet, the first video access unit, the first keyframe.
+                let mut seen_packet = false;
+                let mut seen_frame = false;
+                let mut seen_key = false;
+                let mark = |hop: &'static str| {
+                    tracing::debug!(
+                        target: "cua::stream::timing",
+                        hop,
+                        ms = timing.elapsed().as_secs_f64() * 1e3,
+                        "stream.open"
+                    );
+                };
                 let request_keyframe = |client: &mut MediaClient| -> Option<String> {
                     let r = client.request_keyframe(Instant::now());
                     if r.is_some() {
@@ -212,6 +232,14 @@ impl MediaStream {
                             },
                             Some(Ok(tungstenite::Message::Binary(bytes))) => match client.apply_binary(&bytes) {
                                 Ok(Some(MediaEvent::Video { descriptor, payload })) => {
+                                    if !seen_frame {
+                                        seen_frame = true;
+                                        mark("first_frame");
+                                    }
+                                    if descriptor.keyframe && !seen_key {
+                                        seen_key = true;
+                                        mark("first_keyframe");
+                                    }
                                     let frame = VideoFrame {
                                         sequence: descriptor.sequence.0,
                                         codec: format!("{:?}", descriptor.codec).to_lowercase(),
@@ -271,6 +299,10 @@ impl MediaStream {
                             }
                             None => break,
                         },
+                    }
+                    if !seen_packet && client.phase() != MediaPhase::Attaching {
+                        seen_packet = true;
+                        mark("session_opened");
                     }
                     for text in outgoing {
                         if tx

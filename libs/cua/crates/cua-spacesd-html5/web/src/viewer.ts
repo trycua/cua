@@ -11,6 +11,7 @@ import { ConnectError, Code } from "@connectrpc/connect";
 import { createApi, endpointFromLocation, mediaSocketUrl, type Api } from "./api";
 import { probe, type BrowserSupport } from "./capabilities";
 import { ClipboardSync } from "./clipboard";
+import { parseClipboardMode, type ClipboardMode } from "./clipboardGate";
 import { MediaSession, type AudioConfigMessage, type MediaTicket } from "./core/mediaSession";
 import type { InteractiveInputEvent } from "./core/mediaWire";
 import type { MessageInitShape } from "@bufbuild/protobuf";
@@ -32,6 +33,7 @@ interface ViewerState {
   muted: boolean;
   mic: boolean;
   clipboard: boolean;
+  clipboardMode: ClipboardMode;
   stats: boolean;
 }
 
@@ -99,7 +101,8 @@ export class Viewer {
       scale: params.get("scale") === "actual" ? "actual" : "fit",
       muted: params.get("audio") === "off",
       mic: false,
-      clipboard: params.get("clipboard") !== "off",
+      clipboard: parseClipboardMode(params.get("clipboard")) !== "off",
+      clipboardMode: parseClipboardMode(params.get("clipboard")),
       stats: params.get("stats") === "1",
     };
     this.displayId = params.get("display") ?? "primary";
@@ -328,6 +331,18 @@ export class Viewer {
     if (!this.state.clipboard || this.media?.policy === SessionPolicy.VIEW_ONLY) return;
     const sync = new ClipboardSync({
       api: this.api,
+      mode: this.state.clipboardMode,
+      onPrompt: (offer) => {
+        const space = this.title.textContent || "The Space";
+        const text = offer.direction === "to-host" ? `${space} copied text. Paste it on your Mac?` : `Send your clipboard to ${space}?`;
+        const choices: Array<[string, () => void | Promise<void>]> = [
+          ["Not now", () => offer.answer("not-now")],
+          ["Allow once", () => offer.answer("once")],
+        ];
+        if (offer.offersAlways && offer.direction === "to-host") choices.push(["Always while I'm viewing", () => offer.answer("always")]);
+        this.chipChoices("clipboard-offer", text, choices);
+      },
+      onOfferCleared: () => this.removeChip("clipboard-offer"),
       onSynced: (direction, content) => {
         this.clipboardLog.push({ direction, text: content.text, png: content.png?.byteLength });
         if (this.clipboardLog.length > 50) this.clipboardLog.shift();
@@ -816,6 +831,25 @@ export class Viewer {
       x.title = "Forget";
       x.onclick = () => void onDismiss();
       chip.appendChild(x);
+    }
+    this.chips.appendChild(chip);
+    return chip;
+  }
+
+  /** A calm prompt with one button per choice; any choice closes it. */
+  private chipChoices(id: string, text: string, choices: Array<[string, () => void | Promise<void>]>): HTMLElement {
+    this.removeChip(id);
+    const chip = el("div", "cua-chip");
+    chip.dataset.chip = id;
+    chip.appendChild(el("span", "cua-chip-text", text));
+    for (const [label, run] of choices) {
+      const b = el("button", "cua-chip-btn", label);
+      b.type = "button";
+      b.onclick = () => {
+        this.removeChip(id);
+        void run();
+      };
+      chip.appendChild(b);
     }
     this.chips.appendChild(chip);
     return chip;

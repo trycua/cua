@@ -5,10 +5,26 @@ description: Call Cua Driver from Python or TypeScript in process, verify each a
 
 import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
 
-`CuaDriver.create()` loads the Rust runtime into your process: no daemon,
-socket, or executable. Your app owns the OS permissions, sessions, and
-shutdown. On macOS, the process that imports the SDK needs the Accessibility
-and Screen Recording grants.
+`CuaDriver.create()` gives you a driver for your Python or TypeScript app.
+Where the platform allows it, it is the in-process Rust runtime: no daemon,
+socket, or executable, and your app owns the OS permissions, sessions, and
+shutdown.
+
+**On macOS, `create()` prefers the `CuaDriver.app` daemon.** An in-process
+runtime has no AppKit host, so it cannot draw the agent cursor overlay (the
+visible "the agent is working here" cursor), and macOS attributes the
+Accessibility and Screen Recording grants to your Python, Node, or IDE process
+instead of `CuaDriver.app`. The daemon draws the cursor and owns the grants, so
+`create()` connects to a running daemon, or starts the installed app through
+LaunchServices (the same way `cua-driver permissions grant` does). Run
+`cua-driver permissions grant` once; there is nothing else to configure.
+
+If `CuaDriver.app` is not installed, `create()` falls back to the in-process
+runtime and prints a one-time warning that the agent cursor is unavailable.
+Pass `embedded=True` (Python) or `{ embedded: true }` (TypeScript), or set
+`CUA_DRIVER_EMBEDDED=1`, to force the in-process runtime on purpose. Other
+platforms always run in process. To pick the daemon explicitly, use
+`CuaDriver.connect()`.
 
 <Tabs groupId="language" persist items={['Python', 'TypeScript']}>
   <Tab value="Python">
@@ -200,9 +216,7 @@ try {
   </Tab>
 </Tabs>
 
-Version 0.25 does not expose these typed window methods (`ActionTarget`,
-`ClickPosition`); upgrade the bindings and native library together. Rules the
-example follows:
+Rules the example follows:
 
 - `click` returns `ActionResult` and raises `DriverError.Tool` on refusal. A
   returned action does not prove the UI changed; the second snapshot does.
@@ -225,12 +239,12 @@ confirms the value through a separate `/state` endpoint lives in
 
 | Python / TypeScript | Use |
 | --- | --- |
-| `create()` | Same-process runtime. The default. |
+| `create()` | The default. On macOS, connects to (or starts) the `CuaDriver.app` daemon so the agent cursor and permissions work; elsewhere, or with `embedded=True` / `{ embedded: true }`, the same-process runtime. |
 | `create_configured(options)` / `createConfigured` | Trusted host sets an immutable permission ceiling and session TTLs. |
 | `create_configured_with_authorization_host(options, host)` | Adds a callback that approves residual boundaries, such as attaching to a logged-in browser profile. |
 | `create_configured_with_activity_observer(options, observer)` | Adds content-free activity events (tool, risk class, refusal code; never arguments or images). |
 | `create_private_worker(options)` / `createPrivateWorker` | One supervised child runtime over inherited pipes; no listener, closes with its channel. |
-| `connect(socket_path)` / `connect(socketPath)` | Connects to a running daemon. |
+| `connect(socket_path)` / `connect(socketPath)` | Connects to a running daemon without falling back. |
 
 Python uses `snake_case`, TypeScript `camelCase`. Desktop methods mirror the
 [MCP tools](/cua-driver/reference/mcp-tools) (`get_window_state`, `click`,
@@ -245,7 +259,7 @@ the overlay.
 
 When a signed desktop app must let an external agent use its permissions, host
 a private daemon from the app process and hand its MCP connection to the agent.
-If only your app calls the driver, use `create()` instead.
+If only your app calls the driver, use `create()` instead (on macOS it uses the daemon and draws the agent cursor).
 
 ```ts skip="no-runner"
 import { CuaDriver, EmbeddedCuaDriverHost } from '@trycua/cua-driver';
@@ -296,6 +310,14 @@ Python exposes the same objects:
   environment to shorten it; `EmbeddedCuaDriverHost` admits both in its
   `environment` option. On macOS the wait also holds the focus-restore
   lease, so a shorter wait shortens that protection. Windows ignores both.
+
+- **Keep the full cursor glide inside batches.** On macOS a step of
+  `run_steps` or `run_script` waits at most 120 ms for the agent cursor and
+  100 ms for a window change, because another step follows at once. The last
+  step of a `run_steps` batch and every direct call keep the full waits. Set
+  `CUA_DRIVER_BATCH_PACING=full` in the daemon's launch environment to give
+  every step the full waits, for example when you record a demo;
+  `EmbeddedCuaDriverHost` admits it.
 
 - **Shorten macOS keystroke pacing.** The macOS adapter waits 8 ms between
   synthesized key events. Set `CUA_DRIVER_KEY_GAP_MS` (2 to 100) in the same

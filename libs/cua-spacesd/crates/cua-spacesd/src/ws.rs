@@ -296,8 +296,8 @@ mod guard_tests {
         assert!(ok(true, Some("http://localhost:8080")).is_ok());
         let refused = ok(true, Some("https://evil.example")).unwrap_err();
         assert_eq!(refused.status(), 403);
-        // Token-protected or non-loopback listeners (the Fleet gateway) are
-        // not guarded here.
+        // Token-protected or non-loopback listeners (for example behind a
+        // gateway) are not guarded here.
         assert!(ok(false, Some("https://evil.example")).is_ok());
     }
 }

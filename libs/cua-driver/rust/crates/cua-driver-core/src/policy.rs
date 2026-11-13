@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Optional permission-policy enforcement for MCP tool calls.
 
 use std::path::{Path, PathBuf};
@@ -116,6 +119,8 @@ impl PolicyEngine {
     /// "no-args" sentinel if finer control is needed.
     pub fn is_potentially_listable(&self, tool: &str) -> bool {
         let tool = canonical_tool_name(tool);
+        #[cfg(not(any(feature = "yaml", feature = "rego")))]
+        let _ = tool;
         match self {
             #[cfg(feature = "yaml")]
             Self::Yaml(policy) => policy.is_potentially_listable(tool),
@@ -133,7 +138,7 @@ impl PolicyEngine {
 fn canonical_tool_name(tool: &str) -> &str {
     match tool {
         "type_text_chars" => "type_text",
-        other => other,
+        other => crate::tool::renamed_tool(other).unwrap_or(other),
     }
 }
 
@@ -779,13 +784,13 @@ mod tests {
         let policy = yaml_policy(
             r#"
 allow:
-  tools: [screenshot, wait]
+  tools: [get_window_state, wait]
 deny:
   tools: [shell_execute]
 "#,
         );
         assert_eq!(
-            policy.evaluate("screenshot", &serde_json::json!({})),
+            policy.evaluate("get_window_state", &serde_json::json!({})),
             PolicyDecision::Allow
         );
         assert!(matches!(
@@ -797,7 +802,7 @@ deny:
     #[cfg(feature = "yaml")]
     #[test]
     fn yaml_is_deny_by_default() {
-        let policy = yaml_policy("allow:\n  tools: [screenshot]\n");
+        let policy = yaml_policy("allow:\n  tools: [get_window_state]\n");
         assert!(matches!(
             policy.evaluate("click", &serde_json::json!({"x": 10, "y": 10})),
             PolicyDecision::Deny(_)
@@ -899,9 +904,11 @@ allow:
     #[cfg(feature = "yaml")]
     #[test]
     fn explicit_deny_overrides_allow() {
-        let policy = yaml_policy("allow:\n  tools: [screenshot]\ndeny:\n  tools: [screenshot]\n");
+        let policy = yaml_policy(
+            "allow:\n  tools: [get_window_state]\ndeny:\n  tools: [get_window_state]\n",
+        );
         assert!(matches!(
-            policy.evaluate("screenshot", &serde_json::json!({})),
+            policy.evaluate("get_window_state", &serde_json::json!({})),
             PolicyDecision::Deny(_)
         ));
     }
@@ -937,7 +944,7 @@ default allow = false
 
 allow if {
     input.server == "cua-driver"
-    input.tool == "screenshot"
+    input.tool == "get_window_state"
 }
 
 allow if {
@@ -952,7 +959,7 @@ allow if {
         .unwrap();
         let policy = PolicyEngine::load(&path).unwrap().unwrap();
         assert_eq!(
-            policy.evaluate("screenshot", &serde_json::json!({})),
+            policy.evaluate("get_window_state", &serde_json::json!({})),
             PolicyDecision::Allow
         );
         assert_eq!(
@@ -979,13 +986,13 @@ allow if {
         )
         .unwrap();
         fs::write(
-            dir.path().join("screenshot.rego"),
-            "package cua.policy\nallow if input.tool == \"screenshot\"\n",
+            dir.path().join("window-state.rego"),
+            "package cua.policy\nallow if input.tool == \"get_window_state\"\n",
         )
         .unwrap();
         let policy = PolicyEngine::load(dir.path()).unwrap().unwrap();
         assert_eq!(
-            policy.evaluate("screenshot", &serde_json::json!({})),
+            policy.evaluate("get_window_state", &serde_json::json!({})),
             PolicyDecision::Allow
         );
     }

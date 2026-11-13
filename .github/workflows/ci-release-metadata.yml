@@ -3,6 +3,7 @@ name: "CI: Release metadata"
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened, labeled, unlabeled]
+  merge_group:
 
 permissions:
   contents: read
@@ -11,6 +12,7 @@ permissions:
 
 jobs:
   installer-compatibility:
+    if: github.event_name != 'merge_group'
     uses: ./.github/workflows/ci-cua-driver-installer-compat.yml
     permissions:
       contents: read
@@ -18,7 +20,7 @@ jobs:
 
   validate:
     needs: installer-compatibility
-    if: always()
+    if: always() && github.event_name != 'merge_group'
     runs-on: ubuntu-latest
     steps:
       - name: Require successful installer certification
@@ -117,79 +119,76 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          CHANGED=$(git diff --name-only "$BASE_SHA...$HEAD_SHA")
-          if grep -qx 'libs/cua-driver/rust/crates/cua-perception/VERSION' <<<"$CHANGED"; then
-            VERSION=$(tr -d '[:space:]' < libs/cua-driver/rust/crates/cua-perception/VERSION)
-            python3 .github/scripts/release_attribution.py collect \
-              --repository "${{ github.repository }}" \
-              --product cua-perception \
-              --display-name "Cua Perception" \
-              --version "$VERSION" \
-              --tag "cua-perception-v$VERSION" \
-              --tag-prefix cua-perception-v \
-              --ref "$HEAD_SHA" \
-              --sha "$HEAD_SHA" \
-              --path libs/cua-driver/rust/crates/cua-perception \
-              --changelog libs/cua-driver/rust/crates/cua-perception/CHANGELOG.md \
-              --output /tmp/cua-perception-release-manifest.json
+          # The same check runs on the merge queue commit (ci-gate), where main's newest
+          # state is included. One script holds the product arguments for both.
+          SCRIPT=.github/scripts/release_queue_preflight.py
+          # A release branch cut before the script existed uses main's copy.
+          if [[ ! -f "$SCRIPT" ]]; then
+            git show "$BASE_SHA:$SCRIPT" > "$RUNNER_TEMP/release_queue_preflight.py"
+            SCRIPT="$RUNNER_TEMP/release_queue_preflight.py"
           fi
-          if grep -qx 'libs/cua-driver/rust/VERSION' <<<"$CHANGED"; then
-            VERSION=$(tr -d '[:space:]' < libs/cua-driver/rust/VERSION)
-            python3 .github/scripts/release_attribution.py collect \
-              --repository "${{ github.repository }}" \
-              --product cua-driver-rs \
-              --display-name "Cua Driver" \
-              --version "$VERSION" \
-              --tag "cua-driver-rs-v$VERSION" \
-              --tag-prefix cua-driver-rs-v \
-              --ref "$HEAD_SHA" \
-              --sha "$HEAD_SHA" \
-              --path libs/cua-driver \
-              --exclude-path libs/cua-driver/docs \
-              --exclude-path libs/cua-driver/examples \
-              --exclude-path libs/cua-driver/python \
-              --exclude-path libs/cua-driver/tests \
-              --exclude-path libs/cua-driver/rust/crates/cua-perception \
-              --exclude-path libs/cua-driver/experiments/cua-perception-inference \
-              --exclude-companion-path libs/cua-driver/rust/Cargo.toml \
-              --exclude-companion-path libs/cua-driver/rust/Cargo.lock \
-              --release-metadata-path libs/cua-driver/rust/CHANGELOG.md \
-              --release-metadata-path libs/cua-driver/rust/VERSION \
-              --release-metadata-path libs/cua-driver/rust/Cargo.toml \
-              --release-metadata-path libs/cua-driver/rust/Cargo.lock \
-              --release-metadata-path libs/cua-driver/rust/Skills/cua-driver/SKILL.md \
-              --release-metadata-path libs/cua-driver/typescript/package.json \
-              --release-metadata-path libs/cua-driver/typescript/package-lock.json \
-              --changelog libs/cua-driver/rust/CHANGELOG.md \
-              --output /tmp/cua-driver-release-manifest.json
+          python3 "$SCRIPT" \
+            --control . \
+            --repository "${{ github.repository }}" \
+            --base-sha "$BASE_SHA" \
+            --head-sha "$HEAD_SHA" \
+            --output-dir "$RUNNER_TEMP/release-manifests"
+
+      # Release Please tags from this PR's body after merge. Text added above
+      # its version heading makes it tag every component (#6350), so check the
+      # current body with the same engine on every edit.
+      - name: Check that the release PR tags only its own component
+        if: >-
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          startsWith(github.event.pull_request.head.ref, 'release-please--branches--')
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          NPM_CONFIG_IGNORE_SCRIPTS: "true"
+        run: |
+          set -euo pipefail
+          GUARD=.github/scripts/release_please_tag_guard.cjs
+          # A release branch cut before the guard existed uses main's copy.
+          [[ -f "$GUARD" ]] || git show "$BASE_SHA:$GUARD" > "$GUARD"
+          EXPECTED_INTEGRITY='sha512-dB7HsFUpAvU1Wj9RGCINUz8Zi2qQDZiGbDEEVnJ7baNfJmk5XdYhuUFL6RcuDGjReGhp1gzY8Tc2g7vHlM4zpg=='
+          test "$(npm view release-please@17.3.0 dist.integrity)" = "$EXPECTED_INTEGRITY"
+          ENGINE="$RUNNER_TEMP/release-please-engine"
+          npm install --prefix "$ENGINE" --ignore-scripts --no-audit --no-fund release-please@17.3.0 > /dev/null
+          jq '{number: .pull_request.number, title: .pull_request.title,
+               headRefName: .pull_request.head.ref, body: (.pull_request.body // "")}' \
+            "$GITHUB_EVENT_PATH" > "$RUNNER_TEMP/release-pr.json"
+          if ! NODE_PATH="$ENGINE/node_modules" node "$GUARD" check "$RUNNER_TEMP/release-pr.json"; then
+            echo "::error::After merge this PR would tag other components. Keep the version heading (## [x.y.z](...)) as the first line after '---'; put added notes below it."
+            exit 1
           fi
-          if grep -qx 'libs/lume/VERSION' <<<"$CHANGED"; then
-            VERSION=$(tr -d '[:space:]' < libs/lume/VERSION)
-            python3 .github/scripts/release_attribution.py collect \
-              --repository "${{ github.repository }}" \
-              --product lume \
-              --display-name Lume \
-              --version "$VERSION" \
-              --tag "lume-v$VERSION" \
-              --tag-prefix lume-v \
-              --ref "$HEAD_SHA" \
-              --sha "$HEAD_SHA" \
-              --path libs/lume \
-              --changelog libs/lume/CHANGELOG.md \
-              --output /tmp/lume-release-manifest.json
+
+      # The components release-notes.yml renders get the same preflight: a
+      # release PR whose changelog or contributor attribution would not render
+      # fails here, before its tag exists.
+      - name: Preflight release notes for other Release Please components
+        if: >-
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          startsWith(github.event.pull_request.head.ref, 'release-please--branches--')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          COMPONENT="${HEAD_REF##*--components--}"
+          PACKAGE_PATH=$(jq -r --arg c "$COMPONENT" \
+            '.packages | to_entries[] | select(.value.component == $c) | .key' release-please-config.json)
+          if [[ -z "$PACKAGE_PATH" ]]; then
+            echo "No Release Please package for component $COMPONENT"
+            exit 0
           fi
-          if grep -qx 'libs/python/cua-sandbox/VERSION' <<<"$CHANGED"; then
-            VERSION=$(tr -d '[:space:]' < libs/python/cua-sandbox/VERSION)
-            python3 .github/scripts/release_attribution.py collect \
-              --repository "${{ github.repository }}" \
-              --product sandbox \
-              --display-name "Cua Sandbox" \
-              --version "$VERSION" \
-              --tag "sandbox-v$VERSION" \
-              --tag-prefix sandbox-v \
-              --ref "$HEAD_SHA" \
-              --sha "$HEAD_SHA" \
-              --path libs/python/cua-sandbox \
-              --changelog libs/python/cua-sandbox/CHANGELOG.md \
-              --output /tmp/sandbox-release-manifest.json
+          VERSION=$(jq -r --arg p "$PACKAGE_PATH" '.[$p]' .release-please-manifest.json)
+          TAG="$COMPONENT-v$VERSION"
+          PLAN=$(python3 .github/scripts/release_notes.py plan --tag "$TAG")
+          if ! grep -qx 'render=true' <<<"$PLAN"; then
+            echo "$TAG is rendered by its own CD workflow"
+            exit 0
           fi
+          python3 .github/scripts/release_notes.py render \
+            --tag "$TAG" --ref "$HEAD_SHA" --sha "$HEAD_SHA" \
+            --repository "${{ github.repository }}" --out-dir /tmp/release-notes-preflight
+          cat /tmp/release-notes-preflight/release-body.md

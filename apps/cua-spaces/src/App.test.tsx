@@ -45,7 +45,7 @@ const tileNames = () =>
 describe("ambient -> switcher", () => {
   it("starts ambient with dots and count, expands on click and drives the native mode", async () => {
     const { bridge, user } = renderApp();
-    const ambient = screen.getByRole("button", { name: /4 Spaces, 2 active/ });
+    const ambient = screen.getByRole("button", { name: /2 Spaces, 2 active/ });
     expect(ambient).toBeInTheDocument();
     await waitFor(() => expect(bridge.modes).toContain("ambient"));
 
@@ -61,31 +61,31 @@ describe("ambient -> switcher", () => {
 
   it("collapses with Escape", async () => {
     const { user } = renderApp();
-    await user.click(screen.getByRole("button", { name: /4 Spaces/ }));
+    await user.click(screen.getByRole("button", { name: /2 Spaces/ }));
     await user.keyboard("{Escape}");
     // Island (the default theme) springs the panel back into the notch before
     // collapsing to the ambient tab, so the tab reappears asynchronously.
-    expect(await screen.findByRole("button", { name: /4 Spaces/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /2 Spaces/ })).toBeInTheDocument();
   });
 });
 
 describe("menu-bar presentation", () => {
   it("shows the ambient 'N Spaces' tab in the default notch mode", () => {
     renderApp();
-    expect(screen.getByRole("button", { name: /4 Spaces, 2 active/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /2 Spaces, 2 active/ })).toBeInTheDocument();
   });
 
   it("hides the ambient tab when menu-bar mode is stored (status item is the entry)", () => {
     window.localStorage.setItem(SETTINGS_KEYS.menuBar, "true");
     renderApp();
-    expect(screen.queryByRole("button", { name: /4 Spaces, 2 active/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /2 Spaces, 2 active/ })).toBeNull();
   });
 });
 
 describe("keyboard selection and MRU", () => {
   it("moves focus with arrows, selects with Enter, reorders MRU, confirms, then collapses", async () => {
     const { user } = renderApp();
-    await user.click(screen.getByRole("button", { name: /4 Spaces/ }));
+    await user.click(screen.getByRole("button", { name: /2 Spaces/ }));
 
     // The filter box is focused on open; arrow keys then drive tile navigation.
     expect(screen.getByRole("searchbox")).toHaveFocus();
@@ -101,16 +101,16 @@ describe("keyboard selection and MRU", () => {
     expect(tileNames()).toEqual(["Linux Build", "This Mac", "Windows QA", "Research"]);
     expect(screen.getAllByRole("status")[0]).toHaveTextContent("Switching to Linux Build");
 
-    await waitFor(() => expect(screen.getByRole("button", { name: /4 Spaces/ })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: /2 Spaces/ })).toBeInTheDocument());
     // Re-open: MRU order persists.
-    await user.click(screen.getByRole("button", { name: /4 Spaces/ }));
+    await user.click(screen.getByRole("button", { name: /2 Spaces/ }));
     // The grid mounts as the notch opens: wait for it, as for the collapse.
     await waitFor(() => expect(tileNames()[0]).toBe("Linux Build"));
   });
 
   it("wraps from the New tile back to the first Space and reaches New with End", async () => {
     const { user } = renderApp();
-    await user.click(screen.getByRole("button", { name: /4 Spaces/ }));
+    await user.click(screen.getByRole("button", { name: /2 Spaces/ }));
     await user.keyboard("{End}");
     expect(screen.getByRole("option", { name: /New Space/ })).toHaveFocus();
     await user.keyboard("{ArrowRight}");
@@ -138,17 +138,16 @@ describe("New Space opens a window, never a notch panel", () => {
 
   it("Cmd/Ctrl+N asks the shell for the New Space window and folds the notch away", async () => {
     const { spacesList, user } = renderWithList();
-    await user.click(screen.getByRole("button", { name: /4 Spaces/ }));
+    await user.click(screen.getByRole("button", { name: /2 Spaces/ }));
     await user.keyboard("{Control>}n{/Control}");
     expect(spacesList.openNewSpace).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole("heading", { name: "New Fleet" })).toBeNull();
     expect(screen.queryByRole("dialog", { name: "New Space" })).toBeNull();
-    expect(await screen.findByRole("button", { name: /4 Spaces/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /2 Spaces/ })).toBeInTheDocument();
   });
 
   it("the + New tile does the same", async () => {
     const { spacesList, user } = renderWithList();
-    await user.click(screen.getByRole("button", { name: /4 Spaces/ }));
+    await user.click(screen.getByRole("button", { name: /2 Spaces/ }));
     await user.click(screen.getByRole("option", { name: /New Space/ }));
     expect(spacesList.openNewSpace).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("searchbox")).toBeNull();

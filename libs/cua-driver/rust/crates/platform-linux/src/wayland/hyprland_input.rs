@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Local Hyprland input after the common Driver registry admits the action.
 //! Production v3 uses per-action target binding, not a second approval system.
 //! Protocol 0 remains an explicitly selected, nonshipping test experiment.
@@ -10,6 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, TryLockError};
 use std::time::{Duration, Instant};
 
+use crate::interaction::operation_deadline;
 use anyhow::{bail, ensure, Context, Result};
 use serde_json::{json, Value};
 
@@ -18,13 +22,6 @@ const CANCELLATION_POLL: Duration = Duration::from_millis(25);
 const TEXT_ACTION_GAP: Duration = Duration::from_millis(25);
 const MAX_PACKET: usize = 2048;
 const MAX_LANES: usize = 2;
-/// Retries of an action the plugin refused as `stale_geometry` (the target's
-/// surface box changed between TARGET and the action). Hyprland animates a
-/// window for a few hundred milliseconds after a click activates it or the
-/// layout changes, so an immediate retry lands in the same animation: wait
-/// `STALE_GEOMETRY_BACKOFF * attempt` before each (at most ~0.6 s in all).
-const MAX_STALE_GEOMETRY_RETRIES: usize = 4;
-const STALE_GEOMETRY_BACKOFF: Duration = Duration::from_millis(60);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DeliveryRoute {
@@ -61,10 +58,12 @@ fn validate_target_route(target: &Value, route: DeliveryRoute) -> Result<()> {
 /// Validate the whole string before dispatching any keys. Physical key delivery
 /// uses the compositor's keyboard layout; these codes describe US ASCII keys.
 pub(crate) fn text_actions(text: &str) -> Result<Vec<Action>> {
-    ensure!(
-        text.len() <= 4096 && text.is_ascii(),
-        "Hyprland text requires at most 4096 ASCII bytes"
-    );
+    let text = super::text_keys::typable_text(text)?;
+    if text.len() > 4096 || !text.is_ascii() {
+        return Err(super::text_keys::refused(
+            "Hyprland text takes at most 4096 ASCII bytes",
+        ));
+    }
     text.bytes()
         .map(|byte| {
             let (keycode, shift) = match byte {
@@ -108,11 +107,62 @@ pub(crate) fn text_actions(text: &str) -> Result<Vec<Action>> {
                 b'*' => (9, true),
                 b'(' => (10, true),
                 b')' => (11, true),
-                _ => bail!("unsupported Hyprland text control character"),
+                other => {
+                    return Err(super::text_keys::refused(format!(
+                        "Hyprland text has no key for {:?}",
+                        char::from(other)
+                    )))
+                }
             };
             Ok(Action::TextKey { keycode, shift })
         })
         .collect()
+}
+
+/// Wheel detents per `by: "page"` unit. This is the same documented
+/// approximation the Windows foreground fallback uses (page = 3 detents); it is
+/// not a toolkit-measured viewport fraction, and callers must not treat a page
+/// as an exact viewport.
+pub(crate) const PAGE_WHEEL_DETENTS: usize = 3;
+/// Public scroll `amount` bound (before the page multiplier).
+const MAX_SCROLL_AMOUNT: usize = 50;
+/// One protocol packet carries at most 100 detents (|value| <= 1000 at 10 per
+/// detent). Larger requests are decomposed, never clamped.
+const MAX_DETENTS_PER_PACKET: usize = 100;
+
+/// Validate the whole request before dispatching anything, then expand it to
+/// wheel packets. `amount` is the public 1..=50 count of lines or pages. A page
+/// request that exceeds one packet becomes several consecutive same-direction
+/// packets whose detents sum exactly to `amount * PAGE_WHEEL_DETENTS`.
+pub(crate) fn scroll_actions(
+    point: Option<(f64, f64)>,
+    direction: &str,
+    amount: usize,
+    by: cua_driver_contract::ScrollBy,
+) -> Result<Vec<Action>> {
+    ensure!(
+        (1..=MAX_SCROLL_AMOUNT).contains(&amount),
+        "unsupported scroll amount"
+    );
+    ensure!(
+        matches!(direction, "up" | "down" | "left" | "right"),
+        "unsupported scroll direction"
+    );
+    let mut remaining = match by {
+        cua_driver_contract::ScrollBy::Line => amount,
+        cua_driver_contract::ScrollBy::Page => amount * PAGE_WHEEL_DETENTS,
+    };
+    let mut actions = Vec::new();
+    while remaining > 0 {
+        let chunk = remaining.min(MAX_DETENTS_PER_PACKET);
+        actions.push(Action::Scroll {
+            point,
+            direction: direction.to_owned(),
+            amount: chunk,
+        });
+        remaining -= chunk;
+    }
+    Ok(actions)
 }
 
 /// Cancellation belongs to one invocation, never to its session's next call.
@@ -165,7 +215,8 @@ impl std::fmt::Display for LaneBusy {
 impl std::error::Error for LaneBusy {}
 
 /// A sent action has no trustworthy final reply. The count describes only
-/// acknowledged gesture phases (drag start or completed text keys), never a
+/// acknowledged gesture phases (drag start, completed text keys, or completed
+/// wheel packets of a multi-packet scroll), never a
 /// total event count or proof that no later events landed.
 #[derive(Debug)]
 pub struct DispatchUnknown {
@@ -190,7 +241,7 @@ pub(crate) fn unknown_dispatch(error: anyhow::Error, acknowledged_phases: u32) -
 }
 
 pub fn enabled() -> bool {
-    super::wayland_input_enabled()
+    super::is_wayland()
         && super::hyprland::is_session()
         && (protocol() == InputProtocol::Experiment
             || (0..MAX_LANES).any(|lane| {
@@ -205,14 +256,14 @@ pub fn enabled() -> bool {
             }))
 }
 
-/// Whether background (isolated seat) input is admitted for `pid`'s windows,
-/// the check a background action makes before dispatch. `Err` carries the
-/// refusal reason (`client_not_qualified`, ...). Only meaningful while
-/// [`enabled`]: without the isolated seats the tools route background input
-/// elsewhere.
-pub fn background_admission(pid: u32) -> std::result::Result<(), &'static str> {
+/// Whether background (isolated seat) input can reach window `address` of
+/// `pid`, the check a background session makes when it opens. `Err` carries
+/// the refusal reason (`client_xwayland`, ...). Per-action checks, such as a
+/// toolkit that drops background keys, still apply to each action. Only
+/// meaningful while [`enabled`].
+pub fn background_admission(pid: u32, address: u64) -> std::result::Result<(), &'static str> {
     if protocol() == InputProtocol::Production {
-        super::hyprland_compatibility::qualify(pid)
+        super::hyprland_compatibility::admit(pid, address, false)
     } else {
         Ok(())
     }
@@ -281,13 +332,25 @@ pub enum Action {
         to: (f64, f64),
         duration_ms: u64,
     },
+    /// Pointer enter and motion on the lane's agent seat, no button. The lane
+    /// keeps passive pointer focus there, so hover state persists. Background
+    /// only, and only when the plugin's HELLO advertises `hover`.
+    Hover {
+        x: f64,
+        y: f64,
+    },
 }
+
+/// The refusal for a hover the connected plugin cannot perform. Plugins built
+/// before `HOVER` existed omit `hover` from HELLO; nothing is sent.
+pub(crate) const HOVER_UNSUPPORTED: &str = "hover_unsupported";
 
 struct Client {
     socket: socket2::Socket,
     cancellation: ActionCancellation,
     protocol: InputProtocol,
     foreground_supported: bool,
+    hover_supported: bool,
     delivery_route: Option<DeliveryRoute>,
     // Assigned by the compositor to this connection, never by the local pool.
     lane: Option<usize>,
@@ -415,8 +478,8 @@ impl Client {
         let wayland = super::hyprland::wayland_connection()?;
         super::hyprland::verify_capture_peer(&wayland)?;
         ensure!(
-            super::hyprland::peer_pid(self.socket.as_raw_fd())?
-                == super::hyprland::peer_pid(wayland.backend().poll_fd().as_raw_fd())?,
+            super::compositor_peer::peer_pid(self.socket.as_raw_fd())?
+                == super::compositor_peer::peer_pid(wayland.backend().poll_fd().as_raw_fd())?,
             "input plugin and Wayland name different compositor processes"
         );
         Ok(())
@@ -443,6 +506,7 @@ impl Client {
             cancellation,
             protocol: protocol(),
             foreground_supported: false,
+            hover_supported: false,
             delivery_route: None,
             lane: None,
             owner,
@@ -481,6 +545,7 @@ impl Client {
         self.epoch = hex_field(&hello, "epoch")?;
         self.foreground_supported =
             self.protocol == InputProtocol::Production && hello["foreground_target"] == true;
+        self.hover_supported = self.protocol == InputProtocol::Production && hello["hover"] == true;
         if self.protocol == InputProtocol::Experiment {
             self.challenge = hex_field(&hello, "challenge")?;
         } else {
@@ -505,7 +570,7 @@ impl Client {
     }
 
     fn request(&self, packet: &str) -> Result<Value> {
-        let deadline = Instant::now() + TIMEOUT;
+        let deadline = operation_deadline(TIMEOUT);
         self.send_packet(packet, deadline)?;
         self.receive(deadline)
     }
@@ -600,59 +665,49 @@ impl Client {
             "action requires foreground input"
         );
         ensure!(
+            route == DeliveryRoute::Background || !matches!(&action, Action::Hover { .. }),
+            "hover is background input only"
+        );
+        if matches!(&action, Action::Hover { .. }) && !self.hover_supported {
+            return Ok(json!({"ok":false,"code":HOVER_UNSUPPORTED,"detail":HOVER_UNSUPPORTED}));
+        }
+        ensure!(
             self.delivery_route.is_none_or(|bound| bound == route),
             "input route is immutable"
         );
         self.delivery_route = Some(route);
         let is_drag = matches!(&action, Action::Drag { .. });
         let mut started = started;
-        for attempt in 0..=MAX_STALE_GEOMETRY_RETRIES {
-            // Foreground's first attestation covers the whole logical call.
-            // A retry must establish fresh compositor identity before it can
-            // request another exact target grant. Background attests here on
-            // every attempt because it has no call-level attestation.
-            if route == DeliveryRoute::Background || attempt > 0 {
-                attest(self)?;
-            }
-            let target = self.bind_target(&action, route)?;
-            if target["ok"] == false {
-                return Ok(target);
-            }
-            let token = hex_field(&target, "target")?;
-            let revision = target["revision"]
-                .as_u64()
-                .context("missing target revision")?;
-            let width = target["width"].as_f64().context("missing target width")?;
-            let height = target["height"].as_f64().context("missing target height")?;
-            ensure!(
-                width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0,
-                "invalid target geometry"
-            );
-            self.sequence = self.sequence.checked_add(1).context("sequence exhausted")?;
-            let packet = action.packet(self.sequence, &token, revision, width, height)?;
-            let mut reply =
-                self.dispatch_routed_with_started(&packet, is_drag, &mut started, route)?;
-            if self.protocol == InputProtocol::Production
-                && reply["ok"] == false
-                && reply["code"] == "stale_geometry"
-                && reply["detail"] == "stale_geometry"
-                && reply.get("effect").is_none()
-                && reply.get("delivery").is_none()
-                && attempt < MAX_STALE_GEOMETRY_RETRIES
-            {
-                std::thread::sleep(STALE_GEOMETRY_BACKOFF * (attempt as u32 + 1));
-                continue;
-            }
-            if reply["ok"] == false && self.protocol == InputProtocol::Experiment {
-                // Never report a pending operator grant as successful dispatch.
-                reply["epoch"] = json!(self.epoch);
-                reply["challenge"] = json!(self.challenge);
-                reply["target"] = json!(token);
-                reply["revision"] = json!(revision);
-            }
-            return Ok(reply);
+        // Foreground's attestation covers the whole logical call. Background
+        // attests here because it has no call-level attestation.
+        if route == DeliveryRoute::Background {
+            attest(self)?;
         }
-        unreachable!("bounded stale geometry retry loop always returns")
+        let target = self.bind_target(&action, route)?;
+        if target["ok"] == false {
+            return Ok(target);
+        }
+        let token = hex_field(&target, "target")?;
+        let revision = target["revision"]
+            .as_u64()
+            .context("missing target revision")?;
+        let width = target["width"].as_f64().context("missing target width")?;
+        let height = target["height"].as_f64().context("missing target height")?;
+        ensure!(
+            width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0,
+            "invalid target geometry"
+        );
+        self.sequence = self.sequence.checked_add(1).context("sequence exhausted")?;
+        let packet = action.packet(self.sequence, &token, revision, width, height)?;
+        let mut reply = self.dispatch_routed_with_started(&packet, is_drag, &mut started, route)?;
+        if reply["ok"] == false && self.protocol == InputProtocol::Experiment {
+            // Never report a pending operator grant as successful dispatch.
+            reply["epoch"] = json!(self.epoch);
+            reply["challenge"] = json!(self.challenge);
+            reply["target"] = json!(token);
+            reply["revision"] = json!(revision);
+        }
+        Ok(reply)
     }
 
     fn dispatch_routed_with_started(
@@ -662,7 +717,7 @@ impl Client {
         started: &mut Option<tokio::sync::oneshot::Sender<()>>,
         route: DeliveryRoute,
     ) -> Result<Value> {
-        let deadline = Instant::now() + TIMEOUT;
+        let deadline = operation_deadline(TIMEOUT);
         self.send_packet(packet, deadline).map_err(|error| {
             // Cancellation here precedes sending the action. Once sent, even
             // cancellation while waiting for its first reply is indeterminate.
@@ -687,7 +742,7 @@ impl Client {
                 let _ = started.send(());
             }
             reply = self
-                .receive(Instant::now() + TIMEOUT)
+                .receive(operation_deadline(TIMEOUT))
                 .map_err(|error| unknown_dispatch(error, 1))?;
         }
         if route == DeliveryRoute::Foreground
@@ -753,6 +808,7 @@ impl Action {
             Self::Key { .. } | Self::TextKey { .. } => 2,
             Self::Scroll { .. } => 4,
             Self::Drag { .. } => 8,
+            Self::Hover { .. } => 32,
         }
     }
 
@@ -843,6 +899,10 @@ impl Action {
                 );
                 format!("DRAG {prefix} {x1} {y1} {x2} {y2} {duration_ms}")
             }
+            Self::Hover { x, y } => {
+                point(*x, *y)?;
+                format!("HOVER {prefix} {x} {y}")
+            }
         })
     }
 }
@@ -868,7 +928,10 @@ impl SessionClient {
                     }
                     return Ok(slot);
                 }
-                Err(TryLockError::WouldBlock) => std::thread::sleep(CANCELLATION_POLL),
+                Err(TryLockError::WouldBlock) => {
+                    crate::input::action::admit(|| ())?;
+                    crate::interaction::pause(CANCELLATION_POLL);
+                }
                 Err(TryLockError::Poisoned(_)) => bail!("input connection poisoned"),
             }
         }
@@ -1065,6 +1128,66 @@ pub(crate) fn execute_background_text(
     )
 }
 
+pub(crate) fn execute_scroll(
+    owner: Option<String>,
+    pid: u32,
+    address: u64,
+    actions: Vec<Action>,
+    cancellation: ActionCancellation,
+) -> Result<Value> {
+    execute_scroll_routed(
+        owner,
+        pid,
+        address,
+        actions,
+        cancellation,
+        DeliveryRoute::Background,
+    )
+}
+
+pub(crate) fn execute_foreground_scroll(
+    owner: Option<String>,
+    pid: u32,
+    address: u64,
+    actions: Vec<Action>,
+    cancellation: ActionCancellation,
+) -> Result<Value> {
+    execute_scroll_routed(
+        owner,
+        pid,
+        address,
+        actions,
+        cancellation,
+        DeliveryRoute::Foreground,
+    )
+}
+
+/// One packet keeps the single-action reply; several run as a paced sequence
+/// whose `delivered_count` counts acknowledged wheel packets, not detents.
+fn execute_scroll_routed(
+    owner: Option<String>,
+    pid: u32,
+    address: u64,
+    actions: Vec<Action>,
+    cancellation: ActionCancellation,
+    route: DeliveryRoute,
+) -> Result<Value> {
+    ensure!(
+        !actions.is_empty() && actions.iter().all(|a| matches!(a, Action::Scroll { .. })),
+        "scroll requires wheel actions"
+    );
+    let sequence = actions.len() > 1;
+    execute_actions_routed(
+        owner,
+        (pid, address),
+        actions,
+        None,
+        cancellation,
+        route,
+        sequence,
+    )
+}
+
 fn execute_text_routed(
     owner: Option<String>,
     pid: u32,
@@ -1113,7 +1236,10 @@ fn execute_actions_routed(
         "foreground input requires production protocol; no downgrade is permitted"
     );
     if route == DeliveryRoute::Background && protocol() == InputProtocol::Production {
-        if let Err(reason) = super::hyprland_compatibility::qualify(pid) {
+        let keyboard = actions
+            .iter()
+            .any(|action| matches!(action, Action::Key { .. } | Action::TextKey { .. }));
+        if let Err(reason) = super::hyprland_compatibility::admit(pid, address, keyboard) {
             return Ok(json!({"ok":false,"code":reason,"detail":reason}));
         }
     }
@@ -1187,6 +1313,11 @@ fn execute_text_actions(
 ) -> Result<Value> {
     let mut delivered = 0u32;
     let action_count = actions.len();
+    // Shared by text keys and wheel packets; only the interruption code differs.
+    let interrupted_code = match actions.first() {
+        Some(Action::Scroll { .. }) => "scroll_interrupted",
+        _ => "text_interrupted",
+    };
     for (index, action) in actions.into_iter().enumerate() {
         match dispatch(action) {
             Ok(mut reply) if reply["ok"] == false => {
@@ -1200,7 +1331,8 @@ fn execute_text_actions(
                 // fence. Give the target event loop a bounded turn before the
                 // next character so native GTK clients do not drop a burst.
                 if index + 1 < action_count {
-                    std::thread::sleep(TEXT_ACTION_GAP);
+                    let gap = operation_deadline(TEXT_ACTION_GAP);
+                    std::thread::sleep(gap.saturating_duration_since(Instant::now()));
                 }
             }
             Err(error) => {
@@ -1214,7 +1346,7 @@ fn execute_text_actions(
                     return Err(error);
                 }
                 return Ok(
-                    json!({"ok":false,"code":"text_interrupted","detail":error.to_string(),
+                    json!({"ok":false,"code":interrupted_code,"detail":error.to_string(),
                         "effect":"partial","delivery":{"mode":route.mode(),"delivered_count":delivered}}),
                 );
             }
@@ -1262,6 +1394,7 @@ fn terminal_connection_result(value: &Value) -> bool {
                         | "plugin_shutdown"
                         | "generation_exhausted"
                         | "text_interrupted"
+                        | "scroll_interrupted"
                 )
             ))
 }
@@ -1350,6 +1483,116 @@ mod tests {
             false,
             record_test_attestation,
         )
+    }
+
+    fn scroll_values(actions: &[Action]) -> Vec<String> {
+        actions
+            .iter()
+            .map(|action| {
+                let packet = action.packet(1, TOKEN, 1, 100.0, 100.0).unwrap();
+                packet.rsplit(' ').next().unwrap().to_owned()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn scroll_line_keeps_ten_units_per_detent_in_each_direction() {
+        use cua_driver_contract::ScrollBy::Line;
+        for (direction, axis, sign) in [
+            ("up", 0, -1),
+            ("down", 0, 1),
+            ("left", 1, -1),
+            ("right", 1, 1),
+        ] {
+            let actions = scroll_actions(None, direction, 3, Line).unwrap();
+            assert_eq!(actions.len(), 1);
+            let packet = actions[0].packet(1, TOKEN, 1, 100.0, 100.0).unwrap();
+            assert_eq!(
+                packet,
+                format!("SCROLL 1 {TOKEN} 1 50 50 {axis} {}", 30 * sign)
+            );
+        }
+    }
+
+    #[test]
+    fn scroll_page_is_three_detents_per_page_in_each_direction() {
+        use cua_driver_contract::ScrollBy::Page;
+        for (direction, sign) in [("up", -1), ("down", 1), ("left", -1), ("right", 1)] {
+            let actions = scroll_actions(Some((5.0, 6.0)), direction, 2, Page).unwrap();
+            assert_eq!(scroll_values(&actions), vec![(60 * sign).to_string()]);
+        }
+    }
+
+    #[test]
+    fn scroll_page_beyond_one_packet_is_decomposed_without_loss() {
+        use cua_driver_contract::ScrollBy::{Line, Page};
+        // Maximum public amount: 50 lines fit one packet; 50 pages = 150
+        // detents = 100 + 50, never clamped.
+        assert_eq!(
+            scroll_values(&scroll_actions(None, "down", 50, Line).unwrap()),
+            vec!["500"]
+        );
+        let actions = scroll_actions(None, "up", 50, Page).unwrap();
+        assert_eq!(scroll_values(&actions), vec!["-1000", "-500"]);
+        // The first packet at the protocol's |1000| limit is still valid.
+        assert_eq!(
+            scroll_values(&scroll_actions(None, "down", 34, Page).unwrap()),
+            vec!["1000", "20"]
+        );
+        assert_eq!(
+            scroll_values(&scroll_actions(None, "down", 33, Page).unwrap()),
+            vec!["990"]
+        );
+    }
+
+    #[test]
+    fn scroll_rejects_invalid_amount_and_direction_before_any_packet() {
+        use cua_driver_contract::ScrollBy::{Line, Page};
+        for by in [Line, Page] {
+            assert!(scroll_actions(None, "down", 0, by).is_err());
+            assert!(scroll_actions(None, "down", 51, by).is_err());
+            assert!(scroll_actions(None, "sideways", 1, by).is_err());
+            assert!(scroll_actions(None, "", 1, by).is_err());
+        }
+        // The packet encoder keeps its own protocol bound.
+        let over = Action::Scroll {
+            point: None,
+            direction: "down".into(),
+            amount: 101,
+        };
+        assert!(over.packet(1, TOKEN, 1, 100.0, 100.0).is_err());
+    }
+
+    #[test]
+    fn multi_packet_scroll_reports_packets_and_interruption_honestly() {
+        let actions =
+            scroll_actions(None, "down", 50, cua_driver_contract::ScrollBy::Page).unwrap();
+        let mut calls = 0;
+        let result = execute_text_actions(actions, DeliveryRoute::Foreground, |_| {
+            calls += 1;
+            Ok(json!({"ok":true,"effect":"unverifiable","route":"primary_foreground"}))
+        })
+        .unwrap();
+        assert_eq!(calls, 2);
+        assert_eq!(result["delivery"]["delivered_count"], 2);
+        assert_eq!(result["route"], "primary_foreground");
+
+        let actions =
+            scroll_actions(None, "down", 50, cua_driver_contract::ScrollBy::Page).unwrap();
+        let mut calls = 0;
+        let result = execute_text_actions(actions, DeliveryRoute::Background, |_| {
+            calls += 1;
+            if calls == 1 {
+                Ok(json!({"ok":true,"effect":"unverifiable","route":"synthetic_events"}))
+            } else {
+                anyhow::bail!("cancelled")
+            }
+        })
+        .unwrap();
+        assert_eq!(result["code"], "scroll_interrupted");
+        assert_eq!(result["effect"], "partial");
+        assert_eq!(result["delivery"]["delivered_count"], 1);
+        assert!(terminal_connection_result(&result));
     }
 
     #[test]
@@ -1678,66 +1921,6 @@ mod tests {
     }
 
     #[test]
-    fn production_entry_bounds_stale_geometry_retry_with_fresh_authority() {
-        for (route, succeeds) in [
-            (DeliveryRoute::Foreground, true),
-            (DeliveryRoute::Background, true),
-            (DeliveryRoute::Foreground, false),
-            (DeliveryRoute::Background, false),
-        ] {
-            reset_test_attestations();
-            let (client, peer) = production_test_client();
-            let acknowledgement = route.acknowledgement();
-            // Success on the second attempt, or every attempt refused.
-            let attempts = if succeeds {
-                2
-            } else {
-                MAX_STALE_GEOMETRY_RETRIES as u64 + 1
-            };
-            let server = std::thread::spawn(move || {
-                for sequence in 1..=attempts {
-                    serve_key_target(&peer, route, sequence, sequence * 11);
-                    let reply = if sequence == attempts && succeeds {
-                        json!({"ok":true,"effect":"unverifiable","route":acknowledgement})
-                    } else {
-                        json!({"ok":false,"code":"stale_geometry","detail":"stale_geometry"})
-                    };
-                    peer.send(reply.to_string().as_bytes()).unwrap();
-                }
-                let mut byte = [0u8];
-                assert_eq!(
-                    unsafe { libc::recv(peer.as_raw_fd(), byte.as_mut_ptr().cast(), 1, 0) },
-                    0
-                );
-            });
-
-            let mut slot = Some(client);
-            let started = Instant::now();
-            let reply = dispatch_production_key(&mut slot, route).unwrap();
-            assert_eq!(reply["ok"], succeeds);
-            // Each retry waits for the window to settle, a little longer
-            // every time.
-            let waited: Duration = (1..attempts as u32)
-                .map(|n| STALE_GEOMETRY_BACKOFF * n)
-                .sum();
-            assert!(
-                started.elapsed() >= waited,
-                "{:?} < {waited:?}",
-                started.elapsed()
-            );
-            if !succeeds {
-                assert_eq!(reply["code"], "stale_geometry");
-                assert!(reply.get("effect").is_none());
-                assert!(reply.get("delivery").is_none());
-            }
-            assert_eq!(slot.as_ref().unwrap().sequence, attempts);
-            assert_eq!(test_attestations(), attempts as usize);
-            drop(slot);
-            server.join().unwrap();
-        }
-    }
-
-    #[test]
     fn production_entry_never_retries_an_uncertain_dispatch() {
         for route in [DeliveryRoute::Foreground, DeliveryRoute::Background] {
             reset_test_attestations();
@@ -1762,13 +1945,13 @@ mod tests {
     }
 
     #[test]
-    fn production_entry_retries_only_the_canonical_stale_geometry_refusal() {
+    fn production_entry_never_retries_a_stale_geometry_refusal() {
         for route in [DeliveryRoute::Foreground, DeliveryRoute::Background] {
             reset_test_attestations();
             let (client, peer) = production_test_client();
             let server = std::thread::spawn(move || {
                 serve_key_target(&peer, route, 1, 11);
-                peer.send(br#"{"ok":false,"code":"stale_geometry","detail":"geometry_changed"}"#)
+                peer.send(br#"{"ok":false,"code":"stale_geometry","detail":"stale_geometry"}"#)
                     .unwrap();
                 let mut byte = [0u8];
                 assert_eq!(
@@ -1781,7 +1964,7 @@ mod tests {
             let reply = dispatch_production_key(&mut slot, route).unwrap();
             assert_eq!(reply["ok"], false);
             assert_eq!(reply["code"], "stale_geometry");
-            assert_eq!(reply["detail"], "geometry_changed");
+            assert_eq!(reply["detail"], "stale_geometry");
             assert_eq!(slot.as_ref().unwrap().sequence, 1);
             assert_eq!(test_attestations(), 1);
             drop(slot);
@@ -1953,10 +2136,24 @@ mod tests {
 
     #[test]
     fn hyprland_text_is_bounded_and_fully_prevalidated() {
-        for text in ["valid prefix\u{00e9}", "valid prefix\0", "\r", "\u{007f}"] {
-            assert!(text_actions(text).is_err());
+        let too_much = "foreground_unavailable: Hyprland text takes at most 4096 ASCII bytes; \
+             nothing was typed";
+        for (text, refusal) in [
+            ("valid prefix\u{00e9}".to_owned(), too_much),
+            ("a".repeat(4097), too_much),
+            (
+                "valid prefix\0".to_owned(),
+                "foreground_unavailable: control character U+0000 cannot be typed; nothing was typed",
+            ),
+            (
+                "\u{007f}".to_owned(),
+                "foreground_unavailable: control character U+007F cannot be typed; nothing was typed",
+            ),
+        ] {
+            let error = text_actions(&text).err().map(|error| error.to_string());
+            assert_eq!(error.as_deref(), Some(refusal));
         }
-        assert!(text_actions(&"a".repeat(4097)).is_err());
+        assert_eq!(text_actions("a\r\nb").unwrap().len(), 3);
         assert_eq!(text_actions(&"a".repeat(4096)).unwrap().len(), 4096);
         let actions = text_actions("Aa!? \t\n").unwrap();
         let packets: Vec<_> = actions
@@ -2395,6 +2592,108 @@ mod tests {
     }
 
     #[test]
+    fn hover_is_an_exact_bounded_background_packet() {
+        let hover = Action::Hover { x: 2.5, y: 3.0 };
+        assert_eq!(hover.capability(), 32);
+        assert_eq!(
+            hover.packet(7, TOKEN, 4, 100.0, 80.0).unwrap(),
+            format!("HOVER 7 {TOKEN} 4 2.5 3")
+        );
+        for (x, y) in [(f64::NAN, 1.0), (-1.0, 1.0), (100.0, 1.0), (1.0, 80.0)] {
+            assert!(Action::Hover { x, y }
+                .packet(1, TOKEN, 1, 100.0, 80.0)
+                .is_err());
+        }
+    }
+
+    #[test]
+    fn hover_needs_the_plugin_advertisement_and_sends_nothing_without_it() {
+        let (mut client, peer) = production_test_client();
+        client.hover_supported = false;
+        let reply = client
+            .execute_routed_with_attest(
+                Action::Hover { x: 1.0, y: 1.0 },
+                None,
+                DeliveryRoute::Background,
+                record_test_attestation,
+            )
+            .unwrap();
+        assert_eq!(reply["ok"], false);
+        assert_eq!(reply["code"], HOVER_UNSUPPORTED);
+        drop(client);
+        let mut byte = [0u8];
+        assert_eq!(
+            unsafe { libc::recv(peer.as_raw_fd(), byte.as_mut_ptr().cast(), 1, 0) },
+            0,
+            "an unadvertised hover must not bind a target"
+        );
+    }
+
+    #[test]
+    fn hover_is_never_foreground_input() {
+        let (mut client, _peer) = production_test_client();
+        client.hover_supported = true;
+        assert!(client
+            .execute_routed_with_attest(
+                Action::Hover { x: 1.0, y: 1.0 },
+                None,
+                DeliveryRoute::Foreground,
+                record_test_attestation,
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn handshake_reads_the_hover_advertisement() {
+        for (hello, expected) in [
+            (
+                json!({"ok":true,"protocol":3,"epoch":TOKEN,"foreground_target":true,"hover":true}),
+                true,
+            ),
+            (
+                json!({"ok":true,"protocol":3,"epoch":TOKEN,"foreground_target":true}),
+                false,
+            ),
+        ] {
+            let (mut client, peer) = test_connection();
+            client.protocol = InputProtocol::Production;
+            let server = std::thread::spawn(move || {
+                assert_eq!(read_packet(&peer), "HELLO");
+                peer.send(hello.to_string().as_bytes()).unwrap();
+                assert_eq!(read_packet(&peer), "CLAIM");
+                peer.send(br#"{"ok":true,"lane":0}"#).unwrap();
+                if !expected {
+                    return;
+                }
+                assert_eq!(read_packet(&peer), "TARGET 1 1 32");
+                peer.send(
+                    json!({"ok":true,"target":TOKEN,"revision":2,"width":100,"height":100})
+                        .to_string()
+                        .as_bytes(),
+                )
+                .unwrap();
+                assert_eq!(read_packet(&peer), format!("HOVER 1 {TOKEN} 2 10 20"));
+                peer.send(br#"{"ok":true,"effect":"unverifiable","route":"synthetic_events"}"#)
+                    .unwrap();
+            });
+            assert!(client.attest_and_handshake(0, |_| Ok(())).unwrap());
+            assert_eq!(client.hover_supported, expected);
+            if expected {
+                let reply = client
+                    .execute_routed_with_attest(
+                        Action::Hover { x: 10.0, y: 20.0 },
+                        None,
+                        DeliveryRoute::Background,
+                        record_test_attestation,
+                    )
+                    .unwrap();
+                assert_eq!(reply["ok"], true);
+            }
+            server.join().unwrap();
+        }
+    }
+
+    #[test]
     fn click_is_exact_and_maps_right_button() {
         assert_eq!(
             Action::Click {
@@ -2496,6 +2795,7 @@ mod tests {
                 cancellation: ActionCancellation::default(),
                 protocol: InputProtocol::Experiment,
                 foreground_supported: false,
+                hover_supported: false,
                 delivery_route: None,
                 lane: None,
                 owner: "input-unregistered-test-client".into(),

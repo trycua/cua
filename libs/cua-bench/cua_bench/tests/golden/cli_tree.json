@@ -71,39 +71,6 @@
             }
           ],
           "commands": {}
-        },
-        "push": {
-          "arguments": [
-            {
-              "action": "_StoreAction",
-              "choices": null,
-              "const": null,
-              "default": "cua-bench:latest",
-              "dest": "image_name",
-              "hidden": false,
-              "metavar": null,
-              "nargs": "?",
-              "options": [],
-              "required": false,
-              "type": null
-            },
-            {
-              "action": "_StoreAction",
-              "choices": null,
-              "const": null,
-              "default": null,
-              "dest": "registry",
-              "hidden": false,
-              "metavar": null,
-              "nargs": null,
-              "options": [
-                "--registry"
-              ],
-              "required": false,
-              "type": null
-            }
-          ],
-          "commands": {}
         }
       },
       "subcommand_dest": "agent_command"
@@ -242,26 +209,6 @@
     "env": {
       "arguments": [],
       "commands": {
-        "gc": {
-          "arguments": [
-            {
-              "action": "_StoreAction",
-              "choices": null,
-              "const": null,
-              "default": "30m",
-              "dest": "idle",
-              "hidden": false,
-              "metavar": null,
-              "nargs": null,
-              "options": [
-                "--idle"
-              ],
-              "required": false,
-              "type": null
-            }
-          ],
-          "commands": {}
-        },
         "ls": {
           "aliases": [
             "list"
@@ -997,7 +944,8 @@
             "codesandbox",
             "northflank",
             "aws",
-            "gcp"
+            "gcp",
+            "hetzner"
           ],
           "const": null,
           "default": null,
@@ -1037,8 +985,7 @@
             "gvisor",
             "runc",
             "qemu",
-            "lume",
-            "kubevirt"
+            "lume"
           ],
           "const": null,
           "default": null,
@@ -1098,36 +1045,6 @@
           "type": null
         },
         {
-          "action": "_StoreTrueAction",
-          "choices": null,
-          "const": true,
-          "default": false,
-          "dest": "warm",
-          "hidden": false,
-          "metavar": null,
-          "nargs": 0,
-          "options": [
-            "--warm"
-          ],
-          "required": false,
-          "type": null
-        },
-        {
-          "action": "_StoreAction",
-          "choices": null,
-          "const": null,
-          "default": null,
-          "dest": "claim_ttl",
-          "hidden": false,
-          "metavar": null,
-          "nargs": null,
-          "options": [
-            "--claim-ttl"
-          ],
-          "required": false,
-          "type": null
-        },
-        {
           "action": "_StoreAction",
           "choices": [
             "linux-docker",
@@ -1158,26 +1075,6 @@
           "nargs": null,
           "options": [
             "--provider-type"
-          ],
-          "required": false,
-          "type": null
-        }
-      ],
-      "commands": {}
-    },
-    "login": {
-      "arguments": [
-        {
-          "action": "_StoreTrueAction",
-          "choices": null,
-          "const": true,
-          "default": false,
-          "dest": "no_browser",
-          "hidden": false,
-          "metavar": null,
-          "nargs": 0,
-          "options": [
-            "--no-browser"
           ],
           "required": false,
           "type": null
@@ -1545,7 +1442,8 @@
                 "codesandbox",
                 "northflank",
                 "aws",
-                "gcp"
+                "gcp",
+                "hetzner"
               ],
               "const": null,
               "default": null,
@@ -1585,8 +1483,7 @@
                 "gvisor",
                 "runc",
                 "qemu",
-                "lume",
-                "kubevirt"
+                "lume"
               ],
               "const": null,
               "default": null,
@@ -1641,36 +1538,6 @@
               "nargs": null,
               "options": [
                 "--memory"
-              ],
-              "required": false,
-              "type": null
-            },
-            {
-              "action": "_StoreTrueAction",
-              "choices": null,
-              "const": true,
-              "default": false,
-              "dest": "warm",
-              "hidden": false,
-              "metavar": null,
-              "nargs": 0,
-              "options": [
-                "--warm"
-              ],
-              "required": false,
-              "type": null
-            },
-            {
-              "action": "_StoreAction",
-              "choices": null,
-              "const": null,
-              "default": null,
-              "dest": "claim_ttl",
-              "hidden": false,
-              "metavar": null,
-              "nargs": null,
-              "options": [
-                "--claim-ttl"
               ],
               "required": false,
               "type": null
@@ -2122,7 +1989,8 @@
                 "codesandbox",
                 "northflank",
                 "aws",
-                "gcp"
+                "gcp",
+                "hetzner"
               ],
               "const": null,
               "default": null,
@@ -2162,8 +2030,7 @@
                 "gvisor",
                 "runc",
                 "qemu",
-                "lume",
-                "kubevirt"
+                "lume"
               ],
               "const": null,
               "default": null,
@@ -2218,36 +2085,6 @@
               "nargs": null,
               "options": [
                 "--memory"
-              ],
-              "required": false,
-              "type": null
-            },
-            {
-              "action": "_StoreTrueAction",
-              "choices": null,
-              "const": true,
-              "default": false,
-              "dest": "warm",
-              "hidden": false,
-              "metavar": null,
-              "nargs": 0,
-              "options": [
-                "--warm"
-              ],
-              "required": false,
-              "type": null
-            },
-            {
-              "action": "_StoreAction",
-              "choices": null,
-              "const": null,
-              "default": null,
-              "dest": "claim_ttl",
-              "hidden": false,
-              "metavar": null,
-              "nargs": null,
-              "options": [
-                "--claim-ttl"
               ],
               "required": false,
               "type": null

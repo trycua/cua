@@ -1,4 +1,5 @@
-//! Typed HTTP client for `lume serve` (default `http://127.0.0.1:7777`).
+//! Typed HTTP client for `lume serve` (default `http://127.0.0.1:7777`, Local's
+//! `http://127.0.0.1:7787`).
 //!
 //! Routes mirror `libs/lume/src/Server/Server.swift`.
 
@@ -50,6 +51,19 @@ pub struct VmDetails {
     /// Lume's smoothed download rate.
     #[serde(default)]
     pub bytes_per_second: Option<f64>,
+    /// The VM has a saved machine state its next run resumes (a Lume with
+    /// saved states; older ones never report it).
+    #[serde(default)]
+    pub saved_state: bool,
+    /// The running VM forwards host loopback ports to its guest over vsock
+    /// (a run with [`RunVm::forwards`] on a Lume that supports it).
+    #[serde(default)]
+    pub vsock: bool,
+    /// Guest port to host loopback port, once the guest's vsock agent
+    /// answers ([`RunVm::forwards`]); empty before that, and on a Lume or a
+    /// guest without the agent.
+    #[serde(default)]
+    pub forwards: std::collections::BTreeMap<u16, u16>,
 }
 
 impl VmDetails {
@@ -58,6 +72,18 @@ impl VmDetails {
         self.ip_address
             .as_deref()
             .filter(|ip| !ip.is_empty() && *ip != "unknown" && !ip.starts_with("0.0.0.0"))
+    }
+
+    /// The host loopback port for each of `ports` over vsock, when every
+    /// one of them is forwarded and the guest agent answers.
+    pub fn vsock_ports(&self, ports: &[u16]) -> Option<std::collections::BTreeMap<u16, u16>> {
+        if ports.is_empty() || self.forwards.is_empty() {
+            return None;
+        }
+        ports
+            .iter()
+            .map(|p| self.forwards.get(p).map(|h| (*p, *h)))
+            .collect()
     }
 }
 
@@ -136,6 +162,19 @@ pub struct RunVm {
     pub storage: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disk_path: Option<String>,
+    /// This run's network (`gateway:<socket>`: behind a Cua network
+    /// gateway); `None` keeps the VM's configured network.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network: Option<String>,
+    /// `"disabled"`: start the VM with no VNC server (Lume's VNC server
+    /// listens on every interface); `None` keeps Lume's default (enabled).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vnc: Option<String>,
+    /// Guest ports Lume publishes on host loopback ports over a virtio
+    /// socket device (reported back in [`VmDetails::forwards`]). A Lume
+    /// without the option ignores it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub forwards: Vec<u16>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -163,34 +202,56 @@ pub fn pull_body(reference: &str, name: &str) -> Value {
     }
 }
 
+/// The one HTTP client every [`LumeClient`] uses. Building a client reads
+/// the operating system's root store (expensive on macOS), and the resource
+/// sampler makes a `LumeClient` on every tick (F53).
+fn shared_http() -> reqwest::Client {
+    static HTTP: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    HTTP.get_or_init(|| {
+        // lume's HTTP server closes connections after each response
+        // without saying so; reusing a pooled connection then fails with
+        // "error sending request". One connection per request.
+        reqwest::Client::builder()
+            .pool_max_idle_per_host(0)
+            .connect_timeout(Duration::from_secs(3))
+            .build()
+            .expect("reqwest client")
+    })
+    .clone()
+}
+
 /// Client for one `lume serve` instance.
 #[derive(Clone)]
 pub struct LumeClient {
     http: reqwest::Client,
-    base: String,
+    /// Shared by every clone, so moving to another `lume serve`
+    /// ([`Self::set_base`]) moves them all.
+    base: std::sync::Arc<std::sync::RwLock<String>>,
 }
 
 impl LumeClient {
     pub fn new(base: impl Into<String>) -> Self {
         Self {
-            // lume's HTTP server closes connections after each response
-            // without saying so; reusing a pooled connection then fails with
-            // "error sending request". One connection per request.
-            http: reqwest::Client::builder()
-                .pool_max_idle_per_host(0)
-                .connect_timeout(Duration::from_secs(3))
-                .build()
-                .expect("reqwest client"),
-            base: base.into().trim_end_matches('/').to_string(),
+            http: shared_http(),
+            base: std::sync::Arc::new(std::sync::RwLock::new(
+                base.into().trim_end_matches('/').to_string(),
+            )),
         }
     }
 
-    pub fn base(&self) -> &str {
-        &self.base
+    pub fn base(&self) -> String {
+        self.base.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Talks to the `lume serve` at `base` from now on (this client and
+    /// every clone of it).
+    pub fn set_base(&self, base: &str) {
+        *self.base.write().unwrap_or_else(|e| e.into_inner()) =
+            base.trim_end_matches('/').to_string();
     }
 
     fn url(&self, path: &str) -> String {
-        format!("{}{}", self.base, path)
+        format!("{}{}", self.base(), path)
     }
 
     async fn check(resp: reqwest::Response) -> Result<reqwest::Response> {
@@ -211,6 +272,17 @@ impl LumeClient {
                 .unwrap_or(message);
             return Err(VmmError::NotFound(name));
         }
+        // Apple's license allows two running macOS VMs per Mac: say how to
+        // free one rather than only that Lume refused.
+        let message = if crate::error::is_vm_limit(&message.to_ascii_lowercase()) {
+            format!(
+                "{message}. This Mac is already running two macOS VMs, the most Apple allows at \
+                 once: stop one (in Cua Spaces, or `cua sb ls` then `cua sb suspend <name>`) and \
+                 try again"
+            )
+        } else {
+            message
+        };
         Err(VmmError::Lume {
             status: status.as_u16(),
             message,
@@ -230,7 +302,7 @@ impl LumeClient {
     fn net_err(&self, e: reqwest::Error) -> VmmError {
         if e.is_connect() {
             VmmError::missing(
-                format!("lume serve at {}", self.base),
+                format!("lume serve at {}", self.base()),
                 "not reachable; start it with `lume serve` (cua starts it automatically when the binary is installed)",
             )
         } else {
@@ -246,6 +318,22 @@ impl LumeClient {
             .send()
             .await
             .is_ok()
+    }
+
+    /// The version the server reports in `GET /lume/host/status`, when it
+    /// means something ([`super::builtin::reported_version`]).
+    pub async fn reported_version(&self) -> Option<String> {
+        let status: Value = self
+            .http
+            .get(self.url("/lume/host/status"))
+            .timeout(Duration::from_secs(3))
+            .send()
+            .await
+            .ok()?
+            .json()
+            .await
+            .ok()?;
+        super::builtin::reported_version(status.get("version").and_then(Value::as_str))
     }
 
     /// `GET /lume/host/status`.
@@ -321,6 +409,75 @@ impl LumeClient {
         Self::check(r).await.map(|_| ())
     }
 
+    /// `POST /lume/vms/clone` with the source's saved machine state: the
+    /// clone keeps the source's MAC address and machine identifier (a state
+    /// restores only into the configuration it was saved from) and its
+    /// first run resumes the saved guest. Needs a Lume with saved states ([`Self::suspend`]).
+    pub async fn clone_vm_with_state(&self, name: &str, new_name: &str) -> Result<()> {
+        let r = self
+            .http
+            .post(self.url("/lume/vms/clone"))
+            .json(&json!({ "name": name, "newName": new_name, "withSavedState": true }))
+            .timeout(Duration::from_secs(600))
+            .send()
+            .await
+            .map_err(|e| self.net_err(e))?;
+        Self::check(r).await.map(|_| ())
+    }
+
+    /// `POST /lume/vms/:name/rename`: renames a VM, running or not (the
+    /// guest keeps running). A Lume without it answers
+    /// [`VmmError::Unsupported`].
+    pub async fn rename(&self, name: &str, new_name: &str) -> Result<()> {
+        let r = self
+            .http
+            .post(self.url(&format!("/lume/vms/{name}/rename")))
+            .json(&json!({ "newName": new_name }))
+            .timeout(Duration::from_secs(60))
+            .send()
+            .await
+            .map_err(|e| self.net_err(e))?;
+        if r.status() == reqwest::StatusCode::NOT_FOUND {
+            let text = r.text().await.unwrap_or_default();
+            if text.trim() == "Not found" {
+                return Err(VmmError::Unsupported {
+                    backend: "lume",
+                    op: "renaming a running VM (this Lume predates it; update it)",
+                });
+            }
+            return Err(VmmError::NotFound(name.to_string()));
+        }
+        Self::check(r).await.map(|_| ())
+    }
+
+    /// `POST /lume/vms/:name/suspend`: saves the running VM's memory and
+    /// device state next to its disk and stops it; its next run resumes
+    /// it. Saving writes the guest's resident memory (seconds per GiB).
+    /// A Lume without saved states answers [`VmmError::Unsupported`].
+    pub async fn suspend(&self, name: &str) -> Result<()> {
+        let r = self
+            .http
+            .post(self.url(&format!("/lume/vms/{name}/suspend")))
+            .json(&json!({}))
+            .timeout(Duration::from_secs(600))
+            .send()
+            .await
+            .map_err(|e| self.net_err(e))?;
+        if r.status() == reqwest::StatusCode::NOT_FOUND {
+            // An unknown route: Lume's router answers a bare "Not found"
+            // (a missing VM is a JSON error from the handler).
+            let text = r.text().await.unwrap_or_default();
+            if text.trim() == "Not found" {
+                return Err(VmmError::Unsupported {
+                    backend: "lume",
+                    op: "saving a VM's state (this Lume predates saved states; update it)",
+                });
+            }
+            return Err(VmmError::NotFound(name.to_string()));
+        }
+        Self::check(r).await.map(|_| ())
+    }
+
     /// `PATCH /lume/vms/:name` (`lume set`). Growing a macOS disk can take
     /// minutes, hence the long timeout.
     pub async fn set(&self, name: &str, req: &SetVm) -> Result<()> {
@@ -344,6 +501,26 @@ impl LumeClient {
             .send()
             .await
             .map_err(|e| self.net_err(e))?;
+        if r.status() == 400
+            && req
+                .network
+                .as_deref()
+                .is_some_and(|n| n.starts_with("gateway:"))
+        {
+            // A Lume that predates network gateways rejects the run as an
+            // argument error with no hint of why.
+            let text = r.text().await.unwrap_or_default();
+            return Err(VmmError::Lume {
+                status: 400,
+                message: format!(
+                    "this Lume does not take a network gateway ({}). The secure network default \
+                     for macOS Spaces needs Lume 0.7.0 or newer (cua installs it itself unless \
+                     runtime.lume is set to this Mac's own Lume: update that one, or set it back \
+                     to auto); CUA_SECURE_DEFAULT=0 runs on Apple's NAT as before",
+                    text.trim()
+                ),
+            });
+        }
         Self::check(r).await.map(|_| ())
     }
 
@@ -497,15 +674,22 @@ impl LumeClient {
 
     /// Waits for the async pull of `name` to end, reporting its progress.
     /// It fails after `idle` without movement (a new percent or new bytes),
-    /// never because a slow download that still moves takes long. Dropping
-    /// the wait (a cancelled create) cancels the pull on a Lume that can
-    /// ([`LumeClient::cancel_pull`]), once no other wait in this process
-    /// still needs it.
+    /// never because a slow download that still moves takes long. It fails
+    /// within [`PULL_GONE_GRACE`] when the pull is gone: Lume reports it
+    /// failed, Lume no longer knows the VM (the pull was cancelled outside
+    /// this wait), or `lume serve` stopped answering (the pull ran inside
+    /// it). Dropping the wait (a cancelled create) cancels the pull on a
+    /// Lume that can ([`LumeClient::cancel_pull`]), once no other wait in
+    /// this process still needs it.
     async fn wait_pulled(&self, name: &str, idle: Duration) -> Result<()> {
         let mut guard = PullGuard::new(self.clone(), name);
         let mut moved_at = tokio::time::Instant::now();
         let mut last: Option<(Option<f64>, Option<u64>)> = None;
         let mut meter = crate::progress::Meter::new();
+        // Since when the pull has looked gone, and whether `lume serve`
+        // stopped answering meanwhile.
+        let mut gone_since: Option<tokio::time::Instant> = None;
+        let mut serve_lost = false;
         loop {
             // A Lume that counts bytes shows a stall much sooner.
             let budget = if guard.cancellable {
@@ -520,8 +704,10 @@ impl LumeClient {
                     detail: "lume pull made no progress".into(),
                 });
             }
+            let mut gone = false;
             match self.get(name).await {
                 Ok(Some(vm)) => {
+                    gone_since = None;
                     let now = (vm.download_progress, vm.downloaded_bytes);
                     if last != Some(now) {
                         moved_at = tokio::time::Instant::now();
@@ -538,9 +724,9 @@ impl LumeClient {
                         }
                         s if s.to_ascii_lowercase().contains("error") => {
                             guard.done();
-                            return Err(VmmError::Lume {
-                                status: 500,
-                                message: format!("pull of '{name}' failed: {s}"),
+                            return Err(VmmError::PullStopped {
+                                name: name.into(),
+                                reason: format!("Lume reported {s}"),
                             });
                         }
                         _ => {
@@ -555,12 +741,36 @@ impl LumeClient {
                     message,
                 }) if message.contains("Pull failed") => {
                     guard.done();
-                    return Err(VmmError::Lume {
-                        status: 500,
-                        message,
+                    return Err(VmmError::PullStopped {
+                        name: name.into(),
+                        reason: pull_failed_reason(&message),
                     });
                 }
-                _ => {}
+                // The pull ended without making the VM: cancelled outside
+                // this wait, or lost with a `lume serve` that restarted.
+                Ok(None) => gone = true,
+                // `lume serve` is gone, and the pull that ran inside it.
+                Err(VmmError::Missing { .. }) => {
+                    gone = true;
+                    serve_lost = true;
+                }
+                Err(_) => {}
+            }
+            if gone {
+                let since = *gone_since.get_or_insert_with(tokio::time::Instant::now);
+                if since.elapsed() >= PULL_GONE_GRACE {
+                    guard.done();
+                    let reason = if serve_lost {
+                        "Lume stopped running"
+                    } else {
+                        "it was cancelled outside Cua"
+                    };
+                    tracing::warn!(vm = name, reason, "lume pull ended without the image");
+                    return Err(VmmError::PullStopped {
+                        name: name.into(),
+                        reason: reason.into(),
+                    });
+                }
             }
             tokio::time::sleep(PULL_POLL).await;
         }
@@ -588,6 +798,26 @@ impl LumeClient {
 
 /// How often an async pull is polled (Lume answers from memory).
 const PULL_POLL: Duration = Duration::from_millis(250);
+/// How long an async pull may look gone (its VM unknown to Lume, or
+/// `lume serve` not answering) before the wait fails: a few polls, so one
+/// missed answer never fails a pull that still runs.
+const PULL_GONE_GRACE: Duration = Duration::from_secs(3);
+
+/// The cause in Lume's "Pull failed for 'vm': <cause>" answer.
+fn pull_failed_reason(message: &str) -> String {
+    let cause = message
+        .split_once("': ")
+        .map(|(_, c)| c)
+        .unwrap_or(message)
+        .trim()
+        .trim_end_matches('.');
+    if cause.is_empty() {
+        "Lume's download failed".into()
+    } else {
+        cause.into()
+    }
+}
+
 /// How long a pull whose bytes Lume counts may go without a new byte.
 const PULL_IDLE_WITH_BYTES: Duration = Duration::from_secs(10 * 60);
 
@@ -687,12 +917,12 @@ impl Drop for PullGuard {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// A temp CUA_HOME for this test binary (a cancelled pull forgets its
     /// owned-VM record there, never under the real `~/.cua`).
-    fn temp_home() {
+    pub(crate) fn temp_home() {
         static HOME: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
         HOME.get_or_init(|| {
             let d = tempfile::tempdir().unwrap();
@@ -779,6 +1009,19 @@ mod tests {
             }),
             heard,
         )
+    }
+
+    /// Lume's 409 at Apple's two macOS VMs says how to free one, and
+    /// telemetry reads it as `vm_limit`.
+    #[tokio::test]
+    async fn the_macos_vm_limit_says_how_to_free_one() {
+        let body =
+            r#"{"message":"VM start rejected: host limit of 2 running macOS guests reached"}"#;
+        let (lume, _) = scripted_lume(vec![(409, body.to_string())]).await;
+        let e = lume.get("b").await.unwrap_err().to_string();
+        assert!(e.starts_with("lume API 409: VM start rejected"), "{e}");
+        assert!(e.contains("`cua sb suspend <name>`"), "{e}");
+        assert_eq!(crate::error::failure_kind(&e), Some("vm_limit"));
     }
 
     #[tokio::test]
@@ -920,6 +1163,24 @@ mod tests {
         assert_eq!(b["organization"], "trycua");
         assert!(b.get("registry").is_none());
         assert_eq!(pull_body("macos:1", "n")["image"], "macos:1");
+    }
+
+    #[test]
+    fn run_body_turns_vnc_off_only_when_asked() {
+        let on = serde_json::to_value(RunVm {
+            no_display: true,
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(on.get("vnc").is_none(), "{on}");
+        let off = serde_json::to_value(RunVm {
+            no_display: true,
+            vnc: Some("disabled".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(off["vnc"], "disabled");
+        assert_eq!(off["noDisplay"], true);
     }
 
     #[test]

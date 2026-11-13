@@ -356,6 +356,9 @@ impl ComputerService for Computer {
         &self,
         request: Request<ScreenshotRequest>,
     ) -> Result<Response<ScreenshotResponse>, Status> {
+        // The access log says whether this was a thumbnail or a screen
+        // read (the auth layer leaves screenshots to us).
+        cua_spacesd_server::auth::record_screenshot(&request, request.get_ref().max_dimension);
         let request = request.into_inner();
         let state = self.0.clone();
         let (source, window) = match &request.source {

@@ -11,8 +11,11 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cua="$here/../cua"
 target="${CARGO_TARGET_DIR:-$cua/target}"
-src="$target/release/libcua_spaces_ffi.dylib"
-[ -f "$src" ] || { echo "missing $src: cargo build --locked --release -p cua-spaces-ffi" >&2; exit 1; }
+# CUA_CARGO_PROFILE_DIR: the Cargo profile directory (default release; dev-fast
+# for install-local.sh --development).
+profile_dir="${CUA_CARGO_PROFILE_DIR:-release}"
+src="$target/$profile_dir/libcua_spaces_ffi.dylib"
+[ -f "$src" ] || { echo "missing $src: cargo build --locked --profile $profile_dir -p cua-spaces-ffi" >&2; exit 1; }
 dst="$cua/swift/lib/libcua_sdk.dylib"
 mkdir -p "$(dirname "$dst")"
 cp "$src" "$dst"

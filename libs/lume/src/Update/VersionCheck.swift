@@ -10,6 +10,9 @@ enum LumeVersionCheck {
     private static let cacheRefreshSeconds: TimeInterval = 20 * 60 * 60
     private static let updateCheckEnv = "LUME_UPDATE_CHECK"
     private static let installScriptURLEnv = "LUME_INSTALL_SCRIPT_URL"
+    private static var backgroundServicePlistPath: String {
+        "Library/LaunchAgents/\(LumeChannel.current.lumeDaemonLabel).plist"
+    }
 
     struct State: Codable {
         let currentVersion: String
@@ -167,11 +170,22 @@ enum LumeVersionCheck {
         )
     }
 
-    static func updateChecksEnabled() -> Bool {
+    static func updateChecksEnabled(channel: LumeChannel = .current) -> Bool {
+        // lume-local is a source build: there is no release to move it to, and
+        // the update path runs the stable installer, which replaces `lume`.
+        guard channel.supportsSelfUpdate else { return false }
         guard let value = ProcessInfo.processInfo.environment[updateCheckEnv]?.lowercased() else {
             return true
         }
         return !["0", "false", "no", "off"].contains(value)
+    }
+
+    /// Why `updateChecksEnabled()` is false.
+    static func updateChecksDisabledReason(channel: LumeChannel = .current) -> String {
+        channel.supportsSelfUpdate
+            ? "Update checks disabled by LUME_UPDATE_CHECK"
+            : "\(channel.lumeBinName) is a source build and has no update feed; "
+                + "rebuild it with libs/lume/scripts/install-local.sh"
     }
 
     static func disabledState() -> State {
@@ -186,7 +200,7 @@ enum LumeVersionCheck {
             cacheHit: false,
             installCommand: nil,
             releaseNotesURL: nil,
-            error: "Update checks disabled by LUME_UPDATE_CHECK"
+            error: updateChecksDisabledReason()
         )
     }
 
@@ -208,16 +222,31 @@ enum LumeVersionCheck {
     static func runInstallScript(version: String) throws -> Int32 {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
-        process.arguments = ["-c", manualInstallCommand()]
 
         var environment = ProcessInfo.processInfo.environment
         environment["LUME_VERSION"] = version
         environment["LUME_INSTALL_CHANNEL"] = "update_apply"
         process.environment = environment
+        let homeDirectory = environment["HOME"]
+            .map { URL(fileURLWithPath: $0, isDirectory: true) }
+            ?? FileManager.default.homeDirectoryForCurrentUser
+        process.arguments = installScriptArguments(homeDirectory: homeDirectory)
 
         try process.run()
         process.waitUntilExit()
         return process.terminationStatus
+    }
+
+    static func installScriptArguments(
+        homeDirectory: URL,
+        installCommand: String = manualInstallCommand()
+    ) -> [String] {
+        let servicePlist = homeDirectory.appendingPathComponent(backgroundServicePlistPath)
+        let preserveService = FileManager.default.fileExists(atPath: servicePlist.path)
+        let command = preserveService
+            ? installCommand
+            : "\(installCommand) -s -- --no-background-service"
+        return ["-c", command]
     }
 
     static func isNewer(_ lhs: String, than rhs: String) -> Bool {

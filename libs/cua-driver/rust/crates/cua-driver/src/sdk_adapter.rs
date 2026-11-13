@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Transport-facing adapter over the public Cua Driver SDK contract.
 //!
 //! The daemon, MCP transports, and finite CLI inspection commands all consume
@@ -151,17 +154,13 @@ impl SdkAdapter {
         self.driver.local_history_manager()
     }
 
+    pub fn permissions_pending_result(&self) -> Option<Value> {
+        self.driver.permissions_pending_result()
+    }
+
     pub fn is_known_tool(&self, name: &str) -> bool {
-        name == "type_text_chars"
-            || self
-                .tools_list
-                .get("tools")
-                .and_then(Value::as_array)
-                .is_some_and(|tools| {
-                    tools
-                        .iter()
-                        .any(|tool| tool.get("name").and_then(Value::as_str) == Some(name))
-                })
+        cua_driver_core::tool::renamed_tool(name).is_some()
+            || self.driver.local_is_known_tool(name).unwrap_or(false)
     }
 
     pub fn describe(&self, name: &str) -> Option<Value> {
@@ -272,10 +271,12 @@ impl SdkAdapter {
         Ok(value)
     }
 
-    /// Whether the legacy socket must refuse a call on this ended session.
-    /// An unnamed transport session reclaimed by the idle sweep is not
-    /// refused: core recreates it on the call.
-    pub fn is_session_ended(&self, session: &str) -> bool {
+    /// Whether the legacy socket must refuse a call on this ended session
+    /// from `transport_session`. Core recreates the session on the call, so
+    /// it is not refused, when it is that transport's unnamed session
+    /// reclaimed by the idle sweep, or a label whose owner transport has
+    /// closed since and that was not ended with `end_session`.
+    pub fn is_session_ended(&self, session: &str, transport_session: Option<&str>) -> bool {
         if !self
             .public_sessions
             .lock()
@@ -286,7 +287,12 @@ impl SdkAdapter {
             return false;
         }
         let internal = format!("{}{session}", self.runtime_prefix);
-        !cua_driver_core::session::recreates_on_next_call(&internal, &internal)
+        let owner = format!(
+            "{}{}",
+            self.runtime_prefix,
+            transport_session.unwrap_or(session)
+        );
+        !cua_driver_core::session::recreates_on_next_call(&internal, &owner)
     }
 
     pub fn mark_all_sessions_ended(&self) {
@@ -302,6 +308,9 @@ impl SdkAdapter {
         cua_driver_core::session::suspend_runtime_scope(&self.runtime_scope);
         let count = cua_driver_core::session::revoke_sessions_with_prefix(&self.runtime_prefix);
         self.mark_all_sessions_ended();
+        // Revoking everything must not leave an already-approved browser
+        // socket parked for a later session.
+        cua_driver_core::browser::cdp_ws::close_parked_browser_sockets().await;
         count
     }
 
@@ -441,6 +450,12 @@ fn daemon_tools_list_from(tools_list: &Value) -> Value {
                     "capabilities": tool.get("capabilities").cloned().unwrap_or_else(|| json!([])),
                     "risk": tool.get("risk").cloned().unwrap_or(Value::Null),
                 });
+                if let Some(deprecated) = tool.get("deprecated") {
+                    daemon_tool
+                        .as_object_mut()
+                        .expect("daemon tool entry is an object")
+                        .insert("deprecated".into(), deprecated.clone());
+                }
                 if let Some(output_schema) = tool.get("outputSchema") {
                     daemon_tool
                         .as_object_mut()
@@ -463,6 +478,10 @@ fn daemon_tools_list_from(tools_list: &Value) -> Value {
 impl ToolProvider for SdkAdapter {
     fn tools_list(&self) -> Value {
         self.tools_list()
+    }
+
+    fn is_known_tool(&self, name: &str) -> bool {
+        SdkAdapter::is_known_tool(self, name)
     }
 
     async fn invoke_tool(&self, name: &str, arguments: Value) -> Result<Value, String> {
@@ -591,7 +610,7 @@ mod tests {
             .await
             .expect("end implicit session");
         assert_ne!(ended["isError"], true);
-        assert!(sdk.is_session_ended(transport_session));
+        assert!(sdk.is_session_ended(transport_session, Some(transport_session)));
 
         let revived = sdk
             .invoke_raw("start_session", implicit_args())
@@ -600,7 +619,7 @@ mod tests {
         assert_ne!(revived["isError"], true);
         assert_eq!(revived["structuredContent"]["revived"], true);
         assert!(
-            !sdk.is_session_ended(transport_session),
+            !sdk.is_session_ended(transport_session, Some(transport_session)),
             "successful implicit revival must clear the adapter's early tombstone"
         );
 
@@ -650,21 +669,6 @@ mod tests {
         assert!(
             !second.public_session_observation_state(session).ended,
             "bulk revoke must remain scoped to the owning runtime"
-        );
-
-        second
-            .invoke_raw(
-                "escalate_session",
-                json!({"session": session, "reason": "no_window_target"}),
-            )
-            .await
-            .expect("escalate second session");
-        assert_eq!(
-            second
-                .public_session_observation_state(session)
-                .capture_scope,
-            CaptureScope::Auto,
-            "capture policy remains auto while its effective scope escalates"
         );
 
         first.shutdown().await.expect("shutdown first");

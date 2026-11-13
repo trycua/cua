@@ -88,7 +88,9 @@ pub fn checks(facts: BTreeMap<String, String>) -> Vec<Check> {
                     stale.join(", ")
                 ),
             )
-            .fix("restart them (`cua sb overlay` stops stale copies)")
+            .fix(crate::util::hint(
+                "restart them (`cua sb overlay` stops stale copies)",
+            ))
         });
     }
     let mut identity = Check::new(

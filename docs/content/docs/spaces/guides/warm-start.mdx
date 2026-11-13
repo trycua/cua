@@ -1,0 +1,35 @@
+---
+title: Warm start
+description: Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once.
+---
+
+When you ask for something on Home, Cua makes a Linux Space for the agent, puts the coding app in it and starts the app. The Space takes a few seconds to start and the app takes much longer to install the first time. Warm start does that work before you ask.
+
+This computer keeps one Linux Space ready in the background: the same Linux Space that Home creates for a new agent, with Codex, Hermes, Claude Code and OpenCode already installed in it. Home makes that Space from the Linux slim tier (`ghcr.io/trycua/linux:24.04-slim`, about 0.5 GB to download) instead of the full Linux image, so the Space it keeps ready is the one Create takes. Create takes it, which takes a fraction of a second, and the agent starts in a Space that already has its app. Cua starts the next warm Space as soon as the last one is taken, so the one after is ready when you have typed the next request.
+
+## What it does
+
+- Keeps at most one Linux Space ready. It is hidden: it is on no list and costs nothing you see until Create takes it.
+- Installs the coding apps in it while it waits, so Create does not wait for an install. By default these are Codex, Hermes, Claude Code and OpenCode, the four people run most. To choose others, set `CUA_WARM_POOLS_HARNESSES` for the cua daemon to a comma separated list of app ids, or to `none` to keep a bare Space.
+- Starts the next one at once after Create takes it. If you create again before it is ready, that Create waits for the one that is starting, which began before it, instead of starting another from scratch.
+- Gives the Space back after 30 minutes without a Create (`CUA_HOME_WARMING_IDLE_SECS` shortens that for one daemon, for testing), and whenever this computer needs the memory or CPUs for work you started. A warm Space never makes a Create fail: if there is no room, or anything goes wrong, Create starts a Space the way it does without Warm start.
+- Is always on. There is no switch. To turn it off for one daemon, as an emergency override and not a setting, start it with the environment variable `CUA_WARM_START=0`; nothing is kept ready then and Create starts a Space as it does without Warm start.
+- Holds only what [`pool.memory_percent`](/cua-cli/reference/cli/account-and-setup) allows (15 percent of this computer's memory by default).
+
+## Where it works
+
+A warm Space is claimed on every kind of Space Cua runs, and its coding apps are installed ahead on containers, the kind Home creates on a Mac. A microVM or a VM that cannot answer before it is claimed is claimed warm, and its coding apps are installed right after the claim, as they are without Warm start. [One Space on every runtime](/spaces/concepts/runtime-conformance) lists what each runtime does, and the live conformance run checks a warm claim on each.
+
+## See it
+
+`cua daemon status` shows how many warm Spaces this computer holds. The daemon log says when a Space is claimed and how long the claim took. Every step of an agent's start is also written to `phases.jsonl` in the `persistent` folder of the Cua home, with the time since your message, so you can read how long a start took.
+
+## How fast
+
+Measured on a Mac with 36 GB of memory and Cua's built-in Linux runtime, creating ten Spaces in a row three seconds apart, then starting Claude Code in each and waiting for a session that accepts a message. With Warm start, a Create takes the waiting Space in about 0.1 s and the session opens about 1 s later, so the agent is ready about 1.1 s after Create (1.0 to 1.4 s each). The next Space is ready again in about 2 s, which is faster than the next request. Without Warm start the same ten Creates took about 22 s each, most of it installing Claude Code (16 s) and opening its session (4 s). The very first Create after installing Cua still has to download the runtime and the image, about 70 s on a fast connection; once Warm start has finished its first Space, about two minutes after the app starts, Create takes about 1.2 s.
+
+Per app, creating ten Spaces in a row three seconds apart and waiting for the app to accept a message (medians): Codex 0.9 s, Claude Code 1.1 s, OpenCode 1.8 s, Hermes 2.8 s; without Warm start 14 s, 21 s, 20 s and 46 s. Hermes and OpenCode spend that time loading their own code when a session opens (Hermes imports about a second of Python), which a Space cannot do before it has your credentials.
+
+## What it costs
+
+The Space Cua keeps ready is prepared once and saved: the saved copy takes about 5.7 GB of the runtime's disk (the slim image is 1.8 GB unpacked; the four apps add 2 GB), and the waiting Space holds about 200 MB of memory. Preparing the first one takes two to four minutes in the background; when the app starts again it finds the saved copy and has a Space ready in about 5 s.

@@ -15,7 +15,16 @@
 //   click_target   — NSButton (AX-addressable) records click/double_click/right_click
 //   slider         — NSSlider drives drag / set_value (slider_value=)
 //   checkable_controls — NSButton checkbox (agreed=)
+//   erroring_toggles — opt-in (CUA_APPKIT_ERRORING_TOGGLES=1): two checkboxes
+//                    whose accessibility press raises, so AppKit answers AXPress
+//                    with an AX error; one toggles before raising (#3835)
+//   disabled_control — opt-in (CUA_APPKIT_DISABLED_CONTROL=1): a disabled
+//                    checkbox (disabled_checked=) for enablement reads (#3949),
+//                    and a button and field enabled only while the app is
+//                    active (active_only=, activations=) for the
+//                    post-activation re-read
 //   context_menu   — NSButton + NSMenu (Cut/Copy/Paste → menu_action=)
+//   popup_select   — NSPopUpButton (Design/Research/Finance → popup_value=)
 //   scroll_target  — NSScrollView with a tall body and offset label
 //   ns_menubar     — main menu item with known title (Mac-specific)
 //   exit           — NSButton terminates the app
@@ -52,9 +61,22 @@ let kSliderAID = "sld-value"
 let kSliderValueAID = "lbl-slider-value"
 let kCheckboxAID = "chk-agree"
 let kCheckStateAID = "lbl-chk-state"
+let kErroringTogglesEnv = "CUA_APPKIT_ERRORING_TOGGLES"
+let kActsThenErrorsAID = "chk-acts-then-errors"
+let kErrorsOnlyAID = "chk-errors-only"
+let kErroringTogglesStateAID = "lbl-erroring-toggles"
+let kDisabledControlEnv = "CUA_APPKIT_DISABLED_CONTROL"
+let kDisabledCheckboxAID = "chk-disabled"
+let kDisabledStateAID = "lbl-disabled-state"
+let kActiveOnlyButtonAID = "btn-active-only"
+let kActiveOnlyFieldAID = "txt-active-only"
+let kActiveOnlyStateAID = "lbl-active-only"
+let kActivationsAID = "lbl-activations"
 let kSelectionStateAID = "lbl-selection-state"
 let kContextButtonAID = "btn-context"
 let kMenuActionAID = "lbl-menu-action"
+let kPopupAID = "pop-team"
+let kPopupValueAID = "lbl-popup-value"
 let kScrollerAID = "scroll-tall"
 let kScrollOffsetAID = "lbl-scroll-offset"
 let kAccelCountAID = "lbl-accel-count"
@@ -64,6 +86,7 @@ let kExitButtonAID = "btn-exit"
 let kMenuItemTitle = "Harness Test Item"
 let kSecondaryWindowTitle = "CuaTestHarness AppKit Secondary"
 let kSheetWindowTitle = "CuaTestHarness AppKit Sheet"
+let kSheetInputAID = "txt-sheet"
 let kFloatingWindowTitle = "CuaTestHarness AppKit Floating"
 let kTaskStateEnv = "CUA_APPKIT_TASK_STATE"
 let kTaskStateSchema = "cua.appkit_task_state_v1"
@@ -126,10 +149,22 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
     var clicks = 0
     let sliderValueLabel = NSTextField(labelWithString: "slider_value=0")
     let checkStateLabel = NSTextField(labelWithString: "agreed=false")
+    let actsThenErrors = RaisingCheckbox(checkboxWithTitle: "Acts then errors", target: nil, action: nil)
+    let errorsOnly = RaisingCheckbox(checkboxWithTitle: "Errors only", target: nil, action: nil)
+    let erroringTogglesLabel = NSTextField(labelWithString: "")
+    let disabledCheckbox = NSButton(checkboxWithTitle: "Unavailable option", target: nil, action: nil)
+    let disabledStateLabel = NSTextField(labelWithString: "")
+    // Lazy: an ordinary launch never creates the opt-in active-only controls.
+    lazy var activeOnlyButton = ActiveOnlyButton(title: "Active only", target: nil, action: nil)
+    lazy var activeOnlyField = NSTextField(string: "")
+    lazy var activeOnlyLabel = NSTextField(labelWithString: "active_only=none")
+    lazy var activationsLabel = NSTextField(labelWithString: "activations=0")
+    var activations = 0
     let selectionItems = ["alpha", "beta", "gamma"]
     let selectionTable = NSTableView()
     let selectionStateLabel = NSTextField(labelWithString: "selection=none")
     let menuActionLabel = NSTextField(labelWithString: "menu_action=none")
+    let popupValueLabel = NSTextField(labelWithString: "popup_value=Choose a team")
     let scrollOffsetLabel = NSTextField(labelWithString: "scroll_offset=0")
     let accelCountLabel = NSTextField(labelWithString: "accel_fired=0")
     var accelCount = 0
@@ -342,6 +377,25 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         contextRow.addArrangedSubview(menuActionLabel)
         content.addArrangedSubview(contextRow)
 
+        // popup_select — an NSPopUpButton whose menu is opened by AXPress.
+        // Background tests check the user's front window keeps key status
+        // while the menu is open.
+        content.addArrangedSubview(sectionLabel("popup_select"))
+        let teamPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        teamPopup.addItems(withTitles: ["Choose a team", "Design", "Research", "Finance"])
+        teamPopup.target = self
+        teamPopup.action = #selector(onTeamPopup(_:))
+        teamPopup.setAccessibilityIdentifier(kPopupAID)
+        teamPopup.setAccessibilityLabel("Team")
+        popupValueLabel.setAccessibilityIdentifier(kPopupValueAID)
+        popupValueLabel.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        let popupRow = NSStackView()
+        popupRow.orientation = .horizontal
+        popupRow.spacing = 12
+        popupRow.addArrangedSubview(teamPopup)
+        popupRow.addArrangedSubview(popupValueLabel)
+        content.addArrangedSubview(popupRow)
+
         // scroll_target
         content.addArrangedSubview(sectionLabel("scroll_target"))
         let scrollWrap = NSStackView()
@@ -389,6 +443,12 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
 
         if taskStatePath != nil {
             addTaskControls(to: content)
+        }
+        if ProcessInfo.processInfo.environment[kErroringTogglesEnv] == "1" {
+            addErroringToggles(to: content)
+        }
+        if ProcessInfo.processInfo.environment[kDisabledControlEnv] == "1" {
+            addDisabledControl(to: content)
         }
 
         // No outer scroll-view wrap: the content is sized to fit the window
@@ -454,6 +514,104 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
             sizeRow.addArrangedSubview(radio)
         }
         content.addArrangedSubview(sizeRow)
+    }
+
+    /// Opt-in erroring toggles (#3835), appended below Exit like the task
+    /// controls so every ordinary control keeps its position. The label is the
+    /// fixture's own record of both states.
+    private func addErroringToggles(to content: NSStackView) {
+        content.addArrangedSubview(sectionLabel("erroring_toggles"))
+        actsThenErrors.setAccessibilityIdentifier(kActsThenErrorsAID)
+        actsThenErrors.toggles = true
+        errorsOnly.setAccessibilityIdentifier(kErrorsOnlyAID)
+        erroringTogglesLabel.setAccessibilityIdentifier(kErroringTogglesStateAID)
+        erroringTogglesLabel.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.spacing = 12
+        for box in [actsThenErrors, errorsOnly] {
+            box.state = .off
+            box.onChange = { [weak self] in self?.recordErroringToggles() }
+            row.addArrangedSubview(box)
+        }
+        row.addArrangedSubview(erroringTogglesLabel)
+        content.addArrangedSubview(row)
+        recordErroringToggles()
+    }
+
+    private func recordErroringToggles() {
+        erroringTogglesLabel.stringValue =
+            "acts_then_errors=\(actsThenErrors.state == .on) errors_only=\(errorsOnly.state == .on)"
+    }
+
+    /// Opt-in disabled checkbox (#3949), appended below Exit like the other
+    /// opt-in controls. The label records the box's state, which must never
+    /// change: a disabled control reads as present but cannot be pressed.
+    private func addDisabledControl(to content: NSStackView) {
+        content.addArrangedSubview(sectionLabel("disabled_control"))
+        disabledCheckbox.setAccessibilityIdentifier(kDisabledCheckboxAID)
+        disabledCheckbox.state = .off
+        disabledCheckbox.target = self
+        disabledCheckbox.action = #selector(onDisabledCheckbox)
+        disabledCheckbox.isEnabled = false
+        disabledStateLabel.setAccessibilityIdentifier(kDisabledStateAID)
+        disabledStateLabel.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.spacing = 12
+        row.addArrangedSubview(disabledCheckbox)
+        row.addArrangedSubview(disabledStateLabel)
+        content.addArrangedSubview(row)
+        onDisabledCheckbox()
+
+        // Enabled only while the app is active, like a toolbar item in a
+        // window that is not key: activation is what makes them usable.
+        activeOnlyButton.setAccessibilityIdentifier(kActiveOnlyButtonAID)
+        activeOnlyButton.target = self
+        activeOnlyButton.action = #selector(onActiveOnlyPress)
+        activeOnlyButton.onEvent = { [weak self] in self?.recordActiveOnly($0) }
+        activeOnlyField.setAccessibilityIdentifier(kActiveOnlyFieldAID)
+        activeOnlyField.delegate = self
+        activeOnlyLabel.setAccessibilityIdentifier(kActiveOnlyStateAID)
+        activeOnlyLabel.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        let activeRow = NSStackView()
+        activeRow.orientation = .horizontal
+        activeRow.spacing = 12
+        activeRow.addArrangedSubview(activeOnlyButton)
+        activeRow.addArrangedSubview(activeOnlyField)
+        activeRow.addArrangedSubview(activeOnlyLabel)
+        activationsLabel.setAccessibilityIdentifier(kActivationsAID)
+        activationsLabel.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        activeRow.addArrangedSubview(activationsLabel)
+        NSLayoutConstraint.activate([activeOnlyField.widthAnchor.constraint(equalToConstant: 160)])
+        content.addArrangedSubview(activeRow)
+        for name in [NSApplication.didBecomeActiveNotification,
+                     NSApplication.didResignActiveNotification] {
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(syncActiveOnly(_:)), name: name, object: nil)
+        }
+        syncActiveOnly(nil)
+    }
+
+    @objc private func onDisabledCheckbox() {
+        disabledStateLabel.stringValue = "disabled_checked=\(disabledCheckbox.state == .on)"
+    }
+
+    /// Also counts activations, so a refused call can show it activated the
+    /// app before refusing rather than refusing up front.
+    @objc private func syncActiveOnly(_ note: Notification?) {
+        activeOnlyButton.isEnabled = NSApp.isActive
+        activeOnlyField.isEnabled = NSApp.isActive
+        if note?.name == NSApplication.didBecomeActiveNotification {
+            activations += 1
+            activationsLabel.stringValue = "activations=\(activations)"
+        }
+    }
+
+    @objc private func onActiveOnlyPress() { recordActiveOnly("click") }
+
+    private func recordActiveOnly(_ event: String) {
+        activeOnlyLabel.stringValue = "active_only=\(event)"
     }
 
     /// Benign distractor controls for density mode (#4312): a grid of buttons,
@@ -646,6 +804,10 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         menuActionLabel.stringValue = "menu_action=\(sender.title)"
     }
 
+    @objc private func onTeamPopup(_ sender: NSPopUpButton) {
+        popupValueLabel.stringValue = "popup_value=\(sender.titleOfSelectedItem ?? "")"
+    }
+
     @objc func onArrangeLeft(_ sender: NSMenuItem) {
         menuActionLabel.stringValue = "menu_action=window_arrange_left"
     }
@@ -665,6 +827,8 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         guard let field = obj.object as? NSTextField else { return }
         if field === textInput {
             textInputMirror.stringValue = field.stringValue
+        } else if field.accessibilityIdentifier() == kActiveOnlyFieldAID {
+            recordActiveOnly("text:\(field.stringValue)")
         }
     }
 
@@ -716,6 +880,24 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
 // via AXPress) that additionally reports double-click and right-click. AXPress and
 // single mouse-up fire the target/action (→ click); a pixel double-click is caught
 // here before super so it reports double_click; right-click reports right_click.
+/// A checkbox whose accessibility press raises after optionally toggling.
+/// AppKit answers that AXPress with an AX error, as Finder's toolbar view
+/// switcher does after it has switched the view (#3835).
+final class RaisingCheckbox: NSButton {
+    var toggles = false
+    var onChange: (() -> Void)?
+
+    override func accessibilityPerformPress() -> Bool {
+        if toggles {
+            state = state == .on ? .off : .on
+            onChange?()
+        }
+        NSException(name: .genericException, reason: "harness press handler raised",
+                    userInfo: nil).raise()
+        return false
+    }
+}
+
 final class ClickTargetButton: NSButton {
     weak var harness: HarnessWindowController?
 
@@ -730,6 +912,24 @@ final class ClickTargetButton: NSButton {
         harness?.clickTargetSawRight()
     }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
+/// The active-only button: AXPress and a single click fire its action; a
+/// pixel double-click reports itself before AppKit's tracking loop, and a
+/// middle click reports itself.
+final class ActiveOnlyButton: NSButton {
+    var onEvent: ((String) -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 && isEnabled {
+            onEvent?("double_click")
+            return
+        }
+        super.mouseDown(with: event)
+    }
+    override func otherMouseDown(with event: NSEvent) {
+        if isEnabled { onEvent?("middle_click") }
+    }
 }
 
 // Opt-in windows for the persistent exact-window activation certification.
@@ -749,14 +949,28 @@ final class BringToFrontMatrixWindows {
         secondary.contentView = NSTextField(labelWithString: "bring_to_front secondary ordinary window")
         secondary.orderFront(nil)
 
-        if mode == "sheet" {
+        if mode == "sheet" || mode == "sheet-input" {
             let candidate = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 360, height: 160),
                 styleMask: [.titled], backing: .buffered, defer: false)
             candidate.title = kSheetWindowTitle
             candidate.contentView = NSTextField(labelWithString: "modal sheet blocks parent key status")
+            // An editable field, like Finder's Go to Folder path, for keys
+            // addressed to the sheet or to its parent window.
+            var field: NSTextField?
+            if mode == "sheet-input" {
+                let input = NSTextField(frame: NSRect(x: 20, y: 60, width: 320, height: 24))
+                input.setAccessibilityIdentifier(kSheetInputAID)
+                let content = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 160))
+                content.addSubview(input)
+                candidate.contentView = content
+                field = input
+            }
             sheet = candidate
             parent.beginSheet(candidate)
+            if let field {
+                candidate.makeFirstResponder(field)
+            }
         } else if mode == "floating" {
             let candidate = NSPanel(
                 contentRect: NSRect(x: 180, y: 180, width: 320, height: 140),
@@ -871,6 +1085,8 @@ final class SingleClickReceiver: NSView {
 
     override func mouseDown(with event: NSEvent) { record("down", event) }
     override func mouseUp(with event: NSEvent) { record("up", event) }
+    override func otherMouseDown(with event: NSEvent) { record("middle_down", event) }
+    override func otherMouseUp(with event: NSEvent) { record("middle_up", event) }
 }
 
 @main

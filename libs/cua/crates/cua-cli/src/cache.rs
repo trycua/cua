@@ -1,7 +1,7 @@
 //! `cua cache ls|du|prune|config`: what the SDK keeps on disk and its
 //! cleanup (`cua-disk`).
 
-use crate::util::{self, line};
+use crate::util::{self, hint_line, line};
 use clap::Subcommand;
 use cua_disk::{Budget, CacheConfig, Category, GcOptions, Layout, Scanner, format_size};
 use cua_sdk::CuaError;
@@ -354,7 +354,7 @@ pub async fn run(
                 ),
             );
             if g.kept_referenced > 0 {
-                line(
+                hint_line(
                     out,
                     format!(
                         "kept {} cache entr{} used by sandboxes (cua sb rm frees them)",
@@ -362,6 +362,21 @@ pub async fn run(
                         if g.kept_referenced == 1 { "y" } else { "ies" }
                     ),
                 );
+            }
+            for k in &g.kept_bases {
+                line(
+                    out,
+                    format!(
+                        "kept {} {} ({}): {}",
+                        k.kind,
+                        k.name,
+                        format_size(k.bytes),
+                        k.why
+                    ),
+                );
+            }
+            if !g.kept_bases.is_empty() {
+                hint_line(out, "cua cache prune --all removes bases no sandbox uses");
             }
             Ok(0)
         }

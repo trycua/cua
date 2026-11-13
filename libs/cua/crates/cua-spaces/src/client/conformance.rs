@@ -172,7 +172,7 @@ fn write_string(out: &mut String, value: &str) {
 pub fn session_script() -> String {
     // Written as a value and serialized by the ordered writer, so the script
     // file itself is deterministic too.
-    include_str!("../../../../spaces-contract/fixtures/control/session-script.json").to_string()
+    include_str!(concat!(env!("OUT_DIR"), "/session-script.json")).to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -245,7 +245,6 @@ pub fn run_session(script_json: &str) -> Result<String> {
                 Node::Array(
                     [
                         SpaceProvider::Local,
-                        SpaceProvider::Fleet,
                         SpaceProvider::Demo,
                         SpaceProvider::Unknown,
                     ]
@@ -305,7 +304,7 @@ pub fn run_session(script_json: &str) -> Result<String> {
     // -- attaching to what is not there -----------------------------------
     sections.push((
         "attach_to_absent_space",
-        error_node(connection.attach("fleet:not-here", true).err()),
+        error_node(connection.attach("local:not-here", true).err()),
     ));
 
     // -- windows ----------------------------------------------------------
@@ -727,7 +726,7 @@ pub fn run_session(script_json: &str) -> Result<String> {
                 error_node({
                     let elsewhere = manifest
                         .approving(
-                            "fleet:elsewhere",
+                            "local:elsewhere",
                             &["claude/.credentials.json".to_string()],
                             true,
                         )

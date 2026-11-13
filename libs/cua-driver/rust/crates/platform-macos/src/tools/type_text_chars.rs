@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_core::{
     protocol::ToolResult,
@@ -58,6 +61,12 @@ impl Tool for TypeTextCharsTool {
             Ok(v) => v,
             Err(e) => return e,
         };
+        if let Err(refusal) = crate::security_prompt::refuse_pid(
+            cua_driver_core::security_prompt::PromptInput::from_args(&args),
+            pid,
+        ) {
+            return refusal;
+        }
         let text_raw = match args.require_str("text") {
             Ok(v) => v,
             Err(e) => return e,
@@ -91,7 +100,9 @@ impl Tool for TypeTextCharsTool {
                 pid,
                 wid,
                 element_ptr,
-                cua_driver_core::background_input::BackgroundAction::InsertText,
+                super::window_keyboard_action(
+                    cua_driver_core::background_input::BackgroundAction::InsertText,
+                ),
             )
             .await
             {
@@ -100,6 +111,11 @@ impl Tool for TypeTextCharsTool {
             }
         } else {
             None
+        };
+
+        let _key_scope = match super::acquire_key_scope(pid, window_id, false).await {
+            Ok(scope) => scope,
+            Err(refusal) => return refusal,
         };
 
         // Pre-focus element if requested.

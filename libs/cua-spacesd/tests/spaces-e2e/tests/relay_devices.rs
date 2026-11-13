@@ -5,7 +5,8 @@
 //! mode, a fake OIDC issuer, grace period over): enrollment with a second
 //! factor, approval by code, a same-machine re-key, device sessions on the
 //! machine directory and Spaces, audit, revocation, and a host re-running
-//! setup with its machine token only.
+//! setup: with its machine token, or with the account alone while the host
+//! is offline (never while it is live).
 
 use std::sync::Arc;
 
@@ -38,13 +39,14 @@ async fn relay(issuer: &FakeIssuer) -> String {
     url
 }
 
-/// Relay device policy (S4) this suite pins: a fresh sign-in on an account
-/// with a verified email enrolls a brand-new additional device (another
-/// machine) without an approval (cua-relay 4f62b9c91). When the relay
-/// requires an approval or MFA for those again, set this to `false`: the
-/// asserts that read it expect `Pending` and approve by code instead. The
-/// first device and a same-machine re-key stay approval-free either way.
-const FRESH_SIGN_IN_ENROLLS_A_NEW_MACHINE: bool = false;
+/// Relay device policy this suite pins: by default a fresh sign-in enrolls
+/// a brand-new additional device (another machine) of the account without
+/// an approval, whether or not the email is verified or the token proves
+/// MFA. Under the relay's strict policy (`DevicePolicy::require_approval`,
+/// `CUA_RELAY_DEVICE_REQUIRE_APPROVAL`) set this to `false`: the asserts
+/// that read it expect `Pending` and approve by code instead. The first
+/// device and a same-machine re-key stay approval-free either way.
+const FRESH_SIGN_IN_ENROLLS_A_NEW_MACHINE: bool = true;
 
 /// A device with a fresh key on the machine `machine` (the machine id it
 /// reports; never this host's, so the suite neither reads the host's
@@ -108,27 +110,76 @@ async fn devices_enroll_and_reach_machines_on_the_real_relay() {
         .await
         .unwrap();
     assert_ne!(rotated.machine_token, reg.machine_token);
-    // Without it, a session alone cannot rotate the token.
+    // The host is not connected (a setup that died, a reinstall that lost
+    // the machine token): the owner's session alone re-registers it and
+    // rotates the token.
+    let request = RegisterRequest {
+        id: "0123abcd4567ef89".into(),
+        name: "studio-mac".into(),
+        allow: vec![],
+        host: None,
+        meta: Default::default(),
+    };
+    let rerotated = client.register(&stale, &request).await.unwrap();
+    assert_ne!(rerotated.machine_token, rotated.machine_token);
+    // Once the host is live, a session alone cannot rotate its token (and
+    // so cannot knock it offline); neither can the stale token.
+    let stop = tokio_util::sync::CancellationToken::new();
+    let unused = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let local = unused.local_addr().unwrap();
+    drop(unused);
+    let mut join = cua_relay::client::JoinConfig::new(
+        url.replace("http://", "ws://"),
+        rerotated.machine_token.clone(),
+        request.id.clone(),
+        local,
+    );
+    join.heartbeat = std::time::Duration::from_secs(1);
+    tokio::spawn(cua_relay::client::run(join, stop.clone()));
+    let mut online = false;
+    for _ in 0..200 {
+        if client
+            .machines(&stale)
+            .await
+            .unwrap()
+            .iter()
+            .any(|m| m.id == request.id && m.online)
+        {
+            online = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    assert!(online, "the host connected");
+    let refused = client.register(&stale, &request).await.unwrap_err();
+    assert!(
+        refused
+            .to_string()
+            .contains("needs its computer token or an enrolled device"),
+        "{refused}"
+    );
     assert!(
         client
-            .register(
-                &stale,
-                &RegisterRequest {
-                    id: "0123abcd4567ef89".into(),
-                    name: "x".into(),
-                    allow: vec![],
-                    host: None,
-                    meta: Default::default(),
-                },
-            )
+            .register_as_machine(&stale, Some(&rotated.machine_token), &request)
             .await
-            .is_err()
+            .is_err(),
+        "a superseded machine token is no proof"
     );
-    // The session alone lists nothing.
-    assert!(matches!(
-        client.machines(&stale).await,
-        Err(cua_host::Error::PermissionDenied(_))
-    ));
+    assert!(
+        client
+            .machines(&stale)
+            .await
+            .unwrap()
+            .iter()
+            .any(|m| m.id == request.id && m.online),
+        "still connected"
+    );
+    stop.cancel();
+    // The session alone lists the machines by name only (the apps show
+    // them with a greyed-out Connect) and reaches none of them.
+    let listed = client.machines(&stale).await.unwrap();
+    assert_eq!(listed.len(), 1);
+    assert!(listed[0].url.is_empty() && listed[0].clients.is_empty());
 
     // The first device needs a fresh sign-in.
     let laptop = device(&url, &stale, "laptop", "laptop");

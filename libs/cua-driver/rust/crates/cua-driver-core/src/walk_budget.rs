@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Wall-clock and node budget for the accessibility walk behind
 //! `get_window_state` (`timeout_ms` / `max_elements`).
 //!
@@ -217,10 +220,15 @@ pub fn truncation_note(
         Some(other) => other.to_owned(),
         None => "the walk stopped early".to_owned(),
     };
+    let remedy = if reason == Some("node_budget") {
+        "retry with a larger max_elements"
+    } else {
+        "retry with a larger timeout_ms (e.g. 5000)"
+    };
     format!(
         "⚠️ PARTIAL TREE: {why} after {visited} node(s) ({pending} discovered but not visited). \
          Every element listed is real; elements after the cut are missing. If the element you \
-         need is absent, retry with a larger timeout_ms (e.g. 5000) or narrow with query / max_depth."
+         need is absent, {remedy} or narrow with query / max_depth."
     )
 }
 

@@ -150,29 +150,70 @@ fn sq(s: &str) -> String {
 /// Shell helpers. `cua_exe PID` prints a process's executable (from
 /// `/proc/PID/exe`, else its argv[0]: root in gVisor may not read another
 /// user's `exe` link), without a ` (deleted)` suffix. `cua_exe_sha PID`
-/// prints the sha256 of what it runs (as its owner when root cannot read
-/// it). `cua_daemon` prints `<pid> <exe>` of the running cua-spacesd (the
-/// exec's parent first).
+/// prints the sha256 of what it runs. The kernel lets a caller read
+/// `/proc/PID/exe` only as the process's owner holding every capability the
+/// process holds (or with CAP_SYS_PTRACE), so when a plain read fails it
+/// retries as the owner, then as the owner with the process's permitted
+/// capabilities (the image starts cua-spacesd as `cua` with CAP_SETUID,
+/// CAP_SETGID and CAP_KILL, which neither plain root nor a plain `runuser`
+/// satisfies). `cua_daemon` prints `<pid> <exe>` of the running cua-spacesd
+/// (the exec's parent first).
 const FIND_DAEMON: &str = r#"cua_exe() {
   e=$(readlink "/proc/$1/exe" 2>/dev/null) || e=""
   [ -n "$e" ] || e=$(tr '\0' '\n' <"/proc/$1/cmdline" 2>/dev/null | head -n1) || true
   [ -n "$e" ] || return 1
   echo "${e% (deleted)}"
 }
+cua_caps() {
+  h=$(sed -n 's/^CapPrm:[[:space:]]*//p' "/proc/$1/status" 2>/dev/null | head -n1)
+  [ -n "$h" ] || return 0
+  v=$((0x$h)); n=0; l=""
+  while [ "$v" -ne 0 ] && [ "$n" -lt 63 ]; do
+    [ $((v & 1)) -eq 0 ] || l="$l,+cap_$n"
+    v=$((v >> 1)); n=$((n + 1))
+  done
+  echo "${l#,}"
+}
 cua_exe_sha() {
   s=$(sha256sum "/proc/$1/exe" 2>/dev/null | cut -d' ' -f1)
-  if [ -z "$s" ] && [ "$(id -u)" = 0 ]; then
-    u=$(stat -c %U "/proc/$1" 2>/dev/null)
-    s=$(runuser -u "$u" -- sha256sum "/proc/$1/exe" 2>/dev/null | cut -d' ' -f1)
+  if [ -z "$s" ]; then
+    R=""
+    if [ "$(id -u)" != 0 ]; then R="sudo -n"; $R true 2>/dev/null || { echo ""; return 0; }; fi
+    u=$(stat -c %U "/proc/$1" 2>/dev/null) || u=""
+    [ -n "$u" ] || { echo ""; return 0; }
+    s=$($R runuser -u "$u" -- sha256sum "/proc/$1/exe" 2>/dev/null | cut -d' ' -f1)
+    c=$(cua_caps "$1")
+    if [ -z "$s" ] && [ -n "$c" ]; then
+      s=$($R setpriv --reuid "$u" --regid "$u" --init-groups --inh-caps "$c" --ambient-caps "$c" -- sha256sum "/proc/$1/exe" 2>/dev/null | cut -d' ' -f1)
+    fi
   fi
   echo "$s"
 }
+cua_server_exe() {
+  exe=$(cua_exe "$1") || return 1
+  case "${exe##*/}" in cua-spacesd|cua-guestd|cua-env-driver) ;; *) return 1;; esac
+  args=$(cat "/proc/$1/cmdline" 2>/dev/null | tr '\0' '\n')
+  [ -n "$args" ] || { echo "cannot identify cua-spacesd role for pid $1" >&2; return 2; }
+  arg=$(printf '%s\n' "$args" | sed -n '2p')
+  case "$arg" in
+    --help|-h|--version|-V) return 1;;
+    ''|serve|join|-*) echo "$exe";;
+    *) return 1;;
+  esac
+}
 cua_daemon() {
-  for p in "$PPID" $(ls /proc 2>/dev/null | grep -E '^[0-9]+$'); do
-    exe=$(cua_exe "$p") || continue
-    case "${exe##*/}" in cua-spacesd|cua-guestd|cua-env-driver) echo "$p $exe"; return 0;; esac
+  if exe=$(cua_server_exe "$PPID"); then echo "$PPID $exe"; return 0
+  else rc=$?; [ "$rc" = 1 ] || return "$rc"; fi
+  found=""
+  for p in $(ls /proc 2>/dev/null | grep -E '^[0-9]+$'); do
+    [ "$p" != "$PPID" ] || continue
+    if exe=$(cua_server_exe "$p"); then
+      [ -z "$found" ] || { echo "multiple cua-spacesd servers in the guest" >&2; return 2; }
+      found="$p $exe"
+    else rc=$?; [ "$rc" = 1 ] || return "$rc"; fi
   done
-  return 1
+  [ -n "$found" ] || return 1
+  echo "$found"
 }
 "#;
 
@@ -190,8 +231,13 @@ if [ -z "$target" ]; then
   case "$name" in
     cua-spacesd)
       # The image's daemon may still be starting: wait for it (bounded).
-      i=0; while [ $i -lt 120 ] && ! cua_daemon >/dev/null; do sleep 1; i=$((i + 1)); done
-      if d=$(cua_daemon); then target=${d#* }
+      i=0; d=""
+      while [ $i -lt 120 ]; do
+        if d=$(cua_daemon); then break
+        else rc=$?; [ "$rc" = 1 ] || exit "$rc"; fi
+        sleep 1; i=$((i + 1))
+      done
+      if [ -n "$d" ]; then target=${d#* }
       elif [ -e /usr/local/bin/cua-spacesd ]; then target=$(readlink -f /usr/local/bin/cua-spacesd)
       else echo "no cua-spacesd runs in this guest" >&2; exit 4; fi ;;
     cua-driver)
@@ -225,12 +271,20 @@ echo "previous=$prev"
 /// Schedules a restart of the running cua-spacesd in a detached session
 /// (this exec runs under it). Prints `pid=<old pid>` and `how=<method>`.
 const RESTART_DAEMON: &str = r#"set -eu
-d=$(cua_daemon) || { echo "how="; exit 0; }
+d=$(cua_daemon) || { rc=$?; [ "$rc" = 1 ] || exit "$rc"; echo "how="; exit 0; }
 pid=${d%% *}
 unit=$(sed -n 's#.*/\([^/]*\.service\)$#\1#p' "/proc/$pid/cgroup" 2>/dev/null | head -n1 || true)
 prog=""
-if [ -S /run/supervisor.sock ] || [ -S /var/run/supervisor.sock ]; then
-  prog=$($S supervisorctl status 2>/dev/null | awk '{print $1}' | grep -E '^(cua-spacesd|cua-guestd|cua-env-driver)$' | head -n1 || true)
+if test -S /run/supervisor.sock || test -S /var/run/supervisor.sock; then
+  programs=$($S supervisorctl status 2>/dev/null | awk '{print $1}' | grep -E '^(cua-spacesd|cua-guestd|cua-env-driver)$' || true)
+  for candidate in $programs; do
+    managed_pid=$($S supervisorctl pid "$candidate" 2>/dev/null) || managed_pid=""
+    if [ "$managed_pid" = "$pid" ]; then
+      [ -z "$prog" ] || { echo "multiple supervisor programs identify the selected cua-spacesd server" >&2; exit 2; }
+      prog=$candidate
+    fi
+  done
+  [ -n "$prog" ] || { echo "supervisor does not identify the selected cua-spacesd server" >&2; exit 2; }
 fi
 if [ -n "$prog" ]; then cmd="supervisorctl restart $prog"; how="supervisor:$prog"
 elif [ -n "$unit" ] && command -v systemctl >/dev/null 2>&1; then cmd="systemctl restart $unit"; how="systemd:$unit"
@@ -573,7 +627,11 @@ async fn restart_daemon(
                 if pid != old_pid && sha == sha256 {
                     return Ok(how);
                 }
-                last = format!("pid {pid} runs sha256 {}", &sha[..sha.len().min(12)]);
+                last = if sha.is_empty() {
+                    format!("pid {pid}: its executable's sha256 could not be read")
+                } else {
+                    format!("pid {pid} runs sha256 {}", &sha[..sha.len().min(12)])
+                };
             }
             Err(e) => last = e.to_string(),
         }
@@ -631,6 +689,258 @@ impl Sandbox {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    fn daemon_shell(
+        processes: &[(&str, &str, &str, &str)],
+        setup: &str,
+        script: &str,
+    ) -> std::process::Output {
+        let mut fixture = String::new();
+        for (command, suffix, column) in [
+            ("readlink", "exe", 1),
+            ("cat", "cmdline", 2),
+            ("sha256sum", "exe", 3),
+        ] {
+            fixture.push_str(&format!("{command}() {{ case \"$1\" in\n"));
+            for &(pid, exe, args, hash) in processes {
+                let output = match column {
+                    1 => format!("printf '%s\\n' {}", sq(exe)),
+                    2 => format!(
+                        "printf '%s\\0' {}",
+                        std::iter::once(exe)
+                            .chain(args.split('\n').filter(|arg| !arg.is_empty()))
+                            .map(sq)
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    ),
+                    _ => format!("printf '%s\\n' {}", sq(hash)),
+                };
+                fixture.push_str(&format!("/proc/{pid}/{suffix}) {output};;\n"));
+            }
+            fixture.push_str(if command == "readlink" {
+                "*) echo /bin/sh;; esac; }\n"
+            } else {
+                "*) return 1;; esac; }\n"
+            });
+        }
+        fixture.push_str(&format!(
+            "ls() {{ printf '%s\\n' {}; }}\n",
+            processes
+                .iter()
+                .map(|p| sq(p.0))
+                .collect::<Vec<_>>()
+                .join(" ")
+        ));
+        std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(format!("{FIND_DAEMON}\n{fixture}\n{setup}\n{script}"))
+            .output()
+            .unwrap()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn daemon_identity_ignores_helpers() {
+        for (helper_hash, server_hash) in [("old", "new"), ("new", "old")] {
+            let out = daemon_shell(
+                &[
+                    (
+                        "25",
+                        "/usr/local/bin/cua-spacesd (deleted)",
+                        "volume-helper\n--allow-uid\n1000",
+                        helper_hash,
+                    ),
+                    ("30", "/usr/local/bin/cua-spacesd", "", server_hash),
+                ],
+                "",
+                DAEMON_IDENTITY,
+            );
+            assert!(out.status.success(), "{out:?}");
+            assert_eq!(
+                String::from_utf8_lossy(&out.stdout).trim(),
+                format!("30 {server_hash}")
+            );
+        }
+    }
+
+    /// The image starts cua-spacesd as `cua` holding CAP_SETUID, CAP_SETGID and
+    /// CAP_KILL (permitted 0xe0). The kernel then refuses `/proc/PID/exe` to
+    /// plain root and to the owner alike; only the owner holding the same
+    /// capabilities may read it.
+    #[cfg(unix)]
+    const UNREADABLE_EXE: &str = r#"
+sed() { case "$*" in *CapPrm*) echo 00000000000000e0;; *) command sed "$@";; esac; }
+sha256sum() { return 1; }
+stat() { echo cua; }
+runuser() { return 1; }
+setpriv() {
+  [ "$*" = "--reuid cua --regid cua --init-groups --inh-caps +cap_5,+cap_6,+cap_7 --ambient-caps +cap_5,+cap_6,+cap_7 -- sha256sum /proc/30/exe" ] || return 1
+  echo "new  /proc/30/exe"
+}
+"#;
+
+    #[cfg(unix)]
+    #[test]
+    fn daemon_identity_reads_an_exe_only_its_capabilities_open() {
+        let process = [("30", "/usr/local/bin/cua-spacesd", "", "unused")];
+        let root = format!("id() {{ echo 0; }}\n{UNREADABLE_EXE}");
+        let out = daemon_shell(&process, &root, DAEMON_IDENTITY);
+        assert!(out.status.success(), "{out:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "30 new");
+
+        // Not root: the same read goes through passwordless sudo.
+        let sudo = "id() { echo 1000; }\nsudo() { [ \"$1\" = -n ] && shift; \"$@\"; }";
+        let out = daemon_shell(
+            &process,
+            &format!("{sudo}\n{UNREADABLE_EXE}"),
+            DAEMON_IDENTITY,
+        );
+        assert!(out.status.success(), "{out:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "30 new");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn daemon_identity_is_empty_when_the_exe_cannot_be_read() {
+        let process = [("30", "/usr/local/bin/cua-spacesd", "", "unused")];
+        // Root, but neither the owner nor the owner with its capabilities can.
+        let root = format!("id() {{ echo 0; }}\n{UNREADABLE_EXE}\nsetpriv() {{ return 1; }}");
+        let out = daemon_shell(&process, &root, DAEMON_IDENTITY);
+        assert!(out.status.success(), "{out:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "30");
+        // Not root and no sudo: nothing to retry with.
+        let user = format!("id() {{ echo 1000; }}\nsudo() {{ return 1; }}\n{UNREADABLE_EXE}");
+        let out = daemon_shell(&process, &user, DAEMON_IDENTITY);
+        assert!(out.status.success(), "{out:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "30");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn daemon_selection_accepts_serving_roles_and_aliases() {
+        for name in ["cua-spacesd", "cua-guestd", "cua-env-driver"] {
+            for args in ["", "serve", "join", "--listen\n127.0.0.1:3211"] {
+                let exe = format!("/usr/local/bin/{name}");
+                let out = daemon_shell(&[("30", &exe, args, "new")], "", DAEMON_IDENTITY);
+                assert!(out.status.success(), "{name} {args}: {out:?}");
+                assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "30 new");
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn daemon_selection_rejects_nonserving_roles() {
+        for args in [
+            "volume-helper",
+            "volume-mount",
+            "token-sync",
+            "doctor",
+            "build-info",
+            "check-permissions",
+            "legacy",
+            "--help",
+            "-h",
+            "--version",
+            "-V",
+            "unknown",
+        ] {
+            let out = daemon_shell(
+                &[("25", "/usr/local/bin/cua-spacesd", args, "old")],
+                "",
+                "cua_daemon",
+            );
+            assert_eq!(out.status.code(), Some(1), "{args}: {out:?}");
+            assert!(out.stdout.is_empty());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn daemon_selection_refuses_ambiguous_or_unreadable_identity() {
+        let processes = [
+            ("25", "/usr/local/bin/cua-spacesd", "serve", "old"),
+            ("30", "/usr/local/bin/cua-spacesd", "join", "new"),
+        ];
+        let out = daemon_shell(&processes, "", "cua_daemon");
+        assert_eq!(out.status.code(), Some(2), "{out:?}");
+        assert!(String::from_utf8_lossy(&out.stderr).contains("multiple cua-spacesd servers"));
+        let out = daemon_shell(&processes[..1], "cat() { return 1; }", "cua_daemon");
+        assert_eq!(out.status.code(), Some(2), "{out:?}");
+        assert!(String::from_utf8_lossy(&out.stderr).contains("cannot identify cua-spacesd role"));
+        let out = daemon_shell(&processes, "", &format!("set -- cua-spacesd ''\n{RESOLVE}"));
+        assert_eq!(out.status.code(), Some(2), "{out:?}");
+        assert!(!String::from_utf8_lossy(&out.stdout).contains("target="));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn daemon_selection_prefers_its_serving_parent() {
+        let out = daemon_shell(
+            &[
+                ("$PPID", "/usr/local/bin/cua-spacesd", "join", "parent"),
+                ("30", "/usr/local/bin/cua-spacesd", "serve", "other"),
+            ],
+            "",
+            DAEMON_IDENTITY,
+        );
+        assert!(out.status.success(), "{out:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout)
+                .split_whitespace()
+                .nth(1),
+            Some("parent")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn daemon_restart_matches_supervisor_pid_or_refuses() {
+        let fixture = r#"
+S=""
+sleep() { :; }
+setsid() { printf '%s\n' "$*" >&2; }
+sed() { case "$*" in */cgroup*) return 0;; *) command sed "$@";; esac; }
+test() { if [ "$1" = -S ]; then [ "$SUPERVISOR" != absent ]; else command test "$@"; fi; }
+supervisorctl() {
+  [ "$SUPERVISOR" != error ] || return 1
+  if [ "$1" = pid ] && [ "$SUPERVISOR" = pid-error ]; then return 1; fi
+  case "$1" in
+    status) printf '%s\n' 'cua-guestd RUNNING pid 25, uptime 0:01:00' 'cua-spacesd RUNNING pid 30, uptime 0:01:00';;
+    pid) case "$2" in cua-guestd) echo 25;; cua-spacesd) echo "$SERVER_PID";; esac;;
+  esac
+}
+"#;
+        for (mode, pid, expected) in [
+            ("present", "30", Some("supervisor:cua-spacesd")),
+            ("absent", "30", Some("signal:30")),
+            ("present", "99", None),
+            ("error", "30", None),
+            ("pid-error", "30", None),
+        ] {
+            let setup = format!("{fixture}\nSUPERVISOR={mode}; SERVER_PID={pid}");
+            let out = daemon_shell(
+                &[("30", "/usr/local/bin/cua-spacesd", "serve", "new")],
+                &setup,
+                RESTART_DAEMON,
+            );
+            if let Some(how) = expected {
+                assert!(out.status.success(), "{out:?}");
+                assert!(
+                    String::from_utf8_lossy(&out.stdout).contains(&format!("how={how}")),
+                    "{out:?}"
+                );
+            } else {
+                assert_eq!(out.status.code(), Some(2), "{out:?}");
+                assert!(
+                    String::from_utf8_lossy(&out.stderr)
+                        .contains("supervisor does not identify the selected cua-spacesd server")
+                );
+                assert!(!String::from_utf8_lossy(&out.stderr).contains("sleep 1;"));
+            }
+        }
+    }
 
     #[test]
     fn parses_specs() {

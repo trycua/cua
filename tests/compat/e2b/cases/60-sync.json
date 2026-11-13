@@ -1,0 +1,50 @@
+{"cases": [
+{"name": "sync_files_commands", "tags": ["sync"], "sync": true, "create": {"timeout": 120, "metadata": {"suite": "$run_id"}}, "steps": [
+ ["files.write", ["/tmp/c/sy/a.txt", "sync ü"], {}, {"pick": ["name", "path", "type"]}],
+ ["files.read", ["/tmp/c/sy/a.txt"]],
+ ["files.read", ["/tmp/c/sy/a.txt"], {"format": "bytes"}],
+ ["files.list", ["/tmp/c/sy"], {}, {"pick": ["name", "type"]}],
+ ["files.get_info", ["/tmp/c/sy/a.txt"], {}, {"pick": ["size", "type", "owner"]}],
+ ["files.exists", ["/tmp/c/sy/a.txt"]],
+ ["files.rename", ["/tmp/c/sy/a.txt", "/tmp/c/sy/b.txt"], {}, {"pick": ["name"]}],
+ ["files.remove", ["/tmp/c/sy/b.txt"]],
+ ["files.exists", ["/tmp/c/sy/b.txt"]],
+ ["files.read", ["/tmp/c/sy/nope"]],
+ ["commands.run", ["echo sync-out; echo sync-err >&2"], {"on_stdout": {"$cb": "so"}, "on_stderr": {"$cb": "se"}}],
+ ["commands.run", ["exit 4"]],
+ ["commands.run", ["sleep 30"], {"background": true, "timeout": 0}, {"as": "h"}],
+ ["commands.list", [], {}, {"grep": "sleep 30", "pick": ["cmd", "args"]}],
+ ["commands.kill", ["$h.pid"]],
+ ["@wait", [], {}, {"on": "h"}],
+ ["commands.run", ["sleep 5"], {"timeout": 1}],
+ ["get_info", [], {}, {"pick": ["state", "metadata"]}],
+ ["is_running", []],
+ ["set_timeout", [200]],
+ ["get_host", [3000], {}, {"as": "host", "quiet": true}],
+ ["Sandbox.list", [], {"query": {"$query": {"metadata": {"suite": "$run_id"}}}}, {"as": "pg", "quiet": true}],
+ ["@next_items", [], {}, {"on": "pg", "pick": ["metadata"]}]
+]},
+{"name": "sync_watch_polling", "tags": ["sync", "watch"], "sync": true, "create": {"timeout": 120}, "steps": [
+ ["files.make_dir", ["/tmp/c/sw"]],
+ ["files.watch_dir", ["/tmp/c/sw"], {}, {"as": "w"}],
+ ["files.write", ["/tmp/c/sw/one.txt", "1"], {}, {"quiet": true}],
+ ["sleep", [2]],
+ ["@get_new_events", [], {}, {"on": "w", "pick": ["name", "type"]}],
+ ["files.write", ["/tmp/c/sw/two.txt", "2"], {}, {"quiet": true}],
+ ["sleep", [2]],
+ ["@get_new_events", [], {}, {"on": "w", "pick": ["name", "type"]}],
+ ["@get_new_events", [], {}, {"on": "w", "pick": ["name", "type"]}],
+ ["@stop", [], {}, {"on": "w"}],
+ ["@get_new_events", [], {}, {"on": "w"}]
+]},
+{"name": "sync_pty_and_stdin", "tags": ["sync", "pty"], "sync": true, "create": {"timeout": 120}, "steps": [
+ ["commands.run", ["cat"], {"background": true, "stdin": true, "timeout": 0}, {"as": "h"}],
+ ["commands.send_stdin", ["$h.pid", "via sync\n"]],
+ ["commands.close_stdin", ["$h.pid"]],
+ ["@wait", [], {}, {"on": "h"}],
+ ["pty.create", [{"$size": {"rows": 24, "cols": 80}}], {"timeout": 0}, {"as": "p"}],
+ ["sleep", [1]],
+ ["pty.send_stdin", ["$p.pid", {"$utf8": "echo pty-sync\nexit 2\n"}]],
+ ["@wait", [], {}, {"on": "p"}]
+]}
+]}

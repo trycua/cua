@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Parity check for the `list-tools` CLI subcommand.
 //!
 //! Runs the binary directly and asserts:
@@ -43,7 +46,6 @@ fn main() {
         "press_key",
         "hotkey",
         "scroll",
-        "screenshot",
         "list_apps",
         "list_windows",
         "get_cursor_position",
@@ -63,7 +65,7 @@ fn main() {
     ];
     for tool in expected {
         assert!(
-            names.iter().any(|n| *n == tool),
+            names.contains(&tool),
             "missing tool `{tool}` in list-tools output"
         );
     }

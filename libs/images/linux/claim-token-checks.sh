@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared checks for the Fleet claim token smoke tests (sourced by
+# Shared checks for the claim token smoke tests (sourced by
 # smoke-claim-token.sh and smoke-claim-token-vm.sh). The caller sets URL and
 # WORK and defines set_token TOKEN / clear_token (the operator's side), plus
 # ok/bad. Everything talks gRPC-Web over curl from the host.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Raw FFI bindings to the macOS Accessibility API (AXUIElement).
 //!
 //! We call the C-level AX API directly rather than using a crate wrapper,
@@ -28,10 +31,20 @@ pub type AXUIElementRef = *mut __AXUIElement;
 pub type AXError = c_int;
 pub const kAXErrorSuccess: AXError = 0;
 pub const kAXErrorFailure: AXError = -25200;
+pub const kAXErrorIllegalArgument: AXError = -25201;
 pub const kAXErrorInvalidUIElement: AXError = -25202;
+pub const kAXErrorInvalidUIElementObserver: AXError = -25203;
+pub const kAXErrorCannotComplete: AXError = -25204;
 pub const kAXErrorAttributeUnsupported: AXError = -25205;
-pub const kAXErrorNoValue: AXError = -25212;
+pub const kAXErrorActionUnsupported: AXError = -25206;
+pub const kAXErrorNotificationUnsupported: AXError = -25207;
+pub const kAXErrorNotImplemented: AXError = -25208;
+pub const kAXErrorNotificationAlreadyRegistered: AXError = -25209;
+pub const kAXErrorNotificationNotRegistered: AXError = -25210;
 pub const kAXErrorAPIDisabled: AXError = -25211;
+pub const kAXErrorNoValue: AXError = -25212;
+pub const kAXErrorParameterizedAttributeUnsupported: AXError = -25213;
+pub const kAXErrorNotEnoughPrecision: AXError = -25214;
 
 // ── AXValue opaque type ──────────────────────────────────────────────────────
 
@@ -182,6 +195,28 @@ pub unsafe fn copy_string_attr(element: AXUIElementRef, attr_name: &str) -> Opti
     Some(s.to_string())
 }
 
+/// Copy the `AXURL` attribute (a `CFURL`) as its absolute URL string.
+/// Returns `None` on any error or if the attribute is not a `CFURL`.
+///
+/// # Safety
+///
+/// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
+pub unsafe fn copy_url_attr(element: AXUIElementRef) -> Option<String> {
+    use core_foundation::url::CFURL;
+    let attr = CFStr::new("AXURL");
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
+    if err != kAXErrorSuccess || value.is_null() {
+        return None;
+    }
+    if core_foundation::base::CFGetTypeID(value) != CFURL::type_id() {
+        CFRelease(value);
+        return None;
+    }
+    let url = CFURL::wrap_under_create_rule(value as _);
+    Some(url.absolute().get_string().to_string())
+}
+
 /// Copy a numeric attribute from an AX element as an `f64`. Returns `None` on
 /// any error or if the attribute is not a `CFNumber`. SwiftUI sliders expose a
 /// readable numeric `AXValue` even when that value is not settable — this lets
@@ -283,7 +318,7 @@ pub struct StringishAttrValue {
 }
 
 /// Convert a borrowed CF value without taking ownership of it.
-unsafe fn coerce_stringish_value(value: CFTypeRef) -> Option<StringishAttrValue> {
+pub(crate) unsafe fn coerce_stringish_value(value: CFTypeRef) -> Option<StringishAttrValue> {
     use core_foundation::boolean::CFBoolean;
     use core_foundation::number::CFNumber;
     let type_id = core_foundation::base::CFGetTypeID(value);
@@ -508,12 +543,14 @@ pub unsafe fn focused_element_of_pid(pid: i32) -> Option<AXUIElementRef> {
     Some(value as AXUIElementRef)
 }
 
-/// Return the CGWindowID of the application's focused AX window.
+/// The application's focused AX window, as the ids it answers to: a focused
+/// sheet (Finder's Go to Folder, a Save sheet) is both itself and the window
+/// it is attached to, because keys addressed to that window go to the sheet.
 ///
 /// This is a narrow read-only proof used before global keyboard delivery: an
 /// already focused exact window must not be re-activated, because doing so can
 /// make a focus-proxy renderer drop its current key target.
-pub fn focused_window_id_of_pid(pid: i32) -> Option<u32> {
+pub fn focused_window_id_of_pid(pid: i32) -> Option<super::exact_target::AxWindowId> {
     unsafe {
         let app = AXUIElementCreateApplication(pid);
         if app.is_null() {
@@ -521,6 +558,111 @@ pub fn focused_window_id_of_pid(pid: i32) -> Option<u32> {
         }
         let window = copy_element_attr(app, "AXFocusedWindow");
         CFRelease(app as CFTypeRef);
+        let window = window?;
+        let window_id = super::exact_target::owning_window_id(window);
+        CFRelease(window as CFTypeRef);
+        window_id
+    }
+}
+
+/// Put `pid`'s focused window (else its main window) back on top of the
+/// window order through the app's own `AXRaise`.
+///
+/// For the frontmost app this reorders without an activation: the app orders
+/// its own window, so it never resigns or regains active status and its key
+/// window does not change. `NSRunningApplication.activate` from the daemon,
+/// the alternative, is only a request under cooperative activation; Chromium
+/// keeps its window above it, and when it is honoured the user's app gets a
+/// fresh `didBecomeActive`.
+///
+/// When `pid` is this process, the raise runs on the AppKit main queue.
+pub fn raise_focused_window_of_pid(pid: i32) -> bool {
+    super::main_thread::run_ax_mutation(pid, OWN_WINDOW_RAISE_TIMEOUT, move || {
+        raise_focused_window_of_pid_here(pid)
+    })
+    .unwrap_or(false)
+}
+
+/// Bound on waiting for the main queue to raise one of this process's own
+/// windows; a stalled main thread must not hang the calling worker.
+const OWN_WINDOW_RAISE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+fn raise_focused_window_of_pid_here(pid: i32) -> bool {
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return false;
+        }
+        // A busy app must not stall the caller's order watch.
+        AXUIElementSetMessagingTimeout(app, 0.25);
+        let window = copy_element_attr(app, "AXFocusedWindow")
+            .or_else(|| copy_element_attr(app, "AXMainWindow"));
+        CFRelease(app as CFTypeRef);
+        let Some(window) = window else {
+            return false;
+        };
+        AXUIElementSetMessagingTimeout(window, 0.25);
+        let raised = perform_action(window, "AXRaise") == kAXErrorSuccess;
+        CFRelease(window as CFTypeRef);
+        raised
+    }
+}
+
+/// Raise exactly the window of `pid` whose CGWindowID is `window_id`, and ask
+/// the app to make it main and focused. Within an already frontmost app this
+/// is what moves the key window between siblings; a front-process change on
+/// its own leaves AppKit's key window where it was. No other window of the
+/// process is addressed.
+///
+/// When `pid` is this process, the raise runs on the AppKit main queue.
+pub fn raise_exact_window_of_pid(pid: i32, window_id: u32) -> bool {
+    super::main_thread::run_ax_mutation(pid, OWN_WINDOW_RAISE_TIMEOUT, move || {
+        raise_exact_window_of_pid_here(pid, window_id)
+    })
+    .unwrap_or(false)
+}
+
+fn raise_exact_window_of_pid_here(pid: i32, window_id: u32) -> bool {
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return false;
+        }
+        let mut target = None;
+        for window in copy_ax_windows(app) {
+            if target.is_none() && ax_get_window_id(window) == Some(window_id) {
+                target = Some(window);
+            } else {
+                CFRelease(window as CFTypeRef);
+            }
+        }
+        CFRelease(app as CFTypeRef);
+        let Some(target) = target else {
+            return false;
+        };
+        let raised = perform_action(target, "AXRaise") == kAXErrorSuccess;
+        let main = set_bool_attr_true(target, "AXMain") == kAXErrorSuccess;
+        let focused = set_bool_attr_true(target, "AXFocused") == kAXErrorSuccess;
+        CFRelease(target as CFTypeRef);
+        raised || main || focused
+    }
+}
+
+/// The CGWindowID of the window that holds `pid`'s focused UI element
+/// (`AXFocusedUIElement` → `AXWindow`). `None` when the app reports no focused
+/// element: a LibreOffice that has never been active names a focused window
+/// but has no focused element, and drops every key posted to it.
+pub fn focused_element_window_id_of_pid(pid: i32) -> Option<u32> {
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return None;
+        }
+        let element = copy_element_attr(app, "AXFocusedUIElement");
+        CFRelease(app as CFTypeRef);
+        let element = element?;
+        let window = copy_element_attr(element, "AXWindow");
+        CFRelease(element as CFTypeRef);
         let window = window?;
         let window_id = ax_get_window_id(window);
         CFRelease(window as CFTypeRef);
@@ -740,20 +882,32 @@ pub unsafe fn ax_get_window_id(element: AXUIElementRef) -> Option<u32> {
 ///
 /// `element` must be valid, and the caller must release every returned element.
 pub unsafe fn copy_ax_windows(element: AXUIElementRef) -> Vec<AXUIElementRef> {
+    copy_ax_windows_or_error(element).unwrap_or_default()
+}
+
+/// # Safety
+///
+/// `element` must be valid, and the caller must release every returned element.
+pub unsafe fn copy_ax_windows_or_error(
+    element: AXUIElementRef,
+) -> Result<Vec<AXUIElementRef>, AXError> {
     let attr = CFStr::new("AXWindows");
     let mut value: CFTypeRef = std::ptr::null();
     let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
-    if err != kAXErrorSuccess || value.is_null() {
-        return vec![];
+    if err != kAXErrorSuccess {
+        return Err(err);
+    }
+    if value.is_null() {
+        return Ok(vec![]);
     }
     let cf_array_type_id = CFArray::<CFTypeRef>::type_id();
     if core_foundation::base::CFGetTypeID(value) != cf_array_type_id {
         CFRelease(value);
-        return vec![];
+        return Ok(vec![]);
     }
     let arr = CFArray::<CFTypeRef>::wrap_under_create_rule(value as _);
     let ax_type_id = AXUIElementGetTypeID();
-    (0..arr.len())
+    Ok((0..arr.len())
         .filter_map(|i| {
             let item = *arr.get(i)?;
             if core_foundation::base::CFGetTypeID(item) == ax_type_id {
@@ -763,8 +917,74 @@ pub unsafe fn copy_ax_windows(element: AXUIElementRef) -> Vec<AXUIElementRef> {
                 None
             }
         })
-        .collect()
+        .collect())
 }
+
+pub fn ax_error_name(error: AXError) -> &'static str {
+    match error {
+        kAXErrorFailure => "kAXErrorFailure",
+        kAXErrorIllegalArgument => "kAXErrorIllegalArgument",
+        kAXErrorInvalidUIElement => "kAXErrorInvalidUIElement",
+        kAXErrorInvalidUIElementObserver => "kAXErrorInvalidUIElementObserver",
+        kAXErrorCannotComplete => "kAXErrorCannotComplete",
+        kAXErrorAttributeUnsupported => "kAXErrorAttributeUnsupported",
+        kAXErrorActionUnsupported => "kAXErrorActionUnsupported",
+        kAXErrorNotificationUnsupported => "kAXErrorNotificationUnsupported",
+        kAXErrorNotImplemented => "kAXErrorNotImplemented",
+        kAXErrorNotificationAlreadyRegistered => "kAXErrorNotificationAlreadyRegistered",
+        kAXErrorNotificationNotRegistered => "kAXErrorNotificationNotRegistered",
+        kAXErrorAPIDisabled => "kAXErrorAPIDisabled",
+        kAXErrorNoValue => "kAXErrorNoValue",
+        kAXErrorParameterizedAttributeUnsupported => "kAXErrorParameterizedAttributeUnsupported",
+        kAXErrorNotEnoughPrecision => "kAXErrorNotEnoughPrecision",
+        _ => "unknown AXError",
+    }
+}
+
+/// CGWindowIDs of `pid`'s `AXWindows`, or `None` when that list cannot be
+/// read: the process is not trusted for Accessibility, the app does not
+/// answer within a short timeout, or AX reports an error. `None` means
+/// "unknown", never "no windows", so callers must not treat it as proof that a
+/// window lacks an AX counterpart.
+pub fn ax_window_ids_of_pid(pid: i32) -> Option<std::collections::HashSet<u32>> {
+    unsafe {
+        if !AXIsProcessTrusted() {
+            return None;
+        }
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return None;
+        }
+        AXUIElementSetMessagingTimeout(app, AX_WINDOW_IDS_TIMEOUT_SECONDS);
+        let attr = CFStr::new("AXWindows");
+        let mut value: CFTypeRef = std::ptr::null();
+        let err = AXUIElementCopyAttributeValue(app, attr.as_concrete_TypeRef(), &mut value);
+        CFRelease(app as CFTypeRef);
+        if err != kAXErrorSuccess || value.is_null() {
+            return None;
+        }
+        if core_foundation::base::CFGetTypeID(value) != CFArray::<CFTypeRef>::type_id() {
+            CFRelease(value);
+            return None;
+        }
+        let arr = CFArray::<CFTypeRef>::wrap_under_create_rule(value as _);
+        let ax_type_id = AXUIElementGetTypeID();
+        Some(
+            (0..arr.len())
+                .filter_map(|i| {
+                    let item = *arr.get(i)?;
+                    (core_foundation::base::CFGetTypeID(item) == ax_type_id)
+                        .then(|| ax_get_window_id(item as AXUIElementRef))
+                        .flatten()
+                })
+                .collect(),
+        )
+    }
+}
+
+/// AX messaging timeout for [`ax_window_ids_of_pid`], in seconds. Window
+/// enumeration calls it once per app, so a hung app must not stall it.
+const AX_WINDOW_IDS_TIMEOUT_SECONDS: f32 = 0.25;
 
 /// Highest AX element id probed when looking for an off-Space window.
 /// Window elements are allocated early in an app's lifetime (Calculator's
@@ -826,15 +1046,30 @@ pub unsafe fn copy_ax_window_by_remote_token(pid: i32, window_id: u32) -> Option
 }
 
 /// Whether to run the remote-token probe for a window `AXWindows` omitted.
-/// Only windows WindowServer reports on another Space qualify; a current-Space
-/// or unknown window that AX cannot map fails fast instead of paying the
-/// probe's deadline on every call (issue #4083). `on_current_space` is only
-/// queried for unlisted windows, so listed windows skip the WindowServer read.
+///
+/// Windows WindowServer reports on another Space qualify. So does a window it
+/// places on the current Space but reports off screen: that combination is a
+/// stale or mid-transition Space view (issue #4437), in which AX drops the
+/// window from `AXWindows` exactly as it does for an off-Space one. An
+/// on-screen current-Space or unknown window that AX cannot map fails fast
+/// instead of paying the probe's deadline on every call (issue #4083). The
+/// WindowServer view is only queried for unlisted windows, so listed windows
+/// skip that read.
 fn should_probe_off_space_window(
     listed_in_ax_windows: bool,
-    on_current_space: impl FnOnce() -> Option<bool>,
+    space_view: impl FnOnce() -> Option<crate::windows::WindowSpaceView>,
 ) -> bool {
-    !listed_in_ax_windows && on_current_space() == Some(false)
+    if listed_in_ax_windows {
+        return false;
+    }
+    match space_view() {
+        Some(view) => match view.on_current_space {
+            Some(false) => true,
+            Some(true) => !view.is_on_screen,
+            None => false,
+        },
+        None => false,
+    }
 }
 
 /// `AXWindows` of `pid`'s application element, plus the requested window when
@@ -850,21 +1085,37 @@ pub unsafe fn copy_ax_windows_including(
     pid: i32,
     window_id: u32,
 ) -> Vec<AXUIElementRef> {
-    let mut windows = copy_ax_windows(app);
+    copy_ax_windows_including_or_error(app, pid, window_id).0
+}
+
+/// # Safety
+///
+/// `app` must be the valid application element of `pid`, and the caller must
+/// release every returned element.
+pub unsafe fn copy_ax_windows_including_or_error(
+    app: AXUIElementRef,
+    pid: i32,
+    window_id: u32,
+) -> (Vec<AXUIElementRef>, Option<AXError>) {
+    let (mut windows, error) = match copy_ax_windows_or_error(app) {
+        Ok(windows) => (windows, None),
+        Err(error) => (Vec::new(), Some(error)),
+    };
     let listed = windows
         .iter()
         .any(|&window| ax_get_window_id(window) == Some(window_id));
     if should_probe_off_space_window(listed, || {
-        crate::windows::window_on_current_space_by_id(window_id)
+        crate::windows::window_space_view_by_id(window_id)
     }) {
         windows.extend(copy_ax_window_by_remote_token(pid, window_id));
     }
-    windows
+    (windows, error)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::windows::WindowSpaceView;
     use core_foundation::{boolean::CFBoolean, number::CFNumber};
 
     #[test]
@@ -876,14 +1127,42 @@ mod tests {
         assert_eq!(&token[12..20], &42u64.to_ne_bytes());
     }
 
+    fn space_view(on_current_space: Option<bool>, is_on_screen: bool) -> WindowSpaceView {
+        WindowSpaceView {
+            on_current_space,
+            is_on_screen,
+        }
+    }
+
     #[test]
     fn off_space_probe_runs_only_for_unlisted_off_space_windows() {
-        assert!(should_probe_off_space_window(false, || Some(false)));
-        assert!(!should_probe_off_space_window(false, || Some(true)));
+        assert!(should_probe_off_space_window(false, || Some(space_view(
+            Some(false),
+            false
+        ))));
+        assert!(!should_probe_off_space_window(false, || Some(space_view(
+            Some(true),
+            true
+        ))));
         assert!(!should_probe_off_space_window(false, || None));
+        assert!(!should_probe_off_space_window(false, || Some(space_view(
+            None, false
+        ))));
         assert!(!should_probe_off_space_window(true, || {
             panic!("listed windows must not query Space membership")
         }));
+    }
+
+    /// Issue #4437: WindowServer placed a visible window on the reported
+    /// current Space yet marked it off screen, and AX omitted it. That stale
+    /// Space view must re-resolve through the exact-id probe rather than
+    /// refuse the window as `ax_unresolved`.
+    #[test]
+    fn off_space_probe_runs_for_a_current_space_window_reported_off_screen() {
+        assert!(should_probe_off_space_window(false, || Some(space_view(
+            Some(true),
+            false
+        ))));
     }
 
     #[test]

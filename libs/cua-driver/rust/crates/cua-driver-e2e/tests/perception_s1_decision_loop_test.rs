@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Canonical desktop row for the model-backed perception decision loop.
 //!
 //! The row drives the complete loop that `jev-use` documents for a local

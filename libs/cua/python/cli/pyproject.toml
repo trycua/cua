@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# The Rust `cua` CLI for `cua`, which requires it at the same version; the
+# `cua` console command (cua._cli) runs it. On PyPI it is one thin
+# py3-none-any wheel (build_thin_wheel.py): `cua_cli/_release.json` names
+# the signed CLI archive of the same GitHub release per platform with its
+# SHA-256, and the first run downloads and verifies it (cua_cli.fetch).
+# Local and CI builds (../build_wheel.py --cli) put the binary inside, at
+# `cua_cli/bin/cua[.exe]`. Its own package, not cua/bin/: upgrading from a
+# `cua` that shipped cua/bin/cua would otherwise delete the new binary when
+# pip removes the old `cua`. No dependency back on `cua`.
+[project]
+name = "cua-cli"
+version = "0.27.3"
+description = "The cua command line (the Rust `cua` CLI) for the cua Python package"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "TryCua", email = "hello@trycua.com" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+]
+requires-python = ">=3.10"
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/trycua/cua"
+Repository = "https://github.com/trycua/cua"
+Issues = "https://github.com/trycua/cua/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cua_cli"]
+artifacts = ["src/cua_cli/bin/*", "src/cua_cli/_release.json"]
+pure-python = false
+
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "../hatch_build.py"

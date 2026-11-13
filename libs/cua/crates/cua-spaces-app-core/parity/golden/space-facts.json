@@ -57,36 +57,36 @@
     {
       "case": "no OS name at all",
       "facts": [
-        "Status: timed out",
-        "Identifier: cloud:builder [copy cloud:builder doc.on.doc Copy / checkmark Copied 1500ms]",
+        "Status: Unreachable ?timed out",
+        "Identifier: direct:builder [copy direct:builder doc.on.doc Copy / checkmark Copied 1500ms]",
         "System: Linux"
       ]
     },
     {
-      "case": "cloud Space, image from the claim's template (a tag: no digest)",
+      "case": "a Space whose image is a tag: no digest",
       "facts": [
         "Status: Running",
         "Image: ghcr.io/trycua/linux:24.04-disk [copy ghcr.io/trycua/linux:24.04-disk doc.on.doc Copy / checkmark Copied 1500ms]",
-        "Identifier: cloud:review-bot [copy cloud:review-bot doc.on.doc Copy / checkmark Copied 1500ms]",
+        "Identifier: direct:review-bot [copy direct:review-bot doc.on.doc Copy / checkmark Copied 1500ms]",
         "System: Ubuntu 24.04.3 LTS",
         "Kind: Virtual machine"
       ]
     },
     {
-      "case": "cloud Space on a managed pool (a pinned image: its digest)",
+      "case": "a Space on a pinned image: its digest",
       "facts": [
         "Status: Running",
         "Image: ghcr.io/example/windows@sha256:9b0e6c1d2a3f4e5d6c7b8a9f0e1d2c3b4a5f6e7d8c9b0a1f2e3d4c5b6a7f8e9d ?ghcr.io/example/windows@sha256:9b0e6c1d2a3f4e5d6c7b8a9f0e1d2c3b4a5f6e7d8c9b0a1f2e3d4c5b6a7f8e9d | sha256:9b0e6c1d2a3f4e5d6c7b8a9f0e1d2c3b4a5f6e7d8c9b0a1f2e3d4c5b6a7f8e9d [copy ghcr.io/example/windows@sha256:9b0e6c1d2a3f4e5d6c7b8a9f0e1d2c3b4a5f6e7d8c9b0a1f2e3d4c5b6a7f8e9d doc.on.doc Copy / checkmark Copied 1500ms]",
-        "Identifier: cloud:ci-7 [copy cloud:ci-7 doc.on.doc Copy / checkmark Copied 1500ms]",
+        "Identifier: direct:ci-7 [copy direct:ci-7 doc.on.doc Copy / checkmark Copied 1500ms]",
         "System: Windows"
       ]
     },
     {
-      "case": "cloud amd64 VM: no emulation warning",
+      "case": "an amd64 VM: its architecture",
       "facts": [
         "Status: Running",
         "Image: ghcr.io/trycua/linux:24.04-disk [copy ghcr.io/trycua/linux:24.04-disk doc.on.doc Copy / checkmark Copied 1500ms]",
-        "Identifier: cloud:x64 [copy cloud:x64 doc.on.doc Copy / checkmark Copied 1500ms]",
+        "Identifier: direct:x64 [copy direct:x64 doc.on.doc Copy / checkmark Copied 1500ms]",
         "System: Ubuntu 24.04.3 LTS",
         "Kind: Virtual machine",
         "Architecture: x64"

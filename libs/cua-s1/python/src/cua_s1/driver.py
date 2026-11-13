@@ -215,14 +215,24 @@ class BaseDriver:
         return windows[0]
 
     def window_state(self, target: WindowTarget) -> WindowSnapshot:
-        state = self.call(
-            "get_window_state",
-            pid=target.pid,
-            window_id=target.window_id,
-            session=self.session,
-            include_accessibility_tree=True,
-            include_screenshot=False,
-        )
+        read = {
+            "pid": target.pid,
+            "window_id": target.window_id,
+            "session": self.session,
+            "include_accessibility_tree": True,
+            "include_screenshot": False,
+        }
+        try:
+            # Since cua-driver 0.35 the default read is lean (markdown only,
+            # 250 nodes). Actions need the structured elements of a complete
+            # walk, so ask for the full response.
+            state = self.call("get_window_state", **read, full_output=True)
+        except DriverError as error:
+            # Drivers before 0.35 always return the full response and refuse
+            # the unknown argument.
+            if "unknown argument full_output" not in repr(error.details):
+                raise
+            state = self.call("get_window_state", **read)
         raw_elements = state.get("elements")
         if not isinstance(raw_elements, list):
             raise DriverError(

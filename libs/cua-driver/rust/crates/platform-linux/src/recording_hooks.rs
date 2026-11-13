@@ -1,4 +1,35 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Application-state snapshots used by trajectory recording on Linux.
+
+#[cfg(target_os = "linux")]
+use cua_driver_core::video::{VideoBackend, VideoBackendFactory};
+
+#[cfg(target_os = "linux")]
+pub(crate) fn install() {
+    cua_driver_core::recording::set_classified_screenshot_fn(screenshot_for_recording);
+    cua_driver_core::recording::set_click_marker_fn(|png_bytes, x, y| {
+        crate::capture::crosshair_png_bytes(png_bytes, x, y).ok()
+    });
+    cua_driver_core::recording::set_budgeted_ax_snapshot_fn(app_state_json_for);
+    cua_driver_core::recording::set_element_bounds_fn(element_window_local_xy);
+    cua_driver_core::video::set_video_backend_factory(Box::new(LinuxVideoBackendFactory));
+}
+
+#[cfg(target_os = "linux")]
+struct LinuxVideoBackendFactory;
+
+#[cfg(target_os = "linux")]
+impl VideoBackendFactory for LinuxVideoBackendFactory {
+    fn start(&self, output_path: &std::path::Path) -> anyhow::Result<Box<dyn VideoBackend>> {
+        if crate::wayland::is_wayland() {
+            crate::video_wayland::WaylandVideoBackendFactory.start(output_path)
+        } else {
+            cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory.start(output_path)
+        }
+    }
+}
 
 /// Per-turn application state for trajectory recording, walked under the
 /// shared `get_window_state` budget. The walk reports the shared walk fields so
@@ -72,22 +103,41 @@ fn app_state_json_for_blocking(
 }
 
 #[cfg(target_os = "linux")]
-pub fn screenshot_for_recording(window_id: Option<u64>, pid: Option<i64>) -> Option<Vec<u8>> {
+pub fn screenshot_for_recording(
+    window_id: Option<u64>,
+    pid: Option<i64>,
+) -> cua_driver_core::recording::ScreenshotCapture {
+    use cua_driver_core::recording::ScreenshotCapture;
+    let capture = |png: Option<Vec<u8>>| match png {
+        Some(png) => ScreenshotCapture::captured(png),
+        None => ScreenshotCapture::unavailable("capture_failed"),
+    };
+    let target_pid = pid.and_then(|pid| u32::try_from(pid).ok());
+    if let (None, Some(pid)) = (window_id, target_pid) {
+        // A pid with no window has nothing to photograph. Name that outcome
+        // instead of reporting a capture failure, so a deliberate no-window
+        // turn is told apart from a broken capture path.
+        if crate::wayland::list_windows_dispatch(Some(pid)).is_empty() {
+            return ScreenshotCapture::unavailable(cua_driver_core::recording::TARGET_UNAVAILABLE);
+        }
+    }
     if crate::wayland::is_wayland() {
         // Wayland surface ids are connection-scoped, so a later recording hook
         // cannot safely re-attest the action call's per-window crop. Preserve
         // ownership by recording the compositor's complete rendered output.
-        return crate::wayland::screenshot_display_dispatch().ok();
+        return capture(crate::wayland::screenshot_display_dispatch().ok());
     }
     if let Some(window_id) = window_id {
-        crate::wayland::screenshot_dispatch(window_id).ok()
-    } else if let Some(pid) = pid.and_then(|pid| u32::try_from(pid).ok()) {
-        let windows = crate::wayland::list_windows_dispatch(Some(pid));
-        windows
-            .first()
-            .and_then(|window| crate::wayland::screenshot_dispatch(window.xid).ok())
+        capture(crate::wayland::screenshot_dispatch(window_id).ok())
+    } else if target_pid.is_some() {
+        let windows = crate::wayland::list_windows_dispatch(target_pid);
+        capture(
+            windows
+                .first()
+                .and_then(|window| crate::wayland::screenshot_dispatch(window.xid).ok()),
+        )
     } else {
-        crate::capture::screenshot_display_bytes().ok()
+        capture(crate::capture::screenshot_display_bytes().ok())
     }
 }
 
@@ -179,7 +229,10 @@ pub fn hyprland_pixel_recording_point(
     x: f64,
     y: f64,
 ) -> Option<(f64, f64)> {
-    let (width, height, _) = crate::wayland::hyprland::screen_size().ok()?;
+    // The recorded image is the desktop frame. Window geometry is in layout
+    // coordinates, so move a window point into the frame before placing it.
+    let frame = crate::wayland::hyprland::desktop_frame().ok()?;
+    let (width, height) = (frame.width, frame.height);
     match (window_id, pid) {
         (Some(window_id), Some(pid)) => {
             let pid = u32::try_from(pid).ok()?;
@@ -187,9 +240,10 @@ pub fn hyprland_pixel_recording_point(
             if window.pid != Some(pid) {
                 return None;
             }
+            let (frame_x, frame_y) = frame.from_layout(window.x, window.y);
             hyprland_output_point(
-                (f64::from(window.x) + x, f64::from(window.y) + y),
-                (window.x, window.y, window.width, window.height),
+                (f64::from(frame_x) + x, f64::from(frame_y) + y),
+                (frame_x, frame_y, window.width, window.height),
                 (width, height),
             )
         }
@@ -204,7 +258,10 @@ fn resolve_window_for_recording(
     window_id: Option<u64>,
 ) -> Option<crate::x11::WindowInfo> {
     let windows = crate::wayland::list_windows_dispatch(Some(pid));
-    if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
+    // Hyprland addresses and niri window ids are stable compositor ids.
+    if crate::wayland::is_wayland()
+        && (crate::wayland::hyprland::is_session() || crate::wayland::niri::is_session())
+    {
         return match window_id {
             Some(id) => windows.into_iter().find(|window| window.xid == id),
             None if windows.len() == 1 => windows.into_iter().next(),
@@ -233,8 +290,11 @@ pub fn app_state_json_for(
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn screenshot_for_recording(_window_id: Option<u64>, _pid: Option<i64>) -> Option<Vec<u8>> {
-    None
+pub fn screenshot_for_recording(
+    _window_id: Option<u64>,
+    _pid: Option<i64>,
+) -> cua_driver_core::recording::ScreenshotCapture {
+    cua_driver_core::recording::ScreenshotCapture::unavailable("capture_failed")
 }
 
 #[cfg(not(target_os = "linux"))]

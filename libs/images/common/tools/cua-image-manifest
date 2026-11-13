@@ -206,6 +206,8 @@ def generate(args: argparse.Namespace) -> dict[str, Any]:
         },
         "features_required": list(claims.get("features_required", [])),
         "features_optional": list(claims.get("features_optional", [])),
+        # Features that do not apply to this image (the doctor skips them).
+        "features_not_applicable": list(claims.get("features_not_applicable", [])),
         # Attribute values a feature must report (the backends the image was
         # built for, e.g. presence.cursor_shape's hit_test/system/probe).
         "feature_attributes": {

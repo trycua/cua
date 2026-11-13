@@ -1,0 +1,33 @@
+{
+  "about": "Shared by tool_row.rs and apps/cua-spaces-web/src/bridge/transcript.ts: a tool call in, its one collapsed line and category out. All data here is made up.",
+  "rows": [
+    { "in": { "name": "Bash", "kind": "execute", "input": { "command": "python3 -m unittest" } }, "line": "Ran python3 -m unittest", "cat": "ran" },
+    { "in": { "name": "Bash", "input": { "command": "cd /root/runs/c1/work && python3 -m unittest -v" } }, "line": "Ran python3 -m unittest -v", "cat": "ran" },
+    { "in": { "name": "exec_command", "kind": "execute", "title": "echo codex-was-here > proof.txt && cat proof.txt", "input": { "command": "echo codex-was-here > proof.txt && cat proof.txt", "cwd": "/root/runs/c1/work" } }, "line": "Ran echo codex-was-here > proof.txt && cat proof.txt", "cat": "ran" },
+    { "in": { "name": "Bash", "kind": "execute", "title": "Terminal", "input": {} }, "line": "Ran a command", "cat": "ran" },
+    { "in": { "name": "Bash", "input": { "command": "pytest /Users/me/proj/tests/test_cart.py" } }, "line": "Ran pytest test_cart.py", "cat": "ran" },
+    { "in": { "name": "", "kind": "execute", "title": "terminal: echo hermes-was-here + 1 command" }, "line": "Ran terminal: echo hermes-was-here + 1 command", "cat": "ran" },
+    { "in": { "name": "Read", "kind": "read", "input": { "file_path": "/Users/me/proj/cart.py" } }, "line": "Read cart.py", "cat": "read" },
+    { "in": { "name": "", "kind": "read", "title": "Read /abs/dir/x.rs" }, "line": "Read x.rs", "cat": "read" },
+    { "in": { "name": "Edit", "kind": "edit", "input": { "file_path": "tests/test_cart.py" } }, "line": "Edited tests/test_cart.py", "cat": "edited" },
+    { "in": { "name": "Write", "input": { "file_path": "/tmp/x/new.txt" } }, "line": "Wrote new.txt", "cat": "edited" },
+    { "in": { "name": "apply_patch", "input": { "patch": "*** Begin Patch\n*** Update File: src/cart.py\n@@" } }, "line": "Edited src/cart.py", "cat": "edited" },
+    { "in": { "name": "Grep", "input": { "pattern": "def total" } }, "line": "Searched “def total”", "cat": "searched" },
+    { "in": { "name": "WebSearch", "input": { "query": "python unittest discover" } }, "line": "Searched the web for python unittest discover", "cat": "searched" },
+    { "in": { "name": "WebFetch", "input": { "url": "https://docs.python.org/3/library/unittest.html" } }, "line": "Fetched docs.python.org", "cat": "fetched" },
+    { "in": { "name": "todowrite", "kind": "other" }, "line": "Updated the to-do list", "cat": "planned" },
+    { "in": { "name": "mcp__cua-driver__click" }, "line": "Clicked", "cat": "computer" },
+    { "in": { "name": "mcp__cua-driver__screenshot" }, "line": "Took a screenshot", "cat": "computer" },
+    { "in": { "name": "mcp__cua__space_bash", "input": { "command": "ls -la" } }, "line": "Ran ls -la", "cat": "ran" },
+    { "in": { "name": "mcp__cua__call_tool", "input": { "service": "files", "tool": "space_write", "path": "/work/a.py" } }, "line": "Wrote a.py", "cat": "edited" },
+    { "in": { "name": "mcp__cua-host__repo_push", "input": { "repo": "acme/app" } }, "line": "Asked to push to acme/app", "cat": "other" },
+    { "in": { "name": "mcp__linear__list_issues" }, "line": "Used list issues", "cat": "other" }
+  ],
+  "groups": [
+    { "cats": ["ran", "ran", "ran", "ran"], "label": "Ran 4 commands" },
+    { "cats": ["ran", "read", "read", "edited"], "label": "Ran 1 command, read 2 files, edited 1 file" },
+    { "cats": ["searched"], "label": "Searched once" },
+    { "cats": ["ran", "read", "edited", "searched", "fetched"], "label": "Ran 1 command, read 1 file, edited 1 file, 2 more" },
+    { "cats": [], "label": null }
+  ]
+}

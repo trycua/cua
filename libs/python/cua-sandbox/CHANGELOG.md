@@ -1,5 +1,68 @@
 # Changelog
 
+## [0.11.2](https://github.com/trycua/cua/compare/sandbox-v0.11.1...sandbox-v0.11.2) (2026-11-13)
+
+
+### Bug Fixes
+
+* **deps:** upgrade pillow to 13.0.0 and soupsieve to 4.1 (CVE-2026-128066, CVE-2026-128067, CVE-2026-126190) ([#7598](https://github.com/trycua/cua/issues/7598)) ([4d14f88](https://github.com/trycua/cua/commit/4d14f88d9482528ea0e9bdf2c7020d002bcd488d))
+
+## [0.11.1](https://github.com/trycua/cua/compare/sandbox-v0.11.0...sandbox-v0.11.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** let the driver extra install Cua Driver 0.48 and 0.49 ([#7588](https://github.com/trycua/cua/issues/7588)) ([db29132](https://github.com/trycua/cua/commit/db29132bcf91da170cd7fd98fe7129db08d80c91))
+
+## [0.11.0](https://github.com/trycua/cua/compare/sandbox-v0.10.2...sandbox-v0.11.0) (2026-11-13)
+
+
+### Features
+
+* **cua:** Windows 11 on Apple silicon built locally, ISO downloaded automatically (QEMU+HVF); Windows 10, Server 2019 and 2025 from an ISO ([#6631](https://github.com/trycua/cua/issues/6631)) ([49bf362](https://github.com/trycua/cua/commit/49bf362196b9dc8b420e11f771969cd6d61a1f8c))
+
+## [0.10.2](https://github.com/trycua/cua/compare/sandbox-v0.10.1...sandbox-v0.10.2) (2026-11-12)
+
+
+### Bug Fixes
+
+* **sandbox:** unpin cua-driver in the driver extra so installs resolve ([#7464](https://github.com/trycua/cua/issues/7464)) ([934d527](https://github.com/trycua/cua/commit/934d527c41320cd17461367f6fe171175eb2b978))
+
+## [0.10.1](https://github.com/trycua/cua/compare/sandbox-v0.10.0...sandbox-v0.10.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **sandbox:** forward time_to_start to the local runtime's readiness budget ([#7304](https://github.com/trycua/cua/issues/7304)) ([6086a10](https://github.com/trycua/cua/commit/6086a10126945c1079b5069a720436aab32a2bf6))
+
+## [0.10.0](https://github.com/trycua/cua/compare/sandbox-v0.9.1...sandbox-v0.10.0) (2026-11-10)
+
+
+### Features
+
+* compat gateways for E2B and Daytona, Hetzner as your own cloud, the elastic pool, cua share and the public relay ([#5778](https://github.com/trycua/cua/issues/5778)) ([d4f3f80](https://github.com/trycua/cua/commit/d4f3f8063d7b30a3b3bda2b4c05c565a9dfcb460))
+* **spaces:** Secure Spaces, child Spaces, conformance, space jobs and the macOS developer-tools image, behind experiments ([#6306](https://github.com/trycua/cua/issues/6306)) ([4715a72](https://github.com/trycua/cua/commit/4715a723a450610cdf77f688776c1fdd40660149))
+
+
+### Bug Fixes
+
+* **sandbox:** the [driver] extra installs the current cua-driver (0.37.0) (CUA-1902) ([#5533](https://github.com/trycua/cua/issues/5533)) ([34f3279](https://github.com/trycua/cua/commit/34f3279247e0e910e4896ee33c499beafdb7ab9a))
+* **sdk:** delete the Fleet SDK, pools and claims from the Rust SDK, cua-sandbox, Cua Bench and the apps (CUA-1836) ([#5488](https://github.com/trycua/cua/issues/5488)) ([348c47c](https://github.com/trycua/cua/commit/348c47cc30b1d222844480838ccc4acf53f7a511))
+* **security:** distrust the compromised eMudhra intermediates in every Cua client (CUA-1948) ([#5622](https://github.com/trycua/cua/issues/5622)) ([149ea51](https://github.com/trycua/cua/commit/149ea51c613cc840c3760dec822c57b7e65df05a))
+* **spaces:** say computer instead of machine (CUA-1863) ([#5508](https://github.com/trycua/cua/issues/5508)) ([5cbe31c](https://github.com/trycua/cua/commit/5cbe31c7109fa70eb596b6bde3b5964449e8676e))
+
+## [0.9.1](https://github.com/trycua/cua/compare/sandbox-v0.9.0...sandbox-v0.9.1) (2026-10-19)
+
+
+### Bug Fixes
+
+* post-launch CI follow-ups ([#4405](https://github.com/trycua/cua/issues/4405)) ([352507b](https://github.com/trycua/cua/commit/352507b6c03162ab286b21d5ed509125cc3daece))
+* lock the cua SDK checkout at 0.3.1 ([#4593](https://github.com/trycua/cua/issues/4593)) ([fcb386f](https://github.com/trycua/cua/commit/fcb386f4f958d1357af31ccb0056376f06d9db37))
+* **python:** cua-sandbox, cua-bench and the playground no longer depend on Fleet; remove cua-train (CUA-1834) ([#5445](https://github.com/trycua/cua/issues/5445)) ([7733289](https://github.com/trycua/cua/commit/773328941ead1b83a616e8b6c5a5ac4851af7114))
+* **sandbox:** report directory types in file listings ([#5175](https://github.com/trycua/cua/issues/5175)) ([1e53b1c](https://github.com/trycua/cua/commit/1e53b1cef43a650ff35a7299c470963244b84ce0))
+* **sandbox:** roll back partially opened tunnels ([#5174](https://github.com/trycua/cua/issues/5174)) ([ca6a0e2](https://github.com/trycua/cua/commit/ca6a0e21050966e8ed6a3404b7ba2843b1cf6878))
+* stop Cua Cloud (on="cloud") with a clear "Cua Cloud has ended" error (CUA-1854) ([#5415](https://github.com/trycua/cua/issues/5415)) ([5d78ec8](https://github.com/trycua/cua/commit/5d78ec8b7705d942a3d260b276bcce76614a634c))
+
 ## [0.9.0](https://github.com/trycua/cua/compare/sandbox-v0.8.0...sandbox-v0.9.0) (2026-10-01)
 
 

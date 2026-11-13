@@ -191,10 +191,11 @@ frontmost state:
   raises its window to be key. Even when delivered to a backgrounded
   pid via `hotkey`, the downstream app pulls focus. **For omnibox
   navigation specifically**, the correct path is `launch_app({path:
-"...msedge.exe", urls: ["https://…"]})` (or `{aumid:
-"Microsoft.MicrosoftEdge.Stable_…!App", urls: [...]}`). No
-  omnibox dance, no `Ctrl+L`, no focus-steal. The browser opens the
-  URL in a new window without activating it.
+"...msedge.exe", additional_arguments: ["https://example.com/"]})`.
+  This hands the URL to the selected browser process; no omnibox dance
+  or `Ctrl+L` is needed. Do not combine `path` or `aumid` with `urls`
+  for selected-browser navigation: `urls` opens separately in the default
+  browser. For the default browser, use `urls` only: `launch_app({urls: [url]})`.
 - **Tab-switching shortcuts in browsers (`Ctrl+1..9`, `Ctrl+Tab`,
   `Ctrl+Shift+Tab`, `Ctrl+PageUp/Down`)** are visibly disruptive
   even when delivered to a backgrounded pid. The app's key handler
@@ -349,7 +350,7 @@ gone wrong: re-read "The no-foreground contract" above.
 | Drag / drag-and-drop               | `drag({pid, from_x, from_y, to_x, to_y})`                                                       | `SendInput` with `MOUSEEVENTF_MOVE`, mouse_event                                     |
 | Screenshot                         | `get_window_state` (window) or authorized `get_desktop_state` (desktop)                         | `[System.Windows.Forms.Screen]::CopyFromScreen`, `nircmd savescreenshot`             |
 | Quit an app                        | ask the user first, then `hotkey({pid, keys:["alt","f4"]})`                                     | `taskkill /F`, `Stop-Process -Force`, `Get-Process \| Stop-Process`                  |
-| Hand a file/URL to an app          | `launch_app({urls:[<path>]})` (default app) or `{path: "...exe", args:[<file>]}` (specific app) | `& "app.exe" "file"`, `Invoke-Item`, shell associations                              |
+| Hand a file/URL to an app          | `launch_app({urls:[<path>]})` (default app) or `{path: "...exe", additional_arguments:[<file>]}` (specific app) | `& "app.exe" "file"`, `Invoke-Item`, shell associations                              |
 
 ### The narrow carve-out
 
@@ -376,6 +377,11 @@ When a cua-driver surprises you, diagnose cua-driver first:
   click in.
 - **`Invalid window handle (0x80070578)`?** The HWND you passed is
   stale (window closed, recreated). Re-resolve via `list_windows`.
+- **Large tree or repeated reads?** `get_window_state` returns one compact
+  markdown tree capped at 250 nodes (`full_output:true` restores 5 000 nodes
+  and both forms). Pass `since:<snapshot_id>` for added/changed/removed rows;
+  the focused element is not reported on Windows yet, so an unchanged read
+  says only `no change since …`.
 - **Empty `tree_markdown` / sparse UIA tree?** Some apps populate
   their UIA tree lazily on first call; retry `get_window_state`
   once. If still empty, the app has no UIA provider: fall back to an

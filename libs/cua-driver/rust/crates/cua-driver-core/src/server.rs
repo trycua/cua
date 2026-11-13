@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Shared MCP request dispatch and privacy-bounded observations.
 
 use std::sync::{Arc, OnceLock};
@@ -18,6 +21,10 @@ use crate::tool::ToolRegistry;
 #[async_trait::async_trait]
 pub trait ToolProvider: Send + Sync {
     fn tools_list(&self) -> serde_json::Value;
+    fn is_known_tool(&self, _name: &str) -> bool {
+        true
+    }
+
     async fn invoke_tool(
         &self,
         name: &str,
@@ -29,6 +36,10 @@ pub trait ToolProvider: Send + Sync {
 impl ToolProvider for ToolRegistry {
     fn tools_list(&self) -> serde_json::Value {
         ToolRegistry::tools_list(self)
+    }
+
+    fn is_known_tool(&self, name: &str) -> bool {
+        ToolRegistry::is_known_tool(self, name)
     }
 
     async fn invoke_tool(
@@ -256,6 +267,9 @@ impl From<crate::browser::refusal::BrowserRefusalCode> for ToolRefusalCode {
             BrowserRefusalCode::BrowserInputIncomplete => Self::BrowserInputIncomplete,
             BrowserRefusalCode::BrowserActionUnavailable => Self::BrowserActionUnavailable,
             BrowserRefusalCode::BrowserOriginOutsideScope => Self::BrowserOriginOutsideScope,
+            // Not a browser-specific code: the shared background refusal is
+            // classified through `ToolErrorClass::BackgroundUnavailable`.
+            BrowserRefusalCode::BackgroundUnavailable => Self::Other,
         }
     }
 }
@@ -285,13 +299,8 @@ pub struct ToolCompletionObservation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolOperation {
     NotApplicable,
-    ExecuteJavascript,
     GetText,
     QueryDom,
-    ClickElement,
-    InsertText,
-    TypeKeystrokes,
-    EnableJavascriptAppleEvents,
     BrowserBind,
     BrowserSnapshotDomRefsV1,
     BrowserSnapshotSemanticV2,
@@ -323,13 +332,8 @@ impl ToolOperation {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::NotApplicable => "not_applicable",
-            Self::ExecuteJavascript => "execute_javascript",
             Self::GetText => "get_text",
             Self::QueryDom => "query_dom",
-            Self::ClickElement => "click_element",
-            Self::InsertText => "insert_text",
-            Self::TypeKeystrokes => "type_keystrokes",
-            Self::EnableJavascriptAppleEvents => "enable_javascript_apple_events",
             Self::BrowserBind => "browser_bind",
             Self::BrowserSnapshotDomRefsV1 => "browser_snapshot_dom_refs_v1",
             Self::BrowserSnapshotSemanticV2 => "browser_snapshot_semantic_v2",
@@ -364,15 +368,10 @@ pub fn tool_operation(tool_name: &str, args: Option<&serde_json::Value>) -> Tool
         args.and_then(|value| value.get(key))
             .and_then(serde_json::Value::as_str)
     };
-    match tool_name {
+    match crate::tool::renamed_tool(tool_name).unwrap_or(tool_name) {
         "page" => match string_arg("action") {
-            Some("execute_javascript") => ToolOperation::ExecuteJavascript,
             Some("get_text") => ToolOperation::GetText,
             Some("query_dom") => ToolOperation::QueryDom,
-            Some("click_element") => ToolOperation::ClickElement,
-            Some("insert_text") => ToolOperation::InsertText,
-            Some("type_keystrokes") => ToolOperation::TypeKeystrokes,
-            Some("enable_javascript_apple_events") => ToolOperation::EnableJavascriptAppleEvents,
             _ => ToolOperation::Other,
         },
         "get_browser_state" => {
@@ -455,13 +454,8 @@ pub fn tool_operation(tool_name: &str, args: Option<&serde_json::Value>) -> Tool
 /// or any other tool argument.
 pub fn is_computer_action(tool_name: &str, operation: ToolOperation) -> bool {
     if tool_name == "page" {
-        return matches!(
-            operation,
-            ToolOperation::ClickElement
-                | ToolOperation::InsertText
-                | ToolOperation::TypeKeystrokes
-                | ToolOperation::EnableJavascriptAppleEvents
-        );
+        // `page` only reads, so it is never a computer action.
+        return false;
     }
     if tool_name == "browser_dialog" {
         return matches!(
@@ -598,29 +592,6 @@ pub fn tool_observation_timer(
         valid_params,
         path,
     ))
-}
-
-/// Build a private aggregate-session context from a valid, known tool call.
-/// Only the public `session` argument is considered; reserved fallback keys
-/// and all other arguments remain outside the observer seam.
-pub fn session_tool_context(
-    req: &Request,
-    is_known_tool: impl Fn(&str) -> bool,
-    transport: crate::session::SessionTransport,
-) -> Option<crate::session::SessionToolContext> {
-    if req.method != "tools/call" {
-        return None;
-    }
-    let call = req.tool_call().ok()?;
-    let known_tool = call.name == "type_text_chars" || is_known_tool(&call.name);
-    let client_kind = match transport {
-        crate::session::SessionTransport::Cli => crate::session::SessionClientKind::Cli,
-        crate::session::SessionTransport::Daemon => crate::session::SessionClientKind::Direct,
-        crate::session::SessionTransport::McpStdio | crate::session::SessionTransport::McpHttp => {
-            crate::session::SessionClientKind::Mcp
-        }
-    };
-    crate::session::begin_tool_call(&call.name, &call.args, known_tool, transport, client_kind)
 }
 
 fn notify_session_started(metadata: InitializeMetadata) {
@@ -932,6 +903,16 @@ async fn dispatch_request(
                     );
                 }
 
+                if !provider.is_known_tool(&call.name) {
+                    return Response::ok(
+                        id,
+                        tool_error_result(
+                            format!("Unknown tool: {}", call.name),
+                            serde_json::json!({"code": "unknown_tool"}),
+                        ),
+                    );
+                }
+
                 let public_session = call
                     .args
                     .get("session")
@@ -992,6 +973,10 @@ mod dispatch_contract_tests {
 
     #[async_trait::async_trait]
     impl ToolProvider for NeverInvokeProvider {
+        fn is_known_tool(&self, name: &str) -> bool {
+            name == "get_config"
+        }
+
         fn tools_list(&self) -> serde_json::Value {
             serde_json::json!({"tools": [{"name": "get_config"}]})
         }
@@ -1055,6 +1040,10 @@ mod dispatch_contract_tests {
 
     #[async_trait::async_trait]
     impl ToolProvider for StubProvider {
+        fn is_known_tool(&self, _name: &str) -> bool {
+            true
+        }
+
         fn tools_list(&self) -> serde_json::Value {
             serde_json::json!({"tools": []})
         }
@@ -1146,6 +1135,10 @@ mod observation_tests {
     impl ToolProvider for CapturingProvider {
         fn tools_list(&self) -> serde_json::Value {
             serde_json::json!({"tools": []})
+        }
+
+        fn is_known_tool(&self, _name: &str) -> bool {
+            true
         }
 
         async fn invoke_tool(
@@ -1293,20 +1286,17 @@ mod observation_tests {
     #[test]
     fn page_operation_is_closed_and_retains_no_argument_content() {
         for (action, expected, computer_action) in [
-            (
-                "execute_javascript",
-                ToolOperation::ExecuteJavascript,
-                false,
-            ),
             ("get_text", ToolOperation::GetText, false),
             ("query_dom", ToolOperation::QueryDom, false),
-            ("click_element", ToolOperation::ClickElement, true),
-            ("insert_text", ToolOperation::InsertText, true),
-            ("type_keystrokes", ToolOperation::TypeKeystrokes, true),
+            // Removed page actions classify as `Other`, never as a computer action.
+            ("execute_javascript", ToolOperation::Other, false),
+            ("click_element", ToolOperation::Other, false),
+            ("insert_text", ToolOperation::Other, false),
+            ("type_keystrokes", ToolOperation::Other, false),
             (
                 "enable_javascript_apple_events",
-                ToolOperation::EnableJavascriptAppleEvents,
-                true,
+                ToolOperation::Other,
+                false,
             ),
             ("private-custom-action", ToolOperation::Other, false),
         ] {

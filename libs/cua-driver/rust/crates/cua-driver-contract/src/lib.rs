@@ -44,25 +44,27 @@ fn drop_schemars_numeric_format(schema: &mut Schema) {
     }
 }
 
+pub use cursor::CursorEffectSetting;
 pub use cursor::{
-    classify_cursor_semantics, CursorAction, CursorDelivery, CursorPlayback, CursorReducedMotion,
-    CursorSemantics, CursorTarget, CursorThemeSelection,
+    classify_cursor_semantics, CursorAction, CursorDelivery, CursorMotionEffects,
+    CursorMotionEffectsOutput, CursorMotionStyle, CursorMotionTiming, CursorPlayback,
+    CursorReducedMotion, CursorSemantics, CursorTarget, CursorThemeSelection,
 };
 pub use inputs::{
-    action_target_schema, ActionTarget, CaptureScope, ClickButton, ClickInput, ClickPosition,
-    ClipboardReadInput, ClipboardWriteInput, DesktopScope, DragInput, EndSessionInput,
-    EscalateSessionInput, EscalationReason, GetAgentCursorStateInput, GetCursorPositionInput,
-    GetDesktopStateInput, GetScreenSizeInput, GetSessionInput, GetSessionStateInput, HotkeyInput,
-    InputDeliveryMode, InvokeMenuInput, LegacyClickInput, ListSessionsInput, MoveCursorInput,
-    PressKeyInput, ScrollBy, ScrollDirection, ScrollInput, SetAgentCursorEnabledInput,
-    SetAgentCursorMotionInput, SetAgentCursorThemeInput, SetWindowFrameInput, StartSessionInput,
-    ToolInput, TypeTextInput, MULTI_CALL_SESSION_DESCRIPTION,
+    ActionTarget, CaptureScope, ClickButton, ClickInput, ClickPosition, ClipboardReadInput,
+    ClipboardWriteInput, CursorMotionSelection, DesktopScope, DragInput, EndSessionInput,
+    GetAgentCursorStateInput, GetCursorPositionInput, GetDesktopStateInput, GetScreenSizeInput,
+    GetSessionInput, HotkeyInput, InputDeliveryMode, InvokeMenuInput, LegacyClickInput,
+    ListSessionsInput, MoveCursorInput, PressKeyInput, ScrollBy, ScrollDirection, ScrollInput,
+    SetAgentCursorEnabledInput, SetAgentCursorMotionInput, SetAgentCursorThemeInput,
+    SetWindowFrameInput, StartSessionInput, ToolInput, TypeTextInput,
+    MULTI_CALL_SESSION_DESCRIPTION,
 };
 pub use outputs::{
     advertised_output_schema, conforming_error_envelope, is_refusal_envelope,
     refusal_envelope_schema, ActionDelivery, ActionDeliveryMode, ActionEffect, ActionError,
     ActionEscalation, ActionEscalationReason, ActionEscalationTarget, ActionEvidence,
-    ActionEvidenceKind, ActionResult, ActionResultValidationError, ActionRoute,
+    ActionEvidenceKind, ActionNextCall, ActionResult, ActionResultValidationError, ActionRoute,
     AgentOverlayCapture, AgentOverlayCaptureStatus, ClipboardReadOutput, ClipboardWriteOutput,
     CursorMotionOutput, CursorPointOutput, CursorPositionOutput, CursorThemeOutput,
     CursorVisualOutput, DesktopStateOutput, EffectiveScope, EndSessionOutput,
@@ -127,6 +129,14 @@ pub const ACTION_RESULT_TOOLS: &[&str] = &[
 
 pub fn is_action_result_tool(name: &str) -> bool {
     ACTION_RESULT_TOOLS.contains(&name)
+}
+
+/// Action-result tools that act on native desktop state.
+///
+/// Browser actions are scheduled per CDP tab inside the browser engine; every
+/// other action-result tool drives the shared native input and window state.
+pub fn is_desktop_action_result_tool(name: &str) -> bool {
+    is_action_result_tool(name) && !name.starts_with("browser_")
 }
 
 #[derive(
@@ -222,7 +232,18 @@ pub struct ContractManifest {
     pub tools: Vec<ToolContract>,
 }
 
+/// The published contract. Built once per process: every schema in it comes
+/// from compiled Rust types, so rebuilding it can only repeat the same work.
 pub fn manifest() -> ContractManifest {
+    cached_manifest().clone()
+}
+
+fn cached_manifest() -> &'static ContractManifest {
+    static MANIFEST: OnceLock<ContractManifest> = OnceLock::new();
+    MANIFEST.get_or_init(build_manifest)
+}
+
+fn build_manifest() -> ContractManifest {
     let mut tools = session::contracts();
     tools.extend(desktop::contracts());
     tools.extend(cursor_tools::contracts());
@@ -242,7 +263,14 @@ pub fn manifest() -> ContractManifest {
 }
 
 pub fn tool_contract(name: &str) -> Option<ToolContract> {
-    manifest().tools.into_iter().find(|tool| tool.name == name)
+    cached_tool_contract(name).cloned()
+}
+
+fn cached_tool_contract(name: &str) -> Option<&'static ToolContract> {
+    cached_manifest()
+        .tools
+        .iter()
+        .find(|tool| tool.name == name)
 }
 
 #[derive(Debug)]
@@ -256,9 +284,10 @@ struct ToolIndexEntry {
 fn tool_index() -> &'static BTreeMap<String, ToolIndexEntry> {
     static INDEX: OnceLock<BTreeMap<String, ToolIndexEntry>> = OnceLock::new();
     INDEX.get_or_init(|| {
-        manifest()
+        cached_manifest()
             .tools
-            .into_iter()
+            .iter()
+            .cloned()
             .map(|tool| {
                 let input_fields = tool
                     .input_schema
@@ -300,7 +329,7 @@ pub fn tool_input_fields(name: &str) -> Option<&'static BTreeSet<String>> {
 /// MCP tool. Runtime-only tools can define a narrow shared schema here without
 /// committing every generated SDK to their broader platform-specific shape.
 pub fn tool_success_output_schema(name: &str) -> Option<Value> {
-    tool_contract(name).and_then(|contract| contract.success_output_schema)
+    cached_tool_contract(name).and_then(|contract| contract.success_output_schema.clone())
 }
 
 /// The `outputSchema` one tool advertises on `tools/list`, or `None` when it
@@ -313,7 +342,12 @@ pub fn tool_success_output_schema(name: &str) -> Option<Value> {
 /// schema.
 pub fn advertised_tool_output_schema(name: &str) -> Option<Value> {
     let success = if is_action_result_tool(name) {
-        Some(<ActionResult as ToolOutput>::output_schema())
+        static ACTION_RESULT_SCHEMA: OnceLock<Value> = OnceLock::new();
+        Some(
+            ACTION_RESULT_SCHEMA
+                .get_or_init(<ActionResult as ToolOutput>::output_schema)
+                .clone(),
+        )
     } else {
         tool_success_output_schema(name)
     };
@@ -389,8 +423,15 @@ mod tests {
 
     #[test]
     fn input_and_output_schemas_drop_only_schemars_numeric_formats() {
+        // `input_schema` panics on this fixture's object `const`. The format
+        // stripper runs in `schema_settings` before that rewrite.
         let schemas = [
-            <NumericFormatFixture as ToolInput>::input_schema(),
+            serde_json::to_value(
+                schema_settings()
+                    .into_generator()
+                    .into_root_schema_for::<NumericFormatFixture>(),
+            )
+            .expect("schema"),
             <NumericFormatFixture as ToolOutput>::output_schema(),
         ];
 
@@ -647,7 +688,15 @@ mod tests {
         );
         assert_eq!(
             contract.capabilities,
-            vec!["menu.path.invoke", "accessibility.menu.native"]
+            vec![
+                "menu.path.invoke",
+                "accessibility.menu.native",
+                "input.delivery_mode"
+            ]
+        );
+        assert_eq!(
+            contract.input_schema["properties"]["delivery_mode"]["enum"],
+            serde_json::json!(["background", "foreground"])
         );
     }
 
@@ -724,8 +773,6 @@ mod tests {
                 "effective_scope",
                 "desktop_capture_authorized",
                 "desktop_unlocked",
-                "escalation_reason",
-                "escalation_detail",
                 "active",
                 "revived",
             ]

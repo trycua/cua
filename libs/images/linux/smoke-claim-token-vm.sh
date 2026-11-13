@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke test for the Fleet per-claim token path on the VM (containerDisk)
+# Smoke test for the per-claim token path on the VM (containerDisk)
 # variant under local QEMU: boots disk.img with a claim-secrets share
 # (common/boot-qemu.sh --claim-secrets; 9p stands in for KubeVirt's virtiofs
 # since macOS QEMU has no virtiofsd) and, from the host, writes, rotates and

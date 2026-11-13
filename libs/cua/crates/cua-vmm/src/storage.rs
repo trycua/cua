@@ -9,10 +9,14 @@
 //! [`crate::disk::set_probe`] apply here too.
 
 use std::path::{Path, PathBuf};
+#[cfg(feature = "container")]
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use cua_home::channel::CuaChannel;
+
+#[cfg(feature = "container")]
 use crate::container::engine::{self, EngineKind};
 use crate::host;
 
@@ -38,15 +42,70 @@ pub fn host_volume(path: &Path) -> Option<Volume> {
     })
 }
 
-/// Lume's default VM storage directory (`~/.config/lume/config.yaml`,
-/// else `~/.lume`): where a macOS Space's clone is written.
-pub fn lume_dir() -> PathBuf {
-    let home = host::home_dir();
-    std::fs::read_to_string(home.join(".config/lume/config.yaml"))
+/// The variable Lume reads its home and VM directory from. Spaces Local
+/// follows it and sets it for the Lume it starts ([`crate::lume::LumeCmd`]).
+/// Stable ignores it: the Lume it runs (the pinned 0.6.0, and any before
+/// the one that honours it) keeps VMs where its `config.yaml` says, so
+/// Spaces must look there too.
+pub const LUME_HOME_VAR: &str = "LUME_HOME";
+
+/// `$LUME_HOME`, when set and not blank.
+pub fn lume_home_env() -> Option<String> {
+    std::env::var(LUME_HOME_VAR)
         .ok()
-        .and_then(|y| lume_default_location(&y))
-        .map(|p| expand_home(&p, &home))
-        .unwrap_or_else(|| home.join(".lume"))
+        .filter(|v| !v.trim().is_empty())
+}
+
+/// Lume's default VM storage directory for this process's channel: where a
+/// macOS Space's clone is written.
+///
+/// * Stable (unchanged): the default location in
+///   `~/.config/lume/config.yaml`, else `~/.lume`;
+/// * Local: `$LUME_HOME` when set, else `~/.lume-local`
+///   ([`CuaChannel::lume_dir`]); never Stable's `~/.config/lume/config.yaml`.
+pub fn lume_dir() -> PathBuf {
+    lume_dir_for(CuaChannel::current())
+}
+
+/// [`lume_dir`] for `channel`.
+pub fn lume_dir_for(channel: CuaChannel) -> PathBuf {
+    let home = host::home_dir();
+    let yaml = std::fs::read_to_string(home.join(".config/lume/config.yaml")).ok();
+    lume_dir_with(channel, &home, lume_home_env().as_deref(), yaml.as_deref())
+}
+
+/// [`lume_dir`] for `channel`, with its inputs given (`$LUME_HOME`, and the
+/// text of Lume's `config.yaml` when there is one).
+pub fn lume_dir_with(
+    channel: CuaChannel,
+    home: &Path,
+    lume_home: Option<&str>,
+    config_yaml: Option<&str>,
+) -> PathBuf {
+    if channel.is_local() {
+        return default_lume_dir(channel, home, lume_home);
+    }
+    config_yaml
+        .and_then(lume_default_location)
+        .map(|p| expand_home(&p, home))
+        .unwrap_or_else(|| default_lume_dir(channel, home, None))
+}
+
+/// The VM directory `channel`'s Lume uses before its `config.yaml` is
+/// consulted: for Local `lume_home` (a leading `~` is `home`), else
+/// `~/.lume-local`; for Stable always `~/.lume`, whatever `lume_home` says
+/// ([`LUME_HOME_VAR`]). The names come from [`CuaChannel::lume_dir`].
+pub fn default_lume_dir(channel: CuaChannel, home: &Path, lume_home: Option<&str>) -> PathBuf {
+    if channel.is_local()
+        && let Some(h) = lume_home.map(str::trim).filter(|h| !h.is_empty())
+    {
+        return expand_home(h, home);
+    }
+    let dir = channel.lume_dir();
+    match dir.file_name() {
+        Some(name) => home.join(name),
+        None => dir,
+    }
 }
 
 /// The cua home: QEMU instances (`vmm/qemu`) and the containerDisk cache
@@ -65,7 +124,23 @@ fn expand_home(p: &str, home: &Path) -> PathBuf {
 
 /// The path of Lume's `defaultLocationName` in its `config.yaml`.
 pub fn lume_default_location(yaml: &str) -> Option<String> {
-    let unquote = |v: &str| v.trim().trim_matches('"').trim_matches('\'').to_string();
+    // A double-quoted scalar is read with its escapes (`\\`, `\"`: what
+    // `builtin::config_yaml` writes, and what Lume's parser reads); a
+    // single-quoted one with `''` for a quote; anything else as it is.
+    let unquote = |v: &str| {
+        let v = v.trim();
+        if v.len() >= 2
+            && v.starts_with('"')
+            && v.ends_with('"')
+            && let Ok(s) = serde_json::from_str::<String>(v)
+        {
+            return s;
+        }
+        if v.len() >= 2 && v.starts_with('\'') && v.ends_with('\'') {
+            return v[1..v.len() - 1].replace("''", "'");
+        }
+        v.trim_matches('"').trim_matches('\'').to_string()
+    };
     let default = yaml
         .lines()
         .find_map(|l| l.trim().strip_prefix("defaultLocationName:"))
@@ -86,9 +161,10 @@ pub fn lume_default_location(yaml: &str) -> Option<String> {
 
 /// The container engine's data disk, when its free space can be read:
 /// Colima (`df` in its VM, bounded by the host volume under its sparse
-/// disk), Docker Desktop (the disk limit less what `Docker.raw` holds,
-/// bounded by the host volume), OrbStack (its data directory's volume) and
-/// dockerd on Linux (`/var/lib/docker`). `None` for anything else.
+/// disk), Docker Desktop (the volume its `Docker.raw` grows on), OrbStack
+/// (its data directory's volume) and dockerd on Linux (`/var/lib/docker`).
+/// `None` for anything else.
+#[cfg(feature = "container")]
 pub async fn container_volume() -> Option<Volume> {
     let ep = engine::discover()?;
     let home = host::home_dir();
@@ -124,25 +200,26 @@ pub async fn container_volume() -> Option<Volume> {
             };
             Some(tighter(vm, host_vol))
         }
-        EngineKind::DockerDesktop => {
-            let raw = home.join("Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw");
-            let host_vol = host_volume(&raw);
-            let limit = docker_desktop_disk_limit(&home)?;
-            let used = allocated(&raw).unwrap_or(0);
-            let vm = Volume {
-                available: limit.saturating_sub(used),
-                total: limit,
-                name: "Docker Desktop".into(),
-            };
-            Some(tighter(vm, host_vol))
-        }
+        // Docker Desktop's disk limit is in its settings, under
+        // `~/Library/Group Containers/group.com.docker`, which macOS guards:
+        // reading it asks "would like to access data from other apps" and
+        // blocks until someone answers (no timeout can stop a blocked read).
+        // `Docker.raw` grows on this Mac's own volume, so that is the room.
+        EngineKind::DockerDesktop => host_volume(&home),
         EngineKind::OrbStack => host_volume(&home.join(".orbstack")),
         EngineKind::NativeLinux => host_volume(Path::new("/var/lib/docker")),
         _ => None,
     }
 }
 
+/// Without the `container` feature there is no engine to ask.
+#[cfg(not(feature = "container"))]
+pub async fn container_volume() -> Option<Volume> {
+    None
+}
+
 /// The engine's own disk, unless the host volume under it has less room.
+#[cfg(any(feature = "container", test))]
 fn tighter(engine: Volume, host: Option<Volume>) -> Volume {
     match host {
         Some(h) if h.available < engine.available => h,
@@ -160,41 +237,6 @@ pub fn parse_df(out: &str) -> Option<(u64, u64)> {
     Some((cols[3].parse().ok()?, cols[1].parse().ok()?))
 }
 
-/// Docker Desktop's disk limit in bytes (`DiskSizeMiB` in its settings).
-fn docker_desktop_disk_limit(home: &Path) -> Option<u64> {
-    for f in [
-        "Library/Group Containers/group.com.docker/settings-store.json",
-        "Library/Group Containers/group.com.docker/settings.json",
-    ] {
-        if let Some(mib) = std::fs::read_to_string(home.join(f))
-            .ok()
-            .and_then(|t| disk_size_mib(&t))
-        {
-            return Some(mib << 20);
-        }
-    }
-    None
-}
-
-/// `DiskSizeMiB` (or the older `diskSizeMiB`) of a Docker Desktop settings file.
-pub fn disk_size_mib(json: &str) -> Option<u64> {
-    let v: serde_json::Value = serde_json::from_str(json).ok()?;
-    v.get("DiskSizeMiB")
-        .or_else(|| v.get("diskSizeMiB"))
-        .and_then(serde_json::Value::as_u64)
-}
-
-#[cfg(unix)]
-fn allocated(p: &Path) -> Option<u64> {
-    use std::os::unix::fs::MetadataExt;
-    std::fs::metadata(p).ok().map(|m| m.blocks() * 512)
-}
-
-#[cfg(not(unix))]
-fn allocated(p: &Path) -> Option<u64> {
-    std::fs::metadata(p).ok().map(|m| m.len())
-}
-
 /// The name of the volume holding `path`: the volume label on macOS (the
 /// data volume answers with the startup disk's name, `Macintosh HD`), else
 /// the mount point.
@@ -204,7 +246,28 @@ pub fn volume_name(path: &Path) -> String {
     if p.as_os_str().is_empty() {
         p = PathBuf::from("/");
     }
-    platform::volume_name(&p).unwrap_or_else(|| "this Mac".into())
+    platform::volume_name(&p).unwrap_or_else(|| fallback_volume_name(&p))
+}
+
+/// What to call a volume the platform cannot name: the drive on Windows
+/// (`C:`), else the machine, in the person's words ("this Mac" was shown on
+/// a Windows PC).
+fn fallback_volume_name(path: &Path) -> String {
+    if cfg!(windows) {
+        if let Some(std::path::Component::Prefix(prefix)) = path.components().next() {
+            let drive = prefix.as_os_str().to_string_lossy();
+            // `\?\C:` (extended) or `C:`: keep the drive letter.
+            if let Some(i) = drive.find(':') {
+                return drive[i - 1..=i].to_string();
+            }
+        }
+        return "this PC".into();
+    }
+    if cfg!(target_os = "macos") {
+        "this Mac".into()
+    } else {
+        "this computer".into()
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -309,6 +372,96 @@ mod tests {
     use super::*;
 
     #[test]
+    fn an_unnamed_volume_is_called_by_the_hosts_own_words() {
+        let name = fallback_volume_name(Path::new(if cfg!(windows) {
+            r"C:\Users\a"
+        } else {
+            "/home/a"
+        }));
+        if cfg!(windows) {
+            assert_eq!(name, "C:");
+        } else if cfg!(target_os = "macos") {
+            assert_eq!(name, "this Mac");
+        } else {
+            assert_eq!(name, "this computer");
+        }
+    }
+
+    #[test]
+    fn stable_keeps_lume_s_own_vm_directory_rules() {
+        let home = Path::new("/Users/a");
+        let ext = "defaultLocationName: \"ext\"\nvmLocations:\n  - name: \"ext\"\n    path: \"/Volumes/X/lume\"\n";
+        assert_eq!(
+            lume_dir_with(CuaChannel::Stable, home, None, None),
+            PathBuf::from("/Users/a/.lume")
+        );
+        assert_eq!(
+            lume_dir_with(CuaChannel::Stable, home, None, Some(ext)),
+            PathBuf::from("/Volumes/X/lume")
+        );
+        // A blank LUME_HOME says nothing.
+        assert_eq!(
+            lume_dir_with(CuaChannel::Stable, home, Some("  "), Some(ext)),
+            PathBuf::from("/Volumes/X/lume")
+        );
+    }
+
+    #[test]
+    fn local_keeps_its_vms_apart_from_stable_s() {
+        let home = Path::new("/Users/a");
+        // Stable's config.yaml is not Local's to read.
+        let ext = "defaultLocationName: \"ext\"\nvmLocations:\n  - name: \"ext\"\n    path: \"/Volumes/X/lume\"\n";
+        assert_eq!(
+            lume_dir_with(CuaChannel::Local, home, None, Some(ext)),
+            PathBuf::from("/Users/a/.lume-local")
+        );
+        assert_eq!(
+            lume_dir_with(CuaChannel::Local, home, None, None),
+            PathBuf::from("/Users/a/.lume-local")
+        );
+        // The names come from the channel.
+        assert_eq!(
+            CuaChannel::Local.lume_dir().file_name(),
+            Some(std::ffi::OsStr::new(".lume-local"))
+        );
+        assert_ne!(
+            lume_dir_with(CuaChannel::Local, home, None, None),
+            lume_dir_with(CuaChannel::Stable, home, None, None)
+        );
+    }
+
+    #[test]
+    fn lume_home_moves_local_s_directory_and_never_stable_s() {
+        let home = Path::new("/Users/a");
+        let cfg = Some(
+            "defaultLocationName: \"h\"\nvmLocations:\n  - name: \"h\"\n    path: \"/Volumes/X/lume\"\n",
+        );
+        // Local follows it.
+        assert_eq!(
+            lume_dir_with(CuaChannel::Local, home, Some("/Volumes/X/vms"), cfg),
+            PathBuf::from("/Volumes/X/vms")
+        );
+        assert_eq!(
+            lume_dir_with(CuaChannel::Local, home, Some("~/vms"), None),
+            PathBuf::from("/Users/a/vms")
+        );
+        // Stable does not: the pinned Lume keeps VMs where its config says,
+        // so that is where Spaces must look.
+        assert_eq!(
+            lume_dir_with(CuaChannel::Stable, home, Some("/Volumes/X/vms"), cfg),
+            PathBuf::from("/Volumes/X/lume")
+        );
+        assert_eq!(
+            lume_dir_with(CuaChannel::Stable, home, Some("/Volumes/X/vms"), None),
+            PathBuf::from("/Users/a/.lume")
+        );
+        assert_eq!(
+            default_lume_dir(CuaChannel::Stable, home, Some("/Volumes/X/vms")),
+            PathBuf::from("/Users/a/.lume")
+        );
+    }
+
+    #[test]
     fn lume_default_location_follows_the_config() {
         let yaml = r#"
 defaultLocationName: "ext"
@@ -333,14 +486,11 @@ vmLocations:
     }
 
     #[test]
-    fn df_and_docker_desktop_settings_parse() {
+    fn df_parses() {
         let df = "Filesystem       1-blocks        Used   Available Capacity Mounted on\n\
                   /dev/vdb1  105089261568 57034448896 42668208128      58% /mnt/lima-colima\n";
         assert_eq!(parse_df(df), Some((42668208128, 105089261568)));
         assert_eq!(parse_df("Filesystem\n"), None);
-        assert_eq!(disk_size_mib(r#"{"DiskSizeMiB": 65536}"#), Some(65536));
-        assert_eq!(disk_size_mib(r#"{"diskSizeMiB": 1024}"#), Some(1024));
-        assert_eq!(disk_size_mib("{}"), None);
     }
 
     #[test]

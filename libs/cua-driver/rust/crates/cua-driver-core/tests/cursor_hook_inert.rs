@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! The cursor hook must cost nothing for the users who never register one.
 //!
 //! That is the overwhelming majority of cua-driver consumers: the daemon, the

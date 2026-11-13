@@ -1,10 +1,10 @@
 ---
 title: Run a benchmark
-description: 'Pick a taskset from the Cua Bench registry, run it with one cb run command on a local or cloud desktop sandbox, and read the results.'
+description: 'Pick a taskset from the Cua Bench registry, run it with one cb run command on a desktop sandbox on your machine, and read the results.'
 ---
 
 A benchmark in Cua Bench is a registry taskset: a versioned set of desktop
-tasks, each with a setup, an oracle and an evaluator. Browse them at
+tasks, each with a setup, an oracle (a built-in solution) and an evaluator. Browse them at
 **[cua.ai/cuabench/registry](https://cua.ai/cuabench/registry)** and run one
 by name.
 
@@ -74,7 +74,7 @@ cb run info <run-id>
 Each run writes `summary.json` (mean reward, pass@k) and one directory per
 variant with `result.json`, `run.log` and the agent's `trajectory.json`
 (ATIF, with screenshots), under `~/.local/share/cua-bench/runs`. Every key is
-in [Results](/cua-bench/reference/results).
+in [Results](/cua-bench/reference/task-definition#result-files).
 
 ## Try a task by hand
 
@@ -111,9 +111,37 @@ tasks that set none:
 pinned per task) are fetched as-is. To write tasks for it, see
 [Write a task](/cua-bench/guides/write-a-task).
 
+## Build a benchmark image
+
+The [adapter benchmarks](/cua-bench/guides/adapter-benchmarks) run on converted
+images: an upstream benchmark's environment, rebuilt as one Cua image with a
+container variant and a VM variant. The pipeline lives in `scripts/bench-images/`.
+Each benchmark is described once in `libs/images/bench/<id>/bench.json` (pinned
+sources, license, redistribution class, server and variants). The pipeline
+fetches the sources, builds both variants, smoke-tests them and publishes them.
+
+```bash skip="no-runner"
+python3 scripts/bench-images/bench.py validate
+python3 scripts/bench-images/bench.py fetch osworld      # sha256-checked downloads
+scripts/bench-images/build-qcow2.sh osworld              # rootfs + containerdisk variants
+scripts/bench-images/publish.sh web                      # stage immutable pins, then --promote
+```
+
+| Variant | Tag | Runs on | Init |
+| --- | --- | --- | --- |
+| `rootfs` | `<ver>` | gVisor or runc | supervisord |
+| `containerdisk` | `<ver>-disk` | QEMU | systemd |
+
+`--promote` moves `<ver>` and `<ver>-disk` only after `cua-spacesd doctor`
+passes on every staged digest, architecture and variant.
+
+On an arm64 host, amd64 images run under x86 emulation, where Mesa's llvmpipe
+draws a black screen. Server, file and spacesd checks still work, but doctor and
+screen evidence for amd64 need a native amd64 host.
+
 ## Next
 
 - [Adapter benchmarks](/cua-bench/guides/adapter-benchmarks):
   OSWorld-Verified, MiniWoB++, WebVoyager, Online-Mind2Web, WebGym and the
   grounding sets, through adapters.
-- [`cb run` reference](/cua-bench/reference/cli/run)
+- [`cb run` reference](/cua-bench/reference/cli#cb-run)

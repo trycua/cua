@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Linux platform backend for cua-driver-rs.
 //!
 //! Background automation on Linux via:
@@ -23,7 +26,6 @@ use cua_driver_core::tool::ToolRegistry;
 pub mod health_report;
 pub mod overlay;
 pub mod overlay_capture;
-pub mod pip;
 pub mod tools;
 
 #[cfg(target_os = "linux")]
@@ -61,6 +63,8 @@ pub mod capture;
 mod capture_action_frame;
 #[cfg(target_os = "linux")]
 mod clipboard;
+#[cfg(target_os = "linux")]
+mod interaction;
 
 #[cfg(target_os = "linux")]
 pub mod atspi;
@@ -79,6 +83,8 @@ pub mod video_wayland;
 
 #[cfg(target_os = "linux")]
 pub mod wayland;
+
+pub mod desktop;
 
 // Pure AT-SPI role / X cursor name tables for presence cursor shapes; tested
 // on every host.
@@ -136,6 +142,11 @@ pub(crate) mod test_env {
     /// `WAYLAND_DISPLAY`, so the X11 path is taken and its connect fails
     /// regardless of the host session.
     pub(crate) fn unreachable_x11_display() -> DisplayOverride {
+        x11_display(":9999999")
+    }
+
+    /// Point `DISPLAY` at `display` and hide `WAYLAND_DISPLAY`.
+    pub(crate) fn x11_display(display: &str) -> DisplayOverride {
         let lock = ENV_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -144,8 +155,9 @@ pub(crate) mod test_env {
             wayland_display: std::env::var_os("WAYLAND_DISPLAY"),
             _lock: lock,
         };
-        std::env::set_var("DISPLAY", ":9999999");
+        std::env::set_var("DISPLAY", display);
         std::env::remove_var("WAYLAND_DISPLAY");
+        crate::desktop::reclassify();
         guard
     }
 
@@ -160,6 +172,7 @@ pub(crate) mod test_env {
                     None => std::env::remove_var(name),
                 }
             }
+            crate::desktop::reclassify();
         }
     }
 }
@@ -223,10 +236,8 @@ pub fn register_tools() -> ToolRegistry {
     tools::build_registry(false)
 }
 
-/// `compat=true` enables Claude Code computer-use compatibility mode:
-/// the regular `screenshot` tool is replaced by a window-scoped variant
-/// (pid + window_id required, JPEG @ 85%, text note pointing at pixel
-/// tools). See `tools::impl_::ScreenshotCompatTool`.
+/// `compat` is a legacy Claude Code compatibility flag with no current
+/// tool-surface effect. It remains accepted for launch compatibility.
 pub fn register_tools_with_cursor(cfg: cursor_overlay::CursorConfig, compat: bool) -> ToolRegistry {
     register_tools_with_cursor_and_provider(None, cfg, compat)
 }
@@ -251,7 +262,7 @@ pub fn register_tools_with_cursor_and_provider(
 /// read-only commands such as describe/list-tools must not mutate X11 devices.
 #[cfg(target_os = "linux")]
 pub fn recover_orphaned_mpx_devices() {
-    input::reap_orphaned_master_pointers();
+    input::release_orphaned_master_pairs();
 }
 
 #[cfg(test)]

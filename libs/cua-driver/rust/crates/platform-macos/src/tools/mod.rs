@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! MCP tool implementations for macOS.
 
 mod bring_to_front;
@@ -13,6 +16,7 @@ mod kill_app;
 mod launch_app;
 mod list_apps;
 mod list_windows;
+mod menu_equivalent;
 mod press_key;
 mod right_click;
 mod scroll;
@@ -26,6 +30,7 @@ mod type_text;
 // through GetWindowStateTool.
 mod check_permissions;
 mod cursor_tools;
+mod desktop_pointer_guard;
 mod get_accessibility_tree;
 mod get_config;
 mod get_cursor_position;
@@ -74,16 +79,43 @@ fn pid_window_target_candidates(pid: i64) -> Vec<WindowTargetCandidate> {
     let Ok(pid) = i32::try_from(pid) else {
         return Vec::new();
     };
-    window_target_candidates_for_pid(crate::windows::all_windows(), pid)
+    let enumeration = crate::windows::all_windows_with_space_snapshot();
+    let mut windows = enumeration.windows;
+    windows.retain(|window| window.pid == pid);
+    crate::windows::retain_ax_reachable(&mut windows, enumeration.current_space_id);
+    window_target_candidates_for_pid(windows, pid)
+}
+
+/// Smallest edge, in points, of a window a pid-only action may mean. Below it
+/// the window is a 0x0 or 1x1 helper surface, never a document or dialog.
+const MIN_TARGET_EDGE_PT: f64 = 2.0;
+
+/// Whether `window` is a window a pid-only action could mean: on screen and
+/// of real size. LibreOffice's off-screen `VCL ImplGetDefaultWindow`, its
+/// untitled off-screen helpers, and Chrome's closed omnibox popup are layer-0
+/// windows WindowServer lists but no user can see, type into, or click.
+fn is_visible_target(window: &crate::windows::WindowInfo) -> bool {
+    window.is_on_screen
+        && window.bounds.width >= MIN_TARGET_EDGE_PT
+        && window.bounds.height >= MIN_TARGET_EDGE_PT
 }
 
 fn window_target_candidates_for_pid(
     windows: impl IntoIterator<Item = crate::windows::WindowInfo>,
     pid: i32,
 ) -> Vec<WindowTargetCandidate> {
-    windows
+    let mut windows: Vec<_> = windows
         .into_iter()
         .filter(|window| window.pid == pid)
+        .collect();
+    // Only visible windows compete. When none is visible (the app is hidden,
+    // its only window is minimized or on another Space) keep them all, so a
+    // single real window still resolves and several still refuse.
+    if windows.iter().any(is_visible_target) {
+        windows.retain(is_visible_target);
+    }
+    windows
+        .into_iter()
         .map(|window| WindowTargetCandidate {
             window_id: u64::from(window.window_id),
             transient_for: None,
@@ -130,6 +162,80 @@ mod pid_window_target_tests {
                 if windows.iter().map(|window| window.window_id).collect::<Vec<_>>() == [7, 8]
         ));
     }
+
+    fn off_screen(
+        mut window: crate::windows::WindowInfo,
+        title: &str,
+    ) -> crate::windows::WindowInfo {
+        window.is_on_screen = false;
+        window.title = title.into();
+        window
+    }
+
+    #[test]
+    fn off_screen_helpers_do_not_make_a_document_ambiguous() {
+        // LibreOffice: the document plus `VCL ImplGetDefaultWindow` and an
+        // untitled helper, both off screen (bench CDB-G03, CDB-S02).
+        let candidates = window_target_candidates_for_pid(
+            [
+                window(1680, 42),
+                off_screen(window(1679, 42), "VCL ImplGetDefaultWindow"),
+                off_screen(window(1678, 42), ""),
+            ],
+            42,
+        );
+        assert!(matches!(
+            resolve_pid_window_target(candidates),
+            PidWindowTargetResolution::Resolved(window) if window.window_id == 1680
+        ));
+    }
+
+    #[test]
+    fn zero_size_windows_do_not_compete() {
+        let mut helper = window(9, 42);
+        helper.bounds.width = 0.0;
+        helper.bounds.height = 0.0;
+        let candidates = window_target_candidates_for_pid([window(7, 42), helper], 42);
+        assert!(matches!(
+            resolve_pid_window_target(candidates),
+            PidWindowTargetResolution::Resolved(window) if window.window_id == 7
+        ));
+    }
+
+    #[test]
+    fn two_visible_documents_stay_ambiguous_despite_helpers() {
+        let candidates = window_target_candidates_for_pid(
+            [
+                window(7, 42),
+                window(8, 42),
+                off_screen(window(9, 42), "VCL ImplGetDefaultWindow"),
+            ],
+            42,
+        );
+        assert!(matches!(
+            resolve_pid_window_target(candidates),
+            PidWindowTargetResolution::Ambiguous(windows)
+                if windows.iter().map(|window| window.window_id).collect::<Vec<_>>() == [7, 8]
+        ));
+    }
+
+    #[test]
+    fn an_app_with_no_visible_window_keeps_its_windows() {
+        // A hidden app or a minimized single window still resolves.
+        let candidates = window_target_candidates_for_pid([off_screen(window(7, 42), "Doc")], 42);
+        assert!(matches!(
+            resolve_pid_window_target(candidates),
+            PidWindowTargetResolution::Resolved(window) if window.window_id == 7
+        ));
+    }
+}
+
+/// The window a pid-only keyboard action means when several visible windows
+/// remain: the app's key window (`AXFocusedWindow`), which is where AppKit
+/// sends process-scoped key events anyway. `None` leaves the call refused.
+fn pid_focused_window(pid: i64) -> Option<u64> {
+    let pid = i32::try_from(pid).ok()?;
+    crate::ax::bindings::focused_window_id_of_pid(pid).map(|window| u64::from(window.root))
 }
 
 fn pid_window_guarded<T: Tool + 'static>(
@@ -142,12 +248,27 @@ fn pid_window_guarded<T: Tool + 'static>(
     ))
 }
 
+/// [`pid_window_guarded`] for keyboard tools: when several visible windows
+/// remain, a pid-only key goes to the app's key window, as AppKit would route
+/// it, and the result names that window. Without a key window it still refuses.
+fn pid_keyboard_guarded<T: Tool + 'static>(
+    tool: T,
+    candidates: &WindowTargetCandidates,
+) -> Box<dyn Tool> {
+    Box::new(
+        PidOnlyWindowTargetGuard::new(Box::new(tool), candidates.clone())
+            .with_fallback_resolver(Arc::new(pid_focused_window)),
+    )
+}
+
 pub use check_permissions::{
     request_from_launchservices_host as request_permissions_from_launchservices_host,
     PERMISSIONS_HOST_REQUEST_ARG,
 };
 
 pub use cua_driver_core::snapshot_store::ZoomContext;
+pub(crate) use health_report::current_bundle_identifier as main_bundle_identifier;
+pub(crate) use health_report::sw_vers_product_version as macos_product_version;
 
 /// The shared per-call delivery mode; see [`cua_driver_core::delivery`].
 ///
@@ -186,9 +307,155 @@ pub(crate) fn background_refusal_result(
     .with_structured(structured)
 }
 
+/// Structured `element_disabled` refusal: the control reported
+/// `AXEnabled=false` immediately before dispatch and nothing was sent.
+///
+/// Some controls (menu and toolbar items) are disabled only while their app is
+/// in the background, so a background call into an app that is not frontmost
+/// gets a foreground escalation. Otherwise fronting cannot help.
+pub(crate) fn element_disabled_result(
+    pid: i32,
+    window_id: u32,
+    disabled: &crate::input::ax_actions::ElementDisabled,
+    foreground: bool,
+) -> cua_driver_core::protocol::ToolResult {
+    let suggest_foreground = !foreground && crate::apps::frontmost_pid() != Some(pid);
+    disabled_refusal(pid, window_id, disabled, suggest_foreground)
+}
+
+/// The `element_disabled` refusal for a dispatch error that is an
+/// [`crate::input::ax_actions::ElementDisabled`], or `None` for any other error.
+pub(crate) fn element_disabled_error(
+    pid: i32,
+    window_id: u32,
+    error: &anyhow::Error,
+    foreground: bool,
+) -> Option<cua_driver_core::protocol::ToolResult> {
+    let disabled = error.downcast_ref::<crate::input::ax_actions::ElementDisabled>()?;
+    Some(element_disabled_result(
+        pid, window_id, disabled, foreground,
+    ))
+}
+
+fn disabled_refusal(
+    pid: i32,
+    window_id: u32,
+    disabled: &crate::input::ax_actions::ElementDisabled,
+    suggest_foreground: bool,
+) -> cua_driver_core::protocol::ToolResult {
+    let mut text = disabled.to_string();
+    let mut structured = serde_json::json!({
+        "code": crate::input::ax_actions::ElementDisabled::CODE,
+        "effect": "refused",
+        "pid": pid,
+        "window_id": window_id,
+        "action": disabled.action,
+    });
+    if suggest_foreground {
+        let reason = "the app is in the background, which disables some controls";
+        text.push_str(&format!(
+            ". If {reason}, retry with delivery_mode:\"foreground\""
+        ));
+        structured["escalation"] =
+            serde_json::json!({ "recommended": "foreground", "reason": reason });
+    }
+    cua_driver_core::protocol::ToolResult::error(text).with_structured(structured)
+}
+
+/// Re-read `AXEnabled` on a token target and refuse a disabled one before any
+/// cursor or input work. The snapshot's `enabled` can be stale. A foreground
+/// call into an app that is not frontmost skips the read: activation can
+/// enable the control, so a read before activation would refuse a live target.
+/// Such a caller must read it again after activation, immediately before input.
+pub(crate) async fn refuse_if_disabled(
+    pid: i32,
+    window_id: u32,
+    element: &crate::ax::snapshot::RetainedElement,
+    action: &'static str,
+    foreground: bool,
+) -> Option<cua_driver_core::protocol::ToolResult> {
+    if foreground && crate::apps::frontmost_pid() != Some(pid) {
+        return None;
+    }
+    let element = element.clone();
+    let checked = tokio::task::spawn_blocking(move || {
+        crate::input::ax_actions::ensure_ax_action_enabled(element.as_ptr(), action)
+    })
+    .await
+    .ok()?;
+    let error = checked.err()?;
+    let disabled = error.downcast_ref::<crate::input::ax_actions::ElementDisabled>()?;
+    Some(element_disabled_result(
+        pid, window_id, disabled, foreground,
+    ))
+}
+
+/// Hint shown with every `windowserver_connection_invalid` refusal.
+pub(crate) const WINDOWSERVER_INVALID_HINT: &str = "This daemon runs without its own app-bundle identity (a bare `cua-driver serve`), so macOS gives it no valid WindowServer connection and every no-raise focus step fails. Run the app-bundle daemon: `cua-driver permissions grant`.";
+
+/// Structured refusal for a background action whose no-raise focus step got
+/// `SLPSPostEventRecordTo` status 1002 (invalid connection). Nothing was sent
+/// to the target.
+pub(crate) fn windowserver_connection_refusal(
+    pid: i32,
+    window_id: Option<u32>,
+) -> cua_driver_core::protocol::ToolResult {
+    cua_driver_core::delivery::background_unavailable_result(
+        format!(
+            "Background input is not available for pid {pid}: the WindowServer connection is \
+             invalid (SLPSPostEventRecordTo returned 1002). {WINDOWSERVER_INVALID_HINT}"
+        ),
+        "background_unavailable",
+        "the daemon has no valid WindowServer connection, so no-raise focus cannot work; \
+         run the app-bundle daemon, or retry with delivery_mode:\"foreground\".",
+        serde_json::json!({
+            "reason": "windowserver_connection_invalid",
+            "status": crate::input::skylight::WINDOWSERVER_INVALID_CONNECTION,
+            "effect": "refused",
+            "pid": pid,
+            "window_id": window_id,
+            "hint": WINDOWSERVER_INVALID_HINT,
+        }),
+    )
+}
+
 /// Exclusive per-process ownership of one background mutation. Callers must
 /// keep this value alive through actuator dispatch, focus restoration, and
 /// target-bound verification.
+/// The window a pid-only call means: the app's focused window, else its
+/// frontmost on-screen window. Fills `window_id` for tools that need one
+/// when the caller named only the app's pid.
+pub(crate) fn default_window_for_pid(args: &mut serde_json::Value) {
+    let Some(object) = args.as_object_mut() else {
+        return;
+    };
+    if object
+        .get("window_id")
+        .is_some_and(|value| !value.is_null())
+    {
+        return;
+    }
+    let Some(pid) = object
+        .get("pid")
+        .and_then(serde_json::Value::as_i64)
+        .and_then(|pid| i32::try_from(pid).ok())
+    else {
+        return;
+    };
+    let focused = crate::ax::bindings::focused_window_id_of_pid(pid).map(|window| window.root);
+    let window_id = focused.or_else(|| {
+        crate::windows::all_windows()
+            .into_iter()
+            .filter(|window| window.pid == pid && window.is_on_screen && window.layer == 0)
+            .filter(|window| window.bounds.width >= 2.0 && window.bounds.height >= 2.0)
+            .max_by_key(|window| window.z_index)
+            .map(|window| window.window_id)
+    });
+    if let Some(window_id) = window_id {
+        object.insert("window_id".into(), serde_json::json!(window_id));
+    }
+}
+
 pub(crate) struct BackgroundMutationLease {
     pid: i32,
     _guard: tokio::sync::OwnedMutexGuard<()>,
@@ -239,6 +506,72 @@ async fn decide_background_window_action(
         }
     }
 }
+
+/// The keyboard action class for a window-addressed background key or text
+/// request. When the focus-record transport exists the exact window is made
+/// the app's key window for the duration of the post (see
+/// [`post_keys_to_window`]), so a second same-pid window is not ambiguous.
+/// Without it the caller's fail-closed `generic` class applies.
+pub(crate) fn window_keyboard_action(
+    generic: cua_driver_core::background_input::BackgroundAction,
+) -> cua_driver_core::background_input::BackgroundAction {
+    if crate::input::skylight::is_focus_without_raise_available() {
+        cua_driver_core::background_input::BackgroundAction::ExactWindowKeys
+    } else {
+        generic
+    }
+}
+
+/// Make `window_id` the app's key window, confirmed, for pid-routed keys.
+/// `Ok(None)` when no window is addressed or the SPIs are missing (keys go
+/// where they always did). `Err` carries the refusal text: no key may be
+/// posted, it could reach a sibling window.
+pub(crate) fn key_scope(
+    pid: i32,
+    window_id: Option<u32>,
+) -> Result<Option<crate::input::skylight::WindowKeyScope>, String> {
+    match window_id {
+        Some(wid) if crate::input::skylight::is_focus_without_raise_available() => {
+            crate::input::skylight::enter_exact_window_key(pid as libc::pid_t, wid).map(Some)
+        }
+        _ => Ok(None),
+    }
+}
+
+/// [`key_scope`] for an async tool: runs the blocking prime off the runtime and
+/// turns an unconfirmed key window into the structured `window_not_key`
+/// refusal. Foreground requests and pid-only calls hold no scope.
+pub(crate) async fn acquire_key_scope(
+    pid: i32,
+    window_id: Option<u32>,
+    foreground: bool,
+) -> Result<Option<crate::input::skylight::WindowKeyScope>, cua_driver_core::protocol::ToolResult> {
+    let Some(wid) = window_id.filter(|_| !foreground) else {
+        return Ok(None);
+    };
+    match tokio::task::spawn_blocking(move || key_scope(pid, Some(wid))).await {
+        Ok(Ok(scope)) => Ok(scope),
+        Ok(Err(_)) if crate::input::skylight::windowserver_connection_invalid() => {
+            Err(windowserver_connection_refusal(pid, Some(wid)))
+        }
+        Ok(Err(reason)) => Err(background_refusal_result(
+            pid,
+            wid,
+            &cua_driver_core::background_input::BackgroundRefusal {
+                code: WINDOW_NOT_KEY,
+                reason,
+                advice: Some("foreground"),
+            },
+        )),
+        Err(error) => Err(cua_driver_core::protocol::ToolResult::error(format!(
+            "Could not prepare the key window for pid {pid}: {error}"
+        ))),
+    }
+}
+
+/// Refusal code when the addressed window cannot be confirmed as the app's
+/// key window: no key is sent, none could be proven to reach it.
+pub(crate) const WINDOW_NOT_KEY: &str = "window_not_key";
 
 /// Acquire the per-PID mutation coordinator, gather fresh exact-target facts,
 /// and ask the pure core for one background decision. `element_ptr` must stay
@@ -428,16 +761,14 @@ async fn focused_element_holds_point(
                 return false;
             };
             let rect = crate::ax::bindings::element_screen_rect(focused);
-            let focused_window = if require_window {
-                crate::ax::exact_target::element_window_id(focused)
-            } else {
-                Some(wid)
-            };
+            let in_window = !require_window
+                || crate::ax::exact_target::element_window_id(focused)
+                    .is_some_and(|window| window.is(wid));
             core_foundation::base::CFRelease(focused as core_foundation::base::CFTypeRef);
             let Some(rect) = rect else {
                 return false;
             };
-            focused_window == Some(wid) && point_within_rect(rect, screen_x, screen_y)
+            in_window && point_within_rect(rect, screen_x, screen_y)
         }
     })
     .await
@@ -451,18 +782,26 @@ fn point_within_rect([rx, ry, rw, rh]: [f64; 4], x: f64, y: f64) -> bool {
     rw > 0.0 && rh > 0.0 && x >= rx && x < rx + rw && y >= ry && y < ry + rh
 }
 
+/// Default long-edge cap for screenshots; see [`DriverConfig::max_image_dimension`].
+pub const DEFAULT_MAX_IMAGE_DIMENSION: u32 = 1366;
+
 /// Runtime-mutable driver configuration persisted across calls within a session.
 pub struct DriverConfig {
-    /// Max screenshot dimension (0 = no limit). Applied during screenshot/zoom.
-    /// Default 1568 matches Swift's `CuaDriverConfig.defaultMaxImageDimension` —
+    /// Max screenshot dimension (0 = no limit). Applied during screenshot/zoom:
     /// the long edge is downscaled to this before encoding.
+    ///
+    /// Default 1366. High-resolution Claude models read images up to 2576 px
+    /// at ~w*h/750 tokens each, so a 1568x882 capture costs ~1.8k tokens and a
+    /// 1366x768 one ~1.4k; Anthropic's computer-use guidance names 1366x768 as
+    /// a lower-cost size with strong performance. Callers that need more
+    /// detail use `zoom` or a per-call/session `max_image_dimension`.
     pub max_image_dimension: u32,
 }
 
 impl Default for DriverConfig {
     fn default() -> Self {
         Self {
-            max_image_dimension: 1568,
+            max_image_dimension: DEFAULT_MAX_IMAGE_DIMENSION,
         }
     }
 }
@@ -498,23 +837,9 @@ pub fn load_driver_config() -> DriverConfig {
     cfg
 }
 
-/// Convert native pixels from `get_desktop_state` into the logical point space
-/// used by CoreGraphics input APIs. Retina scaled modes cannot rely on the
-/// nominal backing factor alone, so derive the ratio from the actual PNG.
-pub async fn desktop_screenshot_point(x: f64, y: f64) -> (f64, f64) {
-    let ratio = tokio::task::spawn_blocking(|| {
-        let logical_w = get_screen_size::main_screen_size().map(|(w, _, _)| w as f64);
-        let shot_w = crate::capture::screenshot_display_bytes()
-            .ok()
-            .and_then(|png| crate::capture::png_dimensions(&png).ok())
-            .map(|(w, _)| w as f64);
-        match (shot_w, logical_w) {
-            (Some(sw), Some(lw)) if lw > 0.0 && sw > lw => sw / lw,
-            _ => 1.0,
-        }
-    })
-    .await
-    .unwrap_or(1.0);
+/// Convert native pixels from `get_desktop_state` into logical points.
+pub fn desktop_screenshot_point(x: f64, y: f64) -> (f64, f64) {
+    let ratio = get_screen_size::main_screen_size().map_or(1.0, |(_, _, s)| s);
     (x / ratio, y / ratio)
 }
 
@@ -682,6 +1007,44 @@ impl ToolState {
     }
 }
 
+/// The target pid of an element-addressable call. An explicit `pid` wins; a
+/// call that carries only an `element_token` takes the pid the token was
+/// minted for, as the schemas promise ("the token carries it"). A pid that
+/// draws a system security or consent prompt is refused: its windows are the
+/// user's to answer.
+pub(super) fn target_pid(
+    state: &ToolState,
+    args: &serde_json::Value,
+) -> Result<i32, cua_driver_core::protocol::ToolResult> {
+    use cua_driver_core::tool_args::ArgsExt;
+    let pid = if args.get("pid").is_some_and(|pid| !pid.is_null()) {
+        Some(args.require_i32("pid")?)
+    } else {
+        state.snapshots.pid_for_token(args)
+    };
+    if let Some(pid) = pid {
+        crate::security_prompt::refuse_pid(
+            cua_driver_core::security_prompt::PromptInput::from_args(args),
+            pid,
+        )?;
+        return Ok(pid);
+    }
+    if args
+        .get("element_token")
+        .is_some_and(|token| !token.is_null())
+    {
+        // The token is gone, but a recently retired snapshot still says whose
+        // it was, so the refusal can name what is current for that process.
+        return Err(cua_driver_core::element_token::stale_token_without_pid(
+            state.snapshots.token_owner(args),
+        ));
+    }
+    Err(cua_driver_core::protocol::ToolResult::error(
+        "Missing required integer field: pid. Pass pid, or pass an element_token from the \
+         current get_window_state (a token names its own pid).",
+    ))
+}
+
 pub(super) fn screenshot_scale(
     state: &ToolState,
     args: &serde_json::Value,
@@ -720,10 +1083,8 @@ pub(crate) fn cursor_overlay_unavailable() -> cua_driver_core::protocol::ToolRes
     }))
 }
 
-/// Register all macOS tools into the registry. `compat=true` swaps the
-/// regular `screenshot` tool for the Claude Code computer-use compat
-/// variant — same name, stricter args, window-scoped JPEG @ 85% + a text
-/// note telling the caller to use pixel-addressed tools.
+/// Register all macOS tools into the registry. `compat` is retained for
+/// launch compatibility but currently has no effect on the tool surface.
 pub fn register_all(
     registry: &mut ToolRegistry,
     compat: bool,
@@ -737,6 +1098,12 @@ pub fn register_all(
         host_owns_permission_ux,
         host_bundle_id,
     ));
+    {
+        let state = state.clone();
+        registry.set_token_window_resolver(Arc::new(move |args| {
+            state.snapshots.window_for_token(args)
+        }));
+    }
     let cursor_outcome_reader = {
         let cursor_registry = state.cursor_registry.clone();
         cua_driver_core::session::register_scoped_cursor_outcome_reader(std::sync::Arc::new(
@@ -791,7 +1158,8 @@ pub fn register_all(
     }
     // Share the element cache with the recording-hook layer so it can
     // resolve element_index → window-local screenshot coords for click.png.
-    crate::recording_hooks::set_snapshots(state.snapshots.clone());
+    cua_driver_core::snapshot_store::register_runtime_store(&state.snapshots);
+    crate::recording_hooks::install();
 
     // Drop a disconnecting session's config overrides + owned cursor on
     // `session_end`. The daemon fans the session id out to this hook;
@@ -861,15 +1229,15 @@ pub fn register_all(
         drag::DragTool::new(state.clone()),
         &pid_window_candidates,
     ));
-    registry.register(pid_window_guarded(
+    registry.register(pid_keyboard_guarded(
         type_text::TypeTextTool::new(state.clone()),
         &pid_window_candidates,
     ));
-    registry.register(pid_window_guarded(
+    registry.register(pid_keyboard_guarded(
         press_key::PressKeyTool::new(state.clone()),
         &pid_window_candidates,
     ));
-    registry.register(pid_window_guarded(
+    registry.register(pid_keyboard_guarded(
         hotkey::HotkeyTool::new(state.clone()),
         &pid_window_candidates,
     ));
@@ -885,14 +1253,10 @@ pub fn register_all(
         registry,
         Arc::new(clipboard::MacosClipboard::new()),
     );
-    // The standalone `screenshot` tool was removed (#1692). The pixel-grounding
-    // screenshot the Claude Code computer-use compat loop relies on now comes
-    // from `get_window_state` (which always returns BOTH the tree AND a
-    // screenshot — perception is mode-agnostic; `capture_mode` is deprecated/
-    // ignored) for a window, or `get_desktop_state` for the whole screen.
-    // `compat` no longer gates a tool swap here — the flag's live purpose is to
-    // register the MCP server under the `cua-computer-use` name, which is what
-    // triggers Claude Code's computer-use beta-tool injection (see cli.rs).
+    // The standalone `screenshot` tool was removed in #1692. Window capture
+    // now comes from `get_window_state` (tree plus screenshot by default), while
+    // `get_desktop_state` handles explicit full-display capture. `capture_mode`
+    // is deprecated and ignored. `compat` no longer gates a tool swap here.
     let _ = compat;
     registry.register(Box::new(get_screen_size::GetScreenSizeTool));
     registry.register(Box::new(get_desktop_state::GetDesktopStateTool::new(
@@ -960,6 +1324,29 @@ pub fn register_all(
 }
 
 #[cfg(test)]
+mod registry_surface_tests {
+    use super::*;
+
+    fn names(compat: bool) -> Vec<String> {
+        let mut registry = ToolRegistry::new();
+        register_all(&mut registry, compat, false, false, None);
+        registry.tool_names().map(str::to_owned).collect()
+    }
+
+    #[test]
+    fn default_and_legacy_compat_surfaces_have_no_screenshot_tool() {
+        let default = names(false);
+        let compat = names(true);
+        assert!(!default.iter().any(|name| name == "screenshot"));
+        assert!(!compat.iter().any(|name| name == "screenshot"));
+        assert_eq!(
+            default, compat,
+            "legacy compat flag must remain surface-neutral"
+        );
+    }
+}
+
+#[cfg(test)]
 mod session_config_guard_tests {
     use super::*;
     use cua_driver_core::session::fire_session_end;
@@ -998,6 +1385,118 @@ mod session_config_guard_tests {
         reg.set(sid, overrides(800));
         let dim = reg.effective_max_image_dimension(Some(sid), &global);
         assert_eq!(dim, 800, "live session override must apply");
+    }
+}
+
+/// Input addressed to a process that draws a security prompt is refused
+/// before the tool does anything else, in every mode but unrestricted.
+/// Removing the pid guard from any of these routes fails here.
+#[cfg(test)]
+mod security_prompt_target_tests {
+    use super::*;
+    use crate::security_prompt::fixture::{PromptShown, PROMPT_PID};
+    use cua_driver_core::security_prompt::{ALLOW_ARG, SECURITY_PROMPT_PROTECTED};
+    use cua_driver_core::tool::Tool;
+
+    fn tools() -> Vec<(&'static str, Box<dyn Tool>, serde_json::Value)> {
+        let state = Arc::new(ToolState::new(false, false, None));
+        let pid = PROMPT_PID;
+        vec![
+            (
+                "click",
+                Box::new(click::ClickTool::new(state.clone())),
+                serde_json::json!({"pid": pid, "window_id": 1, "x": 5, "y": 5}),
+            ),
+            (
+                "double_click",
+                Box::new(double_click::DoubleClickTool::new(state.clone())),
+                serde_json::json!({"pid": pid, "window_id": 1, "x": 5, "y": 5}),
+            ),
+            (
+                "right_click",
+                Box::new(right_click::RightClickTool::new(state.clone())),
+                serde_json::json!({"pid": pid, "window_id": 1, "x": 5, "y": 5}),
+            ),
+            (
+                "scroll",
+                Box::new(scroll::ScrollTool::new(state.clone())),
+                serde_json::json!({"pid": pid, "window_id": 1, "direction": "down"}),
+            ),
+            (
+                "drag",
+                Box::new(drag::DragTool::new(state.clone())),
+                serde_json::json!({"pid": pid, "window_id": 1, "from_x": 1, "from_y": 1, "to_x": 2, "to_y": 2}),
+            ),
+            (
+                "type_text",
+                Box::new(type_text::TypeTextTool::new(state.clone())),
+                serde_json::json!({"pid": pid, "window_id": 1, "text": "x"}),
+            ),
+            (
+                "type_text_chars",
+                Box::new(type_text_chars::TypeTextCharsTool::new(state.clone())),
+                serde_json::json!({"pid": pid, "text": "x"}),
+            ),
+            (
+                "press_key",
+                Box::new(press_key::PressKeyTool::new(state.clone())),
+                serde_json::json!({"pid": pid, "window_id": 1, "key": "return"}),
+            ),
+            (
+                "hotkey",
+                Box::new(hotkey::HotkeyTool::new(state.clone())),
+                serde_json::json!({"pid": pid, "window_id": 1, "keys": ["cmd", "a"]}),
+            ),
+            (
+                "set_value",
+                Box::new(set_value::SetValueTool::new(state.clone())),
+                serde_json::json!({"pid": pid, "window_id": 1, "element_index": 0, "value": "x"}),
+            ),
+            (
+                "invoke_menu",
+                Box::new(invoke_menu::InvokeMenuTool),
+                serde_json::json!({"pid": pid, "window_id": 1, "path": ["File", "Close"]}),
+            ),
+        ]
+    }
+
+    fn code(result: &cua_driver_core::protocol::ToolResult) -> Option<String> {
+        let structured = result.structured_content.as_ref()?;
+        structured
+            .pointer("/refusal/code")
+            .or_else(|| structured.get("code"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+    }
+
+    #[tokio::test]
+    async fn input_addressed_to_a_prompt_owner_is_refused() {
+        let _prompt = PromptShown::start();
+        for (name, tool, args) in tools() {
+            let result = tool.invoke(args).await;
+            assert_eq!(result.is_error, Some(true), "{name}");
+            assert_eq!(
+                code(&result).as_deref(),
+                Some(SECURITY_PROMPT_PROTECTED),
+                "{name}: {result:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn unrestricted_mode_lets_the_call_past_the_prompt_guard() {
+        let _prompt = PromptShown::start();
+        for (name, tool, mut args) in tools() {
+            args[ALLOW_ARG] = serde_json::json!(true);
+            let result = tool.invoke(args).await;
+            // The fixture pid is not a real process, so the call fails later
+            // for that reason; it must not fail for the prompt.
+            assert_ne!(
+                code(&result).as_deref(),
+                Some(SECURITY_PROMPT_PROTECTED),
+                "{name}: {result:?}"
+            );
+        }
     }
 }
 
@@ -1078,7 +1577,7 @@ mod pixel_focus_readback_tests {
 
 #[cfg(test)]
 mod recording_start_guard_tests {
-    use cua_driver_core::recording::RecordingSession;
+    use cua_driver_core::recording::{RecordingSession, StopBy};
     use cua_driver_core::session::fire_session_end;
 
     #[test]
@@ -1110,7 +1609,7 @@ mod recording_start_guard_tests {
         let ok = rec.start(dir.to_str().unwrap(), false, Some(sid));
         assert!(ok.is_ok(), "start for a live session owner must succeed");
         assert!(rec.current_state().enabled);
-        let _ = rec.stop_owner(Some(sid));
+        let _ = rec.stop(StopBy::Owner(sid));
     }
 
     #[test]
@@ -1121,6 +1620,59 @@ mod recording_start_guard_tests {
         let ok = rec.start(dir.to_str().unwrap(), false, None);
         assert!(ok.is_ok(), "anonymous start must never be gated");
         assert!(rec.current_state().enabled);
-        let _ = rec.stop_owner(None);
+        let _ = rec.stop(StopBy::Anyone);
+    }
+}
+
+#[cfg(test)]
+mod windowserver_refusal_tests {
+    use super::*;
+
+    #[test]
+    fn refusal_names_the_reason_and_the_app_bundle_daemon() {
+        let result = windowserver_connection_refusal(42, Some(7));
+        assert_eq!(result.is_error, Some(true));
+        let structured = result.structured_content.expect("structured");
+        assert_eq!(structured["code"], "background_unavailable");
+        assert_eq!(structured["reason"], "windowserver_connection_invalid");
+        assert_eq!(structured["status"], 1002);
+        assert_eq!(structured["window_id"], 7);
+        assert!(structured["hint"]
+            .as_str()
+            .unwrap()
+            .contains("cua-driver permissions grant"));
+    }
+}
+
+#[cfg(test)]
+mod element_disabled_tests {
+    use super::*;
+    use crate::input::ax_actions::ElementDisabled;
+
+    fn disabled() -> ElementDisabled {
+        ElementDisabled {
+            action: "set_value".into(),
+        }
+    }
+
+    #[test]
+    fn background_app_refusal_is_coded_and_escalates_to_foreground() {
+        let result = disabled_refusal(42, 7, &disabled(), true);
+        assert_eq!(result.is_error, Some(true));
+        let structured = result.structured_content.expect("structured");
+        assert_eq!(structured["code"], "element_disabled");
+        assert_eq!(structured["effect"], "refused");
+        assert_eq!(structured["action"], "set_value");
+        assert_eq!(structured["window_id"], 7);
+        // run_steps' foreground_fallback keys off this field.
+        assert_eq!(structured["escalation"]["recommended"], "foreground");
+    }
+
+    #[test]
+    fn frontmost_app_refusal_does_not_suggest_fronting() {
+        let result = disabled_refusal(42, 7, &disabled(), false);
+        let structured = result.structured_content.expect("structured");
+        assert_eq!(structured["code"], "element_disabled");
+        assert!(structured.get("escalation").is_none(), "{structured}");
     }
 }

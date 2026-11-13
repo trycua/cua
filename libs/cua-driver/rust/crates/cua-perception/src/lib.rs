@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Length-prefixed stdio protocol and offline inference worker.
 //!
 //! Production startup requires a local model manifest and a local ONNX Runtime

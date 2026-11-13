@@ -91,7 +91,12 @@ export function thisMachineSpace(status: HostStatus | null, now: number, os: Spa
 }
 
 /** The roster with "This machine" first. */
-export function withThisMachine(spaces: Space[], status: HostStatus | null, now: number, os: SpaceOs = hostOs()): Space[] {
+export function withThisMachine(
+  spaces: Space[],
+  status: HostStatus | null,
+  now: number,
+  os: SpaceOs = hostOs(),
+): Space[] {
   return core("host.withThisMachine", { spaces, status: summaryInput(status), now, os });
 }
 
@@ -103,7 +108,8 @@ export type HostActionId =
   | "share-desktop"
   | "hide-desktop"
   | "provide-spaces"
-  | "stop-providing-spaces";
+  | "stop-providing-spaces"
+  | "sign-in";
 
 /** One of the two settings, drawn as a switch (`host::HostToggle`). */
 export interface HostToggle {
@@ -171,6 +177,10 @@ export interface HostAction {
   label: string;
   destructive: boolean;
   confirm?: HostConfirm | null;
+  /** Can be pressed now (Resume sharing is not while nothing is on to share). */
+  enabled?: boolean;
+  /** The tooltip, when it says more than the label. */
+  help?: string | null;
 }
 
 export function hostPanel(status: HostStatus | null): HostPanelView {

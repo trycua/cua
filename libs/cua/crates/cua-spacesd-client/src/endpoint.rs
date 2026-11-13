@@ -3,7 +3,6 @@
 //! Accepted forms:
 //! - `http://host:port`, `https://host:port` (optionally with a path prefix),
 //! - a bare `host:port` or `host` (plain HTTP, default port 3211),
-//! - a Fleet gateway service URL `https://run.cua.ai/api/svc/<ns>/<sandbox>-<service>`,
 //! - a relay machine URL `https://relay.example/m/<machine-id>`.
 
 use crate::error::{Error, Result};
@@ -16,14 +15,6 @@ use url::Url;
 pub enum EndpointKind {
     /// The spacesd listener itself (loopback, LAN, VM IP, container port).
     Direct,
-    /// Through the Fleet gateway's `/api/svc/<namespace>/<service>` proxy.
-    /// The proxy speaks HTTP/1.1 upstream, so only gRPC-Web works.
-    FleetGateway {
-        /// Pool namespace.
-        namespace: String,
-        /// Kubernetes service name (`<sandbox>-<logical service>`).
-        service: String,
-    },
     /// Through a `cua-relay` reverse tunnel (`/m/<machine-id>`).
     Relay {
         /// Machine id registered with the relay.
@@ -105,18 +96,6 @@ impl Endpoint {
         Ok(Self { base: url, kind })
     }
 
-    /// The Fleet gateway URL for `<sandbox>-<service>` in `namespace`, the
-    /// same route `cyclops-sdk`'s `service_request` uses.
-    pub fn fleet_service(
-        fleet_base_url: &str,
-        namespace: &str,
-        sandbox: &str,
-        service: &str,
-    ) -> Result<Self> {
-        let base = fleet_base_url.trim_end_matches('/');
-        Self::parse(&format!("{base}/api/svc/{namespace}/{sandbox}-{service}"))
-    }
-
     /// Base URL (no trailing slash).
     pub fn base_url(&self) -> &Url {
         &self.base
@@ -189,10 +168,6 @@ fn classify(url: &Url) -> EndpointKind {
         .map(|s| s.filter(|p| !p.is_empty()).collect())
         .unwrap_or_default();
     match segments.as_slice() {
-        ["api", "svc", namespace, service, ..] => EndpointKind::FleetGateway {
-            namespace: (*namespace).to_string(),
-            service: (*service).to_string(),
-        },
         ["m", machine_id, ..] => EndpointKind::Relay {
             machine_id: (*machine_id).to_string(),
         },
@@ -228,26 +203,6 @@ mod tests {
             e.ws_url("/media?ticket=a"),
             "wss://env.example.com/media?ticket=a"
         );
-    }
-
-    #[test]
-    fn fleet_gateway_url_is_classified() {
-        let e = Endpoint::parse("https://run.cua.ai/api/svc/pool-a/sbx-1-env/").unwrap();
-        assert_eq!(
-            e.kind(),
-            &EndpointKind::FleetGateway {
-                namespace: "pool-a".into(),
-                service: "sbx-1-env".into()
-            }
-        );
-        assert_eq!(e.path_prefix(), "/api/svc/pool-a/sbx-1-env");
-        assert_eq!(
-            e.http_url("/cua.env.v1.SystemService/GetCapabilities"),
-            "https://run.cua.ai/api/svc/pool-a/sbx-1-env/cua.env.v1.SystemService/GetCapabilities"
-        );
-        let built =
-            Endpoint::fleet_service("https://run.cua.ai/", "pool-a", "sbx-1", "env").unwrap();
-        assert_eq!(built, e);
     }
 
     #[test]

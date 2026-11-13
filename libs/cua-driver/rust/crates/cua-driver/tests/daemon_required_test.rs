@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Public tool transports must fail closed when no daemon is reachable.
 
 use std::io::Write as _;
@@ -160,7 +163,7 @@ fn named_session_survives_across_one_shot_cli_calls() {
     );
     assert!(!started.is_error(), "start failed: {}", started.text());
 
-    let state = driver.call("get_session_state", serde_json::json!({"session": session}));
+    let state = driver.call("get_session", serde_json::json!({"session": session}));
     assert!(
         !state.is_error(),
         "named session did not survive the next CLI process: {}",
@@ -242,7 +245,7 @@ fn cli_call_strips_a_utf8_bom_from_piped_stdin_arguments() {
         String::from_utf8_lossy(&started.stderr)
     );
 
-    let state = driver.call("get_session_state", serde_json::json!({"session": session}));
+    let state = driver.call("get_session", serde_json::json!({"session": session}));
     assert!(
         !state.is_error(),
         "BOM-prefixed arguments were not applied: {}",
@@ -267,7 +270,7 @@ fn implicitly_started_named_session_survives_across_one_shot_cli_calls() {
         first_action.text()
     );
 
-    let state = driver.call("get_session_state", serde_json::json!({"session": session}));
+    let state = driver.call("get_session", serde_json::json!({"session": session}));
     assert!(
         !state.is_error(),
         "implicitly started session did not survive the next CLI process: {}",
@@ -304,7 +307,7 @@ fn named_cli_session_cleanup_is_isolated() {
         anonymous.text()
     );
 
-    let state = driver.call("get_session_state", serde_json::json!({"session": second}));
+    let state = driver.call("get_session", serde_json::json!({"session": second}));
     assert!(
         !state.is_error(),
         "ending another named session or cleaning an anonymous call ended the survivor: {}",
@@ -343,7 +346,7 @@ fn revoke_cli_ends_the_exact_live_session() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let state = driver.call("get_session_state", serde_json::json!({"session": session}));
+    let state = driver.call("get_session", serde_json::json!({"session": session}));
     assert!(state.is_error());
 }
 

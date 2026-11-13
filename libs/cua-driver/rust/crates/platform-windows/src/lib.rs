@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Windows platform backend for cua-driver-rs.
 //!
 //! Background automation on Windows via:
@@ -28,7 +31,6 @@ pub mod diagnostics;
 pub mod dpi;
 pub mod health_report;
 pub mod overlay;
-pub mod pip;
 pub mod recording_hooks;
 pub mod terminal;
 pub mod tools;
@@ -71,6 +73,13 @@ pub fn install_pointer_shape_backend() -> bool {
         false
     }
 }
+
+#[cfg(any(target_os = "windows", test))]
+mod process_selection;
+
+// Pure restore rule for foreground input turns; runs its table test on any host.
+#[cfg(any(target_os = "windows", test))]
+mod typing_turn;
 
 #[cfg(target_os = "windows")]
 pub mod win32;
@@ -134,10 +143,8 @@ pub fn register_tools() -> ToolRegistry {
     tools::build_registry(false)
 }
 
-/// `compat=true` enables Claude Code computer-use compatibility mode:
-/// the regular `screenshot` tool is replaced by a window-scoped variant
-/// (pid + window_id required, JPEG @ 85%, text note pointing at pixel
-/// tools). See `tools::impl_::ScreenshotCompatTool`.
+/// `compat` is a legacy Claude Code compatibility flag with no current
+/// tool-surface effect. It remains accepted for launch compatibility.
 pub fn register_tools_with_cursor(cfg: cursor_overlay::CursorConfig, compat: bool) -> ToolRegistry {
     register_tools_with_cursor_and_provider(None, cfg, compat)
 }

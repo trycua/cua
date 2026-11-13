@@ -599,6 +599,27 @@ mod tests {
     }
 
     #[test]
+    fn edge_on_windows_teleports_through_the_chrome_provider() {
+        let edge = HostApp {
+            name: "Microsoft Edge".into(),
+            app_id: None,
+            path: r"C:\\ProgramData\\Start Menu\\Microsoft Edge.lnk".into(),
+            version: None,
+            icon: None,
+            platform: Platform::Windows,
+        };
+        let e = classify(
+            &edge,
+            &providers(),
+            Platform::Windows,
+            &TargetHint::default(),
+        );
+        assert_eq!(e.id, "edge");
+        assert_eq!(e.provider_id.as_deref(), Some("chrome"));
+        assert_eq!(e.capability, Capability::Full);
+    }
+
+    #[test]
     fn the_target_table_parses_and_names_real_installables_and_providers() {
         let ids = crate::layout::PROVIDER_IDS;
         for (id, t) in targets() {

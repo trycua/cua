@@ -248,6 +248,45 @@ class ObserverAnalysisTests(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 primary_wire_state(data)
 
+    def test_stable_baseline_lock_passes_and_is_reported_but_held_state_still_refuses(self):
+        locked = BASE.replace(b'modifiers(3, 0, 0, 0, 0)', b'modifiers(3, 0, 0, 16, 0)')
+        self.assertEqual(primary_wire_state(BASE)['baseline_locked_modifiers'], 0)
+        self.assertEqual(primary_wire_state(locked)['baseline_locked_modifiers'], 16)
+        for modifiers in (b'1, 0, 16, 0', b'0, 2, 16, 0', b'0, 0, 16, 1', b'4, 0, 0, 0',
+                          b'0, 0, -1, 0', b'0, 0, 4294967296, 0'):
+            with self.subTest(modifiers=modifiers), self.assertRaisesRegex(AssertionError, 'not idle'):
+                primary_wire_state(BASE.replace(b'modifiers(3, 0, 0, 0, 0)', b'modifiers(3, ' + modifiers + b')'))
+        with self.assertRaisesRegex(AssertionError, 'not idle'):
+            primary_wire_state(locked + wire('wl_keyboard#6.key(5, 101, 69, 1)'))
+        with self.assertRaisesRegex(AssertionError, 'not idle'):
+            primary_wire_state(wire('wl_pointer#5.enter(1, wl_surface#10, 300.0, 300.0)',
+                                    'wl_keyboard#6.enter(2, wl_surface#10, array[0])',
+                                    'wl_pointer#5.button(4, 100, 272, 1)'))
+
+    def test_lock_changes_and_return_during_interval_still_fail(self):
+        base = BASE.replace(b'modifiers(3, 0, 0, 0, 0)', b'modifiers(3, 0, 0, 16, 0)')
+        def run_with(events):
+            values = list(observation(events))
+            data = base + values[3][len(BASE):]
+            offset = len(base) - len(BASE)
+            for marker in values[:2]:
+                marker = marker['marker']
+                marker['wire_start'] += offset
+                marker['wire_end'] += offset
+            values[3] = data
+            return analyze(*values)
+        self.assertEqual(run_with(b'')['result'], 'passed')
+        self.assertEqual(run_with(b'')['primary']['baseline_locked_modifiers'], 16)
+        for events in (wire('wl_keyboard#6.modifiers(5, 0, 0, 0, 0)'),
+                       wire('wl_keyboard#6.modifiers(5, 0, 0, 48, 0)'),
+                       wire('wl_keyboard#6.modifiers(5, 0, 0, 0, 0)', 'wl_keyboard#6.modifiers(6, 0, 0, 16, 0)'),
+                       wire('wl_keyboard#6.modifiers(5, 0, 0, 16, 0)')):
+            with self.subTest(events=events):
+                result = run_with(events)
+                self.assertEqual(result['result'], 'failed')
+                self.assertTrue(any(row['interface'] == 'wl_keyboard' for row in result['violations']
+                                    if row['kind'] == 'wire_event'))
+
     def test_raw_evidence_cannot_be_partial_malformed_reordered_or_from_another_producer(self):
         rows = observation()[2]
         data = b''.join((json.dumps(row) + '\n').encode() for row in rows)

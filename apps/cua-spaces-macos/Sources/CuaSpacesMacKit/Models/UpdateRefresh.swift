@@ -110,6 +110,10 @@ public struct UpdateRefresh: Sendable {
         let plan = appAboutAfterLaunch(input: AppLaunchInput(
             lastSeen: settings.lastSeenVersion, version: version, build: build, onboarded: onboarded))
         if let save = plan.save {
+            // An install's first launch: a prerelease's starts on Nightly.
+            if settings.lastSeenVersion == nil {
+                settings.updateChannel = appSettingsFirstLaunchChannel(channel: settings.updateChannel, version: version)
+            }
             settings.lastSeenVersion = save
             try? appSettingsSave(path: settingsPath, settings: settings)
         }

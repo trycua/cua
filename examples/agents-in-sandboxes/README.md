@@ -52,10 +52,10 @@ each `check`, and writes `report.json`:
 ```
 
 Other options: `--image` takes any image with cua-spacesd (a registry image or
-a benchmark image), `--connect local:NAME` reuses a sandbox, `--cloud` creates
-it on Fleet, `--harness` takes any id from `cua agent harnesses`,
-`--base-url`/`--model` point it at a proxy or gateway, `--no-sandbox-mcp`
-drops the sandbox's own MCP tools. The exit code is 1 when a check failed.
+a benchmark image), `--connect local:NAME` reuses a sandbox, `--harness`
+takes any id from `cua agent harnesses`, `--base-url`/`--model` point it at a
+proxy or gateway, `--no-sandbox-mcp` drops the sandbox's own MCP tools. The
+exit code is 1 when a check failed.
 
 ## Run it against the mock provider
 

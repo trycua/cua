@@ -51,6 +51,10 @@ class HarnessWindow(Gtk.Window):
         self.hotkeys = 0
         self._drag_modifier_seen = False
         self.drag_events = 0
+        self._slider_held = False
+        self.slider_presses = 0
+        self.slider_releases = 0
+        self._effect_during_drag = "none"
 
         # Top-level scroller so every control is reachable even on a short window.
         scroller = Gtk.ScrolledWindow()
@@ -86,6 +90,19 @@ class HarnessWindow(Gtk.Window):
         rst.connect("clicked", self.on_reset)
         btn_row.pack_start(inc, False, False, 0)
         btn_row.pack_start(rst, False, False, 0)
+        # A banner drawn over a button, in this row so the layout keeps its
+        # height. GtkOverlay lists its main child first and draws its
+        # overlays above it; ATK's at-point answers with the first child.
+        overlay = Gtk.Overlay()
+        covered = aid(Gtk.Button(label="Covered action"), "btn-overlay-covered")
+        covered.connect("clicked", self.on_overlay, "covered")
+        overlay.add(covered)
+        banner = aid(Gtk.Button(label="Banner action"), "btn-overlay-banner")
+        banner.connect("clicked", self.on_overlay, "banner")
+        overlay.add_overlay(banner)
+        btn_row.pack_start(overlay, False, False, 0)
+        self.overlay_status = Gtk.Label(label="overlay_action=none", xalign=0)
+        btn_row.pack_start(self.overlay_status, False, False, 0)
         root.pack_start(btn_row, False, False, 0)
 
         # ── text_body (static marker) ─────────────────────────────────────
@@ -127,9 +144,17 @@ class HarnessWindow(Gtk.Window):
         self.scale = aid(Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, adjustment=adj), "sld-value")
         self.scale.set_draw_value(False)
         self.scale.connect("value-changed", self.on_scale)
+        self.scale.connect("button-press-event", self.on_scale_button, True)
+        self.scale.connect("button-release-event", self.on_scale_button, False)
         root.pack_start(self.scale, False, False, 0)
         self.scale_status = Gtk.Label(label="slider_value=0", xalign=0)
         root.pack_start(self.scale_status, False, False, 0)
+        # Desktop-lane E2E: names an effect that landed while a slider drag
+        # still held the pointer button.
+        self.lane_status = Gtk.Label(
+            label="slider_presses=0 slider_releases=0 effect_during_drag=none", xalign=0
+        )
+        root.pack_start(self.lane_status, False, False, 0)
 
         # ── checkable_controls ────────────────────────────────────────────
         section(root, "checkable")
@@ -138,6 +163,17 @@ class HarnessWindow(Gtk.Window):
         root.pack_start(self.chk, False, False, 0)
         self.chk_status = Gtk.Label(label="agreed=False", xalign=0)
         root.pack_start(self.chk_status, False, False, 0)
+
+        # ── disabled_control (opt-in) ─────────────────────────────────────
+        # CUA_GTK3_DISABLED_CONTROL=1: an insensitive checkbox, published with
+        # enabled: false, whose token actions must be refused unchanged.
+        if os.environ.get(DISABLED_CONTROL_ENV, "").strip() == "1":
+            self.disabled_chk = aid(Gtk.CheckButton(label="Unavailable option"), "chk-disabled")
+            self.disabled_chk.set_sensitive(False)
+            self.disabled_chk.connect("toggled", self.on_disabled_chk)
+            root.pack_start(self.disabled_chk, False, False, 0)
+            self.disabled_status = Gtk.Label(label="disabled_checked=False", xalign=0)
+            root.pack_start(self.disabled_status, False, False, 0)
 
         # ── multi-selection ───────────────────────────────────────────────
         section(root, "multi selection")
@@ -220,6 +256,7 @@ class HarnessWindow(Gtk.Window):
 
     def on_entry_changed(self, entry):
         self.mirror.set_text(f"mirror={entry.get_text()}")
+        self.note_effect_during_drag("text")
 
     def on_click_target(self, *_):
         self.clicks += 1
@@ -261,8 +298,32 @@ class HarnessWindow(Gtk.Window):
     def on_scale(self, s):
         self.scale_status.set_text(f"slider_value={int(s.get_value())}")
 
+    def on_scale_button(self, _w, ev, held):
+        if ev.button == 1:
+            self._slider_held = held
+            if held:
+                self.slider_presses += 1
+            else:
+                self.slider_releases += 1
+            self.publish_lane_status()
+        return False
+
+    def note_effect_during_drag(self, effect):
+        if self._slider_held:
+            self._effect_during_drag = effect
+            self.publish_lane_status()
+
+    def publish_lane_status(self):
+        self.lane_status.set_text(
+            f"slider_presses={self.slider_presses} slider_releases={self.slider_releases} "
+            f"effect_during_drag={self._effect_during_drag}"
+        )
+
     def on_chk(self, c):
         self.chk_status.set_text(f"agreed={c.get_active()}")
+
+    def on_disabled_chk(self, c):
+        self.disabled_status.set_text(f"disabled_checked={c.get_active()}")
 
     def on_selection_changed(self, list_box):
         values = sorted(
@@ -283,6 +344,7 @@ class HarnessWindow(Gtk.Window):
     def on_native_menu_left(self, _w):
         self._menu_action = "window_arrange_left"
         self.ctx_status.set_text("menu_action=window_arrange_left")
+        self.note_effect_during_drag("menu")
 
     def on_key_press(self, _w, ev):
         key = (Gdk.keyval_name(ev.keyval) or "unknown").lower()
@@ -303,11 +365,15 @@ class HarnessWindow(Gtk.Window):
     def on_scroll(self, adj):
         self.scroll_status.set_text(f"scroll_offset={int(adj.get_value())}")
 
+    def on_overlay(self, _w, which):
+        self.overlay_status.set_text(f"overlay_action={which}")
+
     def on_open_popover(self, *_):
         self.popover.show_all()
         self.popover_status.set_text("popover_open=True")
 
 
+DISABLED_CONTROL_ENV = "CUA_GTK3_DISABLED_CONTROL"
 TASK_STATE_ENV = "CUA_GTK3_TASK_STATE"
 TASK_STATE_SCHEMA = "cua.gtk3_task_state_v1"
 TASK_DENSITY_ENV = "CUA_GTK3_TASK_DENSITY"

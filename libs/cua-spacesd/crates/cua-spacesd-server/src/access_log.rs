@@ -49,7 +49,11 @@ pub struct AccessBody {
     pub via: String,
     /// Who: the verified identity, or `token` (plus a claimed name).
     pub who: String,
-    /// What: the gRPC service (`ProcessService`, ...) or `MCP`.
+    /// What: the gRPC service (`ProcessService`, ...) or `MCP`; a
+    /// background call as `<Service>/<Method> (background)`, a thumbnail
+    /// as `ComputerService/Screenshot (thumbnail[, not owner])`, a refusal
+    /// as `refused <Service> (<why>)` (see `auth::call_what`). Readers
+    /// classify by these forms; the host decides them, never the caller.
     pub what: String,
     /// The previous entry's `hash` (or [`GENESIS`]).
     pub prev: String,

@@ -131,6 +131,10 @@ fn click_button_schema(generator: &mut SchemaGenerator) -> Schema {
     ClickButton::json_schema(generator)
 }
 
+fn input_delivery_mode_schema(generator: &mut SchemaGenerator) -> Schema {
+    InputDeliveryMode::json_schema(generator)
+}
+
 fn scroll_by_schema(generator: &mut SchemaGenerator) -> Schema {
     ScrollBy::json_schema(generator)
 }
@@ -153,10 +157,6 @@ fn scroll_amount_schema(_: &mut SchemaGenerator) -> Schema {
 
 fn cursor_theme_id_schema(_: &mut SchemaGenerator) -> Schema {
     json_schema!({ "type": "string", "minLength": 1, "maxLength": 200 })
-}
-
-fn escalation_detail_schema(_: &mut SchemaGenerator) -> Schema {
-    json_schema!({ "type": "string", "maxLength": 200 })
 }
 
 fn capture_scope_schema(_: &mut SchemaGenerator) -> Schema {
@@ -199,39 +199,6 @@ impl CaptureScope {
 impl std::fmt::Display for CaptureScope {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(self.as_str())
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
-#[serde(rename_all = "snake_case")]
-pub enum EscalationReason {
-    AxTreePixelMismatch,
-    BackgroundDeliveryFailed,
-    ForegroundIneffective,
-    NoWindowTarget,
-    Other,
-}
-
-impl EscalationReason {
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "ax_tree_pixel_mismatch" => Some(Self::AxTreePixelMismatch),
-            "background_delivery_failed" => Some(Self::BackgroundDeliveryFailed),
-            "foreground_ineffective" => Some(Self::ForegroundIneffective),
-            "no_window_target" => Some(Self::NoWindowTarget),
-            "other" => Some(Self::Other),
-            _ => None,
-        }
-    }
-
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::AxTreePixelMismatch => "ax_tree_pixel_mismatch",
-            Self::BackgroundDeliveryFailed => "background_delivery_failed",
-            Self::ForegroundIneffective => "foreground_ineffective",
-            Self::NoWindowTarget => "no_window_target",
-            Self::Other => "other",
-        }
     }
 }
 
@@ -368,35 +335,6 @@ pub struct StartSessionInput {
 
 impl ToolInput for StartSessionInput {
     const TOOL_NAME: &'static str = "start_session";
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
-pub struct EscalateSessionInput {
-    /// Public label of the legacy capture-scope session to escalate.
-    pub session: String,
-    /// Why the window-scoped attempt failed and desktop capture is needed.
-    pub reason: EscalationReason,
-    /// Optional bounded diagnostic detail. Never use secrets or page content.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(schema_with = "escalation_detail_schema")]
-    pub detail: Option<String>,
-}
-
-impl ToolInput for EscalateSessionInput {
-    const TOOL_NAME: &'static str = "escalate_session";
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
-pub struct GetSessionStateInput {
-    /// Optional public label. When omitted, inspect the caller's attached
-    /// implicit session.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(schema_with = "string_schema")]
-    pub session: Option<String>,
-}
-
-impl ToolInput for GetSessionStateInput {
-    const TOOL_NAME: &'static str = "get_session_state";
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
@@ -745,6 +683,13 @@ pub struct InvokeMenuInput {
     /// (1 to 16 labels).
     #[schemars(schema_with = "menu_path_schema")]
     pub path: Vec<String>,
+    /// `background` (default) never takes the user's keyboard or pointer and refuses with
+    /// `background_unavailable` when the item can only be reached by opening a menu. `foreground`
+    /// is the explicit escalation that may activate the window and open menus. Linux honors it;
+    /// macOS and Windows accept it and keep their existing menu behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "input_delivery_mode_schema")]
+    pub delivery_mode: Option<InputDeliveryMode>,
     /// For multi-call work, prefer a short public session label and repeat it on every call that
     /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
     #[serde(default, skip_serializing_if = "Option::is_none")]

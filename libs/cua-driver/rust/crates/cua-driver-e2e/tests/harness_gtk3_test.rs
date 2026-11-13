@@ -36,15 +36,18 @@ fn harness_exe() -> std::path::PathBuf {
 }
 
 fn launch(driver: &mut McpDriver) -> (u32, u64) {
+    launch_with_env(driver, &[])
+}
+
+fn launch_with_env(driver: &mut McpDriver, env: &[(&str, &str)]) -> (u32, u64) {
     let exe = harness_exe();
     assert!(exe.exists(), "required GTK3 harness is missing: {exe:?}");
+    let mut command = Command::new(&exe);
+    command.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+    command.envs(env.iter().copied());
     driver
         .reaper()
-        .spawn(
-            Command::new(&exe)
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit()),
-        )
+        .spawn(&mut command)
         .unwrap_or_else(|error| panic!("launch GTK3 harness {exe:?}: {error}"));
 
     let deadline = Instant::now() + Duration::from_secs(12);
@@ -523,6 +526,169 @@ fn harness_gtk3_stale_element_token_fails_closed() {
     );
 }
 
+/// A disabled control is indexed and published with `enabled: false` and a
+/// frame, and every token writer refuses it as `element_disabled` without
+/// changing it, as on macOS.
+#[test]
+#[ignore]
+fn harness_gtk3_disabled_control_is_published_and_its_writers_refused() {
+    let case = native_readonly_case(
+        "gtk3",
+        "disabled_control_refused",
+        Targeting::Ax,
+        DriverRoute::AxRead,
+        vec![OracleKind::AxState],
+    );
+    let cell_id = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_named(&cell_id).expect("start source-built Linux driver");
+        *evidence = recording_evidence(driver.recording_dir());
+        let (pid, window_id) = launch_with_env(&mut driver, &[("CUA_GTK3_DISABLED_CONTROL", "1")]);
+        driver.start_behavior_recording();
+        let state = snapshot(&mut driver, pid, window_id);
+        assert!(
+            state.tree_text().contains("disabled_checked=False"),
+            "disabled checkbox did not start unchecked:\n{}",
+            state.tree_text()
+        );
+        let index = element_index(&state, "chk-disabled");
+        let row = state
+            .tree_text()
+            .lines()
+            .find(|line| line.contains("chk-disabled"))
+            .unwrap_or_default();
+        assert!(
+            row.contains("enabled=false"),
+            "the disabled checkbox row does not say so: {row}"
+        );
+        let element = state.structured()["elements"]
+            .as_array()
+            .and_then(|elements| {
+                elements
+                    .iter()
+                    .find(|element| element["element_index"].as_u64() == Some(index))
+            })
+            .cloned()
+            .expect("the disabled checkbox is missing from elements");
+        assert_eq!(element["enabled"], false, "{element}");
+        assert!(
+            element["frame"]["w"].as_f64().unwrap_or(0.0) > 0.0,
+            "the disabled checkbox has no frame: {element}"
+        );
+
+        let token = &element["element_token"];
+        let writers = [
+            ("click", serde_json::json!({})),
+            ("click", serde_json::json!({ "button": "middle" })),
+            ("set_value", serde_json::json!({ "value": "1" })),
+            ("type_text", serde_json::json!({ "text": "x" })),
+            // Background pointer gestures on an app that discards synthetic
+            // input are refused before the target is read, so these ask for
+            // the delivery that would otherwise reach it.
+            (
+                "right_click",
+                serde_json::json!({ "delivery_mode": "foreground" }),
+            ),
+            (
+                "double_click",
+                serde_json::json!({ "delivery_mode": "foreground" }),
+            ),
+        ];
+        for (tool, mut args) in writers {
+            args["pid"] = serde_json::json!(pid);
+            args["window_id"] = serde_json::json!(window_id);
+            args["element_token"] = token.clone();
+            let refused = driver.call(tool, args);
+            assert!(
+                refused.is_error() && refused.structured()["code"] == "element_disabled",
+                "{tool} on a disabled control was not refused as element_disabled: {}",
+                refused.raw
+            );
+        }
+
+        std::thread::sleep(Duration::from_millis(200));
+        let after = snapshot(&mut driver, pid, window_id);
+        assert!(
+            after.tree_text().contains("disabled_checked=False"),
+            "a refused action changed the disabled checkbox:\n{}",
+            after.tree_text()
+        );
+        Observation::delivered(vec![OracleKind::AxState], Evidence::default())
+    });
+}
+
+/// A `GtkOverlay` banner drawn over a button: a foreground element click on the
+/// banner presses the banner, and on X11 a click on the covered button is
+/// refused with the banner named instead of pressing the banner by accident.
+#[test]
+#[ignore]
+fn harness_gtk3_foreground_click_respects_overlay_stacking() {
+    run_case(
+        native_foreground_case(
+            "gtk3",
+            "overlay_stacking",
+            Targeting::Ax,
+            DriverRoute::LinuxXTest,
+        ),
+        |pid, window_id, driver| {
+            let first = snapshot(driver, pid, window_id);
+            if DisplayServer::current() == DisplayServer::X11 {
+                let covered = element_token(&first, "btn-overlay-covered");
+                let refused = driver.call(
+                    "click",
+                    serde_json::json!({
+                        "pid": pid as i64,
+                        "window_id": window_id,
+                        "element_token": covered,
+                        "delivery_mode": "foreground"
+                    }),
+                );
+                assert!(
+                    refused.is_error(),
+                    "a press on the covered button was sent: {}",
+                    refused.text()
+                );
+                assert_eq!(
+                    refused.structured()["reason"].as_str(),
+                    Some("point_owned_by_another_element"),
+                    "{}",
+                    refused.text()
+                );
+                assert!(
+                    refused.text().contains("btn-overlay-banner"),
+                    "the refusal names the wrong owner: {}",
+                    refused.text()
+                );
+                std::thread::sleep(Duration::from_millis(250));
+                assert!(
+                    snapshot(driver, pid, window_id)
+                        .tree_text()
+                        .contains("overlay_action=none"),
+                    "the refused click still pressed something"
+                );
+            }
+            let second = snapshot(driver, pid, window_id);
+            let banner = element_token(&second, "btn-overlay-banner");
+            let pressed = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": window_id,
+                    "element_token": banner,
+                    "delivery_mode": "foreground"
+                }),
+            );
+            assert!(
+                !pressed.is_error(),
+                "banner click failed: {}",
+                pressed.text()
+            );
+            wait_for_state(driver, pid, window_id, "overlay_action=banner");
+            Observation::delivered_with_fixture_state(Vec::new())
+        },
+    );
+}
+
 #[test]
 #[ignore]
 fn harness_gtk3_invoke_menu_live_path() {
@@ -539,7 +705,8 @@ fn harness_gtk3_invoke_menu_live_path() {
                 serde_json::json!({
                     "pid": pid,
                     "window_id": window_id,
-                    "path": ["Window", "Arrange", "Missing"]
+                    "path": ["Window", "Arrange", "Missing"],
+                    "delivery_mode": "foreground"
                 }),
             );
             assert!(refused.is_error(), "missing menu path was accepted");
@@ -567,7 +734,8 @@ fn harness_gtk3_invoke_menu_live_path() {
                 serde_json::json!({
                     "pid": pid,
                     "window_id": window_id,
-                    "path": ["Window", "Arrange", "Left"]
+                    "path": ["Window", "Arrange", "Left"],
+                    "delivery_mode": "foreground"
                 }),
             );
             assert!(

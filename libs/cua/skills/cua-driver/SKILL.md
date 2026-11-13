@@ -1,6 +1,6 @@
 ---
 name: cua-driver
-description: Drive a native GUI app (macOS, Windows, Linux) via the cua-driver CLI (default) or MCP server; snapshot its accessibility tree, act through snapshot-bound element tokens, native menu paths, exact window geometry, or pixel coordinates, and verify from fresh state. Use when the user asks you to operate, drive, automate, or perform a GUI task in a real application on the host, or to continue, resume, or recall recent Cua activity.
+description: Drive a native GUI app (macOS, Windows, Linux) via the cua-driver CLI (default) or MCP server; snapshot its accessibility tree, act through snapshot-bound element tokens, native menu paths, exact window geometry, or pixel coordinates, and verify from fresh state. Use when the user asks you to operate, drive, automate, or perform a GUI task in a real application on the host.
 metadata:
   version: 0.31.0 # x-release-please-version
   openclaw:
@@ -75,25 +75,6 @@ Check the installed version and advertised schema before using unfamiliar parame
 | `background_unavailable`                                  | Verify current state; ask before foreground/desktop control if not already authorized |
 | Text did not visibly change                               | Reobserve before retrying; [text and value semantics](WORKFLOW.md#act-once)           |
 | Browser setup, binding, or ref refused                    | [Browser recovery](BROWSER.md#recovery-rules)                                         |
-
-## Consult recent Cua activity only for continuation
-
-When both `history_status` and `history_query` are advertised and the user asks
-to continue, resume, or recall prior Cua work, call `history_status` first. If
-history is healthy and access is admitted, make one bounded initial
-`history_query` before broad application or window discovery. Treat returned
-metadata only as a lead and verify current state through the least intrusive
-appropriate source. Content, geometry, arguments, results, and user intent
-omitted from the metadata remain unknown.
-
-Make another bounded query only when the initial slice exposes a relevant
-session or sequence boundary; never broaden a query to reconstruct excluded
-fields.
-
-Continue without history when either tool is absent, access is denied, the
-query is empty, or history is unhealthy. Do not query history for unrelated
-tasks merely because the tools are advertised, and never mutate history
-lifecycle or settings.
 
 ## References
 

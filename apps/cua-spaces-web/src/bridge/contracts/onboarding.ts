@@ -206,4 +206,6 @@ export interface SandboxImage {
   summary: string;
   tier?: "slim" | "full" | "xcode" | null;
   published: boolean;
+  /** `windows-iso`: built on this computer from a Windows ISO on first use. */
+  local_build?: string | null;
 }

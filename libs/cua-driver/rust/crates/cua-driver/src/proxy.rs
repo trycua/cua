@@ -724,6 +724,11 @@ fn fetch_tools_list_from_daemon(
                 "capabilities": capabilities,
                 "risk": risk,
             });
+            if let Some(deprecated) = t.get("deprecated") {
+                tool.as_object_mut()
+                    .expect("MCP tool entry is an object")
+                    .insert("deprecated".into(), deprecated.clone());
+            }
             // Do not derive a new schema when an older daemon omitted it:
             // mixed-version proxies must advertise only the result contract
             // that the executing daemon actually owns.

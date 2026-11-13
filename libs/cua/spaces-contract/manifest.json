@@ -482,6 +482,12 @@
             "minimum": 0,
             "type": "integer"
           },
+          "cpus": {
+            "description": "vCPUs for each Space. Default: the location's default size.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
           "deny": {
             "description": "Destinations to block (addresses, CIDRs or `all`).",
             "items": {
@@ -539,6 +545,12 @@
             },
             "description": "Labels kept with the Space and shown by `list_spaces` (`labels`): up\nto 64 pairs; keys and values are not empty; keys up to 63 bytes,\nvalues up to 256. Not with `durable` or `reuse`.",
             "type": "object"
+          },
+          "memory_mb": {
+            "description": "Memory for each Space, in MiB. Default: the location's default size.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
           },
           "name": {
             "description": "Name. Default: a generated friendly name such as `brave-otter`.",

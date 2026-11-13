@@ -190,6 +190,35 @@ pub(crate) fn resolve_onscreen_point_with_scroll(
     })))
 }
 
+/// Re-read `IsEnabled` on an admitted token target and refuse a disabled one
+/// before any cursor or input work, as macOS does (`element_disabled`). The
+/// snapshot's `enabled` can be stale. An element whose state cannot be read
+/// is left to the tool.
+pub(crate) async fn refuse_if_disabled(
+    pid: u32,
+    admitted: &Option<crate::uia::snapshot::RetainedElement>,
+    tool: &str,
+) -> Option<ToolResult> {
+    let element = admitted.clone()?;
+    let enabled = tokio::task::spawn_blocking(move || element.element_is_enabled())
+        .await
+        .ok()?;
+    (enabled == Some(false)).then(|| element_disabled_refusal(pid, tool))
+}
+
+pub(crate) fn element_disabled_refusal(pid: u32, tool: &str) -> ToolResult {
+    ToolResult::error(format!(
+        "refusing {tool}: the target reports IsEnabled=false, so the app would ignore it. \
+         Nothing was sent. Snapshot again and act once the element reports enabled"
+    ))
+    .with_structured(json!({
+        "code": "element_disabled",
+        "effect": "refused",
+        "pid": pid,
+        "action": tool,
+    }))
+}
+
 pub(crate) fn minimized_element_refusal(
     hwnd: u64,
     idx: usize,
@@ -607,12 +636,13 @@ impl Default for DriverConfig {
 /// affects behavior — `get_window_state` always returns tree + screenshot.)
 pub fn load_driver_config() -> DriverConfig {
     let mut cfg = DriverConfig::default();
-    if let Some(v) =
-        pip_preview::read_config_value("capture_mode").and_then(|v| v.as_str().map(str::to_owned))
+    if let Some(v) = cua_driver_core::config_file::read_config_value("capture_mode")
+        .and_then(|v| v.as_str().map(str::to_owned))
     {
         cfg.capture_mode = v;
     }
-    if let Some(v) = pip_preview::read_config_value("max_image_dimension").and_then(|v| v.as_u64())
+    if let Some(v) = cua_driver_core::config_file::read_config_value("max_image_dimension")
+        .and_then(|v| v.as_u64())
     {
         if let Ok(v32) = u32::try_from(v) {
             cfg.max_image_dimension = v32;
@@ -1248,6 +1278,10 @@ pub fn build_registry_with_provider(
 ) -> ToolRegistry {
     let mut r = ToolRegistry::new_with_protected_consent_provider(provider);
     let state = ToolState::new(Some(r.capture_service()));
+    {
+        let state = state.clone();
+        r.set_token_window_resolver(Arc::new(move |args| state.snapshots.window_for_token(args)));
+    }
     let cursor_outcome_reader = {
         let cursor_registry = state.cursor_registry.clone();
         cua_driver_core::session::register_scoped_cursor_outcome_reader(std::sync::Arc::new(
@@ -1469,7 +1503,7 @@ pub fn build_registry_with_provider(
         _state: state.clone(),
     }; // touch struct so it stays in this crate for now
        // Cross-platform `page` tool definition lives in mcp-server; Windows plugs
-       // in its UIA TextPattern + FindAll backend (CDP for execute_javascript).
+       // in its UIA TextPattern + FindAll backend.
     r.register(Box::new(cua_driver_core::page::PageTool::new(
         std::sync::Arc::new(super::page::WindowsPageBackend::new()),
     )));

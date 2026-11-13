@@ -31,17 +31,6 @@ fn app_name_for_bundle(bundle_id: &str) -> Option<&'static str> {
     }
 }
 
-fn should_quit_before_enabling(
-    permission: crate::apple_events::AutomationPermission,
-    ensure_permitted: impl FnOnce() -> Result<(), crate::apple_events::ScriptRefusal>,
-) -> Result<bool, crate::apple_events::ScriptRefusal> {
-    if permission == crate::apple_events::AutomationPermission::NotRunning {
-        return Ok(false);
-    }
-    ensure_permitted()?;
-    Ok(true)
-}
-
 impl BrowserJs {
     /// Returns true if this bundle ID is a supported browser.
     pub fn supports(bundle_id: &str) -> bool {
@@ -100,62 +89,6 @@ end tell"#
         };
 
         run_osascript(&script).await
-    }
-
-    /// Patch the browser Preferences JSON to enable Allow JavaScript from Apple Events,
-    /// then relaunch the browser.
-    pub async fn enable_javascript_apple_events(bundle_id: &str) -> anyhow::Result<()> {
-        let app_name = app_name_for_bundle(bundle_id)
-            .ok_or_else(|| anyhow::anyhow!("Unsupported browser bundle: {bundle_id}"))?;
-
-        let should_quit = should_quit_before_enabling(
-            crate::apple_events::automation_permission(bundle_id),
-            || crate::apple_events::ensure_permitted(bundle_id, app_name),
-        )
-        .map_err(|r| anyhow::anyhow!("{}: {}", r.code, r.reason))?;
-
-        // Quit the browser.
-        if should_quit {
-            let quit_script = format!("tell application \"{app_name}\" to quit");
-            let _ = tokio::process::Command::new("/usr/bin/osascript")
-                .arg("-e")
-                .arg(&quit_script)
-                .output()
-                .await;
-
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        }
-
-        // Find profile directory.
-        let home = std::env::var("HOME").unwrap_or_default();
-        let profiles_dir = match bundle_id {
-            "com.google.Chrome" => format!("{home}/Library/Application Support/Google/Chrome"),
-            _ if bundle_id.starts_with(CHROME_APP_BUNDLE_PREFIX) => {
-                format!("{home}/Library/Application Support/Google/Chrome")
-            }
-            "com.brave.Browser" => {
-                format!("{home}/Library/Application Support/BraveSoftware/Brave-Browser")
-            }
-            "com.microsoft.edgemac" => format!("{home}/Library/Application Support/Microsoft Edge"),
-            _ => anyhow::bail!("No profiles directory for {bundle_id}"),
-        };
-
-        // Find all Preferences files.
-        let prefs_files = find_preferences_files(&profiles_dir);
-
-        for path in prefs_files {
-            if let Err(e) = patch_preferences_file(&path) {
-                tracing::warn!("Failed to patch {path}: {e}");
-            }
-        }
-
-        // Relaunch.
-        tokio::process::Command::new("open")
-            .arg("-a")
-            .arg(app_name)
-            .spawn()?;
-
-        Ok(())
     }
 }
 
@@ -293,61 +226,6 @@ fn rounded_i64(value: f64) -> i64 {
     value.round() as i64
 }
 
-fn find_preferences_files(profiles_dir: &str) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(profiles_dir) else {
-        return vec![];
-    };
-    let mut result = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let prefs = path.join("Preferences");
-        if prefs.exists() {
-            if let Some(s) = prefs.to_str() {
-                result.push(s.to_owned());
-            }
-        }
-    }
-    result
-}
-
-fn patch_preferences_file(path: &str) -> anyhow::Result<()> {
-    let content = std::fs::read_to_string(path).with_context(|| format!("Reading {path}"))?;
-    let mut json: serde_json::Value =
-        serde_json::from_str(&content).with_context(|| format!("Parsing {path}"))?;
-
-    // Set browser.allow_javascript_apple_events = true.
-    if let Some(obj) = json.as_object_mut() {
-        let browser = obj
-            .entry("browser")
-            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
-        if let Some(b) = browser.as_object_mut() {
-            b.insert(
-                "allow_javascript_apple_events".to_owned(),
-                serde_json::Value::Bool(true),
-            );
-        }
-        // Also set account_values.browser.allow_javascript_apple_events.
-        let account_values = obj
-            .entry("account_values")
-            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
-        if let Some(av) = account_values.as_object_mut() {
-            let av_browser = av
-                .entry("browser")
-                .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
-            if let Some(avb) = av_browser.as_object_mut() {
-                avb.insert(
-                    "allow_javascript_apple_events".to_owned(),
-                    serde_json::Value::Bool(true),
-                );
-            }
-        }
-    }
-
-    let new_content = serde_json::to_string(&json)?;
-    std::fs::write(path, new_content).with_context(|| format!("Writing {path}"))?;
-    Ok(())
-}
-
 /// Escape a plain string value for embedding inside an AppleScript double-quoted string.
 fn escape_for_applescript_string(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
@@ -397,8 +275,9 @@ pub async fn run_osascript(script: &str) -> anyhow::Result<String> {
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stderr.contains("turned off") || stderr.contains("AppleScript is turned off") {
         anyhow::bail!(
-            "JavaScript from Apple Events is disabled. Use action=enable_javascript_apple_events \
-             to enable it (requires browser restart)."
+            "JavaScript from Apple Events is disabled. Turn on \"Allow JavaScript from Apple Events\" \
+             in the browser's Develop (Safari) or View > Developer (Chromium) menu, or use \
+             get_browser_state and the browser_* tools."
         );
     }
 
@@ -440,36 +319,6 @@ mod tests {
             },
             same_bounds_ordinal,
         }
-    }
-
-    #[test]
-    fn closed_browser_skips_quit_without_checking_consent() {
-        for refuse_ungranted in [false, true] {
-            let should_quit = should_quit_before_enabling(
-                crate::apple_events::AutomationPermission::NotRunning,
-                || panic!("closed browser checked consent with refuse={refuse_ungranted}"),
-            )
-            .unwrap();
-            assert!(!should_quit);
-        }
-    }
-
-    #[test]
-    fn running_browser_requires_permission_before_quitting() {
-        use crate::apple_events::{AutomationPermission, ScriptRefusal};
-
-        assert!(should_quit_before_enabling(AutomationPermission::Granted, || Ok(())).unwrap());
-        let refusal = ScriptRefusal {
-            code: "automation_consent_required",
-            reason: "Grant access in System Settings > Privacy & Security > Automation".into(),
-        };
-        assert_eq!(
-            should_quit_before_enabling(
-                AutomationPermission::NeedsConsent,
-                || Err(refusal.clone())
-            ),
-            Err(refusal)
-        );
     }
 
     #[test]

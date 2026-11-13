@@ -219,8 +219,8 @@ for (const [what, frame] of Object.entries({ travel, click })) {
 assert.deepEqual(rest.body, [0xdd, 0x71, 0xec]);
 assert.ok(rest.halo.length > 0 && rest.halo.every((rgb) => rgb === '221,113,236'), 'halo in the session colour');
 
-// A self-played click (no `cursor.marks`) squishes the arrow about its tip
-// but paints no click marks.
+// A click squishes the arrow about its tip but paints no click marks, whether
+// the helper plays it or cua-driver asks for it.
 const drawOps = () => {
   currentContext = new RecordingContext();
   cursor.handlers.repaint(cursor);
@@ -233,11 +233,10 @@ near(paint(101.15).tip, [1234, 567], 'mid-squish');
 const selfPlayed = drawOps();
 helper.SetCursorState('idle', '', '', true);
 const idle = drawOps();
-assert.equal(selfPlayed, idle, 'no click marks without cursor.marks');
-// A click cue cua-driver asks for still draws its marks.
+assert.equal(selfPlayed, idle, 'no click marks for a self-played click');
 helper.SetCursorState('click', '', '', true);
 globalThis.helperClock = 101.3;
-assert.ok(drawOps() > idle, 'requested click marks are drawn');
+assert.equal(drawOps(), idle, 'no click marks for a requested click either');
 
 helper.disable();
 console.log('helper cursor paint: ok');

@@ -25,6 +25,7 @@ on:
       - ".github/flaky/**"
       - ".github/scripts/flaky/**"
       - ".github/actions/flaky-upload/**"
+      - ".github/actions/install-electron/**"
   merge_group:
   push:
     branches: [main]
@@ -148,6 +149,10 @@ jobs:
           # Its own pnpm-workspace.yaml (allowBuilds: Electron's download); with
           # --ignore-workspace pnpm skips it and fails on electron-winstaller.
           (cd apps/cua-spaces-desktop && pnpm install --frozen-lockfile)
+      # The Electron shell's tests load `electron`, which would download its binary there, once.
+      - uses: ./.github/actions/install-electron
+        with:
+          working-directory: apps/cua-spaces-desktop
       - name: Web UI typecheck
         working-directory: apps/cua-spaces-web
         run: pnpm typecheck
@@ -215,6 +220,10 @@ jobs:
           # Its own pnpm-workspace.yaml (allowBuilds: Electron's download); with
           # --ignore-workspace pnpm skips it and fails on electron-winstaller.
           (cd apps/cua-spaces-desktop && pnpm install --frozen-lockfile)
+      - uses: ./.github/actions/install-electron
+        if: matrix.host == 'electron'
+        with:
+          working-directory: apps/cua-spaces-desktop
       - name: Parity flows in the browser
         if: matrix.host == 'browser'
         working-directory: apps/cua-spaces-web

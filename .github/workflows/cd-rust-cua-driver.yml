@@ -238,6 +238,7 @@ jobs:
             --release-metadata-path libs/cua-driver/typescript/package.json \
             --release-metadata-path libs/cua-driver/typescript/package-lock.json \
             --changelog libs/cua-driver/rust/CHANGELOG.md \
+            --changelog-addenda release-control/.github/releases/changelog-addenda.json \
             --output "$RUNNER_TEMP/cua-driver-release-manifest.json"
 
   # ── Linux (x86_64 + arm64) ───────────────────────────────────────────────────
@@ -1633,6 +1634,7 @@ jobs:
             --release-metadata-path libs/cua-driver/typescript/package.json \
             --release-metadata-path libs/cua-driver/typescript/package-lock.json \
             --changelog libs/cua-driver/rust/CHANGELOG.md \
+            --changelog-addenda release-control/.github/releases/changelog-addenda.json \
             --asset-dir release-upload \
             --report-issue \
             --output release-metadata/release-manifest.json

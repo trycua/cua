@@ -32,16 +32,21 @@ pub(crate) const KEYMAP_FORMAT_TEXT_V1: KeymapFormat = 1;
 pub(crate) const KEYMAP_COMPILE_NO_FLAGS: KeymapCompileFlags = 0;
 pub(crate) const KEYSYM_NO_FLAGS: KeysymFlags = 0;
 pub(crate) const KEYSYM_CASE_INSENSITIVE: KeysymFlags = 1 << 0;
+#[cfg(feature = "portal-input")]
 pub(crate) const STATE_MODS_DEPRESSED: StateComponent = 1 << 0;
+#[cfg(feature = "portal-input")]
 pub(crate) const STATE_MODS_LATCHED: StateComponent = 1 << 1;
+#[cfg(feature = "portal-input")]
 pub(crate) const STATE_MODS_LOCKED: StateComponent = 1 << 2;
 pub(crate) const STATE_MODS_EFFECTIVE: StateComponent = 1 << 3;
 pub(crate) const STATE_LAYOUT_EFFECTIVE: StateComponent = 1 << 7;
 
 pub(crate) const MOD_NAME_SHIFT: &str = "Shift";
+#[cfg(feature = "portal-input")]
 pub(crate) const MOD_NAME_CAPS: &str = "Lock";
 pub(crate) const MOD_NAME_CTRL: &str = "Control";
 pub(crate) const MOD_NAME_ALT: &str = "Mod1";
+#[cfg(feature = "portal-input")]
 pub(crate) const MOD_NAME_NUM: &str = "Mod2";
 pub(crate) const MOD_NAME_LOGO: &str = "Mod4";
 
@@ -441,11 +446,13 @@ mod tests {
         let mut state = State::new(&map.clone());
         assert_eq!(state.key_get_one_sym(a), Keysym::a);
         state.update_key(shift, KeyDirection::Down);
-        assert_eq!(state.serialize_mods(STATE_MODS_DEPRESSED), 1 << shift_index);
+        assert_eq!(state.serialize_mods(STATE_MODS_EFFECTIVE), 1 << shift_index);
         assert_eq!(state.key_get_one_sym(a), Keysym::A);
         state.update_mask(0, 0, 1 << shift_index, 0, 0, 0);
-        assert_eq!(state.serialize_mods(STATE_MODS_DEPRESSED), 0);
-        assert_eq!(state.serialize_mods(STATE_MODS_LOCKED), 1 << shift_index);
+        assert_eq!(state.key_get_one_sym(a), Keysym::A);
+        state.update_mask(0, 0, 0, 0, 0, 0);
+        assert_eq!(state.serialize_mods(STATE_MODS_EFFECTIVE), 0);
+        assert_eq!(state.key_get_one_sym(a), Keysym::a);
         assert_eq!(state.serialize_layout(STATE_LAYOUT_EFFECTIVE), 0);
     }
 

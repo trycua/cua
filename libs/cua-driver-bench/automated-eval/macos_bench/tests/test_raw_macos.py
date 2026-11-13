@@ -560,3 +560,26 @@ class BareArmTest(unittest.TestCase):
         ):
             self.assertNotIn(word, text)
         self.assertEqual(default_ms, server.MAX_TIMEOUT_MS)
+
+    def test_runtime_refusals_name_nothing_but_the_call(self):
+        import importlib
+        import os
+
+        os.environ["RAW_BARE"] = "1"
+        try:
+            import runner_mac
+
+            runner = importlib.reload(runner_mac)
+            for call in (
+                lambda: runner._guarded_getattr(1, "__class__"),
+                lambda: runner._guarded_import("subprocess"),
+            ):
+                with self.assertRaises((AttributeError, ImportError)) as caught:
+                    call()
+                self.assertTrue(
+                    str(caught.exception).startswith("Not available: "), caught.exception
+                )
+                self.assertNotIn("raw", str(caught.exception))
+        finally:
+            os.environ.pop("RAW_BARE", None)
+            importlib.reload(runner_mac)

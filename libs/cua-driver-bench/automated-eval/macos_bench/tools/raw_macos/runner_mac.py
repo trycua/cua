@@ -71,7 +71,11 @@ def _guarded_getattr(obj: Any, name: str, *default: Any) -> Any:
         or (name.startswith("_") and not rawlint.private_ok(name, NATIVE))
         or name in escapes
     ):
-        raise AttributeError(f"{name!r} is not available to raw-macos scripts (rule GUI2)")
+        raise AttributeError(
+            f"Not available: {name!r}"
+            if BARE
+            else f"{name!r} is not available to raw-macos scripts (rule GUI2)"
+        )
     import raw_mac
 
     rule = rawlint.NAMES.get(name)
@@ -99,7 +103,9 @@ def _guarded_import(
 ) -> Any:
     if level or not rawlint.import_ok(name, NATIVE):
         raise ImportError(
-            f"import {name} is not available to raw-macos scripts (GUI-only, rule GUI1)"
+            f"Not available: import {name}"
+            if BARE
+            else f"import {name} is not available to raw-macos scripts (GUI-only, rule GUI1)"
             + ("" if NATIVE else "; use raw.*")
         )
     if name == "raw":

@@ -99,12 +99,44 @@ fi
 # See the note in _install-local-rust.sh: `pkill -x cua-driver-local` never
 # matches on Linux, because `-x` compares against the 15-char truncated
 # `comm` and the name is 16. Match argv[0], anchored so the launcher shells
-# that merely mention the path in their script text are left alone.
-for _daemon_bin in "$CLI_LINK" "$HOME_DIR/packages/current/cua-driver-local"; do
-    [ -n "$_daemon_bin" ] || continue
-    pkill -f "^${_daemon_bin}([[:space:]]|\$)" >/dev/null 2>&1 || true
+# that merely mention the path in their script text are left alone. On macOS
+# the CLI link resolves into the app bundle, and a daemon started from the
+# bundle executable directly carries that path as argv[0].
+LOCAL_DAEMON_BINS=(
+    "$CLI_LINK"
+    "$HOME_DIR/packages/current/cua-driver-local"
+    "$APP_BUNDLE/Contents/MacOS/cua-driver-local"
+)
+signal_local_daemons() {
+    local bin
+    for bin in "${LOCAL_DAEMON_BINS[@]}"; do
+        pkill "$@" -f "^${bin}([[:space:]]|\$)" >/dev/null 2>&1 || true
+    done
+}
+local_daemon_running() {
+    local bin
+    for bin in "${LOCAL_DAEMON_BINS[@]}"; do
+        if pgrep -f "^${bin}([[:space:]]|\$)" >/dev/null 2>&1; then
+            return 0
+        fi
+    done
+    return 1
+}
+# Stop every local daemon before deleting the executables it runs from, and
+# refuse to report success while one is still alive.
+signal_local_daemons
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+    local_daemon_running || break
+    sleep 0.5
 done
-unset _daemon_bin
+if local_daemon_running; then
+    signal_local_daemons -KILL
+    sleep 0.5
+fi
+if local_daemon_running; then
+    echo "error: a cua-driver-local daemon is still running; stop it and rerun $0" >&2
+    exit 1
+fi
 
 # Revoke only the local bundle's TCC rows, while LaunchServices can resolve it.
 if [[ "$OS" == "Darwin" && "$RESET_TCC" == "1" ]] && command -v tccutil >/dev/null 2>&1; then
@@ -210,7 +242,7 @@ fi
 # runtime-owned children, and leave any unrelated files in place.
 LOCAL_HOME_MARKER="$HOME_DIR/packages/current/cua-driver-local"
 if [[ -e "$LOCAL_HOME_MARKER" || -L "$LOCAL_HOME_MARKER" ]]; then
-    rm -rf "$HOME_DIR/packages" "$HOME_DIR/skills"
+    rm -rf "$HOME_DIR/packages" "$HOME_DIR/skills" "$HOME_DIR/.release_installed"
     rm -f \
         "$HOME_DIR/.installation_recorded" \
         "$HOME_DIR/.telemetry_enabled" \
@@ -241,4 +273,8 @@ if [[ "$OS" == "Darwin" && -d "$APP_BUNDLE" ]]; then
     log "removed $APP_BUNDLE"
 fi
 
+if local_daemon_running; then
+    echo "error: a cua-driver-local daemon started during uninstall is still running" >&2
+    exit 1
+fi
 log "cua-driver-local uninstalled; release cua-driver was left untouched"

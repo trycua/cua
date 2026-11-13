@@ -38,6 +38,9 @@ def test_unix_local_uninstall_removes_owned_links_and_preserves_release(tmp_path
         ".telemetry_retry_after",
     ):
         (local_home / runtime_file).write_text("local runtime state\n", encoding="utf-8")
+    release_marker = local_home / ".release_installed/0.23.1"
+    release_marker.parent.mkdir()
+    release_marker.write_text("", encoding="utf-8")
 
     _executable(fake_bin / "uname", "printf 'Linux\\n'")
     _executable(fake_bin / "pkill", "exit 0")
@@ -258,3 +261,79 @@ def test_local_uninstall_resets_macos_permissions_only_when_asked(tmp_path: Path
         "tccutil:reset ScreenCapture com.trycua.driver.local",
         "tccutil:reset AppleEvents com.trycua.driver.local",
     ]
+
+
+def test_local_uninstall_stops_daemon_started_from_macos_app_bundle(tmp_path: Path) -> None:
+    calls, env = _darwin_local_sandbox(tmp_path)
+
+    _run_local_uninstall(env)
+
+    app_daemon = "/Applications/CuaDriverLocal.app/Contents/MacOS/cua-driver-local"
+    lines = calls.read_text(encoding="utf-8").splitlines()
+    assert f"pkill:-f ^{app_daemon}([[:space:]]|$)" in lines
+
+
+def test_local_uninstall_fails_while_a_local_daemon_survives(tmp_path: Path) -> None:
+    calls, env = _darwin_local_sandbox(tmp_path)
+    fake_bin = Path(env["PATH"])
+    _executable(fake_bin / "pgrep", "exit 0\n")
+    _executable(fake_bin / "sleep", "exit 0\n")
+    cache = Path(env["HOME"]) / "Library/Caches/cua-driver-local"
+    cache.mkdir(parents=True)
+    marker = Path(env["CUA_DRIVER_LOCAL_HOME"]) / "packages/current/cua-driver-local"
+    marker.parent.mkdir(parents=True)
+    marker.write_text("local\n", encoding="utf-8")
+
+    result = subprocess.run(
+        ["/bin/bash", str(UNINSTALL_LOCAL), "--force"],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "still running" in result.stderr
+    assert "uninstalled" not in result.stdout
+    recorded = calls.read_text(encoding="utf-8")
+    assert "pkill:-KILL -f" in recorded
+    assert "rm:" not in recorded
+    assert cache.is_dir()
+    assert marker.is_file()
+
+
+def test_unix_local_uninstall_stops_a_running_local_daemon(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "fake-bin"
+    local_home = home / ".cua-driver-local"
+    daemon = local_home / "packages/current/cua-driver-local"
+    _executable(daemon, "exec sleep 60\n")
+    _executable(fake_bin / "uname", "printf 'Linux\\n'")
+    # argv[0] is the daemon path, as for a real `cua-driver-local serve`.
+    process = subprocess.Popen(["/bin/bash", "-c", f"exec -a '{daemon}' sleep 60"])
+    try:
+        env = os.environ.copy()
+        env.update(
+            {
+                "HOME": str(home),
+                "PATH": f"{fake_bin}:/usr/bin:/bin",
+                "CUA_DRIVER_LOCAL_HOME": str(local_home),
+                "CUA_DRIVER_LOCAL_INSTALL_DIR": str(home / ".local/bin"),
+            }
+        )
+        result = subprocess.run(
+            ["/bin/bash", str(UNINSTALL_LOCAL), "--force", "--keep-tcc"],
+            cwd=REPO_ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=30,
+        )
+        process.wait(timeout=10)
+    finally:
+        if process.poll() is None:
+            process.kill()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not daemon.exists()

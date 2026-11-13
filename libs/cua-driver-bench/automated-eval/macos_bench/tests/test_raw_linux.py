@@ -440,6 +440,7 @@ class NativeArmTest(unittest.TestCase):
             "w.set_input_focus(X.RevertToParent, X.CurrentTime)": "BG2",
             "w.raise_window()": "BG2",
             "w.configure(stack_mode=X.Above)": "BG2",
+            'w.configure(**{"stack_mode": 0})': "BG2",
             "root.send_event(ev, event_mask=1)\na = 'x_NET_ACTIVE_WINDOW'": "BG2",
             'lib.XTestFakeKeyEvent(dpy, 36, 1, 0)': "BG3",
             'xdo.xdo_send_keysequence_window(x, 0, b"ctrl+s", 0)': "BG3",
@@ -464,6 +465,11 @@ class NativeArmTest(unittest.TestCase):
             "from gi.repository import GLib\nGLib.spawn_async(['sh'])": "GUI1",
             "import ctypes\nctypes.pythonapi.Py_Exit(0)": "GUI1",
             "open('/etc/passwd')": "GUI1",
+            'import ctypes\nctypes.CDLL("libc.so.6").fopen(b"/etc/passwd", b"r")': "GUI1",
+            "import ctypes\nctypes.CDLL(None)": "GUI1",
+            "import ctypes.util\nctypes.util.find_library('X11')": "GUI1",
+            "import ctypes\nctypes.cdll.LoadLibrary('/lib/x/libc.so.6')": "GUI1",
+            "import ctypes\nname = 'libc.so.6'\nctypes.CDLL(name)": "GUI2",
             "x.__class__": "GUI2",
             "import cua_driver": "DRV1",
             'xdotool("search", "--name", "cua-driver")': "DRV1",
@@ -473,6 +479,20 @@ class NativeArmTest(unittest.TestCase):
             for grant in (False, True):
                 with self.subTest(src=src, grant=grant):
                     self.assertIn(rule, {f.rule for f in self.lint(src + "\nreturn 1", grant).blocked})
+
+    def test_native_libraries_by_name(self):
+        for ok in ("libX11.so.6", "libXtst.so.6", "/usr/lib/aarch64-linux-gnu/libxdo.so.3", "libatspi.so.0"):
+            self.assertTrue(rawlint.native_lib_ok(ok), ok)
+        for bad in ("libc.so.6", None, "", "libX11evil.so", "/tmp/libX11.so.6x", "libpython3.13.so"):
+            self.assertFalse(rawlint.native_lib_ok(bad), bad)
+        self.assertTrue(self.lint('import ctypes\nx = ctypes.CDLL("libXtst.so.6")\nreturn 1').ok)
+
+    def test_native_reads_count_only_in_the_native_arm(self):
+        # the wrapper arm's VR1 is unchanged: a native read name is not a read-back there
+        self.assertIn("VR1", {f.rule for f in granted("raw.click(1, 2, 3)\nreturn w.get_geometry()").findings})
+        self.assertNotIn(
+            "VR1", {f.rule for f in self.lint("xtest.fake_input(d, 4, 1)\nreturn w.get_geometry()", True).findings}
+        )
 
     def test_runner_imports_and_getattr_in_native_mode(self):
         with mock.patch.object(runner, "NATIVE", True):

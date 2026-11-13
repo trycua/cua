@@ -1100,13 +1100,30 @@ def _guard_xlib() -> None:
     for name in ("grab_pointer", "grab_keyboard", "grab_key", "grab_button"):
         guard(drawable.Window, name, "BG4", f"Xlib {name}")
     guard(drawable.Window, "raise_window", "BG2", "Xlib raise_window")
+    real_configure = drawable.Window.configure
+
+    def configure(self: Any, onerror: Any = None, **keys: Any) -> Any:
+        if "stack_mode" in keys or "sibling" in keys:
+            STATE.check("BG2", "Xlib configure(stack_mode)")
+        return real_configure(self, onerror=onerror, **keys)
+
+    drawable.Window.configure = configure
     guard(drawable.Window, "circulate", "BG2", "Xlib circulate")
     guard(drawable.Window, "set_selection_owner", "BG8", "Xlib set_selection_owner")
 
 
 def _guard_ctypes() -> None:
-    """A library the native script loads itself (ctypes.CDLL("libXtst.so.6")) refuses forbidden symbols at lookup,
-    as raw.x11/raw.xtst did, so a computed name is caught at run time too."""
+    """A library the native script loads itself (ctypes.CDLL("libXtst.so.6")) must be one of rawlint.NATIVE_LIBS, and
+    refuses forbidden symbols at lookup, as raw.x11/raw.xtst did, so a computed name is caught at run time too. The
+    runtime's own libraries were loaded before this patch."""
+    real_init = ctypes.CDLL.__init__
+
+    def init(self: Any, name: Any, *args: Any, **kwargs: Any) -> None:
+        if not rawlint.native_lib_ok(name):
+            STATE.refuse("GUI1", f"ctypes.CDLL({name!r})")
+        real_init(self, name, *args, **kwargs)
+
+    ctypes.CDLL.__init__ = init  # type: ignore[method-assign]
     real = ctypes.CDLL.__getattr__
     names = {**rawlint.NAMES, **rawlint.NATIVE_NAMES}
 

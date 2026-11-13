@@ -328,6 +328,8 @@ NATIVE_IMPORTS = {"Xlib", "pyatspi", "dbus", "ctypes"}
 NATIVE_GI = {"Atspi", "Gdk", "GdkPixbuf", "GdkX11", "GLib", "GObject"}  # gi.repository modules a script may load
 NATIVE_ESCAPES = {
     "pythonapi",
+    "util",  # ctypes.util.find_library runs ldconfig/gcc: a process
+    "find_library",
     "PYFUNCTYPE",
     "Gio",
     "Gtk",
@@ -343,6 +345,22 @@ NATIVE_ESCAPES = {
 }
 NATIVE_READ_ATOMS = {"_NET_ACTIVE_WINDOW", "_NET_RESTACK_WINDOW"}  # atoms the native arm may read
 NATIVE_LOADERS = {"CDLL", "cdll", "LoadLibrary", "dlopen"}
+# Native libraries a script may load with ctypes: the X11 / XTest / xdo / AT-SPI / GDK input and read libraries. libc
+# and the process's own symbols (CDLL(None)) are files, processes and memory, not GUI (GUI1).
+NATIVE_LIBS = ("libX11", "libXtst", "libXi", "libXext", "libXfixes", "libXrandr", "libXcomposite", "libXdamage",
+               "libxdo", "libatspi", "libgdk-3", "libgdk_pixbuf", "libxcb")
+
+
+def native_lib_ok(name: object) -> bool:
+    """A ctypes library name or path the native arm may load: one of NATIVE_LIBS, by file name."""
+    if not isinstance(name, str) or not name:
+        return False
+    import re
+
+    folder, _, base = name.rpartition("/")
+    if folder and not (folder + "/").startswith(("/usr/lib/", "/lib/")):
+        return False  # a system library only, never one from a writable directory
+    return any(re.fullmatch(re.escape(lib) + r"(\.so(\.\d+)*)?", base) for lib in NATIVE_LIBS)
 # Native names of the same foreground routes (python-xlib, pyatspi, Gdk, libxdo), matched as in NAMES.
 NATIVE_NAMES: dict[str, str] = {
     **dict.fromkeys(
@@ -491,7 +509,9 @@ READS = {
     "describe",
     "pointer",
     "active_window",
-    # the native arm's reads (python-xlib, Gdk, AT-SPI Table)
+}
+# the native arm's reads (python-xlib, Gdk, AT-SPI Table), counted for VR1 in that arm only
+NATIVE_READS = {
     "savev",
     "get_full_property",
     "get_geometry",
@@ -600,6 +620,7 @@ class _Walker(ast.NodeVisitor):
         self.atom_requests: list[tuple[str, ast.AST]] = []
         self.sends = False
         self.names = {**NAMES, **NATIVE_NAMES} if native else NAMES
+        self.reads = READS | NATIVE_READS if native else READS
         self.raw_names = raw_names or {"raw"}  # "raw" and every local bound to it (r = raw)
         self.findings: list[Finding] = []
         self.last_action: tuple[int, int] = (0, 0)
@@ -632,7 +653,7 @@ class _Walker(ast.NodeVisitor):
             self.sends = True
         if name in ACTIONS:
             self.last_action = max(self.last_action, _pos(node))
-        if name in READS:
+        if name in self.reads:
             self.last_read = max(self.last_read, _pos(node))
 
     def visit_Import(self, node: ast.Import) -> None:
@@ -688,7 +709,7 @@ class _Walker(ast.NodeVisitor):
             self.name_hit(node.id, node)
         if node.id in ACTIONS:
             self.last_action = max(self.last_action, _pos(node))
-        if node.id in READS:
+        if node.id in self.reads:
             self.last_read = max(self.last_read, _pos(node))
         self.generic_visit(node)
 
@@ -737,10 +758,18 @@ class _Walker(ast.NodeVisitor):
                     self.add(HELPERS[attr], node, f"getattr(raw, {attr!r})")
                 if (attr.startswith("_") and not private_ok(attr, self.native)) or attr in self.escapes():
                     self.add("GUI2", node, f"getattr {attr!r}")
-        if self.native and last == "configure" and any(k.arg == "stack_mode" for k in node.keywords):
-            self.add("BG2", node, "configure(stack_mode=...) restacks the window")
         if last == "xdotool":
             self.xdotool(node)
+        if self.native and last in {"CDLL", "LoadLibrary", "dlopen"}:
+            lib = _const_str(node.args[0]) if node.args else None
+            if lib is None and node.args and not isinstance(node.args[0], ast.Constant):
+                self.add("GUI2", node, f"{last} with a computed library name (the runtime checks it again)")
+            elif not native_lib_ok(lib):
+                self.add("GUI1", node, f"{last}({lib!r}): only the X11, XTest, xdo, AT-SPI and GDK libraries load")
+        if self.native and last == "configure" and any(
+            k.arg in (None, "stack_mode", "sibling") for k in node.keywords
+        ):
+            self.add("BG2", node, "configure(stack_mode=...) restacks the window")
         self.generic_visit(node)
 
     def xdotool(self, node: ast.Call) -> None:

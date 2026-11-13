@@ -372,7 +372,11 @@ fn walk_tree_with_web_content(
         }
 
         // Walk each top-level child at depth 0.
-        for child in walk_these {
+        let held = reserve_for_siblings(&mut budget, false, walk_these.len());
+        for (position, child) in walk_these.into_iter().enumerate() {
+            if position < held {
+                budget.release();
+            }
             walk_element(
                 child,
                 0,
@@ -574,7 +578,11 @@ unsafe fn walk_element(
         // parent_index (no actionable node was emitted here).
         let children = attrs.children();
         drop(attrs);
-        for child in children {
+        let held = reserve_for_siblings(budget, in_web_content, children.len());
+        for (position, child) in children.into_iter().enumerate() {
+            if position < held {
+                budget.release();
+            }
             walk_element(
                 child,
                 depth,
@@ -647,7 +655,11 @@ unsafe fn walk_element(
     if !is_actionable && !has_content && role != "AXWindow" && role != "AXSheet" {
         let children = attrs.children();
         drop(attrs);
-        for child in children {
+        let held = reserve_for_siblings(budget, in_web_content, children.len());
+        for (position, child) in children.into_iter().enumerate() {
+            if position < held {
+                budget.release();
+            }
             walk_element(
                 child,
                 depth + 1,
@@ -790,7 +802,11 @@ unsafe fn walk_element(
 
     let children = attrs.children();
     drop(attrs);
-    for child in children {
+    let held = reserve_for_siblings(budget, in_web_content, children.len());
+    for (position, child) in children.into_iter().enumerate() {
+        if position < held {
+            budget.release();
+        }
         walk_element(
             child,
             depth + 1,
@@ -808,6 +824,27 @@ unsafe fn walk_element(
     }
 }
 
+/// Most children a node may hold a row for each of (see [`reserve_for_siblings`]).
+/// A pane, toolbar or button row is this small; a list or table is not.
+const MAX_RESERVED_SIBLINGS: usize = 16;
+
+/// Hold one node of the budget for each of a native node's children before
+/// walking the first, so a deep early sibling cannot use up `max_elements`
+/// before the siblings after it get a row. An Open panel's file browser holds
+/// hundreds of rows and took the whole default budget ahead of the panel's
+/// Cancel and Open buttons, so a read of the panel showed no way to answer it
+/// (#3351). Lists and tables (more than [`MAX_RESERVED_SIBLINGS`] children)
+/// and web content keep their depth-first order, so their first rows still
+/// show their cells. Returns how many were held; the caller releases one
+/// before each of that many children.
+fn reserve_for_siblings(budget: &mut WalkBudget, in_web_content: bool, children: usize) -> usize {
+    if in_web_content || children > MAX_RESERVED_SIBLINGS {
+        0
+    } else {
+        budget.reserve(children)
+    }
+}
+
 fn is_web_content_role(role: &str) -> bool {
     let normalized = role
         .chars()
@@ -815,6 +852,23 @@ fn is_web_content_role(role: &str) -> bool {
         .flat_map(char::to_lowercase)
         .collect::<String>();
     normalized.contains("webarea") || normalized.contains("documentweb") || normalized == "document"
+}
+
+#[cfg(test)]
+mod sibling_reservation_tests {
+    use super::{reserve_for_siblings, MAX_RESERVED_SIBLINGS};
+    use cua_driver_core::walk_budget::WalkBudget;
+
+    #[test]
+    fn a_pane_holds_a_row_for_each_child_but_a_list_does_not() {
+        let mut budget = WalkBudget::nodes_only(250);
+        assert_eq!(reserve_for_siblings(&mut budget, false, 5), 5);
+        assert_eq!(
+            reserve_for_siblings(&mut budget, false, MAX_RESERVED_SIBLINGS + 1),
+            0
+        );
+        assert_eq!(reserve_for_siblings(&mut budget, true, 5), 0);
+    }
 }
 
 #[cfg(test)]

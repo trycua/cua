@@ -53,6 +53,8 @@ pub struct WalkBudget {
     time_bounded: bool,
     max_elements: usize,
     visited: usize,
+    /// Nodes held back by [`WalkBudget::reserve`] for siblings not yet walked.
+    reserved: usize,
     pending: usize,
     stop: Option<WalkStop>,
 }
@@ -68,6 +70,7 @@ impl WalkBudget {
             time_bounded: true,
             max_elements,
             visited: 0,
+            reserved: 0,
             pending: 0,
             stop: None,
         }
@@ -94,19 +97,47 @@ impl WalkBudget {
     /// a budget has run out, and the node is counted as pending.
     pub fn admit(&mut self) -> bool {
         let started = *self.started.get_or_insert_with(Instant::now);
-        if self.stop.is_none() {
-            if self.visited >= self.max_elements {
-                self.stop = Some(WalkStop::NodeBudget);
-            } else if started.elapsed() >= self.timeout {
-                self.stop = Some(WalkStop::Timeout);
-            }
-        }
-        if self.stop.is_some() {
+        // Running out of time ends the walk. Running out of nodes refuses
+        // only this node: a sibling may still claim a node it reserved.
+        let refused = if matches!(
+            self.stop,
+            Some(WalkStop::Timeout | WalkStop::AppLookupTimeout)
+        ) {
+            true
+        } else if self.visited + self.reserved >= self.max_elements {
+            self.stop.get_or_insert(WalkStop::NodeBudget);
+            true
+        } else if started.elapsed() >= self.timeout {
+            self.stop.get_or_insert(WalkStop::Timeout);
+            true
+        } else {
+            false
+        };
+        if refused {
             self.pending += 1;
             return false;
         }
         self.visited += 1;
         true
+    }
+
+    /// Hold back up to `count` nodes of the unreserved node budget and return
+    /// how many were held. A walker reserves one node per sibling before it
+    /// descends into the first, then [`WalkBudget::release`]s one before each
+    /// sibling, so a deep early sibling cannot use up the nodes that later
+    /// siblings need to be listed at all.
+    pub fn reserve(&mut self, count: usize) -> usize {
+        let free = self
+            .max_elements
+            .saturating_sub(self.visited + self.reserved);
+        let held = count.min(free);
+        self.reserved += held;
+        held
+    }
+
+    /// Return one node held by [`WalkBudget::reserve`] to the budget.
+    pub fn release(&mut self) {
+        self.reserved = self.reserved.saturating_sub(1);
     }
 
     /// Whether the wall-clock budget has run out (for phases that cannot be
@@ -246,6 +277,40 @@ mod tests {
         let outcome = budget.outcome();
         assert_eq!(outcome.reason(), Some("node_budget"));
         assert_eq!((outcome.nodes_visited, outcome.nodes_pending), (2, 2));
+    }
+
+    #[test]
+    fn a_reserved_node_survives_a_deep_earlier_sibling() {
+        // A parent and three siblings fill a budget of 4 exactly; the first
+        // sibling has a deep subtree.
+        let mut budget = WalkBudget::nodes_only(4);
+        assert!(budget.admit(), "parent");
+        assert_eq!(budget.reserve(3), 3);
+        budget.release();
+        assert!(budget.admit(), "first sibling");
+        assert!(!budget.admit(), "its subtree stops at the held nodes");
+        budget.release();
+        assert!(budget.admit(), "second sibling");
+        budget.release();
+        assert!(budget.admit(), "third sibling");
+        assert!(!budget.admit());
+        let outcome = budget.outcome();
+        assert_eq!(outcome.reason(), Some("node_budget"));
+        assert_eq!((outcome.nodes_visited, outcome.nodes_pending), (4, 2));
+    }
+
+    #[test]
+    fn a_reservation_never_exceeds_the_free_budget() {
+        let mut budget = WalkBudget::nodes_only(3);
+        assert!(budget.admit());
+        assert_eq!(budget.reserve(10), 2);
+        assert_eq!(budget.reserve(1), 0);
+        budget.release();
+        budget.release();
+        budget.release();
+        assert!(budget.admit());
+        assert!(budget.admit());
+        assert!(!budget.admit());
     }
 
     #[test]

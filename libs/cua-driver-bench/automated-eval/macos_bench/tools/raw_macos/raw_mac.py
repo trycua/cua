@@ -90,6 +90,8 @@ class State:
             f"BLOCKED at run time [{rule.id} {rule.title}]: {what}. {rule.why} Source: {rule.source}. "
             f"Instead: {lint.NATIVE_INSTEAD.get(rule.id, rule.instead) if self.native else rule.instead}"
         )
+        if os.environ.get("RAW_BARE") == "1":
+            text = f"Not available: {what} ({rule.title})."
         with self.lock:
             self.runtime_blocked.append(f"{rule.id}: {what}")
         raise Blocked(text)

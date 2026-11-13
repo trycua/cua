@@ -484,3 +484,79 @@ class NativeLintTest(unittest.TestCase):
         self.assertNotIn("raw.", report.render())
         self.assertIn("raw.", lint.lint("import os\nreturn 1").render())
         self.assertEqual(set(lint.NATIVE_INSTEAD), set(lint.RULES))
+
+
+class BareArmTest(unittest.TestCase):
+    """The bare arm (Zane, 13 Nov 2026 17:02 SGT: "no wrapper, no anything except a way to call the native apis"):
+    a one-paragraph tool description, no background lint or hook feedback, and only the GUI-only rule and the Cua
+    Driver ban enforced."""
+
+    def bare(self, source: str) -> tuple[set[str], bool, str]:
+        report = lint.lint(source + "\nreturn 1", granted=False, bare=True)
+        return {f.rule for f in report.findings}, report.ok, report.render()
+
+    def test_background_routes_are_not_checked(self):
+        for source in (
+            "import Quartz\nQuartz.CGEventPost(0, e)",
+            "import AppKit\napp.activateWithOptions_(0)",
+            "import ApplicationServices as AX\nAX.AXUIElementPerformAction(w, 'AXRaise')",
+            "import ApplicationServices as AX\nAX.AXUIElementSetAttributeValue(e, 'AXFocused', True)",
+            "import ApplicationServices as AX\nAX.AXUIElementPerformAction(p, 'AXShowMenu')",
+            "import AppKit\nAppKit.NSPasteboard.generalPasteboard().clearContents()",
+            "import AppKit\nAppKit.NSWorkspace.sharedWorkspace().openURL_(u)",
+            "import ctypes\nsl = ctypes.CDLL(p)\nsl.SLPSSetFrontProcessWithOptions(psn, 0, 0)",
+        ):
+            with self.subTest(source=source):
+                found, ok, text = self.bare(source)
+                self.assertTrue(ok, found)
+                self.assertEqual(text, "")
+
+    def test_gui_only_and_driver_ban_stay(self):
+        for source in (
+            "import subprocess",
+            "import os",
+            "open('/etc/passwd')",
+            "eval('1')",
+            "import ctypes\nctypes.CDLL(None).system(b'ls')",
+            "import Foundation\nFoundation.NSTask.alloc()",
+            "import Foundation\nFoundation.NSAppleScript.alloc()",
+            'x = "osascript"',
+            "import Foundation\nFoundation.NSData.dataWithContentsOfFile_('/etc/hosts')",
+            'x = "/Applications/CuaDriver.app/Contents/MacOS/cua-driver"',
+            "import raw",
+        ):
+            with self.subTest(source=source):
+                found, ok, text = self.bare(source)
+                self.assertFalse(ok, found)
+                self.assertTrue(text.startswith("Not run: "), text)
+                self.assertNotIn("instead", text)
+                self.assertNotIn("raw.", text.replace("import raw", ""))
+
+    def test_description_is_one_generic_paragraph(self):
+        import importlib
+        import os
+
+        os.environ["RAW_BARE"] = "1"
+        try:
+            import raw_mcp_mac
+
+            server = importlib.reload(raw_mcp_mac)
+            text = server.description({"foreground_grant": True, "coverage": {"Calc": "full"}})
+            default_ms = server.DEFAULT_TIMEOUT_MS
+        finally:
+            os.environ.pop("RAW_BARE", None)
+            importlib.reload(raw_mcp_mac)
+        self.assertEqual(text.strip().count("\n"), 0)
+        self.assertLess(len(text), 700)
+        for word in (
+            "Calc",
+            "GnuCash",
+            "Electron",
+            "raw.",
+            "background",
+            "foreground",
+            "AXPress",
+            "menu",
+        ):
+            self.assertNotIn(word, text)
+        self.assertEqual(default_ms, server.MAX_TIMEOUT_MS)

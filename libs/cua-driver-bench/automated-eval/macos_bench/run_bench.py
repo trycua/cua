@@ -698,7 +698,7 @@ def real_capture_check(ctx: "Ctx", arm: str) -> tuple[str, str, str]:
                     "AppKit.NSURL.fileURLWithPath_(SHOTS + '/p.png'), 'public.png', 1, None)\n"
                     "Quartz.CGImageDestinationAddImage(d, img, None)\nQuartz.CGImageDestinationFinalize(d)\n"
                     "return len(Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionOnScreenOnly, 0))"
-                    if source == ca.RAW_MACOS_NATIVE_ARM
+                    if source in ca.RAW_MACOS_DIRECT_ARMS
                     else "raw.screenshot()\nreturn len(raw.windows())"  # raw-macos: no driver
                 )
                 result = call("run_script", {"script": script, "timeout_ms": 60000})
@@ -1278,7 +1278,11 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
                 "trial_id": entry["trial_id"],
                 "foreground_grant": grant,
                 "coverage": (
-                    spec.get("ax_coverage") if SOURCE_ARM.get(arm, arm) in ca.RAW_MACOS_ARMS else spec.get("atspi_coverage")
+                    {}  # the bare arm gets no per-task notes
+                    if SOURCE_ARM.get(arm, arm) == ca.RAW_MACOS_BARE_ARM
+                    else spec.get("ax_coverage")
+                    if SOURCE_ARM.get(arm, arm) in ca.RAW_MACOS_ARMS
+                    else spec.get("atspi_coverage")
                 )
                 or {},
                 "user_apps": list(ca.RAW_USER_APPS) if condition == "background" else [],

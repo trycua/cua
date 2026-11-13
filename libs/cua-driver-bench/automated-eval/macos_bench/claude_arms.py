@@ -370,7 +370,12 @@ RAW_MACOS_ADAPTER = ADAPTER_TOOLS / "raw_macos" / "raw_mcp_mac.py"
 # The no-wrapper variant (Zane, 13 Nov 2026 16:08 SGT): the same server, lint, hook, grants and per-trial file, except
 # the script gets no raw.* runtime and imports the frameworks itself (RAW_NATIVE=1 in raw_mcp_mac.py).
 RAW_MACOS_NATIVE_ARM = "cc-raw-macos-native"
-RAW_MACOS_ARMS = (RAW_MACOS_ARM, RAW_MACOS_NATIVE_ARM)
+# The bare variant (Zane, 13 Nov 2026 17:02 SGT: "no wrapper, no anything except a way to call the native apis"): the
+# native arm's runner with a one-paragraph tool description, no system-prompt addendum, no coverage labels and no
+# background lint or hook feedback; only the GUI-only rule every v2 arm has and the Cua Driver ban are enforced.
+RAW_MACOS_BARE_ARM = "cc-raw-macos-bare"
+RAW_MACOS_ARMS = (RAW_MACOS_ARM, RAW_MACOS_NATIVE_ARM, RAW_MACOS_BARE_ARM)
+RAW_MACOS_DIRECT_ARMS = (RAW_MACOS_NATIVE_ARM, RAW_MACOS_BARE_ARM)  # no raw.* runtime
 RAW_MACOS_PYTHON = Path(os.environ.get("CDB_RAW_MACOS_PYTHON") or Path.home() / "rmb/venv/bin/python")
 # The tree-diff variant of raw-linux: the same arm, except a re-dump of the same root in a trial returns only what
 # changed since the last one (RAW_DUMP_DIFF=1 in raw_mcp.py).
@@ -388,6 +393,7 @@ ADAPTER_ARMS = {
     RAW_LINUX_DIFF_ARM: "cua",
     RAW_MACOS_ARM: "cua",
     RAW_MACOS_NATIVE_ARM: "cua",
+    RAW_MACOS_BARE_ARM: "cua",
 }
 
 
@@ -428,7 +434,8 @@ def adapter_entry(arm: str) -> dict[str, Any]:
                 "RAW_TMP": str(RAW_LOG.parent / "shots"),
                 "RAW_TRIAL": str(RAW_TRIAL),
                 "PYTHON": python,
-                "RAW_NATIVE": "1" if arm == RAW_MACOS_NATIVE_ARM else "0",
+                "RAW_NATIVE": "1" if arm in RAW_MACOS_DIRECT_ARMS else "0",
+                "RAW_BARE": "1" if arm == RAW_MACOS_BARE_ARM else "0",
             },
         )
         return {"type": "stdio", "command": python, "args": ["-I", "-B", str(RAW_MACOS_ADAPTER)], "env": env}
@@ -474,6 +481,9 @@ ARM_DESCRIPTIONS = {
     RAW_MACOS_NATIVE_ARM: "The cc-raw-macos setup with no raw.* helper library: scripts import pyobjc frameworks and "
     "ctypes and call macOS's APIs (public and private) directly, behind the same lint and runtime hook, no Cua Driver "
     "(tools/raw_macos, RAW_NATIVE=1)",
+    RAW_MACOS_BARE_ARM: "One run_script tool (server cua) with a one-paragraph description: Python that imports macOS's "
+    "native APIs (pyobjc, ctypes) directly; no helpers, guide, task notes or background lint; GUI-only and no Cua "
+    "Driver (tools/raw_macos, RAW_BARE=1)",
     "cc-codex-cu": "Claude Code + Codex computer-use cua_repl MCP (server codex-cu), no skill",
     "cc-codex-cu-1007-browser": "Claude Code + Codex 26.1007.21159 cua_repl MCP (server codex-cu), surfaces browser+computer, no skill (Amendment 10)",
     "cc-claude-cu-helper": "Claude Code + "
@@ -542,6 +552,8 @@ def system_prompt_for(arm: str, *, browser: bool = False) -> str:
         return prompt + RAW_MACOS_ADDENDUM
     if arm == RAW_MACOS_NATIVE_ARM:
         return prompt + RAW_MACOS_NATIVE_ADDENDUM
+    if arm == RAW_MACOS_BARE_ARM:
+        return prompt  # the shared prompt only; the tool's own paragraph is all it gets
     build = CUA_BUILDS.get(arm)
     if build is None:
         return prompt

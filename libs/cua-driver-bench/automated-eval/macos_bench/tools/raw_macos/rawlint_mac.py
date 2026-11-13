@@ -408,6 +408,15 @@ AX_CONSTANTS = {
 
 
 AX_CALLS = ("AXUIElementSetAttributeValue", "AXUIElementPerformAction")
+# LaunchServices launch/open calls: MB5 blocks them because they activate the target (a background rule); the bare
+# arm keeps only the GUI-only part of MB5 (AppleScript, osascript, NSTask, System Events), as bench_v2.EXEC_PATTERNS.
+BARE_LAUNCH = {
+    "launchApplication_",
+    "openURL_",
+    "openApplicationAtURL_configuration_completionHandler_",
+    "openURLs_withApplicationAtURL_configuration_completionHandler_",
+    "launchAppWithBundleIdentifier_options_additionalEventParamDescriptor_launchIdentifier_",
+}
 
 
 def import_ok(name: str, native: bool = False) -> bool:
@@ -498,6 +507,7 @@ class Report:
     findings: list[Finding]
     granted: bool  # the harness's per-trial foreground grant, not anything the script says
     native: bool = False  # the no-wrapper arm: its hints name native APIs, not raw.* helpers
+    bare: bool = False  # the bare arm: only the always-blocked rules, rendered without hints
 
     @property
     def blocked(self) -> list[Finding]:
@@ -519,6 +529,11 @@ class Report:
             if not self.ok
             else "Background-use lint: the script ran with these findings."
         )
+        if self.bare:
+            return "Not run: " + "; ".join(
+                f"line {f.line}: {f.detail} ({RULES[f.rule].title})"
+                for f in sorted(self.findings, key=lambda f: f.line)
+            )
         body = "\n".join(
             f.render(self.granted, self.native) for f in sorted(self.findings, key=lambda f: f.line)
         )
@@ -723,12 +738,14 @@ class _Walker(ast.NodeVisitor):
                     self.add("MB9", node, "keys " + "+".join(keys))
 
 
-def lint(source: str, granted: bool = False, native: bool = False) -> Report:
+def lint(source: str, granted: bool = False, native: bool = False, bare: bool = False) -> Report:
     """Findings for one script on a trial with or without the harness's foreground grant. ``native``: the no-wrapper
-    arm's script (framework imports, ctypes and private API names allowed). A syntax error is the caller's problem,
-    not a finding."""
+    arm's script (framework imports, ctypes and private API names allowed). ``bare`` (implies native): only the
+    always-blocked findings (GUI-only, launch/AppleScript, Cua Driver, unreadable code) are kept; the background
+    rules are not checked, since the bare arm's background rule comes only from the task text. A syntax error is the
+    caller's problem, not a finding."""
     tree = ast.parse(source, "<script>", "exec")
-    walker = _Walker(native)
+    walker = _Walker(native or bare)
     walker.visit(tree)
     if walker.last_action > (0, 0) and walker.last_read <= walker.last_action:
         walker.add(
@@ -736,6 +753,13 @@ def lint(source: str, granted: bool = False, native: bool = False) -> Report:
             ast.Constant(value=None, lineno=walker.last_action[0]),
             "no read after the last action on this line",
         )
+    if bare:
+        kept = [
+            f
+            for f in walker.findings
+            if f.severity == "block" and not (f.rule == "MB5" and f.detail in BARE_LAUNCH)
+        ]
+        return Report(kept, granted, True, True)
     return Report(walker.findings, granted, native)
 
 

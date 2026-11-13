@@ -47,6 +47,10 @@ PYTHON = os.environ.get("PYTHON") or sys.executable
 DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS = 30_000, 120_000
 # The no-wrapper arm (pi-raw-macos-native): scripts call the frameworks directly, with no raw.* runtime
 NATIVE = os.environ.get("RAW_NATIVE") == "1"
+# The bare arm (pi-raw-macos-bare; Zane, 13 Nov 2026 17:02 SGT): one generic paragraph, no feedback beyond the result
+BARE = os.environ.get("RAW_BARE") == "1"
+if BARE:  # the other raw arms' prompts say to pass 120000 on every call; the bare arm's says nothing, so that is its default
+    DEFAULT_TIMEOUT_MS = MAX_TIMEOUT_MS
 # raw_mac.GUARD_MARKER (raw_mac imports the frameworks, so the server does not import it)
 GUARD_MARKER = "key-focus-guard-open"
 
@@ -166,6 +170,14 @@ what the user copied.
 - An action the API accepted is not proof it worked: read the element back (AXValue, the window's text, a \
 screenshot) before you report success.
 """
+BARE_DESCRIPTION = """\
+Run a Python script on this macOS desktop and get back its result. The script body runs inside a function: \
+`return` a JSON-able value to see it (print output comes back too), and each call is a fresh process. The \
+platform's native APIs are importable: pyobjc (ApplicationServices, Quartz, AppKit, Foundation, CoreFoundation, \
+ScreenCaptureKit, objc) and ctypes for any framework or symbol, public or private. PNG files written into the \
+directory named by the global SHOTS come back as images. Shells, subprocesses, file and network access are not \
+available.
+"""
 NATIVE_GRANTED = (
     "This trial grants foreground: the foreground routes above are allowed when no background route works. Each "
     "use is reported."
@@ -200,6 +212,8 @@ def description(settings: dict) -> str:
         if labels
         else "AX coverage of this task's apps: not measured."
     )
+    if BARE:
+        return BARE_DESCRIPTION
     if NATIVE:
         grant = NATIVE_GRANTED if settings.get("foreground_grant") else NATIVE_NOT_GRANTED
         return NATIVE_DESCRIPTION.replace("{coverage}", coverage).replace("{grant}", grant)
@@ -357,7 +371,7 @@ def run_script(script: str, timeout_ms: int | None) -> tuple[list[dict], bool, d
         text.append(result["lint_text"])
     granted = bool(settings.get("foreground_grant"))
     watch = result.get("watch") or {}
-    if watch.get("lines"):
+    if watch.get("lines") and not BARE:
         text.append(
             "Runtime background check: "
             + "; ".join(watch["lines"])
@@ -373,7 +387,7 @@ def run_script(script: str, timeout_ms: int | None) -> tuple[list[dict], bool, d
                 )
             )
         )
-    for item in result.get("runtime_blocked") or []:
+    for item in [] if BARE else result.get("runtime_blocked") or []:
         text.append(f"Refused at run time: {item}")
     if result.get("stdout"):
         text.append("stdout:\n" + result["stdout"])
@@ -438,7 +452,9 @@ def serve() -> None:
                         "protocolVersion": "2024-11-05",
                         "capabilities": {"tools": {}},
                         "serverInfo": {"name": "cua", "version": "raw-macos-prototype"},
-                        "instructions": "One tool, run_script: Python against the macOS Accessibility API, "
+                        "instructions": "One tool, run_script: Python on this macOS desktop."
+                        if BARE
+                        else "One tool, run_script: Python against the macOS Accessibility API, "
                         "per-process events and window capture"
                         + (", called directly (no helper library)" if NATIVE else "")
                         + ". Read its description first.",

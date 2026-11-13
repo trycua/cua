@@ -58,7 +58,9 @@ def _jsonable(value: Any) -> Any:
         return str(value)
 
 
-NATIVE = os.environ.get("RAW_NATIVE") == "1"
+NATIVE = os.environ.get("RAW_NATIVE") == "1" or os.environ.get("RAW_BARE") == "1"
+# The bare arm (pi-raw-macos-bare): native, and only the always-blocked rules are enforced
+BARE = os.environ.get("RAW_BARE") == "1"
 
 
 def _guarded_getattr(obj: Any, name: str, *default: Any) -> Any:
@@ -83,9 +85,12 @@ def _guarded_getattr(obj: Any, name: str, *default: Any) -> Any:
             if name in rawlint.NATIVE_FRONT
             else None
         )
+    if BARE and name in rawlint.BARE_LAUNCH:
+        rule = None
     if rule in {"GUI1", "MB5"}:
         raw_mac.STATE.refuse(rule, f"getattr {name}")
-    raw_mac.STATE.check(rule, f"getattr {name}")
+    if not BARE:
+        raw_mac.STATE.check(rule, f"getattr {name}")
     return getattr(obj, name, *default)
 
 
@@ -105,7 +110,9 @@ def _guarded_import(
 def run(source: str, image_dir: Path) -> dict[str, Any]:
     out: dict[str, Any] = {"ok": False, "lint": [], "lint_blocked": False}
     try:
-        report = rawlint.lint(source, granted=os.environ.get("RAW_GRANT") == "1", native=NATIVE)
+        report = rawlint.lint(
+            source, granted=os.environ.get("RAW_GRANT") == "1", native=NATIVE, bare=BARE
+        )
     except SyntaxError as error:
         out["error"] = f"SyntaxError: {error.msg} (line {error.lineno})"
         return out
@@ -117,7 +124,7 @@ def run(source: str, image_dir: Path) -> dict[str, Any]:
     out["granted"] = report.granted
     if not report.ok:
         out["lint_blocked"] = True
-        out["error"] = "blocked by the background-use lint; nothing was run"
+        out["error"] = "not run" if BARE else "blocked by the background-use lint; nothing was run"
         return out
 
     import raw_mac  # the frameworks load only for a script that passed the lint

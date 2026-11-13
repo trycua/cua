@@ -49,3 +49,17 @@ pub fn write_script(dir: &std::path::Path, name: &str, body: &str) -> std::path:
     write_executable(&p, format!("#!/bin/sh\n{body}\n"));
     p
 }
+
+/// `base` joined with a `/`-separated relative path one segment at a time, the way the crate builds
+/// paths, so a Windows path in an expected value has one separator kind.
+pub trait JoinRel {
+    fn rel(&self, rel: &str) -> std::path::PathBuf;
+}
+
+impl<P: AsRef<std::path::Path>> JoinRel for P {
+    fn rel(&self, rel: &str) -> std::path::PathBuf {
+        rel.split('/')
+            .filter(|s| !s.is_empty())
+            .fold(self.as_ref().to_path_buf(), |p, s| p.join(s))
+    }
+}

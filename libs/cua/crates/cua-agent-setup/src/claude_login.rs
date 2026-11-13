@@ -174,10 +174,7 @@ impl Source {
             Source::Keychain { service } => {
                 format!("the macOS Keychain item \u{201c}{service}\u{201d}")
             }
-            Source::File(p) => match p.strip_prefix(&env.home) {
-                Ok(rel) => format!("~/{}", rel.display()),
-                Err(_) => p.display().to_string(),
-            },
+            Source::File(p) => crate::connection::tilde(env, p),
         }
     }
 

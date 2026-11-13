@@ -10,6 +10,8 @@
 
 mod common;
 
+use common::JoinRel;
+
 use cua_agent_setup::{
     AgentSetup, ConnectionRow, ConnectionState, HostEnv, ImportState, ImportedSignIn, McpServer,
     McpState, Parts, ProblemAction, SignInCopy, SignInVault, SignedInState, StatusOptions,
@@ -172,7 +174,7 @@ impl World {
     }
 
     fn write(&self, rel: &str, text: &str) -> PathBuf {
-        let p = self.home.join(rel);
+        let p = self.home.rel(rel);
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(&p, text).unwrap();
         p
@@ -502,7 +504,7 @@ fn sign_ins_are_made_for_cua_and_never_read_from_the_apps_own_files() {
     let w = World::new();
     w.install("codex", "0.61.0");
     w.sign_in("codex");
-    let own = std::fs::read_to_string(w.home.join(".codex/auth.json")).unwrap();
+    let own = std::fs::read_to_string(w.home.rel(".codex/auth.json")).unwrap();
     w.connect("codex", false);
     let mut env = w.env.clone();
     env.run_agent_clis = true;
@@ -519,14 +521,14 @@ fn sign_ins_are_made_for_cua_and_never_read_from_the_apps_own_files() {
     assert_eq!(v["tokens"]["refresh_token"], "rt-for-cua");
     // Your own sign-in is untouched, and Cua's folder is gone.
     assert_eq!(
-        std::fs::read_to_string(w.home.join(".codex/auth.json")).unwrap(),
+        std::fs::read_to_string(w.home.rel(".codex/auth.json")).unwrap(),
         own
     );
     assert!(
         !s.state_path()
             .parent()
             .unwrap()
-            .join("agent-sign-ins/codex")
+            .rel("agent-sign-ins/codex")
             .exists()
     );
     let r = check(&w, "codex", ConnectionState::Connected, None);
@@ -573,7 +575,7 @@ fn sign_ins_are_made_for_cua_and_never_read_from_the_apps_own_files() {
         !s2.state_path()
             .parent()
             .unwrap()
-            .join("agent-sign-ins/codex")
+            .rel("agent-sign-ins/codex")
             .exists()
     );
 
@@ -582,7 +584,7 @@ fn sign_ins_are_made_for_cua_and_never_read_from_the_apps_own_files() {
     let w = World::new();
     w.install("claude-code", "2.4.1");
     w.sign_in("claude-code");
-    let own = std::fs::read_to_string(w.home.join(".claude/.credentials.json")).unwrap();
+    let own = std::fs::read_to_string(w.home.rel(".claude/.credentials.json")).unwrap();
     w.connect("claude-code", true);
     let r = check(&w, "claude-code", ConnectionState::Connected, None);
     assert_eq!(r.signin_import, ImportState::Ok);
@@ -597,7 +599,7 @@ fn sign_ins_are_made_for_cua_and_never_read_from_the_apps_own_files() {
     // The refresh token is never kept anywhere Cua writes, and Claude Code's file is untouched.
     assert!(!format!("{:?}", w.vault.value("claude-code")).contains("ort01"));
     assert_eq!(
-        std::fs::read_to_string(w.home.join(".claude/.credentials.json")).unwrap(),
+        std::fs::read_to_string(w.home.rel(".claude/.credentials.json")).unwrap(),
         own
     );
 
@@ -805,7 +807,7 @@ fn config_edited_or_removed_outside_cua_is_caught() {
         // Pointed at a cua that doesn't answer.
         std::fs::write(
             &file,
-            text.replace(&cua, &w.bin.join("dead/cua").display().to_string()),
+            text.replace(&cua, &w.bin.rel("dead/cua").display().to_string()),
         )
         .unwrap();
         let r = check(
@@ -858,7 +860,7 @@ fn upgraded_harness_stays_connected_and_says_from_what() {
     assert_eq!(r.version.as_deref(), Some("0.61.0"));
     assert_eq!(r.previous_version.as_deref(), Some("0.60.1"));
     // An upgrade that rewrote the config without Cua: caught.
-    std::fs::write(w.home.join(".codex/config.toml"), "model = \"gpt-5\"\n").unwrap();
+    std::fs::write(w.home.rel(".codex/config.toml"), "model = \"gpt-5\"\n").unwrap();
     check(
         &w,
         "codex",
@@ -905,7 +907,7 @@ fn uninstalled_after_connecting_offers_disconnect_which_undoes_both() {
         .unwrap();
     assert_eq!(removed, ["CODEX_AUTH_JSON"]);
     assert!(w.vault.imported().unwrap().is_empty());
-    let toml = std::fs::read_to_string(w.home.join(".codex/config.toml")).unwrap();
+    let toml = std::fs::read_to_string(w.home.rel(".codex/config.toml")).unwrap();
     assert!(toml.contains("/opt/mine/wrapper"), "{toml}");
     // The old entry isn't Cua's own and its cua is gone: the row says so,
     // but it is no longer "Cua was taken out".
@@ -1050,7 +1052,7 @@ fn a_sign_in_only_connect_changes_nothing_outside_the_cua_home_and_never_prints_
         before,
         "a file outside the Cua home was created or changed"
     );
-    assert!(!w.home.join(".claude/skills").exists());
+    assert!(!w.home.rel(".claude/skills").exists());
     // The access token is kept, the refresh token never, and neither is in anything the connect says.
     assert_eq!(w.vault.value("claude-code").as_deref(), Some(CLAUDE_ACCESS));
     let said = format!("{r:?}{}", serde_json::to_string(&r).unwrap());

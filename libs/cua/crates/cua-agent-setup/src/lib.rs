@@ -206,12 +206,12 @@ impl HostEnv {
             let appdata = self
                 .var("APPDATA")
                 .map(PathBuf::from)
-                .unwrap_or_else(|| self.home.join("AppData/Roaming"));
+                .unwrap_or_else(|| self.home.join("AppData").join("Roaming"));
             vec![
-                self.home.join(".local/bin"),
+                self.home.join(".local").join("bin"),
                 appdata.join("npm"),
-                self.home.join(".bun/bin"),
-                self.home.join(".cargo/bin"),
+                self.home.join(".bun").join("bin"),
+                self.home.join(".cargo").join("bin"),
             ]
         } else {
             vec![

@@ -128,16 +128,17 @@ fn standalone_browser_completeness_html() -> String {
   const cancelDrag = document.getElementById('cancel-drag');
   const cancelState = document.getElementById('cancel-drag-state');
   let canceled = false;
-  let unexpectedDrop = false;
   cancelDrag.addEventListener('dragstart', event => {
     canceled = true;
     event.preventDefault();
   });
   document.getElementById('drop-target').addEventListener('drop', () => {
-    if (canceled) unexpectedDrop = true;
+    if (canceled) cancelState.textContent = 'unexpected-drop';
   });
-  document.addEventListener('pointerup', () => {
-    if (canceled) cancelState.textContent = unexpectedDrop ? 'unexpected-drop' : 'canceled-without-drop';
+  document.addEventListener('pointerup', event => {
+    if (canceled && cancelState.textContent === 'idle') {
+      cancelState.textContent = event.target === cancelDrag ? 'released-at-source' : 'released-elsewhere';
+    }
   });
   document.getElementById('drop-target').addEventListener('drop', event => {
     event.preventDefault();
@@ -5140,7 +5141,7 @@ fn run_pointer_actions(spec: &BrowserSpec) {
                 "{}",
                 canceled.raw
             );
-            wait_for_text(&fixture.server, "cancel-drag-state", "canceled-without-drop");
+            wait_for_text(&fixture.server, "cancel-drag-state", "released-at-source");
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
         })
     });

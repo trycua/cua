@@ -545,7 +545,7 @@ MAX_CELLS = 2000  # one raw.cells read
 ATSPI_TIMEOUT_MS = int(os.environ.get("RAW_ATSPI_TIMEOUT_MS") or 2000)
 # apps that stalled in an earlier script of this trial (from the MCP server); raw.app asks them with a short timeout
 SUSPECT_PIDS = {int(p) for p in (os.environ.get("RAW_ATSPI_SUSPECT") or "").split(",") if p.strip().isdigit()}
-SUSPECT_TIMEOUT_MS = 300
+SUSPECT_TIMEOUT_MS = min(300, ATSPI_TIMEOUT_MS) if ATSPI_TIMEOUT_MS > 0 else 300
 
 
 def _cell_ref(ref: str) -> tuple[int, int]:

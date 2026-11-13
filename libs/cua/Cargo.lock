@@ -3524,6 +3524,7 @@ dependencies = [
  "cua-daemon",
  "cua-home",
  "cua-host",
+ "cua-image",
  "cua-keyvault",
  "cua-media-client",
  "cua-media-codec",

@@ -165,7 +165,7 @@ export interface DemoOptions {
    * built-in Linux runtime does not start; later attempts work,
    * `?demo=create-fail-runtime`) or `disk` (every create is short of disk
    * space, `?demo=create-fail-disk`). */
-  failCreates?: "runtime-once" | "disk" | "unsupported";
+  failCreates?: "runtime-once" | "disk" | "unsupported" | "windows-limited";
   /** The CLI the demo host reports: the released app's `cua` on PATH unless
    * set; `local` is a Local build's (`?demo=cli-local`), `missing` one
    * not installed (`?demo=cli-missing`). */
@@ -234,6 +234,9 @@ export const DEMO_CREATE_FAILURES = {
   /** The daemon's refusal on a Mac that can't run virtual computers (#6323, `?demo=create-fail-unsupported`). */
   unsupported:
     "This Mac can't run Spaces itself, because it can't run virtual computers. That happens when the Mac is itself a virtual machine, or is an older Intel Mac. Add another computer to your account, or link your own cloud, and create the Space there.",
+  /** Microsoft refuses the Windows download until a disc image is chosen (`?demo=create-fail-windows`). */
+  windowsLimited:
+    "local runtime: build failed at windows iso: Microsoft is limiting Windows downloads from this network (Sentinel marked this request as rejected.) right now. Try again in about 42 minutes, or download the Windows ISO yourself (https://www.microsoft.com/software-download/windows11arm64) and save it in your Downloads folder: Cua finds it. With the command line: cua sb create windows:11 --iso ~/Downloads/<the file>.iso",
   disk: "not enough disk space to pull ghcr.io/trycua/macos:26: it needs about 30.0 GB and cua keeps 5.0 GB free, but only 12.4 GB is available on /Users/me/.lume (run `cua cache prune` to free space, or lower CUA_DISK_MIN_FREE)",
 } as const;
 
@@ -419,7 +422,9 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
         ? "disk"
         : flags.has("create-fail-unsupported")
           ? "unsupported"
-          : undefined,
+          : flags.has("create-fail-windows")
+            ? "windows-limited"
+            : undefined,
     ...(flags.has("intel-mac") ? { platform: { os: "macos" as const, arch: "amd64" as const } } : {}),
     ...(flags.has("linux-pc") ? { platform: { os: "linux" as const, arch: "amd64" as const } } : {}),
     ...(flags.has("update-ready")
@@ -489,6 +494,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     identity: options.signedIn === false ? undefined : DEMO_IDENTITY,
     onboarding: { completed: options.onboarded !== false, mode: options.onboarded === false ? null : "client" },
     creates: new Map(),
+    windowsIsoChosen: false,
     agents: demoPersistentAgents(now()),
     // A named allowance is for showing the prompts, which wait for no agent run.
     runs: options.usage ? [] : demoRunRecords(now()),
@@ -658,9 +664,11 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
             ? DEMO_CREATE_FAILURES.disk
             : options.failCreates === "unsupported"
               ? DEMO_CREATE_FAILURES.unsupported
-              : options.failCreates === "runtime-once" && createAttempts++ === 0
-                ? DEMO_CREATE_FAILURES.runtime
-                : null;
+              : options.failCreates === "windows-limited" && !state.windowsIsoChosen
+                ? DEMO_CREATE_FAILURES.windowsLimited
+                : options.failCreates === "runtime-once" && createAttempts++ === 0
+                  ? DEMO_CREATE_FAILURES.runtime
+                  : null;
         if (failure) {
           for (const fraction of [0, 0.3]) {
             emit({ type: "spaces.createProgress", progress: { pendingId, phase: "preparing", fraction, detail: "preparing", space: id } });
@@ -1348,6 +1356,8 @@ export interface DemoState
   identity: string | undefined;
   onboarding: OnboardingState;
   creates: Map<string, { cancelled: boolean }>;
+  /** A Windows disc image was chosen (`windows.chooseIso`). */
+  windowsIsoChosen: boolean;
   agents: PersistentAgent[];
   runs: DemoRunRecord[];
   agentSetup: AgentSetupRow[];

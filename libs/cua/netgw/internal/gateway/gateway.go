@@ -33,7 +33,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/containers/gvisor-tap-vsock/pkg/services/dhcp"
 	"github.com/containers/gvisor-tap-vsock/pkg/services/forwarder"
 	"github.com/containers/gvisor-tap-vsock/pkg/tap"
 	"github.com/containers/gvisor-tap-vsock/pkg/types"
@@ -64,8 +63,8 @@ type Gateway struct {
 	dns     *resolver
 	// The names the resolver answered for each address ([bindings]).
 	bound *bindings
-	ports   *forwarder.PortsForwarder
-	pool    *tap.IPPool
+	ports *forwarder.PortsForwarder
+	pool  *tap.IPPool
 	// The VM's tree (nil: none): its running members, by tree address.
 	tree *tree.Peers
 
@@ -185,7 +184,7 @@ func New(cfg *config.Config, rules *policy.Store, sink *events.Sink) (*Gateway, 
 		}
 	}
 	if cfg.DHCP {
-		srv, err := dhcp.New(&types.Configuration{
+		srv, err := newDHCPServer(&types.Configuration{
 			MTU:               cfg.MTU,
 			Subnet:            cfg.Subnet,
 			GatewayIP:         cfg.GatewayIP,

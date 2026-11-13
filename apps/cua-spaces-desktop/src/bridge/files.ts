@@ -84,6 +84,16 @@ export function filesMethods({ model, ui }: BridgeContext): Handlers {
       if (!ui.chooseFiles) throw Failure.unsupported("This build has no file picker");
       return offers.offer((await ui.chooseFiles(caller.window)) ?? []);
     },
+    // The file is checked and remembered for the image at once (the cua SDK's own `--iso`), so a wrong file is told now.
+    "windows.chooseIso": async (args, caller) => {
+      const image = string(args, "image");
+      if (!ui.chooseIso) throw Failure.unsupported("This build has no file picker");
+      const path = await ui.chooseIso(caller.window);
+      if (!path) return null;
+      const choice = model.native.windowsUseIso(image, path);
+      if (!choice.ok) throw new Failure("bad_iso", choice.problem);
+      return { name: choice.name };
+    },
     "spaces.droppedFiles": (args) => {
       const names = strings(args, "names");
       // Put there by the preload from the drop itself (none: nothing was dropped on this window), else the notch's drop.

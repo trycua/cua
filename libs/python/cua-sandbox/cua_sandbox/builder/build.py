@@ -77,6 +77,9 @@ if (!(Test-Path $TokenFile)) {
 }
 
 netsh advfirewall firewall add rule name="cua-spacesd $Port" dir=in action=allow protocol=TCP localport=$Port
+# A program rule too: a port rule alone still raises the "allow public and private networks" prompt, which
+# blocks the daemon until someone clicks it (nobody does in an unattended build).
+netsh advfirewall firewall add rule name="cua-spacesd program" dir=in action=allow program="$Exe" enable=yes profile=any
 
 $StartScript = Join-Path $InstallDir 'start-spacesd.ps1'
 @"

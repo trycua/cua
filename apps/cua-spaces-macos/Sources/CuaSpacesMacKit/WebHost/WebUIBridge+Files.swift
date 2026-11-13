@@ -2,7 +2,9 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import AppKit
+import CuaSpacesFFI
 import Foundation
+import UniformTypeIdentifiers
 
 /// A Space's drop well in the page, as `SpaceDetailView`'s `TeleportDropZone`
 /// does it: "Send file…" picks files natively, files dropped on the well are
@@ -15,6 +17,14 @@ extension WebUIBridge {
         switch method {
         case "spaces.chooseFiles":
             return offer(pickFiles() ?? [])
+        case "windows.chooseIso":
+            guard let image = args["image"] as? String else { throw Failure.badArgs("image: string") }
+            // Cancelled: nothing chosen. Otherwise the file is checked and
+            // remembered for the image at once, so a wrong file is told now.
+            guard let url = pickIso() else { return NSNull() }
+            let choice = useWindowsIso(image, url.path)
+            guard choice.ok else { throw Failure(code: "bad_iso", message: choice.problem) }
+            return ["name": choice.name]
         case "spaces.droppedFiles":
             guard let names = args["names"] as? [String] else { throw Failure.badArgs("names: [string]") }
             return offer(dropped(names: names))
@@ -54,6 +64,17 @@ extension WebUIBridge {
         let paths = urls.filter(\.isFileURL).map(\.path)
         offeredPaths.formUnion(paths)
         return paths
+    }
+
+    /// The picker for a Windows disc image (`.iso`).
+    static func isoPanel() -> URL? {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.message = "Choose the Windows ISO you downloaded from Microsoft"
+        panel.prompt = "Use This ISO"
+        if let iso = UTType(filenameExtension: "iso") { panel.allowedContentTypes = [iso] }
+        return panel.runModal() == .OK ? panel.url : nil
     }
 
     /// The native file picker, as `SpaceDetailView.chooseFiles`.

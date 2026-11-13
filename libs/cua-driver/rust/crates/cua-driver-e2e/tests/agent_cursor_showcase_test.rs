@@ -419,9 +419,8 @@ fn session_first_actions_show_pointer_and_badge_in_the_video() {
         for (index, a) in places.iter().enumerate() {
             for b in &places[index + 1..] {
                 assert!(
-                    (a.0 - b.0).abs() > 2.0 * POINTER_ORACLE_RADIUS
-                        || (a.1 - b.1).abs() > 2.0 * POINTER_ORACLE_RADIUS,
-                    "first-action places {places:?} overlap, so one rest would count for two"
+                    !overlay_footprints_overlap(*a, *b),
+                    "first-action places {places:?} overlap, so one cursor could count for two"
                 );
             }
         }
@@ -481,9 +480,30 @@ fn element_target(state: &ToolResponse, identifier: &str) -> (String, (f64, f64)
     )
 }
 
-/// A point of the window's screenshot that no control covers, at least two
-/// oracle squares from every point in `avoid`, and the screen point it maps
-/// to. Clicking it changes nothing the oracle could mistake for a cursor.
+/// Whether a cursor resting at `a` and one resting at `b` (screen points)
+/// could draw into each other's oracle regions: each footprint covers the
+/// pointer square and the badge band below it, with the badge at full width.
+fn overlay_footprints_overlap(a: (f64, f64), b: (f64, f64)) -> bool {
+    let footprint = |(x, y): (f64, f64)| {
+        let (anchor_x, anchor_y) = (
+            x + CURSOR_ANCHOR_OFFSET_PER_AXIS,
+            y + CURSOR_ANCHOR_OFFSET_PER_AXIS,
+        );
+        let half_width = POINTER_ORACLE_RADIUS.max(f64::from(BADGE_MAX_WIDTH) * 0.5);
+        [
+            anchor_x - half_width,
+            anchor_y - POINTER_ORACLE_RADIUS,
+            anchor_x + half_width,
+            anchor_y + f64::from(BADGE_CURSOR_GAP + BADGE_HEIGHT),
+        ]
+    };
+    let ([ax0, ay0, ax1, ay1], [bx0, by0, bx1, by1]) = (footprint(a), footprint(b));
+    ax0 < bx1 && bx0 < ax1 && ay0 < by1 && by0 < ay1
+}
+
+/// A point of the window's screenshot that no control covers, whose overlay
+/// footprint misses those of the points in `avoid`, and the screen point it
+/// maps to. Clicking it changes nothing the oracle could mistake for a cursor.
 ///
 /// The point is the candidate nearest the window centre that stays clear of
 /// the screen's edges, where the menu bar, notification banners, the Dock and
@@ -523,7 +543,6 @@ fn empty_window_point(
         })
         .filter(|[_, _, w, h]| w * h < width * height / 4.0)
         .collect();
-    let clearance = 2.0 * POINTER_ORACLE_RADIUS;
     let margin = 8.0;
     let centre = (x + width / 2.0, y + height / 2.0);
     let mut candidates: Vec<((f64, f64), (f64, f64))> = (1..20)
@@ -552,7 +571,7 @@ fn empty_window_point(
                 })
                 && avoid
                     .iter()
-                    .all(|(ax, ay)| (sx - ax).abs() > clearance || (sy - ay).abs() > clearance)
+                    .all(|place| !overlay_footprints_overlap(*place, (*sx, *sy)))
         })
         .collect();
     let distance = |(sx, sy): (f64, f64)| (sx - centre.0).hypot(sy - centre.1);
@@ -1706,6 +1725,16 @@ mod pixel_oracle_tests {
                 image.put_pixel(x as u32, y as u32, color);
             }
         }
+    }
+
+    #[test]
+    fn a_badge_band_under_another_place_counts_as_overlap() {
+        // The keyboard cursor's badge under it would pass for a pointer at a
+        // place just below it.
+        assert!(overlay_footprints_overlap((512.0, 360.0), (512.0, 421.0)));
+        assert!(overlay_footprints_overlap((512.0, 421.0), (512.0, 360.0)));
+        assert!(!overlay_footprints_overlap((512.0, 360.0), (232.0, 377.0)));
+        assert!(!overlay_footprints_overlap((512.0, 360.0), (512.0, 460.0)));
     }
 
     fn assert_colocated_overlay(

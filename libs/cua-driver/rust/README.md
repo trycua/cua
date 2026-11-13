@@ -100,10 +100,7 @@ If `CUA_DRIVER_POLICY_FILE` is **unset**, the driver keeps its
 backward-compatible behavior with no policy enforcement. If it is **set to a
 path that does not exist, or that fails to load**, startup is a hard error: the
 daemon refuses to expose an action endpoint rather than silently running
-unconstrained. To make an unset policy fatal too, set
-`CUA_DRIVER_REQUIRE_POLICY=1`; startup then refuses unless at least one policy
-layer is configured. The effective mode (`enforced`, `disabled`, or `error`) is
-reported in the daemon metadata handshake as `policy_mode`.
+unconstrained.
 
 YAML policies allow unconstrained tools through `allow.tools`, constrained
 calls through `allow.rules`, and explicit overrides through `deny.tools`:

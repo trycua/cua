@@ -697,6 +697,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn end_session_reports_a_cleanup_failure_as_an_error() {
+        let _runtime_guard = crate::test_runtime_lock().lock().await;
+        let sdk = SdkAdapter::load(host_driver()).await.expect("SDK adapter");
+        let session = "end-reports-cleanup-failure";
+        let _hook = cua_driver_core::session::register_scoped_fallible_session_end_hook(
+            "recording",
+            move |ended| {
+                if ended.ends_with(session) {
+                    Err("cleanup failed".into())
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        sdk.invoke_raw("start_session", json!({"session": session}))
+            .await
+            .expect("start session");
+
+        let error = sdk
+            .end_session(session)
+            .await
+            .expect_err("a failed end_session must not report a revoke");
+        assert!(error.contains(session), "unexpected error: {error}");
+
+        sdk.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
     async fn failed_end_preserves_an_existing_out_of_band_tombstone() {
         let _runtime_guard = crate::test_runtime_lock().lock().await;
         let sdk = SdkAdapter::load(host_driver()).await.expect("SDK adapter");

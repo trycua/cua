@@ -1340,7 +1340,14 @@ pub struct ToolRegistry {
     approval_broker: Arc<crate::consent::ApprovalBroker>,
     protected_resource_grants: Arc<crate::consent::ProtectedResourceGrants>,
     protected_resource_ownership: Arc<crate::consent::ProtectedResourceOwnershipStore>,
+    /// How a batch learns which window an `element_token` belongs to; set by
+    /// the platform that owns the snapshot store.
+    token_window_resolver: Option<TokenWindowResolver>,
 }
+
+/// Call arguments (carrying an `element_token`) -> the `(pid, window_id)` of
+/// the live snapshot that token names, or `None` when it is stale or unknown.
+pub type TokenWindowResolver = Arc<dyn Fn(&Value) -> Option<(i32, u64)> + Send + Sync + 'static>;
 
 impl ToolRegistry {
     pub fn new() -> Self {
@@ -1416,7 +1423,19 @@ impl ToolRegistry {
             approval_broker,
             protected_resource_grants,
             protected_resource_ownership,
+            token_window_resolver: None,
         }
+    }
+
+    /// Install the resolver that maps an `element_token` to its snapshot's
+    /// window, so `run_steps` can take the window to observe from a token.
+    pub fn set_token_window_resolver(&mut self, resolver: TokenWindowResolver) {
+        self.token_window_resolver = Some(resolver);
+    }
+
+    /// The `(pid, window_id)` a live `element_token` in `args` names.
+    pub fn window_for_token(&self, args: &Value) -> Option<(i32, u64)> {
+        (self.token_window_resolver.as_ref()?)(args)
     }
 
     /// Return the runtime-owned broker for adapter construction.

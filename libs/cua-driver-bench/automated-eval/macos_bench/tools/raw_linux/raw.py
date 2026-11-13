@@ -1128,6 +1128,8 @@ def _guard_ctypes() -> None:
     names = {**rawlint.NAMES, **rawlint.NATIVE_NAMES}
 
     def lookup(self: Any, name: str) -> Any:
+        if not name.startswith("_") and not rawlint.native_symbol_ok(name):
+            STATE.refuse("GUI1", f"ctypes symbol {name} (not an X11, xcb, xdo, AT-SPI or GDK function)")
         rule = names.get(name)
         if rule and rule not in ("GUI1", "DRV1"):
             STATE.check(rule, f"ctypes {name}")
@@ -1136,7 +1138,9 @@ def _guard_ctypes() -> None:
     real_item = ctypes.CDLL.__getitem__
 
     def item(self: Any, name: Any) -> Any:
-        rule = names.get(name) if isinstance(name, str) else None
+        if not isinstance(name, str) or not rawlint.native_symbol_ok(name):
+            STATE.refuse("GUI1", f"ctypes symbol {name!r} (not an X11, xcb, xdo, AT-SPI or GDK function)")
+        rule = names.get(name)
         if rule and rule not in ("GUI1", "DRV1"):
             STATE.check(rule, f"ctypes {name}")
         return real_item(self, name)

@@ -483,8 +483,16 @@ class NativeArmTest(unittest.TestCase):
     def test_native_libraries_by_name(self):
         for ok in ("libX11.so.6", "libXtst.so.6", "/usr/lib/aarch64-linux-gnu/libxdo.so.3", "libatspi.so.0"):
             self.assertTrue(rawlint.native_lib_ok(ok), ok)
-        for bad in ("libc.so.6", None, "", "libX11evil.so", "/tmp/libX11.so.6x", "libpython3.13.so"):
+        for bad in (
+            "libc.so.6", None, "", "libX11evil.so", "/tmp/libX11.so.6x", "libpython3.13.so",
+            "/usr/lib/../../tmp/libX11.so.6", "/lib/./../tmp/libXtst.so.6",
+        ):
             self.assertFalse(rawlint.native_lib_ok(bad), bad)
+        # a handle resolves its dependencies' symbols too (libc's fopen through libX11): the prefix decides
+        for ok in ("XOpenDisplay", "XTestFakeKeyEvent", "xdo_new", "xcb_connect", "atspi_get_desktop", "gdk_init"):
+            self.assertTrue(rawlint.native_symbol_ok(ok), ok)
+        for bad in ("fopen", "system", "dlopen", "execve", "Py_Exit", "mmap"):
+            self.assertFalse(rawlint.native_symbol_ok(bad), bad)
         self.assertTrue(self.lint('import ctypes\nx = ctypes.CDLL("libXtst.so.6")\nreturn 1').ok)
 
     def test_native_reads_count_only_in_the_native_arm(self):

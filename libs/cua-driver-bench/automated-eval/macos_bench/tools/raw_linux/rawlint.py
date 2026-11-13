@@ -351,12 +351,25 @@ NATIVE_LIBS = ("libX11", "libXtst", "libXi", "libXext", "libXfixes", "libXrandr"
                "libxdo", "libatspi", "libgdk-3", "libgdk_pixbuf", "libxcb")
 
 
+# Symbols a native library handle resolves: the GUI APIs' own prefixes. dlsym also finds a library's dependencies'
+# symbols (libc's fopen through libX11), so the prefix, not the library, decides.
+NATIVE_SYMBOL_PREFIXES = ("X", "xcb_", "xdo_", "atspi_", "gdk_")
+
+
+def native_symbol_ok(name: str) -> bool:
+    return name.startswith(NATIVE_SYMBOL_PREFIXES)
+
+
 def native_lib_ok(name: object) -> bool:
     """A ctypes library name or path the native arm may load: one of NATIVE_LIBS, by file name."""
     if not isinstance(name, str) or not name:
         return False
     import re
 
+    import posixpath
+
+    if "/" in name:
+        name = posixpath.normpath(name)
     folder, _, base = name.rpartition("/")
     if folder and not (folder + "/").startswith(("/usr/lib/", "/lib/")):
         return False  # a system library only, never one from a writable directory

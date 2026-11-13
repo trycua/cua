@@ -882,13 +882,13 @@ class Raw:
         pid: int,
         cell: str,
         value: str,
-        window: str | None = None,
+        window: str | int | None = None,
         sheet: str | None = None,
     ) -> dict[str, Any]:
         """Write ``value`` into cell ``cell`` ("H4") of LibreOffice Calc process ``pid`` and read it back;
         ``value=""`` clears it. ``sheet`` ("Controls") switches to that sheet first with the menu command
         Sheet > Navigate > To Next / To Previous Sheet; pressing a sheet tab does nothing in the background.
-        ``window``: part of the document window's title when several are open. Calc ignores AX writes to a cell and
+        ``window``: part of the document window's title, or its window_id, when several are open. Calc ignores AX writes to a cell and
         plain per-process keys while it is in the background, so this makes the document window Calc's key window
         without activating or raising it (the window-key route of ``post_key(..., window_id=)``), selects the cell
         through AX and types the value followed by Return. Calc parses what it is given as it would typed text
@@ -1640,6 +1640,14 @@ def _focused_window_id(pid: int) -> int | None:
         return None
 
 
+def _key_settled(pid: int, wid: int) -> bool:
+    """``wid`` is the app's focused window and the app has a focused element: keys posted now reach that window
+    (skylight.rs KeyFocus::settled_on)."""
+    if _focused_window_id(pid) != wid:
+        return False
+    return _ax_get(AX.AXUIElementCreateApplication(int(pid)), "AXFocusedUIElement") is not None
+
+
 def _window_key(pid: int, wid: int, what: str) -> None:
     """Make window ``wid`` of ``pid`` that app's key window without activating it or raising a window, the way Cua
     Driver does for background keys (skylight.rs post_window_key_records): a defocus record for the app's current key
@@ -1651,8 +1659,13 @@ def _window_key(pid: int, wid: int, what: str) -> None:
     if not any(w["window_id"] == wid and w["pid"] == pid for w in window_list()):
         raise LookupError(f"window {wid} is not an on-screen window of {app_name(pid)}")
     current = _focused_window_id(pid)
-    if current == wid:
+    if _key_settled(pid, wid):
         return
+    if current == wid:
+        # focused but never primed (no focused element): a LibreOffice that has not been active since launch reports
+        # its document as focused and still drops every key until it gets the records (CUA-1767, skylight.rs:83-93;
+        # traced: keys after closing the Welcome dialog were all dropped)
+        current = None
     before = focus_sample()
     if pid == before["front"]:
         STATE.check("MB3", f"{what}: key window change inside {app_name(pid)}, the frontmost app")
@@ -1668,10 +1681,10 @@ def _window_key(pid: int, wid: int, what: str) -> None:
         time.sleep(_KEY_RECORD_SETTLE_S)
         for kind in (0x01, 0x02):
             _SKYLIGHT.SLPSPostEventRecordTo(psn, _key_record(wid, kind))
-        deadline = time.monotonic() + 0.5
-        while time.monotonic() < deadline and _focused_window_id(pid) != wid:
+        deadline = time.monotonic() + 0.6
+        while time.monotonic() < deadline and not _key_settled(pid, wid):
             time.sleep(0.04)
-        if _focused_window_id(pid) == wid:
+        if _key_settled(pid, wid):
             break
     STATE.route("window_key")
     after = focus_sample()
@@ -1682,6 +1695,11 @@ def _window_key(pid: int, wid: int, what: str) -> None:
             f"{what}: the user's {', '.join(moved)} changed after a key window change in {app_name(pid)}",
         )
     holder = _focused_window_id(pid)
+    if holder == wid and not _key_settled(pid, wid):
+        raise RuntimeError(
+            f"window {wid} of {app_name(pid)} is its focused window but has no focused element after the key-window "
+            "records, so no keys were sent (they would be dropped)"
+        )
     if holder != wid:
         title = next((w["title"] for w in window_list() if w["window_id"] == holder), "")
         raise RuntimeError(
@@ -1961,13 +1979,20 @@ def _calc_cell(el: Any) -> bool:
     )
 
 
-def _calc_window(pid: int, title: str | None) -> Any:
+def _calc_window(pid: int, title: str | int | None) -> Any:
+    """The Calc document window with a sheet: the first, the one whose title contains ``title``, or the one whose
+    window id (raw.windows) is ``title`` when it is an int."""
     windows = _ax_get(AX.AXUIElementCreateApplication(int(pid)), "AXWindows") or []
     for w in windows:
         t = str(_ax_get(w, "AXTitle") or "")
-        if (title is None or title.casefold() in t.casefold()) and Raw().find(
-            w, role="AXTable", limit=1, depth=12
-        ):
+        if isinstance(title, int) and not isinstance(title, bool):
+            try:
+                match = _ax_window_id(pid, w) == title
+            except LookupError:
+                match = False
+        else:
+            match = title is None or str(title).casefold() in t.casefold()
+        if match and Raw().find(w, role="AXTable", limit=1, depth=12):
             return w
     raise LookupError(
         f"no Calc document window{' titled ' + repr(title) if title else ''} with a sheet"

@@ -899,10 +899,11 @@ class Raw:
         STATE.to_user(pid, "set_cell")
         win = _calc_window(pid, window)
         STATE.count(pid)
+        wid = _ax_window_id(pid, win)
+        # key first: the Sheet menu acts on Calc's key document, which must be this one when several are open
+        _window_key(pid, wid, "raw.set_cell")
         if sheet is not None:
             self._calc_sheet(pid, win, str(sheet))
-        wid = _ax_window_id(pid, win)
-        _window_key(pid, wid, "raw.set_cell")
         before = _calc_cell_value(win, cell)
         self._calc_select(win, cell)
         _window_key(pid, wid, "raw.set_cell")

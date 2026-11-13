@@ -116,12 +116,14 @@ signal_local_daemons() {
         pkill "$@" -f "$(daemon_pattern "$bin")" >/dev/null 2>&1 || true
     done
 }
+# pgrep exits 1 for no match. Any other failure means the check did not run,
+# so it counts as a survivor rather than clearing the way to delete files.
 local_daemon_running() {
-    local bin
+    local bin status
     for bin in "${LOCAL_DAEMON_BINS[@]}"; do
-        if pgrep -f "$(daemon_pattern "$bin")" >/dev/null 2>&1; then
-            return 0
-        fi
+        status=0
+        pgrep -f "$(daemon_pattern "$bin")" >/dev/null 2>&1 || status=$?
+        [[ "$status" == "1" ]] || return 0
     done
     return 1
 }

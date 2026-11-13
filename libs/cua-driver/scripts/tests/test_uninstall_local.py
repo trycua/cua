@@ -6,6 +6,8 @@ from pathlib import Path
 import shutil
 import subprocess
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 UNINSTALL_LOCAL = REPO_ROOT / "libs/cua-driver/scripts/uninstall-local.sh"
@@ -218,6 +220,7 @@ def _darwin_local_sandbox(tmp_path: Path) -> tuple[Path, dict[str, str]]:
         (fake_bin / command).parent.mkdir(parents=True, exist_ok=True)
         (fake_bin / command).symlink_to(executable)
     _executable(fake_bin / "uname", "printf 'Darwin\\n'")
+    _executable(fake_bin / "pgrep", "exit 1\n")
     for command in ("pkill", "launchctl", "tccutil", "sudo", "rm"):
         _executable(fake_bin / command, f"printf '%s:%s\\n' '{command}' \"$*\" >> '{calls}'\n")
     env = {
@@ -273,10 +276,11 @@ def test_local_uninstall_stops_daemon_started_from_macos_app_bundle(tmp_path: Pa
     assert f"pkill:-f ^{app_daemon}([[:space:]]|$)" in lines
 
 
-def test_local_uninstall_fails_while_a_local_daemon_survives(tmp_path: Path) -> None:
+@pytest.mark.parametrize("pgrep_status", [0, 2], ids=["daemon-alive", "pgrep-error"])
+def test_local_uninstall_fails_while_a_local_daemon_survives(tmp_path: Path, pgrep_status: int) -> None:
     calls, env = _darwin_local_sandbox(tmp_path)
     fake_bin = Path(env["PATH"])
-    _executable(fake_bin / "pgrep", "exit 0\n")
+    _executable(fake_bin / "pgrep", f"exit {pgrep_status}\n")
     _executable(fake_bin / "sleep", "exit 0\n")
     cache = Path(env["HOME"]) / "Library/Caches/cua-driver-local"
     cache.mkdir(parents=True)

@@ -241,10 +241,11 @@ Work independently of the custom-compositor lane.
 
 ### KDE
 
-- Implement a target-addressable KWin activation adapter using supported KWin
-  scripting or D-Bus interfaces.
-- Validate activation through an independent observer before enabling portal
-  input.
+- Done: the Cua KWin helper's input gate (protocol 2) binds portal/libei input
+  to the target window inside KWin, and activation is confirmed from KWin's
+  keyboard focus before input. See `kwin-target-helper/README.md`.
+- Build the helper in a canonical KDE row so the gate is covered there, not
+  only by the headless KWin harness.
 - Use Plasma 6; do not accept the broken Plasma 5.27 cloud image as evidence.
 
 ### Real Xorg

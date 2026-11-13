@@ -489,9 +489,10 @@ fn classify_wayland_backend(
                      refuses foreground dispatch."
                 ),
                 "On GNOME, install and enable the bundled WinRects Shell helper, then \
-                 log out and back in. KDE foreground input remains unavailable until \
-                 a target-addressable KWin activation adapter is installed; AX actions \
-                 and exact background refusals remain usable.",
+                 log out and back in. On KDE, foreground input needs the Cua KWin \
+                 helper (kwin-target-helper, protocol 2) installed and \
+                 `cua-driver kwin-capture on`, which loads it; AX actions and exact background \
+                 refusals remain usable.",
             );
         }
         if portal_libei_enabled {

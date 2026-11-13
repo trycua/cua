@@ -247,6 +247,11 @@ impl WindowIds {
         Ok(0xE000_0000 + index as u64)
     }
 
+    fn known_id(&self, uuid: &str) -> Option<u64> {
+        let index = self.uuids.iter().position(|known| same_uuid(known, uuid))?;
+        Some(0xE000_0000 + index as u64)
+    }
+
     fn uuid_for(&self, id: u64) -> Option<String> {
         self.uuids
             .get(usize::try_from(id.checked_sub(0xE000_0000)?).ok()?)
@@ -279,6 +284,16 @@ fn desktop_may_be_kde(desktop: Option<&str>) -> bool {
 /// Once switched off, its handles are unknown ids, as on any other route.
 pub(crate) fn knows_window(window_id: u64) -> bool {
     listed(window_id) && super::kwin_access::allowed()
+}
+
+/// KWin's internal id for a handle this adapter listed.
+pub(crate) fn uuid_for(window_id: u64) -> Option<String> {
+    ids().lock().ok()?.uuid_for(window_id)
+}
+
+/// The handle this adapter already gave the KWin window `uuid`, if any.
+pub(crate) fn known_id_for(uuid: &str) -> Option<u64> {
+    ids().lock().ok()?.known_id(uuid)
 }
 
 fn listed(window_id: u64) -> bool {
@@ -842,18 +857,45 @@ mod tests {
     }
 
     #[test]
-    fn raw_input_at_a_kwin_handle_gets_the_refusal_any_compositor_gives() {
+    fn raw_input_at_a_kwin_handle_without_the_input_gate_is_refused() {
         // Global input after activating would reach whatever holds focus when it
-        // lands, so a KWin handle is refused like one with no activation adapter.
+        // lands, so without the helper's input gate a KWin handle is refused.
         let window = ids().lock().unwrap().id_for("raw-input-refusal").unwrap();
         assert!(listed(window));
+        assert!(!super::super::kwin_gate::bindable(window, false));
+        assert!(super::super::kwin_gate::bindable(window, true));
+        assert!(!super::super::kwin_gate::bindable(window + 1_000_000, true));
         assert_eq!(
-            super::super::no_input_activation(window).to_string(),
+            super::super::kwin_gate::unavailable(window).to_string(),
             format!(
-                "foreground_unavailable: this Wayland compositor does not expose a verified, \
-                 target-addressable activation adapter for window {window}; refusing global \
+                "foreground_unavailable: KWin input can be bound to window {window} only \
+                 through the Cua KWin helper's input gate (kwin-target-helper protocol 2), \
+                 which is not loaded; run `cua-driver kwin-capture on` to load it, or \
+                 `cua-driver kwin-capture status` to see what is missing; refusing global \
                  input because it could affect the wrong application"
             )
+        );
+    }
+
+    #[test]
+    fn a_handle_maps_back_from_its_kwin_id_with_or_without_braces() {
+        let window = ids()
+            .lock()
+            .unwrap()
+            .id_for("{1b2c3d4e-0000-4000-8000-000000000001}")
+            .unwrap();
+        assert_eq!(
+            super::known_id_for("1b2c3d4e-0000-4000-8000-000000000001"),
+            Some(window)
+        );
+        assert_eq!(
+            super::known_id_for("{1b2c3d4e-0000-4000-8000-000000000001}"),
+            Some(window)
+        );
+        assert_eq!(super::known_id_for("never-listed"), None);
+        assert_eq!(
+            super::uuid_for(window).as_deref(),
+            Some("{1b2c3d4e-0000-4000-8000-000000000001}")
         );
     }
 

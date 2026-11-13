@@ -168,8 +168,33 @@ pub fn with_target_foreground<T>(
             },
         );
     }
+    if crate::wayland::is_kwin_window(window_id) {
+        use crate::wayland::{kwin_capture, kwin_gate};
+        crate::wayland::refuse_kwin_input(window_id)?;
+        // Activation runs inside the input gate, so focus confirmed for the
+        // target stays bound to it: input that would reach another window if
+        // focus moves again is held back and fails the call.
+        return transaction(
+            &mut (),
+            |()| {
+                Ok(Some(
+                    kwin_gate::active_window()?.filter(|prior| *prior != window_id),
+                ))
+            },
+            |(), _| Ok(()),
+            || {
+                kwin_gate::gated(window_id, || {
+                    kwin_gate::activate_for_input(window_id, Some(pid))?;
+                    body()
+                })
+            },
+            |(), prior, _cleanup| prior.map_or(Ok(()), |prior| kwin_capture::activate(prior, None)),
+        );
+    }
     if kwin_helper::trusted_window_for_id(pid, window_id).is_some() {
-        policy::delivery(&facts::Fact::Known(kwin_helper::available()))?;
+        // A helper token has no activation route; KWin input goes through the
+        // window handles of the KWin capture adapter above.
+        policy::delivery(&facts::Fact::Known(false))?;
     }
     if shell_helper::trusted_window_for_id(pid, window_id).is_some() {
         return transaction(

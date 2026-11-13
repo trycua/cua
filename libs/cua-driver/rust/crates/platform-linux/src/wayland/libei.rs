@@ -253,6 +253,13 @@ fn wait_for_text(
     }
 }
 
+/// The name this process gives its libei client. KWin prefixes every device
+/// it creates for the client with it, which is how the KWin input gate tells
+/// this process's devices from any other program's (see `kwin_gate`).
+pub fn client_name() -> String {
+    format!("cua-driver {}", std::process::id())
+}
+
 /// Spawn the libei worker thread (idempotent — safe to call from every
 /// MCP tool invocation; subsequent calls are no-ops).
 pub fn ensure_started() -> anyhow::Result<()> {
@@ -382,6 +389,10 @@ struct DesktopFacts {
     active_layout: Option<u32>,
     /// The lock keys, from the compositor itself, when it says.
     lock_keys: Option<LockKeys>,
+    /// Whether a KWin input gate binds this input to one window. The gate sees
+    /// only events that pass KWin's input filters, and KWin hands `ei_text`'s
+    /// text to the input method outside them, so text must go as keys.
+    window_bound: bool,
 }
 
 impl DesktopFacts {
@@ -393,6 +404,7 @@ impl DesktopFacts {
                 .then(super::kwin_helper::active_layout)
                 .flatten(),
             lock_keys: (!keyboard_known).then(lock_keys).flatten(),
+            window_bound: super::kwin_gate::armed(),
         }
     }
 }
@@ -806,7 +818,7 @@ impl EisState {
         match event {
             Event::Handshake(handshake, reis::ei::handshake::Event::HandshakeVersion { .. }) => {
                 handshake.handshake_version(1);
-                handshake.name("cua-driver");
+                handshake.name(&client_name());
                 handshake.context_type(reis::ei::handshake::ContextType::Sender);
                 // Advertise the interface set + versions that reis 0.7's own
                 // EIS client examples use against real compositors. The
@@ -1359,6 +1371,12 @@ impl EisState {
                      lose text it gets another way",
                 ));
             }
+            if desktop.window_bound {
+                return Err(refused(
+                    "the compositor offers no keyboard, and the text it takes another way \
+                     would bypass KWin's input gate that binds it to the target window",
+                ));
+            }
             if text.contains('\n') {
                 return Err(refused(
                     "the compositor offers no keyboard to press Return for a line break",
@@ -1367,7 +1385,7 @@ impl EisState {
             return Ok((vec![TextStep::Utf8(text.into_owned())], Duration::ZERO));
         }
         let ei_text = self.device_with_interface("ei_text").is_some();
-        let keys_only = !ei_text || desktop.x11_app_may_have_focus;
+        let keys_only = !ei_text || desktop.x11_app_may_have_focus || desktop.window_bound;
         if keys_only || text.contains('\n') {
             // Return is a key too, so a line break needs a keyboard state keys can trust.
             let (map, keyboard) = match &self.keymap {
@@ -2494,6 +2512,24 @@ mod typing_route_tests {
     }
 
     #[test]
+    fn text_bound_to_a_window_goes_as_keys_never_through_ei_text() {
+        let bound = DesktopFacts {
+            window_bound: true,
+            ..DesktopFacts::default()
+        };
+        let send_bound = |text: &str| send_text(tx()?, text, bound, WAIT);
+        let (results, events) = record(|| (send_bound("ab"), send_bound("añ")));
+        results.0.unwrap();
+        assert_eq!(
+            results.1.unwrap_err().to_string(),
+            "foreground_unavailable: the active keyboard layout has no key for \"ñ\". Use \
+             set_value on the element, or clipboard_write and then hotkey ctrl+v; nothing was typed"
+        );
+        const B: u32 = 48;
+        assert_eq!(events, [tap(A), tap(B)].concat());
+    }
+
+    #[test]
     fn line_breaks_go_as_keys_when_the_layout_can_type_it_all() {
         let (result, events) = typed("a\r\nb\n", false);
         result.unwrap();
@@ -2801,6 +2837,7 @@ mod typing_route_tests {
             x11_app_may_have_focus: true,
             active_layout: Some(DE),
             lock_keys: Some(LockKeys::default()),
+            window_bound: false,
         };
 
         // The first text taps Shift, once, to see if the compositor reports it.
@@ -2839,6 +2876,7 @@ mod typing_route_tests {
             x11_app_may_have_focus: true,
             active_layout: Some(0),
             lock_keys: None,
+            window_bound: false,
         };
 
         // A held Shift would turn digits into symbols too, so nothing goes out.

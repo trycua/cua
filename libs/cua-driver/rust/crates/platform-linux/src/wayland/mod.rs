@@ -20,8 +20,10 @@ pub mod hyprland;
 pub mod hyprland_capture;
 mod hyprland_compatibility;
 pub mod hyprland_input;
+pub mod keyboard_route;
 pub mod kwin_access;
 pub mod kwin_capture;
+pub(crate) mod kwin_gate;
 pub mod kwin_helper;
 #[cfg(feature = "portal-input")]
 mod kwin_keystate;
@@ -56,6 +58,8 @@ pub const PORTAL_INPUT_ENABLED: bool = cfg!(feature = "portal-input");
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
+
+use keyboard_route::{note as note_route, KeyboardRoute};
 
 use wayland_client::{
     event_created_child,
@@ -1966,7 +1970,10 @@ fn open_vptr_session_in(
     // `with_libei_fallback` re-routes through libei/portal. Requiring
     // foreign-toplevel up front would mask the marker and leave the libei
     // fallback dead. See #1982.
-    let mgr = state.vptr_manager.clone().ok_or_else(|| {
+    // KWin's input gate sees only libei input, so the virtual pointer stands
+    // down while one is armed.
+    let vptr_manager = state.vptr_manager.clone().filter(|_| !kwin_gate::armed());
+    let mgr = vptr_manager.ok_or_else(|| {
         if PORTAL_INPUT_ENABLED {
             // The caller (via `with_libei_fallback`) recognises NO_VPTR_MARKER
             // and re-routes the op through the libei/portal backend, which DOES
@@ -2030,14 +2037,35 @@ fn open_vptr_session_in(
     })
 }
 
-/// KWin's portal/libei input goes to whatever holds focus when it lands, so
-/// activating a KWin handle first wouldn't bind the input to that window. The
-/// refusal is the one every compositor without such an adapter gives.
+/// KWin's portal/libei input goes to whatever holds focus when it lands, so a
+/// KWin handle takes input only through the KWin helper's input gate
+/// ([`kwin_gate`]). Refused up front when the gate is missing, before a libei
+/// fallback could ask for portal consent on a doomed call.
 pub(crate) fn refuse_kwin_input(window_id: u64) -> anyhow::Result<()> {
-    if kwin_capture::knows_window(window_id) {
-        return Err(no_input_activation(window_id));
+    if kwin_capture::knows_window(window_id) && !kwin_gate::ready(window_id) {
+        return Err(kwin_gate::unavailable(window_id));
     }
     Ok(())
+}
+
+/// Whether `window_id` is a KWin handle, which takes input only in the
+/// foreground and only through the input gate.
+pub(crate) fn is_kwin_window(window_id: u64) -> bool {
+    kwin_capture::knows_window(window_id)
+}
+
+/// Run `body`, the input for `window`, with KWin's input gate armed for it
+/// when it is a KWin handle: then the input reaches that window or nothing.
+fn kwin_bound<T>(
+    window: Option<u64>,
+    body: impl FnOnce() -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    match window {
+        Some(window_id) if kwin_capture::knows_window(window_id) => {
+            kwin_gate::gated(window_id, body)
+        }
+        _ => body(),
+    }
 }
 
 fn no_input_activation(window_id: u64) -> anyhow::Error {
@@ -2049,8 +2077,8 @@ fn no_input_activation(window_id: u64) -> anyhow::Error {
 }
 
 /// Bring one exact window forward for its own sake: `bring_to_front`, and a menu
-/// path fired through AT-SPI. No global input follows, so KWin's activation is
-/// safe here where [`activate_window_for_input_target`] refuses it.
+/// path fired through AT-SPI. No global input follows, so KWin's activation
+/// needs no input gate here, unlike [`activate_window_for_input_target`].
 pub fn activate_window(window_id: u64, target_pid: Option<u32>) -> anyhow::Result<()> {
     if kwin_capture::knows_window(window_id) {
         return kwin_capture::activate(window_id, target_pid);
@@ -2078,7 +2106,11 @@ pub fn activate_window_for_input_target(
     window_id: u64,
     target_pid: Option<u32>,
 ) -> anyhow::Result<()> {
-    refuse_kwin_input(window_id)?;
+    if kwin_capture::knows_window(window_id) {
+        // Only under the window's own input gate, which holds back whatever
+        // would reach another window if focus moves again.
+        return kwin_gate::activate_for_input(window_id, target_pid);
+    }
     if is_wayland() && hyprland::is_session() {
         // A full compositor address must never enter the generic protocol-id
         // or title-matching route. This observation-only adapter can attest an
@@ -2191,16 +2223,16 @@ fn event_time_ms() -> u32 {
 /// real coords. A short delay between iterations gives the compositor time
 /// to discriminate single vs. double clicks.
 pub fn click(window_id: u64, at: AimedPoint, count: u32, button: u8) -> anyhow::Result<()> {
-    // Before the fallback below can ask for portal consent on a doomed call.
-    refuse_kwin_input(window_id)?;
-    with_libei_fallback(
-        || click_vptr(Some(window_id), at, count, button, None),
-        || {
-            libei_wait_pointer_ready()?;
-            activate_window_for_input(window_id)?;
-            libei_click(at.point.0, at.point.1, count, button)
-        },
-    )
+    kwin_bound(Some(window_id), || {
+        with_libei_fallback(
+            || click_vptr(Some(window_id), at, count, button, None),
+            || {
+                libei_wait_pointer_ready()?;
+                activate_window_for_input(window_id)?;
+                libei_click(at.point.0, at.point.1, count, button)
+            },
+        )
+    })
 }
 
 /// Click through a foreground target already guarded by
@@ -2549,19 +2581,20 @@ pub fn scroll_at(
     direction: &str,
     amount: u32,
 ) -> anyhow::Result<()> {
-    refuse_kwin_input(window_id)?;
     let direction = direction.to_string();
-    with_libei_fallback(
-        || scroll_vptr(Some(window_id), point, &direction, amount, None),
-        || {
-            libei_wait_scroll_ready()?;
-            activate_window_for_input(window_id)?;
-            if let Some(AimedPoint { point: (x, y), .. }) = point {
-                libei_move_absolute(x, y)?;
-            }
-            libei_scroll(&direction, amount)
-        },
-    )
+    kwin_bound(Some(window_id), || {
+        with_libei_fallback(
+            || scroll_vptr(Some(window_id), point, &direction, amount, None),
+            || {
+                libei_wait_scroll_ready()?;
+                activate_window_for_input(window_id)?;
+                if let Some(AimedPoint { point: (x, y), .. }) = point {
+                    libei_move_absolute(x, y)?;
+                }
+                libei_scroll(&direction, amount)
+            },
+        )
+    })
 }
 
 /// Scroll at a desktop-absolute point without activating a named toplevel.
@@ -2725,16 +2758,17 @@ pub fn drag(
     duration_ms: u64,
     button: u8,
 ) -> anyhow::Result<()> {
-    refuse_kwin_input(window_id)?;
     let ((from_x, from_y), (to_x, to_y)) = (from.point, to.point);
-    with_libei_fallback(
-        || drag_vptr(Some(window_id), from, to, steps, button, None),
-        || {
-            libei_wait_pointer_ready()?;
-            activate_window_for_input(window_id)?;
-            libei_drag(from_x, from_y, to_x, to_y, steps, duration_ms, button)
-        },
-    )
+    kwin_bound(Some(window_id), || {
+        with_libei_fallback(
+            || drag_vptr(Some(window_id), from, to, steps, button, None),
+            || {
+                libei_wait_pointer_ready()?;
+                activate_window_for_input(window_id)?;
+                libei_drag(from_x, from_y, to_x, to_y, steps, duration_ms, button)
+            },
+        )
+    })
 }
 
 /// Drag through desktop-absolute points without activating a named toplevel.
@@ -2887,35 +2921,41 @@ fn stopped_after(done: usize, total: usize, error: &anyhow::Error) -> anyhow::Er
 
 /// [`type_text`] into `window`, activated first, or [`type_text_focused`].
 fn type_into(window: Option<u64>, text: &str) -> anyhow::Result<()> {
-    if text.is_empty() {
-        return Ok(());
-    }
-    let text = &*text_keys::typable_text(text)?;
-    window.map_or(Ok(()), activate_window_for_input)?;
-    if niri::is_session() {
-        return niri::keyboard::type_text(window.or_else(niri_expected_window), text);
-    }
-    // Lead with a no-op Shift_L tap: on a freshly-focused window under a headless
-    // seat (notably sway), the compositor needs the first virtual-keyboard event
-    // to wire up keyboard routing, and that first key is dropped. Sacrificing a
-    // modifier tap (no character) absorbs the drop so the real text lands intact;
-    // it's harmless where routing is already live (labwc).
-    let result = wtype_output(&["-k", "Shift_L", "--", text]);
-    match result {
-        Ok(out) if out.status.success() => Ok(()),
-        // `wtype` relies on `zwp_virtual_keyboard_v1`, which KWin/Plasma and
-        // Mutter/GNOME don't implement (and the binary may be missing wtype
-        // entirely). On a portal-input build, route typing through libei's
-        // `ei_text` interface instead. See #1982.
-        other => with_wtype_libei_fallback(
-            || {
-                libei_wait_keyboard_ready()?;
-                window.map_or(Ok(()), activate_window_for_input)?;
-                libei_type_text(text)
-            },
-            other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned()),
-        ),
-    }
+    kwin_bound(window, || {
+        if text.is_empty() {
+            return Ok(());
+        }
+        let text = &*text_keys::typable_text(text)?;
+        window.map_or(Ok(()), activate_window_for_input)?;
+        if niri::is_session() {
+            return niri::keyboard::type_text(window.or_else(niri_expected_window), text)
+                .inspect(|()| note_route(KeyboardRoute::Niri));
+        }
+        // Lead with a no-op Shift_L tap: on a freshly-focused window under a headless
+        // seat (notably sway), the compositor needs the first virtual-keyboard event
+        // to wire up keyboard routing, and that first key is dropped. Sacrificing a
+        // modifier tap (no character) absorbs the drop so the real text lands intact;
+        // it's harmless where routing is already live (labwc).
+        let result = wtype_output(&["-k", "Shift_L", "--", text]);
+        match result {
+            Ok(out) if out.status.success() => {
+                note_route(KeyboardRoute::VirtualKeyboard);
+                Ok(())
+            }
+            // `wtype` relies on `zwp_virtual_keyboard_v1`, which KWin/Plasma and
+            // Mutter/GNOME don't implement (and the binary may be missing wtype
+            // entirely). On a portal-input build, route typing through libei's
+            // `ei_text` interface instead. See #1982.
+            other => with_wtype_libei_fallback(
+                || {
+                    libei_wait_keyboard_ready()?;
+                    window.map_or(Ok(()), activate_window_for_input)?;
+                    libei_type_text(text)
+                },
+                other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned()),
+            ),
+        }
+    })
 }
 
 /// Type text and press one key while an outer exact-container focus guard is
@@ -2927,7 +2967,8 @@ pub fn type_text_then_key_focused(text: &str, key: &str) -> anyhow::Result<()> {
     let keysym = key_to_keysym(key);
     if niri::is_session() {
         niri::keyboard::type_text(niri_expected_window(), text)?;
-        return niri::keyboard::press(niri_expected_window(), &[], &keysym);
+        return niri::keyboard::press(niri_expected_window(), &[], &keysym)
+            .inspect(|()| note_route(KeyboardRoute::Niri));
     }
     let result = wtype_output(&[
         "-k",
@@ -2941,7 +2982,10 @@ pub fn type_text_then_key_focused(text: &str, key: &str) -> anyhow::Result<()> {
         keysym.as_str(),
     ]);
     match result {
-        Ok(out) if out.status.success() => Ok(()),
+        Ok(out) if out.status.success() => {
+            note_route(KeyboardRoute::VirtualKeyboard);
+            Ok(())
+        }
         other => with_wtype_libei_fallback(
             || {
                 libei_wait_keyboard_ready()?;
@@ -2962,33 +3006,40 @@ pub fn press_key(window_id: u64, key: &str) -> anyhow::Result<()> {
 pub fn press_key_focused(key: &str) -> anyhow::Result<()> {
     if is_inject_mode() {
         let (pid, window_id) = inject_focused_target()?;
-        return inject_press_key(pid, window_id, key);
+        return inject_press_key(pid, window_id, key)
+            .inspect(|()| note_route(KeyboardRoute::Compositor));
     }
     press_into(None, key)
 }
 
 /// [`press_key`] into `window`, activated first, or [`press_key_focused`].
 fn press_into(window: Option<u64>, key: &str) -> anyhow::Result<()> {
-    window.map_or(Ok(()), activate_window_for_input)?;
-    let keysym = key_to_keysym(key);
-    if niri::is_session() {
-        return niri::keyboard::press(window.or_else(niri_expected_window), &[], &keysym);
-    }
-    // Keep the sacrificial modifier and requested key in one virtual-keyboard
-    // lifetime. Starting a second wtype process creates a fresh protocol object,
-    // causing headless seats to drop the requested key as their first event.
-    let result = wtype_output(&["-k", "Shift_L", "-k", keysym.as_str()]);
-    match result {
-        Ok(out) if out.status.success() => Ok(()),
-        other => with_wtype_libei_fallback(
-            || {
-                libei_wait_keyboard_ready()?;
-                window.map_or(Ok(()), activate_window_for_input)?;
-                libei_press_key(key)
-            },
-            other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned()),
-        ),
-    }
+    kwin_bound(window, || {
+        window.map_or(Ok(()), activate_window_for_input)?;
+        let keysym = key_to_keysym(key);
+        if niri::is_session() {
+            return niri::keyboard::press(window.or_else(niri_expected_window), &[], &keysym)
+                .inspect(|()| note_route(KeyboardRoute::Niri));
+        }
+        // Keep the sacrificial modifier and requested key in one virtual-keyboard
+        // lifetime. Starting a second wtype process creates a fresh protocol object,
+        // causing headless seats to drop the requested key as their first event.
+        let result = wtype_output(&["-k", "Shift_L", "-k", keysym.as_str()]);
+        match result {
+            Ok(out) if out.status.success() => {
+                note_route(KeyboardRoute::VirtualKeyboard);
+                Ok(())
+            }
+            other => with_wtype_libei_fallback(
+                || {
+                    libei_wait_keyboard_ready()?;
+                    window.map_or(Ok(()), activate_window_for_input)?;
+                    libei_press_key(key)
+                },
+                other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned()),
+            ),
+        }
+    })
 }
 
 /// Press a key combination (modifiers + final key) via `wtype`. Each modifier
@@ -3004,54 +3055,67 @@ pub fn hotkey(window_id: u64, keys: &[String]) -> anyhow::Result<()> {
 pub fn hotkey_focused(keys: &[String]) -> anyhow::Result<()> {
     if is_inject_mode() {
         let (pid, window_id) = inject_focused_target()?;
-        return inject_hotkey(pid, window_id, keys);
+        return inject_hotkey(pid, window_id, keys)
+            .inspect(|()| note_route(KeyboardRoute::Compositor));
     }
     chord_into(None, keys)
 }
 
 /// [`hotkey`] into `window`, activated first, or [`hotkey_focused`].
 fn chord_into(window: Option<u64>, keys: &[String]) -> anyhow::Result<()> {
-    window.map_or(Ok(()), activate_window_for_input)?;
-    let (mods, final_key) = partition_modifiers(keys)?;
-    if niri::is_session() {
-        let expected = window.or_else(niri_expected_window);
-        return niri::keyboard::press(expected, &mods, &chord_keysym(&final_key));
-    }
-    if let Ok(()) = virtual_keyboard::hotkey(&mods, &final_key) {
-        return Ok(());
-    }
-    let keysym = key_to_keysym(&final_key);
-    let args = wtype_hotkey_args(&mods, &keysym);
-    let result = wtype_output(&args);
-    match result {
-        Ok(out) if out.status.success() => Ok(()),
-        other => {
-            let stderr = other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned());
-            #[cfg(feature = "portal-input")]
-            {
-                with_wtype_libei_fallback(
-                    || {
-                        libei::wait_keyboard_ready()?;
-                        window.map_or(Ok(()), activate_window_for_input)?;
-                        libei_hotkey(&mods, &final_key)
-                    },
-                    stderr,
-                )
+    kwin_bound(window, || {
+        window.map_or(Ok(()), activate_window_for_input)?;
+        let (mods, final_key) = partition_modifiers(keys)?;
+        if niri::is_session() {
+            let expected = window.or_else(niri_expected_window);
+            return niri::keyboard::press(expected, &mods, &chord_keysym(&final_key))
+                .inspect(|()| note_route(KeyboardRoute::Niri));
+        }
+        // KWin's input gate sees only libei input.
+        if !kwin_gate::armed() && virtual_keyboard::hotkey(&mods, &final_key).is_ok() {
+            note_route(KeyboardRoute::VirtualKeyboard);
+            return Ok(());
+        }
+        let keysym = key_to_keysym(&final_key);
+        let args = wtype_hotkey_args(&mods, &keysym);
+        let result = wtype_output(&args);
+        match result {
+            Ok(out) if out.status.success() => {
+                note_route(KeyboardRoute::VirtualKeyboard);
+                Ok(())
             }
-            #[cfg(not(feature = "portal-input"))]
-            {
-                anyhow::bail!(
-                    "wtype {} failed: {}",
-                    args.join(" "),
-                    stderr.unwrap_or_else(|_| "wtype unavailable".into())
-                );
+            other => {
+                let stderr = other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned());
+                #[cfg(feature = "portal-input")]
+                {
+                    with_wtype_libei_fallback(
+                        || {
+                            libei::wait_keyboard_ready()?;
+                            window.map_or(Ok(()), activate_window_for_input)?;
+                            libei_hotkey(&mods, &final_key)
+                        },
+                        stderr,
+                    )
+                }
+                #[cfg(not(feature = "portal-input"))]
+                {
+                    anyhow::bail!(
+                        "wtype {} failed: {}",
+                        args.join(" "),
+                        stderr.unwrap_or_else(|_| "wtype unavailable".into())
+                    );
+                }
             }
         }
-    }
+    })
 }
 
 /// Run `wtype` with `args`.
 fn wtype_output<S: AsRef<std::ffi::OsStr>>(args: &[S]) -> std::io::Result<std::process::Output> {
+    if kwin_gate::armed() {
+        // KWin's input gate sees only libei input.
+        return Err(std::io::Error::other("KWin input goes through libei"));
+    }
     std::process::Command::new("wtype").args(args).output()
 }
 
@@ -3384,14 +3448,14 @@ fn libei_type_text(text: &str) -> anyhow::Result<()> {
     if text.is_empty() {
         return Ok(());
     }
-    libei::type_text(text)
+    libei::type_text(text).inspect(|()| note_route(KeyboardRoute::Libei))
 }
 
 #[cfg(feature = "portal-input")]
 fn libei_press_key(key: &str) -> anyhow::Result<()> {
     let keycode = key_to_evdev(key)
         .ok_or_else(|| anyhow::anyhow!("no evdev keycode mapping for key '{key}' (libei path)"))?;
-    libei::press_key(keycode)
+    libei::press_key(keycode).inspect(|()| note_route(KeyboardRoute::Libei))
 }
 
 #[cfg(feature = "portal-input")]
@@ -3415,7 +3479,7 @@ fn libei_hotkey(mods: &[String], key: &str) -> anyhow::Result<()> {
     transitions.push(Press(keycode));
     transitions.push(Release(keycode));
     transitions.extend(modifier_codes.iter().rev().copied().map(Release));
-    libei::key_sequence(&transitions)
+    libei::key_sequence(&transitions).inspect(|()| note_route(KeyboardRoute::Libei))
 }
 
 /// Map cua key names to Linux evdev keycodes for the libei `press_key` path

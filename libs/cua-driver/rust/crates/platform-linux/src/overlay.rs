@@ -431,6 +431,15 @@ pub fn send_command_for(key: CursorKey, cmd: OverlayCommand) {
 /// the native layer-shell overlay. The shell-helper backends publish no
 /// arrivals.
 fn try_send_command_for(key: CursorKey, cmd: OverlayCommand) -> bool {
+    try_send_command_on(crate::desktop::desktop(), key, cmd)
+}
+
+/// [`try_send_command_for`] on `desktop`, which picks the overlay backend.
+fn try_send_command_on(
+    desktop: crate::desktop::Desktop,
+    key: CursorKey,
+    cmd: OverlayCommand,
+) -> bool {
     if !draws_cursor(&key) {
         return false;
     }
@@ -439,9 +448,8 @@ fn try_send_command_for(key: CursorKey, cmd: OverlayCommand) -> bool {
         cmd: cmd.clone(),
     });
     #[cfg(target_os = "linux")]
-    let native_wayland = crate::wayland::is_wayland();
-    let x11_overlay_allowed =
-        should_start_x11_overlay(crate::desktop::desktop() != crate::desktop::Desktop::X11);
+    let native_wayland = matches!(desktop, crate::desktop::Desktop::Wayland(_));
+    let x11_overlay_allowed = should_start_x11_overlay(desktop != crate::desktop::Desktop::X11);
     let x11_queued = x11_overlay_allowed && try_send_x11_message(CMD_TX.get(), msg.clone());
     if x11_overlay_allowed && !x11_queued {
         tracing::warn!(
@@ -815,6 +823,18 @@ pub async fn animate_cursor_to_target_for(
     y: f64,
     target: Option<[f64; 4]>,
 ) {
+    animate_cursor_on(key, x, y, target, crate::desktop::desktop()).await;
+}
+
+/// The glide on `desktop`, which picks the renderer and how long to wait for
+/// its arrival.
+async fn animate_cursor_on(
+    key: CursorKey,
+    x: f64,
+    y: f64,
+    target: Option<[f64; 4]>,
+    desktop: crate::desktop::Desktop,
+) {
     if !draws_cursor(&key) {
         return;
     }
@@ -835,7 +855,8 @@ pub async fn animate_cursor_to_target_for(
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
     arrival_register(key.clone(), tx);
 
-    if !try_send_command_for(
+    if !try_send_command_on(
+        desktop,
         key.clone(),
         OverlayCommand::MoveTo {
             x,
@@ -851,7 +872,7 @@ pub async fn animate_cursor_to_target_for(
     }
 
     #[cfg(target_os = "linux")]
-    if crate::wayland::is_wayland() {
+    if matches!(desktop, crate::desktop::Desktop::Wayland(_)) {
         let budget = wayland_arrival_budget(current_motion_for(&key).glide_duration_ms);
         if tokio::time::timeout(budget, rx).await.is_err() {
             tracing::debug!(key = %key, "overlay: Wayland glide arrival timed out");
@@ -5036,6 +5057,7 @@ mod tests {
     /// registration is dropped.
     #[tokio::test(start_paused = true)]
     async fn unreported_arrival_releases_the_waiter_after_the_cap() {
+        use crate::desktop::Desktop;
         init(CursorConfig::default());
         let key = "arrival-cap-regression".to_owned();
         {
@@ -5052,7 +5074,7 @@ mod tests {
         // Nobody drains CMD_TX here, so no arrival can ever fire.
         tokio::time::timeout(
             ARRIVAL_WAIT_CAP + Duration::from_secs(5),
-            animate_cursor_to_for(key.clone(), 60.0, 60.0),
+            animate_cursor_on(key.clone(), 60.0, 60.0, None, Desktop::X11),
         )
         .await
         .expect("glide wait must be bounded");
@@ -5064,7 +5086,7 @@ mod tests {
             .is_none_or(|map| !map.contains_key(&key)));
         // Degraded: the next glide returns without waiting at all.
         let started = tokio::time::Instant::now();
-        animate_cursor_to_for(key.clone(), 20.0, 20.0).await;
+        animate_cursor_on(key.clone(), 20.0, 20.0, None, Desktop::X11).await;
         assert!(started.elapsed() < Duration::from_millis(100));
         // A real arrival re-arms the wait.
         let (tx, _rx) = tokio::sync::oneshot::channel();

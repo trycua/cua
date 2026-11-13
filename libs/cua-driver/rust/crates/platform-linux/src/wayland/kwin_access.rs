@@ -123,6 +123,8 @@ fn denies(permissions: &HashMap<String, Vec<String>>) -> bool {
 /// Save `setting`. On KWin 6.7 and older the desktop entry is what lets this
 /// executable reach window management and ScreenShot2, so it is written for
 /// on and removed for off; KWin 6.8 and newer don't check it.
+/// On also loads the Cua KWin helper, when it is installed, and has KWin start
+/// it with every session; off undoes both.
 pub fn save(setting: Setting) -> anyhow::Result<()> {
     let entry = desktop_entry_path().ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
     let saved = setting_path().ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
@@ -137,8 +139,13 @@ pub fn save(setting: Setting) -> anyhow::Result<()> {
         replace(&saved, setting.as_str())?;
     }
     refresh_service_cache();
-    if setting != Setting::Off && super::kwin_capture::may_be_session() {
-        wait_until_kwin_lists_windows();
+    if super::kwin_capture::may_be_session() {
+        if setting == Setting::Off {
+            super::kwin_helper::turn_off();
+        } else {
+            wait_until_kwin_lists_windows();
+            super::kwin_helper::turn_on();
+        }
     }
     Ok(())
 }
@@ -236,10 +243,15 @@ pub fn status() -> Status {
 
 /// What `cua-driver kwin-capture status` prints.
 pub fn report() -> String {
-    describe(&status())
+    let helper = super::kwin_capture::may_be_session()
+        .then(super::kwin_helper::status_line)
+        .flatten();
+    describe(&status(), helper)
 }
 
-fn describe(status: &Status) -> String {
+/// The status text. `helper` is the KWin helper's line, when this session can
+/// be KWin.
+fn describe(status: &Status, helper: Option<String>) -> String {
     let mut lines = vec![format!("kwin window capture: {}", status.setting.as_str())];
     if status.kept_off {
         lines.push(
@@ -262,6 +274,7 @@ fn describe(status: &Status) -> String {
         ),
         Entry::None => "desktop entry: none".into(),
     });
+    lines.extend(helper);
     lines.join("\n") + "\n"
 }
 
@@ -396,7 +409,7 @@ mod tests {
         };
         assert!(on.on());
         assert_eq!(
-            describe(&on),
+            describe(&on, None),
             format!(
                 "kwin window capture: on\ndesktop entry: {}\n",
                 entry.display()
@@ -407,18 +420,20 @@ mod tests {
             ..on.clone()
         };
         assert!(!kept_off.on());
-        assert!(describe(&kept_off).contains("\nkept off: the desktop portal"));
+        assert!(describe(&kept_off, None).contains("\nkept off: the desktop portal"));
         let other = Status {
             entry: Entry::Other(entry.clone()),
             ..on.clone()
         };
         assert!(other.on());
-        assert!(describe(&other).contains("names another executable"));
+        assert!(describe(&other, None).contains("names another executable"));
         let ungranted = Status {
             entry: Entry::Ungranted(entry.clone()),
             ..on.clone()
         };
-        assert!(describe(&ungranted).contains("doesn't grant window management and ScreenShot2"));
+        assert!(
+            describe(&ungranted, None).contains("doesn't grant window management and ScreenShot2")
+        );
         let off = Status {
             setting: Setting::Off,
             kept_off: false,
@@ -426,8 +441,12 @@ mod tests {
         };
         assert!(!off.on());
         assert_eq!(
-            describe(&off),
+            describe(&off, None),
             "kwin window capture: off\ndesktop entry: none\n"
+        );
+        assert_eq!(
+            describe(&off, Some("kwin helper: loaded".into())),
+            "kwin window capture: off\ndesktop entry: none\nkwin helper: loaded\n"
         );
         let overridden = Status {
             setting: Setting::OverridePortalDeny,

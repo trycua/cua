@@ -1334,18 +1334,21 @@ impl Tool for ClickTool {
             if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
                 return refusal;
             }
-            // A KWin handle is not an X11 id, and KWin has no input route bound
-            // to one window, so it gets no pointer fallback.
+            // A KWin handle is not an X11 id, so the pointer fallback below
+            // can't address it. KWin input goes only through the foreground
+            // pixel click, under the KWin input gate.
             if let Some(xid) = xid_hint {
-                let kwin =
-                    tokio::task::spawn_blocking(move || crate::wayland::refuse_kwin_input(xid));
-                if let Ok(Err(error)) = kwin.await {
+                let kwin = tokio::task::spawn_blocking(move || crate::wayland::is_kwin_window(xid));
+                if let Ok(true) = kwin.await {
                     if !delivery.is_foreground() {
                         return crate::input::delivery::background_unavailable_error(
                             crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
                         );
                     }
-                    return input_error_result(error);
+                    return input_error_result(anyhow::anyhow!(
+                        "foreground_unavailable: an element click on KWin window {xid} has no \
+                         pointer fallback; click the element's pixel with x and y instead"
+                    ));
                 }
             }
 

@@ -617,7 +617,10 @@ pub fn parse_command() -> Command {
         println!("  cua-driver kwin-capture on      Turn it on; no restart. On KWin 6.7 and older this also writes");
         println!("                                  the desktop entry KWin checks. A screenshot Deny saved in the desktop");
         println!("                                  portal keeps it off; add --override-portal-deny to ignore that.");
-        println!("  cua-driver kwin-capture off     Turn it off from the next call and remove the desktop entry.");
+        println!("                                  It also loads the Cua KWin helper, when that is installed, and");
+        println!("                                  has KWin start it with every session.");
+        println!("  cua-driver kwin-capture off     Turn it off from the next call, remove the desktop entry, and");
+        println!("                                  unload the helper.");
         println!();
         println!("skills options (agent skill-pack management, opt-in):");
         println!("  cua-driver skills install       Fetch the versioned skill pack from GitHub Releases and symlink it");
@@ -4898,9 +4901,9 @@ fn cli_docs_literal() -> serde_json::Value {
                 "options": no_options,
                 "flags": no_flags,
                 "subcommands": [
-                    {"name":"status","abstract":"Show the setting and the desktop entry. The default subcommand.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]},
-                    {"name":"on","abstract":"Turn it on; on KWin 6.7 and older also write the desktop entry KWin checks.","discussion":"A screenshot Deny saved in the desktop portal keeps it off unless --override-portal-deny is given.","arguments":[],"options":[],"flags":[{"name":"override-portal-deny","short_name":null,"help":"Ignore a screenshot Deny saved in the desktop portal.","default_value":false}],"subcommands":[]},
-                    {"name":"off","abstract":"Turn it off and remove the desktop entry.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]}
+                    {"name":"status","abstract":"Show the setting, the desktop entry and the Cua KWin helper. The default subcommand.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]},
+                    {"name":"on","abstract":"Turn it on; on KWin 6.7 and older also write the desktop entry KWin checks.","discussion":"A screenshot Deny saved in the desktop portal keeps it off unless --override-portal-deny is given. Also loads the Cua KWin helper, when it is installed, and has KWin start it with every session.","arguments":[],"options":[],"flags":[{"name":"override-portal-deny","short_name":null,"help":"Ignore a screenshot Deny saved in the desktop portal.","default_value":false}],"subcommands":[]},
+                    {"name":"off","abstract":"Turn it off, remove the desktop entry and unload the Cua KWin helper.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]}
                 ]
             },
             {
@@ -5099,7 +5102,7 @@ const CLI_EXAMPLES: &[(&str, &[(&str, &str)])] = &[
     ("autostart status", &[("cua-driver autostart status", "Check the autostart entry")]),
     ("autostart kick", &[("cua-driver autostart kick", "Start the entry now")]),
     ("kwin-capture", &[("cua-driver kwin-capture", "Show whether exact KWin window capture is on")]),
-    ("kwin-capture status", &[("cua-driver kwin-capture status", "Show the setting and the desktop entry")]),
+    ("kwin-capture status", &[("cua-driver kwin-capture status", "Show the setting, the desktop entry and the Cua KWin helper")]),
     ("kwin-capture on", &[("cua-driver kwin-capture on", "Turn exact KWin window capture on")]),
     ("kwin-capture off", &[("cua-driver kwin-capture off", "Turn exact KWin window capture off")]),
     ("skills", &[("cua-driver skills", "Report skill-pack state")]),

@@ -107,6 +107,10 @@ fn current_direct_capture_evidence_store(source: &Value) -> Option<DirectCapture
 /// window during later background work (CUA-1792).
 fn screen_recording_capturable() -> bool {
     use screencapturekit::prelude::SCShareableContent;
+    if crate::capture_owner::claim().is_err() {
+        // This process captures through `screencapture`, so that is the probe.
+        return crate::capture::screenshot_display_bytes().is_ok();
+    }
     let listed = SCShareableContent::get()
         .map(|c| !c.displays().is_empty())
         .unwrap_or(false);

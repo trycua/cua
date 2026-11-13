@@ -157,6 +157,7 @@ pub struct SckitVideoBackend {
 
 impl SckitVideoBackend {
     fn start(output_path: &Path) -> anyhow::Result<Self> {
+        crate::capture_owner::claim()?;
         if let Some(parent) = output_path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
                 anyhow::anyhow!(

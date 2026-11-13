@@ -878,17 +878,20 @@ fn screenshot_window_bytes_sck_inner(window_id: u32) -> anyhow::Result<CapturedI
 /// unbounded number of detached workers. Ownership of the gate permit and all
 /// ScreenCaptureKit/CF objects stays on the worker until it really returns.
 fn screenshot_window_bytes_sck(window_id: u32) -> anyhow::Result<CapturedImage> {
-    run_native_capture_worker(
-        native_capture_gate(),
-        WINDOW_CAPTURE_NATIVE_TIMEOUT,
-        move || screenshot_window_bytes_sck_inner(window_id),
-    )
-    .map_err(|error| {
-        anyhow::anyhow!(
-            "ScreenCaptureKit capture failed for window {window_id}: {error:#}; \
+    crate::capture_owner::claim()
+        .and_then(|()| {
+            run_native_capture_worker(
+                native_capture_gate(),
+                WINDOW_CAPTURE_NATIVE_TIMEOUT,
+                move || screenshot_window_bytes_sck_inner(window_id),
+            )
+        })
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "ScreenCaptureKit capture failed for window {window_id}: {error:#}; \
              using shell fallback"
-        )
-    })
+            )
+        })
 }
 
 /// Capture a window by its `window_id` (CGWindowID).
@@ -1111,11 +1114,7 @@ pub fn screenshot_display_bytes_excluding_overlay() -> anyhow::Result<(
     refuse_without_direct_capture_consent()?;
     capture_excluding_overlays(&OverlayExcluder, |overlay| {
         let Some(&overlay_window_id) = overlay else {
-            return match run_native_capture_worker(
-                display_capture_gate(),
-                DISPLAY_CAPTURE_NATIVE_TIMEOUT,
-                || screenshot_main_display_sck(None),
-            ) {
+            return match capture_display_native(|| screenshot_main_display_sck(None)) {
                 Ok(bytes) => Ok((bytes, ResidualCheck::Clean)),
                 Err(error) => {
                     tracing::warn!("ScreenCaptureKit display capture failed: {error:#}");
@@ -1123,11 +1122,7 @@ pub fn screenshot_display_bytes_excluding_overlay() -> anyhow::Result<(
                 }
             };
         };
-        match run_native_capture_worker(
-            display_capture_gate(),
-            DISPLAY_CAPTURE_NATIVE_TIMEOUT,
-            move || screenshot_main_display_sck(Some(overlay_window_id)),
-        ) {
+        match capture_display_native(move || screenshot_main_display_sck(Some(overlay_window_id))) {
             Ok(bytes) => Ok((bytes, ResidualCheck::Clean)),
             Err(error) => {
                 tracing::warn!(
@@ -1147,6 +1142,17 @@ pub fn screenshot_display_bytes_excluding_overlay() -> anyhow::Result<(
             }
         }
     })
+}
+
+/// Run a ScreenCaptureKit display capture on the display worker, once this
+/// process holds its executable's ScreenCaptureKit claim.
+fn capture_display_native<T, F>(work: F) -> anyhow::Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> anyhow::Result<T> + Send + 'static,
+{
+    crate::capture_owner::claim()?;
+    run_native_capture_worker(display_capture_gate(), DISPLAY_CAPTURE_NATIVE_TIMEOUT, work)
 }
 
 /// Main display at native pixel size through a ScreenCaptureKit display

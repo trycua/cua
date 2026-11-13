@@ -202,7 +202,7 @@ fn own_app_bundle() -> Option<PathBuf> {
     app_bundle_of(&executable)
 }
 
-fn app_bundle_of(executable: &Path) -> Option<PathBuf> {
+pub(crate) fn app_bundle_of(executable: &Path) -> Option<PathBuf> {
     let macos = executable.parent()?;
     let contents = macos.parent()?;
     let bundle = contents.parent()?;

@@ -1780,10 +1780,7 @@ fn perform_ax_click(
     // Capture advertised actions BEFORE dispatching so we can detect silent no-ops
     // (AX returns success even when the element doesn't advertise the action).
     let advertised = unsafe { copy_action_names(element) };
-    let ax_action = match crate::ax::actions::custom_wire_name(&advertised, action_str) {
-        Some(raw) => raw,
-        None => crate::input::ax_actions::map_action(action_str)?,
-    };
+    let ax_action = crate::ax::actions::wire_name(&advertised, action_str)?;
 
     // Check the live value immediately before dispatch. Foreground assist can
     // enable menu items that were disabled in the cached snapshot, while a
@@ -2214,11 +2211,7 @@ fn validate_click_action(
     match element_actions {
         None if action == "focus" => Ok(()),
         Some(advertised) if known.is_err() => {
-            if crate::ax::actions::custom_wire_name(&advertised(), action).is_some() {
-                Ok(())
-            } else {
-                known
-            }
+            crate::ax::actions::wire_name(&advertised(), action).map(|_| ())
         }
         _ => known,
     }

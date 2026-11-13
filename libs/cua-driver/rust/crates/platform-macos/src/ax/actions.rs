@@ -19,7 +19,18 @@ impl ElementActions {
     }
 }
 
-pub fn custom_wire_name<'a>(advertised: &'a [String], action: &str) -> Option<&'a str> {
+/// The name `AXPerformAction` takes for a caller's `action`. A standard name
+/// wins over a custom action that shares it, so a default `press` stays
+/// AXPress on a row that also advertises a custom "Press"; that custom action
+/// is still reachable by its raw envelope.
+pub fn wire_name<'a>(advertised: &'a [String], action: &str) -> anyhow::Result<&'a str> {
+    match crate::input::ax_actions::map_action(action) {
+        Ok(standard) => Ok(standard),
+        Err(error) => custom_wire_name(advertised, action).ok_or(error),
+    }
+}
+
+fn custom_wire_name<'a>(advertised: &'a [String], action: &str) -> Option<&'a str> {
     advertised
         .iter()
         .filter(|raw| !raw.starts_with("AX"))
@@ -88,6 +99,16 @@ mod tests {
         assert_eq!(custom_wire_name(&names, "Move Down"), Some(envelope));
         assert_eq!(custom_wire_name(&names, "AXShowMenu"), None);
         assert_eq!(custom_wire_name(&names, "Move Up"), None);
+    }
+
+    #[test]
+    fn a_standard_name_wins_over_a_custom_action_that_shares_it() {
+        let envelope = "Name:Press\nTarget:0x0\nSelector:(null)";
+        let names = advertised(&["AXPress", envelope]);
+        assert_eq!(wire_name(&names, "press").unwrap(), "AXPress");
+        assert_eq!(wire_name(&names, "Press").unwrap(), "AXPress");
+        assert_eq!(wire_name(&names, envelope).unwrap(), envelope);
+        assert!(wire_name(&names, "Pin List").is_err());
     }
 
     #[test]

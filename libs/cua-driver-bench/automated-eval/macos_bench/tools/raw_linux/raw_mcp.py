@@ -41,6 +41,8 @@ TMP = Path(os.environ.get("RAW_TMP") or tempfile.mkdtemp(prefix="raw-linux-"))
 TMP.mkdir(parents=True, exist_ok=True)
 PYTHON = os.environ.get("PYTHON") or sys.executable
 DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS = 30_000, 120_000
+# pids whose AT-SPI calls timed out in an earlier script, per trial (raw.app asks them with a short timeout)
+STALLED: dict[str, set[str]] = {}
 
 DESCRIPTION = """\
 Run one Python script against the Linux desktop. The script body runs inside a function, so `return` a value \
@@ -157,9 +159,12 @@ def runner_env(settings: dict) -> dict[str, str]:
     env = {
         k: v
         for k, v in os.environ.items()
-        if k not in {"RAW_LOG", "RAW_TRIAL", "RAW_GRANT"} and not k.startswith("RAW_DRIVER_")
+        if k not in {"RAW_LOG", "RAW_TRIAL", "RAW_GRANT", "RAW_ATSPI_SUSPECT"} and not k.startswith("RAW_DRIVER_")
     }
     env["RAW_GRANT"] = "1" if settings.get("foreground_grant") is True else "0"
+    stalled = STALLED.get(str(settings.get("trial_id")))
+    if stalled:
+        env["RAW_ATSPI_SUSPECT"] = ",".join(sorted(stalled))
     return env
 
 
@@ -192,6 +197,8 @@ def run_script(script: str, timeout_ms: int | None) -> tuple[list[dict], bool, d
             "error": f"the script did not finish within {limit:.0f} s and was killed",
         }
     elapsed = round(time.monotonic() - started, 2)
+    if result.get("atspi_stalled"):
+        STALLED.setdefault(str(settings.get("trial_id")), set()).update(result["atspi_stalled"])
     text: list[str] = []
     if result.get("lint_text"):
         text.append(result["lint_text"])

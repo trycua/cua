@@ -26,7 +26,8 @@ Foreground is granted by the harness per task (RAW_GRANT=1 in the runner's envir
 never by the script.
 
 AT-SPI calls time out after RAW_ATSPI_TIMEOUT_MS (default 2000 ms) instead of D-Bus's 15 s, so one app that stopped
-answering on the bus costs a script seconds, not 15 s per call. Apps that time out are recorded per call.
+answering on the bus costs a script seconds, not 15 s. Apps that time out are recorded per call; the MCP server hands
+their pids to later scripts of the same trial (RAW_ATSPI_SUSPECT), and raw.app asks those with a 300 ms timeout.
 
 The runtime hook (``Watch``) samples the real pointer, the core focus, the active window and the top of the
 stacking order every 50 ms while the script runs, and reports every change. It does not undo anything.
@@ -542,6 +543,9 @@ MAX_CHILDREN = 1000
 MAX_CELLS = 2000  # one raw.cells read
 # 0 keeps D-Bus's own 25 s method timeout (libatspi's default; a stalled app costs about 15 s in practice)
 ATSPI_TIMEOUT_MS = int(os.environ.get("RAW_ATSPI_TIMEOUT_MS") or 2000)
+# apps that stalled in an earlier script of this trial (from the MCP server); raw.app asks them with a short timeout
+SUSPECT_PIDS = {int(p) for p in (os.environ.get("RAW_ATSPI_SUSPECT") or "").split(",") if p.strip().isdigit()}
+SUSPECT_TIMEOUT_MS = 300
 
 
 def _cell_ref(ref: str) -> tuple[int, int]:
@@ -830,9 +834,17 @@ class Raw:
                     return a
                 if name is None or app_pid in STATE.stalled:
                     continue
+                suspect = app_pid in SUSPECT_PIDS and ATSPI_TIMEOUT_MS > 0
+                limit = (SUSPECT_TIMEOUT_MS if suspect else ATSPI_TIMEOUT_MS or 25_000) / 1000
+                if suspect:  # stalled in an earlier script of this trial: ask briefly, it may be back
+                    Atspi.set_timeout(SUSPECT_TIMEOUT_MS, SUSPECT_TIMEOUT_MS)
                 started = time.monotonic()
-                app_name = a.get_name() or ""
-                if time.monotonic() - started >= (ATSPI_TIMEOUT_MS or 25_000) / 1000 * 0.9:
+                try:
+                    app_name = a.get_name() or ""
+                finally:
+                    if suspect:
+                        Atspi.set_timeout(ATSPI_TIMEOUT_MS, ATSPI_TIMEOUT_MS)
+                if time.monotonic() - started >= limit * 0.9:
                     # an app that does not answer: skip it for the rest of this script
                     with STATE.lock:
                         STATE.stalled.setdefault(app_pid, "no answer within the AT-SPI timeout")

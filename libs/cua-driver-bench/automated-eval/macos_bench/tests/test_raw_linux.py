@@ -308,6 +308,13 @@ class TrialSettingsTest(unittest.TestCase):
         self.assertNotIn("raw.driver(", text)
         self.assertIn("raw.cells", text)
 
+    def test_stalled_apps_carry_to_later_scripts_of_the_same_trial_only(self):
+        import raw_mcp
+
+        with mock.patch.dict(raw_mcp.STALLED, {"t1": {"42", "7"}}, clear=True):
+            self.assertEqual(raw_mcp.runner_env({"trial_id": "t1"})["RAW_ATSPI_SUSPECT"], "42,7")
+            self.assertNotIn("RAW_ATSPI_SUSPECT", raw_mcp.runner_env({"trial_id": "t2"}))
+
 
 class ForegroundHelperTest(unittest.TestCase):
     """The keyboard helpers send nothing unless the target holds the input focus (no display needed)."""

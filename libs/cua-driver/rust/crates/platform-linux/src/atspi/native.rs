@@ -51,6 +51,35 @@ tokio::task_local! {
     static OP_DEADLINE: tokio::time::Instant;
 }
 
+tokio::task_local! {
+    /// True while a browser consent scan walks the tree: web document
+    /// subtrees are kept as nodes but never descended into. The prompt it
+    /// looks for is native browser UI, and the scan already ignores anything
+    /// inside web content, so a large page only costs walk time.
+    static SKIP_WEB_CONTENT: bool;
+}
+
+std::thread_local! {
+    static SKIP_WEB_CONTENT_REQUEST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run `body` with web content skipped by every walk it starts on this
+/// thread (restored on return or unwind).
+pub(super) fn with_web_content_skipped<T>(body: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SKIP_WEB_CONTENT_REQUEST.with(|flag| flag.set(self.0));
+        }
+    }
+    let _restore = Restore(SKIP_WEB_CONTENT_REQUEST.with(|flag| flag.replace(true)));
+    body()
+}
+
+fn skip_web_content() -> bool {
+    SKIP_WEB_CONTENT.try_with(|skip| *skip).unwrap_or(false)
+}
+
 /// Time left on the current operation's deadline, or [`CALL_TIMEOUT`] when no
 /// deadline is in scope.
 fn remaining_budget() -> Duration {
@@ -351,6 +380,39 @@ fn wait_for_listener_startup(
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
             Err(anyhow!("AT-SPI listener initialization thread panicked"))
         }
+    }
+}
+
+#[cfg(test)]
+mod web_content_skip_tests {
+    use super::{with_web_content_skipped, SKIP_WEB_CONTENT_REQUEST};
+
+    fn requested() -> bool {
+        SKIP_WEB_CONTENT_REQUEST.with(|flag| flag.get())
+    }
+
+    #[test]
+    fn skip_is_scoped_to_the_body() {
+        assert!(!requested());
+        assert!(with_web_content_skipped(requested));
+        assert!(!requested());
+    }
+
+    #[test]
+    fn skip_is_restored_after_a_panic() {
+        let result =
+            std::panic::catch_unwind(|| with_web_content_skipped(|| panic!("walk failed")));
+        assert!(result.is_err());
+        assert!(!requested());
+    }
+
+    #[test]
+    fn nested_skip_restores_the_outer_request() {
+        with_web_content_skipped(|| {
+            with_web_content_skipped(|| assert!(requested()));
+            assert!(requested());
+        });
+        assert!(!requested());
     }
 }
 
@@ -1896,7 +1958,8 @@ async fn collect_visited_bounded_opts<'a>(
         // Enqueue children (fetched above) before moving `acc` into `visited`.
         // Honor max_depth: skip enqueueing descendants whose depth
         // would exceed the cap.
-        let descend = max_depth.map(|d| depth < d).unwrap_or(true);
+        let descend = max_depth.map(|d| depth < d).unwrap_or(true)
+            && !(skip_web_content() && is_document_role(&role));
         // A menu that is not open (a menubar entry that is not expanded, or
         // any menu that is not showing) keeps its child count and is not
         // walked: its items are hidden, never indexed, and cost a round-trip
@@ -2554,10 +2617,14 @@ pub(super) fn walk_tree_bounded_with_timeout(
         // Backstop only: the walk observes `deadline` itself and returns its
         // partial result; this guards the few un-wrapped awaits.
         let backstop = deadline + Duration::from_millis(500);
-        let walk = OP_DEADLINE.scope(deadline, async {
-            let conn = shared_connection().await?;
-            collect_visited_bounded(conn, pid, xid, max_elements, max_depth).await
-        });
+        let skip_web = SKIP_WEB_CONTENT_REQUEST.with(|flag| flag.get());
+        let walk = SKIP_WEB_CONTENT.scope(
+            skip_web,
+            OP_DEADLINE.scope(deadline, async {
+                let conn = shared_connection().await?;
+                collect_visited_bounded(conn, pid, xid, max_elements, max_depth).await
+            }),
+        );
         let walked = match before_snapshot_deadline(backstop, walk).await {
             Ok(Ok(result)) => result,
             Ok(Err(error)) if error.to_string() == "app_lookup_timeout" => {

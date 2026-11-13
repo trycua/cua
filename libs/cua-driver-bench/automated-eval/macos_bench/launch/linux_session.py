@@ -17,6 +17,7 @@ import secrets
 import select
 import shutil
 import signal
+import socket
 import stat
 import struct
 import subprocess
@@ -176,8 +177,10 @@ def _write_cookie(path: Path) -> None:
     def s(b: bytes) -> bytes:
         return struct.pack(">H", len(b)) + b
 
-    data = struct.pack(">H", 0xFFFF) + s(b"") + s(b"") + s(b"MIT-MAGIC-COOKIE-1")
-    data += s(secrets.token_bytes(16))
+    cookie = s(b"MIT-MAGIC-COOKIE-1") + s(secrets.token_bytes(16))
+    # FamilyWild serves libX11; python-xlib matches only FamilyLocal + hostname, as xauth writes on a desktop
+    data = struct.pack(">H", 0xFFFF) + s(b"") + s(b"") + cookie
+    data += struct.pack(">H", 0x0100) + s(socket.gethostname().encode()) + s(b"") + cookie
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "wb") as f:
         f.write(data)

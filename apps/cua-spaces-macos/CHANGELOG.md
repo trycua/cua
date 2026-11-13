@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.36.5](https://github.com/trycua/cua/compare/cua-spaces-v0.36.4...cua-spaces-v0.36.5) (2026-11-13)
+
+
+### Bug Fixes
+
+* **cua-driver:** do not strip proc-macro dylibs in release builds ([#7540](https://github.com/trycua/cua/issues/7540)) ([8837363](https://github.com/trycua/cua/commit/8837363d65a36292c7692b5c9c37e77d44e9326d))
+
 ## [0.36.4](https://github.com/trycua/cua/compare/cua-spaces-v0.36.3...cua-spaces-v0.36.4) (2026-11-13)
 
 

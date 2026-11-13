@@ -301,6 +301,14 @@ fn session_first_actions_show_pointer_and_badge_in_the_video() {
             .map(Path::to_path_buf)
             .expect("the first-actions row reads its MP4: set CUA_E2E_RECORDINGS_ROOT");
         let (pid, window_id) = launch_native_fixture(&mut driver, &fixture);
+        // A fixture launched after another one in the same process may not
+        // hold the foreground yet (Windows then stalls foreground input), so
+        // raise it once before any session action, as the WPF suite does.
+        let _ = driver.call(
+            "bring_to_front",
+            serde_json::json!({"pid": pid, "window_id": window_id}),
+        );
+        settle(300);
         let (_, screen_width, screen_height) = capture_desktop_png(&mut driver);
 
         // Verbose badges show the session name when the cursor is revealed.

@@ -443,7 +443,13 @@ async fn cancelled_launch_child() {
     } else {
         Duration::from_millis(100)
     };
-    assert!(tokio::time::timeout(wait, launch).await.is_err());
+    // The launch must still be going when the wait ends (it is cancelled then).
+    if let Ok(done) = tokio::time::timeout(wait, launch).await {
+        panic!(
+            "the launch finished within {wait:?}: {:?}",
+            done.map(|_| ())
+        );
+    }
     // The VM is released only once the cancelled launch's own cleanup is done.
     let _owner = tokio::time::timeout(Duration::from_secs(10), runtime.own("vm"))
         .await

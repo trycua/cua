@@ -100,18 +100,16 @@ A Windows 11 on ARM guest (`os="windows"`, `arch="aarch64"`) runs on the QEMU
 runtime of an arm64 macOS or Linux host. Windows 11 needs 4 GB: a guest started
 with less is given 4096 MB.
 
-**TPM.** On an arm64 Linux host the guest gets a persistent software TPM 2.0
-automatically; it needs `swtpm` on the host's `PATH`:
+**TPM.** The guest gets a persistent software TPM 2.0 automatically (not on a
+Mac). It needs `swtpm` on the host's `PATH`:
 
 ```bash skip="host-install"
 sudo apt-get install swtpm         # Debian, Ubuntu
 ```
 
-On a Mac the guest has no TPM (Hypervisor.framework cannot map its memory window), so the unattended install turns Windows 11's TPM check off.
-
-**Secure Boot firmware.** A guest that should see Secure Boot (Microsoft's keys
-enrolled) needs `AAVMF_CODE.secboot.fd` and `AAVMF_VARS.ms.fd`, both in one
-directory. Without it cua boots on the generic edk2 firmware QEMU ships. cua looks, in order, at
+**Secure Boot firmware.** The guest needs `AAVMF_CODE.secboot.fd` and
+`AAVMF_VARS.ms.fd`, both in one directory (else QEMU's generic edk2 firmware).
+cua looks, in order, at
 `CUA_QEMU_AAVMF_DIR` (when set, nowhere else), `~/.cua/firmware/aavmf`, the
 QEMU prefix's `share/AAVMF`, then `/usr/share/AAVMF`. On Linux:
 
@@ -129,8 +127,8 @@ cp -L usr/share/AAVMF/AAVMF_CODE.secboot.fd usr/share/AAVMF/AAVMF_VARS.ms.fd ~/.
 ```
 
 **Network.** Windows 11 on ARM has no inbox virtio-net driver, so a guest you
-install by hand has no network during Setup. Finish OOBE offline, then install
-NetKVM from the virtio-win ISO (`NetKVM\w11\ARM64`). The `windows:11` image does this for you.
+install by hand has no network in Setup. Finish OOBE offline, then install
+NetKVM from the virtio-win ISO (`NetKVM\w11\ARM64`).
 
 **Fork and checkpoint** need the VM stopped, so its TPM state is copied
 consistently. A checkpoint with TPM state stays on the host that made it: it is

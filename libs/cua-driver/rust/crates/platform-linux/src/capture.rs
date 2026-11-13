@@ -339,6 +339,20 @@ fn component_to_u8(pixel: u32, mask: u32) -> u8 {
 }
 
 fn packed_zpixmap_to_png(data: &[u8], w: u32, h: u32, decoder: PixelDecoder) -> Result<Vec<u8>> {
+    let rgba = packed_zpixmap_to_rgba(data, w, h, &decoder, false)?;
+    cua_driver_core::image_utils::encode_rgba_to_png(&rgba, w, h)
+}
+
+/// Decode a ZPixmap to RGBA. With `alpha`, the pixel bits outside the RGB
+/// masks are the alpha channel, as in a depth-32 ARGB visual; otherwise every
+/// pixel is opaque.
+fn packed_zpixmap_to_rgba(
+    data: &[u8],
+    w: u32,
+    h: u32,
+    decoder: &PixelDecoder,
+    alpha: bool,
+) -> Result<Vec<u8>> {
     if data.len() != decoder.layout.len {
         bail!(
             "pixel buffer length {} != expected {} ({}x{})",
@@ -352,6 +366,18 @@ fn packed_zpixmap_to_png(data: &[u8], w: u32, h: u32, decoder: PixelDecoder) -> 
         .checked_mul(h as usize)
         .and_then(|pixels| pixels.checked_mul(4))
         .ok_or_else(|| anyhow!("window geometry {w}x{h} overflows RGBA length"))?;
+    let alpha_mask = if alpha {
+        let bits = decoder.layout.bytes_per_pixel * 8;
+        let pixel_mask = if bits >= 32 {
+            u32::MAX
+        } else {
+            (1u32 << bits) - 1
+        };
+        let mask = pixel_mask & !(decoder.red_mask | decoder.green_mask | decoder.blue_mask);
+        (mask != 0).then_some(mask)
+    } else {
+        None
+    };
     let mut rgba = Vec::with_capacity(rgba_len);
     for y in 0..h as usize {
         let row = &data[y * decoder.layout.stride..(y + 1) * decoder.layout.stride];
@@ -379,10 +405,10 @@ fn packed_zpixmap_to_png(data: &[u8], w: u32, h: u32, decoder: PixelDecoder) -> 
                 };
                 rgba.push(value);
             }
-            rgba.push(255);
+            rgba.push(alpha_mask.map_or(255, |mask| component_to_u8(pixel, mask)));
         }
     }
-    cua_driver_core::image_utils::encode_rgba_to_png(&rgba, w, h)
+    Ok(rgba)
 }
 
 fn xid_to_window(xid: u64) -> Result<u32> {
@@ -994,6 +1020,7 @@ pub(crate) fn screenshot_display_bytes_x11() -> Result<Vec<u8>> {
     let (conn, screen_num) = RustConnection::connect(None)
         .map_err(|e| anyhow::anyhow!("{e}{}", crate::no_display_hint()))?;
     let root = conn.setup().roots[screen_num].root;
+    let pixels = PixelCatalog::from_setup(conn.setup());
     // Get root geometry.
     let geom = conn.get_geometry(root)?.reply()?;
     let w = geom.width as u32;
@@ -1009,20 +1036,219 @@ pub(crate) fn screenshot_display_bytes_x11() -> Result<Vec<u8>> {
             crate::no_display_hint()
         );
     }
-    let img = conn
-        .get_image(ImageFormat::Z_PIXMAP, root, 0, 0, w as u16, h as u16, !0u32)?
-        .reply()?;
-    let bytes = img.data;
-    let bpp = match img.depth {
-        32 | 24 => 4usize,
-        _ => anyhow::bail!("Unsupported depth"),
+    let full = Rect { x: 0, y: 0, w, h };
+    let rgba = match read_drawable_rgba(&conn, &pixels, root, full, false) {
+        Ok(rgba) => rgba,
+        Err(e) if is_root_unreadable(&e) => {
+            compose_top_level_windows(&conn, &pixels, root, (w, h))?
+        }
+        Err(e) => return Err(e),
     };
-    let mut rgba = Vec::with_capacity((w * h * 4) as usize);
-    for chunk in bytes.chunks_exact(bpp) {
-        let (b, g, r) = (chunk[0], chunk[1], chunk[2]);
-        rgba.extend_from_slice(&[r, g, b, 255]);
-    }
     cua_driver_core::image_utils::encode_rgba_to_png(&rgba, w, h)
+}
+
+/// Whether the X server refuses pixel reads of the root window. A rootless
+/// Xwayland (Hyprland, KWin, WSLg, gamescope) keeps no root framebuffer, so
+/// a core `GetImage` on the root fails with BadMatch while the mapped
+/// top-level windows stay readable.
+pub fn x11_root_unreadable() -> Result<bool> {
+    use x11rb::protocol::xproto::ConnectionExt as _;
+    let (conn, screen_num) = x11rb::rust_connection::RustConnection::connect(None)
+        .map_err(|e| anyhow!("{e}{}", crate::no_display_hint()))?;
+    let root = conn.setup().roots[screen_num].root;
+    let read = conn
+        .get_image(
+            x11rb::protocol::xproto::ImageFormat::Z_PIXMAP,
+            root,
+            0,
+            0,
+            1,
+            1,
+            !0u32,
+        )?
+        .reply();
+    match read {
+        Ok(_) => Ok(false),
+        Err(e) => {
+            let e = anyhow::Error::from(e);
+            if is_root_unreadable(&e) {
+                Ok(true)
+            } else {
+                Err(e)
+            }
+        }
+    }
+}
+
+fn is_root_unreadable(error: &anyhow::Error) -> bool {
+    matches!(
+        error.downcast_ref::<x11rb::errors::ReplyError>(),
+        Some(x11rb::errors::ReplyError::X11Error(e))
+            if e.error_kind == x11rb::protocol::ErrorKind::Match
+    )
+}
+
+/// A screen rectangle in root coordinates.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Rect {
+    x: i32,
+    y: i32,
+    w: u32,
+    h: u32,
+}
+
+impl Rect {
+    fn intersect(self, other: Rect) -> Option<Rect> {
+        let x0 = self.x.max(other.x);
+        let y0 = self.y.max(other.y);
+        let x1 =
+            (i64::from(self.x) + i64::from(self.w)).min(i64::from(other.x) + i64::from(other.w));
+        let y1 =
+            (i64::from(self.y) + i64::from(self.h)).min(i64::from(other.y) + i64::from(other.h));
+        (x1 > i64::from(x0) && y1 > i64::from(y0)).then(|| Rect {
+            x: x0,
+            y: y0,
+            w: (x1 - i64::from(x0)) as u32,
+            h: (y1 - i64::from(y0)) as u32,
+        })
+    }
+}
+
+/// `GetImage` of `rect` (in `drawable`'s own coordinates) decoded to RGBA
+/// through the server's pixmap formats and the reply's visual. With `alpha`,
+/// a depth-32 reply keeps its alpha channel.
+fn read_drawable_rgba(
+    conn: &x11rb::rust_connection::RustConnection,
+    pixels: &PixelCatalog,
+    drawable: u32,
+    rect: Rect,
+    alpha: bool,
+) -> Result<Vec<u8>> {
+    use x11rb::protocol::xproto::{ConnectionExt as _, ImageFormat};
+    checked_capture_dimensions(rect.w, rect.h)?;
+    let img = conn
+        .get_image(
+            ImageFormat::Z_PIXMAP,
+            drawable,
+            i16::try_from(rect.x)?,
+            i16::try_from(rect.y)?,
+            u16::try_from(rect.w)?,
+            u16::try_from(rect.h)?,
+            !0u32,
+        )?
+        .reply()?;
+    let decoder = pixels.decoder(rect.w, rect.h, img.depth, img.visual, |visual| {
+        query_direct_colors(conn, drawable, visual)
+    })?;
+    packed_zpixmap_to_rgba(
+        &img.data,
+        rect.w,
+        rect.h,
+        &decoder,
+        alpha && img.depth == 32,
+    )
+}
+
+/// Whether `error` is the reply to a request about a window that was
+/// unmapped (BadMatch) or destroyed (BadWindow, BadDrawable) after the tree
+/// was read.
+fn is_window_gone(error: &anyhow::Error) -> bool {
+    use x11rb::protocol::ErrorKind;
+    matches!(
+        error.downcast_ref::<x11rb::errors::ReplyError>(),
+        Some(x11rb::errors::ReplyError::X11Error(e))
+            if matches!(e.error_kind, ErrorKind::Match | ErrorKind::Window | ErrorKind::Drawable)
+    )
+}
+
+/// The desktop as X11 clients see it when the root window cannot be read:
+/// every viewable top-level window, painted bottom to top at its place on the
+/// screen, over black. Native Wayland surfaces are not part of the X screen,
+/// so they are missing and X11 windows under them show through.
+fn compose_top_level_windows(
+    conn: &x11rb::rust_connection::RustConnection,
+    pixels: &PixelCatalog,
+    root: u32,
+    (screen_w, screen_h): (u32, u32),
+) -> Result<Vec<u8>> {
+    use x11rb::protocol::xproto::ConnectionExt as _;
+    let screen = Rect {
+        x: 0,
+        y: 0,
+        w: screen_w,
+        h: screen_h,
+    };
+    let mut layers = Vec::new();
+    // QueryTree lists children bottom to top.
+    for window in conn.query_tree(root)?.reply()?.children {
+        match read_top_level_window(conn, pixels, window, screen) {
+            Ok(Some(layer)) => layers.push(layer),
+            Ok(None) => {}
+            Err(e) if is_window_gone(&e) => {
+                tracing::debug!("X11 window 0x{window:x} went away during desktop capture: {e:#}")
+            }
+            Err(e) => return Err(e.context(format!("reading X11 window 0x{window:x}"))),
+        }
+    }
+    Ok(paint_layers(screen_w, screen_h, &layers))
+}
+
+/// The on-screen part of a viewable top-level `window`, border included, as
+/// a layer; `None` for a window that shows nothing.
+fn read_top_level_window(
+    conn: &x11rb::rust_connection::RustConnection,
+    pixels: &PixelCatalog,
+    window: u32,
+    screen: Rect,
+) -> Result<Option<(Rect, Vec<u8>)>> {
+    use x11rb::protocol::xproto::{ConnectionExt as _, MapState, WindowClass};
+    let attributes = conn.get_window_attributes(window)?.reply()?;
+    if attributes.map_state != MapState::VIEWABLE || attributes.class == WindowClass::INPUT_ONLY {
+        return Ok(None);
+    }
+    let geom = conn.get_geometry(window)?.reply()?;
+    // geometry x/y is the border's outer corner; GetImage coordinates start
+    // inside the border, and a window read may reach into its border.
+    let border = u32::from(geom.border_width);
+    let outer = Rect {
+        x: i32::from(geom.x),
+        y: i32::from(geom.y),
+        w: u32::from(geom.width) + 2 * border,
+        h: u32::from(geom.height) + 2 * border,
+    };
+    // A window read must lie on the screen, so read only its visible part.
+    let Some(visible) = outer.intersect(screen) else {
+        return Ok(None);
+    };
+    let local = Rect {
+        x: visible.x - outer.x - border as i32,
+        y: visible.y - outer.y - border as i32,
+        ..visible
+    };
+    let rgba = read_drawable_rgba(conn, pixels, window, local, true)?;
+    Ok(Some((visible, rgba)))
+}
+
+/// Paint RGBA `layers`, each already clipped to the screen, bottom to top on
+/// an opaque black `screen_w`x`screen_h` canvas. A layer's alpha is
+/// premultiplied, as X11 ARGB visuals carry it.
+fn paint_layers(screen_w: u32, screen_h: u32, layers: &[(Rect, Vec<u8>)]) -> Vec<u8> {
+    let mut canvas = [0, 0, 0, 255].repeat(screen_w as usize * screen_h as usize);
+    for (rect, rgba) in layers {
+        let row_len = rect.w as usize * 4;
+        for (row, line) in rgba.chunks_exact(row_len).enumerate() {
+            let start = ((rect.y as usize + row) * screen_w as usize + rect.x as usize) * 4;
+            let target = &mut canvas[start..start + row_len];
+            for (dst, src) in target.chunks_exact_mut(4).zip(line.chunks_exact(4)) {
+                let keep = 255 - u16::from(src[3]);
+                for channel in 0..3 {
+                    let under = (u16::from(dst[channel]) * keep + 127) / 255;
+                    dst[channel] = (u16::from(src[channel]) + under).min(255) as u8;
+                }
+            }
+        }
+    }
+    canvas
 }
 
 /// Capture a rectangle of the root window (what is on the screen there,
@@ -1999,6 +2225,137 @@ mod tests {
         let _ = fixture.conn.flush();
         let _ = second_fixture.conn.destroy_window(second_fixture.window);
         let _ = second_fixture.conn.flush();
+    }
+
+    fn rect(x: i32, y: i32, w: u32, h: u32) -> Rect {
+        Rect { x, y, w, h }
+    }
+
+    #[test]
+    fn rect_intersection_clips_to_the_screen() {
+        let screen = rect(0, 0, 100, 50);
+        assert_eq!(
+            rect(-10, 40, 30, 30).intersect(screen),
+            Some(rect(0, 40, 20, 10))
+        );
+        assert_eq!(
+            rect(90, -5, 20, 10).intersect(screen),
+            Some(rect(90, 0, 10, 5))
+        );
+        assert_eq!(rect(100, 0, 10, 10).intersect(screen), None);
+        assert_eq!(rect(-20, 0, 20, 10).intersect(screen), None);
+    }
+
+    #[test]
+    fn composed_desktop_paints_later_windows_over_earlier_ones_on_black() {
+        let red = [255, 0, 0, 255];
+        let blue = [0, 0, 255, 255];
+        let bottom = (rect(0, 0, 2, 2), red.repeat(4));
+        let top = (rect(1, 1, 2, 1), blue.repeat(2));
+        let canvas = paint_layers(4, 3, &[bottom, top]);
+        let black = [0, 0, 0, 255];
+        let expected: Vec<u8> = [
+            red, red, black, black, //
+            red, blue, blue, black, //
+            black, black, black, black,
+        ]
+        .concat();
+        assert_eq!(canvas, expected);
+    }
+
+    #[test]
+    fn composed_desktop_shows_lower_windows_through_transparent_argb_pixels() {
+        let red = [255, 0, 0, 255];
+        let bottom = (rect(0, 0, 3, 1), red.repeat(3));
+        // Premultiplied: clear, half-covering blue, opaque blue.
+        let argb = (
+            rect(0, 0, 3, 1),
+            [[0, 0, 0, 0], [0, 0, 128, 128], [0, 0, 255, 255]].concat(),
+        );
+        let canvas = paint_layers(3, 1, &[bottom, argb]);
+        assert_eq!(
+            canvas,
+            [[255, 0, 0, 255], [127, 0, 128, 255], [0, 0, 255, 255]].concat()
+        );
+    }
+
+    #[test]
+    fn argb_decoding_keeps_the_bits_outside_the_rgb_masks_as_alpha() {
+        let decoder = PixelDecoder {
+            layout: PackedLayout {
+                byte_order: ImageOrder::LSB_FIRST,
+                bytes_per_pixel: 4,
+                stride: 8,
+                len: 8,
+            },
+            red_mask: 0x00ff_0000,
+            green_mask: 0x0000_ff00,
+            blue_mask: 0x0000_00ff,
+            direct_colors: None,
+        };
+        // 0x80102030 then 0x00000000, little-endian.
+        let packed = [0x30, 0x20, 0x10, 0x80, 0, 0, 0, 0];
+        assert_eq!(
+            packed_zpixmap_to_rgba(&packed, 2, 1, &decoder, true).unwrap(),
+            vec![0x10, 0x20, 0x30, 0x80, 0, 0, 0, 0]
+        );
+        assert_eq!(
+            packed_zpixmap_to_rgba(&packed, 2, 1, &decoder, false).unwrap(),
+            vec![0x10, 0x20, 0x30, 255, 0, 0, 0, 255]
+        );
+    }
+
+    #[test]
+    fn window_races_are_told_apart_from_other_read_failures() {
+        let x11_error = |error_kind| {
+            anyhow::Error::from(x11rb::errors::ReplyError::X11Error(
+                x11rb::x11_utils::X11Error {
+                    error_kind,
+                    error_code: 0,
+                    sequence: 2,
+                    bad_value: 0,
+                    minor_opcode: 0,
+                    major_opcode: 73,
+                    extension_name: None,
+                    request_name: Some("GetImage"),
+                },
+            ))
+        };
+        use x11rb::protocol::ErrorKind;
+        for gone in [ErrorKind::Match, ErrorKind::Window, ErrorKind::Drawable] {
+            assert!(is_window_gone(&x11_error(gone)), "{gone:?}");
+        }
+        assert!(!is_window_gone(&x11_error(ErrorKind::Alloc)));
+        assert!(!is_window_gone(&anyhow!(
+            "unknown X11 visual 0x42 for depth 32"
+        )));
+    }
+
+    #[test]
+    fn only_a_badmatch_reply_marks_the_root_unreadable() {
+        let x11_error = |error_kind, error_code| {
+            anyhow::Error::from(x11rb::errors::ReplyError::X11Error(
+                x11rb::x11_utils::X11Error {
+                    error_kind,
+                    error_code,
+                    sequence: 2,
+                    bad_value: 1242,
+                    minor_opcode: 0,
+                    major_opcode: 73,
+                    extension_name: None,
+                    request_name: Some("GetImage"),
+                },
+            ))
+        };
+        assert!(is_root_unreadable(&x11_error(
+            x11rb::protocol::ErrorKind::Match,
+            8
+        )));
+        assert!(!is_root_unreadable(&x11_error(
+            x11rb::protocol::ErrorKind::Drawable,
+            9
+        )));
+        assert!(!is_root_unreadable(&anyhow!("connection reset")));
     }
 
     /// The desktop capture shows top-level windows where they are on the

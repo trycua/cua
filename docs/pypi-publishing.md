@@ -26,6 +26,23 @@ If PyPI already has that version, or a newer one, the run does nothing.
 Cua Driver releases are published as GitHub prereleases. That is unrelated
 to PyPI: the weekly promotion picks them up all the same.
 
+## Wheel size: the executable is downloaded, not shipped
+
+PyPI caps a project at 10 GB across all releases, so the wheels stay small.
+
+- `cua-cli` is one 5 KB `py3-none-any` wheel.
+- `cua-driver` wheels carry only the SDK library (10-18 MB each, about 61 MB for
+  the five wheels of a release, down from 155 MB). `_release.json` names the
+  signed archive of the same GitHub release with its size and SHA-256, and the
+  first `cua-driver` run downloads, verifies and installs it
+  (`libs/cua-driver/python/src/cua_driver/fetch.py`). On macOS that is the
+  notarized `CuaDriver.app` at `/Applications/CuaDriver.app`, so permission
+  grants are shared with the install script.
+
+Because a published wheel pins those archives by SHA-256, never re-upload or
+rebuild a release asset (`gh release upload --clobber`) after its wheels are on
+PyPI: the wheel would refuse the new bytes. Ship a new patch version instead.
+
 ## Promote now
 
 Any of these uploads a build to PyPI right away:

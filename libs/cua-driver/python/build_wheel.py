@@ -3,16 +3,21 @@
 
 This script:
 1. Detects the current platform
-2. Downloads the appropriate cua-driver-rs binary from GitHub releases
-3. Places it in src/cua_driver/bin/
-4. Builds the wheel with hatchling
+2. Downloads the appropriate cua-driver-rs release archive from GitHub releases
+3. Places the SDK library next to the Python package
+4. Writes ``_release.json``, which names the signed archive the first
+   ``cua-driver`` run downloads (size and SHA-256 from the release), and
+   builds the thin wheel with hatchling. The executable is NOT inside the
+   wheel: it was a second copy of the driver (about 60% of the wheel).
+   ``--bundle-cli`` puts it inside instead, for local builds.
 
 Usage:
-    python build_wheel.py [--version VERSION]
+    python build_wheel.py [--version VERSION] [--bundle-cli]
 """
 
 import argparse
 import hashlib
+import json
 import os
 import platform
 import shutil
@@ -118,6 +123,44 @@ def get_release_url(version: str, platform_name: str, arch: str) -> tuple[str, l
         raise ValueError(f"Unknown platform: {platform_name}")
 
     return f"{base_url}/{filename}", binary_names
+
+
+def get_cli_asset(version: str, platform_name: str, arch: str) -> tuple[str, str]:
+    """Return (manifest key, archive name) of the signed archive that holds the CLI.
+
+    macOS: the archive with the notarized CuaDriver.app, which is what the
+    install script installs, so permissions attach to the same app identity.
+    Linux and Windows: the standalone ``-binary`` archive.
+    """
+    if platform_name == "darwin":
+        return "darwin-universal", f"cua-driver-rs-{version}-darwin-universal.tar.gz"
+    url, _ = get_release_url(version, platform_name, arch)
+    return f"{platform_name}-{arch}", url.rsplit("/", 1)[1]
+
+
+def get_release_asset_sizes(version: str) -> dict[str, int]:
+    """Asset name -> size in bytes, from the release's release-manifest.json."""
+    url = f"https://github.com/trycua/cua/releases/download/cua-driver-rs-v{version}/release-manifest.json"
+    try:
+        with urllib.request.urlopen(url) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except Exception as e:
+        raise RuntimeError(f"Failed to fetch or parse {url}: {e}")
+    return {asset["name"]: int(asset["bytes"]) for asset in data["assets"]}
+
+
+def write_release_manifest(
+    version: str, platform_name: str, arch: str, sha256: str, size: int, dest: Path
+) -> dict:
+    """Write ``_release.json``: the archive the thin wheel downloads on first use."""
+    key, name = get_cli_asset(version, platform_name, arch)
+    manifest = {
+        "version": version,
+        "base_url": f"https://github.com/trycua/cua/releases/download/cua-driver-rs-v{version}/",
+        "assets": {key: {"name": name, "size": size, "sha256": sha256}},
+    }
+    dest.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    return manifest
 
 
 def verify_sha256(file_path: Path, expected_sha256: str) -> None:
@@ -289,18 +332,31 @@ def main():
         action="store_true",
         help="Skip download and use existing binary in bin/ (for local testing)",
     )
+    parser.add_argument(
+        "--bundle-cli",
+        action="store_true",
+        help="put the cua-driver executable inside the wheel (local builds; "
+        "the default thin wheel downloads the signed one on first run)",
+    )
     args = parser.parse_args()
     version = args.version or get_default_version()
 
     # Determine paths
     script_dir = Path(__file__).parent
-    bin_dir = script_dir / "src" / "cua_driver" / "bin"
+    package_dir = script_dir / "src" / "cua_driver"
+    bin_dir = package_dir / "bin"
+    release_json = package_dir / "_release.json"
     download_dir = script_dir / "downloads"
     platform_name, arch = get_platform_info(args.arch)
     wheel_tag = get_wheel_tag(platform_name, arch)
     print(f"Wheel tag: {wheel_tag}")
 
     if not args.skip_download:
+        # A stale executable or manifest from an earlier build must not leak
+        # into this wheel.
+        shutil.rmtree(bin_dir, ignore_errors=True)
+        release_json.unlink(missing_ok=True)
+
         # Get platform info and download URL
         print(f"Building for {platform_name}-{arch}")
 
@@ -321,44 +377,57 @@ def main():
             verify_sha256(archive_path, expected_sha256)
             print("[OK] Cached archive checksum verified")
 
-        # Extract binaries
-        extracted = extract_binaries(archive_path, binary_names, bin_dir)
+        # Extract binaries. The thin wheel keeps only the SDK library.
+        wanted = binary_names if args.bundle_cli else [binary_names[-1]]
+        extracted = extract_binaries(archive_path, wanted, bin_dir)
         native_library = next(
             path for path in extracted if path.suffix in {".dylib", ".so", ".dll"}
         )
-        shutil.move(native_library, script_dir / "src" / "cua_driver" / native_library.name)
+        shutil.move(native_library, package_dir / native_library.name)
+        if not args.bundle_cli:
+            shutil.rmtree(bin_dir, ignore_errors=True)
+            _, cli_name = get_cli_asset(version, platform_name, arch)
+            cli_sha256 = get_expected_sha256(version, cli_name)
+            cli_size = get_release_asset_sizes(version).get(cli_name)
+            if cli_size is None:
+                raise RuntimeError(f"{cli_name} is not listed in the release manifest")
+            write_release_manifest(version, platform_name, arch, cli_sha256, cli_size, release_json)
+            print(f"Wrote {release_json.name}: {cli_name} ({cli_size} bytes, sha256 {cli_sha256})")
     else:
-        print("Skipping download (using existing binary)")
-
-    # Verify main binary exists
-    expected_binary = "cua-driver.exe" if sys.platform == "win32" else "cua-driver"
-    binary_path = bin_dir / expected_binary
-    if not binary_path.exists():
-        raise FileNotFoundError(
-            f"Binary not found at {binary_path}. "
-            f"Run without --skip-download or place binary manually."
-        )
+        print("Skipping download (using existing files)")
 
     native_library_name = {
         "darwin": "libcua_driver_sdk.dylib",
         "linux": "libcua_driver_sdk.so",
         "windows": "cua_driver_sdk.dll",
     }[platform_name]
-    native_library_path = script_dir / "src" / "cua_driver" / native_library_name
+    native_library_path = package_dir / native_library_name
     if not native_library_path.exists():
         raise FileNotFoundError(
             f"UniFFI library not found at {native_library_path}. "
             "Use a current release asset or stage a local release build."
         )
 
-    print(f"\nBinary ready at: {binary_path}")
-    print(f"Binary size: {binary_path.stat().st_size / 1024 / 1024:.2f} MB")
-
-    # List all binaries in bin directory
-    print(f"\nAll binaries in {bin_dir}:")
-    for binary in bin_dir.iterdir():
-        if binary.is_file():
-            print(f"  - {binary.name} ({binary.stat().st_size / 1024 / 1024:.2f} MB)")
+    if args.bundle_cli:
+        expected_binary = "cua-driver.exe" if platform_name == "windows" else "cua-driver"
+        binary_path = bin_dir / expected_binary
+        if not binary_path.exists():
+            raise FileNotFoundError(
+                f"Binary not found at {binary_path}. "
+                f"Run without --skip-download or place binary manually."
+            )
+        print(f"\nBinary ready at: {binary_path}")
+        print(f"Binary size: {binary_path.stat().st_size / 1024 / 1024:.2f} MB")
+        print(f"\nAll binaries in {bin_dir}:")
+        for binary in bin_dir.iterdir():
+            if binary.is_file():
+                print(f"  - {binary.name} ({binary.stat().st_size / 1024 / 1024:.2f} MB)")
+    else:
+        if bin_dir.exists():
+            raise RuntimeError(f"{bin_dir} exists: a thin wheel must not carry the executable")
+        if not release_json.is_file():
+            raise FileNotFoundError(f"{release_json} is missing: a thin wheel needs its release manifest")
+        print(f"\nThin wheel: SDK library {native_library_path.stat().st_size / 1024 / 1024:.2f} MB, no executable")
 
     # Build the wheel (pass target arch for cross-compilation)
     build_wheel(script_dir, wheel_tag, target_arch=arch)

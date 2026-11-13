@@ -63,6 +63,8 @@ pub mod recording_hooks;
 pub mod security_prompt;
 #[cfg(target_os = "macos")]
 pub mod session;
+#[cfg(target_os = "macos")]
+pub mod session_resources;
 #[cfg(all(test, target_os = "macos"))]
 mod step_latency_bench;
 #[cfg(target_os = "macos")]
@@ -71,6 +73,8 @@ pub mod terminal;
 pub mod tools;
 #[cfg(target_os = "macos")]
 pub mod video_sckit;
+#[cfg(target_os = "macos")]
+pub mod virtual_display;
 #[cfg(target_os = "macos")]
 pub mod window_change_detector;
 #[cfg(target_os = "macos")]

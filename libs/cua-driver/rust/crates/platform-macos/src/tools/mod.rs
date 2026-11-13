@@ -1098,6 +1098,12 @@ pub fn register_all(
         host_owns_permission_ux,
         host_bundle_id,
     ));
+    {
+        let state = state.clone();
+        registry.set_token_window_resolver(Arc::new(move |args| {
+            state.snapshots.window_for_token(args)
+        }));
+    }
     let cursor_outcome_reader = {
         let cursor_registry = state.cursor_registry.clone();
         cua_driver_core::session::register_scoped_cursor_outcome_reader(std::sync::Arc::new(

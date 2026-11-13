@@ -4813,6 +4813,10 @@ pub fn build_registry_with_provider(
 ) -> ToolRegistry {
     let mut r = ToolRegistry::new_with_protected_consent_provider(provider);
     let state = ToolState::new_with_capture_service(r.capture_service());
+    {
+        let state = state.clone();
+        r.set_token_window_resolver(Arc::new(move |args| state.snapshots.window_for_token(args)));
+    }
     crate::recording_hooks::install();
     if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
         let recording_state = Arc::downgrade(&state);

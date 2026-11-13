@@ -160,16 +160,11 @@ impl Drop for Context {
     }
 }
 
-/// A compiled keymap.
+/// A compiled keymap. libxkbcommon counts its references without atomics, so
+/// it stays on one thread: no `Send` or `Sync`.
 pub(crate) struct Keymap {
     ptr: *mut ffi::xkb_keymap,
 }
-
-// SAFETY: a keymap is immutable after it is compiled, and libxkbcommon counts
-// its references atomically.
-unsafe impl Send for Keymap {}
-// SAFETY: as for `Send`.
-unsafe impl Sync for Keymap {}
 
 impl Clone for Keymap {
     fn clone(&self) -> Self {

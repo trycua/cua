@@ -1693,7 +1693,6 @@ async fn collect_visited_bounded_opts<'a>(
         let has_value = ifaces.contains(Interface::Value);
         let has_component = ifaces.contains(Interface::Component);
         let has_text = ifaces.contains(Interface::Text);
-        let has_document = ifaces.contains(Interface::Document);
 
         // A toplevel transient of role `tool tip` is never read or entered:
         // gail (GTK2, e.g. GIMP 2.10) answers `name` on a tooltip-role popup
@@ -1745,6 +1744,10 @@ async fn collect_visited_bounded_opts<'a>(
         };
         let focused = matches!(state_r.as_ref(), Some(Ok(s)) if s.contains(State::Focused));
         let role_lower = role.to_ascii_lowercase();
+        // Chromium puts the Document interface on nearly every node; only a
+        // document's own URI names the rendered page, so read it there alone.
+        let has_document = ifaces.contains(Interface::Document)
+            && matches!(role_lower.as_str(), "document web" | "document frame");
         let checked = if role_lower.contains("check") {
             state_r
                 .as_ref()

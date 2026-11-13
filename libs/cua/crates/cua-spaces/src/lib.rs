@@ -61,6 +61,7 @@ pub mod app_icon;
 /// A hash-chained audit log (the share audit).
 pub mod audit;
 pub mod build;
+pub mod child_creates;
 pub mod children;
 #[cfg(feature = "mcp-client")]
 pub mod client;
@@ -94,6 +95,8 @@ pub mod operator;
 pub mod pool_checkpoints;
 pub mod prewarm;
 pub mod quarantine;
+/// Whether a Space can take work now (`spaces.reach`), asked before work is handed to it.
+pub mod reach;
 pub mod registry;
 pub mod relay;
 pub mod rename;
@@ -155,6 +158,8 @@ pub mod site_login;
 pub mod spawn;
 #[cfg(feature = "spaces-stream")]
 pub mod stream;
+#[cfg(feature = "spaces-stream")]
+pub mod stream_registry;
 /// The Keyvault broker seam the `teleport_app` MCP tool routes delivery
 /// through (the daemon supplies the implementation).
 pub mod teleport_broker;

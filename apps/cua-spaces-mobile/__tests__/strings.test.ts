@@ -22,7 +22,17 @@ const CORE_BANNED = /\b(devices?)\b/i;
 const PHONE_METHODS = /^(startTask|outbox|cache|approvals|sendMode|voice|push|diff|directory|placement)\./;
 
 // Not UI wording: a header name, a protocol field, a CLI command the person types.
-const ALLOWED_SNIPPETS = ["x-cua-device-session", "cua devices approve", "device_id", "device session", "cua-device-", "dev_", "/v1/devices", "device-key", "machine_id"];
+const ALLOWED_SNIPPETS = [
+  "x-cua-device-session",
+  "cua devices approve",
+  "device_id",
+  "device session",
+  "cua-device-",
+  "dev_",
+  "/v1/devices",
+  "device-key",
+  "machine_id",
+];
 // Identifiers that are not shown: the tool-call category key (`computer`) in the group phrase table.
 const ALLOWED_EXACT = new Set<string>(["machine", "machines", "machine:", "/v1/machines", "/v1/machines/"]);
 
@@ -58,12 +68,20 @@ describe("UI wording", () => {
   const files = walk(join(ROOT, "src")).concat(walk(join(ROOT, "app")));
 
   it("has no middle dot separator in any string the app can show", () => {
-    const hits = files.flatMap((f) => stringsOf(f).filter((s) => MIDDLE_DOTS.test(s)).map((s) => `${relative(ROOT, f)}: ${s.slice(0, 60)}`));
+    const hits = files.flatMap((f) =>
+      stringsOf(f)
+        .filter((s) => MIDDLE_DOTS.test(s))
+        .map((s) => `${relative(ROOT, f)}: ${s.slice(0, 60)}`),
+    );
     expect(hits).toEqual([]);
   });
 
   it("says computers, never machines or devices", () => {
-    const hits = files.flatMap((f) => stringsOf(f).filter((s) => BANNED.test(scrub(s))).map((s) => `${relative(ROOT, f)}: ${s.slice(0, 60)}`));
+    const hits = files.flatMap((f) =>
+      stringsOf(f)
+        .filter((s) => BANNED.test(scrub(s)))
+        .map((s) => `${relative(ROOT, f)}: ${s.slice(0, 60)}`),
+    );
     expect(hits).toEqual([]);
   });
 

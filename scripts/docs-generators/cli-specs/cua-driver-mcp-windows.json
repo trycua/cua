@@ -465,6 +465,14 @@
     "additionalProperties": false,
     "description": "Exact, immediate-child application menu path to resolve and invoke through\nthe operating system's accessibility API. Path labels are matched after\ntrimming surrounding whitespace and otherwise remain case-sensitive. On\nmacOS, three periods in a label also match the ellipsis character that\nnative menu titles use (`Save As...` finds `Save As…`).",
     "properties": {
+     "delivery_mode": {
+      "description": "`background` (default) never takes the user's keyboard or pointer and refuses with\n`background_unavailable` when the item can only be reached by opening a menu. `foreground`\nis the explicit escalation that may activate the window and open menus. Linux honors it;\nmacOS and Windows accept it and keep their existing menu behavior.",
+      "enum": [
+       "background",
+       "foreground"
+      ],
+      "type": "string"
+     },
      "path": {
       "description": "Menu labels from the top-level menu to the item, e.g. `[\"File\", \"Save As...\"]`\n(1 to 16 labels).",
       "items": {
@@ -1817,7 +1825,7 @@
    "read_only": true
   },
   {
-   "description": "Write a setting into the persistent driver config. Values take effect immediately. Pass each setting as its own field.\n\nKnown keys:\n- `capture_mode` (string: `vision` | `ax` | `som`) — DEPRECATED and ignored; `get_window_state` always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect.\n- `max_image_dimension` (integer)\n- `experimental_pip` (boolean; persisted to config.json, applies on next daemon restart — Windows backend stubbed today, see issue #1729)\n- `experimental_pip_geometry` (string `WxH` or `WxH+X+Y`; persisted; applies on next daemon restart)\n\n- `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>` (`on`, `off`, or `default`) — saved default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.\n- `cursor.badges` (`minimal` default, `verbose`, or `off`) — agent cursor badge; applies to every cursor at once.\n- `cursor.float` (float at rest and while moving), `cursor.halo` (soft glow): `on` (default), `off`, or `default`. `cursor.marks` (action marks): `on`, `off` (default), or `default`. `cursor.rotate`: `heading` (default), `lean`, `off`, or `default`. All apply to every cursor at once.\n\nReturns the full updated config in the same shape as `get_config`.",
+   "description": "Write a setting into the persistent driver config. Values take effect immediately. Pass each setting as its own field.\n\nKnown keys:\n- `capture_mode` (string: `vision` | `ax` | `som`) — DEPRECATED and ignored; `get_window_state` always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect.\n- `max_image_dimension` (integer)\n- `experimental_pip` (boolean; persisted to config.json, applies on next daemon restart — Windows backend stubbed today, see issue #1729)\n- `experimental_pip_geometry` (string `WxH` or `WxH+X+Y`; persisted; applies on next daemon restart)\n\n- `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>` (`on`, `off`, or `default`) — saved default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.\n- `cursor.badges` (`minimal` default, `verbose`, or `off`) — agent cursor badge; applies to every cursor at once.\n- `cursor.float` (float at rest and while moving), `cursor.halo` (soft glow): `on` (default), `off`, or `default`. `cursor.rotate`: `heading` (default), `lean`, `off`, or `default`. All apply to every cursor at once. The cursor never draws action marks (`cursor.marks` is retired and ignored).\n\nReturns the full updated config in the same shape as `get_config`.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -1860,7 +1868,7 @@
       "type": "string"
      },
      "cursor.marks": {
-      "description": "Agent cursor action marks: the small cue next to the arrow for observe, click, type, keys, scroll, drag, apps, files, recording and system calls, plus the focus box around a clicked element on macOS. off (default): a plain arrow. Applies immediately to every cursor.",
+      "description": "Retired and ignored: the agent cursor never draws action marks, so it is always a plain arrow whatever the agent does. Still accepted so existing configs and callers keep working.",
       "enum": [
        "on",
        "off",
@@ -1989,7 +1997,7 @@
    "read_only": false
   },
   {
-   "description": "Return a lightweight snapshot of the desktop: running processes and on-screen visible windows with their bounds and owner pid.\n\nFor the full UIA subtree of a single window (with interactive element indices you can click by), use get_window_state instead — this is a fast discovery read.",
+   "description": "DEPRECATED, removed in the first release after 26 Nov 2026. Instead: list_windows and list_apps for what is open, and get_window_state for one window's accessibility tree. Return a lightweight snapshot of the desktop: running processes and on-screen visible windows with their bounds and owner pid.\n\nFor the full UIA subtree of a single window (with interactive element indices you can click by), use get_window_state instead — this is a fast discovery read.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -2054,7 +2062,7 @@
    "read_only": true
   },
   {
-   "description": "Legacy browser compatibility tool. Prefer get_browser_state and the typed browser_* tools for exact targeting, endpoint ownership, and consent. Read-only get_text and query_dom remain available by default. Mutating actions require the daemon operator to set CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1 before daemon startup (restart the daemon after changing it); this escape hatch does not provide the typed browser surface's exact binding or existing-profile grant guarantees. Supports Chrome, Brave, Edge, Safari (via AppleScript on macOS), Electron apps (via CDP), Chromium/Firefox on Windows (via UIA for read; CDP for execute_javascript when --remote-debugging-port is set), and WKWebView/Tauri/AT-SPI fallbacks.\n\nActions:\n- execute_javascript: Run JS and return the result.\n- get_text: Extract visible text from the page. On macOS, structuredContent.source identifies javascript, cdp, or ax_fallback; a successful AX fallback preserves the triggering error and truncation state in structuredContent.\n- query_dom: Find elements matching a CSS selector, with the same macOS fallback metadata contract as get_text.\n- click_element: Click a CSS-selected element AND animate the agent cursor to its on-screen center first (so the user sees what the agent is doing). Prefer over `execute_javascript('el.click()')` whenever you want visible cursor feedback.\n- insert_text: Insert `text` at whatever currently holds DOM focus in one native operation (CDP Input.insertText) — no synthesized key events, but more durable than a one-shot execute_javascript write since rich-text editors already have to treat it like an IME commit. Try this before type_keystrokes on a contenteditable that discarded an execute_javascript write. Click/focus the target field first.\n- type_keystrokes: Type `text` via real per-character keystroke events into whatever currently holds DOM focus. Slower than insert_text but the most durable rung — use it when insert_text also gets discarded, or the editor's own keydown/keyup handlers need to see real keys. Click/focus the target field first.\n- enable_javascript_apple_events: macOS-only — patch the browser's Preferences to allow JS from Apple Events (Chrome/Brave/Edge, requires user confirmation and a browser restart).",
+   "description": "Read-only legacy browser compatibility tool: read a page's text or query its DOM. Prefer get_browser_state and the typed browser_* tools for exact targeting, endpoint ownership, and consent; use this tool to read Safari and Firefox pages, which the typed tools do not cover. It cannot run JavaScript, click, or type: those page actions were removed, so act with the browser_* tools. Supports Chrome, Brave, Edge, Safari (via AppleScript on macOS), Electron apps (via CDP), Chromium/Firefox on Windows (via UIA), and WKWebView/Tauri/AT-SPI fallbacks.\n\nActions:\n- get_text: Extract visible text from the page. On macOS, structuredContent.source identifies javascript, cdp, or ax_fallback; a successful AX fallback preserves the triggering error and truncation state in structuredContent.\n- query_dom: Find elements matching a CSS selector, with the same macOS fallback metadata contract as get_text.",
    "destructive": false,
    "idempotent": false,
    "input_schema": {
@@ -2063,13 +2071,8 @@
      "action": {
       "description": "Action to perform.",
       "enum": [
-       "execute_javascript",
        "get_text",
-       "query_dom",
-       "click_element",
-       "insert_text",
-       "type_keystrokes",
-       "enable_javascript_apple_events"
+       "query_dom"
       ],
       "type": "string"
      },
@@ -2080,47 +2083,17 @@
       },
       "type": "array"
      },
-     "bundle_id": {
-      "description": "Bundle ID of the browser. Required for enable_javascript_apple_events (macOS only).",
-      "type": "string"
-     },
-     "cdp_port": {
-      "description": "Optional, for execute_javascript/insert_text/type_keystrokes: use this exact CDP port instead of auto-discovering one from pid. Needed when the port was opened via the browser's own remote-debugging toggle rather than a launch-time flag, since that path may not answer the auto-discovery probe.",
-      "maximum": 65535,
-      "minimum": 1,
-      "type": "integer"
-     },
      "css_selector": {
       "description": "CSS selector for query_dom (e.g. 'a', 'button', 'input', 'h1'-'h6', 'p', 'img', 'select', '*').",
-      "type": "string"
-     },
-     "javascript": {
-      "description": "JavaScript to execute. Required for execute_javascript.",
       "type": "string"
      },
      "pid": {
       "description": "Target process ID.",
       "type": "integer"
      },
-     "selector": {
-      "description": "CSS selector for click_element (e.g. 'button.submit', '#login a').",
-      "type": "string"
-     },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
       "type": "string"
-     },
-     "target_url_contains": {
-      "description": "Optional, for execute_javascript/insert_text/type_keystrokes: require exactly one browser tab whose URL contains this substring. Use this on a multi-tab browser — there's no built-in link between window_id and which tab a CDP call reaches.",
-      "type": "string"
-     },
-     "text": {
-      "description": "Text to insert or type. Required for insert_text and type_keystrokes. The target field must already have DOM focus (click/focus it first).",
-      "type": "string"
-     },
-     "user_has_confirmed_enabling": {
-      "description": "Must be true to proceed with enable_javascript_apple_events. This will quit and relaunch the browser.",
-      "type": "boolean"
      },
      "window_id": {
       "description": "Target window ID from list_windows.",
@@ -2772,7 +2745,7 @@
    "read_only": true
   },
   {
-   "description": "Replay a recorded trajectory by re-invoking every turn's tool call in lexical order. `dir` must point at a directory previously written by `start_recording`. Each `turn-NNNNN/` is parsed for `action.json`, and the recorded tool is called with its recorded `arguments` via the same dispatch path an MCP / CLI call uses.\n\nCaveats:\n- Element-token actions (`click({pid, element_token})` etc.) will fail because element tokens are per-snapshot and don't survive across sessions. Pixel clicks (`click({pid, x, y})`) and all keyboard tools replay cleanly. Failures are reported but don't stop replay unless `stop_on_error` is true.\n- `get_window_state` and other read-only tools are NOT currently recorded, so replays do not re-populate the per-(pid, window_id) element cache.\n- If recording is ENABLED while replay runs, the replay itself is recorded into the currently configured output directory.  That's deliberate: recording a replay against a new build and diffing the two trajectories is the regression-test workflow.",
+   "description": "DEPRECATED, removed in the first release after 26 Nov 2026. Instead: call the recorded steps yourself with run_steps (replay clicks blindly from old coordinates; keep start_recording for recording). Replay a recorded trajectory by re-invoking every turn's tool call in lexical order. `dir` must point at a directory previously written by `start_recording`. Each `turn-NNNNN/` is parsed for `action.json`, and the recorded tool is called with its recorded `arguments` via the same dispatch path an MCP / CLI call uses.\n\nCaveats:\n- Element-token actions (`click({pid, element_token})` etc.) will fail because element tokens are per-snapshot and don't survive across sessions. Pixel clicks (`click({pid, x, y})`) and all keyboard tools replay cleanly. Failures are reported but don't stop replay unless `stop_on_error` is true.\n- `get_window_state` and other read-only tools are NOT currently recorded, so replays do not re-populate the per-(pid, window_id) element cache.\n- If recording is ENABLED while replay runs, the replay itself is recorded into the currently configured output directory.  That's deliberate: recording a replay against a new build and diffing the two trajectories is the regression-test workflow.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
@@ -2806,7 +2779,7 @@
    "read_only": false
   },
   {
-   "description": "Install the ffmpeg binary used by start_recording's video capture (Linux/Windows; macOS records natively and needs no ffmpeg). Two-step and confirmed: called without `confirm` it only REPORTS the exact install command for this platform's package manager; pass `confirm: true` to actually run it. No-op if ffmpeg is already on PATH. ffmpeg is run as a separate process, never linked into the driver.",
+   "description": "DEPRECATED, removed in the first release after 26 Nov 2026. Instead: install ffmpeg with your package manager (brew install ffmpeg, winget install Gyan.FFmpeg, or apt/dnf/pacman install ffmpeg). Install the ffmpeg binary used by start_recording's video capture (Linux/Windows; macOS records natively and needs no ffmpeg). Two-step and confirmed: called without `confirm` it only REPORTS the exact install command for this platform's package manager; pass `confirm: true` to actually run it. No-op if ffmpeg is already on PATH. ffmpeg is run as a separate process, never linked into the driver.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {

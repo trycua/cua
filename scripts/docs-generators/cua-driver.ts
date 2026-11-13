@@ -54,7 +54,7 @@ import {
   mcpIndexRows,
   renderMcpReference,
 } from './lib/mcp-mdx';
-import { DOCS_CONTENT, REPO_ROOT, finish, isCheckMode, metaJson, stableJson, syncFiles } from './lib/mdx';
+import { DOCS_CONTENT, REPO_ROOT, finish, isCheckMode, metaJson, stableJson, cliSpecJson, syncFiles } from './lib/mdx';
 
 export type { CLIDocumentation };
 
@@ -63,7 +63,6 @@ const OUT_DIR = path.join(DOCS_CONTENT, 'cua-driver', 'reference');
 const SPEC_DIR = path.join(__dirname, 'cli-specs');
 export const DRIVER_CLI_SPEC = path.join(SPEC_DIR, 'cua-driver.json');
 const REGENERATE = 'pnpm --dir docs docs:generate:cua-driver';
-const TAG_PREFIX = 'cua-driver-rs-v';
 
 // ---------------------------------------------------------------- types
 
@@ -129,58 +128,6 @@ export function referencePlatform(host: string): ReferencePlatform {
 
 export function snapshotPath(platform: ReferencePlatform, dir = SPEC_DIR): string {
   return path.join(dir, `cua-driver-mcp-${platform.key}.json`);
-}
-
-// ---------------------------------------------------------------- version
-
-export type GitRunner = (command: string, args: readonly string[]) => string;
-
-/**
- * Select the highest stable semantic version from Cua Driver release tags.
- * Nightlies use their own `nightly-cua-driver-rs-v` prefix and must not affect
- * the version recorded in stable reference docs.
- */
-export function selectLatestReleasedVersion(tags: readonly string[]): string | undefined {
-  const versions = tags.flatMap((tag) => {
-    const match = tag.match(/^cua-driver-rs-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/);
-    if (!match) return [];
-    return [
-      {
-        version: tag.slice(TAG_PREFIX.length),
-        parts: [BigInt(match[1]), BigInt(match[2]), BigInt(match[3])] as const,
-      },
-    ];
-  });
-  versions.sort((a, b) => {
-    for (let index = 0; index < a.parts.length; index += 1) {
-      if (a.parts[index] < b.parts[index]) return -1;
-      if (a.parts[index] > b.parts[index]) return 1;
-    }
-    return 0;
-  });
-  return versions.at(-1)?.version;
-}
-
-function runGit(command: string, args: readonly string[]): string {
-  return execFileSync(command, [...args], { encoding: 'utf-8', cwd: REPO_ROOT });
-}
-
-/** Get the latest stable released version from git tags. */
-export function getLatestReleasedVersion(git: GitRunner = runGit): string {
-  let output: string;
-  try {
-    output = git('git', ['tag', '--list', `${TAG_PREFIX}*`]);
-  } catch (error) {
-    const detail = error instanceof Error ? `: ${error.message}` : '';
-    throw new Error(`Failed to list Cua Driver release tags with git${detail}`);
-  }
-  const version = selectLatestReleasedVersion(output.split(/\r?\n/).filter(Boolean));
-  if (!version) {
-    throw new Error(
-      `No stable Cua Driver release tag matching ${TAG_PREFIX}<major>.<minor>.<patch> was found`
-    );
-  }
-  return version;
 }
 
 // ---------------------------------------------------------------- CLI
@@ -402,13 +349,12 @@ export function mergeTools(snapshots: Map<ReferencePlatform, McpSnapshot>): McpT
   });
 }
 
-export function mcpReference(snapshots: Map<ReferencePlatform, McpSnapshot>, version: string): McpReference {
+export function mcpReference(snapshots: Map<ReferencePlatform, McpSnapshot>): McpReference {
   return {
     product: 'cua-driver',
     server: 'cua-driver mcp',
     generator: REGENERATE,
     source: 'cua-driver dump-docs --type mcp (macOS, Linux and Windows registries)',
-    version,
     description: 'Every tool cua-driver serves over MCP on macOS, Linux and Windows, with its parameters.',
     categories: MCP_CATEGORIES,
     tools: mergeTools(snapshots),
@@ -423,7 +369,7 @@ export function mcpReference(snapshots: Map<ReferencePlatform, McpSnapshot>, ver
 /** Every reference file, keyed by path relative to `reference/`. */
 export function renderReference(cli: CLIDocumentation, snapshots: Map<ReferencePlatform, McpSnapshot>): Map<string, string> {
   const cliRef = cliReference(cli);
-  const mcp = mcpReference(snapshots, cli.version);
+  const mcp = mcpReference(snapshots);
   const rel = new Map<string, string>([...renderCliReference(cliRef), ...renderMcpReference(mcp)]);
   rel.set(
     'index.mdx',
@@ -432,7 +378,6 @@ export function renderReference(cli: CLIDocumentation, snapshots: Map<ReferenceP
       description: 'Every cua-driver command and every MCP tool on macOS, Linux and Windows, generated from the driver.',
       generator: REGENERATE,
       source: 'cua-driver dump-docs --type all',
-      version: cli.version,
       sections: [
         { title: 'Commands', column: 'Command group', rows: cliIndexRows(cliRef) },
         { title: 'MCP tools', column: 'Tools', rows: mcpIndexRows(mcp) },
@@ -468,7 +413,7 @@ export function referenceFiles(
   snapshots.set(platform, own);
   const files = new Map<string, string>();
   for (const [p, content] of renderReference(docs.cli, snapshots)) files.set(path.join(outDir, p), content);
-  files.set(path.join(specDir, 'cua-driver.json'), stableJson(docs.cli));
+  files.set(path.join(specDir, 'cua-driver.json'), cliSpecJson(docs.cli));
   files.set(snapshotPath(platform, specDir), stableJson(own));
   return files;
 }
@@ -532,7 +477,6 @@ function main(): void {
     });
   }
   const docs = extractDocumentation(resolveDriverBinary());
-  if (!docs.cli.version) docs.cli.version = getLatestReleasedVersion();
   const owned = [OUT_DIR, path.join(OUT_DIR, 'cli'), path.join(OUT_DIR, 'mcp-tools')];
   const others = referencePlatforms.filter((p) => p !== platform);
   console.log(

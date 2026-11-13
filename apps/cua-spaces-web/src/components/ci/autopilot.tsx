@@ -11,7 +11,17 @@ import { cn } from "@/lib/utils";
  * means, the budget used this month, what it decided for each kind of job and
  * the reasons, in the sizing's own sentences.
  */
-export function Autopilot({ pilot, heading, cloudLabel, onGoal }: { pilot: CiAutopilotView; heading: string; cloudLabel: string; onGoal(target: string, goal: CiGoal): void }) {
+export function Autopilot({
+  pilot,
+  heading,
+  cloudLabel,
+  onGoal,
+}: {
+  pilot: CiAutopilotView;
+  heading: string;
+  cloudLabel: string;
+  onGoal(target: string, goal: CiGoal): void;
+}) {
   return (
     <GroupedSection title={heading} data-ci-autopilot={pilot.target}>
       <GroupedRow className="justify-between gap-6">
@@ -36,7 +46,14 @@ export function Autopilot({ pilot, heading, cloudLabel, onGoal }: { pilot: CiAut
       </GroupedRow>
       <GroupedRow className="justify-between gap-6">
         <span className="text-[13px]">Budget</span>
-        <span className={cn("text-[13px] tabular-nums text-muted-foreground", pilot.budgetTone === "warn" && "text-warning", pilot.budgetTone === "bad" && "text-destructive")} data-ci-budget="">
+        <span
+          className={cn(
+            "text-[13px] tabular-nums text-muted-foreground",
+            pilot.budgetTone === "warn" && "text-warning",
+            pilot.budgetTone === "bad" && "text-destructive",
+          )}
+          data-ci-budget=""
+        >
           {pilot.budget}
         </span>
       </GroupedRow>

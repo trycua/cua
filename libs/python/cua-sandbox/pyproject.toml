@@ -1,6 +1,6 @@
 [project]
 name = "cua-sandbox"
-version = "0.9.1"
+version = "0.10.2"
 description = "CUA Sandbox — ephemeral and persistent sandboxed computer environments"
 readme = "README.md"
 license = "MIT"
@@ -44,7 +44,7 @@ dependencies = [
 
 [project.optional-dependencies]
 driver = [
-    "cua-driver==0.37.0",
+    "cua-driver>=0.37.0,<0.48",
 ]
 auth = [
     "webbrowser-open>=0.0.1",

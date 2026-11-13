@@ -1,6 +1,6 @@
 [project]
 name = "cua-bench"
-version = "0.3.1"
+version = "0.4.2"
 description = "Run computer-use benchmark datasets on sandboxes"
 readme = "README.md"
 license = "MIT"
@@ -48,7 +48,7 @@ dependencies = [
     # present, and harnesses pinned to cua-core 0.1 (cua-computer 0.5 /
     # cua-agent 0.7, e.g. Agents' Last Exam) must co-install. cua-agent stays
     # unpinned for the same reason; the bundled agents need cua-agent >= 0.8.
-    "cua-sandbox>=0.8.0,<0.10.0",
+    "cua-sandbox>=0.8.0,<0.11.0",
     "cua-agent",
 ]
 

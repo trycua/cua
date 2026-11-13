@@ -609,7 +609,7 @@ pub struct LoginFilled {
 }
 
 /// A site-login request.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LoginRequest {
     /// Capability token (third parties); `None` uses a rule or, for first
     /// parties, interactive presence.
@@ -631,6 +631,20 @@ pub struct LoginRequest {
     /// See [`LoginFill::relay_plaintext_ack`].
     #[serde(default)]
     pub relay_plaintext_ack: bool,
+}
+
+impl std::fmt::Debug for LoginRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LoginRequest")
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("url", &self.url)
+            .field("target", &self.target)
+            .field("username", &self.username)
+            .field("agent", &self.agent)
+            .field("browser", &self.browser)
+            .field("relay_plaintext_ack", &self.relay_plaintext_ack)
+            .finish()
+    }
 }
 
 /// What a site login did.
@@ -852,7 +866,7 @@ enum PresenceAlready {
 }
 
 /// A teleport request.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TeleportRequest {
     /// Capability token (third parties); `None` uses a rule or, for first
     /// parties, interactive presence.
@@ -871,6 +885,18 @@ pub struct TeleportRequest {
     /// a token or a rule never delivers a password, whatever it names.
     #[serde(default)]
     pub include_passwords: bool,
+}
+
+impl std::fmt::Debug for TeleportRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TeleportRequest")
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("items", &self.items)
+            .field("target", &self.target)
+            .field("launch", &self.launch)
+            .field("include_passwords", &self.include_passwords)
+            .finish()
+    }
 }
 
 /// What a teleport did.

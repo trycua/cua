@@ -163,7 +163,7 @@ $ThemeBinaryName = "cua-cursor-theme.exe"
 # where the baked line hasn't been updated yet.
 #
 # ~~~ BAKED_VERSION: auto-updated after release publication — do not edit ~~~
-$Script:CuaDriverRsBakedVersion = "0.44.0" # published-installer-version
+$Script:CuaDriverRsBakedVersion = "0.47.24" # published-installer-version
 # ~~~ END_BAKED_VERSION ~~~
 #
 # Withdrawn releases (for example, a release published without valid
@@ -1271,6 +1271,11 @@ function Get-HttpStatusCode($exception) {
     }
 }
 
+# Seconds to wait before each retry of a release download. GitHub's release
+# CDN has answered 504 for minutes at a time, so the schedule spans about two
+# minutes (seven attempts) rather than a few seconds.
+$Script:ReleaseRetryDelays = @(5, 10, 15, 30, 30, 30)
+
 function Test-TransientDownloadFailure($statusCode) {
     # A missing status means the request failed below HTTP (DNS, connect,
     # timeout, TLS, etc.). Retry those plus standard transient HTTP statuses.
@@ -1285,7 +1290,7 @@ function Get-ReleaseZip([string]$version, [string]$archLabel, [string]$destDir) 
     $zipName = "cua-driver-rs-$version-$archLabel.zip"
     $url     = "https://github.com/$Repo/releases/download/$Script:CuaDriverRsReleaseTag/$zipName"
     $zipPath = Join-Path $destDir $zipName
-    $maxAttempts = 3
+    $maxAttempts = $Script:ReleaseRetryDelays.Count + 1
 
     Write-Step "downloading $url"
     for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
@@ -1313,7 +1318,7 @@ function Get-ReleaseZip([string]$version, [string]$archLabel, [string]$destDir) 
             }
             $isTransient = Test-TransientDownloadFailure $statusCode
             if ($isTransient -and $attempt -lt $maxAttempts) {
-                $delaySeconds = $attempt
+                $delaySeconds = $Script:ReleaseRetryDelays[$attempt - 1]
                 Write-WarningStep "download attempt $attempt of $maxAttempts failed; retrying the same release in $delaySeconds second(s): $($_.Exception.Message)"
                 Start-Sleep -Seconds $delaySeconds
                 continue
@@ -1337,7 +1342,8 @@ function Get-BaseVersion([string]$version) {
 function Get-ReleaseFile([string]$name, [string]$destPath) {
     # Returns $true when fetched, $false on HTTP 404; exits on anything else.
     $url = "https://github.com/$Repo/releases/download/$Script:CuaDriverRsReleaseTag/$name"
-    for ($attempt = 1; $attempt -le 3; $attempt++) {
+    $maxAttempts = $Script:ReleaseRetryDelays.Count + 1
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
         try {
             Invoke-WebRequest -Uri $url -OutFile $destPath -UseBasicParsing
             return $true
@@ -1346,11 +1352,13 @@ function Get-ReleaseFile([string]$name, [string]$destPath) {
             Remove-Item -LiteralPath $destPath -Force -ErrorAction SilentlyContinue
             $statusCode = Get-HttpStatusCode $_.Exception
             if ($statusCode -eq 404) { return $false }
-            if ((Test-TransientDownloadFailure $statusCode) -and $attempt -lt 3) {
-                Start-Sleep -Seconds $attempt
+            if ((Test-TransientDownloadFailure $statusCode) -and $attempt -lt $maxAttempts) {
+                $delaySeconds = $Script:ReleaseRetryDelays[$attempt - 1]
+                Write-WarningStep "download attempt $attempt of $maxAttempts failed; retrying $url in $delaySeconds second(s): $($_.Exception.Message)"
+                Start-Sleep -Seconds $delaySeconds
                 continue
             }
-            Write-ErrorStep "could not download ${url}: $($_.Exception.Message)"
+            Write-ErrorStep "could not download ${url} after $attempt attempt(s): $($_.Exception.Message)"
             exit 1
         }
     }

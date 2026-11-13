@@ -1074,6 +1074,26 @@ fn harness_appkit_invoke_menu_live_path() {
             // and key-window status. The target menu item validates against
             // both, so an AXFocused-only implementation cannot pass this cell.
             let _distractor = Harness::launch();
+            // The target revalidates the item only once it has processed
+            // losing activation, and until then AppKit still reports it
+            // enabled. Wait for that, so the call below runs in the background
+            // state it is meant to test.
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                let state = snapshot_elements(driver, pid, wid);
+                if state
+                    .tree_text()
+                    .contains("[id=menu-window-arrange-left enabled=false")
+                {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "Window > Arrange > Left stayed enabled with the distractor in front: {}",
+                    state.tree_text()
+                );
+                std::thread::sleep(Duration::from_millis(100));
+            }
 
             // invoke_menu does not activate a background app (#4955): with
             // the distractor in front, the item stays disabled and the call
@@ -1992,7 +2012,8 @@ fn harness_appkit_disabled_control_is_published_and_its_press_refused() {
 /// activation can enable the control, and reads it again before input. A
 /// control enabled only while its app is active reads `enabled: false` from
 /// behind another app and is acted on; one that stays disabled is refused as
-/// `element_disabled`, not clicked, double-clicked or typed into.
+/// `element_disabled`, not clicked, double-clicked, middle-clicked or typed
+/// into.
 #[test]
 #[ignore]
 fn harness_appkit_foreground_from_the_background_rereads_enablement_after_activation() {
@@ -2033,6 +2054,12 @@ fn harness_appkit_foreground_from_the_background_rereads_enablement_after_activa
                 "btn-active-only",
                 serde_json::json!({}),
                 Some("active_only=double_click"),
+            ),
+            (
+                "click",
+                "btn-active-only",
+                serde_json::json!({ "button": "middle" }),
+                Some("active_only=middle_click"),
             ),
             (
                 "type_text",

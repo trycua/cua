@@ -959,8 +959,8 @@ the only browser cursor displayed in that Chrome window.
 Browser chrome, permission prompts, downloads, file pickers, Safari, Firefox,
 and unbound embedded webviews remain native surfaces. Inspect them with
 `get_window_state` and use the AX/PX ladder in this file. The legacy `page`
-tool and Apple Events JavaScript bridge remain compatibility surfaces, not the
-starting point for new browser workflows.
+tool is read-only now (`get_text` and `query_dom`) and is not the starting point
+for new browser workflows.
 
 ## macOS common error patterns
 

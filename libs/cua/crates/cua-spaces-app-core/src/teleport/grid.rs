@@ -476,6 +476,7 @@ mod tests {
             width_px: None,
             height_px: None,
             pid: None,
+            origin: None,
         };
         assert_eq!(
             remote_grid(&[screen], "", None).empty_text.as_deref(),

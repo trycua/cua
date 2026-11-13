@@ -112,14 +112,22 @@ export function Composer(p: ComposerProps) {
   if (p.readOnly) {
     return (
       <View style={{ margin: 12, padding: 14, borderRadius: 22, backgroundColor: c.card, borderWidth: 0.5, borderColor: c.border }}>
-        <Text variant="subhead" color="muted" style={{ textAlign: "center" }}>{p.readOnly}</Text>
+        <Text variant="subhead" color="muted" style={{ textAlign: "center" }}>
+          {p.readOnly}
+        </Text>
       </View>
     );
   }
 
   const stopping = !hasText && p.running;
   const micMain = !hasText && !p.running && voice.supported;
-  const label = hasText ? (mode?.accessibilityLabel ?? "Send") : stopping ? (mode?.stopLabel ?? "Stop") : micMain ? (voice.view?.buttonLabel ?? "Dictate") : (mode?.accessibilityLabel ?? "Send, type a message first");
+  const label = hasText
+    ? (mode?.accessibilityLabel ?? "Send")
+    : stopping
+      ? (mode?.stopLabel ?? "Stop")
+      : micMain
+        ? (voice.view?.buttonLabel ?? "Dictate")
+        : (mode?.accessibilityLabel ?? "Send, type a message first");
   const idle = !hasText && !stopping && !micMain;
   const primaryMode: SendHow = (mode?.primary.mode ?? "send") as SendHow;
   const queueing = hasText && p.running;
@@ -127,8 +135,23 @@ export function Composer(p: ComposerProps) {
 
   const menu = () => {
     const items = [
-      { label: "Mention someone", run: () => { setText((t) => (t && !t.endsWith(" ") ? `${t} @` : `${t}@`)); input.current?.focus(); } },
-      { label: "Send with this screen", run: () => { if (hasText) { p.onSendWithScreen(text.trim()); setText(""); setHeight(36); } } },
+      {
+        label: "Mention someone",
+        run: () => {
+          setText((t) => (t && !t.endsWith(" ") ? `${t} @` : `${t}@`));
+          input.current?.focus();
+        },
+      },
+      {
+        label: "Send with this screen",
+        run: () => {
+          if (hasText) {
+            p.onSendWithScreen(text.trim());
+            setText("");
+            setHeight(36);
+          }
+        },
+      },
     ];
     if (hasText && p.running && mode?.alternate) items.push({ label: `${mode.alternate.label}: ${mode.alternate.hint}`, run: () => send("steer") });
     showMenu(undefined, items);
@@ -162,61 +185,158 @@ export function Composer(p: ComposerProps) {
       onAccessibilityAction={() => voice.toggle()}
       accessibilityState={{ selected: voice.listening }}
       testID="composer-mic"
-      style={{ width: small ? 32 : 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: voice.listening ? c.destructive : small ? "transparent" : c.muted }}
+      style={{
+        width: small ? 32 : 36,
+        height: 36,
+        borderRadius: 18,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: voice.listening ? c.destructive : small ? "transparent" : c.muted,
+      }}
     >
-      <Icon name={voice.listening ? "micFill" : "mic"} size={small ? 18 : 18} color={voice.listening ? c.primaryForeground : c.mutedForeground} weight="semibold" />
+      <Icon
+        name={voice.listening ? "micFill" : "mic"}
+        size={small ? 18 : 18}
+        color={voice.listening ? c.primaryForeground : c.mutedForeground}
+        weight="semibold"
+      />
     </Pressable>
   );
 
   return (
     <View>
       {ment && picks.length ? (
-        <View style={{ marginHorizontal: 12, marginBottom: 6, borderRadius: 14, backgroundColor: c.card, borderWidth: 0.5, borderColor: c.border, maxHeight: 220, overflow: "hidden" }} accessibilityLabel="Mention someone">
+        <View
+          style={{
+            marginHorizontal: 12,
+            marginBottom: 6,
+            borderRadius: 14,
+            backgroundColor: c.card,
+            borderWidth: 0.5,
+            borderColor: c.border,
+            maxHeight: 220,
+            overflow: "hidden",
+          }}
+          accessibilityLabel="Mention someone"
+        >
           <FlatList
             data={picks}
             keyboardShouldPersistTaps="always"
             keyExtractor={(m) => m.handle}
             renderItem={({ item }) => (
-              <Pressable onPress={() => insert(item)} accessibilityRole="button" accessibilityLabel={`Mention ${item.name}${item.note ? `, ${item.note}` : ""}`} style={({ pressed }) => ({ flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12, paddingVertical: 9, backgroundColor: pressed ? c.accent : "transparent" })}>
+              <Pressable
+                onPress={() => insert(item)}
+                accessibilityRole="button"
+                accessibilityLabel={`Mention ${item.name}${item.note ? `, ${item.note}` : ""}`}
+                style={({ pressed }) => ({
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 10,
+                  paddingHorizontal: 12,
+                  paddingVertical: 9,
+                  backgroundColor: pressed ? c.accent : "transparent",
+                })}
+              >
                 <Avatar name={item.name} kind={item.kind} size={28} />
-                <Text weight="500" style={{ flex: 1 }}>{item.name}</Text>
-                <Text variant="footnote" color="muted" style={{ fontFamily: mono }}>@{item.handle}</Text>
-                {item.note ? <Text variant="footnote" color="muted">{item.note}</Text> : null}
+                <Text weight="500" style={{ flex: 1 }}>
+                  {item.name}
+                </Text>
+                <Text variant="footnote" color="muted" style={{ fontFamily: mono }}>
+                  @{item.handle}
+                </Text>
+                {item.note ? (
+                  <Text variant="footnote" color="muted">
+                    {item.note}
+                  </Text>
+                ) : null}
               </Pressable>
             )}
           />
         </View>
       ) : null}
       {notice ? (
-        <View style={{ marginHorizontal: 18, marginBottom: 6, flexDirection: "row", alignItems: "center", gap: 10 }} accessibilityLiveRegion="polite" testID="voice-notice">
-          <Text variant="footnote" color="muted" style={{ flex: 1 }}>{notice.text}</Text>
+        <View
+          style={{ marginHorizontal: 18, marginBottom: 6, flexDirection: "row", alignItems: "center", gap: 10 }}
+          accessibilityLiveRegion="polite"
+          testID="voice-notice"
+        >
+          <Text variant="footnote" color="muted" style={{ flex: 1 }}>
+            {notice.text}
+          </Text>
           {notice.action && notice.actionLabel ? (
-            <Pressable onPress={() => voice.act(notice.action!)} accessibilityRole="button" hitSlop={8}><Text variant="footnote" weight="600" color="brand">{notice.actionLabel}</Text></Pressable>
+            <Pressable onPress={() => voice.act(notice.action!)} accessibilityRole="button" hitSlop={8}>
+              <Text variant="footnote" weight="600" color="brand">
+                {notice.actionLabel}
+              </Text>
+            </Pressable>
           ) : null}
         </View>
       ) : null}
       {voice.listening ? (
-        <View style={{ marginHorizontal: 18, marginBottom: 6, flexDirection: "row", alignItems: "center", gap: 8 }} accessibilityLiveRegion="polite" testID="voice-status">
+        <View
+          style={{ marginHorizontal: 18, marginBottom: 6, flexDirection: "row", alignItems: "center", gap: 8 }}
+          accessibilityLiveRegion="polite"
+          testID="voice-status"
+        >
           <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: c.destructive }} />
-          <Text variant="footnote" weight="600">{voice.view?.status ?? "Listening…"}</Text>
-          {voice.view?.privacyNote ? <Text variant="footnote" color="muted" style={{ flex: 1 }} numberOfLines={1}>{voice.view.privacyNote}</Text> : null}
+          <Text variant="footnote" weight="600">
+            {voice.view?.status ?? "Listening…"}
+          </Text>
+          {voice.view?.privacyNote ? (
+            <Text variant="footnote" color="muted" style={{ flex: 1 }} numberOfLines={1}>
+              {voice.view.privacyNote}
+            </Text>
+          ) : null}
         </View>
       ) : null}
-      {mode?.queuedLine ? <Text variant="caption" color="muted" style={{ marginHorizontal: 18, marginBottom: 4 }} testID="queued-line">{mode.queuedLine}</Text> : null}
+      {mode?.queuedLine ? (
+        <Text variant="caption" color="muted" style={{ marginHorizontal: 18, marginBottom: 4 }} testID="queued-line">
+          {mode.queuedLine}
+        </Text>
+      ) : null}
       {p.replyingTo ? (
         <View style={{ marginHorizontal: 18, marginBottom: 4, flexDirection: "row", alignItems: "center", gap: 8 }}>
           <View style={{ width: 2, alignSelf: "stretch", backgroundColor: c.brandStrong }} />
           <View style={{ flex: 1 }}>
-            <Text variant="caption" weight="600">Replying to {p.replyingTo.author}</Text>
-            <Text variant="caption" color="muted" numberOfLines={1}>{p.replyingTo.text}</Text>
+            <Text variant="caption" weight="600">
+              Replying to {p.replyingTo.author}
+            </Text>
+            <Text variant="caption" color="muted" numberOfLines={1}>
+              {p.replyingTo.text}
+            </Text>
           </View>
-          <Pressable onPress={p.onCancelReply} accessibilityRole="button" accessibilityLabel="Cancel reply" hitSlop={8}><Icon name="close" size={14} color={c.mutedForeground} /></Pressable>
+          <Pressable onPress={p.onCancelReply} accessibilityRole="button" accessibilityLabel="Cancel reply" hitSlop={8}>
+            <Icon name="close" size={14} color={c.mutedForeground} />
+          </Pressable>
         </View>
       ) : null}
       <View
-        style={{ marginHorizontal: 10, marginBottom: 8, minHeight: 48, borderRadius: 26, backgroundColor: c.card, borderWidth: 0.5, borderColor: c.border, flexDirection: "row", alignItems: "flex-end", paddingLeft: 6, paddingRight: 6, paddingVertical: 6, shadowColor: "#000", shadowOpacity: 0.08, shadowRadius: 10, shadowOffset: { width: 0, height: 2 }, elevation: 2 }}
+        style={{
+          marginHorizontal: 10,
+          marginBottom: 8,
+          minHeight: 48,
+          borderRadius: 26,
+          backgroundColor: c.card,
+          borderWidth: 0.5,
+          borderColor: c.border,
+          flexDirection: "row",
+          alignItems: "flex-end",
+          paddingLeft: 6,
+          paddingRight: 6,
+          paddingVertical: 6,
+          shadowColor: "#000",
+          shadowOpacity: 0.08,
+          shadowRadius: 10,
+          shadowOffset: { width: 0, height: 2 },
+          elevation: 2,
+        }}
       >
-        <Pressable onPress={menu} accessibilityRole="button" accessibilityLabel="Add to message" style={{ width: 36, height: 36, alignItems: "center", justifyContent: "center" }}>
+        <Pressable
+          onPress={menu}
+          accessibilityRole="button"
+          accessibilityLabel="Add to message"
+          style={{ width: 36, height: 36, alignItems: "center", justifyContent: "center" }}
+        >
           <Icon name="plus" size={20} color={c.mutedForeground} />
         </Pressable>
         <TextInput
@@ -232,7 +352,16 @@ export function Composer(p: ComposerProps) {
           placeholderTextColor={c.mutedForeground}
           multiline
           onContentSizeChange={(e) => setHeight(Math.min(MAX_H, Math.max(36, e.nativeEvent.contentSize.height)))}
-          style={{ flex: 1, height: height, maxHeight: MAX_H, color: c.foreground, fontSize: 17, paddingTop: Platform.OS === "ios" ? 8 : 7, paddingBottom: Platform.OS === "ios" ? 8 : 7, paddingHorizontal: 6 }}
+          style={{
+            flex: 1,
+            height: height,
+            maxHeight: MAX_H,
+            color: c.foreground,
+            fontSize: 17,
+            paddingTop: Platform.OS === "ios" ? 8 : 7,
+            paddingBottom: Platform.OS === "ios" ? 8 : 7,
+            paddingHorizontal: 6,
+          }}
           accessibilityLabel={p.placeholder}
           returnKeyType="default"
           blurOnSubmit={false}
@@ -250,13 +379,29 @@ export function Composer(p: ComposerProps) {
             accessibilityLabel={label}
             accessibilityHint={queueing ? mode?.primary.hint : undefined}
             accessibilityActions={queueing && mode?.alternate ? [{ name: "steer", label: mode.alternate.label }] : undefined}
-            onAccessibilityAction={(e) => { if (e.nativeEvent.actionName === "steer") send("steer"); }}
+            onAccessibilityAction={(e) => {
+              if (e.nativeEvent.actionName === "steer") send("steer");
+            }}
             accessibilityState={{ disabled: idle }}
             testID="composer-send"
-            style={{ minWidth: 36, height: 36, borderRadius: 18, paddingHorizontal: pill ? 12 : 0, flexDirection: "row", gap: 5, alignItems: "center", justifyContent: "center", backgroundColor: idle ? c.muted : c.primary }}
+            style={{
+              minWidth: 36,
+              height: 36,
+              borderRadius: 18,
+              paddingHorizontal: pill ? 12 : 0,
+              flexDirection: "row",
+              gap: 5,
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: idle ? c.muted : c.primary,
+            }}
           >
             <Icon name={stopping ? "stop" : "send"} size={stopping ? 14 : 17} color={idle ? c.mutedForeground : c.primaryForeground} weight="bold" />
-            {pill ? <Text variant="footnote" weight="700" style={{ color: c.primaryForeground }}>{pill}</Text> : null}
+            {pill ? (
+              <Text variant="footnote" weight="700" style={{ color: c.primaryForeground }}>
+                {pill}
+              </Text>
+            ) : null}
           </Pressable>
         )}
       </View>

@@ -47,7 +47,7 @@ struct WebUIHostTests {
     }
 
     @Test func coreRecordsEncodeAsPlainValues() {
-        let x = AppExperiments(cuaVolume: true, childSpaces: false, ciRunners: false, tcpShares: false, mobile: false, warmPools: false)
+        let x = AppExperiments(cuaVolume: true, ciRunners: false, tcpShares: false, mobile: false)
         let v = BridgeValue.encode(x) as? [String: Any]
         #expect(v?["cuaVolume"] as? Bool == true)
         #expect(v?["ciRunners"] as? Bool == false)
@@ -359,6 +359,27 @@ struct WebUIHostTests {
         _ = try await bridge.handle("settings.choose", ["row": "agent:claude-code", "option": "press"])
         let removed = try await bridge.handle("agents.setup", [:]) as? [[String: Any]]
         #expect(removed?.first { $0["agent"] as? String == "claude-code" }?["configured"] as? Bool == false)
+    }
+
+    /// Setup's checklist (CUA-4067): `agents.connect` answers one result per
+    /// part, and runs one part on its own for a row's Retry. `driver` adds the
+    /// Cua Driver this app carries; a build without one (this test's) writes
+    /// none and answers no driver part rather than a failure.
+    @Test func connectAnswersEachPartAndRunsOneAlone() async throws {
+        let setup = FixtureAgentSetup()
+        let (bridge, _) = bridge(agentSetup: setup)
+        let all = try await bridge.handle("agents.connect", ["agents": ["claude-code"], "signIn": true]) as? [[String: Any]]
+        let parts = (all?.first?["parts"] as? [[String: Any]])?.compactMap { $0["part"] as? String }
+        #expect(parts == ["skills", "mcp", "sign_in"])
+        let mcpOnly = try await bridge.handle("agents.connect", ["agents": ["claude-code"], "signIn": false, "skills": false, "mcp": true])
+            as? [[String: Any]]
+        let mcp = (mcpOnly?.first?["parts"] as? [[String: Any]]) ?? []
+        #expect(mcp.compactMap { $0["part"] as? String } == ["mcp"])
+        #expect(mcp.first?["where"] as? String == "~/.claude.json")
+        let driverOnly = try await bridge.handle("agents.connect", ["agents": ["claude-code"], "signIn": false, "skills": false,
+                                                                    "mcp": false, "driver": true]) as? [[String: Any]]
+        #expect((driverOnly?.first?["parts"] as? [[String: Any]])?.isEmpty == true)
+        #expect(setup.lastDriver == nil)
     }
 
     /// The page opens one notification and marks just that one read; the

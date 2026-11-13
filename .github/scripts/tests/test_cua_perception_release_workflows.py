@@ -93,8 +93,11 @@ def test_ci_uses_crate_root_metadata_and_central_version_validation() -> None:
     assert validation["run"] == (
         "python3 .github/scripts/validate_release_versions.py --product all"
     )
-    assert VERSION_PATH in preflight
-    assert f"--changelog {CHANGELOG_PATH}" in preflight
+    # The product arguments live in one script that the PR check and the merge queue share.
+    assert "release_queue_preflight.py" in preflight
+    script = (ROOT / ".github/scripts/release_queue_preflight.py").read_text()
+    assert VERSION_PATH in script
+    assert CHANGELOG_PATH in script
     assert ".github/releases/cua-perception/VERSION" not in source
     assert ".github/releases/cua-perception/*" in source
     assert "jq -r '.[\\\".\\\"]'" not in source

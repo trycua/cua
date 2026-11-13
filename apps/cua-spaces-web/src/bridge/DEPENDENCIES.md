@@ -3,12 +3,12 @@
 For the integrator. The bridge adds **no new runtime dependencies**. It uses
 what `apps/cua-spaces-web/package.json` already lists:
 
-| Package | Kind | Used for |
-|---|---|---|
-| `react` | dependency | `BridgeProvider`, hooks (`useSyncExternalStore`) |
-| `vite` | devDependency | `import.meta.glob` (loads the wasm core only when it was built); `vite/client` types |
-| `vitest`, `jsdom`, `@testing-library/react` | devDependency | `src/bridge/__tests__` |
-| `@types/node` | devDependency | the tests read the wasm bytes with `node:fs` |
+| Package                                     | Kind          | Used for                                                                             |
+| ------------------------------------------- | ------------- | ------------------------------------------------------------------------------------ |
+| `react`                                     | dependency    | `BridgeProvider`, hooks (`useSyncExternalStore`)                                     |
+| `vite`                                      | devDependency | `import.meta.glob` (loads the wasm core only when it was built); `vite/client` types |
+| `vitest`, `jsdom`, `@testing-library/react` | devDependency | `src/bridge/__tests__`                                                               |
+| `@types/node`                               | devDependency | the tests read the wasm bytes with `node:fs`                                         |
 
 It does **not** need `@tauri-apps/api`. The Tauri adapter calls
 `window.__TAURI_INTERNALS__.invoke` (or `window.__TAURI__.core.invoke`)

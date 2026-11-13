@@ -33,7 +33,16 @@ export function demoProbe(kind: string, path: string): RuntimePathCheck {
   const expected = EXPECTED[kind] ?? [];
   const base: RuntimePathCheck = { path: p, exists: false, executable: false, expected };
   if (known && known.kind === kind) {
-    return { ...base, exists: true, executable: true, tool: known.tool, name: known.name, version: known.version, minVersion: known.minVersion ?? null, guests: known.guests ?? null };
+    return {
+      ...base,
+      exists: true,
+      executable: true,
+      tool: known.tool,
+      name: known.name,
+      version: known.version,
+      minVersion: known.minVersion ?? null,
+      guests: known.guests ?? null,
+    };
   }
   // Something else that runs (`/bin/ls`), a file that doesn't (`/etc/hosts`), or nothing.
   if (known || p.startsWith("/bin/") || p.startsWith("/usr/bin/")) return { ...base, exists: true, executable: true };
@@ -72,7 +81,13 @@ export function demoRuntimesInput(r: DemoRuntimes): RuntimesInput {
     };
   });
   // The demo Mac's doctor, as New Space's (`demoMacHostOptions`): no microVMs (macOS 15).
-  return { os: "macos", hostArch: "arm64", localBackends: ["lume", "qemu", "container"], localDetails: { managed: "not used: this Mac's own container engine runs Linux Spaces" }, kinds };
+  return {
+    os: "macos",
+    hostArch: "arm64",
+    localBackends: ["lume", "qemu", "container"],
+    localDetails: { managed: "not used: this Mac's own container engine runs Linux Spaces" },
+    kinds,
+  };
 }
 
 /** A runtime row's choice (`settings.choose`), as the SwiftUI host saves it

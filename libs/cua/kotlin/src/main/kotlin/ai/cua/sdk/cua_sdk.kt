@@ -1399,6 +1399,8 @@ external fun uniffi_cua_sdk_checksum_method_space_info(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_space_join_presence(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_space_join_presence_for(
+): Short
 external fun uniffi_cua_sdk_checksum_method_space_kept_services(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_space_list_tools(
@@ -1890,7 +1892,7 @@ external fun uniffi_cua_sdk_fn_free_agentsetup(`handle`: Long,uniffi_out_err: Un
 ): Unit
 external fun uniffi_cua_sdk_fn_method_agentsetup_configure_mcp(`ptr`: Long,`agents`: RustBuffer.ByValue,`server`: RustBuffer.ByValue,
 ): Long
-external fun uniffi_cua_sdk_fn_method_agentsetup_connect_json(`ptr`: Long,`agents`: RustBuffer.ByValue,`server`: RustBuffer.ByValue,`skills`: Byte,`mcp`: Byte,`signIn`: Byte,
+external fun uniffi_cua_sdk_fn_method_agentsetup_connect_json(`ptr`: Long,`agents`: RustBuffer.ByValue,`server`: RustBuffer.ByValue,`skills`: Byte,`mcp`: Byte,`signIn`: Byte,`driver`: RustBuffer.ByValue,`driverPermissionsGranted`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_agentsetup_connection_status_json(`ptr`: Long,`expected`: RustBuffer.ByValue,`refresh`: Byte,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
@@ -2487,6 +2489,8 @@ external fun uniffi_cua_sdk_fn_method_space_id(`ptr`: Long,uniffi_out_err: Uniff
 external fun uniffi_cua_sdk_fn_method_space_info(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 external fun uniffi_cua_sdk_fn_method_space_join_presence(`ptr`: Long,`identity`: RustBuffer.ByValue,`timeoutMs`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cua_sdk_fn_method_space_join_presence_for(`ptr`: Long,`windowId`: RustBuffer.ByValue,`identity`: RustBuffer.ByValue,`timeoutMs`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_space_kept_services(`ptr`: Long,
 ): Long
@@ -3392,7 +3396,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp() != 53713.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_agentsetup_connect_json() != 21138.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_agentsetup_connect_json() != 1379.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_agentsetup_connection_status_json() != 47692.toShort()) {
@@ -4113,6 +4117,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_space_join_presence() != 56636.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_space_join_presence_for() != 40031.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_space_kept_services() != 50248.toShort()) {
@@ -5934,10 +5941,14 @@ public interface AgentSetupInterface {
      * Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
      * (`server`, default this channel's cua), and with `sign_in` the
      * agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
-     * sign-in it already has, read from where Claude Code keeps it). JSON:
-     * one result per agent.
+     * sign-in it already has, read from where Claude Code keeps it). With
+     * `driver`, the `cua-driver` entry the host app wants (the Cua Driver it
+     * carries, by absolute path) is written too; `driver_permissions_granted`
+     * says whether Screen Recording and Accessibility are on for it (None:
+     * unknown). Each part asked for is reported on its own (`parts`), so
+     * one can be retried by asking for it alone. JSON: one result per agent.
      */
-    suspend fun `connectJson`(`agents`: List<kotlin.String>, `server`: AgentMcpServer?, `skills`: kotlin.Boolean, `mcp`: kotlin.Boolean, `signIn`: kotlin.Boolean): kotlin.String
+    suspend fun `connectJson`(`agents`: List<kotlin.String>, `server`: AgentMcpServer?, `skills`: kotlin.Boolean, `mcp`: kotlin.Boolean, `signIn`: kotlin.Boolean, `driver`: AgentMcpServer?, `driverPermissionsGranted`: kotlin.Boolean?): kotlin.String
 
     /**
      * Whether each agent is really connected (CONTRACT §4: `{agents,
@@ -6169,17 +6180,21 @@ open class AgentSetup: Disposable, AutoCloseable, AgentSetupInterface
      * Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
      * (`server`, default this channel's cua), and with `sign_in` the
      * agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
-     * sign-in it already has, read from where Claude Code keeps it). JSON:
-     * one result per agent.
+     * sign-in it already has, read from where Claude Code keeps it). With
+     * `driver`, the `cua-driver` entry the host app wants (the Cua Driver it
+     * carries, by absolute path) is written too; `driver_permissions_granted`
+     * says whether Screen Recording and Accessibility are on for it (None:
+     * unknown). Each part asked for is reported on its own (`parts`), so
+     * one can be retried by asking for it alone. JSON: one result per agent.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
-    override suspend fun `connectJson`(`agents`: List<kotlin.String>, `server`: AgentMcpServer?, `skills`: kotlin.Boolean, `mcp`: kotlin.Boolean, `signIn`: kotlin.Boolean) : kotlin.String {
+    override suspend fun `connectJson`(`agents`: List<kotlin.String>, `server`: AgentMcpServer?, `skills`: kotlin.Boolean, `mcp`: kotlin.Boolean, `signIn`: kotlin.Boolean, `driver`: AgentMcpServer?, `driverPermissionsGranted`: kotlin.Boolean?) : kotlin.String {
         return uniffiRustCallAsync(
         callWithHandle { uniffiHandle ->
             UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_connect_json(
                 uniffiHandle,
-                FfiConverterSequenceString.lower(`agents`),FfiConverterOptionalTypeAgentMcpServer.lower(`server`),FfiConverterBoolean.lower(`skills`),FfiConverterBoolean.lower(`mcp`),FfiConverterBoolean.lower(`signIn`),
+                FfiConverterSequenceString.lower(`agents`),FfiConverterOptionalTypeAgentMcpServer.lower(`server`),FfiConverterBoolean.lower(`skills`),FfiConverterBoolean.lower(`mcp`),FfiConverterBoolean.lower(`signIn`),FfiConverterOptionalTypeAgentMcpServer.lower(`driver`),FfiConverterOptionalBoolean.lower(`driverPermissionsGranted`),
             )
         },
         { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -18236,6 +18251,17 @@ public interface SpaceInterface {
     suspend fun `joinPresence`(`identity`: PresenceIdentity, `timeoutMs`: kotlin.ULong?): SpacePresence
 
     /**
+     * Joins presence for the window being watched. For a window another
+     * Space shows here and the viewer streams straight from its origin
+     * (`window_id` from [`Space::windows`]), this joins the origin's channel
+     * and this Space's, publishes the cursor to both and reads them as one:
+     * one avatar and one cursor per viewer, as if the stream came through
+     * this Space. For any other window, or `None`, it is
+     * [`Space::join_presence`].
+     */
+    suspend fun `joinPresenceFor`(`windowId`: kotlin.String?, `identity`: PresenceIdentity, `timeoutMs`: kotlin.ULong?): SpacePresence
+
+    /**
      * This Space's services.
      */
     suspend fun `keptServices`(): List<SpaceServiceInfo>
@@ -19159,6 +19185,36 @@ open class Space: Disposable, AutoCloseable, SpaceInterface
             UniffiLib.uniffi_cua_sdk_fn_method_space_join_presence(
                 uniffiHandle,
                 FfiConverterTypePresenceIdentity.lower(`identity`),FfiConverterOptionalULong.lower(`timeoutMs`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_u64(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_u64(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_u64(future) },
+        // lift function
+        { FfiConverterTypeSpacePresence.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Joins presence for the window being watched. For a window another
+     * Space shows here and the viewer streams straight from its origin
+     * (`window_id` from [`Space::windows`]), this joins the origin's channel
+     * and this Space's, publishes the cursor to both and reads them as one:
+     * one avatar and one cursor per viewer, as if the stream came through
+     * this Space. For any other window, or `None`, it is
+     * [`Space::join_presence`].
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `joinPresenceFor`(`windowId`: kotlin.String?, `identity`: PresenceIdentity, `timeoutMs`: kotlin.ULong?) : SpacePresence {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_space_join_presence_for(
+                uniffiHandle,
+                FfiConverterOptionalString.lower(`windowId`),FfiConverterTypePresenceIdentity.lower(`identity`),FfiConverterOptionalULong.lower(`timeoutMs`),
             )
         },
         { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_u64(future, callback, continuation) },
@@ -48159,6 +48215,14 @@ data class SpaceWindow (
      * Why not.
      */
     var `limitation`: kotlin.String
+    ,
+    /**
+     * Where the picture comes from when another Space shows this window
+     * here (`stream_space_window`); `None` for the Space's own windows.
+     * Open it like any window: [`Space::open_stream`] with its `window_id`
+     * streams it straight from the origin when you may reach it.
+     */
+    var `origin`: SpaceWindowOrigin? = null
 
 ){
 
@@ -48186,6 +48250,7 @@ public object FfiConverterTypeSpaceWindow: FfiConverterRustBuffer<SpaceWindow> {
             FfiConverterBoolean.read(buf),
             FfiConverterBoolean.read(buf),
             FfiConverterString.read(buf),
+            FfiConverterOptionalTypeSpaceWindowOrigin.read(buf),
         )
     }
 
@@ -48200,7 +48265,8 @@ public object FfiConverterTypeSpaceWindow: FfiConverterRustBuffer<SpaceWindow> {
             FfiConverterBoolean.allocationSize(value.`onScreen`) +
             FfiConverterBoolean.allocationSize(value.`focused`) +
             FfiConverterBoolean.allocationSize(value.`available`) +
-            FfiConverterString.allocationSize(value.`limitation`)
+            FfiConverterString.allocationSize(value.`limitation`) +
+            FfiConverterOptionalTypeSpaceWindowOrigin.allocationSize(value.`origin`)
     )
 
     override fun write(value: SpaceWindow, buf: ByteBuffer) {
@@ -48215,6 +48281,70 @@ public object FfiConverterTypeSpaceWindow: FfiConverterRustBuffer<SpaceWindow> {
             FfiConverterBoolean.write(value.`focused`, buf)
             FfiConverterBoolean.write(value.`available`, buf)
             FfiConverterString.write(value.`limitation`, buf)
+            FfiConverterOptionalTypeSpaceWindowOrigin.write(value.`origin`, buf)
+    }
+}
+
+
+
+/**
+ * The Space a window row's picture comes from ([`SpaceWindow::origin`]).
+ */
+data class SpaceWindowOrigin (
+    /**
+     * The origin Space (canonical id).
+     */
+    var `spaceId`: kotlin.String
+    ,
+    /**
+     * Its name.
+     */
+    var `name`: kotlin.String
+    ,
+    /**
+     * Its OS (`macos`, `linux`, `windows`, or empty).
+     */
+    var `os`: kotlin.String
+    ,
+    /**
+     * The window's handle in the origin.
+     */
+    var `windowId`: kotlin.String
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSpaceWindowOrigin: FfiConverterRustBuffer<SpaceWindowOrigin> {
+    override fun read(buf: ByteBuffer): SpaceWindowOrigin {
+        return SpaceWindowOrigin(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SpaceWindowOrigin) = (
+            FfiConverterString.allocationSize(value.`spaceId`) +
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterString.allocationSize(value.`os`) +
+            FfiConverterString.allocationSize(value.`windowId`)
+    )
+
+    override fun write(value: SpaceWindowOrigin, buf: ByteBuffer) {
+            FfiConverterString.write(value.`spaceId`, buf)
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterString.write(value.`os`, buf)
+            FfiConverterString.write(value.`windowId`, buf)
     }
 }
 
@@ -54294,6 +54424,38 @@ public object FfiConverterOptionalTypeSpaceSharing: FfiConverterRustBuffer<Space
         } else {
             buf.put(1)
             FfiConverterTypeSpaceSharing.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeSpaceWindowOrigin: FfiConverterRustBuffer<SpaceWindowOrigin?> {
+    override fun read(buf: ByteBuffer): SpaceWindowOrigin? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeSpaceWindowOrigin.read(buf)
+    }
+
+    override fun allocationSize(value: SpaceWindowOrigin?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeSpaceWindowOrigin.allocationSize(value)
+        }
+    }
+
+    override fun write(value: SpaceWindowOrigin?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeSpaceWindowOrigin.write(value, buf)
         }
     }
 }

@@ -1009,16 +1009,24 @@ impl ToolState {
 
 /// The target pid of an element-addressable call. An explicit `pid` wins; a
 /// call that carries only an `element_token` takes the pid the token was
-/// minted for, as the schemas promise ("the token carries it").
+/// minted for, as the schemas promise ("the token carries it"). A pid that
+/// draws a system security or consent prompt is refused: its windows are the
+/// user's to answer.
 pub(super) fn target_pid(
     state: &ToolState,
     args: &serde_json::Value,
 ) -> Result<i32, cua_driver_core::protocol::ToolResult> {
     use cua_driver_core::tool_args::ArgsExt;
-    if args.get("pid").is_some_and(|pid| !pid.is_null()) {
-        return args.require_i32("pid");
-    }
-    if let Some(pid) = state.snapshots.pid_for_token(args) {
+    let pid = if args.get("pid").is_some_and(|pid| !pid.is_null()) {
+        Some(args.require_i32("pid")?)
+    } else {
+        state.snapshots.pid_for_token(args)
+    };
+    if let Some(pid) = pid {
+        crate::security_prompt::refuse_pid(
+            cua_driver_core::security_prompt::PromptInput::from_args(args),
+            pid,
+        )?;
         return Ok(pid);
     }
     if args
@@ -1371,6 +1379,118 @@ mod session_config_guard_tests {
         reg.set(sid, overrides(800));
         let dim = reg.effective_max_image_dimension(Some(sid), &global);
         assert_eq!(dim, 800, "live session override must apply");
+    }
+}
+
+/// Input addressed to a process that draws a security prompt is refused
+/// before the tool does anything else, in every mode but unrestricted.
+/// Removing the pid guard from any of these routes fails here.
+#[cfg(test)]
+mod security_prompt_target_tests {
+    use super::*;
+    use crate::security_prompt::fixture::{PromptShown, PROMPT_PID};
+    use cua_driver_core::security_prompt::{ALLOW_ARG, SECURITY_PROMPT_PROTECTED};
+    use cua_driver_core::tool::Tool;
+
+    fn tools() -> Vec<(&'static str, Box<dyn Tool>, serde_json::Value)> {
+        let state = Arc::new(ToolState::new(false, false, None));
+        let pid = PROMPT_PID;
+        vec![
+            (
+                "click",
+                Box::new(click::ClickTool::new(state.clone())),
+                serde_json::json!({"pid": pid, "window_id": 1, "x": 5, "y": 5}),
+            ),
+            (
+                "double_click",
+                Box::new(double_click::DoubleClickTool::new(state.clone())),
+                serde_json::json!({"pid": pid, "window_id": 1, "x": 5, "y": 5}),
+            ),
+            (
+                "right_click",
+                Box::new(right_click::RightClickTool::new(state.clone())),
+                serde_json::json!({"pid": pid, "window_id": 1, "x": 5, "y": 5}),
+            ),
+            (
+                "scroll",
+                Box::new(scroll::ScrollTool::new(state.clone())),
+                serde_json::json!({"pid": pid, "window_id": 1, "direction": "down"}),
+            ),
+            (
+                "drag",
+                Box::new(drag::DragTool::new(state.clone())),
+                serde_json::json!({"pid": pid, "window_id": 1, "from_x": 1, "from_y": 1, "to_x": 2, "to_y": 2}),
+            ),
+            (
+                "type_text",
+                Box::new(type_text::TypeTextTool::new(state.clone())),
+                serde_json::json!({"pid": pid, "window_id": 1, "text": "x"}),
+            ),
+            (
+                "type_text_chars",
+                Box::new(type_text_chars::TypeTextCharsTool::new(state.clone())),
+                serde_json::json!({"pid": pid, "text": "x"}),
+            ),
+            (
+                "press_key",
+                Box::new(press_key::PressKeyTool::new(state.clone())),
+                serde_json::json!({"pid": pid, "window_id": 1, "key": "return"}),
+            ),
+            (
+                "hotkey",
+                Box::new(hotkey::HotkeyTool::new(state.clone())),
+                serde_json::json!({"pid": pid, "window_id": 1, "keys": ["cmd", "a"]}),
+            ),
+            (
+                "set_value",
+                Box::new(set_value::SetValueTool::new(state.clone())),
+                serde_json::json!({"pid": pid, "window_id": 1, "element_index": 0, "value": "x"}),
+            ),
+            (
+                "invoke_menu",
+                Box::new(invoke_menu::InvokeMenuTool),
+                serde_json::json!({"pid": pid, "window_id": 1, "path": ["File", "Close"]}),
+            ),
+        ]
+    }
+
+    fn code(result: &cua_driver_core::protocol::ToolResult) -> Option<String> {
+        let structured = result.structured_content.as_ref()?;
+        structured
+            .pointer("/refusal/code")
+            .or_else(|| structured.get("code"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+    }
+
+    #[tokio::test]
+    async fn input_addressed_to_a_prompt_owner_is_refused() {
+        let _prompt = PromptShown::start();
+        for (name, tool, args) in tools() {
+            let result = tool.invoke(args).await;
+            assert_eq!(result.is_error, Some(true), "{name}");
+            assert_eq!(
+                code(&result).as_deref(),
+                Some(SECURITY_PROMPT_PROTECTED),
+                "{name}: {result:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn unrestricted_mode_lets_the_call_past_the_prompt_guard() {
+        let _prompt = PromptShown::start();
+        for (name, tool, mut args) in tools() {
+            args[ALLOW_ARG] = serde_json::json!(true);
+            let result = tool.invoke(args).await;
+            // The fixture pid is not a real process, so the call fails later
+            // for that reason; it must not fail for the prompt.
+            assert_ne!(
+                code(&result).as_deref(),
+                Some(SECURITY_PROMPT_PROTECTED),
+                "{name}: {result:?}"
+            );
+        }
     }
 }
 

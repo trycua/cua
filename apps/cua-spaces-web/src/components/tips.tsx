@@ -36,6 +36,7 @@ import {
   type TipPlace,
 } from "@/bridge";
 import { Button } from "@/components/ui/button";
+import { useChildren } from "@/components/children/use-children";
 import { useHiddenSpaceIds } from "@/lib/prepare/store";
 import { realSpaces, spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
@@ -101,7 +102,10 @@ export function useTipFacts(space?: Space): TipFacts | null {
   // The home warming for Home's box is not something to try until a person wrote into it.
   const { core: bridgeCore } = useBridge();
   const warming = useHiddenSpaceIds(bridgeCore);
-  const all = useMemo(() => everything.filter((s) => !warming.has(s.id)), [everything, warming]);
+  // An agent's own home and the child Spaces it made are the agent's working places: "Try <it> in Claude Code" would send the
+  // person's other coding agent into the Space their agent is using.
+  const tree = useChildren();
+  const all = useMemo(() => everything.filter((s) => !warming.has(s.id) && !tree?.node(s.id)?.home && !tree?.node(s.id)?.parent), [everything, warming, tree]);
   const { data: machines = [] } = useMachines();
   const resources = useResources();
   const agents = useAgentSetup();
@@ -222,7 +226,13 @@ export function PageTip({ place, space, onShare, className }: { place: "spaces" 
           />
           {action.value && action.label ? <CopyButton text={action.value} label={action.label} doneLabel={action.doneLabel ?? action.label} /> : null}
           {tip.openIn ? (
-            <Button size="sm" variant="ghost" data-tip-open-in="" className="text-muted-foreground hover:text-foreground" onClick={() => void openExternal(tip.openIn!.url).catch(() => {})}>
+            <Button
+              size="sm"
+              variant="ghost"
+              data-tip-open-in=""
+              className="text-muted-foreground hover:text-foreground"
+              onClick={() => void openExternal(tip.openIn!.url).catch(() => {})}
+            >
               {tip.openIn.label}
             </Button>
           ) : null}
@@ -260,7 +270,9 @@ export function SidebarTip() {
           <code data-tip-code="" className="min-w-0 flex-1 truncate rounded-lg bg-background px-2 py-1 font-mono text-[11px] leading-5 select-all">
             {tip.code}
           </code>
-          {tip.action.value ? <CopyButton iconOnly text={tip.action.value} label={tip.action.label || "Copy"} doneLabel={tip.action.doneLabel ?? "Copied"} /> : null}
+          {tip.action.value ? (
+            <CopyButton iconOnly text={tip.action.value} label={tip.action.label || "Copy"} doneLabel={tip.action.doneLabel ?? "Copied"} />
+          ) : null}
         </div>
       ) : null}
     </div>

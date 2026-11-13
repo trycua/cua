@@ -29,6 +29,7 @@ on:
       - "flake.nix"
       - "flake.lock"
       - ".github/workflows/ci-rust-linux.yml"
+  merge_group:
   push:
     branches: [main]
     paths:
@@ -78,12 +79,12 @@ env:
 jobs:
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   pacman:
     needs: quick
-    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) && needs.quick.outputs.skip != 'true' }}
     name: Arch native pacman updates
     runs-on: ubuntu-latest
     container: archlinux:base-devel
@@ -140,7 +141,7 @@ jobs:
 
   unit:
     needs: quick
-    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) && needs.quick.outputs.skip != 'true' }}
     name: Rust Linux unit and compile
     runs-on: ubuntu-latest
     # 10 to 14 minutes warm. The headroom covers a run with neither the
@@ -216,6 +217,11 @@ jobs:
         run: |
           xvfb-run -a cargo test -p platform-linux --test key_input_x11 \
             --locked -- --ignored --nocapture --test-threads=1
+      - name: Run X11 spare keycode restore regressions
+        working-directory: libs/cua-driver/rust
+        run: |
+          cargo test -p platform-linux --lib spare_keycode_restore_tests \
+            --locked -- --ignored --nocapture
       - name: Run X11 overlay click-through regression
         working-directory: libs/cua-driver/rust
         run: |
@@ -245,6 +251,12 @@ jobs:
             status=$?
             kill "$picom_pid"
             exit $status'
+          # A compositing manager that starts after the overlay (#6415); the
+          # test starts picom itself.
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+            cargo test -p platform-linux \
+            x11_overlay_follows_a_compositor_that_starts_after_it \
+            --locked -- --ignored --nocapture
       - name: Run X11 desktop capture overlay-exclusion regression
         working-directory: libs/cua-driver/rust
         run: |

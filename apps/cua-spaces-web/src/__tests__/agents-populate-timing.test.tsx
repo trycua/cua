@@ -19,8 +19,8 @@ beforeEach(() => localStorage.clear());
 stubBrowserApis();
 
 const q = (s: string) => document.querySelector<HTMLElement>(s);
-const CODEX = "acct_ada/codex/codex";
-const HERMES = "acct_ada/hermes/hermes";
+const CODEX = "local:design-review/codex";
+const HERMES = "relay:mac-mini/release-checks/hermes";
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 /** What each Space's machine takes to answer a thread call (ms); `off` is a machine that is off. */
 const TAKES: Record<string, number | "off"> = {
@@ -56,7 +56,11 @@ async function visit(label: string): Promise<Record<string, number | null>> {
     const settled = () => (q("[data-agents-loading]") ? null : Date.now() - t0);
     let done: number | null = null;
     while (Date.now() - t0 < 12_000) {
-      for (const [name, sel] of [["codex row", `[data-chat='${CODEX}']`], ["hermes row", `[data-chat='${HERMES}']`]] as const) if (!(name in seen) && q(sel)) seen[name] = Date.now() - t0;
+      for (const [name, sel] of [
+        ["codex row", `[data-chat='${CODEX}']`],
+        ["hermes row", `[data-chat='${HERMES}']`],
+      ] as const)
+        if (!(name in seen) && q(sel)) seen[name] = Date.now() - t0;
       if ("codex row" in seen && "hermes row" in seen && (done = settled()) !== null && seen["codex row"] !== undefined) break;
       await sleep(10);
     }

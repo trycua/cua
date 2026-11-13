@@ -215,6 +215,83 @@ def child_for(index_ref: str, variant: str, arch: str) -> tuple[str, str]:
     raise SystemExit(f"{index_ref} has no {arch} child")
 
 
+def qemu_roots() -> list[Path]:
+    """The local QEMU runtime's state roots (``<cua home>/vmm/qemu``):
+    ``$CUA_HOME`` when set, else every ``~/.cua*`` channel home."""
+    homes = ([Path(os.environ["CUA_HOME"])] if os.environ.get("CUA_HOME")
+             else sorted(Path.home().glob(".cua*")))
+    return [h / "vmm" / "qemu" for h in homes if (h / "vmm" / "qemu").is_dir()]
+
+
+class ConsoleTee:
+    """Keeps copies of the guest serial console and QEMU log of this smoke's
+    VM, and of any golden-snapshot recording the runtime boots first
+    (``_golden/.rec-*``), in ``DEST``. A create that fails deletes the VM's
+    directory with its logs, so they are copied while it starts; on failure
+    :meth:`dump` prints their tails (the job log then says why the guest
+    never answered) and the files stay in the evidence."""
+
+    FILES = ("serial.log", "qemu.log")
+
+    def __init__(self, dest: Path, name: str, roots=qemu_roots) -> None:
+        self.dest, self.name, self.roots = dest, name, roots
+        self.seen: dict[Path, int] = {}
+
+    def sources(self) -> list[tuple[str, Path]]:
+        out = []
+        for root in self.roots():
+            dirs = [(self.name, root / self.name)]
+            dirs += [(f"golden-recording{d.name}", d) for d in sorted((root / "_golden").glob(".rec-*"))]
+            for label, d in dirs:
+                out += [(label, d / f) for f in self.FILES if (d / f).is_file()]
+        return out
+
+    def sweep(self) -> None:
+        for label, src in self.sources():
+            try:
+                size = src.stat().st_size
+                if self.seen.get(src) == size:
+                    continue
+                dst = self.dest / label / src.name
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                dst.write_bytes(src.read_bytes()[-(8 << 20):])  # bounded: the last 8 MiB
+                self.seen[src] = size
+            except OSError:
+                pass  # removed between the listing and the copy
+
+    async def run(self, every: float = 5.0) -> None:
+        while True:
+            self.sweep()
+            await asyncio.sleep(every)
+
+    def dump(self, lines: int = 60) -> None:
+        self.sweep()
+        files = sorted(self.dest.glob("*/*.log")) if self.dest.is_dir() else []
+        if not files:
+            print("   (no guest console was captured: the VM never launched)", flush=True)
+        for f in files:
+            tail = f.read_text(errors="replace").splitlines()[-lines:]
+            print(f"   --- {f.parent.name}/{f.name} (last {len(tail)} lines; full copy in {f}) ---", flush=True)
+            for line in tail:
+                print(f"   | {line[:300]}", flush=True)
+
+
+def require_kvm_preflight(variant: str, arch: str) -> None:
+    """With CUA_REQUIRE_KVM=1, a same-arch VM must have a usable /dev/kvm: fail
+    now, with the reason, instead of booting under TCG (900-1300+ s on a hosted
+    runner) and timing out half an hour later. The runtime enforces the same
+    switch when it picks QEMU's accelerator."""
+    if variant != "containerdisk" or os.environ.get("CUA_REQUIRE_KVM", "").strip() not in ("1", "true", "yes"):
+        return
+    if sys.platform != "linux" or arch != host_arch():
+        return
+    if not os.access("/dev/kvm", os.R_OK | os.W_OK):
+        print("::error::CUA_REQUIRE_KVM is set but /dev/kvm is missing or not writable: "
+              "the VM would run under slow TCG emulation (scripts/images/enable-kvm.sh --require)", flush=True)
+        sys.exit(3)
+    print("   /dev/kvm is usable: QEMU runs with KVM", flush=True)
+
+
 async def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("id")
@@ -276,18 +353,34 @@ async def main() -> int:
     mem = args.memory_mb or 4096
     if mem > 4096:
         ap.error("local smokes stay at or under 4096 MiB (AGENT_BRIEF memory rule)")
+    require_kvm_preflight(args.variant, arch)
     report = Report()
     pinned = None
     print(f"== smoke {args.id} {args.variant} {where}: {ref}", flush=True)
     started = time.monotonic()
     extra = {"runtime": "runc"} if args.runc else {}
-    async with Sandbox.ephemeral(image, local=True, name=f"cua-e2e-bench-{args.id}-{uuid.uuid4().hex[:6]}", **extra,
-                                 server_port=server.get("port"), cpu=args.cpu, memory_mb=mem,
-                                 time_to_start=1500, telemetry_enabled=False) as sb:
-        report.add("ready", True, f"after {time.monotonic() - started:.0f}s")
-        info = getattr(sb, "image_info", None)
-        pinned = getattr(info, "pinned_ref", None)
-        await run_checks(sb, b, hooks, report, evidence, tag)
+    name = f"cua-e2e-bench-{args.id}-{uuid.uuid4().hex[:6]}"
+    console = ConsoleTee(evidence / f"{tag}-console", name) if args.variant == "containerdisk" else None
+    tee = asyncio.create_task(console.run()) if console else None
+    try:
+        async with Sandbox.ephemeral(image, local=True, name=name, **extra,
+                                     server_port=server.get("port"), cpu=args.cpu, memory_mb=mem,
+                                     time_to_start=1500, telemetry_enabled=False) as sb:
+            report.add("ready", True, f"after {time.monotonic() - started:.0f}s")
+            info = getattr(sb, "image_info", None)
+            pinned = getattr(info, "pinned_ref", None)
+            await run_checks(sb, b, hooks, report, evidence, tag)
+            if console and not report.ok:
+                console.dump()
+    except BaseException:
+        print(f"== FAIL {args.id} {tag}: the sandbox failed after "
+              f"{time.monotonic() - started:.0f}s; guest console:", flush=True)
+        if console:
+            console.dump()
+        raise
+    finally:
+        if tee:
+            tee.cancel()
     if child:
         # Evidence is keyed by the index the child was read from.
         pinned = index_ref

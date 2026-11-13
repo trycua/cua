@@ -316,4 +316,52 @@ struct MachinesViewTests {
         await m.checkMachineHealth()
         #expect(m.machinesView.machines.first { $0.current }?.issues.isEmpty == true)
     }
+
+    /// Local Network turned on for the app, but the daemon still runs with
+    /// what macOS decided for it before: the app's own connect gets out, so
+    /// the daemon is started again and This Mac checked again, and the issue
+    /// the person just fixed goes (no red dot for it). At most one restart
+    /// in ten minutes; none while the app is blocked too.
+    @Test func aDaemonStillBlockedAfterAccessIsOnIsStartedAgain() async throws {
+        let backend = FixtureSpacesBackend()
+        let blocked = AppMachinesViewHealth(
+            id: "", checks: [
+                AppMachinesViewCheck(id: "machine.local_network", status: "fail", message: "blocked",
+                                     remediation: "", facts: ["app": "Cua Spaces"]),
+            ], cuaVersion: "0.4.1", error: nil)
+        backend.fixtureHealth[""] = blocked
+        let m = await signedInModel(backend: backend)
+        let probe = LocalNetworkPermissionTests.FakeProbe([.blocked])
+        m.localNetworkGate = LocalNetworkGate(probe: probe)
+        var restarts = 0
+        m.restartDaemon = {
+            restarts += 1
+            backend.fixtureHealth[""] = nil
+            return true
+        }
+        var clock = Date()
+        m.listClock = { clock }
+
+        // The app is blocked too: access is off, the issue stays.
+        await m.checkMachineHealth()
+        #expect(restarts == 0)
+        #expect(m.machinesView.machines.first { $0.current }?.health == "fail")
+
+        // Access turned on: the app gets out, the daemon does not.
+        probe.answers = [.allowed]
+        await m.checkMachineHealth()
+        #expect(restarts == 1)
+        let me = try #require(m.machinesView.machines.first { $0.current })
+        #expect(me.issues.isEmpty)
+        #expect(me.health != "fail")
+
+        // Blocked again soon after: no second restart within ten minutes.
+        backend.fixtureHealth[""] = blocked
+        clock += 60
+        await m.checkMachineHealth()
+        #expect(restarts == 1)
+        clock += AppModel.localNetworkRestartEvery
+        await m.checkMachineHealth()
+        #expect(restarts == 2)
+    }
 }

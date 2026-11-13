@@ -183,6 +183,18 @@ class ModelTest(unittest.TestCase):
         result = choose(model, request())
         self.assertEqual(result.kind, "error")
 
+    def test_empty_choice_is_not_replaced_by_the_argmax(self) -> None:
+        bad = good_response()
+        bad["answers"]["candidate"]["choice"] = ""
+        model = OpenJevDecisionModel(
+            OpenJevConfig("https://jev.example"),
+            transport=lambda *_args: bad,
+        )
+        result = choose(model, request())
+        self.assertEqual(result.kind, "error")
+        self.assertEqual(result.reason, "model_error")
+        self.assertIsNone(result.selected_id)
+
     def test_missing_answers_is_bounded_error(self) -> None:
         model = OpenJevDecisionModel(
             OpenJevConfig("https://jev.example"),

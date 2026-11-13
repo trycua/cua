@@ -320,6 +320,127 @@ ESCAPES = {
     "from_param",
     "in_dll",
 }
+# The no-wrapper arm (pi-raw-linux-native, RAW_NATIVE=1): no raw.* runtime. Scripts import Linux's own Python
+# bindings (python-xlib, gi's Atspi/Gdk, pyatspi, dbus) and ctypes for native libraries (libX11, libXtst, libxdo)
+# and call them directly; xdotool runs through the one global xdotool(*args) (Zane, 13 Nov 2026 16:15 SGT). Shells,
+# processes, files and network stay out (GUI1); the same background rules apply to the native names below.
+NATIVE_IMPORTS = {"Xlib", "pyatspi", "dbus", "ctypes"}
+NATIVE_GI = {"Atspi", "Gdk", "GdkPixbuf", "GdkX11", "GLib", "GObject"}  # gi.repository modules a script may load
+NATIVE_ESCAPES = {
+    "pythonapi",
+    "PYFUNCTYPE",
+    "Gio",
+    "Gtk",
+    "Subprocess",
+    "SubprocessLauncher",
+    "spawn_async",
+    "spawn_sync",
+    "spawn_async_with_pipes",
+    "spawn_command_line_async",
+    "spawn_command_line_sync",
+    "file_set_contents",
+    "file_get_contents",
+}
+NATIVE_READ_ATOMS = {"_NET_ACTIVE_WINDOW", "_NET_RESTACK_WINDOW"}  # atoms the native arm may read
+NATIVE_LOADERS = {"CDLL", "cdll", "LoadLibrary", "dlopen"}
+# Native names of the same foreground routes (python-xlib, pyatspi, Gdk, libxdo), matched as in NAMES.
+NATIVE_NAMES: dict[str, str] = {
+    **dict.fromkeys(
+        (
+            "fake_input",  # python-xlib XTest: motion, buttons and keys
+            "warp_pointer",
+            "generateMouseEvent",
+            "test_simulate_button",
+            "warp",
+            "xdo_move_mouse",
+            "xdo_move_mouse_relative",
+            "xdo_move_mouse_relative_to_window",
+            "xdo_click_window",
+            "xdo_click_window_multiple",
+            "xdo_mouse_down",
+            "xdo_mouse_up",
+        ),
+        "BG1",
+    ),
+    **dict.fromkeys(
+        (
+            "set_input_focus",
+            "raise_window",
+            "circulate",
+            "raise_",
+            "xdo_activate_window",
+            "xdo_focus_window",
+            "xdo_raise_window",
+        ),
+        "BG2",
+    ),
+    **dict.fromkeys(
+        (
+            "generateKeyboardEvent",
+            "test_simulate_key",
+            "xdo_send_keysequence_window",
+            "xdo_send_keysequence_window_down",
+            "xdo_send_keysequence_window_up",
+            "xdo_send_keysequence_window_list_do",
+            "xdo_enter_text_window",
+        ),
+        "BG3",
+    ),
+    **dict.fromkeys(
+        (
+            "grab_pointer",
+            "grab_keyboard",
+            "grab_key",
+            "grab_button",
+            "grab_server",
+            "xtest_grab_control",
+            "grab_control",
+            "pointer_grab",
+            "keyboard_grab",
+        ),
+        "BG4",
+    ),
+    "send_event": "BG6",
+    "grabFocus": "BG7",
+    "set_selection_owner": "BG8",
+}
+
+
+# The native arm's alternatives: the wrapper's "instead" texts name raw.* helpers the native arm does not have.
+NATIVE_INSTEAD = {
+    "BG1": "Use the element's AT-SPI Action (Atspi.Action.do_action(acc, i)), EditableText or Value interface. Real "
+    "pointer input (XTest, xdotool mousemove/click) is allowed only on a task that grants foreground.",
+    "BG2": "Address the element directly through AT-SPI (do_action, set_text_contents, set_current_value); these need "
+    "no focus. Activating a window is allowed only on a task that grants foreground.",
+    "BG3": "Set text with the element's EditableText or Value interface, or press the button the key would trigger "
+    "through its AT-SPI Action. XTest or xdotool keys into an activated window are allowed only on a task that grants "
+    "foreground.",
+    "GUI1": "Use Linux's GUI APIs only: gi Atspi/Gdk, pyatspi, python-xlib, dbus, ctypes for libX11/libXtst/libxdo, "
+    "and xdotool(...).",
+    "DRV1": "Use AT-SPI (Action, EditableText, Value, Selection, Table) and, on a task that grants foreground, XTest "
+    "or xdotool input.",
+    "BG9": "Make one xdotool(...) call per command. Chains are allowed only on a task that grants foreground.",
+    "VR1": "After the last action, read the element back (get_text, get_current_value, get_state_set, get_name) or "
+    "save a screenshot into SHOTS.",
+}
+
+
+def import_ok(name: str, native: bool = False) -> bool:
+    if not native:
+        return name in IMPORT_OK
+    if name == "raw":
+        return False
+    if name in IMPORT_OK or name.split(".")[0] in NATIVE_IMPORTS or name in ("gi", "gi.repository"):
+        return True
+    return name.startswith("gi.repository.") and name.split(".")[2] in NATIVE_GI
+
+
+def private_ok(name: str, native: bool) -> bool:
+    """A name starting with _ the script may use: none in the wrapper arm; in the native arm a single-underscore name
+    (ctypes' _fields_, python-xlib's _data), never a dunder."""
+    return native and not name.startswith("__")
+
+
 DYNAMIC = {
     "eval",
     "exec",
@@ -370,6 +491,14 @@ READS = {
     "describe",
     "pointer",
     "active_window",
+    # the native arm's reads (python-xlib, Gdk, AT-SPI Table)
+    "savev",
+    "get_full_property",
+    "get_geometry",
+    "query_pointer",
+    "get_input_focus",
+    "get_accessible_at",
+    "get_extents",
 }
 
 
@@ -383,8 +512,9 @@ class Finding:
     def severity(self) -> str:
         return RULES[self.rule].severity
 
-    def render(self, granted: bool) -> str:
+    def render(self, granted: bool, native: bool = False) -> str:
         r = RULES[self.rule]
+        instead = NATIVE_INSTEAD.get(r.id, r.instead) if native else r.instead
         tag = {
             "block": "BLOCKED",
             "granted": "FOREGROUND (granted by the task)" if granted else "BLOCKED (this task does not grant foreground)",
@@ -392,7 +522,7 @@ class Finding:
         }[r.severity]
         return (
             f"{tag} [{r.id} {r.title}] line {self.line}: {self.detail}\n"
-            f"  rule: {r.why}\n  source: {r.source}\n  instead: {r.instead}"
+            f"  rule: {r.why}\n  source: {r.source}\n  instead: {instead}"
         )
 
 
@@ -400,6 +530,7 @@ class Finding:
 class Report:
     findings: list[Finding]
     granted: bool  # the harness's per-task foreground grant, not anything the script says
+    native: bool = False  # the no-wrapper arm: alternatives name native calls, not raw.* helpers
 
     @property
     def blocked(self) -> list[Finding]:
@@ -422,7 +553,7 @@ class Report:
             else "Background-use lint: the script ran with these findings."
         )
         body = "\n".join(
-            f.render(self.granted) for f in sorted(self.findings, key=lambda f: f.line)
+            f.render(self.granted, self.native) for f in sorted(self.findings, key=lambda f: f.line)
         )
         return f"{head}\n{body}"
 
@@ -464,7 +595,11 @@ def _pos(node: ast.AST) -> tuple[int, int]:
 
 
 class _Walker(ast.NodeVisitor):
-    def __init__(self, raw_names: set[str] | None = None) -> None:
+    def __init__(self, raw_names: set[str] | None = None, native: bool = False) -> None:
+        self.native = native
+        self.atom_requests: list[tuple[str, ast.AST]] = []
+        self.sends = False
+        self.names = {**NAMES, **NATIVE_NAMES} if native else NAMES
         self.raw_names = raw_names or {"raw"}  # "raw" and every local bound to it (r = raw)
         self.findings: list[Finding] = []
         self.last_action: tuple[int, int] = (0, 0)
@@ -478,8 +613,13 @@ class _Walker(ast.NodeVisitor):
         self.seen.add((rule, line))
         self.findings.append(Finding(rule, line, detail))
 
+    def escapes(self) -> set[str]:
+        return NATIVE_ESCAPES if self.native else ESCAPES
+
     def name_hit(self, name: str, node: ast.AST) -> None:
-        rule = NAMES.get(name)
+        rule = self.names.get(name)
+        if self.native and name in NATIVE_LOADERS:
+            return  # loading a native library is the native arm's point
         if rule == "GUI1" and name in {"system", "popen", "fork", "execv", "execvp", "spawnv"}:
             # only as an attribute (os.system), not a plain local called "system"
             if not isinstance(node, ast.Attribute):
@@ -488,6 +628,8 @@ class _Walker(ast.NodeVisitor):
             return  # a local called "driver"; raw.driver and getattr(raw, "driver") still hit
         if rule:
             self.add(rule, node, f"{name}")
+        if name in {"send_event", "XSendEvent"}:
+            self.sends = True
         if name in ACTIONS:
             self.last_action = max(self.last_action, _pos(node))
         if name in READS:
@@ -497,7 +639,7 @@ class _Walker(ast.NodeVisitor):
         for alias in node.names:
             if "cua_driver" in alias.name:
                 self.add("DRV1", node, f"import {alias.name}")
-            if alias.name not in IMPORT_OK:
+            if not import_ok(alias.name, self.native):
                 self.add("GUI1", node, f"import {alias.name}")
         self.generic_visit(node)
 
@@ -505,13 +647,17 @@ class _Walker(ast.NodeVisitor):
         mod = node.module or ""
         if "cua_driver" in mod:
             self.add("DRV1", node, f"from {mod} import ...")
-        if mod not in IMPORT_OK:
+        if node.level or not import_ok(mod, self.native):
             self.add("GUI1", node, f"from {mod} import ...")
+        if mod == "gi.repository" and self.native:
+            for alias in node.names:
+                if alias.name not in NATIVE_GI:
+                    self.add("GUI1", node, f"from gi.repository import {alias.name}")
         if mod == "ctypes":
             for alias in node.names:
-                if alias.name in NAMES:
-                    self.add(NAMES[alias.name], node, f"from ctypes import {alias.name}")
-                elif alias.name in ESCAPES or alias.name == "*":
+                if alias.name in self.names and not (self.native and alias.name in NATIVE_LOADERS):
+                    self.add(self.names[alias.name], node, f"from ctypes import {alias.name}")
+                elif alias.name in self.escapes() or alias.name == "*":
                     self.add("GUI1", node, f"from ctypes import {alias.name}")
         self.generic_visit(node)
 
@@ -519,10 +665,10 @@ class _Walker(ast.NodeVisitor):
         self.name_hit(node.attr, node)
         if node.attr in HELPERS and _dotted(node.value) in self.raw_names:
             self.add(HELPERS[node.attr], node, f"raw.{node.attr}")
-        if node.attr.startswith("_"):
+        if node.attr.startswith("_") and not private_ok(node.attr, self.native):
             # private and dunder attributes reach the runtime's own unguarded handles (raw.x11._lib, type internals)
             self.add("GUI2", node, f"private attribute {node.attr}")
-        elif node.attr in ESCAPES:
+        elif node.attr in self.escapes():
             self.add("GUI1", node, f"attribute {node.attr}")
         self.generic_visit(node)
 
@@ -534,11 +680,11 @@ class _Walker(ast.NodeVisitor):
             self.add("GUI2", node, f"{node.id} used as a value")
         if node.id in DYNAMIC:
             self.add("GUI2", node, node.id)
-        elif node.id in ESCAPES:
+        elif node.id in self.escapes():
             self.add("GUI1", node, f"name {node.id}")
         elif node.id in FILE_CALLS:
             self.add("GUI1", node, f"{node.id}() reads or writes files")
-        elif node.id in NAMES and NAMES[node.id] != "GUI1":
+        elif node.id in self.names and self.names[node.id] != "GUI1":
             self.name_hit(node.id, node)
         if node.id in ACTIONS:
             self.last_action = max(self.last_action, _pos(node))
@@ -553,10 +699,20 @@ class _Walker(ast.NodeVisitor):
         if isinstance(value, str):
             for needle, rule in STRINGS.items():
                 if needle in value:
+                    if self.native and needle in NATIVE_READ_ATOMS:
+                        # python-xlib reads the active window through this atom; only a request sent with it
+                        # (send_event / XSendEvent in the same script) activates or restacks, checked in lint()
+                        self.atom_requests.append((needle, node))
+                        continue
                     self.add(rule, node, f"string {needle!r}")
-            if value in NAMES and NAMES[value] not in ("GUI1", "DRV1"):
-                self.add(NAMES[value], node, f"name {value!r} in a string")
-            if value.startswith("_") and value.strip("_") and value.isidentifier():
+            if value in self.names and self.names[value] not in ("GUI1", "DRV1"):
+                self.add(self.names[value], node, f"name {value!r} in a string")
+            if (
+                value.startswith("_")
+                and value.strip("_")
+                and value.isidentifier()
+                and not private_ok(value, self.native)
+            ):
                 self.add("GUI2", node, f"private name {value!r} in a string")
         self.generic_visit(node)
 
@@ -579,8 +735,10 @@ class _Walker(ast.NodeVisitor):
                 self.name_hit(attr, node)
                 if attr in HELPERS and node.args and _dotted(node.args[0]) in self.raw_names:
                     self.add(HELPERS[attr], node, f"getattr(raw, {attr!r})")
-                if attr.startswith("_") or attr in ESCAPES:
+                if (attr.startswith("_") and not private_ok(attr, self.native)) or attr in self.escapes():
                     self.add("GUI2", node, f"getattr {attr!r}")
+        if self.native and last == "configure" and any(k.arg == "stack_mode" for k in node.keywords):
+            self.add("BG2", node, "configure(stack_mode=...) restacks the window")
         if last == "xdotool":
             self.xdotool(node)
         self.generic_visit(node)
@@ -626,19 +784,23 @@ def _raw_aliases(tree: ast.AST) -> set[str]:
         names = found
 
 
-def lint(source: str, granted: bool = False) -> Report:
-    """Findings for one script on a task with or without the harness's foreground grant. A syntax error is returned
-    as the caller's problem, not a finding."""
+def lint(source: str, granted: bool = False, native: bool = False) -> Report:
+    """Findings for one script on a task with or without the harness's foreground grant. ``native``: the no-wrapper
+    arm's script (native bindings and ctypes imports, single-underscore names). A syntax error is returned as the
+    caller's problem, not a finding."""
     tree = ast.parse(source, "<script>", "exec")
-    walker = _Walker(_raw_aliases(tree))
+    walker = _Walker(_raw_aliases(tree), native)
     walker.visit(tree)
+    if walker.sends:
+        for needle, node in walker.atom_requests:
+            walker.add(STRINGS[needle], node, f"a {needle} request (send_event)")
     if walker.last_action > (0, 0) and walker.last_read <= walker.last_action:
         walker.add(
             "VR1",
             ast.Constant(value=None, lineno=walker.last_action[0]),
             "no read after the last action on this line",
         )
-    return Report(walker.findings, granted)
+    return Report(walker.findings, granted, native)
 
 
 def rules_markdown() -> str:

@@ -339,9 +339,12 @@ class State:
 
     def refuse(self, rule_id: str, what: str) -> None:
         rule = rawlint.RULES[rule_id]
+        instead = (
+            rawlint.NATIVE_INSTEAD.get(rule.id, rule.instead) if os.environ.get("RAW_NATIVE") == "1" else rule.instead
+        )
         text = (
             f"BLOCKED at run time [{rule.id} {rule.title}]: {what}. {rule.why} Source: {rule.source}. "
-            f"Instead: {rule.instead}"
+            f"Instead: {instead}"
         )
         with self.lock:
             self.runtime_blocked.append(f"{rule.id}: {what}")
@@ -1022,6 +1025,143 @@ def _note_stall(acc: Any, error: Exception) -> None:
         pid = -1
     with STATE.lock:
         STATE.stalled.setdefault(pid, str(error)[:200])
+
+
+class Native:
+    """The no-wrapper arm's harness side (RAW_NATIVE=1): no helpers, only the checked xdotool CLI and the
+    end-of-script hand-back the runner calls (nothing to hand back: the arm has no foreground helpers)."""
+
+    def __init__(self) -> None:
+        self._xdotool = shutil.which("xdotool") or "/usr/bin/xdotool"
+
+    def xdotool(self, *args: Any) -> str:
+        """Run the xdotool CLI with these arguments; the same checks as raw.xdotool."""
+        return Raw.xdotool(self, *args)  # type: ignore[arg-type]
+
+    def restore_foreground(self) -> None:
+        return None
+
+
+def _guard_xlib() -> None:
+    """The native arm's python-xlib routes under the same rules as their libX11/libXtst names (raw.x11, raw.xtst)."""
+    try:
+        from Xlib import display as xdisplay
+        from Xlib.ext import xtest
+        from Xlib.xobject import drawable
+    except ImportError:
+        return
+
+    def guard(owner: Any, name: str, rule: str, label: str) -> None:
+        real = getattr(owner, name, None)
+        if real is None:
+            return
+
+        def checked(*args: Any, _real: Any = real, **kwargs: Any) -> Any:
+            STATE.check(rule, label)
+            return _real(*args, **kwargs)
+
+        setattr(owner, name, checked)
+
+    real_fake = xtest.fake_input
+
+    def fake_input(disp: Any, event_type: int, *args: Any, **kwargs: Any) -> Any:
+        # X.KeyPress 2 / X.KeyRelease 3 are keys (BG3); ButtonPress/Release and MotionNotify move or press (BG1)
+        STATE.check("BG3" if event_type in (2, 3) else "BG1", f"Xlib xtest fake_input({event_type})")
+        return real_fake(disp, event_type, *args, **kwargs)
+
+    xtest.fake_input = fake_input
+    guard(xtest, "grab_control", "BG4", "Xlib xtest grab_control")
+    for cls in (xdisplay.Display, drawable.Window):
+        guard(cls, "set_input_focus", "BG2", "Xlib set_input_focus")
+        guard(cls, "warp_pointer", "BG1", "Xlib warp_pointer")
+        real_send = getattr(cls, "send_event", None)
+        if real_send is None:
+            continue
+
+        def send_event(self: Any, *args: Any, _real: Any = real_send, **kwargs: Any) -> Any:
+            # a ClientMessage naming _NET_ACTIVE_WINDOW or _NET_RESTACK_WINDOW is an activation request (BG2)
+            event = kwargs.get("event", args[0] if args and not isinstance(self, xdisplay.Display) else
+                               (args[1] if len(args) > 1 else None))
+            rule, what = "BG6", "Xlib send_event"
+            try:
+                kind = getattr(event, "client_type", None)
+                disp = self if isinstance(self, xdisplay.Display) else self.display
+                name = disp.get_atom_name(kind) if kind else ""
+            except Exception:  # noqa: BLE001
+                name = ""
+            for needle, rule_id in rawlint.STRINGS.items():
+                if needle in (name or ""):
+                    rule, what = rule_id, f"Xlib send_event({needle})"
+            STATE.check(rule, what)
+            return _real(self, *args, **kwargs)
+
+        cls.send_event = send_event
+    guard(xdisplay.Display, "grab_server", "BG4", "Xlib grab_server")
+    for name in ("grab_pointer", "grab_keyboard", "grab_key", "grab_button"):
+        guard(drawable.Window, name, "BG4", f"Xlib {name}")
+    guard(drawable.Window, "raise_window", "BG2", "Xlib raise_window")
+    guard(drawable.Window, "circulate", "BG2", "Xlib circulate")
+    guard(drawable.Window, "set_selection_owner", "BG8", "Xlib set_selection_owner")
+
+
+def _guard_ctypes() -> None:
+    """A library the native script loads itself (ctypes.CDLL("libXtst.so.6")) refuses forbidden symbols at lookup,
+    as raw.x11/raw.xtst did, so a computed name is caught at run time too."""
+    real = ctypes.CDLL.__getattr__
+    names = {**rawlint.NAMES, **rawlint.NATIVE_NAMES}
+
+    def lookup(self: Any, name: str) -> Any:
+        rule = names.get(name)
+        if rule and rule not in ("GUI1", "DRV1"):
+            STATE.check(rule, f"ctypes {name}")
+        return real(self, name)
+
+    real_item = ctypes.CDLL.__getitem__
+
+    def item(self: Any, name: Any) -> Any:
+        rule = names.get(name) if isinstance(name, str) else None
+        if rule and rule not in ("GUI1", "DRV1"):
+            STATE.check(rule, f"ctypes {name}")
+        return real_item(self, name)
+
+    ctypes.CDLL.__getattr__ = lookup  # type: ignore[method-assign]
+    ctypes.CDLL.__getitem__ = item  # type: ignore[method-assign]
+
+
+def _guard_gdk() -> None:
+    """Gdk's pointer warp and synthetic input under the same rules (the wrapper arm never exposed Gdk)."""
+    for owner, name, rule in (
+        (Gdk.Device, "warp", "BG1"),
+        (Gdk, "test_simulate_button", "BG1"),
+        (Gdk, "test_simulate_key", "BG3"),
+        (Gdk.Device, "grab", "BG4"),
+        (Gdk.Seat, "grab", "BG4"),
+        (Gdk, "pointer_grab", "BG4"),
+        (Gdk, "keyboard_grab", "BG4"),
+        (Gdk.Window, "focus", "BG2"),
+        (Gdk.Window, "raise_", "BG2"),
+    ):
+        real = getattr(owner, name, None)
+        if real is None:
+            continue
+
+        def checked(*args: Any, _real: Any = real, _rule: str = rule, _name: str = name, **kwargs: Any) -> Any:
+            STATE.check(_rule, f"Gdk {_name}")
+            return _real(*args, **kwargs)
+
+        setattr(owner, name, checked)
+
+
+def make_native() -> Native:
+    """The native arm's process setup: the same AT-SPI timeout and route checks as make(), and no helper object."""
+    Gdk.init([])
+    if ATSPI_TIMEOUT_MS > 0:
+        Atspi.set_timeout(ATSPI_TIMEOUT_MS, ATSPI_TIMEOUT_MS)
+    _guard_gi()
+    _guard_xlib()
+    _guard_ctypes()
+    _guard_gdk()
+    return Native()
 
 
 def make() -> Raw:

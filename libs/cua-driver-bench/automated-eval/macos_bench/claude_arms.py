@@ -359,10 +359,15 @@ RAW_LINUX_LOG = Path("/tmp/cdb-raw-linux/calls.jsonl")  # the session's private 
 # its AT-SPI coverage labels. The arm has no Cua Driver: no daemon runs during its trials and its lint blocks any call
 # path to one (DRV1).
 RAW_LINUX_TRIAL = RAW_LINUX_LOG.parent / "trial.json"
+# The no-wrapper arm (Zane, 13 Nov 2026 16:15 SGT): the same server, lint, hook, grants and log with RAW_NATIVE=1, so
+# scripts call Linux's own bindings directly and get no raw.* runtime.
+RAW_LINUX_NATIVE_ARM = "cc-raw-linux-native"
+RAW_LINUX_ARMS = (RAW_LINUX_ARM, RAW_LINUX_NATIVE_ARM)
 ADAPTER_ARMS = {
     "cc-agent-desktop": AGENT_DESKTOP_SERVER,
     "cc-browser-use": BROWSER_USE_SERVER,
     RAW_LINUX_ARM: "cua",
+    RAW_LINUX_NATIVE_ARM: "cua",
 }
 
 
@@ -381,7 +386,7 @@ def adapter_entry(arm: str) -> dict[str, Any]:
     elif arm == "cc-browser-use":
         script = BROWSER_USE_ADAPTER
         env.update({"BU_BIN": str(BROWSER_USE_BIN), "BU_SHOT": "ondemand"})
-    elif arm == RAW_LINUX_ARM:
+    elif arm in RAW_LINUX_ARMS:
         python = "/usr/bin/python3" if Path("/usr/bin/python3").is_file() else sys.executable
         env = desktop.desktop_env(
             WORK / "raw-linux-home",
@@ -390,6 +395,7 @@ def adapter_entry(arm: str) -> dict[str, Any]:
                 "RAW_TMP": str(RAW_LINUX_LOG.parent / "shots"),
                 "RAW_TRIAL": str(RAW_LINUX_TRIAL),
                 "PYTHON": python,
+                **({"RAW_NATIVE": "1"} if arm == RAW_LINUX_NATIVE_ARM else {}),
             },
         )
         return {"type": "stdio", "command": python, "args": ["-I", "-B", str(RAW_LINUX_ADAPTER)], "env": env}
@@ -427,6 +433,8 @@ ARM_DESCRIPTIONS = {
     RAW_LINUX_ARM: "One run_script tool (server cua) running Python against AT-SPI, Xlib/XTest and xdotool behind a "
     "background-use lint and runtime hook, with no Cua Driver; foreground granted per task by the harness "
     "(tools/raw_linux), no skill",
+    RAW_LINUX_NATIVE_ARM: "The raw-linux arm with no raw.* runtime: scripts import python-xlib, gi Atspi/Gdk, pyatspi, "
+    "dbus and ctypes and call Linux's own APIs directly; same lint rules, hook, grants and no Cua Driver",
     "cc-codex-cu": "Claude Code + Codex computer-use cua_repl MCP (server codex-cu), no skill",
     "cc-codex-cu-1007-browser": "Claude Code + Codex 26.1007.21159 cua_repl MCP (server codex-cu), surfaces browser+computer, no skill (Amendment 10)",
     "cc-claude-cu-helper": "Claude Code + "
@@ -451,6 +459,19 @@ RAW_LINUX_ADDENDUM = (
     'Pass "timeout_ms": 120000 on every run_script call.\n'
 )
 
+RAW_LINUX_NATIVE_ADDENDUM = (
+    "\n\nrun_script is your only tool: every read and every action is one Python script against the Linux "
+    "desktop, calling Linux's own APIs directly (AT-SPI through `gi.repository.Atspi` or `pyatspi`, X11 and XTest "
+    "through python-xlib or ctypes, D-Bus through `dbus`, the xdotool CLI through `xdotool(...)`); there is no "
+    "helper library. Its description lists what is importable and the background rules the script is checked "
+    "against. To look, walk the app's AT-SPI tree or save a screenshot into SHOTS. To act, use AT-SPI actions, "
+    "EditableText and Value on the elements you found, use loops and if/else, and `return` what you need to check "
+    "the result. Where an app's AT-SPI tree does not reach what you need and the task grants foreground, send real "
+    "input (XTest, xdotool) to the activated window and read back through AT-SPI or a screenshot. A blocked or "
+    "failed script comes back with the rule or the traceback; fix it and run it again.\n"
+    'Pass "timeout_ms": 120000 on every run_script call.\n'
+)
+
 SKILL_PROMPT_HEADER = (
     "\n\nThe instructions of the Cua Driver skill follow. They apply to the `cua` MCP server. The skill's other "
     "files, which these instructions refer to, are in .claude/skills/cua-driver/ and can be read with the Read tool."
@@ -468,6 +489,8 @@ def system_prompt_for(arm: str, *, browser: bool = False) -> str:
         )
     if arm == RAW_LINUX_ARM:
         return prompt + RAW_LINUX_ADDENDUM
+    if arm == RAW_LINUX_NATIVE_ARM:
+        return prompt + RAW_LINUX_NATIVE_ADDENDUM
     build = CUA_BUILDS.get(arm)
     if build is None:
         return prompt

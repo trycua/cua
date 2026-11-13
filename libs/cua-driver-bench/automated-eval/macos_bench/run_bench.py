@@ -601,7 +601,7 @@ def real_capture_check(ctx: "Ctx", arm: str) -> tuple[str, str, str]:
         path, _ = ctx.mcp[arm]
         if source in ca.CUA_ARMS:
             ensure_agent_daemon(ctx, source)
-        elif source == ca.RAW_LINUX_ARM:
+        elif source in ca.RAW_LINUX_ARMS:
             stop_agent_daemons(ctx)  # no Cua Driver for this arm
             ca.RAW_LINUX_TRIAL.parent.mkdir(parents=True, exist_ok=True)
             ca.RAW_LINUX_TRIAL.write_text(
@@ -677,7 +677,7 @@ def real_capture_check(ctx: "Ctx", arm: str) -> tuple[str, str, str]:
         elif source in ca.ADAPTER_ARMS:
             # No capture tool: the adapters have no screenshot of the whole desktop. A read-only list proves the
             # vendor tool answers through the adapter.
-            if source == ca.RAW_LINUX_ARM:
+            if source in ca.RAW_LINUX_ARMS:
                 if set(tools) != {"run_script"}:
                     raise RuntimeError("unexpected raw-linux tools/list")
                 result = call(
@@ -1060,7 +1060,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
     # Per-build Cua Driver identity (Amendment 3); arm B rows keep the 0.34.0 values of the recorder build.
     build_versions = (
         {}
-        if SOURCE_ARM.get(arm, arm) == ca.RAW_LINUX_ARM  # no Cua Driver in this arm
+        if SOURCE_ARM.get(arm, arm) in ca.RAW_LINUX_ARMS  # no Cua Driver in this arm
         else (ctx.versions.get("builds") or {}).get(SOURCE_ARM.get(arm, arm))
         or (ctx.versions.get("builds") or {}).get("cc-cua-driver", {})
     )
@@ -1168,7 +1168,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             SOURCE_ARM.get(arm) in ca.CUA_ARMS
         ):  # A23: Cua Driver under Codex uses that build's daemon
             ensure_agent_daemon(ctx, SOURCE_ARM[arm])
-        elif SOURCE_ARM.get(arm) == ca.RAW_LINUX_ARM:
+        elif SOURCE_ARM.get(arm) in ca.RAW_LINUX_ARMS:
             stop_agent_daemons(ctx)  # no Cua Driver (and no driver overlay) during a raw-linux trial
         if getattr(args, "park_pointer", False):
             row["pointer_parked"] = (
@@ -1232,7 +1232,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             prompt += f"\nYou have about {timeout_s // 60} minutes and at most {max_turns} turns.\n"
         (artifacts / "prompt.txt").write_text(prompt, "utf-8")
         (artifacts / "argv.json").write_text(json.dumps(argv, indent=2) + "\n", "utf-8")
-        raw_arm = SOURCE_ARM.get(arm, arm) == ca.RAW_LINUX_ARM
+        raw_arm = SOURCE_ARM.get(arm, arm) in ca.RAW_LINUX_ARMS
         row["foreground_grant"] = v2.foreground_grant(spec)  # every arm: the task's grant, for comparison
         if raw_arm:
             ca.RAW_LINUX_LOG.parent.mkdir(parents=True, exist_ok=True)
@@ -2724,7 +2724,7 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
     for arm in [a for a in ctx.arm_names if a in pia.ARMS] if with_models and not offline else []:
         try:
             source = pia.SOURCE_ARM[arm]
-            if source == ca.RAW_LINUX_ARM:
+            if source in ca.RAW_LINUX_ARMS:
                 stop_agent_daemons(ctx)  # no Cua Driver for this arm
             elif source in ca.CUA_BUILDS:
                 ensure_agent_daemon(ctx, source)
@@ -3230,7 +3230,7 @@ def write_manifest(ctx: Ctx, first_schedule: list[dict[str, Any]]) -> None:
             a: pia.argv(
                 ca.system_prompt_for(SOURCE_ARM[a]),
                 None
-                if SOURCE_ARM[a] == ca.RAW_LINUX_ARM
+                if SOURCE_ARM[a] in ca.RAW_LINUX_ARMS
                 else Path(ca.CWD_ROOT) / ".claude/skills/cua-driver",
             )
             if a in pia.ARMS

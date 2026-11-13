@@ -41,6 +41,8 @@ TMP = Path(os.environ.get("RAW_TMP") or tempfile.mkdtemp(prefix="raw-linux-"))
 TMP.mkdir(parents=True, exist_ok=True)
 PYTHON = os.environ.get("PYTHON") or sys.executable
 DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS = 30_000, 120_000
+# The no-wrapper arm (pi-raw-linux-native): scripts call Linux's own bindings directly, with no raw.* runtime
+NATIVE = os.environ.get("RAW_NATIVE") == "1"
 # pids whose AT-SPI calls timed out in an earlier script, per trial (raw.app asks them with a short timeout)
 STALLED: dict[str, set[str]] = {}
 
@@ -103,6 +105,60 @@ names.
 - An action the API accepted is not proof it worked: read the element back (get_text, get_current_value, states, \
 a screenshot, raw.cells) before you report success.
 """
+NATIVE_DESCRIPTION = """\
+Run one Python script against the Linux desktop (X11). The script body runs inside a function, so `return` a value \
+(JSON-able) to see it; print() output is returned too. Each call is a fresh process: nothing persists between calls.
+
+Call Linux's own APIs directly; there is no helper library and no Cua Driver (rule DRV1). Import what you need:
+- AT-SPI 2: `import gi; gi.require_version("Atspi", "2.0"); from gi.repository import Atspi` (or `import pyatspi`). \
+Tree: Atspi.get_desktop(0), acc.get_child_count(), get_child_at_index(i), get_role_name(), get_name(), \
+get_process_id(), get_parent(), get_state_set().contains(Atspi.StateType.SHOWING). Call interface methods in class \
+form on the accessible itself: Atspi.Action.get_n_actions(acc), get_action_name(acc, i), do_action(acc, i); \
+Atspi.EditableText.set_text_contents(acc, s); Atspi.Text.get_text(acc, 0, -1); Atspi.Value.get_current_value(acc), \
+set_current_value(acc, v); Atspi.Component.get_extents(acc, Atspi.CoordType.SCREEN); \
+Atspi.Selection.select_child(acc, i); Atspi.Table.get_n_rows(t), get_n_columns(t), get_accessible_at(t, row, col). \
+A spreadsheet's table reports every cell of the sheet as a child (LibreOffice: over a billion), so address cells \
+by row and column, never by walking all children.
+- X11: python-xlib (`from Xlib import display, X, Xatom, XK; from Xlib.ext import xtest`; d = display.Display(); \
+root = d.screen().root; _NET_CLIENT_LIST, _NET_WM_NAME, _NET_WM_PID through get_full_property; \
+xtest.fake_input(d, X.KeyPress, keycode) / X.ButtonPress / X.MotionNotify, then d.sync()), or ctypes for libX11, \
+libXtst or libxdo (ctypes.CDLL("libXtst.so.6")).
+- Gdk 3 (`gi.require_version("Gdk", "3.0")`) for screenshots: Gdk.pixbuf_get_from_window(Gdk.get_default_root_window(), \
+x, y, w, h).savev(SHOTS + "/a.png", "png", [], []). Every PNG written into the directory named by the global SHOTS \
+comes back to you as an image.
+- D-Bus: `import dbus` (session bus reads; the AT-SPI bus is reachable through Atspi).
+- The xdotool CLI: the global `xdotool(*args)` runs one xdotool command and returns its stdout (an argument equal \
+to an xdotool command name counts as a new command, and chains are foreground). xdotool search, getwindowname, \
+getwindowgeometry, getactivewindow are reads.
+- Also importable: json, re, math, time, itertools, collections, functools, string, textwrap, dataclasses, typing, \
+enum, and from gi.repository only Atspi, Gdk, GdkPixbuf, GdkX11, GLib and GObject.
+{coverage}
+
+Start with AT-SPI (cheap, background-safe): find, act on and read back elements yourself. Where an app's tree does \
+not reach what you need (spreadsheet cell entry, ledger registers, a drag), send real input if this task grants \
+foreground: activate the target window, confirm it is active and holds the input focus, then send XTest or xdotool \
+input; keys go to whatever window holds the focus. Give the active window back to the one that had it when you \
+are done. LibreOffice Calc: the Name Box (ctrl+shift+F5, type "B7", Return) moves to a cell; typed text with Tab \
+and Return fills across; ctrl+s saves. Read back either way.
+
+Background contract (checked before the script runs, and again while it runs):
+- The user's real pointer, keyboard focus, active window and stacking must stay as they are. Foreground routes: \
+XTest motion/buttons/keys (python-xlib xtest.fake_input, XTestFake*), warp_pointer / XWarpPointer, Gdk warp and \
+test_simulate_*, Atspi.generate_mouse_event / generate_keyboard_event, xdotool mousemove/click/key/type (without \
+--window)/windowactivate/windowfocus/windowraise, set_input_focus / XSetInputFocus, raise_window / XRaiseWindow, \
+configure(stack_mode=...), _NET_ACTIVE_WINDOW, wmctrl, libxdo's input and activation calls, Wayland/portal input. \
+Grabs (grab_pointer/keyboard/key/button/server, XGrab*) are always blocked.
+- {grant}
+- Prefer AT-SPI: Action.do_action for buttons/checks/menu items/combo boxes, EditableText.set_text_contents for \
+text, Value.set_current_value for spin buttons and sliders. These need no focus and no pointer.
+- Combo boxes: opening one with its "press" action shows a popup that takes the keyboard grab from the user's \
+window. Select an item without opening it: Atspi.Action.do_action on the (hidden) menu item, or \
+Atspi.Selection.select_child(combo, i).
+- Not available: files, processes, shells, network, ctypes.pythonapi, Gio/Gtk, GLib spawn and file calls, \
+eval/exec, dunder attributes, getattr with computed names, Cua Driver in any form.
+- An action the API accepted is not proof it worked: read the element back (get_text, get_current_value, states, \
+a screenshot) before you report success.
+"""
 GRANTED = (
     "This task grants foreground: the routes above are allowed when no background route works (a real hover, a "
     "drag with no accessible action, a tooltip that only shows on hover, keys into a spreadsheet or ledger cell). "
@@ -128,6 +184,9 @@ def description(settings: dict) -> str:
         else "AT-SPI coverage of this task's apps: not measured."
     )
     grant = GRANTED if settings.get("foreground_grant") else NOT_GRANTED
+    if NATIVE:
+        grant = grant.replace("the routes above", "the foreground routes above")
+        return NATIVE_DESCRIPTION.replace("{coverage}", coverage).replace("{grant}", grant)
     return DESCRIPTION.replace("{coverage}", coverage).replace("{grant}", grant)
 
 

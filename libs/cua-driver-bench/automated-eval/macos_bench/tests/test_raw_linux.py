@@ -407,6 +407,109 @@ class CellRefTest(unittest.TestCase):
                     sys.modules.pop("raw", None)
 
 
+class NativeArmTest(unittest.TestCase):
+    """The no-wrapper arm (RAW_NATIVE=1): Linux's own bindings import; the background rules hold on their names."""
+
+    def lint(self, source: str, grant: bool = False) -> "rawlint.Report":
+        return rawlint.lint(source, granted=grant, native=True)
+
+    def test_native_bindings_import_and_read_cleanly(self):
+        src = (
+            "import gi\n"
+            'gi.require_version("Atspi", "2.0")\n'
+            "from gi.repository import Atspi\n"
+            "from Xlib import display, X\n"
+            "import pyatspi, dbus, ctypes\n"
+            'lib = ctypes.CDLL("libX11.so.6")\n'
+            "d = display.Display()\n"
+            'a = d.intern_atom("_NET_ACTIVE_WINDOW")\n'
+            "class P(ctypes.Structure):\n    _fields_ = [('x', ctypes.c_int)]\n"
+            "return Atspi.get_desktop(0).get_child_count()\n"
+        )
+        self.assertEqual([f.rule for f in self.lint(src).findings], [])
+        self.assertNotIn("raw.", self.lint("xtest.fake_input(d, 2, 36)").render())
+        # the wrapper arm still refuses all of it
+        self.assertFalse(rawlint.lint(src).ok)
+
+    def test_native_foreground_routes_need_the_grant_and_grabs_never_pass(self):
+        cases = {
+            "xtest.fake_input(d, X.KeyPress, 36)": "BG1",
+            "w.warp_pointer(1, 1)": "BG1",
+            'Atspi.generate_keyboard_event(36, None, 0)': "BG3",
+            "pyatspi.Registry.generateMouseEvent(1, 1, 'b1c')": "BG1",
+            "w.set_input_focus(X.RevertToParent, X.CurrentTime)": "BG2",
+            "w.raise_window()": "BG2",
+            "w.configure(stack_mode=X.Above)": "BG2",
+            "root.send_event(ev, event_mask=1)\na = 'x_NET_ACTIVE_WINDOW'": "BG2",
+            'lib.XTestFakeKeyEvent(dpy, 36, 1, 0)': "BG3",
+            'xdo.xdo_send_keysequence_window(x, 0, b"ctrl+s", 0)': "BG3",
+            'xdotool("key", "ctrl+s")': "BG3",
+            'xdotool("windowactivate", "5")': "BG2",
+        }
+        for src, rule in cases.items():
+            with self.subTest(src=src):
+                report = self.lint(src + "\nreturn w.get_geometry()")
+                self.assertIn(rule, {f.rule for f in report.blocked})
+                self.assertTrue(self.lint(src + "\nreturn w.get_geometry()", grant=True).ok)
+        for src in ("w.grab_keyboard(1, 1, 1, 0)", "d.grab_server()", "lib.XGrabPointer(dpy)"):
+            with self.subTest(src=src):
+                self.assertIn("BG4", {f.rule for f in self.lint(src, grant=True).blocked})
+
+    def test_side_doors_and_cua_driver_stay_closed(self):
+        for src, rule in {
+            "import os": "GUI1",
+            "import subprocess": "GUI1",
+            "from gi.repository import Gio": "GUI1",
+            "from gi.repository import Gtk": "GUI1",
+            "from gi.repository import GLib\nGLib.spawn_async(['sh'])": "GUI1",
+            "import ctypes\nctypes.pythonapi.Py_Exit(0)": "GUI1",
+            "open('/etc/passwd')": "GUI1",
+            "x.__class__": "GUI2",
+            "import cua_driver": "DRV1",
+            'xdotool("search", "--name", "cua-driver")': "DRV1",
+            "from . import raw": "GUI1",
+            "import raw": "GUI1",
+        }.items():
+            for grant in (False, True):
+                with self.subTest(src=src, grant=grant):
+                    self.assertIn(rule, {f.rule for f in self.lint(src + "\nreturn 1", grant).blocked})
+
+    def test_runner_imports_and_getattr_in_native_mode(self):
+        with mock.patch.object(runner, "NATIVE", True):
+            self.assertIs(runner._guarded_import("json"), __import__("json"))
+            self.assertIs(runner._guarded_import("ctypes"), __import__("ctypes"))
+            for name in ("os", "subprocess", "raw", "gi.repository.Gio", "importlib"):
+                with self.assertRaises(ImportError, msg=name):
+                    runner._guarded_import(name)
+            with self.assertRaises(ImportError):
+                runner._guarded_import("gi.repository", fromlist=("Gtk",))
+            with self.assertRaises(ImportError):
+                runner._guarded_import("json", level=1)
+
+            class Box:
+                _fields_ = "ok"
+                __secret__ = "no"
+                pythonapi = "no"
+
+            fake = mock.MagicMock()
+            fake.STATE.check.return_value = None
+            with mock.patch.dict(sys.modules, {"raw": fake}):
+                self.assertEqual(runner._guarded_getattr(Box(), "_fields_"), "ok")
+            for name in ("__secret__", "pythonapi"):
+                with self.assertRaises(AttributeError, msg=name):
+                    runner._guarded_getattr(Box(), name)
+
+    def test_server_offers_the_native_description_only_in_native_mode(self):
+        import raw_mcp
+
+        with mock.patch.object(raw_mcp, "NATIVE", True):
+            text = raw_mcp.description({"foreground_grant": True})
+        self.assertNotIn("raw.", text)
+        self.assertIn("SHOTS", text)
+        self.assertIn("This task grants foreground", text)
+        self.assertIn("raw.cells", raw_mcp.description({"foreground_grant": True}))
+
+
 class TaskGrantTest(unittest.TestCase):
     """The per-task grant in the task definitions: only tasks with no background route on the X11 lane get it."""
 

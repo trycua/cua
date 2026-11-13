@@ -69,6 +69,9 @@ fn read_state(driver: &mut McpDriver, pid: i64, window_id: u64) -> serde_json::V
     state.structured().clone()
 }
 
+/// Launch Calculator and find its keypad window. WindowServer may list
+/// helper windows, and titles are unavailable without Screen Recording, so
+/// select the window whose tree holds the Equals button.
 fn launch_calculator(driver: &mut McpDriver) -> (i64, u64) {
     let launch = driver.call(
         "launch_app",
@@ -83,20 +86,27 @@ fn launch_calculator(driver: &mut McpDriver) -> (i64, u64) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         let listed = driver.call("list_windows", serde_json::json!({ "pid": pid }));
-        let window = listed.structured()["windows"]
+        let candidates: Vec<u64> = listed.structured()["windows"]
             .as_array()
-            .and_then(|windows| {
-                windows.iter().find(|window| {
-                    window["is_on_screen"] == true && window["title"] == "Calculator"
-                })
-            })
-            .and_then(|window| window["window_id"].as_u64());
-        if let Some(window_id) = window {
-            return (pid, window_id);
+            .into_iter()
+            .flatten()
+            .filter(|window| window["is_on_screen"] == true)
+            .filter_map(|window| window["window_id"].as_u64())
+            .collect();
+        for window_id in candidates {
+            let state = read_state(driver, pid, window_id);
+            let has_keypad = state["elements"].as_array().is_some_and(|elements| {
+                elements
+                    .iter()
+                    .any(|element| element["role"] == "AXButton" && element["label"] == "Equals")
+            });
+            if has_keypad {
+                return (pid, window_id);
+            }
         }
         assert!(
             Instant::now() < deadline,
-            "Calculator opened no on-screen window: {}",
+            "Calculator opened no window with its keypad: {}",
             listed.text()
         );
         std::thread::sleep(Duration::from_millis(250));

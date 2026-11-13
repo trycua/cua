@@ -1114,6 +1114,60 @@ fn focus_record(wid: u32) -> [u8; 0xF8] {
     buf
 }
 
+/// The focus and defocus records are AppKit's own application events: type
+/// 0x0d is `NSEventTypeAppKitDefined` and byte 0x8a its subtype, 1
+/// `NSEventSubtypeApplicationActivated` and 2 `...ApplicationDeactivated`.
+/// Posted to one process only, they change what that app's AppKit believes
+/// (`NSApp.isActive`); WindowServer's front process stays as it is.
+const APPKIT_APPLICATION_ACTIVATED: u8 = 0x01;
+const APPKIT_APPLICATION_DEACTIVATED: u8 = 0x02;
+
+/// The application-activated (`activated`) or -deactivated record for `wid`.
+fn app_activation_record(wid: u32, activated: bool) -> [u8; 0xF8] {
+    let mut record = focus_record(wid);
+    record[0x8A] = if activated {
+        APPKIT_APPLICATION_ACTIVATED
+    } else {
+        APPKIT_APPLICATION_DEACTIVATED
+    };
+    record
+}
+
+/// An app that counts itself active while it stays behind the user's app.
+///
+/// AppKit applies some keyboard behaviour only in an active app (a closed
+/// popup's type-select is one). [`InAppActivation::enter`] posts the
+/// application-activated record and the make-key records for `wid` to `pid`
+/// only: the app's AppKit then counts itself active with `wid` key, while
+/// WindowServer's front process, the window order and the user's key focus do
+/// not change. Dropping it posts the application-deactivated record to `pid`,
+/// so the app counts itself inactive again.
+pub struct InAppActivation {
+    pid: pid_t,
+    wid: u32,
+}
+
+impl InAppActivation {
+    /// Post the records; `None` when they could not be posted. Whether the
+    /// app now counts itself active is for the caller to read back.
+    pub fn enter(pid: pid_t, wid: u32) -> Option<Self> {
+        post_window_key_records(pid, None, wid).then_some(Self { pid, wid })
+    }
+}
+
+impl Drop for InAppActivation {
+    fn drop(&mut self) {
+        let Some(post) = post_event_record_to_fn() else {
+            return;
+        };
+        let mut psn = [0u8; 8];
+        if get_process_psn_for_window(self.wid, self.pid, &mut psn) {
+            let record = app_activation_record(self.wid, false);
+            note_post_status(unsafe { post(psn.as_ptr() as *const c_void, record.as_ptr()) });
+        }
+    }
+}
+
 /// The CGWindowID of `pid`'s key window: its `AXFocusedWindow`, else its
 /// frontmost on-screen layer-0 window.
 pub fn key_window_of_pid(pid: pid_t) -> Option<u32> {
@@ -1551,9 +1605,10 @@ fn preserves_exact_existing_focus(
 #[cfg(test)]
 mod tests {
     use super::{
-        focus_failure_hint_from, foreground_turn, make_key_window_record, note_post_status,
-        preserves_exact_existing_focus, reset_windowserver_connection_invalid_for_test,
-        windowserver_connection_invalid, WINDOWSERVER_INVALID_CONNECTION,
+        app_activation_record, focus_failure_hint_from, focus_record, foreground_turn,
+        make_key_window_record, note_post_status, preserves_exact_existing_focus,
+        reset_windowserver_connection_invalid_for_test, windowserver_connection_invalid,
+        WINDOWSERVER_INVALID_CONNECTION,
     };
     use crate::ax::exact_target::AxWindowId;
 
@@ -1622,6 +1677,26 @@ mod tests {
         assert_eq!(&press[0x3C..0x40], &[0x12, 0x34, 0x56, 0x78]);
         assert_eq!(press[0x3A], 0x10);
         assert!(press[0x20..0x30].iter().all(|byte| *byte == 0xFF));
+    }
+
+    #[test]
+    fn app_activation_records_are_appkit_application_events_for_the_window() {
+        let activated = app_activation_record(0x7856_3412, true);
+        let deactivated = app_activation_record(0x7856_3412, false);
+        for record in [&activated, &deactivated] {
+            assert_eq!(record.len(), 0xF8);
+            assert_eq!(record[0x04], 0xF8);
+            // NSEventTypeAppKitDefined.
+            assert_eq!(record[0x08], 0x0D);
+            assert_eq!(&record[0x3C..0x40], &[0x12, 0x34, 0x56, 0x78]);
+        }
+        // NSEventSubtypeApplicationActivated / ...Deactivated.
+        assert_eq!(activated[0x8A], 0x01);
+        assert_eq!(deactivated[0x8A], 0x02);
+        // Nothing else is set: the same records as the focus/defocus pair.
+        let mut focus = focus_record(0x7856_3412);
+        focus[0x8A] = 0x01;
+        assert_eq!(activated, focus);
     }
 
     #[test]

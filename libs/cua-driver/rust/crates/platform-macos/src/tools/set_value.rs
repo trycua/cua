@@ -51,7 +51,7 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "set_value".into(),
-        description: "Set an element's value by `element_token`. A popup button / select dropdown: selects the menu item whose title or value matches `value` (case-insensitive). Safari `<select>` is set through the DOM; a background Chromium `<select>` is chosen by typing the option's label into the closed control. AppKit popups list items only while open, so the menu is opened, the item pressed and the menu closed again. In the background a menu is never opened while another app's window covers the popup's window, because opening it brings the window above the user's. There the item is chosen by typing its title into the closed popup (AppKit type-select, `popup_route:\"type_select\"`, read back) when the app takes it: AppKit applies type-select only in an app it counts as active. Otherwise the call is refused with `background_unavailable` (reason `popup_menu_would_raise_window`, `type_select` says why) and nothing changes. If the app raises its window or activates itself anyway, the driver puts the user's window back and reports it in `user_disturbance`. An unknown value lists the options. Any other element: writes AXValue (sliders, steppers, date pickers, native text fields).\n\
+        description: "Set an element's value by `element_token`. A popup button / select dropdown: selects the menu item whose title or value matches `value` (case-insensitive). Safari `<select>` is set through the DOM; a background Chromium `<select>` is chosen by typing the option's label into the closed control. AppKit popups list items only while open, so the menu is opened, the item pressed and the menu closed again. In the background a menu is never opened while another app's window covers the popup's window, because opening it brings the window above the user's. There the item is chosen by typing its title into the closed popup (AppKit type-select, `popup_route:\"type_select\"`, read back). AppKit applies type-select only in an app it counts as active, so an app that does not is made to count itself active for the length of the typing by an in-app activation (the user's app stays frontmost and keeps the keyboard; nothing is raised). Otherwise the call is refused with `background_unavailable` (reason `popup_menu_would_raise_window`, `type_select` says why) and nothing changes. If the app raises its window or activates itself anyway, the driver puts the user's window back and reports it in `user_disturbance`. An unknown value lists the options. Any other element: writes AXValue (sliders, steppers, date pickers, native text fields).\n\
             \n\
             A Finder file name cell (list or icon view, not being edited) is renamed through Finder's scripting interface with Finder left in the background, and the new name is read back from disk; the value is the full new name with its extension. macOS may prompt for Automation consent; with serve --no-automation-prompts, ungranted consent refuses with automation_consent_required. Finder's Get Info `Name` field is refused with `file_name_needs_rename`. For free-form text in web inputs use `type_text_chars`: WebKit ignores AXValue writes.".into(),
         input_schema: serde_json::json!({
@@ -1132,9 +1132,14 @@ fn type_select_keys(title: &str) -> Vec<char> {
 enum TypeSelectMiss {
     /// The title begins with a key that would open the menu.
     NoKeys,
-    /// AppKit does not count the app as active, so it ignores type-select;
-    /// nothing was typed.
+    /// AppKit does not count the app as active, so it ignores type-select,
+    /// and the in-app activation records did not change that; nothing was
+    /// typed.
     AppNotActive,
+    /// Counting itself active put another of the app's windows on screen (a
+    /// panel AppKit shows only in an active app), so the activation was
+    /// undone at once; nothing was typed.
+    ActivationShowedWindows,
     /// The popup could not take keyboard focus, or the window could not be
     /// made the app's key window; nothing was typed.
     NotFocused,
@@ -1149,6 +1154,7 @@ impl TypeSelectMiss {
         match self {
             Self::NoKeys => "title_starts_with_a_menu_key",
             Self::AppNotActive => "app_not_active",
+            Self::ActivationShowedWindows => "activation_showed_windows",
             Self::NotFocused => "popup_not_focused",
             Self::NotChosen { .. } => "item_not_chosen",
         }
@@ -1181,6 +1187,49 @@ fn run_type_select(
         }
         if std::time::Instant::now() >= deadline {
             return Err(TypeSelectMiss::NotChosen { shown: now_shown });
+        }
+        std::thread::sleep(poll);
+    }
+}
+
+/// How long an app may take to handle the in-app activation records before it
+/// reports itself active.
+const ACTIVATION_SETTLE: std::time::Duration = std::time::Duration::from_millis(500);
+const ACTIVATION_POLL: std::time::Duration = std::time::Duration::from_millis(25);
+
+/// Have AppKit count the app as active before anything is typed. An app that
+/// already does needs nothing (`Ok(None)`). Otherwise `activate` posts the
+/// in-app activation and returns its guard, and `is_active` is read until it
+/// is true or `settle` has passed. An app that shows another window once
+/// active (`showed_windows`: a panel AppKit hides while the app is inactive)
+/// would change the user's screen, so that activation is undone. The guard
+/// undoes the activation when it is dropped, which happens here when the app
+/// never reports itself active or shows a window.
+fn ensure_counts_itself_active<G>(
+    mut is_active: impl FnMut() -> bool,
+    activate: impl FnOnce() -> Option<G>,
+    mut showed_windows: impl FnMut() -> bool,
+    settle: std::time::Duration,
+    poll: std::time::Duration,
+) -> Result<Option<G>, TypeSelectMiss> {
+    if is_active() {
+        return Ok(None);
+    }
+    let Some(guard) = activate() else {
+        return Err(TypeSelectMiss::AppNotActive);
+    };
+    let deadline = std::time::Instant::now() + settle;
+    loop {
+        if is_active() {
+            if showed_windows() {
+                drop(guard);
+                return Err(TypeSelectMiss::ActivationShowedWindows);
+            }
+            return Ok(Some(guard));
+        }
+        if std::time::Instant::now() >= deadline {
+            drop(guard);
+            return Err(TypeSelectMiss::AppNotActive);
         }
         std::thread::sleep(poll);
     }
@@ -1223,10 +1272,13 @@ fn press_type_select_key(pid: i32, key: char) -> anyhow::Result<()> {
 /// characters select the first item whose title starts with them once typing
 /// pauses. The popup is focused through accessibility and the keys are posted
 /// to the app with its window made the app's key window, the route `press_key`
-/// with an `element_token` uses; nothing is activated or raised. The result is
-/// read back from the popup. AppKit applies type-select only while it counts
-/// the app as active (it ignores the keys otherwise), so nothing is typed into
-/// an app that does not; the caller then refuses as before.
+/// with an `element_token` uses; nothing is raised. The result is read back
+/// from the popup. AppKit applies type-select only while it counts the app as
+/// active (it ignores the keys otherwise). An app that does not is made to
+/// count itself active by AppKit's application-activated record, posted to it
+/// alone, for the length of the typing: WindowServer's front process, the
+/// window order and the user's key focus do not change. When even that leaves
+/// the app inactive, nothing is typed and the caller refuses as before.
 fn select_appkit_popup_by_type_select(
     popup: AXUIElementRef,
     element_index: usize,
@@ -1252,9 +1304,24 @@ fn select_appkit_popup_by_type_select(
     if keys.is_empty() {
         return Err(TypeSelectMiss::NoKeys);
     }
-    if !app_counts_itself_active(pid) {
-        return Err(TypeSelectMiss::AppNotActive);
-    }
+    // AppKit applies type-select only in an app it counts as active. One that
+    // does not gets the application-activated record (to it alone; the user's
+    // app stays frontmost and keeps the keyboard) and is handed back with the
+    // deactivated record once the item is chosen or the attempt ends.
+    let on_screen = || -> Vec<u32> {
+        crate::windows::pid_on_screen_windows_any_layer(pid)
+            .into_iter()
+            .map(|window| window.window_id)
+            .collect()
+    };
+    let on_screen_before = on_screen();
+    let activation = ensure_counts_itself_active(
+        || app_counts_itself_active(pid),
+        || crate::input::skylight::InAppActivation::enter(pid, window_id),
+        || on_screen().iter().any(|id| !on_screen_before.contains(id)),
+        ACTIVATION_SETTLE,
+        ACTIVATION_POLL,
+    )?;
     let popup_address = popup as usize;
     let previous_focus =
         unsafe { crate::ax::exact_target::focused_element_in_window(pid, window_id) };
@@ -1297,6 +1364,7 @@ fn select_appkit_popup_by_type_select(
         TYPE_SELECT_POLL,
     );
     drop(scope);
+    drop(activation);
     match result {
         Ok(shown) => {
             if let Some(previous) = previous_focus {
@@ -1726,6 +1794,119 @@ mod type_select_tests {
             Err(TypeSelectMiss::NotChosen {
                 shown: "Low".into()
             })
+        );
+    }
+
+    /// An app that counts itself active once `activate_after` reads have
+    /// passed since the activation was posted; `posted` and `undone` count the
+    /// activation and its guard's drop.
+    struct FakeApp {
+        active: std::cell::Cell<bool>,
+        reads_until_active: std::cell::Cell<Option<u32>>,
+        posted: std::cell::Cell<u32>,
+        undone: std::rc::Rc<std::cell::Cell<u32>>,
+    }
+
+    struct FakeActivation(std::rc::Rc<std::cell::Cell<u32>>);
+
+    impl Drop for FakeActivation {
+        fn drop(&mut self) {
+            self.0.set(self.0.get() + 1);
+        }
+    }
+
+    impl FakeApp {
+        fn new(active: bool, reads_until_active: Option<u32>) -> Self {
+            Self {
+                active: std::cell::Cell::new(active),
+                reads_until_active: std::cell::Cell::new(reads_until_active),
+                posted: std::cell::Cell::new(0),
+                undone: std::rc::Rc::new(std::cell::Cell::new(0)),
+            }
+        }
+
+        fn is_active(&self) -> bool {
+            if self.posted.get() > 0 {
+                match self.reads_until_active.get() {
+                    Some(0) => self.active.set(true),
+                    Some(n) => self.reads_until_active.set(Some(n - 1)),
+                    None => {}
+                }
+            }
+            self.active.get()
+        }
+
+        fn ensure(
+            &self,
+            showed_windows: bool,
+            posts: bool,
+        ) -> Result<Option<FakeActivation>, TypeSelectMiss> {
+            super::ensure_counts_itself_active(
+                || self.is_active(),
+                || {
+                    self.posted.set(self.posted.get() + 1);
+                    posts.then(|| FakeActivation(self.undone.clone()))
+                },
+                || showed_windows,
+                Duration::from_millis(40),
+                Duration::from_millis(2),
+            )
+        }
+    }
+
+    #[test]
+    fn an_app_that_counts_itself_active_gets_no_activation() {
+        let app = FakeApp::new(true, None);
+        assert!(matches!(app.ensure(false, true), Ok(None)));
+        assert_eq!(app.posted.get(), 0);
+        assert_eq!(app.undone.get(), 0);
+    }
+
+    #[test]
+    fn an_inactive_app_is_activated_in_app_and_handed_back_after() {
+        let app = FakeApp::new(false, Some(2));
+        let guard = app.ensure(false, true).expect("activated");
+        assert!(guard.is_some());
+        assert_eq!(app.posted.get(), 1);
+        // Still active while the guard (the typing) lasts.
+        assert_eq!(app.undone.get(), 0);
+        drop(guard);
+        assert_eq!(app.undone.get(), 1);
+    }
+
+    #[test]
+    fn an_app_that_stays_inactive_is_handed_back_and_refused() {
+        let app = FakeApp::new(false, None);
+        assert!(matches!(
+            app.ensure(false, true),
+            Err(TypeSelectMiss::AppNotActive)
+        ));
+        assert_eq!(app.posted.get(), 1);
+        assert_eq!(app.undone.get(), 1);
+    }
+
+    #[test]
+    fn records_that_cannot_be_posted_are_refused() {
+        let app = FakeApp::new(false, Some(0));
+        assert!(matches!(
+            app.ensure(false, false),
+            Err(TypeSelectMiss::AppNotActive)
+        ));
+        assert_eq!(app.undone.get(), 0);
+    }
+
+    #[test]
+    fn an_activation_that_shows_a_window_is_undone_at_once() {
+        let app = FakeApp::new(false, Some(0));
+        let result = app.ensure(true, true);
+        assert!(matches!(
+            result,
+            Err(TypeSelectMiss::ActivationShowedWindows)
+        ));
+        assert_eq!(app.undone.get(), 1);
+        assert_eq!(
+            TypeSelectMiss::ActivationShowedWindows.code(),
+            "activation_showed_windows"
         );
     }
 }

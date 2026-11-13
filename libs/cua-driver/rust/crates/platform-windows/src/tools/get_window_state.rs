@@ -46,6 +46,26 @@ mod get_window_state_actions_tests {
     }
 
     #[test]
+    fn display_only_rows_are_observations_without_action_handles() {
+        let mut text = node(Vec::new());
+        text.element_index = None;
+        text.control_type = "Text".to_owned();
+        text.name = Some("Display is 6".to_owned());
+        text.parent_element_index = Some(1);
+        let mut blank = node(Vec::new());
+        blank.element_index = None;
+        blank.name = None;
+        let nodes = vec![node(vec!["invoke".to_owned()]), text, blank];
+        assert!(build_element_entry(&nodes[1], None).is_none());
+        let observations = build_observations(&nodes);
+        assert_eq!(observations.len(), 1);
+        assert_eq!(
+            serde_json::to_value(&observations[0]).unwrap(),
+            json!({"role": "Text", "depth": 0, "label": "Display is 6", "parent_index": 1})
+        );
+    }
+
+    #[test]
     fn element_entry_omits_actions_when_empty() {
         let n = node(Vec::new());
         let entry = build_element_entry(&n, None).unwrap();
@@ -112,6 +132,43 @@ fn build_element_entry(
         });
     }
     Some(entry)
+}
+
+/// The walk's display-only rows (static text, read-only values) as
+/// `observations`. They carry no `element_index` or `element_token` because
+/// no action can target them (#2958).
+fn build_observations(
+    nodes: &[crate::uia::UiaNode],
+) -> Vec<cua_driver_contract::WindowObservation> {
+    nodes
+        .iter()
+        .filter(|n| n.element_index.is_none())
+        .filter_map(|n| {
+            let value = n.value.clone().filter(|v| !v.is_empty());
+            let label = n
+                .name
+                .clone()
+                .or_else(|| n.value.clone())
+                .or_else(|| n.automation_id.clone())
+                .or_else(|| n.help_text.clone());
+            (label.is_some() || value.is_some()).then(|| cua_driver_contract::WindowObservation {
+                role: n.control_type.clone(),
+                depth: n.depth as u32,
+                label,
+                value,
+                frame: n
+                    .rect
+                    .map(|(l, t, r, b)| cua_driver_contract::ElementFrame {
+                        x: f64::from(l),
+                        y: f64::from(t),
+                        w: f64::from((r - l).max(0)),
+                        h: f64::from((b - t).max(0)),
+                    }),
+                parent_index: n.parent_element_index.map(|i| i as u64),
+                in_web_content: n.in_web_content.then_some(true),
+            })
+        })
+        .collect()
 }
 
 pub struct GetWindowStateTool {
@@ -565,6 +622,11 @@ impl Tool for GetWindowStateTool {
                     structured["total_element_count"] = json!(count);
                     structured["returned_element_count"] = json!(elements.len());
                     structured["elements"] = json!(elements);
+                    cua_driver_core::element_query::publish_observations(
+                        &mut structured,
+                        build_observations(&tr.nodes),
+                        query.as_deref(),
+                    );
                     // Surface 6: snapshot id mirror for debug correlation.
                     if let Some(snapshot_id) = snapshot_id {
                         structured["snapshot_id"] = json!(

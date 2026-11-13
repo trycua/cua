@@ -8185,6 +8185,78 @@ class _UniffiFfiConverterTypeWindowElement(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalFloat64.write(value.min, buf)
         _UniffiFfiConverterOptionalFloat64.write(value.max, buf)
 
+@dataclass
+class WindowObservation:
+    """
+    A readable native row with no action handle: static text, a label, a
+    read-only value. It comes from the same walk as `elements`, carries no
+    `element_index` or `element_token`, and no action tool accepts it.
+    `parent_index` names the nearest addressable ancestor in `elements`.
+"""
+    def __init__(self, *, role:str, depth:int, label:typing.Optional[str], value:typing.Optional[str], frame:typing.Optional[ElementFrame], parent_index:typing.Optional[int], in_web_content:typing.Optional[bool]):
+        self.role = role
+        self.depth = depth
+        self.label = label
+        self.value = value
+        self.frame = frame
+        self.parent_index = parent_index
+        self.in_web_content = in_web_content
+
+
+
+
+    def __str__(self):
+        return "WindowObservation(role={}, depth={}, label={}, value={}, frame={}, parent_index={}, in_web_content={})".format(self.role, self.depth, self.label, self.value, self.frame, self.parent_index, self.in_web_content)
+    def __eq__(self, other):
+        if self.role != other.role:
+            return False
+        if self.depth != other.depth:
+            return False
+        if self.label != other.label:
+            return False
+        if self.value != other.value:
+            return False
+        if self.frame != other.frame:
+            return False
+        if self.parent_index != other.parent_index:
+            return False
+        if self.in_web_content != other.in_web_content:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeWindowObservation(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return WindowObservation(
+            role=_UniffiFfiConverterString.read(buf),
+            depth=_UniffiFfiConverterUInt32.read(buf),
+            label=_UniffiFfiConverterOptionalString.read(buf),
+            value=_UniffiFfiConverterOptionalString.read(buf),
+            frame=_UniffiFfiConverterOptionalTypeElementFrame.read(buf),
+            parent_index=_UniffiFfiConverterOptionalUInt64.read(buf),
+            in_web_content=_UniffiFfiConverterOptionalBoolean.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.role)
+        _UniffiFfiConverterUInt32.check_lower(value.depth)
+        _UniffiFfiConverterOptionalString.check_lower(value.label)
+        _UniffiFfiConverterOptionalString.check_lower(value.value)
+        _UniffiFfiConverterOptionalTypeElementFrame.check_lower(value.frame)
+        _UniffiFfiConverterOptionalUInt64.check_lower(value.parent_index)
+        _UniffiFfiConverterOptionalBoolean.check_lower(value.in_web_content)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.role, buf)
+        _UniffiFfiConverterUInt32.write(value.depth, buf)
+        _UniffiFfiConverterOptionalString.write(value.label, buf)
+        _UniffiFfiConverterOptionalString.write(value.value, buf)
+        _UniffiFfiConverterOptionalTypeElementFrame.write(value.frame, buf)
+        _UniffiFfiConverterOptionalUInt64.write(value.parent_index, buf)
+        _UniffiFfiConverterOptionalBoolean.write(value.in_web_content, buf)
+
 class _UniffiFfiConverterSequenceTypeWindowElement(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -8230,6 +8302,54 @@ class _UniffiFfiConverterOptionalSequenceTypeWindowElement(_UniffiConverterRustB
             return None
         elif flag == 1:
             return _UniffiFfiConverterSequenceTypeWindowElement.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
+class _UniffiFfiConverterSequenceTypeWindowObservation(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeWindowObservation.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeWindowObservation.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeWindowObservation.read(buf) for i in range(count)
+        ]
+
+class _UniffiFfiConverterOptionalSequenceTypeWindowObservation(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterSequenceTypeWindowObservation.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterSequenceTypeWindowObservation.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterSequenceTypeWindowObservation.read(buf)
         else:
             raise InternalError("Unexpected flag byte for optional type")
 
@@ -8283,7 +8403,7 @@ class _UniffiFfiConverterSequenceTypeSnapshotImage(_UniffiConverterRustBuffer):
 
 @dataclass
 class WindowStateOutput:
-    def __init__(self, *, pid:int, window_id:int, snapshot_id:typing.Optional[str], app_name:typing.Optional[str], window_title:typing.Optional[str], tree_markdown:typing.Optional[str], elements:typing.Optional[typing.List[WindowElement]], element_count:typing.Optional[int], total_element_count:typing.Optional[int], returned_element_count:typing.Optional[int], filtered_element_count:typing.Optional[int], elements_complete:typing.Optional[bool], degraded:typing.Optional[bool], degraded_reason:typing.Optional[str], truncated:typing.Optional[bool], truncation_reason:typing.Optional[str], truncation_hint:typing.Optional[str], tree_format:typing.Optional[str], since:typing.Optional[str], since_status:typing.Optional[str], tree_diff:typing.Optional[str], screenshot_width:typing.Optional[int], screenshot_height:typing.Optional[int], screenshot_scale:typing.Optional[float], screenshot_mime_type:typing.Optional[str], screenshot_file_path:typing.Optional[str], screenshot_frame_valid:typing.Optional[bool], window_bounds:typing.Optional[WindowBounds], images:typing.List[SnapshotImage]):
+    def __init__(self, *, pid:int, window_id:int, snapshot_id:typing.Optional[str], app_name:typing.Optional[str], window_title:typing.Optional[str], tree_markdown:typing.Optional[str], elements:typing.Optional[typing.List[WindowElement]], observations:typing.Optional[typing.List[WindowObservation]], observations_truncated:typing.Optional[bool], element_count:typing.Optional[int], total_element_count:typing.Optional[int], returned_element_count:typing.Optional[int], filtered_element_count:typing.Optional[int], elements_complete:typing.Optional[bool], degraded:typing.Optional[bool], degraded_reason:typing.Optional[str], truncated:typing.Optional[bool], truncation_reason:typing.Optional[str], truncation_hint:typing.Optional[str], tree_format:typing.Optional[str], since:typing.Optional[str], since_status:typing.Optional[str], tree_diff:typing.Optional[str], screenshot_width:typing.Optional[int], screenshot_height:typing.Optional[int], screenshot_scale:typing.Optional[float], screenshot_mime_type:typing.Optional[str], screenshot_file_path:typing.Optional[str], screenshot_frame_valid:typing.Optional[bool], window_bounds:typing.Optional[WindowBounds], images:typing.List[SnapshotImage]):
         self.pid = pid
         self.window_id = window_id
         self.snapshot_id = snapshot_id
@@ -8291,6 +8411,8 @@ class WindowStateOutput:
         self.window_title = window_title
         self.tree_markdown = tree_markdown
         self.elements = elements
+        self.observations = observations
+        self.observations_truncated = observations_truncated
         self.element_count = element_count
         self.total_element_count = total_element_count
         self.returned_element_count = returned_element_count
@@ -8318,7 +8440,7 @@ class WindowStateOutput:
 
 
     def __str__(self):
-        return "WindowStateOutput(pid={}, window_id={}, snapshot_id={}, app_name={}, window_title={}, tree_markdown={}, elements={}, element_count={}, total_element_count={}, returned_element_count={}, filtered_element_count={}, elements_complete={}, degraded={}, degraded_reason={}, truncated={}, truncation_reason={}, truncation_hint={}, tree_format={}, since={}, since_status={}, tree_diff={}, screenshot_width={}, screenshot_height={}, screenshot_scale={}, screenshot_mime_type={}, screenshot_file_path={}, screenshot_frame_valid={}, window_bounds={}, images={})".format(self.pid, self.window_id, self.snapshot_id, self.app_name, self.window_title, self.tree_markdown, self.elements, self.element_count, self.total_element_count, self.returned_element_count, self.filtered_element_count, self.elements_complete, self.degraded, self.degraded_reason, self.truncated, self.truncation_reason, self.truncation_hint, self.tree_format, self.since, self.since_status, self.tree_diff, self.screenshot_width, self.screenshot_height, self.screenshot_scale, self.screenshot_mime_type, self.screenshot_file_path, self.screenshot_frame_valid, self.window_bounds, self.images)
+        return "WindowStateOutput(pid={}, window_id={}, snapshot_id={}, app_name={}, window_title={}, tree_markdown={}, elements={}, observations={}, observations_truncated={}, element_count={}, total_element_count={}, returned_element_count={}, filtered_element_count={}, elements_complete={}, degraded={}, degraded_reason={}, truncated={}, truncation_reason={}, truncation_hint={}, tree_format={}, since={}, since_status={}, tree_diff={}, screenshot_width={}, screenshot_height={}, screenshot_scale={}, screenshot_mime_type={}, screenshot_file_path={}, screenshot_frame_valid={}, window_bounds={}, images={})".format(self.pid, self.window_id, self.snapshot_id, self.app_name, self.window_title, self.tree_markdown, self.elements, self.observations, self.observations_truncated, self.element_count, self.total_element_count, self.returned_element_count, self.filtered_element_count, self.elements_complete, self.degraded, self.degraded_reason, self.truncated, self.truncation_reason, self.truncation_hint, self.tree_format, self.since, self.since_status, self.tree_diff, self.screenshot_width, self.screenshot_height, self.screenshot_scale, self.screenshot_mime_type, self.screenshot_file_path, self.screenshot_frame_valid, self.window_bounds, self.images)
     def __eq__(self, other):
         if self.pid != other.pid:
             return False
@@ -8333,6 +8455,10 @@ class WindowStateOutput:
         if self.tree_markdown != other.tree_markdown:
             return False
         if self.elements != other.elements:
+            return False
+        if self.observations != other.observations:
+            return False
+        if self.observations_truncated != other.observations_truncated:
             return False
         if self.element_count != other.element_count:
             return False
@@ -8391,6 +8517,8 @@ class _UniffiFfiConverterTypeWindowStateOutput(_UniffiConverterRustBuffer):
             window_title=_UniffiFfiConverterOptionalString.read(buf),
             tree_markdown=_UniffiFfiConverterOptionalString.read(buf),
             elements=_UniffiFfiConverterOptionalSequenceTypeWindowElement.read(buf),
+            observations=_UniffiFfiConverterOptionalSequenceTypeWindowObservation.read(buf),
+            observations_truncated=_UniffiFfiConverterOptionalBoolean.read(buf),
             element_count=_UniffiFfiConverterOptionalUInt64.read(buf),
             total_element_count=_UniffiFfiConverterOptionalUInt64.read(buf),
             returned_element_count=_UniffiFfiConverterOptionalUInt64.read(buf),
@@ -8424,6 +8552,8 @@ class _UniffiFfiConverterTypeWindowStateOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.check_lower(value.window_title)
         _UniffiFfiConverterOptionalString.check_lower(value.tree_markdown)
         _UniffiFfiConverterOptionalSequenceTypeWindowElement.check_lower(value.elements)
+        _UniffiFfiConverterOptionalSequenceTypeWindowObservation.check_lower(value.observations)
+        _UniffiFfiConverterOptionalBoolean.check_lower(value.observations_truncated)
         _UniffiFfiConverterOptionalUInt64.check_lower(value.element_count)
         _UniffiFfiConverterOptionalUInt64.check_lower(value.total_element_count)
         _UniffiFfiConverterOptionalUInt64.check_lower(value.returned_element_count)
@@ -8456,6 +8586,8 @@ class _UniffiFfiConverterTypeWindowStateOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.write(value.window_title, buf)
         _UniffiFfiConverterOptionalString.write(value.tree_markdown, buf)
         _UniffiFfiConverterOptionalSequenceTypeWindowElement.write(value.elements, buf)
+        _UniffiFfiConverterOptionalSequenceTypeWindowObservation.write(value.observations, buf)
+        _UniffiFfiConverterOptionalBoolean.write(value.observations_truncated, buf)
         _UniffiFfiConverterOptionalUInt64.write(value.element_count, buf)
         _UniffiFfiConverterOptionalUInt64.write(value.total_element_count, buf)
         _UniffiFfiConverterOptionalUInt64.write(value.returned_element_count, buf)
@@ -8649,5 +8781,6 @@ __all__ = [
     "VerifyStateOutput",
     "VisualParseError",
     "WindowElement",
+    "WindowObservation",
     "WindowStateOutput",
 ]

@@ -269,17 +269,12 @@ def run_script(script: str, timeout_ms: int | None) -> tuple[list[dict], bool, d
     shots = Path(tempfile.mkdtemp(prefix="call-", dir=TMP))
     started = time.monotonic()
     code, stdout, stderr = run_runner(script, shots, limit, runner_env(settings))
+    line = ""
     if code is None:
         result = {
             "ok": False,
             "error": f"the script did not finish within {limit:.0f} s and was killed",
         }
-        if (shots / GUARD_MARKER).exists():
-            # killed with a background pop-up menu open under the key-focus guard: what it left is unknown
-            result["runtime_blocked"] = [
-                "MB7: the script was killed while raw.select had a background pop-up menu open under the key-focus "
-                "guard; the user's key focus and window order were not checked"
-            ]
     else:
         line = (stdout.strip().splitlines() or [""])[-1]
         result = (
@@ -287,6 +282,13 @@ def run_script(script: str, timeout_ms: int | None) -> tuple[list[dict], bool, d
             if line.startswith("{")
             else {"ok": False, "error": f"runner exited {code}: {stderr.strip()[-1500:]}"}
         )
+    if (code is None or not line.startswith("{")) and (shots / GUARD_MARKER).exists():
+        # no complete result from a call that opened a background pop-up menu under the key-focus guard (killed or
+        # crashed): what it left on screen is unknown, so the call is refused
+        result["runtime_blocked"] = [
+            "MB7: the script ended without a result after raw.select opened a background pop-up menu under the "
+            "key-focus guard; the user's key focus and window order were not checked"
+        ]
     elapsed = round(time.monotonic() - started, 2)
     text: list[str] = []
     if result.get("lint_text"):

@@ -192,7 +192,8 @@ def focus_sample() -> dict[str, Any]:
     }
 
 
-# Written into the call's directory while the key-focus guard has a menu open (read by raw_mcp_mac on a timeout).
+# Written into the call's directory when the key-focus guard opens a menu (read by raw_mcp_mac when the runner does not
+# return a complete result).
 GUARD_MARKER = "key-focus-guard-open"
 # Disturbances a helper saw and undid itself (the key-focus guard's window restores), for the hook's report.
 WATCH_NOTES: list[str] = []
@@ -781,8 +782,9 @@ class Raw:
         guard = _KeyFocusGuard(front, pid)
         if not guard.start():
             STATE.refuse("MB7", "raw.select: the key-focus guard could not tap the user's app")
-        # while this file exists the guard has a menu open; if the call is killed (its time limit), the server sees
-        # it and refuses the call under MB7 (raw_mcp_mac.run_script)
+        # the call used the guard: if the runner does not hand back a complete result (killed at its time limit, or
+        # crashed), the server sees this file and refuses the call under MB7 (raw_mcp_mac.run_script). It is never
+        # removed; a complete result carries the guard's own refusals and hook report instead.
         marker = STATE.image_dir / GUARD_MARKER if STATE.image_dir is not None else None
         if marker is not None:
             marker.write_text(app_name(pid), "utf-8")
@@ -791,8 +793,6 @@ class Raw:
         finally:
             # also when the pick raised (no such item): what the guard could not undo is refused either way
             problems = guard.finish()
-            if marker is not None:
-                marker.unlink(missing_ok=True)
             if problems:
                 STATE.refuse("MB7", "raw.select guarded pop-up: " + "; ".join(problems))
         STATE.route("select:menu_guarded")

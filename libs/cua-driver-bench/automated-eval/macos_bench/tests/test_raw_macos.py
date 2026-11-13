@@ -181,7 +181,7 @@ class GuardTimeoutTest(unittest.TestCase):
     """A call killed at its time limit while raw.select had a background pop-up menu open is refused under MB7, so a
     disturbance the guard could not finish checking still reaches the call log."""
 
-    def run_killed(self, marker: bool) -> dict:
+    def run_killed(self, marker: bool, outcome=(None, "", "")) -> dict:
         import importlib
         import os
         import tempfile
@@ -197,16 +197,26 @@ class GuardTimeoutTest(unittest.TestCase):
         def killed(script, shots, limit, env):
             if marker:
                 (shots / server.GUARD_MARKER).write_text("BenchLab")
-            return None, "", ""
+            return outcome
 
         server.run_runner = killed
         _, is_error, entry = server.run_script("return 1", 1000)
-        self.assertTrue(is_error)
+        self.assertEqual(is_error, outcome[0] != 0)
         return entry
 
     def test_killed_with_the_guard_open_is_refused(self):
         entry = self.run_killed(marker=True)
         self.assertTrue(any(b.startswith("MB7") for b in entry["runtime_blocked"]))
+
+    def test_crashed_with_the_guard_open_is_refused(self):
+        entry = self.run_killed(marker=True, outcome=(-11, "", "Segmentation fault"))
+        self.assertTrue(any(b.startswith("MB7") for b in entry["runtime_blocked"]))
+
+    def test_a_complete_result_keeps_its_own_findings(self):
+        done = '{"ok": true, "value": 1, "runtime_blocked": [], "watch": {"changed": ["top"], "lines": ["x"]}}'
+        entry = self.run_killed(marker=True, outcome=(0, done + "\n", ""))
+        self.assertEqual(entry["runtime_blocked"], [])
+        self.assertEqual(entry["watch_changed"], ["top"])
 
     def test_killed_without_the_guard_is_only_a_timeout(self):
         self.assertEqual(self.run_killed(marker=False)["runtime_blocked"], [])

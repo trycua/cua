@@ -2000,4 +2000,88 @@ mod tests {
         let _ = second_fixture.conn.destroy_window(second_fixture.window);
         let _ = second_fixture.conn.flush();
     }
+
+    /// The desktop capture shows top-level windows where they are on the
+    /// screen, stacked as the server stacks them. Run it under rootless
+    /// Xwayland (`Xwayland -rootless` inside a Wayland compositor, where a
+    /// root `GetImage` fails with BadMatch, #2932) and under Xvfb (where the
+    /// root is read directly).
+    #[test]
+    #[ignore = "requires a live X11 server (Xvfb or rootless Xwayland)"]
+    fn live_desktop_capture_shows_stacked_windows_at_their_screen_position() {
+        use x11rb::protocol::xproto::{ConnectionExt as _, CreateWindowAux, WindowClass};
+        use x11rb::rust_connection::RustConnection;
+        use x11rb::wrapper::ConnectionExt as _;
+
+        let (conn, screen_num) = RustConnection::connect(None).expect("connect");
+        let screen = conn.setup().roots[screen_num].clone();
+        let pixel = |rgb: u32| -> u32 {
+            let visual = screen
+                .allowed_depths
+                .iter()
+                .flat_map(|depth| depth.visuals.iter())
+                .find(|visual| visual.visual_id == screen.root_visual)
+                .expect("root visual");
+            let place = |component: u32, mask: u32| {
+                let max = mask >> mask.trailing_zeros();
+                ((component * max / 255) << mask.trailing_zeros()) & mask
+            };
+            place(rgb >> 16 & 0xff, visual.red_mask)
+                | place(rgb >> 8 & 0xff, visual.green_mask)
+                | place(rgb & 0xff, visual.blue_mask)
+        };
+        let window = |x: i16, y: i16, w: u16, h: u16, border: u16, rgb: u32| {
+            let id = conn.generate_id().unwrap();
+            conn.create_window(
+                x11rb::COPY_DEPTH_FROM_PARENT,
+                id,
+                screen.root,
+                x,
+                y,
+                w,
+                h,
+                border,
+                WindowClass::INPUT_OUTPUT,
+                0,
+                &CreateWindowAux::new()
+                    .override_redirect(1)
+                    .background_pixel(pixel(rgb))
+                    .border_pixel(pixel(0x00ff00)),
+            )
+            .unwrap()
+            .check()
+            .unwrap();
+            conn.map_window(id).unwrap().check().unwrap();
+            id
+        };
+        // The bottom window's 4 px green border spans x 40..168, y 30..118.
+        let bottom = window(40, 30, 120, 80, 4, 0xff0000);
+        let top = window(100, 60, 120, 80, 0, 0x0000ff);
+        conn.sync().unwrap();
+        // Let the server and any compositor show both windows.
+        std::thread::sleep(Duration::from_millis(500));
+
+        let png = screenshot_display_bytes_x11().expect("desktop capture");
+        let image = image::load_from_memory_with_format(&png, image::ImageFormat::Png)
+            .expect("decode")
+            .to_rgb8();
+        assert_eq!(
+            image.dimensions(),
+            (
+                u32::from(screen.width_in_pixels),
+                u32::from(screen.height_in_pixels)
+            )
+        );
+        let at = |x, y| image.get_pixel(x, y).0;
+        assert_eq!(at(41, 31), [0, 255, 0], "bottom window border");
+        assert_eq!(at(50, 40), [255, 0, 0], "bottom window alone");
+        assert_eq!(at(150, 100), [0, 0, 255], "top window over the bottom one");
+        assert_eq!(at(210, 130), [0, 0, 255], "top window alone");
+        assert_ne!(at(10, 10), [255, 0, 0], "outside both windows");
+        assert_ne!(at(10, 10), [0, 0, 255], "outside both windows");
+
+        conn.destroy_window(top).unwrap();
+        conn.destroy_window(bottom).unwrap();
+        conn.sync().unwrap();
+    }
 }

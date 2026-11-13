@@ -214,7 +214,7 @@ def _darwin_local_sandbox(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     fake_bin = tmp_path / "fake-bin"
     calls = tmp_path / "calls.log"
     home.mkdir()
-    for command in ("dirname", "readlink", "realpath", "rmdir", "sed"):
+    for command in ("dirname", "id", "readlink", "realpath", "rmdir", "sed"):
         executable = shutil.which(command, path=os.defpath)
         assert executable is not None, f"missing fixture utility: {command}"
         (fake_bin / command).parent.mkdir(parents=True, exist_ok=True)
@@ -273,14 +273,16 @@ def test_local_uninstall_stops_daemon_started_from_macos_app_bundle(tmp_path: Pa
 
     app_daemon = r"/Applications/CuaDriverLocal\.app/Contents/MacOS/cua-driver-local"
     lines = calls.read_text(encoding="utf-8").splitlines()
-    assert f"pkill:-f ^{app_daemon}([[:space:]]|$)" in lines
+    # Scoped to this user: /Applications is shared with other accounts.
+    assert f"pkill:-U {os.getuid()} -f ^{app_daemon}([[:space:]]|$)" in lines
+    assert all(f"-U {os.getuid()} " in line for line in lines if line.startswith("pkill:"))
 
 
 @pytest.mark.parametrize("pgrep_status", [0, 2], ids=["daemon-alive", "pgrep-error"])
 def test_local_uninstall_fails_while_a_local_daemon_survives(tmp_path: Path, pgrep_status: int) -> None:
     calls, env = _darwin_local_sandbox(tmp_path)
     fake_bin = Path(env["PATH"])
-    _executable(fake_bin / "pgrep", f"exit {pgrep_status}\n")
+    _executable(fake_bin / "pgrep", f"printf 'pgrep:%s\\n' \"$*\" >> '{calls}'\nexit {pgrep_status}\n")
     _executable(fake_bin / "sleep", "exit 0\n")
     cache = Path(env["HOME"]) / "Library/Caches/cua-driver-local"
     cache.mkdir(parents=True)
@@ -304,7 +306,8 @@ def test_local_uninstall_fails_while_a_local_daemon_survives(tmp_path: Path, pgr
     assert "still running" in result.stderr
     assert "uninstalled" not in result.stdout
     recorded = calls.read_text(encoding="utf-8")
-    assert "pkill:-KILL -f" in recorded
+    assert f"pkill:-KILL -U {os.getuid()} -f" in recorded
+    assert f"pgrep:-U {os.getuid()} -f" in recorded
     assert "rm:" not in recorded
     assert cache.is_dir()
     assert marker.is_file()

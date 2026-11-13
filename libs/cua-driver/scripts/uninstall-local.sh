@@ -110,10 +110,13 @@ daemon_pattern() {
     # in an overridden home must not widen the match.
     printf '^%s([[:space:]]|$)' "$(printf '%s' "$1" | sed 's/[][\\.*^$(){}?+|]/\\&/g')"
 }
+# /Applications is shared, so another user's daemon can run from the same
+# bundle path. Only this user's processes belong to this uninstall.
+LOCAL_UID="$(id -u)"
 signal_local_daemons() {
     local bin
     for bin in "${LOCAL_DAEMON_BINS[@]}"; do
-        pkill "$@" -f "$(daemon_pattern "$bin")" >/dev/null 2>&1 || true
+        pkill "$@" -U "$LOCAL_UID" -f "$(daemon_pattern "$bin")" >/dev/null 2>&1 || true
     done
 }
 # pgrep exits 1 for no match. Any other failure means the check did not run,
@@ -122,7 +125,7 @@ local_daemon_running() {
     local bin status
     for bin in "${LOCAL_DAEMON_BINS[@]}"; do
         status=0
-        pgrep -f "$(daemon_pattern "$bin")" >/dev/null 2>&1 || status=$?
+        pgrep -U "$LOCAL_UID" -f "$(daemon_pattern "$bin")" >/dev/null 2>&1 || status=$?
         [[ "$status" == "1" ]] || return 0
     done
     return 1

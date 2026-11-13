@@ -522,10 +522,10 @@ fn abi_executor_for_cleanup() -> Result<&'static AbiExecutor, AbiFailure> {
     initialized_abi_executor(&EXECUTOR, build_abi_executor)
 }
 
-fn initialized_abi_executor<'a>(
-    executor: &'a OnceLock<Result<AbiExecutor, String>>,
+fn initialized_abi_executor(
+    executor: &OnceLock<Result<AbiExecutor, String>>,
     initialize: impl FnOnce() -> Result<AbiExecutor, String>,
-) -> Result<&'a AbiExecutor, AbiFailure> {
+) -> Result<&AbiExecutor, AbiFailure> {
     match executor.get_or_init(initialize) {
         Ok(executor) => Ok(executor),
         Err(error) => Err(AbiFailure::new(
@@ -538,9 +538,9 @@ fn initialized_abi_executor<'a>(
 fn build_abi_executor() -> Result<AbiExecutor, String> {
     #[cfg(target_os = "windows")]
     {
-        return build_windows_abi_executor(Arc::new(
+        build_windows_abi_executor(Arc::new(
             platform_windows::dpi::use_per_monitor_v2_for_current_thread,
-        ));
+        ))
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -608,23 +608,13 @@ fn spawn_completion<F>(
 where
     F: Future<Output = Result<String, AbiFailure>> + Send + 'static,
 {
-    spawn_cleanup_completion(
-        executor,
-        async move {
-            #[cfg(target_os = "windows")]
-            {
-                platform_windows::dpi::guard_future(future)
-                    .await
-                    .map_err(|error| AbiFailure::new(CuaDriverStatus::RuntimeUnavailable, error))?
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                future.await
-            }
-        },
-        callback,
-        context,
-    )
+    #[cfg(target_os = "windows")]
+    let future = async move {
+        platform_windows::dpi::guard_future(future)
+            .await
+            .map_err(|error| AbiFailure::new(CuaDriverStatus::RuntimeUnavailable, error))?
+    };
+    spawn_cleanup_completion(executor, future, callback, context)
 }
 
 #[derive(Debug, Clone, Copy)]

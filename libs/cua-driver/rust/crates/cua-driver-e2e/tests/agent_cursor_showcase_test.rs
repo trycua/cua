@@ -280,7 +280,7 @@ impl FirstAction {
 /// placement.
 #[test]
 #[ignore]
-fn first_recorded_actions_show_pointer_and_badge_in_the_video() {
+fn session_first_actions_show_pointer_and_badge_in_the_video() {
     let fixture = native_fixture();
     let case = CaseSpec::delivered(
         FIRST_ACTIONS_CELL_ID,

@@ -1,5 +1,10 @@
 //! Native (non-wasm) implementation.
 
+// A build without the `spaces`, `host` and `media` features (a crate that
+// depends on cua-sdk for the sandbox API alone) does not reach the stream
+// telemetry, the Space routes or the tunnel forwards.
+#![cfg_attr(not(feature = "spaces"), allow(dead_code))]
+
 mod agent_setup;
 mod agents;
 mod auth;

@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.48.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.24...cua-driver-rs-v0.48.0) (2026-11-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cua-driver:** removed the `escalate_session` and `get_session_state` MCP tools and SDK methods, the `EscalateSessionInput`, `GetSessionStateInput` and `EscalationReason` types, the `escalation_reason` and `escalation_detail` fields of the `start_session` result, the `experimental_pip` and `experimental_pip_geometry` config keys, and the picture-in-picture preview window.
+
+### Features
+
+* **cua-driver:** remove picture-in-picture preview and deprecated session tools ([#7481](https://github.com/trycua/cua/issues/7481)) ([d2fb9e2](https://github.com/trycua/cua/commit/d2fb9e24f0fdf2673aa89911b859bd2661311c14))
+
+
+### Bug Fixes
+
+* **cua-driver:** do not strip proc-macro dylibs in release builds ([#7540](https://github.com/trycua/cua/issues/7540)) ([8837363](https://github.com/trycua/cua/commit/8837363d65a36292c7692b5c9c37e77d44e9326d))
+* **cua-driver:** restore Windows web harness e2e coverage ([#7537](https://github.com/trycua/cua/issues/7537)) ([362d4b7](https://github.com/trycua/cua/commit/362d4b77d18096051e7ed9d033cecb0a3b9bff2a))
+* **cua-driver:** run_steps takes its window from element tokens and accepts flat step arguments ([#7553](https://github.com/trycua/cua/issues/7553)) ([782ace9](https://github.com/trycua/cua/commit/782ace90be1d58e8de31249c48a821742c8588fa))
+
 ## [0.47.24](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.23...cua-driver-rs-v0.47.24) (2026-11-12)
 
 

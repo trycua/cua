@@ -451,9 +451,9 @@ class LinuxSessionSupervisorTest(unittest.TestCase):
             'xdotool getdisplaygeometry > "$CDB_SESSION_DIR/geom.txt"; '
             'XAUTHORITY=/dev/null xdotool getdisplaygeometry; '
             'echo $? > "$CDB_SESSION_DIR/noauth.txt"; '
-            'python3 -c "from Xlib import display; display.Display().close()" '
+            '"$PY" -c "from Xlib import display; display.Display().close()" '
             '> "$CDB_SESSION_DIR/xlib.txt" 2>&1; echo $? >> "$CDB_SESSION_DIR/xlib.txt"; exit 7',
-            AT_SPI_BUS_ADDRESS="unix:path=/nonexistent", WAYLAND_DISPLAY="wayland-9",
+            AT_SPI_BUS_ADDRESS="unix:path=/nonexistent", WAYLAND_DISPLAY="wayland-9", PY=sys.executable,
         )  # fmt: skip
         self.assertEqual(code, 7, out)
         self.assertEqual((self.ev / "exit").read_text().strip(), "command=7 evidence=0")

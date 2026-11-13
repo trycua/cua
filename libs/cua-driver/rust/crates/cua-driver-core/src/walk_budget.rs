@@ -97,20 +97,19 @@ impl WalkBudget {
     /// a budget has run out, and the node is counted as pending.
     pub fn admit(&mut self) -> bool {
         let started = *self.started.get_or_insert_with(Instant::now);
-        // Running out of time ends the walk. Running out of nodes refuses
-        // only this node: a sibling may still claim a node it reserved.
+        // Running out of time ends the walk, and the reason says so even
+        // after a node-budget refusal. Running out of nodes refuses only
+        // this node: a sibling may still claim nodes reserved for it.
         let refused = if matches!(
             self.stop,
             Some(WalkStop::Timeout | WalkStop::AppLookupTimeout)
         ) {
             true
+        } else if started.elapsed() >= self.timeout {
+            self.stop = Some(WalkStop::Timeout);
+            true
         } else if self.visited + self.reserved >= self.max_elements {
             self.stop.get_or_insert(WalkStop::NodeBudget);
-            true
-        } else if started.elapsed() >= self.timeout {
-            // Time ends the walk even after a node-budget refusal, and the
-            // reason says so.
-            self.stop = Some(WalkStop::Timeout);
             true
         } else {
             false
@@ -124,9 +123,9 @@ impl WalkBudget {
     }
 
     /// Hold back up to `count` nodes of the unreserved node budget and return
-    /// how many were held. A walker reserves one node per sibling before it
-    /// descends into the first, then [`WalkBudget::release`]s one before each
-    /// sibling, so a deep early sibling cannot use up the nodes that later
+    /// how many were held. A walker holds nodes for the siblings it has not
+    /// walked yet and [`WalkBudget::release`]s each sibling's share before
+    /// walking it, so a deep early sibling cannot use up the nodes the later
     /// siblings need to be listed at all.
     pub fn reserve(&mut self, count: usize) -> usize {
         let free = self
@@ -137,9 +136,9 @@ impl WalkBudget {
         held
     }
 
-    /// Return one node held by [`WalkBudget::reserve`] to the budget.
-    pub fn release(&mut self) {
-        self.reserved = self.reserved.saturating_sub(1);
+    /// Return `count` nodes held by [`WalkBudget::reserve`] to the budget.
+    pub fn release(&mut self, count: usize) {
+        self.reserved = self.reserved.saturating_sub(count);
     }
 
     /// Whether the wall-clock budget has run out (for phases that cannot be
@@ -288,12 +287,12 @@ mod tests {
         let mut budget = WalkBudget::nodes_only(4);
         assert!(budget.admit(), "parent");
         assert_eq!(budget.reserve(3), 3);
-        budget.release();
+        budget.release(1);
         assert!(budget.admit(), "first sibling");
         assert!(!budget.admit(), "its subtree stops at the held nodes");
-        budget.release();
+        budget.release(1);
         assert!(budget.admit(), "second sibling");
-        budget.release();
+        budget.release(1);
         assert!(budget.admit(), "third sibling");
         assert!(!budget.admit());
         let outcome = budget.outcome();
@@ -303,14 +302,20 @@ mod tests {
 
     #[test]
     fn a_timeout_after_a_node_budget_refusal_is_reported_as_timeout() {
-        let mut budget = WalkBudget::new(30, 2);
-        assert!(budget.admit());
-        assert_eq!(budget.reserve(1), 1);
-        assert!(!budget.admit(), "held node refuses the deep child");
-        std::thread::sleep(Duration::from_millis(40));
-        budget.release();
-        assert!(!budget.admit(), "the deadline has passed");
-        assert_eq!(budget.outcome().reason(), Some("timeout"));
+        // Refused for nodes, then past the deadline: with the held node
+        // given back, and with the budget still full.
+        for give_back in [true, false] {
+            let mut budget = WalkBudget::new(30, 2);
+            assert!(budget.admit());
+            assert_eq!(budget.reserve(1), 1);
+            assert!(!budget.admit(), "held node refuses the deep child");
+            std::thread::sleep(Duration::from_millis(40));
+            if give_back {
+                budget.release(1);
+            }
+            assert!(!budget.admit(), "the deadline has passed");
+            assert_eq!(budget.outcome().reason(), Some("timeout"));
+        }
     }
 
     #[test]
@@ -319,9 +324,9 @@ mod tests {
         assert!(budget.admit());
         assert_eq!(budget.reserve(10), 2);
         assert_eq!(budget.reserve(1), 0);
-        budget.release();
-        budget.release();
-        budget.release();
+        budget.release(1);
+        budget.release(1);
+        budget.release(1);
         assert!(budget.admit());
         assert!(budget.admit());
         assert!(!budget.admit());

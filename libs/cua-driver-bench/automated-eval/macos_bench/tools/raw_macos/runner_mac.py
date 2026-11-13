@@ -63,6 +63,10 @@ NATIVE = os.environ.get("RAW_NATIVE") == "1" or os.environ.get("RAW_BARE") == "1
 BARE = os.environ.get("RAW_BARE") == "1"
 
 
+class BareRefusal(ImportError):
+    """A bare-arm refusal (of an import or a getattr): the model sees its one line, not a traceback."""
+
+
 def _guarded_getattr(obj: Any, name: str, *default: Any) -> Any:
     """getattr for scripts: the same refusals as the lint, applied to the name the script computed."""
     escapes = rawlint.NATIVE_ESCAPES if NATIVE else rawlint.ESCAPES
@@ -71,11 +75,9 @@ def _guarded_getattr(obj: Any, name: str, *default: Any) -> Any:
         or (name.startswith("_") and not rawlint.private_ok(name, NATIVE))
         or name in escapes
     ):
-        raise AttributeError(
-            f"Not available: {name!r}"
-            if BARE
-            else f"{name!r} is not available to raw-macos scripts (rule GUI2)"
-        )
+        if BARE:
+            raise BareRefusal(f"Not available: {name!r}")
+        raise AttributeError(f"{name!r} is not available to raw-macos scripts (rule GUI2)")
     import raw_mac
 
     rule = rawlint.NAMES.get(name)
@@ -102,10 +104,10 @@ def _guarded_import(
     name: str, globals_: Any = None, locals_: Any = None, fromlist: Any = (), level: int = 0
 ) -> Any:
     if level or not rawlint.import_ok(name, NATIVE):
+        if BARE:
+            raise BareRefusal(f"Not available: import {name}")
         raise ImportError(
-            f"Not available: import {name}"
-            if BARE
-            else f"import {name} is not available to raw-macos scripts (GUI-only, rule GUI1)"
+            f"import {name} is not available to raw-macos scripts (GUI-only, rule GUI1)"
             + ("" if NATIVE else "; use raw.*")
         )
     if name == "raw":
@@ -170,7 +172,7 @@ def run(source: str, image_dir: Path) -> dict[str, Any]:
             value = env["__script"]()
         out["ok"] = True
         out["value"] = _jsonable(value)
-    except raw_mac.Blocked as error:
+    except (raw_mac.Blocked, BareRefusal) as error:
         out["error"] = str(error)
     except Exception:  # noqa: BLE001 - the model gets the traceback of its own script
         lines = traceback.format_exc().splitlines()

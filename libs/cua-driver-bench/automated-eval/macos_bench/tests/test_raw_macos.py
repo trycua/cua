@@ -583,3 +583,59 @@ class BareArmTest(unittest.TestCase):
         finally:
             os.environ.pop("RAW_BARE", None)
             importlib.reload(runner_mac)
+
+    def test_runner_returns_one_line_for_a_runtime_refusal(self):
+        import importlib
+        import os
+        import sys
+        import tempfile
+        import types
+
+        os.environ["RAW_BARE"] = "1"
+        fake = types.ModuleType("raw_mac")  # the real runtime needs pyobjc and a desktop
+
+        class Blocked(RuntimeError):
+            pass
+
+        class Watch:
+            def start(self):
+                return self
+
+            def finish(self):
+                return {}
+
+        fake.Blocked, fake.Watch = Blocked, Watch
+        fake.STATE = types.SimpleNamespace(
+            image_dir=None,
+            runtime_blocked=[],
+            runtime_warned=[],
+            routes={},
+            raw_actions={},
+            images=[],
+        )
+        saved = sys.modules.get("raw_mac")
+        sys.modules["raw_mac"] = fake
+        try:
+            import runner_mac
+
+            runner = importlib.reload(runner_mac)
+            with tempfile.TemporaryDirectory() as tmp:
+                from pathlib import Path
+
+                for source in (
+                    'x = "_" + "_class__"\nreturn getattr(1, f"{x}")',
+                    'm = "sub" + "process"\nreturn __builtins__["__import__"](m)',
+                ):
+                    out = runner.run(source, Path(tmp))
+                    if out.get("lint_blocked"):
+                        continue
+                    self.assertFalse(out["ok"])
+                    self.assertTrue(out["error"].startswith("Not available: "), out["error"])
+                    self.assertNotIn("\n", out["error"])
+        finally:
+            os.environ.pop("RAW_BARE", None)
+            if saved is None:
+                sys.modules.pop("raw_mac", None)
+            else:
+                sys.modules["raw_mac"] = saved
+            importlib.reload(runner_mac)

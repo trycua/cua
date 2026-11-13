@@ -1,12 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-use std::{
-    path::Path,
-    process::Command,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{path::Path, process::Command, sync::Arc};
 
 use cua_driver_core::{
     recording::RecordingSession,
@@ -101,6 +96,8 @@ async fn shutdown_timeout_stops_the_encoder_behind_a_shim() {
         run_in_child_process("shutdown_timeout_stops_the_encoder_behind_a_shim", "shim");
         return;
     }
+    use std::time::{Duration, Instant};
+
     let directory = tempfile::tempdir().unwrap();
     let started = Instant::now();
     let (response, _) = record_with_encoder(directory.path()).await;

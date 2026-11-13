@@ -269,25 +269,29 @@ def run_script(script: str, timeout_ms: int | None) -> tuple[list[dict], bool, d
     shots = Path(tempfile.mkdtemp(prefix="call-", dir=TMP))
     started = time.monotonic()
     code, stdout, stderr = run_runner(script, shots, limit, runner_env(settings))
-    line = ""
-    if code is None:
+    result: dict | None = None
+    if code is not None:
+        line = (stdout.strip().splitlines() or [""])[-1]
+        try:
+            parsed = json.loads(line) if line.startswith("{") else None
+        except ValueError:
+            parsed = None  # cut off mid-write
+        result = parsed if isinstance(parsed, dict) else None
+    # complete: the runner wrote its result after the hook's report (a lint block never ran anything)
+    complete = result is not None and ("watch" in result or bool(result.get("lint_blocked")))
+    if result is None:
         result = {
             "ok": False,
-            "error": f"the script did not finish within {limit:.0f} s and was killed",
+            "error": f"the script did not finish within {limit:.0f} s and was killed"
+            if code is None
+            else f"runner exited {code}: {stderr.strip()[-1500:]}",
         }
-    else:
-        line = (stdout.strip().splitlines() or [""])[-1]
-        result = (
-            json.loads(line)
-            if line.startswith("{")
-            else {"ok": False, "error": f"runner exited {code}: {stderr.strip()[-1500:]}"}
-        )
-    if (code is None or not line.startswith("{")) and (shots / GUARD_MARKER).exists():
-        # no complete result from a call that opened a background pop-up menu under the key-focus guard (killed or
-        # crashed): what it left on screen is unknown, so the call is refused
-        result["runtime_blocked"] = [
-            "MB7: the script ended without a result after raw.select opened a background pop-up menu under the "
-            "key-focus guard; the user's key focus and window order were not checked"
+    if not complete and (shots / GUARD_MARKER).exists():
+        # no complete result from a call that opened a background pop-up menu under the key-focus guard (killed,
+        # crashed, cut off, or failed before its hook report): what it left on screen is unknown, so it is refused
+        result["runtime_blocked"] = list(result.get("runtime_blocked") or []) + [
+            "MB7: the script ended without a complete result after raw.select opened a background pop-up menu "
+            "under the key-focus guard; the user's key focus and window order were not checked"
         ]
     elapsed = round(time.monotonic() - started, 2)
     text: list[str] = []

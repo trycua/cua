@@ -201,7 +201,6 @@ class GuardTimeoutTest(unittest.TestCase):
 
         server.run_runner = killed
         _, is_error, entry = server.run_script("return 1", 1000)
-        self.assertEqual(is_error, outcome[0] != 0)
         return entry
 
     def test_killed_with_the_guard_open_is_refused(self):
@@ -217,6 +216,17 @@ class GuardTimeoutTest(unittest.TestCase):
         entry = self.run_killed(marker=True, outcome=(0, done + "\n", ""))
         self.assertEqual(entry["runtime_blocked"], [])
         self.assertEqual(entry["watch_changed"], ["top"])
+
+    def test_a_cut_off_result_is_refused(self):
+        entry = self.run_killed(marker=True, outcome=(0, '{"ok": true, "watch": {"cha', ""))
+        self.assertTrue(any(b.startswith("MB7") for b in entry["runtime_blocked"]))
+
+    def test_a_result_without_the_hook_report_is_refused(self):
+        # the runner's own fallback when run() raised: it carries no watch report
+        entry = self.run_killed(
+            marker=True, outcome=(0, '{"ok": false, "error": "runtime failure"}\n', "")
+        )
+        self.assertTrue(any(b.startswith("MB7") for b in entry["runtime_blocked"]))
 
     def test_killed_without_the_guard_is_only_a_timeout(self):
         self.assertEqual(self.run_killed(marker=False)["runtime_blocked"], [])

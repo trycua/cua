@@ -671,21 +671,6 @@ mod tests {
             "bulk revoke must remain scoped to the owning runtime"
         );
 
-        second
-            .invoke_raw(
-                "escalate_session",
-                json!({"session": session, "reason": "no_window_target"}),
-            )
-            .await
-            .expect("escalate second session");
-        assert_eq!(
-            second
-                .public_session_observation_state(session)
-                .capture_scope,
-            CaptureScope::Auto,
-            "capture policy remains auto while its effective scope escalates"
-        );
-
         first.shutdown().await.expect("shutdown first");
         second.shutdown().await.expect("shutdown second");
     }

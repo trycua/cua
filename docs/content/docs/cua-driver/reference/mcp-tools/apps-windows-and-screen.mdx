@@ -30,10 +30,8 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 | [`get_cursor_position`](#get_cursor_position) | Return the current mouse cursor position in screen points (origin top-left). | macOS, Linux, Windows |
 | [`zoom`](#zoom) | Capture a cropped JPEG of a window region (x1,y1)–(x2,y2) in screenshot pixel coordinates, with 20% padding added on each side. | macOS, Linux, Windows |
 | [`start_session`](#start_session) | Optionally create or return a lifecycle session before acting. | macOS, Linux, Windows |
-| [`escalate_session`](#escalate_session) | Deprecated compatibility tool for legacy capture-scope sessions. | macOS, Linux, Windows |
 | [`get_session`](#get_session) | Read content-free lifecycle, cursor, recording, and idle status for one session visible to this authenticated transport. | macOS, Linux, Windows |
 | [`list_sessions`](#list_sessions) | List content-free lifecycle summaries attached to this authenticated transport lease. | macOS, Linux, Windows |
-| [`get_session_state`](#get_session_state) | Deprecated compatibility alias that reads a live legacy session's capture policy. | macOS, Linux, Windows |
 | [`end_session`](#end_session) | End one visible lifecycle session and run its cursor, recording, configuration, and other cleanup hooks exactly once. | macOS, Linux, Windows |
 
 Served by `cua-driver mcp`; see [MCP tools](/cua-driver/reference/mcp-tools) for every tool.
@@ -504,7 +502,7 @@ Uses `IUIAutomationCacheRequest` to batch-fetch all element properties in a sing
 
 Optional `max_elements` / `max_depth` bound the UIA walk (Electron / large web apps produce 10k+ element trees). Markdown and structured elements are truncated identically. `elements_complete` is false when a bound skips a node or subtree; ending exactly at a bound remains complete. Default: `max_elements` 250, depth ≤25.
 
-CHROMIUM COVERAGE: a browser-owned permission bubble can be composited outside the requested native window. Chromium-family snapshots therefore describe this limit in structuredContent.capture_coverage. After a verified ineffective window action, call escalate_session, take a fresh get_desktop_state snapshot, act explicitly in desktop scope if needed, then verify with another fresh desktop snapshot. This is separate from page JavaScript dialogs, which remain on browser_dialog.
+CHROMIUM COVERAGE: a browser-owned permission bubble can be composited outside the requested native window. Chromium-family snapshots therefore describe this limit in structuredContent.capture_coverage. After a verified ineffective window action, take a fresh get_desktop_state snapshot, act explicitly in desktop scope if needed, then verify with another fresh desktop snapshot. This is separate from page JavaScript dialogs, which remain on browser_dialog.
 
 Windows requires no special permissions.
 
@@ -775,7 +773,7 @@ Windows-specific: `window_id` is the canonical addressing field (HWND). `pid` is
 
 ## Session tools
 
-Start, escalate, inspect and end lifecycle sessions.
+Start, inspect and end lifecycle sessions.
 
 ### `start_session`
 
@@ -804,24 +802,6 @@ Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
 | <span id="start_session--cursor_theme-theme_id"></span>`cursor_theme.theme_id` | `string` |  |  |
 | <span id="start_session--session"></span>`session` | `string` |  | Optional stable public label for this run (e.g. "research-run-1"). When omitted, the authenticated transport lease's implicit session is created or returned. |
 
-### `escalate_session`
-
-Deprecated compatibility tool for legacy capture-scope sessions. New callers select window or desktop modality on each action. No deescalate_session tool exists.
-
-Effect: mutating. Platforms: macOS, Linux, Windows.
-
-| Parameter | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="escalate_session--detail"></span>`detail` | `string` |  | Optional bounded diagnostic detail. Never use secrets or page content. |
-| <span id="escalate_session--reason"></span>`reason` | `"ax_tree_pixel_mismatch" \| "background_delivery_failed" \| "foreground_ineffective" \| "no_window_target" \| "other"` | required | Why the window-scoped attempt failed and desktop capture is needed. |
-| <span id="escalate_session--session"></span>`session` | `string` | required | Public label of the legacy capture-scope session to escalate. |
-
-**Example arguments**
-
-```json
-{"session":"<session>","reason":"ax_tree_pixel_mismatch"}
-```
-
 ### `get_session`
 
 Read content-free lifecycle, cursor, recording, and idle status for one session visible to this authenticated transport. Omit `session` to inspect its implicit session.
@@ -842,16 +822,6 @@ Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
 | --- | --- | --- | --- |
 | <span id="list_sessions--cursor"></span>`cursor` | `string` |  | Opaque continuation cursor returned by a previous call. |
 | <span id="list_sessions--limit"></span>`limit` | `integer` |  | Maximum number of content-free summaries to return (default 50, max 100). Ordinary agent transports are scoped to their own lease. Minimum: 0. |
-
-### `get_session_state`
-
-Deprecated compatibility alias that reads a live legacy session's capture policy. Use get_session for lifecycle state.
-
-Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
-
-| Parameter | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="get_session_state--session"></span>`session` | `string` |  | Optional public label. When omitted, inspect the caller's attached implicit session. |
 
 ### `end_session`
 

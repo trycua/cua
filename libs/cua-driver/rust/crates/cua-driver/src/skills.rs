@@ -1792,7 +1792,7 @@ mod tests {
             "pass the same label on every call that accepts it",
             "Passing it once is not sticky",
             "revive a name after",
-            "There is no `deescalate_session`",
+            "tools were removed, so choose window or desktop on each action",
             "--capability-manifest",
             "--approve-capability-manifest",
             "It can remove tools or typed resources",

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/trycua/cua/compare/sandbox-v0.10.2...sandbox-v0.11.0) (2026-11-13)
+
+
+### Features
+
+* **cua:** Windows 11 on Apple silicon built locally, ISO downloaded automatically (QEMU+HVF); Windows 10, Server 2019 and 2025 from an ISO ([#6631](https://github.com/trycua/cua/issues/6631)) ([49bf362](https://github.com/trycua/cua/commit/49bf362196b9dc8b420e11f771969cd6d61a1f8c))
+
 ## [0.10.2](https://github.com/trycua/cua/compare/sandbox-v0.10.1...sandbox-v0.10.2) (2026-11-12)
 
 

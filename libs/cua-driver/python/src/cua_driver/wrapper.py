@@ -21,28 +21,56 @@ def _stdio_with_fileno(stream: Optional[IO[Any]]) -> Optional[IO[Any]]:
     return stream
 
 
+def _fetch_module() -> Any:
+    """The `fetch` module next to this one (also when this file is loaded alone)."""
+    try:
+        from . import fetch
+
+        return fetch
+    except ImportError:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "cua_driver_fetch", Path(__file__).parent / "fetch.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        return module
+
+
 def get_binary_path() -> Path:
-    """Get the path to the bundled cua-driver binary.
+    """Get the path to the cua-driver executable.
+
+    Order: ``$CUA_DRIVER_BINARY``; an executable bundled in the package
+    (local builds); otherwise the verified download of this release, fetched on
+    first use (see ``cua_driver.fetch``).
 
     Returns:
         Path to the cua-driver executable.
 
     Raises:
-        FileNotFoundError: If the binary is not found in the package.
+        FileNotFoundError: If the executable is not bundled and cannot be fetched.
     """
-    # Binary is bundled in the package at: cua_driver/bin/cua-driver[.exe]
     package_dir = Path(__file__).parent
+    binary_name = "cua-driver.exe" if sys.platform == "win32" else "cua-driver"
 
-    if sys.platform == "win32":
-        binary_name = "cua-driver.exe"
+    override = os.environ.get("CUA_DRIVER_BINARY")
+    bundled = package_dir / "bin" / binary_name
+    if override:
+        binary_path = Path(override)
+    elif bundled.exists() or not (package_dir / "_release.json").is_file():
+        binary_path = bundled
     else:
-        binary_name = "cua-driver"
-
-    binary_path = package_dir / "bin" / binary_name
+        fetch = _fetch_module()
+        try:
+            binary_path = fetch.binary()
+        except fetch.FetchError as e:
+            raise FileNotFoundError(str(e)) from e
 
     if not binary_path.exists():
         raise FileNotFoundError(
-            f"cua-driver binary not found at {binary_path}. "
+            f"cua-driver executable not found at {binary_path}. "
             f"This package may not have been built correctly for {sys.platform}."
         )
 

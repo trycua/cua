@@ -131,7 +131,8 @@ jobs:
           echo "should_publish=$SHOULD_PUBLISH" >> "$GITHUB_OUTPUT"
           echo "Detected version: $VERSION (publish: $SHOULD_PUBLISH)"
 
-  # Build wheels for each platform (with bundled binaries)
+  # Build thin wheels for each platform: the SDK library inside, and the
+  # signed executable named by _release.json, downloaded on first run.
   build-wheels:
     needs: get-version
     if: needs.get-version.outputs.should_publish == 'true'
@@ -183,7 +184,7 @@ jobs:
           grep "^version = " pyproject.toml
           grep "^__version__ = " src/cua_driver/__init__.py
 
-      - name: Build wheel with bundled binary
+      - name: Build the thin wheel (SDK library inside, executable fetched on first run)
         shell: bash
         run: |
           cd libs/cua-driver/python
@@ -194,6 +195,30 @@ jobs:
         run: |
           python -m pip install --force-reinstall libs/cua-driver/python/dist/*.whl
           python -c "from cua_driver import CuaDriver; print(CuaDriver.connect(None).socket_path())"
+
+      # The wheel carries no executable. The first `cua-driver` run must
+      # download the signed archive of this release, check the SHA-256 the
+      # wheel carries (and, on macOS, the code signature of CuaDriver.app),
+      # install it and run it.
+      - name: Fetch the signed executable the thin wheel names and run it
+        shell: bash
+        env:
+          VERSION: ${{ needs.get-version.outputs.version }}
+        run: |
+          cd "$RUNNER_TEMP"
+          test "$(cua-driver --version | tr -d '\r')" = "cua-driver $VERSION"
+          # Second run starts the installed copy without downloading.
+          test "$(CUA_DRIVER_DOWNLOAD_BASE=file:///nonexistent/ cua-driver --version | tr -d '\r')" = "cua-driver $VERSION"
+
+      - name: Check the thin wheel stays thin
+        shell: bash
+        run: |
+          # The executable used to be inside: 31-52 MB wheels. The library alone is 10-18 MB.
+          for w in libs/cua-driver/python/dist/*.whl; do
+            size=$(wc -c < "$w" | tr -d ' ')
+            echo "$w: $size bytes"
+            test "$size" -lt 25000000
+          done
 
       - name: List built artifacts
         shell: bash

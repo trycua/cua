@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "cua-driver"
 version = "0.47.24"
-description = "Rust-backed Cua Driver SDK and bundled executable for client applications"
+description = "Rust-backed Cua Driver SDK and launcher for the signed cua-driver executable"
 readme = "README.md"
 license = { text = "MIT" }
 authors = [
@@ -53,6 +53,7 @@ cua-driver = "cua_driver.__main__:main"
 packages = ["src/cua_driver"]
 artifacts = [
     "src/cua_driver/bin/*",
+    "src/cua_driver/_release.json",
     "src/cua_driver/*.dylib",
     "src/cua_driver/*.so",
     "src/cua_driver/*.dll",

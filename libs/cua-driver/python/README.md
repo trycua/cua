@@ -1,6 +1,6 @@
 # cua-driver Python SDK
 
-Rust-backed Python SDK and bundled executable for
+Rust-backed Python SDK and launcher for the signed `cua-driver` executable of
 [Cua Driver](https://github.com/trycua/cua/tree/main/libs/cua-driver).
 
 ## Product boundary
@@ -28,9 +28,34 @@ agent SDK.
 Install and usage docs live at https://cua.ai/docs/cua-driver/quickstart
 and https://cua.ai/docs/reference/cua-driver/mcp-tools.
 
-The wheel contains generated UniFFI bindings, a platform-specific Rust SDK
-library, and the `cua-driver` executable. `CuaDriver.create()` loads the runtime
-in the importing process and does not require the executable or daemon.
+The wheel contains generated UniFFI bindings and a platform-specific Rust SDK
+library (10-18 MB). `CuaDriver.create()` loads the runtime in the importing
+process and does not require the executable or daemon.
+
+The `cua-driver` executable is not inside the wheel (it used to be a second
+copy of the driver, 60% of the download). The first `cua-driver` run, or
+`python -m cua_driver.fetch fetch`, downloads the signed archive of this exact
+release from GitHub Releases, checks its SHA-256 against the value the wheel
+carries, and installs it:
+
+| Platform | What is installed |
+| --- | --- |
+| macOS | The Developer ID signed, notarized `CuaDriver.app` at `/Applications/CuaDriver.app`, after its code signature verifies against Cua's team. Same path, bundle id (`com.trycua.driver`) and signature as the install script, so Accessibility and Screen Recording grants are shared with a normal install and survive updates. An existing `/Applications/CuaDriver.app` is used as it is and never overwritten. |
+| Linux, Windows | The release's standalone archive, unpacked into a per-version cache (`~/.cache/cua-driver/python`, `~/Library/Caches/...`, `%LOCALAPPDATA%\cua-driver\python`). |
+
+Offline, air-gapped and pinned installs:
+
+| Variable | Effect |
+| --- | --- |
+| `CUA_DRIVER_BINARY` | Run this executable; nothing is downloaded. |
+| `CUA_DRIVER_DOWNLOAD_BASE` | Fetch the archives from this URL (a mirror, or `file:///dir/` holding them). The SHA-256 check still applies. |
+| `CUA_DRIVER_CACHE_DIR` | Where the Linux and Windows cache lives. |
+
+`python -m cua_driver.fetch fetch` downloads ahead of time (Docker images, CI);
+`python -m cua_driver.fetch path` prints the executable `cua-driver` runs. If
+`/Applications` is not writable for the current user, install once with
+`curl -fsSL https://cua.ai/driver/install.sh | bash`. Local builds with the
+executable inside (`build_wheel.py --bundle-cli`) never download.
 
 ## SDK example
 
@@ -186,7 +211,7 @@ best-effort path so a blocked terminal cannot stop diagnostic collection.
 
 ## Binary wrapper
 
-The package also exposes the bundled executable:
+The package also exposes the executable (fetched on first use, see above):
 
 ```python
 from cua_driver import get_binary_path, run_cua_driver

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.3](https://github.com/trycua/cua/compare/cua-sdk-v0.27.2...cua-sdk-v0.27.3) (2026-11-13)
+
+
+### Bug Fixes
+
+* **host:** name and, where possible, fix what a headless Linux computer needs for Spaces ([#7310](https://github.com/trycua/cua/issues/7310)) ([#7399](https://github.com/trycua/cua/issues/7399)) ([9653f85](https://github.com/trycua/cua/commit/9653f85f38b76f7293c833673775d5c8b00b033d))
+
 ## [0.27.2](https://github.com/trycua/cua/compare/cua-sdk-v0.27.1...cua-sdk-v0.27.2) (2026-11-13)
 
 

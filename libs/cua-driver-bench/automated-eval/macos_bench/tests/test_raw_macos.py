@@ -177,5 +177,46 @@ class MacGrantTest(unittest.TestCase):
         )
 
 
+class GuardTimeoutTest(unittest.TestCase):
+    """A call killed at its time limit while raw.select had a background pop-up menu open is refused under MB7, so a
+    disturbance the guard could not finish checking still reaches the call log."""
+
+    def run_killed(self, marker: bool) -> dict:
+        import importlib
+        import os
+        import tempfile
+
+        tmp = Path(tempfile.mkdtemp())
+        os.environ["RAW_TMP"] = str(tmp)
+        os.environ.pop("RAW_LOG", None)
+        os.environ.pop("RAW_TRIAL", None)
+        import raw_mcp_mac
+
+        server = importlib.reload(raw_mcp_mac)
+
+        def killed(script, shots, limit, env):
+            if marker:
+                (shots / server.GUARD_MARKER).write_text("BenchLab")
+            return None, "", ""
+
+        server.run_runner = killed
+        _, is_error, entry = server.run_script("return 1", 1000)
+        self.assertTrue(is_error)
+        return entry
+
+    def test_killed_with_the_guard_open_is_refused(self):
+        entry = self.run_killed(marker=True)
+        self.assertTrue(any(b.startswith("MB7") for b in entry["runtime_blocked"]))
+
+    def test_killed_without_the_guard_is_only_a_timeout(self):
+        self.assertEqual(self.run_killed(marker=False)["runtime_blocked"], [])
+
+    def test_the_marker_name_matches_the_runtime(self):
+        source = (Path(lint.__file__).parent / "raw_mac.py").read_text()
+        import raw_mcp_mac
+
+        self.assertIn(f'GUARD_MARKER = "{raw_mcp_mac.GUARD_MARKER}"', source)
+
+
 if __name__ == "__main__":
     unittest.main()

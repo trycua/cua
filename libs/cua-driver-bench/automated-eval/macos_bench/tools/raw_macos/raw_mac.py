@@ -192,6 +192,8 @@ def focus_sample() -> dict[str, Any]:
     }
 
 
+# Written into the call's directory while the key-focus guard has a menu open (read by raw_mcp_mac on a timeout).
+GUARD_MARKER = "key-focus-guard-open"
 # Disturbances a helper saw and undid itself (the key-focus guard's window restores), for the hook's report.
 WATCH_NOTES: list[str] = []
 
@@ -779,11 +781,18 @@ class Raw:
         guard = _KeyFocusGuard(front, pid)
         if not guard.start():
             STATE.refuse("MB7", "raw.select: the key-focus guard could not tap the user's app")
+        # while this file exists the guard has a menu open; if the call is killed (its time limit), the server sees
+        # it and refuses the call under MB7 (raw_mcp_mac.run_script)
+        marker = STATE.image_dir / GUARD_MARKER if STATE.image_dir is not None else None
+        if marker is not None:
+            marker.write_text(app_name(pid), "utf-8")
         try:
             result = self._pick_from_menu(el, pid, label, guard=guard)
         finally:
             # also when the pick raised (no such item): what the guard could not undo is refused either way
             problems = guard.finish()
+            if marker is not None:
+                marker.unlink(missing_ok=True)
             if problems:
                 STATE.refuse("MB7", "raw.select guarded pop-up: " + "; ".join(problems))
         STATE.route("select:menu_guarded")
@@ -1530,7 +1539,7 @@ class _KeyFocusGuard:
         self.scanned = False
         self.restores = 0
         self.interrupted = False
-        self.menu_seen = False  # the target's menu window was on screen during the pick
+        self.failed: list[str] = []  # errors inside the guard's own threads
         self.thread: threading.Thread | None = None
         self.stolen_at = 0.0
         self.held_ms: int | None = None  # how long the target held key focus before the release
@@ -1552,9 +1561,19 @@ class _KeyFocusGuard:
         if lost and _CG.CGEventGetIntegerValueField(event, _F_THIEF) == self.target:
             self.stolen.set()
             self.stolen_at = time.monotonic()
-            threading.Thread(target=self._release, daemon=True).start()
+            threading.Thread(target=self._guarded(self._release), daemon=True).start()
             return None  # the user's app never hears it lost key focus
         return event
+
+    def _guarded(self, body: Any) -> Any:
+        def run() -> None:
+            try:
+                body()
+            except Exception as error:  # noqa: BLE001 - a guard thread that died is a failure to report
+                with self.lock:
+                    self.failed.append(f"the key-focus guard failed: {error!r}"[:300])
+
+        return run
 
     def _release(self) -> None:
         # Released before the menu window is on screen, AppKit orders the menu group to the front and lifts the
@@ -1591,19 +1610,12 @@ class _KeyFocusGuard:
             self.restore()
             time.sleep(0.005)
 
-    def _watch_menu(self) -> None:
-        while not self.done.is_set() and not self.menu_seen:
-            if _menu_up(self.target):
-                self.menu_seen = True
-            time.sleep(0.005)
-
     def start(self) -> bool:
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
         self.ready.wait(2.0)
         if self.port:
-            threading.Thread(target=self._watch_order, daemon=True).start()
-            threading.Thread(target=self._watch_menu, daemon=True).start()
+            threading.Thread(target=self._guarded(self._watch_order), daemon=True).start()
         return bool(self.port)
 
     def restore(self) -> None:
@@ -1645,10 +1657,13 @@ class _KeyFocusGuard:
                 problems.append(
                     "the target's key-focus theft was not released (the user's window lost key focus)"
                 )
-            if self.menu_seen and not self.stolen.is_set():
+            if not self.stolen.is_set():
+                # the pick pressed the pop-up, and an open menu always takes key focus: no notice means the tap
+                # missed it, so the user's window may have lost key focus unseen
                 problems.append(
-                    "the menu opened but the guard never saw it take key focus (the user's window may have lost it)"
+                    "the guard never saw the menu take key focus (the user's window may have lost it)"
                 )
+            problems += self.failed
             if self.interrupted:
                 problems.append("the guard's event tap was interrupted while the menu was open")
             if len(self.released) > 1:

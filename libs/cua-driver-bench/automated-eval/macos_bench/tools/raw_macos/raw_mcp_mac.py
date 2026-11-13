@@ -45,6 +45,8 @@ TMP = Path(os.environ.get("RAW_TMP") or tempfile.mkdtemp(prefix="raw-macos-"))
 TMP.mkdir(parents=True, exist_ok=True)
 PYTHON = os.environ.get("PYTHON") or sys.executable
 DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS = 30_000, 120_000
+# raw_mac.GUARD_MARKER (raw_mac imports the frameworks, so the server does not import it)
+GUARD_MARKER = "key-focus-guard-open"
 
 DESCRIPTION = """\
 Run one Python script against the macOS desktop. The script body runs inside a function, so `return` a value \
@@ -252,8 +254,8 @@ def run_runner(
             for sig in (signal.SIGTERM, signal.SIGKILL):
                 try:
                     os.killpg(pid, sig)
-                except ProcessLookupError:
-                    break
+                except (ProcessLookupError, PermissionError):
+                    break  # gone; EPERM once the group's only member is an unreaped zombie
                 time.sleep(0.3)
             os.waitpid(pid, 0)
             break
@@ -272,6 +274,12 @@ def run_script(script: str, timeout_ms: int | None) -> tuple[list[dict], bool, d
             "ok": False,
             "error": f"the script did not finish within {limit:.0f} s and was killed",
         }
+        if (shots / GUARD_MARKER).exists():
+            # killed with a background pop-up menu open under the key-focus guard: what it left is unknown
+            result["runtime_blocked"] = [
+                "MB7: the script was killed while raw.select had a background pop-up menu open under the key-focus "
+                "guard; the user's key focus and window order were not checked"
+            ]
     else:
         line = (stdout.strip().splitlines() or [""])[-1]
         result = (

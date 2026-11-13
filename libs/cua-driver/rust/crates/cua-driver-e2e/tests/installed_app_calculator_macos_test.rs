@@ -31,13 +31,28 @@ impl Drop for QuitCalculator {
     }
 }
 
-/// Every static text in Calculator's front window, read by System Events.
+/// Calculator's static texts, read by System Events walking its front window.
+/// `entire contents` cannot be filtered by class on Calculator's SwiftUI tree,
+/// so walk `UI elements` breadth-first and keep the AXStaticText values.
+const ORACLE_SCRIPT: &str = r#"tell application "System Events" to tell process "Calculator"
+set out to {}
+set queue to UI elements of front window
+repeat while queue is not {}
+set e to item 1 of queue
+set queue to rest of queue
+try
+if role of e is "AXStaticText" then set end of out to (value of e as text)
+end try
+try
+set queue to queue & (UI elements of e)
+end try
+end repeat
+return out
+end tell"#;
+
 fn oracle_static_texts() -> Vec<String> {
     let output = Command::new("osascript")
-        .args([
-            "-e",
-            r#"tell application "System Events" to tell process "Calculator" to get value of every static text of entire contents of front window"#,
-        ])
+        .args(["-e", ORACLE_SCRIPT])
         .output()
         .expect("run osascript");
     assert!(

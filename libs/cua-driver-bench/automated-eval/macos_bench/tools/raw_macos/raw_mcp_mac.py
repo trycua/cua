@@ -51,6 +51,44 @@ NATIVE = os.environ.get("RAW_NATIVE") == "1"
 BARE = os.environ.get("RAW_BARE") == "1"
 if BARE:  # the other raw arms' prompts say to pass 120000 on every call; the bare arm's says nothing, so that is its default
     DEFAULT_TIMEOUT_MS = MAX_TIMEOUT_MS
+# The docs arm (pi-raw-macos-docs; Zane, 13 Nov 2026 21:58 SGT): the bare arm plus a lookup tool over the docs generated
+# for this macOS build (docs/gen_docs.py) and the generic notes (docs/notes.md)
+DOCS_DIR = Path(os.environ["RAW_DOCS_DIR"]) if os.environ.get("RAW_DOCS_DIR") else None
+LOOKUP_DESCRIPTION = (
+    "Look up macOS API documentation (generated from this Mac's SDK headers and framework exports, public and "
+    "private) and short how-to notes: a query in, the matching entries out."
+)
+LOOKUP_SCHEMA = {
+    "type": "object",
+    "required": ["query"],
+    "properties": {
+        "query": {"type": "string", "description": "Words or an API name."},
+        "limit": {"type": "integer", "description": "Entries to return, default 8, max 20."},
+    },
+    "additionalProperties": False,
+}
+_DOCS_INDEX = None
+
+
+def lookup(query: str, limit: int | None) -> tuple[list[dict], bool, dict]:
+    global _DOCS_INDEX
+    import docs_lookup
+
+    started = time.monotonic()
+    if _DOCS_INDEX is None:
+        _DOCS_INDEX = docs_lookup.Index.load(DOCS_DIR)
+    found = _DOCS_INDEX.search(query, limit or docs_lookup.DEFAULT_LIMIT)
+    entry = {
+        "t": time.time(),
+        "tool": "lookup",
+        "query": query[:500],
+        "limit": limit,
+        "hits": [e["name"] for e in found],
+        "elapsed_s": round(time.monotonic() - started, 3),
+    }
+    return [{"type": "text", "text": docs_lookup.render(found)}], False, entry
+
+
 # raw_mac.GUARD_MARKER (raw_mac imports the frameworks, so the server does not import it)
 GUARD_MARKER = "key-focus-guard-open"
 
@@ -452,7 +490,10 @@ def serve() -> None:
                         "protocolVersion": "2024-11-05",
                         "capabilities": {"tools": {}},
                         "serverInfo": {"name": "cua", "version": "raw-macos-prototype"},
-                        "instructions": "One tool, run_script: Python on this macOS desktop."
+                        "instructions": "Two tools: run_script runs Python on this macOS desktop; lookup searches "
+                        "macOS API documentation."
+                        if BARE and DOCS_DIR is not None
+                        else "One tool, run_script: Python on this macOS desktop."
                         if BARE
                         else "One tool, run_script: Python against the macOS Accessibility API, "
                         "per-process events and window capture"
@@ -472,12 +513,42 @@ def serve() -> None:
                                 "inputSchema": SCHEMA,
                             }
                         ]
+                        + (
+                            [
+                                {
+                                    "name": "lookup",
+                                    "description": LOOKUP_DESCRIPTION,
+                                    "inputSchema": LOOKUP_SCHEMA,
+                                }
+                            ]
+                            if DOCS_DIR is not None
+                            else []
+                        )
                     }
                 }
             )
         elif method == "tools/call":
             params = message.get("params") or {}
             args = params.get("arguments") or {}
+            if (
+                DOCS_DIR is not None
+                and params.get("name") == "lookup"
+                and isinstance(args.get("query"), str)
+                and args["query"].strip()
+            ):
+                try:
+                    content, failed, entry = lookup(args["query"], args.get("limit"))
+                except Exception as error:  # noqa: BLE001 - reported to the model and logged
+                    content, failed = [{"type": "text", "text": f"lookup failed: {error}"}], True
+                    entry = {
+                        "t": time.time(),
+                        "tool": "lookup",
+                        "query": args["query"][:500],
+                        "error": str(error),
+                    }
+                _log(entry)
+                send({"result": {"content": content, "isError": failed}})
+                continue
             if params.get("name") != "run_script" or not isinstance(args.get("script"), str):
                 send(
                     {

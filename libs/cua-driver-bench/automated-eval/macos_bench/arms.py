@@ -66,6 +66,7 @@ PI_ARMS = (
     "pi-raw-macos",  # the same on macOS: AX + per-process events (tools/raw_macos)
     "pi-raw-macos-native",  # pi-raw-macos with no raw.* helpers: scripts call the frameworks directly
     "pi-raw-macos-bare",  # only run_script and the native APIs: no helpers, guide, notes or background lint
+    "pi-raw-macos-docs",  # pi-raw-macos-bare plus a lookup tool over generated macOS API docs and generic notes
 )
 ALL_ARMS = CLAUDE_ARMS + CODEX_FALLBACK_ARMS + NATIVE_CODEX_ARMS + PI_ARMS
 

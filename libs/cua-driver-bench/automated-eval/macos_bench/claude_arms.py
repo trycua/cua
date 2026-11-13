@@ -374,8 +374,14 @@ RAW_MACOS_NATIVE_ARM = "cc-raw-macos-native"
 # native arm's runner with a one-paragraph tool description, no system-prompt addendum, no coverage labels and no
 # background lint or hook feedback; only the GUI-only rule every v2 arm has and the Cua Driver ban are enforced.
 RAW_MACOS_BARE_ARM = "cc-raw-macos-bare"
-RAW_MACOS_ARMS = (RAW_MACOS_ARM, RAW_MACOS_NATIVE_ARM, RAW_MACOS_BARE_ARM)
-RAW_MACOS_DIRECT_ARMS = (RAW_MACOS_NATIVE_ARM, RAW_MACOS_BARE_ARM)  # no raw.* runtime
+# The docs variant (Zane, 13 Nov 2026 21:58 SGT: "raw apis + generated docs"): the bare arm plus one lookup tool over
+# API docs generated from this macOS build (tools/raw_macos/docs/gen_docs.py) and generic notes (docs/notes.md).
+RAW_MACOS_DOCS_ARM = "cc-raw-macos-docs"
+RAW_MACOS_BARE_ARMS = (RAW_MACOS_BARE_ARM, RAW_MACOS_DOCS_ARM)
+RAW_MACOS_ARMS = (RAW_MACOS_ARM, RAW_MACOS_NATIVE_ARM, *RAW_MACOS_BARE_ARMS)
+RAW_MACOS_DIRECT_ARMS = (RAW_MACOS_NATIVE_ARM, *RAW_MACOS_BARE_ARMS)  # no raw.* runtime
+# Generated docs, one directory per macOS build (gen_docs.py OUT_ROOT)
+RAW_MACOS_DOCS_DIR = Path(os.environ.get("CDB_RAW_MACOS_DOCS") or Path.home() / "rmd/docs")
 RAW_MACOS_PYTHON = Path(os.environ.get("CDB_RAW_MACOS_PYTHON") or Path.home() / "rmb/venv/bin/python")
 # The tree-diff variant of raw-linux: the same arm, except a re-dump of the same root in a trial returns only what
 # changed since the last one (RAW_DUMP_DIFF=1 in raw_mcp.py).
@@ -394,6 +400,7 @@ ADAPTER_ARMS = {
     RAW_MACOS_ARM: "cua",
     RAW_MACOS_NATIVE_ARM: "cua",
     RAW_MACOS_BARE_ARM: "cua",
+    RAW_MACOS_DOCS_ARM: "cua",
 }
 
 
@@ -435,7 +442,8 @@ def adapter_entry(arm: str) -> dict[str, Any]:
                 "RAW_TRIAL": str(RAW_TRIAL),
                 "PYTHON": python,
                 "RAW_NATIVE": "1" if arm in RAW_MACOS_DIRECT_ARMS else "0",
-                "RAW_BARE": "1" if arm == RAW_MACOS_BARE_ARM else "0",
+                "RAW_BARE": "1" if arm in RAW_MACOS_BARE_ARMS else "0",
+                "RAW_DOCS_DIR": str(RAW_MACOS_DOCS_DIR) if arm == RAW_MACOS_DOCS_ARM else "",
             },
         )
         return {"type": "stdio", "command": python, "args": ["-I", "-B", str(RAW_MACOS_ADAPTER)], "env": env}
@@ -484,6 +492,9 @@ ARM_DESCRIPTIONS = {
     RAW_MACOS_BARE_ARM: "One run_script tool (server cua) with a one-paragraph description: Python that imports macOS's "
     "native APIs (pyobjc, ctypes) directly; no helpers, guide, task notes or background lint; GUI-only and no Cua "
     "Driver (tools/raw_macos, RAW_BARE=1)",
+    RAW_MACOS_DOCS_ARM: "The cc-raw-macos-bare setup plus a lookup tool (server cua): a query in, matching entries of "
+    "API docs generated from this macOS build's SDK headers and framework exports, and generic notes, out "
+    "(tools/raw_macos, RAW_BARE=1, RAW_DOCS_DIR)",
     "cc-codex-cu": "Claude Code + Codex computer-use cua_repl MCP (server codex-cu), no skill",
     "cc-codex-cu-1007-browser": "Claude Code + Codex 26.1007.21159 cua_repl MCP (server codex-cu), surfaces browser+computer, no skill (Amendment 10)",
     "cc-claude-cu-helper": "Claude Code + "
@@ -531,6 +542,12 @@ RAW_LINUX_ADDENDUM = (
     'Pass "timeout_ms": 120000 on every run_script call.\n'
 )
 
+# The docs arm's one prompt line (Zane, 13 Nov 2026: no guide text beyond one line saying the lookup exists)
+RAW_MACOS_DOCS_LINE = (
+    "\n\nThe cua server's lookup tool searches macOS API documentation and how-to notes: a query in, matching "
+    "entries out."
+)
+
 SKILL_PROMPT_HEADER = (
     "\n\nThe instructions of the Cua Driver skill follow. They apply to the `cua` MCP server. The skill's other "
     "files, which these instructions refer to, are in .claude/skills/cua-driver/ and can be read with the Read tool."
@@ -552,7 +569,9 @@ def system_prompt_for(arm: str, *, browser: bool = False) -> str:
         return prompt + RAW_MACOS_ADDENDUM
     if arm == RAW_MACOS_NATIVE_ARM:
         return prompt + RAW_MACOS_NATIVE_ADDENDUM
-    if arm == RAW_MACOS_BARE_ARM:
+    if arm == RAW_MACOS_DOCS_ARM:
+        return prompt + RAW_MACOS_DOCS_LINE
+    if arm in RAW_MACOS_BARE_ARMS:
         return prompt  # the shared prompt only; the tool's own paragraph is all it gets
     build = CUA_BUILDS.get(arm)
     if build is None:

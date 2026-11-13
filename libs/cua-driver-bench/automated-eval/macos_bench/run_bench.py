@@ -683,7 +683,7 @@ def real_capture_check(ctx: "Ctx", arm: str) -> tuple[str, str, str]:
             # No capture tool: the adapters have no screenshot of the whole desktop. A read-only list proves the
             # vendor tool answers through the adapter.
             if source in ca.RAW_ARMS:
-                if set(tools) != {"run_script"}:
+                if set(tools) != ({"run_script", "lookup"} if source == ca.RAW_MACOS_DOCS_ARM else {"run_script"}):
                     raise RuntimeError(f"unexpected {source} tools/list")
                 script = (
                     # the capture, and one raw.driver round trip to the fallback daemon
@@ -1018,13 +1018,15 @@ DRIVER_ACTIONS = {
 def raw_linux_summary(log: Path, dest: Path) -> dict[str, Any]:
     """Move the raw-linux call log into the trial and count its background findings per call."""
     calls: list[dict[str, Any]] = []
+    lookups: list[dict[str, Any]] = []  # the docs arm's lookup calls (raw_mcp_mac.lookup), not scripts
     if log.is_file():
         shutil.move(str(log), dest)
         for line in dest.read_text("utf-8").splitlines():
             try:
-                calls.append(json.loads(line))
+                entry = json.loads(line)
             except ValueError:
                 continue
+            (lookups if entry.get("tool") == "lookup" else calls).append(entry)
     rules: dict[str, int] = {}
     blocked_rules: dict[str, int] = {}
     raw_by_app: dict[str, int] = {}
@@ -1069,6 +1071,8 @@ def raw_linux_summary(log: Path, dest: Path) -> dict[str, Any]:
             r: sum(int((c.get("routes") or {}).get(r, 0)) for c in calls)
             for r in sorted({r for c in calls for r in (c.get("routes") or {})})
         },
+        "lookups": len(lookups),
+        "lookup_failed": sum(1 for x in lookups if x.get("error")),
         "raw_tool_s": round(sum(float(c.get("elapsed_s") or 0) for c in calls), 2),
         "driver_tool_s": round(sum(float(d.get("elapsed_s") or 0) for d in driver), 2),
     }
@@ -1279,7 +1283,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
                 "foreground_grant": grant,
                 "coverage": (
                     {}  # the bare arm gets no per-task notes
-                    if SOURCE_ARM.get(arm, arm) == ca.RAW_MACOS_BARE_ARM
+                    if SOURCE_ARM.get(arm, arm) in ca.RAW_MACOS_BARE_ARMS
                     else spec.get("ax_coverage")
                     if SOURCE_ARM.get(arm, arm) in ca.RAW_MACOS_ARMS
                     else spec.get("atspi_coverage")

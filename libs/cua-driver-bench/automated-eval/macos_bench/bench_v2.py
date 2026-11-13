@@ -222,6 +222,8 @@ NODE_MODULE_RE = re.compile(
 )
 # Text that only names a side-door app (recorded, not a violation; opening one is caught live).
 MENTION_PATTERNS = ("Terminal", "iTerm", "Script Editor", "ScriptEditor", "Automator", "Shortcuts")
+# MCP tools that only search text and run nothing (the raw-macos docs arm's lookup over generated API docs)
+SEARCH_ONLY_TOOLS = ("mcp__cua__lookup",)
 # Built-in tools that would be a shell or file route; v2 argv never offers them.
 FORBIDDEN_BUILTINS = (
     "Bash",
@@ -244,6 +246,8 @@ def scan_tool_use(name: str, tool_input: Any) -> tuple[list[str], list[str]]:
         return [f"builtin:{name}"], []
     if not name.startswith("mcp__"):
         return [], []
+    if name in SEARCH_ONLY_TOOLS:
+        return [], []  # a documentation query runs nothing; its words may name any API
     text = "\n".join(_strings(tool_input))
     hard = [f"{name}:{p}" for p in EXEC_PATTERNS if p in text]
     hard += [f"{name}:import:{m}" for m in sorted(set(NODE_MODULE_RE.findall(text)))]

@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.49.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.1...cua-driver-rs-v0.49.2) (2026-11-13)
+
+
+### Bug Fixes
+
+* **cua-driver:** cover foreground typing into a minimized Screen Sharing window ([#7594](https://github.com/trycua/cua/issues/7594)) ([670e6fc](https://github.com/trycua/cua/commit/670e6fc01797bddc5a19c9a414e8585446fc2e28)), closes [#3201](https://github.com/trycua/cua/issues/3201)
+* **cua-driver:** make Linux browser prepare language independent ([#7587](https://github.com/trycua/cua/issues/7587)) ([f95ca03](https://github.com/trycua/cua/commit/f95ca03fa24251c0ad7699145dab4d46ba226246))
+
 ## [0.49.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.0...cua-driver-rs-v0.49.1) (2026-11-13)
 
 

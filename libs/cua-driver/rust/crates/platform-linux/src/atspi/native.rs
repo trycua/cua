@@ -491,6 +491,7 @@ struct Visited<'a> {
     /// tooltip there ("Play"/"Pause", "Look in"), GTK its tooltip text.
     description: String,
     value: Option<String>,
+    document_uri: Option<String>,
     checked: Option<bool>,
     enabled: Option<bool>,
     selected: Option<bool>,
@@ -1692,6 +1693,7 @@ async fn collect_visited_bounded_opts<'a>(
         let has_value = ifaces.contains(Interface::Value);
         let has_component = ifaces.contains(Interface::Component);
         let has_text = ifaces.contains(Interface::Text);
+        let has_document = ifaces.contains(Interface::Document);
 
         // A toplevel transient of role `tool tip` is never read or entered:
         // gail (GTK2, e.g. GIMP 2.10) answers `name` on a tooltip-role popup
@@ -1788,8 +1790,9 @@ async fn collect_visited_bounded_opts<'a>(
         // and drop the borrow before `acc` moves into `visited`.
         let mut actions: Vec<String> = Vec::new();
         let mut value: Option<String> = None;
+        let mut document_uri: Option<String> = None;
         let mut text_content = String::new();
-        if has_action || has_value || has_text {
+        if has_action || has_value || has_text || has_document {
             if let Some(Ok(proxies)) = call(acc.proxies()).await {
                 if has_action {
                     if let Some(Ok(ap)) = call(proxies.action()).await {
@@ -1831,6 +1834,17 @@ async fn collect_visited_bounded_opts<'a>(
                                 text_content = t;
                             }
                         }
+                    }
+                }
+                if has_document {
+                    if let Some(Ok(document)) = call(proxies.document()).await {
+                        // Chromium maps AXTreeData.url to the standard ATK /
+                        // AT-SPI Document "URI" attribute. It is the rendered
+                        // destination, unlike localized names and titles.
+                        document_uri = call(document.get_attribute_value("URI"))
+                            .await
+                            .and_then(|result| result.ok())
+                            .filter(|uri| !uri.trim().is_empty());
                     }
                 }
             }
@@ -2002,6 +2016,7 @@ async fn collect_visited_bounded_opts<'a>(
             name,
             description,
             value,
+            document_uri,
             checked,
             enabled,
             selected,
@@ -2316,7 +2331,9 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
                 checked: v.checked,
                 enabled: v.enabled,
                 selected: v.selected,
+                focused: Some(v.focused),
                 description: (!description_parts.is_empty()).then(|| description_parts.join("; ")),
+                document_uri: v.document_uri.clone(),
                 actions: v.actions.clone(),
                 element_key: idx as u64,
                 identity: v.identity.clone(),

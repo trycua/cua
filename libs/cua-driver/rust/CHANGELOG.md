@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.49.5](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.4...cua-driver-rs-v0.49.5) (2026-11-13)
+
+
+### Bug Fixes
+
+* **cua-driver:** do not move Windows windows off their virtual desktop (re-land of [#5782](https://github.com/trycua/cua/issues/5782)) ([#7644](https://github.com/trycua/cua/issues/7644)) ([4665ba1](https://github.com/trycua/cua/commit/4665ba1e5549e36278ed36741eaf778ff64466cc))
+* **cua-driver:** list no tools when a policy layer fails to load ([#7647](https://github.com/trycua/cua/issues/7647)) ([33767af](https://github.com/trycua/cua/commit/33767af439575a41a2a23e30acfdf33311c4a843))
+* **cua-driver:** release the memory of every macOS screenshot ([#7549](https://github.com/trycua/cua/issues/7549)) ([1f037e4](https://github.com/trycua/cua/commit/1f037e43972dc7b1ff1935bd9f3f4eaa63532e25))
+* **cua-driver:** start the Windows daemon's PowerShell and cmd children without a console window ([#6757](https://github.com/trycua/cua/issues/6757)) ([6742beb](https://github.com/trycua/cua/commit/6742beb38fdb9aed27bf2616532d393d01610088))
+* **cua-driver:** Windows consent matcher skips other native bubbles ([#7378](https://github.com/trycua/cua/issues/7378)) ([d55e5e4](https://github.com/trycua/cua/commit/d55e5e4f91cfef741a7dd1c6f8b2f854732670d5))
+
 ## [0.49.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.3...cua-driver-rs-v0.49.4) (2026-11-13)
 
 

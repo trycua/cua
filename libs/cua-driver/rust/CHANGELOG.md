@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.49.7](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.6...cua-driver-rs-v0.49.7) (2026-11-13)
+
+
+### Bug Fixes
+
+* **cua-driver:** pin before AX double-click pulse ([#7659](https://github.com/trycua/cua/issues/7659)) ([d6a5c4f](https://github.com/trycua/cua/commit/d6a5c4f9efab5607c7c5632066be9054c84769d5))
+
 ## [0.49.6](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.5...cua-driver-rs-v0.49.6) (2026-11-13)
 
 

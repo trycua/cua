@@ -379,8 +379,11 @@ fn session_first_actions_show_pointer_and_badge_in_the_video() {
         );
         settle(ACTION_DWELL_MS);
 
-        let ((x, y), coordinate_point) =
-            empty_window_point(&state, &[keyboard_point, semantic_point]);
+        let ((x, y), coordinate_point) = empty_window_point(
+            &state,
+            (screen_width, screen_height),
+            &[keyboard_point, semantic_point],
+        );
         call_ok(
             &mut driver,
             "click",
@@ -481,7 +484,16 @@ fn element_target(state: &ToolResponse, identifier: &str) -> (String, (f64, f64)
 /// A point of the window's screenshot that no control covers, at least two
 /// oracle squares from every point in `avoid`, and the screen point it maps
 /// to. Clicking it changes nothing the oracle could mistake for a cursor.
-fn empty_window_point(state: &ToolResponse, avoid: &[(f64, f64)]) -> ((f64, f64), (f64, f64)) {
+///
+/// The point is the candidate nearest the window centre that stays clear of
+/// the screen's edges, where the menu bar, notification banners, the Dock and
+/// the taskbar sit; none of those is in the fixture's tree, and clicking one
+/// opens another app over the fixture.
+fn empty_window_point(
+    state: &ToolResponse,
+    (screen_width, screen_height): (f64, f64),
+    avoid: &[(f64, f64)],
+) -> ((f64, f64), (f64, f64)) {
     let structured = state.structured();
     let bounds = &structured["window_bounds"];
     let (Some(shot_width), Some(shot_height), Some(x), Some(y), Some(width), Some(height)) = (
@@ -512,13 +524,14 @@ fn empty_window_point(state: &ToolResponse, avoid: &[(f64, f64)]) -> ((f64, f64)
         .filter(|[_, _, w, h]| w * h < width * height / 4.0)
         .collect();
     let clearance = 2.0 * POINTER_ORACLE_RADIUS;
-    (1..10)
-        .rev()
-        .flat_map(|column| (1..10).map(move |row| (column, row)))
+    let margin = 8.0;
+    let centre = (x + width / 2.0, y + height / 2.0);
+    let mut candidates: Vec<((f64, f64), (f64, f64))> = (1..20)
+        .flat_map(|column| (1..20).map(move |row| (column, row)))
         .map(|(column, row)| {
             let pixel = (
-                (shot_width * f64::from(column) / 10.0).round(),
-                (shot_height * f64::from(row) / 10.0).round(),
+                (shot_width * f64::from(column) / 20.0).round(),
+                (shot_height * f64::from(row) / 20.0).round(),
             );
             let screen = (
                 x + pixel.0 * width / shot_width,
@@ -526,17 +539,27 @@ fn empty_window_point(state: &ToolResponse, avoid: &[(f64, f64)]) -> ((f64, f64)
             );
             (pixel, screen)
         })
-        .find(|(_, (sx, sy))| {
-            let margin = 8.0;
-            controls.iter().all(|[cx, cy, cw, ch]| {
-                *sx < cx - margin
-                    || *sx > cx + cw + margin
-                    || *sy < cy - margin
-                    || *sy > cy + ch + margin
-            }) && avoid
-                .iter()
-                .all(|(ax, ay)| (sx - ax).abs() > clearance || (sy - ay).abs() > clearance)
+        .filter(|(_, (sx, sy))| {
+            *sx > screen_width * 0.15
+                && *sx < screen_width * 0.85
+                && *sy > screen_height * 0.2
+                && *sy < screen_height * 0.8
+                && controls.iter().all(|[cx, cy, cw, ch]| {
+                    *sx < cx - margin
+                        || *sx > cx + cw + margin
+                        || *sy < cy - margin
+                        || *sy > cy + ch + margin
+                })
+                && avoid
+                    .iter()
+                    .all(|(ax, ay)| (sx - ax).abs() > clearance || (sy - ay).abs() > clearance)
         })
+        .collect();
+    let distance = |(sx, sy): (f64, f64)| (sx - centre.0).hypot(sy - centre.1);
+    candidates.sort_by(|left, right| distance(left.1).total_cmp(&distance(right.1)));
+    candidates
+        .first()
+        .copied()
         .unwrap_or_else(|| panic!("no empty point in the fixture window: {structured}"))
 }
 

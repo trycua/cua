@@ -495,8 +495,15 @@ pub async fn handle(
     let mut saw_prompt = false;
     let mut accessibility_action_at = None;
     let mut trusted_click_attempted = false;
+    // Names are withheld: the snapshot shows the topology of the last walk
+    // that failed to settle without leaking page or prompt text.
+    let mut last_snapshot = serde_json::Value::Null;
     loop {
-        check_deadline(deadline)?;
+        if let Err(refusal) = check_deadline(deadline) {
+            return Err(refusal.with_detail(serde_json::json!({
+                "redacted_native_nodes": last_snapshot,
+            })));
+        }
         prove_window_owner(pid, request.window_id)?;
         let window_id = request.window_id;
         let tree =
@@ -508,11 +515,10 @@ pub async fn handle(
                         format!("could not inspect the browser consent UI: {error}"),
                     )
                 })?;
+        last_snapshot = redacted_native_prompt_snapshot(&tree.nodes, &tree.bounds);
         if let Err(refusal) = check_deadline(deadline) {
-            // Names are withheld: the snapshot shows the topology that failed
-            // to match without leaking page or prompt text.
             return Err(refusal.with_detail(serde_json::json!({
-                "redacted_native_nodes": redacted_native_prompt_snapshot(&tree.nodes, &tree.bounds),
+                "redacted_native_nodes": last_snapshot,
             })));
         }
         let prompt_present = native_prompt_surface_present(&tree.nodes);

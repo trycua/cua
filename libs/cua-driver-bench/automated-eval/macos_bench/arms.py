@@ -64,6 +64,7 @@ PI_ARMS = (
     "pi-raw-linux",  # no Cua Driver: scripts against Linux low-level APIs (tools/raw_linux)
     "pi-raw-linux-native",  # the same with no raw.* runtime: scripts call Linux's own bindings directly
     "pi-raw-linux-bare",  # native bindings with no guide: one generic tool paragraph, no prompt addendum
+    "pi-raw-linux-docs",  # the bare arm plus a lookup over API docs generated from the desktop (tools/raw_linux)
 )
 ALL_ARMS = CLAUDE_ARMS + CODEX_FALLBACK_ARMS + NATIVE_CODEX_ARMS + PI_ARMS
 

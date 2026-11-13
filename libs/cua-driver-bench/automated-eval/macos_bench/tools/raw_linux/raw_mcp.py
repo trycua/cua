@@ -24,6 +24,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -46,6 +47,19 @@ NATIVE = os.environ.get("RAW_NATIVE") == "1"
 # The bare arm (pi-raw-linux-bare, RAW_BARE=1 with RAW_NATIVE=1): the native runtime and the same checks, but the model
 # sees only BARE_DESCRIPTION; lint and runtime messages name the rule and nothing else.
 BARE = NATIVE and os.environ.get("RAW_BARE") == "1"
+# The docs arm (pi-raw-linux-docs, RAW_DOCS=<index.jsonl> with the bare settings): the bare arm plus one lookup tool
+# over the generated API docs (gen_docs.py). Its description is the one line below; nothing else changes.
+DOCS = Path(os.environ["RAW_DOCS"]) if BARE and os.environ.get("RAW_DOCS") else None
+LOOKUP_DESCRIPTION = "Search the API documentation of this desktop's native libraries: a query in, matching entries out."
+LOOKUP_SCHEMA = {
+    "type": "object",
+    "required": ["query"],
+    "properties": {
+        "query": {"type": "string", "description": "Words or a symbol name."},
+        "limit": {"type": "integer", "description": "Entries to return, default 10, max 30."},
+    },
+    "additionalProperties": False,
+}
 # pids whose AT-SPI calls timed out in an earlier script, per trial (raw.app asks them with a short timeout)
 STALLED: dict[str, set[str]] = {}
 
@@ -328,6 +342,60 @@ def run_script(script: str, timeout_ms: int | None) -> tuple[list[dict], bool, d
     return content, not result.get("ok"), entry
 
 
+_INDEX: list[tuple[dict, str, str]] | None = None
+WORD = re.compile(r"[A-Za-z0-9_]+")
+
+
+def _split(word: str) -> list[str]:
+    """A symbol's searchable parts: the whole, its snake/camel pieces (XTestFakeKeyEvent -> xtest fake key event)."""
+    parts = re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+", word)
+    return [word.lower(), *(p.lower() for p in parts if len(p) > 1)]
+
+
+def index() -> list[tuple[dict, str, str]]:
+    """The docs index, loaded once: (entry, name text, body text), in the file's order."""
+    global _INDEX
+    if _INDEX is None:
+        _INDEX = []
+        for line in DOCS.read_text("utf-8").splitlines():
+            e = json.loads(line)
+            name = " ".join(t for w in WORD.findall(e["id"]) for t in _split(w))
+            body = " ".join(t for w in WORD.findall(e["sig"] + " " + e["doc"]) for t in _split(w))
+            _INDEX.append((e, f" {name} ", f" {body} "))
+    return _INDEX
+
+
+def lookup(query: str, limit: int | None) -> tuple[list[dict], bool, dict]:
+    """Rank entries by query terms in the entry's name (weight 3) and its signature and doc (1); ties keep index
+    order. A term that is an exact symbol name scores highest."""
+    started = time.monotonic()
+    n = max(1, min(int(limit or 10), 30))
+    terms = list(dict.fromkeys(t for w in WORD.findall(query) for t in _split(w)))
+    exact = {w.lower() for w in WORD.findall(query)}
+    scored = []
+    for pos, (e, name, body) in enumerate(index() if terms else []):
+        last = e["id"].rsplit(".", 1)[-1].rsplit(":", 1)[-1].lower()
+        score = 10 * (last in exact) + sum(3 * (f" {t} " in name) + (f" {t} " in body) for t in terms)
+        matched = sum((f" {t} " in name) or (f" {t} " in body) for t in terms)
+        if score:
+            scored.append((-matched, -score, pos, e))
+    scored.sort(key=lambda x: x[:3])
+    hits = [x[3] for x in scored[:n]]
+    out = [f"{len(scored)} matching entries" + (f", top {len(hits)}:" if hits else ".")]
+    for e in hits:
+        out.append(f"[{e['kind']}] {e['sig']}\n  source: {e['source']}" + (f"\n  {e['doc']}" if e["doc"] else ""))
+    entry = {"t": time.time(), "tool": "lookup", "query": query[:500], "hits": len(scored),
+             "returned": [e["id"] for e in hits], "elapsed_s": round(time.monotonic() - started, 3)}
+    return [{"type": "text", "text": "\n\n".join(out)}], False, entry
+
+
+def tools_list() -> list[dict]:
+    tools = [{"name": "run_script", "description": description(trial()), "inputSchema": SCHEMA}]
+    if DOCS is not None:
+        tools.append({"name": "lookup", "description": LOOKUP_DESCRIPTION, "inputSchema": LOOKUP_SCHEMA})
+    return tools
+
+
 def serve() -> None:
     for line in sys.stdin:
         try:
@@ -347,7 +415,9 @@ def serve() -> None:
                         "protocolVersion": "2024-11-05",
                         "capabilities": {"tools": {}},
                         "serverInfo": {"name": "cua", "version": "raw-linux-prototype"},
-                        "instructions": "One tool, run_script."
+                        "instructions": "Two tools, run_script and lookup."
+                        if DOCS is not None
+                        else "One tool, run_script."
                         if BARE
                         else "One tool, run_script: Python against Linux low-level APIs. Read its description first.",
                     }
@@ -357,19 +427,18 @@ def serve() -> None:
             send(
                 {
                     "result": {
-                        "tools": [
-                            {
-                                "name": "run_script",
-                                "description": description(trial()),
-                                "inputSchema": SCHEMA,
-                            }
-                        ]
+                        "tools": tools_list()
                     }
                 }
             )
         elif method == "tools/call":
             params = message.get("params") or {}
             args = params.get("arguments") or {}
+            if DOCS is not None and params.get("name") == "lookup" and isinstance(args.get("query"), str):
+                content, failed, entry = lookup(args["query"], args.get("limit"))
+                _log(entry)
+                send({"result": {"content": content, "isError": failed}})
+                continue
             if params.get("name") != "run_script" or not isinstance(args.get("script"), str):
                 send(
                     {

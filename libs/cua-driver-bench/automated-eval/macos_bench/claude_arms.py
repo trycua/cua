@@ -366,14 +366,29 @@ RAW_LINUX_NATIVE_ARM = "cc-raw-linux-native"
 # native arm's runtime and the same harness checks, with RAW_BARE=1. The model sees one generic tool paragraph, no
 # system-prompt addendum, no coverage labels, no grant text and no hints in lint or runtime messages.
 RAW_LINUX_BARE_ARM = "cc-raw-linux-bare"
-RAW_LINUX_ARMS = (RAW_LINUX_ARM, RAW_LINUX_NATIVE_ARM, RAW_LINUX_BARE_ARM)
+# The docs arm (Zane, 13 Nov 2026 22:09 SGT: raw apis + generated docs): the bare arm plus a second tool, lookup, over
+# the docs gen_docs.py built from this desktop's own .gir, header, D-Bus and Wayland files and binding docstrings
+# (CDB_RAW_DOCS: that build's index.jsonl). The lookup's one-line description is the only added text.
+RAW_LINUX_DOCS_ARM = "cc-raw-linux-docs"
+RAW_LINUX_DOCS = os.environ.get("CDB_RAW_DOCS") or ""
+RAW_LINUX_ARMS = (RAW_LINUX_ARM, RAW_LINUX_NATIVE_ARM, RAW_LINUX_BARE_ARM, RAW_LINUX_DOCS_ARM)
+RAW_LINUX_BARE_ARMS = (RAW_LINUX_BARE_ARM, RAW_LINUX_DOCS_ARM)
 ADAPTER_ARMS = {
     "cc-agent-desktop": AGENT_DESKTOP_SERVER,
     "cc-browser-use": BROWSER_USE_SERVER,
     RAW_LINUX_ARM: "cua",
     RAW_LINUX_NATIVE_ARM: "cua",
     RAW_LINUX_BARE_ARM: "cua",
+    RAW_LINUX_DOCS_ARM: "cua",
 }
+
+
+def docs_index() -> str:
+    """The docs arm's index.jsonl (CDB_RAW_DOCS); the arm cannot run without one."""
+    path = Path(RAW_LINUX_DOCS)
+    if not RAW_LINUX_DOCS or not path.is_file():
+        raise FileNotFoundError(f"{RAW_LINUX_DOCS_ARM} needs CDB_RAW_DOCS, a gen_docs.py index.jsonl")
+    return str(path.resolve())
 
 
 def adapter_entry(arm: str) -> dict[str, Any]:
@@ -400,8 +415,9 @@ def adapter_entry(arm: str) -> dict[str, Any]:
                 "RAW_TMP": str(RAW_LINUX_LOG.parent / "shots"),
                 "RAW_TRIAL": str(RAW_LINUX_TRIAL),
                 "PYTHON": python,
-                **({"RAW_NATIVE": "1"} if arm in (RAW_LINUX_NATIVE_ARM, RAW_LINUX_BARE_ARM) else {}),
-                **({"RAW_BARE": "1"} if arm == RAW_LINUX_BARE_ARM else {}),
+                **({"RAW_NATIVE": "1"} if arm in (RAW_LINUX_NATIVE_ARM, *RAW_LINUX_BARE_ARMS) else {}),
+                **({"RAW_BARE": "1"} if arm in RAW_LINUX_BARE_ARMS else {}),
+                **({"RAW_DOCS": docs_index()} if arm == RAW_LINUX_DOCS_ARM else {}),
             },
         )
         return {"type": "stdio", "command": python, "args": ["-I", "-B", str(RAW_LINUX_ADAPTER)], "env": env}
@@ -443,6 +459,8 @@ ARM_DESCRIPTIONS = {
     "dbus and ctypes and call Linux's own APIs directly; same lint rules, hook, grants and no Cua Driver",
     RAW_LINUX_BARE_ARM: "The native arm with no guide: one generic run_script paragraph, no system-prompt addendum, "
     "no hints; same imports, lint rules, hook, grants and no Cua Driver",
+    RAW_LINUX_DOCS_ARM: "The bare arm plus one lookup tool over API docs generated from this desktop's own .gir, "
+    "header, D-Bus, Wayland and binding files and a short generic notes file; same imports, rules, hook, grants",
     "cc-codex-cu": "Claude Code + Codex computer-use cua_repl MCP (server codex-cu), no skill",
     "cc-codex-cu-1007-browser": "Claude Code + Codex 26.1007.21159 cua_repl MCP (server codex-cu), surfaces browser+computer, no skill (Amendment 10)",
     "cc-claude-cu-helper": "Claude Code + "
@@ -499,7 +517,7 @@ def system_prompt_for(arm: str, *, browser: bool = False) -> str:
         return prompt + RAW_LINUX_ADDENDUM
     if arm == RAW_LINUX_NATIVE_ARM:
         return prompt + RAW_LINUX_NATIVE_ADDENDUM
-    if arm == RAW_LINUX_BARE_ARM:
+    if arm in RAW_LINUX_BARE_ARMS:
         return prompt  # the shared prompt only: the tool's own paragraph is the whole interface
     build = CUA_BUILDS.get(arm)
     if build is None:

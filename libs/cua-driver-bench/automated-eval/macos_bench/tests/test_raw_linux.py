@@ -613,6 +613,168 @@ class BareArmTest(unittest.TestCase):
         self.assertEqual(ca.system_prompt_for(ca.RAW_LINUX_BARE_ARM), ca.SYSTEM_PROMPT)
 
 
+class DocsArmTest(unittest.TestCase):
+    """The docs arm (pi-raw-linux-docs): the bare arm plus one lookup tool over generated docs, and nothing else."""
+
+    INDEX = [
+        {"id": "gir:Atspi.Action.do_action", "kind": "method", "source": "Atspi-2.0.gir",
+         "sig": "Atspi.Action.do_action(i: gint) -> gboolean", "doc": "Invoke the action indicated by #index."},
+        {"id": "c:XTestFakeKeyEvent", "kind": "function", "source": "XTest.h",
+         "sig": "extern int XTestFakeKeyEvent(Display* dpy, unsigned int keycode, Bool is_press, unsigned long delay)",
+         "doc": ""},
+        {"id": "gir:Gdk.pixbuf_get_from_window", "kind": "function", "source": "Gdk-3.0.gir",
+         "sig": "Gdk.pixbuf_get_from_window(window: Window, src_x: gint) -> GdkPixbuf.Pixbuf",
+         "doc": "Transfers image data from a GdkWindow and converts it to an RGB(A) representation."},
+    ]
+
+    def server(self, tmp: Path):
+        import importlib
+
+        import raw_mcp
+
+        path = tmp / "index.jsonl"
+        path.write_text("".join(json.dumps(e) + "\n" for e in self.INDEX), "utf-8")
+        env = {"RAW_NATIVE": "1", "RAW_BARE": "1", "RAW_DOCS": str(path)}
+        with mock.patch.dict(os.environ, env):
+            return importlib.reload(raw_mcp)
+
+    def tearDown(self):
+        import importlib
+
+        import raw_mcp
+
+        with mock.patch.dict(os.environ, {}, clear=False):
+            for k in ("RAW_DOCS", "RAW_BARE", "RAW_NATIVE"):
+                os.environ.pop(k, None)
+            importlib.reload(raw_mcp)
+
+    def test_tools_are_the_bare_tool_plus_a_one_line_lookup(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            m = self.server(Path(tmp))
+            tools = m.tools_list()
+        self.assertEqual([t["name"] for t in tools], ["run_script", "lookup"])
+        self.assertEqual(tools[0]["description"], m.BARE_DESCRIPTION)  # run_script unchanged from bare
+        line = tools[1]["description"]
+        self.assertNotIn("\n", line)
+        self.assertLess(len(line), 140)
+        for hint in ("Calc", "drag", "background", "focus", "AT-SPI", "XTest", "notes"):
+            self.assertNotIn(hint, line, hint)
+
+    def test_bare_arm_has_no_lookup(self):
+        import importlib
+
+        import raw_mcp
+
+        with mock.patch.dict(os.environ, {"RAW_NATIVE": "1", "RAW_BARE": "1"}):
+            os.environ.pop("RAW_DOCS", None)
+            m = importlib.reload(raw_mcp)
+            self.assertEqual([t["name"] for t in m.tools_list()], ["run_script"])
+
+    def test_lookup_finds_by_symbol_and_by_words(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            m = self.server(Path(tmp))
+            by_c, _, log = m.lookup("XTestFakeKeyEvent", None)
+            words, _, _ = m.lookup("screenshot image from window", 1)
+            camel, _, _ = m.lookup("fake key", 1)
+            none, failed, _ = m.lookup("zzzz", None)
+        self.assertTrue(by_c[0]["text"].split("\n\n")[1].startswith("[function] extern int XTestFakeKeyEvent"))
+        self.assertEqual(log["tool"], "lookup")
+        self.assertEqual(log["returned"][0], "c:XTestFakeKeyEvent")
+        self.assertIn("pixbuf_get_from_window", words[0]["text"])
+        self.assertIn("XTestFakeKeyEvent", camel[0]["text"])  # camel-case parts are searchable
+        self.assertIn("0 matching entries", none[0]["text"])
+        self.assertFalse(failed)
+
+    def test_summary_counts_lookups_apart_from_scripts(self):
+        import tempfile
+
+        import run_bench
+
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "calls.jsonl"
+            log.write_text(json.dumps({"ok": True, "elapsed_s": 1.0}) + "\n"
+                           + json.dumps({"tool": "lookup", "query": "drag", "elapsed_s": 0.01}) + "\n", "utf-8")
+            s = run_bench.raw_linux_summary(log, Path(tmp) / "out.jsonl")
+        self.assertEqual((s["calls"], s["lookups"], s["lookup_queries"]), (1, 1, ["drag"]))
+
+    def test_arm_wiring(self):
+        import tempfile
+
+        import claude_arms as ca
+
+        with tempfile.TemporaryDirectory() as tmp:
+            index = Path(tmp) / "index.jsonl"
+            index.write_text("", "utf-8")
+            with mock.patch.object(ca, "RAW_LINUX_DOCS", str(index)):
+                env = ca.adapter_entry(ca.RAW_LINUX_DOCS_ARM)["env"]
+            self.assertEqual((env["RAW_NATIVE"], env["RAW_BARE"], env["RAW_DOCS"]), ("1", "1", str(index.resolve())))
+        with mock.patch.object(ca, "RAW_LINUX_DOCS", ""):
+            with self.assertRaises(FileNotFoundError):
+                ca.adapter_entry(ca.RAW_LINUX_DOCS_ARM)
+        self.assertNotIn("RAW_DOCS", ca.adapter_entry(ca.RAW_LINUX_BARE_ARM)["env"])
+        self.assertEqual(ca.system_prompt_for(ca.RAW_LINUX_DOCS_ARM), ca.SYSTEM_PROMPT)
+
+
+class NotesLintTest(unittest.TestCase):
+    """notes.md stays generic: the lint fails on any bench app, task id or trial id."""
+
+    def test_shipped_notes_pass(self):
+        import notes_lint
+
+        self.assertEqual(notes_lint.lint((HERE / "tools/raw_linux/notes.md").read_text("utf-8")), [])
+
+    def test_names_from_the_bench_definitions_fail(self):
+        import notes_lint
+
+        for bad in ("type into LibreOffice", "the soffice tree", "in GnuCash", "BenchLab's list", "IR-02",
+                    "MB-09 r3", "cdb-g03", "lighthouse-desk", "Ledger Lantern Mail", "IR-01-r4-pi-raw-linux-bare",
+                    "an electron window"):
+            self.assertTrue(notes_lint.lint(f"## Topic\n{bad}\n"), bad)
+        self.assertEqual(notes_lint.lint("## Drag\nPress, move, release.\n"), [])
+
+
+class GenDocsTest(unittest.TestCase):
+    """gen_docs.py's parsers on small fixtures: the fields kept and a stable order."""
+
+    def test_parsers(self):
+        import tempfile
+
+        import gen_docs
+
+        with tempfile.TemporaryDirectory() as tmp:
+            t = Path(tmp)
+            (t / "a.gir").write_text(
+                '<repository xmlns="http://www.gtk.org/introspection/core/1.0" '
+                'xmlns:c="http://www.gtk.org/introspection/c/1.0" xmlns:glib="http://www.gtk.org/introspection/glib/1.0">'
+                '<namespace name="Atspi"><interface name="Action"><method name="do_action" '
+                'c:identifier="atspi_action_do_action" throws="1"><doc>Invoke the action.</doc>'
+                '<return-value><type name="gboolean"/></return-value><parameters><instance-parameter name="obj"/>'
+                '<parameter name="i"><doc>index</doc><type name="gint"/></parameter></parameters></method>'
+                '</interface></namespace></repository>', "utf-8")
+            (t / "x.h").write_text("#define Foo 3\n/**\n * Press a key.\n */\n"
+                                   "extern int XTestFakeKeyEvent(\n Display* /* dpy */,\n unsigned int /* kc */);\n",
+                                   "utf-8")
+            (t / "d.xml").write_text('<node><interface name="org.a11y.atspi.Action"><method name="DoAction">'
+                                     '<arg direction="in" name="index" type="i"/><arg direction="out" type="b"/>'
+                                     '</method></interface></node>', "utf-8")
+            gir = list(gen_docs.parse_gir(t / "a.gir", "a.gir"))
+            hdr = list(gen_docs.parse_header(t / "x.h", "x.h", "X11"))
+            dbus = list(gen_docs.parse_dbus(t / "d.xml", "d.xml"))
+        method = next(e for e in gir if e["id"] == "gir:Atspi.Action.do_action")
+        self.assertIn("i: gint", method["sig"])
+        self.assertIn("atspi_action_do_action", method["sig"])
+        self.assertIn("index", method["doc"])
+        fn = next(e for e in hdr if e["id"] == "c:XTestFakeKeyEvent")
+        self.assertIn("Display* dpy", fn["sig"])
+        self.assertEqual(fn["doc"], "Press a key.")
+        self.assertIn("c:Foo", [e["id"] for e in hdr])
+        self.assertEqual(dbus[1]["sig"], "method org.a11y.atspi.Action.DoAction(index: i, out _: b)")
+
+
 class TaskGrantTest(unittest.TestCase):
     """The per-task grant in the task definitions: only tasks with no background route on the X11 lane get it."""
 

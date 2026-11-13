@@ -692,8 +692,13 @@ def real_capture_check(ctx: "Ctx", arm: str) -> tuple[str, str, str]:
             # No capture tool: the adapters have no screenshot of the whole desktop. A read-only list proves the
             # vendor tool answers through the adapter.
             if source in ca.RAW_LINUX_ARMS:
-                if set(tools) != {"run_script"}:
+                want = {"run_script", "lookup"} if source == ca.RAW_LINUX_DOCS_ARM else {"run_script"}
+                if set(tools) != want:
                     raise RuntimeError("unexpected raw-linux tools/list")
+                if source == ca.RAW_LINUX_DOCS_ARM:  # the docs answer a symbol the desktop installs
+                    found = claude_events._text_of(call("lookup", {"query": "atspi_action_do_action"}).get("content"))
+                    if "Atspi.Action.do_action" not in found:
+                        raise RuntimeError("raw-linux docs lookup found no Atspi.Action.do_action")
                 result = call(
                     "run_script",
                     {
@@ -1011,13 +1016,15 @@ def resume_conflicts(ctx: Ctx) -> list[str]:
 def raw_linux_summary(log: Path, dest: Path) -> dict[str, Any]:
     """Move the raw-linux call log into the trial and count its background findings per call."""
     calls: list[dict[str, Any]] = []
+    lookups: list[dict[str, Any]] = []  # the docs arm's lookup calls share the log; they are not scripts
     if log.is_file():
         shutil.move(str(log), dest)
         for line in dest.read_text("utf-8").splitlines():
             try:
-                calls.append(json.loads(line))
+                call = json.loads(line)
             except ValueError:
                 continue
+            (lookups if call.get("tool") == "lookup" else calls).append(call)
     rules: dict[str, int] = {}
     blocked_rules: dict[str, int] = {}
     raw_by_app: dict[str, int] = {}
@@ -1055,6 +1062,9 @@ def raw_linux_summary(log: Path, dest: Path) -> dict[str, Any]:
         "atspi_stalled_calls": sum(1 for c in calls if c.get("atspi_stalled")),
         "atspi_stalled_pids": stalled_pids,
         "raw_tool_s": round(sum(float(c.get("elapsed_s") or 0) for c in calls), 2),
+        "lookups": len(lookups),
+        "lookup_queries": [str(c.get("query")) for c in lookups],
+        "lookup_tool_s": round(sum(float(c.get("elapsed_s") or 0) for c in lookups), 3),
     }
 
 
@@ -1260,6 +1270,9 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             }
             ca.RAW_LINUX_TRIAL.write_text(json.dumps(settings) + "\n", "utf-8")
             shutil.copy(ca.RAW_LINUX_TRIAL, artifacts / "raw-trial.json")
+            if SOURCE_ARM.get(arm, arm) == ca.RAW_LINUX_DOCS_ARM:  # which docs build the trial searched
+                docs = Path(ca.docs_index())
+                row["raw_docs"] = {"build": docs.parent.name, "index_sha256": ca.sha256_file(docs)}
         recording = ctx.recorder.start(trial_dir / "rec") if ctx.recorder else False
         row["recording_started"] = bool(recording)
         sentinel.toggle_armed()

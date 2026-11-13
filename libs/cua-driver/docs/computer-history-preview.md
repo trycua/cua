@@ -1,5 +1,7 @@
 # Try the Computer History desktop preview
 
+> **Deprecated.** Computer History is deprecated. It is off by default, agents are no longer told to call `history_status` or `history_query`, and both tools will be removed in the release after 26 Nov 2026. To remove stored data, run `cua-driver history delete --yes`.
+
 This guide shows you how to enable Cua Driver's encrypted Computer History,
 inspect it, let an authorized agent read it, and remove it. It applies to
 nightly macOS, Windows, and Linux builds that include the experimental preview.

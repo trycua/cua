@@ -6,7 +6,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-const REMOVED_TOOLS: &[&str] = &["screenshot"];
+const REMOVED_TOOLS: &[&str] = &["screenshot", "escalate_session", "get_session_state"];
 
 #[cfg(target_os = "macos")]
 fn live_tool_names() -> HashSet<String> {

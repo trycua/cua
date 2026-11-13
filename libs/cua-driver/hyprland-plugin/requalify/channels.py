@@ -33,8 +33,10 @@ TRACKED = (
 )
 ARCH_MIRROR = "https://geo.mirror.pkgbuild.com/$repo/os/$arch"
 
-# Repository order matters: rc and stable list [omarchy] first, edge last
-# (omacom/omarchy default/pacman/pacman-*.conf).
+# Repository order matters: every Omarchy channel lists [omarchy] first, as Omarchy's own
+# pacman-*.conf does, so its patched builds (hyprland, ...) shadow Arch's same-named
+# packages. Listing it last made edge resolve Arch's hyprland and report a false
+# "not installable" for the plugin pinned to Omarchy's build.
 CHANNELS = {
     "arch": {
         "description": "Arch Linux core/extra (live)",
@@ -42,9 +44,9 @@ CHANNELS = {
     },
     "omarchy-edge": {
         "description": "Omarchy edge (mirror.omarchy.org + pkgs.omarchy.org/edge)",
-        "repos": [("core", "https://mirror.omarchy.org/$repo/os/$arch"),
-                  ("extra", "https://mirror.omarchy.org/$repo/os/$arch"),
-                  ("omarchy", "https://pkgs.omarchy.org/edge/$arch")],
+        "repos": [("omarchy", "https://pkgs.omarchy.org/edge/$arch"),
+                  ("core", "https://mirror.omarchy.org/$repo/os/$arch"),
+                  ("extra", "https://mirror.omarchy.org/$repo/os/$arch")],
     },
     "omarchy-rc": {
         "description": "Omarchy rc (rc-mirror.omarchy.org + pkgs.omarchy.org/rc)",

@@ -849,6 +849,10 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         ))
     }
 
+    fn security_prompt_open(&self) -> bool {
+        crate::security_prompt::security_prompt_on_screen()
+    }
+
     fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
         // Measured on Chrome 155 with another app frontmost: CDP
         // Input.dispatchMouseEvent (with and without focus emulation) into a

@@ -358,6 +358,47 @@ async fn resolve_placement_inner(
         arch: None,
         image: None,
     };
+    // A Windows image built on this computer (`windows:11`) has no registry
+    // entry to read: it is a VM disk that carries cua-spacesd, so readiness
+    // waits for it like for a published Windows image.
+    if let ImageSource::Oci { reference } = &placement.image
+        && matches!(prefix, None | Some("vm"))
+        && let Some(version) = cua_image::windows::build::local_build_target(reference)
+    {
+        // Always a VM, whatever the kind said by default: a Windows image is
+        // never a container.
+        let mut placement = placement.clone();
+        placement.backend = BackendKind::Qemu;
+        // The host's own architecture when the version has a build for it
+        // (ARM64 Windows 11 on Apple silicon: hardware accelerated), else the
+        // one it has (x64 Windows Server on an ARM Mac: the build says why
+        // that is not done).
+        let own = cua_image::windows::WindowsArch::host();
+        let guest = if version.supports(own) {
+            own
+        } else {
+            version.iso_arch.first().copied().unwrap_or(own)
+        };
+        let host = cua_image::windows::native::vmm_arch(guest);
+        let image = cua_image::ResolvedImage {
+            reference: reference.clone(),
+            variant_ref: reference.clone(),
+            pinned_ref: reference.clone(),
+            digest: String::new(),
+            variant: Variant::Containerdisk,
+            arch: Some(host.oci().to_string()),
+            architectures: vec![host.oci().to_string()],
+            emulated: guest != own,
+            os: "windows".into(),
+            spacesd: Some(true),
+            layers: vec![],
+        };
+        return Ok(Resolved {
+            placement,
+            arch: Some(host),
+            image: Some(image),
+        });
+    }
     let (reference, backend) = match (&placement.backend, &placement.image, prefix) {
         (_, ImageSource::Oci { reference }, Some("container" | "docker")) => {
             (reference.clone(), Backend::Container)
@@ -4441,6 +4482,52 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(r.placement.backend, BackendKind::Lume, "{image}: {r:?}");
+    }
+
+    /// A Windows image built on this computer (`windows:11`) has no registry
+    /// entry, yet it is a VM disk that carries cua-spacesd: readiness waits
+    /// for it, on the architecture this host runs natively when the version
+    /// has a build for it, and on the one it has otherwise.
+    #[tokio::test]
+    async fn a_windows_image_built_here_resolves_without_a_registry() {
+        use cua_sandbox_core::placement::{Kind, Runtime};
+        // With no kind given (`cua sb create windows:11`) it is still a VM.
+        let by_default = resolve_placement_for(
+            "ghcr.io/trycua/windows:11",
+            "windows",
+            Kind::Auto,
+            &Runtime::Auto,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(by_default.placement.backend, BackendKind::Qemu);
+        let r = resolve_placement_for(
+            "ghcr.io/trycua/windows:11",
+            "windows",
+            Kind::Vm,
+            &Runtime::Auto,
+            None,
+        )
+        .await
+        .unwrap();
+        let image = r.image.expect("a local build resolves to an image");
+        assert_eq!(image.spacesd, Some(true));
+        assert_eq!(image.os, "windows");
+        assert_eq!(r.placement.backend, BackendKind::Qemu);
+        // Windows 11 has a build for either architecture: this host's own.
+        assert_eq!(r.arch, Some(cua_vmm::Arch::host()));
+        // Server 2025 is x64 only: that is its architecture, here or not.
+        let s = resolve_placement_for(
+            "ghcr.io/trycua/windows:2025",
+            "windows",
+            Kind::Vm,
+            &Runtime::Auto,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(s.arch, Some(cua_vmm::Arch::X86_64));
     }
 
     /// A rootfs published only for the other architecture keeps that arch,

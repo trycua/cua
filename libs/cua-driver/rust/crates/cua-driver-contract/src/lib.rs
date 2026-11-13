@@ -53,12 +53,12 @@ pub use cursor::{
 pub use inputs::{
     ActionTarget, CaptureScope, ClickButton, ClickInput, ClickPosition, ClipboardReadInput,
     ClipboardWriteInput, CursorMotionSelection, DesktopScope, DragInput, EndSessionInput,
-    EscalateSessionInput, EscalationReason, GetAgentCursorStateInput, GetCursorPositionInput,
-    GetDesktopStateInput, GetScreenSizeInput, GetSessionInput, GetSessionStateInput, HotkeyInput,
-    InputDeliveryMode, InvokeMenuInput, LegacyClickInput, ListSessionsInput, MoveCursorInput,
-    PressKeyInput, ScrollBy, ScrollDirection, ScrollInput, SetAgentCursorEnabledInput,
-    SetAgentCursorMotionInput, SetAgentCursorThemeInput, SetWindowFrameInput, StartSessionInput,
-    ToolInput, TypeTextInput, MULTI_CALL_SESSION_DESCRIPTION,
+    GetAgentCursorStateInput, GetCursorPositionInput, GetDesktopStateInput, GetScreenSizeInput,
+    GetSessionInput, HotkeyInput, InputDeliveryMode, InvokeMenuInput, LegacyClickInput,
+    ListSessionsInput, MoveCursorInput, PressKeyInput, ScrollBy, ScrollDirection, ScrollInput,
+    SetAgentCursorEnabledInput, SetAgentCursorMotionInput, SetAgentCursorThemeInput,
+    SetWindowFrameInput, StartSessionInput, ToolInput, TypeTextInput,
+    MULTI_CALL_SESSION_DESCRIPTION,
 };
 pub use outputs::{
     advertised_output_schema, conforming_error_envelope, is_refusal_envelope,
@@ -688,7 +688,15 @@ mod tests {
         );
         assert_eq!(
             contract.capabilities,
-            vec!["menu.path.invoke", "accessibility.menu.native"]
+            vec![
+                "menu.path.invoke",
+                "accessibility.menu.native",
+                "input.delivery_mode"
+            ]
+        );
+        assert_eq!(
+            contract.input_schema["properties"]["delivery_mode"]["enum"],
+            serde_json::json!(["background", "foreground"])
         );
     }
 
@@ -765,8 +773,6 @@ mod tests {
                 "effective_scope",
                 "desktop_capture_authorized",
                 "desktop_unlocked",
-                "escalation_reason",
-                "escalation_detail",
                 "active",
                 "revived",
             ]

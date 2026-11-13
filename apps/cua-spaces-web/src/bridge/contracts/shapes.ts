@@ -293,7 +293,18 @@ const ComputerResourcesShape = ref(
   }),
 );
 
-const CreateFixShape = ref("CreateFix", obj<CreateFix>()({ text: str, label: str, action: oneOf("copy-command", "open-url", "details"), value: opt(str) }));
+const CreateFixShape = ref(
+  "CreateFix",
+  obj<CreateFix>()({
+    text: str,
+    label: str,
+    action: oneOf("copy-command", "open-url", "details", "choose-windows-iso"),
+    value: opt(str),
+    linkLabel: opt(str),
+    linkUrl: opt(str),
+    keepRetry: opt(bool),
+  }),
+);
 
 const SpaceProgressShape = ref(
   "SpaceProgress",
@@ -1053,6 +1064,16 @@ const ConnectResultsShape = list(
           refused: nullable(str),
           line: nullable(str),
         }),
+      ),
+      parts: opt(
+        list(
+          object({
+            part: oneOf("mcp", "skills", "driver", "sign_in"),
+            status: oneOf("done", "needs_permission", "skipped", "failed"),
+            where: nullable(str),
+            line: nullable(str),
+          }),
+        ),
       ),
     }),
   ),
@@ -1896,6 +1917,7 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "spaces.chooseFiles": strings,
   "spaces.droppedFiles": strings,
   "spaces.sendFiles": list(obj<SentFileInfo>()({ name: str, dest: str, bytes: num })),
+  "windows.chooseIso": nullable(object({ name: str })),
   "host.setUp": HostStatusShape,
   "host.joinWithCode": HostStatusShape,
   "host.action": HostStatusShape,
@@ -2350,6 +2372,7 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "spaces.chooseFiles": strings,
   "spaces.droppedFiles": strings,
   "spaces.sendFiles": OP_SHAPES["spaces.sendFiles"],
+  "windows.chooseIso": OP_SHAPES["windows.chooseIso"],
   "host.openSettings": nul,
   "settings.get": WkSettingsShape,
   "settings.choose": WkSettingsShape,

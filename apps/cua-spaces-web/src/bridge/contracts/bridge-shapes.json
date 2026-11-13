@@ -1675,6 +1675,48 @@
             "refused",
             "line"
           ]
+        },
+        "parts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "part": {
+                "enum": [
+                  "mcp",
+                  "skills",
+                  "driver",
+                  "sign_in"
+                ]
+              },
+              "status": {
+                "enum": [
+                  "done",
+                  "needs_permission",
+                  "skipped",
+                  "failed"
+                ]
+              },
+              "where": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "line": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "part",
+              "status",
+              "where",
+              "line"
+            ]
+          }
         }
       },
       "required": [
@@ -1729,11 +1771,21 @@
           "enum": [
             "copy-command",
             "open-url",
-            "details"
+            "details",
+            "choose-windows-iso"
           ]
         },
         "value": {
           "type": "string"
+        },
+        "linkLabel": {
+          "type": "string"
+        },
+        "linkUrl": {
+          "type": "string"
+        },
+        "keepRetry": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -11657,6 +11709,20 @@
     },
     "volume.unmount": {
       "$ref": "#/$defs/DriveMountInput"
+    },
+    "windows.chooseIso": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ]
     }
   },
   "webkit": {
@@ -15723,6 +15789,20 @@
     },
     "window.setDropTargets": {
       "type": "null"
+    },
+    "windows.chooseIso": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ]
     }
   },
   "webkitUnshaped": {

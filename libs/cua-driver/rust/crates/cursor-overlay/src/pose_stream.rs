@@ -62,6 +62,10 @@ pub struct PoseTrack {
     /// Seconds into the track at which the hotspot arrives, where the float
     /// is exactly 0. `None` for a snap.
     pub arrival: Option<f64>,
+    /// Seconds into the track at which the action waiting on the move is
+    /// released: the arrival, or earlier when a floor timing stretched the
+    /// move (see `RenderStateCore::release_t`). `None` for a snap.
+    pub release: Option<f64>,
     /// The float clock at the last sample.
     pub rest: RestFloat,
 }
@@ -150,9 +154,10 @@ impl PoseTrack {
         .to_string()
     }
 
-    /// Seconds the hotspot takes to reach its target.
-    pub fn arrival_secs(&self) -> f64 {
-        self.arrival
+    /// Seconds until the action waiting on the move is released.
+    pub fn release_secs(&self) -> f64 {
+        self.release
+            .or(self.arrival)
             .unwrap_or_else(|| self.samples.last().map_or(0.0, |s| s.t))
     }
 }
@@ -258,6 +263,7 @@ impl RenderStateCore {
         Some(PoseTrack {
             samples,
             arrival: Some((arrival - start).max(0.0)),
+            release: Some((self.release_t - start).max(0.0)),
             rest: rest_at(last),
         })
     }
@@ -372,6 +378,7 @@ impl PoseModel {
                         rotation: float.tilt,
                     }],
                     arrival: None,
+                    release: None,
                     rest: core.rest_float(),
                 })
             }
@@ -435,7 +442,6 @@ mod tests {
             float: true,
             halo: true,
             rotate,
-            ..CursorOptions::default()
         }
     }
 
@@ -699,7 +705,7 @@ mod tests {
             round(track.arrival.unwrap(), 4)
         );
         assert_eq!(parsed["rest"].as_array().unwrap().len(), 3);
-        assert!(track.arrival_secs() > 0.0);
+        assert!(track.release_secs() > 0.0);
 
         let look: serde_json::Value =
             serde_json::from_str(&model.look("s").unwrap().to_json()).unwrap();

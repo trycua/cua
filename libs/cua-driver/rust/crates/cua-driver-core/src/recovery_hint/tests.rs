@@ -420,7 +420,7 @@ fn session_codes_name_start_session() {
         json!({"tool": "start_session", "arguments": {"session": "run-1"}})
     );
     let missing = hint_for(
-        "escalate_session",
+        "get_session",
         &Seed::default(),
         true,
         json!({"code": "session_not_started"}),

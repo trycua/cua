@@ -17,7 +17,6 @@ implementations, testkit, and helper crates.
 | `cua-driver-uia` | Windows UIAccess worker |
 | `cursor-overlay` | Cross-platform semantic cursor renderer and bounded compiled-theme loader |
 | `cursor-theme-cli` | Short-lived dotLottie validation, compilation, preview, and installation sidecar |
-| `pip-preview` | Packaging preview helper |
 
 Platform crates are selected with `cfg(target_os)` from the main driver crate.
 Keep platform-specific behavior inside the matching `platform-<os>` crate.

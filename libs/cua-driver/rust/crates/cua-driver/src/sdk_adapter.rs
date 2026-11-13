@@ -450,6 +450,12 @@ fn daemon_tools_list_from(tools_list: &Value) -> Value {
                     "capabilities": tool.get("capabilities").cloned().unwrap_or_else(|| json!([])),
                     "risk": tool.get("risk").cloned().unwrap_or(Value::Null),
                 });
+                if let Some(deprecated) = tool.get("deprecated") {
+                    daemon_tool
+                        .as_object_mut()
+                        .expect("daemon tool entry is an object")
+                        .insert("deprecated".into(), deprecated.clone());
+                }
                 if let Some(output_schema) = tool.get("outputSchema") {
                     daemon_tool
                         .as_object_mut()
@@ -663,21 +669,6 @@ mod tests {
         assert!(
             !second.public_session_observation_state(session).ended,
             "bulk revoke must remain scoped to the owning runtime"
-        );
-
-        second
-            .invoke_raw(
-                "escalate_session",
-                json!({"session": session, "reason": "no_window_target"}),
-            )
-            .await
-            .expect("escalate second session");
-        assert_eq!(
-            second
-                .public_session_observation_state(session)
-                .capture_scope,
-            CaptureScope::Auto,
-            "capture policy remains auto while its effective scope escalates"
         );
 
         first.shutdown().await.expect("shutdown first");

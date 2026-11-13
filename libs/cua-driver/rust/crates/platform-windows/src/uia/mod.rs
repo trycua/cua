@@ -851,12 +851,12 @@ fn emit_cached_node(
     let automation_id = read_cached_bstr(element, UIA_AutomationIdPropertyId);
     let help_text = read_cached_bstr(element, UIA_HelpTextPropertyId);
     let enabled = read_cached_bool(element, UIA_IsEnabledPropertyId);
-    // Missing UIA state must remain unknown on the structured observation
-    // surface. Action discovery keeps its historical best-effort assumption.
-    let is_enabled = enabled.unwrap_or(true);
     let selected = read_cached_selected(element);
-    let actions = detect_cached_actions(element, &control_type, is_enabled);
-    let is_actionable = !actions.is_empty() && is_enabled;
+    // A disabled control is indexed and published with `enabled: false`, as on
+    // macOS: enablement is state the caller needs to read, not a reason to hide
+    // the row. The token writers refuse it (`tools::impl_::refuse_if_disabled`).
+    let actions = detect_cached_actions(element, &control_type);
+    let is_actionable = !actions.is_empty();
     let has_content = name
         .as_deref()
         .map(|s| !s.trim().is_empty())
@@ -1005,14 +1005,7 @@ fn read_cached_bounding_rect_full(
     }
 }
 
-fn detect_cached_actions(
-    element: &IUIAutomationElement,
-    control_type: &str,
-    is_enabled: bool,
-) -> Vec<String> {
-    if !is_enabled {
-        return vec![];
-    }
+fn detect_cached_actions(element: &IUIAutomationElement, control_type: &str) -> Vec<String> {
     let mut actions = Vec::new();
     unsafe {
         if element.GetCachedPattern(UIA_InvokePatternId).is_ok() {
@@ -1145,6 +1138,9 @@ pub(crate) fn format_node_line(node: &UiaNode) -> String {
         if let Some(h) = &node.help_text {
             attrs.push(format!("help=\"{}\"", h));
         }
+        if node.enabled == Some(false) {
+            attrs.push("enabled=false".to_owned());
+        }
         if !node.actions.is_empty() {
             attrs.push(format!("actions=[{}]", node.actions.join(",")));
         }
@@ -1224,6 +1220,41 @@ fn filter_tree(markdown: &str, query: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_disabled_control_row_says_so() {
+        let node = UiaNode {
+            element_index: Some(7),
+            control_type: "CheckBox".into(),
+            name: Some("Reset".into()),
+            value: None,
+            automation_id: Some("chk-reset".into()),
+            help_text: None,
+            actions: vec!["toggle".into()],
+            enabled: Some(false),
+            selected: Some(false),
+            element_ptr: 0,
+            center_x: 0,
+            center_y: 0,
+            rect: None,
+            msaa_role: None,
+            depth: 0,
+            parent_element_index: None,
+            in_web_content: false,
+        };
+        assert_eq!(
+            format_node_line(&node),
+            "- [7] CheckBox \"Reset\" [id=chk-reset enabled=false actions=[toggle]]"
+        );
+        let enabled = UiaNode {
+            enabled: Some(true),
+            ..node
+        };
+        assert_eq!(
+            format_node_line(&enabled),
+            "- [7] CheckBox \"Reset\" [id=chk-reset actions=[toggle]]"
+        );
+    }
 
     #[test]
     fn com_init_accepts_an_existing_apartment_of_either_mode() {

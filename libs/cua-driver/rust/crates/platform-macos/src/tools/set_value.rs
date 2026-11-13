@@ -906,7 +906,12 @@ fn retype_blocking(
     end: &'static str,
     role: &str,
 ) -> anyhow::Result<SetValueOutcome> {
-    let before = unsafe { copy_string_attr(element, "AXValue") };
+    let Some(before) = (unsafe { copy_string_attr(element, "AXValue") }) else {
+        anyhow::bail!(
+            "[{element_index}] {role} does not expose a readable AXValue, so its current text \
+             cannot be selected and typing could append to it"
+        );
+    };
 
     crate::input::ax_actions::focus_element(element_ptr)
         .map_err(|error| anyhow::anyhow!("could not focus [{element_index}] {role}: {error}"))?;
@@ -923,9 +928,7 @@ fn retype_blocking(
         );
     }
 
-    let existing = before
-        .as_deref()
-        .map_or(0, |value| value.encode_utf16().count());
+    let existing = before.encode_utf16().count();
     if existing > 0 && !select_all_text(element, existing) {
         anyhow::bail!(
             "[{element_index}] {role} refused both an AXSelectedTextRange selection and an \
@@ -963,7 +966,7 @@ fn retype_blocking(
     let (committed, commit_detail) = judge_commit(dispatched, survived, edit_ended, end);
 
     let after = unsafe { copy_string_attr(element, "AXValue") };
-    let (verified, changed) = classify_write(before.as_deref(), after.as_deref(), value, false);
+    let (verified, changed) = classify_write(Some(&before), after.as_deref(), value, false);
     let delivery = match (delivered_all, delivered) {
         (true, _) => String::new(),
         (false, Some(count)) => format!(
@@ -1001,6 +1004,7 @@ fn select_all_text(element: AXUIElementRef, utf16_length: usize) -> bool {
         return true;
     }
     (unsafe { set_string_attr(element, "AXValue", "") }) == kAXErrorSuccess
+        && unsafe { copy_string_attr(element, "AXValue") }.as_deref() == Some("")
 }
 
 fn value_equal(observed: &str, expected: &str, numeric: bool) -> bool {

@@ -343,7 +343,7 @@ class State:
             rawlint.NATIVE_INSTEAD.get(rule.id, rule.instead) if os.environ.get("RAW_NATIVE") == "1" else rule.instead
         )
         text = (
-            f"BLOCKED at run time [{rule.id} {rule.title}]: {what}."
+            f"BLOCKED at run time [{rule.id} {rule.title}]."
             if os.environ.get("RAW_BARE") == "1"  # the bare arm: the rule only, no explanation or alternative
             else f"BLOCKED at run time [{rule.id} {rule.title}]: {what}. {rule.why} Source: {rule.source}. "
             f"Instead: {instead}"

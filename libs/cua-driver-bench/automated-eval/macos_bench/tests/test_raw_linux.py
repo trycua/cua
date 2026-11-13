@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import unittest
@@ -565,6 +566,9 @@ class BareArmTest(unittest.TestCase):
         for hint in ("instead", "source", "rule:", "AT-SPI", "EditableText", "grants"):
             self.assertNotIn(hint, text, hint)
         self.assertTrue(rawlint.lint(src, granted=True, native=True, bare=True).ok)  # the grant still applies
+        libc = rawlint.lint('import ctypes\nctypes.CDLL("libc.so.6").fopen', native=True, bare=True)
+        self.assertFalse(libc.ok)
+        self.assertNotIn("libc", libc.render())  # no finding detail: it could carry guidance
 
     def test_lint_warnings_are_silent(self):
         src = "import pyatspi\nx = 1"
@@ -585,7 +589,19 @@ class BareArmTest(unittest.TestCase):
             with self.assertRaises(raw.Blocked) as caught:
                 raw.State().refuse("BG3", "Xlib xtest fake_input(2)")
         self.assertNotIn("Instead", str(caught.exception))
+        self.assertNotIn("fake_input", str(caught.exception))
         self.assertIn("BG3", str(caught.exception))
+
+    def test_runtime_refusal_line_in_the_tool_result_names_only_the_rule(self):
+        import raw_mcp
+
+        done = mock.Mock(stdout=json.dumps({"ok": False, "error": "BLOCKED at run time [GUI1 x].",
+                                            "runtime_blocked": ["GUI1: ctypes.CDLL('libc.so.6')"]}), stderr="")
+        with mock.patch.object(raw_mcp, "BARE", True), mock.patch.object(raw_mcp.subprocess, "run", return_value=done):
+            content, failed, entry = raw_mcp.run_script("x = 1", 1000)
+        self.assertTrue(failed)
+        self.assertNotIn("libc", content[0]["text"])
+        self.assertIn("libc", entry["runtime_blocked"][0])  # the log keeps it
 
     def test_arm_wiring(self):
         import claude_arms as ca

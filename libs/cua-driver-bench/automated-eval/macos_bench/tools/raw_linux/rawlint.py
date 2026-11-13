@@ -548,7 +548,7 @@ class Finding:
     def render(self, granted: bool, native: bool = False, bare: bool = False) -> str:
         r = RULES[self.rule]
         if bare:  # the bare arm: which rule refused the script, no explanation or alternative
-            return f"BLOCKED [{r.id} {r.title}] line {self.line}: {self.detail}"
+            return f"BLOCKED [{r.id} {r.title}] line {self.line}"
         instead = NATIVE_INSTEAD.get(r.id, r.instead) if native else r.instead
         tag = {
             "block": "BLOCKED",

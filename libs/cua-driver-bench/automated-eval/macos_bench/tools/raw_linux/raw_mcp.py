@@ -286,8 +286,8 @@ def run_script(script: str, timeout_ms: int | None) -> tuple[list[dict], bool, d
                 "(do_action, set_text_contents, set_current_value)."
             )
         )
-    for item in result.get("runtime_blocked") or []:
-        text.append(f"Refused at run time: {item}")
+    for item in result.get("runtime_blocked") or []:  # the call log keeps the detail either way
+        text.append(f"Refused at run time: {str(item).split(':')[0] if BARE else item}")
     if result.get("ok"):
         if result.get("stdout"):
             text.append("stdout:\n" + result["stdout"])

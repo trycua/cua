@@ -296,3 +296,62 @@ class CalcReadBackTest(unittest.TestCase):
         ):
             with self.subTest(value=value, got=got):
                 self.assertEqual(shows(value, got), ok)
+
+
+class WindowKeyTest(unittest.TestCase):
+    """The window-key route's pure decisions, loaded from raw_mac.py's source with the AX calls stubbed."""
+
+    def load(self, names: set[str], **env):
+        import ast
+
+        source = (Path(lint.__file__).parent / "raw_mac.py").read_text()
+        nodes = [
+            n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name in names
+        ]
+        self.assertEqual({n.name for n in nodes}, names)
+        exec(compile(ast.Module(nodes, []), "raw_mac.py", "exec"), env)  # noqa: S102
+        return env
+
+    def test_settled_needs_a_focused_element(self):
+        # a never-active LibreOffice reports its document as focused with no focused element and drops keys
+        for focused_window, focused_element, settled in (
+            (7, "el", True),
+            (7, None, False),
+            (8, "el", False),
+            (None, None, False),
+        ):
+            env = self.load(
+                {"_key_settled"},
+                _focused_window_id=lambda pid, w=focused_window: w,
+                _ax_get=lambda el, attr, e=focused_element: e,
+                AX=type(
+                    "AX", (), {"AXUIElementCreateApplication": staticmethod(lambda pid: "app")}
+                ),
+            )
+            with self.subTest(window=focused_window, element=focused_element):
+                self.assertEqual(env["_key_settled"](1, 7), settled)
+
+    def test_calc_window_by_title_or_id(self):
+        windows = {"w1": ("Untitled 1", 11), "w2": ("lighthouse-replan.ods", 22)}
+
+        class Finder:
+            def find(self, w, **kw):
+                return [w]
+
+        env = self.load(
+            {"_calc_window"},
+            AX=type("AX", (), {"AXUIElementCreateApplication": staticmethod(lambda pid: "app")}),
+            _ax_get=lambda el, attr: list(windows) if attr == "AXWindows" else windows[el][0],
+            _ax_window_id=lambda pid, w: windows[w][1],
+            Raw=Finder,
+            Any=object,
+        )
+        pick = env["_calc_window"]
+        self.assertEqual(pick(1, None), "w1")
+        self.assertEqual(pick(1, "lighthouse"), "w2")
+        self.assertEqual(pick(1, 22), "w2")
+        self.assertEqual(pick(1, 11), "w1")
+        with self.assertRaises(LookupError):
+            pick(1, 33)
+        with self.assertRaises(LookupError):
+            pick(1, True)  # a bool is not a window id (and no title contains "True")

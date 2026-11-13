@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.49.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.0...cua-driver-rs-v0.49.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* **cua-driver:** capture the Linux desktop on rootless Xwayland instead of failing with GetImage BadMatch ([#7580](https://github.com/trycua/cua/issues/7580)) ([606a66e](https://github.com/trycua/cua/commit/606a66ed13710e19a55798e2c66906c1e34b3592))
+
 ## [0.49.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.48.0...cua-driver-rs-v0.49.0) (2026-11-13)
 
 

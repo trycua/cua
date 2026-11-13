@@ -264,10 +264,49 @@ pub struct ViewContext<'a> {
     pub key: ViewKey,
     /// Describes the focused element, called only for a `no change` answer.
     pub focus_probe: Option<&'a dyn Fn() -> Option<String>>,
+    /// The app that owns the window, used to attach its first-read notes
+    /// (see `app_notes`). `None` attaches none.
+    pub app: Option<crate::app_notes::AppIdentity<'a>>,
 }
 
-/// Shape a finished `get_window_state` payload in place.
+/// Shape a finished `get_window_state` payload in place, then attach the app's
+/// first-read notes when it has any and this session has not seen them.
 pub fn apply(
+    opts: &ViewOptions,
+    ctx: &ViewContext<'_>,
+    content: &mut [Content],
+    structured: &mut Value,
+) {
+    let notes = ctx
+        .app
+        .as_ref()
+        .and_then(|app| crate::app_notes::take_first_read(crate::app_notes::Os::current(), app));
+    apply_view(opts, ctx, content, structured);
+    if let Some(notes) = notes {
+        attach_app_notes(&notes, content, structured);
+    }
+}
+
+/// Notes go in the structured `app_notes` field, as the first line of
+/// `tree_markdown` (callers often return only that), and as a line under the
+/// first line of the text block.
+fn attach_app_notes(notes: &str, content: &mut [Content], structured: &mut Value) {
+    structured["app_notes"] = json!(notes);
+    if let Some(md) = structured.get("tree_markdown").and_then(Value::as_str) {
+        structured["tree_markdown"] = json!(format!("{notes}\n{md}"));
+    }
+    for part in content.iter_mut() {
+        if let Content::Text { text, .. } = part {
+            match text.find('\n') {
+                Some(nl) => text.insert_str(nl, &format!("\n{notes}")),
+                None => text.push_str(&format!("\n{notes}")),
+            }
+            return;
+        }
+    }
+}
+
+fn apply_view(
     opts: &ViewOptions,
     ctx: &ViewContext<'_>,
     content: &mut [Content],
@@ -776,6 +815,7 @@ pub(crate) fn remember_for_test(snapshot_id: &str, pid: i64, window_id: u64, mar
             max_depth: None,
         },
         focus_probe: None,
+        app: None,
     };
     remember(snapshot_id, &ctx, markdown);
 }
@@ -1278,6 +1318,7 @@ mod tests {
                 max_depth: None,
             },
             focus_probe: None,
+            app: None,
         }
     }
 
@@ -1289,6 +1330,42 @@ mod tests {
                 _ => None,
             })
             .unwrap()
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn app_notes_ride_on_the_first_read_of_a_matching_app_only() {
+        let app = crate::app_notes::AppIdentity {
+            bundle_id: Some("org.libreoffice.script"),
+            name: Some("LibreOffice"),
+            session_id: Some("view-test-session"),
+        };
+        let mut c = ctx(7901);
+        c.app = Some(app);
+        let (mut content, mut s) = payload("s000000b1", OLD);
+        apply(&opts(json!({})), &c, &mut content, &mut s);
+        let notes = s["app_notes"].as_str().expect("structured app_notes");
+        assert!(notes.starts_with("Notes for LibreOffice: "));
+        let md = s["tree_markdown"].as_str().unwrap();
+        assert!(md.starts_with(notes), "notes lead tree_markdown");
+        assert!(md.ends_with(OLD));
+        let text = text_of(&content);
+        assert_eq!(text.lines().nth(1), Some(notes));
+
+        let (mut content, mut s) = payload("s000000b2", OLD);
+        apply(&opts(json!({})), &c, &mut content, &mut s);
+        assert!(s.get("app_notes").is_none());
+        assert_eq!(s["tree_markdown"], OLD);
+
+        let mut other = ctx(7902);
+        other.app = Some(crate::app_notes::AppIdentity {
+            bundle_id: Some("com.apple.finder"),
+            name: Some("Finder"),
+            session_id: Some("view-test-session"),
+        });
+        let (mut content, mut s) = payload("s000000b3", OLD);
+        apply(&opts(json!({})), &other, &mut content, &mut s);
+        assert!(s.get("app_notes").is_none());
     }
 
     #[test]

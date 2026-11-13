@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.2](https://github.com/trycua/cua/compare/cua-sdk-v0.27.1...cua-sdk-v0.27.2) (2026-11-13)
+
+
+### Bug Fixes
+
+* **cua-driver:** do not strip proc-macro dylibs in release builds ([#7540](https://github.com/trycua/cua/issues/7540)) ([8837363](https://github.com/trycua/cua/commit/8837363d65a36292c7692b5c9c37e77d44e9326d))
+
 ## [0.27.1](https://github.com/trycua/cua/compare/cua-sdk-v0.27.0...cua-sdk-v0.27.1) (2026-11-12)
 
 

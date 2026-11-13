@@ -514,8 +514,9 @@ fn cancelled_launch(late: bool) {
     let bin = tmp.path().join("bin");
     std::fs::create_dir(&bin).unwrap();
     let link = fake_swtpm_link(tmp.path());
-    let sleeper = tmp.path().join("qemu-sleep");
-    std::os::unix::fs::symlink(host::which("sleep").unwrap(), &sleeper).unwrap();
+    // Run `sleep` by its own name: a multi-call coreutils (uutils, on newer
+    // runner images) refuses a link to it that is named anything else.
+    let sleeper = host::which("sleep").unwrap();
     let exe = |name: &str, body: String| {
         let path = bin.join(name);
         std::fs::write(&path, body).unwrap();

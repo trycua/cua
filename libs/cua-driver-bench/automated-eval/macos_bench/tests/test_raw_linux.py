@@ -681,6 +681,8 @@ class DocsArmTest(unittest.TestCase):
             words, _, _ = m.lookup("screenshot image from window", 1)
             camel, _, _ = m.lookup("fake key", 1)
             none, failed, _ = m.lookup("zzzz", None)
+            odd = [m.lookup("drag", bad)[1] for bad in ("bad", [1], 10**9, -5)] + [m.lookup("", None)[1]]
+            schema = m.tools_list()[1]["inputSchema"]
         self.assertTrue(by_c[0]["text"].split("\n\n")[1].startswith("[function] extern int XTestFakeKeyEvent"))
         self.assertEqual(log["tool"], "lookup")
         self.assertEqual(log["returned"][0], "c:XTestFakeKeyEvent")
@@ -688,6 +690,8 @@ class DocsArmTest(unittest.TestCase):
         self.assertIn("XTestFakeKeyEvent", camel[0]["text"])  # camel-case parts are searchable
         self.assertIn("0 matching entries", none[0]["text"])
         self.assertFalse(failed)
+        self.assertEqual(odd, [False] * 5)  # odd input never fails or kills the server
+        self.assertNotIn("description", json.dumps(schema))  # the one-line description is the only text
 
     def test_a_lookup_query_is_not_a_gui_only_violation(self):
         import bench_v2 as v2

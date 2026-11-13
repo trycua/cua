@@ -55,8 +55,8 @@ LOOKUP_SCHEMA = {
     "type": "object",
     "required": ["query"],
     "properties": {
-        "query": {"type": "string", "description": "Words or a symbol name."},
-        "limit": {"type": "integer", "description": "Entries to return, default 10, max 30."},
+        "query": {"type": "string"},
+        "limit": {"type": "integer"},
     },
     "additionalProperties": False,
 }
@@ -369,7 +369,10 @@ def lookup(query: str, limit: int | None) -> tuple[list[dict], bool, dict]:
     """Rank entries by query terms in the entry's name (weight 3) and its signature and doc (1); ties keep index
     order. A term that is an exact symbol name scores highest."""
     started = time.monotonic()
-    n = max(1, min(int(limit or 10), 30))
+    try:
+        n = max(1, min(int(limit or 10), 30))
+    except (TypeError, ValueError):
+        n = 10  # a malformed limit falls back to the default rather than failing the call
     terms = list(dict.fromkeys(t for w in WORD.findall(query) for t in _split(w)))
     exact = {w.lower() for w in WORD.findall(query)}
     scored = []

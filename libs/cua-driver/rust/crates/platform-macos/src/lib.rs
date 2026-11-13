@@ -29,6 +29,8 @@ pub mod capture;
 #[cfg(target_os = "macos")]
 pub mod capture_consent;
 #[cfg(target_os = "macos")]
+mod capture_owner;
+#[cfg(target_os = "macos")]
 pub mod cursor;
 #[cfg(target_os = "macos")]
 pub mod display_awake;

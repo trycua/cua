@@ -118,6 +118,10 @@ pub fn request_screen_recording() -> bool {
 /// under Screen & System Audio Recording. Bounded: returns after `timeout`
 /// even if the query never answers.
 fn register_with_screen_capture_kit(timeout: std::time::Duration) {
+    if crate::capture_owner::claim().is_err() {
+        // The process that holds the claim has already put this executable in the list.
+        return;
+    }
     let (tx, rx) = std::sync::mpsc::channel();
     let spawned = std::thread::Builder::new()
         .name("cua-sr-register".into())

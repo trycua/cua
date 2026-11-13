@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.36.6](https://github.com/trycua/cua/compare/cua-spaces-v0.36.5...cua-spaces-v0.36.6) (2026-11-13)
+
+
+### Bug Fixes
+
+* **host:** name and, where possible, fix what a headless Linux computer needs for Spaces ([#7310](https://github.com/trycua/cua/issues/7310)) ([#7399](https://github.com/trycua/cua/issues/7399)) ([9653f85](https://github.com/trycua/cua/commit/9653f85f38b76f7293c833673775d5c8b00b033d))
+* **spaces-macos:** bundle cua 0.27.2 in Cua Spaces ([#7563](https://github.com/trycua/cua/issues/7563)) ([3268440](https://github.com/trycua/cua/commit/3268440d3dc9a7b906ef80fd59c2ab0774908657))
+
 ## [0.36.5](https://github.com/trycua/cua/compare/cua-spaces-v0.36.4...cua-spaces-v0.36.5) (2026-11-13)
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.1](https://github.com/trycua/cua/compare/cua-spacesd-v0.16.0...cua-spacesd-v0.16.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* **cua-spacesd:** note that the release build installs cross targets for the pinned toolchain ([#7578](https://github.com/trycua/cua/issues/7578)) ([fccd2eb](https://github.com/trycua/cua/commit/fccd2eb27faab70b3a6b7b3cc7a4d840b4f914fd))
+
 ## [0.16.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.15.5...cua-spacesd-v0.16.0) (2026-11-13)
 
 

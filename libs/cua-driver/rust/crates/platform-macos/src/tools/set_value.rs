@@ -526,6 +526,7 @@ fn set_value_blocking(
         let numeric_target = value.trim().parse::<f64>().ok();
         // Read the value before writing so an unchanged field can be reported as
         // idempotent rather than silently indistinguishable from a fresh write.
+        unsafe { crate::ax::enablement::flush_pending_web_updates_for_element(pid, element) };
         let before = unsafe { copy_string_attr(element, "AXValue") };
         let err = match numeric_target {
             Some(n) => {
@@ -539,6 +540,7 @@ fn set_value_blocking(
             None => unsafe { set_string_attr(element, "AXValue", value) },
         };
         if err == kAXErrorSuccess {
+            unsafe { crate::ax::enablement::flush_pending_web_updates_for_element(pid, element) };
             let mut after = unsafe { copy_string_attr(element, "AXValue") };
             let (mut verified, mut changed) = classify_write(
                 before.as_deref(),
@@ -555,6 +557,9 @@ fn set_value_blocking(
                     break;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(100));
+                unsafe {
+                    crate::ax::enablement::flush_pending_web_updates_for_element(pid, element)
+                };
                 after = unsafe { copy_string_attr(element, "AXValue") };
                 (verified, changed) = classify_write(
                     before.as_deref(),

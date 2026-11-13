@@ -407,83 +407,38 @@ impl SpacesdClient {
         self.inner.channel.clone()
     }
 
-    raw_client!(
-        /// Raw `SystemService` client.
-        system,
-        SystemServiceClient
-    );
-    raw_client!(
-        /// Raw `ProcessService` client.
-        process,
-        ProcessServiceClient
-    );
-    raw_client!(
-        /// Raw `FilesystemService` client.
-        filesystem,
-        FilesystemServiceClient
-    );
-    raw_client!(
-        /// Raw `ComputerService` client.
-        computer,
-        ComputerServiceClient
-    );
-    raw_client!(
-        /// Raw `WindowsService` client.
-        windows,
-        WindowsServiceClient
-    );
-    raw_client!(
-        /// Raw `AccessibilityService` client.
-        accessibility,
-        AccessibilityServiceClient
-    );
-    raw_client!(
-        /// Raw `DriverService` client.
-        driver,
-        DriverServiceClient
-    );
-    raw_client!(
-        /// Raw `StreamService` client.
-        stream,
-        StreamServiceClient
-    );
-    raw_client!(
-        /// Raw `PresenceService` client.
-        presence,
-        PresenceServiceClient
-    );
-    raw_client!(
-        /// Raw `TeleportService` client.
-        teleport,
-        TeleportServiceClient
-    );
-    raw_client!(
-        /// Raw `TunnelService` client.
-        tunnel,
-        TunnelServiceClient
-    );
-    raw_client!(
-        /// Raw `VolumeService` client (the guest mount of Cua Volume).
-        volume,
-        VolumeServiceClient
-    );
-    raw_client!(
-        /// Raw `HostSpacesService` client (a host that provides Spaces).
-        host_spaces,
-        HostSpacesServiceClient
-    );
-    raw_client!(
-        /// Raw `HostSnapshotsService` client (a host's checkpoints, and
+    raw_client!(/// Raw `SystemService` client.
+        system, SystemServiceClient);
+    raw_client!(/// Raw `ProcessService` client.
+        process, ProcessServiceClient);
+    raw_client!(/// Raw `FilesystemService` client.
+        filesystem, FilesystemServiceClient);
+    raw_client!(/// Raw `ComputerService` client.
+        computer, ComputerServiceClient);
+    raw_client!(/// Raw `WindowsService` client.
+        windows, WindowsServiceClient);
+    raw_client!(/// Raw `AccessibilityService` client.
+        accessibility, AccessibilityServiceClient);
+    raw_client!(/// Raw `DriverService` client.
+        driver, DriverServiceClient);
+    raw_client!(/// Raw `StreamService` client.
+        stream, StreamServiceClient);
+    raw_client!(/// Raw `PresenceService` client.
+        presence, PresenceServiceClient);
+    raw_client!(/// Raw `TeleportService` client.
+        teleport, TeleportServiceClient);
+    raw_client!(/// Raw `TunnelService` client.
+        tunnel, TunnelServiceClient);
+    raw_client!(/// Raw `VolumeService` client (the guest mount of Cua Volume).
+        volume, VolumeServiceClient);
+    raw_client!(/// Raw `HostSpacesService` client (a host that provides Spaces).
+        host_spaces, HostSpacesServiceClient);
+    raw_client!(/// Raw `HostSnapshotsService` client (a host's checkpoints, and
         /// copying them between hosts).
-        host_snapshots,
-        HostSnapshotsServiceClient
-    );
-    raw_client!(
-        /// Raw `HostThreadService` client (the threads of the Spaces a
+        host_snapshots, HostSnapshotsServiceClient);
+    raw_client!(/// Raw `HostThreadService` client (the threads of the Spaces a
         /// host provides).
-        host_thread,
-        HostThreadServiceClient
-    );
+        host_thread, HostThreadServiceClient);
 
     /// `GetCapabilities`, cached after the first successful call.
     pub async fn capabilities(&self) -> Result<pb::GetCapabilitiesResponse> {

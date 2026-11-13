@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.49.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.2...cua-driver-rs-v0.49.3) (2026-11-13)
+
+
+### Bug Fixes
+
+* **cua-driver:** uninstall-local stops app-bundle daemons and removes release markers ([#7615](https://github.com/trycua/cua/issues/7615)) ([b9ed6ae](https://github.com/trycua/cua/commit/b9ed6ae9f755ce69ac24be35b04be869ae5ad259))
+
 ## [0.49.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.1...cua-driver-rs-v0.49.2) (2026-11-13)
 
 

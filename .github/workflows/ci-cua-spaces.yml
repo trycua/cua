@@ -158,6 +158,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: apps/cua-spaces/pnpm-lock.yaml
       - name: Install Rust and the wasm32 target
+        working-directory: apps/cua-spaces
         shell: bash
         run: |
           rustup show active-toolchain || rustup toolchain install
@@ -205,6 +206,7 @@ jobs:
       # The models call the shared app core (libs/cua/crates/cua-spaces-app-core)
       # as wasm, built by scripts/build-core-wasm.mjs before test and build.
       - name: Install Rust and the wasm32 target
+        working-directory: apps/cua-spaces
         shell: bash
         run: |
           rustup show active-toolchain || rustup toolchain install
@@ -279,6 +281,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: apps/cua-spaces/pnpm-lock.yaml
       - name: Install Rust (toolchain from rust-toolchain.toml) and the wasm32 target
+        working-directory: apps/cua-spaces
         shell: bash
         run: |
           rustup show active-toolchain || rustup toolchain install

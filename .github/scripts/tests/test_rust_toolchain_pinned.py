@@ -94,3 +94,57 @@ def test_cua_spacesd_workspace_pins_the_same_toolchain_as_libs_cua():
     spacesd = tomllib.loads((ROOT / "libs/cua-spacesd/rust-toolchain.toml").read_text())["toolchain"]
     assert spacesd["channel"] == cua["channel"]
     assert {"rustfmt", "clippy"} <= set(spacesd["components"])
+
+
+def _toolchain_dir(workdir: str) -> bool:
+    """True if `workdir` (repo-relative) or a parent has a rust-toolchain.toml."""
+    path = (ROOT / workdir).resolve()
+    while path != ROOT.parent:
+        if (path / "rust-toolchain.toml").exists():
+            return True
+        if path == ROOT:
+            break
+        path = path.parent
+    return False
+
+
+def test_cross_targets_are_installed_for_the_pinned_toolchain():
+    """Cargo uses the toolchain pinned by rust-toolchain.toml, not whatever the
+    workflow installed first. A target added to another toolchain (for example
+    `dtolnay/rust-toolchain@stable` with `targets:`) leaves the pinned one
+    without that target's std: `error[E0463]: can't find crate for core`
+    (cua-spacesd-v0.16.0 release run).
+
+    So a step that adds targets must either install the pinned compiler
+    itself (`dtolnay/rust-toolchain@<x.y.z>` equal to libs/cua's pin), or run
+    `rustup target add` from a directory governed by a rust-toolchain.toml
+    (or name `--toolchain`).
+    """
+    pinned = tomllib.loads((ROOT / "libs/cua/rust-toolchain.toml").read_text())["toolchain"]["channel"]
+    offenders = []
+    for path in [*WORKFLOWS, *sorted((ROOT / ".github/actions").glob("*/action.yml"))]:
+        doc = yaml.safe_load(path.read_text())
+        groups = [j.get("steps") or [] for j in (doc.get("jobs") or {}).values() if isinstance(j, dict)]
+        groups.append((doc.get("runs") or {}).get("steps") or [])
+        for steps in groups:
+            for step in steps:
+                uses = step.get("uses") or ""
+                with_ = step.get("with") or {}
+                where = f"{path.relative_to(ROOT)}: {step.get('name') or uses or step.get('run', '')[:40]!r}"
+                if uses.startswith("dtolnay/rust-toolchain@") and with_.get("targets"):
+                    channel = str(with_.get("toolchain") or uses.split("@", 1)[1])
+                    sha = re.search(re.escape(uses) + r"\s+#\s*(\S+)", path.read_text())
+                    if re.fullmatch(r"[0-9a-f]{40}", channel) and sha:
+                        channel = sha.group(1)  # SHA pin: its trailing comment names the version
+                    if channel != pinned:
+                        offenders.append(f"{where}: installs {channel!r}, pinned toolchain is {pinned}")
+                run = step.get("run") or ""
+                if re.search(r"\brustup\s+target\s+add\b", run) and "--toolchain" not in run:
+                    workdir = step.get("working-directory") or ""
+                    cd = re.search(r"^\s*cd\s+(\S+)", run, re.M)
+                    workdir = workdir or (cd.group(1) if cd else "")
+                    if "${{" in workdir or not _toolchain_dir(workdir or "."):
+                        offenders.append(f"{where}: `rustup target add` outside a rust-toolchain.toml directory")
+    assert not offenders, (
+        f"Bind cross targets to the pinned toolchain ({pinned}); see docstring:\n" + "\n".join(offenders)
+    )

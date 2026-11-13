@@ -357,6 +357,7 @@ impl QemuPackageManager {
                 "qemu-efi-aarch64",
                 "ovmf",
                 "openssh-client",
+                "passt",
             ],
             Self::Dnf => &[
                 "qemu-kvm",
@@ -364,6 +365,7 @@ impl QemuPackageManager {
                 "edk2-ovmf",
                 "edk2-aarch64",
                 "openssh",
+                "passt",
             ],
         }
     }
@@ -390,6 +392,73 @@ impl QemuPackageManager {
             Self::Apt.render(),
             Self::Dnf.render()
         )
+    }
+}
+
+/// The plain fix for a host without `pasta` (passt): a QEMU VM's secure
+/// network runs in a namespace pasta creates, so no VM starts without it.
+pub const PASST_FIX: &str = "pasta (passt), which gives QEMU Spaces their network: Debian/Ubuntu: \
+     `sudo apt-get install passt`; Fedora: `sudo dnf install passt` \
+     (`cua runtime setup qemu` installs it when sudo needs no password)";
+
+/// The plain fix for a host that stops pasta from creating its user
+/// namespace. Needs an administrator: setup cannot do it unattended.
+pub const USERNS_FIX: &str = "permission for pasta to create a user namespace, which this host \
+     denies. On Ubuntu 24.04 (kernel.apparmor_restrict_unprivileged_userns=1) add an AppArmor \
+     profile that grants `userns` to /usr/bin/pasta, or run `sudo sysctl -w \
+     kernel.apparmor_restrict_unprivileged_userns=0` and keep it in /etc/sysctl.d/. Elsewhere \
+     raise user.max_user_namespaces or set kernel.unprivileged_userns_clone=1. Setup cannot \
+     change this for you";
+
+/// What a Linux host still lacks for a QEMU VM's secure network (empty when
+/// it has all of it): passt, and permission for pasta's user namespace.
+/// `userns_denied` is only meaningful when pasta is there to be asked.
+pub fn secure_net_missing(pasta: bool, userns_denied: bool) -> Vec<String> {
+    let mut missing = Vec::new();
+    if !pasta {
+        missing.push(PASST_FIX.to_string());
+    } else if userns_denied {
+        missing.push(USERNS_FIX.to_string());
+    }
+    missing
+}
+
+/// Folds [`secure_net_missing`] into QEMU's doctor row: not ready, with each
+/// missing piece named. A missing passt is something setup installs when the
+/// package manager can run without a password (`installer` is its plan).
+fn note_secure_net(status: &mut BackendStatus, missing: Vec<String>, installer: Option<String>) {
+    if missing.is_empty() {
+        return;
+    }
+    let pasta_missing = missing.iter().any(|m| m == PASST_FIX);
+    status.ready = false;
+    status.missing.extend(missing);
+    if pasta_missing && let Some(plan) = installer {
+        status.provisionable = true;
+        if !status.provisioning.contains(&plan) {
+            status.provisioning.push(plan);
+        }
+    }
+}
+
+/// Whether pasta can create its user namespace here: runs `pasta` once on a
+/// no-op command in a throwaway namespace and looks for its refusal. Only
+/// asked of a pasta that exists.
+async fn pasta_userns_denied_here(pasta: &std::path::Path) -> bool {
+    let run = host::run(pasta, &["-q", "--", "/bin/true"]);
+    match tokio::time::timeout(std::time::Duration::from_secs(10), run).await {
+        Ok(Err(VmmError::Command { stderr, .. })) => {
+            #[cfg(feature = "qemu")]
+            {
+                crate::qemu::pasta_userns_denied(&stderr)
+            }
+            #[cfg(not(feature = "qemu"))]
+            {
+                let _ = stderr;
+                false
+            }
+        }
+        _ => false,
     }
 }
 
@@ -481,6 +550,24 @@ pub async fn doctor() -> DoctorReport {
         ));
     }
     note_kvm(&mut qemu_status, host_os, &kvm);
+    // A QEMU VM on Linux runs in a pasta namespace under the secure default:
+    // name what that still needs (passt, permission for its user namespace).
+    if host_os == HostOs::Linux && crate::network::Mode::from_env() == crate::network::Mode::Secure
+    {
+        let pasta = host::which("pasta");
+        let denied = match &pasta {
+            Some(p) => pasta_userns_denied_here(p).await,
+            None => false,
+        };
+        let installer = QemuPackageManager::detect().and_then(|(manager, _)| {
+            (manager == QemuPackageManager::Dnf || host::sudo_available()).then(|| manager.render())
+        });
+        note_secure_net(
+            &mut qemu_status,
+            secure_net_missing(pasta.is_some(), denied),
+            installer,
+        );
+    }
 
     // Lume.
     // Apple silicon cannot nest macOS VMs: a Mac that is itself a virtual
@@ -1575,6 +1662,103 @@ mod tests {
         eprintln!("{}", serde_json::to_string_pretty(&r).unwrap());
     }
 
+    fn qemu_row(ready: bool) -> BackendStatus {
+        BackendStatus {
+            backend: BackendKind::Qemu,
+            ready,
+            provisionable: false,
+            detail: "QEMU emulator version 8.2.2".into(),
+            missing: vec![],
+            provisioning: vec![],
+        }
+    }
+
+    #[test]
+    fn a_linux_host_with_passt_and_its_namespace_has_nothing_missing() {
+        assert!(secure_net_missing(true, false).is_empty());
+        let mut row = qemu_row(true);
+        note_secure_net(&mut row, vec![], Some("sudo apt-get install passt".into()));
+        assert!(row.ready && row.missing.is_empty() && !row.provisionable);
+    }
+
+    #[test]
+    fn missing_passt_is_named_with_its_fix_and_setup_can_install_it() {
+        let missing = secure_net_missing(false, false);
+        assert_eq!(missing.len(), 1);
+        assert!(
+            missing[0].contains("sudo apt-get install passt"),
+            "{missing:?}"
+        );
+        assert!(missing[0].contains("sudo dnf install passt"), "{missing:?}");
+        let mut row = qemu_row(true);
+        note_secure_net(&mut row, missing, Some(QemuPackageManager::Apt.render()));
+        assert!(!row.ready);
+        assert!(row.provisionable);
+        assert!(
+            row.provisioning[0].contains("passt"),
+            "{:?}",
+            row.provisioning
+        );
+    }
+
+    #[test]
+    fn missing_passt_without_a_passwordless_installer_is_not_offered_to_setup() {
+        let mut row = qemu_row(true);
+        note_secure_net(&mut row, secure_net_missing(false, false), None);
+        assert!(!row.ready && !row.provisionable && row.provisioning.is_empty());
+        assert_eq!(row.missing.len(), 1);
+    }
+
+    #[test]
+    fn a_denied_user_namespace_is_named_and_never_offered_to_setup() {
+        let missing = secure_net_missing(true, true);
+        assert_eq!(missing.len(), 1);
+        for word in [
+            "kernel.apparmor_restrict_unprivileged_userns",
+            "AppArmor",
+            "/usr/bin/pasta",
+            "Setup cannot",
+        ] {
+            assert!(missing[0].contains(word), "{word}: {missing:?}");
+        }
+        let mut row = qemu_row(true);
+        note_secure_net(&mut row, missing, Some(QemuPackageManager::Apt.render()));
+        assert!(!row.ready);
+        assert!(!row.provisionable, "setup cannot edit AppArmor or sysctls");
+    }
+
+    #[test]
+    fn without_pasta_the_namespace_is_not_blamed() {
+        // No pasta to ask: only the install is named.
+        let missing = secure_net_missing(false, true);
+        assert_eq!(missing, vec![PASST_FIX.to_string()]);
+    }
+
+    #[cfg(all(unix, feature = "qemu"))]
+    #[tokio::test]
+    async fn the_namespace_probe_reads_pastas_own_refusal() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let fake = |name: &str, body: &str| {
+            let p = dir.path().join(name);
+            std::fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+            p
+        };
+        let denies = fake(
+            "denies",
+            "echo \"Couldn't write to /proc/self/uid_map: Permission denied\" >&2; exit 1",
+        );
+        let allows = fake("allows", "exit 0");
+        let other = fake("other", "echo 'No external routable interface' >&2; exit 1");
+        assert!(pasta_userns_denied_here(&denies).await);
+        assert!(!pasta_userns_denied_here(&allows).await);
+        assert!(
+            !pasta_userns_denied_here(&other).await,
+            "an unrelated failure is not a namespace denial"
+        );
+    }
+
     #[test]
     fn apt_qemu_plan_refreshes_before_install() {
         let commands = QemuPackageManager::Apt.commands("/usr/bin/apt-get");
@@ -1593,6 +1777,7 @@ mod tests {
                     "qemu-efi-aarch64",
                     "ovmf",
                     "openssh-client",
+                    "passt",
                 ],
             ]
         );
@@ -1603,7 +1788,7 @@ mod tests {
         assert_eq!(
             QemuPackageManager::Apt.render(),
             "sudo -n apt-get update && sudo -n apt-get install -y qemu-system-x86 \
-             qemu-system-arm qemu-utils qemu-efi-aarch64 ovmf openssh-client"
+             qemu-system-arm qemu-utils qemu-efi-aarch64 ovmf openssh-client passt"
         );
     }
 
@@ -1621,11 +1806,12 @@ mod tests {
                 "edk2-ovmf",
                 "edk2-aarch64",
                 "openssh",
+                "passt",
             ]]
         );
         assert_eq!(
             QemuPackageManager::Dnf.render(),
-            "sudo -n dnf install -y qemu-kvm qemu-img edk2-ovmf edk2-aarch64 openssh"
+            "sudo -n dnf install -y qemu-kvm qemu-img edk2-ovmf edk2-aarch64 openssh passt"
         );
     }
 
@@ -1638,10 +1824,11 @@ mod tests {
             "ovmf",
             "qemu-system-arm",
             "qemu-efi-aarch64",
+            "passt",
         ] {
             assert!(apt.contains(package), "{package}");
         }
-        for package in ["qemu-kvm", "edk2-ovmf", "edk2-aarch64"] {
+        for package in ["qemu-kvm", "edk2-ovmf", "edk2-aarch64", "passt"] {
             assert!(dnf.contains(package), "{package}");
         }
     }

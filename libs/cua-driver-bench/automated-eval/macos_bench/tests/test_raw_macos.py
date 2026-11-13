@@ -424,6 +424,16 @@ class NativeLintTest(unittest.TestCase):
                 "MB3",
             ),
             (
+                "from ApplicationServices import AXUIElementPerformAction, kAXShowMenuAction as show\n"
+                "AXUIElementPerformAction(p, show)\nreturn 1",
+                "MB7",
+            ),
+            (
+                "from ApplicationServices import AXUIElementSetAttributeValue as setv, kAXFocusedAttribute as focus\n"
+                "setv(e, focus, True)\nreturn 1",
+                "MB3",
+            ),
+            (
                 "from ApplicationServices import AXUIElementSetAttributeValue, kAXFrontmostAttribute\n"
                 "AXUIElementSetAttributeValue(a, kAXFrontmostAttribute, True)\nreturn 1",
                 "MB2",
@@ -460,6 +470,10 @@ class NativeLintTest(unittest.TestCase):
             "import ctypes\nctypes.CDLL(None).posix_spawn(a, b)",
             "import ctypes\nctypes.CDLL(None).system(b'ls')",
             "from Foundation import NSFileManager",
+            "import Foundation\nFoundation.NSData.dataWithContentsOfFile_('/etc/hosts')",
+            "import Foundation\nFoundation.NSData.dataWithContentsOfURL_(u)",
+            "import Foundation\nFoundation.NSString.stringWithContentsOfFile_encoding_error_(p, 4, None)",
+            "import Foundation\nd.writeToFile_atomically_(p, True)",
         ):
             with self.subTest(source=source):
                 found, ok = native(source + "\nreturn 1", granted=True)

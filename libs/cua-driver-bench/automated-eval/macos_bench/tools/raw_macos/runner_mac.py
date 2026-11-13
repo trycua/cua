@@ -78,7 +78,7 @@ def _guarded_getattr(obj: Any, name: str, *default: Any) -> Any:
     if NATIVE and rule is None:
         rule = (
             "GUI1"
-            if name in rawlint.NATIVE_SIDE_DOORS
+            if rawlint.native_side_door(name)
             else "MB2"
             if name in rawlint.NATIVE_FRONT
             else None

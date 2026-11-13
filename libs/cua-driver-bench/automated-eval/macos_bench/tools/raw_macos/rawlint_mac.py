@@ -367,6 +367,22 @@ NATIVE_SIDE_DOORS = {
     "NSURLSession",
     "NSURLConnection",
 }
+# Foundation selectors that read or write files or URLs (NSData/NSString/NSDictionary/NSImage ...ContentsOfFile_,
+# ...ContentsOfURL_, writeToFile_, writeToURL_): matched as a part of the selector name (GUI1)
+NATIVE_IO_PARTS = (
+    "ContentsOfFile",
+    "ContentsOfURL",
+    "writeToFile",
+    "writeToURL",
+    "ContentsAtPath",
+    "createFileAtPath",
+)
+
+
+def native_side_door(name: str) -> bool:
+    return name in NATIVE_SIDE_DOORS or any(part in name for part in NATIVE_IO_PARTS)
+
+
 # SkyLight/CPS calls that make a process frontmost (MB2, as SetFrontProcess)
 NATIVE_FRONT = {
     "SLPSSetFrontProcessWithOptions",
@@ -389,6 +405,9 @@ AX_CONSTANTS = {
     "kAXRaiseAction": "AXRaise",
     "kAXShowMenuAction": "AXShowMenu",
 }
+
+
+AX_CALLS = ("AXUIElementSetAttributeValue", "AXUIElementPerformAction")
 
 
 def import_ok(name: str, native: bool = False) -> bool:
@@ -540,6 +559,7 @@ def _pos(node: ast.AST) -> tuple[int, int]:
 class _Walker(ast.NodeVisitor):
     def __init__(self, native: bool = False) -> None:
         self.native = native
+        self.aliases: dict[str, str] = {}  # from ApplicationServices import kAXRaiseAction as r
         self.findings: list[Finding] = []
         self.last_action: tuple[int, int] = (0, 0)
         self.last_read: tuple[int, int] = (0, 0)
@@ -566,7 +586,7 @@ class _Walker(ast.NodeVisitor):
         if self.native and name in NATIVE_LOADERS:
             return  # framework loading is the native arm's point
         if self.native and rule is None:
-            rule = "GUI1" if name in NATIVE_SIDE_DOORS else "MB2" if name in NATIVE_FRONT else None
+            rule = "GUI1" if native_side_door(name) else "MB2" if name in NATIVE_FRONT else None
         if rule:
             self.add(rule, node, name)
 
@@ -580,7 +600,13 @@ class _Walker(ast.NodeVisitor):
         if node.level or not import_ok(node.module or "", self.native):
             self.add("GUI1", node, f"from {node.module} import ...")
         for alias in node.names:  # from Quartz import CGEventPost: the imported name is the call
-            if self.native and alias.name in (NATIVE_SIDE_DOORS | NATIVE_FRONT):
+            if (
+                self.native
+                and alias.asname
+                and (alias.name in AX_CONSTANTS or alias.name in AX_CALLS)
+            ):
+                self.aliases[alias.asname] = alias.name
+            if self.native and (native_side_door(alias.name) or alias.name in NATIVE_FRONT):
                 self.name_hit(alias.name, node)
             elif alias.name in NAMES and NAMES[alias.name] != "GUI1":
                 self.name_hit(
@@ -614,7 +640,7 @@ class _Walker(ast.NodeVisitor):
             self.add("GUI1", node, f"{node.id}() reads or writes files")
         elif node.id in NAMES and NAMES[node.id] != "GUI1":
             self.name_hit(node.id, node)
-        elif self.native and (node.id in NATIVE_SIDE_DOORS or node.id in NATIVE_FRONT):
+        elif self.native and (native_side_door(node.id) or node.id in NATIVE_FRONT):
             self.name_hit(node.id, node)
         self.generic_visit(node)
 
@@ -662,14 +688,12 @@ class _Walker(ast.NodeVisitor):
             action = _const_str(node.args[1])
             if action in AX_ACTION:
                 self.add(AX_ACTION[action], node, f"raw.ax.perform(..., {action!r})")
-        if (
-            self.native
-            and last in {"AXUIElementSetAttributeValue", "AXUIElementPerformAction"}
-            and len(node.args) >= 2
-        ):
+        last = self.aliases.get(last, last) if self.native else last
+        if self.native and last in AX_CALLS and len(node.args) >= 2:
             name = _const_str(node.args[1])
             if name is None and isinstance(node.args[1], (ast.Name, ast.Attribute)):
-                name = AX_CONSTANTS.get(_dotted(node.args[1]).rsplit(".", 1)[-1])
+                const = _dotted(node.args[1]).rsplit(".", 1)[-1]
+                name = AX_CONSTANTS.get(self.aliases.get(const, const))
             table = AX_SET if last == "AXUIElementSetAttributeValue" else AX_ACTION
             if name in table:
                 self.add(table[name], node, f"{last}(..., {name!r})")

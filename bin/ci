@@ -647,6 +647,8 @@ def changed_crates(changes: Changes, env: Dict[str, str]) -> Dict[str, Tuple[Wor
 
 LOCKFILE_RX = r"(^|/)(Cargo\.(toml|lock)|package(-lock)?\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|uv\.lock|pyproject\.toml|rust-toolchain\.toml)$|^scripts/ci/(check-lockfiles\.sh|lockfile-drift-allowlist\.txt)$"
 TSX = "node docs/node_modules/tsx/dist/cli.mjs"
+# The repository whose image workflows write the image-doctor-ledger branch.
+LEDGER_REPO = "https://github.com/trycua/cua.git"
 # The pre-commit hook's Prettier.
 PRETTIER = "npx -y prettier@3.6.2"
 SPACES_APPS = "apps/cua-spaces/ apps/cua-spaces-web/ apps/cua-spaces-desktop/ apps/cua-spaces-mobile/"
@@ -794,11 +796,14 @@ def static_checks(changes: Changes, ctx: "Context") -> List[Check]:
                   hint='give each new fence a disposition: test="<lane>" id="<id>", skip="<reason>" or output (tests/e2e/cua-sdk/docs/README.md)',
                   ci=(("ci-check-docs-links.yml", "python3 tests/e2e/cua-sdk/docs/extract.py --lint"),)))
 
+    # Only the canonical repository's image workflows write the ledger. A fork
+    # has no copy, or a stale one, so do not read it from `origin`.
     docs_img = changes.touches(r"^(docs/|skills/|README\.md$|libs/.*README\.md$|libs/cua/crates/cua-image/src/(canonical|resolve)\.rs$|scripts/images/(check-docs-image-refs|doctor_ledger)\.py$|scripts/images/docs-image-refs-baseline\.json$)")
     if docs_img:
         c = Check("docs-image-refs", "docs image refs have passing doctor reports",
                   f'set -e; l="$(mktemp -d)"; trap \'rm -rf "$l"\' EXIT; '
-                  f'git fetch -q origin image-doctor-ledger 2>/dev/null && git archive FETCH_HEAD | tar -x -C "$l" || true; '
+                  f'if git fetch -q {LEDGER_REPO} image-doctor-ledger 2>/dev/null; then git archive FETCH_HEAD | tar -x -C "$l"; '
+                  f'else echo "no image-doctor-ledger from {LEDGER_REPO}; every ref must be in the baseline" >&2; fi; '
                   f'b="$l/.base.json"; args=(--ledger "$l"); git show {changes.base}:scripts/images/docs-image-refs-baseline.json > "$b" 2>/dev/null && args+=(--baseline-base "$b"); '
                   f'python3 scripts/images/check-docs-image-refs.py "${{args[@]}}"',
                   tools=("crane",), hint="install crane: brew install crane")

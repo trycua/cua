@@ -355,3 +355,20 @@ class WindowKeyTest(unittest.TestCase):
             pick(1, 33)
         with self.assertRaises(LookupError):
             pick(1, True)  # a bool is not a window id (and no title contains "True")
+
+
+class Utf16Test(unittest.TestCase):
+    def test_ax_range_length(self):
+        import ast
+
+        source = (Path(lint.__file__).parent / "raw_mac.py").read_text()
+        node = next(
+            n
+            for n in ast.parse(source).body
+            if isinstance(n, ast.FunctionDef) and n.name == "_utf16_len"
+        )
+        env: dict = {}
+        exec(compile(ast.Module([node], []), "raw_mac.py", "exec"), env)  # noqa: S102
+        for text, n in (("13:00", 5), ("", 0), ("a\U0001f600b", 4), ("\u00e9", 1)):
+            with self.subTest(text=text):
+                self.assertEqual(env["_utf16_len"](text), n)

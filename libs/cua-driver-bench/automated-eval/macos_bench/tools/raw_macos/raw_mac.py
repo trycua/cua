@@ -739,7 +739,7 @@ class Raw:
         AX.AXUIElementSetAttributeValue(
             el,
             "AXSelectedTextRange",
-            AX.AXValueCreate(AX.kAXValueCFRangeType, (0, len(current))),
+            AX.AXValueCreate(AX.kAXValueCFRangeType, (0, _utf16_len(current))),
         )
         time.sleep(0.1)
         self.post_text(pid, text)
@@ -1441,6 +1441,11 @@ class _Refs:
 def _text_of(el: Any) -> str:
     v = _ax_get(el, "AXValue")
     return v if isinstance(v, str) else ("" if v is None else str(v))
+
+
+def _utf16_len(text: str) -> int:
+    """Length in UTF-16 code units, the unit of an AX text range (an emoji counts 2)."""
+    return len(text.encode("utf-16-le")) // 2
 
 
 def _wait_text(el: Any, text: str, wait: float) -> bool:

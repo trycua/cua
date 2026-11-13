@@ -545,8 +545,10 @@ class Finding:
     def severity(self) -> str:
         return RULES[self.rule].severity
 
-    def render(self, granted: bool, native: bool = False) -> str:
+    def render(self, granted: bool, native: bool = False, bare: bool = False) -> str:
         r = RULES[self.rule]
+        if bare:  # the bare arm: which rule refused the script, no explanation or alternative
+            return f"BLOCKED [{r.id} {r.title}] line {self.line}: {self.detail}"
         instead = NATIVE_INSTEAD.get(r.id, r.instead) if native else r.instead
         tag = {
             "block": "BLOCKED",
@@ -564,6 +566,7 @@ class Report:
     findings: list[Finding]
     granted: bool  # the harness's per-task foreground grant, not anything the script says
     native: bool = False  # the no-wrapper arm: alternatives name native calls, not raw.* helpers
+    bare: bool = False  # the bare arm: only blocking findings, rule id and title, no hints
 
     @property
     def blocked(self) -> list[Finding]:
@@ -578,6 +581,11 @@ class Report:
         return not self.blocked
 
     def render(self) -> str:
+        if self.bare:
+            return "\n".join(
+                ["The script was not run."]
+                + [f.render(self.granted, self.native, True) for f in sorted(self.blocked, key=lambda f: f.line)]
+            ) if self.blocked else ""
         if not self.findings:
             return ""
         head = (
@@ -826,7 +834,7 @@ def _raw_aliases(tree: ast.AST) -> set[str]:
         names = found
 
 
-def lint(source: str, granted: bool = False, native: bool = False) -> Report:
+def lint(source: str, granted: bool = False, native: bool = False, bare: bool = False) -> Report:
     """Findings for one script on a task with or without the harness's foreground grant. ``native``: the no-wrapper
     arm's script (native bindings and ctypes imports, single-underscore names). A syntax error is returned as the
     caller's problem, not a finding."""
@@ -842,7 +850,7 @@ def lint(source: str, granted: bool = False, native: bool = False) -> Report:
             ast.Constant(value=None, lineno=walker.last_action[0]),
             "no read after the last action on this line",
         )
-    return Report(walker.findings, granted, native)
+    return Report(walker.findings, granted, native, bare and native)
 
 
 def rules_markdown() -> str:

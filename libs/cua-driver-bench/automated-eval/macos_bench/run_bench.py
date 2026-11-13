@@ -594,6 +594,20 @@ def capture_subject(work: Path):
         proc.wait(timeout=5)
 
 
+# The native raw-linux arms' preflight capture: a root-window PNG into SHOTS and the client list, native calls only.
+NATIVE_CAPTURE_SCRIPT = (
+    "import gi\n"
+    'gi.require_version("Gdk", "3.0")\n'
+    "from gi.repository import Gdk\n"
+    "root = Gdk.get_default_root_window()\n"
+    'Gdk.pixbuf_get_from_window(root, 0, 0, root.get_width(), root.get_height()).savev(SHOTS + "/c.png", "png", [], [])\n'
+    "from Xlib import display\n"
+    "d = display.Display()\n"
+    "p = d.screen().root.get_full_property(d.intern_atom('_NET_CLIENT_LIST'), 0)\n"
+    "return len(p.value) if p else 0\n"
+)
+
+
 def real_capture_check(ctx: "Ctx", arm: str) -> tuple[str, str, str]:
     client = None
     try:
@@ -683,7 +697,9 @@ def real_capture_check(ctx: "Ctx", arm: str) -> tuple[str, str, str]:
                 result = call(
                     "run_script",
                     {
-                        "script": "raw.screenshot()\nreturn len(raw.windows())",
+                        "script": "raw.screenshot()\nreturn len(raw.windows())"
+                        if source == ca.RAW_LINUX_ARM
+                        else NATIVE_CAPTURE_SCRIPT,  # the native arms have no raw runtime
                         "timeout_ms": 60000,
                     },
                 )

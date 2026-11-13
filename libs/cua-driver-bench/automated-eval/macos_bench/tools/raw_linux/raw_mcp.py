@@ -43,6 +43,9 @@ PYTHON = os.environ.get("PYTHON") or sys.executable
 DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS = 30_000, 120_000
 # The no-wrapper arm (pi-raw-linux-native): scripts call Linux's own bindings directly, with no raw.* runtime
 NATIVE = os.environ.get("RAW_NATIVE") == "1"
+# The bare arm (pi-raw-linux-bare, RAW_BARE=1 with RAW_NATIVE=1): the native runtime and the same checks, but the model
+# sees only BARE_DESCRIPTION; lint and runtime messages name the rule and nothing else.
+BARE = NATIVE and os.environ.get("RAW_BARE") == "1"
 # pids whose AT-SPI calls timed out in an earlier script, per trial (raw.app asks them with a short timeout)
 STALLED: dict[str, set[str]] = {}
 
@@ -159,6 +162,13 @@ eval/exec, dunder attributes, getattr with computed names, Cua Driver in any for
 - An action the API accepted is not proof it worked: read the element back (get_text, get_current_value, states, \
 a screenshot) before you report success.
 """
+BARE_DESCRIPTION = (
+    "Run a Python script on this Linux (X11) desktop and get back its return value, printed output and any PNG it "
+    "saves into the directory named by the global SHOTS. Each call is a fresh process. Linux's native desktop APIs "
+    "are importable (gi.repository Atspi/Gdk/GdkPixbuf/GdkX11/GLib/GObject, pyatspi, python-xlib with XTest, dbus, "
+    "ctypes for the X11/XTest/xdo/AT-SPI libraries), and the global xdotool(*args) runs the xdotool CLI. Calls the "
+    "harness does not allow come back as an error."
+)
 GRANTED = (
     "This task grants foreground: the routes above are allowed when no background route works (a real hover, a "
     "drag with no accessible action, a tooltip that only shows on hover, keys into a spreadsheet or ledger cell). "
@@ -175,6 +185,8 @@ def trial() -> dict:
 
 
 def description(settings: dict) -> str:
+    if BARE:
+        return BARE_DESCRIPTION
     labels = settings.get("coverage") or {}
     coverage = (
         "AT-SPI coverage of this task's apps (measured by the harness): "
@@ -263,7 +275,7 @@ def run_script(script: str, timeout_ms: int | None) -> tuple[list[dict], bool, d
         text.append(result["lint_text"])
     granted = bool(settings.get("foreground_grant"))
     watch = result.get("watch") or {}
-    if watch.get("lines"):
+    if watch.get("lines") and not BARE:  # the bare arm gets no hints; the watch is still logged
         text.append(
             "Runtime background check: "
             + "; ".join(watch["lines"])
@@ -335,8 +347,9 @@ def serve() -> None:
                         "protocolVersion": "2024-11-05",
                         "capabilities": {"tools": {}},
                         "serverInfo": {"name": "cua", "version": "raw-linux-prototype"},
-                        "instructions": "One tool, run_script: Python against Linux low-level APIs. "
-                        "Read its description first.",
+                        "instructions": "One tool, run_script."
+                        if BARE
+                        else "One tool, run_script: Python against Linux low-level APIs. Read its description first.",
                     }
                 }
             )

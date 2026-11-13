@@ -362,12 +362,17 @@ RAW_LINUX_TRIAL = RAW_LINUX_LOG.parent / "trial.json"
 # The no-wrapper arm (Zane, 13 Nov 2026 16:15 SGT): the same server, lint, hook, grants and log with RAW_NATIVE=1, so
 # scripts call Linux's own bindings directly and get no raw.* runtime.
 RAW_LINUX_NATIVE_ARM = "cc-raw-linux-native"
-RAW_LINUX_ARMS = (RAW_LINUX_ARM, RAW_LINUX_NATIVE_ARM)
+# The bare arm (Zane, 13 Nov 2026 17:02 SGT: "no wrapper, no anything except a way to call the native apis"): the
+# native arm's runtime and the same harness checks, with RAW_BARE=1. The model sees one generic tool paragraph, no
+# system-prompt addendum, no coverage labels, no grant text and no hints in lint or runtime messages.
+RAW_LINUX_BARE_ARM = "cc-raw-linux-bare"
+RAW_LINUX_ARMS = (RAW_LINUX_ARM, RAW_LINUX_NATIVE_ARM, RAW_LINUX_BARE_ARM)
 ADAPTER_ARMS = {
     "cc-agent-desktop": AGENT_DESKTOP_SERVER,
     "cc-browser-use": BROWSER_USE_SERVER,
     RAW_LINUX_ARM: "cua",
     RAW_LINUX_NATIVE_ARM: "cua",
+    RAW_LINUX_BARE_ARM: "cua",
 }
 
 
@@ -395,7 +400,8 @@ def adapter_entry(arm: str) -> dict[str, Any]:
                 "RAW_TMP": str(RAW_LINUX_LOG.parent / "shots"),
                 "RAW_TRIAL": str(RAW_LINUX_TRIAL),
                 "PYTHON": python,
-                **({"RAW_NATIVE": "1"} if arm == RAW_LINUX_NATIVE_ARM else {}),
+                **({"RAW_NATIVE": "1"} if arm in (RAW_LINUX_NATIVE_ARM, RAW_LINUX_BARE_ARM) else {}),
+                **({"RAW_BARE": "1"} if arm == RAW_LINUX_BARE_ARM else {}),
             },
         )
         return {"type": "stdio", "command": python, "args": ["-I", "-B", str(RAW_LINUX_ADAPTER)], "env": env}
@@ -435,6 +441,8 @@ ARM_DESCRIPTIONS = {
     "(tools/raw_linux), no skill",
     RAW_LINUX_NATIVE_ARM: "The raw-linux arm with no raw.* runtime: scripts import python-xlib, gi Atspi/Gdk, pyatspi, "
     "dbus and ctypes and call Linux's own APIs directly; same lint rules, hook, grants and no Cua Driver",
+    RAW_LINUX_BARE_ARM: "The native arm with no guide: one generic run_script paragraph, no system-prompt addendum, "
+    "no hints; same imports, lint rules, hook, grants and no Cua Driver",
     "cc-codex-cu": "Claude Code + Codex computer-use cua_repl MCP (server codex-cu), no skill",
     "cc-codex-cu-1007-browser": "Claude Code + Codex 26.1007.21159 cua_repl MCP (server codex-cu), surfaces browser+computer, no skill (Amendment 10)",
     "cc-claude-cu-helper": "Claude Code + "
@@ -491,6 +499,8 @@ def system_prompt_for(arm: str, *, browser: bool = False) -> str:
         return prompt + RAW_LINUX_ADDENDUM
     if arm == RAW_LINUX_NATIVE_ARM:
         return prompt + RAW_LINUX_NATIVE_ADDENDUM
+    if arm == RAW_LINUX_BARE_ARM:
+        return prompt  # the shared prompt only: the tool's own paragraph is the whole interface
     build = CUA_BUILDS.get(arm)
     if build is None:
         return prompt

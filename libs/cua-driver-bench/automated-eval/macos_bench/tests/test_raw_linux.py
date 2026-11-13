@@ -538,6 +538,65 @@ class NativeArmTest(unittest.TestCase):
         self.assertIn("raw.cells", raw_mcp.description({"foreground_grant": True}))
 
 
+class BareArmTest(unittest.TestCase):
+    """The bare arm (RAW_BARE=1): the native runtime and the same checks, but no guide or hint reaches the model."""
+
+    def test_description_is_one_generic_paragraph(self):
+        import raw_mcp
+
+        with mock.patch.object(raw_mcp, "BARE", True), mock.patch.object(raw_mcp, "NATIVE", True):
+            granted = raw_mcp.description({"foreground_grant": True, "coverage": {"Calc": "partial"}})
+            not_granted = raw_mcp.description({"foreground_grant": False})
+        self.assertEqual(granted, not_granted)  # the grant comes from the task text only
+        self.assertNotIn("\n", granted)
+        self.assertLess(len(granted), 700)
+        for hint in ("raw.", "Calc", "Name Box", "GnuCash", "Electron", "foreground", "background", "combo",
+                     "spreadsheet", "do_action", "partial", "Cua Driver"):
+            self.assertNotIn(hint, granted, hint)
+        self.assertIn("SHOTS", granted)
+
+    def test_lint_blocks_the_same_scripts_and_names_only_the_rule(self):
+        src = "from Xlib import display\nfrom Xlib.ext import xtest\nd = display.Display()\nxtest.fake_input(d, 2, 38)"
+        full, bare = rawlint.lint(src, native=True), rawlint.lint(src, native=True, bare=True)
+        self.assertEqual([f.rule for f in full.blocked], [f.rule for f in bare.blocked])
+        self.assertFalse(bare.ok)
+        text = bare.render()
+        self.assertIn(full.blocked[0].rule, text)
+        for hint in ("instead", "source", "rule:", "AT-SPI", "EditableText", "grants"):
+            self.assertNotIn(hint, text, hint)
+        self.assertTrue(rawlint.lint(src, granted=True, native=True, bare=True).ok)  # the grant still applies
+
+    def test_lint_warnings_are_silent(self):
+        src = "import pyatspi\nx = 1"
+        self.assertEqual(rawlint.lint("from gi.repository import Atspi\nAtspi.Action.do_action(a, 0)",
+                                      native=True, bare=True).render(), "")
+        self.assertEqual(rawlint.lint(src, native=True, bare=True).render(), "")
+
+    def test_bare_needs_native(self):
+        self.assertFalse(rawlint.lint("x = 1", bare=True).bare)
+
+    def test_runtime_refusal_names_only_the_rule(self):
+        sys.modules.pop("raw", None)
+        try:
+            import raw
+        except Exception as error:  # noqa: BLE001 - gi or X11 missing on this host
+            self.skipTest(f"raw runtime not importable here: {error}")
+        with mock.patch.dict(os.environ, {"RAW_BARE": "1", "RAW_NATIVE": "1"}):
+            with self.assertRaises(raw.Blocked) as caught:
+                raw.State().refuse("BG3", "Xlib xtest fake_input(2)")
+        self.assertNotIn("Instead", str(caught.exception))
+        self.assertIn("BG3", str(caught.exception))
+
+    def test_arm_wiring(self):
+        import claude_arms as ca
+
+        self.assertIn(ca.RAW_LINUX_BARE_ARM, ca.RAW_LINUX_ARMS)
+        entry = ca.adapter_entry(ca.RAW_LINUX_BARE_ARM)
+        self.assertEqual((entry["env"]["RAW_NATIVE"], entry["env"]["RAW_BARE"]), ("1", "1"))
+        self.assertNotIn("RAW_BARE", ca.adapter_entry(ca.RAW_LINUX_NATIVE_ARM)["env"])
+        self.assertEqual(ca.system_prompt_for(ca.RAW_LINUX_BARE_ARM), ca.SYSTEM_PROMPT)
+
+
 class TaskGrantTest(unittest.TestCase):
     """The per-task grant in the task definitions: only tasks with no background route on the X11 lane get it."""
 

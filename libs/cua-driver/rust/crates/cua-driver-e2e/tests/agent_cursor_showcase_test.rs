@@ -315,10 +315,14 @@ const DESKTOP_KEYBOARD_FIRST_CELL_ID: &str = "desktop-agent-cursor-keyboard-firs
 /// A named session whose first action is a desktop-scope `press_key` (no pid,
 /// no window_id) shows its agent cursor. On macOS and Windows the key goes to
 /// the frontmost window, so the cursor lands on that window's centre.
+///
+/// Its name sorts after `keyboard_first_session_places_its_cursor_on_the_target_window`
+/// on purpose: on Windows, this row's `bring_to_front` and fixture teardown left
+/// foreground state that stalled that row's foreground `press_key` when it ran next.
 #[cfg(not(target_os = "linux"))]
 #[test]
 #[ignore]
-fn desktop_keyboard_first_session_places_its_cursor() {
+fn session_cursor_follows_a_desktop_scope_keyboard_first_action() {
     let fixture = native_fixture();
     let case = CaseSpec::delivered(
         DESKTOP_KEYBOARD_FIRST_CELL_ID,

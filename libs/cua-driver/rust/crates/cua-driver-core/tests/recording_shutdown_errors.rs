@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-use std::{process::Command, sync::Arc};
+use std::{path::Path, process::Command, sync::Arc};
 
 use cua_driver_core::{
     recording::RecordingSession,
@@ -20,7 +20,8 @@ async fn stop_recording_reports_encoder_exit() {
         run_in_child_process("stop_recording_reports_encoder_exit", "exit");
         return;
     }
-    let (response, state) = record_with_encoder().await;
+    let directory = tempfile::tempdir().unwrap();
+    let (response, state) = record_with_encoder(directory.path()).await;
     assert_eq!(response["isError"], true);
     assert!(
         response["content"][0]["text"]
@@ -43,7 +44,8 @@ async fn stop_recording_reports_shutdown_timeout() {
         run_in_child_process("stop_recording_reports_shutdown_timeout", "timeout");
         return;
     }
-    let (response, state) = record_with_encoder().await;
+    let directory = tempfile::tempdir().unwrap();
+    let (response, state) = record_with_encoder(directory.path()).await;
     assert_eq!(response["isError"], true);
     assert!(
         response["content"][0]["text"]
@@ -58,6 +60,67 @@ async fn stop_recording_reports_shutdown_timeout() {
         .as_str()
         .unwrap()
         .contains("ffmpeg shutdown timed out"));
+}
+
+/// #3713: a stalled desktop grab delayed ffmpeg's clean shutdown past the old
+/// three-second deadline, so a finalized video was reported as a failure.
+#[tokio::test]
+async fn stop_recording_waits_for_a_slow_clean_encoder_shutdown() {
+    if std::env::var_os(CHILD_MODE).is_none() {
+        run_in_child_process(
+            "stop_recording_waits_for_a_slow_clean_encoder_shutdown",
+            "slow",
+        );
+        return;
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let (response, state) = record_with_encoder(directory.path()).await;
+    assert_ne!(response["isError"], true, "{response}");
+    let video = directory.path().join("recording.mp4");
+    assert_eq!(
+        state["last_video_path"].as_str().map(Path::new),
+        Some(video.as_path()),
+        "{state}"
+    );
+    assert_eq!(std::fs::read(&video).unwrap(), b"finalized");
+    assert!(state["last_error"].is_null(), "{state}");
+}
+
+/// #3713: Chocolatey's ffmpeg.exe is a shim around the real encoder. Killing
+/// only the shim at the deadline left the encoder running, still writing the
+/// file the caller had just been told failed.
+#[cfg(windows)]
+#[tokio::test]
+async fn shutdown_timeout_stops_the_encoder_behind_a_shim() {
+    if std::env::var_os(CHILD_MODE).is_none() {
+        run_in_child_process("shutdown_timeout_stops_the_encoder_behind_a_shim", "shim");
+        return;
+    }
+    use std::time::{Duration, Instant};
+
+    let directory = tempfile::tempdir().unwrap();
+    let started = Instant::now();
+    let (response, _) = record_with_encoder(directory.path()).await;
+    // The fixture encoder ignores `q` for 60 s; returning well before that
+    // means stop did not wait for it to exit on its own.
+    assert!(started.elapsed() < Duration::from_secs(40), "{response}");
+    assert!(
+        response["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("ffmpeg shutdown timed out"),
+        "{response}"
+    );
+    let pid = std::fs::read_to_string(directory.path().join("recording.mp4.encoder-pid")).unwrap();
+    let tasks = Command::new("tasklist")
+        .args(["/NH", "/FO", "CSV", "/FI", &format!("PID eq {pid}")])
+        .output()
+        .unwrap();
+    assert!(tasks.status.success(), "{tasks:?}");
+    assert!(
+        !String::from_utf8_lossy(&tasks.stdout).contains(&format!("\"{pid}\"")),
+        "encoder {pid} outlived the shutdown timeout"
+    );
 }
 
 fn run_in_child_process(test_name: &str, mode: &str) {
@@ -96,12 +159,11 @@ fn run_in_child_process(test_name: &str, mode: &str) {
     );
 }
 
-async fn record_with_encoder() -> (Value, Value) {
+async fn record_with_encoder(output_dir: &Path) -> (Value, Value) {
     set_video_backend_factory(Box::new(FfmpegVideoBackendFactory));
     let session = Arc::new(RecordingSession::new());
-    let directory = tempfile::tempdir().unwrap();
     let started = StartRecordingTool::new(session.clone())
-        .invoke(json!({"output_dir": directory.path(), "record_video": true}))
+        .invoke(json!({"output_dir": output_dir, "record_video": true}))
         .await;
     assert_eq!(
         started.structured_content.as_ref().unwrap()["video_active"],

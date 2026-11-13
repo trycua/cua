@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.49.6](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.5...cua-driver-rs-v0.49.6) (2026-11-13)
+
+
+### Bug Fixes
+
+* **cua-driver:** report the macOS keyboard route as window-addressed keys are gated ([#7653](https://github.com/trycua/cua/issues/7653)) ([892bfdc](https://github.com/trycua/cua/commit/892bfdc1481de87d381a9eb0fbb178e158261133))
+
 ## [0.49.5](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.4...cua-driver-rs-v0.49.5) (2026-11-13)
 
 

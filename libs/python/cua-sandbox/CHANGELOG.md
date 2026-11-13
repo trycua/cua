@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.2](https://github.com/trycua/cua/compare/sandbox-v0.11.1...sandbox-v0.11.2) (2026-11-13)
+
+
+### Bug Fixes
+
+* **deps:** upgrade pillow to 13.0.0 and soupsieve to 4.1 (CVE-2026-128066, CVE-2026-128067, CVE-2026-126190) ([#7598](https://github.com/trycua/cua/issues/7598)) ([4d14f88](https://github.com/trycua/cua/commit/4d14f88d9482528ea0e9bdf2c7020d002bcd488d))
+
 ## [0.11.1](https://github.com/trycua/cua/compare/sandbox-v0.11.0...sandbox-v0.11.1) (2026-11-13)
 
 

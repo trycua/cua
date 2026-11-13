@@ -464,7 +464,8 @@ def _pos(node: ast.AST) -> tuple[int, int]:
 
 
 class _Walker(ast.NodeVisitor):
-    def __init__(self) -> None:
+    def __init__(self, raw_names: set[str] | None = None) -> None:
+        self.raw_names = raw_names or {"raw"}  # "raw" and every local bound to it (r = raw)
         self.findings: list[Finding] = []
         self.last_action: tuple[int, int] = (0, 0)
         self.last_read: tuple[int, int] = (0, 0)
@@ -516,7 +517,7 @@ class _Walker(ast.NodeVisitor):
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
         self.name_hit(node.attr, node)
-        if node.attr in HELPERS and _dotted(node.value) == "raw":
+        if node.attr in HELPERS and _dotted(node.value) in self.raw_names:
             self.add(HELPERS[node.attr], node, f"raw.{node.attr}")
         if node.attr.startswith("_"):
             # private and dunder attributes reach the runtime's own unguarded handles (raw.x11._lib, type internals)
@@ -576,7 +577,7 @@ class _Walker(ast.NodeVisitor):
                 self.add("GUI2", node, "getattr with a computed name")
             else:
                 self.name_hit(attr, node)
-                if attr in HELPERS and node.args and _dotted(node.args[0]) == "raw":
+                if attr in HELPERS and node.args and _dotted(node.args[0]) in self.raw_names:
                     self.add(HELPERS[attr], node, f"getattr(raw, {attr!r})")
                 if attr.startswith("_") or attr in ESCAPES:
                     self.add("GUI2", node, f"getattr {attr!r}")
@@ -609,11 +610,27 @@ class _Walker(ast.NodeVisitor):
             self.last_action = max(self.last_action, _pos(node))
 
 
+def _raw_aliases(tree: ast.AST) -> set[str]:
+    """"raw" and every name bound to it, directly or through another alias (r = raw; q = r; a = b = raw)."""
+    names = {"raw"}
+    while True:
+        found = set(names)
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+                value = node.value
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                if isinstance(value, ast.Name) and value.id in names:
+                    found |= {t.id for t in targets if isinstance(t, ast.Name)}
+        if found == names:
+            return names
+        names = found
+
+
 def lint(source: str, granted: bool = False) -> Report:
     """Findings for one script on a task with or without the harness's foreground grant. A syntax error is returned
     as the caller's problem, not a finding."""
     tree = ast.parse(source, "<script>", "exec")
-    walker = _Walker()
+    walker = _Walker(_raw_aliases(tree))
     walker.visit(tree)
     if walker.last_action > (0, 0) and walker.last_read <= walker.last_action:
         walker.add(

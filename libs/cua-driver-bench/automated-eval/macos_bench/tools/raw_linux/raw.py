@@ -625,7 +625,9 @@ class Raw:
                 return {"active": active == wid, "focus_ok": ok}
             time.sleep(0.05)
 
-    def _foreground(self, name: str, rule: str, window_id: Any, body: Any) -> dict[str, Any]:
+    def _foreground(
+        self, name: str, rule: str, window_id: Any, body: Any, keyboard: bool = False
+    ) -> dict[str, Any]:
         STATE.check(rule, f"raw.{name}")
         STATE.route(name)
         if self._restore_to is None:
@@ -637,6 +639,9 @@ class Raw:
             out.update(self._activate(wid))
             if not out["active"]:
                 raise RuntimeError(f"window {wid} did not become active; nothing was sent")
+            if keyboard and not out["focus_ok"]:
+                # keys go to the X input focus: never send them while it sits outside the target
+                raise RuntimeError(f"the input focus did not move into window {wid}; no keys were sent")
         body()
         time.sleep(0.1)
         return out
@@ -667,6 +672,7 @@ class Raw:
         return self._foreground(
             "key", "BG3", window_id,
             lambda: self._run_xdotool("key", "--clearmodifiers", "--delay", 30, *(names * count), timeout=60),
+            keyboard=True,
         )
 
     def type_text(self, window_id: int, text: str) -> dict[str, Any]:
@@ -687,7 +693,7 @@ class Raw:
                 else:
                     chunk += ch
 
-        return self._foreground("type_text", "BG3", window_id, body)
+        return self._foreground("type_text", "BG3", window_id, body, keyboard=True)
 
     def click(
         self, window_id: int, x: int, y: int, button: int = 1, count: int = 1, screen: bool = False

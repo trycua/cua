@@ -124,6 +124,9 @@ class RawLintTest(unittest.TestCase):
             "raw.scroll(5, 10, 10, 3)": "BG1",
             "raw.drag(1, 2, 3, 4)": "BG1",
             'getattr(raw, "drag")(1, 2, 3, 4)': "BG1",
+            "r = raw\nf = r.key\nf(5, 'a')": "BG3",
+            "q = r = raw\nq.click(5, 1, 1)": "BG1",
+            "r = raw\nq = r\ngetattr(q, 'type_text')(5, 'x')": "BG3",
         }
         for src, rule in cases.items():
             with self.subTest(src=src):
@@ -304,6 +307,49 @@ class TrialSettingsTest(unittest.TestCase):
         self.assertIn("does not grant foreground", raw_mcp.description({}))
         self.assertNotIn("raw.driver(", text)
         self.assertIn("raw.cells", text)
+
+
+class ForegroundHelperTest(unittest.TestCase):
+    """The keyboard helpers send nothing unless the target holds the input focus (no display needed)."""
+
+    def test_no_keys_when_focus_is_outside_the_target(self):
+        fake = mock.MagicMock()
+        with mock.patch.dict(sys.modules, {"gi": fake, "gi.repository": fake}):
+            sys.modules.pop("raw", None)
+            with mock.patch("ctypes.CDLL"), mock.patch("ctypes.util.find_library", return_value="x"):
+                import raw  # noqa: PLC0415
+
+                try:
+                    helper = object.__new__(raw.Raw)
+                    helper._x = mock.MagicMock()
+                    helper._x.clients.return_value = [5]
+                    helper._x.popups.return_value = ()
+                    helper._restore_to = None
+                    helper._popups_before = set()
+                    sent = []
+                    helper._run_xdotool = lambda *a, **k: sent.append(a)
+                    raw.STATE.granted = True
+                    for focus_ok, expect in ((False, 0), (True, 1)):
+                        sent.clear()
+                        helper._activate = lambda wid, ok=focus_ok: {"active": True, "focus_ok": ok}
+                        for call in (lambda: helper.key(5, "ctrl+s"), lambda: helper.type_text(5, "abc")):
+                            if focus_ok:
+                                call()
+                            else:
+                                with self.assertRaises(RuntimeError):
+                                    call()
+                        self.assertEqual(len(sent), 2 * expect, focus_ok)
+                    # a pointer helper needs the window active, not the key focus
+                    sent.clear()
+                    helper._activate = lambda wid: {"active": True, "focus_ok": False}
+                    helper._x.geometry.return_value = (0, 0, 10, 10)
+                    helper.click(5, 1, 1)
+                    self.assertEqual(len(sent), 2)
+                    raw.STATE.granted = False
+                    with self.assertRaises(raw.Blocked):
+                        helper.key(5, "a")
+                finally:
+                    sys.modules.pop("raw", None)
 
 
 class CellRefTest(unittest.TestCase):

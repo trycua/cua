@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.36.3](https://github.com/trycua/cua/compare/cua-spaces-v0.36.2...cua-spaces-v0.36.3) (2026-11-12)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.27.1 in Cua Spaces ([#7532](https://github.com/trycua/cua/issues/7532)) ([775fa27](https://github.com/trycua/cua/commit/775fa27508ff307ed44fc3b4c7bff835dbba0e7e))
+
+## [0.36.2](https://github.com/trycua/cua/compare/cua-spaces-v0.36.1...cua-spaces-v0.36.2) (2026-11-12)
+
+
+### Bug Fixes
+
+* **cua-spaces:** build the github_auth tests on Windows ([#7515](https://github.com/trycua/cua/issues/7515)) ([2319d45](https://github.com/trycua/cua/commit/2319d4561feb3086a8dc66edeb9cbd5eb509c5a5))
+* **spaces-macos:** bundle cua 0.27.0 in Cua Spaces ([#7500](https://github.com/trycua/cua/issues/7500)) ([0266f05](https://github.com/trycua/cua/commit/0266f05d4a325263aa59e6d2fb7c73e66d7e695a))
+* **spaces-macos:** bundle Cua Driver 0.47.22 in Cua Spaces ([#7518](https://github.com/trycua/cua/issues/7518)) ([2aab2f6](https://github.com/trycua/cua/commit/2aab2f60f62fb7350404a4296244633ce9bfc473))
+
 ## [0.36.1](https://github.com/trycua/cua/compare/cua-spaces-v0.36.0...cua-spaces-v0.36.1) (2026-11-12)
 
 

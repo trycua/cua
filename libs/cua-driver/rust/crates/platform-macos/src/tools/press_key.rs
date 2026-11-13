@@ -200,6 +200,62 @@ fn with_confirmed_key_focus<T>(
     dispatch()
 }
 
+/// Whether a key press must first be checked against a covered popup: a
+/// background press, addressed by element or to the window's focus (not the
+/// pixel form, whose click is gated on its own), of a key that opens a popup
+/// menu. Foreground presses are the caller's explicit choice and go through.
+fn key_may_open_background_popup(
+    foreground: bool,
+    pixel_form: bool,
+    key: &str,
+    modifiers: &[&str],
+) -> bool {
+    !foreground && !pixel_form && crate::input::keyboard::opens_popup_menu(key, modifiers)
+}
+
+/// Refusal for a key that would open the menu of a closed popup button in a
+/// window another app covers. The popup is the addressed element, or without
+/// an `element_token` the window's focused element.
+fn popup_key_refusal(
+    pid: i32,
+    window_id: u32,
+    element_index: Option<usize>,
+    element_ptr: Option<usize>,
+    doing: &str,
+) -> Option<ToolResult> {
+    let (element, owned) = match element_ptr {
+        Some(ptr) => (ptr as AXUIElementRef, false),
+        None => (
+            unsafe { crate::ax::exact_target::focused_element_in_window(pid, window_id) }?,
+            true,
+        ),
+    };
+    let refusal = (unsafe { copy_string_attr(element, "AXRole") }.as_deref()
+        == Some("AXPopUpButton")
+        && !super::set_value::popup_menu_is_open(element)
+        && crate::key_focus_guard::menu_open_would_raise(pid, window_id))
+    .then(|| {
+        let current = unsafe { copy_string_attr(element, "AXValue") }.unwrap_or_default();
+        let label = super::menu_raise::label(element);
+        let target = match element_index {
+            Some(_) => super::menu_raise::describe(element_index, "AXPopUpButton", &label),
+            None => format!("the focused AXPopUpButton \"{label}\""),
+        };
+        super::menu_raise::refusal(
+            pid,
+            window_id,
+            &target,
+            super::menu_raise::Menu::PopupOpen,
+            doing,
+            Some(&current),
+        )
+    });
+    if owned {
+        unsafe { CFRelease(element as _) };
+    }
+    refusal
+}
+
 fn delivery_failed(error: anyhow::Error) -> ToolResult {
     if let Some(refusal) = crate::security_prompt::tool_result(&error) {
         return refusal;
@@ -225,6 +281,7 @@ fn def() -> &'static ToolDef {
             - `foreground`: fronts the exact window (needs `window_id`), sends a real HID key transition (Chromium content, inline editors, menu equivalents), then restores the prior app.\n\
             \n\
             An element target whose focus cannot be confirmed is refused with `target_focus_unconfirmed`, effect \"refused\", and no key dispatched.\n\
+            In the background, up, down, space or return on a closed popup button (the element_token, or the window's focused element) whose window another app's window covers is refused with `background_unavailable`, reason `popup_menu_would_raise_window`: it would open the menu and raise the window. Choose the item with `set_value`.\n\
             Confirmed only when a native AX value/selection read-back changes; otherwise `effect:\"unverifiable\"` (not a delivery failure). Keys: return, tab, escape, up/down/left/right, space, delete, home, end, pageup, pagedown, f1-f12, any letter or digit.".into(),
         input_schema: serde_json::json!({
             "type": "object",
@@ -346,6 +403,33 @@ impl Tool for PressKeyTool {
         }
 
         let pre_focus_ptr: Option<usize> = pre_focus_guard.as_ref().map(|g| g.as_ptr());
+
+        // An arrow, Space or Return on a closed popup button opens its menu,
+        // and in a window another app covers that raises the window above the
+        // user's. Refuse before anything is sent; set_value chooses the item
+        // by typing instead.
+        if let Some(wid) = window_id {
+            let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+            if key_may_open_background_popup(fg, px.is_some(), &key, &modifier_refs) {
+                let target = pre_focus_guard.clone();
+                let doing = format!("pressing \"{display_key}\"");
+                let refusal = tokio::task::spawn_blocking(move || {
+                    popup_key_refusal(
+                        pid,
+                        wid,
+                        element_index,
+                        target.as_ref().map(|guard| guard.as_ptr()),
+                        &doing,
+                    )
+                })
+                .await
+                .ok()
+                .flatten();
+                if let Some(refusal) = refusal {
+                    return refusal;
+                }
+            }
+        }
 
         // ── Exact-target background gate (macOS background input v1) ──
         // A window-addressed background key is process-scoped transport: it
@@ -703,5 +787,38 @@ mod tests {
             failure.structured_content.unwrap()["code"],
             "delivery_failed"
         );
+    }
+
+    #[test]
+    fn keys_that_open_a_popup_menu_are_checked_only_in_the_background() {
+        for key in ["down", "up", "space", " ", "return", "enter", "ArrowDown"] {
+            assert!(
+                super::key_may_open_background_popup(false, false, key, &[]),
+                "{key}"
+            );
+            // Foreground stays the caller's explicit choice.
+            assert!(
+                !super::key_may_open_background_popup(true, false, key, &[]),
+                "{key}"
+            );
+            // The pixel form's focus click is gated on its own.
+            assert!(
+                !super::key_may_open_background_popup(false, true, key, &[]),
+                "{key}"
+            );
+        }
+        // Letters type-select an item without opening the menu.
+        for key in ["o", "f", "1", "tab", "escape", "left"] {
+            assert!(
+                !super::key_may_open_background_popup(false, false, key, &[]),
+                "{key}"
+            );
+        }
+        assert!(!super::key_may_open_background_popup(
+            false,
+            false,
+            "down",
+            &["cmd"]
+        ));
     }
 }

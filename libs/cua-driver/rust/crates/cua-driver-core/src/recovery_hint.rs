@@ -792,9 +792,9 @@ fn background_unavailable(c: &Ctx) -> RecoveryHint {
         ))
         .call(c.read_window()),
         (_, Some("popup_menu_would_raise_window")) => RecoveryHint::new(format!(
-            "Nothing changed: opening this popup's menu would raise its window above the user's. \
-             Call bring_to_front, then set_value, {FOREGROUND_CONDITION}; otherwise report the \
-             step as blocked."
+            "Nothing changed: this popup's menu would raise its window over the user's. Use \
+             set_value (it never opens the menu); if refused too, bring_to_front then \
+             set_value, {FOREGROUND_CONDITION}; else report blocked."
         )),
         (_, Some("context_menu_would_raise_window")) => RecoveryHint::new(format!(
             "Nothing changed: this context menu would raise its window above the user's. Run the \

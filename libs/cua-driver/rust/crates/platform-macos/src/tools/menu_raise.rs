@@ -7,9 +7,10 @@
 //! context menu), WindowServer orders the menu's window group to the front,
 //! and the group includes the window the menu belongs to. The key-focus guard
 //! puts the user's window back about 20 ms later, but the raise is on the
-//! user's screen for a frame or two first. No accessibility route chooses an
-//! AppKit menu item without the menu, so a background action that would open
-//! one is refused with `background_unavailable` and nothing is sent.
+//! user's screen for a frame or two first, so a background action that would
+//! open one is refused with `background_unavailable` and nothing is sent.
+//! `set_value` first tries to choose a popup's item by typing its title into
+//! the closed popup (type-select), which opens no menu.
 
 use cua_driver_core::protocol::ToolResult;
 
@@ -23,7 +24,10 @@ pub(super) const CONTEXT_MENU_WOULD_RAISE: &str = "context_menu_would_raise_wind
 /// Which menu a refused action would have opened.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Menu {
+    /// `set_value` could not choose the item without the popup's menu.
     Popup,
+    /// A click or key that opens the popup's menu; `set_value` is the route.
+    PopupOpen,
     Context,
 }
 
@@ -54,6 +58,14 @@ pub(super) fn refusal(
             "needs its menu open",
             "If the user agrees to this window coming forward, call bring_to_front for it, \
              then set_value again.",
+        ),
+        Menu::PopupOpen => (
+            POPUP_MENU_WOULD_RAISE,
+            "opens its menu",
+            "To choose an item, call set_value(element_token, \"<item title>\") instead: it \
+             selects by typing the title into the closed popup where the app takes that, \
+             never opens the menu, and says when the item can't be chosen. If the user agrees \
+             to this window coming forward, call bring_to_front for it first.",
         ),
         Menu::Context => (
             CONTEXT_MENU_WOULD_RAISE,
@@ -192,5 +204,28 @@ mod tests {
         let data = refused.structured_content.expect("structured");
         assert_eq!(data["reason"], CONTEXT_MENU_WOULD_RAISE);
         assert!(data.get("current_value").is_none());
+    }
+
+    #[test]
+    fn a_refused_popup_key_or_click_points_at_set_value() {
+        let refused = refusal(
+            7,
+            42,
+            &describe(Some(1), "AXPopUpButton", "Team"),
+            Menu::PopupOpen,
+            "pressing \"down\"",
+            Some("Choose a team"),
+        );
+        let message = text(&refused);
+        assert!(
+            message.contains("pressing \"down\" on [1] AXPopUpButton \"Team\""),
+            "{message}"
+        );
+        assert!(message.contains("set_value"), "{message}");
+        assert!(message.contains("typing"), "{message}");
+        let data = refused.structured_content.expect("structured");
+        assert_eq!(data["code"], "background_unavailable");
+        assert_eq!(data["reason"], POPUP_MENU_WOULD_RAISE);
+        assert_eq!(data["current_value"], "Choose a team");
     }
 }

@@ -5,7 +5,8 @@
 
 The entries are the generated index of the running macOS build (docs/gen_docs.py writes
 ``<RAW_DOCS_DIR>/<build>/index.jsonl``) and the hand-written notes (docs/notes.md, one entry per ``## `` section).
-Ranking is BM25 over each entry's name (weighted), declaration, doc text and framework, with identifiers split at
+Ranking: an exact name first, then entries that match more of the query's words, then BM25 over each entry's name
+(weighted), declaration, doc text and framework (pi's tool_search orders tools the same way), with identifiers split at
 camelCase and underscores, so ``CGImageDestination`` finds ``CGImageDestinationCreateWithURL`` and ``save image png``
 finds the note and the ImageIO calls. An exact name query ranks that entry first. Ties break on the name, so the same
 query always returns the same entries. Nothing here runs code or touches the desktop.
@@ -152,6 +153,7 @@ class Index:
         exact = self.by_name.get(query.strip().lower().lstrip("_"), [])
         terms = list(dict.fromkeys(tokens(query)))
         scores: dict[int, float] = {}
+        covered: dict[int, int] = {}
         for t in terms:
             idf = self.idf.get(t)
             if idf is None:
@@ -166,9 +168,21 @@ class Index:
                     + idf * norm
                     + (NAME_WEIGHT * idf if t in self.name_terms[i] else 0.0)
                 )
+                covered[i] = covered.get(i, 0) + 1
         for i in exact:
-            scores[i] = scores.get(i, 0.0) + 1e6
-        ranked = sorted(scores, key=lambda i: (-round(scores[i], 9), self.entries[i]["name"], i))
+            scores.setdefault(i, 0.0)
+        exact_set = set(exact)
+        # an exact name first, then entries matching more of the query's words, then BM25 (as pi's tool_search)
+        ranked = sorted(
+            scores,
+            key=lambda i: (
+                i not in exact_set,
+                -covered.get(i, 0),
+                -round(scores[i], 9),
+                self.entries[i]["name"],
+                i,
+            ),
+        )
         return [self.entries[i] for i in ranked[:limit]]
 
 

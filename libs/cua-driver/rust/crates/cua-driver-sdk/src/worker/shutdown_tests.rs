@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Pipe-only subprocess fixtures. Never initialize a driver, AppKit, or a desktop.
 use super::*;
 use std::sync::mpsc;

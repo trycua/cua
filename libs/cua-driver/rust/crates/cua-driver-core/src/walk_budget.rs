@@ -108,7 +108,9 @@ impl WalkBudget {
             self.stop.get_or_insert(WalkStop::NodeBudget);
             true
         } else if started.elapsed() >= self.timeout {
-            self.stop.get_or_insert(WalkStop::Timeout);
+            // Time ends the walk even after a node-budget refusal, and the
+            // reason says so.
+            self.stop = Some(WalkStop::Timeout);
             true
         } else {
             false
@@ -297,6 +299,18 @@ mod tests {
         let outcome = budget.outcome();
         assert_eq!(outcome.reason(), Some("node_budget"));
         assert_eq!((outcome.nodes_visited, outcome.nodes_pending), (4, 2));
+    }
+
+    #[test]
+    fn a_timeout_after_a_node_budget_refusal_is_reported_as_timeout() {
+        let mut budget = WalkBudget::new(30, 2);
+        assert!(budget.admit());
+        assert_eq!(budget.reserve(1), 1);
+        assert!(!budget.admit(), "held node refuses the deep child");
+        std::thread::sleep(Duration::from_millis(40));
+        budget.release();
+        assert!(!budget.admit(), "the deadline has passed");
+        assert_eq!(budget.outcome().reason(), Some("timeout"));
     }
 
     #[test]

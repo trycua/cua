@@ -84,17 +84,15 @@ is_local_target() {
     esac
 }
 
-# Stop only local autostart/process identities.
+# Stop only local autostart/process identities. The unit files are removed
+# only after every local daemon is confirmed gone, so a failed stop leaves the
+# install intact for a rerun.
 if [[ "$OS" == "Darwin" && -f "$LAUNCHAGENT" ]]; then
     launchctl unload "$LAUNCHAGENT" 2>/dev/null || true
-    rm -f "$LAUNCHAGENT"
-    log "removed LaunchAgent $LAUNCHAGENT"
 elif [[ "$OS" == "Linux" && -f "$SYSTEMD_UNIT" ]]; then
     if command -v systemctl >/dev/null 2>&1; then
         systemctl --user disable --now cua-driver-local.service 2>/dev/null || true
     fi
-    rm -f "$SYSTEMD_UNIT"
-    log "removed systemd user unit $SYSTEMD_UNIT"
 fi
 # See the note in _install-local-rust.sh: `pkill -x cua-driver-local` never
 # matches on Linux, because `-x` compares against the 15-char truncated
@@ -107,16 +105,21 @@ LOCAL_DAEMON_BINS=(
     "$HOME_DIR/packages/current/cua-driver-local"
     "$APP_BUNDLE/Contents/MacOS/cua-driver-local"
 )
+daemon_pattern() {
+    # Match the path literally: `.` in CuaDriverLocal.app and any metacharacter
+    # in an overridden home must not widen the match.
+    printf '^%s([[:space:]]|$)' "$(printf '%s' "$1" | sed 's/[][\\.*^$(){}?+|]/\\&/g')"
+}
 signal_local_daemons() {
     local bin
     for bin in "${LOCAL_DAEMON_BINS[@]}"; do
-        pkill "$@" -f "^${bin}([[:space:]]|\$)" >/dev/null 2>&1 || true
+        pkill "$@" -f "$(daemon_pattern "$bin")" >/dev/null 2>&1 || true
     done
 }
 local_daemon_running() {
     local bin
     for bin in "${LOCAL_DAEMON_BINS[@]}"; do
-        if pgrep -f "^${bin}([[:space:]]|\$)" >/dev/null 2>&1; then
+        if pgrep -f "$(daemon_pattern "$bin")" >/dev/null 2>&1; then
             return 0
         fi
     done
@@ -136,6 +139,13 @@ fi
 if local_daemon_running; then
     echo "error: a cua-driver-local daemon is still running; stop it and rerun $0" >&2
     exit 1
+fi
+if [[ "$OS" == "Darwin" && -f "$LAUNCHAGENT" ]]; then
+    rm -f "$LAUNCHAGENT"
+    log "removed LaunchAgent $LAUNCHAGENT"
+elif [[ "$OS" == "Linux" && -f "$SYSTEMD_UNIT" ]]; then
+    rm -f "$SYSTEMD_UNIT"
+    log "removed systemd user unit $SYSTEMD_UNIT"
 fi
 
 # Revoke only the local bundle's TCC rows, while LaunchServices can resolve it.

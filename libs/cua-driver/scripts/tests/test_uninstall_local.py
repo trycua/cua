@@ -212,7 +212,7 @@ def _darwin_local_sandbox(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     fake_bin = tmp_path / "fake-bin"
     calls = tmp_path / "calls.log"
     home.mkdir()
-    for command in ("dirname", "readlink", "realpath", "rmdir"):
+    for command in ("dirname", "readlink", "realpath", "rmdir", "sed"):
         executable = shutil.which(command, path=os.defpath)
         assert executable is not None, f"missing fixture utility: {command}"
         (fake_bin / command).parent.mkdir(parents=True, exist_ok=True)
@@ -268,7 +268,7 @@ def test_local_uninstall_stops_daemon_started_from_macos_app_bundle(tmp_path: Pa
 
     _run_local_uninstall(env)
 
-    app_daemon = "/Applications/CuaDriverLocal.app/Contents/MacOS/cua-driver-local"
+    app_daemon = r"/Applications/CuaDriverLocal\.app/Contents/MacOS/cua-driver-local"
     lines = calls.read_text(encoding="utf-8").splitlines()
     assert f"pkill:-f ^{app_daemon}([[:space:]]|$)" in lines
 
@@ -283,6 +283,9 @@ def test_local_uninstall_fails_while_a_local_daemon_survives(tmp_path: Path) -> 
     marker = Path(env["CUA_DRIVER_LOCAL_HOME"]) / "packages/current/cua-driver-local"
     marker.parent.mkdir(parents=True)
     marker.write_text("local\n", encoding="utf-8")
+    launchagent = Path(env["HOME"]) / "Library/LaunchAgents/com.trycua.cua-driver-local.plist"
+    launchagent.parent.mkdir(parents=True)
+    launchagent.write_text("local\n", encoding="utf-8")
 
     result = subprocess.run(
         ["/bin/bash", str(UNINSTALL_LOCAL), "--force"],
@@ -301,12 +304,14 @@ def test_local_uninstall_fails_while_a_local_daemon_survives(tmp_path: Path) -> 
     assert "rm:" not in recorded
     assert cache.is_dir()
     assert marker.is_file()
+    assert launchagent.is_file()
 
 
 def test_unix_local_uninstall_stops_a_running_local_daemon(tmp_path: Path) -> None:
     home = tmp_path / "home"
     fake_bin = tmp_path / "fake-bin"
-    local_home = home / ".cua-driver-local"
+    # Regex metacharacters in an overridden home must still match literally.
+    local_home = home / "local.home (x)"
     daemon = local_home / "packages/current/cua-driver-local"
     _executable(daemon, "exec sleep 60\n")
     _executable(fake_bin / "uname", "printf 'Linux\\n'")

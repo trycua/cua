@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 # The real cua-driver (MCP over stdio) against headless KWin with the helper loaded.
-# Windows A and B log every key and click they receive to argv[2].
+# Windows A and B (Wayland) and X (Xwayland) log every key and click they
+# receive to argv[2].
 import dbus
 import json
 import subprocess
@@ -98,10 +99,10 @@ d = Mcp()
 for _ in range(30):
     r = d.rpc("tools/call", {"name": "list_windows", "arguments": {}})["result"]
     by = {w.get("title"): w for w in r.get("structuredContent", {}).get("windows", [])}
-    if "A" in by and "B" in by:
+    if "A" in by and "B" in by and "X" in by:
         break
     time.sleep(0.5)
-A, B = by["A"], by["B"]
+A, B, X = by["A"], by["B"], by["X"]
 fg = {"delivery_mode": "foreground"}
 
 # 1. Typing into A while B is active: A gets the text, B nothing, B active again after.
@@ -204,7 +205,50 @@ err, text = d.call(
 got = log()
 check("5 background click is refused", err and got == [], (err, text[:200], got))
 
-# 6. Without the helper's gate, foreground input is refused and nothing is sent.
+# 6. Typing into the Xwayland window X while B is active, as for Java apps.
+activate("B")
+fresh()
+err, text = d.call("type_text", {"pid": X["pid"], "window_id": X["window_id"], "text": "hi", **fg})
+got = log()
+check(
+    "6 type_text into Xwayland X while B active",
+    not err
+    and [x for x in got if x.startswith("X key") and x != "X key Shift_L"] == ["X key h", "X key i"]
+    and not any(x.startswith("B") for x in got)
+    and active_title() == "B",
+    (err, text[:300], got, active_title()),
+)
+
+# 7. Pixel click on the Xwayland window X while B is active.
+d.call(
+    "get_window_state",
+    {
+        "pid": X["pid"],
+        "window_id": X["window_id"],
+        "include_accessibility_tree": False,
+        "max_image_dimension": 0,
+    },
+)
+activate("B")
+fresh()
+err, text = d.call(
+    "click",
+    {
+        "pid": X["pid"],
+        "window_id": X["window_id"],
+        "x": X["width"] // 2,
+        "y": X["height"] // 2,
+        **fg,
+    },
+)
+got = log()
+check(
+    "7 click on Xwayland X while B active",
+    not err and "X click 1" in got and not any(x.startswith("B") for x in got),
+    (err, text[:300], got),
+)
+
+# 8. Without the helper's gate, foreground input is refused and nothing is sent.
 dbus.Interface(bus.get_object("org.kde.KWin", "/Effects"), "org.kde.kwin.Effects").unloadEffect(
     "cua_kwin_target_helper"
 )
@@ -214,7 +258,7 @@ fresh()
 err, text = d.call("type_text", {"pid": A["pid"], "window_id": A["window_id"], "text": "x", **fg})
 got = log()
 check(
-    "6 no gate: refused, nothing sent",
+    "8 no gate: refused, nothing sent",
     err and "foreground_unavailable" in text and got == [],
     (err, text[:300], got),
 )

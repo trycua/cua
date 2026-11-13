@@ -5,5 +5,5 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     kwin-dev kwin-wayland cmake make g++ pkg-config extra-cmake-modules ca-certificates \
     qt6-base-dev qt6-declarative-dev libkf6config-dev libkf6windowsystem-dev libkf6globalaccel-dev \
     libkf6coreaddons-dev libdrm-dev libepoxy-dev libwayland-dev libxkbcommon-dev libegl-dev libgbm-dev \
-    dbus qdbus-qt6 libglib2.0-bin python3-gi gir1.2-gtk-4.0 python3-dbus libei1 libgl1-mesa-dri \
+    dbus qdbus-qt6 libglib2.0-bin python3-gi gir1.2-gtk-4.0 python3-dbus libei1 libgl1-mesa-dri xwayland \
     && rm -rf /var/lib/apt/lists/*

@@ -24,7 +24,7 @@ def win(title):
     return next(w for w in windows() if w["title"] == title)
 
 
-def activate(title):
+def activate(title, must_focus=True):
     js = tempfile.NamedTemporaryFile("w", suffix=".js", delete=False)
     js.write(
         "for (const w of workspace.windowList()) if (w.caption === %s) workspace.activeWindow = w;"
@@ -40,9 +40,11 @@ def activate(title):
     s.unloadScript("cuatest-activate")
     for _ in range(40):
         if json.loads(str(helper.GetFocus(win(title)["uuid"])))["keyboard"]:
-            return
+            return True
         time.sleep(0.05)
-    raise SystemExit(f"could not focus {title}")
+    if must_focus:
+        raise SystemExit(f"could not focus {title}")
+    return False
 
 
 ei = C.CDLL("libei.so.1")
@@ -264,6 +266,39 @@ check(
     "10 caller connection closes: gate released",
     "arm" in pa and got == ["B key r"] and "arm" in again,
     (pa, got, again),
+)
+check("11 GetFocus reports the keyboard on Xwayland window X", activate("X", False), "")
+fresh()
+a = arm("X")
+drv.tap(45)
+st = disarm(a)
+got = log()
+check(
+    "12 Xwayland target focused: key reaches X",
+    got == ["X key x"] and st == {"passed": 1, "dropped": 0},
+    (got, st),
+)
+activate("A")
+fresh()
+a = arm("X")
+drv.tap(45)
+st = disarm(a)
+got = log()
+check(
+    "13 armed for Xwayland X, A focused: key dropped",
+    got == [] and st == {"passed": 0, "dropped": 1},
+    (got, st),
+)
+activate("X")
+fresh()
+a = arm("X")
+drv.click(*centre("X"))
+st = disarm(a)
+got = log()
+check(
+    "14 click on Xwayland X while armed for X: reaches X",
+    got == ["X click 1"] and st["dropped"] == 0,
+    (got, st),
 )
 print("gate suite", sum(results), "/", len(results))
 if not all(results):

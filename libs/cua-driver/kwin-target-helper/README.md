@@ -77,7 +77,8 @@ runs it on its main thread for each event, after resolving where the event goes
 and before any window receives it. While a gate is armed for a window, an event
 from one of the driver's own libei devices passes only when the keyboard or
 pointer focus it would go to is that window or one of its transients (menus,
-popups, dialogs). Any other event is held back and counted, and Cua Driver fails
+popups, dialogs). This holds for native Wayland windows and for Xwayland
+windows (Java, Wine and other X11-only apps) alike. Any other event is held back and counted, and Cua Driver fails
 the action with `input_interrupted` instead of reporting success. A release
 follows its press, so no key or button is left held down.
 
@@ -102,8 +103,9 @@ Limits of the gate:
 ## Testing the input gate
 
 `tests/run.sh` is an opt-in test that never touches your desktop session. It
-builds a container image with KWin, builds the helper against it, and starts a headless KWin on the container's own D-Bus with two windows
-that log every key and click they receive.
+builds a container image with KWin, builds the helper against it, and starts a headless KWin on the container's own D-Bus with three windows
+that log every key and click they receive: two native Wayland windows and one
+that runs under Xwayland.
 
 ```bash
 tests/run.sh                        # gate suite: the helper with a raw libei client
@@ -114,7 +116,8 @@ DISTRO=fedora45 tests/run.sh ...    # KWin 6.8, which offers ei_text
 
 The driver suite needs a `--features portal-input` build whose glibc the image
 has; one built on Debian 13 runs on all three. It checks that typing, a pixel click and a key press reach the named
-window while another window is active, that stealing focus mid-typing fails the
+window while another window is active (typing and a click also for the Xwayland
+window), that stealing focus mid-typing fails the
 call with `input_interrupted` while the other window receives nothing, that
 background input stays refused, and that input is refused once the helper is
 unloaded. It needs podman or docker, and `/dev/dri` for the window capture the

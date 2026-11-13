@@ -72,7 +72,20 @@ KWin::Window *keyboardFocus()
         return nullptr;
     }
     const auto surface = server->seat()->focusedKeyboardSurface();
-    return surface ? server->findWindow(surface) : nullptr;
+    if (!surface) {
+        return nullptr;
+    }
+    if (auto window = server->findWindow(surface)) {
+        return window;
+    }
+    // WaylandServer knows only native Wayland windows. An Xwayland window
+    // (Java, Wine and other X11-only apps) is in the workspace, with its
+    // Xwayland surface.
+    auto workspace = KWin::workspace();
+    return workspace ? workspace->findWindow([surface](const KWin::Window *window) {
+        return window->surface() == surface;
+    })
+                     : nullptr;
 }
 
 KWin::Window *pointerFocus()

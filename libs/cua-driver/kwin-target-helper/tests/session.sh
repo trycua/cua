@@ -23,11 +23,24 @@ unset DISPLAY
 # copy runs without them. Its permission checks read KDE's application cache,
 # which this throwaway session never builds, so they are off.
 cp /usr/bin/kwin_wayland "$work/kwin_wayland"
+# KWin's Xwayland puts its socket here and does not create the directory.
+mkdir -p -m1777 /tmp/.X11-unix
 start_kwin() {
   KWIN_WAYLAND_NO_PERMISSION_CHECKS=1 KWIN_SCREENSHOT_NO_PERMISSION_CHECKS=1 \
-    "$work/kwin_wayland" --virtual --socket "$WAYLAND_DISPLAY" --width 1280 --height 800 >"$work/kwin.log" 2>&1 &
+    "$work/kwin_wayland" --virtual --xwayland --socket "$WAYLAND_DISPLAY" --width 1280 --height 800 >"$work/kwin.log" 2>&1 &
   kwin=$!
   for _ in $(seq 50); do [ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ] && break; sleep 0.2; done
+}
+# The X display KWin's Xwayland serves, for the X11 test window.
+xwayland_display() {
+  local socket
+  for _ in $(seq 50); do
+    socket=$(ls /tmp/.X11-unix/ 2>/dev/null | head -1)
+    [ -n "$socket" ] && { echo ":${socket#X}"; return 0; }
+    sleep 0.2
+  done
+  echo "KWin did not start Xwayland" >&2; tail "$work/kwin.log" >&2
+  exit 1
 }
 # helper_up <failure> [command...]: wait for the helper to answer, running the
 # command between tries.
@@ -61,6 +74,8 @@ fi
 events="$work/events.log"
 GDK_BACKEND=wayland python3 "$tests/keylog.py" A "$events" >/dev/null 2>&1 &
 GDK_BACKEND=wayland python3 "$tests/keylog.py" B "$events" >/dev/null 2>&1 &
+# X runs under Xwayland, as Java, Wine and other X11-only apps do.
+DISPLAY="$(xwayland_display)" GDK_BACKEND=x11 python3 "$tests/keylog.py" X "$events" >/dev/null 2>&1 &
 sleep 2
 python3 "$tests/gate_test.py" "$events"; status=$?
 if [ -x "$driver" ]; then

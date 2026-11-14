@@ -485,6 +485,54 @@ const FfiConverterTypeActionRoute = (() => {
     return new FFIConverter();
 })();
 
+/**
+ * What the driver observed of the target application's own end-of-edit after
+ * a value-setting action.
+ */
+export enum ActionCommit {
+    /**
+     * The edit session was observed to end with the written value in place.
+     */
+    Committed,
+    /**
+     * The commit gesture could not be dispatched, or the application replaced
+     * the written value at its end-of-edit.
+     */
+    NotCommitted,
+    /**
+     * The value survived the gesture, but the only evidence is an
+     * accessibility read-back. A control whose value is a binding target
+     * echoes that read-back whether or not the application took the value.
+     */
+    Unproven
+}
+
+const FfiConverterTypeActionCommit = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = ActionCommit;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return ActionCommit.Committed;
+                case 2: return ActionCommit.NotCommitted;
+                case 3: return ActionCommit.Unproven;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case ActionCommit.Committed: return ordinalConverter.write(1, into);
+                case ActionCommit.NotCommitted: return ordinalConverter.write(2, into);
+                case ActionCommit.Unproven: return ordinalConverter.write(3, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
 export type ActionResult = {
     effect: ActionEffect,
     route: ActionRoute,
@@ -502,6 +550,10 @@ export type ActionResult = {
      * Present only with `effect: refused`.
      */
     error?: ActionError,
+    /**
+     * End-of-edit verdict, currently published by macOS text actions.
+     */
+    committed?: ActionCommit,
     /**
      * What to do next, in one short sentence. Present when the effect is
      * `unverifiable` or `suspected_noop`, so an unconfirmed action points at
@@ -552,6 +604,7 @@ const FfiConverterTypeActionResult = (() => {
                 escalation: FfiConverterOptionalTypeActionEscalation.read(from),
                 summary: FfiConverterOptionalString.read(from),
                 error: FfiConverterOptionalTypeActionError.read(from),
+                committed: FfiConverterOptionalTypeActionCommit.read(from),
                 hint: FfiConverterOptionalString.read(from),
                 nextCall: FfiConverterOptionalTypeActionNextCall.read(from),
                 fastPath: FfiConverterOptionalString.read(from)
@@ -565,6 +618,7 @@ const FfiConverterTypeActionResult = (() => {
             FfiConverterOptionalTypeActionEscalation.write(value.escalation, into);
             FfiConverterOptionalString.write(value.summary, into);
             FfiConverterOptionalTypeActionError.write(value.error, into);
+            FfiConverterOptionalTypeActionCommit.write(value.committed, into);
             FfiConverterOptionalString.write(value.hint, into);
             FfiConverterOptionalTypeActionNextCall.write(value.nextCall, into);
             FfiConverterOptionalString.write(value.fastPath, into);
@@ -577,6 +631,7 @@ const FfiConverterTypeActionResult = (() => {
              FfiConverterOptionalTypeActionEscalation.allocationSize(value.escalation) +
              FfiConverterOptionalString.allocationSize(value.summary) +
              FfiConverterOptionalTypeActionError.allocationSize(value.error) +
+             FfiConverterOptionalTypeActionCommit.allocationSize(value.committed) +
              FfiConverterOptionalString.allocationSize(value.hint) +
              FfiConverterOptionalTypeActionNextCall.allocationSize(value.nextCall) +
              FfiConverterOptionalString.allocationSize(value.fastPath);
@@ -6516,6 +6571,9 @@ const FfiConverterOptionalTypeActionEscalation = new FfiConverterOptional(FfiCon
 // FfiConverter for ActionError | undefined
 const FfiConverterOptionalTypeActionError = new FfiConverterOptional(FfiConverterTypeActionError);
 
+// FfiConverter for ActionCommit | undefined
+const FfiConverterOptionalTypeActionCommit = new FfiConverterOptional(FfiConverterTypeActionCommit);
+
 // FfiConverter for ActionNextCall | undefined
 const FfiConverterOptionalTypeActionNextCall = new FfiConverterOptional(FfiConverterTypeActionNextCall);
 
@@ -6667,6 +6725,7 @@ function uniffiEnsureInitialized() {
 export default Object.freeze({
   initialize: uniffiEnsureInitialized,
   converters: {
+    FfiConverterTypeActionCommit,
     FfiConverterTypeActionDelivery,
     FfiConverterTypeActionDeliveryMode,
     FfiConverterTypeActionEffect,

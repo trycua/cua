@@ -17,7 +17,8 @@ tests/fixtures/
 │   │   ├── electron/        # Chromium/Electron host, CDP port 9223
 │   │   └── tauri/           # native webview/Tauri host
 │   ├── linux/
-│   │   └── gtk3/            # PyGObject GTK3 app
+│   │   ├── gtk3/            # PyGObject GTK3 app
+│   │   └── wayland-presentation/  # raw Wayland client; presentation timing
 │   ├── macos/
 │   │   ├── appkit/          # single-file Swift AppKit app
 │   │   ├── swiftui/         # single-file SwiftUI app
@@ -44,9 +45,10 @@ libs/cua-driver/tests/fixtures/build/macos.sh
 libs/cua-driver/tests/fixtures/build/macos.sh --skip electron
 libs/cua-driver/tests/fixtures/build/macos.sh --only wkwebview
 
-# Linux: GTK3, Electron, Tauri
+# Linux: GTK3, GTK4, Electron, Tauri, Wayland presentation
 libs/cua-driver/tests/fixtures/build/linux.sh
 libs/cua-driver/tests/fixtures/build/linux.sh --skip tauri
+libs/cua-driver/tests/fixtures/build/linux.sh --only wayland-presentation
 ```
 
 ```powershell
@@ -60,7 +62,8 @@ Host requirements:
 
 - macOS: Xcode command line tools; Node.js/npm for Electron; Rust for Tauri.
 - Linux: GTK3/PyGObject/AT-SPI; Node.js/npm for Electron; Rust plus WebKitGTK
-  build/runtime deps for Tauri.
+  build/runtime deps for Tauri; Rust plus `libwayland-dev` for the Wayland
+  presentation fixture.
 - Windows: .NET 8 SDK; Node.js/npm for Electron; Rust for Tauri.
 
 ## Test Mapping
@@ -72,6 +75,9 @@ Rust tests under `libs/cua-driver/rust/crates/cua-driver-e2e/tests/` consume the
 - `harness_<toolkit>_test.rs`: toolkit-specific app coverage.
 - `capture_contract_test.rs` and `desktop_scope_<os>_test.rs`: capture and
   desktop-scope contracts.
+- `wayland_presentation_latency_test.rs`: joins Driver-side request/return
+  stamps with the fixture's input, state, commit, and compositor-presented
+  timestamps, and retains the raw rows as artifacts.
 - `protocol_*_test.rs` and schema tests: headless protocol coverage, default.
 
 Rust integration tests under `libs/cua-driver/rust/crates/cua-driver-e2e/tests/` drive
@@ -88,6 +94,7 @@ the shared Electron/Tauri harnesses through the public MCP interface.
 | WinUI3 | `apps/windows/winui3` | `harness-winui3` | UIA/XAML controls |
 | WebView2 | `apps/windows/webview2` | `harness-webview` | Chromium web UIA |
 | GTK3 | `apps/linux/gtk3` | `harness-gtk3` | AT-SPI/GTK controls |
+| Wayland presentation | `apps/linux/wayland-presentation` | `harness-wayland-presentation` | raw `wl_surface` + `wp_presentation` latency evidence |
 | Electron | `apps/cross-platform/electron` | `harness-electron` | Chromium web AX/UIA/AT-SPI |
 | Tauri | `apps/cross-platform/tauri` | `harness-tauri` | native webview AX/UIA/AT-SPI |
 

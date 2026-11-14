@@ -73,6 +73,33 @@ fn standalone_trust_gated_click_html() -> String {
     )
 }
 
+/// A control that acts only for a focused page next to the fixture's plain
+/// increment button. A background accessibility press reaches the document
+/// while it is unfocused, so only the plain button reacts (#4243).
+#[cfg(target_os = "macos")]
+fn standalone_focus_gated_click_html() -> String {
+    standalone_fixture_html().replace(
+        "</body>",
+        r#"<fieldset>
+  <legend>focus-gated click</legend>
+  <button id="standalone-focus-gated" data-cua-id="standalone-focus-gated">
+    Activate focus-gated control
+  </button>
+  <span id="standalone-focus-gated-state" data-cua-id="standalone-focus-gated-state">
+    activation=idle
+  </span>
+</fieldset>
+<script>
+  document.getElementById('standalone-focus-gated').addEventListener('click', () => {
+    if (document.hasFocus()) {
+      document.getElementById('standalone-focus-gated-state').textContent = 'activation=accepted';
+    }
+  });
+</script>
+</body>"#,
+    )
+}
+
 #[cfg(target_os = "macos")]
 fn standalone_generic_type_text_html() -> String {
     standalone_fixture_html().replace(
@@ -1221,6 +1248,7 @@ fn wait_for_devtools_listener_to_close(profile: &Path, port: u16) {
 struct BrowserLaunchFlags {
     force_high_device_scale: bool,
     disable_quiet_notification_prompts: bool,
+    force_renderer_accessibility: bool,
 }
 
 fn spawn_browser_command(
@@ -1235,6 +1263,7 @@ fn spawn_browser_command(
     let BrowserLaunchFlags {
         force_high_device_scale,
         disable_quiet_notification_prompts,
+        force_renderer_accessibility,
     } = flags;
     let mut command = command_for_browser(
         spec,
@@ -1252,6 +1281,11 @@ fn spawn_browser_command(
     }
     if force_high_device_scale {
         command.arg("--force-device-scale-factor=2");
+    }
+    if force_renderer_accessibility {
+        // A fresh window can otherwise hold back its page tree from the
+        // native accessibility API for minutes on a loaded runner.
+        command.arg("--force-renderer-accessibility");
     }
     let child = spawn_in_job(&mut command).expect("launch standalone browser");
     eprintln!(
@@ -1294,6 +1328,7 @@ fn launch_browser_with_driver(
         BrowserLaunchFlags {
             force_high_device_scale: label.contains("multi-tab"),
             disable_quiet_notification_prompts: label.contains("browser-owned-permission"),
+            force_renderer_accessibility: label.contains("background-web-click-noop"),
         },
     );
     navigate_initial_page(cdp_port, &server);
@@ -2457,6 +2492,122 @@ fn run_web_type_text_verification(spec: &BrowserSpec) {
             vec![OracleKind::FixtureState, OracleKind::Protocol],
             Evidence::default(),
         )
+    });
+}
+
+/// The element token of the page control labelled `label`, read again for a
+/// bounded time while Chrome finishes building the page tree.
+#[cfg(target_os = "macos")]
+fn web_element_token(fixture: &mut BrowserFixture, label: &str) -> String {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let state = fixture.driver.call(
+            "get_window_state",
+            serde_json::json!({
+                "pid": fixture.pid as i64,
+                "window_id": fixture.window_id,
+                "include_screenshot": false,
+            }),
+        );
+        assert!(!state.is_error(), "native browser snapshot: {}", state.raw);
+        if let Some(index) = element_index_containing(state.tree_text(), label) {
+            return state.element_token(index).to_owned();
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{label} missing from the AX tree: {}",
+            state.raw
+        );
+        thread::sleep(Duration::from_millis(250));
+    }
+}
+
+/// #4243: a background element click on web content that leaves the page
+/// unchanged reports `suspected_noop` with a foreground escalation, not a bare
+/// `unverifiable`; a press the page handles stays `unverifiable` and lands.
+#[cfg(target_os = "macos")]
+fn run_background_web_click_noop(spec: &BrowserSpec) {
+    let scenario = format!("macos-{}-standalone-background-web-click-noop", spec.name);
+    let case = CaseSpec::delivered(
+        scenario.clone(),
+        spec.name.clone(),
+        "standalone-chromium",
+        "background_web_click_noop",
+        Targeting::Ax,
+        Delivery::Background,
+        Scope::Window,
+        DriverRoute::MacosAxAction,
+        vec![
+            OracleKind::FixtureState,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::NoLeakedInput,
+        ],
+    );
+    execute_case(case, |evidence| {
+        let mut fixture =
+            launch_browser_with_html(spec, &scenario, standalone_focus_gated_click_html());
+        *evidence = recording_evidence(fixture.driver.recording_dir());
+        wait_for_text(&fixture.server, "lbl-counter", "counter=0");
+        // Chrome builds the page's accessibility tree on the first reads.
+        web_element_token(&mut fixture, "Activate focus-gated control");
+        run_with_background_oracles(&mut fixture, |fixture| {
+            let click = |fixture: &mut BrowserFixture, label: &str| {
+                let token = web_element_token(fixture, label);
+                // The pid lets the recording mark where a suspected no-op was
+                // aimed; its evidence check requires that marker.
+                fixture.driver.call(
+                    "click",
+                    serde_json::json!({
+                        "pid": fixture.pid as i64,
+                        "element_token": token,
+                        "delivery_mode": "background",
+                    }),
+                )
+            };
+
+            let gated = click(fixture, "Activate focus-gated control");
+            assert!(!gated.is_error(), "focus-gated click: {}", gated.raw);
+            assert_eq!(
+                gated.action_effect(),
+                Some("suspected_noop"),
+                "{}",
+                gated.raw
+            );
+            assert_eq!(gated.action_route(), Some("accessibility"), "{}", gated.raw);
+            assert_eq!(
+                gated.structured()["escalation"]["target"],
+                "foreground",
+                "{}",
+                gated.raw
+            );
+            assert_eq!(
+                gated.structured()["escalation"]["reason"],
+                "suspected_noop",
+                "{}",
+                gated.raw
+            );
+            assert_eq!(
+                fixture
+                    .server
+                    .text("standalone-focus-gated-state")
+                    .as_deref(),
+                Some("activation=idle"),
+                "the background press must not have activated the gated control"
+            );
+
+            let plain = click(fixture, "Increment");
+            assert!(!plain.is_error(), "plain click: {}", plain.raw);
+            assert_eq!(plain.action_effect(), Some("unverifiable"), "{}", plain.raw);
+            assert!(
+                plain.structured().get("escalation").is_none(),
+                "a press the page handled must not escalate: {}",
+                plain.raw
+            );
+            wait_for_text(&fixture.server, "lbl-counter", "counter=1");
+
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+        })
     });
 }
 
@@ -5432,6 +5583,11 @@ standalone_browser_test!(
 standalone_browser_test!(
     standalone_browser_web_type_text_verification,
     run_web_type_text_verification
+);
+#[cfg(target_os = "macos")]
+standalone_browser_test!(
+    standalone_browser_background_web_click_noop,
+    run_background_web_click_noop
 );
 standalone_browser_test!(standalone_browser_trusted_click, run_trusted_click);
 standalone_browser_test!(

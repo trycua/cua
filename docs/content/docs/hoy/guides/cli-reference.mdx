@@ -19,10 +19,12 @@ read-only. You make images on your own Mac from Apple's restore image.
 
 | Command | What it does |
 |---|---|
-| `hoy image create [NAME]` | Make a macOS image on this Mac from Apple's restore image, set it up unattended (user, auto-login, ssh, guest agent), store it, smoke-test it and mark it usable. |
+| `hoy image create [NAME]` | Make a macOS image on this Mac from Apple's restore image, set it up unattended (user, auto-login, ssh, guest agent), store it and smoke-test it; a pass makes it the image a plain `--image NAME` picks. |
 | `hoy images` (or `hoy images ls`) | List the images in the image store. |
-| `hoy images inspect <ref>` | Show an image's manifest, usable state and smoke results. |
+| `hoy images inspect <ref>` | Show an image's manifest, test state and smoke results. |
 | `hoy images verify <ref>` | Re-hash every file against the image digest. |
+| `hoy images rm <ref> [--yes]` | Remove an image to free its disk space: `<name>` removes every version, `<name>:<version>` or `sha256:<digest>` removes one. Asks first at a terminal. Exits 4 if the image is being built, being cloned or leased. |
+| `hoy images prune [--yes] [--dry-run] [--restore-images]` | Remove failed and never-tested images and tested versions that have a newer tested version. Each name's default (newest tested) version stays. `--restore-images` also removes cached Apple restore images and leftover build folders. `--dry-run` lists what would go. |
 
 `hoy image create` flags:
 
@@ -45,8 +47,16 @@ need `--ipsw`. A first build takes about 15 to 25 minutes plus the 20 to 26 GB
 download from Apple, and needs about 64 GiB free (40 GiB once the restore image
 is downloaded). Hoy checks this before it downloads anything.
 
-An image reference (`REF`) is `name:version`, `name`, `name@usable`,
-`sha256:<hex>` or a hex prefix.
+`hoy images rm` and `hoy images prune` ask before they remove anything when you
+are at a terminal. `--yes` (`-y`) skips the question. Without a terminal, or with
+`--json`, they need `--yes` (exit 2). VMs made from a removed image keep working.
+See [Free disk space](/hoy/guides/free-disk-space).
+
+An image reference (`REF`) is a `name` (the newest version of it that passed its
+test), `name:version`, `sha256:<hex>` or a hex prefix. A name with no tested
+version is an error that says so; give `name:version` with `--force` to use an
+image that has not passed. `hoy images` shows a TESTED column and marks the
+version a plain name picks as `default`.
 
 ## Create and run VMs
 
@@ -70,8 +80,8 @@ An image reference (`REF`) is `name:version`, `name`, `name@usable`,
 
 | Flag | Meaning |
 |---|---|
-| `--image REF` | The image to clone. A non-usable image needs `--force`. |
-| `--force` | Allow an image that is not marked usable. |
+| `--image REF` | The image to clone. An image that has not passed its test needs `--force`. |
+| `--force` | Allow an image that has not passed its test. |
 | `--verify full` | Verify the whole image against its digest. |
 | `--cpu N` | CPU count. |
 | `--memory 8G` | Memory. |
@@ -102,7 +112,7 @@ first boot its own host name and ssh host keys. The new key is pinned in
 | `--window` | Then open the VM's desktop, as `hoy vnc` does. Needs a VM created with `--vnc` or `--window`. |
 
 `hoy start` is refused with exit code 5 when two macOS VMs already run on the
-Mac, or when the [Hoy VM limit extension](/hoy/guides/install#approve-the-hoy-vm-limit-extension)
+Mac, or when the [Hoy system extension](/hoy/guides/install#approve-the-hoy-system-extension)
 is not on. See [Limits](/hoy/concepts/two-vm-limit).
 
 `hoy logs --kind` takes `engine`, `console`, `events`, `vmm` and `models`, among
@@ -166,7 +176,7 @@ VMs created without the flag are unchanged.
 
 | Command | What it does |
 |---|---|
-| `hoy doctor [--facts FILE]` | Preflight: chip, macOS, Hypervisor, free disk, macOS VM slots, the Hoy VM limit extension, the Hoy login item, license and VMM. Prints a fix for each problem. Exit 5 if a check failed. |
+| `hoy doctor [--facts FILE]` | Preflight: chip, macOS, Hypervisor, free disk, macOS VM slots, the Hoy system extension, the Hoy login item, license and VMM. Prints a fix for each problem. Exit 5 if a check failed. |
 | `hoy health` | Daemon status, VMs, the host's macOS VM count and what counts, the extension's state and the image store. |
 | `hoy metrics` | Prometheus text metrics. |
 | `hoy invariant` | Reconcile, then check `hoy ps` against the process table and VM locks. Exit 1 on any mismatch. |

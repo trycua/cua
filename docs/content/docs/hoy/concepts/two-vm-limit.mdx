@@ -1,6 +1,6 @@
 ---
 title: Limits
-description: 'The two-macOS-VM limit: where it comes from, how the Hoy VM limit extension enforces it, which VMs count and which do not, plus the other known limits of this release.'
+description: 'The two-macOS-VM limit: where it comes from, how the Hoy system extension enforces it, which VMs count and which do not, plus the other known limits of this release.'
 ---
 
 A Mac can run two macOS VMs at a time. The limit comes from Apple's macOS
@@ -10,10 +10,10 @@ the limit. A setting can lower it.
 
 ## How it is enforced
 
-The Hoy VM limit extension is an Endpoint Security system extension that comes
+The Hoy system extension is an Endpoint Security extension that comes
 inside Hoy.app. With it on, it counts every macOS VM on the Mac, started by any
 tool and any user, and stops a third from booting. See
-[Install](/hoy/guides/install#approve-the-hoy-vm-limit-extension) for the two
+[Install](/hoy/guides/install#approve-the-hoy-system-extension) for the two
 switches that turn it on.
 
 This release requires the extension. Until it is on, `hoy start` refuses macOS

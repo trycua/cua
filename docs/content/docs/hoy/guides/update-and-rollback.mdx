@@ -21,7 +21,7 @@ nothing that is not signed by Cua and notarized by Apple.
 
 Running VMs keep running on the release they started with. Each VM uses the new
 release from its next start, and the background service restarts on it without stopping any VM.
-The Hoy VM limit extension is replaced in place and needs no new approval.
+The Hoy system extension is replaced in place and needs no new approval.
 
 To only ask, without installing:
 
@@ -56,6 +56,12 @@ the environment.
 
 The check is a separate request from [data collection](/hoy/guides/data-collection).
 It sends the installed Hoy version, the update channel and your download token.
+
+If no download token is saved (a DMG install does not save one), `hoy doctor`
+shows an `info:` line saying Hoy cannot check for updates. That is not a
+problem with the Mac. While Hoy is on the waitlist, new releases arrive with the
+download email. To check from the Mac too, save the token from that email once:
+`HOY_TOKEN=<token from your Hoy email> hoy update --check`.
 
 ## From release 0.16
 

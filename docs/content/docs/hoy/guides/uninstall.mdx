@@ -1,6 +1,6 @@
 ---
 title: Uninstall
-description: 'Remove Hoy, Hoy.app and the Hoy VM limit extension with the uninstaller, see what it keeps, remove everything with --purge, or finish by hand.'
+description: 'Remove Hoy, Hoy.app and the Hoy system extension with the uninstaller, see what it keeps, remove everything with --purge, or finish by hand.'
 ---
 
 Run the uninstaller from the copy the installer keeps:
@@ -11,7 +11,7 @@ Run the uninstaller from the copy the installer keeps:
 ```
 
 `--dry-run` prints what would be removed and changes nothing. The plain command
-removes the program, the Hoy login item, Hoy.app and the Hoy VM limit extension,
+removes the program, the Hoy login item, Hoy.app and the Hoy system extension,
 and keeps your VMs, images, settings and logs, so installing Hoy again later
 picks them up.
 
@@ -25,6 +25,10 @@ first:
 ```bash skip="destructive"
 sudo sh ~/.local/hoy/current/hoy-install.sh --system-daemon --remove
 ```
+
+To free the image store's space without uninstalling, use `hoy images prune --dry-run`
+and `hoy images rm <ref>`. They remove images, not VMs. See
+[Free disk space](/hoy/guides/free-disk-space).
 
 ## What it removes
 

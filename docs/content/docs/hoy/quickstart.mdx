@@ -3,11 +3,13 @@ title: Quickstart
 description: 'Make a macOS image on your Mac, create and start a VM, ssh in, list your VMs, then stop and remove the VM.'
 ---
 
-Make a macOS image, create a VM from it, ssh in, and clean up.
+Make a macOS image, create a VM from it, ssh in, and clean up. In short:
+make an image once, create a VM from it, start it, open its desktop. `create`
+does not start the VM.
 
 ## Prerequisites
 
-- Hoy [installed](/hoy/guides/install), the Hoy VM limit extension approved, and
+- Hoy [installed](/hoy/guides/install), the Hoy system extension approved, and
   `hoy doctor` shows no failed check.
 - 64 GiB of free disk for the first image.
 
@@ -28,19 +30,39 @@ download already done it takes about 6 minutes, and the finished image takes
 about 27 GiB on disk. Run it once. If it fails, the output names the step; run
 the same command again and the download is reused.
 
-`hoy images` lists your images and shows which are usable.
+It prints five steps. Step 5 stores the image (copying about 27 GiB, a few
+minutes) and then runs a smoke test that can take up to 15 minutes. Both print
+a line every 30 seconds so you can see it is working.
+
+While it runs, `hoy images` in another terminal lists the build:
+`building: macOS 27.2.1 (24C101), step 5 of 5, storing the image, 14 min 0 s so
+far (not tested until it finishes)`. An older image in the same list is a
+different, finished image. When the build ends, `hoy image create` prints the
+total time and the exact commands to run next:
+
+```text output
+image macos-27.2.1:1 is ready (sha256:...)
+  macOS 27.2.1 (24C101), 27.2 GiB on disk, built in 12 min 30 s
+  tested: yes (a plain `macos-27.2.1` always means the newest image of this name that passed its smoke test)
+Next: make a VM from it, then start it. Creating a VM does not boot it.
+  hoy create demo --image macos-27.2.1
+  hoy start demo --wait ready
+```
+
+`hoy images` lists your images, whether each one passed its test, and which version a plain image name picks.
 
 ## Create, start and ssh in
 
 ```bash skip="no-runner"
-hoy create demo --image macos-26.5.2@usable
+hoy create demo --image macos-26.5.2
 hoy start demo --wait ready
 hoy ssh demo
 ```
 
 - `hoy create` clones the image in seconds and uses no extra disk until the
-  guest writes. Use the image name that `hoy images` shows. `@usable` means the
-  newest image that passed its tests.
+  guest writes. It prints `created demo (stopped)` and the command to start it:
+  creating a VM does not boot it. Use the image name that `hoy images` shows: a
+  plain name always means the newest image of that name that passed its tests.
 - `hoy start --wait ready` boots the VM and returns when ssh answers.
 - `hoy ssh demo` opens a shell in the VM. It uses the VM's own address, user and
   key, so you do not copy any of them. `hoy ssh demo -- uname -a` runs one
@@ -54,7 +76,7 @@ grows). Add `--vnc` to get a desktop you can open with `hoy vnc demo`, or
 `hoy exec demo -- sw_vers` runs one command in the guest and exits with its exit
 code. `hoy restart demo` reboots the guest from inside.
 
-If `hoy start` is refused with exit code 5, the Hoy VM limit extension is not on
+If `hoy start` is refused with exit code 5, the Hoy system extension is not on
 yet, or two macOS VMs already run. See [Limits](/hoy/concepts/two-vm-limit).
 
 ## List your VMs
@@ -74,8 +96,25 @@ hoy rm demo
 ```
 
 `hoy stop` is an ordered stop: it flushes the guest's disk, asks the guest to
-shut down, and only forces it off after 60 seconds. `hoy rm` deletes the VM and
-its disk. The image stays, so you can create another VM from it.
+shut down, and only forces it off after 60 seconds. `hoy rm` deletes the VM, its
+disk and all of its snapshots, for good. The image stays, so you can create
+another VM from it.
+
+At a terminal, `hoy rm` asks first and says what goes:
+
+```text output
+Delete VM "demo"? This removes its disk (23 GB used) and 3 snapshots. It can't be undone. [y/N]
+```
+
+Only `y` or `yes` deletes. Anything else, or just Enter, cancels and deletes
+nothing. Afterwards it says what it freed: `deleted demo: freed 23 GB, removed 3
+snapshots`. Add `--yes` (or `-y`) to skip the question.
+
+In a script, in CI, or with `--json`, `hoy rm` never asks. A VM without
+snapshots is deleted straight away. A VM with snapshots is not: `hoy rm` exits
+with code 2 and says `demo has 3 snapshots; add --yes to delete the VM and its
+snapshots`. With `--json`, the answer reports `disk_bytes`, `snapshot_count`,
+`snapshot_bytes` and `freed_bytes`.
 
 Every command takes `--json` for scripts. Exit codes are in
 [Troubleshooting](/hoy/guides/troubleshooting#exit-codes).

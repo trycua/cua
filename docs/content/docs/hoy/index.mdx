@@ -19,6 +19,26 @@ wants to try something risky and roll it back.
 The Hoy End User License Agreement allows commercial use on as many Macs as you
 like. Apple's macOS license still applies to every macOS VM you run.
 
+## How Hoy works
+
+Hoy turns one Apple-made macOS install into as many VMs as you need. The order
+is always the same:
+
+1. **Prepare macOS once: make an image.** `hoy image create` downloads Apple's
+   macOS from Apple, installs it, sets it up (a user, ssh, Hoy's guest agent)
+   and stores the result as an image. You do it once per macOS version.
+2. **Create a VM from the image.** `hoy create demo --image macos-27.2.1`
+   takes seconds and almost no disk, because the VM is a clone of the image.
+   `create` does not start the VM. It is listed as stopped.
+3. **Start it.** `hoy start demo --wait ready` boots the VM and waits until it
+   answers.
+4. **Open its desktop, or run commands in it.** `hoy vnc demo` opens the desktop.
+   `hoy exec demo -- sw_vers` and `hoy ssh demo` use the shell.
+
+A plain image name means the newest image with that name that passed its smoke
+test. At the end of `hoy image create`, Hoy boots a test VM from the new image,
+checks the desktop, ssh and sudo, and only then counts it as tested.
+
 ## How fast
 
 Hoy and Apple's Virtualization framework, on the same Mac with the same macOS
@@ -45,7 +65,7 @@ new VMs from it.
 | Mac | Apple silicon, M1 or later. Intel Macs are not supported. |
 | macOS on the Mac | 26.x or 27.x |
 | Disk | 64 GiB free for your first image, then about 27 GiB per further image |
-| Admin account | To install Hoy.app and approve the Hoy VM limit extension (Endpoint Security) |
+| Admin account | To install Hoy.app and approve the Hoy system extension (Endpoint Security) |
 | Concurrency | Up to two macOS VMs at a time across all tools (Apple's limit) |
 
 ## Next

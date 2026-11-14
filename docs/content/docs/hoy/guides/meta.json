@@ -3,6 +3,7 @@
   "pages": [
     "install",
     "update-and-rollback",
+    "free-disk-space",
     "uninstall",
     "snapshots-restore-fork",
     "import",

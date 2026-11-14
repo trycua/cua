@@ -1,6 +1,6 @@
 ---
 title: Install
-description: 'Register for a token, install Hoy with one command, approve the Hoy VM limit extension in System Settings, and check your Mac with hoy doctor.'
+description: 'Register for a token, install Hoy with one command, approve the Hoy system extension in System Settings, and check your Mac with hoy doctor.'
 ---
 
 Hoy installs with one command. Copying Hoy.app into `/Applications` and turning
@@ -49,7 +49,7 @@ Replace `...` with your token. The installer:
 It installs:
 
 - the `hoy` command in `~/.local/bin` and the release in `~/.local/hoy`;
-- **Hoy.app** in `/Applications`, which carries the Hoy VM limit extension (see
+- **Hoy.app** in `/Applications`, which carries the Hoy system extension (see
   the next section);
 - the Hoy background service, as a login item named **Hoy**.
 
@@ -72,11 +72,17 @@ curl -fsSL https://hoy.cua.ai/install.sh | HOY_TOKEN=... sh -s -- --version <ver
 | `--version V` | Install release `V` instead of the latest |
 | `--help` | List the options |
 
+If you installed from the DMG there is no saved token, and `hoy doctor` ends
+with an `info:` line saying Hoy cannot check for updates. Nothing is wrong with
+the Mac. While Hoy is on the waitlist, new releases arrive with the download
+email. To check from the Mac too, save the token from that email once:
+`HOY_TOKEN=<token from your Hoy email> hoy update --check`.
+
 If the installer says your token has expired or was revoked, sign in at
 [hoy.cua.ai](https://hoy.cua.ai), renew the token and run the new command.
 Hoy that is already installed, and VMs that are running, are not affected.
 
-## Approve the Hoy VM limit extension
+## Approve the Hoy system extension
 
 Hoy requires its Endpoint Security extension. It keeps the Mac within Apple's
 limit of two macOS VMs (see [Limits](/hoy/concepts/two-vm-limit)). macOS only
@@ -98,8 +104,8 @@ and two one-time switches finish the job:
    ![System Settings, Endpoint Security Extensions: Hoy, with its switch off, ready to turn on](/img/hoy/install-endpoint-security-switch.png)
 
 3. In System Settings > Privacy & Security > Full Disk Access, turn on
-   **com.trycua.hoy.es.systemextension**. That entry is the Hoy VM limit
-   extension: macOS lists it by that name, not as "Hoy". macOS requires Full
+   **com.trycua.hoy.es.systemextension**. That entry is the Hoy system extension: this one page lists it by its
+   file name, not as "Hoy". macOS requires Full
    Disk Access of every Endpoint Security extension. It applies to the extension
    only: the `hoy` command and the background service do not get Full Disk Access.
 
@@ -118,9 +124,9 @@ Two commands open those pages for you:
 
 Until both switches are on, macOS VMs do not start. `hoy start` is refused with
 exit code 5 and `"reason": "limit_service_inactive"` in `--json` output. Linux
-VMs and other apps are not affected. `hoy doctor` says which step is missing
-(check `limit-service`). Between the two switches it shows the extension as
-"waiting for Full Disk Access". Updates replace the extension in place and need no new
+VMs and other apps are not affected. `hoy doctor` says which step is missing:
+`limit-service` is the first switch (the extension is approved) and
+`full-disk-access` is the second. Updates replace the extension in place and need no new
 approval.
 
 ### Managed Macs
@@ -176,6 +182,22 @@ validated. Two setups exist:
   running the same `--system-daemon` command again. `--system-daemon --remove`
   removes it. The uninstaller refuses to run while it exists.
 
+## Setup checklist: what macOS asks for, when and why
+
+`hoy doctor` shows one line for each switch, so you can see which one is left.
+
+| Doctor line | What you do | When | Why |
+|---|---|---|---|
+| `limit-service` | Turn on **Hoy** under Endpoint Security Extensions | Right after the install | Approves the Hoy system extension, which keeps the Mac within Apple's limit of two macOS VMs |
+| `full-disk-access` | Turn on **com.trycua.hoy.es.systemextension** under Full Disk Access | Right after the line above | macOS requires it of every Endpoint Security extension. The extension turns on by itself a few seconds later |
+| `daemon` | Nothing, unless doctor says Hoy's login item is off: then turn on **Hoy** under Allow in the Background | At install | Hoy's background service owns your VMs. It starts at login |
+| `local-network` | Click **Allow** if macOS asks to let Hoy's background service find devices on local networks. If you chose Don't Allow, turn on Hoy's background service under Privacy & Security > Local Network | The first time you start a VM made from an **older** image (made by a Hoy before this release). Never for new images | Older images are reached at the VM's private network address, which macOS counts as the local network. macOS asks once and never again, so Don't Allow looks like a VM that never answers. Making a new image with `hoy image create` avoids it for good |
+| `guest:<vm>` | Nothing | Each running VM | Shows how Hoy reaches that VM: over its internal channel, or at its network address (the case that needs Local Network) |
+
+The installer does not trigger the Local Network prompt. No VM exists yet to
+explain it, and VMs from new images never need it. `hoy doctor` lists any
+running VM that does.
+
 ## Check your Mac
 
 ```bash skip="no-runner"
@@ -183,8 +205,11 @@ hoy doctor
 ```
 
 `hoy doctor` checks the chip, the macOS version, Hypervisor support, free disk,
-how many macOS VMs already run on the Mac, the Hoy VM limit extension, the Hoy
-login item and the other Hoy components. It prints a fix under each problem. It
+how many macOS VMs already run on the Mac, the Hoy system extension and its
+Full Disk Access (two lines), Hoy's background service and its login item, Local
+Network access and how each running VM is reached, and the other Hoy components.
+It prints a fix under each problem. An `info:` line at the end says whether Hoy
+can check for updates. It never makes the Mac "not ready". It
 exits 0 when the Mac is ready (warnings are fine) and 5 when a check failed.
 Before your first image, "no image store" is expected. `hoy --version` prints
 the Hoy version; include it in any [bug report](/hoy/guides/getting-help).
@@ -198,8 +223,10 @@ the Hoy version; include it in any [bug report](/hoy/guides/getting-help).
 - Screen Sharing asks for a password when `hoy vnc` or `hoy start --window`
   opens a VM's desktop. Hoy has copied it to the clipboard: paste it with
   Command-V and press Return.
-- A Local Network prompt for Hoy's background service only for a VM made from an image from an
-  earlier Hoy. See [Troubleshooting](/hoy/guides/troubleshooting).
+- A Local Network prompt for Hoy's background service only for a VM made from an
+  image from an earlier Hoy. See the
+  [setup checklist](#setup-checklist-what-macos-asks-for-when-and-why) and
+  [Troubleshooting](/hoy/guides/troubleshooting).
 
 You do not need to install developer tools, Xcode, Homebrew or Python. Hoy asks
 for no Accessibility or Screen Recording permission.

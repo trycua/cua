@@ -11,9 +11,10 @@ hoy health
 ```
 
 - `hoy doctor` checks the Mac: chip, macOS version, Hypervisor support, free
-  disk, macOS VM slots in use, the Hoy VM limit extension (`limit-service`),
-  the Hoy login item, Local Network access (`local-network`) and
-  the Hoy components. It prints a fix under each
+  disk, macOS VM slots in use, the Hoy system extension (`limit-service`), its
+  Full Disk Access (`full-disk-access`), the background service (`daemon`) and the
+  Hoy login item, Local Network access (`local-network`), how each running VM is
+  reached (`guest:<vm>`) and the Hoy components. It prints a fix under each
   problem and exits 5 if a check failed. Before the first image, "no image store"
   is expected.
 - `hoy health` checks the running system: the background service, your
@@ -29,7 +30,7 @@ When you ask for help, include the output of `hoy --version` and `hoy doctor`.
 | What | Where |
 |---|---|
 | Background service | The `logs` folder in `~/Library/Application Support/hoy` |
-| Hoy VM limit extension | The macOS unified log, see below |
+| Hoy system extension | The macOS unified log, see below |
 | One VM | `hoy logs <vm>` |
 | Console output of a VM | `hoy logs <vm> --kind console --follow` |
 
@@ -50,7 +51,7 @@ Every `hoy` command uses the same codes.
 |---|---|
 | 0 | Success |
 | 1 | Internal error |
-| 2 | Wrong usage |
+| 2 | Wrong usage, for example `hoy rm` without `--yes` on a VM that has snapshots, in a script |
 | 3 | Not found |
 | 4 | Wrong state, for example `hoy ssh` on a stopped VM |
 | 5 | Refused: the macOS VM limit, the extension is not on, or not enough resources |
@@ -62,13 +63,13 @@ Every `hoy` command uses the same codes.
 
 ## Common errors
 
-**`hoy start` says macOS VMs need the Hoy VM limit extension (exit 5).** With
+**`hoy start` says macOS VMs need the Hoy system extension (exit 5).** With
 `--json` the reason is `limit_service_inactive`. Turn on the two switches in
-[Install](/hoy/guides/install#approve-the-hoy-vm-limit-extension) (Endpoint
+[Install](/hoy/guides/install#approve-the-hoy-system-extension) (Endpoint
 Security Extensions: **Hoy**; Full Disk Access:
 **com.trycua.hoy.es.systemextension**), then run `hoy doctor` and start again.
-If it says the extension is "waiting for Full Disk Access", the Full Disk Access
-switch is still off: once you turn it on, the extension activates on its own
+If the `full-disk-access` line fails, the Full Disk Access
+switch is still off (`limit-service` is ok then, the extension is approved): once you turn it on, the extension activates on its own
 within a few seconds. If it says the extension is "not installed", run the installer
 again from an administrator account. If it says it is "a different version from
 this hoy", run the installer of this release again. No new approval is needed.
@@ -106,6 +107,11 @@ Run `hoy images` to see its state, or build it again with `hoy image create`.
 **`hoy image create` fails.** The output names the step. Run the same command
 again: the restore image you downloaded is reused. Check that you have 64 GiB
 free (40 GiB once the restore image is downloaded).
+
+**The disk is full, or `hoy doctor` says free disk is low.** Run
+`hoy images prune --dry-run` to see which images you can remove (add
+`--restore-images` for the downloaded Apple restore images), then run it again
+without `--dry-run`. See [Free disk space](/hoy/guides/free-disk-space).
 
 **Clipboard does not work in an older VM.** Run `hoy clipboard install <vm>`.
 See [Clipboard sharing](/hoy/guides/clipboard-sharing).

@@ -124,7 +124,7 @@ cua-driver status
 cua-driver list_apps
 ```
 
-The release binary targets glibc 2.31 and newer. It is built in a `debian:11` container and should run on Debian 11+, Ubuntu 20.04+, and RHEL/Rocky/Alma 8+. It has been verified live on Debian 12 with glibc 2.36 and Rocky 9 with glibc 2.34, and tested across Debian 12, Ubuntu 22.04, Ubuntu 24.04, Rocky 9, and Fedora 41.
+The release binary targets glibc 2.31 and newer. It is built in a `debian:11` container and should run on Debian 11+, Ubuntu 20.04+, and RHEL/Rocky/Alma 9+. It has been verified live on Debian 12 with glibc 2.36 and Rocky 9 with glibc 2.34, and tested across Debian 12, Ubuntu 22.04, Ubuntu 24.04, Rocky 9, and Fedora 41.
 
 Start the driver:
 

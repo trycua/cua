@@ -105,12 +105,17 @@ impl Tool for StartRecordingTool {
                 fails on startup the per-turn capture (screenshots + \
                 action.json) still runs and the session's `last_error` field \
                 carries the diagnostic.\n\n\
-                **Linux Wayland routes by compositor**: GNOME uses the trusted \
-                Shell helper's frames, wlroots compositors use `wf-recorder`, \
-                and compositors without wlr-screencopy (KDE/KWin) record the \
-                monitor the user grants through the xdg-desktop-portal \
-                ScreenCast (one consent dialog per install; requires a build \
-                with the `portal-capture` feature and ffmpeg on PATH). \
+                **Linux Wayland routes by compositor**: GNOME with the \
+                trusted WinRects Shell helper uses its frames, wlroots \
+                compositors use `wf-recorder`, and compositors with neither \
+                (KDE/KWin, GNOME without the helper) record the monitor the \
+                user grants through the xdg-desktop-portal ScreenCast (a \
+                consent dialog unless the portal accepts a grant saved by an \
+                earlier recording; startup waits up to about 93 s for the \
+                grant and the first frame, plus cleanup if it fails; needs \
+                a build with the `portal-capture` feature, which the \
+                released Linux binaries and the Nix package have, as well \
+                as the system PipeWire client library and ffmpeg on PATH). \
                 Unsupported combinations report the exact limitation in \
                 `last_error`.\n\n\
                 State persists for the life of the daemon; a restart \

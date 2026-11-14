@@ -35,23 +35,34 @@ class TestDriverLinuxBootstrap(unittest.TestCase):
         )
         self.assertIsNotNone(sources)
         lines = sources[1].splitlines()
-        self.assertEqual(len(lines), 3)
+        self.assertEqual(len(lines), 4)
         suites = set()
         for line in lines:
             source = re.fullmatch(
                 r"deb \[check-valid-until=no "
                 r"signed-by=/usr/share/keyrings/debian-archive-keyring.gpg\] "
-                r"http://snapshot.debian.org/archive/(debian|debian-security)/"
-                r"20260901T000000Z/ (bullseye(?:-updates|-security)?) main",
+                r"http://snapshot.debian.org/archive/"
+                r"(debian|debian-security|debian-archive)/20260901T000000Z/"
+                r"(debian/)? "
+                r"(bullseye(?:-updates|-security|-backports)?) main",
                 line,
             )
             self.assertIsNotNone(source, line)
-            archive, suite = source.groups()
+            archive, subdirectory, suite = source.groups()
             self.assertEqual(
-                archive, "debian-security" if suite == "bullseye-security" else "debian"
+                (archive, subdirectory),
+                {
+                    "bullseye": ("debian", None),
+                    "bullseye-updates": ("debian", None),
+                    "bullseye-security": ("debian-security", None),
+                    "bullseye-backports": ("debian-archive", "debian/"),
+                }[suite],
             )
             suites.add(suite)
-        self.assertEqual(suites, {"bullseye", "bullseye-updates", "bullseye-security"})
+        self.assertEqual(
+            suites,
+            {"bullseye", "bullseye-updates", "bullseye-security", "bullseye-backports"},
+        )
         remaining = self.bootstrap.replace(sources[1], "")
         # The documented archive.debian.org fallback (past Valid-Until by
         # design) is the only other place expiry checks may be disabled.
@@ -62,7 +73,8 @@ class TestDriverLinuxBootstrap(unittest.TestCase):
             re.S,
         )
         self.assertIsNotNone(fallback)
-        self.assertEqual(len(fallback[1].splitlines()), 3)
+        self.assertEqual(len(fallback[1].splitlines()), 4)
+        self.assertIn("http://archive.debian.org/debian bullseye-backports main", fallback[1])
         remaining = remaining.replace(fallback[1], "")
         self.assertNotRegex(remaining.lower(), r"check-valid-until|check-date")
         self.assertNotRegex(
@@ -83,15 +95,25 @@ class TestDriverLinuxBootstrap(unittest.TestCase):
         )
         # Image-provided extra sources stay ignored in both attempts.
         self.assertIn("Dir::Etc::sourceparts=-", self.bootstrap)
-        pkgs = re.search(r'PACKAGES="([^"]*)"', self.bootstrap)
+        pkgs = re.search(r'^PACKAGES="([^"]*)"', self.bootstrap, re.M)
         self.assertIsNotNone(pkgs)
         self.assertEqual(
             set(pkgs[1].split()),
             {
                 "git", "ca-certificates", "curl", "python3", "build-essential", "pkg-config",
                 "libx11-dev", "libxi-dev", "libxtst-dev", "libxext-dev", "libwayland-dev",
-                "libxkbcommon-dev",
+                "libxkbcommon-dev", "libclang-11-dev",
             },
+        )
+        # PipeWire headers must come from backports explicitly: bullseye's own
+        # 0.3.19 headers do not compile libspa-sys, and backports has a lower
+        # APT priority than the release suite.
+        backports = re.search(r'^BACKPORTS_PACKAGES="([^"]*)"', self.bootstrap, re.M)
+        self.assertIsNotNone(backports)
+        self.assertEqual(set(backports[1].split()), {"libpipewire-0.3-dev", "libspa-0.2-dev"})
+        self.assertIn(
+            "install -y --no-install-recommends -t bullseye-backports $BACKPORTS_PACKAGES",
+            self.bootstrap,
         )
 
 

@@ -344,7 +344,7 @@ pub enum Action {
     /// The app started again with this record: whatever was in flight is
     /// looked at again.
     Resume { now_ms: u64 },
-    /// The home Space is gone (removed, or never made): start that part over.
+    /// The home Space was removed: stop preparing until the person asks again.
     HomeGone { now_ms: u64 },
     /// The person sent a message.
     Send {
@@ -505,6 +505,21 @@ pub fn reduce(state: &State, action: &Action) -> Reduced {
         s = State::default();
     }
     let mut fx: Vec<Effect> = Vec::new();
+    // Completion reports from work that deletion cancelled cannot start it again.
+    if !s.wanted
+        && !matches!(
+            action,
+            Action::Start { .. }
+                | Action::Send { .. }
+                | Action::OnboardingDone { .. }
+                | Action::Online { .. }
+        )
+    {
+        return Reduced {
+            state: s,
+            effects: fx,
+        };
+    }
     match action {
         Action::Start {
             now_ms,
@@ -705,8 +720,9 @@ pub fn reduce(state: &State, action: &Action) -> Reduced {
                 fx.push(Effect::VerifyDelivery { id: m.id.clone() });
             }
         }
-        Action::HomeGone { now_ms } => {
+        Action::HomeGone { .. } => {
             if s.wanted {
+                s.wanted = false;
                 s.home_space_id = None;
                 s.pending_id = None;
                 s.ready_ms = None;
@@ -716,14 +732,13 @@ pub fn reduce(state: &State, action: &Action) -> Reduced {
                 s.attempt = 0;
                 s.failures = 0;
                 s.trouble = None;
-                enter(&mut s, Step::Home, *now_ms);
+                s.retry_at_ms = None;
                 // Delivering messages may be lost with the Space: back in the queue.
                 for m in &mut s.messages {
                     if m.state == MessageState::Delivering {
                         m.state = MessageState::Queued;
                     }
                 }
-                fx.push(Effect::Create);
             }
         }
         Action::Send {
@@ -1696,7 +1711,7 @@ mod tests {
     }
 
     #[test]
-    fn a_removed_home_is_made_again_and_claimed_messages_are_not_lost() {
+    fn a_removed_home_stays_removed_and_claimed_messages_are_not_lost() {
         let mut s = ready();
         s = go(
             &s,
@@ -1711,12 +1726,29 @@ mod tests {
         )
         .state;
         let r = go(&s, Action::HomeGone { now_ms: 30_000 });
-        assert_eq!(r.effects, vec![Effect::Create]);
+        assert!(r.effects.is_empty());
+        assert!(!r.state.wanted);
         assert_eq!(r.state.messages[0].state, MessageState::Queued);
-        assert_eq!(r.state.home.state, StepState::Running);
+        assert_eq!(r.state.home.state, StepState::Pending);
         assert_eq!(r.state.runtime.state, StepState::Skipped, "kept as it was");
         assert_eq!(r.state.ready_ms, None);
-        assert_eq!(view(&r.state).phase, "preparing");
+        assert_eq!(view(&r.state).phase, "idle");
+        assert!(
+            go(&r.state, Action::Resume { now_ms: 31_000 })
+                .effects
+                .is_empty()
+        );
+        assert!(
+            go(
+                &r.state,
+                Action::HomeReady {
+                    now_ms: 32_000,
+                    space_id: "local:late".into()
+                }
+            )
+            .effects
+            .is_empty()
+        );
     }
 
     #[test]

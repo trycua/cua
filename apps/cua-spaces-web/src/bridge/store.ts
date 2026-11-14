@@ -9,7 +9,7 @@
  * `state/cloud.tsx` does. Hooks read it with `useSyncExternalStore`.
  */
 
-import { hiddenSpaceIdsNow, onHiddenSpacesChange } from "../lib/prepare/store";
+import { getDriver, hiddenSpaceIdsNow, onHiddenSpacesChange } from "../lib/prepare/store";
 import { cloudsInput, cloudsView } from "./clouds";
 import { spokenName } from "./space-names";
 import { isUnsupported, type DataAdapter } from "./adapter";
@@ -795,6 +795,7 @@ export class BridgeStore {
   }
 
   async cancelCreate(pendingId: string): Promise<void> {
+    getDriver()?.removeHome(pendingId);
     this.dispatch({ type: "cancel-start", id: pendingId });
     try {
       await this.adapter.call("spaces.cancelCreate", { pendingId });
@@ -808,6 +809,7 @@ export class BridgeStore {
    * keeps its own row for the create until it is dismissed: its Delete on a
    * pending id does that), so it doesn't come back as a ghost. */
   async dismissCreate(pendingId: string): Promise<void> {
+    getDriver()?.removeHome(pendingId);
     this.dispatch({ type: "dismiss", id: pendingId });
     this.createFailures.delete(pendingId);
     // A removed row is not followed to a Space it might still become.
@@ -838,6 +840,7 @@ export class BridgeStore {
   /** Deletes the Space; `removeOnly` only forgets it here (it keeps
    * running in your cloud). */
   async deleteSpace(spaceId: string, removeOnly = false): Promise<void> {
+    getDriver()?.removeHome(spaceId);
     this.dispatch({ type: "delete-start", id: spaceId, now: this.now() });
     try {
       await this.adapter.call("spaces.delete", removeOnly ? { spaceId, removeOnly } : { spaceId });
@@ -864,7 +867,10 @@ export class BridgeStore {
 
   private async bulk(op: "spaces.deleteMany" | "spaces.leave", ids: string[]): Promise<BulkResult[]> {
     if (ids.length === 0) return [];
-    for (const id of ids) this.dispatch({ type: "delete-start", id, now: this.now() });
+    for (const id of ids) {
+      getDriver()?.removeHome(id);
+      this.dispatch({ type: "delete-start", id, now: this.now() });
+    }
     let results: BulkResult[];
     try {
       results = (await this.adapter.call(op, { ids })).results;

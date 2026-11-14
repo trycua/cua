@@ -60,6 +60,12 @@ impl std::fmt::Debug for Streamer {
     }
 }
 
+/// Whether `version` names one content of a key. A store without
+/// versioning answers with no id (or S3's `null`) for every content.
+fn has_version_id(version: &str) -> bool {
+    !version.is_empty() && version != "null"
+}
+
 impl Streamer {
     /// A streamer over `backend`; `cache` is used only when the backend is
     /// remote.
@@ -102,13 +108,17 @@ impl Streamer {
             return Ok(vec![]);
         }
         let out = match &self.cache {
-            None => self.backend.get_range(key, version, offset, len).await?,
-            Some(cache) => {
+            // Blocks are cached by version id. A store without versioning
+            // (Cloudflare R2, or an S3 bucket with versioning off) gives
+            // every content of a key the same empty or "null" id, so a
+            // cached block could be an earlier content: read the store.
+            Some(cache) if has_version_id(version) => {
                 self.plan_readahead(cache, key, version, size, offset, len);
                 cache
                     .read(self.backend.as_ref(), key, version, size, offset, len)
                     .await?
             }
+            _ => self.backend.get_range(key, version, offset, len).await?,
         };
         self.read_bytes
             .fetch_add(out.len() as u64, Ordering::Relaxed);

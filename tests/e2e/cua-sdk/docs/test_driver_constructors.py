@@ -82,16 +82,20 @@ def call_errors(block: str, signatures: dict[str, Signature]) -> list[str]:
         sig = signatures.get(name)
         if sig is None:
             continue
-        given = {k.arg for k in node.keywords}
-        if None in given:
-            continue  # **kwargs: cannot tell statically
+        unpacked = any(k.arg is None for k in node.keywords)
+        given = {k.arg for k in node.keywords if k.arg is not None}
         npos = len(node.args)
         missing = [p for p in sig.positional[npos : sig.required_positional] if p not in given]
         missing += sorted(sig.required_keywords - given)
+        if unpacked:
+            missing = []  # **kwargs may supply them
         unknown = sorted(given - set(sig.positional) - sig.keywords)
+        duplicate = [p for p in sig.positional[:npos] if p in given]
         problems = []
         if npos > len(sig.positional):
             problems.append(f"{npos} positional arguments, accepts {len(sig.positional)}")
+        if duplicate:
+            problems.append(f"given twice {', '.join(duplicate)}")
         if missing:
             problems.append(f"missing {', '.join(missing)}")
         if unknown:
@@ -145,13 +149,18 @@ class DriverConstructorTests(unittest.TestCase):
             "from cua_driver import GetWindowStateInput as G, ActionTarget\n"
             "G(pid=1, window_id=1, bogus=2)\n"
             "ActionTarget.WINDOW(1)\n"
+            "ActionTarget.WINDOW(1, pid=2, **extra)\n"
+            "G(bogus=1, **extra)\n"
         )
         errors = call_errors(block, self.signatures)
-        self.assertEqual(len(errors), 2, errors)
+        self.assertEqual(len(errors), 4, errors)
         self.assertIn("missing", errors[0])
         self.assertIn("max_image_dimension", errors[0])
         self.assertIn("unexpected bogus", errors[0])
         self.assertIn("ActionTarget.WINDOW(...) missing window_id", errors[1])
+        self.assertIn("ActionTarget.WINDOW(...) given twice pid", errors[2])
+        self.assertIn("GetWindowStateInput(...) unexpected bogus", errors[3])
+        self.assertNotIn("missing", errors[3])
 
 
 if __name__ == "__main__":

@@ -50,4 +50,4 @@ jobs:
         run: |
           cargo test --locked -p cua-driver-contract --test visual_contract
           cargo test --locked -p cua-perception --test protocol
-          cargo test --locked -p cua-driver-core --lib
+          cargo test --locked -p cua-driver-core --lib --features test-support

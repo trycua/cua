@@ -47,5 +47,6 @@ portal-capture = ["platform-linux/portal-capture"]
 portal-libei = ["portal-input", "portal-capture"]
 
 [dev-dependencies]
+cua-driver-core = { path = "../cua-driver-core", default-features = false, features = ["test-support"] }
 tempfile = "3"
 uniffi = { workspace = true, features = ["bindgen"] }

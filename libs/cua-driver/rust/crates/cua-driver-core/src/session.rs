@@ -52,6 +52,8 @@ pub struct SessionCleanupReport {
 struct RegisteredSessionEndHook {
     name: String,
     callback: SessionEndHook,
+    #[cfg(feature = "test-support")]
+    runtime_scope: Option<String>,
 }
 
 struct SessionCleanupProgress {
@@ -1291,6 +1293,8 @@ pub fn register_scoped_fallible_session_end_hook(
         RegisteredSessionEndHook {
             name: name.into(),
             callback: Arc::new(hook),
+            #[cfg(feature = "test-support")]
+            runtime_scope: crate::tool::hook_registration_runtime_scope(),
         },
     );
     SessionEndHookRegistration { id }
@@ -1357,6 +1361,17 @@ pub fn fire_session_revive_for_owner(session_id: &str, owner_transport: &str) ->
 #[doc(hidden)]
 pub fn session_end_hook_count() -> usize {
     hooks().lock().unwrap().len()
+}
+
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub fn session_end_hook_count_for_runtime(runtime_scope: &str) -> usize {
+    hooks()
+        .lock()
+        .unwrap()
+        .values()
+        .filter(|hook| hook.runtime_scope.as_deref() == Some(runtime_scope))
+        .count()
 }
 
 /// Release process-global session storage after the standalone daemon has

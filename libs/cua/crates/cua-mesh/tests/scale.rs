@@ -66,7 +66,7 @@ fn serve_echo(m: &Mesh) {
     });
 }
 
-struct Fleet {
+struct Machines {
     _dir: tempfile::TempDir,
     coord: FakeCoordinator,
     online: Vec<Mesh>,
@@ -75,7 +75,7 @@ struct Fleet {
 
 /// `online` machines serving echo, plus `offline` machines that joined
 /// once and were switched off (in the map, offline).
-async fn fleet(online: usize, offline: usize) -> Fleet {
+async fn machines(online: usize, offline: usize) -> Machines {
     let dir = tempfile::tempdir().unwrap();
     let coord = FakeCoordinator::start(Mode::Account).await;
     let mut up = Vec::new();
@@ -103,7 +103,7 @@ async fn fleet(online: usize, offline: usize) -> Fleet {
         online,
         "offline machines still connected"
     );
-    Fleet {
+    Machines {
         _dir: dir,
         coord,
         online: up,
@@ -180,7 +180,7 @@ impl Timings {
 /// Streams to every machine at once, straight on the node.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn offline_machines_do_not_hold_up_streams_to_the_rest() {
-    let f = fleet(
+    let f = machines(
         size("CUA_MESH_SCALE_ONLINE", 15),
         size("CUA_MESH_SCALE_OFFLINE", 5),
     )
@@ -249,7 +249,7 @@ async fn offline_machines_do_not_hold_up_streams_to_the_rest() {
 /// request through it, for every machine at once.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn offline_machines_do_not_hold_up_routes_to_the_rest() {
-    let f = fleet(
+    let f = machines(
         size("CUA_MESH_SCALE_ONLINE", 15),
         size("CUA_MESH_SCALE_OFFLINE", 5),
     )

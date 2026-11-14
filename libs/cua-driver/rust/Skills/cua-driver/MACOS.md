@@ -317,14 +317,14 @@ cua-driver permissions status --json   # read-only, never prompts
 
 ### Grant permissions, in order of preference
 
-1. **(a) Managed Macs and fleets:** an MDM profile pre-approves Accessibility.
+1. **(a) Managed Macs:** an MDM profile pre-approves Accessibility.
 2. **(b) Operator-authorized hosts:** approve Cua Driver's own prompts through
    the host's screen sharing, only with the owner's explicit authorization.
 3. **(c) Everything else:** ask the user to click.
 
 Read [Guardrails](#guardrails-for-approving-prompts) before using (b).
 
-#### (a) Managed Macs and fleets: an MDM profile
+#### (a) Managed Macs: an MDM profile
 
 When the Mac is managed, push a Privacy Preferences Policy Control (PPPC)
 profile from your MDM server. This is Apple's supported route. macOS honors

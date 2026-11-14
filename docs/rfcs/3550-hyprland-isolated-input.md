@@ -30,7 +30,7 @@ accepted upstream Hyprland API.
 
 The [maintainer-selected delivery scope](https://github.com/trycua/cua/issues/3550#issuecomment-5555206901)
 authorizes the existing implementation workstreams toward released Driver
-packages and a verified Omarchy Fleet image. The intended end state is
+packages and a verified Omarchy cloud image. The intended end state is
 supported input for a qualified client/operation matrix.
 
 The [scope correction in #3550](https://github.com/trycua/cua/issues/3550#issuecomment-5556178980)
@@ -122,7 +122,7 @@ gates input on an authorization contract and second-seat evidence.
 
 The [validation report](https://github.com/trycua/cua/blob/fc6d064d9287cb04a16152d056f87a809b8e3cf6/libs/cua-driver/hyprland-plugin/tests/validation.md)
 records native build and repeated lifecycle tests on Hyprland `0.56.2-1`.
-Its Fleet environment used Omarchy `4.0.1-1` and Cua Driver `0.22.2`.
+Its cloud environment used Omarchy `4.0.1-1` and Cua Driver `0.22.2`.
 The report identifies the tested source archive and subsequent non-executable
 changes; it is not application-delivery or physical-input-isolation evidence.
 
@@ -539,7 +539,7 @@ decision. Design acceptance does not mark the candidate certified:
    and one-owner cancellation. Prove lifecycle, keymap, target, and desktop
    recovery on current source; unknown or partial actions are never replayed.
 5. Certify the stable exact source candidate with the affected canonical desktop
-   matrix and native Hyprland real-app proof, including disposable Fleet tests.
+   matrix and native Hyprland real-app proof, including disposable cloud tests.
    Retain supported/refused/unproven cells and diagnose recurring discovery/IPC
    failures. Review and merge the RFC and implementation dependencies, then run
    a main-branch smoke and account for differences from the certified SHA.
@@ -551,17 +551,17 @@ decision. Design acceptance does not mark the candidate certified:
    planned-restart upgrade, and rollback. A local checkout or tag alone is
    insufficient release evidence.
 7. Only after released Driver/plugin verification, publish the final immutable
-   Omarchy Fleet image through the canonical amd64 build/publish pipeline,
+   Omarchy cloud image through the canonical amd64 build/publish pipeline,
    pinned to those artifacts. Test supported input on two
    distinct fresh concurrent instances, including both apps, normal Driver
    sessions, cleanup, provenance, and an uninstrumented production-package
    smoke. Verify temporary-resource cleanup before promoting the documented
-   image pin; retain the previous pin for rollback. Source-built Fleet tests
+   image pin; retain the previous pin for rollback. Source-built cloud tests
    and image-recipe preparation may run earlier, but do not replace this gate.
 
 Deliver install/use instructions, the support matrix, recordings, exact release
 and image identities, and rollback. Bare-metal support requires the separate
-physical Omarchy gate; label Fleet evidence accurately until then.
+physical Omarchy gate; label cloud evidence accurately until then.
 
 ## Test and acceptance plan
 
@@ -612,7 +612,7 @@ admission. It records no completed native certification.
 | Identity and geometry             | Target replacement, PID/window reuse, move/resize, popup/modal/subsurface eligibility, occlusion, off-workspace targets, mixed scale, output transforms, and monitor changes yield exact delivery or the declared refusal.                                                                                                                                                                                                            |
 | Revocation and Stop               | Revocation at admission and every gesture stage cleans owner state and preserves other lanes/primary input. Test runtime/session stop, process death, brief lock/unlock and DPMS off/on transitions, keymap/target loss, config transitions, and compositor restart. Later actions reacquire only after fresh checks; partial/unknown actions are never replayed. Measure responsive-compositor cleanup and report stalls separately. |
 | Shared surface parity             | Common permission, session, result, and schema tests cover Rust, Python, TypeScript, CLI, and MCP as affected. Native macOS, Windows, X11, and other Wayland paths retain behavior or an explicit limitation.                                                                                                                                                                                                                         |
-| Release, Fleet, and physical host | Pre-release Fleet source tests qualify the candidate. The final image consumes verified merged/released Driver/plugin artifacts and passes on two fresh concurrent Fleet instances before pin promotion. The documented bare-metal Omarchy baseline supplies separate physical-input evidence.                                                                                                                                        |
+| Release, cloud, and physical host | Pre-release cloud source tests qualify the candidate. The final image consumes verified merged/released Driver/plugin artifacts and passes on two fresh concurrent cloud instances before pin promotion. The documented bare-metal Omarchy baseline supplies separate physical-input evidence.                                                                                                                                        |
 
 Each promoted delivery cell needs fixture-owned target state and independent
 focus, stacking, workspace, cursor, primary-seat held-state, and input-leak
@@ -719,7 +719,7 @@ path within its existing qualification limits. Extended Python stress plans
 remain diagnostic. This supersedes the earlier repetition requirement while
 preserving historical results, failures, and design decisions. It adds no
 approval UI, test bypass, or new passing certification claim. Implementation
-merge still requires passing affected CI and E2E evidence; release, Fleet,
+merge still requires passing affected CI and E2E evidence; release, cloud,
 and physical-host requirements retain their separate scope.
 
 The background decision preserves the contributor feedback and alternatives above. It
@@ -732,12 +732,12 @@ the approved scope is optional, narrowly qualified, and reuses Driver's
 existing cross-platform permission contract without a new public permission
 mode or automatic activation. This does not waive implementation review,
 exact-candidate native qualification, package lifecycle tests, canonical
-desktop coverage, or release and Fleet validation.
+desktop coverage, or release and cloud validation.
 
 The implementation-verification questions remain release gates, not unresolved
 permission-UI choices. Keep status `accepted` until the required criteria ship;
 then record completion. Certify and release the Driver/plugin dependency chain
-before publishing the final supported Fleet image. No upstream Hyprland
+before publishing the final supported cloud image. No upstream Hyprland
 endorsement or physical-host parity is implied.
 
 ### Accepted exact-target foreground scope adjustment

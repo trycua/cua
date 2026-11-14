@@ -2065,7 +2065,7 @@ impl DeviceStore {
         // device was renewed within the last step, so only its last-seen
         // time changes, in memory (written with the next real change).
         // Rewriting and fsyncing the whole devices file on every session
-        // held the devices lock for the write, and a reconnecting fleet
+        // held the devices lock for the write, and a group of reconnecting machines
         // opens several sessions a second (CUA-2323).
         let kept = {
             let mut state = self.state.lock().expect("devices");
@@ -3861,7 +3861,7 @@ pub(crate) mod tests {
     }
 
     /// CUA-2323: a session that renews nothing does not rewrite the
-    /// devices file (a reconnecting fleet opened several a second, each a
+    /// devices file (a group of reconnecting machines opened several a second, each a
     /// full rewrite and fsync under the devices lock), and its audit line
     /// is throttled per device.
     #[cfg(unix)]

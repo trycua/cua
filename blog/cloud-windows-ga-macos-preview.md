@@ -1,6 +1,6 @@
 # Cloud Windows Sandboxes GA + macOS Preview
 
-> Update, October 2026: Cua Cloud (Fleets) ended on 18 October 2026, so the cloud sandboxes, credit pricing and macOS waitlist in this post no longer apply. This post describes it as it was. See [what changed](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended) and the current plans on [cua.ai/pricing](https://cua.ai/pricing).
+> Update, October 2026: Cua Cloud ended on 18 October 2026, so the cloud sandboxes, credit pricing and macOS waitlist in this post no longer apply. This post describes it as it was. See [what changed](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended) and the current plans on [cua.ai/pricing](https://cua.ai/pricing).
 
 If you've been building with our `cua` libraries, you might've hit a limitation with local computer-use sandboxes: to run agents on Windows or macOS, you need to be on that OS - Windows Sandbox for Windows, Apple Virtualization for macOS. The only cross-platform option is Linux on Docker, which limits you to virtualizing Linux environments ([see all local options here](https://cua.ai/docs/cua/reference/computer-sdk)).
 

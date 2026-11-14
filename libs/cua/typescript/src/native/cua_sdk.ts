@@ -35603,7 +35603,7 @@ export interface SandboxLike {
  * memory and a disk grown to `disk_gb` GiB (each `None` keeps it). The
  * VM stops and boots again from its own disk, so its memory and
  * running processes do not survive; its files do. Returns once it is
- * ready again. A disk never shrinks. Containers, Fleet and other
+ * ready again. A disk never shrinks. Containers and other
  * providers' sandboxes are refused (`Unsupported`).
  */
     resize(cpus: number | undefined, memoryMb: bigint | undefined, diskGb: number | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
@@ -36357,7 +36357,7 @@ private constructor(pointer: UniffiHandle) {
  * memory and a disk grown to `disk_gb` GiB (each `None` keeps it). The
  * VM stops and boots again from its own disk, so its memory and
  * running processes do not survive; its files do. Returns once it is
- * ready again. A disk never shrinks. Containers, Fleet and other
+ * ready again. A disk never shrinks. Containers and other
  * providers' sandboxes are refused (`Unsupported`).
  */
     async resize(cpus: number | undefined, memoryMb: bigint | undefined, diskGb: number | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
@@ -50164,7 +50164,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_refresh() !== 45835) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandbox_refresh");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_resize() !== 25505) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_resize() !== 21403) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandbox_resize");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_restart() !== 22482) {

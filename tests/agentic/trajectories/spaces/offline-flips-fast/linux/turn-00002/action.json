@@ -1,0 +1,25 @@
+{
+  "action_truth": {
+    "actual_delivery": "background",
+    "attempts": [],
+    "delivered_count": null,
+    "detail": null,
+    "effect": "unverifiable",
+    "escalation": null,
+    "evidence": [],
+    "fallbacks": [],
+    "refusal": null,
+    "requested_delivery": "background",
+    "route": "accessibility",
+    "transport": "linux_at_spi_action"
+  },
+  "arguments": {
+    "element_token": "s00000002:18"
+  },
+  "result_error": false,
+  "result_summary": "Clicked element [18] (pid 71756).",
+  "t_ms_from_session_start": 9549,
+  "t_start_ms_from_session_start": 8447,
+  "timestamp": "2026-11-06T00:11:27.885Z",
+  "tool": "click"
+}

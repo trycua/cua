@@ -1,0 +1,33 @@
+{
+  "action_truth": {
+    "actual_delivery": "unknown",
+    "attempts": [],
+    "delivered_count": null,
+    "detail": null,
+    "effect": "unverifiable",
+    "escalation": {
+      "detail": "background input is unavailable on this surface; retry this action with delivery_mode:\"foreground\".",
+      "kind": "retry_with_foreground_delivery"
+    },
+    "evidence": [],
+    "fallbacks": [],
+    "refusal": null,
+    "requested_delivery": "background",
+    "route": "global_input",
+    "transport": "linux_x_test"
+  },
+  "arguments": {
+    "amount": 15,
+    "direction": "down",
+    "pid": 71756,
+    "window_id": 46137348,
+    "x": 420,
+    "y": 500
+  },
+  "result_error": true,
+  "result_summary": "Background delivery is not available: Chromium/Electron does not accept pointer or keyboard input addressed to an occluded, unfocused renderer through X11 background injection. Retry this action with delivery_mode:\"foreground\"; Cua Driver will activate the target window, confirm it holds the input focus, and deliver real input to it.",
+  "t_ms_from_session_start": 63827,
+  "t_start_ms_from_session_start": 61675,
+  "timestamp": "2026-11-06T00:12:22.163Z",
+  "tool": "scroll"
+}

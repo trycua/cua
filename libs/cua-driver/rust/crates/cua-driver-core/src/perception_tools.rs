@@ -159,8 +159,7 @@ impl Tool for ParseVisualRegionsTool {
             Err(error) => return tool_error(error),
         };
         let structured = serde_json::to_value(&output).expect("visual output serializes");
-        ToolResult::text(format!("Parsed {} visual regions", output.regions.len()))
-            .with_structured(structured)
+        ToolResult::text(format_visual_regions_text(&output)).with_structured(structured)
     }
 }
 
@@ -550,6 +549,58 @@ fn invalid_worker_artifact(cause: impl ToString) -> VisualParseError {
     )
 }
 
+/// Text body for `parse_visual_regions`. The count stays first so existing
+/// readers still see it, then `capture_id` and one row per region, because
+/// some MCP hosts only forward `content[].text`.
+fn format_visual_regions_text(output: &ParseVisualRegionsOutput) -> String {
+    let mut text = format!(
+        "Parsed {} visual regions capture_id={}",
+        output.regions.len(),
+        output.capture.capture_id
+    );
+    for region in &output.regions {
+        text.push('\n');
+        text.push_str(&format_region_line(region));
+    }
+    text
+}
+
+fn format_region_line(region: &VisualRegion) -> String {
+    let bounds = region.bounds;
+    let mut line = format!(
+        "- id={} kind={} bounds={},{} {}x{} confidence={}",
+        region.id,
+        region_kind_name(region.kind),
+        bounds.x,
+        bounds.y,
+        bounds.width,
+        bounds.height,
+        format_confidence(region.confidence),
+    );
+    if let Some(text) = &region.text {
+        line.push_str(" text=");
+        line.push_str(&format!("{text:?}"));
+    }
+    if let Some(label) = &region.label {
+        line.push_str(" label=");
+        line.push_str(&format!("{label:?}"));
+    }
+    line
+}
+
+fn region_kind_name(kind: VisualRegionKind) -> &'static str {
+    match kind {
+        VisualRegionKind::Text => "text",
+        VisualRegionKind::Icon => "icon",
+    }
+}
+
+fn format_confidence(confidence: f64) -> String {
+    serde_json::Number::from_f64(confidence)
+        .map(|number| number.to_string())
+        .unwrap_or_else(|| confidence.to_string())
+}
+
 fn tool_error(error: VisualParseError) -> ToolResult {
     let message = error.message.clone();
     ToolResult::error(message)
@@ -928,8 +979,22 @@ else:
             "worker mapping failed: {:?}",
             result.structured_content
         );
+        let text = match result.content.first() {
+            Some(crate::protocol::Content::Text { text, .. }) => text.clone(),
+            other => panic!("parse_visual_regions text missing: {other:?}"),
+        };
+        assert!(
+            text.starts_with(&format!(
+                "Parsed 1 visual regions capture_id={capture_id}\n"
+            )),
+            "{text}"
+        );
+        assert!(
+            text.contains("id=one kind=icon bounds=0,0 1x1 confidence=0.9 label=\"icon-class-4\""),
+            "{text}"
+        );
         let output: ParseVisualRegionsOutput =
-            serde_json::from_value(result.structured_content.unwrap()).unwrap();
+            serde_json::from_value(result.structured_content.clone().unwrap()).unwrap();
         assert_eq!(output.regions.len(), 1);
         assert_eq!(output.capture.capture_id, capture_id);
         assert_eq!(output.regions[0].label.as_deref(), Some("icon-class-4"));
@@ -1166,5 +1231,103 @@ else:
             output.capture.action_coordinate_space.map_point(1.5, 1.5),
             transform.apply(1.5, 1.5)
         );
+    }
+
+    fn parsed_regions(capture_id: &str, regions: Value) -> ParseVisualRegionsOutput {
+        let digest = "11".repeat(32);
+        let input = ParseVisualRegionsInput {
+            capture_id: capture_id.into(),
+            options: Default::default(),
+        };
+        let provenance = VisualCaptureProvenance {
+            capture_id: capture_id.into(),
+            source: VisualCaptureSource::Window {
+                pid: 10,
+                window_id: 20,
+            },
+            screenshot: VisualScreenshotReference {
+                reference: format!("local-png-sha256:{digest}"),
+                width: 200,
+                height: 100,
+                mime_type: "image/png".into(),
+                sha256: Some(digest.clone()),
+            },
+            action_coordinate_space: VisualActionCoordinateSpace::ScreenshotPixels,
+            captured_at: None,
+        };
+        build_local_output(
+            &input,
+            provenance,
+            json!({
+                "capture_id": capture_id,
+                "image": {"width": 200, "height": 100, "sha256": digest},
+                "coordinate_space": "image_pixels",
+                "runtime": "fixture_only",
+                "identity": {
+                    "extension": {"id": "cua-perception", "version": "0.1.0"},
+                    "backend": "deterministic_fixture",
+                    "fixture_sha256": "22".repeat(32)
+                },
+                "regions": regions
+            }),
+            115,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn parse_text_lists_region_details_and_keeps_structured_fields() {
+        let output = parsed_regions(
+            "cap_00000001",
+            json!([
+                {
+                    "id": "vr_0",
+                    "kind": "text",
+                    "bounds": {"x": 16, "y": 14, "width": 118, "height": 28},
+                    "text": "Calculator",
+                    "label": "title",
+                    "confidence": 0.94
+                },
+                {
+                    "id": "vr_1",
+                    "kind": "icon",
+                    "bounds": {"x": 1, "y": 2, "width": 3, "height": 4},
+                    "text": "say \"hi\"\nnext",
+                    "label": "Ok",
+                    "confidence": 1.0
+                }
+            ]),
+        );
+        let text = format_visual_regions_text(&output);
+        assert_eq!(
+            text,
+            "Parsed 2 visual regions capture_id=cap_00000001\n\
+             - id=vr_0 kind=text bounds=16,14 118x28 confidence=0.94 text=\"Calculator\" label=\"title\"\n\
+             - id=vr_1 kind=icon bounds=1,2 3x4 confidence=1.0 text=\"say \\\"hi\\\"\\nnext\" label=\"Ok\""
+        );
+        let structured = serde_json::to_value(&output).unwrap();
+        assert_eq!(structured["capture"]["capture_id"], "cap_00000001");
+        assert_eq!(structured["regions"].as_array().unwrap().len(), 2);
+        assert_eq!(structured["regions"][0]["id"], "vr_0");
+        assert_eq!(structured["regions"][0]["kind"], "text");
+        assert_eq!(structured["regions"][0]["bounds"]["width"], 118);
+        assert_eq!(structured["regions"][0]["confidence"], 0.94);
+        assert_eq!(structured["regions"][0]["text"], "Calculator");
+        assert_eq!(structured["regions"][0]["label"], "title");
+        assert_eq!(structured["regions"][1]["text"], "say \"hi\"\nnext");
+        assert_eq!(structured["regions"][1]["label"], "Ok");
+    }
+
+    #[test]
+    fn parse_text_keeps_the_count_when_no_regions_were_returned() {
+        let output = parsed_regions("cap_00000001", json!([]));
+        assert_eq!(
+            format_visual_regions_text(&output),
+            "Parsed 0 visual regions capture_id=cap_00000001"
+        );
+        assert!(serde_json::to_value(&output).unwrap()["regions"]
+            .as_array()
+            .unwrap()
+            .is_empty());
     }
 }

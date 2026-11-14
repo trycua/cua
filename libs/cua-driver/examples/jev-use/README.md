@@ -159,6 +159,38 @@ uv run --frozen python verify_native.py --harness wpf --typescript --output-dir 
 uv run --frozen python verify_native.py --harness winui3 --typescript --output-dir $env:TEMP\jev-native-winui3
 ```
 
+#### Intermediate native verification
+
+After each dispatched native action the runner polls the harness state file.
+Whole-task `check` outcomes win: `verified` or `refuted` ends the wait
+immediately. For the built-in counter and choose-size tasks, an independently
+witnessed intermediate effect may end an otherwise whole-task wait: increment
+must move integer `counter` by exactly +1 from the pre-dispatch value, and the
+Large radio must show `size: large`. A supported effect that never appears
+returns `intermediate_timeout` and the runner stops without a dependent
+follow-up mutation.
+
+Save-note text entry, custom tasks, terminal actions, empty step lists, and
+exhausted action budgets keep the original 20-attempt wait. A driver
+dispatch receipt is never treated as completion.
+
+Offline checks stay on the deterministic mock path:
+
+```bash
+uv run python -m unittest discover -s python/tests
+npm test
+npm run typecheck
+uv run python verify_native_waits.py
+```
+
+`verify_native_waits.py` compiles the immutable Git `poll_oracle` (default
+baseline `62cdfbcd9356cf2e1b47ab09fee94eddd1d881cc`) and compares it with this
+checkout under a fake clock. Nine delayed-effect cells must all terminate
+verified. Printed timings are virtual policy latency, not a live or model
+benchmark. Optional `--baseline-sha` selects another Git revision; optional
+`--output` writes JSON only to that path. Without `--output`, the script writes
+only to stdout.
+
 `--capture-dir` also records sanitized `get_window_state` fixtures like the
 ones under `fixtures/native/`. On Linux, Cua Driver 0.30.2 and earlier report
 no `value` for a named text field
@@ -586,6 +618,7 @@ The tests use the deterministic provider and do not require
 uv run python -m unittest discover -s python/tests
 npm test
 npm run typecheck
+uv run python verify_native_waits.py
 ```
 
 ## Other decision models

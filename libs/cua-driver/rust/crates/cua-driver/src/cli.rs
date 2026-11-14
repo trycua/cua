@@ -1370,8 +1370,16 @@ fn check_options(args: &[String], positionals: &[&str]) -> Result<(), String> {
     while index < args.len() {
         let arg = args[index].as_str();
         index += 1;
-        // macOS LaunchServices may add `-psn_*` to an app launch.
-        if is_value(arg) || arg.starts_with("-psn_") {
+        // macOS LaunchServices may add a process serial number,
+        // `-psn_<high>_<low>`, to an app launch.
+        let serial_number = arg.strip_prefix("-psn_").is_some_and(|serial| {
+            serial.split_once('_').is_some_and(|(high, low)| {
+                [high, low]
+                    .iter()
+                    .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+            })
+        });
+        if is_value(arg) || serial_number {
             continue;
         }
         let (name, inline_value) = match arg.split_once('=') {
@@ -6502,6 +6510,10 @@ mod tests {
             (
                 &["stop", "--socket", "/s", "--socket", "--expected-pidd", "1"],
                 "cua-driver stop: option '--socket' needs a value",
+            ),
+            (
+                &["stop", "--socket", "/s", "-psn_expected-pidd", "1"],
+                "cua-driver stop: unknown option '-psn_expected-pidd'",
             ),
             (
                 &["serve", "--socket", "--bogus"],

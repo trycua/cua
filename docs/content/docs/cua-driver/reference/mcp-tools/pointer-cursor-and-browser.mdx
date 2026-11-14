@@ -519,6 +519,11 @@ Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
 | <span id="get_browser_state--pid"></span>`pid` | `integer` |  | Native browser process id (bind mode). |
 | <span id="get_browser_state--query"></span>`query` | `string` |  | Read-only semantic match over role, accessible name, and visible text. |
 | <span id="get_browser_state--scope_ref"></span>`scope_ref` | `string` |  | Current semantic/content ref whose subtree should be observed. |
+| <span id="get_browser_state--screenshot_clip"></span>`screenshot_clip` | `object` |  | Capture only this region of the viewport, in viewport CSS pixels from its top-left corner (the space of pixel_to_css_scale_x/y and browser_pointer). A region running past the right or bottom edge is cut to the viewport and reported with clip_clamped:true. A region with no visible part refuses. Requires include_screenshot:true. |
+| <span id="get_browser_state--screenshot_clip-height"></span>`screenshot_clip.height` | `number` |  | Height in CSS px, greater than 0. |
+| <span id="get_browser_state--screenshot_clip-width"></span>`screenshot_clip.width` | `number` |  | Width in CSS px, greater than 0. |
+| <span id="get_browser_state--screenshot_clip-x"></span>`screenshot_clip.x` | `number` |  | Left edge, CSS px from the viewport's left. Minimum: 0. |
+| <span id="get_browser_state--screenshot_clip-y"></span>`screenshot_clip.y` | `number` |  | Top edge, CSS px from the viewport's top. Minimum: 0. |
 | <span id="get_browser_state--screenshot_format"></span>`screenshot_format` | `"png" \| "jpeg"` |  | Encoding of the requested screenshot: "png" (default) or "jpeg". Requires include_screenshot:true. |
 | <span id="get_browser_state--screenshot_quality"></span>`screenshot_quality` | `integer` |  | JPEG quality, 1-95, with screenshot_format:"jpeg" only. Default 85. Range: 1 to 95. |
 | <span id="get_browser_state--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session. |

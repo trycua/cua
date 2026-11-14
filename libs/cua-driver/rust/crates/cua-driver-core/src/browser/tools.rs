@@ -25,7 +25,10 @@ use crate::tool_args::ArgsExt;
 
 use super::cdp_ws::CdpConnection;
 use super::download::BrowserDownloadTool;
-use super::engine::{BrowserEngine, BrowserTabScreenshot, DIALOG_SUBSCRIPTION_TIMEOUT};
+use super::engine::{
+    BrowserEngine, BrowserTabScreenshot, CaptureTabScreenshotError, TabScreenshotRequest,
+    ViewportClip, DIALOG_SUBSCRIPTION_TIMEOUT,
+};
 use super::platform::{
     BrowserVisualActionKind, PrepareAction, PrepareProfile, PrepareProfileMode, PrepareRequest,
     PrepareStrategy,
@@ -395,7 +398,7 @@ fn with_tab_screenshot(mut result: ToolResult, screenshot: BrowserTabScreenshot)
     if let Some(structured) = result.structured_content.as_mut() {
         structured["screenshot"] = json!({
             "source": "cdp_tab",
-            "scope": "viewport",
+            "scope": if screenshot.clip.is_some() { "clip" } else { "viewport" },
             "mime_type": screenshot.mime_type,
             "width": screenshot.width,
             "height": screenshot.height,
@@ -407,6 +410,15 @@ fn with_tab_screenshot(mut result: ToolResult, screenshot: BrowserTabScreenshot)
             "tab_activation": "not_requested",
             "window_foregrounding": "not_requested",
         });
+        if let Some(clip) = screenshot.clip {
+            structured["screenshot"]["clip"] = json!({
+                "x": clip.x,
+                "y": clip.y,
+                "width": clip.width,
+                "height": clip.height,
+            });
+            structured["screenshot"]["clip_clamped"] = json!(clip.clamped);
+        }
         structured["screenshot_width"] = json!(screenshot.width);
         structured["screenshot_height"] = json!(screenshot.height);
         structured["screenshot_mime_type"] = json!(screenshot.mime_type);
@@ -420,13 +432,62 @@ fn with_tab_screenshot(mut result: ToolResult, screenshot: BrowserTabScreenshot)
     result
 }
 
-/// Screenshot encoding fields of `get_browser_state`. They apply only to a
+/// Screenshot option fields of `get_browser_state`. They apply only to a
 /// snapshot-mode call that sets `include_screenshot: true`.
-const SCREENSHOT_OPTION_FIELDS: [&str; 3] = [
+const SCREENSHOT_OPTION_FIELDS: [&str; 4] = [
     "screenshot_format",
     "screenshot_quality",
     "max_image_dimension",
+    "screenshot_clip",
 ];
+
+/// Map a failed tab capture onto the tool's two error shapes.
+fn capture_error_result(error: CaptureTabScreenshotError) -> ToolResult {
+    match error {
+        CaptureTabScreenshotError::InvalidArguments(detail) => {
+            invalid_browser_state_arguments(detail)
+        }
+        CaptureTabScreenshotError::Refusal(refusal) => refusal.to_tool_result(),
+    }
+}
+
+/// Validate `screenshot_clip`: exactly `x`, `y`, `width`, `height`, all
+/// finite, with a non-negative origin and a positive size.
+fn screenshot_clip(args: &Value) -> Result<Option<ViewportClip>, ToolResult> {
+    let value = match args.get("screenshot_clip") {
+        None | Some(Value::Null) => return Ok(None),
+        Some(value) => value,
+    };
+    let shape = || {
+        invalid_browser_state_arguments(format!(
+            "screenshot_clip must be an object with exactly x, y, width, and height as \
+             finite numbers, got {value}"
+        ))
+    };
+    let fields = value.as_object().ok_or_else(shape)?;
+    if fields.len() != 4 {
+        return Err(shape());
+    }
+    let number = |key: &str| {
+        fields
+            .get(key)
+            .and_then(Value::as_f64)
+            .filter(|number| number.is_finite())
+            .ok_or_else(shape)
+    };
+    let clip = ViewportClip {
+        x: number("x")?,
+        y: number("y")?,
+        width: number("width")?,
+        height: number("height")?,
+    };
+    if clip.x < 0.0 || clip.y < 0.0 || clip.width <= 0.0 || clip.height <= 0.0 {
+        return Err(invalid_browser_state_arguments(format!(
+            "screenshot_clip needs x >= 0, y >= 0, width > 0, and height > 0, got {value}"
+        )));
+    }
+    Ok(Some(clip))
+}
 
 fn invalid_browser_state_arguments(detail: impl Into<String>) -> ToolResult {
     let detail = detail.into();
@@ -449,9 +510,7 @@ fn screenshot_options_present(args: &Value) -> bool {
 
 /// Resolve the long-edge cap and encoding for a requested tab screenshot.
 /// Omitted fields keep the native-resolution PNG.
-fn screenshot_request(
-    args: &Value,
-) -> Result<(u32, crate::image_utils::ScreenshotEncoding), ToolResult> {
+fn screenshot_request(args: &Value) -> Result<TabScreenshotRequest, ToolResult> {
     let encoding = crate::image_utils::ScreenshotEncoding::from_args(
         "screenshot_format",
         args.get("screenshot_format"),
@@ -471,7 +530,11 @@ fn screenshot_request(
                 ))
             })?,
     };
-    Ok((max_dim, encoding))
+    Ok(TabScreenshotRequest {
+        max_dim,
+        encoding,
+        clip: screenshot_clip(args)?,
+    })
 }
 
 // ── get_browser_state ────────────────────────────────────────────────────────
@@ -545,6 +608,18 @@ impl GetBrowserStateTool {
                         "maximum": 95,
                         "description": "JPEG quality, 1-95, with screenshot_format:\"jpeg\" only. Default 85."
                     },
+                    "screenshot_clip": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["x", "y", "width", "height"],
+                        "properties": {
+                            "x": { "type": "number", "minimum": 0, "description": "Left edge, CSS px from the viewport's left." },
+                            "y": { "type": "number", "minimum": 0, "description": "Top edge, CSS px from the viewport's top." },
+                            "width": { "type": "number", "description": "Width in CSS px, greater than 0." },
+                            "height": { "type": "number", "description": "Height in CSS px, greater than 0." }
+                        },
+                        "description": "Capture only this region of the viewport, in viewport CSS pixels from its top-left corner (the space of pixel_to_css_scale_x/y and browser_pointer). A region running past the right or bottom edge is cut to the viewport and reported with clip_clamped:true. A region with no visible part refuses. Requires include_screenshot:true."
+                    },
                     "max_image_dimension": {
                         "type": "integer",
                         "minimum": 0,
@@ -571,12 +646,11 @@ impl GetBrowserStateTool {
         session: &str,
         target_id: &str,
         tab_id: &str,
-        max_dim: u32,
-        encoding: crate::image_utils::ScreenshotEncoding,
+        request: TabScreenshotRequest,
     ) -> ToolResult {
         match self
             .engine
-            .capture_tab_screenshot(session, target_id, tab_id, max_dim, encoding)
+            .capture_tab_screenshot(session, target_id, tab_id, request)
             .await
         {
             Ok(screenshot) => with_tab_screenshot(
@@ -591,7 +665,7 @@ impl GetBrowserStateTool {
                 })),
                 screenshot,
             ),
-            Err(refusal) => refusal.to_tool_result(),
+            Err(error) => capture_error_result(error),
         }
     }
 }
@@ -663,11 +737,11 @@ impl Tool for GetBrowserStateTool {
             };
             if screenshot_options_present(&args) && !include_screenshot {
                 return invalid_browser_state_arguments(
-                    "screenshot_format, screenshot_quality, and max_image_dimension \
-                     apply only with include_screenshot: true",
+                    "screenshot_format, screenshot_quality, max_image_dimension, and \
+                     screenshot_clip apply only with include_screenshot: true",
                 );
             }
-            let (max_dim, encoding) = match screenshot_request(&args) {
+            let screenshot = match screenshot_request(&args) {
                 Ok(request) => request,
                 Err(error) => return error,
             };
@@ -687,7 +761,7 @@ impl Tool for GetBrowserStateTool {
                     );
                 }
                 return self
-                    .screenshot_only(&session, &target_id, &tab_id, max_dim, encoding)
+                    .screenshot_only(&session, &target_id, &tab_id, screenshot)
                     .await;
             }
             let snapshot_format = args
@@ -782,11 +856,11 @@ impl Tool for GetBrowserStateTool {
                 if include_screenshot {
                     return match self
                         .engine
-                        .capture_tab_screenshot(&session, &target_id, &tab_id, max_dim, encoding)
+                        .capture_tab_screenshot(&session, &target_id, &tab_id, screenshot)
                         .await
                     {
                         Ok(screenshot) => with_tab_screenshot(snapshot, screenshot),
-                        Err(refusal) => refusal.to_tool_result(),
+                        Err(error) => capture_error_result(error),
                     };
                 }
                 return snapshot;
@@ -835,11 +909,11 @@ impl Tool for GetBrowserStateTool {
             if include_screenshot {
                 return match self
                     .engine
-                    .capture_tab_screenshot(&session, &target_id, &tab_id, max_dim, encoding)
+                    .capture_tab_screenshot(&session, &target_id, &tab_id, screenshot)
                     .await
                 {
                     Ok(screenshot) => with_tab_screenshot(snapshot, screenshot),
-                    Err(refusal) => refusal.to_tool_result(),
+                    Err(error) => capture_error_result(error),
                 };
             }
             return snapshot;
@@ -855,8 +929,8 @@ impl Tool for GetBrowserStateTool {
         }
         if screenshot_options_present(&args) {
             return invalid_browser_state_arguments(
-                "screenshot_format, screenshot_quality, and max_image_dimension \
-                 require snapshot mode with include_screenshot: true",
+                "screenshot_format, screenshot_quality, max_image_dimension, and \
+                 screenshot_clip require snapshot mode with include_screenshot: true",
             );
         }
         if include_snapshot.is_some() {
@@ -3889,6 +3963,7 @@ mod tests {
             json!({"screenshot_format": "jpeg"}),
             json!({"screenshot_quality": 80}),
             json!({"max_image_dimension": 1280}),
+            json!({"screenshot_clip": {"x": 0, "y": 0, "width": 10, "height": 10}}),
             json!({"include_screenshot": false, "screenshot_format": "png"}),
         ] {
             let mut args = json!({
@@ -3901,8 +3976,8 @@ mod tests {
             }
             assert_eq!(
                 invalid_arguments_detail(args).await,
-                "screenshot_format, screenshot_quality, and max_image_dimension apply only with \
-                 include_screenshot: true"
+                "screenshot_format, screenshot_quality, max_image_dimension, and screenshot_clip \
+                 apply only with include_screenshot: true"
             );
         }
     }
@@ -3939,18 +4014,79 @@ mod tests {
             "screenshot_format",
             "screenshot_quality",
             "max_image_dimension",
+            "screenshot_clip",
         ] {
-            let value = if field == "screenshot_format" {
-                json!("jpeg")
-            } else {
-                json!(80)
+            let value = match field {
+                "screenshot_format" => json!("jpeg"),
+                "screenshot_clip" => json!({"x": 0, "y": 0, "width": 10, "height": 10}),
+                _ => json!(80),
             };
             let mut args = json!({"pid": 4242, "window_id": 7, "session": "browser-run"});
             args[field] = value;
             assert_eq!(
                 invalid_arguments_detail(args).await,
-                "screenshot_format, screenshot_quality, and max_image_dimension require snapshot \
-                 mode with include_screenshot: true"
+                "screenshot_format, screenshot_quality, max_image_dimension, and screenshot_clip \
+                 require snapshot mode with include_screenshot: true"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn screenshot_clip_refuses_a_malformed_region_before_any_capture() {
+        let shape = |got: &str| {
+            format!(
+                "screenshot_clip must be an object with exactly x, y, width, and height as finite \
+                 numbers, got {got}"
+            )
+        };
+        let range = |got: &str| {
+            format!("screenshot_clip needs x >= 0, y >= 0, width > 0, and height > 0, got {got}")
+        };
+        for (clip, expected) in [
+            (json!([0, 0, 10, 10]), shape("[0,0,10,10]")),
+            (
+                json!({"x": 0, "y": 0, "width": 10}),
+                shape(r#"{"width":10,"x":0,"y":0}"#),
+            ),
+            (
+                json!({"x": 0, "y": 0, "width": 10, "height": 10, "scale": 2}),
+                shape(r#"{"height":10,"scale":2,"width":10,"x":0,"y":0}"#),
+            ),
+            (
+                json!({"x": 0, "y": 0, "w": 10, "height": 10}),
+                shape(r#"{"height":10,"w":10,"x":0,"y":0}"#),
+            ),
+            (
+                json!({"x": "0", "y": 0, "width": 10, "height": 10}),
+                shape(r#"{"height":10,"width":10,"x":"0","y":0}"#),
+            ),
+            (
+                json!({"x": f64::NAN, "y": 0, "width": 10, "height": 10}),
+                shape(r#"{"height":10,"width":10,"x":null,"y":0}"#),
+            ),
+            (
+                json!({"x": -1, "y": 0, "width": 10, "height": 10}),
+                range(r#"{"height":10,"width":10,"x":-1,"y":0}"#),
+            ),
+            (
+                json!({"x": 0, "y": 0, "width": 0, "height": 10}),
+                range(r#"{"height":10,"width":0,"x":0,"y":0}"#),
+            ),
+            (
+                json!({"x": 0, "y": 0, "width": 10, "height": -5}),
+                range(r#"{"height":-5,"width":10,"x":0,"y":0}"#),
+            ),
+        ] {
+            assert_eq!(
+                invalid_arguments_detail(json!({
+                    "target_id": "bt-fixture",
+                    "tab_id": "tab-fixture",
+                    "session": "browser-run",
+                    "include_screenshot": true,
+                    "screenshot_clip": clip
+                }))
+                .await,
+                expected
             );
         }
     }

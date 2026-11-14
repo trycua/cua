@@ -2450,6 +2450,37 @@
       "description": "Current semantic/content ref whose subtree should be observed.",
       "type": "string"
      },
+     "screenshot_clip": {
+      "additionalProperties": false,
+      "description": "Capture only this region of the viewport, in viewport CSS pixels from its top-left corner (the space of pixel_to_css_scale_x/y and browser_pointer). A region running past the right or bottom edge is cut to the viewport and reported with clip_clamped:true. A region with no visible part refuses. Requires include_screenshot:true.",
+      "properties": {
+       "height": {
+        "description": "Height in CSS px, greater than 0.",
+        "type": "number"
+       },
+       "width": {
+        "description": "Width in CSS px, greater than 0.",
+        "type": "number"
+       },
+       "x": {
+        "description": "Left edge, CSS px from the viewport's left.",
+        "minimum": 0,
+        "type": "number"
+       },
+       "y": {
+        "description": "Top edge, CSS px from the viewport's top.",
+        "minimum": 0,
+        "type": "number"
+       }
+      },
+      "required": [
+       "x",
+       "y",
+       "width",
+       "height"
+      ],
+      "type": "object"
+     },
      "screenshot_format": {
       "description": "Encoding of the requested screenshot: \"png\" (default) or \"jpeg\". Requires include_screenshot:true.",
       "enum": [

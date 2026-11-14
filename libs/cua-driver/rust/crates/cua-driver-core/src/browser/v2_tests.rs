@@ -89,6 +89,8 @@ pub(super) struct FixtureState {
     screenshot_data: String,
     viewport_css_width: f64,
     viewport_css_height: f64,
+    viewport_page_x: f64,
+    viewport_page_y: f64,
     tab_visible: bool,
     select_outcome: Value,
     /// Extra page targets Chromium reports but cannot map to any browser
@@ -161,6 +163,8 @@ impl Default for FixtureState {
             screenshot_data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZJrAAAAAASUVORK5CYII=".into(),
             viewport_css_width: 800.0,
             viewport_css_height: 600.0,
+            viewport_page_x: 0.0,
+            viewport_page_y: 0.0,
             tab_visible: true,
             select_outcome: Value::Null,
             dom_click_changes_readback: true,
@@ -677,8 +681,8 @@ fn fixture_handler(state: SharedState) -> MockHandler {
             )),
             "Page.getLayoutMetrics" => MockReply::ok(json!({
                 "cssVisualViewport": {
-                    "pageX": 0.0,
-                    "pageY": 0.0,
+                    "pageX": st.viewport_page_x,
+                    "pageY": st.viewport_page_y,
                     "clientWidth": st.viewport_css_width,
                     "clientHeight": st.viewport_css_height
                 }
@@ -2577,6 +2581,145 @@ async fn requested_tab_screenshot_refuses_an_unusable_long_edge_cap() {
         );
     }
     assert!(recorded_calls(&f, "Page.captureScreenshot").is_empty());
+}
+
+/// A 200x100 CSS viewport scrolled to (30, 400), captured as a 400x200 PNG.
+async fn scrolled_clip_fixture() -> Fixture {
+    fixture_with(|state| {
+        state.viewport_css_width = 200.0;
+        state.viewport_css_height = 100.0;
+        state.viewport_page_x = 30.0;
+        state.viewport_page_y = 400.0;
+        state.screenshot_data = screenshot_png_base64(80, 40);
+    })
+    .await
+}
+
+#[tokio::test]
+async fn screenshot_clip_offsets_the_capture_by_the_scroll_position() {
+    let f = scrolled_clip_fixture().await;
+    let result = tab_screenshot(
+        &f,
+        json!({"screenshot_clip": {"x": 10, "y": 20, "width": 40, "height": 20}}),
+    )
+    .await;
+    let snapshot = structured(&result);
+    assert_eq!(snapshot["status"], "ok", "{snapshot}");
+    let capture = recorded_calls(&f, "Page.captureScreenshot");
+    assert_eq!(capture.len(), 1, "{capture:?}");
+    assert_eq!(
+        capture[0].1["clip"],
+        json!({"x": 40.0, "y": 420.0, "width": 40.0, "height": 20.0, "scale": 1.0})
+    );
+    assert_eq!(capture[0].1["captureBeyondViewport"], false);
+    let shot = &snapshot["screenshot"];
+    assert_eq!(shot["scope"], "clip");
+    assert_eq!(
+        shot["clip"],
+        json!({"x": 10.0, "y": 20.0, "width": 40.0, "height": 20.0})
+    );
+    assert_eq!(shot["clip_clamped"], false);
+    assert_eq!(shot["coordinate_space"], "viewport_css_px");
+    assert_eq!(shot["viewport_css_width"], 200.0);
+    assert_eq!(shot["viewport_css_height"], 100.0);
+    // The endpoint returned 80x40 device pixels for a 40x20 CSS region.
+    assert_eq!(shot["pixel_to_css_scale_x"], 0.5);
+    assert_eq!(shot["pixel_to_css_scale_y"], 0.5);
+    let state = f.state.lock().unwrap();
+    assert!(state.calls.iter().all(|(_, method, _)| {
+        method != "Target.activateTarget" && method != "Page.bringToFront"
+    }));
+}
+
+#[tokio::test]
+async fn screenshot_clip_cuts_a_region_that_runs_past_the_viewport() {
+    let f = scrolled_clip_fixture().await;
+    let result = tab_screenshot(
+        &f,
+        json!({"screenshot_clip": {"x": 150, "y": 60, "width": 100, "height": 100}}),
+    )
+    .await;
+    let snapshot = structured(&result);
+    assert_eq!(snapshot["status"], "ok", "{snapshot}");
+    let capture = recorded_calls(&f, "Page.captureScreenshot");
+    assert_eq!(
+        capture[0].1["clip"],
+        json!({"x": 180.0, "y": 460.0, "width": 50.0, "height": 40.0, "scale": 1.0})
+    );
+    assert_eq!(
+        snapshot["screenshot"]["clip"],
+        json!({"x": 150.0, "y": 60.0, "width": 50.0, "height": 40.0})
+    );
+    assert_eq!(snapshot["screenshot"]["clip_clamped"], true);
+}
+
+#[tokio::test]
+async fn screenshot_clip_refuses_a_region_with_no_visible_part() {
+    let f = scrolled_clip_fixture().await;
+    for clip in [
+        json!({"x": 200, "y": 0, "width": 10, "height": 10}),
+        json!({"x": 0, "y": 150, "width": 10, "height": 10}),
+        json!({"x": 199.5, "y": 0, "width": 10, "height": 10}),
+        json!({"x": 0, "y": 0, "width": 0.5, "height": 10}),
+    ] {
+        let result = tab_screenshot(&f, json!({"screenshot_clip": clip})).await;
+        assert_eq!(result.is_error, Some(true), "{clip}");
+        assert_eq!(structured(&result)["code"], "invalid_arguments");
+        assert_eq!(
+            structured(&result)["detail"],
+            "screenshot_clip lies outside the 200x100 viewport"
+        );
+    }
+    assert!(recorded_calls(&f, "Page.captureScreenshot").is_empty());
+}
+
+#[tokio::test]
+async fn screenshot_clip_combines_with_jpeg_downscale_and_screenshot_only() {
+    let f = scrolled_clip_fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let button = ref_of(&snap, "main", "main-btn");
+    let result = GetBrowserStateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "include_snapshot": false,
+            "include_screenshot": true,
+            "screenshot_format": "jpeg",
+            "screenshot_quality": 80,
+            "max_image_dimension": 20,
+            "screenshot_clip": {"x": 0, "y": 0, "width": 40, "height": 20}
+        }))
+        .await;
+    let shot = structured(&result);
+    assert_eq!(shot["status"], "ok", "{shot}");
+    assert_eq!(shot["mode"], "screenshot");
+    assert_eq!(first_image(&result).1, "image/jpeg");
+    assert_eq!(shot["screenshot_width"], 20);
+    assert_eq!(shot["screenshot_height"], 10);
+    assert_eq!(shot["screenshot"]["scope"], "clip");
+    assert_eq!(shot["screenshot"]["pixel_to_css_scale_x"], 2.0);
+    assert_eq!(shot["screenshot"]["pixel_to_css_scale_y"], 2.0);
+    f.engine
+        .store
+        .resolve_ref(SESSION, &target, &tab, &button)
+        .expect("ref from the earlier snapshot stays valid");
+}
+
+#[tokio::test]
+async fn viewport_screenshot_reports_no_clip() {
+    let f = scrolled_clip_fixture().await;
+    let result = tab_screenshot(&f, json!({})).await;
+    let shot = &structured(&result)["screenshot"];
+    assert_eq!(shot["scope"], "viewport");
+    assert!(shot.get("clip").is_none(), "{shot}");
+    assert!(shot.get("clip_clamped").is_none(), "{shot}");
+    let capture = recorded_calls(&f, "Page.captureScreenshot");
+    assert_eq!(
+        capture[0].1["clip"],
+        json!({"x": 30.0, "y": 400.0, "width": 200.0, "height": 100.0, "scale": 1.0})
+    );
 }
 
 #[tokio::test]

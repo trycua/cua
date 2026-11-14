@@ -10,6 +10,7 @@
     "browser_click",
     "browser_dialog",
     "browser_download",
+    "browser_motion_policy",
     "browser_navigate",
     "browser_pointer",
     "browser_prepare",

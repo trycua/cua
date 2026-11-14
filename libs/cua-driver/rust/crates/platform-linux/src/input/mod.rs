@@ -54,7 +54,7 @@ use x11rb::protocol::xproto::*;
 use x11rb::rust_connection::RustConnection;
 
 const CLICK_DELAY_MS: u64 = 35;
-const DOUBLE_CLICK_DELAY_MS: u64 = 50;
+pub(crate) const DOUBLE_CLICK_DELAY_MS: u64 = 50;
 const KEY_DELAY_MS: u64 = 10;
 
 /// How `type_text` paces key delivery on X11 (see

@@ -369,6 +369,30 @@ mod tests {
     }
 
     #[test]
+    fn skills_with_a_canonical_source_install_it_byte_for_byte() {
+        let crate_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        for (name, canonical) in [
+            ("cua-driver", "../../../cua-driver/rust/Skills/cua-driver"),
+            ("gui-automation", "../../../../skills/gui-automation"),
+        ] {
+            let canonical = crate_dir.join(canonical);
+            if !canonical.exists() {
+                // Built from the crates.io package, which vendors the skills.
+                continue;
+            }
+            let d = tempfile::tempdir().unwrap();
+            let dest = d.path().join(name);
+            write_to(name, &dest).unwrap();
+            assert_eq!(
+                fsutil::hash_dir(&dest).unwrap(),
+                fsutil::hash_dir(&canonical).unwrap(),
+                "the bundled {name} skill differs from {}",
+                canonical.display()
+            );
+        }
+    }
+
+    #[test]
     fn our_skill_texts_have_no_em_dashes() {
         for name in ["cua-sandboxes", "cua-spaces", "cua-volume"] {
             let d = BUNDLED.get_dir(name).unwrap();

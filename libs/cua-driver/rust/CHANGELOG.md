@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.49.9](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.8...cua-driver-rs-v0.49.9) (2026-11-14)
+
+
+### Bug Fixes
+
+* **cua-driver:** use GNOME Mutter's logical frame for capture and input ([#7687](https://github.com/trycua/cua/issues/7687)) ([ba9f119](https://github.com/trycua/cua/commit/ba9f119846168fb6d8bf69906d165475e26d0a78))
+
 ## [0.49.8](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.7...cua-driver-rs-v0.49.8) (2026-11-14)
 
 

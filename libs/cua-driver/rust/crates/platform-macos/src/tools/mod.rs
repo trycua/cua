@@ -482,28 +482,74 @@ async fn decide_background_window_action(
     action: cua_driver_core::background_input::BackgroundAction,
 ) -> Result<(), cua_driver_core::protocol::ToolResult> {
     use cua_driver_core::background_input::{
-        decide_background_input, BackgroundInputDecision, ExactWindowTarget,
+        BackgroundInputDecision, ElementAncestry, ExactWindowTarget,
     };
     let element_guard =
         element_ptr.map(|ptr| unsafe { crate::ax::snapshot::RetainedElement::retain(ptr) });
-    let facts = match tokio::task::spawn_blocking(move || {
+    let (facts, menu_open) = match tokio::task::spawn_blocking(move || {
         let element_ptr = element_guard.as_ref().map(|guard| guard.as_ptr());
-        crate::ax::exact_target::gather_background_facts(pid, window_id, element_ptr)
+        let facts = crate::ax::exact_target::gather_background_facts(pid, window_id, element_ptr);
+        // An unproven item of a Catalyst-style menu: is a menu of the app
+        // still on screen (so a refusal does not leave it open silently)?
+        let menu_open = facts.element == ElementAncestry::Unproven
+            && element_ptr.is_some_and(|ptr| unsafe {
+                crate::ax::exact_target::in_parentless_menu(
+                    ptr as crate::ax::bindings::AXUIElementRef,
+                )
+            })
+            && crate::windows::menu_window_ids(pid).is_some_and(|ids| !ids.is_empty());
+        (facts, menu_open)
     })
     .await
     {
-        Ok(facts) => facts,
+        Ok(gathered) => gathered,
         Err(error) => {
             return Err(cua_driver_core::protocol::ToolResult::error(format!(
                 "Could not gather exact-target facts for pid {pid} window {window_id}: {error}"
             )));
         }
     };
-    match decide_background_input(ExactWindowTarget { pid, window_id }, &facts, action) {
+    match decide_with_open_menu(
+        ExactWindowTarget { pid, window_id },
+        &facts,
+        action,
+        menu_open,
+    ) {
         BackgroundInputDecision::Execute { .. } => Ok(()),
         BackgroundInputDecision::Refuse(refusal) => {
             Err(background_refusal_result(pid, window_id, &refusal))
         }
+    }
+}
+
+/// [`decide_background_input`], plus a note when `menu_open` (the addressed
+/// item belongs to a menu that names no window, and a menu of the app is on
+/// screen): an `element_outside_target_window` refusal then says the menu is
+/// still open and recommends the foreground route that picks the item.
+/// Admission is unchanged.
+///
+/// [`decide_background_input`]: cua_driver_core::background_input::decide_background_input
+fn decide_with_open_menu(
+    target: cua_driver_core::background_input::ExactWindowTarget,
+    facts: &cua_driver_core::background_input::BackgroundTargetFacts,
+    action: cua_driver_core::background_input::BackgroundAction,
+    menu_open: bool,
+) -> cua_driver_core::background_input::BackgroundInputDecision {
+    use cua_driver_core::background_input::{
+        decide_background_input, refusal_codes, BackgroundInputDecision,
+    };
+    match decide_background_input(target, facts, action) {
+        BackgroundInputDecision::Refuse(mut refusal)
+            if menu_open && refusal.code == refusal_codes::ELEMENT_OUTSIDE_TARGET_WINDOW =>
+        {
+            refusal.reason.push_str(
+                ". It is an item of a menu that names no window, and a menu of this app is \
+                 still on screen; click this item with delivery_mode \"foreground\" to pick it",
+            );
+            refusal.advice = Some("foreground");
+            BackgroundInputDecision::Refuse(refusal)
+        }
+        decision => decision,
     }
 }
 
@@ -1381,6 +1427,88 @@ pub fn register_all(
     // Recording / replay + session-lifecycle tools are platform-independent.
     registry.register_recording_tools();
     registry.register_session_tools();
+}
+
+#[cfg(test)]
+mod open_menu_refusal_tests {
+    use super::{background_refusal_result, decide_with_open_menu};
+    use cua_driver_core::background_input::{
+        decide_background_input, BackgroundAction, BackgroundInputDecision, BackgroundTargetFacts,
+        ElementAncestry, ExactWindowTarget, WindowServerOwnership,
+    };
+
+    const TARGET: ExactWindowTarget = ExactWindowTarget {
+        pid: 42,
+        window_id: 7,
+    };
+    const ACTIONS: [BackgroundAction; 4] = [
+        BackgroundAction::AxSemantic,
+        BackgroundAction::WindowPointer,
+        BackgroundAction::InsertText,
+        BackgroundAction::GenericKey,
+    ];
+
+    fn facts(element: ElementAncestry, screen_locked: bool) -> BackgroundTargetFacts {
+        BackgroundTargetFacts {
+            window_server: WindowServerOwnership::SamePid,
+            ax_window_present: true,
+            target_minimized: Some(false),
+            app_hidden: Some(false),
+            competing_keyboard_destinations: 0,
+            element,
+            screen_locked,
+        }
+    }
+
+    #[test]
+    fn an_open_parentless_menu_recommends_foreground() {
+        let decision = decide_with_open_menu(
+            TARGET,
+            &facts(ElementAncestry::Unproven, false),
+            BackgroundAction::AxSemantic,
+            true,
+        );
+        let BackgroundInputDecision::Refuse(refusal) = decision else {
+            panic!("an unproven element must stay refused, got {decision:?}");
+        };
+        let result = background_refusal_result(42, 7, &refusal);
+        let structured = result.structured_content.expect("structured refusal");
+        assert_eq!(structured["code"], "element_outside_target_window");
+        assert_eq!(structured["effect"], "refused");
+        assert_eq!(structured["escalation"]["recommended"], "foreground");
+        let reason = structured["reason"].as_str().unwrap();
+        assert!(reason.contains("take a fresh get_window_state snapshot"));
+        assert!(reason.contains("a menu of this app is still on screen"));
+        assert!(reason.contains("delivery_mode \"foreground\""));
+    }
+
+    #[test]
+    fn admission_and_other_refusals_are_unchanged() {
+        for element in [
+            ElementAncestry::NotAddressed,
+            ElementAncestry::ProvenDescendant,
+            ElementAncestry::OutsideTargetWindow,
+            ElementAncestry::Unproven,
+        ] {
+            for screen_locked in [false, true] {
+                let facts = facts(element, screen_locked);
+                for action in ACTIONS {
+                    let plain = decide_background_input(TARGET, &facts, action);
+                    let closed = decide_with_open_menu(TARGET, &facts, action, false);
+                    assert_eq!(closed, plain, "{element:?} {action:?}");
+                    let open = decide_with_open_menu(TARGET, &facts, action, true);
+                    assert_eq!(
+                        open.is_execute(),
+                        plain.is_execute(),
+                        "{element:?} {action:?}"
+                    );
+                    if screen_locked {
+                        assert_eq!(open, plain, "screen_locked keeps its refusal");
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

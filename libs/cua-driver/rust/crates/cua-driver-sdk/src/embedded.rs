@@ -1941,8 +1941,12 @@ mod tests {
                     environment: Vec::new(),
                 },
             },
-            child,
-            liveness: None,
+            process: ManagedChild {
+                child,
+                liveness: None,
+                stderr_pump: None,
+                shutdown_timeout: Duration::from_millis(DEFAULT_SHUTDOWN_TIMEOUT_MS),
+            },
             endpoint_identity,
         }));
         stdin

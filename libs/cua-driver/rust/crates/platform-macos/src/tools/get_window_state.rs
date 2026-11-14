@@ -360,7 +360,7 @@ impl Tool for GetWindowStateTool {
         let prefetched_capture = prefetch_capture(should_capture, want_tree, move || {
             crate::capture::screenshot_window_image(window_id)
         });
-        let (tree_result, prepared_snapshot) = if want_tree {
+        let (mut tree_result, prepared_snapshot) = if want_tree {
             let q = query.clone();
             // `timeout_ms` bounds the walk itself: it returns the partial tree
             // when the budget runs out. The outer deadline is only a backstop
@@ -412,6 +412,15 @@ impl Tool for GetWindowStateTool {
         // `window_scope` is None only when no window_id was requested, which
         // this tool never does — so treat that as resolved.
         let scope_matched = window_scope.as_ref().is_none_or(|s| s.is_matched());
+        // A window whose content is missing from the accessibility tree (a
+        // toolkit that draws its own widgets: GTK, many Java and canvas UIs)
+        // gets its on-screen text read from its screenshot and listed as tree
+        // rows; see `cua_driver_core::opaque_text`.
+        let opaque_content = !observation_only
+            && scope_matched
+            && tree_result
+                .as_ref()
+                .is_some_and(|tree| crate::ocr::window_content_is_opaque(pid, window_id, tree));
 
         let removed = (!scope_matched && !observation_only)
             .then(|| self.state.snapshots.remove(pid, u64::from(window_id)))
@@ -525,6 +534,71 @@ impl Tool for GetWindowStateTool {
         } else {
             None
         };
+
+        let ocr_page = if opaque_content {
+            let read = match screenshot.as_ref() {
+                Some((image, _, _, _, _, _, _, _)) => {
+                    let image = image.clone();
+                    Some(tokio::task::spawn_blocking(move || {
+                        crate::ocr::read_page(&image).map(|page| (page, None))
+                    }))
+                }
+                // A tree-only read still needs the text: capture for it alone,
+                // and keep the frame its coordinates are in so pixel actions
+                // taken from them resolve.
+                None if want_tree && screenshot_frame_error.is_none() => {
+                    Some(tokio::task::spawn_blocking(move || {
+                        ocr_only_capture(pid, window_id, max_dim)
+                            .map(|(page, scale)| (page, Some(scale)))
+                    }))
+                }
+                None => None,
+            };
+            match read {
+                Some(task) => match tokio::time::timeout(OCR_WAIT, task).await {
+                    Ok(Ok(Ok((page, scale)))) => {
+                        if scale.is_some() {
+                            screenshot_resize_scale = scale;
+                        }
+                        Some(Ok(page))
+                    }
+                    Ok(Ok(Err(e))) => {
+                        tracing::warn!("text recognition for window {window_id} failed: {e}");
+                        None
+                    }
+                    Ok(Err(e)) => {
+                        tracing::warn!("text recognition for window {window_id} failed: {e}");
+                        None
+                    }
+                    // The recognizer is still loading (first use after boot);
+                    // it keeps running and the next read gets the text.
+                    Err(_) => Some(Err(())),
+                },
+                None => None,
+            }
+        } else {
+            None
+        };
+        let mut ocr_row_count = None;
+        let mut ocr_pending = false;
+        if let Some(tree) = tree_result.as_mut() {
+            use cua_driver_core::opaque_text;
+            match ocr_page {
+                Some(Ok(page)) => {
+                    let mut rows = opaque_text::group_rows(page.fragments);
+                    opaque_text::stamp_ink(&mut rows, &page.luma, page.width, page.height);
+                    let block = opaque_text::render_block(&rows, query.as_deref());
+                    tree.tree_markdown = opaque_text::insert_block(&tree.tree_markdown, &block);
+                    ocr_row_count = Some(rows.len());
+                }
+                Some(Err(())) => {
+                    ocr_pending = true;
+                    tree.tree_markdown =
+                        opaque_text::insert_block(&tree.tree_markdown, opaque_text::PENDING_BLOCK);
+                }
+                None => {}
+            }
+        }
 
         // Capture screenshot dimensions before consuming.
         let screenshot_dims = screenshot.as_ref().map(|(_, _, w, h, _, _, _, _)| (*w, *h));
@@ -719,6 +793,15 @@ impl Tool for GetWindowStateTool {
         }
         if let Some(r) = tree_result.as_ref() {
             r.walk.apply(&mut structured);
+        }
+        if opaque_content {
+            structured["opaque_content"] = serde_json::json!(true);
+            if let Some(rows) = ocr_row_count {
+                structured["ocr_text_rows"] = serde_json::json!(rows);
+            }
+            if ocr_pending {
+                structured["ocr_status"] = serde_json::json!("starting");
+            }
         }
         // Surface 6: an opaque snapshot identifier consumers can log
         // alongside the per-element tokens for debug correlation. Same value
@@ -954,6 +1037,31 @@ impl Tool for GetWindowStateTool {
             action_record: None,
         }
     }
+}
+
+/// How long a read waits for text recognition before returning without it.
+const OCR_WAIT: std::time::Duration = std::time::Duration::from_secs(4);
+
+/// Capture `window_id` for text recognition only (the read returns no image):
+/// its text, in the pixels the image would have been delivered at, and that
+/// image's downscale factor from the native capture.
+fn ocr_only_capture(
+    pid: i32,
+    window_id: u32,
+    max_dim: u32,
+) -> anyhow::Result<(crate::ocr::TextPage, f64)> {
+    let bounds = crate::windows::window_bounds_by_id(window_id)
+        .filter(|b| b.width > 0.0 && b.height > 0.0)
+        .ok_or_else(|| anyhow::anyhow!("window {window_id} has no on-screen bounds"))?;
+    let raw = crate::capture::screenshot_window_image(window_id)?;
+    crate::fast_path_guard::record_read_image(pid, window_id, &raw, &bounds);
+    let (native_width, _) = raw.dimensions()?;
+    let (png, width, _) = raw.encode(
+        max_dim,
+        cua_driver_core::image_utils::ScreenshotEncoding::Png,
+    )?;
+    let page = crate::ocr::read_page(&png)?;
+    Ok((page, f64::from(native_width) / f64::from(width.max(1))))
 }
 
 /// Describe the app's focused UI element as `[N] Role "title"` when it is one

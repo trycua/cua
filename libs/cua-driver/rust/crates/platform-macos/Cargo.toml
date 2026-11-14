@@ -38,6 +38,8 @@ objc2-foundation = { version = "0.2", features = [
     "NSThread", "NSObject", "NSValue",
     "NSAppleEventDescriptor", "NSNotification", "NSOperation",
     "NSURL", "NSDate", "NSError",
+    # Vision text-recognition bounding boxes (ocr.rs).
+    "NSGeometry",
     # Cursor image bytes for system cursor shape classification.
     "NSData",
     "block2", "libc",

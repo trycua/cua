@@ -64,7 +64,8 @@ PostMessage** (UWP Calculator, Win11 Notepad, WinUI3 apps, etc.). cua-driver
 turns the pixel coord into a UIA Invoke at that point and delivers
 through the accessibility channel: no flash, no focus steal. Only
 escalate to `delivery_mode:"foreground"` when you actually see a
-`background_unavailable` structured error. Retry only that action with
+`background_unavailable` structured error. Read fresh state first
+([No blind retry](WORKFLOW.md#no-blind-retry)), then retry only that action with
 `delivery_mode:"foreground"`; cua-driver briefly activates the target, delivers
 the input, and restores the previous foreground.
 

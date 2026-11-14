@@ -72,7 +72,7 @@ Check the installed version and advertised schema before using unfamiliar parame
 ## Rules
 
 1. Select the exact target on each action. A session is lifecycle metadata, not capture scope or permission authority.
-2. Observe before input and verify the outcome at checkpoints, not after every action. `effect:"unverifiable"` and a successful exit are not task success; never replay a partial, canceled, or unknown action blindly.
+2. Observe before input and verify the outcome at checkpoints, not after every action. `effect:"unverifiable"` and a successful exit are not task success; never replay a partial, canceled, or unknown action blindly. Send input again only under [No blind retry](WORKFLOW.md#no-blind-retry).
 3. Use returned tokens, never invented indices. A fresh snapshot replaces prior element handles and lists them in `invalidated_snapshot_ids`; act with `element_token`. Reads are bounded and return one tree form by default; follow up with `since:"latest"` instead of re-reading a large window.
 4. Keep background window actions non-interfering. Foreground delivery and desktop input require authorization for visible control; an unavailable route is not permission to escalate.
 5. Never infer pixels from a missing image, a different window, or an unaccounted-for resized preview. Capture failure and an empty accessibility tree are different failures.
@@ -87,7 +87,8 @@ Check the installed version and advertised schema before using unfamiliar parame
 | Stale token or ambiguous window                           | Refresh `list_windows` / `get_window_state`; choose the intended live target                                                                                        |
 | Large, truncated, or sparse tree; repeated reads          | [Bounded observation and `since` diffs](WORKFLOW.md#observe)                                                                                                        |
 | `surface_identity_unproven` or screenshot permission wait | [Wayland capture recovery](LINUX.md#capture-recovery)                                                                                                               |
-| `background_unavailable`                                  | Not a stop: that input route is closed, the task is not. Read `get_window_state` and act by element (`element_token`, `invoke_menu`); foreground only if authorized |
+| `background_unavailable`                                  | Not a stop: that input route did not complete, the task is not. It can follow input that already landed, so read `get_window_state` first, then act by element (`element_token`, `invoke_menu`), or in the foreground if authorized, under [No blind retry](WORKFLOW.md#no-blind-retry) |
+| `window_scope_unproven` (Linux)                           | The driver could not prove the element belongs to that window, and sent nothing. Read that exact window again; see [GNOME notes](LINUX.md#gnomemutter) |
 | Web page in a browser                                     | Refs from `get_browser_state` with `browser_click` / `browser_type`; pixel clicks only when no ref exists                                                           |
 | LibreOffice, Preview and other macOS editors              | [macOS recipes](MACOS.md#libreoffice-numbers-and-other-editors-in-the-background)                                                                                   |
 | Text did not visibly change                               | Reobserve before retrying; [text and value semantics](WORKFLOW.md#act-once)                                                                                         |

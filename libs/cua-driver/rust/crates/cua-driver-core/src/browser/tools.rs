@@ -2653,7 +2653,13 @@ impl Tool for BrowserTypeTool {
             })),
             Err(e) => BrowserRefusal::new(
                 BrowserRefusalCode::BrowserInputIncomplete,
-                if submit_enter && delivered_chars == requested_chars {
+                if enter_pressed {
+                    // Only the focus-emulation cleanup after the Enter failed.
+                    format!(
+                        "trusted Input typed all {requested_chars} character(s) and pressed \
+                         Enter, but focus emulation could not be turned off: {e}"
+                    )
+                } else if submit_enter && delivered_chars == requested_chars {
                     format!(
                         "trusted Input typed all {requested_chars} character(s) but the \
                          trailing Enter was not delivered: {e}"

@@ -64,6 +64,8 @@ pub(super) struct FixtureState {
     /// The typed element keeps a newline as content (textarea or
     /// contenteditable) instead of being a single-line input.
     multiline_field: bool,
+    /// `Emulation.setFocusEmulationEnabled { enabled: false }` fails.
+    focus_emulation_off_fails: bool,
     /// A synthetic `this.click()` opens a confirm() dialog: the mock emits
     /// `Page.javascriptDialogOpening` and never answers the call.
     click_opens_dialog: bool,
@@ -150,6 +152,7 @@ impl Default for FixtureState {
             fail_key_down_after: None,
             completed_key_pairs: 0,
             multiline_field: false,
+            focus_emulation_off_fails: false,
             click_opens_dialog: false,
             dialog_vanished: false,
             trusted_click_opens_dialog: None,
@@ -821,6 +824,11 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     st.dom_click_generation += 1;
                 }
                 MockReply::ok(json!({}))
+            }
+            "Emulation.setFocusEmulationEnabled"
+                if st.focus_emulation_off_fails && call.params["enabled"] == false =>
+            {
+                MockReply::err(-32000, "fixture focus emulation failure")
             }
             "DOM.focus" | "Emulation.setFocusEmulationEnabled" | "Input.insertText" => {
                 MockReply::ok(json!({}))
@@ -4669,4 +4677,27 @@ async fn a_failed_enter_after_insert_text_is_reported_not_counted() {
     assert_eq!(refusal["detail"]["delivered_chars"], 2);
     assert_eq!(refusal["detail"]["enter_pressed"], false);
     assert_eq!(recorded_calls(&f, "Input.insertText").len(), 1);
+}
+
+#[tokio::test]
+async fn a_failed_cleanup_after_the_enter_does_not_say_the_enter_was_lost() {
+    let f = fixture_with(|state| state.focus_emulation_off_fails = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let input_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let result = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": input_ref,
+            "text": "hi\n", "session": SESSION
+        }))
+        .await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "refused", "{s}");
+    let refusal = &s["refusal"];
+    assert_eq!(refusal["code"], "browser_input_incomplete", "{refusal}");
+    assert_eq!(refusal["detail"]["enter_pressed"], true, "{refusal}");
+    let message = refusal["message"].as_str().unwrap_or_default();
+    assert!(message.contains("pressed Enter"), "{refusal}");
+    assert!(!message.contains("not delivered"), "{refusal}");
 }

@@ -482,7 +482,7 @@ impl Tool for LaunchAppTool {
         let pid = if let Some(aumid) = aumid_for_uwp.clone() {
             let aumid_clone = aumid.clone();
             let args_clone = extra_joined.clone();
-            let activation = tokio::task::spawn_blocking(move || {
+            let activation = crate::dpi::spawn_blocking(move || {
                 crate::launch_uwp::launch_uwp(&aumid_clone, &args_clone)
             })
             .await;
@@ -524,7 +524,7 @@ impl Tool for LaunchAppTool {
             // UI so that case fails fast with an error code; the timeout is the
             // backstop for any *other* blocking broker dialog (SmartScreen, an
             // elevation/consent surface) so a bad target can't hang the daemon.
-            let launch = tokio::task::spawn_blocking(move || -> anyhow::Result<u32> {
+            let launch = crate::dpi::spawn_blocking(move || -> anyhow::Result<u32> {
                 use windows::core::{PCWSTR, PWSTR};
                 use windows::Win32::Foundation::CloseHandle;
                 use windows::Win32::System::Threading::{
@@ -714,7 +714,7 @@ impl Tool for LaunchAppTool {
         if aumid_for_uwp.is_none() && restore_foreground {
             let spawned_pid_for_restore = pid;
             let target_foreground_addr = foreground_before_addr;
-            tokio::spawn(async move {
+            crate::dpi::spawn(async move {
                 restore_foreground_polling_best_effort(
                     target_foreground_addr,
                     spawned_pid_for_restore,
@@ -729,7 +729,7 @@ impl Tool for LaunchAppTool {
         if aumid_for_uwp.is_some() && !urls.is_empty() {
             let urls_clone = urls.clone();
             let n_show_for_urls = n_show;
-            let _ = tokio::task::spawn_blocking(move || {
+            let _ = crate::dpi::spawn_blocking(move || {
                 use windows::core::PCWSTR;
                 use windows::Win32::UI::Shell::{ShellExecuteExW, SHELLEXECUTEINFOW};
                 fn to_wide(s: &str) -> Vec<u16> {
@@ -783,7 +783,7 @@ impl Tool for LaunchAppTool {
         if aumid_for_uwp.is_some() {
             for _ in 0..10 {
                 let host =
-                    tokio::task::spawn_blocking(move || crate::win32::resolve_uwp_host_window(pid))
+                    crate::dpi::spawn_blocking(move || crate::win32::resolve_uwp_host_window(pid))
                         .await
                         .unwrap_or(None);
                 if let Some(w) = host {
@@ -809,7 +809,7 @@ impl Tool for LaunchAppTool {
                 break;
             }
             let wins =
-                tokio::task::spawn_blocking(move || crate::win32::list_windows_win32_first(pid))
+                crate::dpi::spawn_blocking(move || crate::win32::list_windows_win32_first(pid))
                     .await
                     .unwrap_or_default();
             if !wins.is_empty() {
@@ -848,7 +848,7 @@ impl Tool for LaunchAppTool {
             let max_candidate_attempts: usize = if is_slow_launcher { 30 } else { 3 };
 
             let basename_clone = basename_for_match.clone();
-            let candidates_initial = tokio::task::spawn_blocking(move || {
+            let candidates_initial = crate::dpi::spawn_blocking(move || {
                 crate::win32::related_processes(pid, &basename_clone)
             })
             .await
@@ -868,7 +868,7 @@ impl Tool for LaunchAppTool {
                 while let Some(candidate_pid) = candidate_queue.pop() {
                     for _ in 0..max_candidate_attempts {
                         total_attempts += 1;
-                        let wins = tokio::task::spawn_blocking(move || {
+                        let wins = crate::dpi::spawn_blocking(move || {
                             crate::win32::list_windows_win32_first(candidate_pid)
                         })
                         .await
@@ -898,7 +898,7 @@ impl Tool for LaunchAppTool {
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 total_attempts += 3; // count the 500ms wait as 3 attempts
                 let basename_rescan = basename_for_match.clone();
-                let fresh = tokio::task::spawn_blocking(move || {
+                let fresh = crate::dpi::spawn_blocking(move || {
                     crate::win32::related_processes(pid, &basename_rescan)
                 })
                 .await
@@ -954,7 +954,7 @@ impl Tool for LaunchAppTool {
             // poll window.
             let parent_pid = pid;
             let immediate_hwnds_for_poll = immediate_hwnds.clone();
-            let _ = tokio::task::spawn_blocking(move || {
+            let _ = crate::dpi::spawn_blocking(move || {
                 use windows::Win32::Foundation::HWND;
                 use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWMINNOACTIVE};
                 for h in immediate_hwnds {
@@ -1003,7 +1003,7 @@ impl Tool for LaunchAppTool {
                     // Build the family pid set fresh each tick — both
                     // descendant graph and name-relatives can grow as
                     // launcher-stub chains spawn deeper children.
-                    let family_new_pids: Vec<u32> = tokio::task::spawn_blocking(move || {
+                    let family_new_pids: Vec<u32> = crate::dpi::spawn_blocking(move || {
                         let related: std::collections::HashSet<u32> =
                             crate::win32::related_processes(parent_pid, &basename_clone)
                                 .into_iter()
@@ -1021,7 +1021,7 @@ impl Tool for LaunchAppTool {
                     .unwrap_or_default();
                     let mut tick_hits: usize = 0;
                     for cpid in family_new_pids {
-                        let wins = tokio::task::spawn_blocking(move || {
+                        let wins = crate::dpi::spawn_blocking(move || {
                             crate::win32::list_windows(Some(cpid))
                         })
                         .await
@@ -1032,7 +1032,7 @@ impl Tool for LaunchAppTool {
                                 hit_count_total += 1;
                             }
                             let hwnd_iso = w.hwnd as usize;
-                            let restored = tokio::task::spawn_blocking(move || unsafe {
+                            let restored = crate::dpi::spawn_blocking(move || unsafe {
                                 let hwnd = HWND(hwnd_iso as *mut _);
                                 if IsIconic(hwnd).as_bool() {
                                     false

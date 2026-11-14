@@ -101,7 +101,7 @@ impl Tool for RightClickTool {
         let hwnd = match hwnd_opt {
             Some(h) => h,
             None => {
-                let windows = tokio::task::spawn_blocking({
+                let windows = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -181,7 +181,7 @@ impl Tool for RightClickTool {
             if delivery == DeliveryMode::Background
                 && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
-                let inj = tokio::task::spawn_blocking({
+                let inj = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -205,7 +205,7 @@ impl Tool for RightClickTool {
                 let prev_fg_addr = unsafe {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
-                let send_result = tokio::task::spawn_blocking({
+                let send_result = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -220,7 +220,7 @@ impl Tool for RightClickTool {
                     }
                 })
                 .await;
-                tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+                crate::dpi::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
                 return match send_result {
                     Ok(Ok(())) => ToolResult::text(format!(
                         "✅ Sent right-click via SendInput on [{idx}] at screen ({cx},{cy}) (delivery_mode:foreground)."
@@ -235,7 +235,7 @@ impl Tool for RightClickTool {
             {
                 return r;
             }
-            let result = tokio::task::spawn_blocking({
+            let result = crate::dpi::spawn_blocking({
                 let admitted = admitted.clone();
                 move || -> anyhow::Result<String> {
                     let _admission = &admitted;
@@ -299,7 +299,7 @@ impl Tool for RightClickTool {
             if delivery == DeliveryMode::Background
                 && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
-                let inj = tokio::task::spawn_blocking({
+                let inj = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -323,7 +323,7 @@ impl Tool for RightClickTool {
                 let prev_fg_addr = unsafe {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
-                let send_result = tokio::task::spawn_blocking({
+                let send_result = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -338,7 +338,7 @@ impl Tool for RightClickTool {
                     }
                 })
                 .await;
-                tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+                crate::dpi::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
                 return match send_result {
                     Ok(Ok(())) => ToolResult::text(format!(
                         "✅ Sent right-click via SendInput to pid {pid} at screen ({sx_i},{sy_i}) (delivery_mode:foreground)."
@@ -354,7 +354,7 @@ impl Tool for RightClickTool {
             {
                 return r;
             }
-            let result = tokio::task::spawn_blocking({
+            let result = crate::dpi::spawn_blocking({
                 let admitted = admitted.clone();
                 move || {
                     let _admission = &admitted;

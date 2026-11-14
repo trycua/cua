@@ -120,7 +120,7 @@ impl Tool for HotkeyTool {
             };
             position_keyboard_cursor(&self.state, &args, hwnd, None).await;
             let key_display = full_keys.join("+");
-            return match tokio::task::spawn_blocking(move || {
+            return match crate::dpi::spawn_blocking(move || {
                 let modifiers: Vec<&str> = mods.iter().map(String::as_str).collect();
                 crate::input::send_key_synthesized(hwnd, &key, &modifiers)
             })
@@ -190,7 +190,7 @@ impl Tool for HotkeyTool {
             Some(h) => h,
             None => {
                 let pid2 = pid;
-                let windows = tokio::task::spawn_blocking({
+                let windows = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -272,7 +272,7 @@ impl Tool for HotkeyTool {
             // bound the call so a hung provider returns an error instead of
             // blocking the daemon indefinitely. 4 s matches the budget
             // `get_window_state.rs` uses for similar UIA scans (`UIA_SCREENSHOT_TIMEOUT`).
-            let result = tokio::task::spawn_blocking({
+            let result = crate::dpi::spawn_blocking({
                 let admitted = admitted.clone();
                 move || {
                     let _admission = &admitted;
@@ -367,7 +367,7 @@ impl Tool for HotkeyTool {
             let point = admitted.as_ref().map(|element| element.center);
             (idx, point)
         });
-        let result = tokio::task::spawn_blocking({
+        let result = crate::dpi::spawn_blocking({
             let admitted = admitted.clone();
             move || {
                 let _admission = &admitted;

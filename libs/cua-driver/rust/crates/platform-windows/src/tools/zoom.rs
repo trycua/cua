@@ -114,7 +114,7 @@ impl Tool for ZoomTool {
         );
 
         let state = self.state.clone();
-        let result = tokio::task::spawn_blocking(move || {
+        let result = crate::dpi::spawn_blocking(move || {
             let png = crate::capture::screenshot_window_bytes(hwnd)?;
             cursor_overlay::capture_utils::crop_png_to_jpeg(&png, nx1, ny1, nx2, ny2, 500)
         })

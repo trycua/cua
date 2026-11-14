@@ -330,7 +330,7 @@ impl Tool for ClickTool {
             // Click the HWND that owned the pixel before the driver overlay
             // moved there. The active SendInput path performs the foreground
             // swap and UIPI checks needed for Chromium and retained-mode apps.
-            let send_result = tokio::task::spawn_blocking(move || -> anyhow::Result<u64> {
+            let send_result = crate::dpi::spawn_blocking(move || -> anyhow::Result<u64> {
                 let mod_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
                 crate::input::send_click_synthesized_desktop_mods(
                     hwnd_u, sx, sy, count, &button, &mod_refs,
@@ -421,7 +421,7 @@ impl Tool for ClickTool {
         let hwnd = match hwnd_opt {
             Some(h) => h,
             None => {
-                let windows = tokio::task::spawn_blocking({
+                let windows = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -577,7 +577,7 @@ impl Tool for ClickTool {
                 };
                 let mods_owned = modifiers.clone();
                 let activate = delivery == DeliveryMode::Foreground;
-                let send_result = tokio::task::spawn_blocking({
+                let send_result = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -594,7 +594,7 @@ impl Tool for ClickTool {
                     }
                 })
                 .await;
-                tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+                crate::dpi::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
                 let half = if want_expand { "dropdown" } else { "press" };
                 return match send_result {
                     Ok(Ok(())) => ToolResult::text(format!(
@@ -648,7 +648,7 @@ impl Tool for ClickTool {
             // WPF/WinUI menus and tree nodes whose visual click target is
             // transient or scroll-adjusted.
             if action_req.as_deref() == Some("expand") {
-                let expand = tokio::task::spawn_blocking({
+                let expand = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || -> anyhow::Result<()> {
                         let _admission = &admitted;
@@ -746,7 +746,7 @@ impl Tool for ClickTool {
                 let prev_fg_addr = unsafe {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
-                let send_result = tokio::task::spawn_blocking({
+                let send_result = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -757,7 +757,7 @@ impl Tool for ClickTool {
                     }
                 })
                 .await;
-                tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+                crate::dpi::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
                 return match send_result {
                     Ok(Ok(())) => ToolResult::text(format!(
                         "✅ Performed SendInput click on [{idx}] at screen ({cx},{cy}) (delivery_mode:foreground)."
@@ -817,7 +817,7 @@ impl Tool for ClickTool {
                         }
                     }));
                 }
-                let posted = tokio::task::spawn_blocking({
+                let posted = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -849,7 +849,7 @@ impl Tool for ClickTool {
             //   - count > 1 (double-click semantics aren't an Invoke
             //     concept — PostMessage produces the actual WM_LBUTTONDBLCLK)
             let use_uia_invoke = (btn == "left" || btn == "middle") && count == 1;
-            let result = tokio::task::spawn_blocking({ let admitted = admitted.clone(); move || -> anyhow::Result<BackgroundElementClick> {
+            let result = crate::dpi::spawn_blocking({ let admitted = admitted.clone(); move || -> anyhow::Result<BackgroundElementClick> {
                 let _admission = &admitted;
                 let mut failed_calls = Vec::new();
                 // Direct Chromium UIA Invoke can return S_OK without firing a
@@ -1012,7 +1012,7 @@ impl Tool for ClickTool {
             } else {
                 "PostMessage click"
             };
-            let sent = tokio::task::spawn_blocking({
+            let sent = crate::dpi::spawn_blocking({
                 let admitted = admitted.clone();
                 move || {
                     let _admission = &admitted;
@@ -1125,7 +1125,7 @@ impl Tool for ClickTool {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
                 let mods_owned = modifiers.clone();
-                let send_result = tokio::task::spawn_blocking({
+                let send_result = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -1136,7 +1136,7 @@ impl Tool for ClickTool {
                     }
                 })
                 .await;
-                tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+                crate::dpi::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
                 return match send_result {
                     Ok(Ok(())) => {
                         let click_word = match count {
@@ -1175,7 +1175,7 @@ impl Tool for ClickTool {
                 && count == 1
                 && crate::input::is_chromium_target_window(hwnd)
             {
-                let posted = tokio::task::spawn_blocking({
+                let posted = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -1204,7 +1204,7 @@ impl Tool for ClickTool {
             if delivery == DeliveryMode::Background && crate::input::is_chromium_target_window(hwnd)
             {
                 let btn2 = btn.clone();
-                let inj = tokio::task::spawn_blocking({
+                let inj = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -1227,7 +1227,7 @@ impl Tool for ClickTool {
             }
             let use_uia = (btn == "left" || btn == "middle") && count == 1;
             if use_uia {
-                let outcome = tokio::task::spawn_blocking({
+                let outcome = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -1251,7 +1251,7 @@ impl Tool for ClickTool {
                 && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
                 let btn2 = btn.clone();
-                let inj = tokio::task::spawn_blocking({
+                let inj = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -1282,7 +1282,7 @@ impl Tool for ClickTool {
 
             // bitmap pixels -> screen (DWM-frame origin + inset). Use
             // post_click_screen so we don't double-ClientToScreen.
-            let result = tokio::task::spawn_blocking({
+            let result = crate::dpi::spawn_blocking({
                 let admitted = admitted.clone();
                 move || {
                     let _admission = &admitted;

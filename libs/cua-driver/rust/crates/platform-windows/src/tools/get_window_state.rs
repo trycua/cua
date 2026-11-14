@@ -246,7 +246,7 @@ impl Tool for GetWindowStateTool {
         // is consulted only on a miss (#4416).
         use crate::win32::PidWindowLookup;
         let lookup =
-            tokio::task::spawn_blocking(move || crate::win32::lookup_window_for_pid(pid, hwnd))
+            crate::dpi::spawn_blocking(move || crate::win32::lookup_window_for_pid(pid, hwnd))
                 .await
                 .unwrap_or(PidWindowLookup::Missing);
         let window = match lookup {
@@ -275,7 +275,7 @@ impl Tool for GetWindowStateTool {
             window.width,
             window.height,
         ));
-        let app_name = tokio::task::spawn_blocking(move || {
+        let app_name = crate::dpi::spawn_blocking(move || {
             crate::win32::list_processes()
                 .into_iter()
                 .find(|p| p.pid == pid)
@@ -382,7 +382,7 @@ impl Tool for GetWindowStateTool {
         // the response carries an empty tree flagged `truncated` instead of an
         // error, and the screenshot below still comes back.
         let tree_result = if do_tree {
-            let tree_task = tokio::task::spawn_blocking(move || {
+            let tree_task = crate::dpi::spawn_blocking(move || {
                 let mut budget =
                     cua_driver_core::walk_budget::WalkBudget::new(timeout_ms, max_elements);
                 let iconic_before = crate::input::window_is_iconic(hwnd);
@@ -429,7 +429,7 @@ impl Tool for GetWindowStateTool {
         } else {
             None
         };
-        let blocking = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+        let blocking = crate::dpi::spawn_blocking(move || -> anyhow::Result<_> {
             // Capture screenshot AND any error message so the response can
             // surface *why* there's no image (the iconic-window guard from
             // #1973 / PR #1974 is the load-bearing case: minimized windows

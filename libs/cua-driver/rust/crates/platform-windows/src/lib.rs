@@ -27,6 +27,8 @@
 use cua_driver_core::tool::ToolRegistry;
 
 pub mod diagnostics;
+#[cfg(target_os = "windows")]
+pub mod dpi;
 pub mod health_report;
 pub mod overlay;
 pub mod recording_hooks;

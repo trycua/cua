@@ -134,6 +134,8 @@ impl Default for StateCaptureBudget {
 type AxSnapshotFn =
     Arc<dyn Fn(Option<u64>, Option<i64>, StateCaptureBudget) -> Option<Vec<u8>> + Send + Sync>;
 static AX_SNAPSHOT_FN: OnceLock<AxSnapshotFn> = OnceLock::new();
+type AxSnapshotThreadInitFn = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
+static AX_SNAPSHOT_THREAD_INIT: OnceLock<AxSnapshotThreadInitFn> = OnceLock::new();
 
 /// Register an AX/UIA snapshot callback that ignores the per-turn budget.
 /// The recorder's backstop still bounds how long a turn waits for it. Call
@@ -151,6 +153,16 @@ pub fn set_budgeted_ax_snapshot_fn(
     f: impl Fn(Option<u64>, Option<i64>, StateCaptureBudget) -> Option<Vec<u8>> + Send + Sync + 'static,
 ) {
     let _ = AX_SNAPSHOT_FN.set(Arc::new(f));
+}
+
+/// Register an initializer for the recorder-owned application-state worker.
+/// It runs on that worker before the snapshot callback, and an error keeps the
+/// callback out of native code. Platform runtimes use it to set up thread
+/// context without this crate depending on a particular operating system.
+pub fn set_budgeted_ax_snapshot_thread_initializer(
+    f: impl Fn() -> Result<(), String> + Send + Sync + 'static,
+) {
+    let _ = AX_SNAPSHOT_THREAD_INIT.set(Arc::new(f));
 }
 
 /// A state walk in flight for one target pid. At most one exists per pid, so
@@ -246,6 +258,22 @@ fn run_state_hook(
     pid: Option<i64>,
     budget: StateCaptureBudget,
 ) -> StateCapture {
+    run_state_hook_with_initializer(
+        hook,
+        window_id,
+        pid,
+        budget,
+        AX_SNAPSHOT_THREAD_INIT.get().cloned(),
+    )
+}
+
+fn run_state_hook_with_initializer(
+    hook: AxSnapshotFn,
+    window_id: Option<u64>,
+    pid: Option<i64>,
+    budget: StateCaptureBudget,
+    initializer: Option<AxSnapshotThreadInitFn>,
+) -> StateCapture {
     use std::collections::hash_map::Entry;
     let key = pid.unwrap_or(-1);
     let busy = match state_capture_workers().entry(key) {
@@ -271,6 +299,20 @@ fn run_state_hook(
         .name("cua-recording-state".into())
         .spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                if let Some(initialize) = initializer {
+                    if let Err(error) = initialize() {
+                        tracing::error!(
+                            target: "recording",
+                            "application-state worker initialization failed: {error}"
+                        );
+                        return None;
+                    }
+                    // A turn that gave up while this thread initialized no
+                    // longer wants the walk.
+                    if let Some(Worker::Abandoned { .. }) = state_capture_workers().get(&key) {
+                        return None;
+                    }
+                }
                 hook(window_id, pid, budget)
             }))
             .unwrap_or(None);
@@ -1693,6 +1735,53 @@ fn validate_video_metadata(meta: VideoMetadata) -> anyhow::Result<VideoMetadata>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recording_worker_initializes_before_hook_and_fails_closed_on_late_thread_error() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let initialization_count = Arc::new(AtomicUsize::new(0));
+        let initialized_thread = Arc::new(Mutex::new(None));
+        let count = initialization_count.clone();
+        let initialized = initialized_thread.clone();
+        let initializer: AxSnapshotThreadInitFn = Arc::new(move || {
+            if count.fetch_add(1, Ordering::SeqCst) > 0 {
+                return Err("late recorder thread PMv2 rejection".to_owned());
+            }
+            *initialized.lock().unwrap() = Some(std::thread::current().id());
+            Ok(())
+        });
+        let hook_calls = Arc::new(AtomicUsize::new(0));
+        let calls = hook_calls.clone();
+        let hook_initialized_thread = initialized_thread.clone();
+        let hook: AxSnapshotFn = Arc::new(move |_, _, _| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            assert_eq!(
+                *hook_initialized_thread.lock().unwrap(),
+                Some(std::thread::current().id()),
+                "initializer and native callback must run on the same recorder worker"
+            );
+            assert_eq!(std::thread::current().name(), Some("cua-recording-state"));
+            Some(br#"{"element_count":0}"#.to_vec())
+        });
+        let budget = StateCaptureBudget { timeout_ms: 1000 };
+
+        let first = run_state_hook_with_initializer(
+            hook.clone(),
+            None,
+            Some(712_345),
+            budget,
+            Some(initializer.clone()),
+        );
+        assert!(first.bytes.is_some());
+        assert_eq!(hook_calls.load(Ordering::SeqCst), 1);
+
+        let late_failure =
+            run_state_hook_with_initializer(hook, None, Some(712_346), budget, Some(initializer));
+        assert!(late_failure.bytes.is_none());
+        assert_eq!(late_failure.classification, Some("capture_failed"));
+        assert_eq!(hook_calls.load(Ordering::SeqCst), 1);
+    }
 
     fn live_at(dir: &Path) -> Live {
         Live {

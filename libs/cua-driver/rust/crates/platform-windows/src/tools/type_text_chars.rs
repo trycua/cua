@@ -56,7 +56,7 @@ impl Tool for TypeTextCharsTool {
             Some(h) => h,
             None => {
                 let windows =
-                    tokio::task::spawn_blocking(move || crate::win32::list_windows(Some(pid)))
+                    crate::dpi::spawn_blocking(move || crate::win32::list_windows(Some(pid)))
                         .await
                         .unwrap_or_default();
                 match windows.first() {
@@ -70,7 +70,7 @@ impl Tool for TypeTextCharsTool {
             }
         };
         let text_len = text.chars().count();
-        let result = tokio::task::spawn_blocking(move || {
+        let result = crate::dpi::spawn_blocking(move || {
             crate::input::post_type_text_with_delay(hwnd, &text, delay_ms)
         })
         .await;

@@ -1,10 +1,11 @@
-"""Every ignored Cua Driver integration test has a runner or a written reason.
+"""Every ignored Cua Driver test has a runner or a written reason.
 
 `#[ignore]` keeps a desktop-bound test out of plain `cargo test`. It then runs
 only when a canonical runner or workflow selects it, either by name or through
-a whole-binary `--ignored` run. A test that no runner selects silently stops
-running; several regressions did exactly that before this inventory existed.
-Tests that are deliberately manual must say why in the allowlist.
+a whole-binary `--ignored` run. This covers desktop-bound SDK unit tests as well
+as integration binaries. A test that no runner selects silently stops running;
+several regressions did exactly that before this inventory existed. Tests that
+are deliberately manual must say why in the allowlist.
 """
 
 from __future__ import annotations
@@ -20,6 +21,9 @@ CRATES_ROOT = REPO_ROOT / "libs/cua-driver/rust/crates"
 # Desktop E2E suites live in their own crate; hermetic protocol and CLI tests
 # stay with the driver. Both can hold ignored tests.
 TEST_PACKAGES = ("cua-driver", "cua-driver-e2e")
+UNIT_TEST_SOURCES = {
+    "cua-driver-sdk": [CRATES_ROOT / "cua-driver-sdk/src/lib.rs"],
+}
 ALLOWLIST = REPO_ROOT / "libs/cua-driver/tests/manual-e2e-allowlist.txt"
 
 # Canonical runners and the workflows that call them. The Windows Sandbox
@@ -92,8 +96,10 @@ def package_test_binaries() -> dict[str, set[str]]:
 
 
 def _test_binary_sources() -> dict[str, list[Path]]:
-    """Map each integration-test binary to the source files it compiles."""
-    binaries: dict[str, list[Path]] = {}
+    """Map integration binaries and tracked library suites to their sources."""
+    binaries: dict[str, list[Path]] = {
+        binary: list(sources) for binary, sources in UNIT_TEST_SOURCES.items()
+    }
     for package in TEST_PACKAGES:
         for path in sorted((CRATES_ROOT / package / "tests").glob("*.rs")):
             assert path.stem not in binaries, f"test binary {path.stem} exists in two packages"
@@ -248,6 +254,10 @@ def test_inventory_expands_macro_rows_and_support_modules() -> None:
     ignored = ignored_tests()
     assert ("harness_gtk3_test", "harness_gtk3_left_click_ax_background") in ignored
     assert ("standalone_browser_behavior_test", "standalone_browser_roundtrip") in ignored
+    assert (
+        "cua-driver-sdk",
+        "embedded_abi_uses_physical_pixels_from_an_unaware_host_thread",
+    ) in ignored
     assert (
         "harness_appkit_test",
         "harness_appkit_pending_snapshot_cannot_retarget_token",

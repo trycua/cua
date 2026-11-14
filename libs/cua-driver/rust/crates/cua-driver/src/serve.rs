@@ -784,6 +784,26 @@ fn shutdown_response(request: &DaemonRequest) -> (DaemonResponse, bool) {
     )
 }
 
+/// Resolves once the daemon's host is gone: an embedded host closed its
+/// lifetime pipe, or the `--owner-pid` process exited.
+async fn host_gone() {
+    let lifetime_pipe = async {
+        if cua_driver_core::parent_liveness_stdin_enabled() {
+            wait_for_parent_stdin_eof().await;
+        } else {
+            std::future::pending::<()>().await;
+        }
+    };
+    tokio::select! {
+        _ = lifetime_pipe => {
+            eprintln!("Cua Driver embedded host closed its lifetime pipe; shutting down.");
+        }
+        _ = crate::owner::exited() => {
+            eprintln!("Cua Driver owner process exited; shutting down.");
+        }
+    }
+}
+
 async fn wait_for_parent_stdin_eof() {
     use tokio::io::AsyncReadExt as _;
 
@@ -1068,13 +1088,7 @@ pub async fn run_serve(
     let trusted_resume_registry: TrustedResumeRegistry =
         std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new()));
     let mut connection_tasks = tokio::task::JoinSet::new();
-    let parent_liveness = async {
-        if cua_driver_core::parent_liveness_stdin_enabled() {
-            wait_for_parent_stdin_eof().await;
-        } else {
-            std::future::pending::<()>().await;
-        }
-    };
+    let parent_liveness = host_gone();
     tokio::pin!(parent_liveness);
 
     // Idle-session and recording maintenance is owned by the SDK runtime so
@@ -1476,10 +1490,7 @@ pub async fn run_serve(
                 eprintln!("Cua Driver daemon shutting down.");
                 break;
             }
-            _ = &mut parent_liveness => {
-                eprintln!("Cua Driver embedded host closed its lifetime pipe; shutting down.");
-                break;
-            }
+            _ = &mut parent_liveness => break,
         }
     }
 
@@ -1804,13 +1815,7 @@ pub async fn run_serve(
     let shutdown_tx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(shutdown_tx)));
     let trusted_resume_registry: TrustedResumeRegistry =
         std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new()));
-    let parent_liveness = async {
-        if cua_driver_core::parent_liveness_stdin_enabled() {
-            wait_for_parent_stdin_eof().await;
-        } else {
-            std::future::pending::<()>().await;
-        }
-    };
+    let parent_liveness = host_gone();
     tokio::pin!(parent_liveness);
 
     // Idle-session and recording maintenance is owned by the SDK runtime.
@@ -1847,10 +1852,7 @@ pub async fn run_serve(
                     eprintln!("Cua Driver daemon shutting down.");
                     break;
                 }
-                _ = &mut parent_liveness => {
-                    eprintln!("Cua Driver embedded host closed its lifetime pipe; shutting down.");
-                    break;
-                }
+                _ = &mut parent_liveness => break,
             }
         }
 
@@ -2266,10 +2268,7 @@ pub async fn run_serve(
                 eprintln!("Cua Driver daemon shutting down.");
                 break;
             }
-            _ = &mut parent_liveness => {
-                eprintln!("Cua Driver embedded host closed its lifetime pipe; shutting down.");
-                break;
-            }
+            _ = &mut parent_liveness => break,
         }
     }
 
@@ -2363,6 +2362,7 @@ pub fn run_serve_cmd(
     driver: std::sync::Arc<cua_driver_sdk::CuaDriver>,
     socket_path: &str,
     pid_file_path: Option<&str>,
+    owner_pid: Option<u32>,
 ) {
     let socket_path = socket_path.to_owned();
     let pid_file_path = pid_file_path.map(str::to_owned);
@@ -2379,6 +2379,13 @@ pub fn run_serve_cmd(
              Run `cua-driver stop` first."
         );
         std::process::exit(1);
+    }
+
+    if let Some(pid) = owner_pid {
+        if let Err(error) = crate::owner::watch(pid) {
+            eprintln!("cua-driver serve: {error}");
+            std::process::exit(1);
+        }
     }
 
     // Session-0 warning banner (Windows). The daemon runs fine in services

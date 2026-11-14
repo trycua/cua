@@ -63,6 +63,8 @@ pub enum Command {
     Serve {
         socket: Option<String>,
         pid_file: Option<String>,
+        /// Shut down once this process exits (`--owner-pid`).
+        owner_pid: Option<u32>,
         /// Immutable agent-authorization mode selected at trusted daemon
         /// startup. This is distinct from the macOS OS-permissions gate.
         permission_mode: Option<String>,
@@ -258,6 +260,7 @@ const VALUE_FLAGS: &[&str] = &[
     "--session-policy",
     "--capability-manifest",
     "--pid-file",
+    "--owner-pid",
     "--expected-pid",
     "--type",
     "--host-bundle-id",
@@ -814,6 +817,10 @@ pub fn parse_command() -> Command {
     }
 
     let expected_stop_pid = parse_expected_stop_pid(&args, positionals.first().copied());
+    if flag_value(&args, "--owner-pid").is_some() && positionals.first().copied() != Some("serve") {
+        eprintln!("--owner-pid is valid only with `cua-driver serve`");
+        process::exit(64);
+    }
 
     if matches!(positionals.first().copied(), None | Some("mcp")) {
         if let Some(flag) = serve_only_authorization_flag(&args) {
@@ -884,6 +891,7 @@ pub fn parse_command() -> Command {
         Some("serve") => Command::Serve {
             socket,
             pid_file: flag_value(&args, "--pid-file"),
+            owner_pid: parse_owner_pid(&args),
             permission_mode: flag_value(&args, "--permission-mode"),
             dangerously_bypass_approvals: args
                 .iter()
@@ -1288,6 +1296,17 @@ fn parse_expected_stop_pid(args: &[String], command: Option<&str>) -> Option<u32
         Ok(pid) if pid != 0 => Some(pid),
         _ => {
             eprintln!("--expected-pid requires a positive integer PID");
+            process::exit(64);
+        }
+    }
+}
+
+fn parse_owner_pid(args: &[String]) -> Option<u32> {
+    let raw = flag_value(args, "--owner-pid")?;
+    match raw.parse::<u32>() {
+        Ok(pid) if pid != 0 && pid != process::id() => Some(pid),
+        _ => {
+            eprintln!("--owner-pid requires the positive integer PID of another process");
             process::exit(64);
         }
     }
@@ -4613,6 +4632,7 @@ fn cli_docs_literal() -> serde_json::Value {
                 "options": [
                     {"name":"socket","short_name":null,"help":"Override the daemon socket or named-pipe path.","type":"String","default_value":null,"is_optional":true},
                     {"name":"pid-file","short_name":null,"help":"Override the pid-file path.","type":"Path","default_value":null,"is_optional":true},
+                    {"name":"owner-pid","short_name":null,"help":"Shut down, as `stop` does, once the process with this PID exits.","type":"Number","default_value":null,"is_optional":true},
                     {"name":"permission-mode","short_name":null,"help":"Immutable agent authorization mode: standard, bounded, or unrestricted.","type":"String","default_value":"standard","is_optional":true},
                     {"name":"grant","short_name":null,"help":"Pre-authorize a residual standard-mode boundary. Repeatable; supported value: existing-profile.","type":"String","default_value":null,"is_optional":true,"is_repeatable":true},
                     {"name":"capability-manifest","short_name":null,"help":"Optional narrow-only tool/resource ceiling; required in bounded mode.","type":"Path","default_value":null,"is_optional":true},

@@ -569,7 +569,7 @@ Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="browser_motion_policy--mode"></span>`mode` | `"reduce" \| "default"` | required | reduce emulates prefers-reduced-motion: reduce; default clears the emulated media-feature override. |
-| <span id="browser_motion_policy--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session. |
+| <span id="browser_motion_policy--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session. |
 | <span id="browser_motion_policy--tab_id"></span>`tab_id` | `string` | required | Opaque tab id from get_browser_state (session-scoped). |
 | <span id="browser_motion_policy--target_id"></span>`target_id` | `string` | required | Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id). |
 

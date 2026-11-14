@@ -3,7 +3,7 @@ title: Target-addressable KWin input delivery for KDE/Wayland
 authors:
   - netbospl
 created: 2026-09-01
-last_updated: 2026-10-31
+last_updated: 2026-11-14
 status: review
 discussion: https://github.com/trycua/cua/issues/3506
 rfc_pr: https://github.com/trycua/cua/pull/3507
@@ -621,6 +621,15 @@ generation change, ambiguous identity, unsupported input kinds, or any
 focus/user-interaction transition that the target-bound primitive cannot handle
 safely.
 
+This rule also applies across Cua-controlled SDK and agent/tool orchestration:
+an exact-target request must not be silently reconstructed as activation of
+that target followed by desktop-scoped input when target input is unsupported,
+refused, partial, or unknown. Separate calls do not bind delivery to the target.
+Explicit user intent to send desktop-scoped input is distinct from an automatic
+fallback to satisfy a target-scoped request. Preserve activation as a separate
+side effect even if subsequent input is refused, and preserve partial/unknown
+delivery without replay. This does not constrain independent third-party callers.
+
 Representative pre-dispatch refusal categories include `target_input_unavailable`,
 `target_identity_stale`, and an existing/common policy-denial result; final
 names should follow the current typed driver error taxonomy.
@@ -701,6 +710,9 @@ checks cannot undo an event delivered to
 another application. The 2026-09-29 decision separately permits investigating
 a guarded, foreground-only first increment; acceptance requires the requested
 recording, API calls, timing/failure evidence, and a recorded maintainer decision.
+The [independent Plasma 6.6.6 report](3506/plasma-6.6-proof.md#external-corroborating-report-plasma-666)
+illustrates the same hazard across separate orchestration calls, not a safe
+substitute for target-bound delivery.
 
 ### Recheck focus before every libei command or add sleeps
 
@@ -991,6 +1003,16 @@ no replay of the operation or its remaining frames
 ```
 
 A successful driver response alone is not evidence.
+
+Proposed headless orchestration acceptance tests must inspect synthetic tool-call
+traces and results without injecting desktop input. Cover an exact-target
+zero-dispatch refusal with no automatic desktop-scoped retry; successful
+activation followed by target-input refusal, preserving the activation side
+effect; a focus change between activation and a requested input; and
+partial/unknown delivery without a zero-delivery claim or replay. Distinguish
+an explicitly user-requested desktop-scoped operation from a fallback that
+reconstructs a target-scoped request. These are proposed tests, not evidence
+that current SDK or agent orchestration already enforces the rule.
 
 ### At-most-once transport and acknowledgement tests
 

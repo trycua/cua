@@ -85,6 +85,37 @@ compile-only foreground field carried by the sidecar patch; the background
 case changes that field before the same SDK call. There is no separate
 `exact` enum value or additional exact-mode experiment owed here.
 
+## External corroborating report: Plasma 6.6.6
+
+[astrovm's independent report](https://github.com/trycua/cua/pull/3507#issuecomment-6623887198)
+describes a private `kwin_wayland --virtual` session; it was not reproduced by
+this experiment. Each trial began with B active and called `bring_to_front(A)`
+then `type_text(scope="desktop")`, sending 100 keys. The individual window key
+logs were the reported ground truth.
+
+| Reported trials | All to A | All to B | Split | Driver response |
+| --- | --- | --- | --- | --- |
+| 15 without focus change | 15 | 0 | 0 | `unverifiable` |
+| 45 with one forced B activation at a random 0–400 ms offset | 41 | 4 | 0 | `unverifiable` |
+
+The report also says window-scoped `type_text` correctly refused with zero keys
+sent and the Driver did not falsely confirm success. The forced-race frequency
+is not an estimate of normal-use risk; no observed split does not prove splitting
+impossible. The author suggests, without measuring it, that one guarded call
+could narrow but not eliminate the gap.
+
+The report's table calls the forced activation a KWin script, while its final
+paragraph says activation used `org_kde_plasma_window_management`
+(`get_window_by_uuid`, `set_state`), confirmed via `state_changed`, rather than
+scripting. It is unclear whether these describe separate parts of the setup;
+the report does not resolve that distinction. Neither activation nor its
+confirmation establishes delivery-time target binding.
+
+Unlike the separate 6.6.4 operation 11, which leaked a key pair inside a guarded
+Driver operation after confirmation, this report tests two separate calls and
+desktop-scoped typing. Both demonstrate focus-dependent delivery hazards, not a
+supported destination-bound primitive or a production-safety certification.
+
 ## Reproduction and provenance
 
 ### Historical execution (not commands to rerun with the consumed IDs)

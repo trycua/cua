@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.49.10](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.9...cua-driver-rs-v0.49.10) (2026-11-14)
+
+
+### Bug Fixes
+
+* **cua-driver:** report a background web press the page ignored ([#7694](https://github.com/trycua/cua/issues/7694)) ([a486f93](https://github.com/trycua/cua/commit/a486f930ad4597e961828d00cff467b89ba3f711))
+
 ## [0.49.9](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.8...cua-driver-rs-v0.49.9) (2026-11-14)
 
 

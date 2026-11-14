@@ -2320,18 +2320,21 @@ impl Tool for BrowserTypeTool {
         let mut replaced_chars = 0usize;
         let mut enter_pressed = false;
         let (typed, delivered_chars) = if mode == "insert_text" {
-            if replace {
+            // Replacement and the trailing Enter are key-path input, which an
+            // inactive tab drops without focus emulation.
+            let emulate_focus = replace || submit_enter;
+            if emulate_focus {
                 if let Err(detail) =
                     enter_focus_emulation(conn, cdp, entry.backend_node_id, &object_id).await
                 {
                     return BrowserRefusal::new(
                         BrowserRefusalCode::BrowserInputTrustUnavailable,
-                        format!(
-                            "the inactive tab could not prepare trusted replacement input: {detail}"
-                        ),
+                        format!("the inactive tab could not prepare trusted key input: {detail}"),
                     )
                     .to_tool_result();
                 }
+            }
+            if replace {
                 match select_all_in_element(conn, cdp, &object_id).await {
                     Ok(n) => replaced_chars = n,
                     Err(detail) => {
@@ -2399,7 +2402,7 @@ impl Tool for BrowserTypeTool {
                     Err(error) => call = Err(error),
                 }
             }
-            if replace {
+            if emulate_focus {
                 if let Err(error) = conn
                     .call(
                         Some(cdp),

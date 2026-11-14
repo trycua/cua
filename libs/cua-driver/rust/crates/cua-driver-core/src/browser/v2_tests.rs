@@ -4542,6 +4542,31 @@ async fn insert_text_trailing_newline_presses_enter_on_a_single_line_field() {
     assert!(events
         .iter()
         .all(|(sess, _)| sess.as_deref().unwrap().starts_with("tab-sess-")));
+
+    // An inactive tab drops key events without focus emulation, so the Enter
+    // must sit between enabling and disabling it.
+    let calls: Vec<(String, Value)> = f
+        .state
+        .lock()
+        .unwrap()
+        .calls
+        .iter()
+        .map(|(_, method, params)| (method.clone(), params.clone()))
+        .collect();
+    let emulation = |enabled: bool| {
+        calls
+            .iter()
+            .position(|(method, params)| {
+                method == "Emulation.setFocusEmulationEnabled" && params["enabled"] == enabled
+            })
+            .expect("focus emulation toggled")
+    };
+    let key_down = calls
+        .iter()
+        .position(|(method, _)| method == "Input.dispatchKeyEvent")
+        .unwrap();
+    assert!(emulation(true) < key_down, "{calls:?}");
+    assert!(key_down < emulation(false), "{calls:?}");
 }
 
 #[tokio::test]

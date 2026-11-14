@@ -622,6 +622,25 @@ unsafe fn require_live_menu_window(
     require_menu_window(requested, read("AXFocusedWindow"), read("AXMainWindow"))
 }
 
+/// Why a menu command was refused for `requested`, and the one call that
+/// fixes it when another window of the app holds focus (a dialog or a second
+/// document window): menus act on the focused window.
+fn unbound_menu_reason(requested: u32, focused: Option<u32>, main: Option<u32>) -> String {
+    let mut reason = format!(
+        "invoke_menu: requested window {requested} is not the confirmed document menu context \
+         (focused={focused:?}, main={main:?}); no menu action was dispatched"
+    );
+    if let Some(other) = focused.filter(|&f| f != requested) {
+        reason.push_str(&format!(
+            ". Window {other} of this app has focus (a dialog or another document window) and \
+             the app's menus act on it: if the command is for that window, retry with \
+             window_id {other}; otherwise finish or close window {other} first (its buttons, or \
+             press_key escape with window_id {other}), then retry with window_id {requested}"
+        ));
+    }
+    reason
+}
+
 fn unbound_menu_window(
     pid: i32,
     requested: u32,
@@ -633,10 +652,7 @@ fn unbound_menu_window(
         requested,
         &cua_driver_core::background_input::BackgroundRefusal {
             code: super::WINDOW_NOT_KEY,
-            reason: format!(
-                "invoke_menu: requested window {requested} is not the confirmed document menu context \
-                 (focused={focused:?}, main={main:?}); no menu action was dispatched"
-            ),
+            reason: unbound_menu_reason(requested, focused, main),
             advice: Some("foreground"),
         },
     )
@@ -1267,5 +1283,17 @@ mod tests {
         );
         assert_eq!(select_frontmost_pid(None, || Some(8), 7), Some(8));
         assert_eq!(select_frontmost_pid(None, || None, 7), None);
+    }
+    #[test]
+    fn unbound_menu_reason_names_the_focused_window_fix() {
+        let reason = unbound_menu_reason(76, Some(52), Some(76));
+        assert!(
+            reason.contains("Window 52 of this app has focus"),
+            "{reason}"
+        );
+        assert!(reason.contains("retry with window_id 52"), "{reason}");
+        assert!(reason.contains("then retry with window_id 76"), "{reason}");
+        let plain = unbound_menu_reason(76, None, None);
+        assert!(!plain.contains("has focus"), "{plain}");
     }
 }

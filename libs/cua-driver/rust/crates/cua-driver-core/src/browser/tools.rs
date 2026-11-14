@@ -1855,6 +1855,13 @@ const EDITABLE_AND_FOCUSED_CHECK: &str = "function() { \
         .includes((this.type || 'text').toLowerCase()); \
 }";
 
+/// Whether the element is a single-line field, where a newline cannot be
+/// content and conventionally means "submit". A textarea or contenteditable
+/// keeps a newline as text, so this is false for them.
+const SINGLE_LINE_FIELD_CHECK: &str = "function() { \
+    return !this.isContentEditable && this.tagName === 'INPUT'; \
+}";
+
 const FOCUS_EMULATION_READY_CHECK: &str = "function() { \
     const root = this.getRootNode(); \
     const active = ('activeElement' in root) ? root.activeElement : null; \
@@ -1888,6 +1895,51 @@ const SELECT_ALL_IN_ELEMENT: &str = "function() { \
     } \
     return -1; \
 }";
+
+/// One phase of an Enter key press carrying the full key identity.
+///
+/// A `keyDown` with only `key: "Enter"` reaches `event.key` handlers but
+/// arrives with `code: ""` and `keyCode: 0`, so pages that check
+/// `event.keyCode === 13` (still common in chat and search boxes) ignore it.
+fn enter_key_event(phase: &str) -> Value {
+    let mut event = json!({
+        "type": phase,
+        "key": "Enter",
+        "code": "Enter",
+        "windowsVirtualKeyCode": 13,
+        "nativeVirtualKeyCode": 13,
+    });
+    if phase == "char" {
+        event["text"] = json!("\r");
+        event["unmodifiedText"] = json!("\r");
+    }
+    event
+}
+
+/// How far a trailing Enter got. A failed key event may still have reached
+/// the page (a reply timeout or a dropped socket looks the same as a refusal),
+/// so once one is sent a failure is uncertain, never "not delivered".
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EnterDelivery {
+    NotSent,
+    Uncertain,
+    Pressed,
+}
+
+/// Press Enter as a complete keyDown/char/keyUp sequence.
+async fn press_enter(
+    conn: &CdpConnection,
+    cdp: &str,
+    delivery: &mut EnterDelivery,
+) -> anyhow::Result<()> {
+    *delivery = EnterDelivery::Uncertain;
+    for phase in ["keyDown", "char", "keyUp"] {
+        conn.call(Some(cdp), "Input.dispatchKeyEvent", enter_key_event(phase))
+            .await?;
+    }
+    *delivery = EnterDelivery::Pressed;
+    Ok(())
+}
 
 /// Put the element's entire content into the selection.
 ///
@@ -2014,7 +2066,10 @@ impl BrowserTypeTool {
                 mode=\"keystrokes\" dispatches per-character key events. Both insert \
                 at the caret, so typing into a field that already holds text appends \
                 to it; pass replace=true to set the field instead, or to clear it by \
-                typing an empty string. Pass a ref to an editable element from the \
+                typing an empty string. On a single-line input, a trailing newline \
+                is pressed as a real Enter (key, code, keyCode 13) after the text and \
+                the result reports enter_pressed; a textarea or contenteditable keeps \
+                it as content. Pass a ref to an editable element from the \
                 latest snapshot. A ref is required; heuristic bindings are refused."
                 .into(),
             input_schema: json!({
@@ -2023,7 +2078,7 @@ impl BrowserTypeTool {
                     "target_id": schema_target_id(),
                     "tab_id": schema_tab_id(),
                     "session": schema_session(),
-                    "text": { "type": "string", "description": "Text to type." },
+                    "text": { "type": "string", "description": "Text to type. End it with \\n to press Enter after the text on a single-line input." },
                     "ref": schema_ref(),
                     "mode": {
                         "type": "string",
@@ -2217,6 +2272,44 @@ impl Tool for BrowserTypeTool {
             .to_tool_result();
         }
 
+        // A trailing newline on a single-line field is the usual way to type
+        // and submit. `Input.insertText` silently drops it there, and no key
+        // event fires, so split it off and press a real Enter afterwards.
+        // Multiline fields keep the newline as content.
+        let (text, submit_enter) = match text.strip_suffix('\n') {
+            Some(rest) => {
+                let single_line = conn
+                    .call(
+                        Some(cdp),
+                        "Runtime.callFunctionOn",
+                        json!({
+                            "objectId": object_id,
+                            "functionDeclaration": SINGLE_LINE_FIELD_CHECK,
+                            "returnByValue": true,
+                        }),
+                    )
+                    .await;
+                // Guessing "multiline" on a failed probe would send the newline
+                // through insertText, which a single-line input drops silently.
+                match single_line
+                    .ok()
+                    .and_then(|value| value["result"]["value"].as_bool())
+                {
+                    Some(true) => (rest.to_string(), true),
+                    Some(false) => (text, false),
+                    None => {
+                        return BrowserRefusal::new(
+                            BrowserRefusalCode::BrowserInputTrustUnavailable,
+                            "could not tell whether the ref is a single-line field, so the \
+                             trailing newline was not sent; nothing was typed",
+                        )
+                        .to_tool_result()
+                    }
+                }
+            }
+            None => (text, false),
+        };
+
         // Give the recording a visual target before text delivery. Keep this
         // best-effort: editability/input semantics never depend on the overlay.
         let _ = conn
@@ -2250,19 +2343,23 @@ impl Tool for BrowserTypeTool {
 
         let requested_chars = text.chars().count();
         let mut replaced_chars = 0usize;
+        let mut enter = EnterDelivery::NotSent;
         let (typed, delivered_chars) = if mode == "insert_text" {
-            if replace {
+            // Replacement and the trailing Enter are key-path input, which an
+            // inactive tab drops without focus emulation.
+            let emulate_focus = replace || submit_enter;
+            if emulate_focus {
                 if let Err(detail) =
                     enter_focus_emulation(conn, cdp, entry.backend_node_id, &object_id).await
                 {
                     return BrowserRefusal::new(
                         BrowserRefusalCode::BrowserInputTrustUnavailable,
-                        format!(
-                            "the inactive tab could not prepare trusted replacement input: {detail}"
-                        ),
+                        format!("the inactive tab could not prepare trusted key input: {detail}"),
                     )
                     .to_tool_result();
                 }
+            }
+            if replace {
                 match select_all_in_element(conn, cdp, &object_id).await {
                     Ok(n) => replaced_chars = n,
                     Err(detail) => {
@@ -2323,7 +2420,13 @@ impl Tool for BrowserTypeTool {
                 conn.call(Some(cdp), "Input.insertText", json!({ "text": text }))
                     .await
             };
-            if replace {
+            let inserted = call.is_ok();
+            if inserted && submit_enter {
+                if let Err(error) = press_enter(conn, cdp, &mut enter).await {
+                    call = Err(error);
+                }
+            }
+            if emulate_focus {
                 if let Err(error) = conn
                     .call(
                         Some(cdp),
@@ -2337,7 +2440,7 @@ impl Tool for BrowserTypeTool {
             }
             match call {
                 Ok(_) => (Ok(()), requested_chars),
-                Err(error) => (Err(error), 0),
+                Err(error) => (Err(error), if inserted { requested_chars } else { 0 }),
             }
         } else {
             if let Err(error) = conn
@@ -2486,39 +2589,36 @@ impl Tool for BrowserTypeTool {
                 }
             }
             for ch in text.chars() {
-                let (key, key_text) = if ch == '\n' {
-                    ("Enter".to_string(), "\r".to_string())
-                } else {
-                    (ch.to_string(), ch.to_string())
-                };
-                let down = conn
-                    .call(
-                        Some(cdp),
-                        "Input.dispatchKeyEvent",
-                        json!({ "type": "keyDown", "key": key }),
+                let (down_params, char_params, up_params) = if ch == '\n' {
+                    (
+                        enter_key_event("keyDown"),
+                        enter_key_event("char"),
+                        enter_key_event("keyUp"),
                     )
-                    .await;
-                let character = if down.is_ok() {
-                    conn.call(
-                        Some(cdp),
-                        "Input.dispatchKeyEvent",
+                } else {
+                    let key = ch.to_string();
+                    (
+                        json!({ "type": "keyDown", "key": key }),
                         json!({
                             "type": "char",
                             "key": key,
-                            "text": key_text,
-                            "unmodifiedText": key_text,
+                            "text": key,
+                            "unmodifiedText": key,
                         }),
+                        json!({ "type": "keyUp", "key": key }),
                     )
-                    .await
+                };
+                let down = conn
+                    .call(Some(cdp), "Input.dispatchKeyEvent", down_params)
+                    .await;
+                let character = if down.is_ok() {
+                    conn.call(Some(cdp), "Input.dispatchKeyEvent", char_params)
+                        .await
                 } else {
                     Ok(json!({}))
                 };
                 let up = conn
-                    .call(
-                        Some(cdp),
-                        "Input.dispatchKeyEvent",
-                        json!({ "type": "keyUp", "key": key }),
-                    )
+                    .call(Some(cdp), "Input.dispatchKeyEvent", up_params)
                     .await;
                 if let Err(e) = down.and(character).and(up) {
                     result = Err(e);
@@ -2526,6 +2626,11 @@ impl Tool for BrowserTypeTool {
                 }
                 delivered += 1;
                 tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+            }
+            if result.is_ok() && submit_enter {
+                if let Err(error) = press_enter(conn, cdp, &mut enter).await {
+                    result = Err(error);
+                }
             }
             if let Err(error) = conn
                 .call(
@@ -2540,15 +2645,17 @@ impl Tool for BrowserTypeTool {
             (result, delivered)
         };
 
+        let enter_pressed = enter == EnterDelivery::Pressed;
         match typed {
-            Ok(()) => ToolResult::text(if replace {
-                format!(
-                    "typed {requested_chars} char(s) into {tab_id}, replacing \
-                     {replaced_chars} char(s)"
-                )
-            } else {
-                format!("typed {requested_chars} char(s) into {tab_id}")
-            })
+            Ok(()) => ToolResult::text(format!(
+                "typed {requested_chars} char(s) into {tab_id}{}{}",
+                if replace {
+                    format!(", replacing {replaced_chars} char(s)")
+                } else {
+                    String::new()
+                },
+                if enter_pressed { " and pressed Enter" } else { "" }
+            ))
             .with_structured(json!({
                 "status": "ok",
                 "target_id": target_id,
@@ -2564,16 +2671,35 @@ impl Tool for BrowserTypeTool {
                 // field" from "overwrote something" without re-reading the page.
                 "replace": replace,
                 "replaced_chars": replaced_chars,
+                // A trailing newline on a single-line field is pressed as a
+                // real Enter rather than typed; say so instead of counting it.
+                "enter_pressed": enter_pressed,
             })),
             Err(e) => BrowserRefusal::new(
                 BrowserRefusalCode::BrowserInputIncomplete,
-                format!(
-                    "trusted Input typing stopped after {delivered_chars} of {requested_chars} character(s): {e}"
-                ),
+                if enter == EnterDelivery::Uncertain {
+                    format!(
+                        "trusted Input typed all {requested_chars} character(s), but the \
+                         trailing Enter key press failed partway, so the page may or may not \
+                         have acted on it; read the page before retrying: {e}"
+                    )
+                } else if enter_pressed {
+                    // Only the focus-emulation cleanup after the Enter failed.
+                    format!(
+                        "trusted Input typed all {requested_chars} character(s) and pressed \
+                         Enter, but focus emulation could not be turned off: {e}"
+                    )
+                } else {
+                    format!(
+                        "trusted Input typing stopped after {delivered_chars} of {requested_chars} character(s): {e}"
+                    )
+                },
             )
             .with_detail(json!({
                 "requested_chars": requested_chars,
                 "delivered_chars": delivered_chars,
+                "enter_pressed": enter_pressed,
+                "enter_uncertain": enter == EnterDelivery::Uncertain,
                 "retryable": false,
             }))
             .to_tool_result(),

@@ -23,6 +23,7 @@ The lifecycle uses only public cua-sandbox API (``Image``, ``Sandbox.ephemeral``
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from contextlib import asynccontextmanager
@@ -35,6 +36,9 @@ logger = logging.getLogger(__name__)
 
 #: Sandbox boot deadline in seconds (a first start can pull an image).
 TIME_TO_START_S = 900
+#: Sandbox release deadline in seconds: past it the batch proceeds and the
+#: sandbox may leak.
+TIME_TO_RELEASE_S = 300
 
 
 @dataclass
@@ -177,10 +181,35 @@ async def open_sandbox(
         raise CloudEnded()
     image = build_image(spec, image_cls)
     kwargs = ephemeral_kwargs(spec, target)
-    async with sandbox_cls.ephemeral(image, **kwargs) as sb:
+    ephemeral = sandbox_cls.ephemeral(image, **kwargs)
+    sb = await ephemeral.__aenter__()
+    try:
         yield sb
-    if on_progress is not None:
-        on_progress(Progress(stage="release", message="sandbox released"))
+    except BaseException as exc:
+        await _release(ephemeral, type(exc), exc, exc.__traceback__)
+        raise
+    else:
+        released = await _release(ephemeral, None, None, None)
+        if released and on_progress is not None:
+            on_progress(Progress(stage="release", message="sandbox released"))
+
+
+async def _release(ephemeral: Any, *exc_info: Any) -> bool:
+    """Exit ``ephemeral`` under the release bound. A wedged release logs a
+    warning and returns False so the batch proceeds (the sandbox may leak);
+    any other failure propagates."""
+    try:
+        async with asyncio.timeout(TIME_TO_RELEASE_S) as deadline:
+            await ephemeral.__aexit__(*exc_info)
+    except TimeoutError:
+        if not deadline.expired():
+            raise
+        logger.warning(
+            "sandbox release did not finish within %ss; the sandbox may leak",
+            TIME_TO_RELEASE_S,
+        )
+        return False
+    return True
 
 
 # ── Errors worth explaining ────────────────────────────────────────────────

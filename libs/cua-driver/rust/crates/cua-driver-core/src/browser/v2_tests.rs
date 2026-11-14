@@ -4693,6 +4693,8 @@ async fn a_failed_enter_after_insert_text_is_reported_not_counted() {
     assert_eq!(refusal["detail"]["requested_chars"], 2);
     assert_eq!(refusal["detail"]["delivered_chars"], 2);
     assert_eq!(refusal["detail"]["enter_pressed"], false);
+    // The failed keyDown may still have reached the page.
+    assert_eq!(refusal["detail"]["enter_uncertain"], true, "{refusal}");
     assert_eq!(recorded_calls(&f, "Input.insertText").len(), 1);
 }
 
@@ -4720,7 +4722,7 @@ async fn a_failed_cleanup_after_the_enter_does_not_say_the_enter_was_lost() {
 }
 
 #[tokio::test]
-async fn an_enter_that_fails_after_its_keydown_is_reported_as_uncertain() {
+async fn an_enter_that_fails_partway_is_reported_as_uncertain() {
     let f = fixture_with(|state| state.fail_enter_char = true).await;
     let (target, tab) = bind(&f).await;
     let snap = snapshot(&f, &target, &tab).await;
@@ -4737,7 +4739,7 @@ async fn an_enter_that_fails_after_its_keydown_is_reported_as_uncertain() {
     let refusal = &s["refusal"];
     assert_eq!(refusal["code"], "browser_input_incomplete", "{refusal}");
     assert_eq!(refusal["detail"]["enter_pressed"], false, "{refusal}");
-    assert_eq!(refusal["detail"]["enter_partial"], true, "{refusal}");
+    assert_eq!(refusal["detail"]["enter_uncertain"], true, "{refusal}");
     let message = refusal["message"].as_str().unwrap_or_default();
     assert!(!message.contains("not delivered"), "{refusal}");
     assert!(message.contains("may or may not"), "{refusal}");

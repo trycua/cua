@@ -1916,12 +1916,13 @@ fn enter_key_event(phase: &str) -> Value {
     event
 }
 
-/// How far a trailing Enter got. Once keyDown lands the page may already have
-/// submitted, so a later failure must not be reported as "not delivered".
+/// How far a trailing Enter got. A failed key event may still have reached
+/// the page (a reply timeout or a dropped socket looks the same as a refusal),
+/// so once one is sent a failure is uncertain, never "not delivered".
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum EnterDelivery {
     NotSent,
-    Partial,
+    Uncertain,
     Pressed,
 }
 
@@ -1931,10 +1932,10 @@ async fn press_enter(
     cdp: &str,
     delivery: &mut EnterDelivery,
 ) -> anyhow::Result<()> {
+    *delivery = EnterDelivery::Uncertain;
     for phase in ["keyDown", "char", "keyUp"] {
         conn.call(Some(cdp), "Input.dispatchKeyEvent", enter_key_event(phase))
             .await?;
-        *delivery = EnterDelivery::Partial;
     }
     *delivery = EnterDelivery::Pressed;
     Ok(())
@@ -2676,23 +2677,17 @@ impl Tool for BrowserTypeTool {
             })),
             Err(e) => BrowserRefusal::new(
                 BrowserRefusalCode::BrowserInputIncomplete,
-                if enter == EnterDelivery::Partial {
-                    // keyDown reached the page, so it may already have acted.
+                if enter == EnterDelivery::Uncertain {
                     format!(
-                        "trusted Input typed all {requested_chars} character(s) and sent the \
-                         Enter keyDown, but the rest of the key press failed, so the page may \
-                         or may not have acted on it; read the page before retrying: {e}"
+                        "trusted Input typed all {requested_chars} character(s), but the \
+                         trailing Enter key press failed partway, so the page may or may not \
+                         have acted on it; read the page before retrying: {e}"
                     )
                 } else if enter_pressed {
                     // Only the focus-emulation cleanup after the Enter failed.
                     format!(
                         "trusted Input typed all {requested_chars} character(s) and pressed \
                          Enter, but focus emulation could not be turned off: {e}"
-                    )
-                } else if submit_enter && delivered_chars == requested_chars {
-                    format!(
-                        "trusted Input typed all {requested_chars} character(s) but the \
-                         trailing Enter was not delivered: {e}"
                     )
                 } else {
                     format!(
@@ -2704,7 +2699,7 @@ impl Tool for BrowserTypeTool {
                 "requested_chars": requested_chars,
                 "delivered_chars": delivered_chars,
                 "enter_pressed": enter_pressed,
-                "enter_partial": enter == EnterDelivery::Partial,
+                "enter_uncertain": enter == EnterDelivery::Uncertain,
                 "retryable": false,
             }))
             .to_tool_result(),

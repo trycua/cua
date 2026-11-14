@@ -399,7 +399,7 @@ fn restore_front_app_if_browser_front(previous_pid: i64, browser_pid: i64) -> bo
     crate::apps::reactivate_app(previous)
 }
 
-fn is_chromium(name: &str, bundle_id: &str) -> bool {
+pub(crate) fn is_chromium(name: &str, bundle_id: &str) -> bool {
     let value = format!("{name} {bundle_id}").to_ascii_lowercase();
     let products = [
         "chrome", "chromium", "electron", "brave", "edge", "vivaldi", "opera", "arc", "thorium",

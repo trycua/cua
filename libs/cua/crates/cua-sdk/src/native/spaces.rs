@@ -79,6 +79,7 @@ pub const SPACES_TOOL_METHODS: &[(&str, &str)] = &[
     ("notify_user", "Spaces.notify_user"),
     ("notifications_list", "Spaces.notifications"),
     ("notifications_ack", "Spaces.notifications_ack"),
+    ("notifications_delete", "Spaces.notifications_delete"),
     ("computer_access_grant", "Spaces.computer_access_grant"),
     ("computer_access_revoke", "Spaces.computer_access_revoke"),
     ("computer_access_list", "Spaces.computer_access"),

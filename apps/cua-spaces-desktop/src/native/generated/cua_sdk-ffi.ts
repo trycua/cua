@@ -2684,6 +2684,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_fn_method_spaces_notifications_delete": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.Int8],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_fn_method_spaces_notify_user": {
       args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -5334,6 +5339,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_spaces_notifications_delete": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_spaces_notify_user": {
       args: [],
       ret: FfiType.UInt16,
@@ -6676,6 +6686,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_spaces_network_log(uniffiSelf: bigint, space: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_notifications(uniffiSelf: bigint, unreadOnly: number, sinceMs: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_notifications_ack(uniffiSelf: bigint, ids: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_spaces_notifications_delete(uniffiSelf: bigint, ids: Uint8Array, all: number): bigint;
     uniffi_cua_sdk_fn_method_spaces_notify_user(uniffiSelf: bigint, title: Uint8Array, body: Uint8Array, agent: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_orphans(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_spaces_persistent_agent_create(uniffiSelf: bigint, name: Uint8Array, harness: Uint8Array, space: Uint8Array, options: Uint8Array): bigint;
@@ -7206,6 +7217,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_spaces_network_log(): number;
     uniffi_cua_sdk_checksum_method_spaces_notifications(): number;
     uniffi_cua_sdk_checksum_method_spaces_notifications_ack(): number;
+    uniffi_cua_sdk_checksum_method_spaces_notifications_delete(): number;
     uniffi_cua_sdk_checksum_method_spaces_notify_user(): number;
     uniffi_cua_sdk_checksum_method_spaces_orphans(): number;
     uniffi_cua_sdk_checksum_method_spaces_persistent_agent_create(): number;

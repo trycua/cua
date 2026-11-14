@@ -94,6 +94,12 @@ class ToolBackend extends FixtureSpacesBackend {
         this.notifications = this.notifications.map((n) => (ids.length === 0 || ids.includes(n.id) ? { ...n, read: true } : n));
         return {};
       }
+      case "notifications_delete": {
+        // As the daemon's feed: ids, or all; an empty list deletes nothing.
+        const ids = Array.isArray(args.ids) ? (args.ids as string[]) : [];
+        this.notifications = args.all === true ? [] : this.notifications.filter((n) => !ids.includes(n.id));
+        return { deleted: 0 };
+      }
       case "persistent_agent_list":
         return { agents: this.agents };
       case "volume_approve":
@@ -221,6 +227,8 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
       ["notifications.list", {}],
       ["notifications.markRead", { ids: ["n1"] }],
       ["notifications.markAllRead", {}],
+      ["notifications.delete", { ids: ["n1"] }],
+      ["notifications.deleteAll", {}],
       ["host.setUp", { request: { mode: "direct", direct: "0.0.0.0:3211" } }],
       ["host.action", { action: "provide-spaces" }],
       ["host.limits", { maxSpaces: 2 }],
@@ -258,6 +266,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
       "devices.createPairingCode": { team: null },
       "devices.revokePairingCode": { id: "pc_fixture1" },
       "notifications.markRead": { ids: ["n1"] },
+      "notifications.delete": { ids: ["n1"] },
       "storage.run": { request: { kind: "clear-cache" } } as never,
       "host.setUp": { request: { mode: "direct", direct: "0.0.0.0:3211" } } as never,
       "host.action": { action: "provide-spaces" } as never,
@@ -938,6 +947,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(await code("volume.overview")).toBe("unsupported");
     expect(await code("notifications.list")).toBe("unsupported");
     expect(await code("notifications.markRead", { ids: ["n1"] })).toBe("unsupported");
+    expect(await code("notifications.deleteAll")).toBe("unsupported");
     expect(await code("storage.run", { request: { kind: "mount" } })).toBe("unsupported");
     expect(await call("volume.storage")).toBeNull();
   });
@@ -985,6 +995,27 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect((await list()).get("n2")?.read).toBe(false);
     expect(await code("notifications.markRead", {})).toBe("bad_args");
     expect(await code("notifications.markRead", { ids: [1] })).toBe("bad_args");
+  });
+
+  it("deletes one entry or all of them, for good", async () => {
+    backend.notifications = [
+      { id: "n1", at_ms: 1000, agent: "ada", kind: "answer", title: "Done", body: "One", read: false },
+      { id: "n2", at_ms: 2000, agent: "ada", kind: "message", title: "Ada", body: "Two", read: true },
+      { id: "n3", at_ms: 3000, agent: "ada", kind: "message", title: "Ada", body: "Three", read: false },
+    ];
+    const ids = async () => ((await call("notifications.list")) as { id: string }[]).map((r) => r.id).sort();
+    expect(await call("notifications.delete", { ids: ["n2"] })).toBeNull();
+    expect(backend.tools.filter(([t]) => t === "notifications_delete").at(-1)).toEqual(["notifications_delete", { ids: ["n2"] }]);
+    expect(await ids()).toEqual(["n1", "n3"]);
+    // No ids deletes nothing and never calls the daemon (it never reads [] as "all").
+    const calls = backend.tools.filter(([t]) => t === "notifications_delete").length;
+    await call("notifications.delete", { ids: [] });
+    expect(backend.tools.filter(([t]) => t === "notifications_delete").length).toBe(calls);
+    expect(await code("notifications.delete", {})).toBe("bad_args");
+    expect(await code("notifications.delete", { ids: [1] })).toBe("bad_args");
+    expect(await call("notifications.deleteAll")).toBeNull();
+    expect(backend.tools.filter(([t]) => t === "notifications_delete").at(-1)).toEqual(["notifications_delete", { ids: [], all: true }]);
+    expect(await ids()).toEqual([]);
   });
 
   // MARK: The first run

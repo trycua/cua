@@ -49,7 +49,7 @@ Returned by [`Space.info`](/cua-sdk/reference/spaces/space#space), [`Spaces.add`
 | `expires_at_unix` / `expiresAtUnix` | `i64` |  | When the Space ends (Unix seconds), as set by `Spaces.set_lifetime`; 0 when it has none. |
 | `on_expire` / `onExpire` | `String` |  | What happens then: `delete` or `suspend`; empty without a lifetime. |
 | `created_at_unix` / `createdAtUnix` | `i64` |  | When the Space was created (Unix seconds; the time it was added, for a Space added by address); 0 when unknown. |
-| `egress` | [`EgressPolicy`](/cua-sdk/reference/spaces#egresspolicy-record) |  | The egress policy last set on the Space; empty when it has none. |
+| `egress` | [`EgressPolicy`](/cua-sdk/reference/spaces/lifetime#egresspolicy-record) |  | The egress policy last set on the Space; empty when it has none. |
 | `egress_enforced` / `egressEnforced` | [`Option<EgressEnforcement>`](/cua-sdk/reference/spaces/space#egressenforcement-enum) |  | Where `egress` is enforced; `None` without one. |
 | `network` | [`Option<NetworkSettings>`](/cua-sdk/reference/spaces/network#networksettings-record) |  | Its network settings; `None` for a Space this computer keeps no record of, or one created before they existed (it gets them on its next start). |
 | `network_note` / `networkNote` | `Option<String>` |  | Why its network is not what was asked, in plain words (a runtime that can't protect it yet started it without network); `None` otherwise. |

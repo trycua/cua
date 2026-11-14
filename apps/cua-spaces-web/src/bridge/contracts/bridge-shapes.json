@@ -10176,6 +10176,12 @@
         "applied"
       ]
     },
+    "notifications.delete": {
+      "type": "null"
+    },
+    "notifications.deleteAll": {
+      "type": "null"
+    },
     "notifications.list": {
       "type": "array",
       "items": {
@@ -14631,6 +14637,12 @@
       "required": [
         "applied"
       ]
+    },
+    "notifications.delete": {
+      "type": "null"
+    },
+    "notifications.deleteAll": {
+      "type": "null"
     },
     "notifications.list": {
       "type": "array",

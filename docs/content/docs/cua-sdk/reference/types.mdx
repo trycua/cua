@@ -163,7 +163,7 @@ The 11 items of Processor, memory and disk are listed on [its page](/cua-sdk/ref
 | [`DriveVersion`](/cua-sdk/reference/spaces/volume#driveversion-record) | record | One version in a file's history. |
 | [`DriveView`](/cua-sdk/reference/spaces/volume#driveview-record) | record | Whose view of the drive a call takes: the user (the default, the whole drive) or a persistent agent in a Space. |
 | [`EgressEnforcement`](/cua-sdk/reference/spaces/space#egressenforcement-enum) | enum | Where a Space's egress policy is enforced (`SpaceInfo.egress_enforced`). |
-| [`EgressPolicy`](/cua-sdk/reference/spaces#egresspolicy-record) | record | Which destinations a Space may open connections to. |
+| [`EgressPolicy`](/cua-sdk/reference/spaces/lifetime#egresspolicy-record) | record | Which destinations a Space may open connections to. |
 | [`ElasticAssignment`](/cua-sdk/reference/spaces/elastic#elasticassignment-record) | record | Some Spaces of one group on one machine. |
 | [`ElasticBudget`](/cua-sdk/reference/spaces/elastic#elasticbudget-record) | record | The budget, and what the clouds cost now. |
 | [`ElasticBudgetUpdate`](/cua-sdk/reference/spaces/elastic#elasticbudgetupdate-record) | record | The elastic pool's caps and switches (`cloud_budget`): set those given. |
@@ -178,8 +178,8 @@ The 11 items of Processor, memory and disk are listed on [its page](/cua-sdk/ref
 | [`ExitInfo`](/cua-sdk/reference/spacesd/shell#exitinfo-record) | record | How a process ended. |
 | [`FileEntry`](/cua-sdk/reference/spacesd/files#fileentry-record) | record | A file or directory in the guest. |
 | [`FrameSink`](/cua-sdk/reference/spacesd/computer#framesink) | object | Receives video frames and control events. |
-| [`GpuOption`](/cua-sdk/reference/spaces#gpuoption-record) | record | One GPU option of a runtime (see `Spaces.gpu_support`). |
-| [`GpuSupport`](/cua-sdk/reference/spaces#gpusupport-record) | record | The GPU options of one runtime: empty, with the reason, when it has none. |
+| [`GpuOption`](/cua-sdk/reference/spaces/lifetime#gpuoption-record) | record | One GPU option of a runtime (see `Spaces.gpu_support`). |
+| [`GpuSupport`](/cua-sdk/reference/spaces/lifetime#gpusupport-record) | record | The GPU options of one runtime: empty, with the reason, when it has none. |
 | [`GuestDisplay`](/cua-sdk/reference/spacesd#guestdisplay) | object | The guest display of a sandbox without cua-spacesd (`Sandbox.guest_display`). |
 | [`HomeTransfer`](/cua-sdk/reference/spaces/persistent-agents#hometransfer-record) | record | What moved between the drive and a Space. |
 | [`Host`](/cua-sdk/reference/spaces/host#host) | object | This machine as an unattended-access host. |
@@ -305,11 +305,11 @@ The 11 items of Processor, memory and disk are listed on [its page](/cua-sdk/ref
 | [`SpaceAppIcon`](/cua-sdk/reference/spaces/space#spaceappicon-record) | record | An app icon from `Space.app_icons`: the icon the guest desktop uses, normalized by the SDK's icon cache. |
 | [`SpaceAppIconRequest`](/cua-sdk/reference/spaces/space#spaceappiconrequest-record) | record | One window's app, for `Space.app_icons`. |
 | [`SpaceBashResult`](/cua-sdk/reference/spaces/space#spacebashresult-record) | record | Output of `Space.bash`. |
-| [`SpaceCancelOutcome`](/cua-sdk/reference/spaces#spacecanceloutcome-record) | record | What `Spaces.cancel_create` did. |
-| [`SpaceCreateListener`](/cua-sdk/reference/spaces#spacecreatelistener) | object | Receives `SpaceCreateProgress` while `Spaces.create_with_progress` runs, in order, ending with `ready`. |
-| [`SpaceCreateOptions`](/cua-sdk/reference/spaces#spacecreateoptions-record) | record | Options for `Spaces.create`: the same location / kind / runtime model as sandboxes. |
-| [`SpaceCreateProgress`](/cua-sdk/reference/spaces#spacecreateprogress-record) | record | What a Space create is doing (see `Spaces.create_with_progress`). |
-| [`SpaceCreateResult`](/cua-sdk/reference/spaces#spacecreateresult-record) | record | Result of `Spaces.create`. |
+| [`SpaceCancelOutcome`](/cua-sdk/reference/spaces/lifetime#spacecanceloutcome-record) | record | What `Spaces.cancel_create` did. |
+| [`SpaceCreateListener`](/cua-sdk/reference/spaces/lifetime#spacecreatelistener) | object | Receives `SpaceCreateProgress` while `Spaces.create_with_progress` runs, in order, ending with `ready`. |
+| [`SpaceCreateOptions`](/cua-sdk/reference/spaces/lifetime#spacecreateoptions-record) | record | Options for `Spaces.create`: the same location / kind / runtime model as sandboxes. |
+| [`SpaceCreateProgress`](/cua-sdk/reference/spaces/lifetime#spacecreateprogress-record) | record | What a Space create is doing (see `Spaces.create_with_progress`). |
+| [`SpaceCreateResult`](/cua-sdk/reference/spaces/lifetime#spacecreateresult-record) | record | Result of `Spaces.create`. |
 | [`SpaceCreatingElsewhere`](/cua-sdk/reference/spaces/space#spacecreatingelsewhere-record) | record | A Space another of your computers is creating (`SpaceList.creating`). |
 | [`SpaceDisplay`](/cua-sdk/reference/spaces/space#spacedisplay-record) | record | One of a Space's displays (`Space.displays`). |
 | [`SpaceHotspotStatus`](/cua-sdk/reference/spaces/space#spacehotspotstatus-record) | record | Hotspot state. |

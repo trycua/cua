@@ -319,6 +319,7 @@ struct BridgeContractTests {
             ("devices.revokePairingCode", ["id": "pc_fixture1"]),
             ("storage.get", [:]), ("storage.run", ["request": ["kind": "clear-cache"]]),
             ("notifications.list", [:]), ("notifications.markRead", ["ids": ["n1"]]), ("notifications.markAllRead", [:]),
+            ("notifications.delete", ["ids": ["n1"]]), ("notifications.deleteAll", [:]),
             ("telemetry.track", ["signals": [["type": "step", "step": "app_launched", "ok": true]]]),
             ("telemetry.linkNotice", [:]), ("telemetry.acknowledgeLinkNotice", [:]), ("crashReporting.config", [:]),
             ("spaces.usage", ["spaceId": space]), ("spaces.reach", ["spaceId": space]), ("spaces.windows", ["spaceId": space]),

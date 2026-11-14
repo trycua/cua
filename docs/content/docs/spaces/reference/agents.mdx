@@ -417,6 +417,7 @@ Named agents whose memory outlives their Space: homes in Cua Volume, routines, n
 | [`notify_user`](#notify_user) | Tell the user something in the Cua app. |
 | [`notifications_list`](#notifications_list) | Read the notifications feed. |
 | [`notifications_ack`](#notifications_ack) | Mark notifications read. |
+| [`notifications_delete`](#notifications_delete) | Delete notifications. |
 | [`computer_access_grant`](#computer_access_grant) | Let a persistent agent use one of the user's computers. |
 | [`computer_access_revoke`](#computer_access_revoke) | Take back a persistent agent's access to a computer. |
 | [`computer_access_list`](#computer_access_list) | List per-agent computer access. |
@@ -850,6 +851,36 @@ Mark notifications read.
 #### Result
 
 JSON: `marked` (how many changed).
+
+#### Errors
+
+[`invalid_argument`](/spaces/reference#invalid_argument)
+
+### notifications_delete
+
+Delete notifications.
+
+Removes notifications for good, in every app that reads the feed. Pass `ids`, or `all: true` for the whole feed; an empty `ids` deletes nothing.
+
+| | |
+| --- | --- |
+| Providers | all (cloud, local, direct, relay) |
+| Platforms | all (macos, windows, linux) |
+| Metering | free |
+| Approval | permission `spaces:notifications_delete`; mutating, idempotent |
+| Swift SDK | `spaces.notifications.delete(_:all:)` |
+| Rust | `notify::Feed::delete` |
+
+#### Parameters
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `all` | `boolean` | `false` | Delete every notification. Default false. |
+| `ids` | `string[]` | `[]` | Ids to delete. Unknown ids are ignored; an empty list deletes nothing unless `all` is set. |
+
+#### Result
+
+JSON: `deleted` (how many were removed).
 
 #### Errors
 

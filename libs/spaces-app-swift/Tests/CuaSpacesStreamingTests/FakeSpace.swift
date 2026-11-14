@@ -487,6 +487,8 @@ actor FakeSpacesBackend: SpacesTransport {
                 "title": "ada", "body": "Your research is ready.", "read": false])])])
         case "notifications_ack":
             return .object(["marked": 1])
+        case "notifications_delete":
+            return .object(["deleted": 1])
         case "computer_access_grant":
             return .object(["id": "g-1", "agent": arguments["agent"] ?? "ada",
                             "machine": arguments["machine"] ?? "relay:0123", "created_ms": 1])

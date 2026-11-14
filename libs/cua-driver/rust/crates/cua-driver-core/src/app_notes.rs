@@ -76,7 +76,7 @@ pub static NOTES: &[AppNote] = &[
         display: "GnuCash",
         bundle_ids: &["org.gnucash."],
         names: &["gnucash"],
-        text: "GnuCash exposes a sparse accessibility tree, so work the registers by keyboard and read the result from screenshots. Pass window_id and use press_key / type_text: Tab moves between the fields of a transaction, Enter commits it, and arrow keys move between rows. Run menu commands with invoke_menu({pid, window_id, path}). Re-read with a screenshot after each commit to confirm the row landed. See MACOS.md, \"LibreOffice, Numbers and other editors in the background\".",
+        text: "GnuCash exposes a sparse accessibility tree, so work the registers by keyboard and read the result from screenshots. Pass window_id and use press_key / type_text: Tab moves between the fields of a transaction, Enter commits it, and arrow keys move between rows. Run menu commands with invoke_menu({pid, window_id, path}). Re-read with a screenshot after each commit to confirm the row landed. In a register the R column only toggles n (not cleared) and c (cleared) when clicked or given a key; y (reconciled) is set only through Actions > Reconcile: enter the statement's ending balance, tick each transaction in the Reconcile window, then Finish. See MACOS.md, \"LibreOffice, Numbers and other editors in the background\".",
     },
     AppNote {
         id: "electron",

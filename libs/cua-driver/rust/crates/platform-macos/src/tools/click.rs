@@ -137,6 +137,16 @@ const SELECTION_READBACK_POLL: std::time::Duration = std::time::Duration::from_m
 const SELECTION_READBACK_SETTLE: std::time::Duration = std::time::Duration::from_millis(200);
 const SELECTION_READBACK_STABILITY: std::time::Duration = std::time::Duration::from_millis(250);
 
+/// Whether an AXPress on an element would be a silent no-op that a routed
+/// pixel click should replace. AX returns success for a press the element
+/// never advertised; that press is hollow on a toolkit that drops routed mouse
+/// events (LibreOffice's VCL) and on web content, where Chromium advertises and
+/// performs AXPress only in screen-reader mode, which an embedder such as Dia
+/// never enters. `hollow_surface` is only evaluated for an unadvertised press.
+fn press_is_hollow(advertised: &[String], hollow_surface: impl FnOnce() -> bool) -> bool {
+    !advertised.iter().any(|action| action == "AXPress") && hollow_surface()
+}
+
 /// AXPress on a radio button or checkbox that advertises it: a press whose
 /// effect the control's own AXValue shows.
 fn is_toggle_press(ax_action: &str, role: &str, advertised: &[String]) -> bool {
@@ -883,6 +893,50 @@ impl ClickTool {
                 selection_pixel = None;
             }
 
+            // A hollow web-content press is replaced by a routed pixel click at
+            // the element's center, behind the same WindowPointer gate.
+            let mut web_pixel = None;
+            if effective_action == "press" && modifiers.is_empty() {
+                if let Some(screen_center) = center {
+                    let web_guard = element_guard.clone();
+                    let hollow = tokio::task::spawn_blocking(move || {
+                        let el = web_guard.as_ptr();
+                        press_is_hollow(&unsafe { copy_action_names(el as AXUIElementRef) }, || {
+                            super::type_text::target_in_web_area(pid, Some((el, None)), Some(wid))
+                        })
+                    })
+                    .await
+                    .unwrap_or(false);
+                    if hollow {
+                        web_pixel =
+                            super::px_frame::resolve_or_refuse(wid)
+                                .await
+                                .ok()
+                                .map(|frame| {
+                                    selection_pixel_target(
+                                        screen_center,
+                                        (frame.bounds.x, frame.bounds.y),
+                                    )
+                                });
+                    }
+                }
+            }
+            if web_pixel.is_some()
+                && !delivery_mode.is_foreground()
+                && _mutation_lease
+                    .as_ref()
+                    .expect("background element actions hold the per-pid lease")
+                    .gate_again(
+                        wid,
+                        Some(element_ptr),
+                        cua_driver_core::background_input::BackgroundAction::WindowPointer,
+                    )
+                    .await
+                    .is_err()
+            {
+                web_pixel = None;
+            }
+
             // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
             // Capture prior frontmost, arm the wildcard suppressor in the
             // snapshot, then arm a targeted suppressor across the AX action
@@ -926,6 +980,7 @@ impl ClickTool {
                                     &action_clone,
                                     &ck,
                                     selection_pixel,
+                                    web_pixel,
                                     &selection_modifiers,
                                     AxDelivery {
                                         foreground,
@@ -961,6 +1016,7 @@ impl ClickTool {
                                 &action_clone,
                                 &ck,
                                 selection_pixel,
+                                web_pixel,
                                 &selection_modifiers,
                                 AxDelivery {
                                     foreground: false,
@@ -1309,17 +1365,20 @@ impl ClickTool {
                         CFRelease(element as _);
                         return Ok(None);
                     }
-                    // An element that does not advertise AXPress can still
-                    // accept it as a no-op. On a toolkit that drops routed
-                    // mouse events (LibreOffice's Calc cells) that no-op used
-                    // to come back as a pressed click; fall through so the
-                    // pixel route refuses instead.
+                    // A hollow press used to come back as a pressed click. Fall
+                    // through to the routed pixel path: it refuses on a toolkit
+                    // that drops routed mouse events (LibreOffice's Calc cells)
+                    // and delivers the click to web content.
                     if !focus_only
-                        && !crate::ax::bindings::copy_action_names(element)
-                            .iter()
-                            .any(|action| action == "AXPress")
-                        && crate::input::pointer_toolkit::detect(pid)
-                            == Some(crate::input::pointer_toolkit::PointerReadingToolkit::Vcl)
+                        && press_is_hollow(&crate::ax::bindings::copy_action_names(element), || {
+                            crate::input::pointer_toolkit::detect(pid)
+                                == Some(crate::input::pointer_toolkit::PointerReadingToolkit::Vcl)
+                                || super::type_text::target_in_web_area(
+                                    pid,
+                                    Some((element as usize, None)),
+                                    Some(hit_test_wid),
+                                )
+                        })
                     {
                         CFRelease(element as _);
                         return Ok(None);
@@ -1865,12 +1924,14 @@ unsafe fn ancestor_roles(element: AXUIElementRef) -> Vec<String> {
     roles
 }
 
+#[allow(clippy::too_many_arguments)]
 fn perform_ax_click(
     element: (usize, usize),
     window: (i32, u32),
     action_str: &str,
     cursor_key: &str,
     selection_pixel: Option<SelectionPixelTarget>,
+    web_pixel: Option<SelectionPixelTarget>,
     modifiers: &[String],
     delivery: AxDelivery,
 ) -> anyhow::Result<AxClickOutcome> {
@@ -2015,6 +2076,31 @@ fn perform_ax_click(
                  take a fresh snapshot before retrying"
             );
         }
+
+        if let Some(target) = web_pixel {
+            crate::input::mouse::click_at_xy_with_window_local(
+                pid,
+                target.screen_x,
+                target.screen_y,
+                target.window_x,
+                target.window_y,
+                window_id,
+                1,
+                &[],
+                crate::input::mouse::WindowClickDelivery::from_foreground(foreground),
+            )?;
+            return Ok((
+                format!(
+                    "✅ Posted a click at the center of [{idx}] {role} \"{title}\": this web \
+                     content does not advertise AXPress, so the press would be a no-op \
+                     (not driver-verified)."
+                ),
+                false,
+                false,
+                false,
+                true,
+            ));
+        }
     }
 
     let read_value = || unsafe {
@@ -2154,6 +2240,25 @@ fn perform_ax_click(
         page,
         pressed_at,
     })
+}
+
+#[cfg(test)]
+mod hollow_press_tests {
+    use super::press_is_hollow;
+
+    #[test]
+    fn only_an_unadvertised_press_on_a_hollow_surface_is_replaced() {
+        let unadvertised = vec!["AXShowMenu".to_owned(), "AXScrollToVisible".to_owned()];
+        let advertised = vec!["AXPress".to_owned(), "AXShowMenu".to_owned()];
+        // Web content (or VCL) without AXPress: the press would be a no-op.
+        assert!(press_is_hollow(&unadvertised, || true));
+        // A native element without AXPress keeps the AX press it may still honor.
+        assert!(!press_is_hollow(&unadvertised, || false));
+        // An advertised press is trusted, and the surface is never probed for it.
+        assert!(!press_is_hollow(&advertised, || panic!(
+            "probed an advertised press"
+        )));
+    }
 }
 
 #[cfg(test)]

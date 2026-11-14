@@ -250,7 +250,9 @@ Python uses `snake_case`, TypeScript `camelCase`. Desktop methods mirror the
 [MCP tools](/cua-driver/reference/mcp-tools) (`get_window_state`, `click`,
 `type_text`, …); `list_tools_json()` and `call_tool()` reach the full generic
 tool surface. Results are `ToolResult` (`text`, `images`, `structured_json`,
-`is_error`, `error_code`, `verified`, `degraded`). On macOS, a direct runtime
+`is_error`, `error_code`, `action`, `verification`, `degraded`, `raw_json`);
+for an action tool, `action.effect` says whether the change was confirmed.
+On macOS, a direct runtime
 cannot draw the agent cursor unless the host provides an AppKit main-thread
 adapter; it returns `facility_unavailable`. Use a private worker when you need
 the overlay.

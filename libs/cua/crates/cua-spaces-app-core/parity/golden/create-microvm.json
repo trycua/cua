@@ -48,7 +48,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.9–6.9 GB initially; grows with use"
+          "Disk: 3.1–7.3 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -108,7 +108,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.9–6.9 GB initially; grows with use"
+          "Disk: 3.1–7.3 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -280,7 +280,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.9–6.9 GB initially; grows with use"
+          "Disk: 3.1–7.3 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -340,7 +340,7 @@
         "resourceFacts": [
           "Kind: MicroVM",
           "Architecture: ARM",
-          "Disk: 2.9–6.9 GB initially; grows with use"
+          "Disk: 3.1–7.3 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -399,7 +399,7 @@
         "resourceFacts": [
           "Kind: MicroVM",
           "Architecture: ARM",
-          "Disk: 2.9–6.9 GB initially; grows with use"
+          "Disk: 3.1–7.3 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "containerization",
@@ -454,7 +454,7 @@
         "resourceFacts": [
           "Kind: MicroVM",
           "Architecture: ARM",
-          "Disk: 2.9–6.9 GB initially; grows with use"
+          "Disk: 3.1–7.3 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "containerization",
@@ -509,7 +509,7 @@
         "resourceFacts": [
           "Kind: MicroVM",
           "Architecture: ARM",
-          "Disk: 2.9–6.9 GB initially; grows with use"
+          "Disk: 3.1–7.3 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "containerization",
@@ -561,7 +561,7 @@
         "resourceFacts": [
           "Kind: MicroVM",
           "Architecture: ARM",
-          "Disk: 2.9–6.9 GB initially; grows with use"
+          "Disk: 3.1–7.3 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "containerization",
@@ -596,7 +596,7 @@
           "Architecture: ARM",
           "Runtime: Apple Containerization microVM on this Mac",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: About 3–7 GB ?2.9–6.9 GB initially; grows with use",
+          "Disk: About 4–8 GB ?3.1–7.3 GB initially; grows with use",
           "Name: dapper-mole",
           "When ready: Open the desktop"
         ]

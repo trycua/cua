@@ -350,6 +350,26 @@ get_browser_state
     "screenshot_format":"jpeg","max_image_dimension":1280}'
 ```
 
+To capture one region, such as a dialog or a block of a review page, add
+`screenshot_clip:{"x":…,"y":…,"width":…,"height":…}` in viewport CSS pixels
+from the viewport's top-left corner. Read the numbers off a viewport screenshot
+with the conversion above. The response then reports `screenshot.scope:"clip"`
+and the captured `screenshot.clip`, and image pixels map back to the viewport
+with `css_x = clip.x + img_x * pixel_to_css_scale_x` and
+`css_y = clip.y + img_y * pixel_to_css_scale_y`. A region that runs past the
+right or bottom edge is cut to the viewport (`clip_clamped:true`). A region
+with no visible part refuses with `invalid_arguments`, so scroll it into view
+first. The capture shows the rendered pixels: content behind an overlay keeps
+the overlay's tint.
+
+```text
+get_browser_state
+  '{"target_id":"<target>","tab_id":"<tab>","session":"browser-run-1",
+    "include_snapshot":false,"include_screenshot":true,
+    "screenshot_format":"jpeg","screenshot_clip":
+    {"x":0,"y":0,"width":640,"height":180}}'
+```
+
 From the CLI, add `--screenshot-out-file /absolute/run-dir/page.jpg` to write
 the image to a file instead of printing it as base64.
 

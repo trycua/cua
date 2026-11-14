@@ -465,6 +465,75 @@ pub(crate) struct BrowserTabScreenshot {
     pub viewport_css_height: f64,
     pub pixel_to_css_scale_x: f64,
     pub pixel_to_css_scale_y: f64,
+    /// The captured region when the caller asked for `screenshot_clip`.
+    pub clip: Option<AppliedViewportClip>,
+}
+
+/// A caller-requested region, in viewport CSS pixels from the viewport's
+/// top-left corner. Validated by the tool before it reaches the engine.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct ViewportClip {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+/// The region actually captured: the requested clip intersected with the
+/// live viewport. `clamped` says the right or bottom edge was cut.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct AppliedViewportClip {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    pub clamped: bool,
+}
+
+/// What a tab screenshot should deliver. The default is the full viewport
+/// as a native-resolution PNG.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TabScreenshotRequest {
+    pub max_dim: u32,
+    pub encoding: crate::image_utils::ScreenshotEncoding,
+    pub clip: Option<ViewportClip>,
+}
+
+/// A tab screenshot fails either because the request does not fit the live
+/// page (an argument error the caller can fix) or because the browser route
+/// refused.
+pub(crate) enum CaptureTabScreenshotError {
+    InvalidArguments(String),
+    Refusal(BrowserRefusal),
+}
+
+impl From<BrowserRefusal> for CaptureTabScreenshotError {
+    fn from(refusal: BrowserRefusal) -> Self {
+        Self::Refusal(refusal)
+    }
+}
+
+/// Intersect `clip` with a `width` x `height` viewport. Only the right and
+/// bottom edges can be cut, since the tool refuses negative origins.
+fn apply_viewport_clip(
+    clip: ViewportClip,
+    width: f64,
+    height: f64,
+) -> Result<AppliedViewportClip, String> {
+    let clipped_width = (width - clip.x).min(clip.width);
+    let clipped_height = (height - clip.y).min(clip.height);
+    if clipped_width < 1.0 || clipped_height < 1.0 {
+        return Err(format!(
+            "screenshot_clip lies outside the {width}x{height} viewport"
+        ));
+    }
+    Ok(AppliedViewportClip {
+        x: clip.x,
+        y: clip.y,
+        width: clipped_width,
+        height: clipped_height,
+        clamped: clip.x + clip.width > width || clip.y + clip.height > height,
+    })
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2053,15 +2122,16 @@ impl BrowserEngine {
     /// inactive tab stays inactive.
     ///
     /// The endpoint's PNG is bounded and validated before it is decoded, then
-    /// downscaled to `max_dim` (`0`: native) and encoded as `encoding`.
+    /// downscaled to `request.max_dim` (`0`: native) and encoded as
+    /// `request.encoding`. A `request.clip` narrows the capture to that region
+    /// of the viewport.
     pub(crate) async fn capture_tab_screenshot(
         &self,
         session: &str,
         target_id: &str,
         tab_id: &str,
-        max_dim: u32,
-        encoding: crate::image_utils::ScreenshotEncoding,
-    ) -> Result<BrowserTabScreenshot, BrowserRefusal> {
+        request: TabScreenshotRequest,
+    ) -> Result<BrowserTabScreenshot, CaptureTabScreenshotError> {
         let record = self.store.get_target(session, target_id)?;
         let tab = record.tabs.get(tab_id).cloned().ok_or_else(|| {
             refuse(
@@ -2076,6 +2146,16 @@ impl BrowserEngine {
             .await
             .map_err(|error| route_err("Page.getLayoutMetrics failed", error))?;
         let viewport = browser_screenshot_viewport(&metrics)?;
+        let clip = request
+            .clip
+            .map(|clip| apply_viewport_clip(clip, viewport.width, viewport.height))
+            .transpose()
+            .map_err(CaptureTabScreenshotError::InvalidArguments)?;
+        // CDP takes the clip in document coordinates: offset by the scroll.
+        let (clip_x, clip_y, clip_width, clip_height) = match clip {
+            Some(clip) => (clip.x, clip.y, clip.width, clip.height),
+            None => (0.0, 0.0, viewport.width, viewport.height),
+        };
         let response = conn
             .call(
                 Some(&cdp_session),
@@ -2085,10 +2165,10 @@ impl BrowserEngine {
                     "fromSurface": true,
                     "captureBeyondViewport": false,
                     "clip": {
-                        "x": viewport.page_x,
-                        "y": viewport.page_y,
-                        "width": viewport.width,
-                        "height": viewport.height,
+                        "x": viewport.page_x + clip_x,
+                        "y": viewport.page_y + clip_y,
+                        "width": clip_width,
+                        "height": clip_height,
                         "scale": 1.0,
                     },
                 }),
@@ -2109,7 +2189,8 @@ impl BrowserEngine {
             return Err(route_err(
                 "Page.captureScreenshot returned oversized data",
                 "encoded payload exceeds the browser screenshot limit",
-            ));
+            )
+            .into());
         }
         let png = BASE64.decode(&data_base64).map_err(|error| {
             route_err(
@@ -2124,7 +2205,8 @@ impl BrowserEngine {
                     "decoded PNG is {} bytes; limit is {MAX_BROWSER_SCREENSHOT_BYTES}",
                     png.len()
                 ),
-            ));
+            )
+            .into());
         }
         let (width, height) = crate::image_utils::png_dimensions(&png).map_err(|error| {
             route_err(
@@ -2136,23 +2218,25 @@ impl BrowserEngine {
             return Err(route_err(
                 "Page.captureScreenshot returned malformed data",
                 "PNG dimensions must be non-zero",
-            ));
+            )
+            .into());
         }
         // A PNG that needs no downscale passes through `encode` byte for
         // byte, so callers that pass no screenshot options see no change.
         let (bytes, width, height) = crate::image_utils::CapturedImage::Png(png)
-            .encode(max_dim, encoding)
+            .encode(request.max_dim, request.encoding)
             .map_err(|error| route_err("browser screenshot encoding failed", error))?;
         let data_base64 = BASE64.encode(bytes);
         Ok(BrowserTabScreenshot {
             data_base64,
-            mime_type: encoding.mime_type(),
+            mime_type: request.encoding.mime_type(),
             width,
             height,
             viewport_css_width: viewport.width,
             viewport_css_height: viewport.height,
-            pixel_to_css_scale_x: viewport.width / f64::from(width),
-            pixel_to_css_scale_y: viewport.height / f64::from(height),
+            pixel_to_css_scale_x: clip_width / f64::from(width),
+            pixel_to_css_scale_y: clip_height / f64::from(height),
+            clip,
         })
     }
 

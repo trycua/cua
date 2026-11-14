@@ -110,8 +110,8 @@ where
     let spawn = thread::Builder::new()
         .name(format!("cua-uia-{stage}"))
         .spawn(move || {
-            let _permit = permit;
             let result = f(worker_cancelled);
+            drop(permit);
             let _ = tx.send(result);
         });
 
@@ -172,12 +172,12 @@ where
     F: FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
 {
     static GATE: OnceLock<Arc<SingleFlight>> = OnceLock::new();
-    const FOCUSED_DOCUMENT_PROBE_TIMEOUT: Duration = Duration::from_millis(200);
+    const FOCUSED_DOCUMENT_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
     run_uia_single_flight(
         GATE.get_or_init(|| Arc::new(SingleFlight::new(Duration::ZERO))),
         "focused document typing",
         FOCUSED_DOCUMENT_PROBE_TIMEOUT,
-        "native typing if no write started; otherwise an unknown-effect result without retry",
+        "an error without typing if no write started; otherwise an unknown-effect result without retry",
         f,
     )
 }

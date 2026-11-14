@@ -43,7 +43,8 @@ impl Tool for TypeTextTool {
                 **Routing on Windows.** `element_token` selects a specific UIA element \
                 and writes its ValuePattern value. For no-element foreground typing, a \
                 separate capability-gated path can use the exact focused UIA Document \
-                only when it is writable and empty. \
+                when it is writable, has one selection, and is at most 1M characters; the \
+                text replaces that selection. \
                 Eligibility depends on control capabilities and live focus, not app names. \
                 Chromium/Electron windows keep their existing boundary because a UIA \
                 value echo does not prove that the renderer accepted the text. The \
@@ -711,9 +712,12 @@ fn focused_document_tool_result(
 
     match outcome {
         FocusedDocumentTypeOutcome::NotApplicable => None,
+        FocusedDocumentTypeOutcome::Unanswered => Some(ToolResult::error(
+            "The target did not answer UI Automation in time; nothing was written and no keys were sent. Retry when the app responds.",
+        )),
         FocusedDocumentTypeOutcome::Confirmed => Some(
             ToolResult::text(format!(
-                "Wrote and verified {text_len} character(s) in the focused Document; caret is at the document end."
+                "Wrote and verified {text_len} character(s) in the focused Document; caret is after the typed text."
             ))
             .with_structured(json!({
                 "path": "ax",
@@ -771,6 +775,10 @@ mod focused_document_result_tests {
         let confirmed = normalize(confirmed);
         assert_eq!(confirmed.route, ActionRoute::Accessibility);
         assert_eq!(confirmed.effect, ActionEffect::Confirmed);
+
+        let unanswered = focused_document_tool_result(FocusedDocumentTypeOutcome::Unanswered, 12)
+            .expect("unanswered focused-document output");
+        assert_eq!(unanswered.is_error, Some(true));
 
         let unknown = focused_document_tool_result(
             FocusedDocumentTypeOutcome::Unknown("value read-back failed"),

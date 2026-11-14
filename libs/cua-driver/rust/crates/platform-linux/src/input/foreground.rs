@@ -23,13 +23,15 @@
 
 use crate::interaction::operation_deadline;
 use anyhow::{anyhow, Result};
+use cua_driver_core::post_action_wait::{PostActionWait, LINUX_DEFAULT_REPORT_WINDOW};
+use cua_driver_core::step_pacing::{StepPacing, BATCH_REPORT_WINDOW};
 use cua_driver_core::window_observation::WindowObservationBounds;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use x11rb::connection::Connection as _;
 use x11rb::protocol::xproto::{
-    AtomEnum, ClientMessageEvent, ConnectionExt as _, CreateWindowAux, EventMask, InputFocus,
-    PropMode, Window, WindowClass, CLIENT_MESSAGE_EVENT,
+    AtomEnum, ChangeWindowAttributesAux, ClientMessageEvent, ConnectionExt as _, CreateWindowAux,
+    EventMask, InputFocus, PropMode, Window, WindowClass, CLIENT_MESSAGE_EVENT,
 };
 use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
@@ -268,13 +270,17 @@ fn describe_window_change(before: &[WindowEntry], after: &[WindowEntry]) -> Opti
     })
 }
 
-/// How often the target process's window set is re-read after the body.
+/// Longest gap between two reads of the target process's window set while
+/// the watch waits. Root `MapNotify` / `UnmapNotify` / `DestroyNotify` and
+/// root property changes (`_NET_CLIENT_LIST`) wake it at once; this read
+/// catches a change those events do not carry.
 const WINDOW_CHANGE_POLL: Duration = Duration::from_millis(50);
 
-/// How long a toolkit gets to map a menu / dialog after the body before the
-/// window set is declared unchanged. GTK / VCL menus and dialogs map within
-/// ~100 ms of the click; a Qt file dialog (VLC "Add...", "Convert / Save")
-/// takes 300-600 ms, which a fixed 150 ms settle reported as no change.
+/// How long a `post_action_wait: "report"` result waits for a menu or dialog
+/// to map. GTK / VCL menus and dialogs map within ~100 ms of the click; a Qt
+/// file dialog (VLC "Add...", "Convert / Save") takes 300-600 ms. A default
+/// call waits [`LINUX_DEFAULT_REPORT_WINDOW`] instead and reports
+/// `unverifiable` when nothing opened by then.
 const WINDOW_CHANGE_DEADLINE: Duration = Duration::from_millis(800);
 
 /// After the first change is seen, a beat for the new window's title
@@ -294,9 +300,34 @@ const FOCUS_RETRY: Duration = Duration::from_millis(500);
 /// `WINDOW_CHANGE_POLL` unless the embedding host set
 /// `CUA_DRIVER_WINDOW_CHANGE_TIMEOUT_MS` / `CUA_DRIVER_WINDOW_CHANGE_POLL_MS`
 /// on the daemon environment (shared parsing with macOS in
-/// `cua_driver_core::window_observation`).
+/// `cua_driver_core::window_observation`), then shortened to the caller's
+/// report window ([`report_window`]).
 fn window_change_bounds() -> WindowObservationBounds {
-    WindowObservationBounds::from_env(WINDOW_CHANGE_DEADLINE, WINDOW_CHANGE_POLL)
+    let host = WindowObservationBounds::from_env(WINDOW_CHANGE_DEADLINE, WINDOW_CHANGE_POLL);
+    let (wait, pacing) = crate::input::action::current().map_or_else(
+        || (PostActionWait::default(), StepPacing::default()),
+        |action| (action.post_action_wait(), action.pacing()),
+    );
+    WindowObservationBounds {
+        timeout: report_window(host.timeout, wait, pacing),
+        ..host
+    }
+}
+
+/// How long the result waits for a window change, given the host deadline,
+/// the caller's `post_action_wait` and the step's batch pacing. `"report"`
+/// waits the whole deadline, a default call [`LINUX_DEFAULT_REPORT_WINDOW`],
+/// a batched step at most [`BATCH_REPORT_WINDOW`], and `"none"` not at all.
+fn report_window(host: Duration, wait: PostActionWait, pacing: StepPacing) -> Duration {
+    let window = match wait {
+        PostActionWait::None => Duration::ZERO,
+        PostActionWait::Report => host,
+        PostActionWait::Default => host.min(LINUX_DEFAULT_REPORT_WINDOW),
+    };
+    match pacing {
+        StepPacing::Single => window,
+        StepPacing::Batched => window.min(BATCH_REPORT_WINDOW),
+    }
 }
 
 /// Poll `pid`'s window set until it differs from `before` or the deadline
@@ -315,6 +346,9 @@ fn wait_for_window_change(
     if bounds.skips_observation() {
         return (pid_window_set(pid), None);
     }
+    // Subscribe before the first read, so a window that maps between the two
+    // still wakes the wait.
+    let watch = RootWatch::open();
     loop {
         let after = pid_window_set(pid);
         if let Some(change) = describe_window_change(before, &after) {
@@ -328,7 +362,72 @@ fn wait_for_window_change(
         if Instant::now() >= deadline {
             return (after, None);
         }
-        std::thread::sleep(remaining(deadline).min(bounds.poll));
+        let wait = remaining(deadline).min(bounds.poll);
+        match &watch {
+            Some(watch) => watch.wait(wait),
+            None => std::thread::sleep(wait),
+        }
+    }
+}
+
+/// Wait until `done` holds or `timeout` passes, re-reading it whenever the
+/// root window reports a structure or property change (and at least every
+/// `poll`). Whether it held.
+pub fn wait_for_root_change(
+    timeout: Duration,
+    poll: Duration,
+    mut done: impl FnMut() -> bool,
+) -> bool {
+    let watch = RootWatch::open();
+    let deadline = Instant::now() + timeout;
+    loop {
+        if done() {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        let wait = remaining(deadline).min(poll);
+        match &watch {
+            Some(watch) => watch.wait(wait),
+            None => std::thread::sleep(wait),
+        }
+    }
+}
+
+/// Root-window structure and property events on a connection of its own:
+/// a toplevel or popup mapping, unmapping or being destroyed, and the window
+/// manager's `_NET_CLIENT_LIST` updates.
+struct RootWatch {
+    conn: RustConnection,
+}
+
+impl RootWatch {
+    fn open() -> Option<Self> {
+        let (conn, screen) = RustConnection::connect(None).ok()?;
+        let root = conn.setup().roots.get(screen)?.root;
+        let mask = EventMask::SUBSTRUCTURE_NOTIFY | EventMask::PROPERTY_CHANGE;
+        conn.change_window_attributes(root, &ChangeWindowAttributesAux::new().event_mask(mask))
+            .ok()?
+            .check()
+            .ok()?;
+        Some(Self { conn })
+    }
+
+    /// Return once an event arrives or `timeout` passes, draining what came.
+    fn wait(&self, timeout: Duration) {
+        use std::os::fd::AsRawFd as _;
+        let mut fd = libc::pollfd {
+            fd: self.conn.stream().as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let millis = timeout.as_millis().clamp(1, i32::MAX as u128) as i32;
+        // x11rb may already hold read events in its buffer, so check it first.
+        if !matches!(self.conn.poll_for_event(), Ok(Some(_))) {
+            unsafe { libc::poll(&mut fd, 1, millis) };
+        }
+        while let Ok(Some(_)) = self.conn.poll_for_event() {}
     }
 }
 
@@ -933,6 +1032,28 @@ mod tests {
         });
         assert!(result.is_none());
         assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn the_report_window_follows_post_action_wait_and_pacing() {
+        let host = WINDOW_CHANGE_DEADLINE;
+        let single = StepPacing::Single;
+        assert_eq!(
+            report_window(host, PostActionWait::Default, single),
+            LINUX_DEFAULT_REPORT_WINDOW
+        );
+        assert_eq!(report_window(host, PostActionWait::Report, single), host);
+        assert_eq!(
+            report_window(host, PostActionWait::None, single),
+            Duration::ZERO
+        );
+        assert_eq!(
+            report_window(host, PostActionWait::Report, StepPacing::Batched),
+            BATCH_REPORT_WINDOW
+        );
+        // A shorter host bound is never lengthened.
+        let short = Duration::from_millis(40);
+        assert_eq!(report_window(short, PostActionWait::Default, single), short);
     }
 
     #[test]

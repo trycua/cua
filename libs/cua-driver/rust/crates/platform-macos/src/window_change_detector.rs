@@ -253,12 +253,13 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_millis(1000);
 /// Default inter-poll interval.
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
-/// How long the action result itself waits for a window change. Menus,
-/// popovers and sheets map well inside this. When nothing has changed by
-/// then the result returns, and the rest of the observation deadline runs
-/// detached (see [`Snapshot::continue_detached`]): the focus-steal lease
-/// stays armed and a late window is reported on the next action's result. Before this, every
-/// action that opened nothing paid the whole deadline.
+/// How long a result waits for a window change when the caller passed
+/// `post_action_wait: "report"`, or when the action needs the change as
+/// evidence (see [`Snapshot::detect_async_for_evidence`]). Menus, popovers and
+/// sheets map well inside this. A default call does not wait at all: it
+/// returns at delivery and the whole deadline runs detached (see
+/// [`Snapshot::continue_detached`]), with the focus-steal lease armed, so a
+/// window that opens is reported on the next action's result.
 const REPORT_WINDOW: Duration = Duration::from_millis(300);
 
 /// A late change older than this is not reported on a later result.
@@ -273,6 +274,38 @@ struct Late {
 }
 
 static LATE: Mutex<Option<Late>> = Mutex::new(None);
+
+/// What the running detached watch compares against, so the next action's
+/// snapshot can report a change the watch had not read yet when it ended.
+struct Watched {
+    /// The detached lease id of the watch; only that watch may publish or
+    /// clear this entry.
+    id: u64,
+    window_ids: HashSet<u32>,
+    front_pid: Option<i32>,
+    deadline: Instant,
+}
+
+static WATCHED: Mutex<Option<Watched>> = Mutex::new(None);
+
+impl Watched {
+    /// The change between the watched set and `current`, within the deadline.
+    fn late_change(&self, current: &[WindowInfo], front_pid: Option<i32>) -> Option<Late> {
+        if Instant::now() >= self.deadline {
+            return None;
+        }
+        let (new_windows, _closed) = Snapshot::diff(&self.window_ids, current);
+        let foreground_changed = matches!(
+            (self.front_pid, front_pid),
+            (Some(before), Some(now)) if before != now
+        );
+        (!new_windows.is_empty() || foreground_changed).then(|| Late {
+            at: Instant::now(),
+            new_windows,
+            foreground_changed,
+        })
+    }
+}
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -361,10 +394,22 @@ impl WindowChangeDetector {
         allowed_pid: Option<i32>,
     ) -> Snapshot {
         // A new action supersedes the previous action's detached observation.
+        // Taking the entry under its lock ends the watch's right to publish;
+        // a watch an intentional activation already ended says nothing.
+        let epoch = focus_arbiter::Epoch::now();
+        let watched = lock(&WATCHED)
+            .take()
+            .filter(|w| focus_arbiter::holds_detached(w.id));
         focus_arbiter::end_detached();
-        let window_ids: HashSet<u32> = host_windows().into_iter().map(|w| w.window_id).collect();
+        let current = host_windows();
+        // A driver activation since the check made what follows its own.
+        let watched = watched.filter(|_| epoch.is_current());
+        let window_ids: HashSet<u32> = current.iter().map(|w| w.window_id).collect();
         let mut snapshot = Self::capture_from(window_ids, prior_front, suppress_focus, allowed_pid);
-        snapshot.earlier = take_late();
+        // A change the ended watch had not read yet is in this snapshot's
+        // before-set, so report it here rather than lose it.
+        snapshot.earlier =
+            take_late().or_else(|| watched.and_then(|w| w.late_change(&current, prior_front)));
         snapshot
     }
 
@@ -473,7 +518,13 @@ impl Snapshot {
         let report = report_window.min(bounds.timeout);
         let mut observe = observe;
         let changes = match self.poll_until(started + report, bounds.poll, &mut observe) {
-            Ok(changes) => changes,
+            Ok((changes, snapshot)) => {
+                // The change may be an activation the lease is still
+                // reverting, and the targeted lease around the action is
+                // gone: keep the wildcard lease to the deadline.
+                snapshot.hold_lease_until(started + bounds.timeout, bounds.poll);
+                changes
+            }
             Err(quiet) => {
                 quiet.continue_detached(started + bounds.timeout, bounds.poll, observe);
                 Changes::no_change()
@@ -486,24 +537,37 @@ impl Snapshot {
     /// loop on a `spawn_blocking` thread so it doesn't stall the
     /// tokio runtime. Most action-tool call sites should prefer this
     /// over the blocking `detect()`.
+    ///
+    /// The caller's `post_action_wait` sets how long the result waits: not
+    /// at all by default or with `"none"` (which also says so in the
+    /// result), the report window with `"report"`.
     pub async fn detect_async(self) -> Changes {
-        // A step of a batch returns after a shorter report window, because
-        // the next step follows at once. The pacing is read here: a blocking
-        // thread does not inherit the task's batch marker.
-        // `post_action_wait: "none"` skips the wait altogether.
-        let report_window = match cua_driver_core::post_action_wait::current() {
-            cua_driver_core::post_action_wait::PostActionWait::None => Duration::ZERO,
-            cua_driver_core::post_action_wait::PostActionWait::Default => {
-                cua_driver_core::step_pacing::report_window(REPORT_WINDOW)
-            }
-        };
+        self.detect_async_waiting(false).await
+    }
+
+    /// [`detect_async`](Self::detect_async) for an action whose result reads
+    /// `new_windows` as evidence (an AX press that may be a no-op): it waits
+    /// the report window unless the caller passed `post_action_wait: "none"`.
+    pub async fn detect_async_for_evidence(self) -> Changes {
+        self.detect_async_waiting(true).await
+    }
+
+    async fn detect_async_waiting(self, evidence: bool) -> Changes {
+        use cua_driver_core::post_action_wait::PostActionWait;
+        // Read here: a blocking thread does not inherit the task-locals.
+        let wait = cua_driver_core::post_action_wait::current();
+        let report_window = report_window_for(wait, evidence);
         // Move the Snapshot (and its embedded lease) onto the blocking
         // thread; the lease's Drop runs there when detect_with returns.
-        tokio::task::spawn_blocking(move || {
+        let mut changes = tokio::task::spawn_blocking(move || {
             self.detect_bounded_reporting(host_observation_bounds(), report_window, observe_host)
         })
         .await
-        .unwrap_or_else(|_| Changes::not_polled())
+        .unwrap_or_else(|_| Changes::not_polled());
+        // Only an explicit "none" says that nothing was observed; a default
+        // call reports later changes on the next result without a note.
+        changes.deferred &= wait == PostActionWait::None;
+        changes
     }
 
     /// One observation against the snapshot: the change it shows, if any.
@@ -526,18 +590,18 @@ impl Snapshot {
         })
     }
 
-    /// Poll until a change shows (`Ok`, the lease is dropped) or `deadline`
-    /// passes with none (`Err`, the snapshot and its lease handed back).
+    /// Poll until a change shows (`Ok`) or `deadline` passes with none
+    /// (`Err`). Either way the snapshot and its lease are handed back.
     fn poll_until(
         self,
         deadline: Instant,
         poll_interval: Duration,
         observe: &mut impl FnMut() -> (Vec<WindowInfo>, Option<i32>),
-    ) -> Result<Changes, Self> {
+    ) -> Result<(Changes, Self), Self> {
         loop {
             std::thread::sleep(poll_interval);
             if let Some(changes) = self.observe_once(observe) {
-                return Ok(changes);
+                return Ok((changes, self));
             }
             if Instant::now() >= deadline {
                 return Err(self);
@@ -560,6 +624,12 @@ impl Snapshot {
             return;
         }
         let id = focus_arbiter::detach(self._lease.take());
+        *lock(&WATCHED) = Some(Watched {
+            id,
+            window_ids: self.window_ids.clone(),
+            front_pid: self.front_pid,
+            deadline,
+        });
         let still_mine = move || focus_arbiter::holds_detached(id);
         let spawned = std::thread::Builder::new()
             .name("cua-window-watch".into())
@@ -570,7 +640,11 @@ impl Snapshot {
                         return;
                     }
                     if let Some(changes) = self.observe_once(&mut observe) {
-                        if !still_mine() {
+                        // Publish under the WATCHED lock, so the next action's
+                        // capture either sees this report or ended the watch
+                        // first and this one says nothing.
+                        let mut watched = lock(&WATCHED);
+                        if !watched.as_ref().is_some_and(|w| w.id == id) || !still_mine() {
                             return;
                         }
                         *lock(&LATE) = Some(Late {
@@ -578,6 +652,8 @@ impl Snapshot {
                             new_windows: changes.new_windows,
                             foreground_changed: changes.foreground_changed,
                         });
+                        watched.take();
+                        drop(watched);
                         // Keep the lease until the deadline: the change may be
                         // an activation it is still reverting.
                         break;
@@ -594,6 +670,30 @@ impl Snapshot {
             });
         if spawned.is_err() {
             // No thread: release the lease now rather than holding it forever.
+            lock(&WATCHED).take_if(|w| w.id == id);
+            focus_arbiter::release_detached(id);
+        }
+    }
+
+    /// Keep the focus-steal lease armed on a background thread until
+    /// `deadline`, without observing. The next action, or an intentional
+    /// activation, ends it early ([`focus_arbiter::end_detached`]).
+    fn hold_lease_until(mut self, deadline: Instant, poll_interval: Duration) {
+        if self._lease.is_none() || Instant::now() >= deadline {
+            return;
+        }
+        let id = focus_arbiter::detach(self._lease.take());
+        let spawned = std::thread::Builder::new()
+            .name("cua-window-lease".into())
+            .spawn(move || {
+                while focus_arbiter::holds_detached(id) && Instant::now() < deadline {
+                    std::thread::sleep(
+                        poll_interval.min(deadline.saturating_duration_since(Instant::now())),
+                    );
+                }
+                focus_arbiter::release_detached(id);
+            });
+        if spawned.is_err() {
             focus_arbiter::release_detached(id);
         }
     }
@@ -631,6 +731,24 @@ impl Snapshot {
     }
 }
 
+/// How long a result waits for a window change, given the caller's
+/// `post_action_wait` and whether the action reads the change as evidence. A
+/// step of a batch waits at most the batch report window, because the next
+/// step follows at once.
+fn report_window_for(
+    wait: cua_driver_core::post_action_wait::PostActionWait,
+    evidence: bool,
+) -> Duration {
+    use cua_driver_core::post_action_wait::PostActionWait;
+    match wait {
+        PostActionWait::None => Duration::ZERO,
+        PostActionWait::Default if !evidence => Duration::ZERO,
+        PostActionWait::Default | PostActionWait::Report => {
+            cua_driver_core::step_pacing::report_window(REPORT_WINDOW)
+        }
+    }
+}
+
 /// The host's visible layer-0 windows.
 fn host_windows() -> Vec<WindowInfo> {
     windows::visible_windows_without_spaces()
@@ -652,7 +770,8 @@ pub(crate) fn observe_quiet_window_list(bounds: WindowObservationBounds, report_
     focus_arbiter::end_detached();
 }
 
-/// The report window of a direct call. Support for the step-latency benchmark.
+/// The report window of a direct `"report"` call. Support for the
+/// step-latency benchmark.
 #[cfg(test)]
 pub(crate) const DIRECT_REPORT_WINDOW: Duration = REPORT_WINDOW;
 
@@ -1058,6 +1177,37 @@ mod tests {
         assert_eq!(changes.new_windows.len(), 1);
     }
 
+    /// A default call returns at delivery; "report" and an evidence wait get
+    /// the report window, shortened inside a batch; "none" never waits.
+    #[tokio::test]
+    async fn only_report_and_evidence_wait_for_the_report_window() {
+        use cua_driver_core::post_action_wait::PostActionWait;
+        use cua_driver_core::step_pacing::{scope, StepPacing, BATCH_REPORT_WINDOW};
+        assert_eq!(
+            report_window_for(PostActionWait::Default, false),
+            Duration::ZERO
+        );
+        assert_eq!(
+            report_window_for(PostActionWait::None, true),
+            Duration::ZERO
+        );
+        assert_eq!(
+            report_window_for(PostActionWait::Report, false),
+            REPORT_WINDOW
+        );
+        assert_eq!(
+            report_window_for(PostActionWait::Default, true),
+            REPORT_WINDOW
+        );
+        scope(StepPacing::Batched, async {
+            assert_eq!(
+                report_window_for(PostActionWait::Report, false),
+                BATCH_REPORT_WINDOW
+            );
+        })
+        .await;
+    }
+
     /// `post_action_wait: "none"` (a zero report window) returns at once
     /// without observing, says so, and hands the whole deadline to the
     /// detached watch, which still records a late window.
@@ -1101,6 +1251,32 @@ mod tests {
         assert!(
             take_late().is_some_and(|late| late.new_windows.len() == 1),
             "the detached watch records the late window"
+        );
+        focus_arbiter::end_detached();
+    }
+
+    /// A change seen while the result waits keeps the wildcard lease armed
+    /// to the deadline: the targeted lease around the action has already
+    /// dropped, and the change may be an activation still being reverted.
+    #[test]
+    fn an_early_change_keeps_the_lease_to_the_deadline() {
+        let _serial = lock(&TAIL_TEST_LOCK);
+        focus_arbiter::end_detached();
+        let snap = WindowChangeDetector::capture_from(HashSet::from([1]), Some(7), true, None);
+        let changes = snap.detect_bounded_reporting(
+            observation_bounds_from(Some("2000"), Some("10")),
+            REPORT_WINDOW,
+            || {
+                (
+                    vec![win(1, 7, "App", "Main"), win(2, 7, "App", "Save")],
+                    Some(7),
+                )
+            },
+        );
+        assert_eq!(changes.new_windows.len(), 1);
+        assert!(
+            focus_arbiter::has_detached(),
+            "the lease outlives the result"
         );
         focus_arbiter::end_detached();
     }
@@ -1160,6 +1336,35 @@ mod tests {
             "\n\n🪟 After the previous action returned, it opened new window(s): App (\"Save\")."
         );
         assert!(take_late().is_none(), "reported once");
+    }
+
+    /// A window that opens after the result returned but before the detached
+    /// watch reads it again is reported by the next action's snapshot, not
+    /// absorbed into its before-set.
+    #[test]
+    fn a_window_the_ended_watch_missed_is_reported_next() {
+        let _serial = lock(&TAIL_TEST_LOCK);
+        focus_arbiter::end_detached();
+        lock(&LATE).take();
+        let snap = WindowChangeDetector::capture_from(HashSet::from([1]), Some(7), false, None);
+        let _ = snap.detect_bounded_reporting(
+            observation_bounds_from(Some("3000"), Some("1000")),
+            Duration::ZERO,
+            || (vec![win(1, 7, "App", "Main")], Some(7)),
+        );
+        let watched = lock(&WATCHED)
+            .take()
+            .expect("the detached watch is recorded");
+        assert!(focus_arbiter::holds_detached(watched.id));
+        focus_arbiter::end_detached();
+        assert!(
+            !focus_arbiter::holds_detached(watched.id),
+            "an ended watch is filtered out at the next capture"
+        );
+        let now = [win(1, 7, "App", "Main"), win(2, 7, "App", "Save")];
+        let late = watched.late_change(&now, Some(7)).expect("the new window");
+        assert_eq!(late.new_windows.len(), 1);
+        assert!(watched.late_change(&now[..1], Some(7)).is_none());
     }
 
     /// The next action ends the previous tail before it acts, so a lingering

@@ -204,13 +204,15 @@ daemon child.
 
 After an input action, the driver watches the window list for a short time so
 it can report a menu, dialog, or new window that the action opened. On macOS,
-the watch lasts up to 1000 ms. The action's result waits for at most the first
-300 ms of it; when nothing has changed by then, the result returns and the rest
-of the watch runs detached, still holding the focus-steal lease. A window that
-opens during that remainder is reported on the next action's result as
+the watch lasts up to 1000 ms. The action's result returns as soon as the input
+is delivered, and the watch runs detached, still holding the focus-steal lease.
+A window that opens meanwhile is reported on the next action's result as
 `After the previous action returned, it opened new window(s): …`. The next
-action, or any activation the driver performs, ends the detached remainder
-first. On Linux X11 the result waits for the whole watch. A host that already observes
+action, or any activation the driver performs, ends the detached watch first.
+An AX press on an element that does not advertise the action waits up to
+300 ms of the watch, because only a window it opened lifts its
+`suspected_noop`. On Linux X11 a foreground action's result waits up to 150 ms
+of the 800 ms watch, and the watch ends with the wait. A host that already observes
 its target continuously can shorten it through two variables set at trusted
 launch, in the environment of the `serve --embedded` child (or of the host
 process when you use the same-process runtime). `EmbeddedCuaDriverHost` starts
@@ -265,14 +267,15 @@ with `0`.
 ### Steps inside `run_steps` and `run_script` (macOS)
 
 Two waits make up most of a macOS action's latency: the agent cursor's glide to
-the target and the first 300 ms of the window watch above. The default `steady`
-timing (like `relaxed` and `calm`) stretches a short hop to its floor so a person
-can follow it, but the action does not wait for the stretch: it goes ahead when
-the same move under `native` timing would have arrived, and the cursor finishes
-its glide during the action. A call that is one step of a `run_steps` batch or a
-`run_script` program is followed at once by another step, so the driver shortens
-both for it: the step waits at most 120 ms for the cursor to arrive and 100 ms
-for a window change. The cursor keeps gliding and the watch keeps running
+the target and, when asked for with `post_action_wait: "report"`, up to 300 ms of
+the window watch above. The default `steady` timing (like `relaxed` and `calm`)
+stretches a short hop to its floor so a person can follow it, but the action does
+not wait for the stretch: it goes ahead when the same move under `native` timing
+would have arrived, and the cursor finishes its glide during the action. A call
+that is one step of a `run_steps` batch or a `run_script` program is followed at
+once by another step, so the driver shortens both for it: the step waits at most
+120 ms for the cursor to arrive and 100 ms for a window change (on Linux X11 too).
+The cursor keeps gliding and the watch keeps running
 detached, as above, so a window that opens late is still reported on the next
 action's result. The last step of a `run_steps` batch, and every direct call,
 keep the full waits, so the batch's final result still reports what it left
@@ -284,32 +287,29 @@ example to record a demo, sets `CUA_DRIVER_BATCH_PACING=full` in the same
 environment as the variables above. Any other value, or none, applies the
 shortened waits. No tool argument can change it.
 
-### Skipping the report wait per call (macOS)
+### Choosing the report wait per call (macOS and Linux X11)
 
-An agent that reads the window state after every action does not need the
-result to wait for the window watch. Each action that waits for it (`click`,
-`double_click`, `right_click`, `drag`, `scroll`, `type_text`, `press_key`,
-`hotkey` and `set_value`) accepts an optional `post_action_wait` argument:
+Each action that watches for window changes (`click`, `double_click`,
+`right_click`, `drag`, `scroll`, `type_text`, `press_key`, `hotkey` and
+`set_value`) accepts an optional `post_action_wait` argument:
 
-- `"default"`, or omitting it, keeps the behavior above.
+- `"default"`, or omitting it, keeps the behavior above: no wait on macOS,
+  up to 150 ms on Linux X11.
+- `"report"` waits for a change: up to 300 ms on macOS, and the whole watch
+  (800 ms) on Linux X11, where a Qt file dialog that maps after 300 to 600 ms
+  then still confirms the action. Use it when the next decision depends on
+  this result naming the window the action opened.
 - `"none"` returns as soon as the input is delivered. The result ends with
   `Window changes not observed: post_action_wait "none" returned without
-  waiting.` instead of reporting no change. The watch still runs detached for
-  its whole deadline and keeps the focus-steal lease, exactly like the
-  remainder of a quiet watch above, so focus protection is unchanged and a
-  window that opens is reported on the next action's result.
+  waiting.` instead of reporting no change. On macOS the watch still runs
+  detached for its whole deadline and keeps the focus-steal lease, so focus
+  protection is unchanged and a window that opens is reported on the next
+  action's result. On Linux X11 a foreground action then reports no
+  window-change evidence.
 
-Linux and Windows do not advertise `post_action_wait`, and their action
-schemas refuse it as an unknown argument (`invalid_arguments`): the Linux X11
-foreground transaction uses its window watch as delivery evidence, and the
-Windows adapter does not wait for window changes after an action.
-
-Measured on macOS 26 with Calculator in the background (medians of 20 calls
-over three runs), an `element_token` click (AXPress) took 570 to 750 ms with
-the default and 250 to 350 ms with `"none"`. A coordinate click that
-Calculator routes through the pixel path took 870 to 1160 ms and 510 to 690 ms.
-A coordinate click that resolves to an AX press through the hit-test does not
-watch the window list, so the argument does not change it.
+Windows does not advertise `post_action_wait`, and its action schemas refuse it
+as an unknown argument (`invalid_arguments`): the Windows adapter does not wait
+for window changes after an action.
 
 ## Pacing synthesized keystrokes (macOS)
 

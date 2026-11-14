@@ -3,25 +3,28 @@
 
 //! Whether an action's result waits for its post-action window-change report.
 //!
-//! After an input action the macOS adapter watches the window list for a short
-//! time (300 ms for a direct call) so its result can name a menu, dialog, new
-//! window or foreground change the action caused. For an agent that reads the
-//! window state after every action anyway, that wait is most of a background
-//! click's latency.
+//! After an input action the macOS adapter and the Linux X11 foreground
+//! transaction watch the window list so a result can name a menu, dialog, new
+//! window or foreground change the action caused. This choice sets how long
+//! the result waits for a change. On macOS the watch then keeps running for
+//! its whole deadline, and what it sees after the result returned is reported
+//! on the next action's result; the Linux watch ends with the wait.
 //!
-//! The optional per-call argument [`POST_ACTION_WAIT_ARG`] lets a caller skip
-//! it: with `"none"` the result returns as soon as the input is delivered and
-//! says that window changes were not observed. The watch itself, and the
-//! focus-steal suppression it holds, still run detached for the full deadline,
-//! and a change it sees is reported on the next action's result. Omitted, or
-//! `"default"`, keeps the current behavior.
+//! The optional per-call argument [`POST_ACTION_WAIT_ARG`]:
+//!
+//! - omitted, or `"default"`: macOS returns as soon as the input is delivered;
+//!   Linux X11 waits [`LINUX_DEFAULT_REPORT_WINDOW`], which covers menus and
+//!   GTK/VCL dialogs, and reports `unverifiable` when nothing opened by then.
+//! - `"report"`: wait for a change for the adapter's full report window (300 ms
+//!   on macOS, the whole 800 ms deadline on Linux X11, where a slow Qt dialog
+//!   then still confirms the action).
+//! - `"none"`: return at delivery and say that window changes were not
+//!   observed.
 //!
 //! The dispatch boundary reads the argument and runs the tool inside [`scope`];
-//! adapters read [`current`]. Only macOS implements the skip: the Linux X11
-//! foreground transaction uses its window watch as delivery evidence, and the
-//! Windows adapter does not watch for window changes after an action. On those
-//! platforms the argument is not advertised, and the closed action schemas
-//! refuse it as an unknown argument.
+//! adapters read [`current`]. The Windows adapter does not watch for window
+//! changes after an action, so the argument is not advertised there, and the
+//! closed action schemas refuse it as an unknown argument.
 
 use std::future::Future;
 
@@ -44,15 +47,22 @@ pub const POST_ACTION_WAIT_TOOLS: &[&str] = &[
     "set_value",
 ];
 
-/// Whether this platform's adapter implements `"none"`.
-pub const SKIP_SUPPORTED: bool = cfg!(target_os = "macos");
+/// Whether this platform's adapter watches for window changes after an action.
+pub const SKIP_SUPPORTED: bool = cfg!(any(target_os = "macos", target_os = "linux"));
+
+/// How long a direct Linux X11 foreground action's result waits for a window
+/// change when the caller did not ask for `"report"`. GTK and VCL menus and
+/// dialogs map within about 100 ms of the input.
+pub const LINUX_DEFAULT_REPORT_WINDOW: std::time::Duration = std::time::Duration::from_millis(150);
 
 /// The caller's choice for the action being dispatched.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PostActionWait {
-    /// Wait for the window-change report as usual.
+    /// The adapter's default wait (see the module docs).
     #[default]
     Default,
+    /// Wait for a change for the adapter's full report window.
+    Report,
     /// Return without waiting; the result says nothing was observed.
     None,
 }
@@ -72,9 +82,9 @@ pub fn current() -> PostActionWait {
     CURRENT.try_with(|wait| *wait).unwrap_or_default()
 }
 
-/// Whether `tool` accepts [`POST_ACTION_WAIT_ARG`] on this platform. Only
-/// macOS implements the skip; elsewhere the argument is not advertised, so the
-/// closed action schemas refuse it as an unknown argument.
+/// Whether `tool` accepts [`POST_ACTION_WAIT_ARG`] on this platform. Windows
+/// does not advertise the argument, so its closed action schemas refuse it as
+/// an unknown argument.
 pub fn accepts(tool: &str) -> bool {
     SKIP_SUPPORTED && POST_ACTION_WAIT_TOOLS.contains(&tool)
 }
@@ -83,14 +93,10 @@ pub fn accepts(tool: &str) -> bool {
 pub fn schema() -> Value {
     json!({
         "type": "string",
-        "enum": ["default", "none"],
-        "description": "Whether the result waits for the post-action window-change report \
-                        (default \"default\": up to 300 ms for a new window, menu, dialog or \
-                        foreground change). \"none\" returns as soon as the input is delivered \
-                        and says window changes were not observed; the watch keeps running in \
-                        the background and a change it sees is reported on the next action's \
-                        result. Only paths that already observe window changes are affected; \
-                        for example a right_click that does not watch is unchanged."
+        "enum": ["default", "report", "none"],
+        "description": "Wait for a window change this action caused: \"default\" (macOS \
+                        none, Linux X11 150 ms), \"report\" (300 ms, Linux X11 800 ms) or \
+                        \"none\". See EMBEDDING.md."
     })
 }
 
@@ -100,9 +106,12 @@ pub fn from_args(tool: &str, args: &Value) -> Result<PostActionWait, (String, Va
     match args.get(POST_ACTION_WAIT_ARG) {
         None => Ok(PostActionWait::Default),
         Some(Value::String(s)) if s == "default" => Ok(PostActionWait::Default),
+        Some(Value::String(s)) if s == "report" => Ok(PostActionWait::Report),
         Some(Value::String(s)) if s == "none" => Ok(PostActionWait::None),
         Some(other) => {
-            let detail = format!("post_action_wait must be \"default\" or \"none\", got {other}");
+            let detail = format!(
+                "post_action_wait must be \"default\", \"report\" or \"none\", got {other}"
+            );
             Err((
                 format!("{tool}: {detail}"),
                 json!({ "code": "invalid_arguments", "tool": tool, "detail": detail }),
@@ -127,6 +136,14 @@ mod tests {
         assert_eq!(
             from_args("click", &json!({"post_action_wait": "none"})).unwrap(),
             PostActionWait::None
+        );
+    }
+
+    #[test]
+    fn report_asks_for_the_full_wait() {
+        assert_eq!(
+            from_args("click", &json!({"post_action_wait": "report"})).unwrap(),
+            PostActionWait::Report
         );
     }
 

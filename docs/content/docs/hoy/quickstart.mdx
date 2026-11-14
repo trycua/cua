@@ -1,0 +1,88 @@
+---
+title: Quickstart
+description: 'Make a macOS image on your Mac, create and start a VM, ssh in, list your VMs, then stop and remove the VM.'
+---
+
+Make a macOS image, create a VM from it, ssh in, and clean up.
+
+## Prerequisites
+
+- Hoy [installed](/hoy/guides/install), the Hoy VM limit extension approved, and
+  `hoy doctor` shows no failed check.
+- 64 GiB of free disk for the first image.
+
+## Make an image
+
+A VM is made from an image: a macOS install that was set up once and is stored
+read-only. You make the image on your own Mac, from Apple's macOS restore
+image. Hoy contains no Apple software, and Cua does not hand out macOS.
+
+```bash skip="no-runner"
+hoy image create
+```
+
+This downloads the newest macOS restore image your Mac supports from Apple
+(20 to 26 GB, resumable, kept for the next build), installs it, sets up a user
+and ssh without clicking through Setup Assistant, and tests the result. With the
+download already done it takes about 6 minutes, and the finished image takes
+about 27 GiB on disk. Run it once. If it fails, the output names the step; run
+the same command again and the download is reused.
+
+`hoy images` lists your images and shows which are usable.
+
+## Create, start and ssh in
+
+```bash skip="no-runner"
+hoy create demo --image macos-26.5.2@usable
+hoy start demo --wait ready
+hoy ssh demo
+```
+
+- `hoy create` clones the image in seconds and uses no extra disk until the
+  guest writes. Use the image name that `hoy images` shows. `@usable` means the
+  newest image that passed its tests.
+- `hoy start --wait ready` boots the VM and returns when ssh answers.
+- `hoy ssh demo` opens a shell in the VM. It uses the VM's own address, user and
+  key, so you do not copy any of them. `hoy ssh demo -- uname -a` runs one
+  command and exits with its exit code.
+
+`hoy create` also takes `--cpu`, `--memory 8G` and `--disk 150G` (the disk only
+grows). Add `--vnc` to get a desktop you can open with `hoy vnc demo`, or
+`--profile headless` for a VM with no desktop session. Every option is in the
+[CLI reference](/hoy/guides/cli-reference).
+
+`hoy exec demo -- sw_vers` runs one command in the guest and exits with its exit
+code. `hoy restart demo` reboots the guest from inside.
+
+If `hoy start` is refused with exit code 5, the Hoy VM limit extension is not on
+yet, or two macOS VMs already run. See [Limits](/hoy/concepts/two-vm-limit).
+
+## List your VMs
+
+```bash skip="no-runner"
+hoy list
+```
+
+`hoy ps` and `hoy ls` do the same. `hoy inspect demo` shows one VM in detail:
+address, resources, identity and clipboard settings.
+
+## Stop and remove
+
+```bash skip="no-runner"
+hoy stop demo
+hoy rm demo
+```
+
+`hoy stop` is an ordered stop: it flushes the guest's disk, asks the guest to
+shut down, and only forces it off after 60 seconds. `hoy rm` deletes the VM and
+its disk. The image stays, so you can create another VM from it.
+
+Every command takes `--json` for scripts. Exit codes are in
+[Troubleshooting](/hoy/guides/troubleshooting#exit-codes).
+
+## Next
+
+- [Snapshots and restore](/hoy/guides/snapshots-restore-fork): save a running VM and go back to it.
+- [Import VMs from Tart, UTM and Lume](/hoy/guides/import)
+- [CLI reference](/hoy/guides/cli-reference)
+- [Clipboard sharing](/hoy/guides/clipboard-sharing): copy and paste between your Mac and a VM.

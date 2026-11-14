@@ -1,0 +1,16 @@
+{
+  "title": "Guides",
+  "pages": [
+    "install",
+    "update-and-rollback",
+    "uninstall",
+    "snapshots-restore-fork",
+    "import",
+    "clipboard-sharing",
+    "cli-reference",
+    "troubleshooting",
+    "license-and-data",
+    "data-collection",
+    "getting-help"
+  ]
+}

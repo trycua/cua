@@ -1,0 +1,67 @@
+---
+title: Limits
+description: 'The two-macOS-VM limit: where it comes from, how the Hoy VM limit extension enforces it, which VMs count and which do not, plus the other known limits of this release.'
+---
+
+A Mac can run two macOS VMs at a time. The limit comes from Apple's macOS
+license, not from Hoy. It applies to every macOS VM on the Mac, whatever software
+runs it, and Hoy counts across all tools. A license key or a setting cannot raise
+the limit. A setting can lower it.
+
+## How it is enforced
+
+The Hoy VM limit extension is an Endpoint Security system extension that comes
+inside Hoy.app. With it on, it counts every macOS VM on the Mac, started by any
+tool and any user, and stops a third from booting. See
+[Install](/hoy/guides/install#approve-the-hoy-vm-limit-extension) for the two
+switches that turn it on.
+
+This release requires the extension. Until it is on, `hoy start` refuses macOS
+VMs with exit code 5 and the reason `limit_service_inactive`, and `hoy doctor`
+shows a failing `limit-service` check. Linux VMs and other apps are not affected,
+whether the extension is on, off or missing.
+
+When a third macOS VM is refused, the message names each VM it counted: its
+process ID, the tool and why it counts. `hoy doctor` and `hoy health` list every
+VM and whether it counts.
+
+## What counts
+
+| Counts as a macOS VM | Does not count |
+|---|---|
+| Hoy macOS VMs, including a fork | Linux VMs on Virtualization.framework: Docker Desktop, OrbStack, Colima/Lima and Rancher with vz, Podman, UTM's Apple backend |
+| Other apps' macOS VMs on Virtualization.framework (they hold the macOS license lock that Apple's framework takes for a macOS guest) | The engines of Docker Desktop, Parallels Desktop (Linux and Windows) and OrbStack |
+| A VM run by another hypervisor engine while it runs, to be safe and whatever its guest: QEMU (also behind Colima, Lima and Podman, and UTM's QEMU backend), krunkit, VMware Fusion, Multipass. Each running VM counts as one | UTM open with no QEMU VM running |
+| A VM whose files Hoy cannot read, such as another user's, to be safe | A VM that is stopped |
+
+A stopped VM does not count. Stop one VM, or remove it with `hoy rm`, and the
+slot is free.
+
+## Make the most of two
+
+- Use [snapshots](/hoy/guides/snapshots-restore-fork) to go back to a clean state
+  instead of keeping many VMs around.
+- Remove VMs you are done with. Images stay, and `hoy create` makes a new VM from
+  one in seconds.
+
+## Other known limits
+
+- **Hosts.** Apple silicon with macOS 26.x or 27.x. A newer macOS is untried.
+- **Images are desktop images.** There is no headless image from
+  `hoy image create` yet. You make each image yourself, on the same APFS volume
+  as the Hoy home.
+- **A desktop login session.** Hoy's background service runs in the logged-in user's
+  desktop session.
+  Running `hoy image create` and VMs with nobody logged in at the desktop has not
+  been validated. See [Install](/hoy/guides/install#macs-where-nobody-logs-in).
+- **Graphics.** Under heavy graphics load the guest's frame rate is below what
+  Apple's Virtualization framework reaches. Headless and light desktop use is not
+  affected.
+- **GPU models are experimental.** `hoy create --gpu-models` is off by default.
+  Such a VM cannot be snapshotted or forked yet. See the
+  [CLI reference](/hoy/guides/cli-reference#gpu-models-experimental).
+- **Apple Account, iCloud and App Store sign-in** do not work in a Hoy VM. See
+  [Apple Account and iCloud](/hoy/concepts/apple-account).
+- **Desktop console.** `--vnc` publishes the VM's console on a Unix socket in the
+  VM folder, not on a TCP port. Use `hoy exec` for shell access.
+- **No microphone input** in the guest yet.

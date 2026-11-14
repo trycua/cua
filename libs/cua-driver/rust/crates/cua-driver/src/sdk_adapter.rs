@@ -348,9 +348,30 @@ impl SdkAdapter {
     }
 
     pub async fn end_session(&self, session: &str) -> Result<(), String> {
-        self.invoke_raw("end_session", json!({"session": session}))
-            .await
-            .map(|_| ())
+        let value = self
+            .invoke_raw("end_session", json!({"session": session}))
+            .await?;
+        // `invoke_raw` returns `Ok` even when the tool result carries
+        // `isError: true`, because a tool-level failure is not a transport
+        // failure. `revoke_authorization` must not report a successful revoke
+        // for a session the tool refused to end, so surface the error here.
+        if value.get("isError").and_then(Value::as_bool) == Some(true) {
+            let detail = value
+                .get("content")
+                .and_then(Value::as_array)
+                .and_then(|items| {
+                    items.iter().find_map(|item| {
+                        item.get("text")
+                            .and_then(Value::as_str)
+                            .filter(|text| !text.is_empty())
+                    })
+                })
+                .unwrap_or("the end_session tool reported an error");
+            return Err(format!(
+                "end_session did not end session '{session}': {detail}"
+            ));
+        }
+        Ok(())
     }
 
     pub fn end_transport_sessions(&self, transport_session: &str) -> usize {
@@ -673,6 +694,34 @@ mod tests {
 
         first.shutdown().await.expect("shutdown first");
         second.shutdown().await.expect("shutdown second");
+    }
+
+    #[tokio::test]
+    async fn end_session_reports_a_cleanup_failure_as_an_error() {
+        let _runtime_guard = crate::test_runtime_lock().lock().await;
+        let sdk = SdkAdapter::load(host_driver()).await.expect("SDK adapter");
+        let session = "end-reports-cleanup-failure";
+        let _hook = cua_driver_core::session::register_scoped_fallible_session_end_hook(
+            "recording",
+            move |ended| {
+                if ended.ends_with(session) {
+                    Err("cleanup failed".into())
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        sdk.invoke_raw("start_session", json!({"session": session}))
+            .await
+            .expect("start session");
+
+        let error = sdk
+            .end_session(session)
+            .await
+            .expect_err("a failed end_session must not report a revoke");
+        assert!(error.contains(session), "unexpected error: {error}");
+
+        sdk.shutdown().await.expect("shutdown");
     }
 
     #[tokio::test]

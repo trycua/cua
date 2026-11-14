@@ -23,7 +23,8 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Mapping
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -39,14 +40,22 @@ from native_tasks import (
     NATIVE_TASK_IDS,
     NativeTask,
     OracleError,
+    check_intermediate_effect,
+    has_declared_steps_remaining,
     native_task,
     native_choice_request,
     visual_fallback_reason,
 )
+from tasks import Outcome, TaskSources
 from s1_service import S1ServiceError, choose_s1_service, s1_service_url
-from run import Driver, DriverToolError, background_refusal_code, supports_capture_bound_click
+from run import (
+    Driver,
+    DriverToolError,
+    background_refusal_code,
+    decision_timing_fields,
+    supports_capture_bound_click,
+)
 from sources import NativeAccessibilitySource, VisualRegionSource
-from tasks import TaskSources
 
 STALE_TOKEN_CODES = frozenset({"stale_element_token"})
 # A partial or truncated tree is observed once more with this walk budget.
@@ -65,6 +74,36 @@ def is_stale_token_error(error: BaseException) -> bool:
     if isinstance(error, DriverToolError) and error.code in STALE_TOKEN_CODES:
         return True
     return "element_token is stale" in str(error)
+
+
+def add_phase(phase_timings: dict[str, float] | None, name: str, started: float) -> float:
+    """Add the time since ``started`` to a step phase; return the elapsed milliseconds."""
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    if phase_timings is not None:
+        phase_timings[name] = phase_timings.get(name, 0.0) + elapsed_ms
+    return elapsed_ms
+
+
+def native_timing_fields(
+    started: float, phase_timings: dict[str, float], provider_decision_ms: float
+) -> dict[str, Any]:
+    """The browser runner's decision-phase fields for one native step.
+
+    ``provider_decision_ms`` is ``decide_ms``. ``visual_observe_ms`` is the
+    ``parse_visual_regions`` phase only: the native screenshot and ``capture_id``
+    come from the same ``get_window_state`` call that produced the semantic
+    observation, so that capture is inside ``semantic_observe_ms``.
+    """
+    return {
+        **decision_timing_fields(
+            decision_ms=round((time.perf_counter() - started) * 1000, 2),
+            semantic_observe_ms=round(phase_timings.get("semantic_observe_ms", 0.0), 2),
+            visual_observe_ms=round(phase_timings.get("visual_observe_ms", 0.0), 2),
+            candidate_build_ms=round(phase_timings.get("candidate_build_ms", 0.0), 2),
+            provider_decision_ms=provider_decision_ms,
+        ),
+        "visual_observe_scope": "parse_only",
+    }
 
 
 def write_event(log_path: Path | None, event: dict[str, Any]) -> None:
@@ -126,12 +165,18 @@ async def observe_step(
     window_id: int,
     platform: Platform,
     foreground_ids: frozenset[str],
+    phase_timings: dict[str, float] | None = None,
 ) -> tuple[TaskSources, dict[str, Any]]:
     """Take one observation, reobserving once with a larger walk budget if needed.
 
     A truncated tree, or a partial tree with no native candidate, is observed
     once more with ``REOBSERVE_TIMEOUT_MS``. The newer observation replaces the
     older one entirely, so every token in the step comes from one snapshot.
+
+    ``observe_ms`` (kept for compatibility) spans this whole function. When
+    ``phase_timings`` is given, the ``get_window_state`` calls (plus the
+    ``NativeObservation`` validation) are added to ``semantic_observe_ms`` and the
+    source construction and preliminary plan to ``candidate_build_ms``.
     """
     started = time.perf_counter()
     record: dict[str, Any] = {"reobserved": False}
@@ -142,16 +187,24 @@ async def observe_step(
         )
         return TaskSources(ax=ax, foreground_ids=foreground_ids)
 
-    sources = build(await observe(driver, task, pid, window_id))
+    observe_started = time.perf_counter()
+    first = await observe(driver, task, pid, window_id)
+    add_phase(phase_timings, "semantic_observe_ms", observe_started)
+    build_started = time.perf_counter()
+    sources = build(first)
     observation = sources.ax.observation  # type: ignore[union-attr]
     native_count = sum(
         1 for candidate in task.plan(sources).candidates if candidate.source == "ax"
     )
+    add_phase(phase_timings, "candidate_build_ms", build_started)
     if observation.truncated or (observation.partial and native_count == 0):
         record = {"reobserved": True, "reason": "truncated" if observation.truncated else "partial_empty"}
-        sources = build(
-            await observe(driver, task, pid, window_id, timeout_ms=REOBSERVE_TIMEOUT_MS)
-        )
+        observe_started = time.perf_counter()
+        second = await observe(driver, task, pid, window_id, timeout_ms=REOBSERVE_TIMEOUT_MS)
+        add_phase(phase_timings, "semantic_observe_ms", observe_started)
+        build_started = time.perf_counter()
+        sources = build(second)
+        add_phase(phase_timings, "candidate_build_ms", build_started)
     observation = sources.ax.observation  # type: ignore[union-attr]
     record.update(
         {
@@ -173,10 +226,13 @@ async def maybe_visual(
     sources: TaskSources,
     available_tools: set[str],
     capture_bound_click: bool,
+    phase_timings: dict[str, float] | None = None,
 ) -> tuple[TaskSources, dict[str, Any]]:
     """Parse visual regions from the same capture, only under the fallback rule."""
+    candidate_started = time.perf_counter()
     native_count = sum(1 for c in task.plan(sources).candidates if c.source == "ax")
     reason = visual_fallback_reason(sources, task, native_count)
+    add_phase(phase_timings, "candidate_build_ms", candidate_started)
     if reason is None:
         return sources, {"status": "skipped"}
     if not capture_bound_click or "parse_visual_regions" not in available_tools:
@@ -202,20 +258,25 @@ async def maybe_visual(
             expected_window_id=observation.window_id,
         )
     except DriverToolError as error:
+        # A failed parse still cost time; ``parse_ms`` is reported only on success.
+        add_phase(phase_timings, "visual_observe_ms", started)
         return sources, {"status": "error", "reason": reason, "error_code": error.code or "driver_error"}
     except VisualObservationError as error:
+        add_phase(phase_timings, "visual_observe_ms", started)
         return sources, {"status": "error", "reason": reason, "error_code": error.code}
-    return (
-        TaskSources(
-            ax=sources.ax,
-            visual=VisualRegionSource(
-                visual, "background", capture_bound_click, min_confidence=task.visual_min_confidence
-            ),
-            visual_path=True,
-            foreground_ids=sources.foreground_ids,
+    visual_sources = TaskSources(
+        ax=sources.ax,
+        visual=VisualRegionSource(
+            visual, "background", capture_bound_click, min_confidence=task.visual_min_confidence
         ),
-        {"status": "ok", "reason": reason, "region_count": len(visual.regions),
-         "parse_ms": round((time.perf_counter() - started) * 1000, 2)},
+        visual_path=True,
+        foreground_ids=sources.foreground_ids,
+    )
+    # One measurement feeds both fields, so visual_observe_ms == parse_ms on success.
+    parse_ms = round(add_phase(phase_timings, "visual_observe_ms", started), 2)
+    return (
+        visual_sources,
+        {"status": "ok", "reason": reason, "region_count": len(visual.regions), "parse_ms": parse_ms},
     )
 
 
@@ -239,14 +300,46 @@ def assert_in_scope(candidate: Candidate, pid: int, window_id: int) -> None:
         raise RuntimeError("candidate addresses a window outside the task scope")
 
 
-async def poll_oracle(task: NativeTask, steps: int) -> str:
-    outcome = "unknown"
+@dataclass(frozen=True)
+class PollResult:
+    """Result of polling an oracle after action dispatch."""
+
+    outcome: Outcome
+    status: str
+    can_continue: bool
+
+
+async def poll_oracle(
+    task: NativeTask,
+    steps: int,
+    *,
+    candidate: Candidate | None = None,
+    pre_oracle: Mapping[str, Any] | None = None,
+    history: list[Mapping[str, Any]] | None = None,
+) -> PollResult:
+    candidate_id = candidate.id if candidate is not None else None
+    outcome: Outcome = "unknown"
+    is_supported = False
+    has_remaining = has_declared_steps_remaining(task, history)
+
     for _ in range(20):
-        outcome = task.classify(task.read_oracle(), steps=steps)
+        current_oracle = task.read_oracle()
+        outcome = task.classify(current_oracle, steps=steps)
         if outcome in {"verified", "refuted"}:
-            return outcome
+            return PollResult(outcome, status=outcome, can_continue=False)
+
+        if has_remaining and outcome == "unknown":
+            effect = check_intermediate_effect(task, candidate_id, pre_oracle, current_oracle)
+            if effect is True:
+                return PollResult("unknown", status="intermediate_witnessed", can_continue=True)
+            if effect is False:
+                is_supported = True
+
         await asyncio.sleep(0.1)
-    return outcome
+
+    if is_supported:
+        return PollResult(outcome, status="intermediate_timeout", can_continue=False)
+    return PollResult(outcome, status="continuation", can_continue=True)
 
 
 async def run_task(args: argparse.Namespace, task: NativeTask) -> str:
@@ -280,13 +373,18 @@ async def run_task(args: argparse.Namespace, task: NativeTask) -> str:
                     write_event(log_path, {"event": "outcome", "outcome": current, "step": step - 1})
                     return current
 
+                started = time.perf_counter()
+                phase_timings: dict[str, float] = {}
                 sources, observed = await observe_step(
-                    driver, task, args.pid, window_id, platform, frozenset(foreground_ids)
+                    driver, task, args.pid, window_id, platform, frozenset(foreground_ids),
+                    phase_timings,
                 )
                 sources, visual_record = await maybe_visual(
-                    driver, task, sources, available_tools, capture_bound_click
+                    driver, task, sources, available_tools, capture_bound_click, phase_timings
                 )
+                plan_started = time.perf_counter()
                 plan = task.plan(sources)
+                add_phase(phase_timings, "candidate_build_ms", plan_started)
                 request = native_choice_request(task, sources, plan, history)
                 validate_request(request)
 
@@ -331,6 +429,7 @@ async def run_task(args: argparse.Namespace, task: NativeTask) -> str:
                     "expected_offered": bool(set(expected_ids) & offered),
                 }
                 if choice is None:
+                    base_event.update(native_timing_fields(started, phase_timings, decide_ms))
                     write_event(log_path, {**base_event, "event": "outcome", "outcome": "abstained"})
                     return "abstained"
                 visual = sources.visual.observation if sources.visual is not None else None
@@ -338,17 +437,20 @@ async def run_task(args: argparse.Namespace, task: NativeTask) -> str:
                     choice, plan.candidates, current_capture_id=visual.capture_id if visual else None
                 )
                 assert_in_scope(candidate, args.pid, window_id)
+                base_event.update(native_timing_fields(started, phase_timings, decide_ms))
                 base_event["candidate"] = candidate.id
                 base_event["source"] = candidate.source
 
                 if candidate.id == "reobserve":
                     history.append(task.history_entry(step, candidate.id))
-                    write_event(log_path, {**base_event, "tool": None, "act_ms": 0.0})
+                    write_event(log_path, {**base_event, "tool": None, "act_ms": 0.0, "action_ms": 0.0,
+                                           "total_step_ms": round((time.perf_counter() - started) * 1000, 2)})
                     continue
                 if candidate.id == "abstain":
                     write_event(log_path, {**base_event, "event": "outcome", "outcome": "abstained"})
                     return "abstained"
 
+                pre_oracle = task.read_oracle()
                 act_started = time.perf_counter()
                 try:
                     assert candidate.tool is not None
@@ -359,13 +461,17 @@ async def run_task(args: argparse.Namespace, task: NativeTask) -> str:
                         # Nothing else is dispatched; the next step observes again.
                         history.append(task.history_entry(step, candidate.id, stale=True))
                         write_event(log_path, {**base_event, "tool": candidate.tool,
-                                               "act_ms": act_ms, "action_error": "stale_element_token"})
+                                               "act_ms": act_ms, "action_ms": act_ms,
+                                               "total_step_ms": round((time.perf_counter() - started) * 1000, 2),
+                                               "action_error": "stale_element_token"})
                         continue
                     refusal = background_refusal_code(candidate, error)
                     if refusal is not None:
                         foreground_ids.add(candidate.id)
                         history.append(task.history_entry(step, candidate.id, refusal=refusal))
                         write_event(log_path, {**base_event, "tool": candidate.tool, "act_ms": act_ms,
+                                               "action_ms": act_ms,
+                                               "total_step_ms": round((time.perf_counter() - started) * 1000, 2),
                                                "action_error": refusal,
                                                "escalation": {"from": "background", "to": "foreground",
                                                               "allowed": task.allow_foreground}})
@@ -379,11 +485,22 @@ async def run_task(args: argparse.Namespace, task: NativeTask) -> str:
                     task.history_entry(step, candidate.id, outcome=plan.outcomes.get(candidate.id))
                 )
                 write_event(log_path, {**base_event, "tool": candidate.tool, "act_ms": act_ms,
+                                       "action_ms": act_ms,
+                                       "total_step_ms": round((time.perf_counter() - started) * 1000, 2),
                                        "delivery_mode": candidate.arguments.get("delivery_mode")})
-                outcome = await poll_oracle(task, step)
-                if outcome in {"verified", "refuted"}:
-                    write_event(log_path, {"event": "outcome", "outcome": outcome, "step": step})
-                    return outcome
+                poll_result = await poll_oracle(task, step, candidate=candidate, pre_oracle=pre_oracle, history=history)
+                if poll_result.outcome in {"verified", "refuted"}:
+                    write_event(log_path, {"event": "outcome", "outcome": poll_result.outcome, "step": step})
+                    return poll_result.outcome
+                if not poll_result.can_continue:
+                    write_event(log_path, {
+                        "event": "outcome",
+                        "outcome": poll_result.outcome,
+                        "step": step,
+                        "phase": "verification",
+                        "reason": poll_result.status,
+                    })
+                    return poll_result.outcome
 
             outcome = task.classify(task.read_oracle(), steps=task.max_steps)
             write_event(log_path, {"event": "outcome", "outcome": outcome, "step": task.max_steps})

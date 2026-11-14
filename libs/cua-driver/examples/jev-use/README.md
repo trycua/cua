@@ -159,6 +159,38 @@ uv run --frozen python verify_native.py --harness wpf --typescript --output-dir 
 uv run --frozen python verify_native.py --harness winui3 --typescript --output-dir $env:TEMP\jev-native-winui3
 ```
 
+#### Intermediate native verification
+
+After each dispatched native action the runner polls the harness state file.
+Whole-task `check` outcomes win: `verified` or `refuted` ends the wait
+immediately. For the built-in counter and choose-size tasks, an independently
+witnessed intermediate effect may end an otherwise whole-task wait: increment
+must move integer `counter` by exactly +1 from the pre-dispatch value, and the
+Large radio must show `size: large`. A supported effect that never appears
+returns `intermediate_timeout` and the runner stops without a dependent
+follow-up mutation.
+
+Save-note text entry, custom tasks, terminal actions, empty step lists, and
+exhausted action budgets keep the original 20-attempt wait. A driver
+dispatch receipt is never treated as completion.
+
+Offline checks stay on the deterministic mock path:
+
+```bash
+uv run python -m unittest discover -s python/tests
+npm test
+npm run typecheck
+uv run python verify_native_waits.py
+```
+
+`verify_native_waits.py` compiles the immutable Git `poll_oracle` (default
+baseline `62cdfbcd9356cf2e1b47ab09fee94eddd1d881cc`) and compares it with this
+checkout under a fake clock. Nine delayed-effect cells must all terminate
+verified. Printed timings are virtual policy latency, not a live or model
+benchmark. Optional `--baseline-sha` selects another Git revision; optional
+`--output` writes JSON only to that path. Without `--output`, the script writes
+only to stdout.
+
 `--capture-dir` also records sanitized `get_window_state` fixtures like the
 ones under `fixtures/native/`. On Linux, Cua Driver 0.30.2 and earlier report
 no `value` for a named text field
@@ -228,6 +260,43 @@ uv run --frozen python verify_native.py --harness appkit --typescript --s1 --out
 The MCP connection stays open across the entire loop. This preserves the
 explicit named Cua Driver session and avoids rebuilding tool state for every
 step.
+
+### Guarded completion
+
+The browser-fixture runners also accept `--guarded-completion`. It is opt-in:
+the default remains one provider decision per action.
+
+With the flag enabled, a provider-selected type action may bind exactly one
+local completion obligation. The next step still takes a **fresh**
+`semantic_v2` snapshot. The runner skips the provider only when that snapshot
+shows the required token in the field and exactly one page-structure
+`button / Submit` target. The completion is bound to the same named Cua
+session, and the click uses only the ref from that fresh snapshot. A foreign
+session, ambiguous/missing target, mismatched field value, changed candidate,
+or stale/tampered ref falls back to the ordinary chooser.
+
+This is caller policy in the example, not a Driver batch API or a reusable
+authorization service. It does not skip the fresh observation.
+
+An accepted step logs `guarded_completion` with `status: "accepted"`, the
+prior and fresh refs, `verification_field: "contains_required_token"`,
+`submit_matches: 1`, and the session label. Its `confidence` and `probabilities`
+are `null`, not model calibration output, and `provider_decision_ms` remains
+zero. A declined proof logs `status: "declined"` and a stable `reason` on the
+following provider step; steps that never attempted a guard omit the record.
+Neither proof records nor outcome JSONL expose the required field value.
+
+The owned fixture can invalidate Submit uniqueness after typing to prove a
+real-Driver fallback without changing Driver or the runners' production flags:
+
+```bash
+uv run --frozen python verify_setup.py --typescript --guarded-completion \
+  --guarded-completion-decline --output-dir /absolute/new/guard-decline-proof
+```
+
+This row requires `provider → provider`, `submit_not_unique`, and success from
+the independent fixture state, rather than trusting the runner's outcome alone.
+
 Page references are snapshot-bound, so the runners take another snapshot after
 the page changes rather than reusing an older reference.
 Visual candidates are also bound to the exact capture ID and screenshot
@@ -484,6 +553,31 @@ validation/bookkeeping, not another model or Driver call. Logs contain choices
 and timings, not a complete request, token-usage, or billing audit. The fixture
 tests integration rather than general agent capability.
 
+The native runners (`run_native.py` / `run_native.ts`) keep their original
+`observe_ms`, `parse_ms`, `decide_ms`, and `act_ms` fields and also emit the
+browser runners' phase names on every step event, so logs compare by field name.
+The boundaries are not identical because native observation is one
+`get_window_state` call that returns the accessibility tree, the screenshot, and
+the `capture_id` together:
+
+| Common field | Native meaning |
+|---|---|
+| `semantic_observe_ms` | The `get_window_state` calls in the step (the first, plus the one larger-budget reobservation when it happens) and `NativeObservation` validation. It **includes the screenshot capture**, paid on every step even when no visual parse runs. |
+| `visual_observe_ms` | The `parse_visual_regions` call and its validation only (equal to `parse_ms` when it succeeds; a failed attempt is counted here but has no `parse_ms`). `0` when the fallback rule does not parse. The browser value is capture plus parse. Native events carry `visual_observe_scope: "parse_only"` so the two meanings cannot be confused. |
+| `candidate_build_ms` | Building sources from the observation and every `task.plan(...)` call in the step: the preliminary plans that decide reobservation and the visual fallback, and the final plan. Python plans once after every first observation; TypeScript only when the tree is neither truncated nor complete. The definition is identical; the amount of work differs. |
+| `provider_decision_ms` | `decide_ms`, the same value. |
+| `decision_ms` | Step start through the validated, in-scope choice. |
+| `action_ms` | `act_ms`, the same value (`0` for a reobserve decision). |
+| `total_step_ms` | Step start through the end of the action, or through a reobserve decision. The oracle poll that follows is not included. |
+
+`observe_ms` still spans the whole observation function, so it is at least
+`semantic_observe_ms` and also covers that function's source and plan work. The
+native runner builds and schema-validates the provider request (`native_choice_request`,
+`validate_request`) before starting the `decide_ms` timer, whereas the browser
+runners build it inside the provider call; that time is in `decision_ms` but in no
+named phase, so `decision_ms` can exceed the sum of the phases by more than the
+browser's small residual.
+
 ## MCP, CLI, and perception boundaries
 
 The Python and TypeScript programs are the two complete agent loops. They use a
@@ -524,6 +618,7 @@ The tests use the deterministic provider and do not require
 uv run python -m unittest discover -s python/tests
 npm test
 npm run typecheck
+uv run python verify_native_waits.py
 ```
 
 ## Other decision models

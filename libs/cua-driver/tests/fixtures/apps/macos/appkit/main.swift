@@ -1187,6 +1187,33 @@ struct CuaAppKitHarness {
                 "height": controller.window.frame.height
             ])
         }
+        // An untitled borderless child window over the receiver's top-left
+        // quarter, like Chrome's omnibox dropdown (issue #4242). Pointer
+        // events it receives go to the same journal, tagged with its id.
+        var popupWindow: NSWindow?
+        if let path = ProcessInfo.processInfo.environment["CUA_APPKIT_POINTER_ORACLE"],
+           ProcessInfo.processInfo.environment["CUA_APPKIT_POPUP_OVER_RECEIVER"] == "1" {
+            let parent = controller.window
+            let content = parent.contentRect(forFrameRect: parent.frame)
+            let popup = NSWindow(
+                contentRect: NSRect(
+                    x: content.minX, y: content.maxY - content.height / 2,
+                    width: content.width / 2, height: content.height / 2),
+                styleMask: [.borderless], backing: .buffered, defer: false)
+            popup.isReleasedWhenClosed = false
+            popup.isRestorable = false
+            let receiver = SingleClickReceiver(
+                frame: NSRect(origin: .zero, size: popup.frame.size),
+                journal: URL(fileURLWithPath: path))
+            receiver.layer?.backgroundColor = NSColor.systemOrange.cgColor
+            popup.contentView = receiver
+            parent.addChildWindow(popup, ordered: .above)
+            popupWindow = popup
+            receiver.append([
+                "kind": "popup_ready",
+                "window_id": popup.windowNumber
+            ])
+        }
         var matrixWindows: BringToFrontMatrixWindows?
         if let mode = ProcessInfo.processInfo.environment["CUA_HARNESS_BRING_TO_FRONT_MODE"] {
             matrixWindows = BringToFrontMatrixWindows(parent: controller.window, mode: mode)
@@ -1203,5 +1230,6 @@ struct CuaAppKitHarness {
         }
         app.run()
         _ = matrixWindows
+        _ = popupWindow
     }
 }

@@ -156,7 +156,10 @@ if ($null -ne $rid) {{ Write-Output ([int]$rid) }}
 "#,
         pid = pid
     );
+    use std::os::windows::process::CommandExt as _;
+    use windows::Win32::System::Threading::CREATE_NO_WINDOW;
     let out = std::process::Command::new("powershell.exe")
+        .creation_flags(CREATE_NO_WINDOW.0)
         .args([
             "-NoProfile",
             "-NonInteractive",

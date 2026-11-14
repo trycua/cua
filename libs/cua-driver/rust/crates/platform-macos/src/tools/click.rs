@@ -1360,6 +1360,15 @@ impl ClickTool {
             // requested foreground click without a window id still degrades to
             // background, matching the existing contract and result label.
             let fg = delivery_mode.is_foreground() && window_id.is_some();
+            // The AX hit-test above presses a popup's own element when AX puts
+            // it in this window (Chrome's omnibox rows). A routed event cannot.
+            if let Some(wid) = window_id.filter(|_| !fg) {
+                if let Err(refusal) =
+                    super::refuse_point_under_own_popup(pid, wid, screen_x, screen_y).await
+                {
+                    return refusal;
+                }
+            }
             // Background delivery cannot satisfy a toolkit that reads the
             // hardware pointer; refuse before any activation or dispatch.
             let route = match super::pixel_route::resolve(pid, fg, window_id, "mouse_click").await {

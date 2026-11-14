@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.49.9](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.8...cua-driver-rs-v0.49.9) (2026-11-14)
+
+
+### Bug Fixes
+
+* **cua-driver:** use GNOME Mutter's logical frame for capture and input ([#7687](https://github.com/trycua/cua/issues/7687)) ([ba9f119](https://github.com/trycua/cua/commit/ba9f119846168fb6d8bf69906d165475e26d0a78))
+
+## [0.49.8](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.7...cua-driver-rs-v0.49.8) (2026-11-14)
+
+
+### Bug Fixes
+
+* **cua-driver:** refuse macOS background clicks under the app's own popup ([#7669](https://github.com/trycua/cua/issues/7669)) ([12fe80c](https://github.com/trycua/cua/commit/12fe80c84c9a5e76ac317f6386d48a693a1e9d54))
+
+## [0.49.7](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.6...cua-driver-rs-v0.49.7) (2026-11-13)
+
+
+### Bug Fixes
+
+* **cua-driver:** pin before AX double-click pulse ([#7659](https://github.com/trycua/cua/issues/7659)) ([d6a5c4f](https://github.com/trycua/cua/commit/d6a5c4f9efab5607c7c5632066be9054c84769d5))
+
+## [0.49.6](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.5...cua-driver-rs-v0.49.6) (2026-11-13)
+
+
+### Bug Fixes
+
+* **cua-driver:** report the macOS keyboard route as window-addressed keys are gated ([#7653](https://github.com/trycua/cua/issues/7653)) ([892bfdc](https://github.com/trycua/cua/commit/892bfdc1481de87d381a9eb0fbb178e158261133))
+
+## [0.49.5](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.4...cua-driver-rs-v0.49.5) (2026-11-13)
+
+
+### Bug Fixes
+
+* **cua-driver:** do not move Windows windows off their virtual desktop (re-land of [#5782](https://github.com/trycua/cua/issues/5782)) ([#7644](https://github.com/trycua/cua/issues/7644)) ([4665ba1](https://github.com/trycua/cua/commit/4665ba1e5549e36278ed36741eaf778ff64466cc))
+* **cua-driver:** list no tools when a policy layer fails to load ([#7647](https://github.com/trycua/cua/issues/7647)) ([33767af](https://github.com/trycua/cua/commit/33767af439575a41a2a23e30acfdf33311c4a843))
+* **cua-driver:** release the memory of every macOS screenshot ([#7549](https://github.com/trycua/cua/issues/7549)) ([1f037e4](https://github.com/trycua/cua/commit/1f037e43972dc7b1ff1935bd9f3f4eaa63532e25))
+* **cua-driver:** start the Windows daemon's PowerShell and cmd children without a console window ([#6757](https://github.com/trycua/cua/issues/6757)) ([6742beb](https://github.com/trycua/cua/commit/6742beb38fdb9aed27bf2616532d393d01610088))
+* **cua-driver:** Windows consent matcher skips other native bubbles ([#7378](https://github.com/trycua/cua/issues/7378)) ([d55e5e4](https://github.com/trycua/cua/commit/d55e5e4f91cfef741a7dd1c6f8b2f854732670d5))
+
+## [0.49.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.3...cua-driver-rs-v0.49.4) (2026-11-13)
+
+
+### Bug Fixes
+
+* **cua-driver:** let Windows ffmpeg finish shutdown and stop shimmed encoders ([#7628](https://github.com/trycua/cua/issues/7628)) ([6380b25](https://github.com/trycua/cua/commit/6380b253745b3eef976c57e6bc283943f4487086))
+
 ## [0.49.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.2...cua-driver-rs-v0.49.3) (2026-11-13)
 
 

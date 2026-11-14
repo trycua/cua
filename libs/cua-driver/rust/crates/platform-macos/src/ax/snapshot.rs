@@ -6,6 +6,7 @@ use super::tree::AXNode;
 use core_foundation::base::{CFRelease, CFRetain, CFTypeRef};
 use cua_driver_core::snapshot_store::{SnapshotPayload, SnapshotStore};
 
+#[derive(Debug)]
 pub struct RetainedElement(usize);
 
 impl RetainedElement {
@@ -42,6 +43,7 @@ impl Drop for RetainedElement {
 
 pub struct AxSnapshot {
     pub elements: Vec<usize>,
+    pub regions: Vec<RetainedElement>,
 }
 
 impl AxSnapshot {
@@ -52,6 +54,19 @@ impl AxSnapshot {
                 .filter(|node| node.element_index.is_some())
                 .map(|node| node.element_ptr)
                 .collect(),
+            regions: Vec::new(),
+        }
+    }
+
+    pub fn from_walk(walk: &super::tree::TreeWalkResult) -> Self {
+        Self {
+            elements: walk
+                .nodes
+                .iter()
+                .filter(|node| node.element_index.is_some())
+                .map(|node| node.element_ptr)
+                .collect(),
+            regions: walk.regions.iter().map(|r| r.element.clone()).collect(),
         }
     }
 }
@@ -65,6 +80,12 @@ impl SnapshotPayload for AxSnapshot {
         self.elements
             .get(index)
             .map(|ptr| unsafe { RetainedElement::retain(*ptr) })
+    }
+    fn region_len(&self) -> usize {
+        self.regions.len()
+    }
+    fn retain_region(&self, index: usize) -> Option<RetainedElement> {
+        self.regions.get(index).cloned()
     }
 }
 
@@ -104,6 +125,7 @@ mod tests {
         unsafe { CFRetain(ptr as CFTypeRef) };
         AxSnapshot {
             elements: vec![ptr],
+            regions: Vec::new(),
         }
     }
 

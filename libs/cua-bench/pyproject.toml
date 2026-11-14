@@ -1,6 +1,6 @@
 [project]
 name = "cua-bench"
-version = "0.4.4"
+version = "0.4.5"
 description = "Run computer-use benchmark datasets on sandboxes"
 readme = "README.md"
 license = "MIT"

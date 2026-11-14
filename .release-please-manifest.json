@@ -6,5 +6,5 @@
   "libs/cua": "0.27.4",
   "libs/cua-spacesd": "0.16.1",
   "apps/cua-spaces-macos": "0.36.12",
-  "libs/cua-bench": "0.4.4"
+  "libs/cua-bench": "0.4.5"
 }

@@ -9,7 +9,7 @@
 
 use crate::driver_service_http::{Request as ServiceRequest, Service};
 use cua_driver_core::mcp_wire::ProtocolSession;
-use cua_driver_core::protocol::{initialize_result, Request, Response};
+use cua_driver_core::protocol::{initialize_result_for, Request, Response};
 use cua_driver_core::server::{
     observe_proxy_session_started, observe_proxy_tool_completed, tool_observation_timer,
     StdioExecutionPath,
@@ -230,7 +230,7 @@ where
             continue;
         }
         if request.method == "initialize" {
-            let mut result = initialize_result();
+            let mut result = initialize_result_for(&sdk.tools_list());
             result["capabilities"]["experimental"][CAPABILITY] = json!({"version": 1});
             if !session_observed {
                 if let Some(metadata) = request.initialize_metadata() {

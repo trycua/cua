@@ -35,7 +35,7 @@ use serde_json::{json, Map, Value};
 use crate::{
     batch_tools::{
         locate::{self, Check, ElementSpec, Locator, WindowSpec},
-        BATCHABLE_TOOLS,
+        BATCHABLE_TOOLS, RUN_STEPS_TOOL,
     },
     protocol::{Content, ToolResult},
     recording_tools::ReplayRegistrySlot,
@@ -52,6 +52,11 @@ pub const DISABLE_ENV: &str = "CUA_DRIVER_DISABLE_RUN_SCRIPT";
 /// Legacy opt-in switch from when the tool was off by default. `0` still
 /// turns the tool off; `1` changes nothing.
 pub const LEGACY_ENV: &str = "CUA_DRIVER_EXPERIMENTAL_SCRIPT";
+/// Experimental switch: when `1`, `tools/list` offers `run_script` alone, and
+/// its description lists the signature of every tool a script can call, so
+/// every read and action the agent needs goes through one script surface.
+/// Set by whoever runs the driver; an opt-out of `run_script` wins over it.
+pub const SCRIPT_ONLY_ENV: &str = "CUA_DRIVER_SCRIPT_ONLY";
 
 pub const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 pub const MAX_TIMEOUT_MS: u64 = 120_000;
@@ -63,24 +68,134 @@ const STACK_BYTES: usize = 1024 * 1024;
 const THREAD_STACK_BYTES: usize = 16 * 1024 * 1024;
 const RETURN_TEXT_LIMIT: usize = 8_000;
 const CALL_TEXT_LIMIT: usize = 12_000;
+/// A tool's first line ends with its verification clause ("not verified —
+/// confirm with a screenshot."), so the call log keeps whole first lines.
+const SUMMARY_TEXT_LIMIT: usize = 240;
+const CALL_LINE_LIMIT: usize = 300;
 const IMAGES_KEPT: usize = 2;
 /// Extra time the engine thread gets to notice a deadline or cancel.
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(1_500);
 
-/// Driver tools a script may call, besides the batchable actions.
-const READ_TOOLS: &[&str] = &[
-    "launch_app",
-    "list_apps",
-    "list_windows",
-    "get_window_state",
-    "verify_state",
-    "zoom",
+/// Registered tools a script can never call: each runs other tools through
+/// this registry, so calling one from a script would nest. Every other tool
+/// the registry lists is callable, through the same checks as a direct call.
+pub const DENIED_TOOLS: &[&str] = &[RUN_SCRIPT_TOOL, RUN_STEPS_TOOL];
+
+/// Operations the prelude sends that are not registry tools. A registry tool
+/// with one of these names would be shadowed, so it is not callable either.
+const SCRIPT_OPS: &[&str] = &[
+    "platform", "sleep", "get_app", "find", "wait_for", "describe",
 ];
+
+/// Whether a script may call the registry tool `name`. Tools that policy
+/// hides from `tools/list` stay hidden from scripts as well.
+fn callable(name: &str) -> bool {
+    !DENIED_TOOLS.contains(&name)
+        && !SCRIPT_OPS.contains(&name)
+        && crate::policy::is_tool_listable(name)
+}
+
+/// The tools a script may call, in registration order.
+pub(crate) fn script_tools(registry: &ToolRegistry) -> Vec<(&str, &ToolDef)> {
+    let mut seen = std::collections::HashSet::new();
+    registry
+        .iter_defs()
+        .filter(|(name, _)| callable(name) && seen.insert(*name))
+        .collect()
+}
+
+/// One-line signature of a tool from its advertised input schema: required
+/// arguments first, then optional ones marked `?`. `session` is left out
+/// because a script always runs in its own call's session.
+pub(crate) fn signature(def: &ToolDef) -> String {
+    let schema = crate::tool::advertised_runtime_input_schema(&def.name, &def.input_schema);
+    let required: Vec<&str> = schema["required"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|name| *name != "session")
+        .collect();
+    let optional = schema["properties"]
+        .as_object()
+        .into_iter()
+        .flat_map(|properties| properties.keys())
+        .map(String::as_str)
+        .filter(|name| *name != "session" && !required.contains(name))
+        .map(|name| format!("{name}?"));
+    let arguments: Vec<String> = required
+        .iter()
+        .map(|name| (*name).to_owned())
+        .chain(optional)
+        .collect();
+    format!("{}({})", def.name, arguments.join(", "))
+}
+
+const DESCRIPTION_HEAD: &str =
+    "Run a JavaScript program that drives apps through Cua Driver, in ONE \
+    call: loops, conditions, reads and checks between actions, and only the result comes back.";
+
+const DESCRIPTION_SANDBOX: &str = "The script is the body of an async function: use `await`, and \
+    `return` a JSON value. It runs in a sandbox with no filesystem, network, process, timers or \
+    environment; the only API is `cua`.";
+
+const DESCRIPTION_LIMITS: &str =
+    "A failed driver call throws a CuaError (catch it to recover). Every \
+    call goes through the same session, permission and approval checks as a direct call.\n\n\
+    Limits: `timeout_ms` wall time (default 30000, max 120000), `max_calls` driver calls \
+    (default 100, max 500), 32 MiB heap. Returns the return value, console output, and a \
+    per-call log; an error names the script line, the call and the reason.";
+
+/// The description `tools/list` shows when `run_script` is the only tool:
+/// the direct tool API, with one signature per callable tool of `registry`.
+pub(crate) fn script_only_description(registry: &ToolRegistry) -> String {
+    let signatures: Vec<String> = script_tools(registry)
+        .into_iter()
+        .map(|(_, def)| signature(def))
+        .collect();
+    format!(
+        "{DESCRIPTION_HEAD} This driver offers run_script as its only tool: every read and \
+         every action is a script.\n\n\
+         {DESCRIPTION_SANDBOX}\n\
+         - `await cua.tools.<name>(args)` calls the driver tool `name` with that tool's own \
+         arguments and returns its structured result (`cua.call(name, args)` is the same).\n\
+         - `await cua.describe(name)` → that tool's full description and input schema; \
+         `await cua.describe()` → every callable tool's signature.\n\
+         - The action tools ({actions}) also take {{role, name, nth?}} (with `pid` or `app`) \
+         in place of `element_token`: the element is found fresh, waiting up to 3 s.\n\
+         - `cua.sleep(ms)`, `cua.computer.target` (\"mac\", \"windows\" or \"linux\").\n\
+         {DESCRIPTION_LIMITS}\n\n\
+         {pacing}\n\n\
+         Tools (`?` = optional):\n{signatures}\n\n\
+         Example:\n\
+         const [w] = (await cua.tools.list_windows({{app: \"Calculator\"}})).windows;\n\
+         for (const key of [\"7\", \"multiply\", \"6\", \"equals\"]) await cua.tools.click({{pid: w.pid, role: \"button\", name: key}});\n\
+         return (await cua.tools.get_window_state({{pid: w.pid, window_id: w.window_id}})).tree_markdown;",
+        actions = BATCHABLE_TOOLS.join(", "),
+        pacing = crate::protocol::SCRIPT_PACING,
+        signatures = signatures.join("\n"),
+    )
+}
 
 /// Whether the tool is offered: yes, unless the person running the driver
 /// turned it off.
 pub fn enabled() -> bool {
     disabled_by().is_none()
+}
+
+/// Whether `run_script` is the only tool offered (see [`SCRIPT_ONLY_ENV`]).
+pub fn script_only() -> bool {
+    script_only_from(std::env::var(SCRIPT_ONLY_ENV).ok().as_deref(), enabled())
+}
+
+fn script_only_from(value: Option<&str>, script_enabled: bool) -> bool {
+    script_enabled
+        && value.is_some_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
 }
 
 /// The setting that turned the tool off, if any.
@@ -134,6 +249,46 @@ fn disabled_from(
     None
 }
 
+/// The description in the default mode, where every other tool is listed
+/// beside `run_script` with its own schema: the helpers, and one rule for the
+/// rest instead of a second copy of the list.
+fn default_description() -> String {
+    format!(
+        "{DESCRIPTION_HEAD} Use it when the flow needs logic (a loop over rows, a branch on what \
+         the app shows, a retry); use run_steps for a fixed list of steps.\n\n\
+         {DESCRIPTION_SANDBOX}\n\
+         - `await cua.getApp(\"TextEdit\" | \"com.apple.TextEdit\" | {{pid, windowId}})` \u{2192} \
+         app (follows the app's frontmost window unless a windowId is given)\n\
+         - `await cua.launch(nameOrBundleId)` \u{2192} app; `cua.listApps()`, \
+         `cua.listWindows({{pid?}})`, `cua.sleep(ms)`, `cua.computer.target`\n\
+         - app.getState(opts?) \u{2192} get_window_state result (`tree_markdown` or \
+         `tree_diff`, `snapshot_id`; pass get_window_state options such as \
+         {{since:\"latest\"}})\n\
+         - app.query({{role?, name?, text?}}) \u{2192} matching elements across the app's \
+         windows {{element_token, role, label, value, enabled, selected, frame}}, then \
+         matching static-text rows {{role, label, value, text, display_only}} (read text \
+         such as a status line from their `value`)\n\
+         - app.waitFor({{role?, name?, text?, gone?, value?, timeout_ms?}}) and \
+         app.verify(predicate | predicates) (verify_state)\n\
+         - app.click(t), doubleClick(t), rightClick(t), typeText(text, t?), \
+         pressKey(\"return\" | \"cmd+s\", t?), hotkey([\"cmd\",\"s\"]), scroll(t, \
+         direction, amount?), setValue(t, value), drag([x,y], [x,y]), zoom([x1,y1,x2,y2])\n\
+         where a target `t` is {{role, name, nth?}} (found fresh, waits up to 3 s), an \
+         element_token string, a row number from this app's last getState(), or [x, y] \
+         window pixels.\n\
+         - `await cua.tools.<name>(args)` (or `cua.call(name, args)`) for any other tool this \
+         driver lists, except {denied}, with that tool's own arguments; \
+         `await cua.describe(name)` \u{2192} its description and input schema.\n\
+         {DESCRIPTION_LIMITS}\n\n\
+         Example:\n\
+         const app = await cua.getApp(\"Calculator\");\n\
+         for (const key of [\"7\", \"multiply\", \"6\", \"equals\"]) await app.click({{role: \"button\", name: key}});\n\
+         const [display] = await app.query({{role: \"statictext\"}});\n\
+         return display.value;",
+        denied = DENIED_TOOLS.join(" and "),
+    )
+}
+
 pub struct RunScriptTool {
     registry: ReplayRegistrySlot,
 }
@@ -161,47 +316,7 @@ impl Tool for RunScriptTool {
     fn def(&self) -> &ToolDef {
         DEF.get_or_init(|| ToolDef {
             name: RUN_SCRIPT_TOOL.into(),
-            description: "Run a JavaScript program that drives apps through Cua Driver, in ONE \
-                call: loops, conditions, reads and checks between actions, and only the result \
-                comes back. Use it when the flow needs logic (a loop over rows, a branch on what \
-                the app shows, a retry); use run_steps for a fixed list of steps.\n\n\
-                The script is the body of an async function: use `await`, and `return` a JSON \
-                value. It runs in a sandbox with no filesystem, network, process, timers or \
-                environment; the only API is `cua`:\n\
-                - `await cua.getApp(\"TextEdit\" | \"com.apple.TextEdit\" | {pid, windowId})` → \
-                app (follows the app's frontmost window unless a windowId is given)\n\
-                - `await cua.launch(nameOrBundleId)` → app; `cua.listApps()`, \
-                `cua.listWindows({pid?})`, `cua.sleep(ms)`, `cua.computer.target`\n\
-                - app.getState(opts?) → get_window_state result (`tree_markdown` or \
-                `tree_diff`, `snapshot_id`; pass get_window_state options such as \
-                {since:\"latest\"})\n\
-                - app.query({role?, name?, text?}) → matching elements across the app's \
-                windows {element_token, role, label, value, enabled, selected, frame}, then \
-                matching static-text rows {role, label, value, text, display_only} (read text \
-                such as a status line from their `value`)\n\
-                - app.waitFor({role?, name?, text?, gone?, value?, timeout_ms?}) and \
-                app.verify(predicate | predicates) (verify_state)\n\
-                - app.click(t), doubleClick(t), rightClick(t), typeText(text, t?), \
-                pressKey(\"return\" | \"cmd+s\", t?), hotkey([\"cmd\",\"s\"]), scroll(t, \
-                direction, amount?), setValue(t, value), drag([x,y], [x,y]), zoom([x1,y1,x2,y2])\n\
-                where a target `t` is {role, name, nth?} (found fresh, waits up to 3 s), an \
-                element_token string, a row number from this app's last getState(), or [x, y] \
-                window pixels.\n\
-                - `cua.call(tool, args)` for any other allowed tool: click, double_click, \
-                right_click, set_value, type_text, press_key, hotkey, scroll, drag, \
-                launch_app, list_apps, list_windows, get_window_state, verify_state, zoom.\n\
-                A failed driver call throws a CuaError (catch it to recover). Every call goes \
-                through the same session, permission and approval checks as a direct call.\n\n\
-                Limits: `timeout_ms` wall time (default 30000, max 120000), `max_calls` driver \
-                calls (default 100, max 500), 32 MiB heap. Returns the return value, console \
-                output, and a per-call log; an error names the script line, the call and the \
-                reason.\n\n\
-                Example:\n\
-                const app = await cua.getApp(\"Calculator\");\n\
-                for (const key of [\"7\", \"multiply\", \"6\", \"equals\"]) await app.click({role: \"button\", name: key});\n\
-                const [display] = await app.query({role: \"statictext\"});\n\
-                return display.value;"
-                .into(),
+            description: default_description(),
             input_schema: json!({
                 "type": "object",
                 "required": ["script"],
@@ -328,6 +443,8 @@ struct CallRecord {
     op: String,
     line: u32,
     ok: bool,
+    /// The tool said it could not confirm the action took effect.
+    unverified: bool,
     elapsed: Duration,
     detail: String,
 }
@@ -376,6 +493,7 @@ async fn run(registry: &ToolRegistry, request: Request) -> ToolResult {
                         op: call.op.clone(),
                         line: call.line,
                         ok: result.is_ok(),
+                        unverified: result.as_ref().is_ok_and(unverified),
                         elapsed: call_started.elapsed(),
                         detail: match &result {
                             Ok(value) => summarize(value),
@@ -465,15 +583,47 @@ impl<'a> Api<'a> {
             "get_app" => self.get_app(args).await,
             "find" => self.find(args).await,
             "wait_for" => self.wait_for(args).await,
-            tool if BATCHABLE_TOOLS.contains(&tool) => self.act(tool, args).await,
-            tool if READ_TOOLS.contains(&tool) => self.invoke(tool, args).await,
-            other => Err(HostError::new(
-                format!(
-                    "`{other}` is not available to scripts; allowed: {}, {}",
-                    BATCHABLE_TOOLS.join(", "),
-                    READ_TOOLS.join(", ")
-                ),
+            "describe" => self.describe(&args),
+            tool if DENIED_TOOLS.contains(&tool) => Err(HostError::new(
+                format!("`{tool}` runs other tools and is not available to scripts; call those tools directly"),
                 "not_allowed",
+            )),
+            tool if self.registry.get_def(tool).is_none() || !callable(tool) => {
+                Err(HostError::new(
+                    format!(
+                        "`{tool}` is not available to scripts; `cua.describe()` lists the tools that are"
+                    ),
+                    "not_allowed",
+                ))
+            }
+            tool if BATCHABLE_TOOLS.contains(&tool) => self.act(tool, args).await,
+            tool => self.invoke(tool, args).await,
+        }
+    }
+
+    /// `cua.describe(name)`: the tool's `tools/list` description and input
+    /// schema. Without a name: the signature of every callable tool.
+    fn describe(&self, args: &Map<String, Value>) -> Result<Value, HostError> {
+        let Some(name) = args.get("name").and_then(Value::as_str) else {
+            let tools: Vec<String> = script_tools(self.registry)
+                .into_iter()
+                .map(|(_, def)| signature(def))
+                .collect();
+            return Ok(json!({ "tools": tools }));
+        };
+        match self.registry.get_def(name).filter(|_| callable(name)) {
+            Some(def) => {
+                let entry = def.to_list_entry();
+                Ok(json!({
+                    "name": name,
+                    "signature": signature(def),
+                    "description": entry["description"],
+                    "input_schema": entry["inputSchema"],
+                }))
+            }
+            None => Err(HostError::new(
+                format!("no tool `{name}` is available to scripts; `cua.describe()` lists them"),
+                "not_found",
             )),
         }
     }
@@ -725,17 +875,34 @@ impl<'a> Api<'a> {
     }
 }
 
-/// Short, model-facing summary of a successful call.
+/// Whether a successful call's own result says the action is unconfirmed.
+fn unverified(value: &Value) -> bool {
+    value.get("verified").and_then(Value::as_bool) == Some(false)
+        || matches!(
+            value.get("effect").and_then(Value::as_str),
+            Some("unverifiable" | "suspected_noop")
+        )
+}
+
+/// Short, model-facing summary of a successful call. The tool's own first
+/// line stays, so its verification warnings reach the model.
 fn summarize(value: &Value) -> String {
+    let text = value
+        .get("text")
+        .and_then(Value::as_str)
+        .map(|text| clip(text.lines().next().unwrap_or(""), SUMMARY_TEXT_LIMIT));
     if let Some(target) = value
         .get("target")
         .and_then(|target| target.get("element"))
         .and_then(Value::as_str)
     {
-        return format!("on {target}");
+        return match text {
+            Some(text) if !text.is_empty() => format!("on {target}: {text}"),
+            _ => format!("on {target}"),
+        };
     }
-    if let Some(text) = value.get("text").and_then(Value::as_str) {
-        return clip(text.lines().next().unwrap_or(""), 120);
+    if let Some(text) = text {
+        return text;
     }
     match value {
         Value::Array(items) => format!("{} item(s)", items.len()),
@@ -772,16 +939,21 @@ fn render(
     let calls_json: Vec<Value> = log
         .iter()
         .map(|record| {
-            json!({
+            let mut entry = json!({
                 "call": record.number,
                 "op": record.op,
                 "line": (record.line > 0).then_some(record.line),
                 "ok": record.ok,
                 "ms": record.elapsed.as_millis() as u64,
                 "detail": record.detail,
-            })
+            });
+            if record.unverified {
+                entry["verified"] = json!(false);
+            }
+            entry
         })
         .collect();
+    let unverified_calls = log.iter().filter(|record| record.unverified).count();
     let mut lines = Vec::new();
     let mut structured = json!({
         "elapsed_ms": elapsed_ms,
@@ -848,6 +1020,11 @@ fn render(
             true
         }
     };
+    if unverified_calls > 0 {
+        lines.push(format!(
+            "{unverified_calls} call(s) unverified — look before reporting done"
+        ));
+    }
     if !outcome.console.is_empty() {
         lines.push(format!(
             "console ({} line(s){}):",
@@ -872,12 +1049,16 @@ fn render(
                     String::new()
                 },
                 record.op,
-                if record.ok { "ok" } else { "ERROR" },
+                match (record.ok, record.unverified) {
+                    (false, _) => "ERROR",
+                    (true, true) => "ok (unverified)",
+                    (true, false) => "ok",
+                },
                 record.elapsed.as_millis(),
                 if record.detail.is_empty() {
                     String::new()
                 } else {
-                    format!(": {}", clip(&record.detail, 160))
+                    format!(": {}", clip(&record.detail, CALL_LINE_LIMIT))
                 }
             ));
         }

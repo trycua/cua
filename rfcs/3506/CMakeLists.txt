@@ -1,0 +1,18 @@
+cmake_minimum_required(VERSION 3.21)
+project(cua_kwin_3506_proof LANGUAGES CXX)
+set(CMAKE_AUTOMOC ON)
+find_package(Qt6 REQUIRED COMPONENTS Core DBus Gui Widgets)
+find_package(KF6CoreAddons REQUIRED)
+find_package(KWin REQUIRED)
+include(KDEInstallDirs)
+include(KDECMakeSettings)
+set(KDE_INSTALL_PLUGINDIR "lib/qt6/plugins")
+set(KDE_INSTALL_QTPLUGINDIR "lib/qt6/plugins")
+if(NOT DEFINED PROOF_HELPER_SOURCE)
+    message(FATAL_ERROR "Apply helper-identity.patch in a scratch copy and set PROOF_HELPER_SOURCE")
+endif()
+kcoreaddons_add_plugin(cua_kwin_3506_proof
+    SOURCES "${PROOF_HELPER_SOURCE}/kwin_target_helper.cpp"
+    INSTALL_NAMESPACE "kwin/effects/plugins")
+target_compile_features(cua_kwin_3506_proof PRIVATE cxx_std_20)
+target_link_libraries(cua_kwin_3506_proof PRIVATE KWin::kwin Qt6::Core Qt6::DBus)

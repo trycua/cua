@@ -47,6 +47,7 @@ mod grant;
 mod keyed_gates;
 #[cfg(test)]
 pub(crate) mod mock_cdp;
+mod motion_policy;
 mod mutation;
 pub mod platform;
 pub mod pointer;

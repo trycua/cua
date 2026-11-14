@@ -6,7 +6,8 @@
 //! Chromium-family apps (Arc, VS Code, Electron shells) ship their web-content
 //! AX tree OFF and only build it once an assistive client asks for it. The
 //! walker flips `AXManualAccessibility` (falling back to
-//! `AXEnhancedUserInterface` only when the modern attribute is unsupported —
+//! `AXEnhancedUserInterface` only when the modern attribute is unsupported and
+//! the app is Chromium or Electron —
 //! see [`super::bindings::enable_chromium_accessibility`]) and waits for the
 //! asynchronously-built tree to appear before it is read.
 //!
@@ -53,6 +54,9 @@ enum WebContent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Wait {
     Complete,
+    /// Not Chromium or Electron: nothing was enabled and there is no web
+    /// content to wait for or flush.
+    NotNeeded,
     TimedOut {
         attempts: u32,
         attempted_at: Instant,
@@ -69,6 +73,15 @@ struct ProcessEnablement {
 enum Attempt {
     Skip,
     Run { prior_timeouts: u32 },
+}
+
+/// Chromium or Electron: a Chromium-family name or bundle id, or an app bundle
+/// that carries `Electron Framework.framework`.
+fn is_chromium_family(pid: i32) -> bool {
+    crate::browser::platform::is_chromium(
+        &crate::apps::get_app_name_for_pid(pid).unwrap_or_default(),
+        &crate::apps::bundle_id_for_pid(pid).unwrap_or_default(),
+    ) || crate::apps::bundles_electron(pid)
 }
 
 /// Kernel start time of a process: `(pbi_start_tvsec, pbi_start_tvusec)`.
@@ -109,7 +122,7 @@ fn next_attempt(
         return fresh;
     }
     match cached.wait {
-        Wait::Complete => Attempt::Skip,
+        Wait::Complete | Wait::NotNeeded => Attempt::Skip,
         Wait::TimedOut {
             attempts,
             attempted_at,
@@ -135,6 +148,7 @@ fn wait_outcome(
 ) -> Option<Wait> {
     match opt_in {
         AccessibilityOptIn::NotAccepted => None,
+        AccessibilityOptIn::NotNeeded => Some(Wait::NotNeeded),
         // Chrome builds its web tree asynchronously after either opt-in, so
         // both wait for it. Returning at once for `AXEnhancedUserInterface`
         // let the first read return browser chrome only (CUA-1766).
@@ -281,15 +295,16 @@ pub unsafe fn ensure_chromium_ax_enabled(pid: i32, app_element: AXUIElementRef) 
         Attempt::Skip => return,
         Attempt::Run { prior_timeouts } => prior_timeouts,
     };
+    let chromium_family = || is_chromium_family(pid);
     let outcome = wait_outcome(
-        enable_chromium_accessibility(app_element),
+        enable_chromium_accessibility(app_element, chromium_family),
         prior_timeouts,
         attempted_at,
         || {
             await_web_content(
                 || probe_web_content(app_element),
                 || {
-                    enable_chromium_accessibility(app_element);
+                    enable_chromium_accessibility(app_element, chromium_family);
                 },
                 pump_for,
             )
@@ -304,7 +319,11 @@ pub unsafe fn ensure_chromium_ax_enabled(pid: i32, app_element: AXUIElementRef) 
 
 /// Whether the cached opt-in belongs to the process lifetime observed now.
 fn opted_in(cached: Option<&ProcessEnablement>, observed: Option<ProcessStartStamp>) -> bool {
-    matches!((cached, observed), (Some(cached), Some(observed)) if cached.stamp == observed)
+    matches!(
+        (cached, observed),
+        (Some(cached), Some(observed))
+            if cached.stamp == observed && cached.wait != Wait::NotNeeded
+    )
 }
 
 /// Whether this process lifetime accepted the Chromium accessibility opt-in,
@@ -508,6 +527,19 @@ mod tests {
             !opted_in(None, Some(launch)),
             "a process that never accepted the opt-in (native app) gets no flush"
         );
+        let native = ProcessEnablement {
+            stamp: launch,
+            wait: Wait::NotNeeded,
+        };
+        assert!(
+            !opted_in(Some(&native), Some(launch)),
+            "a native app that needed no opt-in gets no flush"
+        );
+        assert_eq!(
+            next_attempt(Some(&native), Some(launch), now + Duration::from_secs(3600)),
+            Attempt::Skip,
+            "a native app is classified once per process lifetime"
+        );
     }
 
     #[test]
@@ -589,6 +621,14 @@ mod tests {
             );
         }
         let polls = Cell::new(0u32);
+        assert_eq!(
+            wait_outcome(AccessibilityOptIn::NotNeeded, 0, now, || {
+                polls.set(polls.get() + 1);
+                false
+            }),
+            Some(Wait::NotNeeded),
+            "a native app needs no enablement"
+        );
         assert_eq!(
             wait_outcome(AccessibilityOptIn::NotAccepted, 0, now, || {
                 polls.set(polls.get() + 1);

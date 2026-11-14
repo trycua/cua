@@ -2269,6 +2269,44 @@
    "read_only": false
   },
   {
+   "description": "Apply or clear the standard prefers-reduced-motion media emulation for one exactly-bound driver-owned browser tab.\nThis is an explicit experimental performance/accessibility policy: it does not inject CSS, freeze timers, video, canvas, or WebGL, and refuses existing user profiles in v0.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "mode": {
+      "description": "reduce emulates prefers-reduced-motion: reduce; default clears the emulated media-feature override.",
+      "enum": [
+       "reduce",
+       "default"
+      ],
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "type": "string"
+     },
+     "tab_id": {
+      "description": "Opaque tab id from get_browser_state (session-scoped).",
+      "type": "string"
+     },
+     "target_id": {
+      "description": "Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id).",
+      "type": "string"
+     }
+    },
+    "required": [
+     "target_id",
+     "tab_id",
+     "mode"
+    ],
+    "type": "object"
+   },
+   "name": "browser_motion_policy",
+   "read_only": false
+  },
+  {
    "description": "Click a page element (by ref) or viewport coordinates in an exactly-bound tab.\nDefault route is trusted hardware-like input (Input.dispatchMouseEvent), and refuses where that route cannot preserve standalone-browser background posture unless delivery_mode=\"foreground\" accepts that the browser window may activate (including Linux Chromium configurations whose trusted route cannot stay in the background; for example a browser inside a sandbox). input_route=\"dom_event\" (synthetic pointer and mouse down/up/click sequence at the element's center, ref required) is used only when explicitly requested; it proves dispatch, not control activation, because trust-gated controls may ignore synthetic events. If a click's handler opens a page-owned JavaScript dialog, on either route, the call returns at once with a dialog block (present, kind, dialog_id) to pass to browser_dialog. Refused while a page-owned dialog is open on the tab, and for heuristic bindings.",
    "destructive": false,
    "idempotent": false,

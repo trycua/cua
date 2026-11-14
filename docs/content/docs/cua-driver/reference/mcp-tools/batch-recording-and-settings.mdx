@@ -48,7 +48,8 @@ change it.
 
 ### `run_steps`
 
-The default way to act: run one or more action tools in ONE call, in order, stop at the first failure, and (with `observe`) get what changed in the same response. Use it whenever you know the next action(s) and would otherwise re-read the window after them: fill three fields, click, and see the result in one call instead of five. Even a single step plus `observe:{}` replaces an action call followed by a get_window_state call. Each step is `{tool, args}` where `tool` is one of click, double_click, right_click, set_value, type_text, press_key, hotkey, scroll, drag, move_cursor and `args` are exactly that tool's arguments. `pid` and `window_id` (or `app`/`window`) on run_steps itself are the default window of every step that names none. Reads (get_window_state, zoom) do not run between steps: one there is skipped; a get_window_state last is the `observe`, a zoom last runs after it. Steps pass the same checks as direct calls. Element tokens and element_index values come from a get_window_state read before the batch; a step that changes the UI can invalidate later element targets, so put element-targeted actions before the actions that reshuffle the window, or target later steps by role/name. A token that went stale is retried once on the element with the same role and label, if exactly one matches.
+The default way to act: run one or more action tools in ONE call, in order, stop at the first failure, and (with `observe`) get what changed in the same response.
+Use it whenever you know the next action(s) and would otherwise re-read the window after them: fill three fields, click, and see the result in one call instead of five. Even a single step plus `observe:{}` replaces an action call followed by a get_window_state call. Each step is `{tool, args}` where `tool` is one of click, double_click, right_click, set_value, type_text, press_key, hotkey, scroll, drag, move_cursor and `args` are exactly that tool's arguments. `pid` and `window_id` (or `app`/`window`) on run_steps itself are the default window of every step that names none. Reads (get_window_state, zoom) do not run between steps: one there is skipped; a get_window_state last is the `observe`, a zoom last runs after it. Steps pass the same checks as direct calls. Element tokens and element_index values come from a get_window_state read before the batch; a step that changes the UI can invalidate later element targets, so put element-targeted actions before the actions that reshuffle the window, or target later steps by role/name. A token that went stale is retried once on the element with the same role and label, if exactly one matches.
 
 Returns per-step status (`ok` or the error message) and, when `observe` is given, ONE bounded get_window_state read after the last executed step (after a failure caused by a dialog holding focus, that dialog is read, even without `observe`). A step refused because its app ignores background input says how to re-send it; `foreground_fallback:true` retries such steps in the foreground once (the window is activated). That read is a `since:"latest"` diff by default: only the rows that changed since your last read of the window, plus a new snapshot_id. Without `observe` nothing is read. `delay_ms` pauses between steps (max 2000). At most 64 steps; `delivery_mode` on run_steps is the default for its steps.
 
@@ -82,7 +83,8 @@ Effect: destructive. Platforms: macOS, Linux, Windows.
 
 ### `run_script`
 
-Run a JavaScript program that drives apps through Cua Driver, in ONE call: loops, conditions, reads and checks between actions, and only the result comes back. Use it when the flow needs logic (a loop over rows, a branch on what the app shows, a retry); use run_steps for a fixed list of steps.
+Run a JavaScript program that drives apps through Cua Driver, in ONE call: loops, conditions, reads and checks between actions, and only the result comes back.
+Use it when the flow needs logic (a loop over rows, a branch on what the app shows, a retry); use run_steps for a fixed list of steps.
 
 The script is the body of an async function: use `await`, and `return` a JSON value. It runs in a sandbox with no filesystem, network, process, timers or environment; the only API is `cua`:
 - `await cua.getApp("TextEdit" | "com.apple.TextEdit" | {pid, windowId})` → app (follows the app's frontmost window unless a windowId is given)
@@ -124,7 +126,8 @@ Record and replay trajectories.
 
 ### `start_recording`
 
-Start trajectory recording for the calling session. Each action-tool invocation (click, right_click, scroll, type_text, press_key, hotkey, set_value) from that session writes a turn folder under `output_dir`. Without `session`, every call on the same connection is recorded, including named-session calls. Other connections and session lifecycle calls (`start_session` / `end_session`) are not recorded. CLI recordings started with `cua-driver recording start` are daemon-wide.
+Start trajectory recording for the calling session.
+Each action-tool invocation (click, right_click, scroll, type_text, press_key, hotkey, set_value) from that session writes a turn folder under `output_dir`. Without `session`, every call on the same connection is recorded, including named-session calls. Other connections and session lifecycle calls (`start_session` / `end_session`) are not recorded. CLI recordings started with `cua-driver recording start` are daemon-wide.
 
 Each turn folder holds:
 
@@ -171,7 +174,8 @@ Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
 
 ### `stop_recording`
 
-Stop trajectory recording. Disables further per-turn capture and, when video was enabled, gracefully terminates the ffmpeg subprocess so the mp4's moov atom is finalized (the file is playable). Calling stop on an already-stopped session is a no-op. The response carries `last_video_path` pointing at the finalized mp4 (when video was on).
+Stop trajectory recording.
+Disables further per-turn capture and, when video was enabled, gracefully terminates the ffmpeg subprocess so the mp4's moov atom is finalized (the file is playable). Calling stop on an already-stopped session is a no-op. The response carries `last_video_path` pointing at the finalized mp4 (when video was on).
 
 A manual `stop_recording` is **unconditional**: it stops whatever recording is active regardless of which session started it. Ownership-scoped teardown (so one client disconnecting can't stop a recording a later client started) is handled by the registry's `session_end` lifecycle hook, not by this tool.
 
@@ -183,7 +187,8 @@ Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
 
 ### `get_recording_state`
 
-Report the current trajectory recorder state: whether recording is enabled, the output directory (when enabled), and the 1-based counter for the next turn folder that will be written. Counter increments on every recorded action tool call and resets to 1 each time recording is (re-)enabled.
+Report the current trajectory recorder state: whether recording is enabled, the output directory (when enabled), and the 1-based counter for the next turn folder that will be written.
+Counter increments on every recorded action tool call and resets to 1 each time recording is (re-)enabled.
 
 Pure read-only.
 
@@ -195,7 +200,8 @@ Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
 
 ### `replay_trajectory`
 
-DEPRECATED, removed in the first release after 26 Nov 2026. Instead: call the recorded steps yourself with run_steps (replay clicks blindly from old coordinates; keep start_recording for recording). Replay a recorded trajectory by re-invoking every turn's tool call in lexical order. `dir` must point at a directory previously written by `start_recording`. Each `turn-NNNNN/` is parsed for `action.json`, and the recorded tool is called with its recorded `arguments` via the same dispatch path an MCP / CLI call uses.
+DEPRECATED, removed in the first release after 26 Nov 2026. Instead: call the recorded steps yourself with run_steps (replay clicks blindly from old coordinates; keep start_recording for recording). Replay a recorded trajectory by re-invoking every turn's tool call in lexical order.
+`dir` must point at a directory previously written by `start_recording`. Each `turn-NNNNN/` is parsed for `action.json`, and the recorded tool is called with its recorded `arguments` via the same dispatch path an MCP / CLI call uses.
 
 Caveats:
 - Element-token actions (`click({pid, element_token})` etc.) will fail because element tokens are per-snapshot and don't survive across sessions. Pixel clicks (`click({pid, x, y})`) and all keyboard tools replay cleanly. Failures are reported but don't stop replay unless `stop_on_error` is true.
@@ -219,7 +225,8 @@ Effect: destructive. Platforms: macOS, Linux, Windows.
 
 ### `install_ffmpeg`
 
-DEPRECATED, removed in the first release after 26 Nov 2026. Instead: install ffmpeg with your package manager (brew install ffmpeg, winget install Gyan.FFmpeg, or apt/dnf/pacman install ffmpeg). Install the ffmpeg binary used by start_recording's video capture (Linux/Windows; macOS records natively and needs no ffmpeg). Two-step and confirmed: called without `confirm` it only REPORTS the exact install command for this platform's package manager; pass `confirm: true` to actually run it. No-op if ffmpeg is already on PATH. ffmpeg is run as a separate process, never linked into the driver.
+DEPRECATED, removed in the first release after 26 Nov 2026. Instead: install ffmpeg with your package manager (brew install ffmpeg, winget install Gyan.FFmpeg, or apt/dnf/pacman install ffmpeg). Install the ffmpeg binary used by start_recording's video capture (Linux/Windows; macOS records natively and needs no ffmpeg).
+Two-step and confirmed: called without `confirm` it only REPORTS the exact install command for this platform's package manager; pass `confirm: true` to actually run it. No-op if ffmpeg is already on PATH. ffmpeg is run as a separate process, never linked into the driver.
 
 Effect: destructive. Platforms: macOS, Linux, Windows.
 
@@ -282,7 +289,8 @@ Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
 <Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
 <Tab value="macOS">
 
-Update cua-driver-rs configuration. Changes to max_image_dimension take effect immediately.
+Update cua-driver-rs configuration.
+Changes to max_image_dimension take effect immediately.
 
 Note: capture_mode is a per-call param (on get_window_state / click), not a stored setting. Capture modality is selected by each action's target; the old capture_scope config key is retired.
 
@@ -295,7 +303,8 @@ Agent cursor extras: cursor.float (float at rest and while moving) and cursor.ha
 </Tab>
 <Tab value="Linux">
 
-Update cua-driver-rs configuration. capture_mode / max_image_dimension take effect immediately.
+Update cua-driver-rs configuration.
+capture_mode / max_image_dimension take effect immediately.
 
 Pass each setting as its own field: `{"capture_mode": "som", "max_image_dimension": 0}`.
 
@@ -314,7 +323,8 @@ Pass each setting as its own field: `{"capture_mode": "som", "max_image_dimensio
 </Tab>
 <Tab value="Windows">
 
-Write a setting into the persistent driver config. Values take effect immediately. Pass each setting as its own field.
+Write a setting into the persistent driver config.
+Values take effect immediately. Pass each setting as its own field.
 
 Known keys:
 - `capture_mode` (string: `vision` | `ax` | `som`); DEPRECATED and ignored; `get_window_state` always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect.
@@ -362,7 +372,8 @@ Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
 <Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
 <Tab value="macOS">
 
-Report TCC permission status for Accessibility and Screen Recording. By default also raises the system permission dialogs for any missing grants: Apple's request APIs are no-ops when the grant is already active, so this is safe to call repeatedly. Pass &#123;"prompt": false&#125; for a purely read-only status check.
+Report TCC permission status for Accessibility and Screen Recording.
+By default also raises the system permission dialogs for any missing grants: Apple's request APIs are no-ops when the grant is already active, so this is safe to call repeatedly. Pass &#123;"prompt": false&#125; for a purely read-only status check.
 
 Returns: `accessibility` + `screen_recording` (booleans from the TCC preflight APIs), `screen_recording_capturable` (a live ScreenCaptureKit probe when `prompt` is true; null on read-only calls), `direct_capture_status` (`ready`, `unavailable`, `timed_out`, `probe_failed`, `blocked_by_screen_recording`, or `not_checked`), `direct_capture_error` (a structured timeout/probe failure when applicable), `direct_capture_verification` (validated source, UTC time, and bundle identity from an explicit grant probe), and `source` (which TCC identity the booleans reflect: the CuaDriver daemon vs the launching terminal/IDE). macOS attributes grants to the responsible process, so a standalone call from a terminal reports the terminal's grants, not the driver's. The prompt-capable ScreenCaptureKit probe never runs when `prompt` is false. Pass `probe_direct_capture:false` with `prompt:true` to register/request only the two required TCC grants before separately explaining Tahoe's direct-capture consent. How to get them granted: `get_guide({topic:"permissions"})`.
 
@@ -376,7 +387,8 @@ Returns: `accessibility` + `screen_recording` (booleans from the TCC preflight A
 </Tab>
 <Tab value="Linux">
 
-Check required permissions for cua-driver-rs on Linux. How to get them granted: `get_guide({topic:"permissions"})`.
+Check required permissions for cua-driver-rs on Linux.
+How to get them granted: `get_guide({topic:"permissions"})`.
 
 **Linux parameters**
 
@@ -387,7 +399,8 @@ Check required permissions for cua-driver-rs on Linux. How to get them granted: 
 </Tab>
 <Tab value="Windows">
 
-Check required permissions for cua-driver-rs on Windows. How to get them granted: `get_guide({topic:"permissions"})`.
+Check required permissions for cua-driver-rs on Windows.
+How to get them granted: `get_guide({topic:"permissions"})`.
 
 **Windows parameters**
 
@@ -406,7 +419,8 @@ Check required permissions for cua-driver-rs on Windows. How to get them granted
 
 ### `health_report`
 
-Single-call end-to-end driver diagnostics. Designed to let downstream consumers ship one stable call instead of stitching together check_permissions, doctor, version, bundle attribution, and platform capability status. On macOS, prompt-capable direct capture is deliberately skipped. For standalone CuaDriver, use `cua-driver permissions grant` to verify it explicitly. For an embedded or linked driver, use the host's permission flow for the app or executable macOS attributes this process's permission request to; the standalone command does not verify the host's capture readiness. cua-driver owns the health model; consumers stay thin.
+Single-call end-to-end driver diagnostics.
+Designed to let downstream consumers ship one stable call instead of stitching together check_permissions, doctor, version, bundle attribution, and platform capability status. On macOS, prompt-capable direct capture is deliberately skipped. For standalone CuaDriver, use `cua-driver permissions grant` to verify it explicitly. For an embedded or linked driver, use the host's permission flow for the app or executable macOS attributes this process's permission request to; the standalone command does not verify the host's capture readiness. cua-driver owns the health model; consumers stay thin.
 
 Input: all optional:
   &#123;
@@ -459,7 +473,8 @@ Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
 
 ### `check_for_update`
 
-Check the saved stable/nightly Cua Driver channel for a release on GitHub. Returns current and selected channels, current and latest versions, an `update_available` boolean, the install one-liner, and the release notes URL. Read-only: never installs. Pacman-owned Linux executables return package-manager guidance without checking GitHub. Mirror of `cua-driver check-update --json`.
+Check the saved stable/nightly Cua Driver channel for a release on GitHub.
+Returns current and selected channels, current and latest versions, an `update_available` boolean, the install one-liner, and the release notes URL. Read-only: never installs. Pacman-owned Linux executables return package-manager guidance without checking GitHub. Mirror of `cua-driver check-update --json`.
 
 Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
 
@@ -469,7 +484,8 @@ Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
 
 ### `install_extension`
 
-Preview or install one Driver-managed optional extension. The first call without confirm returns the exact signed artifact, destination, license, source, and trust plan without mutation. Re-call with confirm=true to perform that exact verified installation.
+Preview or install one Driver-managed optional extension.
+The first call without confirm returns the exact signed artifact, destination, license, source, and trust plan without mutation. Re-call with confirm=true to perform that exact verified installation.
 
 Effect: destructive. Platforms: macOS, Linux, Windows.
 
@@ -487,7 +503,8 @@ Effect: destructive. Platforms: macOS, Linux, Windows.
 
 ### `get_guide`
 
-Read Cua Driver guidance on demand, taken from the guide bundled with this driver (no skill install needed). Topics: overview, drag, browser, permissions, batching, menus. Call with no topic to list them. Read-only.
+Read Cua Driver guidance on demand, taken from the guide bundled with this driver (no skill install needed).
+Topics: overview, drag, browser, permissions, batching, menus. Call with no topic to list them. Read-only.
 
 Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
 

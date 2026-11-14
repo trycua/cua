@@ -78,17 +78,28 @@ pub fn read_page(image: &[u8]) -> anyhow::Result<TextPage> {
     } else {
         1
     };
-    let mut fragments = if factor == 1 {
-        recognize_text(image, width, height)?
+    let big;
+    let (input, w, h) = if factor == 1 {
+        (image, width, height)
     } else {
-        let big = decoded.resize_exact(
+        let upsampled = decoded.resize_exact(
             width * factor,
             height * factor,
             image::imageops::FilterType::CatmullRom,
         );
-        let png = fast_png(&big.to_rgb8())?;
-        recognize_text(&png, width * factor, height * factor)?
+        big = fast_png(&upsampled.to_rgb8())?;
+        (big.as_slice(), width * factor, height * factor)
     };
+    let first = recognize_text(input, w, h)?;
+    // The current recognizer drops a glyph alone in a narrow cell at any
+    // scale; the previous revision reads it. A second pass costs about as
+    // much as the first and only fills gaps the first left.
+    let second = recognize_text_with_revision(input, w, h, Some(SECOND_PASS_REVISION))
+        .unwrap_or_else(|error| {
+            tracing::debug!("second text recognition pass failed: {error}");
+            Vec::new()
+        });
+    let mut fragments = cua_driver_core::opaque_text::merge_second_pass(first, second);
     let factor = f64::from(factor);
     for fragment in &mut fragments {
         fragment.x /= factor;
@@ -125,9 +136,27 @@ pub fn warm_up_in_background() {
         });
 }
 
+/// `VNRecognizeTextRequestRevision2`: the recognizer before the current
+/// default, which still reads lone glyphs (see [`read_page`]).
+const SECOND_PASS_REVISION: usize = 2;
+
 /// Recognize text in an encoded image (PNG or JPEG) of `width` x
 /// `height` pixels. Fragments come back in those pixels, top-left origin.
 pub fn recognize_text(image: &[u8], width: u32, height: u32) -> anyhow::Result<Vec<OcrFragment>> {
+    recognize_text_with_revision(image, width, height, None)
+}
+
+/// [`recognize_text`] with a given `VNRecognizeTextRequest` revision
+/// (`None`: the system default).
+///
+/// Vision answers repeated text requests on one image from its first result,
+/// whatever their revision, so each call builds its own request handler.
+pub fn recognize_text_with_revision(
+    image: &[u8],
+    width: u32,
+    height: u32,
+    revision: Option<usize>,
+) -> anyhow::Result<Vec<OcrFragment>> {
     if image.is_empty() || width == 0 || height == 0 {
         anyhow::bail!("no image to recognize text in");
     }
@@ -135,11 +164,16 @@ pub fn recognize_text(image: &[u8], width: u32, height: u32) -> anyhow::Result<V
         // SAFETY: every message below is sent to a live Vision object of the
         // class that declares it, with the argument types its header gives;
         // autoreleased results stay alive inside this pool.
-        unsafe { recognize(image, f64::from(width), f64::from(height)) }
+        unsafe { recognize(image, f64::from(width), f64::from(height), revision) }
     })
 }
 
-unsafe fn recognize(image: &[u8], width: f64, height: f64) -> anyhow::Result<Vec<OcrFragment>> {
+unsafe fn recognize(
+    image: &[u8],
+    width: f64,
+    height: f64,
+    revision: Option<usize>,
+) -> anyhow::Result<Vec<OcrFragment>> {
     let handler_class = vision_class("VNImageRequestHandler")?;
     let request_class = vision_class("VNRecognizeTextRequest")?;
     let data = NSData::with_bytes(image);
@@ -152,6 +186,18 @@ unsafe fn recognize(image: &[u8], width: f64, height: f64) -> anyhow::Result<Vec
     let handler = handler.ok_or_else(|| anyhow::anyhow!("VNImageRequestHandler init failed"))?;
     let request: Option<Retained<AnyObject>> = msg_send_id![request_class, new];
     let request = request.ok_or_else(|| anyhow::anyhow!("VNRecognizeTextRequest init failed"))?;
+    if let Some(revision) = revision {
+        let revisions: *mut AnyObject = msg_send![request_class, supportedRevisions];
+        let supported: Bool = if revisions.is_null() {
+            Bool::NO
+        } else {
+            msg_send![revisions, containsIndex: revision]
+        };
+        if !supported.as_bool() {
+            anyhow::bail!("text recognition revision {revision} is unavailable");
+        }
+        let _: () = msg_send![&*request, setRevision: revision];
+    }
     let _: () = msg_send![&*request, setRecognitionLevel: RECOGNITION_LEVEL_ACCURATE];
     // UI text is codes, amounts and short labels, not prose: language
     // correction rewrites them ("GNC-512" -> "GNC-5I2").
@@ -328,6 +374,7 @@ pub fn baseline(pid: i32, window_id: u32) -> Option<TextBaseline> {
 /// Group and fingerprint a page's text into rows.
 pub fn page_rows(page: TextPage) -> TextBaseline {
     let mut rows = cua_driver_core::opaque_text::group_rows(page.fragments);
+    cua_driver_core::opaque_text::mark_unread_ink(&mut rows, &page.luma, page.width, page.height);
     cua_driver_core::opaque_text::stamp_ink(&mut rows, &page.luma, page.width, page.height);
     TextBaseline {
         rows,
@@ -369,6 +416,79 @@ pub fn read_window_rows(window_id: u32, frame: RowFrame) -> anyhow::Result<TextB
     Ok(text)
 }
 
+/// The pixel rectangle `[x, y, width, height]` of `tree`'s picture region
+/// (see [`cua_driver_core::opaque_text::picture_region`]) in a screenshot of
+/// `width` x `height` pixels taken of a window at `bounds` (screen points).
+/// `None` when the walk was cut short: a missing subtree would look empty.
+pub fn picture_region_px(
+    tree: &crate::ax::tree::TreeWalkResult,
+    bounds: &crate::windows::WindowBounds,
+    width: u32,
+    height: u32,
+) -> Option<[u32; 4]> {
+    use cua_driver_core::opaque_text::{picture_region, RegionFacts};
+    if tree.truncated || tree.depth_truncated || bounds.width <= 0.0 || bounds.height <= 0.0 {
+        return None;
+    }
+    let facts = tree.nodes.iter().map(|node| RegionFacts {
+        role: &node.role,
+        has_text: first_text([
+            node.title.as_ref(),
+            node.value.as_ref(),
+            node.description.as_ref(),
+        ])
+        .is_some(),
+        frame: node.frame,
+    });
+    let region = picture_region(facts, [bounds.x, bounds.y, bounds.width, bounds.height])?;
+    let (sx, sy) = (
+        f64::from(width) / bounds.width,
+        f64::from(height) / bounds.height,
+    );
+    let x0 = ((region[0] - bounds.x) * sx)
+        .floor()
+        .clamp(0.0, f64::from(width)) as u32;
+    let y0 = ((region[1] - bounds.y) * sy)
+        .floor()
+        .clamp(0.0, f64::from(height)) as u32;
+    let x1 = ((region[0] + region[2] - bounds.x) * sx)
+        .ceil()
+        .clamp(0.0, f64::from(width)) as u32;
+    let y1 = ((region[1] + region[3] - bounds.y) * sy)
+        .ceil()
+        .clamp(0.0, f64::from(height)) as u32;
+    (x1 > x0 + 8 && y1 > y0 + 8).then_some([x0, y0, x1 - x0, y1 - y0])
+}
+
+/// Read the text rows of `region` (pixels) of an encoded screenshot, in the
+/// whole screenshot's pixels. Empty when the region is blank: a blank region
+/// costs a decode, not a recognition.
+pub fn read_region_rows(image: &[u8], region: [u32; 4]) -> anyhow::Result<Vec<OcrRow>> {
+    let decoded = image::load_from_memory(image)?;
+    let [x, y, w, h] = region;
+    let x = x.min(decoded.width());
+    let y = y.min(decoded.height());
+    let w = w.min(decoded.width() - x);
+    let h = h.min(decoded.height() - y);
+    if w == 0 || h == 0 {
+        return Ok(Vec::new());
+    }
+    let crop = decoded.crop_imm(x, y, w, h).to_rgb8();
+    let luma = image::DynamicImage::ImageRgb8(crop.clone()).to_luma8();
+    let mean =
+        (luma.as_raw().iter().map(|&l| u64::from(l)).sum::<u64>() / u64::from(w * h).max(1)) as i16;
+    if !luma
+        .as_raw()
+        .iter()
+        .any(|&l| (i16::from(l) - mean).abs() > 64)
+    {
+        return Ok(Vec::new());
+    }
+    let mut text = page_rows(read_page(&fast_png(&crop)?)?);
+    cua_driver_core::opaque_text::offset_rows(&mut text.rows, f64::from(x), f64::from(y));
+    Ok(text.rows)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -408,6 +528,53 @@ mod tests {
         assert_eq!((page.width, page.height), (40, 20));
         assert_eq!(page.luma.len(), 800);
         assert!(page.fragments.is_empty());
+    }
+
+    /// Print the rows read from the image at `OCR_PROBE_IMAGE` (manual probe).
+    #[test]
+    #[ignore = "manual probe: OCR_PROBE_IMAGE=<png> cargo test -- --ignored --nocapture"]
+    fn probe_rows_of_an_image() {
+        let path = std::env::var("OCR_PROBE_IMAGE").expect("OCR_PROBE_IMAGE");
+        let bytes = std::fs::read(path).expect("read image");
+        let started = std::time::Instant::now();
+        let _ = read_page(&bytes).expect("warm");
+        let warm = started.elapsed();
+        let started = std::time::Instant::now();
+        let text = page_rows(read_page(&bytes).expect("read"));
+        println!(
+            "warm-up {} ms, read {} ms",
+            warm.as_millis(),
+            started.elapsed().as_millis()
+        );
+        for row in &text.rows {
+            println!("{}", cua_driver_core::opaque_text::render_row(row));
+        }
+    }
+
+    #[test]
+    fn a_blank_region_is_not_recognized() {
+        let image = image::RgbImage::from_pixel(80, 60, image::Rgb([240, 240, 240]));
+        let mut png = Vec::new();
+        image
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .expect("encode");
+        assert!(read_region_rows(&png, [10, 10, 50, 40])
+            .expect("read")
+            .is_empty());
+        // A region past the edge is clipped, not an error.
+        assert!(read_region_rows(&png, [70, 50, 50, 40])
+            .expect("read")
+            .is_empty());
+    }
+
+    #[test]
+    fn the_second_pass_revision_is_available() {
+        let image = image::RgbImage::from_pixel(64, 32, image::Rgb([255, 255, 255]));
+        let png = fast_png(&image).expect("encode");
+        let fragments = recognize_text_with_revision(&png, 64, 32, Some(SECOND_PASS_REVISION))
+            .expect("revision 2 answers");
+        assert!(fragments.is_empty());
+        assert!(recognize_text_with_revision(&png, 64, 32, Some(999)).is_err());
     }
 
     #[test]

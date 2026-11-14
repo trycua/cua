@@ -614,6 +614,82 @@ impl Tool for GetWindowStateTool {
                 tree.tree_markdown = opaque_text::insert_block(&tree.tree_markdown, &block);
             }
         }
+        // An accessible window can still hold a picture the tree says nothing
+        // about (a document viewer that renders pages as images): read the
+        // text of that region alone, in the same row format.
+        if !opaque_content && !observation_only && scope_matched {
+            if let Some(tree) = tree_result.as_mut() {
+                let source = match screenshot.as_ref() {
+                    Some((image, _, w, h, _, _, bounds, _)) => {
+                        crate::ocr::picture_region_px(tree, bounds, *w, *h)
+                            .map(|region| (region, Some(image.clone())))
+                    }
+                    None if screenshot_frame_error.is_none() => {
+                        crate::windows::window_bounds_by_id(window_id).and_then(|bounds| {
+                            // The frame a capture at `max_dim` would be delivered in.
+                            let edge = bounds.width.max(bounds.height);
+                            let factor = if max_dim == 0 || edge <= f64::from(max_dim) {
+                                1.0
+                            } else {
+                                f64::from(max_dim) / edge
+                            };
+                            crate::ocr::picture_region_px(
+                                tree,
+                                &bounds,
+                                (bounds.width * factor).round() as u32,
+                                (bounds.height * factor).round() as u32,
+                            )
+                            .map(|region| (region, None))
+                        })
+                    }
+                    None => None,
+                };
+                if let Some((region, image)) = source {
+                    let task = tokio::task::spawn_blocking(move || {
+                        let (image, scale) = match image {
+                            Some(image) => (image, None),
+                            None => {
+                                let raw = crate::capture::screenshot_window_image(window_id)?;
+                                let (native_width, _) = raw.dimensions()?;
+                                let (png, width, _) = raw.encode(
+                                    max_dim,
+                                    cua_driver_core::image_utils::ScreenshotEncoding::Png,
+                                )?;
+                                (png, Some(f64::from(native_width) / f64::from(width.max(1))))
+                            }
+                        };
+                        crate::ocr::read_region_rows(&image, region).map(|rows| (rows, scale))
+                    });
+                    match tokio::time::timeout(OCR_WAIT, task).await {
+                        Ok(Ok(Ok((rows, scale)))) if !rows.is_empty() => {
+                            if scale.is_some() && screenshot_resize_scale.is_none() {
+                                screenshot_resize_scale = scale;
+                            }
+                            let block = cua_driver_core::opaque_text::render_block_with_header(
+                                &rows,
+                                query.as_deref(),
+                                cua_driver_core::opaque_text::REGION_HEADER_TEXT,
+                            );
+                            tree.tree_markdown = cua_driver_core::opaque_text::insert_block(
+                                &tree.tree_markdown,
+                                &block,
+                            );
+                            ocr_row_count = Some(rows.len());
+                        }
+                        Ok(Ok(Ok(_))) => {}
+                        Ok(Ok(Err(e))) => {
+                            tracing::debug!("picture region text for window {window_id}: {e}")
+                        }
+                        Ok(Err(e)) => {
+                            tracing::debug!("picture region text for window {window_id}: {e}")
+                        }
+                        Err(_) => tracing::debug!(
+                            "picture region text for window {window_id} is still being read"
+                        ),
+                    }
+                }
+            }
+        }
 
         // Capture screenshot dimensions before consuming.
         let screenshot_dims = screenshot.as_ref().map(|(_, _, w, h, _, _, _, _)| (*w, *h));

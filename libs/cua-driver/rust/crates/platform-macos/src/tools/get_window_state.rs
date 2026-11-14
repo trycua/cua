@@ -416,11 +416,15 @@ impl Tool for GetWindowStateTool {
         // toolkit that draws its own widgets: GTK, many Java and canvas UIs)
         // gets its on-screen text read from its screenshot and listed as tree
         // rows; see `cua_driver_core::opaque_text`.
+        // A picture-only read walks no tree; it reuses the last verdict, so
+        // an opaque window's text still comes with its picture (the text is
+        // the window's content, not its accessibility tree).
         let opaque_content = !observation_only
             && scope_matched
-            && tree_result
-                .as_ref()
-                .is_some_and(|tree| crate::ocr::window_content_is_opaque(pid, window_id, tree));
+            && match tree_result.as_ref() {
+                Some(tree) => crate::ocr::window_content_is_opaque(pid, window_id, tree),
+                None => !want_tree && crate::ocr::known_opaque(pid, window_id),
+            };
 
         let removed = (!scope_matched && !observation_only)
             .then(|| self.state.snapshots.remove(pid, u64::from(window_id)))
@@ -580,30 +584,34 @@ impl Tool for GetWindowStateTool {
         };
         let mut ocr_row_count = None;
         let mut ocr_status: Option<String> = None;
-        if let Some(tree) = tree_result.as_mut() {
+        // The text block: inside the tree, or on its own for a picture-only read.
+        let mut ocr_block: Option<String> = None;
+        {
             use cua_driver_core::opaque_text;
             match ocr_page {
                 Some(OcrRead::Page(page)) => {
-                    let mut rows = opaque_text::group_rows(page.fragments);
-                    opaque_text::stamp_ink(&mut rows, &page.luma, page.width, page.height);
-                    let block = opaque_text::render_block(&rows, query.as_deref());
-                    tree.tree_markdown = opaque_text::insert_block(&tree.tree_markdown, &block);
-                    ocr_row_count = Some(rows.len());
+                    let text = crate::ocr::page_rows(page);
+                    ocr_block = Some(opaque_text::render_block(&text.rows, query.as_deref()));
+                    ocr_row_count = Some(text.rows.len());
+                    // The next action on this window reports its changes
+                    // against these rows, in this read's pixel frame.
+                    if !observation_only {
+                        crate::ocr::remember_rows(pid, window_id, text);
+                    }
                 }
                 Some(OcrRead::Starting) => {
                     ocr_status = Some("starting".to_owned());
-                    tree.tree_markdown =
-                        opaque_text::insert_block(&tree.tree_markdown, opaque_text::PENDING_BLOCK);
+                    ocr_block = Some(opaque_text::PENDING_BLOCK.to_owned());
                 }
                 Some(OcrRead::Failed(reason)) => {
                     tracing::warn!("text recognition for window {window_id} failed: {reason}");
-                    tree.tree_markdown = opaque_text::insert_block(
-                        &tree.tree_markdown,
-                        &opaque_text::failed_block(&reason),
-                    );
+                    ocr_block = Some(opaque_text::failed_block(&reason));
                     ocr_status = Some(format!("failed: {reason}"));
                 }
                 None => {}
+            }
+            if let (Some(tree), Some(block)) = (tree_result.as_mut(), ocr_block.take()) {
+                tree.tree_markdown = opaque_text::insert_block(&tree.tree_markdown, &block);
             }
         }
 
@@ -640,7 +648,13 @@ impl Tool for GetWindowStateTool {
                     w, h, r.tree_markdown
                 )
             } else {
-                format!("window_id={window_id} pid={pid} size={}x{}", w, h)
+                match ocr_block.as_deref().filter(|block| !block.is_empty()) {
+                    Some(block) => format!(
+                        "window_id={window_id} pid={pid} size={}x{}\n\n{}",
+                        w, h, block
+                    ),
+                    None => format!("window_id={window_id} pid={pid} size={}x{}", w, h),
+                }
             };
             content.push(Content::text(summary));
         } else if let Some(ref r) = tree_result {

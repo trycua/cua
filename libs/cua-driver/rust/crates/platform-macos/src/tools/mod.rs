@@ -3,6 +3,7 @@
 
 //! MCP tool implementations for macOS.
 
+mod action_evidence;
 mod bring_to_front;
 mod capture_binding;
 mod click;
@@ -1212,33 +1213,48 @@ pub fn register_all(
         &pid_window_candidates,
     ));
     registry.register(Box::new(set_window_frame::SetWindowFrameTool));
-    registry.register(Box::new(invoke_menu::InvokeMenuTool));
+    registry.register(Box::new(action_evidence::ActionEvidence::new(
+        invoke_menu::InvokeMenuTool,
+        state.clone(),
+    )));
     registry.register(pid_window_guarded(
-        click::ClickTool::new(state.clone()),
+        action_evidence::ActionEvidence::new(click::ClickTool::new(state.clone()), state.clone()),
         &pid_window_candidates,
     ));
     registry.register(pid_window_guarded(
-        double_click::DoubleClickTool::new(state.clone()),
+        action_evidence::ActionEvidence::new(
+            double_click::DoubleClickTool::new(state.clone()),
+            state.clone(),
+        ),
         &pid_window_candidates,
     ));
     registry.register(pid_window_guarded(
-        right_click::RightClickTool::new(state.clone()),
+        action_evidence::ActionEvidence::new(
+            right_click::RightClickTool::new(state.clone()),
+            state.clone(),
+        ),
         &pid_window_candidates,
     ));
     registry.register(pid_window_guarded(
-        drag::DragTool::new(state.clone()),
+        action_evidence::ActionEvidence::new(drag::DragTool::new(state.clone()), state.clone()),
         &pid_window_candidates,
     ));
     registry.register(pid_keyboard_guarded(
-        type_text::TypeTextTool::new(state.clone()),
+        action_evidence::ActionEvidence::new(
+            type_text::TypeTextTool::new(state.clone()),
+            state.clone(),
+        ),
         &pid_window_candidates,
     ));
     registry.register(pid_keyboard_guarded(
-        press_key::PressKeyTool::new(state.clone()),
+        action_evidence::ActionEvidence::new(
+            press_key::PressKeyTool::new(state.clone()),
+            state.clone(),
+        ),
         &pid_window_candidates,
     ));
     registry.register(pid_keyboard_guarded(
-        hotkey::HotkeyTool::new(state.clone()),
+        action_evidence::ActionEvidence::new(hotkey::HotkeyTool::new(state.clone()), state.clone()),
         &pid_window_candidates,
     ));
     registry.register(pid_window_guarded(
@@ -1246,7 +1262,7 @@ pub fn register_all(
         &pid_window_candidates,
     ));
     registry.register(pid_window_guarded(
-        scroll::ScrollTool::new(state.clone()),
+        action_evidence::ActionEvidence::new(scroll::ScrollTool::new(state.clone()), state.clone()),
         &pid_window_candidates,
     ));
     cua_driver_core::clipboard::register_clipboard_tools(

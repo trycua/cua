@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::ffi::CStr;
 use std::sync::Mutex;
 
-use cua_driver_core::opaque_text::{content_is_opaque, NodeFacts, OcrFragment};
+use cua_driver_core::opaque_text::{content_is_opaque, NodeFacts, OcrFragment, OcrRow};
 use objc2::rc::{autoreleasepool, Allocated, Retained};
 use objc2::runtime::{AnyClass, AnyObject, Bool};
 use objc2::{msg_send, msg_send_id};
@@ -265,6 +265,108 @@ pub fn window_content_is_opaque(
         }
         None => verdicts.get(&(pid, window_id)).copied().unwrap_or(false),
     }
+}
+
+/// Whether the last complete read of `window_id` found its content missing
+/// from the accessibility tree (or the window was opened by an action on such
+/// a window and has not been read yet).
+pub fn known_opaque(pid: i32, window_id: u32) -> bool {
+    verdicts()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&(pid, window_id))
+        .copied()
+        .unwrap_or(false)
+}
+
+/// Treat a window an opaque window's action opened (a dialog of the same
+/// toolkit) as opaque until a read of its own decides.
+pub fn assume_opaque(pid: i32, window_id: u32) {
+    verdicts()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .entry((pid, window_id))
+        .or_insert(true);
+}
+
+/// A window's text rows as last read, and the pixel frame they are in.
+#[derive(Clone, Debug)]
+pub struct TextBaseline {
+    pub rows: Vec<OcrRow>,
+    pub width: u32,
+    pub height: u32,
+    /// Native capture width / `width`: the screenshot scale of this frame
+    /// (1.0 when the rows were not read off a fresh capture).
+    pub capture_scale: f64,
+}
+
+fn baselines() -> &'static Mutex<HashMap<(i32, u32), TextBaseline>> {
+    static BASELINES: std::sync::OnceLock<Mutex<HashMap<(i32, u32), TextBaseline>>> =
+        std::sync::OnceLock::new();
+    BASELINES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Remember `rows` as the latest text of `window_id`, read in a
+/// `width` x `height` frame; the next action on the window diffs against it.
+pub fn remember_rows(pid: i32, window_id: u32, baseline: TextBaseline) {
+    let mut map = baselines().lock().unwrap_or_else(|e| e.into_inner());
+    if map.len() > 64 {
+        map.clear();
+    }
+    map.insert((pid, window_id), baseline);
+}
+
+/// The latest remembered text of `window_id`.
+pub fn baseline(pid: i32, window_id: u32) -> Option<TextBaseline> {
+    baselines()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&(pid, window_id))
+        .cloned()
+}
+
+/// Group and fingerprint a page's text into rows.
+pub fn page_rows(page: TextPage) -> TextBaseline {
+    let mut rows = cua_driver_core::opaque_text::group_rows(page.fragments);
+    cua_driver_core::opaque_text::stamp_ink(&mut rows, &page.luma, page.width, page.height);
+    TextBaseline {
+        rows,
+        width: page.width,
+        height: page.height,
+        capture_scale: 1.0,
+    }
+}
+
+/// The pixel frame a window's text is read in.
+#[derive(Clone, Copy, Debug)]
+pub enum RowFrame {
+    /// The longer edge is this many pixels (an earlier read's frame).
+    MaxEdge(u32),
+    /// The native capture divided by this factor (the frame of the window's
+    /// latest screenshot, which pixel actions use).
+    Downscale(f64),
+}
+
+/// Capture `window_id` now and read its text rows in `frame`.
+pub fn read_window_rows(window_id: u32, frame: RowFrame) -> anyhow::Result<TextBaseline> {
+    let raw = crate::capture::screenshot_window_image(window_id)?;
+    let (native_width, native_height) = raw.dimensions()?;
+    let max_edge = match frame {
+        RowFrame::MaxEdge(edge) => edge,
+        RowFrame::Downscale(factor) => (f64::from(native_width.max(native_height))
+            / factor.max(1e-3))
+        .round()
+        .max(1.0) as u32,
+    };
+    let (png, _, _) = raw.encode(
+        max_edge,
+        cua_driver_core::image_utils::ScreenshotEncoding::Png,
+    )?;
+    let mut text = page_rows(read_page(&png)?);
+    if text.width > 0 {
+        text.capture_scale = f64::from(native_width) / f64::from(text.width);
+    }
+    Ok(text)
 }
 
 #[cfg(test)]

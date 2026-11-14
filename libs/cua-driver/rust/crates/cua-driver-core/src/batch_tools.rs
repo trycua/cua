@@ -1061,6 +1061,9 @@ async fn run_step(
         if !message.is_empty() {
             notes.insert(0, message);
         }
+        if let Some(seen) = visible_effect(&result) {
+            notes.push(seen);
+        }
     }
 
     let fallback = last_window
@@ -1974,6 +1977,44 @@ fn validate_against_schema(
             format!("invalid arguments at {path}: {error}")
         }
     })
+}
+
+/// Longest visible-effect note kept for one step.
+const EFFECT_NOTE_LIMIT: usize = 1200;
+
+/// What a step's action visibly did, from its result: the `window_change`
+/// evidence (rows that changed, windows that opened) or a `suspected_noop`.
+/// The step line keeps only the first line of the action's text, so this is
+/// carried separately.
+fn visible_effect(result: &ToolResult) -> Option<String> {
+    let structured = result.structured_content.as_ref()?;
+    let details: Vec<&str> = structured
+        .get("evidence")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|item| item.get("kind").and_then(Value::as_str) == Some("window_change"))
+        .filter_map(|item| item.get("detail").and_then(Value::as_str))
+        .filter(|detail| !detail.trim().is_empty())
+        .collect();
+    let note = if details.is_empty() {
+        if structured.get("effect").and_then(Value::as_str) != Some("suspected_noop") {
+            return None;
+        }
+        "no visible change (suspected_noop)".to_owned()
+    } else {
+        details
+            .join(" / ")
+            .lines()
+            .map(str::trim)
+            .collect::<Vec<_>>()
+            .join(" / ")
+    };
+    let mut bounded: String = note.chars().take(EFFECT_NOTE_LIMIT).collect();
+    if note.chars().count() > EFFECT_NOTE_LIMIT {
+        bounded.push_str("...");
+    }
+    Some(bounded)
 }
 
 fn bounded_message(result: &ToolResult) -> String {

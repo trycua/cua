@@ -52,9 +52,9 @@ pub const ROW_ROLE: &str = "OCRRow";
 
 /// Header row text. One line, so it never shows up in a diff read.
 pub const HEADER_TEXT: &str = "window content is not in the accessibility tree; rows below are \
-text read from this window's screenshot. Act by pixel x,y (screenshot pixels) from a row; \
-re-read with since=latest to see which rows changed (a row's ink= changes with its pixels, \
-also where no text was read)";
+text read from this window's screenshot (text + @(x,y)). Act by those pixels; each action's result \
+lists the rows that changed and any new window, so no screenshot is needed to check it \
+(a row's ink= changes with its pixels, also where no text was read)";
 
 /// Block shown while the recognizer is still loading (first use after boot).
 pub const PENDING_BLOCK: &str =
@@ -197,23 +197,10 @@ fn clean(text: &str) -> String {
 
 /// One row as a tree line (without indentation).
 pub fn render_row(row: &OcrRow) -> String {
-    let cells: Vec<String> = row
-        .fragments
-        .iter()
-        .map(|f| {
-            let (cx, cy) = f.center();
-            format!(
-                "{} @({},{})",
-                clean(&f.text),
-                cx.round() as i64,
-                cy.round() as i64
-            )
-        })
-        .collect();
     let mut line = format!(
         "- {ROW_ROLE} \"y={}\" = \"{}\"",
         row.y.round() as i64,
-        cells.join(" | ")
+        row_cells(row)
     );
     if let Some(ink) = row.ink {
         line.push_str(&format!(" ink={ink:04x}"));
@@ -354,6 +341,140 @@ pub fn insert_block(markdown: &str, block: &str) -> String {
     out
 }
 
+/// At most this many changed rows are listed in an action's result.
+pub const MAX_CHANGES: usize = 8;
+
+/// Rows whose `y` labels are this close are the same row across two reads.
+const SAME_ROW_SLACK: i64 = 3;
+
+/// A row that differs between two reads of the same window.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RowChange {
+    /// The row's `y` label (the later read's, or the earlier one's when the
+    /// row is gone).
+    pub y: i64,
+    /// The row's text before; `None` when the row is new.
+    pub before: Option<String>,
+    /// The row as rendered cells (`text @(x,y) | ...`) after; `None` when
+    /// the row is gone.
+    pub after: Option<String>,
+    /// Same recognized text, different pixels (a glyph the recognizer
+    /// missed, a toggled mark, a highlight).
+    pub ink_only: bool,
+}
+
+/// A row's recognized text, cells joined with ` | `.
+pub fn row_text(row: &OcrRow) -> String {
+    row.fragments
+        .iter()
+        .map(|f| clean(&f.text))
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+/// A row's cells with their pixel centres, as [`render_row`] shows them.
+pub fn row_cells(row: &OcrRow) -> String {
+    row.fragments
+        .iter()
+        .map(|f| {
+            let (cx, cy) = f.center();
+            format!(
+                "{} @({},{})",
+                clean(&f.text),
+                cx.round() as i64,
+                cy.round() as i64
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+/// The rows that differ between two reads of one window taken in the same
+/// pixel frame, top to bottom. Rows pair by their `y` label (within a few
+/// pixels), the way a `since` read pairs them; a pair differs when its text
+/// or its ink fingerprint does.
+pub fn diff_rows(before: &[OcrRow], after: &[OcrRow]) -> Vec<RowChange> {
+    let y = |row: &OcrRow| row.y.round() as i64;
+    let mut used = vec![false; before.len()];
+    let mut changes = Vec::new();
+    for row in after {
+        let ry = y(row);
+        let pair = before
+            .iter()
+            .enumerate()
+            .filter(|(i, old)| !used[*i] && (y(old) - ry).abs() <= SAME_ROW_SLACK)
+            .min_by_key(|(_, old)| (y(old) - ry).abs())
+            .map(|(i, _)| i);
+        match pair {
+            Some(i) => {
+                used[i] = true;
+                let old = &before[i];
+                let (old_text, new_text) = (row_text(old), row_text(row));
+                let ink_changed = old.ink.is_some() && row.ink.is_some() && old.ink != row.ink;
+                if old_text != new_text || ink_changed {
+                    changes.push(RowChange {
+                        y: ry,
+                        before: Some(old_text.clone()),
+                        after: Some(row_cells(row)),
+                        ink_only: old_text == new_text,
+                    });
+                }
+            }
+            None => changes.push(RowChange {
+                y: ry,
+                before: None,
+                after: Some(row_cells(row)),
+                ink_only: false,
+            }),
+        }
+    }
+    for (old, _) in before.iter().zip(&used).filter(|(_, used)| !**used) {
+        changes.push(RowChange {
+            y: y(old),
+            before: Some(row_text(old)),
+            after: None,
+            ink_only: false,
+        });
+    }
+    changes.sort_by_key(|change| change.y);
+    changes
+}
+
+/// One changed row as a short line: `y=165: "a | n" -> "a @(10,165) | c @(80,165)"`.
+pub fn render_change(change: &RowChange) -> String {
+    let quote = |text: &Option<String>| match text {
+        Some(text) => format!("\"{text}\""),
+        None => "(none)".to_owned(),
+    };
+    let mut line = format!(
+        "y={}: {} -> {}",
+        change.y,
+        quote(&change.before),
+        quote(&change.after)
+    );
+    if change.ink_only {
+        line.push_str(" (same text, pixels changed)");
+    }
+    line
+}
+
+/// The changed rows of an action's result, at most [`MAX_CHANGES`], one per
+/// line, with a note when more changed.
+pub fn render_changes(changes: &[RowChange]) -> String {
+    let mut out: Vec<String> = changes
+        .iter()
+        .take(MAX_CHANGES)
+        .map(render_change)
+        .collect();
+    if changes.len() > MAX_CHANGES {
+        out.push(format!(
+            "{} more rows changed; get_window_state since=latest lists them all",
+            changes.len() - MAX_CHANGES
+        ));
+    }
+    out.join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -367,6 +488,84 @@ mod tests {
             height: 14.0,
             confidence: 0.9,
         }
+    }
+
+    fn row(y: f64, cells: &[&str], ink: u16) -> OcrRow {
+        OcrRow {
+            y,
+            fragments: cells
+                .iter()
+                .enumerate()
+                .map(|(i, text)| frag(text, 20.0 + 100.0 * i as f64, y - 7.0))
+                .collect(),
+            ink: Some(ink),
+        }
+    }
+
+    #[test]
+    fn identical_reads_have_no_changes() {
+        let rows = [
+            row(100.0, &["Old Canal", "n", "73.10"], 1),
+            row(130.0, &["Total"], 2),
+        ];
+        assert!(diff_rows(&rows, &rows).is_empty());
+    }
+
+    #[test]
+    fn a_changed_cell_is_one_change_with_the_new_pixels() {
+        let before = [
+            row(100.0, &["Old Canal", "n"], 1),
+            row(130.0, &["Total"], 2),
+        ];
+        let after = [
+            row(101.0, &["Old Canal", "c"], 3),
+            row(130.0, &["Total"], 2),
+        ];
+        let changes = diff_rows(&before, &after);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].y, 101);
+        assert_eq!(changes[0].before.as_deref(), Some("Old Canal | n"));
+        assert_eq!(
+            changes[0].after.as_deref(),
+            Some("Old Canal @(40,101) | c @(140,101)")
+        );
+        assert!(!changes[0].ink_only);
+        assert_eq!(
+            render_changes(&changes),
+            "y=101: \"Old Canal | n\" -> \"Old Canal @(40,101) | c @(140,101)\""
+        );
+    }
+
+    #[test]
+    fn a_pixel_only_change_is_flagged() {
+        let before = [row(100.0, &["Old Canal"], 1)];
+        let after = [row(100.0, &["Old Canal"], 9)];
+        let changes = diff_rows(&before, &after);
+        assert_eq!(changes.len(), 1);
+        assert!(changes[0].ink_only);
+        assert!(render_change(&changes[0]).ends_with("(same text, pixels changed)"));
+    }
+
+    #[test]
+    fn added_and_removed_rows_are_listed_in_order() {
+        let before = [row(100.0, &["A"], 1), row(200.0, &["B"], 2)];
+        let after = [row(100.0, &["A"], 1), row(150.0, &["New"], 3)];
+        let changes = diff_rows(&before, &after);
+        assert_eq!(changes.len(), 2);
+        assert_eq!((changes[0].y, changes[0].before.as_deref()), (150, None));
+        assert_eq!((changes[1].y, changes[1].after.as_deref()), (200, None));
+        assert_eq!(render_change(&changes[1]), "y=200: \"B\" -> (none)");
+    }
+
+    #[test]
+    fn long_change_lists_are_capped() {
+        let before: Vec<OcrRow> = (0..20).map(|i| row(30.0 * i as f64, &["x"], 1)).collect();
+        let after: Vec<OcrRow> = (0..20).map(|i| row(30.0 * i as f64, &["y"], 1)).collect();
+        let text = render_changes(&diff_rows(&before, &after));
+        assert_eq!(text.lines().count(), MAX_CHANGES + 1);
+        assert!(
+            text.ends_with("12 more rows changed; get_window_state since=latest lists them all")
+        );
     }
 
     fn facts(

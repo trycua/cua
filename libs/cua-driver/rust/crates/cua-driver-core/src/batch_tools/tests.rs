@@ -896,3 +896,22 @@ async fn args_mixed_with_a_stray_field_is_still_refused() {
     );
     assert_eq!(harness.hits("press_key"), 0);
 }
+
+#[test]
+fn a_step_carries_the_rows_its_action_changed() {
+    let result = ToolResult::text("Clicked at (10,20).").with_structured(json!({
+        "effect": "confirmed",
+        "evidence": [{"kind": "window_change", "detail": "Window 5 rows that changed (1):\ny=165: \"n\" -> \"c @(80,165)\""}]
+    }));
+    assert_eq!(
+        super::visible_effect(&result).as_deref(),
+        Some("Window 5 rows that changed (1): / y=165: \"n\" -> \"c @(80,165)\"")
+    );
+    let noop = ToolResult::text("Pressed y.").with_structured(json!({"effect": "suspected_noop"}));
+    assert_eq!(
+        super::visible_effect(&noop).as_deref(),
+        Some("no visible change (suspected_noop)")
+    );
+    let plain = ToolResult::text("Clicked.").with_structured(json!({"effect": "unverifiable"}));
+    assert_eq!(super::visible_effect(&plain), None);
+}

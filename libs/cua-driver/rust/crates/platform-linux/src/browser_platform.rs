@@ -346,6 +346,7 @@ fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
         BrowserProduct::GoogleChrome => ".config/google-chrome",
         BrowserProduct::MicrosoftEdge => ".config/microsoft-edge",
         BrowserProduct::Chromium => ".config/chromium",
+        BrowserProduct::Brave => ".config/BraveSoftware/Brave-Browser",
         _ => return None,
     };
     Some(home.join(relative))
@@ -1291,6 +1292,15 @@ impl BrowserPlatform for LinuxBrowserPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn brave_default_user_data_dir_is_its_brave_software_profile_root() {
+        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap();
+        assert_eq!(
+            default_user_data_dir(browser_product("/opt/brave.com/brave/brave")),
+            Some(home.join(".config/BraveSoftware/Brave-Browser"))
+        );
+    }
 
     #[test]
     fn x11_identity_and_cardinality_precede_compositor_selection() {

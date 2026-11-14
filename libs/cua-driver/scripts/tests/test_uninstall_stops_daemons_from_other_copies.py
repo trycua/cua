@@ -344,6 +344,30 @@ def test_installer_swap_step_never_touches_other_apps_and_skips_pkill_on_macos(m
     )
 
 
+def test_installer_stop_unloads_every_known_launchagent(machine: Machine) -> None:
+    """A KeepAlive agent left loaded respawns `serve` inside the swap window."""
+    agents = machine.home / "Library/LaunchAgents"
+    agents.mkdir(parents=True)
+    for name in (
+        "com.trycua.cua-driver.plist",
+        "com.trycua.cua-driver-rs.plist",
+    ):
+        (agents / name).write_text("<plist/>", encoding="utf-8")
+    machine._write(machine.bin / "uname", "echo Darwin")
+    machine._write(
+        machine.bin / "launchctl",
+        f'echo "$@" >> "{machine.root}/launchctl.log"',
+    )
+
+    result = machine.common_shell("stop_cua_driver_daemons")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = (machine.root / "launchctl.log").read_text()
+    for label in ("com.trycua.cua-driver", "com.trycua.cua-driver-rs"):
+        assert f"unload {agents}/{label}.plist" in calls
+        assert f"remove {label}" in calls
+
+
 def test_installer_survivor_note_names_the_pid(machine: Machine) -> None:
     old = machine.bundle("tmp/CuaDriver.app")
     stray = machine.spawn(old)

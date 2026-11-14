@@ -470,21 +470,16 @@ async fn invoke_daemon_tool(
         if !is_session_lifecycle_tool(&tool_name)
             && sdk.is_session_ended(sid, req.session_id.as_deref())
         {
-            observe_daemon_error(observation, 1);
             // An unnamed call's lifecycle id is the transport session, which
             // is not a label the caller can pass back to start_session.
-            let recovery = if req.session_id.as_deref() == Some(sid.as_str()) {
-                "Call start_session without a session label to start a new unnamed session."
-                    .to_owned()
-            } else {
-                format!(
-                    "Call start_session with session '{sid}' to start it again, or use a new session label."
-                )
-            };
-            return DaemonResponse::err(
-                format!("session has ended; tool call '{tool_name}' was rejected. {recovery}"),
-                1,
-            );
+            let public_label = (req.session_id.as_deref() != Some(sid.as_str())).then_some(sid);
+            // The same tool result the in-process runtime returns, so every
+            // socket client can branch on the `session_ended` code.
+            let refusal = serde_json::to_value(cua_driver_core::tool::session_ended_refusal(
+                public_label.map(String::as_str),
+            ))
+            .expect("tool result is serializable");
+            return DaemonResponse::ok(observe_daemon_result(observation, None, refusal));
         }
     }
 

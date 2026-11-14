@@ -122,6 +122,7 @@ pub async fn tree_paths(spaces: &crate::Spaces, _space: &str) -> Paths {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn no_mesh_says_the_tree_stays_here() {
         let dir = tempfile::tempdir().unwrap();
@@ -130,5 +131,19 @@ mod tests {
         assert!(p.machines.is_empty());
         assert_eq!(p.prefer, "auto");
         assert!(p.note.unwrap().contains("No mesh"), "plain words");
+    }
+
+    #[cfg(not(unix))]
+    #[tokio::test]
+    async fn path_details_are_unavailable_off_unix() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = machine_paths(dir.path()).await;
+        assert!(!p.mesh);
+        assert!(p.machines.is_empty());
+        assert_eq!(p.prefer, "auto");
+        assert_eq!(
+            p.note.as_deref(),
+            Some("Path details aren't available on this system yet")
+        );
     }
 }

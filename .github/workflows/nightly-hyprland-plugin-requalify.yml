@@ -47,6 +47,16 @@ on:
         description: "Commit the manifest to the hyprland-plugin-compat branch"
         type: boolean
         default: true
+  # Called by omarchy-edge-watch.yml. A called workflow sees the caller's event,
+  # so a scheduled or dispatched caller on main also commits the manifest.
+  workflow_call:
+    inputs:
+      force:
+        type: boolean
+        default: false
+      publish_manifest:
+        type: boolean
+        default: true
   pull_request:
     paths:
       - "libs/cua-driver/hyprland-plugin/requalify/**"

@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "plugin_pin": {
+    "hyprland": "0.56.2-4"
+  },
+  "last_qualified": {
+    "hyprland": "0.56.2-4",
+    "omarchy_dev": "4.0.0.r7437.g7f4b1dd-1",
+    "omarchy_settings_dev": "4.0.0.r7437.g7f4b1dd-1",
+    "omarchy_plugin": "0.33.2-4",
+    "qualified_at": "2026-10-30",
+    "run_url": ""
+  },
+  "stopgaps": [
+    {
+      "id": "trycua/cua#6328",
+      "pr": 6328,
+      "paths": ["libs/images/omarchy/Dockerfile"],
+      "note": "Drops misc.bell_sound at image build while the installed Hyprland is older than 0.57."
+    }
+  ]
+}

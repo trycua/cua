@@ -330,3 +330,31 @@ DPMS-off refusal, and one-shot and long-lived graphical-session client rows;
 see `tests/README.md` for the required evidence. Those broader application rows
 are separate from the per-target background admission, plain US keymap, and
 two seats documented in the input v3 contract.
+
+## Omarchy edge watch
+
+Four small workflows keep the plugin, Omarchy edge and the Omarchy image in
+step. They reuse the requalification workflow, the Omarchy image build with its
+doctor gates, and the plugin release kit; they add no new build logic. Tracked
+in Linear as CUA-3108.
+
+`omarchy-qualified.json` is the state: the Hyprland build the plugin is pinned
+to, the last qualified Hyprland, omarchy-dev, omarchy-settings-dev and
+Omarchy-packaged plugin versions, and any recorded stopgaps.
+
+| Workflow | What it does |
+| --- | --- |
+| `Omarchy: edge watch` (daily, or dispatch) | `edge-watch/edge_watch.py check` compares the edge channel with the file. On a change it runs `lint` (keys in Omarchy's Hyprland Lua config that the Hyprland we would pin does not know, such as `misc.bell_sound` for 0.56.x), the requalification workflow, and the image build with its doctor lanes and Hyprland e2e (gate only, nothing is published). Green: a PR bumps the pin and the file, with auto-merge queued. Red: one issue (`Omarchy edge watch failing`) with the failing step, log excerpt and the doctor screenshot artifact link; the failed run also reaches Alertmanager through `workflow-failure-alerts.yml`. |
+| `Release: Omarchy plugin` | After Release Please runs for a main commit that moved `plugin_pin`, builds the kit with `packaging/release/bundle.py` and queues auto-merge on the Driver release PR. The tag then builds and publishes the plugin assets through the Driver release. The pin PR is a `fix(cua-driver)` commit, so Release Please opens that PR. |
+| `Omarchy: update request` | On a Driver release with plugin assets, writes the Omarchy issue text (plugin version, Hyprland it is built for, release link, changes, Spencer Bull) to the job summary. The `post` job runs in the `omarchy-outreach` environment and posts nothing until the required reviewer approves. |
+| Post-update recheck | Inside the edge watch: when Omarchy's packaged plugin reaches our latest release, the same lanes run, and a green run also drops the stopgaps in `omarchy-qualified.json` and closes their open PRs. |
+
+Limits: a green PR records the qualification and moves the pin file. It does
+not regenerate the measured ABI profile or the kit's Hyprland dependency, which
+stay the reviewed `profile_measure.py` flow.
+
+Settings (Francesco): environment `omarchy-outreach` with required reviewer
+`f-trycua`; secret `OMARCHY_ISSUE_TOKEN` (can open issues in the target
+repository); optional variable `OMARCHY_ISSUE_REPO` (default `basecamp/omarchy`).
+The App secrets `RELEASE_APP_ID` and `RELEASE_APP_PRIVATE_KEY` are already used
+by Release Please.

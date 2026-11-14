@@ -1595,7 +1595,10 @@ mod tests {
             &serde_json::json!({"target_id": "t", "tab_id": "tab", "mode": "reduce"}),
         );
         assert_eq!(
-            adapters.iter().map(|adapter| adapter.id).collect::<Vec<_>>(),
+            adapters
+                .iter()
+                .map(|adapter| adapter.id)
+                .collect::<Vec<_>>(),
             vec!["browser_bound_input"]
         );
         assert_eq!(

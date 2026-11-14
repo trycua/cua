@@ -31,8 +31,9 @@ use super::platform::{
 use super::pointer::BrowserPointerTool;
 use super::refusal::BrowserRefusal;
 use super::tools::{
-    browser_protected_resource_scope, BrowserClickTool, BrowserDialogTool, BrowserNavigateTool,
-    BrowserPrepareTool, BrowserSelectTool, BrowserTypeTool, GetBrowserStateTool,
+    browser_protected_resource_scope, BrowserClickTool, BrowserDialogTool, BrowserMotionPolicyTool,
+    BrowserNavigateTool, BrowserPrepareTool, BrowserSelectTool, BrowserTypeTool,
+    GetBrowserStateTool,
 };
 use super::types::{
     BrowserClassification, BrowserEngineFamily, BrowserProcessRole, BrowserProduct,
@@ -2561,6 +2562,31 @@ async fn navigation_targets_an_inactive_tab_without_activating_it() {
     );
     assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
     assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
+}
+
+#[tokio::test]
+async fn motion_policy_leaves_an_embedded_application_tab_unemulated() {
+    // The default fixture binds an embedded application, which the reduced
+    // motion policy must leave alone (#4557).
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let result = BrowserMotionPolicyTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "mode": "reduce",
+            "session": SESSION,
+        }))
+        .await;
+
+    let refused = structured(&result);
+    assert_eq!(refused["status"], "refused", "{refused}");
+    assert_eq!(refused["refusal"]["code"], "browser_wrong_target_refused");
+    assert_eq!(
+        refused["refusal"]["detail"]["reason"],
+        "motion_policy_driver_owned_only"
+    );
+    assert!(recorded_calls(&f, "Emulation.setEmulatedMedia").is_empty());
 }
 
 #[tokio::test]

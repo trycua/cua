@@ -723,6 +723,11 @@ jobs:
           cp dist/wheel-*/*.whl dist/npm/*.tgz dist/proto-tarball/cua-proto-*.tar.gz release/
           for d in dist/native-*; do
             label="${d##*/native-}"
+            # download-artifact drops the executable bit; a program must be
+            # executable in the archive that ships it.
+            for f in cua cua-vz cua-microvm-init cua-spacesd-linux-aarch64 cua-spacesd-linux-x86_64; do
+              [ -f "$d/$f" ] && chmod +x "$d/$f"
+            done
             tar -czf "release/cua-${{ needs.version.outputs.version }}-$label.tar.gz" -C "$d" .
           done
           # Standalone CLI archives for install.sh / install.ps1 (just `cua`).

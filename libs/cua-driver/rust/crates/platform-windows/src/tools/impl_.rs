@@ -278,34 +278,8 @@ pub(crate) fn minimized_element_refusal(
 /// the capture fallback which also keeps the full PrintWindow bitmap
 /// without crop.
 pub(crate) fn bitmap_to_screen(hwnd: u64, px: i32, py: i32) -> (i32, i32) {
-    use windows::Win32::Foundation::{HWND, RECT};
-    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
-    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
-
-    // Keep this constant in sync with `capture::DWM_CROP_INSET_PX`.
-    const DWM_CROP_INSET_PX: i32 = 1;
-    let h = HWND(hwnd as *mut _);
-    unsafe {
-        let mut dwm = RECT::default();
-        let hr = DwmGetWindowAttribute(
-            h,
-            DWMWA_EXTENDED_FRAME_BOUNDS,
-            &mut dwm as *mut _ as *mut _,
-            std::mem::size_of::<RECT>() as u32,
-        );
-        if hr.is_ok() {
-            return (
-                dwm.left + DWM_CROP_INSET_PX + px,
-                dwm.top + DWM_CROP_INSET_PX + py,
-            );
-        }
-        // Fallback path — capture also keeps the full bitmap when DWM
-        // bounds aren't available, so the bitmap origin IS GetWindowRect
-        // top-left in that branch.
-        let mut wr = RECT::default();
-        let _ = GetWindowRect(h, &mut wr);
-        (wr.left + px, wr.top + py)
-    }
+    let (left, top) = crate::capture::window_capture_origin(hwnd).unwrap_or((0, 0));
+    (left + px, top + py)
 }
 
 /// Animate the agent cursor to (sx, sy) in screen coordinates and wait for the

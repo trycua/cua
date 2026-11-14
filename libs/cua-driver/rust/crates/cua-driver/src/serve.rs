@@ -344,8 +344,15 @@ pub fn default_socket_path() -> String {
     socket_path_for_namespace(crate::bundle::state_namespace())
 }
 
+/// The PID file `serve` writes: the explicit `--pid-file`, else the default
+/// file only when serving the default socket. The default file identifies the
+/// default daemon, so a daemon on another socket must not overwrite it.
+pub fn pid_file_path_for(socket_path: &str, explicit: Option<String>) -> Option<String> {
+    explicit.or_else(|| (socket_path == default_socket_path()).then(default_pid_file_path))
+}
+
 /// Returns the platform default PID file path.
-pub fn default_pid_file_path() -> String {
+fn default_pid_file_path() -> String {
     let namespace = crate::bundle::state_namespace();
     #[cfg(target_os = "macos")]
     {
@@ -2369,10 +2376,8 @@ pub fn run_serve_cmd(
 
     // Fail fast if another daemon is already running.
     if is_daemon_listening(&socket_path) {
-        let pid_hint = pid_file_path
-            .as_deref()
-            .and_then(read_pid_file)
-            .map(|pid| format!(" (pid {pid})"))
+        let pid_hint = cua_driver_core::daemon::request_daemon_metadata(&socket_path)
+            .map(|metadata| format!(" (pid {})", metadata.pid))
             .unwrap_or_default();
         eprintln!(
             "Cua Driver daemon is already running on {socket_path}{pid_hint}. \
@@ -2472,8 +2477,9 @@ pub(crate) fn wait_for_release(socket_path: &str) {
     }
 }
 
-/// `cua-driver status` implementation.
-pub fn run_status_cmd(socket_path: &str, pid_file_path: &str) {
+/// `cua-driver status` implementation. The PID comes from the file named by
+/// `--pid-file` when given, else from the daemon serving `socket_path`.
+pub fn run_status_cmd(socket_path: &str, pid_file_path: Option<&str>) {
     if is_daemon_listening(socket_path) {
         let request = DaemonRequest {
             method: "authorization_status".to_owned(),
@@ -2497,10 +2503,15 @@ pub fn run_status_cmd(socket_path: &str, pid_file_path: &str) {
         }
         println!("Cua Driver daemon is running");
         println!("  socket: {socket_path}");
-        if let Some(pid) = read_pid_file(pid_file_path) {
-            println!("  pid: {pid}");
-        } else {
-            println!("  pid: unknown (no pid file)");
+        match pid_file_path {
+            Some(path) => match read_pid_file(path) {
+                Some(pid) => println!("  pid: {pid}"),
+                None => println!("  pid: unknown (no pid file)"),
+            },
+            None => match cua_driver_core::daemon::request_daemon_metadata(socket_path) {
+                Ok(metadata) => println!("  pid: {}", metadata.pid),
+                Err(_) => println!("  pid: unknown"),
+            },
         }
         if let Ok(response) = response {
             if let Some(status) = response.result {

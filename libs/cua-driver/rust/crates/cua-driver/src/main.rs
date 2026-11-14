@@ -693,7 +693,7 @@ fn main() {
             serve::set_permission_gate_pending(&driver, !gate_opts.opt_out);
             let gate_driver = driver.clone();
             let sp = socket.unwrap_or_else(serve::default_socket_path);
-            let pid_path = pid_file.unwrap_or_else(serve::default_pid_file_path);
+            let pid_path = serve::pid_file_path_for(&sp, pid_file);
 
             // Bind the Unix socket FIRST, on a background thread, BEFORE
             // running the (blocking) permissions gate (#1761).
@@ -717,7 +717,7 @@ fn main() {
             let serve_handle = std::thread::Builder::new()
                 .name("cua-serve".into())
                 .spawn(move || {
-                    serve::run_serve_cmd(driver, &sp, Some(&pid_path));
+                    serve::run_serve_cmd(driver, &sp, pid_path.as_deref());
                     std::process::exit(0);
                 })
                 .expect("spawn serve thread");
@@ -806,8 +806,7 @@ fn main() {
         }
         cli::Command::Status { socket, pid_file } => {
             let sp = socket.unwrap_or_else(serve::default_socket_path);
-            let pid_path = pid_file.unwrap_or_else(serve::default_pid_file_path);
-            serve::run_status_cmd(&sp, &pid_path);
+            serve::run_status_cmd(&sp, pid_file.as_deref());
         }
         cli::Command::Sessions { json, socket } => {
             let sp = socket.unwrap_or_else(serve::default_socket_path);
@@ -1099,10 +1098,10 @@ fn main() -> anyhow::Result<()> {
                 cua_driver_core::embedded_mode(),
             )?;
             let sp = socket.unwrap_or_else(serve::default_socket_path);
-            let pid_path = pid_file.unwrap_or_else(serve::default_pid_file_path);
+            let pid_path = serve::pid_file_path_for(&sp, pid_file);
             // run_serve_cmd builds its own runtime; must run on a fresh thread.
             std::thread::spawn(move || {
-                serve::run_serve_cmd(driver, &sp, Some(&pid_path));
+                serve::run_serve_cmd(driver, &sp, pid_path.as_deref());
             })
             .join()
             .ok();
@@ -1130,8 +1129,7 @@ fn main() -> anyhow::Result<()> {
         }
         cli::Command::Status { socket, pid_file } => {
             let sp = socket.unwrap_or_else(serve::default_socket_path);
-            let pid_path = pid_file.unwrap_or_else(serve::default_pid_file_path);
-            serve::run_status_cmd(&sp, &pid_path);
+            serve::run_status_cmd(&sp, pid_file.as_deref());
             Ok(())
         }
         cli::Command::Sessions { json, socket } => {

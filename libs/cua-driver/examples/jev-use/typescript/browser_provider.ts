@@ -1,34 +1,20 @@
 /**
- * Browser-runner provider parity on the existing bounded decision seam.
+ * Browser-runner provider choices and the backend each one reports.
  * Candidate construction, action arguments, freshness and verification remain
- * caller-owned. Providers receive only supplied candidate IDs/descriptions.
+ * caller-owned. `live` keeps the TypeSafe request pinned by the provider-request
+ * golden files; `s1` receives only the validated closed-choice request.
  */
-import { TypeSafeClient } from '@typesafe-ai/sdk';
-
-import {
-  REQUEST_SCHEMA,
-  providerObservation,
-  validateRequest,
-  type ValidatedRequest,
-} from './choose_action.js';
-import { chooseBoundedWithTypeSafe, chooseMockForTask } from './jev_adapter.js';
-import { chooseS1Service } from './s1_service.js';
+import { REQUEST_SCHEMA, validateRequest, type ValidatedRequest } from './choose_action.js';
 import type { Candidate } from './sources.js';
 import type { HistoryEntry, Task, TaskSources } from './tasks.js';
 
-export type BrowserProvider = 'mock' | 'live' | 'typesafe' | 's1';
+export const BACKENDS = { mock: 'mock', live: 'typesafe', s1: 's1' } as const;
 
-export type BrowserDecision = Readonly<{
-  choice: string | null;
-  confidence: number;
-  probabilities: Readonly<Record<string, number>>;
-  backend: 'mock' | 'typesafe' | 's1';
-}>;
+export type BrowserProvider = keyof typeof BACKENDS;
+export type Backend = (typeof BACKENDS)[BrowserProvider];
 
-export function backendName(
-  provider: BrowserProvider
-): BrowserDecision['backend'] {
-  return provider === 'live' || provider === 'typesafe' ? 'typesafe' : provider;
+export function isBrowserProvider(value: string): value is BrowserProvider {
+  return Object.hasOwn(BACKENDS, value);
 }
 
 export function browserDecisionRequest(
@@ -60,47 +46,12 @@ export function browserDecisionRequest(
       confidence: region.confidence,
       interactive: region.interactive,
     })) ?? [];
-  const request = {
+  return validateRequest({
     schema: REQUEST_SCHEMA,
     goal: task.goal,
     capture_id: captureId,
     regions: task.redact(regions),
     history: history.map(({ selected_id, outcome }) => ({ selected_id, outcome })),
     candidates: candidates.map(({ id, description }) => ({ id, description })),
-  };
-  return validateRequest(request);
-}
-
-export async function chooseBrowserProvider(
-  provider: BrowserProvider,
-  task: Task,
-  sources: TaskSources,
-  candidates: Candidate[],
-  history: HistoryEntry[]
-): Promise<BrowserDecision> {
-  const backend = backendName(provider);
-  if (provider === 'mock') {
-    const result = chooseMockForTask(task, sources, candidates, history);
-    return { ...result, backend };
-  }
-
-  const request = browserDecisionRequest(task, sources, candidates, history);
-  if (provider === 's1') {
-    return { ...(await chooseS1Service(request)), backend };
-  }
-  const criteria = Object.fromEntries(
-    request.candidates.map(({ id, description }) => [id, description])
-  );
-  const result = await chooseBoundedWithTypeSafe(
-    new TypeSafeClient(),
-    request.goal,
-    providerObservation(request),
-    criteria
-  );
-  return {
-    choice: result.selectedId,
-    confidence: result.confidence,
-    probabilities: result.probabilities,
-    backend,
-  };
+  });
 }

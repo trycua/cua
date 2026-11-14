@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.49.8](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.7...cua-driver-rs-v0.49.8) (2026-11-14)
+
+
+### Bug Fixes
+
+* **cua-driver:** refuse macOS background clicks under the app's own popup ([#7669](https://github.com/trycua/cua/issues/7669)) ([12fe80c](https://github.com/trycua/cua/commit/12fe80c84c9a5e76ac317f6386d48a693a1e9d54))
+
 ## [0.49.7](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.6...cua-driver-rs-v0.49.7) (2026-11-13)
 
 

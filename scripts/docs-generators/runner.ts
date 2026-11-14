@@ -195,7 +195,7 @@ async function main() {
   if (hasErrors) {
     console.error('❌ Some generators failed or detected drift.');
     if (checkOnly) {
-      console.log("\n💡 Run 'pnpm --dir docs docs:generate' to update documentation");
+      console.log("\n💡 Run scripts/regen-all.sh --only docs to update documentation");
     }
     process.exit(1);
   } else {

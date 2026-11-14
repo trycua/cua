@@ -49,7 +49,7 @@ fn write_or_check(path: &Path, expected: &str, check: bool) -> Result<(), String
             .map_err(|error| format!("{} is missing: {error}", path.display()))?;
         if actual != expected {
             return Err(format!(
-                "{} is stale; run `cargo run -p cua-driver-contract --bin cua-contract-gen -- all`",
+                "{} is stale; run scripts/regen-all.sh --only driver",
                 path.display()
             ));
         }

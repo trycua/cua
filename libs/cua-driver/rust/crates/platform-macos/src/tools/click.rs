@@ -908,6 +908,7 @@ impl ClickTool {
             let selection_modifiers = modifiers.clone();
             let settle_guard = element_guard.clone();
             let prompt = PromptInput::from_args(&args);
+            let watch_page = watches_page_after_press();
             let result = focus_guard::with_focus_suppressed(
                 if foreground { None } else { Some(pid) },
                 prior_front,
@@ -926,7 +927,11 @@ impl ClickTool {
                                     &ck,
                                     selection_pixel,
                                     &selection_modifiers,
-                                    (foreground, prompt),
+                                    AxDelivery {
+                                        foreground,
+                                        prompt,
+                                        watch_page: false,
+                                    },
                                 )?);
                                 std::thread::sleep(std::time::Duration::from_millis(150));
                                 Ok(())
@@ -957,10 +962,18 @@ impl ClickTool {
                                 &ck,
                                 selection_pixel,
                                 &selection_modifiers,
-                                (false, prompt),
+                                AxDelivery {
+                                    foreground: false,
+                                    prompt,
+                                    watch_page,
+                                },
                             )
                             .map(|outcome| (outcome, false))
                         }
+                        .map(|(outcome, fronted)| {
+                            let suspicion = outcome.noop_suspicion();
+                            (outcome, suspicion, fronted)
+                        })
                     })
                     .await
                 },
@@ -973,13 +986,14 @@ impl ClickTool {
 
             match result {
                 Ok(Ok((
-                    (
-                        mut msg,
+                    AxClickOutcome {
+                        summary: mut msg,
                         needs_webkit_delay,
-                        suspected_noop,
                         selection_verified,
                         selection_via_pixel,
-                    ),
+                        ..
+                    },
+                    suspicion,
                     fronted,
                 ))) => {
                     // For text inputs in web content, wait for the page to move
@@ -997,6 +1011,11 @@ impl ClickTool {
                             .await;
                         }
                     }
+                    if suspicion == Some(NoopSuspicion::BackgroundWebUnchanged)
+                        && changes.new_windows.is_empty()
+                    {
+                        msg.push_str(BACKGROUND_WEB_NOOP_NOTE);
+                    }
                     msg.push_str(&changes.result_suffix());
                     let path = if selection_via_pixel {
                         if fronted {
@@ -1010,7 +1029,7 @@ impl ClickTool {
                         "ax"
                     };
                     let structured =
-                        ax_click_structured(path, selection_verified, suspected_noop, &changes);
+                        ax_click_structured(path, selection_verified, suspicion, &changes);
                     ToolResult::text(msg).with_structured(structured)
                 }
                 Ok(Err(e)) => match e.downcast_ref::<crate::input::ax_actions::ElementDisabled>() {
@@ -1274,9 +1293,10 @@ impl ClickTool {
                     && modifiers.is_empty()
             }) {
                 let focus_only = action == "focus";
+                let watch_page = watches_page_after_press();
                 let ax_result = tokio::task::spawn_blocking(move || unsafe {
                     let Some(element) = element_at_screen_position(pid, screen_x, screen_y) else {
-                        return Ok::<bool, anyhow::Error>(false);
+                        return Ok::<Option<bool>, anyhow::Error>(None);
                     };
                     // The pid-scoped hit-test can resolve an element from a
                     // same-process sibling overlapping the requested point.
@@ -1287,7 +1307,7 @@ impl ClickTool {
                         .is_some_and(|window| window.is(hit_test_wid))
                     {
                         CFRelease(element as _);
-                        return Ok(false);
+                        return Ok(None);
                     }
                     // An element that does not advertise AXPress can still
                     // accept it as a no-op. On a toolkit that drops routed
@@ -1302,21 +1322,35 @@ impl ClickTool {
                             == Some(crate::input::pointer_toolkit::PointerReadingToolkit::Vcl)
                     {
                         CFRelease(element as _);
-                        return Ok(false);
+                        return Ok(None);
                     }
+                    // `Some(unchanged)`: delivered, and whether the page of a
+                    // web press stayed the same.
                     let delivered = if focus_only {
-                        crate::input::ax_actions::focus_element(element as usize).is_ok()
+                        crate::input::ax_actions::focus_element(element as usize)
+                            .is_ok()
+                            .then_some(false)
                     } else {
+                        let page = watch_page
+                            .then(|| crate::ax::web_effect::PageProbe::before_press(pid, element))
+                            .flatten();
+                        let pressed_at = std::time::Instant::now();
                         let press = core_foundation::string::CFString::new("AXPress");
-                        AXUIElementPerformAction(element, press.as_concrete_TypeRef())
-                            == kAXErrorSuccess
+                        (AXUIElementPerformAction(element, press.as_concrete_TypeRef())
+                            == kAXErrorSuccess)
+                            .then(|| {
+                                page.is_some_and(|page| {
+                                    page.settle(pressed_at)
+                                        == crate::ax::web_effect::PageChange::Unchanged
+                                })
+                            })
                     };
                     CFRelease(element as _);
                     Ok(delivered)
                 })
                 .await;
                 match ax_result {
-                    Ok(Ok(true)) => {
+                    Ok(Ok(Some(unchanged))) => {
                         crate::cursor::overlay::send_command(
                             cursor_key.clone(),
                             cursor_overlay::OverlayCommand::ClickPulse {
@@ -1325,16 +1359,20 @@ impl ClickTool {
                             },
                         );
                         let label = if focus_only { "focused" } else { "pressed" };
-                        return ToolResult::text(format!(
-                            "✅ PX hit-test {label} the background element via AX."
-                        ))
-                        .with_structured(serde_json::json!({
-                            "path": "ax",
-                            "verified": false,
-                            "effect": "unverifiable"
-                        }));
+                        let suspicion = unchanged.then_some(NoopSuspicion::BackgroundWebUnchanged);
+                        let mut text =
+                            format!("✅ PX hit-test {label} the background element via AX.");
+                        if unchanged {
+                            text.push_str(BACKGROUND_WEB_NOOP_NOTE);
+                        }
+                        return ToolResult::text(text).with_structured(ax_click_structured(
+                            "ax",
+                            false,
+                            suspicion,
+                            &crate::window_change_detector::Changes::no_change(),
+                        ));
                     }
-                    Ok(Ok(false)) if focus_only => {
+                    Ok(Ok(None)) if focus_only => {
                         return ToolResult::error(
                             "Background PX focus is unavailable at the requested point.".to_owned(),
                         )
@@ -1613,17 +1651,76 @@ impl ClickTool {
 
 // ── AX click implementation (blocking) ───────────────────────────────────────
 
-/// Returns `(summary_text, needs_webkit_delay, suspected_noop,
-/// selection_verified, selection_via_pixel)`.
-///
-/// `suspected_noop` is true when the element did not advertise the action we
-/// dispatched — AXUIElementPerformAction returns success regardless, so this is
-/// the driver's only signal that the press likely did nothing. The caller turns
-/// it into `effect: "suspected_noop"` + an escalation hint so the agent crosses
-/// to the vision/pixel path instead of trusting a hollow success.
-///
+/// Why the driver suspects an AX press did nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NoopSuspicion {
+    /// The element does not advertise the action, and
+    /// `AXUIElementPerformAction` returns success regardless.
+    UnadvertisedAction,
+    /// A background press on web content left the browser window unchanged
+    /// through the settle window. Pages that act only for a focused document
+    /// (`document.hasFocus()`) ignore it; foreground delivery reaches them
+    /// (#4243).
+    BackgroundWebUnchanged,
+}
+
+/// How [`perform_ax_click`] delivers the action. `watch_page` reads a web
+/// element's browser window before a background press so the caller can tell
+/// whether the page reacted.
+struct AxDelivery {
+    foreground: bool,
+    prompt: PromptInput,
+    watch_page: bool,
+}
+
+/// What a dispatched AX click did, as far as the driver can tell.
+struct AxClickOutcome {
+    summary: String,
+    needs_webkit_delay: bool,
+    /// Set when the element did not advertise the action.
+    unadvertised: bool,
+    selection_verified: bool,
+    selection_via_pixel: bool,
+    /// The browser window of a background web press, read just before it.
+    page: Option<crate::ax::web_effect::PageProbe>,
+    pressed_at: std::time::Instant,
+}
+
+impl AxClickOutcome {
+    fn verified(summary: String, selection_via_pixel: bool) -> Self {
+        Self {
+            summary,
+            needs_webkit_delay: false,
+            unadvertised: false,
+            selection_verified: true,
+            selection_via_pixel,
+            page: None,
+            pressed_at: std::time::Instant::now(),
+        }
+    }
+
+    /// Watch the page of a background web press (blocking), and name the
+    /// suspected no-op, if any.
+    fn noop_suspicion(&self) -> Option<NoopSuspicion> {
+        if self.selection_verified {
+            return None;
+        }
+        if self.unadvertised {
+            return Some(NoopSuspicion::UnadvertisedAction);
+        }
+        let page = self.page.as_ref()?;
+        (page.settle(self.pressed_at) == crate::ax::web_effect::PageChange::Unchanged)
+            .then_some(NoopSuspicion::BackgroundWebUnchanged)
+    }
+}
+
 /// `element` is the cached AX element pointer and its snapshot index; `window`
 /// is the target (pid, window_id).
+///
+/// `unadvertised` in the outcome is set when the element did not advertise
+/// the action we dispatched: AXUIElementPerformAction returns success
+/// regardless. A background press on web content also carries a read of its
+/// browser window, so the caller can tell whether the page reacted.
 /// Whether a background AXPress needs its window to be the app's key window.
 ///
 /// A toolbar or format-bar control in a native app sends its action to the
@@ -1775,11 +1872,15 @@ fn perform_ax_click(
     cursor_key: &str,
     selection_pixel: Option<SelectionPixelTarget>,
     modifiers: &[String],
-    delivery: (bool, PromptInput),
-) -> anyhow::Result<(String, bool, bool, bool, bool)> {
+    delivery: AxDelivery,
+) -> anyhow::Result<AxClickOutcome> {
     let (element_ptr, idx) = element;
     let (pid, window_id) = window;
-    let (foreground, prompt) = delivery;
+    let AxDelivery {
+        foreground,
+        prompt,
+        watch_page,
+    } = delivery;
     let ax_action = crate::input::ax_actions::map_action(action_str)?;
     let element = element_ptr as AXUIElementRef;
 
@@ -1813,14 +1914,11 @@ fn perform_ax_click(
             if let Some(selected_role) =
                 crate::input::ax_actions::select_nearest_container(element_ptr)
             {
-                return Ok((
+                return Ok(AxClickOutcome::verified(
                     format!(
                         "✅ Selected nearest {selected_role} for [{idx}] {role} \"{title}\"; \
                          confirmed AXSelected=true."
                     ),
-                    false,
-                    false,
-                    true,
                     false,
                 ));
             }
@@ -1886,16 +1984,13 @@ fn perform_ax_click(
                                     stable_peers_preserved,
                                 )
                             {
-                                return Ok((
+                                return Ok(AxClickOutcome::verified(
                                     format!(
                                         "✅ Selected nearest {selected_role} for [{idx}] {role} \
                                          \"{title}\"; AX selection write was unavailable, so a \
                                          coordinate click was delivered and confirmed by stable \
                                          AXSelected read-back."
                                     ),
-                                    false,
-                                    false,
-                                    true,
                                     true,
                                 ));
                             }
@@ -1931,6 +2026,10 @@ fn perform_ax_click(
     if !foreground {
         prime_key_window_for_background_press(pid, window_id, ax_action);
     }
+    let page = (watch_page && !foreground && ax_action == "AXPress")
+        .then(|| unsafe { crate::ax::web_effect::PageProbe::before_press(pid, element) })
+        .flatten();
+    let pressed_at = std::time::Instant::now();
     let err = unsafe { crate::ax::bindings::perform_action(element, ax_action) };
     if err != crate::ax::bindings::kAXErrorSuccess {
         // Checked before the row-selection fallback, which writes AXSelected
@@ -1943,15 +2042,12 @@ fn perform_ax_click(
                 SELECTION_READBACK_POLL,
                 SELECTION_READBACK_STABILITY,
             ) {
-                return Ok((
+                return Ok(AxClickOutcome::verified(
                     format!(
                         "✅ Performed {ax_action} on [{idx}] {role} \"{title}\"; AXValue is now \
                          {now} (was {before}) on two reads, although the app returned AX error \
                          {err}."
                     ),
-                    false,
-                    false,
-                    true,
                     false,
                 ));
             }
@@ -1963,14 +2059,11 @@ fn perform_ax_click(
             if let Some(selected_role) =
                 crate::input::ax_actions::select_nearest_container(element_ptr)
             {
-                return Ok((
+                return Ok(AxClickOutcome::verified(
                     format!(
                         "✅ Selected nearest {selected_role} for [{idx}] {role} \"{title}\" \
                          after AXPress returned {err}; confirmed AXSelected=true."
                     ),
-                    false,
-                    false,
-                    true,
                     false,
                 ));
             }
@@ -2021,8 +2114,8 @@ fn perform_ax_click(
 
     // Advertised-action warning: non-fatal but surfaces likely no-ops. Also the
     // machine-readable `suspected_noop` signal returned to the caller.
-    let suspected_noop = !advertised.contains(&ax_action.to_string());
-    if suspected_noop {
+    let unadvertised = !advertised.contains(&ax_action.to_string());
+    if unadvertised {
         let adv_list = if advertised.is_empty() {
             "none".into()
         } else {
@@ -2052,10 +2145,15 @@ fn perform_ax_click(
             cursor_overlay::OverlayCommand::ClickPulse { x: cx, y: cy },
         );
     }
-    let _ = pid;
-    let _ = window_id; // used by caller context
-
-    Ok((summary, needs_webkit_delay, suspected_noop, false, false))
+    Ok(AxClickOutcome {
+        summary,
+        needs_webkit_delay,
+        unadvertised,
+        selection_verified: false,
+        selection_via_pixel: false,
+        page,
+        pressed_at,
+    })
 }
 
 #[cfg(test)]
@@ -2158,11 +2256,26 @@ mod selection_fallback_tests {
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
+/// Whether this call waits to see the page react to a background web press.
+/// `post_action_wait:"none"` asks the action to return without waiting, so the
+/// press is reported `unverifiable` instead.
+fn watches_page_after_press() -> bool {
+    cua_driver_core::post_action_wait::current()
+        != cua_driver_core::post_action_wait::PostActionWait::None
+}
+
+/// Text added to a background web press whose page did not change.
+const BACKGROUND_WEB_NOOP_NOTE: &str = "\n⚠️ The page did not change after this background press. \
+     Some web controls act only for a focused page. Check the window before retrying; if it \
+     did not react, retry with delivery_mode:\"foreground\".";
+
 /// Structured result of a dispatched AX click. AXPerformAction returning
 /// success does not confirm the on-screen effect, so `verified` stays false
 /// without a read-back and the tri-state `effect` is the signal:
-///   * suspected_noop: the element didn't advertise the action and this
-///     press opened no window, so it likely did nothing; escalate to pixel.
+///   * suspected_noop: the driver has evidence the press did nothing (see
+///     [`NoopSuspicion`]) and it opened no window. The escalation names the
+///     rung that reaches the control: a pixel click for an unadvertised
+///     action, foreground delivery for an unchanged background web page.
 ///   * unverifiable: dispatched fine, the caller verifies via screenshot.
 ///
 /// A window the previous action's detached tail saw says nothing about this
@@ -2170,16 +2283,16 @@ mod selection_fallback_tests {
 fn ax_click_structured(
     path: &str,
     selection_verified: bool,
-    suspected_noop: bool,
+    suspicion: Option<NoopSuspicion>,
     changes: &crate::window_change_detector::Changes,
 ) -> Value {
-    let suspected_noop = !selection_verified && suspected_noop && changes.new_windows.is_empty();
+    let suspicion = suspicion.filter(|_| !selection_verified && changes.new_windows.is_empty());
     let mut structured = serde_json::json!({
         "path": path,
         "verified": selection_verified,
         "effect": if selection_verified {
             "confirmed"
-        } else if suspected_noop {
+        } else if suspicion.is_some() {
             "suspected_noop"
         } else {
             "unverifiable"
@@ -2189,14 +2302,28 @@ fn ax_click_structured(
     if selection_verified {
         structured["evidence"] = serde_json::json!([{ "kind": "accessibility_readback" }]);
     }
-    if suspected_noop {
-        structured["escalation"] = serde_json::json!({
-            "recommended": "px",
-            "reason": "element does not advertise this action — the \
-                       AX press likely no-op'd. Do an element px \
-                       action: click by pixel (x,y) off the \
-                       screenshot from get_window_state."
-        });
+    match suspicion {
+        Some(NoopSuspicion::UnadvertisedAction) => {
+            structured["escalation"] = serde_json::json!({
+                "recommended": "px",
+                "reason": "element does not advertise this action — the \
+                           AX press likely no-op'd. Do an element px \
+                           action: click by pixel (x,y) off the \
+                           screenshot from get_window_state."
+            });
+        }
+        Some(NoopSuspicion::BackgroundWebUnchanged) => {
+            structured["escalation"] = serde_json::json!({
+                "recommended": "foreground",
+                "reason": "the page did not change within the settle window after \
+                           the background press; controls that act only for a focused \
+                           page ignore it. Check the window first: a press with no \
+                           visible effect (a copy, a slow request) can still have \
+                           acted. If it did not, retry with delivery_mode:\"foreground\" \
+                           if the user allows the window to come forward."
+            });
+        }
+        None => {}
     }
     structured
 }
@@ -2237,6 +2364,8 @@ mod tests {
         }
     }
 
+    const UNADVERTISED: Option<NoopSuspicion> = Some(NoopSuspicion::UnadvertisedAction);
+
     /// A late window from the previous action must not turn this press's
     /// suspected no-op into `unverifiable` and drop the pixel escalation.
     #[test]
@@ -2246,7 +2375,7 @@ mod tests {
             earlier_new_windows: vec![window(7)],
             ..Changes::no_change()
         };
-        let r = ax_click_structured("ax", false, true, &earlier_only);
+        let r = ax_click_structured("ax", false, UNADVERTISED, &earlier_only);
         assert_eq!(r["effect"], "suspected_noop");
         assert_eq!(r["escalation"]["recommended"], "px");
         assert!(r.get("new_windows").is_none());
@@ -2256,22 +2385,66 @@ mod tests {
             new_windows: vec![window(8)],
             ..Changes::no_change()
         };
-        let r = ax_click_structured("ax", false, true, &opened_now);
+        let r = ax_click_structured("ax", false, UNADVERTISED, &opened_now);
         assert_eq!(r["effect"], "unverifiable");
         assert!(r.get("escalation").is_none());
         assert_eq!(r["new_windows"][0]["window_id"], 8);
         assert!(r.get("earlier_new_windows").is_none());
 
-        let r = ax_click_structured("ax", false, true, &Changes::no_change());
+        let r = ax_click_structured("ax", false, UNADVERTISED, &Changes::no_change());
         assert_eq!(r["effect"], "suspected_noop");
         assert!(r.get("new_windows").is_none());
-        let r = ax_click_structured("ax", false, false, &Changes::no_change());
+        let r = ax_click_structured("ax", false, None, &Changes::no_change());
         assert_eq!(r["effect"], "unverifiable");
         assert!(r.get("escalation").is_none());
-        let r = ax_click_structured("cgevent", true, true, &opened_now);
+        let r = ax_click_structured("cgevent", true, UNADVERTISED, &opened_now);
         assert_eq!(r["effect"], "confirmed");
         assert_eq!(r["evidence"][0]["kind"], "accessibility_readback");
         assert!(r.get("escalation").is_none());
+    }
+
+    /// #4243: a background press on web content that left the page unchanged
+    /// is a suspected no-op that points at foreground delivery, the rung that
+    /// reaches focus-gated controls. A window it opened lifts the suspicion.
+    #[test]
+    fn unchanged_background_web_press_escalates_to_foreground() {
+        use crate::window_change_detector::Changes;
+        let web = Some(NoopSuspicion::BackgroundWebUnchanged);
+        let r = ax_click_structured("ax", false, web, &Changes::no_change());
+        assert_eq!(r["effect"], "suspected_noop");
+        assert_eq!(r["escalation"]["recommended"], "foreground");
+        assert!(r["escalation"]["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("delivery_mode:\"foreground\"")));
+
+        let opened_now = Changes {
+            new_windows: vec![window(9)],
+            ..Changes::no_change()
+        };
+        let r = ax_click_structured("ax", false, web, &opened_now);
+        assert_eq!(r["effect"], "unverifiable");
+        assert!(r.get("escalation").is_none());
+    }
+
+    /// A press the driver confirmed, or one it has no evidence against, never
+    /// reads as a no-op.
+    #[test]
+    fn noop_suspicion_needs_evidence() {
+        let outcome = |unadvertised, selection_verified| AxClickOutcome {
+            summary: String::new(),
+            needs_webkit_delay: false,
+            unadvertised,
+            selection_verified,
+            selection_via_pixel: false,
+            page: None,
+            pressed_at: std::time::Instant::now(),
+        };
+        assert_eq!(outcome(false, false).noop_suspicion(), None);
+        assert_eq!(
+            outcome(true, false).noop_suspicion(),
+            Some(NoopSuspicion::UnadvertisedAction)
+        );
+        assert_eq!(outcome(true, true).noop_suspicion(), None);
     }
 
     /// #3835: Finder's toolbar view switcher applies an AXPress and returns

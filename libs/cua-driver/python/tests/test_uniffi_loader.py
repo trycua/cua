@@ -62,6 +62,7 @@ class GeneratedOptionsTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             ClickInput(x=10.0, y=20.0)
         for name in (
+            "ActionCommit",
             "AppInfo", "ClickPosition", "ElementFrame", "GetWindowStateInput",
             "InputDeliveryMode", "ListAppsInput", "ListAppsOutput", "ListWindowsInput",
             "ListWindowsOutput", "SnapshotImage", "WindowBounds", "WindowElement",
@@ -142,7 +143,7 @@ while True:
             if request["method"] == "metadata":
                 result = {
                     "driver_version": "0.10.0",
-                    "contract_version": "0.8.0",
+                    "contract_version": "0.9.0",
                     "tools_list_schema_version": "1",
                     "capability_version": "1",
                     "mcp_protocol_version": "2025-06-18",
@@ -230,7 +231,7 @@ except FileNotFoundError:
                         if request["method"] == "metadata":
                             result = {
                                 "driver_version": "0.12.6",
-                                "contract_version": "0.8.0",
+                                "contract_version": "0.9.0",
                                 "tools_list_schema_version": "1",
                                 "capability_version": "1",
                                 "mcp_protocol_version": "2025-06-18",

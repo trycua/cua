@@ -89,6 +89,16 @@ pub(super) struct FixtureState {
     screenshot_data: String,
     viewport_css_width: f64,
     viewport_css_height: f64,
+    /// Layout-viewport document scroll offset, as `cssLayoutViewport.pageY`.
+    layout_scroll_y: f64,
+    /// A node rendered over every point, answered by `DOM.getNodeForLocation`.
+    covering_node: Option<i64>,
+    /// The covering node is a descendant of the hit-tested ref.
+    covering_node_is_descendant: bool,
+    /// Scrolling this backend into view moves every main-frame box by `dy`.
+    scroll_into_view_shifts: Option<(i64, f64)>,
+    /// Accumulated main-frame box shift from such scrolls.
+    box_shift_y: f64,
     tab_visible: bool,
     select_outcome: Value,
     /// Extra page targets Chromium reports but cannot map to any browser
@@ -161,6 +171,11 @@ impl Default for FixtureState {
             screenshot_data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZJrAAAAAASUVORK5CYII=".into(),
             viewport_css_width: 800.0,
             viewport_css_height: 600.0,
+            layout_scroll_y: 0.0,
+            covering_node: None,
+            covering_node_is_descendant: false,
+            scroll_into_view_shifts: None,
+            box_shift_y: 0.0,
             tab_visible: true,
             select_outcome: Value::Null,
             dom_click_changes_readback: true,
@@ -675,14 +690,47 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 &[90, 100],
                 &[[0.0, 0.0, 300.0, 100.0], [10.0, 10.0, 120.0, 30.0]],
             )),
+            // The OOPIF child's box models sit near (1000, 1000), so its own
+            // viewport is large enough to contain them.
+            "Page.getLayoutMetrics" if is_oopif => MockReply::ok(json!({
+                "cssVisualViewport": {
+                    "offsetX": 0.0, "offsetY": 0.0, "pageX": 0.0, "pageY": 0.0,
+                    "clientWidth": 2_000.0, "clientHeight": 2_000.0
+                },
+                "cssLayoutViewport": { "pageX": 0.0, "pageY": 0.0 }
+            })),
             "Page.getLayoutMetrics" => MockReply::ok(json!({
                 "cssVisualViewport": {
+                    "offsetX": 0.0,
+                    "offsetY": 0.0,
                     "pageX": 0.0,
-                    "pageY": 0.0,
+                    "pageY": st.layout_scroll_y,
                     "clientWidth": st.viewport_css_width,
                     "clientHeight": st.viewport_css_height
-                }
+                },
+                "cssLayoutViewport": { "pageX": 0.0, "pageY": st.layout_scroll_y }
             })),
+            // Like Chromium, hit-test in document coordinates and answer an
+            // empty point with an error.
+            "DOM.getNodeForLocation" => {
+                let x = call.params["x"].as_f64().unwrap_or(f64::NAN);
+                let y = call.params["y"].as_f64().unwrap_or(f64::NAN)
+                    - if is_oopif {
+                        0.0
+                    } else {
+                        st.layout_scroll_y + st.box_shift_y
+                    };
+                let known: &[i64] = if is_oopif { &[100] } else { &[10, 20, 21, 30] };
+                let under = known.iter().copied().find(|backend| {
+                    let origin = (*backend * 10) as f64;
+                    x >= origin && x < origin + 20.0 && y >= origin && y < origin + 10.0
+                });
+                match (st.covering_node, under) {
+                    (Some(cover), _) => MockReply::ok(json!({ "backendNodeId": cover })),
+                    (None, Some(backend)) => MockReply::ok(json!({ "backendNodeId": backend })),
+                    (None, None) => MockReply::err(-32000, "No node found at given location"),
+                }
+            }
             "Runtime.evaluate"
                 if call.params["expression"] == "document.visibilityState === 'visible'" =>
             {
@@ -759,7 +807,14 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 }
                 MockReply::ok(json!({})).with_events(events)
             }
-            "DOM.scrollIntoViewIfNeeded" => MockReply::ok(json!({})),
+            "DOM.scrollIntoViewIfNeeded" => {
+                if let Some((backend, dy)) = st.scroll_into_view_shifts {
+                    if !is_oopif && call.params["backendNodeId"] == backend {
+                        st.box_shift_y += dy;
+                    }
+                }
+                MockReply::ok(json!({}))
+            }
             "DOM.getBoxModel" => {
                 let backend = call.params["backendNodeId"].as_i64().unwrap_or(0);
                 let known = if is_oopif {
@@ -768,7 +823,8 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     [10, 20, 21, 30].contains(&backend)
                 };
                 if known {
-                    let (x, y) = ((backend * 10) as f64, (backend * 10) as f64);
+                    let shift = if is_oopif { 0.0 } else { st.box_shift_y };
+                    let (x, y) = ((backend * 10) as f64, (backend * 10) as f64 + shift);
                     MockReply::ok(json!({
                         "model": {
                             "content": [x, y, x + 20.0, y, x + 20.0, y + 10.0, x, y + 10.0]
@@ -827,6 +883,13 @@ fn fixture_handler(state: SharedState) -> MockHandler {
             "DOM.resolveNode" => MockReply::ok(json!({
                 "object": { "objectId": format!("obj-{}", call.params["backendNodeId"]) }
             })),
+            "Runtime.callFunctionOn"
+                if call.params["functionDeclaration"]
+                    .as_str()
+                    .is_some_and(|declaration| declaration.contains("cua_trusted_ref_hit")) =>
+            {
+                MockReply::ok(json!({ "result": { "value": st.covering_node_is_descendant } }))
+            }
             "Runtime.callFunctionOn"
                 if call.params["functionDeclaration"]
                     .as_str()
@@ -3230,6 +3293,231 @@ async fn synthetic_scroll_awaits_page_readback_without_changing_routes() {
     assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
     assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
     assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
+}
+
+fn mouse_points(f: &Fixture) -> Vec<(f64, f64)> {
+    recorded_calls(f, "Input.dispatchMouseEvent")
+        .into_iter()
+        .map(|(_, params)| (params["x"].as_f64().unwrap(), params["y"].as_f64().unwrap()))
+        .collect()
+}
+
+fn assert_trusted_refusal_sent_nothing(f: &Fixture, result: &ToolResult, hit_test: &str) {
+    let s = structured(result);
+    assert_eq!(s["status"], "refused", "{s}");
+    assert_eq!(
+        s["refusal"]["code"], "browser_input_trust_unavailable",
+        "{s}"
+    );
+    assert_eq!(s["refusal"]["detail"]["hit_test"], hit_test, "{s}");
+    assert_eq!(
+        s["refusal"]["detail"]["alternative_route"], "dom_event",
+        "{s}"
+    );
+    assert_eq!(
+        s["refusal"]["detail"]["trusted_delivery_attempted"], false,
+        "{s}"
+    );
+    assert!(recorded_calls(f, "Input.dispatchMouseEvent").is_empty());
+    assert!(recorded_calls(f, "Emulation.setFocusEmulationEnabled").is_empty());
+}
+
+// #2882 finding 2: the trusted route clicked a ref's box center while another
+// element was rendered there, so the click silently missed the ref.
+#[tokio::test]
+async fn trusted_ref_click_refuses_when_another_element_is_at_the_point() {
+    let f = fixture_with(|state| state.covering_node = Some(999)).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref, "session": SESSION
+        }))
+        .await;
+
+    assert_trusted_refusal_sent_nothing(&f, &result, "covered");
+    assert!(!recorded_calls(&f, "DOM.scrollIntoViewIfNeeded").is_empty());
+}
+
+#[tokio::test]
+async fn trusted_ref_click_refuses_a_point_outside_the_viewport() {
+    // main-btn's box spans y 100..110; a 100px-tall viewport cuts it off.
+    let f = fixture_with(|state| state.viewport_css_height = 100.0).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref, "session": SESSION
+        }))
+        .await;
+
+    assert_trusted_refusal_sent_nothing(&f, &result, "outside_viewport");
+    assert!(recorded_calls(&f, "DOM.getNodeForLocation").is_empty());
+}
+
+#[tokio::test]
+async fn trusted_ref_click_hit_tests_a_scrolled_page_in_document_coordinates() {
+    let f = fixture_with(|state| state.layout_scroll_y = 500.0).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref, "session": SESSION
+        }))
+        .await;
+
+    let s = structured(&result);
+    assert_eq!(s["status"], "ok", "{s}");
+    let hit = recorded_calls(&f, "DOM.getNodeForLocation");
+    assert_eq!(hit.len(), 1);
+    assert_eq!(
+        (hit[0].1["x"].clone(), hit[0].1["y"].clone()),
+        (json!(110), json!(605))
+    );
+    // The event goes to the hit-tested viewport point.
+    assert_eq!(mouse_points(&f), vec![(110.0, 105.0), (110.0, 105.0)]);
+    assert_eq!(
+        (s["x"].clone(), s["y"].clone()),
+        (json!(110.0), json!(105.0))
+    );
+}
+
+#[tokio::test]
+async fn trusted_ref_click_accepts_a_hit_on_a_descendant_of_the_ref() {
+    let f = fixture_with(|state| {
+        state.covering_node = Some(999);
+        state.covering_node_is_descendant = true;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref, "session": SESSION
+        }))
+        .await;
+
+    assert_eq!(
+        structured(&result)["status"],
+        "ok",
+        "{}",
+        structured(&result)
+    );
+    let ancestry = recorded_calls(&f, "Runtime.callFunctionOn")
+        .into_iter()
+        .find(|(_, params)| {
+            params["functionDeclaration"]
+                .as_str()
+                .is_some_and(|function| function.contains("cua_trusted_ref_hit"))
+        })
+        .expect("a non-identical hit is checked for ancestry");
+    assert_eq!(ancestry.1["objectId"], "obj-10");
+    assert_eq!(ancestry.1["arguments"][0]["objectId"], "obj-999");
+    assert_eq!(mouse_points(&f).len(), 2);
+}
+
+#[tokio::test]
+async fn trusted_ref_pointer_refuses_when_another_element_is_at_the_point() {
+    let f = fixture_with(|state| state.covering_node = Some(999)).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserPointerTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref,
+            "action": "double_click", "session": SESSION
+        }))
+        .await;
+
+    assert_trusted_refusal_sent_nothing(&f, &result, "covered");
+}
+
+fn exact_label_ref(snapshot: &Value, label: &str) -> String {
+    snapshot["refs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["frame"] == "main" && r["label"] == label)
+        .and_then(|r| r["ref"].as_str())
+        .unwrap_or_else(|| panic!("no main ref labelled {label:?}: {snapshot}"))
+        .to_owned()
+}
+
+#[tokio::test]
+async fn trusted_ref_drag_presses_where_the_origin_is_after_the_destination_scrolls() {
+    // Scrolling the destination (backend 21) into view moves the origin
+    // (main-btn, backend 10, box y 100..110) up by 50px.
+    let f = fixture_with(|state| state.scroll_into_view_shifts = Some((21, -50.0))).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let origin = ref_of(&snap, "main", "main-btn");
+    let destination = exact_label_ref(&snap, "type=text");
+
+    let result = BrowserPointerTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": origin,
+            "destination_ref": destination, "action": "drag", "session": SESSION
+        }))
+        .await;
+
+    let s = structured(&result);
+    assert_eq!(s["status"], "ok", "{s}");
+    let points = mouse_points(&f);
+    // mouseMoved then mousePressed at the origin's current center, not y=105.
+    assert_eq!(points[0], (110.0, 55.0), "{points:?}");
+    assert_eq!(points[1], (110.0, 55.0), "{points:?}");
+    assert_eq!(*points.last().unwrap(), (220.0, 165.0), "{points:?}");
+}
+
+#[tokio::test]
+async fn trusted_coordinate_click_is_not_hit_tested() {
+    let f = fixture_with(|state| state.covering_node = Some(999)).await;
+    let (target, tab) = bind(&f).await;
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "x": 40, "y": 50, "session": SESSION
+        }))
+        .await;
+
+    assert_eq!(
+        structured(&result)["status"],
+        "ok",
+        "{}",
+        structured(&result)
+    );
+    assert!(recorded_calls(&f, "DOM.getNodeForLocation").is_empty());
+    assert_eq!(mouse_points(&f), vec![(40.0, 50.0), (40.0, 50.0)]);
+}
+
+#[tokio::test]
+async fn dom_event_click_is_not_hit_tested() {
+    let f = fixture_with(|state| state.covering_node = Some(999)).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref,
+            "input_route": "dom_event", "session": SESSION
+        }))
+        .await;
+
+    assert!(result.content.iter().any(|content| matches!(
+        content,
+        Content::Text { text, .. } if text.starts_with("dispatched synthetic DOM click")
+    )));
+    assert!(recorded_calls(&f, "DOM.getNodeForLocation").is_empty());
 }
 
 #[tokio::test]

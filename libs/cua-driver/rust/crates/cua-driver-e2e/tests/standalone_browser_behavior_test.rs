@@ -73,6 +73,17 @@ fn standalone_trust_gated_click_html() -> String {
     )
 }
 
+/// The counter button sits under a transparent overlay that swallows clicks,
+/// so a trusted event at the button's center lands on the overlay instead.
+fn standalone_covered_click_html() -> String {
+    standalone_fixture_html().replace(
+        "</body>",
+        r#"<div id="standalone-click-cover" aria-hidden="true"
+        style="position:fixed;inset:0;z-index:2147483647;background:transparent"></div>
+</body>"#,
+    )
+}
+
 #[cfg(target_os = "macos")]
 fn standalone_generic_type_text_html() -> String {
     standalone_fixture_html().replace(
@@ -2514,6 +2525,77 @@ fn run_trusted_click(spec: &BrowserSpec) {
             }
         })
     });
+}
+
+/// #2882: a trusted ref click whose point another element covers must refuse
+/// before dispatch, not report success after clicking the cover. The same ref
+/// on the explicit DOM route still reaches the button.
+fn run_trusted_click_covered_ref(spec: &BrowserSpec) {
+    let scenario = format!(
+        "{}-{}-standalone-trusted-click-covered-ref",
+        std::env::consts::OS,
+        spec.name
+    );
+    execute_case(
+        refusal_case(
+            &spec.name,
+            "trusted_click_covered_ref",
+            RefusalCode::BrowserInputTrustUnavailable,
+        ),
+        |evidence| {
+            let mut fixture =
+                launch_browser_with_html(spec, &scenario, standalone_covered_click_html());
+            *evidence = recording_evidence(fixture.driver.recording_dir());
+            let session = format!("standalone-trusted-click-covered-{}", fixture.pid);
+            prepare_same_space_attachment(&mut fixture, &session);
+            run_with_background_oracles(&mut fixture, |fixture| {
+                let (target, tab, snapshot) = bind(fixture, &session);
+                let click_ref = ref_by_label(&snapshot, "id=btn-increment");
+                let refused = fixture.driver.call(
+                    "browser_click",
+                    serde_json::json!({
+                        "target_id": target,
+                        "tab_id": tab,
+                        "ref": click_ref,
+                        "input_route": "trusted",
+                        "delivery_mode": "foreground",
+                        "session": session,
+                    }),
+                );
+                assert_eq!(refused.action_effect(), Some("refused"), "{}", refused.raw);
+                assert!(
+                    refused.text().contains("browser_input_trust_unavailable"),
+                    "{}",
+                    refused.raw
+                );
+                assert!(
+                    refused.text().contains("nothing was sent"),
+                    "{}",
+                    refused.raw
+                );
+                wait_for_text(&fixture.server, "lbl-counter", "counter=0");
+
+                let synthetic = fixture.driver.call(
+                    "browser_click",
+                    serde_json::json!({
+                        "target_id": target,
+                        "tab_id": tab,
+                        "ref": click_ref,
+                        "input_route": "dom_event",
+                        "session": session,
+                    }),
+                );
+                assert_eq!(synthetic.action_route(), Some("dom"), "{}", synthetic.raw);
+                wait_for_text(&fixture.server, "lbl-counter", "counter=1");
+                Observation::refused(
+                    RefusalCode::BrowserInputTrustUnavailable,
+                    vec![OracleKind::FixtureState],
+                    refused.text(),
+                    Evidence::default(),
+                )
+            })
+        },
+    );
 }
 
 fn run_prepare_isolated_launch(spec: &BrowserSpec) {
@@ -5434,6 +5516,10 @@ standalone_browser_test!(
     run_web_type_text_verification
 );
 standalone_browser_test!(standalone_browser_trusted_click, run_trusted_click);
+standalone_browser_test!(
+    standalone_browser_trusted_click_covered_ref,
+    run_trusted_click_covered_ref
+);
 standalone_browser_test!(
     standalone_browser_prepare_isolated,
     run_prepare_isolated_launch

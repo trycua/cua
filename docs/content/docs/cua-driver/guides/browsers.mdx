@@ -215,7 +215,7 @@ with `--force-renderer-accessibility`. Setup recognizes English UI labels only.
 | `browser_consent_revoked` | The host denied, or the browser's prompt was dismissed. |
 | `browser_ref_stale`, `browser_binding_stale` | Snapshot or bind again. |
 | `browser_wrong_target_refused`, `browser_endpoint_owner_mismatch` | Window, prompt, or endpoint identity is not exact. |
-| `browser_input_trust_unavailable` | Trusted input would activate the browser; use `input_route: "dom_event"` if acceptable. |
+| `browser_input_trust_unavailable` | Trusted input would activate the browser, or (with `detail.hit_test`) a ref's click point is covered or off screen; use `input_route: "dom_event"` if acceptable. |
 | `browser_route_unavailable` | No typed route for this engine or platform. |
 | `browser_origin_outside_scope` | The tab left the manifest's origins; mutation pauses. |
 | `browser_action_unavailable` | The ref does not declare the needed action. |

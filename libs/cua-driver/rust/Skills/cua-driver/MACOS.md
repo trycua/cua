@@ -728,12 +728,15 @@ A native `<input type="range">` in Chrome does not follow a background drag
 through CDP `Input.dispatchMouseEvent` with the button held.
 
 A drag that starts a macOS drag-and-drop session (reordering a list by drag
-and drop, moving a file, HTML5 `draggable` content) cannot drop in the
-background: macOS tracks those sessions with the real pointer. The driver
-sees the session start, releases at once, and returns
-`background_unavailable` with `reason: "drag_and_drop_session"`. Look for a
-non-drag route first (Move Up/Down, a menu or context-menu command, a
-shortcut, cut and paste), then foreground if the user allows it.
+and drop, moving a file) drops in the background too. AppKit ends a session
+that window-routed events started soon after it starts, dropping at the last
+dragged point, so the driver moves straight to the drop point once the drag
+image shows and holds it there until the session ends. The result then says
+`drag_session: true`. If the session is still open when the hold runs out,
+no drop landed and the result is `background_unavailable` with
+`reason: "drag_and_drop_session"`. Then look for a non-drag route (Move
+Up/Down, a menu or context-menu command, a shortcut, cut and paste), and
+use foreground only if the user allows it.
 
 In an Electron window, `drag` is sent from the app's main process
 (CDP `Input.dispatchMouseEvent` with the button held, or

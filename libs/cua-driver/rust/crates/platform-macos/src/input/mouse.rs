@@ -857,7 +857,7 @@ where
         modifiers,
         button,
         observe,
-        || true,
+        || false,
     )
     .map(|_| ())
 }
@@ -876,12 +876,24 @@ fn refuse_drag_points(
 /// How a background drag gesture ended.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum BackgroundDragOutcome {
-    /// Every planned event was posted and the release landed on the drop point.
+    /// No drag-and-drop session showed; every planned event was posted and
+    /// the release landed on the drop point.
     Completed,
-    /// The caller's `keep_going` check failed during the path; the release
-    /// was posted at once at this screen point instead of the drop point.
-    StoppedEarly { at: (f64, f64) },
+    /// A drag-and-drop session started during the path. The gesture went
+    /// straight to the drop point and held it there; `ended` says whether the
+    /// session closed (and so dropped there) before the hold ran out.
+    DragSession { ended: bool },
 }
+
+/// How long a background drag holds the drop point waiting for a
+/// drag-and-drop session to end, and how often it repeats the drag there.
+/// AppKit ends a session started by window-routed events on its own within a
+/// few hundred milliseconds, dropping at the last dragged point.
+const DRAG_SESSION_HOLD: std::time::Duration = std::time::Duration::from_millis(1500);
+const DRAG_SESSION_TICK_MS: u64 = 16;
+/// How often a background drag looks for a drag-and-drop session while it
+/// waits between path steps.
+const DRAG_SESSION_POLL: std::time::Duration = std::time::Duration::from_millis(4);
 
 /// Event kinds in the background drag plan.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -981,10 +993,13 @@ impl BackgroundDragStep {
 /// window AppKit-key without raising it first
 /// ([`prepare_background_pixel_click`]).
 ///
-/// `keep_going` runs after each drag step; when it returns false the rest of
-/// the path is skipped and the release is posted at once where the gesture
-/// stands. The drag tool uses it to cut short a gesture that started a system
-/// drag-and-drop session, which macOS tracks with the hardware pointer.
+/// `session_open` runs after each drag step and reports whether a system
+/// drag-and-drop session is showing (the drag tool watches for its drag
+/// image). AppKit ends such a session on its own soon after it starts,
+/// dropping at the last point it was dragged to. So once a session shows, the
+/// rest of the path is skipped: the gesture moves straight to the drop point
+/// and repeats the drag there until the session ends or [`DRAG_SESSION_HOLD`]
+/// runs out, then releases at the drop point.
 #[allow(clippy::too_many_arguments)]
 pub fn drag_at_xy_background<F, G>(
     pid: i32,
@@ -997,7 +1012,7 @@ pub fn drag_at_xy_background<F, G>(
     modifiers: &[&str],
     button: DragButton,
     mut observe: F,
-    mut keep_going: G,
+    mut session_open: G,
 ) -> anyhow::Result<BackgroundDragOutcome>
 where
     F: FnMut(f64, f64),
@@ -1044,15 +1059,10 @@ where
     } else {
         (0.0, 0.0)
     };
-    let mut stopped_at: Option<(f64, f64)> = None;
-    let mut last_point = from;
-    for mut step in background_drag_plan(from, to, steps, duration_ms) {
-        if let Some(at) = stopped_at {
-            match step.kind {
-                Dragged => continue,
-                Up => step.point = at,
-                _ => {}
-            }
+    let mut session: Option<bool> = None;
+    for step in background_drag_plan(from, to, steps, duration_ms) {
+        if session.is_some() && step.kind == Dragged {
+            continue;
         }
         // (type, button, button number, subtype). Primers keep the click
         // recipe's left button and touch subtype; the gesture itself is a
@@ -1065,40 +1075,74 @@ where
             Dragged => (dragged_type, cg_button, button_number, 0),
             Up => (up_type, cg_button, button_number, 0),
         };
-        let point = CGPoint::new(step.point.0, step.point.1);
-        let event = CGEvent::new_mouse_event(source.clone(), event_type, point, event_button)
+        let post = |point: (f64, f64)| -> anyhow::Result<()> {
+            let event = CGEvent::new_mouse_event(
+                source.clone(),
+                event_type,
+                CGPoint::new(point.0, point.1),
+                event_button,
+            )
             .map_err(|_| {
                 anyhow::anyhow!("background drag {:?} event creation failed", step.kind)
             })?;
-        let ptr = event.as_ptr() as *mut std::ffi::c_void;
-        let set =
-            |field: u32, value: i64| crate::input::skylight::set_integer_field(ptr, field, value);
-        set(0, step.phase);
-        set(1, step.click_state);
-        set(3, event_button_number);
-        set(7, subtype);
-        set(40, pid as i64);
-        set(51, window_id);
-        set(91, window_id);
-        set(92, window_id);
-        set(58, gesture_id);
-        let (stamp_x, stamp_y) = step.window_location(stamp_origin);
-        crate::input::skylight::set_window_location(ptr, stamp_x, stamp_y);
-        set_explicit_flags(&event, flags);
-        dispatch_mouse_event(route, pid, &event);
+            let ptr = event.as_ptr() as *mut std::ffi::c_void;
+            let set = |field: u32, value: i64| {
+                crate::input::skylight::set_integer_field(ptr, field, value)
+            };
+            set(0, step.phase);
+            set(1, step.click_state);
+            set(3, event_button_number);
+            set(7, subtype);
+            set(40, pid as i64);
+            set(51, window_id);
+            set(91, window_id);
+            set(92, window_id);
+            set(58, gesture_id);
+            let stamped = BackgroundDragStep { point, ..step };
+            let (stamp_x, stamp_y) = stamped.window_location(stamp_origin);
+            crate::input::skylight::set_window_location(ptr, stamp_x, stamp_y);
+            set_explicit_flags(&event, flags);
+            dispatch_mouse_event(route, pid, &event);
+            Ok(())
+        };
+        post(step.point)?;
         if matches!(step.kind, Down | Dragged) {
             observe(step.point.0, step.point.1);
-            last_point = step.point;
         }
-        if step.delay_after_ms > 0 {
-            std::thread::sleep(std::time::Duration::from_millis(step.delay_after_ms));
+        if step.kind != Dragged {
+            if step.delay_after_ms > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(step.delay_after_ms));
+            }
+            continue;
         }
-        if step.kind == Dragged && stopped_at.is_none() && !keep_going() {
-            stopped_at = Some(last_point);
+        // A session can start and end within one step's delay, dropping
+        // wherever the path stands then, so look for it in short slices.
+        let step_end =
+            std::time::Instant::now() + std::time::Duration::from_millis(step.delay_after_ms);
+        let mut open = session_open();
+        while !open && std::time::Instant::now() < step_end {
+            let left = step_end.saturating_duration_since(std::time::Instant::now());
+            std::thread::sleep(left.min(DRAG_SESSION_POLL));
+            open = session_open();
+        }
+        if open {
+            // Hold the drop point until the session ends there.
+            observe(to.0, to.1);
+            let deadline = std::time::Instant::now() + DRAG_SESSION_HOLD;
+            let mut ended = false;
+            while std::time::Instant::now() < deadline {
+                post(to)?;
+                std::thread::sleep(std::time::Duration::from_millis(DRAG_SESSION_TICK_MS));
+                if !session_open() {
+                    ended = true;
+                    break;
+                }
+            }
+            session = Some(ended);
         }
     }
-    Ok(match stopped_at {
-        Some(at) => BackgroundDragOutcome::StoppedEarly { at },
+    Ok(match session {
+        Some(ended) => BackgroundDragOutcome::DragSession { ended },
         None => BackgroundDragOutcome::Completed,
     })
 }
@@ -1896,6 +1940,7 @@ mod post_sink {
         /// Modifier flags carried by each posted event, parallel to `posted`.
         modifiers: Vec<u64>,
         window_routing: Vec<[i64; 4]>,
+        locations: Vec<(f64, f64)>,
     }
 
     thread_local! {
@@ -1915,6 +1960,7 @@ mod post_sink {
                     warps: 0,
                     modifiers: Vec::new(),
                     window_routing: Vec::new(),
+                    locations: Vec::new(),
                 });
             });
             Self
@@ -1945,6 +1991,11 @@ mod post_sink {
 
         pub(super) fn window_routing(&self) -> Vec<[i64; 4]> {
             STATE.with(|state| state.borrow().as_ref().unwrap().window_routing.clone())
+        }
+
+        /// Each posted event's screen location.
+        pub(super) fn locations(&self) -> Vec<(f64, f64)> {
+            STATE.with(|state| state.borrow().as_ref().unwrap().locations.clone())
         }
     }
 
@@ -1999,6 +2050,8 @@ mod post_sink {
             state
                 .window_routing
                 .push([51, 91, 92, 58].map(|field| event.get_integer_value_field(field)));
+            let location = event.location();
+            state.locations.push((location.x, location.y));
             true
         })
     }
@@ -2487,7 +2540,7 @@ mod tests {
             &["shift"],
             DragButton::Left,
             |x, y| observed.push((x, y)),
-            || true,
+            || false,
         )
         .unwrap();
         let posted = capture.posted();
@@ -2541,7 +2594,7 @@ mod tests {
             &[],
             DragButton::Right,
             |_, _| {},
-            || true,
+            || false,
         )
         .unwrap();
         let posted = capture.posted();
@@ -2562,8 +2615,11 @@ mod tests {
         );
     }
 
+    /// A drag-and-drop session that shows after the second step: the path is
+    /// cut there, the drag moves straight to the drop point and repeats there
+    /// until the session ends, and the release goes out at the drop point.
     #[test]
-    fn background_drag_stopped_early_releases_where_it_stands() {
+    fn background_drag_session_holds_the_drop_point_until_it_ends() {
         let capture = Capture::start(true);
         let mut checks = 0;
         let outcome = drag_at_xy_background(
@@ -2579,29 +2635,54 @@ mod tests {
             |_, _| {},
             || {
                 checks += 1;
-                checks < 2
+                // Not open after step 1; open after step 2 and for two
+                // holds at the drop point; closed after the third.
+                (2..=4).contains(&checks)
             },
         )
         .unwrap();
-        assert_eq!(
-            outcome,
-            BackgroundDragOutcome::StoppedEarly { at: (50.0, 0.0) }
-        );
-        let events: Vec<_> = capture
-            .posted()
+        assert_eq!(outcome, BackgroundDragOutcome::DragSession { ended: true });
+        let gesture: Vec<_> = capture.posted()[3..]
             .iter()
             .map(|posted| posted.event.clone())
+            .zip(capture.locations()[3..].iter().copied())
             .collect();
+        let at = |event: &str, x: f64| (event.to_owned(), (x, 0.0));
         assert_eq!(
-            events[3..],
+            gesture,
             [
-                "LeftMouseDown",
-                "LeftMouseDragged",
-                "LeftMouseDragged",
-                "LeftMouseUp"
+                at("LeftMouseDown", 0.0),
+                at("LeftMouseDragged", 25.0),
+                at("LeftMouseDragged", 50.0),
+                at("LeftMouseDragged", 100.0),
+                at("LeftMouseDragged", 100.0),
+                at("LeftMouseDragged", 100.0),
+                at("LeftMouseUp", 100.0),
             ],
-            "no drag after the stop, and the release still goes out"
+            "the rest of the path is skipped and every later event is at the drop point"
         );
+    }
+
+    #[test]
+    fn background_drag_session_that_never_ends_reports_it() {
+        let capture = Capture::start(true);
+        let outcome = drag_at_xy_background(
+            42,
+            (0.0, 0.0),
+            (100.0, 0.0),
+            (0.0, 0.0),
+            7,
+            0,
+            2,
+            &[],
+            DragButton::Left,
+            |_, _| {},
+            || true,
+        )
+        .unwrap();
+        assert_eq!(outcome, BackgroundDragOutcome::DragSession { ended: false });
+        assert_eq!(capture.posted().last().unwrap().event, "LeftMouseUp");
+        assert_eq!(capture.locations().last(), Some(&(100.0, 0.0)));
     }
 
     /// Every global-HID pointer primitive checks for a security prompt before

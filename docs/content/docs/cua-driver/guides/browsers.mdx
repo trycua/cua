@@ -1,6 +1,6 @@
 ---
 title: Drive a browser
-description: Bind a browser window, snapshot its tab, and navigate, click, and type without raising it; attach to a logged-in Chrome or Edge profile.
+description: Bind a browser window, snapshot its tab, and navigate, click, and type without raising it; attach to a logged-in Chrome, Edge or Brave profile.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -119,7 +119,7 @@ or endpoint the driver did not launch, and sessions already ending, have no
 
 ## Attach to a logged-in profile
 
-Use an existing Chrome or Edge profile only when the task needs its signed-in
+Use an existing Chrome, Edge or Brave profile only when the task needs its signed-in
 session, on a trusted machine. CDP exposes that profile's pages, cookies, and
 storage, and loopback is not authentication: other processes running as the
 same user can reach an open endpoint.
@@ -187,7 +187,7 @@ browser_prepare({
 ```
 
 If the browser has no DevTools endpoint, the driver opens a temporary tab at
-`chrome://inspect/#remote-debugging` (or `edge://…`), turns on **Allow remote
+`chrome://inspect/#remote-debugging` (or `edge://…`, `brave://…`), turns on **Allow remote
 debugging for this browser instance**, proves the new listener is loopback and
 owned by that process, and closes the tab. It presses only the browser's own
 consent button. On Chrome 144 and later it connects through the running
@@ -203,8 +203,9 @@ ids are invalid. The grant lives in memory: it expires after 30 minutes idle or
 off Chrome's remote-debugging setting; do that in Chrome.
 
 Supported: Chrome and Edge on macOS, Windows, and Linux X11; Chrome on GNOME
-Wayland; Chrome, Edge, and Chromium on Sway. On Linux, start the browser
-with `--force-renderer-accessibility`. Setup recognizes English UI labels only.
+Wayland; Chrome, Edge, and Chromium on Sway; Brave on macOS, Windows, and
+Linux X11. On Linux, start the browser with `--force-renderer-accessibility`.
+Setup recognizes English UI labels only.
 
 ## Refusals
 

@@ -263,7 +263,7 @@ struct BrowserSpec {
     executable: PathBuf,
 }
 
-const SUPPORTED_BROWSER_PRODUCTS: &[&str] = &["chrome", "chromium", "edge"];
+const SUPPORTED_BROWSER_PRODUCTS: &[&str] = &["chrome", "chromium", "edge", "brave"];
 
 fn parse_browser_products(raw: &str) -> Result<Vec<String>, String> {
     let mut products = Vec::new();
@@ -319,6 +319,7 @@ fn browser_product_selection_is_ordered_and_strict() {
     assert!(parse_browser_products("").is_err());
     assert!(parse_browser_products("chrome,chrome").is_err());
     assert!(parse_browser_products("firefox").is_err());
+    assert_eq!(parse_browser_products("brave").unwrap(), ["brave"]);
 
     let deduped = dedupe_browser_products(vec![
         BrowserSpec {
@@ -419,6 +420,14 @@ fn browser_specs() -> Vec<BrowserSpec> {
                     "edge",
                     home.join("Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
                 ),
+                (
+                    "brave",
+                    PathBuf::from("/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"),
+                ),
+                (
+                    "brave",
+                    home.join("Applications/Brave Browser.app/Contents/MacOS/Brave Browser"),
+                ),
             ]
             .into_iter()
             .filter(|(_, executable)| executable.is_file())
@@ -438,6 +447,8 @@ fn browser_specs() -> Vec<BrowserSpec> {
             ("chromium", PathBuf::from("/usr/bin/chromium-browser")),
             ("edge", PathBuf::from("/usr/bin/microsoft-edge")),
             ("edge", PathBuf::from("/usr/bin/microsoft-edge-stable")),
+            ("brave", PathBuf::from("/usr/bin/brave-browser")),
+            ("brave", PathBuf::from("/usr/bin/brave-browser-stable")),
         ];
         if let Some(path) = std::env::var_os("PATH") {
             for (name, executable_name) in [
@@ -446,6 +457,8 @@ fn browser_specs() -> Vec<BrowserSpec> {
                 ("chromium", "chromium-browser"),
                 ("edge", "microsoft-edge"),
                 ("edge", "microsoft-edge-stable"),
+                ("brave", "brave-browser"),
+                ("brave", "brave-browser-stable"),
             ] {
                 if let Some(executable) = std::env::split_paths(&path)
                     .map(|directory| directory.join(executable_name))
@@ -517,6 +530,18 @@ fn browser_specs() -> Vec<BrowserSpec> {
                 (
                     "edge",
                     program_files.join(r"Microsoft\Edge\Application\msedge.exe"),
+                ),
+                (
+                    "brave",
+                    program_files.join(r"BraveSoftware\Brave-Browser\Application\brave.exe"),
+                ),
+                (
+                    "brave",
+                    program_files_x86.join(r"BraveSoftware\Brave-Browser\Application\brave.exe"),
+                ),
+                (
+                    "brave",
+                    local_app_data.join(r"BraveSoftware\Brave-Browser\Application\brave.exe"),
                 ),
             ]
             .into_iter()
@@ -1106,6 +1131,7 @@ fn browser_app_name_matches(spec: &BrowserSpec, app_name: &str) -> bool {
         "chrome" => app_name.contains("chrome"),
         "chromium" => app_name.contains("chromium"),
         "edge" => app_name.contains("edge"),
+        "brave" => app_name.contains("brave"),
         _ => false,
     }
 }

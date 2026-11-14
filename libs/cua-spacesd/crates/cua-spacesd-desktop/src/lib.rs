@@ -794,16 +794,19 @@ pub struct CuaDisplayProvider(#[allow(dead_code)] Arc<CuaProviderInner>);
 
 const DISPLAY_KEY_PREFIX: &str = "display:";
 
-/// Whether the desktop is a Hyprland (Wayland) session, which the X11
+/// Whether the desktop is a Hyprland or niri (Wayland) session, which the X11
 /// backends cannot see into (see [`linux_wayland`]).
 #[cfg(target_os = "linux")]
 pub(crate) fn wayland_session() -> bool {
     linux_wayland::active()
 }
 
-/// The Hyprland window manager (focus and geometry through `hyprctl`).
+/// The Wayland window manager (Hyprland via `hyprctl`, niri via its IPC).
 #[cfg(target_os = "linux")]
 pub(crate) fn wayland_window_manager() -> Arc<dyn grpc::tool_backend::WindowManager> {
+    if linux_wayland::is_niri() {
+        return Arc::new(linux_wayland::NiriWindowManager);
+    }
     Arc::new(linux_wayland::HyprlandWindowManager)
 }
 
@@ -848,7 +851,7 @@ impl cua_spacesd_provider_api::DisplayProvider for CuaDisplayProvider {
         #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
         Err(ProviderError::new(
             ProviderErrorCode::Unsupported,
-            "desktop (display) targets are implemented on Linux (X11 and Hyprland), macOS and Windows only; stream windows instead",
+            "desktop (display) targets are implemented on Linux (X11, Hyprland and niri), macOS and Windows only; stream windows instead",
         ))
     }
 
@@ -1089,7 +1092,9 @@ impl InteractiveInputProvider for CuaInteractiveInputProvider {
                     delivery_mode,
                     |target| {
                         let native = inner.native(target)?;
-                        if delivery_mode == cua_driver_core::interactive_input::InteractiveDeliveryMode::Background {
+                        if delivery_mode == cua_driver_core::interactive_input::InteractiveDeliveryMode::Background
+                            && !linux_wayland::is_niri()
+                        {
                             hyprland_background_admission(native)?;
                         }
                         let descriptor = inner
@@ -1136,7 +1141,12 @@ impl InteractiveInputProvider for CuaInteractiveInputProvider {
                     target: "cua_spacesd_client::host_input",
                     target = %target.key.provider_value(),
                     ?delivery_mode,
-                    "opened cua-driver tool input session (Hyprland)"
+                    "{}",
+                    if linux_wayland::is_niri() {
+                        "opened cua-driver tool input session (niri)"
+                    } else {
+                        "opened cua-driver tool input session (Hyprland)"
+                    }
                 );
                 return Ok(Some(Arc::new(lease)));
             }

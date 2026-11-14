@@ -961,7 +961,9 @@ const UNLISTED_ACTIONS: &[&str] = &["AXShowMenu", "AXScrollToVisible"];
 /// Drop static-text leaf rows that only repeat text already shown on their
 /// parent row (a web button "Save case" with a child text "Save case"). The
 /// rows keep their element indices; only the rendering omits them, and a
-/// `query` for the text still matches the parent.
+/// `query` for the text still matches the parent. Only an addressable parent
+/// (one with its own `[N]` index) stands in for the child: a named group kept
+/// as a display row has no index, so its echoing text row stays the target.
 fn prune_echo_text_rows(lines: &mut Vec<(usize, String)>) {
     let mut keep = vec![true; lines.len()];
     for i in 0..lines.len() {
@@ -974,7 +976,9 @@ fn prune_echo_text_rows(lines: &mut Vec<(usize, String)>) {
             continue;
         }
         let parent = lines[..i].iter().rev().find(|(d, _)| *d + 1 == *depth);
-        if parent.is_some_and(|(_, parent_line)| quoted_text_contains(parent_line, text)) {
+        if parent.is_some_and(|(_, parent_line)| {
+            parent_line.starts_with("- [") && quoted_text_contains(parent_line, text)
+        }) {
             keep[i] = false;
         }
     }
@@ -1260,6 +1264,22 @@ mod lean_row_tests {
                 "- [12] AXStaticText = \"Inbox\"",
             ]
         );
+    }
+
+    #[test]
+    fn echo_text_under_an_unindexed_group_is_kept_as_the_target() {
+        // A named group is a display row with no element_index, so the text
+        // row repeating its name is the only addressable carrier (a web
+        // scroll region labelled by its own text).
+        let mut lines = rows(&[
+            (0, "- [0] AXWindow \"Harness\" [actions=[raise]]"),
+            (1, "- AXGroup \"scroll-tall\""),
+            (2, "- [33] AXStaticText = \"top marker\""),
+            (2, "- [34] AXStaticText = \"scroll-tall\""),
+            (2, "- [35] AXStaticText = \"line 02\""),
+        ]);
+        prune_echo_text_rows(&mut lines);
+        assert_eq!(lines.len(), 5);
     }
 
     #[test]

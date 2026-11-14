@@ -233,10 +233,11 @@ TypeSafe Jev and Cua-S1 chose correctly in all 1,680 decisions at about 4,
 
 #### Choose with Cua-S1
 
-The native runners also accept `--provider s1`, and `verify_native.py` accepts
-`--s1`. Loading Cua-S1 takes 10 to 35 seconds, so a per-step model load would
+The native and browser-fixture runners also accept `--provider s1`, and
+`verify_native.py` accepts `--s1`. Loading Cua-S1 takes 10 to 35 seconds, so a per-step model load would
 not fit inside Driver's 60-second capture lifetime. The runners therefore send
-each validated `cua.jev_choice_request_v2` request to an already loaded model
+each validated request (`cua.jev_choice_request_v2` from the native runners,
+`cua.jev_choice_request_v1` from the browser runners) to an already loaded model
 behind a loopback HTTP endpoint, and read one `cua.decision_choice_v1`
 response. `CUA_S1_DECISION_URL` names that endpoint. It must be a plain
 `http://` URL on `127.0.0.1`, `localhost`, or `::1`; a model on another host is
@@ -256,6 +257,14 @@ then stops with a logged `S1ServiceError` outcome. For example, to verify the na
 export CUA_S1_DECISION_URL=http://127.0.0.1:8791/decide
 uv run --frozen python verify_native.py --harness appkit --typescript --s1 --output-dir /tmp/jev-native-s1
 ```
+
+The browser-fixture runners send S1 the same validated
+`cua.jev_choice_request_v1` request that `choose_action.py` accepts: the goal,
+one `capture_id`, any typed visual regions, compact history, and candidate IDs
+with descriptions. They never send action arguments or the verification token.
+`--provider live` is unchanged and still sends the TypeSafe request pinned by
+the golden files above. Both runners check `CUA_S1_DECISION_URL` before they
+reset the fixture or start Driver.
 
 The MCP connection stays open across the entire loop. This preserves the
 explicit named Cua Driver session and avoids rebuilding tool state for every
@@ -371,7 +380,12 @@ are not provider billing caps.
 
 Every `step` event in a runner's JSONL log records the Driver tool that acted
 (`browser_type`, `browser_click`, or `click`), its `delivery_mode` for a visual
-click, and a redacted `visual` record:
+click, and a redacted `visual` record. In the browser-fixture runners, every
+step and decision outcome also records `backend`, the backend that chose it:
+`mock`, `typesafe` (for `--provider live`), or `s1`. It is `null` on a guarded
+completion step, where no provider ran. A provider failure ends the run with an
+`unknown` outcome, `phase: "provider"`, the backend and the error class, before
+any action is dispatched. The `visual` record is one of:
 
 ```json
 {"status": "skipped", "reason": "page_structure_candidate"}

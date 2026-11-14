@@ -28,7 +28,9 @@ from guarded_completion import (
     plan_guarded_completion,
     resolve_guarded_completion,
 )
+from browser_provider import BACKENDS, browser_decision_request
 from jev_adapter import choose_live_for_task, choose_mock_for_task
+from s1_service import choose_s1_service, s1_service_url
 from tasks import (
     FixtureFormTask,
     Task,
@@ -468,12 +470,19 @@ async def run(args: argparse.Namespace) -> str:
                     confidence = None
                     probabilities = None
                     decision_route = "guarded-completion"
+                    backend = None
                 else:
+                    backend = BACKENDS[args.provider]
                     provider_started = time.perf_counter()
                     try:
                         if args.provider == "mock":
                             choice, confidence, probabilities = choose_mock_for_task(
                                 task, sources, candidates, history
+                            )
+                        elif args.provider == "s1":
+                            choice, confidence, probabilities = await asyncio.to_thread(
+                                choose_s1_service,
+                                browser_decision_request(task, sources, candidates, history),
                             )
                         else:
                             choice, confidence, probabilities = await asyncio.to_thread(
@@ -483,18 +492,18 @@ async def run(args: argparse.Namespace) -> str:
                             (time.perf_counter() - provider_started) * 1000, 2
                         )
                         if choice is None:
-                            if guarded_record:
-                                write_event(
-                                    log_path,
-                                    {
-                                        "event": "outcome",
-                                        "outcome": "abstained",
-                                        "step": step,
-                                        "decision_route": "provider",
-                                        **guarded_record,
-                                        "visual": visual_record,
-                                    },
-                                )
+                            write_event(
+                                log_path,
+                                {
+                                    "event": "outcome",
+                                    "outcome": "abstained",
+                                    "step": step,
+                                    "decision_route": "provider",
+                                    "backend": backend,
+                                    **guarded_record,
+                                    "visual": visual_record,
+                                },
+                            )
                             return "abstained"
                         candidate = validate_choice(
                             choice,
@@ -503,8 +512,8 @@ async def run(args: argparse.Namespace) -> str:
                         )
                         decision_route = "provider"
                     except Exception as error:
-                        if not guarded_record:
-                            raise
+                        # No action was dispatched; fail closed with a logged
+                        # outcome that names only the error class.
                         write_event(
                             log_path,
                             {
@@ -514,6 +523,7 @@ async def run(args: argparse.Namespace) -> str:
                                 "phase": "provider",
                                 "error": type(error).__name__,
                                 "decision_route": "provider",
+                                "backend": backend,
                                 **guarded_record,
                                 "visual": visual_record,
                             },
@@ -552,6 +562,7 @@ async def run(args: argparse.Namespace) -> str:
                         "dry_run": args.dry_run,
                         "tool": None,
                         "decision_route": decision_route,
+                        "backend": backend,
                         **guarded_record,
                         "visual": visual_record,
                     }
@@ -567,6 +578,7 @@ async def run(args: argparse.Namespace) -> str:
                             "outcome": "abstained",
                             "step": step,
                             "decision_route": decision_route,
+                            "backend": backend,
                             **guarded_record,
                             "confidence": confidence,
                             "probabilities": probabilities,
@@ -594,6 +606,7 @@ async def run(args: argparse.Namespace) -> str:
                                 "probabilities": probabilities,
                                 **timing,
                                 "decision_route": decision_route,
+                                "backend": backend,
                                 **guarded_record,
                                 "action_ms": round((time.perf_counter() - action_started) * 1000, 2),
                                 "total_step_ms": round((time.perf_counter() - started) * 1000, 2),
@@ -619,6 +632,7 @@ async def run(args: argparse.Namespace) -> str:
                                 "step": step,
                                 "phase": "action",
                                 "decision_route": decision_route,
+                                "backend": backend,
                                 **guarded_record,
                                 "error": type(error).__name__,
                                 "tool": candidate.tool,
@@ -643,6 +657,7 @@ async def run(args: argparse.Namespace) -> str:
                     "tool": candidate.tool,
                     "delivery_mode": candidate.arguments.get("delivery_mode"),
                     "decision_route": decision_route,
+                    "backend": backend,
                     **guarded_record,
                     "visual": visual_record,
                 }
@@ -667,7 +682,12 @@ async def run(args: argparse.Namespace) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--provider", choices=("mock", "live"), default="mock")
+    parser.add_argument(
+        "--provider",
+        choices=tuple(BACKENDS),
+        default="mock",
+        help="live is TypeSafe Jev; s1 needs CUA_S1_DECISION_URL",
+    )
     parser.add_argument(
         "--fixture-url", type=validate_fixture_url, default="http://127.0.0.1:8765/"
     )
@@ -698,6 +718,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.provider == "s1":
+        s1_service_url()  # fail before touching the browser when the service is not configured
     outcome = asyncio.run(run(args))
     raise SystemExit(0 if outcome == "verified" or args.dry_run else 1)
 

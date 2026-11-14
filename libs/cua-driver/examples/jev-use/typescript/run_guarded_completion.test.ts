@@ -27,6 +27,7 @@ type Scenario = {
   actionError?: boolean;
   providerError?: boolean;
   duplicateCandidate?: boolean;
+  s1?: boolean;
 };
 
 async function runFixture(scenario: Scenario, log: string) {
@@ -73,6 +74,29 @@ async function runFixture(scenario: Scenario, log: string) {
           },
         },
       };
+    });
+  }
+
+  if (scenario.s1) {
+    process.env.CUA_S1_DECISION_URL = 'http://127.0.0.1:9/decide';
+    mock.method(globalThis, 'fetch', async (_url: unknown, init: { body: string }) => {
+      providerCalls += 1;
+      const request = JSON.parse(init.body);
+      console.error(`s1-request ${JSON.stringify(request)}`);
+      const ids: string[] = request.candidates.map(({ id }: { id: string }) => id);
+      const selected = ids.includes('submit-form') ? 'submit-form' : 'type-verification-value';
+      return new Response(
+        JSON.stringify({
+          schema: 'cua.decision_choice_v1',
+          kind: 'selected',
+          capture_id: request.capture_id,
+          selected_id: selected,
+          model: 'test-s1',
+          confidence: 0.9,
+          probabilities: Object.fromEntries(ids.map((id) => [id, id === selected ? 0.9 : 0])),
+          reason: null,
+        })
+      );
     });
   }
 
@@ -161,7 +185,7 @@ async function runFixture(scenario: Scenario, log: string) {
     process.execPath,
     fileURLToPath(new URL('./run.ts', import.meta.url)),
     '--provider',
-    scenario.providerError ? 'live' : 'mock',
+    scenario.providerError ? 'live' : scenario.s1 ? 's1' : 'mock',
     '--visual-observation',
     scenario.mode === 'visual-refusal' ? 'auto' : 'off',
     '--token',
@@ -206,7 +230,11 @@ function runScenario(scenario: Scenario = {}) {
         .find((line) => line.startsWith('{')) ?? '{}'
     );
     assert.equal(receipt.closed, true, child.stderr);
-    return { events, receipt, jsonl, status: child.status, stderr: child.stderr };
+    const s1Requests = child.stderr
+      .split('\n')
+      .filter((line) => line.startsWith('s1-request '))
+      .map((line) => JSON.parse(line.slice('s1-request '.length)));
+    return { events, receipt, jsonl, s1Requests, status: child.status, stderr: child.stderr };
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -410,6 +438,7 @@ if (process.argv[2] === '--fixture-run') {
         step: 2,
         phase: 'provider',
         decision_route: 'provider',
+        backend: providerError ? 'typesafe' : 'mock',
         error: 'Error',
         visual: { status: 'skipped', reason: 'disabled' },
         guarded_completion: {
@@ -431,13 +460,59 @@ if (process.argv[2] === '--fixture-run') {
     });
   }
 
-  test('runner preserves default-off provider failure behavior without guard telemetry', () => {
+  test('runner logs a default-off provider failure as unknown before any action', () => {
     const { events, receipt, status, jsonl } = runScenario({ guarded: false, providerError: true });
     assert.equal(status, 1);
-    assert.equal(events.length, 1);
+    assert.equal(events.length, 2);
     assert.equal(events[0].event, 'step');
-    assert.equal(Object.hasOwn(events[0], 'guarded_completion'), false);
+    assert.equal(events[0].backend, 'typesafe');
+    assert.deepEqual(events[1], {
+      event: 'outcome',
+      outcome: 'unknown',
+      step: 2,
+      phase: 'provider',
+      decision_route: 'provider',
+      backend: 'typesafe',
+      error: 'Error',
+      visual: { status: 'skipped', reason: 'disabled' },
+    });
     assert.equal(receipt.providerCalls, 2);
+    assert.equal(receipt.actions.length, 1);
     assert.equal(jsonl.includes(TOKEN), false);
+  });
+
+  test('every decision record names the backend that decided', () => {
+    const { events } = runScenario();
+    const steps = events.filter((event) => event.event === 'step');
+    assert.deepEqual(
+      steps.map((step) => [step.decision_route, step.backend]),
+      [
+        ['provider', 'mock'],
+        ['guarded-completion', null],
+      ]
+    );
+  });
+
+  test('runner sends S1 only the bounded request and records the s1 backend', () => {
+    const { events, receipt, s1Requests, status, stderr } = runScenario({
+      guarded: false,
+      s1: true,
+    });
+    assert.equal(status, 0, stderr);
+    assert.equal(receipt.providerCalls, 2);
+    assert.equal(s1Requests.length, 2);
+    for (const request of s1Requests) {
+      assert.equal(request.schema, 'cua.jev_choice_request_v1');
+      const wire = JSON.stringify(request);
+      for (const forbidden of [TOKEN, 'arguments', 'browser_type']) {
+        assert.equal(wire.includes(forbidden), false, forbidden);
+      }
+    }
+    const steps = events.filter((event) => event.event === 'step');
+    assert.deepEqual(
+      steps.map((step) => step.backend),
+      ['s1', 's1']
+    );
+    assert.equal(events.at(-1)?.outcome, 'verified');
   });
 }

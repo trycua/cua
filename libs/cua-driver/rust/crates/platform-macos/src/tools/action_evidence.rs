@@ -162,15 +162,29 @@ impl Findings {
         }
         for (window, rows) in &self.new_windows {
             let [x, y, w, h] = window.bounds;
-            out.push(format!(
-                "New window {} \"{}\" at ({x},{y}) {w}x{h} pt; read it with get_window_state \
-                 (window_id {}) before pixel actions on it.",
-                window.window_id,
-                window.title.replace('"', "'"),
-                window.window_id
-            ));
-            if let Some(rows) = rows.as_deref().filter(|rows| !rows.is_empty()) {
-                out.push(format!("Its text (default screenshot pixels):\n{rows}"));
+            match rows {
+                // The window was captured for these rows and that capture is
+                // now its screenshot frame: pixels off the rows are accepted.
+                Some(rows) => {
+                    out.push(format!(
+                        "New window {} \"{}\" at ({x},{y}) {w}x{h} pt; this capture is now its \
+                         screenshot, so pass window_id {} with x,y from the rows below (no read \
+                         needed first).",
+                        window.window_id,
+                        window.title.replace('"', "'"),
+                        window.window_id
+                    ));
+                    if !rows.is_empty() {
+                        out.push(format!("Its text (x,y in its screenshot pixels):\n{rows}"));
+                    }
+                }
+                None => out.push(format!(
+                    "New window {} \"{}\" at ({x},{y}) {w}x{h} pt; read it with get_window_state \
+                     (window_id {}) before pixel actions on it.",
+                    window.window_id,
+                    window.title.replace('"', "'"),
+                    window.window_id
+                )),
             }
         }
         if let Some(status) = &self.ocr_status {
@@ -310,6 +324,10 @@ impl<T: Tool + 'static> Tool for ActionEvidence<T> {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         let (pid, window_id) = action_target(&self.state, &args);
+        let session = args
+            .get("_session_id")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         let Some(pid) = pid else {
             return self.inner.invoke(args).await;
         };
@@ -369,7 +387,11 @@ impl<T: Tool + 'static> Tool for ActionEvidence<T> {
             .state
             .config
             .read()
-            .map(|c| c.max_image_dimension)
+            .map(|c| {
+                self.state
+                    .session_config
+                    .effective_max_image_dimension(session.as_deref(), &c)
+            })
             .unwrap_or(super::DEFAULT_MAX_IMAGE_DIMENSION);
         for window in new_windows(&before, &after) {
             // A window an opaque window opened is drawn by the same toolkit:
@@ -384,6 +406,7 @@ impl<T: Tool + 'static> Tool for ActionEvidence<T> {
                 .await
                 .ok()
                 .map(|text| {
+                    self.adopt_frame(pid, &window, &text, session.as_deref());
                     let shown: Vec<_> = text.rows.iter().take(NEW_WINDOW_ROWS).cloned().collect();
                     let mut block: String = shown
                         .iter()
@@ -418,6 +441,32 @@ impl<T: Tool + 'static> Tool for ActionEvidence<T> {
 }
 
 impl<T> ActionEvidence<T> {
+    /// Make the capture a new window's rows were read off that window's
+    /// screenshot frame, and its rows the baseline the next action diffs
+    /// against. The rows' x,y are shown to the caller, so a pixel action on
+    /// the window must accept them without another read. A window that
+    /// already has a snapshot keeps it (its tokens stay valid).
+    fn adopt_frame(
+        &self,
+        pid: i32,
+        window: &NewWindow,
+        text: &crate::ocr::TextBaseline,
+        session: Option<&str>,
+    ) {
+        let id = u64::from(window.window_id);
+        if text.capture_scale <= 0.0 || self.state.snapshots.contains_window(pid, id) {
+            return;
+        }
+        self.state.snapshots.publish_capture_for_session(
+            pid,
+            id,
+            crate::ax::snapshot::AxSnapshot::from_nodes(&[]),
+            session,
+            Some(text.capture_scale),
+        );
+        crate::ocr::remember_rows(pid, window.window_id, text.clone());
+    }
+
     /// The frame the caller's pixel actions on `window` use: its latest
     /// screenshot's.
     fn action_frame(&self, args: &Value, pid: i32, window: u32) -> Option<RowFrame> {
@@ -549,10 +598,29 @@ mod tests {
         let text = findings.render(Some(5));
         assert!(text.contains("New window 77 \"Save 'changes'\" at (1,2) 300x120 pt"));
         assert!(text.contains("OCRRow \"y=10\""));
+        assert!(text.contains("pass window_id 77 with x,y from the rows below"));
+        assert!(!text.contains("before pixel actions"));
         let mut map = serde_json::Map::new();
         findings.apply(&mut map, &text);
         assert_eq!(map["effect"], "confirmed");
         assert_eq!(map["new_windows"][0]["window_id"], 77);
+    }
+
+    #[test]
+    fn a_new_window_without_rows_asks_for_a_read() {
+        let findings = Findings {
+            new_windows: vec![(
+                NewWindow {
+                    window_id: 78,
+                    title: "Open".into(),
+                    bounds: [1, 2, 300, 120],
+                },
+                None,
+            )],
+            ..Findings::default()
+        };
+        let text = findings.render(Some(5));
+        assert!(text.contains("read it with get_window_state (window_id 78) before pixel actions"));
     }
 
     #[test]

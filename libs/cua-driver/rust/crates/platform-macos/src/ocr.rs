@@ -295,6 +295,9 @@ pub struct TextBaseline {
     pub rows: Vec<OcrRow>,
     pub width: u32,
     pub height: u32,
+    /// Native capture width / `width`: the screenshot scale of this frame
+    /// (1.0 when the rows were not read off a fresh capture).
+    pub capture_scale: f64,
 }
 
 fn baselines() -> &'static Mutex<HashMap<(i32, u32), TextBaseline>> {
@@ -330,6 +333,7 @@ pub fn page_rows(page: TextPage) -> TextBaseline {
         rows,
         width: page.width,
         height: page.height,
+        capture_scale: 1.0,
     }
 }
 
@@ -346,20 +350,23 @@ pub enum RowFrame {
 /// Capture `window_id` now and read its text rows in `frame`.
 pub fn read_window_rows(window_id: u32, frame: RowFrame) -> anyhow::Result<TextBaseline> {
     let raw = crate::capture::screenshot_window_image(window_id)?;
+    let (native_width, native_height) = raw.dimensions()?;
     let max_edge = match frame {
         RowFrame::MaxEdge(edge) => edge,
-        RowFrame::Downscale(factor) => {
-            let (width, height) = raw.dimensions()?;
-            (f64::from(width.max(height)) / factor.max(1e-3))
-                .round()
-                .max(1.0) as u32
-        }
+        RowFrame::Downscale(factor) => (f64::from(native_width.max(native_height))
+            / factor.max(1e-3))
+        .round()
+        .max(1.0) as u32,
     };
     let (png, _, _) = raw.encode(
         max_edge,
         cua_driver_core::image_utils::ScreenshotEncoding::Png,
     )?;
-    Ok(page_rows(read_page(&png)?))
+    let mut text = page_rows(read_page(&png)?);
+    if text.width > 0 {
+        text.capture_scale = f64::from(native_width) / f64::from(text.width);
+    }
+    Ok(text)
 }
 
 #[cfg(test)]

@@ -531,6 +531,7 @@ fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
         BrowserProduct::GoogleChrome => "Library/Application Support/Google/Chrome",
         BrowserProduct::MicrosoftEdge => "Library/Application Support/Microsoft Edge",
         BrowserProduct::Chromium => "Library/Application Support/Chromium",
+        BrowserProduct::Brave => "Library/Application Support/BraveSoftware/Brave-Browser",
         _ => return None,
     };
     Some(home.join(relative))
@@ -1481,6 +1482,15 @@ impl BrowserPlatform for MacOsBrowserPlatform {
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn brave_default_user_data_dir_is_its_brave_software_profile_root() {
+        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap();
+        assert_eq!(
+            default_user_data_dir(browser_product("Brave Browser", "com.brave.Browser")),
+            Some(home.join("Library/Application Support/BraveSoftware/Brave-Browser"))
+        );
+    }
 
     fn consent_surface(window_id: u32) -> ConsentSurfaceEvidence {
         ConsentSurfaceEvidence {

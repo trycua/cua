@@ -1035,6 +1035,10 @@ pub async fn run_serve(
 
     #[cfg(target_os = "linux")]
     platform_linux::recover_orphaned_mpx_devices();
+    // Load the text recognizer now, not in the first read of a window whose
+    // content is missing from the accessibility tree.
+    #[cfg(target_os = "macos")]
+    platform_macos::ocr::warm_up_in_background();
 
     // Create parent directory.
     if let Some(dir) = std::path::Path::new(socket_path).parent() {

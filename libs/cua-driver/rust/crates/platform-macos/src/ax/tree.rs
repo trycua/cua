@@ -832,6 +832,17 @@ mod web_content_role_tests {
     }
 }
 
+/// What a window title-bar button does, from its AXSubrole.
+fn frame_button_name(subrole: &str) -> Option<&'static str> {
+    match subrole {
+        "AXCloseButton" => Some("window close button"),
+        "AXMinimizeButton" => Some("window minimize button"),
+        "AXZoomButton" => Some("window zoom button"),
+        "AXFullScreenButton" => Some("window full screen button"),
+        _ => None,
+    }
+}
+
 fn format_node_line(node: &AXNode) -> String {
     let mut parts = String::new();
 
@@ -859,6 +870,19 @@ fn format_node_line(node: &AXNode) -> String {
         .filter(|d| node.title.as_ref() != Some(*d))
     {
         parts.push_str(&format!(" ({})", d));
+    }
+    // A window's title-bar buttons carry no title or description, only a
+    // subrole; name them so a dialog's close button is not mistaken for one
+    // of its own (unlabeled) buttons.
+    if node.title.as_deref().is_none_or(|t| t.trim().is_empty())
+        && node
+            .description
+            .as_deref()
+            .is_none_or(|d| d.trim().is_empty())
+    {
+        if let Some(name) = node.subrole.as_deref().and_then(frame_button_name) {
+            parts.push_str(&format!(" ({name})"));
+        }
     }
 
     // Bracketed metadata block (identifier, help, actions).
@@ -1070,6 +1094,42 @@ mod tests {
         assert_eq!(
             format_node_line(&node),
             "- [7] AXCheckBox \"Reset\" [enabled=false actions=[press]]"
+        );
+    }
+
+    #[test]
+    fn an_unlabeled_title_bar_button_is_named_by_its_subrole() {
+        let mut node = AXNode {
+            element_index: Some(1),
+            role: "AXButton".into(),
+            title: None,
+            value: None,
+            description: None,
+            placeholder: None,
+            subrole: Some("AXCloseButton".into()),
+            identifier: None,
+            help: None,
+            actions: vec!["AXPress".into()],
+            element_ptr: 0,
+            depth: 1,
+            parent_element_index: None,
+            frame: None,
+            value_state: None,
+            value_description: None,
+            min_value: None,
+            max_value: None,
+            enabled: None,
+            selected: None,
+            in_web_content: false,
+        };
+        assert_eq!(
+            format_node_line(&node),
+            "- [1] AXButton (window close button) [actions=[press]]"
+        );
+        node.description = Some("close".into());
+        assert_eq!(
+            format_node_line(&node),
+            "- [1] AXButton (close) [actions=[press]]"
         );
     }
 

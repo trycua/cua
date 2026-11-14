@@ -1126,7 +1126,7 @@ mod tests {
             return;
         }
 
-        let directory = tempfile::tempdir().expect("temporary socket directory");
+        let directory = cua_driver_testkit::socket_tempdir().expect("temporary socket directory");
         let socket = directory.path().join("daemon.sock");
         #[cfg(unix)]
         let listener = tokio::net::UnixListener::bind(&socket).expect("bind test daemon");

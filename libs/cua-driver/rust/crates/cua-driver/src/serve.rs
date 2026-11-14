@@ -2733,7 +2733,7 @@ mod socket_tests {
 
     #[test]
     fn every_local_service_socket_is_forced_private() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = cua_driver_testkit::socket_tempdir().unwrap();
         let socket = directory.path().join("driver.sock");
         let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
         std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o770)).unwrap();
@@ -2747,7 +2747,7 @@ mod socket_tests {
 
     #[test]
     fn a_second_standalone_launch_cannot_take_a_held_socket() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = cua_driver_testkit::socket_tempdir().unwrap();
         let socket = directory.path().join("driver.sock");
         let socket = socket.to_str().unwrap();
         let first = super::claim_standalone_socket(socket).unwrap();
@@ -2763,7 +2763,7 @@ mod socket_tests {
 
     #[test]
     fn cleanup_preserves_a_replacement_socket() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = cua_driver_testkit::socket_tempdir().unwrap();
         let socket = directory.path().join("driver.sock");
         let first = std::os::unix::net::UnixListener::bind(&socket).unwrap();
         let first_identity = socket_identity(socket.to_str().unwrap()).unwrap();

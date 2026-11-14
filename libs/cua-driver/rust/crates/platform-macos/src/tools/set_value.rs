@@ -1137,8 +1137,10 @@ enum TypeSelectMiss {
     /// typed.
     AppNotActive,
     /// Counting itself active put another of the app's windows on screen (a
-    /// panel AppKit shows only in an active app), so the activation was
-    /// undone at once; nothing was typed.
+    /// panel AppKit shows only in an active app: it went away again when the
+    /// activation was undone), so the activation was undone at once; nothing
+    /// was typed. A window the app showed by itself meanwhile (it stays on
+    /// screen while the app is inactive) is not this.
     ActivationShowedWindows,
     /// The popup could not take keyboard focus, or the window could not be
     /// made the app's key window; nothing was typed.
@@ -1193,45 +1195,119 @@ fn run_type_select(
 }
 
 /// How long an app may take to handle the in-app activation records before it
-/// reports itself active.
+/// reports itself active, or the deactivation record before it reports itself
+/// inactive again.
 const ACTIVATION_SETTLE: std::time::Duration = std::time::Duration::from_millis(500);
 const ACTIVATION_POLL: std::time::Duration = std::time::Duration::from_millis(25);
+/// How long a window that appeared during the activation must stay on screen
+/// after the app counts itself inactive again to be the app's own window
+/// rather than a panel AppKit shows only in an active app.
+const ACTIVATION_HIDE_GRACE: std::time::Duration = std::time::Duration::from_millis(100);
+/// How often the activation is tried when windows the app showed by itself
+/// (not because of the activation) appeared while it was being posted.
+const ACTIVATION_ATTEMPTS: usize = 2;
+
+/// The timing of [`ensure_counts_itself_active`].
+#[derive(Clone, Copy)]
+struct ActivationTiming {
+    settle: std::time::Duration,
+    poll: std::time::Duration,
+    hide_grace: std::time::Duration,
+}
+
+const ACTIVATION_TIMING: ActivationTiming = ActivationTiming {
+    settle: ACTIVATION_SETTLE,
+    poll: ACTIVATION_POLL,
+    hide_grace: ACTIVATION_HIDE_GRACE,
+};
 
 /// Have AppKit count the app as active before anything is typed. An app that
 /// already does needs nothing (`Ok(None)`). Otherwise `activate` posts the
 /// in-app activation and returns its guard, and `is_active` is read until it
-/// is true or `settle` has passed. An app that shows another window once
-/// active (`showed_windows`: a panel AppKit hides while the app is inactive)
-/// would change the user's screen, so that activation is undone. The guard
-/// undoes the activation when it is dropped, which happens here when the app
-/// never reports itself active or shows a window.
+/// is true or `timing.settle` has passed. The guard undoes the activation when
+/// it is dropped, which happens here when the app never reports itself active
+/// or a window it showed has to be undone.
+///
+/// An app that shows another window once active (a panel AppKit hides while
+/// the app is inactive) would change the user's screen, so that activation is
+/// undone. But a window can also appear on its own while the records are in
+/// flight: an app answers an earlier action with a banner, an alert or a
+/// sheet a moment later, whether it is active or not. Comparing the app's
+/// on-screen windows (`on_screen`) before and after cannot tell the two
+/// apart, so the activation is undone and the new windows are read again
+/// once the app counts itself inactive: a window the activation showed goes
+/// away with it, a window the app showed by itself stays. Only the first is
+/// refused; for the second the activation is tried again with the window
+/// counted as already there.
 fn ensure_counts_itself_active<G>(
     mut is_active: impl FnMut() -> bool,
-    activate: impl FnOnce() -> Option<G>,
-    mut showed_windows: impl FnMut() -> bool,
-    settle: std::time::Duration,
-    poll: std::time::Duration,
+    mut activate: impl FnMut() -> Option<G>,
+    mut on_screen: impl FnMut() -> Vec<u32>,
+    timing: ActivationTiming,
 ) -> Result<Option<G>, TypeSelectMiss> {
     if is_active() {
         return Ok(None);
     }
-    let Some(guard) = activate() else {
-        return Err(TypeSelectMiss::AppNotActive);
-    };
-    let deadline = std::time::Instant::now() + settle;
-    loop {
-        if is_active() {
-            if showed_windows() {
+    let mut before = on_screen();
+    for _ in 0..ACTIVATION_ATTEMPTS {
+        let Some(guard) = activate() else {
+            return Err(TypeSelectMiss::AppNotActive);
+        };
+        let deadline = std::time::Instant::now() + timing.settle;
+        while !is_active() {
+            if std::time::Instant::now() >= deadline {
                 drop(guard);
-                return Err(TypeSelectMiss::ActivationShowedWindows);
+                return Err(TypeSelectMiss::AppNotActive);
             }
+            std::thread::sleep(timing.poll);
+        }
+        let shown: Vec<u32> = on_screen()
+            .into_iter()
+            .filter(|id| !before.contains(id))
+            .collect();
+        if shown.is_empty() {
             return Ok(Some(guard));
         }
-        if std::time::Instant::now() >= deadline {
-            drop(guard);
-            return Err(TypeSelectMiss::AppNotActive);
+        drop(guard);
+        if !shown_while_inactive(&shown, &mut is_active, &mut on_screen, timing) {
+            return Err(TypeSelectMiss::ActivationShowedWindows);
         }
-        std::thread::sleep(poll);
+        before = on_screen();
+    }
+    Err(TypeSelectMiss::ActivationShowedWindows)
+}
+
+/// After the activation was undone: whether every window in `shown` is still
+/// on screen `timing.hide_grace` after the app counts itself inactive again,
+/// so the app showed it by itself. `false` as soon as one of them is gone (the
+/// activation showed it), and when the app still counts itself active after
+/// `timing.settle` (it cannot be told).
+fn shown_while_inactive(
+    shown: &[u32],
+    is_active: &mut impl FnMut() -> bool,
+    on_screen: &mut impl FnMut() -> Vec<u32>,
+    timing: ActivationTiming,
+) -> bool {
+    let deadline = std::time::Instant::now() + timing.settle;
+    let mut inactive_since: Option<std::time::Instant> = None;
+    loop {
+        let now_on_screen = on_screen();
+        if shown.iter().any(|id| !now_on_screen.contains(id)) {
+            return false;
+        }
+        if is_active() {
+            inactive_since = None;
+        } else if inactive_since
+            .get_or_insert_with(std::time::Instant::now)
+            .elapsed()
+            >= timing.hide_grace
+        {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(timing.poll);
     }
 }
 
@@ -1314,13 +1390,11 @@ fn select_appkit_popup_by_type_select(
             .map(|window| window.window_id)
             .collect()
     };
-    let on_screen_before = on_screen();
     let activation = ensure_counts_itself_active(
         || app_counts_itself_active(pid),
         || crate::input::skylight::InAppActivation::enter(pid, window_id),
-        || on_screen().iter().any(|id| !on_screen_before.contains(id)),
-        ACTIVATION_SETTLE,
-        ACTIVATION_POLL,
+        on_screen,
+        ACTIVATION_TIMING,
     )?;
     let popup_address = popup as usize;
     let previous_focus =
@@ -1650,7 +1724,7 @@ fn select_popup_option(
 #[cfg(test)]
 mod type_select_tests {
     use super::{run_type_select, type_select_keys, TypeSelectMiss};
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     use std::time::Duration;
 
     /// A closed popup that applies type-select the way AppKit does: typed
@@ -1797,59 +1871,98 @@ mod type_select_tests {
         );
     }
 
-    /// An app that counts itself active once `activate_after` reads have
-    /// passed since the activation was posted; `posted` and `undone` count the
-    /// activation and its guard's drop.
+    /// A fake app for [`super::ensure_counts_itself_active`]. Once an
+    /// activation is posted it counts itself active after `reads_until_active`
+    /// reads (never with `None`); dropping the activation makes it inactive
+    /// again. `panel` is a window it shows only while active; `own_after` puts
+    /// a window of its own on screen after that many window reads, active or
+    /// not (a banner in answer to an earlier action).
     struct FakeApp {
-        active: std::cell::Cell<bool>,
-        reads_until_active: std::cell::Cell<Option<u32>>,
-        posted: std::cell::Cell<u32>,
-        undone: std::rc::Rc<std::cell::Cell<u32>>,
+        state: std::rc::Rc<FakeState>,
+        reads_until_active: Option<u32>,
+        panel: bool,
+        own_after: Option<u32>,
+        posts: bool,
     }
 
-    struct FakeActivation(std::rc::Rc<std::cell::Cell<u32>>);
+    #[derive(Default)]
+    struct FakeState {
+        active: Cell<bool>,
+        pending: Cell<Option<u32>>,
+        posted: Cell<u32>,
+        undone: Cell<u32>,
+        window_reads: Cell<u32>,
+    }
+
+    struct FakeActivation(std::rc::Rc<FakeState>);
 
     impl Drop for FakeActivation {
         fn drop(&mut self) {
-            self.0.set(self.0.get() + 1);
+            self.0.undone.set(self.0.undone.get() + 1);
+            self.0.pending.set(None);
+            self.0.active.set(false);
         }
     }
 
+    const MAIN: u32 = 1;
+    const PANEL: u32 = 7;
+    const OWN: u32 = 9;
+
     impl FakeApp {
         fn new(active: bool, reads_until_active: Option<u32>) -> Self {
+            let state = FakeState::default();
+            state.active.set(active);
             Self {
-                active: std::cell::Cell::new(active),
-                reads_until_active: std::cell::Cell::new(reads_until_active),
-                posted: std::cell::Cell::new(0),
-                undone: std::rc::Rc::new(std::cell::Cell::new(0)),
+                state: std::rc::Rc::new(state),
+                reads_until_active,
+                panel: false,
+                own_after: None,
+                posts: true,
             }
         }
 
         fn is_active(&self) -> bool {
-            if self.posted.get() > 0 {
-                match self.reads_until_active.get() {
-                    Some(0) => self.active.set(true),
-                    Some(n) => self.reads_until_active.set(Some(n - 1)),
-                    None => {}
+            match self.state.pending.get() {
+                Some(0) => {
+                    self.state.pending.set(None);
+                    self.state.active.set(true);
                 }
+                Some(n) => self.state.pending.set(Some(n - 1)),
+                None => {}
             }
-            self.active.get()
+            self.state.active.get()
         }
 
-        fn ensure(
-            &self,
-            showed_windows: bool,
-            posts: bool,
-        ) -> Result<Option<FakeActivation>, TypeSelectMiss> {
+        fn on_screen(&self) -> Vec<u32> {
+            let reads = self.state.window_reads.get() + 1;
+            self.state.window_reads.set(reads);
+            let mut windows = vec![MAIN];
+            if self.panel && self.state.active.get() {
+                windows.push(PANEL);
+            }
+            if self.own_after.is_some_and(|after| reads > after) {
+                windows.push(OWN);
+            }
+            windows
+        }
+
+        fn ensure(&self) -> Result<Option<FakeActivation>, TypeSelectMiss> {
             super::ensure_counts_itself_active(
                 || self.is_active(),
                 || {
-                    self.posted.set(self.posted.get() + 1);
-                    posts.then(|| FakeActivation(self.undone.clone()))
+                    self.state.posted.set(self.state.posted.get() + 1);
+                    if !self.posts {
+                        return None;
+                    }
+                    self.state.pending.set(self.reads_until_active);
+                    Some(FakeActivation(self.state.clone()))
                 },
-                || showed_windows,
-                Duration::from_millis(40),
-                Duration::from_millis(2),
+                || self.on_screen(),
+                super::ActivationTiming {
+                    settle: Duration::from_millis(40),
+                    poll: Duration::from_millis(2),
+                    hide_grace: Duration::from_millis(6),
+                },
             )
         }
     }
@@ -1857,57 +1970,89 @@ mod type_select_tests {
     #[test]
     fn an_app_that_counts_itself_active_gets_no_activation() {
         let app = FakeApp::new(true, None);
-        assert!(matches!(app.ensure(false, true), Ok(None)));
-        assert_eq!(app.posted.get(), 0);
-        assert_eq!(app.undone.get(), 0);
+        assert!(matches!(app.ensure(), Ok(None)));
+        assert_eq!(app.state.posted.get(), 0);
+        assert_eq!(app.state.undone.get(), 0);
     }
 
     #[test]
     fn an_inactive_app_is_activated_in_app_and_handed_back_after() {
         let app = FakeApp::new(false, Some(2));
-        let guard = app.ensure(false, true).expect("activated");
+        let guard = app.ensure().expect("activated");
         assert!(guard.is_some());
-        assert_eq!(app.posted.get(), 1);
+        assert_eq!(app.state.posted.get(), 1);
         // Still active while the guard (the typing) lasts.
-        assert_eq!(app.undone.get(), 0);
+        assert_eq!(app.state.undone.get(), 0);
         drop(guard);
-        assert_eq!(app.undone.get(), 1);
+        assert_eq!(app.state.undone.get(), 1);
     }
 
     #[test]
     fn an_app_that_stays_inactive_is_handed_back_and_refused() {
         let app = FakeApp::new(false, None);
-        assert!(matches!(
-            app.ensure(false, true),
-            Err(TypeSelectMiss::AppNotActive)
-        ));
-        assert_eq!(app.posted.get(), 1);
-        assert_eq!(app.undone.get(), 1);
+        assert!(matches!(app.ensure(), Err(TypeSelectMiss::AppNotActive)));
+        assert_eq!(app.state.posted.get(), 1);
+        assert_eq!(app.state.undone.get(), 1);
     }
 
     #[test]
     fn records_that_cannot_be_posted_are_refused() {
-        let app = FakeApp::new(false, Some(0));
-        assert!(matches!(
-            app.ensure(false, false),
-            Err(TypeSelectMiss::AppNotActive)
-        ));
-        assert_eq!(app.undone.get(), 0);
+        let mut app = FakeApp::new(false, Some(0));
+        app.posts = false;
+        assert!(matches!(app.ensure(), Err(TypeSelectMiss::AppNotActive)));
+        assert_eq!(app.state.undone.get(), 0);
     }
 
     #[test]
     fn an_activation_that_shows_a_window_is_undone_at_once() {
-        let app = FakeApp::new(false, Some(0));
-        let result = app.ensure(true, true);
+        let mut app = FakeApp::new(false, Some(0));
+        app.panel = true;
+        let result = app.ensure();
         assert!(matches!(
             result,
             Err(TypeSelectMiss::ActivationShowedWindows)
         ));
-        assert_eq!(app.undone.get(), 1);
+        // Undone once; not tried again, since the window went away with it.
+        assert_eq!(app.state.posted.get(), 1);
+        assert_eq!(app.state.undone.get(), 1);
+        assert!(!app.state.active.get());
         assert_eq!(
             TypeSelectMiss::ActivationShowedWindows.code(),
             "activation_showed_windows"
         );
+    }
+
+    /// The IR-02 race: the app puts a banner of its own on screen (in answer
+    /// to the field set just before) while the activation is posted. The
+    /// banner stays once the app is inactive again, so it is not the
+    /// activation's: the activation is tried again and goes through.
+    #[test]
+    fn a_window_the_app_shows_by_itself_meanwhile_is_not_refused() {
+        let mut app = FakeApp::new(false, Some(1));
+        // Read 1 is the baseline; the banner is up from read 2 on.
+        app.own_after = Some(1);
+        let guard = app.ensure().expect("activated on the second try");
+        assert!(guard.is_some());
+        assert_eq!(app.state.posted.get(), 2);
+        assert_eq!(app.state.undone.get(), 1);
+        assert!(app.state.active.get());
+        drop(guard);
+        assert_eq!(app.state.undone.get(), 2);
+    }
+
+    /// A panel the activation shows is still refused when a window of the
+    /// app's own appears in the same moment.
+    #[test]
+    fn an_activation_panel_is_refused_beside_a_window_of_the_apps_own() {
+        let mut app = FakeApp::new(false, Some(0));
+        app.own_after = Some(1);
+        app.panel = true;
+        assert!(matches!(
+            app.ensure(),
+            Err(TypeSelectMiss::ActivationShowedWindows)
+        ));
+        assert_eq!(app.state.posted.get(), 1);
+        assert!(!app.state.active.get());
     }
 }
 

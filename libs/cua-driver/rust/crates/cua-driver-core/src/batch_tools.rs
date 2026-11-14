@@ -1031,8 +1031,9 @@ async fn run_step(
                 report["code"] = Value::String(code.to_owned());
             }
             // The step's own recovery hint and next call, so a failed batch
-            // says what to do next without a second tool call.
-            for key in ["hint", "next_call"] {
+            // says what to do next without a second tool call, and the
+            // refusal's structured reason, which the bounded message may cut.
+            for key in ["hint", "next_call", "reason", "type_select"] {
                 if let Some(value) = result
                     .structured_content
                     .as_ref()
@@ -1041,6 +1042,7 @@ async fn run_step(
                     report[key] = value.clone();
                 }
             }
+            message.push_str(&refusal_reason_note(result.structured_content.as_ref()));
             return StepOutcome {
                 line: format!("{}. {label} ERROR (action): {message}", index + 1),
                 report: with_phase(report, Phase::Action),
@@ -1931,6 +1933,26 @@ fn validate_against_schema(
             format!("invalid arguments at {path}: {error}")
         }
     })
+}
+
+/// ` (reason: …, type_select: …)` for a failed step whose result carries
+/// those structured fields, so the step line names why it was refused even
+/// when [`bounded_message`] cuts the text before it says so. Empty otherwise.
+fn refusal_reason_note(structured: Option<&Value>) -> String {
+    let fields: Vec<String> = ["reason", "type_select"]
+        .iter()
+        .filter_map(|key| {
+            structured
+                .and_then(|value| value.get(*key))
+                .and_then(Value::as_str)
+                .map(|value| format!("{key}: {value}"))
+        })
+        .collect();
+    if fields.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", fields.join(", "))
+    }
 }
 
 fn bounded_message(result: &ToolResult) -> String {

@@ -9,6 +9,7 @@
  */
 
 import type { HostStatus } from "@/bridge/contracts/host";
+import { t } from "@/i18n";
 
 import { defaultWhere, hostSpaceId, type NewKind, type TaskWhere } from "./ask-first";
 
@@ -50,8 +51,27 @@ export function thisMacSetupSteps(status: HostStatus | null | undefined): ThisMa
 
 /** The chip's words when this computer isn't ready: `place` is "This Mac", "This PC" ... */
 export const thisMacChipText = (place: string) => ({
-  note: "not set up for agents yet",
-  action: "Set up",
-  actionLabel: `Set up ${place} so agents can work on it`,
-  busy: "Setting up…",
+  note: t("computers.this_mac.chip_note"),
+  action: t("computers.this_mac.chip_action"),
+  actionLabel: t("computers.this_mac.chip_action_label", { place }),
+  busy: t("computers.this_mac.chip_busy"),
 });
+
+/**
+ * This computer's host status once it can take a job: Set up sharing its desktop starts its sharing service
+ * again, which is offline for a few seconds while it reconnects. A job sent in that moment failed with
+ * "Couldn't reach that computer" (CUA-3974), so the start waits, up to `timeoutMs`, while the status says it is
+ * set up but offline. Anything else (not set up, no status, online) is returned at once.
+ */
+export async function hostStatusWhenOnline(
+  read: () => Promise<HostStatus | null>,
+  { timeoutMs = 20_000, everyMs = 1_000, sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms)), now = () => Date.now() } = {},
+): Promise<HostStatus | null> {
+  const until = now() + timeoutMs;
+  let status = await read();
+  while (status && hostSpaceId(status) && status.online === false && now() < until) {
+    await sleep(everyMs);
+    status = await read();
+  }
+  return status;
+}

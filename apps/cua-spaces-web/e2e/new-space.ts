@@ -55,7 +55,10 @@ async function expectRunOnMenu(page: Page, v: WizardView): Promise<void> {
   await page.locator("[data-run-on]").click();
   const items = page.locator("[data-run-on-option]:visible");
   // Only with the Your cloud experiment (the core's `connect-cloud` field), last, after a rule.
-  const entries = [...v.placements.map((o) => ({ id: o.id, label: o.label, enabled: o.enabled })), ...(v.fields.some((f) => f.id === "connect-cloud") ? [{ ...ADD_CLOUD, enabled: true }] : [])];
+  const entries = [
+    ...v.placements.map((o) => ({ id: o.id, label: o.label, enabled: o.enabled })),
+    ...(v.fields.some((f) => f.id === "connect-cloud") ? [{ ...ADD_CLOUD, enabled: true }] : []),
+  ];
   await expect(items).toHaveCount(entries.length);
   expect(await attrs(items, "data-value")).toEqual(entries.map((o) => o.id));
   expect(await items.evaluateAll((els) => els.map((el) => el.hasAttribute("data-disabled")))).toEqual(entries.map((o) => !o.enabled));
@@ -101,7 +104,12 @@ async function checkWizard(page: Page, state: WizardState, v: WizardView, menuCh
   const field = (id: string) => shown.find((f) => f.id === id);
 
   if (v.step === 0) {
-    expect((await attrs(root.locator("[data-field]"), "data-field")).sort()).toEqual(shown.filter((f) => !LINKS.has(f.id)).map((f) => f.id).sort());
+    expect((await attrs(root.locator("[data-field]"), "data-field")).sort()).toEqual(
+      shown
+        .filter((f) => !LINKS.has(f.id))
+        .map((f) => f.id)
+        .sort(),
+    );
     const errors: Record<string, string> = {};
     for (const f of shown) {
       if (f.id === "image") {
@@ -201,8 +209,7 @@ async function checkWizard(page: Page, state: WizardState, v: WizardView, menuCh
     const plain = v.summary.filter((f) => !technical.has(f.label));
     const tech = v.summary.filter((f) => technical.has(f.label));
     await expect(root.locator("[data-advanced-toggle]")).toHaveCount(tech.length ? 1 : 0);
-    const rowsOf = () =>
-      root.locator("[data-summary-row]").evaluateAll((els) => els.map((el) => [...el.children].map((c) => c.textContent ?? "")));
+    const rowsOf = () => root.locator("[data-summary-row]").evaluateAll((els) => els.map((el) => [...el.children].map((c) => c.textContent ?? "")));
     expect(await rowsOf()).toEqual((v.advanced ? [...plain, ...tech] : plain).map((f) => [f.label, f.value]));
   }
 }

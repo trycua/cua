@@ -162,13 +162,17 @@ async fn observe_dom_click(
     }
 }
 
-fn dom_click_action_record(observation: &DomClickObservation) -> ActionExecutionRecord {
+fn click_readback_action_record(
+    observation: &DomClickObservation,
+    transport: ActionTransport,
+    delivery: ActualDelivery,
+) -> ActionExecutionRecord {
     let mut builder = ActionExecutionRecord::builder(
         observation.effect,
-        ActionTransport::BrowserCdpRuntimeFunction,
+        transport,
         RequestedDelivery::NotApplicable,
     )
-    .actual_delivery(ActualDelivery::Background);
+    .actual_delivery(delivery);
     if observation.readback_available {
         builder = builder.evidence(ActionEvidence {
             kind: EvidenceKind::BrowserReadback,
@@ -1473,7 +1477,11 @@ impl Tool for BrowserClickTool {
                             ext_ref.as_deref().unwrap_or("?")
                         ),
                     };
-                    let action_record = dom_click_action_record(&observation);
+                    let action_record = click_readback_action_record(
+                        &observation,
+                        ActionTransport::BrowserCdpRuntimeFunction,
+                        ActualDelivery::Background,
+                    );
                     ToolResult::text(text).with_action_record(action_record)
                 }
                 (Ok(_), Some(open)) => {
@@ -1485,6 +1493,7 @@ impl Tool for BrowserClickTool {
                         open.kind,
                         dialog_capability_id(open.generation)
                     );
+                    // The dialog blocks the renderer, so no readback can run.
                     ToolResult::text(text).with_structured(json!({
                         "status": "ok",
                         "effect": "unverifiable",
@@ -1557,6 +1566,34 @@ impl Tool for BrowserClickTool {
                 BrowserVisualActionKind::Click,
             )
             .await;
+
+        // A ref-targeted trusted click gets the same bounded target readback
+        // as the dom_event route, so a press that misses its target is not
+        // reported like one that toggled it. Coordinate clicks have no node.
+        let readback_object = match backend_node_id {
+            Some(backend) => conn
+                .call(
+                    Some(cdp),
+                    "DOM.resolveNode",
+                    json!({ "backendNodeId": backend }),
+                )
+                .await
+                .ok()
+                .and_then(|resolved| {
+                    resolved
+                        .pointer("/object/objectId")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                }),
+            None => None,
+        };
+        let before = match readback_object.as_deref() {
+            Some(object_id) => {
+                read_dom_click_state(conn, cdp, object_id, DOM_CLICK_BASELINE_DEADLINE).await
+            }
+            None => None,
+        };
+        let ref_targeted = backend_node_id.is_some();
 
         if let Err(error) = conn
             .call(
@@ -1654,8 +1691,44 @@ impl Tool for BrowserClickTool {
             "y": y,
         });
         let Some(open) = opened else {
-            return ToolResult::text(format!("clicked ({x:.0}, {y:.0}) in {tab_id}"))
-                .with_structured(structured);
+            let text = format!("clicked ({x:.0}, {y:.0}) in {tab_id}");
+            if !ref_targeted {
+                return ToolResult::text(text).with_structured(structured);
+            }
+            let observation = match readback_object.as_deref() {
+                Some(object_id) => observe_dom_click(conn, cdp, object_id, before).await,
+                None => DomClickObservation {
+                    effect: effect_from_value_readback(false, false, false),
+                    readback_available: false,
+                },
+            };
+            let text = match observation.effect {
+                ActionEffect::Confirmed => {
+                    format!("{text}; bounded semantic readback confirmed a target-state change")
+                }
+                _ if observation.readback_available => format!(
+                    "{text}; bounded semantic target state remained unchanged; application \
+                     effect is unverifiable. Refresh page state and verify the expected \
+                     postcondition"
+                ),
+                _ => format!(
+                    "{text}; application effect not verified because semantic target readback \
+                     was unavailable. Refresh page state and verify the expected postcondition"
+                ),
+            };
+            let delivery = if foreground {
+                ActualDelivery::Foreground
+            } else {
+                ActualDelivery::Background
+            };
+            let action_record = click_readback_action_record(
+                &observation,
+                ActionTransport::BrowserCdpInputMouse,
+                delivery,
+            );
+            return ToolResult::text(text)
+                .with_structured(structured)
+                .with_action_record(action_record);
         };
         structured["dialog"] = dialog_block(&open);
         structured["escalation"] = json!({
@@ -3194,6 +3267,19 @@ mod tests {
         launch_delay: std::time::Duration,
         /// Start time reported for every pid; a change stands for pid reuse.
         start_time: std::sync::atomic::AtomicU64,
+        /// What the isolated-launch tests observe and control.
+        launches: Arc<LaunchSignals>,
+    }
+
+    /// Isolated launches the mock performed, and a stand-in for an OS
+    /// security prompt (a macOS keychain prompt) on screen.
+    #[derive(Default)]
+    struct LaunchSignals {
+        spawned: std::sync::atomic::AtomicUsize,
+        prompt_open: std::sync::atomic::AtomicBool,
+        /// Each launched browser raises a prompt, as a Chromium that reads
+        /// its keychain secret does.
+        prompt_on_launch: std::sync::atomic::AtomicBool,
     }
 
     impl MockPlatform {
@@ -3343,12 +3429,23 @@ mod tests {
             }
         }
 
+        fn security_prompt_open(&self) -> bool {
+            self.launches
+                .prompt_open
+                .load(std::sync::atomic::Ordering::SeqCst)
+        }
+
         fn spawn_isolated_browser(
             &self,
             _command: std::process::Command,
             profile: &std::path::Path,
         ) -> Result<Box<dyn crate::browser::platform::IsolatedBrowserProcess>, BrowserRefusal>
         {
+            use std::sync::atomic::Ordering;
+            self.launches.spawned.fetch_add(1, Ordering::SeqCst);
+            if self.launches.prompt_on_launch.load(Ordering::SeqCst) {
+                self.launches.prompt_open.store(true, Ordering::SeqCst);
+            }
             std::thread::sleep(self.launch_delay);
             let port = self.devtools.as_ref().unwrap().local_addr().unwrap().port();
             std::fs::write(
@@ -3375,6 +3472,14 @@ mod tests {
 
     #[cfg(unix)]
     fn slow_launching_engine(launch_delay: std::time::Duration) -> Arc<BrowserEngine> {
+        observed_launching_engine(launch_delay, Arc::default())
+    }
+
+    #[cfg(unix)]
+    fn observed_launching_engine(
+        launch_delay: std::time::Duration,
+        launches: Arc<LaunchSignals>,
+    ) -> Arc<BrowserEngine> {
         static PROFILE_ROOT: std::sync::Once = std::sync::Once::new();
         PROFILE_ROOT.call_once(|| {
             std::env::set_var(
@@ -3385,6 +3490,7 @@ mod tests {
         BrowserEngine::new(Arc::new(MockPlatform {
             devtools: Some(std::net::TcpListener::bind("127.0.0.1:0").unwrap()),
             launch_delay,
+            launches,
             ..MockPlatform::default()
         }))
     }
@@ -3753,6 +3859,107 @@ mod tests {
                 "{body}"
             );
         }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn existing_profile_requests_never_launch_a_browser() {
+        let launches = Arc::new(LaunchSignals::default());
+        let tool = BrowserPrepareTool::new(observed_launching_engine(
+            std::time::Duration::ZERO,
+            launches.clone(),
+        ));
+        for request in [
+            json!({
+                "pid": 1,
+                "window_id": 7,
+                "strategy": { "kind": "existing_profile" },
+                "session": "existing-never-launches"
+            }),
+            json!({
+                "pid": 1,
+                "window_id": 7,
+                "allow_launch": true,
+                "strategy": { "kind": "existing_profile" },
+                "session": "existing-never-launches"
+            }),
+            json!({
+                "pid": 1,
+                "window_id": 7,
+                "allow_launch": true,
+                "profile": { "mode": "isolated_new" },
+                "strategy": { "kind": "existing_profile" },
+                "session": "existing-never-launches"
+            }),
+        ] {
+            let result = tool.invoke(request).await;
+            assert_eq!(structured(&result)["status"], "refused", "{result:?}");
+        }
+        assert_eq!(
+            launches.spawned.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "the user's own profile must never be launched or relaunched"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_open_security_prompt_blocks_isolated_launches() {
+        use std::sync::atomic::Ordering;
+        let launches = Arc::new(LaunchSignals::default());
+        launches.prompt_open.store(true, Ordering::SeqCst);
+        let tool = BrowserPrepareTool::new(observed_launching_engine(
+            std::time::Duration::ZERO,
+            launches.clone(),
+        ));
+        for _ in 0..5 {
+            let result = tool
+                .invoke(json!({
+                    "allow_launch": true,
+                    "profile": { "mode": "isolated_new" },
+                    "session": "prompt-already-open"
+                }))
+                .await;
+            let refusal = &structured(&result)["refusal"];
+            assert_eq!(refusal["code"], "browser_route_unavailable", "{refusal}");
+            assert_eq!(refusal["detail"]["reason"], "security_prompt_open");
+        }
+        assert_eq!(launches.spawned.load(Ordering::SeqCst), 0);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_prompt_raised_by_a_launch_stops_it_and_further_launches() {
+        use std::sync::atomic::Ordering;
+        let launches = Arc::new(LaunchSignals::default());
+        launches.prompt_on_launch.store(true, Ordering::SeqCst);
+        let tool = BrowserPrepareTool::new(observed_launching_engine(
+            std::time::Duration::ZERO,
+            launches.clone(),
+        ));
+        let request = json!({
+            "allow_launch": true,
+            "profile": { "mode": "isolated_new" },
+            "session": "prompt-on-launch"
+        });
+        let first = tool.invoke(request.clone()).await;
+        let refusal = &structured(&first)["refusal"];
+        assert_eq!(
+            refusal["detail"]["reason"], "security_prompt_appeared",
+            "{refusal}"
+        );
+        assert_eq!(launches.spawned.load(Ordering::SeqCst), 1);
+
+        // Even after the person dismisses the prompt, an immediate retry is
+        // held back instead of raising the next prompt.
+        launches.prompt_open.store(false, Ordering::SeqCst);
+        let retry = tool.invoke(request).await;
+        let refusal = &structured(&retry)["refusal"];
+        assert_eq!(
+            refusal["detail"]["reason"], "isolated_launch_backoff",
+            "{refusal}"
+        );
+        assert_eq!(launches.spawned.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

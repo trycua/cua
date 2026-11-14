@@ -54,7 +54,6 @@ pub mod overview;
 pub mod paths;
 pub mod perf;
 pub mod pool;
-pub mod sdk;
 pub mod secret;
 pub mod service;
 pub mod service_api;

@@ -301,18 +301,17 @@ fi
         self.assertIn("git rebase --abort", replay)
         self.assertIn('--force-with-lease="refs/heads/$BRANCH:$REMOTE_HEAD"', workflow)
         self.assertNotIn("git push --force ", workflow)
-        self.assertIn("sync_driver_release_docs.py", workflow)
+        self.assertNotIn("sync_driver_release_docs.py", workflow)
         self.assertIn(
             "chore(cua-driver-rs): synchronize generated release files",
             workflow,
         )
-        self.assertIn("sync_lume_release_docs.py", workflow)
-        self.assertIn("chore(lume): synchronize release documentation", workflow)
-        self.assertIn(
-            "npx --yes pnpm@9.0.4 --dir docs install --frozen-lockfile --ignore-scripts",
-            workflow,
-        )
-        self.assertIn("runner.ts --library sandbox", workflow)
+        self.assertNotIn("sync_lume_release_docs.py", workflow)
+        self.assertIn("chore(lume): synchronize release files", workflow)
+        # Generated reference pages carry no release version, so a release
+        # never regenerates or re-stamps them (docs-version-stamp.test.ts).
+        self.assertNotIn("runner.ts --library sandbox", workflow)
+        self.assertNotIn("sync_bench_release_docs.py", workflow)
         self.assertNotIn("if: steps.release.outputs.prs_created == 'true'", workflow)
         self.assertNotIn("RELEASE_PRS: ${{ steps.release.outputs.prs }}", workflow)
 
@@ -333,8 +332,10 @@ fi
         self.assertIn("resolve_release_please_request.py", workflow)
         self.assertIn('"--path=$RELEASE_PATH"', workflow)
         self.assertIn('ARGS+=("--release-as=$RELEASE_AS")', workflow)
-        self.assertIn("release-please@17.3.0", workflow)
-        self.assertIn("EXPECTED_INTEGRITY=", workflow)
+        self.assertIn('.github/scripts/release_please.sh "${ARGS[@]}"', workflow)
+        runner = self.read(".github/scripts/release_please.sh")
+        self.assertIn("ENGINE_VERSION=17.3.0", runner)
+        self.assertIn("EXPECTED_INTEGRITY=", runner)
 
     def test_required_release_metadata_check_runs_for_every_pull_request(self) -> None:
         workflow = self.read(".github/workflows/ci-release-metadata.yml")
@@ -1140,7 +1141,7 @@ fi
         self.assertEqual(
             package["dependencies"],
             {
-                "@anthropic-ai/claude-code": "2.1.224",
+                "@anthropic-ai/claude-code": "2.1.322",
                 "@modelcontextprotocol/sdk": "1.30.0",
                 "@openai/codex": "0.146.1",
             },
@@ -1151,10 +1152,10 @@ fi
         self.assertEqual(
             len(expected["baseTools"]), len(set(expected["baseTools"]))
         )
-        self.assertEqual(len(expected["baseTools"]), 62)
+        self.assertEqual(len(expected["baseTools"]), 60)
         self.assertEqual(
             expected["outputSchemaCountByPlatform"],
-            {"darwin": 35, "linux": 39, "win32": 35},
+            {"darwin": 33, "linux": 37, "win32": 33},
         )
         self.assertEqual(
             expected["platformTools"],

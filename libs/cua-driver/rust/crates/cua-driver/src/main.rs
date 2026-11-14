@@ -252,66 +252,6 @@ fn run_cursor_theme_command(args: &[String]) -> ! {
     std::process::exit(status.code().unwrap_or(1));
 }
 
-/// Wire up the experimental picture-in-picture preview window.
-///
-/// Called from every long-running entry point (Serve and Mcp on all
-/// platforms; the `Call` arm intentionally skips PiP since the
-/// per-call binaries don't keep an AppKit/event loop alive long
-/// enough to be useful).
-///
-/// No-op when `--experimental-pip` is not on argv. On Windows / Linux
-/// startup returns "not yet implemented" — we log and continue
-/// without a window so the rest of the daemon keeps working.
-fn maybe_init_pip() {
-    let cfg = match pip_preview::default_config_path() {
-        Some(p) => pip_preview::PipConfig::from_args_and_file(&p),
-        None => pip_preview::PipConfig::from_args(),
-    };
-    if !cfg.enabled {
-        return;
-    }
-
-    #[cfg(target_os = "macos")]
-    let backend = platform_macos::pip::start(&cfg);
-    #[cfg(target_os = "windows")]
-    let backend = platform_windows::pip::start(&cfg);
-    #[cfg(target_os = "linux")]
-    let backend = platform_linux::pip::start(&cfg);
-
-    match backend {
-        Ok(backend) => {
-            // Bridge: when the tool dispatcher in cua-driver-core wants
-            // to push a frame, forward to the live backend handle.
-            // We move the Box into a static Mutex<Option<...>> so the
-            // closure can re-borrow on every call without taking
-            // ownership of the trait object.
-            use std::sync::Mutex as StdMutex;
-            static BACKEND: std::sync::OnceLock<
-                StdMutex<Option<Box<dyn pip_preview::PipBackend>>>,
-            > = std::sync::OnceLock::new();
-            let _ = BACKEND.set(StdMutex::new(Some(backend)));
-            cua_driver_core::pip_hook::set_pip_push_fn(|frame| {
-                if let Some(slot) = BACKEND.get() {
-                    if let Some(b) = slot.lock().unwrap().as_ref() {
-                        b.push_frame(pip_preview::PipFrame {
-                            png_bytes: frame.png_bytes,
-                            action_label: frame.action_label,
-                            timestamp_ms: frame.timestamp_ms,
-                        });
-                    }
-                }
-            });
-            eprintln!(
-                "⚗️  PiP preview enabled (experimental — macOS only today; \
-                 see https://github.com/trycua/cua/issues for follow-up)"
-            );
-        }
-        Err(e) => {
-            eprintln!("⚗️  PiP preview requested but unavailable: {e}");
-        }
-    }
-}
-
 // ── Public SDK runtime host ──────────────────────────────────────────────
 
 fn register_host_tools(registry: &mut cua_driver_core::tool::ToolRegistry) {
@@ -635,9 +575,16 @@ fn main() {
         cli::Command::Connect {
             clients,
             dry_run,
+            replace,
             json,
         } => {
-            connect::run_connect(&clients, dry_run, json);
+            connect::run_connect(
+                &clients,
+                &inspect_tools_without_runtime(),
+                dry_run,
+                replace,
+                json,
+            );
         }
         cli::Command::Manifest { pretty } => {
             // Surface 8: machine-readable CLI manifest. Read-only — no
@@ -715,11 +662,6 @@ fn main() {
             // before any blocking work so the banner can land on stderr
             // early in the serve lifecycle.
             version_check::maybe_announce_update();
-            let pip_cfg = match pip_preview::default_config_path() {
-                Some(p) => pip_preview::PipConfig::from_args_and_file(&p),
-                None => pip_preview::PipConfig::from_args(),
-            };
-            maybe_init_pip();
 
             // Agent-cursor overlay. The DAEMON is the process that actually
             // performs clicks / AX presses, so the overlay NSWindow + render
@@ -833,18 +775,13 @@ fn main() {
 
             // Keep the main thread alive for the daemon.
             //
-            // The agent-cursor overlay and PiP both need the AppKit main run
-            // loop. The overlay's loop is NSApplication.run() plus the cursor
-            // command consumer, so it also drains the dispatch_async_f calls
-            // that create the PiP window and push its frames. Run it whenever
-            // the cursor is enabled; PiP's own loop alone would leave cursor
-            // commands unconsumed. Without either, just join the serve thread
-            // so the process stays up as long as the daemon does.
+            // The agent-cursor overlay needs the AppKit main run loop
+            // (NSApplication.run() plus the cursor command consumer). Run it
+            // whenever the cursor is enabled; otherwise just join the serve
+            // thread so the process stays up as long as the daemon does.
             if cursor_cfg.enabled {
                 platform_macos::cursor::overlay::run_on_main_thread();
                 let _ = serve_handle.join();
-            } else if pip_cfg.enabled {
-                platform_macos::pip::run_appkit_main_loop();
             } else {
                 let _ = serve_handle.join();
             }
@@ -1079,9 +1016,16 @@ fn main() -> anyhow::Result<()> {
         cli::Command::Connect {
             clients,
             dry_run,
+            replace,
             json,
         } => {
-            connect::run_connect(&clients, dry_run, json);
+            connect::run_connect(
+                &clients,
+                &inspect_tools_without_runtime(),
+                dry_run,
+                replace,
+                json,
+            );
             Ok(())
         }
         cli::Command::Manifest { pretty } => {
@@ -1154,7 +1098,6 @@ fn main() -> anyhow::Result<()> {
                 claude_code_compat,
                 cua_driver_core::embedded_mode(),
             )?;
-            maybe_init_pip();
             let sp = socket.unwrap_or_else(serve::default_socket_path);
             let pid_path = pid_file.unwrap_or_else(serve::default_pid_file_path);
             // run_serve_cmd builds its own runtime; must run on a fresh thread.

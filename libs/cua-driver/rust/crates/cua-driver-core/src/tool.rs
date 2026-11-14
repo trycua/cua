@@ -17,14 +17,12 @@ thread_local! {
 }
 
 use crate::{
-    pip_hook,
     protocol::{Content, ToolResult},
-    recording::{now_ms, screenshot_for, RecordingSession},
+    recording::{now_ms, RecordingSession},
     recording_tools::{
         GetRecordingStateTool, ReplayRegistrySlot, ReplayTrajectoryTool, StartRecordingTool,
         StopRecordingTool,
     },
-    tool_args::ArgsExt,
 };
 
 tokio::task_local! {
@@ -318,9 +316,14 @@ impl ToolDef {
         let risk = crate::authorization::risk_metadata_json(&self.name);
         // Tools that most often need a guide point at `get_guide`, so an agent
         // that never reads the skill still learns where the guidance lives.
+        let deprecation = crate::deprecation::lookup(&self.name);
         let description = match crate::guide::description_hint(&self.name) {
             Some(hint) => format!("{} {hint}", self.description),
             None => self.description.clone(),
+        };
+        let description = match deprecation {
+            Some(entry) => format!("{} {description}", entry.description_prefix()),
+            None => description,
         };
         let mut entry = serde_json::json!({
             "name": self.name,
@@ -335,6 +338,12 @@ impl ToolDef {
             "capabilities": caps,
             "risk": risk,
         });
+        if let Some(entry_deprecation) = deprecation {
+            entry
+                .as_object_mut()
+                .expect("tool list entry is an object")
+                .insert("deprecated".into(), entry_deprecation.list_marker());
+        }
         // Advertise the refusal envelope alongside the success shape. MCP
         // holds every `structuredContent` we emit — refusals included — to
         // the advertised schema, and a success-only schema made strict
@@ -1331,7 +1340,14 @@ pub struct ToolRegistry {
     approval_broker: Arc<crate::consent::ApprovalBroker>,
     protected_resource_grants: Arc<crate::consent::ProtectedResourceGrants>,
     protected_resource_ownership: Arc<crate::consent::ProtectedResourceOwnershipStore>,
+    /// How a batch learns which window an `element_token` belongs to; set by
+    /// the platform that owns the snapshot store.
+    token_window_resolver: Option<TokenWindowResolver>,
 }
+
+/// Call arguments (carrying an `element_token`) -> the `(pid, window_id)` of
+/// the live snapshot that token names, or `None` when it is stale or unknown.
+pub type TokenWindowResolver = Arc<dyn Fn(&Value) -> Option<(i32, u64)> + Send + Sync + 'static>;
 
 impl ToolRegistry {
     pub fn new() -> Self {
@@ -1407,7 +1423,19 @@ impl ToolRegistry {
             approval_broker,
             protected_resource_grants,
             protected_resource_ownership,
+            token_window_resolver: None,
         }
+    }
+
+    /// Install the resolver that maps an `element_token` to its snapshot's
+    /// window, so `run_steps` can take the window to observe from a token.
+    pub fn set_token_window_resolver(&mut self, resolver: TokenWindowResolver) {
+        self.token_window_resolver = Some(resolver);
+    }
+
+    /// The `(pid, window_id)` a live `element_token` in `args` names.
+    pub fn window_for_token(&self, args: &Value) -> Option<(i32, u64)> {
+        (self.token_window_resolver.as_ref()?)(args)
     }
 
     /// Return the runtime-owned broker for adapter construction.
@@ -1562,14 +1590,11 @@ impl ToolRegistry {
     /// `register_recording_tools` from each platform's `register_all`.
     pub fn register_session_tools(&mut self) {
         use crate::session_tools::{
-            EndSessionTool, EscalateSessionTool, GetSessionStateTool, GetSessionTool,
-            ListSessionsTool, StartSessionTool,
+            EndSessionTool, GetSessionTool, ListSessionsTool, StartSessionTool,
         };
         self.register(Box::new(StartSessionTool));
-        self.register(Box::new(EscalateSessionTool));
         self.register(Box::new(GetSessionTool));
         self.register(Box::new(ListSessionsTool));
-        self.register(Box::new(GetSessionStateTool));
         self.register(Box::new(EndSessionTool));
         self.register(Box::new(crate::guide::GetGuideTool));
         self.register_batch_tools();
@@ -2068,9 +2093,11 @@ impl ToolRegistry {
                 .get("_transport_session_id")
                 .and_then(Value::as_str)
                 .unwrap_or(session);
-            // An unnamed session reclaimed by the idle sweep is recreated at
-            // lifecycle admission below; every other ended episode refuses
-            // with the recovery that actually applies to its identity.
+            // An unnamed session reclaimed by the idle sweep, or a label its
+            // closed owner transport released without `end_session`, is
+            // recreated at lifecycle admission below; every other ended
+            // episode refuses with the recovery that actually applies to its
+            // identity.
             if !matches!(resolved_name, "start_session" | "end_session")
                 && crate::session::is_session_ended(session)
                 && !crate::session::recreates_on_next_call(session, owner)
@@ -2543,6 +2570,11 @@ impl ToolRegistry {
         // Desktop pixels read off a capped get_desktop_state image are mapped
         // back to the uncapped capture before any platform interprets them.
         crate::desktop_capture_scale::map_desktop_args(&mut args);
+        // The platform refuses input that would reach an OS security or
+        // consent prompt unless the adapter lifts it for this call's mode.
+        if has_adapter(crate::security_prompt::ADAPTER_ID) {
+            crate::security_prompt::PromptInput::for_mode(context.mode()).stamp(&mut args);
+        }
         crate::tool_activity::note_tool_activity();
         let invoke = tool.invoke(args.clone());
         let mut result =
@@ -2611,7 +2643,7 @@ impl ToolRegistry {
         crate::cursor_events::end_tool(cursor_event);
         // Coordinate the physical action itself, not post-action evidence
         // capture or result shaping. Keeping the global desktop lock through
-        // recording/PiP screenshots would unnecessarily block an unrelated
+        // recording screenshots would unnecessarily block an unrelated
         // runtime after the input side effect has already completed. A
         // platform worker still running keeps its own clone of the lease.
         drop(desktop_call);
@@ -2662,6 +2694,10 @@ impl ToolRegistry {
         // as a distinct call site.
         let name = resolved_name;
 
+        if let Some(deprecation) = crate::deprecation::lookup(resolved_name) {
+            result.content.push(Content::text(deprecation.notice()));
+        }
+
         if let (Some(history), Some(pending)) = (self.history.as_ref(), pending_history) {
             history.finish_action(
                 pending,
@@ -2691,22 +2727,6 @@ impl ToolRegistry {
                 recording_result_text.as_deref().unwrap_or(""),
                 result.action_record.as_ref(),
                 result.is_error == Some(true),
-            );
-        }
-
-        // Experimental PiP push — only when --experimental-pip is on argv
-        // (otherwise `pip_enabled()` is false and we skip the screenshot
-        // entirely to avoid wasted capture work). We push for the same set
-        // of action tools the recording pipeline cares about (non-read-only,
-        // not the recording-control meta-tools) so the live view matches
-        // what the recorder would have captured for the turn. The frame is
-        // only a preview, so it is captured off the request path: capturing
-        // and encoding a large window held the result back for up to 2 s.
-        if pip_hook::pip_enabled() && should_record && !private_consent_turn {
-            push_pip_frame_in_background(
-                args.opt_u64("window_id"),
-                args.opt_i64("pid"),
-                synthesize_action_label(name, &public_args),
             );
         }
 
@@ -2783,14 +2803,6 @@ impl ToolRegistry {
             return Err(crate::consent::ConsentError::Provider(
                 "browser observation did not attest a live top-level origin".to_owned(),
             ));
-        } else if tool_name == "escalate_session" {
-            (
-                serde_json::json!({
-                    "kind": "session_capture_scope",
-                    "capture_scope": "desktop",
-                }),
-                "Allow Cua to expand this session's observation scope".to_owned(),
-            )
         } else if let Some(window_id) = args.get("window_id").and_then(Value::as_u64) {
             let pid = args.get("pid").and_then(Value::as_i64);
             (
@@ -3716,17 +3728,13 @@ fn session_requiring_tool(tool_name: &str) -> bool {
             | "get_guide"
             | "get_session"
             | "list_sessions"
-            | "get_session_state"
             | "end_session"
     )
 }
 
 fn session_selecting_tool(tool_name: &str) -> bool {
     session_requiring_tool(tool_name)
-        || matches!(
-            tool_name,
-            "get_session" | "list_sessions" | "get_session_state" | "end_session"
-        )
+        || matches!(tool_name, "get_session" | "list_sessions" | "end_session")
 }
 
 fn publish_action_result(result: &mut ToolResult) -> Result<(), String> {
@@ -4181,8 +4189,7 @@ mod runtime_isolation_tests {
                 "properties": {
                     "key": {"type": "string"},
                     "value": {},
-                    "max_image_dimension": {"type": "integer"},
-                    "experimental_pip": {"type": "boolean"}
+                    "max_image_dimension": {"type": "integer"}
                 },
                 "additionalProperties": false
             })
@@ -5281,6 +5288,93 @@ resources:
     }
 
     #[tokio::test]
+    async fn deprecated_tools_still_work_and_say_when_they_go() {
+        // replay_trajectory refuses calls without a `dir` before it runs, so the
+        // dispatch half of this test covers the tools that take no arguments.
+        for entry in crate::deprecation::DEPRECATED_TOOLS
+            .iter()
+            .filter(|entry| entry.tool != "replay_trajectory")
+        {
+            let hits = Arc::new(AtomicUsize::new(0));
+            let mut registry = super::ToolRegistry::new();
+            registry.register(Box::new(ArgumentProbe {
+                hits: hits.clone(),
+                last_args: Arc::new(Mutex::new(None)),
+                def: super::ToolDef {
+                    name: entry.tool.into(),
+                    description: "test tool".into(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                    read_only: true,
+                    destructive: false,
+                    idempotent: true,
+                    open_world: false,
+                },
+            }));
+            let registry = Arc::new(registry);
+
+            let result = registry
+                .invoke_with_context(entry.tool, serde_json::json!({}), standard_context())
+                .await;
+            assert_ne!(result.is_error, Some(true), "{}: {result:?}", entry.tool);
+            assert_eq!(
+                hits.load(Ordering::SeqCst),
+                1,
+                "{} must still run",
+                entry.tool
+            );
+            let notices = result
+                .content
+                .iter()
+                .filter_map(|content| match content {
+                    Content::Text { text, .. } => Some(text.as_str()),
+                    _ => None,
+                })
+                .filter(|text| text.starts_with("Deprecated: "))
+                .collect::<Vec<_>>();
+            assert_eq!(notices, [entry.notice().as_str()], "{}", entry.tool);
+
+            let listed = registry.tools_list();
+            let listed = &listed["tools"][0];
+            assert_eq!(listed["deprecated"]["removal_after"], "2026-11-26");
+            assert!(listed["description"]
+                .as_str()
+                .unwrap()
+                .starts_with("DEPRECATED, removed in the first release after 26 Nov 2026"));
+        }
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(ArgumentProbe {
+            hits,
+            last_args: Arc::new(Mutex::new(None)),
+            def: super::ToolDef {
+                name: "get_window_state".into(),
+                description: "test tool".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: true,
+                destructive: false,
+                idempotent: true,
+                open_world: false,
+            },
+        }));
+        let registry = Arc::new(registry);
+        let result = registry
+            .invoke_with_context(
+                "get_window_state",
+                serde_json::json!({}),
+                standard_context(),
+            )
+            .await;
+        assert!(result.content.iter().all(|content| match content {
+            Content::Text { text, .. } => !text.starts_with("Deprecated: "),
+            _ => true,
+        }));
+        assert!(registry.tools_list()["tools"][0]
+            .get("deprecated")
+            .is_none());
+    }
+
+    #[tokio::test]
     async fn dispatch_resolves_type_text_chars_before_reading_the_wait() {
         use crate::post_action_wait::{PostActionWait, SKIP_SUPPORTED};
         use serde_json::json;
@@ -5597,6 +5691,63 @@ resources:
             .await;
         assert_ne!(allowed.is_error, Some(true));
         assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    /// The platform lets input reach an OS security or consent prompt only
+    /// when the dispatch boundary stamped the call. Only unrestricted mode
+    /// stamps it, and a caller cannot forge the stamp.
+    #[tokio::test]
+    async fn only_unrestricted_dispatch_lets_input_reach_an_os_security_prompt() {
+        use crate::security_prompt::{PromptInput, ALLOW_ARG};
+        let hits = Arc::new(AtomicUsize::new(0));
+        let last_args = Arc::new(Mutex::new(None));
+        let mut registry = super::ToolRegistry::new();
+        for name in ["click", "move_cursor"] {
+            registry.register(Box::new(ArgumentProbe {
+                hits: hits.clone(),
+                last_args: last_args.clone(),
+                def: super::ToolDef {
+                    name: name.into(),
+                    description: "test input".into(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                    read_only: false,
+                    destructive: false,
+                    idempotent: false,
+                    open_world: false,
+                },
+            }));
+        }
+        let registry = Arc::new(registry);
+        let received = |tool: &'static str, context| {
+            let registry = registry.clone();
+            let last_args = last_args.clone();
+            async move {
+                let result = registry
+                    .invoke_with_context(
+                        tool,
+                        serde_json::json!({"scope": "desktop", "x": 1, "y": 1, ALLOW_ARG: true}),
+                        context,
+                    )
+                    .await;
+                assert_ne!(result.is_error, Some(true), "{result:?}");
+                let args = last_args.lock().unwrap().take().expect("arguments");
+                PromptInput::from_args(&args)
+            }
+        };
+        assert_eq!(
+            received("click", standard_context()).await,
+            PromptInput::Refuse,
+            "a forged stamp must not survive the boundary"
+        );
+        assert_eq!(
+            received("click", unrestricted_context()).await,
+            PromptInput::Allow
+        );
+        assert_eq!(
+            received("move_cursor", unrestricted_context()).await,
+            PromptInput::Refuse,
+            "only tools the adapter covers are stamped"
+        );
     }
 
     #[tokio::test]
@@ -7053,91 +7204,6 @@ impl Default for ToolRegistry {
     }
 }
 
-/// A PiP frame capture is running; a newer request waits for the next action
-/// instead of queueing behind it.
-static PIP_CAPTURE_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// Capture the action's window for the PiP preview on its own thread, so the
-/// tool result does not wait for it. At most one capture runs at a time.
-fn push_pip_frame_in_background(window_id: Option<u64>, pid: Option<i64>, label: String) {
-    use std::sync::atomic::Ordering;
-    struct Busy;
-    impl Drop for Busy {
-        fn drop(&mut self) {
-            PIP_CAPTURE_BUSY.store(false, Ordering::Release);
-        }
-    }
-    if PIP_CAPTURE_BUSY.swap(true, Ordering::AcqRel) {
-        return;
-    }
-    let spawned = std::thread::Builder::new()
-        .name("pip-frame".into())
-        .spawn(move || {
-            let _busy = Busy;
-            if let Some(png_bytes) = screenshot_for(window_id, pid) {
-                pip_hook::push_pip_frame(pip_hook::PipHookFrame {
-                    png_bytes,
-                    action_label: label,
-                    timestamp_ms: now_ms(),
-                });
-            }
-        });
-    if spawned.is_err() {
-        PIP_CAPTURE_BUSY.store(false, Ordering::Release);
-    }
-}
-
-/// Build a short, human-friendly label for the PiP overlay from the
-/// tool name + raw args. Kept under ~60 chars so the macOS NSTextField
-/// has room without truncation at default geometry.
-fn synthesize_action_label(tool_name: &str, args: &Value) -> String {
-    let arg = |k: &str| -> Option<String> {
-        args.get(k).map(|v| match v {
-            Value::String(s) => s.clone(),
-            other => other.to_string(),
-        })
-    };
-    let summary = match tool_name {
-        "click" | "double_click" | "right_click" => {
-            if let Some((_, idx)) = args
-                .opt_str("element_token")
-                .as_deref()
-                .and_then(crate::element_token::parse_token)
-            {
-                format!("element_index={idx}")
-            } else if let (Some(x), Some(y)) = (args.opt_f64("x"), args.opt_f64("y")) {
-                format!("({x:.0}, {y:.0})")
-            } else {
-                "".into()
-            }
-        }
-        "type_text" => {
-            let text = arg("text").unwrap_or_default();
-            let trimmed: String = text.chars().take(40).collect();
-            if text.chars().count() > 40 {
-                format!("\"{trimmed}…\"")
-            } else {
-                format!("\"{trimmed}\"")
-            }
-        }
-        "press_key" | "hotkey" => arg("key").or_else(|| arg("keys")).unwrap_or_default(),
-        "scroll" => format!(
-            "dx={} dy={}",
-            arg("dx").unwrap_or_else(|| "0".into()),
-            arg("dy").unwrap_or_else(|| "0".into())
-        ),
-        "drag" => "drag".into(),
-        "set_value" => arg("value").unwrap_or_default(),
-        "launch_app" => arg("bundle_id").or_else(|| arg("name")).unwrap_or_default(),
-        _ => String::new(),
-    };
-    if summary.is_empty() {
-        tool_name.to_owned()
-    } else {
-        format!("{tool_name}: {summary}")
-    }
-}
-
 #[cfg(test)]
 mod capability_tests {
     //! Unit tests for the per-tool `capabilities` array and the
@@ -7293,8 +7359,6 @@ mod capability_tests {
         "start_session",
         "get_session",
         "list_sessions",
-        "escalate_session",
-        "get_session_state",
         "end_session",
         // agent cursor
         "set_agent_cursor_enabled",
@@ -8171,8 +8235,6 @@ mod argument_shape_tests {
         for key in [
             "capture_mode",
             "max_image_dimension",
-            "experimental_pip",
-            "experimental_pip_geometry",
             "cursor.motion",
             "cursor.motion.style",
             "cursor.motion.timing",

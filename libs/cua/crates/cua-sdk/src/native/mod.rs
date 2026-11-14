@@ -1,5 +1,10 @@
 //! Native (non-wasm) implementation.
 
+// A build without the `spaces`, `host` and `media` features (a crate that
+// depends on cua-sdk for the sandbox API alone) does not reach the stream
+// telemetry, the Space routes or the tunnel forwards.
+#![cfg_attr(not(feature = "spaces"), allow(dead_code))]
+
 mod agent_setup;
 mod agents;
 mod auth;
@@ -53,6 +58,7 @@ pub use overlay::*;
 pub use persistent::*;
 pub use sandbox::*;
 pub use share::*;
+#[cfg(feature = "spaces")]
 pub use spaces::*;
 pub use spacesd::*;
 pub use telemetry::*;
@@ -106,9 +112,9 @@ pub(crate) fn not_found_message(message: String) -> String {
     }
 }
 
-impl From<cua_daemon::Error> for CuaError {
-    fn from(e: cua_daemon::Error) -> Self {
-        use cua_daemon::Error as E;
+impl From<cua_daemon_core::Error> for CuaError {
+    fn from(e: cua_daemon_core::Error) -> Self {
+        use cua_daemon_core::Error as E;
         let m = e.message().to_string();
         match e {
             E::InvalidArgument(_) => CuaError::InvalidArgument(m),
@@ -161,7 +167,7 @@ impl From<cua_spacesd_client::Error> for CuaError {
 
 impl From<cua_sandbox_core::Error> for CuaError {
     fn from(e: cua_sandbox_core::Error) -> Self {
-        cua_daemon::Error::from(e).into()
+        cua_daemon_core::Error::from(e).into()
     }
 }
 
@@ -260,7 +266,7 @@ mod not_found_tests {
         let what = "a computer matching \"dev_22\" among your computers (\"gamma-4 Mac Studio\" (host:96fe))";
         let embedded: CuaError = cua_spaces::Error::NotFound(what.into()).into();
         assert_eq!(embedded.to_string(), format!("not found: {what}"));
-        let daemon: CuaError = cua_daemon::Error::NotFound(format!("{what} not found")).into();
+        let daemon: CuaError = cua_daemon_core::Error::NotFound(format!("{what} not found")).into();
         assert_eq!(daemon.to_string(), format!("not found: {what}"));
         // A message that is only the word stays as it is.
         assert_eq!(not_found_message(" not found".into()), " not found");
@@ -269,10 +275,10 @@ mod not_found_tests {
 }
 
 /// Raises this process's soft open-file limit toward 65,536, within the
-/// hard limit ([`cua_daemon::fd_guard::raise_open_file_limit`]). Returns the
+/// hard limit ([`cua_daemon_core::fd_guard::raise_open_file_limit`]). Returns the
 /// soft limit before and after, or `None` when nothing changed.
 pub fn raise_open_file_limit() -> Option<(u64, u64)> {
-    cua_daemon::fd_guard::raise_open_file_limit()
+    cua_daemon_core::fd_guard::raise_open_file_limit()
 }
 
 #[cfg(all(test, unix))]

@@ -26,7 +26,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 env:
   CARGO_NET_RETRY: "10"

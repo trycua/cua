@@ -64,9 +64,15 @@ fn clamp_amount(requested: u64) -> usize {
 const ELECTRON_BACKGROUND_SCROLL_UNAVAILABLE: &str = "Background scroll is unavailable for \
      this Electron/Chromium window on macOS: it drops background wheel events and keystrokes, \
      and background scroll movement could not be established through accessibility. \
-     Retry with delivery_mode:\"foreground\" (and the same window_id, element_token \
-     or x,y); the driver briefly fronts that window, scrolls, and restores the prior frontmost \
-     app.";
+     Without fronting the window: find the item with a get_window_state query and act on it by \
+     element_token, or make the window taller with set_window_frame. If the user allows the \
+     window to come forward, retry with delivery_mode:\"foreground\" (same window_id, \
+     element_token or x,y); the driver briefly fronts it, scrolls, and restores the prior \
+     frontmost app.";
+
+const ELECTRON_BACKGROUND_SCROLL_SUGGESTION: &str = "Act on the item by element_token (find it \
+     with a get_window_state query) instead of scrolling, or retry with \
+     delivery_mode:\"foreground\" only if the user allows the window to come forward.";
 
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
@@ -154,8 +160,9 @@ impl Tool for ScrollTool {
             {
                 return refusal;
             }
+            let prompt = cua_driver_core::security_prompt::PromptInput::from_args(&args);
             let result = tokio::task::spawn_blocking(move || {
-                crate::input::mouse::scroll_wheel_desktop(x, y, delta_y, delta_x, amount)
+                crate::input::mouse::scroll_wheel_desktop(prompt, x, y, delta_y, delta_x, amount)
             })
             .await;
             return match result {
@@ -167,7 +174,11 @@ impl Tool for ScrollTool {
                     "path": "hid",
                     "effect": "unverifiable"
                 })),
-                Ok(Err(error)) => ToolResult::error(format!("desktop scroll failed: {error}")),
+                Ok(Err(error)) => {
+                    crate::security_prompt::tool_result(&error).unwrap_or_else(|| {
+                        ToolResult::error(format!("desktop scroll failed: {error}"))
+                    })
+                }
                 Err(error) => ToolResult::error(format!("desktop scroll task failed: {error}")),
             };
         }
@@ -706,11 +717,12 @@ async fn electron_reveal_scroll(
     lease: &mut Option<super::BackgroundMutationLease>,
 ) -> ToolResult {
     let unavailable = || {
-        cua_driver_core::delivery::background_unavailable_result(
+        cua_driver_core::delivery::background_unavailable_result_with_suggestion(
             ELECTRON_BACKGROUND_SCROLL_UNAVAILABLE,
             "background_unavailable",
             "Electron/Chromium windows drop background wheel events and keystrokes on macOS",
             serde_json::json!({ "effect": "refused" }),
+            ELECTRON_BACKGROUND_SCROLL_SUGGESTION,
         )
     };
     let window = window_id.and_then(crate::windows::window_bounds_by_id);

@@ -47,6 +47,10 @@ pub const DEFAULT_MAX_ELEMENTS: usize = 2_000;
 /// indefinitely.
 const AX_MESSAGING_TIMEOUT_SECONDS: f32 = 2.0;
 
+/// Most windows of one app a walk brings up to date (see
+/// [`super::enablement::flush_pending_web_updates`]).
+const MAX_WEB_FLUSH_WINDOWS: usize = 4;
+
 unsafe fn set_messaging_timeout(element: AXUIElementRef) {
     let _ = AXUIElementSetMessagingTimeout(element, AX_MESSAGING_TIMEOUT_SECONDS);
 }
@@ -295,7 +299,10 @@ fn walk_tree_with_web_content(
                 walk: budget.outcome(),
                 // No application AX element at all, so a requested window
                 // certainly did not resolve.
-                window_scope: window_id.map(|_| WindowScope::AxUnresolved { ax_window_count: 0 }),
+                window_scope: window_id.map(|_| WindowScope::AxUnresolved {
+                    ax_window_count: 0,
+                    ax_windows_error: None,
+                }),
             };
         }
         set_messaging_timeout(app_elem);
@@ -318,7 +325,7 @@ fn walk_tree_with_web_content(
             let attempt_started = Instant::now();
             super::enablement::ensure_chromium_ax_enabled(pid, app_elem);
 
-            let mut top_level = copy_top_level(app_elem, pid, window_id);
+            let (mut top_level, ax_windows_error) = copy_top_level(app_elem, pid, window_id);
 
             // Scope: keep non-window children (menu bar) + the target window —
             // but ONLY once the target window has actually been identified. When
@@ -329,7 +336,7 @@ fn walk_tree_with_web_content(
                 let walk = top_level.clone();
                 break (top_level, walk);
             };
-            let decision = scope_top_level(&mut top_level, pid, wid);
+            let decision = scope_top_level(&mut top_level, pid, wid, ax_windows_error);
             if matches!(decision.scope, WindowScope::AxUnresolved { .. }) {
                 match launch_wait.step(attempt_started, Instant::now(), || is_still_launching(pid))
                 {
@@ -352,6 +359,17 @@ fn walk_tree_with_web_content(
             window_scope = Some(decision.scope);
             break (top_level, walk);
         };
+
+        // A hidden or covered Chromium window holds back the page changes of
+        // the last action until it is asked something; ask first so the walk
+        // reads the page as it is now.
+        if include_web_content {
+            for &child in walk_these.iter().take(MAX_WEB_FLUSH_WINDOWS) {
+                if copy_string_attr(child, "AXRole").as_deref() == Some("AXWindow") {
+                    super::enablement::flush_pending_web_updates(pid, child);
+                }
+            }
+        }
 
         // Walk each top-level child at depth 0.
         for child in walk_these {
@@ -410,13 +428,13 @@ unsafe fn copy_top_level(
     app_elem: AXUIElementRef,
     pid: i32,
     window_id: Option<u32>,
-) -> Vec<AXUIElementRef> {
+) -> (Vec<AXUIElementRef>, Option<AXError>) {
     let mut top_level = copy_children(app_elem);
     // A requested window on another Space is absent from AXWindows; the
     // `_including` variant recovers it by exact CGWindowID.
-    let from_windows = match window_id {
-        Some(wid) => copy_ax_windows_including(app_elem, pid, wid),
-        None => copy_ax_windows(app_elem),
+    let (from_windows, ax_windows_error) = match window_id {
+        Some(wid) => copy_ax_windows_including_or_error(app_elem, pid, wid),
+        None => (copy_ax_windows(app_elem), None),
     };
     for w in from_windows {
         // AXChildren and AXWindows can return different proxy pointers for
@@ -433,7 +451,7 @@ unsafe fn copy_top_level(
             CFRelease(w as CFTypeRef);
         }
     }
-    top_level
+    (top_level, ax_windows_error)
 }
 
 /// Decide which of `top_level` a walk scoped to `wid` covers.
@@ -446,6 +464,7 @@ unsafe fn scope_top_level(
     top_level: &mut Vec<AXUIElementRef>,
     pid: i32,
     wid: u32,
+    ax_windows_error: Option<AXError>,
 ) -> ScopeDecision {
     let mut candidates: Vec<TopLevelCandidate> = top_level
         .iter()
@@ -476,7 +495,7 @@ unsafe fn scope_top_level(
             }
         }
     }
-    decide_window_scope(&candidates, wid, || {
+    decide_window_scope(&candidates, wid, ax_windows_error, || {
         crate::windows::resolve_window_owner(pid, wid)
     })
 }

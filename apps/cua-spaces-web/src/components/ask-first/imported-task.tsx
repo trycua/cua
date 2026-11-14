@@ -6,12 +6,25 @@ import { Link } from "@tanstack/react-router";
 import { ArrowLeftIcon, ArrowUpIcon, CheckIcon, ChevronDownIcon, LaptopIcon, Loader2Icon, MonitorIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { folderLabel, resumeContext, useAgents, useAgentTimeline, useBridge, useMachines, type AgentTimeline, type HostStatus, type PastThread, type ThreadAgent, type TranscriptItem } from "@/bridge";
+import {
+  folderLabel,
+  resumeContext,
+  useAgents,
+  useAgentTimeline,
+  useBridge,
+  useMachines,
+  type AgentTimeline,
+  type HostStatus,
+  type PastThread,
+  type ThreadAgent,
+  type TranscriptItem,
+} from "@/bridge";
 import { Timeline } from "@/components/agents/timeline";
 import { Button } from "@/components/ui/button";
 import { toastError } from "@/components/ui/toast";
 import { HOST_NOT_SHARED, hostSpaceId, updateAskTask, type AskTask } from "@/lib/ask-first";
 import { chatComputers } from "@/lib/machines";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 import { agentName, AppMark } from "./ask-box";
@@ -45,6 +58,7 @@ export const FIRST_VIEW_MESSAGES = 30;
 export const MORE_MESSAGES = 100;
 
 export function ImportedTaskView({ task }: { task: AskTask & { imported: NonNullable<AskTask["imported"]> } }) {
+  const t = useT();
   const { data } = useBridge();
   const { startRun, sendMessage } = useAgents();
   const chat = task.imported;
@@ -98,11 +112,11 @@ export function ImportedTaskView({ task }: { task: AskTask & { imported: NonNull
     }
   };
   const send = async (text: string) => {
-    const t = text.trim();
-    if (!t || starting) return;
+    const trimmed = text.trim();
+    if (!trimmed || starting) return;
     setReply("");
-    if (!ref) return start(t);
-    await sendMessage(ref, t).catch(toastError(`Couldn't send that to ${name}`));
+    if (!ref) return start(trimmed);
+    await sendMessage(ref, trimmed).catch(toastError(t("home.task.imported_send_failed", { name })));
   };
 
   const folder = folderLabel(chat.cwd);
@@ -112,21 +126,23 @@ export function ImportedTaskView({ task }: { task: AskTask & { imported: NonNull
     <div className="flex h-full flex-col" data-ask-first-task={task.id} data-imported-chat={task.agent}>
       <header /* design-ok: page-wide header rule, as the task view's */ className="flex h-16 shrink-0 items-center gap-3 border-b px-8">
         <Button variant="ghost" className="-ml-2 h-9" render={<Link to="/home" />}>
-          <ArrowLeftIcon /> Home
+          <ArrowLeftIcon /> {t("home.task.home")}
         </Button>
         <AppMark agent={task.agent} size={32} />
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-[15px] font-semibold">{chat.title}</h2>
           <p className="truncate text-[13px] text-muted-foreground">
-            {name}
-            {folder ? ` in ${folder}` : ""}, last used {agoLabel(chat.lastActiveMs)}
+            {folder
+              ? t("home.task.imported_detail_folder", { name, folder, ago: agoLabel(chat.lastActiveMs) })
+              : t("home.task.imported_detail", { name, ago: agoLabel(chat.lastActiveMs) })}
           </p>
         </div>
       </header>
       <div className="flex min-h-0 flex-1 flex-col">
         <p className="mx-auto w-full max-w-[720px] shrink-0 px-8 pt-6 text-[12px] font-medium text-muted-foreground" data-earlier-heading="">
-          Earlier on {thisComputerText()}
-          {history?.earlierOmitted ? " (older messages aren't shown)" : ""}
+          {history?.earlierOmitted
+            ? t("home.task.earlier_omitted", { computer: thisComputerText() })
+            : t("home.task.earlier", { computer: thisComputerText() })}
           {history?.earlierOmitted ? (
             <button
               type="button"
@@ -138,7 +154,7 @@ export function ImportedTaskView({ task }: { task: AskTask & { imported: NonNull
               className="ml-2 underline underline-offset-2 hover:text-foreground disabled:opacity-60"
               data-earlier-more=""
             >
-              {loadingMore ? "Loading…" : "Show earlier messages"}
+              {loadingMore ? t("home.task.loading") : t("home.task.show_earlier")}
             </button>
           ) : null}
         </p>
@@ -148,7 +164,7 @@ export function ImportedTaskView({ task }: { task: AskTask & { imported: NonNull
           </div>
         ) : historyError && !timeline.items.length ? (
           <div className="mx-auto w-full max-w-[720px] flex-1 px-8 pt-4 text-[14px] text-muted-foreground" data-earlier-error="">
-            {name} couldn't show the earlier messages. You can still continue: {name} picks up its own session when you send.
+            {t("home.task.earlier_error", { name })}
           </div>
         ) : (
           <Timeline
@@ -165,7 +181,9 @@ export function ImportedTaskView({ task }: { task: AskTask & { imported: NonNull
         )}
         <div className="shrink-0 px-8 pb-6">
           <div className="mx-auto flex max-w-[720px] flex-col gap-2">
-            <div /* design-ok: the message box, as Home's and the task view's */ className="flex min-h-14 items-end gap-2 rounded-2xl border bg-card py-1.5 pr-1.5 pl-5 shadow-xs dark:bg-white/[0.03]">
+            <div
+              /* design-ok: the message box, as Home's and the task view's */ className="flex min-h-14 items-end gap-2 rounded-2xl border bg-card py-1.5 pr-1.5 pl-5 shadow-xs dark:bg-white/[0.03]"
+            >
               <textarea
                 value={reply}
                 rows={1}
@@ -178,25 +196,28 @@ export function ImportedTaskView({ task }: { task: AskTask & { imported: NonNull
                     void send(reply);
                   }
                 }}
-                aria-label={`Your next message to ${name}`}
-                placeholder={waiting ? `Your next message to ${name}` : `Reply to ${name}`}
+                aria-label={t("home.task.next_message", { name })}
+                placeholder={waiting ? t("home.task.next_message", { name }) : t("home.task.reply_to", { name })}
                 className="min-h-11 flex-1 resize-none self-center bg-transparent py-2.5 text-[14px] outline-none placeholder:text-muted-foreground disabled:opacity-60"
                 data-imported-reply=""
               />
               <ContinueOn />
               <button
                 type="button"
-                aria-label="Send"
+                aria-label={t("home.task.send")}
                 disabled={starting || !reply.trim()}
                 onClick={() => void send(reply)}
-                className={cn("flex size-11 shrink-0 items-center justify-center rounded-full", reply.trim() && !starting ? "bg-primary text-primary-foreground" : "bg-foreground/10 text-muted-foreground")}
+                className={cn(
+                  "flex size-11 shrink-0 items-center justify-center rounded-full",
+                  reply.trim() && !starting ? "bg-primary text-primary-foreground" : "bg-foreground/10 text-muted-foreground",
+                )}
               >
                 {starting ? <Loader2Icon className="size-5 animate-spin" /> : <ArrowUpIcon className="size-5" />}
               </button>
             </div>
             {waiting ? (
               <p className="px-1 text-[12px] text-muted-foreground" data-imported-note="">
-                Nothing runs until you send. {name} then carries on this chat on {thisComputerText()}, in its own folder.
+                {t("home.task.imported_note", { name, computer: thisComputerText() })}
               </p>
             ) : null}
           </div>
@@ -214,14 +235,20 @@ export function ImportedTaskView({ task }: { task: AskTask & { imported: NonNull
  * box, whichever has room, and scrolls rather than leave the window.
  */
 export function ContinueOn() {
+  const t = useT();
   const { data: machines } = useMachines();
   const { computers: others, offline } = chatComputers(machines ?? []);
   return (
     <MenuPrimitive.Root>
       <MenuPrimitive.Trigger
         render={
-          <button type="button" className="flex h-11 shrink-0 items-center gap-1.5 rounded-lg px-3 text-[13px] outline-none hover:bg-foreground/5 data-popup-open:bg-foreground/[0.07]" data-continue-on="">
-            <span className="text-muted-foreground">Continue on:</span> {thisComputerLabel()} <ChevronDownIcon className="size-3.5 text-muted-foreground" />
+          <button
+            type="button"
+            className="flex h-11 shrink-0 items-center gap-1.5 rounded-lg px-3 text-[13px] outline-none hover:bg-foreground/5 data-popup-open:bg-foreground/[0.07]"
+            data-continue-on=""
+          >
+            <span className="text-muted-foreground">{t("home.task.continue_on_label")}</span> {thisComputerLabel()}{" "}
+            <ChevronDownIcon className="size-3.5 text-muted-foreground" />
           </button>
         }
       />
@@ -232,27 +259,32 @@ export function ContinueOn() {
             className="glass max-h-[min(480px,var(--available-height))] w-[340px] origin-(--transform-origin) overflow-y-auto overscroll-contain rounded-xl border p-2 text-popover-foreground shadow-float outline-none"
             data-continue-on-menu=""
           >
-            <p className="px-3 pt-2 pb-1 text-[12px] font-medium text-muted-foreground">Continue on</p>
+            <p className="px-3 pt-2 pb-1 text-[12px] font-medium text-muted-foreground">{t("home.task.continue_on")}</p>
             <MenuPrimitive.Item className="flex min-h-12 cursor-default items-center gap-3 rounded-lg bg-foreground/[0.06] px-3 py-2 outline-none">
               <LaptopIcon className="size-4" />
               <div className="min-w-0 flex-1">
                 <div className="text-[14px] font-medium">{thisComputerLabel()}</div>
-                <div className="text-[12px] text-muted-foreground">Where this chat's session is</div>
+                <div className="text-[12px] text-muted-foreground">{t("home.task.session_here")}</div>
               </div>
               <CheckIcon className="size-4" />
             </MenuPrimitive.Item>
             {others.map((m) => (
-              <MenuPrimitive.Item key={m.id} disabled className="flex min-h-12 cursor-default items-center gap-3 rounded-lg px-3 py-2 opacity-50 outline-none" data-continue-on-other={m.id}>
+              <MenuPrimitive.Item
+                key={m.id}
+                disabled
+                className="flex min-h-12 cursor-default items-center gap-3 rounded-lg px-3 py-2 opacity-50 outline-none"
+                data-continue-on-other={m.id}
+              >
                 <MonitorIcon className="size-4" />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[14px] font-medium">{m.name}</div>
-                  <div className="text-[12px] text-muted-foreground">Not yet: the chat's session is on {thisComputerText()}</div>
+                  <div className="text-[12px] text-muted-foreground">{t("home.task.session_not_yet", { computer: thisComputerText() })}</div>
                 </div>
               </MenuPrimitive.Item>
             ))}
             {offline > 0 ? (
               <p className="px-3 pt-2 pb-1 text-[12px] text-muted-foreground" data-continue-on-offline={offline}>
-                {offline === 1 ? "1 more computer is offline." : `${offline} more computers are offline.`}
+                {t("home.task.offline", { count: offline })}
               </p>
             ) : null}
           </MenuPrimitive.Popup>

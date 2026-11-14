@@ -13,6 +13,7 @@
 //! compositor-attested surfaces and return a typed identity error otherwise.
 
 mod compositor_peer;
+mod dynamic_library;
 pub mod ext_screencopy;
 pub mod ext_toplevel;
 pub mod hyprland;
@@ -24,7 +25,7 @@ pub mod kwin_capture;
 pub mod kwin_helper;
 #[cfg(feature = "portal-input")]
 mod kwin_keystate;
-pub(crate) mod kwin_layout;
+pub(crate) mod logical_layout;
 pub mod niri;
 pub use niri::keyboard::call_budget as niri_keyboard_budget;
 pub(crate) use niri::AimedPoint;
@@ -1758,7 +1759,7 @@ fn pointer_reaches(origin_x: i32, origin_y: i32, w: u32, h: u32, x: i32, y: i32)
 #[derive(Clone, Debug, Default)]
 pub struct DesktopInputSpace {
     snapshot: Option<hyprland::DesktopSnapshot>,
-    kwin_distorted: Option<kwin_layout::DistortedCapture>,
+    kwin_distorted: Option<logical_layout::DistortedCapture>,
 }
 
 impl DesktopInputSpace {
@@ -1775,9 +1776,9 @@ impl DesktopInputSpace {
                 kwin_distorted: None,
             });
         }
-        // KWin input goes through libei, which takes layout coordinates, so it
-        // has no virtual-pointer layout to qualify.
-        let Some(layout) = kwin_desktop_layout()? else {
+        // KWin and Mutter input goes through libei, which takes layout
+        // coordinates, so it has no virtual-pointer layout to qualify.
+        let Some(layout) = logical_desktop_layout()? else {
             return Ok(Self::default());
         };
         Ok(Self {
@@ -1878,21 +1879,21 @@ pub(crate) fn compositor_logical_frame() -> Option<anyhow::Result<(u32, u32)>> {
     if hyprland::is_session() {
         return Some(hyprland::screen_size().map(|(width, height, _scale)| (width, height)));
     }
-    kwin_desktop_layout()
+    logical_desktop_layout()
         .transpose()
         .map(|layout| layout.map(|layout| (layout.frame.width, layout.frame.height)))
 }
 
-/// KWin's desktop layout: its pointer input is logical while its screenshots
-/// are physical, so a screenshot pixel and a pointer coordinate only agree in
-/// this frame. `None` on any other compositor; a KWin that cannot report a
-/// usable layout is an error rather than a silent return to the mismatched
-/// physical frame.
-pub(crate) fn kwin_desktop_layout() -> anyhow::Result<Option<kwin_layout::DesktopLayout>> {
+/// The KWin or GNOME Mutter desktop layout: their pointer input is logical
+/// while their screenshots can be physical, so a screenshot pixel and a
+/// pointer coordinate only agree in this frame. `None` on any other
+/// compositor; one that cannot report a usable layout is an error rather than
+/// a silent return to the mismatched physical frame.
+pub(crate) fn logical_desktop_layout() -> anyhow::Result<Option<logical_layout::DesktopLayout>> {
     if !is_wayland() || hyprland::is_session() || niri::is_session() {
         return Ok(None);
     }
-    kwin_layout::desktop_layout()
+    logical_layout::desktop_layout()
 }
 
 /// Pointer space for `zwlr_virtual_pointer_v1::motion_absolute`, as

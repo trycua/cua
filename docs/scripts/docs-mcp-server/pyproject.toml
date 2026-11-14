@@ -25,9 +25,9 @@ dependencies = [
     "pydantic>=2.0.0",
     "pandas>=2.0.0",
     "markdown-it-py>=3.0.0",
-    "opentelemetry-api>=1.20.0",
-    "opentelemetry-sdk>=1.20.0",
-    "opentelemetry-exporter-otlp-proto-http>=1.20.0",
+    "opentelemetry-api>=1.45.2",
+    "opentelemetry-sdk>=1.45.2",
+    "opentelemetry-exporter-otlp-proto-http>=1.45.2",
     "uvicorn>=0.23.0",
 ]
 

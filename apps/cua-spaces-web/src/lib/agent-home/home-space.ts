@@ -121,5 +121,9 @@ const subscribe = (l: () => void) => {
 
 /** Whether this Space is an agent's home (the Spaces list tags it "Home"). */
 export function useIsHomeSpace(spaceId: string): boolean {
-  return useSyncExternalStore(subscribe, () => isHomeSpaceId(spaceId), () => false);
+  return useSyncExternalStore(
+    subscribe,
+    () => isHomeSpaceId(spaceId),
+    () => false,
+  );
 }

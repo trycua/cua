@@ -742,6 +742,133 @@ fn harness_appkit_middle_click_px_background_reaches_exact_window() {
     });
 }
 
+/// Issue #4242: a background pixel click on the receiver at a point its own
+/// untitled popup covers (Chrome's omnibox dropdown shape) is refused, and
+/// neither window gets a press. A point outside the popup still lands on the
+/// receiver, so the check covers only the popup. That control click is a
+/// middle click, which skips the background AX press and reaches the routed
+/// path the check guards.
+#[test]
+#[ignore]
+fn harness_appkit_left_click_px_background_refuses_point_under_own_popup() {
+    let case = native_background_case(
+        "appkit",
+        "left_click_under_own_popup",
+        Targeting::Px,
+        DriverRoute::MacosCgEventPid,
+    );
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named("appkit-click-under-popup")
+            .expect("start macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+        let directory = tempfile::tempdir().expect("create popup journal directory");
+        let journal = directory.path().join("pointer.jsonl");
+        std::fs::write(&journal, "").expect("initialize native pointer journal");
+        let harness = Harness::spawn(
+            None,
+            Some(&journal),
+            false,
+            None,
+            &[("CUA_APPKIT_POPUP_OVER_RECEIVER", "1")],
+        )
+        .presented();
+        let (wid, _) = driver
+            .find_window(harness.pid as i64, "CuaTestHarness AppKit")
+            .expect("find receiver window");
+        let read_events = || -> Vec<serde_json::Value> {
+            std::fs::read_to_string(&journal)
+                .expect("read native pointer journal")
+                .lines()
+                .map(|line| serde_json::from_str(line).expect("parse native pointer event"))
+                .collect()
+        };
+        let initial = read_events();
+        assert_eq!(
+            initial.len(),
+            2,
+            "receiver and popup must be idle: {initial:?}"
+        );
+        assert_eq!(initial[0]["kind"], "ready");
+        assert_eq!(initial[1]["kind"], "popup_ready");
+        let popup = initial[1]["window_id"].as_u64().expect("popup window id");
+        let snapshot = snapshot_elements(&mut driver, harness.pid, wid);
+        assert!(
+            !snapshot.is_error(),
+            "capture receiver: {}",
+            snapshot.text()
+        );
+        let width = snapshot.structured()["screenshot_width"]
+            .as_f64()
+            .expect("screenshot width");
+        let height = snapshot.structured()["screenshot_height"]
+            .as_f64()
+            .expect("screenshot height");
+        let (_, passed) = run_with_background_oracles(
+            &mut driver,
+            TargetWindow {
+                pid: harness.pid,
+                native_id: wid,
+            },
+            |driver| {
+                // The popup covers the receiver's top-left quarter, under
+                // the title bar.
+                let covered = driver.call(
+                    "click",
+                    serde_json::json!({
+                        "pid": harness.pid, "window_id": wid,
+                        "x": width / 4.0, "y": height / 3.0,
+                        "delivery_mode": "background"
+                    }),
+                );
+                assert!(
+                    covered.is_error(),
+                    "click under the popup was sent: {}",
+                    covered.raw
+                );
+                assert_eq!(
+                    covered.structured()["code"],
+                    "target_occluded",
+                    "{}",
+                    covered.raw
+                );
+                assert_eq!(
+                    covered.structured()["covering_window"].as_u64(),
+                    Some(popup)
+                );
+                std::thread::sleep(Duration::from_millis(500));
+                assert_eq!(read_events().len(), 2, "a refused click reached a window");
+
+                let open = driver.call(
+                    "click",
+                    serde_json::json!({
+                        "pid": harness.pid, "window_id": wid,
+                        "x": width * 3.0 / 4.0, "y": height * 3.0 / 4.0,
+                        "button": "middle", "delivery_mode": "background"
+                    }),
+                );
+                assert!(!open.is_error(), "click outside the popup: {}", open.text());
+                let deadline = Instant::now() + Duration::from_secs(3);
+                loop {
+                    let events = read_events();
+                    if events.iter().any(|event| event["kind"] == "middle_up") {
+                        for event in &events[2..] {
+                            assert_eq!(event["window_id"].as_u64(), Some(wid), "{events:?}");
+                        }
+                        break;
+                    }
+                    assert!(
+                        Instant::now() < deadline,
+                        "click outside the popup did not arrive: {events:?}"
+                    );
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            },
+        )
+        .expect("refusal must preserve background desktop state");
+        Observation::delivered_with_fixture_state(passed)
+    });
+}
+
 #[test]
 #[ignore]
 fn harness_appkit_smoke() {
@@ -1074,6 +1201,26 @@ fn harness_appkit_invoke_menu_live_path() {
             // and key-window status. The target menu item validates against
             // both, so an AXFocused-only implementation cannot pass this cell.
             let _distractor = Harness::launch();
+            // The target revalidates the item only once it has processed
+            // losing activation, and until then AppKit still reports it
+            // enabled. Wait for that, so the call below runs in the background
+            // state it is meant to test.
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                let state = snapshot_elements(driver, pid, wid);
+                if state
+                    .tree_text()
+                    .contains("[id=menu-window-arrange-left enabled=false")
+                {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "Window > Arrange > Left stayed enabled with the distractor in front: {}",
+                    state.tree_text()
+                );
+                std::thread::sleep(Duration::from_millis(100));
+            }
 
             // invoke_menu does not activate a background app (#4955): with
             // the distractor in front, the item stays disabled and the call
@@ -1971,6 +2118,13 @@ fn harness_appkit_disabled_control_is_published_and_its_press_refused() {
                         "{tool} on a disabled control was not refused as element_disabled: {}",
                         refused.raw
                     );
+                    assert!(
+                        refused.text().contains("\nNext: ")
+                            && refused.structured()["hint"].is_string()
+                            && refused.structured()["next_call"]["tool"] == "get_window_state",
+                        "{tool} refusal gave no next step: {}",
+                        refused.raw
+                    );
                 }
 
                 std::thread::sleep(Duration::from_millis(200));
@@ -1992,7 +2146,8 @@ fn harness_appkit_disabled_control_is_published_and_its_press_refused() {
 /// activation can enable the control, and reads it again before input. A
 /// control enabled only while its app is active reads `enabled: false` from
 /// behind another app and is acted on; one that stays disabled is refused as
-/// `element_disabled`, not clicked, double-clicked or typed into.
+/// `element_disabled`, not clicked, double-clicked, middle-clicked or typed
+/// into.
 #[test]
 #[ignore]
 fn harness_appkit_foreground_from_the_background_rereads_enablement_after_activation() {
@@ -2033,6 +2188,12 @@ fn harness_appkit_foreground_from_the_background_rereads_enablement_after_activa
                 "btn-active-only",
                 serde_json::json!({}),
                 Some("active_only=double_click"),
+            ),
+            (
+                "click",
+                "btn-active-only",
+                serde_json::json!({ "button": "middle" }),
+                Some("active_only=middle_click"),
             ),
             (
                 "type_text",

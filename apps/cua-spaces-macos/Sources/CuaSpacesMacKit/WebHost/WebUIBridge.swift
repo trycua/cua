@@ -72,7 +72,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "spaces.setPower", "spaces.delete", "spaces.rename", "spaces.deleteMany", "spaces.leave", "spaces.cancelCreate",
         // A Space's network, clipboard and Volume settings (the SDK's).
         "network.get", "network.set", "network.log", "network.ackNotice", "spaces.setAccess",
-        // Child Spaces (the Child Spaces experiment; the daemon refuses them while it is off).
+        // Child Spaces: the tree of Spaces, children, budgets and kept services.
         "spaces.tree", "children.set", "budget.get", "budget.set", "services.list", "services.control",
         "machines.list", "host.status",
         "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
@@ -80,6 +80,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "agents.status", "agents.connect", "agents.disconnect",
         // The coding agents' own recent chats on this Mac (person-only daemon tools, CUA-3319).
         "agents.recentThreads", "agents.threadHistory",
+        // An agent's own sign-in on another computer (person-only daemon tool agent_sign_in, CUA-3907).
+        "agents.computerSignIn",
         // An agent's device-code sign-in made for Cua (Codex), started and waited in two calls.
         "agents.signInStart", "agents.signInWait",
         // Start a run in a Space and reply to it (the daemon's agent_start, agent_message).
@@ -88,6 +90,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine",
         "agents.removeRoutine", "agents.allowComputer", "agents.revokeComputer",
         "agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.use", "agentKeys.rename", "agentKeys.shell", "agentKeys.fromShell",
+        "agentKeys.copySignIn",
         // Settings, Connections, GitHub: the daemon's github.* methods (WebUIBridge+Pages.swift).
         "github.status", "github.rescan", "github.use", "github.enable",
         // New Space's address form and Connect a cloud, Teleport and Share,
@@ -105,11 +108,11 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "devices.revoke", "devices.confirmMachine", "devices.createPairingCode", "devices.pairingCodes",
         "devices.revokePairingCode", "teams.list", "storage.get", "storage.run",
         "notifications.list", "notifications.markAllRead", "notifications.markRead",
-        "telemetry.track", "telemetry.linkNotice", "telemetry.acknowledgeLinkNotice", "crashReporting.config", "spaces.usage", "spaces.windows", "stream.pip",
+        "telemetry.track", "telemetry.linkNotice", "telemetry.acknowledgeLinkNotice", "crashReporting.config", "spaces.usage", "spaces.reach", "spaces.windows", "stream.pip",
         // A Space's thumbnail (WebUIBridge+Thumbnails.swift).
         "spaces.thumbnail",
         // A Space's drop well: Send file… and dropped files (WebUIBridge+Files.swift).
-        "spaces.chooseFiles", "spaces.droppedFiles", "spaces.sendFiles",
+        "spaces.chooseFiles", "spaces.droppedFiles", "spaces.sendFiles", "windows.chooseIso",
         "host.setUp", "host.joinWithCode", "host.action", "host.limits", "host.openSettings",
         "settings.get", "settings.choose", "settings.update",
         // Settings, Advanced's runtime rows (WebUIBridge+Runtimes.swift).
@@ -201,6 +204,11 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
     var offeredPaths: Set<String> = []
     /// "Send file…"'s picker (a test sets its own).
     var pickFiles: @MainActor () -> [URL]? = WebUIBridge.openPanel
+    /// "Choose Windows ISO…"'s picker (a test sets its own).
+    var pickIso: @MainActor () -> URL? = WebUIBridge.isoPanel
+    /// Checks and remembers the chosen ISO for a Windows image (the cua SDK's
+    /// own `--iso`; a test sets its own).
+    var useWindowsIso: @MainActor (_ image: String, _ path: String) -> WindowsIsoChoice = { windowsUseIso(image: $0, path: $1) }
     /// Settings, Advanced's "Browse…" for a kind's program (a test sets its own).
     var pickRuntime: @MainActor (String) async -> URL? = { WebUIBridge.runtimePanel($0) }
     /// The "<Space> is ready" notification of a create the onboarding
@@ -437,6 +445,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         case "agents.recentThreads", "agents.threadHistory":
             return try await agentThreads(method, args)
 
+        case "agents.computerSignIn":
+            return try await computerSignIn(args)
+
         case "checklist.get": return ["state": model.checklist.stored]
         case "checklist.send":
             model.checklist.send(try checklistAction(args["action"]))
@@ -606,9 +617,11 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         }
         model.onboarding.finish(mode: word == "host" ? .host : .client, launchAtLogin: args["launchAtLogin"] as? Bool)
         model.telemetrySink?.acknowledgeNotice()
-        // The first run's sign-in set this Mac up to provide Spaces: ask for
-        // Local Network now that it is over.
-        if model.host.providesSpaces { model.askLocalNetworkForHosting() }
+        // Local Network is not asked here: the first run's permissions step
+        // asks for it, with its reason, and a dialog as Home opens was a
+        // surprise with no context (device test, 10 Nov). Left off there,
+        // it is asked when it is needed: the first macOS Space on this Mac,
+        // or turning on Spaces from other computers (`askLocalNetworkForHosting`).
         return onboarding()
     }
 
@@ -909,7 +922,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
                                                  branch: text("branch"), model: text("model"),
                                                  envFromHost: (args["envFromHost"] as? [String]) ?? [],
                                                  cwd: text("cwd"), resumeSession: text("resumeSession"),
-                                                 resumeContext: text("resumeContext"))
+                                                 resumeContext: text("resumeContext"), effort: text("effort"))
         case "agents.message":
             let spaceId = try string(args, "spaceId"), runId = try string(args, "runId"), text = try string(args, "text")
             guard persistent.canCallTools else { throw Failure.unsupported(serviceDownMessage) }
@@ -948,9 +961,18 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             guard let setup = model.agentSetup else { throw Failure.unsupported("Agent setup is not available in this build") }
             let signIn = (args["signIn"] as? Bool) ?? false
             do {
+                // `driver`: the Cua Driver this app carries goes in too, as one more part (setup's "Let agents use
+                // apps on this Mac" row). A build without one has no such part.
+                var driver: (embedded: EmbeddedDriver, entry: DriverConnect)?
+                if args["driver"] as? Bool == true { driver = await connectDriver() }
                 let out = try await setup.connectJson(agents: try strings(args, "agents"), signIn: signIn,
-                                                      skills: (args["skills"] as? Bool) ?? true, mcp: (args["mcp"] as? Bool) ?? true)
+                                                      skills: (args["skills"] as? Bool) ?? true, mcp: (args["mcp"] as? Bool) ?? true,
+                                                      driver: driver?.entry)
                 await model.reloadAgents()
+                // Written with both permissions on: a driver that isn't running yet starts, without holding the answer.
+                if let embedded = driver?.embedded, driver?.entry.permissionsGranted == true {
+                    Task { await self.startDriverIfNeeded(embedded) }
+                }
                 return try json(out)
             } catch let f as Failure { throw f }
             catch { throw Failure(code: "failed", message: LiveSpacesBackend.words(error)) }

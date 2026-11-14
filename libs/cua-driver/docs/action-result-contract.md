@@ -56,6 +56,31 @@ The action-result tools are:
 Other mutating tools such as application launch, window activation, browser
 navigation, dialogs, uploads, and downloads retain their own typed results.
 
+Every tool that advertises a native pointer, keyboard, menu, or window-frame
+capability must be an action-result tool. `protocol_schema_test`
+(`every_native_input_tool_publishes_the_action_result`) checks that against the
+live `tools/list` in the macOS, Windows and Linux CI lanes.
+
+### Modality-ladder audit outcome
+
+The June 2026 modality-ladder audit found desktop tools that reported success
+without confirming the effect. On macOS, Windows and Linux alike, its P0 and
+P1 items now resolve as follows:
+
+| Tool | Outcome |
+| --- | --- |
+| `type_text`, `click`, `drag`, `scroll` (P0) | shipped: action-result tools |
+| `set_value`, `right_click`, `double_click`, `press_key`, `hotkey` | shipped: action-result tools |
+| `type_text_chars` | shipped: a hidden alias of `type_text` with the same result |
+| `get_window_state`, `get_desktop_state`, `zoom` | not applicable: read-only |
+| `page`, `launch_app` | not applicable: their own typed results, not input rungs |
+
+The fix is the shared dispatch seam (`ToolRegistry::invoke_with_context`), not
+per-tool code. It turns any platform payload into an `ActionResult`, reports
+`unverifiable` when the payload carries no readback or window-change
+evidence, and refuses to publish `confirmed` without it. Escalation moved to
+the harness (see [Escalation belongs to the harness](#escalation-belongs-to-the-harness)).
+
 The contract is deliberately closed. It does not echo selectors, request
 coordinates, scope, targets, platform transport names, diagnostic pointers, or
 the old `verified` boolean as fields; `summary` is prose for the agent, not a
@@ -103,6 +128,14 @@ For example, a background drag that macOS cannot drop returns:
 }
 ```
 
+A refusal also ends its text with a line `Next: <hint>`, so a client that shows
+the agent only the text still delivers it. The first line stays the refusal.
+Every hint names only routes the driver supports in that situation, and says
+why when nothing will work. For example, an Electron window drops background
+scrolling and typing, so those hints point to `get_window_state` plus
+`element_token`, `set_value` or `invoke_menu`, and name foreground delivery only
+with its condition.
+
 A producer that already sets `hint` or `next_call` keeps its own value. In
 `run_steps`, a failed step's report carries the same `hint` and `next_call`; in
 `run_script`, the hint is appended to the error message of the failed call.
@@ -125,11 +158,14 @@ an error, and it is never sent for a step that already runs inside `run_steps`
 or `run_script`. The logic is in `rust/crates/cua-driver-core/src/batch_nudge.rs`.
 
 `suspected_noop` is advisory. It means a bounded readable state remained
-unchanged, not that the action failed. For a ref-targeted browser DOM click,
-the readback covers bounded semantic and form state on the target plus the
-document URL. An unchanged DOM click readback remains `unverifiable`, with
-readback evidence: effects elsewhere on the page can be invisible to that
-readback, so verify the expected postcondition before retrying.
+unchanged, not that the action failed. For a ref-targeted `browser_click`,
+on both the `dom_event` and `trusted` routes, the readback covers bounded
+semantic and form state on the target plus the document URL. A change in it
+reports `confirmed` with `value_readback` evidence. An unchanged readback
+remains `unverifiable`, with readback evidence: effects elsewhere on the page
+can be invisible to that readback, so verify the expected postcondition before
+retrying. A missing readback, a click that opens a page dialog, and a
+coordinate-targeted click carry no readback evidence and stay `unverifiable`.
 
 ## Window target resolution
 

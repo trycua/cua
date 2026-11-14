@@ -34,7 +34,13 @@ export const usePrefs = create<Prefs>((set, get) => ({
     try {
       const raw = await AsyncStorage.getItem(KEY);
       const saved = raw ? (JSON.parse(raw) as Partial<Pick<Prefs, "notifyNeedsYou" | "notifyDone" | "sampleOffline" | "requireUnlock">>) : {};
-      set({ notifyNeedsYou: saved.notifyNeedsYou ?? true, notifyDone: saved.notifyDone ?? false, sampleOffline: saved.sampleOffline ?? false, requireUnlock: saved.requireUnlock ?? true, ready: true });
+      set({
+        notifyNeedsYou: saved.notifyNeedsYou ?? true,
+        notifyDone: saved.notifyDone ?? false,
+        sampleOffline: saved.sampleOffline ?? false,
+        requireUnlock: saved.requireUnlock ?? true,
+        ready: true,
+      });
     } catch {
       set({ ready: true });
     }

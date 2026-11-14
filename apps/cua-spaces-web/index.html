@@ -18,9 +18,7 @@
           const stored = localStorage.getItem(KEY);
           if (stored === "light" || stored === "dark" || stored === "system") pref = stored;
         } catch {}
-        const dark =
-          pref === "dark" ||
-          (pref === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        const dark = pref === "dark" || (pref === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
         const root = document.documentElement;
         root.classList.toggle("dark", dark);
         root.style.colorScheme = dark ? "dark" : "light";

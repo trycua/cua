@@ -491,6 +491,7 @@ struct Visited<'a> {
     /// tooltip there ("Play"/"Pause", "Look in"), GTK its tooltip text.
     description: String,
     value: Option<String>,
+    document_uri: Option<String>,
     checked: Option<bool>,
     enabled: Option<bool>,
     selected: Option<bool>,
@@ -1743,6 +1744,10 @@ async fn collect_visited_bounded_opts<'a>(
         };
         let focused = matches!(state_r.as_ref(), Some(Ok(s)) if s.contains(State::Focused));
         let role_lower = role.to_ascii_lowercase();
+        // Chromium puts the Document interface on nearly every node; only a
+        // document's own URI names the rendered page, so read it there alone.
+        let has_document = ifaces.contains(Interface::Document)
+            && matches!(role_lower.as_str(), "document web" | "document frame");
         let checked = if role_lower.contains("check") {
             state_r
                 .as_ref()
@@ -1788,8 +1793,9 @@ async fn collect_visited_bounded_opts<'a>(
         // and drop the borrow before `acc` moves into `visited`.
         let mut actions: Vec<String> = Vec::new();
         let mut value: Option<String> = None;
+        let mut document_uri: Option<String> = None;
         let mut text_content = String::new();
-        if has_action || has_value || has_text {
+        if has_action || has_value || has_text || has_document {
             if let Some(Ok(proxies)) = call(acc.proxies()).await {
                 if has_action {
                     if let Some(Ok(ap)) = call(proxies.action()).await {
@@ -1831,6 +1837,17 @@ async fn collect_visited_bounded_opts<'a>(
                                 text_content = t;
                             }
                         }
+                    }
+                }
+                if has_document {
+                    if let Some(Ok(document)) = call(proxies.document()).await {
+                        // Chromium maps AXTreeData.url to the standard ATK /
+                        // AT-SPI Document "URI" attribute. It is the rendered
+                        // destination, unlike localized names and titles.
+                        document_uri = call(document.get_attribute_value("URI"))
+                            .await
+                            .and_then(|result| result.ok())
+                            .filter(|uri| !uri.trim().is_empty());
                     }
                 }
             }
@@ -2002,6 +2019,7 @@ async fn collect_visited_bounded_opts<'a>(
             name,
             description,
             value,
+            document_uri,
             checked,
             enabled,
             selected,
@@ -2268,7 +2286,7 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
                     ));
                 }
             }
-            let act_str = v.actions.join(",");
+            let attrs = indexed_row_attrs(v.enabled, &v.actions);
             let val_part = match &v.value {
                 Some(val) if !val.is_empty() => format!(" value=\"{val}\""),
                 _ => String::new(),
@@ -2284,7 +2302,7 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
                 .map(|note| format!(" ({note})"))
                 .unwrap_or_default();
             md.push_str(&format!(
-                "{indent}- [{idx}] {role} \"{name}\"{desc}{val_part} [actions=[{act_str}]]{collapsed_note}{unlabelled_shown}
+                "{indent}- [{idx}] {role} \"{name}\"{desc}{val_part} [{attrs}]{collapsed_note}{unlabelled_shown}
 ",
                 role = v.role,
                 desc = description_shown.as_deref().unwrap_or(""),
@@ -2316,7 +2334,9 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
                 checked: v.checked,
                 enabled: v.enabled,
                 selected: v.selected,
+                focused: Some(v.focused),
                 description: (!description_parts.is_empty()).then(|| description_parts.join("; ")),
+                document_uri: v.document_uri.clone(),
                 actions: v.actions.clone(),
                 element_key: idx as u64,
                 identity: v.identity.clone(),
@@ -2328,11 +2348,10 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
             idx += 1;
         } else if emit && !v.name.is_empty() && v.showing {
             md.push_str(&format!(
-                "{indent}- {role} = \"{name}\"{marker}
+                "{indent}- {role} = \"{name}\"
 ",
                 role = v.role,
                 name = v.name,
-                marker = passive_marker(&v.role, !v.actions.is_empty(), v.has_component, v.enabled),
             ));
         }
     }
@@ -2340,31 +2359,14 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
     (md, nodes)
 }
 
-/// Why a visible, named control is listed without an index. A disabled
-/// button is rendered as `- push button = "Restore" (disabled)` so a caller
-/// learns it must enable it (select something) rather than assume the tree
-/// dropped it.
-fn passive_marker(
-    role: &str,
-    has_action: bool,
-    has_component: bool,
-    enabled: Option<bool>,
-) -> &'static str {
-    let control = has_action
-        || (has_component
-            && matches!(
-                role.trim().to_ascii_lowercase().as_str(),
-                "button"
-                    | "push button"
-                    | "toggle button"
-                    | "menu item"
-                    | "check box"
-                    | "radio button"
-            ));
-    if control && enabled == Some(false) {
-        " (disabled)"
+/// The bracketed attributes of an indexed row: `enabled=false` for a disabled
+/// control (as on macOS), then its actions.
+fn indexed_row_attrs(enabled: Option<bool>, actions: &[String]) -> String {
+    let actions = format!("actions=[{}]", actions.join(","));
+    if enabled == Some(false) {
+        format!("enabled=false {actions}")
     } else {
-        ""
+        actions
     }
 }
 
@@ -2440,9 +2442,14 @@ fn is_enabled_state(state: &StateSet) -> bool {
 /// no Action even though a coordinate click on their bounds is operable. Keep
 /// every such control in the shared index space so physical-input fallbacks can
 /// address it without inventing pixels in the caller. Some GTK4 buttons expose
-/// only Component plus their control role; include those only when the state set
-/// positively verifies that they are enabled. Passive component-backed labels
-/// and containers remain outside the index.
+/// only Component plus their control role; include those too. Passive
+/// component-backed labels and containers remain outside the index, and so does
+/// a node whose state set could not be read.
+///
+/// A disabled control is indexed and published with `enabled: false`, as on
+/// macOS: enablement is state the caller needs to read (a form's Save button),
+/// not a reason to hide the row. The token writers refuse it
+/// (`tools::impl_::refuse_if_disabled`).
 ///
 /// This predicate is the single source of truth for the element-index space and
 /// MUST be applied identically in `render` and in every `action_nodes` filter
@@ -2471,16 +2478,15 @@ fn is_indexable_capabilities(
     enabled: Option<bool>,
 ) -> bool {
     let normalized_role = role.trim().to_ascii_lowercase();
-    let pixel_addressable_control = has_component
-        && enabled == Some(true)
-        && matches!(normalized_role.as_str(), "button" | "push button");
+    let pixel_addressable_control =
+        has_component && matches!(normalized_role.as_str(), "button" | "push button");
     !is_passive_role(&normalized_role)
         && (has_action
             || has_editable
             || has_value
             || has_selectable_state
             || pixel_addressable_control)
-        && enabled == Some(true)
+        && enabled.is_some()
 }
 
 // ── Public (sync) entry points ───────────────────────────────────────────────
@@ -3511,13 +3517,22 @@ fn at_point_activation_index(
     actions: &[String],
     is_deepest_hit: bool,
 ) -> Option<usize> {
-    if is_container_role(role) || crate::at_point_policy::is_top_level_shell_role(role) {
+    if is_container_role(role)
+        || crate::at_point_policy::is_top_level_shell_role(role)
+        || is_web_document_role(role)
+    {
         return None;
     }
     if !is_deepest_hit && role.trim().eq_ignore_ascii_case("canvas") {
         return None;
     }
     activation_index(role, actions)
+}
+
+/// A web document's `doDefault` dispatches no DOM click (Chromium on X11
+/// answers true and the page sees nothing), so it is never an at-point target.
+pub(crate) fn is_web_document_role(role: &str) -> bool {
+    role.trim().eq_ignore_ascii_case("document web")
 }
 
 /// What an at-point accessibility click did, for the tool result.
@@ -3626,64 +3641,194 @@ fn exact_menu_path_matches(visited: &[Visited<'_>], path: &[String]) -> Vec<usiz
 /// Every hop re-walks AT-SPI after the preceding menu has materialized; no
 /// snapshot index is retained across mutations.
 pub fn invoke_menu_path(pid: u32, path: &[String]) -> Result<()> {
-    invoke_menu_path_in(pid, 0, path)
+    invoke_menu_path_in(pid, 0, path, MenuOpening::Allowed)
+}
+
+/// Whether [`invoke_menu_path_in`] may open intermediate menus.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuOpening {
+    /// Open each menu along the path when the final item cannot be reached
+    /// directly (the window was activated for a foreground delivery).
+    Allowed,
+    /// Background delivery: never open a menu. An open GTK, Qt or VCL menu
+    /// grabs the core keyboard and pointer, so the user's keystrokes land in
+    /// the menu instead of their own window for as long as it stays open
+    /// (trycua/cua#7371).
+    Forbidden,
+}
+
+/// The final menu item cannot be reached without opening a menu, and the
+/// delivery forbids opening one ([`MenuOpening::Forbidden`]). Nothing was
+/// actuated.
+#[derive(Debug)]
+pub struct MenuMustOpen {
+    pub detail: String,
+}
+
+impl std::fmt::Display for MenuMustOpen {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "the menu item is only reachable by opening a menu ({})",
+            self.detail
+        )
+    }
+}
+
+impl std::error::Error for MenuMustOpen {}
+
+/// The unique live node for `path` (all of it, or a prefix) in one walk;
+/// `Ok(None)` when no node matches it.
+fn resolve_menu_segment(
+    visited: &[Visited<'_>],
+    scoped_frame: Option<usize>,
+    path: &[String],
+) -> Result<Option<usize>> {
+    let depth = path.len() - 1;
+    let mut matches = exact_menu_path_matches(visited, path);
+    if matches.len() > 1 {
+        if let Some(scope) = scoped_frame {
+            let scoped: Vec<usize> = matches
+                .iter()
+                .copied()
+                .filter(|index| visited[*index].frame_ordinal == scope)
+                .collect();
+            if !scoped.is_empty() {
+                matches = scoped;
+            }
+        }
+    }
+    if matches.len() > 1 {
+        matches = dedupe_menu_matches(visited, matches);
+    }
+    match matches.as_slice() {
+        [index] => Ok(Some(*index)),
+        [] => Ok(None),
+        _ => anyhow::bail!("menu path segment {depth} is ambiguous"),
+    }
+}
+
+/// A menu node that opens a submenu rather than running a command: GTK and
+/// Qt give it the `menu` role, a command item is `menu item` / `check menu
+/// item` / `radio menu item`.
+fn opens_submenu(role: &str) -> bool {
+    role.trim().eq_ignore_ascii_case("menu")
+}
+
+/// The decision for one resolved final item, before any action is fired.
+#[derive(Debug, PartialEq, Eq)]
+enum LeafPlan {
+    /// Fire the item's own action; no menu opens.
+    Direct,
+    /// The item is itself a submenu: firing it opens a menu.
+    OpensMenu,
+}
+
+fn leaf_plan(role: &str) -> LeafPlan {
+    if opens_submenu(role) {
+        LeafPlan::OpensMenu
+    } else {
+        LeafPlan::Direct
+    }
+}
+
+/// Fire the safe activation action of `target`. `Ok(false)` is the toolkit
+/// declining it (LibreOffice VCL answers that for an item of a closed menu).
+async fn fire_menu_node(target: &Visited<'_>, depth: usize) -> Result<bool> {
+    if target.enabled == Some(false) {
+        anyhow::bail!("menu path segment {depth} is disabled");
+    }
+    let chosen = activation_index(&target.role, &target.actions)
+        .ok_or_else(|| anyhow!("menu path segment {depth} has no safe activation action"))?;
+    let proxies = target
+        .acc
+        .proxies()
+        .await
+        .map_err(|error| anyhow!("interface proxies unavailable: {error}"))?;
+    let action = proxies
+        .action()
+        .await
+        .map_err(|error| anyhow!("Action unavailable: {error}"))?;
+    action
+        .do_action(chosen as i32)
+        .await
+        .map_err(|error| anyhow!("doAction failed: {error}"))
 }
 
 /// [`invoke_menu_path`] scoped to the caller's native window: when the same
 /// menu path exists under several top-levels of the process (LibreOffice
 /// publishes every document window's menubar in one AT-SPI application),
 /// the hop under `xid`'s frame wins instead of the path being ambiguous.
-pub fn invoke_menu_path_in(pid: u32, xid: u64, path: &[String]) -> Result<()> {
+///
+/// GTK 3 and Qt publish closed menus, so the final item is usually in the
+/// first walk: its action is fired directly and no menu ever opens (GTK runs
+/// the item's `activate` and leaves its menus unposted). Only when the item
+/// is missing or declines a closed-menu action does the path open each menu
+/// in turn, and only when `opening` allows it; otherwise [`MenuMustOpen`] is
+/// returned with nothing actuated.
+pub fn invoke_menu_path_in(
+    pid: u32,
+    xid: u64,
+    path: &[String],
+    opening: MenuOpening,
+) -> Result<()> {
     bounded(
         async {
             let conn = shared_connection().await?;
+            let collected = collect_visited_bounded_opts(conn, pid, xid, None, None, true)
+                .await?
+                .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
+            let last = path.len() - 1;
+            match resolve_menu_segment(&collected.visited, collected.scoped_frame, path)? {
+                Some(index) => {
+                    let target = &collected.visited[index];
+                    if opening == MenuOpening::Forbidden
+                        && leaf_plan(&target.role) == LeafPlan::OpensMenu
+                    {
+                        return Err(MenuMustOpen {
+                            detail: format!(
+                                "segment {last} is a submenu, and invoking it opens that menu"
+                            ),
+                        }
+                        .into());
+                    }
+                    if fire_menu_node(target, last).await? {
+                        return Ok(());
+                    }
+                    if last == 0 {
+                        anyhow::bail!("menu path segment {last} rejected its native action");
+                    }
+                    if opening == MenuOpening::Forbidden {
+                        // Declined with its menu closed; the hop walk would
+                        // open the menu. Nothing ran.
+                        return Err(MenuMustOpen {
+                            detail: "the app declines the item's action while its menu is closed"
+                                .into(),
+                        }
+                        .into());
+                    }
+                }
+                None if last == 0 => anyhow::bail!("menu path segment 0 was not found"),
+                None if opening == MenuOpening::Forbidden => {
+                    return Err(MenuMustOpen {
+                        detail: "the app does not publish the item until its menu opens".into(),
+                    }
+                    .into())
+                }
+                None => {}
+            }
+            drop(collected);
             for depth in 0..path.len() {
                 let collected = collect_visited_bounded_opts(conn, pid, xid, None, None, true)
                     .await?
                     .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
-                let visited = collected.visited;
-                let mut matches = exact_menu_path_matches(&visited, &path[..=depth]);
-                if matches.len() > 1 {
-                    if let Some(scope) = collected.scoped_frame {
-                        let scoped: Vec<usize> = matches
-                            .iter()
-                            .copied()
-                            .filter(|index| visited[*index].frame_ordinal == scope)
-                            .collect();
-                        if !scoped.is_empty() {
-                            matches = scoped;
-                        }
-                    }
-                }
-                if matches.len() > 1 {
-                    matches = dedupe_menu_matches(&visited, matches);
-                }
-                let target_index = match matches.as_slice() {
-                    [index] => *index,
-                    [] => anyhow::bail!("menu path segment {depth} was not found"),
-                    _ => anyhow::bail!("menu path segment {depth} is ambiguous"),
-                };
-                let target = &visited[target_index];
-                if target.enabled == Some(false) {
-                    anyhow::bail!("menu path segment {depth} is disabled");
-                }
-                let chosen = activation_index(&target.role, &target.actions).ok_or_else(|| {
-                    anyhow!("menu path segment {depth} has no safe activation action")
-                })?;
-                let proxies = target
-                    .acc
-                    .proxies()
-                    .await
-                    .map_err(|error| anyhow!("interface proxies unavailable: {error}"))?;
-                let action = proxies
-                    .action()
-                    .await
-                    .map_err(|error| anyhow!("Action unavailable: {error}"))?;
-                let accepted = action
-                    .do_action(chosen as i32)
-                    .await
-                    .map_err(|error| anyhow!("doAction failed: {error}"))?;
-                if !accepted {
+                let index = resolve_menu_segment(
+                    &collected.visited,
+                    collected.scoped_frame,
+                    &path[..=depth],
+                )?
+                .ok_or_else(|| anyhow!("menu path segment {depth} was not found"))?;
+                if !fire_menu_node(&collected.visited[index], depth).await? {
                     anyhow::bail!("menu path segment {depth} rejected its native action");
                 }
                 if depth + 1 != path.len() {
@@ -3694,6 +3839,41 @@ pub fn invoke_menu_path_in(pid: u32, xid: u64, path: &[String]) -> Result<()> {
         },
         || Err(anyhow!("invoke_menu timed out for pid {pid}")),
     )
+}
+
+#[cfg(test)]
+mod menu_leaf_tests {
+    use super::*;
+
+    #[test]
+    fn a_command_item_fires_directly_and_a_submenu_would_open_a_menu() {
+        // trycua/cua#7371: background invoke_menu must never open a menu,
+        // because an open menu grabs the user's keyboard. Command items run
+        // through their own action; only a submenu node opens one.
+        for role in [
+            "menu item",
+            "check menu item",
+            "radio menu item",
+            "Menu Item",
+        ] {
+            assert_eq!(leaf_plan(role), LeafPlan::Direct, "{role}");
+        }
+        for role in ["menu", "Menu", " menu "] {
+            assert_eq!(leaf_plan(role), LeafPlan::OpensMenu, "{role}");
+        }
+    }
+
+    #[test]
+    fn menu_must_open_names_why_nothing_ran() {
+        let error: anyhow::Error = MenuMustOpen {
+            detail: "segment 1 is a submenu".into(),
+        }
+        .into();
+        assert!(error.downcast_ref::<MenuMustOpen>().is_some());
+        assert!(error
+            .to_string()
+            .contains("only reachable by opening a menu"));
+    }
 }
 
 /// Several nodes matched one menu path segment inside the scoped frame.
@@ -4010,6 +4190,25 @@ pub fn element_showing_ref(object_ref: &ObjectRef) -> Result<bool> {
     )
 }
 
+/// Whether a snapshot-cached element is enabled right now, read from its own
+/// state set ([`is_enabled_state`]). `Ok(None)` when the toolkit exposes no
+/// state set.
+pub fn element_enabled_ref(object_ref: &ObjectRef) -> Result<Option<bool>> {
+    bounded_for(
+        REF_ACTION_BUDGET,
+        async {
+            let conn = shared_connection().await?;
+            let (acc, _) = live_accessible(conn, object_ref).await?;
+            match call(acc.get_state()).await {
+                Some(Ok(state)) => Ok(Some(is_enabled_state(&state))),
+                Some(Err(_)) => Ok(None),
+                None => Err(anyhow!("cached element did not answer in time")),
+            }
+        },
+        || Err(anyhow!("element_enabled (cached element) timed out")),
+    )
+}
+
 /// [`focus_element`] on a snapshot-cached element identity.
 pub fn focus_element_ref(object_ref: &ObjectRef) -> Result<bool> {
     bounded_for(
@@ -4104,11 +4303,15 @@ struct HitNode<'a> {
 /// Descend from `start` through `Component.GetAccessibleAtPoint(Window)` until
 /// the toolkit stops returning a deeper child. O(depth) round-trips instead of
 /// a full tree walk — this is how AT-SPI clients are meant to hit-test.
+///
+/// `stacking` says how far the toolkit's answer can be trusted where siblings
+/// overlap (see [`SiblingStacking`]).
 async fn descend_at_point<'a>(
     conn: &'a AccessibilityConnection,
     start: RawObjectRef,
     x: i32,
     y: i32,
+    stacking: SiblingStacking,
 ) -> Vec<HitNode<'a>> {
     let mut chain: Vec<HitNode<'a>> = Vec::new();
     let mut current = start;
@@ -4136,9 +4339,122 @@ async fn descend_at_point<'a>(
         if next.path.ends_with("/null") || next == current {
             break;
         }
+        let next = match stacking {
+            SiblingStacking::FirstMatch => later_sibling_on_top(conn, &current, &next, x, y)
+                .await
+                .unwrap_or(next),
+            SiblingStacking::Topmost => next,
+        };
         current = next;
     }
     chain
+}
+
+/// How a toolkit's `GetAccessibleAtPoint` picks among overlapping children.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SiblingStacking {
+    /// The answer is the child drawn on top.
+    Topmost,
+    /// ATK's container default (GTK 2 and 3): the *first* child, in child
+    /// order, whose extents contain the point. A `GtkOverlay` lists its main
+    /// child first and draws its overlays above it, so a banner shown over a
+    /// button answers with the button underneath.
+    FirstMatch,
+}
+
+impl SiblingStacking {
+    fn of_toolkit(name: &str, version: &str) -> Self {
+        let name = name.trim();
+        let gtk3_or_older = version
+            .trim()
+            .split('.')
+            .next()
+            .and_then(|major| major.parse::<u32>().ok())
+            .is_some_and(|major| major < 4);
+        if name.eq_ignore_ascii_case("gail") || (name.eq_ignore_ascii_case("gtk") && gtk3_or_older)
+        {
+            Self::FirstMatch
+        } else {
+            Self::Topmost
+        }
+    }
+
+    async fn of_app(app: &AccessibleProxy<'_>) -> Self {
+        let inner = app.inner();
+        let Some(application) = async {
+            atspi::proxy::application::ApplicationProxy::builder(inner.connection())
+                .cache_properties(zbus::proxy::CacheProperties::No)
+                .destination(inner.destination().to_owned())
+                .ok()?
+                .build()
+                .await
+                .ok()
+        }
+        .await
+        else {
+            return Self::Topmost;
+        };
+        let name = call(application.toolkit_name()).await.and_then(Result::ok);
+        let version = call(application.version()).await.and_then(Result::ok);
+        match (name, version) {
+            (Some(name), Some(version)) => Self::of_toolkit(&name, &version),
+            _ => Self::Topmost,
+        }
+    }
+}
+
+/// Overlapping siblings of one parent the stacking check reads at most; a
+/// container with more children (a list, a sheet) is not a stack.
+const STACKED_SIBLINGS_CAP: i32 = 32;
+
+/// For a [`SiblingStacking::FirstMatch`] toolkit: the last showing child of
+/// `parent` after `hit` whose extents contain the point, which the toolkit
+/// draws over `hit`. `None` keeps the toolkit's answer.
+async fn later_sibling_on_top(
+    conn: &AccessibilityConnection,
+    parent: &RawObjectRef,
+    hit: &RawObjectRef,
+    x: i32,
+    y: i32,
+) -> Option<RawObjectRef> {
+    let count = raw_child_count(conn.connection(), parent).await.ok()?;
+    if !(2..=STACKED_SIBLINGS_CAP).contains(&count) {
+        return None;
+    }
+    let index = call(accessible_for(conn, hit).await.ok()?.get_index_in_parent())
+        .await?
+        .ok()?;
+    if index < 0 {
+        return None;
+    }
+    let parent = accessible_for(conn, parent).await.ok()?;
+    for sibling in (index + 1..count).rev() {
+        let Some(Ok(child)) = call(parent.get_child_at_index(sibling)).await else {
+            continue;
+        };
+        let Some(raw) = RawObjectRef::from_atspi(&child) else {
+            continue;
+        };
+        let Ok(acc) = accessible_for(conn, &raw).await else {
+            continue;
+        };
+        let Some(Ok(proxies)) = call(acc.proxies()).await else {
+            continue;
+        };
+        let Some(Ok(component)) = call(proxies.component()).await else {
+            continue;
+        };
+        if !matches!(
+            call(component.contains(x, y, CoordType::Window)).await,
+            Some(Ok(true))
+        ) {
+            continue;
+        }
+        if matches!(call(acc.get_state()).await, Some(Ok(state)) if is_showing_state(&state)) {
+            return Some(raw);
+        }
+    }
+    None
 }
 
 impl PartialEq for RawObjectRef {
@@ -4200,8 +4516,9 @@ pub fn perform_action_at_point_in(
                 Some(ordinal) => seeds.get(ordinal).cloned().into_iter().collect(),
                 None => seeds,
             };
+            let stacking = SiblingStacking::of_app(&app).await;
             for seed in ordered {
-                let chain = descend_at_point(conn, seed, hit_x, hit_y).await;
+                let chain = descend_at_point(conn, seed, hit_x, hit_y, stacking).await;
                 if chain.len() <= 1 {
                     // The frame itself, or nothing: this top-level does not
                     // cover the point (or cannot hit-test). Try the next one.
@@ -4291,6 +4608,19 @@ pub(crate) fn at_point_toolkit_coords(
 #[cfg(test)]
 mod at_point_coords_tests {
     use super::at_point_toolkit_coords;
+
+    #[test]
+    fn only_gtk3_and_older_answer_at_point_with_the_first_matching_child() {
+        use super::SiblingStacking::{FirstMatch, Topmost};
+        let of = super::SiblingStacking::of_toolkit;
+        assert_eq!(of("gtk", "3.24.49"), FirstMatch);
+        assert_eq!(of("GAIL", "2.24.33"), FirstMatch);
+        assert_eq!(of("GTK", "4.14.4"), Topmost);
+        assert_eq!(of("gtk", ""), Topmost);
+        assert_eq!(of("Qt", "5.15.13"), Topmost);
+        assert_eq!(of("Chromium", "126.0"), Topmost);
+        assert_eq!(of("VCL", "3.24"), Topmost);
+    }
 
     #[test]
     fn only_vcl_measures_from_the_wm_frame() {
@@ -5224,7 +5554,9 @@ pub fn perform_action_at_point(
             for (i, v) in visited.iter().enumerate() {
                 if v.actions.is_empty()
                     || !v.has_component
+                    || v.enabled == Some(false)
                     || is_container_role(&v.role)
+                    || is_web_document_role(&v.role)
                     || crate::at_point_policy::is_top_level_shell_role(&v.role)
                 {
                     continue;
@@ -5359,6 +5691,7 @@ pub fn perform_action_at_screen_point(
                 .into_iter()
                 .filter(|&(idx, ..)| {
                     !crate::at_point_policy::is_top_level_shell_role(&action_nodes[idx].role)
+                        && action_nodes[idx].enabled != Some(false)
                 })
                 .map(|(idx, x, y, w, h)| {
                     (idx, x, y, w, h, is_passive_role(&action_nodes[idx].role))
@@ -5642,7 +5975,10 @@ pub enum OptionPick {
     Picked { name: String },
     /// No option has that text; nothing was changed.
     NoMatch { options: Vec<String> },
-    /// The element lists no options (or cannot select them).
+    /// Every read of the element answered, and it lists no options.
+    NoOptions,
+    /// No options could be read (or selected): a read failed or timed out,
+    /// or the element has no selection route.
     Unavailable,
 }
 
@@ -5712,31 +6048,44 @@ struct OptionNode {
     index: i32,
 }
 
+/// The options [`list_options`] found, and whether every read it made
+/// answered: an incomplete scan with no options proves nothing about the
+/// element.
+struct OptionScan {
+    options: Vec<OptionNode>,
+    complete: bool,
+}
+
 /// The options under `oref`: item children, or the items of its popup menu
 /// or list child (one level down), in order.
-async fn list_options(conn: &AccessibilityConnection, oref: &RawObjectRef) -> Vec<OptionNode> {
+async fn list_options(conn: &AccessibilityConnection, oref: &RawObjectRef) -> OptionScan {
     let zconn = conn.connection();
-    let mut options = Vec::new();
+    let mut scan = OptionScan {
+        options: Vec::new(),
+        complete: true,
+    };
     let Some(Ok(children)) = call(raw_children(zconn, oref)).await else {
-        return options;
+        scan.complete = false;
+        return scan;
     };
     for (position, child) in children.into_iter().enumerate() {
-        if options.len() >= OPTION_SCAN_CAP {
+        if scan.options.len() >= OPTION_SCAN_CAP {
             break;
         }
         let Some(Ok(acc)) = call(accessible_for(conn, &child)).await else {
+            scan.complete = false;
             continue;
         };
-        let role = call(acc.get_role_name())
-            .await
-            .and_then(|r| r.ok())
-            .unwrap_or_default();
+        let Some(Ok(role)) = call(acc.get_role_name()).await else {
+            scan.complete = false;
+            continue;
+        };
         if is_option_role(&role) {
             let name = call(acc.name())
                 .await
                 .and_then(|r| r.ok())
                 .unwrap_or_default();
-            options.push(OptionNode {
+            scan.options.push(OptionNode {
                 oref: child,
                 name,
                 index: position as i32,
@@ -5747,19 +6096,21 @@ async fn list_options(conn: &AccessibilityConnection, oref: &RawObjectRef) -> Ve
             continue;
         }
         let Some(Ok(items)) = call(raw_children(zconn, &child)).await else {
+            scan.complete = false;
             continue;
         };
         for (index, item) in items.into_iter().enumerate() {
-            if options.len() >= OPTION_SCAN_CAP {
+            if scan.options.len() >= OPTION_SCAN_CAP {
                 break;
             }
             let Some(Ok(item_acc)) = call(accessible_for(conn, &item)).await else {
+                scan.complete = false;
                 continue;
             };
-            let item_role = call(item_acc.get_role_name())
-                .await
-                .and_then(|r| r.ok())
-                .unwrap_or_default();
+            let Some(Ok(item_role)) = call(item_acc.get_role_name()).await else {
+                scan.complete = false;
+                continue;
+            };
             if !is_option_role(&item_role) {
                 continue;
             }
@@ -5767,14 +6118,14 @@ async fn list_options(conn: &AccessibilityConnection, oref: &RawObjectRef) -> Ve
                 .await
                 .and_then(|r| r.ok())
                 .unwrap_or_default();
-            options.push(OptionNode {
+            scan.options.push(OptionNode {
                 oref: item,
                 name,
                 index: index as i32,
             });
         }
     }
-    options
+    scan
 }
 
 /// Pick the option `value` names on a snapshot-cached selection container
@@ -5794,7 +6145,7 @@ pub fn select_option_ref(object_ref: &ObjectRef, value: &str) -> Result<OptionPi
             if !ifaces.contains(Interface::Selection) {
                 return Ok(OptionPick::Unavailable);
             }
-            let options = list_options(conn, &raw_ref(object_ref)).await;
+            let options = list_options(conn, &raw_ref(object_ref)).await.options;
             if options.is_empty() {
                 return Ok(OptionPick::Unavailable);
             }
@@ -5831,9 +6182,14 @@ pub fn activate_option_ref(object_ref: &ObjectRef, value: &str) -> Result<Option
         async {
             let conn = shared_connection().await?;
             live_accessible(conn, object_ref).await?;
-            let options = list_options(conn, &raw_ref(object_ref)).await;
+            let scan = list_options(conn, &raw_ref(object_ref)).await;
+            let options = scan.options;
             if options.is_empty() {
-                return Ok(OptionPick::Unavailable);
+                return Ok(if scan.complete {
+                    OptionPick::NoOptions
+                } else {
+                    OptionPick::Unavailable
+                });
             }
             let names: Vec<String> = options.iter().map(|o| o.name.clone()).collect();
             let Some(found) = match_option(&names, value) else {
@@ -5878,7 +6234,7 @@ pub fn options_showing_ref(object_ref: &ObjectRef) -> bool {
         REF_ACTION_BUDGET,
         async {
             let conn = shared_connection().await?;
-            for option in list_options(conn, &raw_ref(object_ref)).await {
+            for option in list_options(conn, &raw_ref(object_ref)).await.options {
                 if let Some(Ok(acc)) = call(accessible_for(conn, &option.oref)).await {
                     if let Some(Ok(state)) = call(acc.get_state()).await {
                         if is_showing_state(&state) {
@@ -7458,8 +7814,8 @@ mod coord_tests {
     use super::{
         activation_index, before_snapshot_deadline, bounded_blocking,
         combine_wayland_content_offsets, counts_as_showing, hyprland_document_top_inset,
-        is_activation_action, is_enabled_state, is_indexable_capabilities, is_passive_role,
-        is_showing_state, is_web_process_bus, listing_state, passive_marker,
+        indexed_row_attrs, is_activation_action, is_enabled_state, is_indexable_capabilities,
+        is_passive_role, is_showing_state, is_web_process_bus, listing_state,
         prefer_authoritative_wayland_origin, project_screen_extents, rebase_renderer_window_offset,
         scoped_component_nodes, screen_extent_rebase, select_click_target, select_web_document,
         wayland_window_origin, ApplicationSelection,
@@ -7627,7 +7983,7 @@ mod coord_tests {
             true,
             Some(true)
         ));
-        assert!(!is_indexable_capabilities(
+        assert!(is_indexable_capabilities(
             "button",
             true,
             false,
@@ -7651,7 +8007,7 @@ mod coord_tests {
     }
 
     #[test]
-    fn hidden_and_disabled_controls_are_not_indexed_but_are_named() {
+    fn hidden_controls_are_not_listed_and_offscreen_ones_are_marked() {
         // `Showing` is the on-screen state.
         assert!(!is_showing_state(&StateSet::new(
             State::Enabled | State::Visible
@@ -7697,17 +8053,17 @@ mod coord_tests {
             "menu item",
             &StateSet::new(State::Enabled)
         ));
-        // A visible but insensitive button keeps a marker in the markdown.
+    }
+
+    #[test]
+    fn a_disabled_control_row_says_so() {
+        let click = vec!["click".to_owned()];
         assert_eq!(
-            passive_marker("push button", true, true, Some(false)),
-            " (disabled)"
+            indexed_row_attrs(Some(false), &click),
+            "enabled=false actions=[click]"
         );
-        assert_eq!(
-            passive_marker("push button", false, true, Some(false)),
-            " (disabled)"
-        );
-        assert_eq!(passive_marker("push button", true, true, Some(true)), "");
-        assert_eq!(passive_marker("label", false, true, Some(false)), "");
+        assert_eq!(indexed_row_attrs(Some(true), &click), "actions=[click]");
+        assert_eq!(indexed_row_attrs(None, &[]), "actions=[]");
     }
 
     #[test]
@@ -7737,11 +8093,20 @@ mod coord_tests {
 
     #[test]
     fn component_role_fallback_rejects_unverified_or_passive_nodes() {
-        for enabled in [None, Some(false)] {
-            assert!(!is_indexable_capabilities(
-                "button", false, false, false, false, true, enabled
-            ));
-        }
+        assert!(!is_indexable_capabilities(
+            "button", false, false, false, false, true, None
+        ));
+        // A disabled component-only button is indexed so its `enabled: false`
+        // can be read.
+        assert!(is_indexable_capabilities(
+            "button",
+            false,
+            false,
+            false,
+            false,
+            true,
+            Some(false)
+        ));
         assert!(!is_indexable_capabilities(
             "button",
             false,
@@ -8335,6 +8700,13 @@ mod at_point_rules_tests {
             at_point_activation_index("push button", &acts(&["doDefault"]), true),
             Some(0)
         );
+        // Its document is not: `doDefault` there dispatches no DOM click.
+        for deepest in [false, true] {
+            assert_eq!(
+                at_point_activation_index("document web", &acts(&["doDefault"]), deepest),
+                None
+            );
+        }
     }
 
     #[test]

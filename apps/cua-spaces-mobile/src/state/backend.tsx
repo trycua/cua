@@ -270,7 +270,10 @@ export function useThread(spaceId: string | null): ThreadState {
             outbox?.setOnline(true);
             first = false;
             void backend.readThread(spaceId, { after: Math.max(0, p.cursor - 1), limit: 1, markRead: true }).catch(() => {});
-            backend.members(spaceId).then((m) => alive && setMembers(m), () => {});
+            backend.members(spaceId).then(
+              (m) => alive && setMembers(m),
+              () => {},
+            );
           } else {
             const p = await backend.readThread(spaceId, { after: cursor.current, followMs: FOLLOW_MS, liveAfter: liveKey, markRead: true });
             if (!alive) return;
@@ -284,7 +287,11 @@ export function useThread(spaceId: string | null): ThreadState {
             liveKey = p.live.key;
             setLive(p.live.agents);
             merge(p.entries);
-            if (p.entries.some((e) => e.kind !== "message") || moved) backend.members(spaceId).then((m) => alive && setMembers(m), () => {});
+            if (p.entries.some((e) => e.kind !== "message") || moved)
+              backend.members(spaceId).then(
+                (m) => alive && setMembers(m),
+                () => {},
+              );
             if (!p.entries.length && !moved) await sleep(1_500);
           }
         } catch (e) {
@@ -364,7 +371,28 @@ export function useThread(spaceId: string | null): ThreadState {
   const items = useMemo(() => foldThread(entries, { readSeq, me }), [entries, readSeq, me]);
   const view = outbox ? outbox.view(spaceId) : null;
   const pending = view?.rows ?? [];
-  return { status, items, entries, members, live, me, role, error, offline, cached, syncedMs, hasMoreBefore, loadEarlier, post, answer, pending, outboxBanner: view?.banner ?? null, retry, discard, refresh };
+  return {
+    status,
+    items,
+    entries,
+    members,
+    live,
+    me,
+    role,
+    error,
+    offline,
+    cached,
+    syncedMs,
+    hasMoreBefore,
+    loadEarlier,
+    post,
+    answer,
+    pending,
+    outboxBanner: view?.banner ?? null,
+    retry,
+    discard,
+    refresh,
+  };
 }
 
 /**

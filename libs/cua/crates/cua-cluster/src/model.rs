@@ -156,32 +156,183 @@ fn is_zero(n: &u32) -> bool {
     *n == 0
 }
 
-/// The canonical spelling of an accelerator request: `gpu` (any),
-/// `apple`, `nvidia`, or empty (none needed).
-pub fn normalize_accelerator(a: &str) -> Result<String, String> {
-    match a.trim().to_ascii_lowercase().as_str() {
-        "" | "none" => Ok(String::new()),
-        "gpu" | "any" | "auto" => Ok("gpu".into()),
-        "apple" | "metal" | "mps" => Ok("apple".into()),
-        "nvidia" | "cuda" => Ok("nvidia".into()),
+/// What a job asks of an accelerator: `vendor[:model][:NNGB]`, for example
+/// `nvidia`, `nvidia:24GB` (a GPU with 24 GB free), `nvidia:L4` or
+/// `nvidia:RTX PRO 6000:40GB`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AccelReq {
+    /// `gpu` (any), `apple` or `nvidia`; empty: none needed.
+    pub vendor: String,
+    /// A word the GPU's name must contain (case does not matter); empty: any.
+    pub model: String,
+    /// Video memory the job needs free on one GPU (MiB); 0: not said.
+    pub vram_mb: u64,
+}
+
+fn vendor_word(v: &str) -> Result<&'static str, String> {
+    match v.trim().to_ascii_lowercase().as_str() {
+        "gpu" | "any" | "auto" => Ok("gpu"),
+        "apple" | "metal" | "mps" => Ok("apple"),
+        "nvidia" | "cuda" => Ok("nvidia"),
         other => Err(format!(
-            "accelerator {other:?}: use gpu (any), apple or nvidia"
+            "accelerator {other:?}: use gpu (any), apple or nvidia, with an optional GPU model \
+             and memory (`nvidia:L4:24GB`)"
         )),
     }
 }
 
-/// Whether a host that reports `accelerators` satisfies `want` (a
-/// [`normalize_accelerator`] word).
-pub fn accelerator_fits(want: &str, accelerators: &[String]) -> bool {
-    match want {
-        "" => true,
-        "gpu" => !accelerators.is_empty(),
-        vendor => accelerators.iter().any(|a| {
-            a.split(':')
-                .next()
-                .is_some_and(|v| v.eq_ignore_ascii_case(vendor))
-        }),
+/// `24GB`, `24 GB`, `0.5TB` as MiB.
+fn parse_size_mb(s: &str) -> Option<u64> {
+    let s = s.trim().to_ascii_lowercase();
+    let (num, mult) = if let Some(n) = s.strip_suffix("tb") {
+        (n, 1024.0 * 1024.0)
+    } else if let Some(n) = s.strip_suffix("gb") {
+        (n, 1024.0)
+    } else {
+        (s.strip_suffix("mb")?, 1.0)
+    };
+    let v: f64 = num.trim().parse().ok()?;
+    (v.is_finite() && v > 0.0).then(|| (v * mult).ceil() as u64)
+}
+
+/// Reads an accelerator request ([`AccelReq`]); empty or `none` is no request.
+pub fn parse_accelerator(a: &str) -> Result<AccelReq, String> {
+    let a = a.trim();
+    if a.is_empty() || a.eq_ignore_ascii_case("none") {
+        return Ok(AccelReq::default());
     }
+    let mut parts = a.split(':').map(str::trim);
+    let vendor = vendor_word(parts.next().unwrap_or_default())?.to_string();
+    let mut req = AccelReq {
+        vendor,
+        ..Default::default()
+    };
+    for p in parts {
+        if p.is_empty() {
+            continue;
+        }
+        match parse_size_mb(p) {
+            Some(mb) if req.vram_mb == 0 => req.vram_mb = mb,
+            Some(_) => return Err(format!("accelerator {a:?}: one memory size only")),
+            None if req.model.is_empty() => req.model = p.to_string(),
+            None => return Err(format!("accelerator {a:?}: one GPU model only")),
+        }
+    }
+    Ok(req)
+}
+
+/// The canonical spelling of an accelerator request: `gpu` (any), `apple`,
+/// `nvidia`, or empty (none needed), then an optional GPU model and memory
+/// (`nvidia:L4:24GB`).
+pub fn normalize_accelerator(a: &str) -> Result<String, String> {
+    let r = parse_accelerator(a)?;
+    if r.vendor.is_empty() {
+        return Ok(String::new());
+    }
+    let mut out = r.vendor;
+    if !r.model.is_empty() {
+        out.push(':');
+        out.push_str(&r.model);
+    }
+    if r.vram_mb > 0 {
+        let gb = r.vram_mb.div_ceil(1024);
+        out.push_str(&format!(":{gb}GB"));
+    }
+    Ok(out)
+}
+
+/// What a host reports of one accelerator: `vendor:name[:cores GPU]:96 GB[:80 GB free]`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GpuWord {
+    /// `apple` or `nvidia`.
+    pub vendor: String,
+    /// The GPU's name and the words between it and the sizes.
+    pub name: String,
+    /// Its memory (MiB; 0 when the host says none).
+    pub total_mb: u64,
+    /// Memory free now (MiB), when the host says.
+    pub free_mb: Option<u64>,
+}
+
+/// Reads a host's accelerator word ([`GpuWord`]).
+pub fn parse_gpu_word(w: &str) -> GpuWord {
+    let mut out = GpuWord::default();
+    let mut names = Vec::new();
+    for (i, p) in w.split(':').enumerate() {
+        let p = p.trim();
+        if i == 0 {
+            out.vendor = p.to_ascii_lowercase();
+        } else if let Some(f) = p.strip_suffix(" free").or_else(|| p.strip_suffix("free")) {
+            out.free_mb = parse_size_mb(f);
+        } else if let Some(mb) = parse_size_mb(p) {
+            out.total_mb = mb;
+        } else {
+            names.push(p);
+        }
+    }
+    out.name = names.join(" ");
+    out
+}
+
+/// Whether one accelerator word of a host satisfies `req` (the model, and the
+/// memory free on it).
+fn gpu_word_fits(req: &AccelReq, w: &GpuWord) -> bool {
+    if req.vendor != "gpu" && w.vendor != req.vendor {
+        return false;
+    }
+    if !req.model.is_empty() && !w.name.to_lowercase().contains(&req.model.to_lowercase()) {
+        return false;
+    }
+    // A host that does not say how much memory it has is taken at its word.
+    let have = w.free_mb.unwrap_or(w.total_mb);
+    req.vram_mb == 0 || have == 0 || have >= req.vram_mb
+}
+
+/// Whether a host that reports `accelerators` satisfies `want` (a
+/// [`normalize_accelerator`] word): a GPU of that vendor and model with the
+/// memory free.
+pub fn accelerator_fits(want: &str, accelerators: &[String]) -> bool {
+    let Ok(req) = parse_accelerator(want) else {
+        return false;
+    };
+    if req.vendor.is_empty() {
+        return true;
+    }
+    accelerators
+        .iter()
+        .any(|a| gpu_word_fits(&req, &parse_gpu_word(a)))
+}
+
+/// `words` with `mb` of video memory taken off the NVIDIA GPUs that have it
+/// free (the first one first): what a scheduler has already sent a host since
+/// its last report.
+pub fn reserve_vram(words: &[String], mb: u64) -> Vec<String> {
+    if mb == 0 {
+        return words.to_vec();
+    }
+    let mut left = mb;
+    words
+        .iter()
+        .map(|w| {
+            let g = parse_gpu_word(w);
+            if g.vendor != "nvidia" || g.total_mb == 0 {
+                return w.clone();
+            }
+            let free = g.free_mb.unwrap_or(g.total_mb);
+            let take = left.min(free);
+            left -= take;
+            let base = match w.rsplit_once(':') {
+                Some((head, tail)) if tail.trim_end().ends_with("free") => head,
+                _ => w.as_str(),
+            };
+            format!("{base}:{} GB free", (free - take) / 1024)
+        })
+        .collect()
+}
+
+/// Video memory a job asks for (MiB; 0: none said).
+pub fn vram_request_mb(accelerator: &str) -> u64 {
+    parse_accelerator(accelerator).map_or(0, |r| r.vram_mb)
 }
 
 /// The canonical spelling of a CPU architecture (`arm64` is `aarch64`,
@@ -305,6 +456,81 @@ pub fn space_name(job_id: &str, attempt: u32) -> String {
     format!("{JOB_SPACE_PREFIX}{}-{attempt}", &hex::encode(digest)[..16])
 }
 
+/// The Space a run was submitted from, set in a job's environment by the
+/// submitting computer's daemon. The host that creates the job's Space
+/// records it as a child of that Space (a real tree record on the same
+/// computer, the `cua.parent` / `cua.root` / `cua.depth` labels on another),
+/// so it is listed under its parent and goes with it.
+pub const ENV_PARENT_SPACE: &str = "CUA_PARENT_SPACE";
+/// The top-level Space of the submitter's tree ([`ENV_PARENT_SPACE`]).
+pub const ENV_ROOT_SPACE: &str = "CUA_ROOT_SPACE";
+/// The depth the job's Space has in that tree (its parent's plus one).
+pub const ENV_TREE_DEPTH: &str = "CUA_TREE_DEPTH";
+
+/// The submitter's network settings (JSON), for a host that does not hold
+/// the parent's record: the job's Space is no more open than this.
+pub const ENV_PARENT_NETWORK: &str = "CUA_PARENT_NETWORK";
+
+/// A short name for the job, shown in place of any id: what the agent called its app, cut to a
+/// pet-name shape by [`sanitize_job_name`], else one made from the run ([`pet_name`]).
+pub const ENV_JOB_NAME: &str = "CUA_JOB_NAME";
+
+/// Label on a job's Space: it is a job (one row for it, with a JOB badge).
+pub const LABEL_JOB: &str = "cua.job";
+/// Label on a job's Space: the name to show.
+pub const LABEL_JOB_NAME: &str = "cua.job.name";
+/// Label on a job's Space: it has a GPU (the row shows a GPU icon).
+pub const LABEL_JOB_GPU: &str = "cua.job.gpu";
+/// Label on a job's Space: the run it belongs to (one row per run).
+pub const LABEL_JOB_RUN: &str = "cua.job.run";
+
+/// A job name in the shape of a pet name: lower case letters and digits in words joined by single
+/// hyphens, at most 24 characters. `None` when nothing is left, or when it is an id (`p-train-1a2b3c4d`,
+/// `cj-...`): ids are never shown.
+pub fn sanitize_job_name(raw: &str) -> Option<String> {
+    let mut out = String::new();
+    for c in raw.trim().chars().flat_map(char::to_lowercase) {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+        } else if !out.is_empty() && !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    let out: String = out.trim_matches('-').chars().take(24).collect();
+    let out = out.trim_matches('-').to_string();
+    let hex = |x: &str, n: usize| x.len() >= n && x.bytes().all(|b| b.is_ascii_hexdigit());
+    let first = out.split('-').next().unwrap_or("");
+    let idlike = out.split('-').any(|x| hex(x, 8))
+        || (matches!(first, "p" | "l" | "cj" | "j") && out.split('-').any(|x| hex(x, 6)));
+    (!out.is_empty() && !idlike).then_some(out)
+}
+
+/// A pet name (`lucky-llama`) that is the same for the same `seed`.
+pub fn pet_name(seed: &str) -> String {
+    use sha2::Digest;
+    const ADJ: [&str; 16] = [
+        "lucky", "brave", "calm", "swift", "bright", "gentle", "bold", "quiet", "merry", "keen",
+        "sunny", "witty", "nimble", "steady", "cosmic", "amber",
+    ];
+    const ANIMAL: [&str; 16] = [
+        "llama", "otter", "falcon", "panda", "koala", "heron", "lynx", "gecko", "badger", "orca",
+        "ibis", "newt", "fox", "wren", "bison", "mole",
+    ];
+    let d = sha2::Sha256::digest(seed.as_bytes());
+    format!(
+        "{}-{}",
+        ADJ[(d[0] & 15) as usize],
+        ANIMAL[(d[1] & 15) as usize]
+    )
+}
+
+/// The name a job shows: the agent's own (sanitized) or a pet name made from `seed`.
+pub fn job_display_name(agent_given: Option<&str>, seed: &str) -> String {
+    agent_given
+        .and_then(sanitize_job_name)
+        .unwrap_or_else(|| pet_name(seed))
+}
+
 /// The name prefix of every job Space ([`space_name`]).
 pub const JOB_SPACE_PREFIX: &str = "cj-";
 
@@ -394,6 +620,34 @@ mod tests {
     }
 
     #[test]
+    fn a_gpu_request_names_a_model_and_the_memory_it_needs_free() {
+        let pc =
+            vec!["nvidia:RTX PRO 6000 Blackwell Workstation Edition:96 GB:40 GB free".to_string()];
+        let l4 = vec!["nvidia:L4:24 GB".to_string()];
+        assert_eq!(
+            normalize_accelerator("CUDA : L4 : 24 GB").unwrap(),
+            "nvidia:L4:24GB"
+        );
+        assert_eq!(normalize_accelerator("nvidia:16gb").unwrap(), "nvidia:16GB");
+        assert!(normalize_accelerator("nvidia:16GB:24GB").is_err());
+        assert!(normalize_accelerator("tpu:16GB").is_err());
+        // Free memory counts, not the card's total.
+        assert!(accelerator_fits("nvidia:32GB", &pc));
+        assert!(!accelerator_fits("nvidia:48GB", &pc));
+        assert!(accelerator_fits("gpu:24GB", &l4) && !accelerator_fits("gpu:32GB", &l4));
+        // A model is a word of the name, whatever its case.
+        assert!(accelerator_fits("nvidia:rtx pro", &pc) && !accelerator_fits("nvidia:L4", &pc));
+        assert!(accelerator_fits("nvidia:L4:16GB", &l4));
+        assert_eq!(vram_request_mb("nvidia:L4:24GB"), 24 * 1024);
+        let w = parse_gpu_word("apple:M2 Max:38-core GPU:96 GB");
+        assert_eq!(
+            (w.vendor.as_str(), w.total_mb, w.free_mb),
+            ("apple", 96 * 1024, None)
+        );
+        assert_eq!(w.name, "M2 Max 38-core GPU");
+    }
+
+    #[test]
     fn accelerators_match_by_vendor() {
         let mac = vec!["apple:M2 Max:38-core GPU:96 GB".to_string()];
         let l4 = vec!["nvidia:L4:24 GB".to_string()];
@@ -465,5 +719,33 @@ mod tests {
     fn tails_keep_the_end() {
         assert_eq!(tail(b"abcdef".to_vec(), 3), (b"def".to_vec(), true));
         assert_eq!(tail(b"ab".to_vec(), 3), (b"ab".to_vec(), false));
+    }
+
+    #[test]
+    fn a_job_shows_a_pet_style_name_and_never_an_id() {
+        assert_eq!(sanitize_job_name("NCA Logo!!").as_deref(), Some("nca-logo"));
+        assert_eq!(
+            sanitize_job_name("  logo_grower ").as_deref(),
+            Some("logo-grower")
+        );
+        assert_eq!(
+            sanitize_job_name("a-very-long-name-that-goes-on-and-on").as_deref(),
+            Some("a-very-long-name-that-go")
+        );
+        for id in [
+            "p-train-1a2b3c4d",
+            "cj-0123456789abcdef-1",
+            "p-1a2b3c4d",
+            "",
+            "---",
+            "!!!",
+        ] {
+            assert_eq!(sanitize_job_name(id), None, "{id}");
+        }
+        // Without a name of its own, a stable pet name of the run.
+        let n = job_display_name(None, "p-1a2b3c4d");
+        assert_eq!(n, job_display_name(Some("p-train-1a2b3c4d"), "p-1a2b3c4d"));
+        assert!(n.contains('-') && !n.starts_with("p-"), "{n}");
+        assert_eq!(job_display_name(Some("logo-grower"), "x"), "logo-grower");
     }
 }

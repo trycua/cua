@@ -20,15 +20,15 @@ requires-python = ">=3.11,<3.14"
 [project.optional-dependencies]
 # OpenTelemetry for operational metrics (Four Golden Signals)
 otel = [
-    "opentelemetry-api>=1.20.0",
-    "opentelemetry-sdk>=1.20.0",
-    "opentelemetry-exporter-otlp-proto-http>=1.20.0",
+    "opentelemetry-api>=1.45.2",
+    "opentelemetry-sdk>=1.45.2",
+    "opentelemetry-exporter-otlp-proto-http>=1.45.2",
 ]
 # All telemetry features
 telemetry = [
-    "opentelemetry-api>=1.20.0",
-    "opentelemetry-sdk>=1.20.0",
-    "opentelemetry-exporter-otlp-proto-http>=1.20.0",
+    "opentelemetry-api>=1.45.2",
+    "opentelemetry-sdk>=1.45.2",
+    "opentelemetry-exporter-otlp-proto-http>=1.45.2",
 ]
 
 [tool.pdm]

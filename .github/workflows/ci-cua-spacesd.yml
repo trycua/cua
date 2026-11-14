@@ -34,6 +34,7 @@ on:
       - ".github/scripts/ci_component_scope.py"
       - ".github/scripts/ci_graph.py"
       - ".github/scripts/ci_reuse_pr_result.py"
+  merge_group:
   push:
     branches: [main]
     paths:
@@ -92,12 +93,12 @@ env:
 jobs:
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   changes:
     needs: quick
-    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) }}
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) && needs.quick.outputs.skip != 'true' }}
     name: "cua-spacesd / changes"
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -169,8 +170,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REUSE_MODE: ${{ vars.CI_REUSE_PR_RESULTS }}
-        # Floating inputs the jobs install: dtolnay/rust-toolchain@stable.
-        run: python3 .github/scripts/ci_reuse_pr_result.py run --stamp-job "cua-spacesd / changes" --float rust-stable
+        # Rust is pinned (dtolnay/rust-toolchain@1.97.1): no floating inputs.
+        run: python3 .github/scripts/ci_reuse_pr_result.py run --stamp-job "cua-spacesd / changes"
       - id: legs_test
         continue-on-error: true
         timeout-minutes: 1
@@ -188,8 +189,8 @@ jobs:
 
   test:
     name: fmt, clippy, test (${{ matrix.os }})
-    needs: changes
-    if: ${{ !failure() && !cancelled() && needs.changes.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.changes.outputs.run == 'true' && needs.changes.outputs.legs_test != '[]')) }}
+    needs: [quick, changes]
+    if: ${{ !failure() && !cancelled() && needs.changes.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.changes.outputs.run == 'true' && needs.changes.outputs.legs_test != '[]')) && needs.quick.outputs.skip != 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -213,7 +214,7 @@ jobs:
       # cua-proto (the cua.env.v1 contract) is generated at build time.
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: rustfmt, clippy
       - uses: ./.github/actions/rust-cache
@@ -306,7 +307,7 @@ jobs:
     # Not shipped yet (renames fail in the Windows NFS client): run on
     # demand while the Windows mount is finished.
     needs: quick
-    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name == 'workflow_dispatch')) }}
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name == 'workflow_dispatch')) && needs.quick.outputs.skip != 'true' }}
     runs-on: windows-latest
     timeout-minutes: 60
     defaults:
@@ -317,7 +318,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.97.1
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-spacesd -> target"
@@ -367,8 +368,8 @@ jobs:
   # Linux lane without a retry, and failed about one run in three on timing tests.
   relay-e2e:
     name: relay e2e (docker) (${{ matrix.shard }})
-    needs: changes
-    if: ${{ !failure() && !cancelled() && needs.changes.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.changes.outputs.run == 'true' && needs.changes.outputs.relay_run == 'true' && contains(needs.changes.outputs.matrix, 'ubuntu') && needs.changes.outputs.legs_relay != '[]' && !contains(fromJSON(needs.changes.outputs.reused), 'relay e2e (docker)'))) }}
+    needs: [quick, changes]
+    if: ${{ !failure() && !cancelled() && needs.changes.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.changes.outputs.run == 'true' && needs.changes.outputs.relay_run == 'true' && contains(needs.changes.outputs.matrix, 'ubuntu') && needs.changes.outputs.legs_relay != '[]' && !contains(fromJSON(needs.changes.outputs.reused), 'relay e2e (docker)'))) && needs.quick.outputs.skip != 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -408,8 +409,8 @@ jobs:
   # require if branch protection ever needs one.
   result:
     name: "cua-spacesd / result"
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (always()) }}
-    needs: [changes, test, relay-e2e]
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (always()) && needs.quick.outputs.skip != 'true' }}
+    needs: [quick, changes, test, relay-e2e]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

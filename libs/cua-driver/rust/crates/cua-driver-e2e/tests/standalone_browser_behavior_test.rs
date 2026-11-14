@@ -73,6 +73,33 @@ fn standalone_trust_gated_click_html() -> String {
     )
 }
 
+/// A control that acts only for a focused page next to the fixture's plain
+/// increment button. A background accessibility press reaches the document
+/// while it is unfocused, so only the plain button reacts (#4243).
+#[cfg(target_os = "macos")]
+fn standalone_focus_gated_click_html() -> String {
+    standalone_fixture_html().replace(
+        "</body>",
+        r#"<fieldset>
+  <legend>focus-gated click</legend>
+  <button id="standalone-focus-gated" data-cua-id="standalone-focus-gated">
+    Activate focus-gated control
+  </button>
+  <span id="standalone-focus-gated-state" data-cua-id="standalone-focus-gated-state">
+    activation=idle
+  </span>
+</fieldset>
+<script>
+  document.getElementById('standalone-focus-gated').addEventListener('click', () => {
+    if (document.hasFocus()) {
+      document.getElementById('standalone-focus-gated-state').textContent = 'activation=accepted';
+    }
+  });
+</script>
+</body>"#,
+    )
+}
+
 #[cfg(target_os = "macos")]
 fn standalone_generic_type_text_html() -> String {
     standalone_fixture_html().replace(
@@ -970,6 +997,10 @@ fn configure_macos_test_browser_command(command: &mut Command) {
     // unexpected native prompt; this keeps the setup-success row focused on
     // the exact remote-debugging page instead of pre-answering OS consent.
     command.arg("--disable-features=MediaRouter");
+    // Throwaway test profiles must not read the login keychain: each launch
+    // of a binary missing from the "Safe Storage" item's access list shows a
+    // Keychain prompt, as Cua Driver's own isolated launches avoid.
+    command.arg("--use-mock-keychain");
 }
 
 fn browser_stderr() -> Stdio {
@@ -1217,6 +1248,7 @@ fn wait_for_devtools_listener_to_close(profile: &Path, port: u16) {
 struct BrowserLaunchFlags {
     force_high_device_scale: bool,
     disable_quiet_notification_prompts: bool,
+    force_renderer_accessibility: bool,
 }
 
 fn spawn_browser_command(
@@ -1231,6 +1263,7 @@ fn spawn_browser_command(
     let BrowserLaunchFlags {
         force_high_device_scale,
         disable_quiet_notification_prompts,
+        force_renderer_accessibility,
     } = flags;
     let mut command = command_for_browser(
         spec,
@@ -1248,6 +1281,11 @@ fn spawn_browser_command(
     }
     if force_high_device_scale {
         command.arg("--force-device-scale-factor=2");
+    }
+    if force_renderer_accessibility {
+        // A fresh window can otherwise hold back its page tree from the
+        // native accessibility API for minutes on a loaded runner.
+        command.arg("--force-renderer-accessibility");
     }
     let child = spawn_in_job(&mut command).expect("launch standalone browser");
     eprintln!(
@@ -1290,6 +1328,7 @@ fn launch_browser_with_driver(
         BrowserLaunchFlags {
             force_high_device_scale: label.contains("multi-tab"),
             disable_quiet_notification_prompts: label.contains("browser-owned-permission"),
+            force_renderer_accessibility: label.contains("background-web-click-noop"),
         },
     );
     navigate_initial_page(cdp_port, &server);
@@ -2453,6 +2492,122 @@ fn run_web_type_text_verification(spec: &BrowserSpec) {
             vec![OracleKind::FixtureState, OracleKind::Protocol],
             Evidence::default(),
         )
+    });
+}
+
+/// The element token of the page control labelled `label`, read again for a
+/// bounded time while Chrome finishes building the page tree.
+#[cfg(target_os = "macos")]
+fn web_element_token(fixture: &mut BrowserFixture, label: &str) -> String {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let state = fixture.driver.call(
+            "get_window_state",
+            serde_json::json!({
+                "pid": fixture.pid as i64,
+                "window_id": fixture.window_id,
+                "include_screenshot": false,
+            }),
+        );
+        assert!(!state.is_error(), "native browser snapshot: {}", state.raw);
+        if let Some(index) = element_index_containing(state.tree_text(), label) {
+            return state.element_token(index).to_owned();
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{label} missing from the AX tree: {}",
+            state.raw
+        );
+        thread::sleep(Duration::from_millis(250));
+    }
+}
+
+/// #4243: a background element click on web content that leaves the page
+/// unchanged reports `suspected_noop` with a foreground escalation, not a bare
+/// `unverifiable`; a press the page handles stays `unverifiable` and lands.
+#[cfg(target_os = "macos")]
+fn run_background_web_click_noop(spec: &BrowserSpec) {
+    let scenario = format!("macos-{}-standalone-background-web-click-noop", spec.name);
+    let case = CaseSpec::delivered(
+        scenario.clone(),
+        spec.name.clone(),
+        "standalone-chromium",
+        "background_web_click_noop",
+        Targeting::Ax,
+        Delivery::Background,
+        Scope::Window,
+        DriverRoute::MacosAxAction,
+        vec![
+            OracleKind::FixtureState,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::NoLeakedInput,
+        ],
+    );
+    execute_case(case, |evidence| {
+        let mut fixture =
+            launch_browser_with_html(spec, &scenario, standalone_focus_gated_click_html());
+        *evidence = recording_evidence(fixture.driver.recording_dir());
+        wait_for_text(&fixture.server, "lbl-counter", "counter=0");
+        // Chrome builds the page's accessibility tree on the first reads.
+        web_element_token(&mut fixture, "Activate focus-gated control");
+        run_with_background_oracles(&mut fixture, |fixture| {
+            let click = |fixture: &mut BrowserFixture, label: &str| {
+                let token = web_element_token(fixture, label);
+                // The pid lets the recording mark where a suspected no-op was
+                // aimed; its evidence check requires that marker.
+                fixture.driver.call(
+                    "click",
+                    serde_json::json!({
+                        "pid": fixture.pid as i64,
+                        "element_token": token,
+                        "delivery_mode": "background",
+                    }),
+                )
+            };
+
+            let gated = click(fixture, "Activate focus-gated control");
+            assert!(!gated.is_error(), "focus-gated click: {}", gated.raw);
+            assert_eq!(
+                gated.action_effect(),
+                Some("suspected_noop"),
+                "{}",
+                gated.raw
+            );
+            assert_eq!(gated.action_route(), Some("accessibility"), "{}", gated.raw);
+            assert_eq!(
+                gated.structured()["escalation"]["target"],
+                "foreground",
+                "{}",
+                gated.raw
+            );
+            assert_eq!(
+                gated.structured()["escalation"]["reason"],
+                "suspected_noop",
+                "{}",
+                gated.raw
+            );
+            assert_eq!(
+                fixture
+                    .server
+                    .text("standalone-focus-gated-state")
+                    .as_deref(),
+                Some("activation=idle"),
+                "the background press must not have activated the gated control"
+            );
+
+            let plain = click(fixture, "Increment");
+            assert!(!plain.is_error(), "plain click: {}", plain.raw);
+            assert_eq!(plain.action_effect(), Some("unverifiable"), "{}", plain.raw);
+            assert!(
+                plain.structured().get("escalation").is_none(),
+                "a press the page handled must not escalate: {}",
+                plain.raw
+            );
+            wait_for_text(&fixture.server, "lbl-counter", "counter=1");
+
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+        })
     });
 }
 
@@ -4649,22 +4804,148 @@ fn standalone_full_viewport_click_html() -> String {
     )
 }
 
-/// A capture-bound background pixel click on Chromium page content must not
-/// report success without an effect. Chromium's X11 renderer drops focus-free
-/// synthetic input and its AT-SPI hit test at the point resolves only to the
-/// top-level frame, so the canonical Xvfb lanes must return the structured
-/// `background_unavailable` refusal before admission. The refused capture then
-/// stays usable for the explicit foreground escalation, which must land.
+/// Chromium's X11 renderer drops focus-free synthetic pointer input, but the
+/// AT-SPI action of the control under a plain left click still lands (the
+/// driver tries it first and refuses only when no control covers the point; a
+/// web document's own `doDefault` is never a target). Wayland and the
+/// libei/inject lanes have no such route and keep the typed refusal.
 #[cfg(target_os = "linux")]
-fn run_capture_bound_pixel_click_background_refusal(spec: &BrowserSpec) {
+fn linux_x11_background_atspi_click() -> bool {
+    std::env::var_os("CUA_INJECT_SOCKET").is_none()
+        && cua_driver_testkit::e2e::DisplayServer::current()
+            == cua_driver_testkit::e2e::DisplayServer::X11
+}
+
+/// The fixture page with every control hidden from the accessibility tree and
+/// a transparent layer over it: no control covers any window pixel, so the
+/// accessibility hit test resolves only to the page document.
+#[cfg(target_os = "linux")]
+fn standalone_full_viewport_inert_cover_html() -> String {
+    standalone_fixture_html().replace(
+        "</body>",
+        r#"<style>body > *:not(script):not(style) { visibility: hidden !important; }</style>
+</body>"#,
+    )
+}
+
+/// The fixture page with every other control hidden from the accessibility
+/// tree and one button over the lower half of the viewport, where the pixel
+/// click lands: the smallest control covering the point is that button, which
+/// forwards its click to the fixture's journaled increment counter.
+#[cfg(target_os = "linux")]
+fn standalone_pixel_target_html() -> String {
+    standalone_fixture_html().replace(
+        "</body>",
+        r#"<style>body > *:not(script):not(style) { visibility: hidden !important; }</style>
+<button id="pixel-target" aria-label="pixel-target"
+        style="visibility:visible !important;position:fixed;left:0;right:0;top:40%;bottom:0;border:0"
+        onclick="document.getElementById('btn-increment').click()">pixel-target</button>
+</body>"#,
+    )
+}
+
+/// Capture id and the click arguments for a background pixel click below the
+/// browser toolbar, inside the page.
+#[cfg(target_os = "linux")]
+fn standalone_pixel_click_args(fixture: &mut BrowserFixture, session: &str) -> serde_json::Value {
+    let state = fixture.driver.call(
+        "get_window_state",
+        serde_json::json!({
+            "pid": fixture.pid as i64,
+            "window_id": fixture.window_id,
+            "session": session,
+        }),
+    );
+    assert!(!state.is_error(), "window capture: {}", state.raw);
+    let capture_id = state.structured()["capture_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("window capture has no capture_id: {}", state.raw))
+        .to_owned();
+    let width = state.structured()["screenshot_width"]
+        .as_f64()
+        .expect("capture width");
+    let height = state.structured()["screenshot_height"]
+        .as_f64()
+        .expect("capture height");
+    serde_json::json!({
+        "session": session,
+        "pid": fixture.pid as i64,
+        "window_id": fixture.window_id,
+        "x": (width / 2.0).round(),
+        "y": (height * 0.65).round(),
+        "capture_id": capture_id,
+        "delivery_mode": "background",
+    })
+}
+
+/// X11: a capture-bound background pixel click on a Chromium control is
+/// delivered through its AT-SPI action, with no focus, z-order or input leak,
+/// and the page sees the click.
+#[cfg(target_os = "linux")]
+fn run_capture_bound_pixel_click_background_atspi(spec: &BrowserSpec) {
     let scenario = format!(
-        "{}-{}-standalone-capture-bound-pixel-click",
+        "{}-{}-standalone-capture-bound-pixel-click-atspi",
         std::env::consts::OS,
         spec.name
     );
     let case = CaseSpec::delivered(
         format!(
-            "{}-{}-standalone-capture-bound-pixel-click-px-background",
+            "{}-{}-standalone-capture-bound-pixel-click-atspi-px-background",
+            std::env::consts::OS,
+            spec.name
+        ),
+        spec.name.clone(),
+        "standalone-chromium",
+        "capture_bound_pixel_click",
+        Targeting::Px,
+        Delivery::Background,
+        Scope::Window,
+        DriverRoute::LinuxAtSpiAction,
+        vec![
+            OracleKind::FixtureState,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::NoLeakedInput,
+        ],
+    );
+    execute_case(case, |evidence| {
+        let mut fixture = launch_browser_with_html(spec, &scenario, standalone_pixel_target_html());
+        *evidence = recording_evidence(fixture.driver.recording_dir());
+        wait_for_text(&fixture.server, "lbl-counter", "counter=0");
+        let session = format!("standalone-pixel-click-atspi-{}", fixture.pid);
+        run_with_background_oracles(&mut fixture, |fixture| {
+            let args = standalone_pixel_click_args(fixture, &session);
+            let delivered = fixture.driver.call("click", args);
+            assert!(
+                !delivered.is_error(),
+                "background pixel click on a Chromium control was refused: {}",
+                delivered.raw
+            );
+            eprintln!("[standalone-browser] pixel click result: {}", delivered.raw);
+            wait_for_text(&fixture.server, "lbl-counter", "counter=1");
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+        })
+    });
+}
+
+/// A capture-bound background pixel click on Chromium page content with no
+/// control under the point must not report success without an effect. The
+/// structured `background_unavailable` refusal comes before admission, and the
+/// refused capture then stays usable for the explicit foreground escalation.
+/// `inert` hides every control from the accessibility tree (X11, where a control
+/// would be clicked through AT-SPI); otherwise the cover is a button and
+/// Wayland and the inject lanes refuse the click outright.
+#[cfg(target_os = "linux")]
+fn run_capture_bound_pixel_click_refusal(spec: &BrowserSpec, inert: bool) {
+    let suffix = if inert { "-inert" } else { "" };
+    let scenario = format!(
+        "{}-{}-standalone-capture-bound-pixel-click{suffix}",
+        std::env::consts::OS,
+        spec.name
+    );
+    let case = CaseSpec::delivered(
+        format!(
+            "{}-{}-standalone-capture-bound-pixel-click{suffix}-px-background",
             std::env::consts::OS,
             spec.name
         ),
@@ -4684,42 +4965,18 @@ fn run_capture_bound_pixel_click_background_refusal(spec: &BrowserSpec) {
     )
     .expecting_refusal(vec![RefusalCode::BackgroundUnavailable]);
     execute_case(case, |evidence| {
-        let mut fixture =
-            launch_browser_with_html(spec, &scenario, standalone_full_viewport_click_html());
+        let html = if inert {
+            standalone_full_viewport_inert_cover_html()
+        } else {
+            standalone_full_viewport_click_html()
+        };
+        let mut fixture = launch_browser_with_html(spec, &scenario, html);
         *evidence = recording_evidence(fixture.driver.recording_dir());
         wait_for_text(&fixture.server, "lbl-counter", "counter=0");
         let session = format!("standalone-pixel-click-{}", fixture.pid);
         let mut click_args = None;
         let observation = run_with_background_oracles(&mut fixture, |fixture| {
-            let state = fixture.driver.call(
-                "get_window_state",
-                serde_json::json!({
-                    "pid": fixture.pid as i64,
-                    "window_id": fixture.window_id,
-                    "session": session,
-                }),
-            );
-            assert!(!state.is_error(), "window capture: {}", state.raw);
-            let capture_id = state.structured()["capture_id"]
-                .as_str()
-                .unwrap_or_else(|| panic!("window capture has no capture_id: {}", state.raw))
-                .to_owned();
-            let width = state.structured()["screenshot_width"]
-                .as_f64()
-                .expect("capture width");
-            let height = state.structured()["screenshot_height"]
-                .as_f64()
-                .expect("capture height");
-            // Below the browser toolbar, inside the full-viewport button.
-            let args = serde_json::json!({
-                "session": session,
-                "pid": fixture.pid as i64,
-                "window_id": fixture.window_id,
-                "x": (width / 2.0).round(),
-                "y": (height * 0.65).round(),
-                "capture_id": capture_id,
-                "delivery_mode": "background",
-            });
+            let args = standalone_pixel_click_args(fixture, &session);
             let refused = fixture.driver.call("click", args.clone());
             assert!(
                 refused.is_error(),
@@ -4757,7 +5014,9 @@ fn run_capture_bound_pixel_click_background_refusal(spec: &BrowserSpec) {
             "foreground retry did not reuse the refused capture: {}",
             landed.raw
         );
-        wait_for_text(&fixture.server, "lbl-counter", "counter=1");
+        if !inert {
+            wait_for_text(&fixture.server, "lbl-counter", "counter=1");
+        }
         let reused = fixture.driver.call("click", foreground);
         assert!(
             reused.is_error(),
@@ -4766,6 +5025,28 @@ fn run_capture_bound_pixel_click_background_refusal(spec: &BrowserSpec) {
         );
         observation
     });
+}
+
+#[cfg(target_os = "linux")]
+fn run_capture_bound_pixel_click_background_refusal(spec: &BrowserSpec) {
+    if linux_x11_background_atspi_click() {
+        // A control under the point is clicked through AT-SPI on X11; the
+        // refusal there is for a point no control covers.
+        run_capture_bound_pixel_click_refusal(spec, true);
+    } else {
+        run_capture_bound_pixel_click_refusal(spec, false);
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn run_capture_bound_pixel_click_background_control(spec: &BrowserSpec) {
+    if linux_x11_background_atspi_click() {
+        run_capture_bound_pixel_click_background_atspi(spec);
+    } else {
+        // Wayland and the inject lanes have no AT-SPI pixel route: the row
+        // above covers their refusal.
+        eprintln!("[standalone-browser] AT-SPI pixel click is X11 only; skipped");
+    }
 }
 
 fn run_upload(spec: &BrowserSpec) {
@@ -5303,6 +5584,11 @@ standalone_browser_test!(
     standalone_browser_web_type_text_verification,
     run_web_type_text_verification
 );
+#[cfg(target_os = "macos")]
+standalone_browser_test!(
+    standalone_browser_background_web_click_noop,
+    run_background_web_click_noop
+);
 standalone_browser_test!(standalone_browser_trusted_click, run_trusted_click);
 standalone_browser_test!(
     standalone_browser_prepare_isolated,
@@ -5344,6 +5630,11 @@ standalone_browser_test!(
 standalone_browser_test!(
     standalone_browser_capture_bound_pixel_click_background_refusal,
     run_capture_bound_pixel_click_background_refusal
+);
+#[cfg(target_os = "linux")]
+standalone_browser_test!(
+    standalone_browser_capture_bound_pixel_click_background_control,
+    run_capture_bound_pixel_click_background_control
 );
 standalone_browser_test!(standalone_browser_upload, run_upload);
 standalone_browser_test!(standalone_browser_pointer_actions, run_pointer_actions);

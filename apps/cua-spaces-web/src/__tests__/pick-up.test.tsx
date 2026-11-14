@@ -27,7 +27,13 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 const q = (s: string) => document.querySelector<HTMLElement>(s);
-const KETTLE = { agent: "claude-code", id: "0b1e5c2a-1111-4222-8333-944445555666", title: "Kettle timer test fails on CI", cwd: "/Users/demo/code/kettle", lastActiveMs: Date.now() - 60_000 };
+const KETTLE = {
+  agent: "claude-code",
+  id: "0b1e5c2a-1111-4222-8333-944445555666",
+  title: "Kettle timer test fails on CI",
+  cwd: "/Users/demo/code/kettle",
+  lastActiveMs: Date.now() - 60_000,
+};
 const SHARED: Partial<HostStatus> = { configured: true, sharing: true, shareDesktop: true, mode: "relay", machineId: "this-mac-1" };
 
 describe("Pick up where you left off", () => {
@@ -67,7 +73,10 @@ describe("Pick up where you left off", () => {
 function listing(list: (args: unknown) => Promise<unknown>): DataAdapter {
   const base = createDemoAdapter({ latencyMs: 1 });
   return new Proxy(base, {
-    get: (t, k) => (k === "call" ? (op: string, args: unknown) => (op === "agents.recentThreads" ? list(args) : (t.call as (o: string, a: unknown) => Promise<unknown>)(op, args)) : Reflect.get(t, k)),
+    get: (t, k) =>
+      k === "call"
+        ? (op: string, args: unknown) => (op === "agents.recentThreads" ? list(args) : (t.call as (o: string, a: unknown) => Promise<unknown>)(op, args))
+        : Reflect.get(t, k),
   }) as DataAdapter;
 }
 
@@ -76,7 +85,13 @@ describe("the new setup's Ready screen", () => {
   const ready = async (agent: string, adapter: DataAdapter = createDemoAdapter({ latencyMs: 1 }), onContinueChat: (t: AskTask) => void = () => {}) =>
     render(
       <BridgeProvider adapter={adapter} core={await testCore()}>
-        <ReadyScreen view={readyView({ os: "macos", agent, computers: ["this"] })} agent={agent} place="this Mac" onDone={() => {}} onContinueChat={onContinueChat} />
+        <ReadyScreen
+          view={readyView({ os: "macos", agent, computers: ["this"] })}
+          agent={agent}
+          place="this Mac"
+          onDone={() => {}}
+          onContinueChat={onContinueChat}
+        />
       </BridgeProvider>,
     );
 
@@ -127,7 +142,12 @@ describe("the new setup's Ready screen", () => {
 
   it("uses the list read while the agent was being connected: no second ask, no placeholder", async () => {
     const asked: unknown[] = [];
-    const adapter = listing((args) => (asked.push(args), Promise.resolve([{ agent: "claude-code", id: KETTLE.id, title: KETTLE.title, cwd: KETTLE.cwd, lastActiveMs: KETTLE.lastActiveMs, resume: [] }])));
+    const adapter = listing(
+      (args) => (
+        asked.push(args),
+        Promise.resolve([{ agent: "claude-code", id: KETTLE.id, title: KETTLE.title, cwd: KETTLE.cwd, lastActiveMs: KETTLE.lastActiveMs, resume: [] }])
+      ),
+    );
     await recentThreads(adapter, ["claude-code"]);
     await ready("claude-code", adapter);
     expect(rows()).toEqual(["claude-code"]);

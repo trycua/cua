@@ -223,7 +223,10 @@ async function claudeCodeProbe() {
   const debugFile = join(configDir, "mcp-debug.log");
   const env = { ...PROBE_ENV, CLAUDE_CONFIG_DIR: configDir };
   const version = run(CLAUDE, ["--version"], { env });
-  assert.match(version.stdout, /2\.1\.224/);
+  const pinned = JSON.parse(readFileSync(join(HERE, "package.json"), "utf8")).dependencies[
+    "@anthropic-ai/claude-code"
+  ];
+  assert.equal(version.stdout.trim().split(" ")[0], pinned);
 
   run(
     CLAUDE,
@@ -251,7 +254,7 @@ async function claudeCodeProbe() {
     debug,
     new RegExp(`"name":"${EXPECTED.serverName}","version":"${EXPECTED_VERSION.replaceAll(".", "\\.")}"`),
   );
-  console.log("Claude Code 2.1.224: connected and accepted the complete tool schema set");
+  console.log(`Claude Code ${pinned}: connected and accepted the complete tool schema set`);
 }
 
 async function codexProbe() {

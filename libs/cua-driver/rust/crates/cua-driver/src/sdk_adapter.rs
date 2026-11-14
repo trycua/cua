@@ -271,10 +271,12 @@ impl SdkAdapter {
         Ok(value)
     }
 
-    /// Whether the legacy socket must refuse a call on this ended session.
-    /// An unnamed transport session reclaimed by the idle sweep is not
-    /// refused: core recreates it on the call.
-    pub fn is_session_ended(&self, session: &str) -> bool {
+    /// Whether the legacy socket must refuse a call on this ended session
+    /// from `transport_session`. Core recreates the session on the call, so
+    /// it is not refused, when it is that transport's unnamed session
+    /// reclaimed by the idle sweep, or a label whose owner transport has
+    /// closed since and that was not ended with `end_session`.
+    pub fn is_session_ended(&self, session: &str, transport_session: Option<&str>) -> bool {
         if !self
             .public_sessions
             .lock()
@@ -285,7 +287,12 @@ impl SdkAdapter {
             return false;
         }
         let internal = format!("{}{session}", self.runtime_prefix);
-        !cua_driver_core::session::recreates_on_next_call(&internal, &internal)
+        let owner = format!(
+            "{}{}",
+            self.runtime_prefix,
+            transport_session.unwrap_or(session)
+        );
+        !cua_driver_core::session::recreates_on_next_call(&internal, &owner)
     }
 
     pub fn mark_all_sessions_ended(&self) {
@@ -341,9 +348,30 @@ impl SdkAdapter {
     }
 
     pub async fn end_session(&self, session: &str) -> Result<(), String> {
-        self.invoke_raw("end_session", json!({"session": session}))
-            .await
-            .map(|_| ())
+        let value = self
+            .invoke_raw("end_session", json!({"session": session}))
+            .await?;
+        // `invoke_raw` returns `Ok` even when the tool result carries
+        // `isError: true`, because a tool-level failure is not a transport
+        // failure. `revoke_authorization` must not report a successful revoke
+        // for a session the tool refused to end, so surface the error here.
+        if value.get("isError").and_then(Value::as_bool) == Some(true) {
+            let detail = value
+                .get("content")
+                .and_then(Value::as_array)
+                .and_then(|items| {
+                    items.iter().find_map(|item| {
+                        item.get("text")
+                            .and_then(Value::as_str)
+                            .filter(|text| !text.is_empty())
+                    })
+                })
+                .unwrap_or("the end_session tool reported an error");
+            return Err(format!(
+                "end_session did not end session '{session}': {detail}"
+            ));
+        }
+        Ok(())
     }
 
     pub fn end_transport_sessions(&self, transport_session: &str) -> usize {
@@ -443,6 +471,12 @@ fn daemon_tools_list_from(tools_list: &Value) -> Value {
                     "capabilities": tool.get("capabilities").cloned().unwrap_or_else(|| json!([])),
                     "risk": tool.get("risk").cloned().unwrap_or(Value::Null),
                 });
+                if let Some(deprecated) = tool.get("deprecated") {
+                    daemon_tool
+                        .as_object_mut()
+                        .expect("daemon tool entry is an object")
+                        .insert("deprecated".into(), deprecated.clone());
+                }
                 if let Some(output_schema) = tool.get("outputSchema") {
                     daemon_tool
                         .as_object_mut()
@@ -597,7 +631,7 @@ mod tests {
             .await
             .expect("end implicit session");
         assert_ne!(ended["isError"], true);
-        assert!(sdk.is_session_ended(transport_session));
+        assert!(sdk.is_session_ended(transport_session, Some(transport_session)));
 
         let revived = sdk
             .invoke_raw("start_session", implicit_args())
@@ -606,7 +640,7 @@ mod tests {
         assert_ne!(revived["isError"], true);
         assert_eq!(revived["structuredContent"]["revived"], true);
         assert!(
-            !sdk.is_session_ended(transport_session),
+            !sdk.is_session_ended(transport_session, Some(transport_session)),
             "successful implicit revival must clear the adapter's early tombstone"
         );
 
@@ -658,23 +692,36 @@ mod tests {
             "bulk revoke must remain scoped to the owning runtime"
         );
 
-        second
-            .invoke_raw(
-                "escalate_session",
-                json!({"session": session, "reason": "no_window_target"}),
-            )
-            .await
-            .expect("escalate second session");
-        assert_eq!(
-            second
-                .public_session_observation_state(session)
-                .capture_scope,
-            CaptureScope::Auto,
-            "capture policy remains auto while its effective scope escalates"
-        );
-
         first.shutdown().await.expect("shutdown first");
         second.shutdown().await.expect("shutdown second");
+    }
+
+    #[tokio::test]
+    async fn end_session_reports_a_cleanup_failure_as_an_error() {
+        let _runtime_guard = crate::test_runtime_lock().lock().await;
+        let sdk = SdkAdapter::load(host_driver()).await.expect("SDK adapter");
+        let session = "end-reports-cleanup-failure";
+        let _hook = cua_driver_core::session::register_scoped_fallible_session_end_hook(
+            "recording",
+            move |ended| {
+                if ended.ends_with(session) {
+                    Err("cleanup failed".into())
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        sdk.invoke_raw("start_session", json!({"session": session}))
+            .await
+            .expect("start session");
+
+        let error = sdk
+            .end_session(session)
+            .await
+            .expect_err("a failed end_session must not report a revoke");
+        assert!(error.contains(session), "unexpected error: {error}");
+
+        sdk.shutdown().await.expect("shutdown");
     }
 
     #[tokio::test]

@@ -32,10 +32,16 @@ function stopped(calls: [string, unknown][]): TestHost {
     listsGhost: false,
     answer: (op, out) => {
       if (op === "spaces.list") {
-        return [...(out as unknown[]), { id: "relay:studio", name: "Studio", provider: "relay", spacesdVersion: "0.6.0", features: [], reachable: false, error: LINE }];
+        return [
+          ...(out as unknown[]),
+          { id: "relay:studio", name: "Studio", provider: "relay", spacesdVersion: "0.6.0", features: [], reachable: false, error: LINE },
+        ];
       }
       if (op === "machines.list") {
-        return [...(out as MachineRow[]), { id: "studio", name: "Studio", via: "relay", online: true, os: "macos", detail: LINE, limits: withNotSharing([], LINE) }];
+        return [
+          ...(out as MachineRow[]),
+          { id: "studio", name: "Studio", via: "relay", online: true, os: "macos", detail: LINE, limits: withNotSharing([], LINE) },
+        ];
       }
       return out;
     },
@@ -67,7 +73,16 @@ async function issuesView(name = "the mockup with issues"): Promise<MachinesView
 }
 
 function hostDrawn(view: MachinesView, calls: [string, unknown][]): TestHost {
-  const rows: MachineRow[] = view.machines.map((m) => ({ id: m.id, name: m.name, via: m.current ? "local" : "relay", online: m.online, os: m.os, current: m.current || undefined, limits: [], ...(m.id.startsWith("dev_") ? { device: true } : {}) }));
+  const rows: MachineRow[] = view.machines.map((m) => ({
+    id: m.id,
+    name: m.name,
+    via: m.current ? "local" : "relay",
+    online: m.online,
+    os: m.os,
+    current: m.current || undefined,
+    limits: [],
+    ...(m.id.startsWith("dev_") ? { device: true } : {}),
+  }));
   return {
     failsCreates: false,
     listsGhost: false,
@@ -163,7 +178,10 @@ describe.skipIf(!wasmBuilt)("your computers and each one's page (real routes, wa
     detail = await detailOf("cua's Mac Studio");
     expect(switches().every((s) => s.hasAttribute("data-disabled"))).toBe(true);
     // Every other computer shows both switches, read-only, in the owner's words.
-    expect(labels()).toEqual([expect.stringContaining("Let other computers create Spaces here"), expect.stringContaining("Let other computers control this desktop")]);
+    expect(labels()).toEqual([
+      expect.stringContaining("Let other computers create Spaces here"),
+      expect.stringContaining("Let other computers control this desktop"),
+    ]);
     expect(detail.querySelector("[data-machine-toggles-note]")?.textContent).toBe("Change this on that Mac.");
     // No Space actions on a machine.
     expect(within(detail).queryByRole("button", { name: /^(Open|Start|Stop|Teleport)/ })).toBeNull();
@@ -171,7 +189,9 @@ describe.skipIf(!wasmBuilt)("your computers and each one's page (real routes, wa
     // Details, collapsed until opened.
     expect(detail.querySelector("[data-machine-details]")).toBeNull();
     fireEvent.click(detail.querySelector("[data-machine-details-toggle]")!);
-    await waitFor(() => expect(document.querySelector("[data-machine-details]")?.textContent).toMatch(/OS.*macOS 26\.5\.2.*Connection.*via Cua relay.*Service.*Running/));
+    await waitFor(() =>
+      expect(document.querySelector("[data-machine-details]")?.textContent).toMatch(/OS.*macOS 26\.5\.2.*Connection.*via Cua relay.*Service.*Running/),
+    );
     detail = await detailOf("cua's Mac Studio");
 
     // Rename saves on the relay machine.
@@ -217,7 +237,10 @@ describe.skipIf(!wasmBuilt)("your computers and each one's page (real routes, wa
     expect(help?.textContent).toBe("Spaces can be created here (up to 6)");
     expect(detail.textContent).not.toContain("\u00b7");
     // Read-only: the switch cannot be flipped from here.
-    expect(detail.querySelector('[data-machine-toggle="spaces"] [role="switch"]')?.hasAttribute("data-disabled") || detail.querySelector('[data-machine-toggle="spaces"] [role="switch"]')?.getAttribute("aria-readonly") === "true").toBe(true);
+    expect(
+      detail.querySelector('[data-machine-toggle="spaces"] [role="switch"]')?.hasAttribute("data-disabled") ||
+        detail.querySelector('[data-machine-toggle="spaces"] [role="switch"]')?.getAttribute("aria-readonly") === "true",
+    ).toBe(true);
   });
 
   it("asks before removing a machine from the account; Cancel removes nothing", async () => {
@@ -291,7 +314,10 @@ describe.skipIf(!wasmBuilt)("your computers and each one's page (real routes, wa
     expect(detail.querySelector("[data-machine-issue-action]")).toBeNull();
 
     // Healthy (the team machine) and offline (old checks not shown): no section.
-    for (const [id, name] of [["team", "build-mini-01"], ["byoc", "Cua BYOC tests"]] as const) {
+    for (const [id, name] of [
+      ["team", "build-mini-01"],
+      ["byoc", "Cua BYOC tests"],
+    ] as const) {
       await select(id);
       detail = await detailOf(name);
       expect(detail.querySelector("[data-machine-issues]")).toBeNull();
@@ -385,7 +411,9 @@ describe.skipIf(!wasmBuilt)("your computers and each one's page (real routes, wa
     await router.load();
     await waitFor(() => expect(hooks.machines.view?.clouds?.group.rows.map((r) => r.id)).toEqual(["aws", "hetzner"]));
     const group = document.querySelector("[data-cloud-group]")!;
-    expect([...group.querySelectorAll("[data-cloud-id]")].map((r) => [r.getAttribute("data-cloud-id"), r.querySelector("[data-cloud-line]")?.textContent])).toEqual([
+    expect(
+      [...group.querySelectorAll("[data-cloud-id]")].map((r) => [r.getAttribute("data-cloud-id"), r.querySelector("[data-cloud-line]")?.textContent]),
+    ).toEqual([
       ["aws", "3 running"],
       ["hetzner", "2 running"],
     ]);
@@ -418,8 +446,20 @@ describe.skipIf(!wasmBuilt)("your computers and each one's page (real routes, wa
       if (!el) throw new Error("no Connect a cloud sheet");
       return el;
     });
-    expect([...sheet.querySelectorAll("[data-cloud-row-title]")].map((r) => r.textContent)).toEqual(["AWS", "Google Cloud", "Microsoft Azure", "Hetzner", "Modal"]);
-    expect([...sheet.querySelectorAll("[data-cloud-row-auth]")].map((r) => r.textContent)).toEqual(["OIDC", "Coming soon", "Coming soon", "API token", "API token"]);
+    expect([...sheet.querySelectorAll("[data-cloud-row-title]")].map((r) => r.textContent)).toEqual([
+      "AWS",
+      "Google Cloud",
+      "Microsoft Azure",
+      "Hetzner",
+      "Modal",
+    ]);
+    expect([...sheet.querySelectorAll("[data-cloud-row-auth]")].map((r) => r.textContent)).toEqual([
+      "OIDC",
+      "Coming soon",
+      "Coming soon",
+      "API token",
+      "API token",
+    ]);
     const prompt = sheet.querySelector<HTMLTextAreaElement>("[data-cloud-prompt]")!;
     expect(prompt.readOnly).toBe(true);
     expect(prompt.value).toContain("`cua cloud status` says connected.");
@@ -572,7 +612,12 @@ describe("your computers when one powers off", () => {
       },
     }) as MachinesView["machines"][number];
 
-  const view = (): MachinesView => ({ summary: "1 machine, 1 online", groups: [{ id: "yours", title: "Your machines", collapsed: false, ids: ["studio-pc"] }], machines: [machine()], order: ["yours"] });
+  const view = (): MachinesView => ({
+    summary: "1 machine, 1 online",
+    groups: [{ id: "yours", title: "Your machines", collapsed: false, ids: ["studio-pc"] }],
+    machines: [machine()],
+    order: ["yours"],
+  });
 
   const step = (space: string, name: string, online: boolean, role: string) => ({ space, name, online, role });
 
@@ -581,10 +626,22 @@ describe("your computers when one powers off", () => {
       failsCreates: false,
       listsGhost: false,
       // The demo's own Studio PC is replaced by this one, which the host still counts as online.
-      answer: (op, out) => (op === "machines.list" ? [...(out as MachineRow[]).filter((m) => m.id !== "studio-pc"), { id: "studio-pc", name: "Studio PC", via: "relay", online: true, os: "windows", limits: [] }] : out),
+      answer: (op, out) =>
+        op === "machines.list"
+          ? [
+              ...(out as MachineRow[]).filter((m) => m.id !== "studio-pc"),
+              { id: "studio-pc", name: "Studio PC", via: "relay", online: true, os: "windows", limits: [] },
+            ]
+          : out,
       intercept: (op) =>
         op === "spaces.resolveDefault"
-          ? { space: "relay:studio-pc", reason: "setting", defaultSpace: "relay:studio-pc", defaultOnline: relayOnline.value, order: [step("relay:studio-pc", "Studio PC", relayOnline.value, "default"), step("relay:this-mac", "This Mac", true, "here")] }
+          ? {
+              space: "relay:studio-pc",
+              reason: "setting",
+              defaultSpace: "relay:studio-pc",
+              defaultOnline: relayOnline.value,
+              order: [step("relay:studio-pc", "Studio PC", relayOnline.value, "default"), step("relay:this-mac", "This Mac", true, "here")],
+            }
           : undefined,
       machinesView: view,
     });

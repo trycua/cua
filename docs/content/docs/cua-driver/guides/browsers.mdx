@@ -93,6 +93,18 @@ deleted when the session ends; use `{"mode": "isolated_named", "name": "research
 to keep it. Do not pass remote-debugging flags through `launch_app`: they are
 refused.
 
+An isolated browser keeps its passwords and cookies away from the system
+keychain (on macOS it starts with `--use-mock-keychain`, on Linux with
+`--password-store=basic`), so launching one never shows a Keychain prompt.
+If a Keychain or password prompt is already on screen, or one appears while
+the browser starts, `browser_prepare` stops with `browser_route_unavailable`
+(`detail.reason` is `security_prompt_open` or `security_prompt_appeared`)
+instead of launching more browsers. The driver never answers these prompts;
+ask the person to close it. After three failed launches in a row, further
+launches are refused for a back-off that starts at 30 seconds
+(`detail.reason` is `isolated_launch_backoff`, with `retry_after_seconds`).
+Fix the cause before retrying.
+
 The result's optional `lifecycle` object describes how long the browser
 process lives: `owner` is `session`, `idle_expires_in_seconds` is how long the
 session may stay idle after this call before it and the browser end,
@@ -208,7 +220,7 @@ with `--force-renderer-accessibility`. Setup recognizes English UI labels only.
 | `browser_origin_outside_scope` | The tab left the manifest's origins; mutation pauses. |
 | `browser_action_unavailable` | The ref does not declare the needed action. |
 
-The legacy `page` tool keeps its read-only `get_text` and `query_dom` actions.
-Its mutation actions need `CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1` at daemon
-start and skip the typed tools' binding and consent checks; migrate to
-`browser_*`.
+The legacy `page` tool keeps its read-only `get_text` and `query_dom` actions,
+which are the way to read Safari and Firefox pages. Its page actions (run
+JavaScript, click, type) and the `CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS`
+switch were removed; act on a page with the typed `browser_*` tools.

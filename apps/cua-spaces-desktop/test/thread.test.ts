@@ -10,7 +10,12 @@ import { threadMethods } from "../src/bridge/thread";
 import { ToolError } from "../src/model/backend";
 
 const ctx = {} as BridgeContext;
-const PAGE = { entries: [{ seq: 1, id: "e1", ts_ms: 1, author: { kind: "person", id: "acct_1", name: "Ada" }, kind: "message", text: "hi" }], cursor: 1, caught_up: true, unread: 0 };
+const PAGE = {
+  entries: [{ seq: 1, id: "e1", ts_ms: 1, author: { kind: "person", id: "acct_1", name: "Ada" }, kind: "message", text: "hi" }],
+  cursor: 1,
+  caught_up: true,
+  unread: 0,
+};
 
 describe("thread.*", () => {
   it("reads with the tool's arguments and answers its JSON as-is", async () => {

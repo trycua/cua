@@ -10,11 +10,13 @@
  * | Operation | Tauri | SwiftUI | Electron |
  * |---|---|---|---|
  * | `spaces.usage {spaceId}` | `space_usage` | `backend.usage(id:)` (`Space.usage`) | the same SDK call |
+ * | `spaces.reach {spaceId}` | none | `backend.reach(id:)` (the SDK's app method `spaces.reach`) | the same SDK call |
  * | `spaces.windows {spaceId}` | none: its viewer lists windows over its own stream | `StreamRowsModel`'s `availableWindows` and `primaryDisplay` | `StreamRows` (`Space.windows`, `displays`) |
  * | `stream.pip {spaceId, command}` | none: its PiP is a viewer window | the stream panel set (`StreamSource.pipKey`) | floating windows showing `/pip` (`src/pip.ts`) |
  * | `spaces.thumbnail {spaceId, maxAgeMs?}` | none | `SpaceThumbnails.refresh` (the notch's and the cover's image) | `SpaceThumbnails`, ported |
  * | `spaces.chooseFiles {}` | none | "Send file…"'s `NSOpenPanel` (`SpaceDetailView.chooseFiles`) | Electron's open dialog |
  * | `spaces.droppedFiles {names}` | none | the drag pasteboard's file URLs (`TeleportDropZone`'s drop) | the drop's paths, read by the preload |
+ * | `windows.chooseIso {image}` | none | `NSOpenPanel` for an `.iso`, then `windowsUseIso` | Electron's open dialog, then `windowsUseIso` |
  * | `spaces.sendFiles {spaceId, paths}` | none | `backend.sendFiles` (`Space.send_file`) | the same SDK call |
  *
  * Types mirror `cua-spaces-app-core/src/spaces/sidebar.rs` and `stream.rs`.
@@ -94,6 +96,14 @@ export interface StreamRowAction {
   active: boolean;
 }
 
+/** The Space a window another Space shows here lives in (`stream::StreamRowOrigin`). */
+export interface StreamRowOrigin {
+  spaceId: string;
+  name: string;
+  /** Its OS mark (`os-macos`, `os-ubuntu`, ...). */
+  osIcon: string;
+}
+
 /** One row of the Stream section (`stream::StreamRow`). */
 export interface StreamRow {
   id: string;
@@ -102,6 +112,8 @@ export interface StreamRow {
   help: string;
   resolution?: string | null;
   icon: StreamRowIcon;
+  /** Only on a window another Space shows here: where it lives. A Space's own rows carry none. */
+  origin?: StreamRowOrigin | null;
   actions: StreamRowAction[];
 }
 
@@ -237,11 +249,25 @@ export interface DetailCopy {
   teleportApp: string;
 }
 
+/**
+ * Whether a Space can take work now (the SDK's `spaces.reach`): the relay's word on its computer and a health
+ * check over the connection a job would use. Asked just before a job is handed to it.
+ */
+export interface SpaceReach {
+  reachable: boolean;
+  /** The relay lists its computer offline. */
+  listedOffline: boolean;
+  /** Why it can't take work, when it can't. */
+  reason: string | null;
+}
+
 /* ---- Operations ------------------------------------------------------------------ */
 
 export interface SpaceDetailOps {
   /** Memory and storage use now (the SDK's `Space.usage`); null when the Space can't say. */
   "spaces.usage": { args: { spaceId: string }; result: SpaceUsage | null };
+  /** Whether the Space can take work now; asked before a job is handed to it. */
+  "spaces.reach": { args: { spaceId: string }; result: SpaceReach };
   /** The Space's windows and primary display. */
   "spaces.windows": { args: { spaceId: string }; result: SpaceWindows };
   /** Opens or closes a row's picture-in-picture panel; answers the rows whose panel is open. */
@@ -258,8 +284,18 @@ export interface SpaceDetailOps {
   "spaces.droppedFiles": { args: { names: string[] }; result: string[] };
   /** Sends picked or dropped files into the Space's Downloads. */
   "spaces.sendFiles": { args: { spaceId: string; paths: string[] }; result: SentFileInfo[] };
+  /** "Choose Windows ISO…": the host's file picker for a Windows disc image
+   * (`.iso`), checked and remembered for `image` (what `cua sb create
+   * windows:11 --iso <path>` does), so the create that follows installs
+   * from that file. Null when cancelled. A file that cannot be used rejects
+   * with the reason in plain words. */
+  "windows.chooseIso": { args: { image: string }; result: ChosenIso | null };
 }
 
+/** The Windows ISO a person chose (`windows_use_iso`): its file name. */
+export interface ChosenIso {
+  name: string;
+}
 
 /* ---- Hosts ------------------------------------------------------------------------- */
 
@@ -268,12 +304,14 @@ type Args<K extends keyof SpaceDetailOps> = SpaceDetailOps[K]["args"];
 
 /** Ops the Tauri shell has no command for (they reject as unsupported). */
 export const TAURI_SPACE_DETAIL_UNSUPPORTED = [
+  "spaces.reach",
   "spaces.windows",
   "stream.pip",
   "spaces.thumbnail",
   "spaces.chooseFiles",
   "spaces.droppedFiles",
   "spaces.sendFiles",
+  "windows.chooseIso",
 ] as const;
 
 export function tauriSpaceDetailOps(invoke: Invoke) {
@@ -289,6 +327,11 @@ export const SPACE_DETAIL_COVERAGE = {
   "spaces.usage": {
     webkit: { methods: ["spaces.usage"] },
     tauri: ["space_usage"],
+  },
+  "spaces.reach": {
+    webkit: { methods: ["spaces.reach"] },
+    tauri: [],
+    unsupported: { tauri: "the Tauri app starts no jobs on your other computers" },
   },
   "spaces.windows": {
     webkit: { methods: ["spaces.windows"] },
@@ -320,18 +363,25 @@ export const SPACE_DETAIL_COVERAGE = {
     tauri: [],
     unsupported: { tauri: DROP_WELL },
   },
+  "windows.chooseIso": {
+    webkit: { methods: ["windows.chooseIso"] },
+    tauri: [],
+    unsupported: { tauri: "the Tauri app builds no Windows images" },
+  },
 } as const satisfies Record<keyof SpaceDetailOps, OpCoverage>;
 
 /** Arguments that take each W5 operation down its usual path in the demo host (coverage tests). */
 export const DETAIL_ARGS = {
   "telemetry.track": { signals: [{ type: "step" as const, step: "app_launched", ok: true }] },
   "spaces.usage": { spaceId: "local:design-review" },
+  "spaces.reach": { spaceId: "local:design-review" },
   "spaces.windows": { spaceId: "local:design-review" },
   "stream.pip": { spaceId: "local:design-review", command: { type: "open" as const, row: "desktop" } },
   "spaces.thumbnail": { spaceId: "local:design-review" },
   "spaces.chooseFiles": {},
   "spaces.droppedFiles": { names: ["notes.txt"] },
   "spaces.sendFiles": { spaceId: "local:design-review", paths: ["/Users/demo/notes.txt"] },
+  "windows.chooseIso": { image: "ghcr.io/trycua/windows:11" },
   "host.setUp": { request: { mode: "relay" } },
   "host.joinWithCode": { code: "K7QM-4XPB-2RHD" },
   "host.action": { action: "stop-sharing" as const },

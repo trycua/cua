@@ -326,6 +326,19 @@ pub trait GuestIdentity: Send + Sync {
         let _ = (endpoints, token);
         Ok(())
     }
+
+    /// Whether [`Self::renew`] can work in the guest reachable at
+    /// `endpoints` (token `token`): `Ok(None)` when it can, `Ok(Some(why))`
+    /// when the guest says it cannot (say its agent runs as an
+    /// unprivileged user without passwordless sudo), `Err` when it did not
+    /// answer. A golden memory snapshot is recorded only from a guest that
+    /// can: one that cannot boots cold every time instead of restoring,
+    /// failing to renew until the readiness budget is gone, and then
+    /// booting cold anyway.
+    async fn check_renewable(&self, endpoints: &Endpoints, token: &str) -> Result<Option<String>> {
+        let _ = (endpoints, token);
+        Ok(None)
+    }
 }
 
 /// What an OCI image runs (its config's `Entrypoint`, `Cmd`, `Env`,

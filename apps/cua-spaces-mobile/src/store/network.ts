@@ -3,7 +3,8 @@
 
 /** Whether an error is the connection's (a message is queued and tried again) or the request's (it counts against the message). */
 
-const WORDS = /network request failed|failed to fetch|network error|network connection|timed out|timeout|offline|no route|econn|enotfound|not connected to the internet|load failed|the internet connection|unreachable|fetch failed|socket/i;
+const WORDS =
+  /network request failed|failed to fetch|network error|network connection|timed out|timeout|offline|no route|econn|enotfound|not connected to the internet|load failed|the internet connection|unreachable|fetch failed|socket/i;
 
 /** Connect error codes that mean the connection: `Unavailable` (14), `DeadlineExceeded` (4), `Aborted` (10). */
 const CONNECT_CODES = new Set([14, 4, 10]);

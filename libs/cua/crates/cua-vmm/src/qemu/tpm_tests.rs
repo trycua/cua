@@ -27,6 +27,8 @@ async fn daemon_script_success_failure_and_force_stop() {
         let tmp = tempfile::tempdir().unwrap();
         let runtime = QemuRuntime::new(QemuConfig {
             root: tmp.path().into(),
+            // These launches force software emulation of a Windows guest on purpose.
+            accel: Some("tcg".into()),
             ..Default::default()
         });
         let dir = runtime.dir("vm");
@@ -99,6 +101,8 @@ async fn launch_once_wiring_child() {
     };
     let runtime = QemuRuntime::new(QemuConfig {
         root: root.into(),
+        // These launches force software emulation of a Windows guest on purpose.
+        accel: Some("tcg".into()),
         vnc: false,
         allow_install: false,
         ..Default::default()
@@ -309,6 +313,8 @@ async fn stop_tpm_leaves_other_processes() {
     let link = fake_swtpm_link(tmp.path());
     let runtime = QemuRuntime::new(QemuConfig {
         root: tmp.path().join("root"),
+        // These launches force software emulation of a Windows guest on purpose.
+        accel: Some("tcg".into()),
         ..Default::default()
     });
     let dir = runtime.dir("vm");
@@ -360,6 +366,8 @@ async fn stop_tpm_kills_a_swtpm_that_ignores_term() {
     let link = fake_swtpm_link(tmp.path());
     let runtime = QemuRuntime::new(QemuConfig {
         root: tmp.path().join("root"),
+        // These launches force software emulation of a Windows guest on purpose.
+        accel: Some("tcg".into()),
         ..Default::default()
     });
     let dir = runtime.dir("vm");
@@ -379,6 +387,8 @@ fn copy_refused_until_the_tpm_exits() {
     let link = fake_swtpm_link(tmp.path());
     let runtime = QemuRuntime::new(QemuConfig {
         root: tmp.path().join("root"),
+        // These launches force software emulation of a Windows guest on purpose.
+        accel: Some("tcg".into()),
         ..Default::default()
     });
     let dir = runtime.dir("vm");
@@ -410,6 +420,8 @@ async fn cancelled_launch_child() {
     let root = PathBuf::from(root);
     let runtime = QemuRuntime::new(QemuConfig {
         root: root.join("state"),
+        // These launches force software emulation of a Windows guest on purpose.
+        accel: Some("tcg".into()),
         vnc: false,
         allow_install: false,
         ..Default::default()
@@ -431,7 +443,13 @@ async fn cancelled_launch_child() {
     } else {
         Duration::from_millis(100)
     };
-    assert!(tokio::time::timeout(wait, launch).await.is_err());
+    // The launch must still be going when the wait ends (it is cancelled then).
+    if let Ok(done) = tokio::time::timeout(wait, launch).await {
+        panic!(
+            "the launch finished within {wait:?}: {:?}",
+            done.map(|_| ())
+        );
+    }
     // The VM is released only once the cancelled launch's own cleanup is done.
     let _owner = tokio::time::timeout(Duration::from_secs(10), runtime.own("vm"))
         .await
@@ -496,8 +514,9 @@ fn cancelled_launch(late: bool) {
     let bin = tmp.path().join("bin");
     std::fs::create_dir(&bin).unwrap();
     let link = fake_swtpm_link(tmp.path());
-    let sleeper = tmp.path().join("qemu-sleep");
-    std::os::unix::fs::symlink(host::which("sleep").unwrap(), &sleeper).unwrap();
+    // Run `sleep` by its own name: a multi-call coreutils (uutils, on newer
+    // runner images) refuses a link to it that is named anything else.
+    let sleeper = host::which("sleep").unwrap();
     let exe = |name: &str, body: String| {
         let path = bin.join(name);
         std::fs::write(&path, body).unwrap();
@@ -661,6 +680,8 @@ async fn a_tpm_vm_cannot_be_claimed() {
     let tmp = tempfile::tempdir().unwrap();
     let runtime = QemuRuntime::new(QemuConfig {
         root: tmp.path().join("root"),
+        // These launches force software emulation of a Windows guest on purpose.
+        accel: Some("tcg".into()),
         ..Default::default()
     });
     let dir = runtime.dir("vm");
@@ -707,6 +728,8 @@ async fn a_queued_start_returns_the_vm_its_predecessor_started() {
     let link = fake_swtpm_link(tmp.path());
     let runtime = Arc::new(QemuRuntime::new(QemuConfig {
         root: tmp.path().join("root"),
+        // These launches force software emulation of a Windows guest on purpose.
+        accel: Some("tcg".into()),
         vnc: false,
         allow_install: false,
         preflight_tools: false,
@@ -758,6 +781,8 @@ async fn a_dropped_launch_keeps_the_vm_until_its_cleanup_ends() {
     let link = fake_swtpm_link(tmp.path());
     let runtime = QemuRuntime::new(QemuConfig {
         root: tmp.path().join("root"),
+        // These launches force software emulation of a Windows guest on purpose.
+        accel: Some("tcg".into()),
         ..Default::default()
     });
     let dir = runtime.dir("vm");
@@ -845,6 +870,7 @@ async fn failed_start_child() {
     let root = PathBuf::from(root);
     let runtime = Arc::new(QemuRuntime::new(QemuConfig {
         root: root.join("state"),
+        // These launches force software emulation of a Windows guest on purpose.
         accel: Some("tcg".into()),
         vnc: false,
         allow_install: false,
@@ -908,6 +934,8 @@ async fn an_unreadable_run_dir_stops_and_copies_nothing() {
     let link = fake_swtpm_link(tmp.path());
     let runtime = QemuRuntime::new(QemuConfig {
         root: tmp.path().join("root"),
+        // These launches force software emulation of a Windows guest on purpose.
+        accel: Some("tcg".into()),
         ..Default::default()
     });
     let dir = runtime.dir("vm");
@@ -960,6 +988,8 @@ async fn an_unreadable_or_malformed_record_stops_and_copies_nothing() {
     let link = fake_swtpm_link(tmp.path());
     let runtime = QemuRuntime::new(QemuConfig {
         root: tmp.path().join("root"),
+        // These launches force software emulation of a Windows guest on purpose.
+        accel: Some("tcg".into()),
         ..Default::default()
     });
     let dir = runtime.dir("vm");

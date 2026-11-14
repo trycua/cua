@@ -1066,14 +1066,19 @@ impl MediaSession {
     /// most one per second per session, so one bad client cannot flood a
     /// shared stream with IDRs.
     pub(crate) fn request_keyframe_limited(&self) {
-        let recent = self
-            .last_keyframe_request
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_some_and(|at| at.elapsed() < Duration::from_secs(1));
-        if !recent {
-            self.request_keyframe_now();
+        {
+            let mut last = self
+                .last_keyframe_request
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if last.is_some_and(|at| at.elapsed() < Duration::from_secs(1)) {
+                return;
+            }
+            // Claim the slot before releasing the lock so concurrent callers
+            // (maintenance tick, frame overflow) cannot both pass the check.
+            *last = Some(Instant::now());
         }
+        self.request_keyframe_now();
     }
 
     pub(crate) fn broadcast_control(&self, message: ServerMessage) {

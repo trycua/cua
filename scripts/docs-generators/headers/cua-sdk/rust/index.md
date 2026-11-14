@@ -4,7 +4,7 @@ Depend on them from git, pinned to a release tag or a commit:
 
 ```toml test="config" id="cargo-dependency"
 [dependencies]
-cua-sdk = { git = "https://github.com/trycua/cua", tag = "cua-sdk-v{{version}}" }
+cua-sdk = { git = "https://github.com/trycua/cua", tag = "cua-sdk-v<version>" }
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -17,4 +17,4 @@ Inside this repository, use a path dependency (`path = "libs/cua/crates/cua-sdk"
 - Unstable: `cua-sandbox-core` and `cua-spaces` follow the Spaces service and can change in any minor release, so they have no pages here: run `cargo doc -p cua-spaces --open` in `libs/cua` to read them. Items named `testing`, `conformance` or `coverage` are test support, not API.
 - Not API: items hidden from these pages (`#[doc(hidden)]`), the UniFFI scaffolding (`uniffi_*`, `ffi_*`), and cargo features other than the defaults.
 
-Other workspace crates (`cua-proto`, `cua-daemon`, `cua-vmm`, `cua-image`, the media crates, `cua-cli`) are implementation details. The Cua Spaces crates (`cua-spaces-ext`, `cua-spaces-ffi`, `cua-spaces-cli`, `cua-spaces-app-core`, `cua-teleport`, `cua-keyvault`, `cua-volume`) are source-available under FSL-1.1-MIT and not part of the SDK. The wire contract is the [protocol reference](/cua-sdk/reference/protocol). Each page shows item summaries and declarations; `cargo doc --open` in `libs/cua` has the full comments.
+Other workspace crates (`cua-proto`, `cua-daemon`, `cua-daemon-core`, `cua-vmm`, `cua-image`, the media crates, `cua-cli`) are implementation details. The Cua Spaces crates (`cua-spaces-ext`, `cua-spaces-ffi`, `cua-spaces-cli`, `cua-spaces-app-core`, `cua-teleport`, `cua-keyvault`, `cua-volume`) are source-available under FSL-1.1-MIT and not part of the SDK. The wire contract is the [protocol reference](/cua-sdk/reference/protocol). Each page shows item summaries and declarations; `cargo doc --open` in `libs/cua` has the full comments.

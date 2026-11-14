@@ -39,7 +39,14 @@ const AWS: ConnectedCloud = {
   ttlHours: 8,
   offers: [
     { image: "linux", kind: "container", supported: true, reason: "", machineType: "t4g.medium", usdPerHour: 0.0368 },
-    { image: "windows", kind: "vm", supported: false, reason: "Windows on AWS is not offered yet.", machineType: "", usdPerHour: 0 },
+    {
+      image: "windows",
+      kind: "vm",
+      supported: false,
+      reason: "Windows on AWS is not offered yet.",
+      machineType: "",
+      usdPerHour: 0,
+    },
   ],
 };
 
@@ -59,10 +66,13 @@ const suggestionRefs = () =>
     .map((option) => option.querySelector(".wz-combo-ref")!.textContent);
 
 describe("the image field", () => {
-  // What pickers offer: published entries of groups without `picker: false`
+  // What pickers offer: published entries (or ones built on this computer on
+  // first use, `local_build`) of groups without `picker: false`
   // (benchmark images are for cua-bench, not Spaces).
   const offeredGroups = new Set(list.groups.filter((g) => !("picker" in g) || g.picker !== false).map((g) => g.id));
-  const offered = list.images.filter((image) => image.published && offeredGroups.has(image.group));
+  const offered = list.images.filter(
+    (image) => (image.published || "local_build" in image) && offeredGroups.has(image.group),
+  );
   const pressedOs = () =>
     ["Linux", "macOS", "Windows"].filter(
       (name) => screen.getByRole("button", { name: new RegExp(`^${name}`) }).getAttribute("aria-pressed") === "true",
@@ -85,7 +95,8 @@ describe("the image field", () => {
     expect(pressedOs()).toEqual([]);
     fireEvent.keyDown(imageField(), { key: "Escape" });
     fireEvent.click(imageField());
-    expect(suggestionRefs()).toEqual(offered.map((i) => i.ref));
+    // Every OS's images are searched; the order puts built-on-first-use images where the host's catalog does.
+    expect([...suggestionRefs()].sort()).toEqual(offered.map((i) => i.ref).sort());
   });
 
   it("groups the suggestions the way the file groups them, one line a row", () => {
@@ -105,9 +116,7 @@ describe("the image field", () => {
     renderWizard();
     fireEvent.change(imageField(), { target: { value: "macos" } });
     // Every published macOS image in the catalog, in catalog order (tiers appear once published).
-    expect(suggestionRefs()).toEqual(
-      list.images.filter((i) => i.published && i.os === "macos").map((i) => i.ref),
-    );
+    expect(suggestionRefs()).toEqual(list.images.filter((i) => i.published && i.os === "macos").map((i) => i.ref));
     fireEvent.keyDown(imageField(), { key: "ArrowDown" });
     fireEvent.keyDown(imageField(), { key: "ArrowDown" });
     fireEvent.keyDown(imageField(), { key: "ArrowUp" });
@@ -157,9 +166,7 @@ describe("the image field", () => {
 describe("New Space wizard", () => {
   it("walks System, Resources, Options, Summary and creates a local VM with its resources", () => {
     const { onCreate } = renderWizard({ localBackends: ["docker", "lume", "qemu"] });
-    expect(screen.getByRole("list", { name: "Steps" })).toHaveTextContent(
-      "1System2Resources3Options4Summary",
-    );
+    expect(screen.getByRole("list", { name: "Steps" })).toHaveTextContent("1System2Resources3Options4Summary");
     fireEvent.change(imageField(), { target: { value: "ghcr.io/trycua/linux:24.04-disk" } });
     runOn("local");
     next();
@@ -191,7 +198,14 @@ describe("New Space wizard", () => {
     const onConnectCloud = vi.fn();
     renderWizard({ clouds: [AWS], hosts: [MINI, STUDIO], onConnectCloud });
     expect(screen.queryByText(/Cua Cloud/)).toBeNull();
-    expect(entries()).toEqual(["Auto", "This Mac", "Mac mini", "Studio (offline) (disabled)", "AWS \u00b7 us-west-2", "Add your cloud account…"]);
+    expect(entries()).toEqual([
+      "Auto",
+      "This Mac",
+      "Mac mini",
+      "Studio (offline) (disabled)",
+      "AWS \u00b7 us-west-2",
+      "Add your cloud account…",
+    ]);
     runOn("add:cloud");
     expect(onConnectCloud).toHaveBeenCalled();
   });
@@ -255,11 +269,13 @@ describe("New Space wizard", () => {
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
   });
 
-  it("shows Windows as coming soon on a Mac and cannot pick it", () => {
-    renderWizard();
+  it("offers Windows on a Mac and picks the build it runs (Windows 11)", () => {
+    renderWizard({ hostArch: "arm64" });
     const tile = screen.getByRole("button", { name: /^Windows/ });
-    expect(tile).toHaveTextContent("coming soon");
-    expect(tile).toBeDisabled();
+    expect(tile).not.toHaveTextContent("coming soon");
+    expect(tile).toBeEnabled();
+    fireEvent.click(tile);
+    expect(imageField()).toHaveValue("ghcr.io/trycua/windows:11");
   });
 
   it("the OS tiles pick that system's first image", () => {
@@ -313,7 +329,12 @@ describe("the Resources step", () => {
     next();
     const p = size("ghcr.io/trycua/linux:24.04", "arm64");
     const gb = (b: number) => (b / GB < 10 ? (b / GB).toFixed(1) : Math.round(b / GB)) + " GB";
-    expect(facts()).toEqual(["Container", "ARM", `${gb(p.unpacked).replace(" GB", "")}–${gb(p.unpacked + p.disk + p.download)} initially; grows with use (download ${gb(p.download)})`, "40 GB on Colima"]);
+    expect(facts()).toEqual([
+      "Container",
+      "ARM",
+      `${gb(p.unpacked).replace(" GB", "")}–${gb(p.unpacked + p.disk + p.download)} initially; grows with use (download ${gb(p.download)})`,
+      "40 GB on Colima",
+    ]);
     expect(screen.queryByRole("slider", { name: "Disk" })).toBeNull();
     expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
   });
@@ -349,7 +370,11 @@ describe("the Resources step", () => {
   });
 
   it("grows a Linux VM's disk with a slider and creates with it", () => {
-    const { onCreate } = renderWizard({ hostArch: "arm64", storage: storage(), localBackends: ["docker", "lume", "qemu"] });
+    const { onCreate } = renderWizard({
+      hostArch: "arm64",
+      storage: storage(),
+      localBackends: ["docker", "lume", "qemu"],
+    });
     fireEvent.change(imageField(), { target: { value: "ghcr.io/trycua/linux:24.04-disk" } });
     runOn("local");
     next();
@@ -458,7 +483,7 @@ describe("QEMU VMs", () => {
     runOn("local");
     pick("ghcr.io/trycua/windows:2022");
     expect(continueButton()).toBeDisabled();
-    expect(screen.getByRole("alert")).toHaveTextContent("cannot run QEMU Spaces");
+    expect(screen.getByRole("alert")).toHaveTextContent("Needs QEMU");
     pick("ghcr.io/trycua/linux:24.04-disk");
     expect(continueButton()).toBeDisabled();
     pick("ghcr.io/trycua/linux:24.04");
@@ -472,7 +497,7 @@ describe("QEMU VMs", () => {
     runOn("local");
     pick("ghcr.io/trycua/windows:2022");
     expect(continueButton()).toBeDisabled();
-    expect(screen.getByRole("alert")).toHaveTextContent("cannot run QEMU Spaces");
+    expect(screen.getByRole("alert")).toHaveTextContent("Needs QEMU");
     pick("ghcr.io/trycua/macos:26");
     expect(continueButton()).toBeEnabled();
     pick("ghcr.io/trycua/linux:24.04");

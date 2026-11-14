@@ -886,6 +886,43 @@ fn hw_capture_window_list_fn() -> Option<HwCaptureWindowListFn> {
     })
 }
 
+type CopyAssociatedWindowsFn = unsafe extern "C" fn(c_int, u32) -> *const c_void;
+
+fn copy_associated_windows_fn() -> Option<CopyAssociatedWindowsFn> {
+    static SYM: OnceLock<Option<CopyAssociatedWindowsFn>> = OnceLock::new();
+    *SYM.get_or_init(|| find_sym(b"SLSCopyAssociatedWindows\0").map(|p| unsafe { as_fn(p) }))
+}
+
+/// The windows WindowServer keeps together with `window_id`: its AppKit
+/// parent and child windows (a GTK dialog and the window it is transient
+/// for), `window_id` included. Empty when the SPI is missing or the window
+/// is unknown; a window with no relatives returns only itself.
+pub fn associated_windows(window_id: u32) -> Vec<u32> {
+    use core_foundation::{
+        array::CFArray,
+        base::{CFType, TCFType},
+        number::CFNumber,
+    };
+
+    let (Some(copy), Some(cid)) = (copy_associated_windows_fn(), main_connection_id()) else {
+        return Vec::new();
+    };
+    let Ok(cid) = c_int::try_from(cid) else {
+        return Vec::new();
+    };
+    let array_ptr = unsafe { copy(cid, window_id) };
+    if array_ptr.is_null() {
+        return Vec::new();
+    }
+    // SAFETY: a Copy-rule CFArray, owned here and released on drop.
+    let array: CFArray<CFType> = unsafe { CFArray::wrap_under_create_rule(array_ptr as _) };
+    array
+        .iter()
+        .filter_map(|item| item.downcast::<CFNumber>()?.to_i64())
+        .filter_map(|id| u32::try_from(id).ok())
+        .collect()
+}
+
 /// Capture one window's backing store with `SLSHWCaptureWindowList`.
 ///
 /// `None` when the SPI is missing or WindowServer returns no image.

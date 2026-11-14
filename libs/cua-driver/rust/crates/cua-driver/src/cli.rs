@@ -3596,7 +3596,7 @@ fn run_permissions_status(json: bool) {
     let Some(mut structured) = daemon_status else {
         // No reliable answer. Emit NO accessibility/screen_recording booleans —
         // nothing downstream can misread a false "on".
-        let (reason, next_step) = permission_status_unavailable(cli_name);
+        let (reason, next_step) = permission_status_unavailable(cli_name, is_listening);
         if json {
             let payload = serde_json::json!({
                 "daemon_running": is_listening,
@@ -3654,7 +3654,10 @@ fn read_permissions_via_launchservices() -> Option<serde_json::Value> {
 }
 
 /// Why no reliable status is available, and the one thing to do next.
-fn permission_status_unavailable(cli_name: &str) -> (String, String) {
+fn permission_status_unavailable(cli_name: &str, is_listening: bool) -> (String, String) {
+    #[cfg(target_os = "macos")]
+    let _ = is_listening;
+
     #[cfg(target_os = "macos")]
     {
         let app_path = crate::bundle::app_bundle_path();
@@ -3674,10 +3677,19 @@ fn permission_status_unavailable(cli_name: &str) -> (String, String) {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        (
-            "Couldn't read Cua Driver's permissions: Cua Driver isn't running.".to_owned(),
-            format!("start it with `{cli_name} serve`, then run this again."),
-        )
+        if is_listening {
+            (
+                "Couldn't read Cua Driver's permissions: Cua Driver is running but didn't answer."
+                    .to_owned(),
+                "retry this command. If it keeps failing, restart Cua Driver and check again."
+                    .to_owned(),
+            )
+        } else {
+            (
+                "Couldn't read Cua Driver's permissions: Cua Driver isn't running.".to_owned(),
+                format!("start it with `{cli_name} serve`, then run this again."),
+            )
+        }
     }
 }
 
@@ -6453,13 +6465,27 @@ mod tests {
         for text in [
             permission_status_text(&off, "cua-driver"),
             permission_status_text(&on, "cua-driver"),
-            permission_status_unavailable("cua-driver").0,
-            permission_status_unavailable("cua-driver").1,
+            permission_status_unavailable("cua-driver", false).0,
+            permission_status_unavailable("cua-driver", false).1,
         ] {
             for banned in ["TCC", "daemon", "unknown", "CuaDriver ", "AX "] {
                 assert!(!text.contains(banned), "{text:?} contains {banned:?}");
             }
         }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn permission_status_unavailable_distinguishes_a_running_driver() {
+        let (reason, next_step) = permission_status_unavailable("cua-driver", true);
+
+        assert!(reason.contains("Cua Driver is running but didn't answer"));
+        assert!(next_step.contains("retry this command"));
+        assert!(!next_step.contains("serve"));
+
+        let (reason, next_step) = permission_status_unavailable("cua-driver", false);
+        assert!(reason.contains("Cua Driver isn't running"));
+        assert!(next_step.contains("cua-driver serve"));
     }
 
     // ── Surface 8: manifest shape ───────────────────────────────────────────

@@ -6,8 +6,10 @@ use super::tree::AXNode;
 use core_foundation::base::{CFRelease, CFRetain, CFTypeRef};
 use cua_driver_core::snapshot_store::{SnapshotPayload, SnapshotStore};
 
+/// What a snapshot showed the caller about one element: the attributes that
+/// say which control it is, read and normalised the way the tree prints them.
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct ObservedIdentity {
+pub struct ObservedIdentity {
     role: String,
     title: Option<String>,
     description: Option<String>,
@@ -24,15 +26,15 @@ impl ObservedIdentity {
         }
     }
 
-    unsafe fn read(ptr: usize) -> Option<Self> {
+    unsafe fn read(ptr: usize) -> Self {
         use super::bindings::copy_string_attr;
         let element = ptr as AXUIElementRef;
-        Some(Self {
-            role: copy_string_attr(element, "AXRole")?,
+        Self {
+            role: copy_string_attr(element, "AXRole").unwrap_or_else(|| "AXUnknown".into()),
             title: normalized_label(copy_string_attr(element, "AXTitle")),
             description: normalized_label(copy_string_attr(element, "AXDescription")),
             identifier: copy_string_attr(element, "AXIdentifier"),
-        })
+        }
     }
 }
 
@@ -52,7 +54,7 @@ impl RetainedElement {
     /// not prove that a button still represents the observed action.
     pub fn observed_identity_is_current(&self) -> bool {
         self.1.as_ref().is_some_and(|expected| {
-            unsafe { ObservedIdentity::read(self.0) }.as_ref() == Some(expected)
+            self.0 != 0 && unsafe { ObservedIdentity::read(self.0) } == *expected
         })
     }
 
@@ -87,7 +89,9 @@ impl Drop for RetainedElement {
 
 pub struct AxSnapshot {
     pub elements: Vec<usize>,
-    identities: Vec<ObservedIdentity>,
+    /// One per entry of `elements`. An element without one never passes
+    /// [`RetainedElement::observed_identity_is_current`].
+    pub identities: Vec<ObservedIdentity>,
 }
 
 impl AxSnapshot {
@@ -170,6 +174,18 @@ mod tests {
             normalized_label(Some("  Submit  ".into())),
             Some("Submit".into())
         );
+    }
+
+    #[test]
+    fn element_without_an_observed_identity_is_never_current() {
+        let value = CFString::new("cua-driver-unobserved-element");
+        let ptr = value.as_concrete_TypeRef() as usize;
+        let cache = Snapshots::new();
+        let snapshot = cache.publish(1, 2, payload(ptr));
+        let element = resolve(&cache, snapshot, 0).unwrap();
+        assert!(!element.observed_identity_is_current());
+        assert!(!element.clone().observed_identity_is_current());
+        assert!(!unsafe { RetainedElement::retain(0) }.observed_identity_is_current());
     }
 
     #[test]

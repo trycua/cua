@@ -3,7 +3,7 @@
 
 //! What an input action visibly did, returned with the action.
 //!
-//! Two checks wrap the pointer and keyboard tools:
+//! Two checks wrap the pointer and keyboard tools and invoke_menu:
 //!
 //! - New windows: the target app's on-screen windows are listed before and
 //!   after the action; windows that appeared (a dialog, a sheet, a child

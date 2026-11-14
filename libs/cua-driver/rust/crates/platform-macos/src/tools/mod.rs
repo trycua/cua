@@ -1213,7 +1213,10 @@ pub fn register_all(
         &pid_window_candidates,
     ));
     registry.register(Box::new(set_window_frame::SetWindowFrameTool));
-    registry.register(Box::new(invoke_menu::InvokeMenuTool));
+    registry.register(Box::new(action_evidence::ActionEvidence::new(
+        invoke_menu::InvokeMenuTool,
+        state.clone(),
+    )));
     registry.register(pid_window_guarded(
         action_evidence::ActionEvidence::new(click::ClickTool::new(state.clone()), state.clone()),
         &pid_window_candidates,

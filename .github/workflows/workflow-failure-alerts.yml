@@ -40,6 +40,7 @@ on:
       - "Release: Prepare component releases"
       - "Release: Auto-merge release PRs"
       - "Release: installer scripts feed"
+      - "CI: Cache guard"
     types: [completed]
   schedule:
     - cron: "*/15 * * * *"
@@ -82,6 +83,7 @@ jobs:
         Release: Prepare component releases=release
         Release: Auto-merge release PRs=release
         Release: installer scripts feed=release
+        CI: Cache guard=ci
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       GH_TOKEN: ${{ github.token }}
       ALERTMANAGER_INTAKE_TOKEN: ${{ secrets.ALERTMANAGER_INTAKE_TOKEN }}

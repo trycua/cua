@@ -174,7 +174,12 @@ jobs:
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
-          key: openkoalabot-example-swift
+          # The same `cargo build --release -p cua-sdk` as infinite-canvas, so the
+          # same family: main's infinite-canvas run saves it, this job restores it.
+          # (`key` is ignored, so this job used the debug libs-cua family, which
+          # holds none of its release units, and built the SDK cold.)
+          shared-key: libs-cua-sdk-release-macos
+          save-if: "false"
       - name: Build and stage the cua SDK for Swift
         run: |
           (cd libs/cua && cargo build --locked --release -p cua-sdk-native)

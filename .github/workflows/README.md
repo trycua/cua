@@ -94,6 +94,12 @@ workflow.
   dispatches the seeding Rust workflows when none has run green on main for
   36 hours, so a quiet weekend does not let the 7 day idle eviction drop them.
 * When sccache cannot start, cargo compiles normally.
+* A failed cache save is only a warning, so `CI: Cache guard`
+  (`.github/scripts/cache_guard.py`) checks after each green main run of the macOS
+  Swift workflows that main holds the entry (the day's sccache key, or the SwiftUI
+  slice key the producer printed). A miss turns it red, which posts to Alertmanager
+  and opens or updates a `ci-nightly` issue. A pull request on a day main has not
+  saved still starts from the newest entry of the family (restore-keys prefix).
 * sccache hashes the rustc version into every object key, so a toolchain bump
   simply misses until main re-seeds, and the cap ages the old objects out.
 

@@ -60,7 +60,7 @@ fn document_uris(nodes: &[AtspiNode]) -> Vec<&str> {
         .collect()
 }
 
-/// `Some(true)` when the one reported document URI is the setup URL,
+/// `Some(true)` when the one reported document URI is the setup page's,
 /// `Some(false)` when the URIs name anything else, `None` when the browser
 /// reports none and older evidence has to decide.
 fn document_is_setup_page(
@@ -69,7 +69,7 @@ fn document_is_setup_page(
 ) -> Option<bool> {
     match document_uris(nodes).as_slice() {
         [] => None,
-        [uri] => Some(uri.eq_ignore_ascii_case(descriptor.setup_url)),
+        [uri] => Some(uri.eq_ignore_ascii_case(descriptor.document_url)),
         _ => Some(false),
     }
 }
@@ -917,6 +917,16 @@ mod tests {
                 .is_none(),
             "two rendered documents do not name one setup page"
         );
+    }
+
+    #[test]
+    fn brave_setup_page_is_proven_by_the_chrome_scheme_document_uri() {
+        // Brave 1.99 on Linux reports brave://inspect as a chrome:// document.
+        let brave = existing_profile_setup_descriptor(BrowserProduct::Brave).unwrap();
+        let nodes = localized_setup_page("chrome://inspect/#remote-debugging", None);
+        assert!(exact_setup_checkbox(&nodes, brave, false)
+            .unwrap()
+            .is_some());
     }
 
     #[test]

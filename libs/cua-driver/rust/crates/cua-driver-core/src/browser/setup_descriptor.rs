@@ -20,6 +20,10 @@ pub struct BrowserSetupDescriptor {
     pub product: BrowserProduct,
     pub product_name: &'static str,
     pub setup_url: &'static str,
+    /// The URI the rendered setup page reports as its document. Brave serves
+    /// `brave://` pages under the `chrome://` scheme, so it differs from
+    /// `setup_url` there.
+    pub document_url: &'static str,
     pub page_titles: &'static [&'static str],
     pub page_heading: &'static str,
     pub checkbox_label: &'static str,
@@ -48,6 +52,7 @@ const CHROME: BrowserSetupDescriptor = BrowserSetupDescriptor {
     product: BrowserProduct::GoogleChrome,
     product_name: "Google Chrome",
     setup_url: "chrome://inspect/#remote-debugging",
+    document_url: "chrome://inspect/#remote-debugging",
     page_titles: CHROME_TITLES,
     page_heading: "Remote debugging",
     checkbox_label: "Allow remote debugging for this browser instance",
@@ -58,6 +63,7 @@ const CHROMIUM: BrowserSetupDescriptor = BrowserSetupDescriptor {
     product: BrowserProduct::Chromium,
     product_name: "Chromium",
     setup_url: "chrome://inspect/#remote-debugging",
+    document_url: "chrome://inspect/#remote-debugging",
     page_titles: CHROMIUM_TITLES,
     page_heading: "Remote debugging",
     checkbox_label: "Allow remote debugging for this browser instance",
@@ -68,6 +74,7 @@ const EDGE: BrowserSetupDescriptor = BrowserSetupDescriptor {
     product: BrowserProduct::MicrosoftEdge,
     product_name: "Microsoft Edge",
     setup_url: "edge://inspect/#remote-debugging",
+    document_url: "edge://inspect/#remote-debugging",
     page_titles: EDGE_TITLES,
     page_heading: "Remote debugging",
     checkbox_label: "Allow remote debugging for this browser instance",
@@ -78,6 +85,7 @@ const BRAVE: BrowserSetupDescriptor = BrowserSetupDescriptor {
     product: BrowserProduct::Brave,
     product_name: "Brave",
     setup_url: "brave://inspect/#remote-debugging",
+    document_url: "chrome://inspect/#remote-debugging",
     page_titles: BRAVE_TITLES,
     page_heading: "Remote debugging",
     checkbox_label: "Allow remote debugging for this browser instance",
@@ -123,6 +131,7 @@ mod tests {
         let brave = existing_profile_setup_descriptor(BrowserProduct::Brave).unwrap();
         assert_eq!(brave.product, BrowserProduct::Brave);
         assert_eq!(brave.setup_url, "brave://inspect/#remote-debugging");
+        assert_eq!(brave.document_url, "chrome://inspect/#remote-debugging");
         assert!(brave
             .page_titles
             .contains(&"Inspect with Chrome Developer Tools"));

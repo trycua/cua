@@ -2624,9 +2624,11 @@ fn run_background_menu_refusal(
 /// popup_select through set_value in the background. AppKit lists a popup's
 /// items only while its menu is open, and opening the menu of an app that is
 /// not frontmost raises its window over the user's window for a frame or two
-/// before the driver can put it back. So set_value must refuse instead, and
-/// the window must never rise, even transiently (the z-order oracle samples
-/// the window order while the action runs).
+/// before the driver can put it back. Type-select would choose the item
+/// without the menu, but AppKit ignores it in an app it does not count as
+/// active, as this fixture is. So set_value must refuse instead, and the
+/// window must never rise, even transiently (the z-order oracle samples the
+/// window order while the action runs).
 #[test]
 #[ignore]
 fn harness_appkit_popup_set_value_background_never_raises_the_window() {

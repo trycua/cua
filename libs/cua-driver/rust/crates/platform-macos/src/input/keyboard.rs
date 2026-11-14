@@ -805,6 +805,22 @@ fn modifier_flags(modifiers: &[&str]) -> CGEventFlags {
     flags
 }
 
+/// Whether pressing `key` with `modifiers` on a focused, closed AppKit popup
+/// button opens its menu: an arrow up or down, Space, Return or Enter with no
+/// modifier. Letters and digits type-select an item instead.
+pub fn opens_popup_menu(key: &str, modifiers: &[&str]) -> bool {
+    if !modifiers.is_empty() {
+        return false;
+    }
+    if key == " " {
+        return true;
+    }
+    matches!(
+        canonical_key_name(key).as_str(),
+        "up" | "down" | "space" | "return" | "enter"
+    )
+}
+
 /// A multi-character key name as `key_name_to_code` matches it: lower case
 /// with spaces, `_` and `-` dropped, and common spellings folded onto one
 /// name, so "Page_Down", "page-down", "PgDn" and "ArrowLeft" all work. Single
@@ -1174,6 +1190,26 @@ fn unknown_key_message(key: &str) -> String {
 mod tests {
     use super::*;
     use core_graphics::event::CGEventType;
+
+    #[test]
+    fn arrows_space_and_return_open_a_popup_menu_letters_do_not() {
+        for key in [
+            "down",
+            "Up",
+            "space",
+            " ",
+            "return",
+            "enter",
+            "kp_enter",
+            "ArrowDown",
+        ] {
+            assert!(opens_popup_menu(key, &[]), "{key}");
+        }
+        for key in ["o", "O", "7", "tab", "escape", "left", "right"] {
+            assert!(!opens_popup_menu(key, &[]), "{key}");
+        }
+        assert!(!opens_popup_menu("down", &["shift"]));
+    }
 
     /// Every global-HID key primitive checks for a security prompt before
     /// its first event. Removing one of those checks fails here. Keys are

@@ -642,10 +642,20 @@ window that another app's window covers:
   option's text into the closed control and the menu never opens. A
   `click` on it is refused (`select_menu_would_raise_window`).
 - A native popup button (`AXPopUpButton`): AppKit lists its items only
-  while the menu is open, so `set_value`, `click` and `right_click` on it
-  are refused with `background_unavailable`, reason
-  `popup_menu_would_raise_window`, and nothing changes. The refusal gives
-  the current value.
+  while the menu is open. `set_value` chooses the item by typing its title
+  into the closed popup (AppKit type-select) when the app takes it, and
+  reads the popup back (`popup_route: "type_select"`). AppKit applies
+  type-select only in an app it counts as active, which a background app
+  usually is not, so for the length of the typing the driver makes it
+  count itself active with AppKit's own activation event, sent to that app
+  alone: the user's app stays frontmost and keeps the keyboard, and no
+  window moves. When the app still does not take it (or showing it active
+  would put one of its panels on screen), `set_value` is refused with
+  `background_unavailable`, reason `popup_menu_would_raise_window`, and
+  nothing changes; `type_select` says why and the refusal gives the
+  current value. `click` and `right_click` on the popup, and `press_key`
+  of up, down, space or return on it, would open the menu and are refused
+  the same way.
 - A context menu (an element that lists `show_menu`): `right_click`, or
   `click` with `button:"right"`, is refused with `background_unavailable`,
   reason `context_menu_would_raise_window`. Run the same command from the

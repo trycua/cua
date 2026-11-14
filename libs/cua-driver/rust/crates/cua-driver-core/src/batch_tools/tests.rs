@@ -798,3 +798,25 @@ async fn non_scalar_set_value_is_rejected_before_any_batch_action() {
         assert_eq!(harness.hits("set_value"), 0);
     }
 }
+
+#[test]
+fn a_refused_step_line_names_the_structured_reason() {
+    // A refusal's first line is cut at the message limit before it says why
+    // ("... call bring_to_fr..."); the line carries the
+    // structured reason and the popup's type_select instead.
+    let refusal = json!({
+        "code": "background_unavailable",
+        "reason": "popup_menu_would_raise_window",
+        "type_select": "activation_showed_windows",
+    });
+    assert_eq!(
+        super::refusal_reason_note(Some(&refusal)),
+        " (reason: popup_menu_would_raise_window, type_select: activation_showed_windows)"
+    );
+    assert_eq!(
+        super::refusal_reason_note(Some(&json!({"reason": "window_not_key"}))),
+        " (reason: window_not_key)"
+    );
+    assert_eq!(super::refusal_reason_note(Some(&json!({"code": "x"}))), "");
+    assert_eq!(super::refusal_reason_note(None), "");
+}

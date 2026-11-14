@@ -41,7 +41,7 @@ Click a target pid. Prefer `element_token` (from get_window_state): it identifie
 - element_token: AX action path. Tokens are scoped to (pid, window_id) and stale once the window is snapshotted again.
 - x, y: window-local pixels of the get_window_state screenshot, sent as CGEvent mouse events. Needs a visible window. `modifier` takes cmd/shift/option/ctrl.
 
-`button` defaults to left; on the AX path "right" maps to AXShowMenu and "middle" falls back to a pixel click at the element center. `action`: press (default), show_menu, pick, confirm, cancel, open, show_alternate_ui, show_default_ui; an element listing showalternateui reveals its hover-only controls with show_alternate_ui, in the background and without the pointer. `from_zoom:true` translates zoom-image pixels after a `zoom` call. Pressing a popup button opens its menu and leaves it open until an item is chosen or it is dismissed; in the background the user's front window keeps key focus meanwhile. To choose an option in one call use `set_value`. In the background a web `<select>` (Chrome, Electron) is not opened, because its menu would raise the browser window: the click is refused with `select_menu_would_raise_window`; use `set_value`. Several known actions: one `run_steps` (`get_guide({topic:"batching"})`).
+`button` defaults to left; on the AX path "right" maps to AXShowMenu and "middle" falls back to a pixel click at the element center. `action`: press (default), show_menu, pick, confirm, cancel, open, show_alternate_ui, show_default_ui; an element listing showalternateui reveals its hover-only controls with show_alternate_ui, in the background and without the pointer. `from_zoom:true` translates zoom-image pixels after a `zoom` call. Pressing a popup button opens its menu and leaves it open until an item is chosen or it is dismissed; in the background the user's front window keeps key focus meanwhile. To choose an option in one call use `set_value`. In the background a web `<select>` (Chrome, Electron) is not opened, because its menu would raise the browser window: the click is refused with `select_menu_would_raise_window`; use `set_value`. Any other popup whose window sits behind another app's window is not opened in the background either (`background_unavailable`, reason `popup_menu_would_raise_window`): its menu would bring the window above the user's. Several known actions: one `run_steps` (`get_guide({topic:"batching"})`).
 
 **macOS parameters**
 
@@ -234,6 +234,8 @@ Right-click against a target pid. Two addressing modes:
 
 Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is required with `x`, `y`; an `element_token` carries its own pid.
 
+In the background, a target that opens a context menu (it lists `show_menu`) or a popup's menu is not right-clicked while another app's window covers its window: the menu would bring the window above the user's. The call is refused with `background_unavailable` (reason `context_menu_would_raise_window`); use the app's menu bar (`invoke_menu`) or a keyboard shortcut.
+
 **macOS parameters**
 
 | Parameter | Type | Default | Description |
@@ -409,6 +411,7 @@ Press and release one key. `delivery_mode` as in click/type_text.
 - `foreground`: fronts the exact window (needs `window_id`), sends a real HID key transition (Chromium content, inline editors, menu equivalents), then restores the prior app.
 
 An element target whose focus cannot be confirmed is refused with `target_focus_unconfirmed`, effect "refused", and no key dispatched.
+In the background, up, down, space or return on a closed popup button (the element_token, or the window's focused element) whose window another app's window covers is refused with `background_unavailable`, reason `popup_menu_would_raise_window`: it would open the menu and raise the window. Choose the item with `set_value`.
 Confirmed only when a native AX value/selection read-back changes; otherwise `effect:"unverifiable"` (not a delivery failure). Keys: return, tab, escape, up/down/left/right, space, delete, home, end, pageup, pagedown, f1-f12, any letter or digit. Several known actions: one `run_steps` (`get_guide({topic:"batching"})`).
 
 **macOS parameters**
@@ -597,7 +600,7 @@ Effect: destructive, idempotent. Platforms: macOS, Linux, Windows.
 <Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
 <Tab value="macOS">
 
-Set an element's value by `element_token`. A popup button / select dropdown: selects the menu item whose title or value matches `value` (case-insensitive). Safari `<select>` is set through the DOM; AppKit and Chromium popups list items only while open, so the menu is opened, the item pressed and the menu closed again (in the background the user's front window keeps key focus). An unknown value lists the options. Any other element: writes AXValue (sliders, steppers, date pickers, native text fields).
+Set an element's value by `element_token`. A popup button / select dropdown: selects the menu item whose title or value matches `value` (case-insensitive). Safari `<select>` is set through the DOM; a background Chromium `<select>` is chosen by typing the option's label into the closed control. AppKit popups list items only while open, so the menu is opened, the item pressed and the menu closed again. In the background a menu is never opened while another app's window covers the popup's window, because opening it brings the window above the user's. There the item is chosen by typing its title into the closed popup (AppKit type-select, `popup_route:"type_select"`, read back). AppKit applies type-select only in an app it counts as active, so an app that does not is made to count itself active for the length of the typing by an in-app activation (the user's app stays frontmost and keeps the keyboard; nothing is raised). Otherwise the call is refused with `background_unavailable` (reason `popup_menu_would_raise_window`, `type_select` says why) and nothing changes. If the app raises its window or activates itself anyway, the driver puts the user's window back and reports it in `user_disturbance`. An unknown value lists the options. Any other element: writes AXValue (sliders, steppers, date pickers, native text fields).
 
 A Finder file name cell (list or icon view, not being edited) is renamed through Finder's scripting interface with Finder left in the background, and the new name is read back from disk; the value is the full new name with its extension. macOS may prompt for Automation consent; with serve --no-automation-prompts, ungranted consent refuses with automation_consent_required. Finder's Get Info `Name` field is refused with `file_name_needs_rename`. For free-form text in web inputs use `type_text_chars`: WebKit ignores AXValue writes.
 

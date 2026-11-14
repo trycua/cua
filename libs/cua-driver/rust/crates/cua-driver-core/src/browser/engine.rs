@@ -458,6 +458,7 @@ pub(crate) struct SemanticSnapshotOutcome {
 
 pub(crate) struct BrowserTabScreenshot {
     pub data_base64: String,
+    pub mime_type: &'static str,
     pub width: u32,
     pub height: u32,
     pub viewport_css_width: f64,
@@ -2050,11 +2051,16 @@ impl BrowserEngine {
     /// CDP session. This route never calls `Target.activateTarget`,
     /// `Page.bringToFront`, or a native foreground API, so an already-open
     /// inactive tab stays inactive.
+    ///
+    /// The endpoint's PNG is bounded and validated before it is decoded, then
+    /// downscaled to `max_dim` (`0`: native) and encoded as `encoding`.
     pub(crate) async fn capture_tab_screenshot(
         &self,
         session: &str,
         target_id: &str,
         tab_id: &str,
+        max_dim: u32,
+        encoding: crate::image_utils::ScreenshotEncoding,
     ) -> Result<BrowserTabScreenshot, BrowserRefusal> {
         let record = self.store.get_target(session, target_id)?;
         let tab = record.tabs.get(tab_id).cloned().ok_or_else(|| {
@@ -2132,8 +2138,15 @@ impl BrowserEngine {
                 "PNG dimensions must be non-zero",
             ));
         }
+        // A PNG that needs no downscale passes through `encode` byte for
+        // byte, so callers that pass no screenshot options see no change.
+        let (bytes, width, height) = crate::image_utils::CapturedImage::Png(png)
+            .encode(max_dim, encoding)
+            .map_err(|error| route_err("browser screenshot encoding failed", error))?;
+        let data_base64 = BASE64.encode(bytes);
         Ok(BrowserTabScreenshot {
             data_base64,
+            mime_type: encoding.mime_type(),
             width,
             height,
             viewport_css_width: viewport.width,

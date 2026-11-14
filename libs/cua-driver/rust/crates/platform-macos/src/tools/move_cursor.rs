@@ -329,12 +329,17 @@ const BROWSER_HOVER_NOTE: &str = "This is a web browser page: hover it with the 
 /// What a window-target move does not do for a background app.
 const BACKGROUND_HOVER_NOTE: &str = " The app is in the background, so it sees no hover: \
      macOS apps track hover and show tooltips from the real pointer, and nothing under this \
-     point offers a background route (no AXShowAlternateUI, not an Electron page). For a web \
-     page in Chrome use browser_pointer hover. A control that only appears on hover, or a \
-     tooltip, cannot be revealed without the user's pointer (scope:\"desktop\") or the app in \
-     front (bring_to_front); use either only if the user allows it. Look first for the same \
-     command elsewhere: a menu item, a context menu, a keyboard shortcut, or help text in \
-     get_window_state.";
+     point offers a background route (no AXShowAlternateUI, not an Electron page). Posting \
+     mouseMoved events to the window does not change that: a VM check on macOS 26.5.2 (a \
+     tracking-area toolbar and a rect tooltip, with the window made key without raising it) \
+     showed no hover and no tooltip. For a web page in Chrome use browser_pointer hover. Read \
+     the text from the accessibility tree instead where the app has it: get_window_state with \
+     a query for the control, and look at its description, help= or title. A control that only \
+     appears on hover, or a tooltip on a custom-drawn view, cannot be revealed without the \
+     user's pointer (scope:\"desktop\") or the app in front (bring_to_front), which disturbs \
+     the user: use either only if the user allows it, otherwise stop and tell them which step \
+     needs it. Look first for the same command elsewhere: a menu item, a context menu, a \
+     keyboard shortcut, or help text in get_window_state.";
 
 /// The app that owns the frontmost ordinary window under a desktop point,
 /// when that app is not the active one. The driver's own windows (cursor
@@ -356,9 +361,11 @@ fn inactive_app_under_point(x: f64, y: f64) -> Option<String> {
 /// only in the active one (VM check: 3/3 with the app active, 0/3 without).
 fn inactive_app_note(app: &str) -> String {
     format!(
-        " {app} is not the active app: hover effects update, but native tooltips only \
-         appear in the active app. To read a tooltip, bring_to_front its window first, \
-         move the pointer onto the control and wait about a second before looking."
+        " {app} is not the active app, but hover effects update and a native tooltip still \
+         appears after about a second, as a small window of the app (macOS 26.5.2 VM check). \
+         List the windows of the app for the new one and call get_window_state on its \
+         window_id: its screenshot is the tooltip (the accessibility tree comes back empty). The \
+         real pointer moved, so this is not a background route."
     )
 }
 
@@ -406,6 +413,9 @@ mod tests {
     fn the_inactive_app_note_names_the_route_to_a_tooltip() {
         let note = super::inactive_app_note("BenchLab");
         assert!(note.starts_with(" BenchLab is not the active app"));
-        assert!(note.contains("bring_to_front"));
+        assert!(note.contains("list the windows") || note.contains("List the windows"));
+        assert!(note.contains("get_window_state"));
+        assert!(note.contains("screenshot"));
+        assert!(note.contains("not a background route"));
     }
 }

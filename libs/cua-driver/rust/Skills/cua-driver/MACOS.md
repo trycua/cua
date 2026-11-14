@@ -688,6 +688,12 @@ item, a context menu, a keyboard shortcut, or the control's help text in
 Otherwise the step needs the user's pointer (`move_cursor` with
 `scope:"desktop"` and `delivery_mode:"foreground"`) or the app in front
 (`bring_to_front`); use either only if the user allows it, and say which.
+Posting `mouseMoved` events to the window does not hover: a VM check on
+macOS 26.5.2 (a tracking-area toolbar and a rect tooltip, window made key
+without a raise) showed neither. After a real hover a native tooltip is a
+small window of the app, even when the app is not active: find it with
+`list_windows` and call `get_window_state` on its `window_id`; its screenshot
+is the tooltip and its accessibility tree is empty.
 
 ### Desktop-target pointer input over a background app
 
@@ -733,7 +739,11 @@ background: macOS tracks those sessions with the real pointer. The driver
 sees the session start, releases at once, and returns
 `background_unavailable` with `reason: "drag_and_drop_session"`. Look for a
 non-drag route first (Move Up/Down, a menu or context-menu command, a
-shortcut, cut and paste), then foreground if the user allows it.
+shortcut, cut and paste), then foreground if the user allows it. Posting
+the rest of the drag does not help: in a VM check (macOS 26.5.2, an
+`NSTableView` row) the session began, the drop fired, and it landed on the
+row where the drag started, because the session reads the real pointer's
+position, not the posted events.
 
 In an Electron window, `drag` is sent from the app's main process
 (CDP `Input.dispatchMouseEvent` with the button held, or

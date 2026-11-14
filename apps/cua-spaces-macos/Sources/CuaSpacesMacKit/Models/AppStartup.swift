@@ -522,6 +522,23 @@ public struct LiveServices: @unchecked Sendable {
     }
 }
 
+/// The account's access token from the live services.
+public enum LiveAccountToken {
+    /// nil only when the sign-in service said the session is gone. Cua not
+    /// having started (the SDK failed to come up, which happens right after
+    /// a wake or an update) is not "signed out": it throws, so the host's
+    /// sign-in check changes nothing instead of pausing sharing
+    /// (`HostModel.reconcileAccount`, CUA-3746).
+    public static func read(gate: LiveGate<LiveServices>, force: Bool) async throws -> String? {
+        guard let live = await gate.wait().live else { throw NotStarted(what: "Your account") }
+        do {
+            return try await live.cua.auth().accessToken(force: force)
+        } catch CuaError.Unauthenticated {
+            return nil
+        }
+    }
+}
+
 /// A value set once, which callers wait for.
 public final class LiveGate<Value: Sendable>: @unchecked Sendable {
     private let lock = NSLock()

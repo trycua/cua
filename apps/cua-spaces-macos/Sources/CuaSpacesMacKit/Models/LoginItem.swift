@@ -193,10 +193,15 @@ public enum HelperService {
     public enum WatchVerdict: Equatable, Sendable {
         /// Nothing changed.
         case keep
-        /// The app's files or the spec are gone (a downgrade to a build
-        /// without the service, or the host was removed): stop, exit 0, and
+        /// The spec is gone (the host was removed): stop, exit 0, and
         /// launchd leaves it stopped.
         case stop
+        /// The app's files are gone but the host is still set up (an update's
+        /// bundle swap that takes longer than the watch's two looks, or a
+        /// downgrade): stop the old cua-spacesd and exit 75, so launchd
+        /// tries again once the files are back. Exiting 0 here left the
+        /// service stopped after an update (CUA-3746).
+        case retryLater
         /// The app was updated in place: stop the old cua-spacesd and exit
         /// non-zero, so launchd starts the new build's (KeepAlive
         /// SuccessfulExit=false).
@@ -206,22 +211,59 @@ public enum HelperService {
     /// One look at the service's files: `started` are the identities of the
     /// files it runs from (its own executable and Contents/Helpers/
     /// cua-spacesd) when it started, `now` the same files now (`nil` for one
-    /// that is gone). Gone twice in a row stops (an update's swap is quick
-    /// and is not mistaken for a removal); all there with any identity
-    /// changed restarts.
+    /// that is gone). Gone twice in a row stops or retries (an update's swap
+    /// is quick and is not mistaken for a removal): the spec gone is a
+    /// removal (`.stop`), the app's files gone with the spec there is not
+    /// (`.retryLater`). All there with any identity changed restarts.
     public static func watch(started: [FileIdentity?], now: [FileIdentity?], specPresent: Bool,
                              misses: inout Int) -> WatchVerdict {
         if !specPresent || now.contains(where: { $0 == nil }) {
             misses += 1
-            return misses >= 2 ? .stop : .keep
+            guard misses >= 2 else { return .keep }
+            return specPresent ? .retryLater : .stop
         }
         misses = 0
         return started != now ? .restart : .keep
     }
 
+    /// A service log past this size is moved aside to `<log>.1` at the next
+    /// start (the log lives in `~/.cua/logs/host.log`, outside the host
+    /// folder, so removing the host keeps it: CUA-3746).
+    public static let logRotateBytes: Int = 5 * 1024 * 1024
+
+    public static func rotateLog(_ path: String, max: Int = logRotateBytes) {
+        guard let size = (try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? Int,
+              size > max else { return }
+        try? FileManager.default.removeItem(atPath: path + ".1")
+        try? FileManager.default.moveItem(atPath: path, toPath: path + ".1")
+    }
+
     /// The exit status of a service that restarts onto an updated app
     /// (EX_TEMPFAIL): non-zero, so launchd starts it again.
     public static let restartExitCode: Int32 = 75
+
+    /// A stop (SIGTERM) in the first seconds of a start is not a person
+    /// stopping the service: it is a restarter killing the launcher that
+    /// launchd had just started (an unregister, a `kickstart -k` during an
+    /// update; the log of CUA-3746 shows launchd ending a new launcher after
+    /// 22 ms). It must come back, so it exits 75 like an update does.
+    public static let startGraceSeconds: TimeInterval = 5
+
+    /// The launcher's exit status once the child is gone. `stopping`: a stop
+    /// signal or the `.stop` verdict reached it; `restarting`: the update
+    /// watch asked for a restart; `uptime`: seconds since the child started.
+    /// 0 leaves the service stopped (launchd's KeepAlive SuccessfulExit=false),
+    /// anything else starts it again.
+    public static func launcherExitCode(stopping: Bool, restarting: Bool, childCode: Int32,
+                                        uptime: TimeInterval, removed: Bool) -> Int32 {
+        if restarting { return restartExitCode }
+        if stopping {
+            // Removed (the spec is gone) or stopped long after it started:
+            // stay stopped. Stopped at once on a start: come back.
+            return (removed || uptime >= startGraceSeconds) ? 0 : restartExitCode
+        }
+        return childCode == 0 ? 1 : childCode
+    }
 
     /// A launch of this executable that is not the app's window: the host
     /// service, Cua Driver's login item and their commands
@@ -290,17 +332,55 @@ public enum HelperService {
         return nil
     }
 
+    /// When the app starts a helper that should run but does not: at once,
+    /// then after 15 s, 30 s, 1 min, 2 min and every 5 min, so a service
+    /// that keeps failing is not hammered and one that came back is never
+    /// given up on (CUA-3746: before, three tries and then nothing).
+    public struct RepairBackoff: Equatable, Sendable {
+        public static let delays: [TimeInterval] = [0, 15, 30, 60, 120, 300]
+        public private(set) var attempts = 0
+        public private(set) var last: Date?
+        public init() {}
+
+        /// Whether a repair is due at `now`.
+        public func due(now: Date) -> Bool {
+            guard let last else { return true }
+            let wait = Self.delays[min(attempts, Self.delays.count - 1)]
+            return now.timeIntervalSince(last) >= wait
+        }
+        public mutating func attempted(now: Date) {
+            attempts += 1
+            last = now
+        }
+        /// The service runs (or sharing is off): start over.
+        public mutating func healthy() { self = RepairBackoff() }
+        /// After this many failed repairs the page may offer "Restart service".
+        public var failed: Bool { attempts >= 2 }
+    }
+
+    /// How long the app waits for a running helper to restart itself after
+    /// an update before it restarts it (`restartIfStale`).
+    public static let restartGraceSeconds: TimeInterval = 30
+
     /// CUA-2457: at launch, the login item still running from before an
     /// update (Sparkle, or the app dragged over) is restarted onto this
     /// build (`launchctl kickstart -k`), so the host service runs the
     /// cua-spacesd that shipped with it. Services from this build watch
     /// their own files and restart themselves; this catches the ones that
     /// started before that watch existed. Off the main thread.
-    public static func restartIfStale(executable: URL? = Bundle.main.executableURL) {
+    public static func restartIfStale(executable: URL? = Bundle.main.executableURL,
+                                      grace: TimeInterval = restartGraceSeconds) {
         guard let executable else { return }
         let target = "gui/\(getuid())/\(label)"
         DispatchQueue.global(qos: .utility).async {
-            guard let pid = runningPid(target: target) else { return }
+            guard let first = runningPid(target: target) else { return }
+            // A helper that watches its own files restarts itself onto the
+            // new build within seconds of the swap: give it that time before
+            // a second restarter kills what launchd just started (CUA-3746).
+            // Only a helper still on the same pid after the grace is one
+            // that cannot (it started before the watch existed).
+            if grace > 0 { Thread.sleep(forTimeInterval: grace) }
+            guard let pid = runningPid(target: target), pid == first else { return }
             let stale = processStart(pid).flatMap { started in
                 placedTime(daemonPath(executable: executable).path).map { isStale(serviceStarted: started, daemonInstalled: $0) }
             } ?? false

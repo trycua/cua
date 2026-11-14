@@ -2130,8 +2130,11 @@ impl ServiceManager for AppHelper {
         // A registration made by another copy of the app (replaced since:
         // an update, a reinstall, a downgrade and back) can leave launchd
         // resolving the helper in a bundle that is gone ("Invalid or missing
-        // Program", exit 78). Registering again from this app binds it here.
-        if !self.state().running {
+        // Program", exit 78). Unregistering first binds it to this app. A
+        // helper that is merely not running (the update's swap, a stop) is
+        // left registered: unregistering it fights the helper's own restart
+        // (CUA-3746), and registering again is idempotent.
+        if needs_reregistration(self.state().running, self.spawn_failed()) {
             let _ = self.registration("unregister");
         }
         let reg = self.registration("register")?;
@@ -2145,7 +2148,13 @@ impl ServiceManager for AppHelper {
             std::thread::sleep(step);
             waited += step;
         }
-        let kick = || run(Command::new("launchctl").args(["kickstart", "-k", &self.target()]));
+        // `-k` ends a running helper first (a deliberate restart onto a new
+        // spec); a stopped one is only started, so a launcher that launchd
+        // just started on its own is not killed again (CUA-3746).
+        let kick = || {
+            run(Command::new("launchctl")
+                .args(kickstart_args(self.state().running, &self.target())))
+        };
         let mut result = kick();
         // Started but gone at once with launchd's "could not find the
         // program" (a stale bundle): register from this app and try once more.
@@ -2198,6 +2207,25 @@ impl ServiceManager for AppHelper {
     fn port_free(&self, addr: std::net::SocketAddr, transport: crate::ports::Transport) -> bool {
         crate::ports::os_port_free(addr, transport)
     }
+}
+
+/// Whether `install` unregisters the app helper before it registers it
+/// again: only when launchd could not start its program at the last try
+/// (a registration left by another copy of the app, exit 78). A helper that
+/// is merely stopped keeps its registration.
+pub(crate) fn needs_reregistration(running: bool, spawn_failed: bool) -> bool {
+    !running && spawn_failed
+}
+
+/// The `launchctl` arguments that start the helper: `kickstart -k` ends a
+/// running one first, a stopped one gets a plain `kickstart`.
+pub(crate) fn kickstart_args(running: bool, target: &str) -> Vec<String> {
+    let mut args = vec!["kickstart".to_string()];
+    if running {
+        args.push("-k".into());
+    }
+    args.push(target.into());
+    args
 }
 
 /// A registration that did not leave the helper allowed to run, in words.
@@ -3442,5 +3470,33 @@ mod instance_tests {
         .unwrap();
         assert!(staging.retire_legacy_names().is_empty());
         assert!(unit_dir.join("cua-spacesd-host.service").exists());
+    }
+}
+
+#[cfg(test)]
+mod helper_restart_tests {
+    use super::{kickstart_args, needs_reregistration};
+
+    #[test]
+    fn a_stopped_helper_keeps_its_registration() {
+        // The update's swap, a SIGTERM, a stop: not running, but launchd can
+        // still start its program. Unregistering it fights the helper's own
+        // restart (CUA-3746).
+        assert!(!needs_reregistration(false, false));
+        assert!(!needs_reregistration(true, false));
+    }
+
+    #[test]
+    fn a_registration_launchd_cannot_start_is_bound_again() {
+        assert!(needs_reregistration(false, true));
+        // Running means launchd found the program after all.
+        assert!(!needs_reregistration(true, true));
+    }
+
+    #[test]
+    fn only_a_running_helper_is_killed_by_kickstart() {
+        let t = "gui/501/com.trycua.spaces.helper";
+        assert_eq!(kickstart_args(true, t), ["kickstart", "-k", t]);
+        assert_eq!(kickstart_args(false, t), ["kickstart", t]);
     }
 }

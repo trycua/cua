@@ -2068,7 +2068,7 @@
    "read_only": false
   },
   {
-   "description": "Check required permissions for cua-driver-rs on Linux.\nHow to get them granted: `get_guide({topic:\"permissions\"})`.",
+   "description": "Check required permissions for cua-driver-rs on Linux. How to get them granted: `get_guide({topic:\"permissions\"})`.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {

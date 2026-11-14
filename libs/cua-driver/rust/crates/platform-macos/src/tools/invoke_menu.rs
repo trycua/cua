@@ -22,9 +22,10 @@ use std::{
 };
 
 use crate::ax::bindings::{
-    ax_get_window_id, copy_action_names, copy_ax_windows, copy_bool_attr, copy_children,
-    copy_element_attr, copy_string_attr, kAXErrorSuccess, perform_action, set_bool_attr_true,
-    AXUIElementCreateApplication, AXUIElementRef, AXUIElementSetMessagingTimeout,
+    ax_get_window_id, copy_action_names, copy_ax_windows, copy_ax_windows_including,
+    copy_bool_attr, copy_children, copy_element_attr, copy_string_attr, kAXErrorSuccess,
+    perform_action, set_bool_attr_true, AXUIElementCreateApplication, AXUIElementRef,
+    AXUIElementSetMessagingTimeout,
 };
 
 pub struct InvokeMenuTool;
@@ -474,6 +475,26 @@ fn focus_exact_window(pid: i32, window_id: u32) -> Result<(), String> {
     }
 }
 
+/// How `invoke_menu` reaches the menu of its target window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MenuRoute {
+    /// Make the window key, raise it, and open each menu level.
+    Foreground,
+    /// Resolve the path without opening a menu or raising the window.
+    Background,
+}
+
+/// The foreground route raises the target window, which for a window on
+/// another Space switches the user's Space (issue #4635). That window takes
+/// the background route even when its app is frontmost.
+fn menu_route(app_in_front: bool, window_on_current_space: Option<bool>) -> MenuRoute {
+    if app_in_front && window_on_current_space != Some(false) {
+        MenuRoute::Foreground
+    } else {
+        MenuRoute::Background
+    }
+}
+
 fn exact_window_is_ready(
     frontmost_pid: Option<i32>,
     target_pid: i32,
@@ -736,7 +757,8 @@ fn document_path_of_window(pid: i32, window_id: u32) -> Option<std::path::PathBu
         }
         set_messaging_timeout(app);
         let mut url = None;
-        for window in copy_ax_windows(app) {
+        // `AXWindows` omits a window on another Space; the probe recovers it.
+        for window in copy_ax_windows_including(app, pid, window_id) {
             if url.is_none() && ax_get_window_id(window) == Some(window_id) {
                 url = copy_string_attr(window, "AXDocument");
             }
@@ -977,12 +999,15 @@ impl Tool for InvokeMenuTool {
         // A background target: invoke the item without activating the app or
         // raising its window. When macOS keeps the item unavailable to a
         // background app, refuse and say so instead of activating it.
-        let target_in_front = tokio::task::spawn_blocking(move || {
-            live_frontmost_app().or_else(crate::apps::frontmost_pid) == Some(pid)
+        let route = tokio::task::spawn_blocking(move || {
+            menu_route(
+                live_frontmost_app().or_else(crate::apps::frontmost_pid) == Some(pid),
+                crate::windows::window_on_current_space_by_id(window_id),
+            )
         })
         .await
-        .unwrap_or(false);
-        if !target_in_front {
+        .unwrap_or(MenuRoute::Background);
+        if route == MenuRoute::Background {
             return run_in_background(pid, window_id, path, MenuRequest::Path).await;
         }
 
@@ -1042,6 +1067,20 @@ impl Tool for InvokeMenuTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue #4635: a frontmost app's window on another Space must not be
+    /// raised (that switches the user's Space), so its menu goes through the
+    /// background route. Only a window known to be on another Space is
+    /// diverted; an unreadable Space view keeps the app-in-front route.
+    #[test]
+    fn a_window_on_another_space_takes_the_background_route() {
+        assert_eq!(menu_route(true, Some(false)), MenuRoute::Background);
+        assert_eq!(menu_route(true, Some(true)), MenuRoute::Foreground);
+        assert_eq!(menu_route(true, None), MenuRoute::Foreground);
+        for space in [Some(true), Some(false), None] {
+            assert_eq!(menu_route(false, space), MenuRoute::Background);
+        }
+    }
 
     #[test]
     fn background_menu_requires_both_exact_document_contexts() {

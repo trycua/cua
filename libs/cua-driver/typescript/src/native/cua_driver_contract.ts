@@ -1178,7 +1178,7 @@ export type ClipboardReadInput = {
     includeText: boolean,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string
 }
@@ -1291,7 +1291,7 @@ export type ClipboardWriteInput = {
     filePath?: string,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string
 }
@@ -2216,7 +2216,7 @@ export type DragInput = {
     scope?: DesktopScope,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string,
     durationMs?: bigint,
@@ -2639,7 +2639,7 @@ const FfiConverterTypeGetAgentCursorStateOutput = (() => {
 export type GetCursorPositionInput = {
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string
 }
@@ -2682,7 +2682,7 @@ const FfiConverterTypeGetCursorPositionInput = (() => {
 export type GetDesktopStateInput = {
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string,
     /**
@@ -2742,7 +2742,7 @@ const FfiConverterTypeGetDesktopStateInput = (() => {
 export type GetScreenSizeInput = {
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string
 }
@@ -2965,7 +2965,7 @@ export type HotkeyInput = {
     scope?: DesktopScope,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string
 }
@@ -3044,7 +3044,7 @@ export type InvokeMenuInput = {
     deliveryMode?: InputDeliveryMode,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string
 }
@@ -3686,7 +3686,7 @@ export type MoveCursorInput = {
     scope?: DesktopScope,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string
 }
@@ -4825,7 +4825,7 @@ export type PressKeyInput = {
     scope?: DesktopScope,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string,
     modifiers?: Array<string>
@@ -4957,7 +4957,7 @@ export type ScrollInput = {
     scope?: DesktopScope,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string,
     by?: ScrollBy,
@@ -5553,7 +5553,7 @@ export type SetWindowFrameInput = {
     height: number,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string
 }
@@ -5880,7 +5880,7 @@ export type TypeTextInput = {
     scope?: DesktopScope,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string
 }
@@ -5944,8 +5944,7 @@ export type VerifyStateInput = {
     expect: Array<StatePredicate>,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session. This
-     * field never selects capture modality or authorization.
+     * accepts it. This field never selects capture modality or authorization.
      */
     session?: string,
     /**

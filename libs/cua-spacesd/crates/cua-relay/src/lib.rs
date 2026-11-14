@@ -52,6 +52,7 @@ pub mod pairing;
 pub mod pending_deletions;
 pub mod phone;
 pub mod pool;
+pub mod process_memory;
 pub mod proxies;
 pub mod push_api;
 pub mod route_marker;

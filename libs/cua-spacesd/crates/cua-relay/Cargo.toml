@@ -66,3 +66,8 @@ cua-proto = { path = "../../../cua/crates/cua-proto" }
 native-tls.workspace = true
 tokio-native-tls.workspace = true
 tempfile.workspace = true
+
+# tests/churn_bounded.rs measures the live heap with jemalloc's statistics.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+tikv-jemallocator = "0.7"
+tikv-jemalloc-ctl = { version = "0.7", features = ["stats"] }

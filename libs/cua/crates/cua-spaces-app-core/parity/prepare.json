@@ -209,7 +209,7 @@
       ]
     },
     {
-      "step": "the home Space was removed and is made again",
+      "step": "the home Space was removed and stays removed",
       "actions": [
         {
           "type": "homeGone",
@@ -218,8 +218,9 @@
       ]
     },
     {
-      "step": "a failure that will not clear offers Try again",
+      "step": "a new request can prepare again; a failure that will not clear offers Try again",
       "actions": [
+        { "type": "start", "nowMs": 1805000, "harness": "claude-code", "pendingId": "pending:requested" },
         {
           "type": "failed",
           "nowMs": 1810000,

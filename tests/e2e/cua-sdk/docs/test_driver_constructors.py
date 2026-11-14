@@ -82,16 +82,20 @@ def call_errors(block: str, signatures: dict[str, Signature]) -> list[str]:
         sig = signatures.get(name)
         if sig is None:
             continue
-        unpacked = any(k.arg is None for k in node.keywords)
         given = {k.arg for k in node.keywords if k.arg is not None}
+        unknown = sorted(given - set(sig.positional) - sig.keywords)
+        problems = []
+        if any(isinstance(a, ast.Starred) for a in node.args):
+            # *args: the positional count is unknown, so only keyword names can be checked.
+            if unknown:
+                errors.append(f"line {node.lineno}: {name}(...) unexpected {', '.join(unknown)}")
+            continue
         npos = len(node.args)
         missing = [p for p in sig.positional[npos : sig.required_positional] if p not in given]
         missing += sorted(sig.required_keywords - given)
-        if unpacked:
+        if any(k.arg is None for k in node.keywords):
             missing = []  # **kwargs may supply them
-        unknown = sorted(given - set(sig.positional) - sig.keywords)
         duplicate = [p for p in sig.positional[:npos] if p in given]
-        problems = []
         if npos > len(sig.positional):
             problems.append(f"{npos} positional arguments, accepts {len(sig.positional)}")
         if duplicate:
@@ -151,6 +155,8 @@ class DriverConstructorTests(unittest.TestCase):
             "ActionTarget.WINDOW(1)\n"
             "ActionTarget.WINDOW(1, pid=2, **extra)\n"
             "G(bogus=1, **extra)\n"
+            "G(*(), **extra)\n"
+            "ActionTarget.WINDOW(*args)\n"
         )
         errors = call_errors(block, self.signatures)
         self.assertEqual(len(errors), 4, errors)

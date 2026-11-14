@@ -802,7 +802,7 @@ async fn non_scalar_set_value_is_rejected_before_any_batch_action() {
 #[test]
 fn a_refused_step_line_names_the_structured_reason() {
     // A refusal's first line is cut at the message limit before it says why
-    // (bench IR-02: "... call bring_to_fr..."); the line carries the
+    // ("... call bring_to_fr..."); the line carries the
     // structured reason and the popup's type_select instead.
     let refusal = json!({
         "code": "background_unavailable",

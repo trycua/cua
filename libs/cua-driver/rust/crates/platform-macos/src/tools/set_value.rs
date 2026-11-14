@@ -2022,7 +2022,7 @@ mod type_select_tests {
         );
     }
 
-    /// The IR-02 race: the app puts a banner of its own on screen (in answer
+    /// The race: the app puts a banner of its own on screen (in answer
     /// to the field set just before) while the activation is posted. The
     /// banner stays once the app is inactive again, so it is not the
     /// activation's: the activation is tried again and goes through.

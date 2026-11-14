@@ -4,6 +4,7 @@
 //! Linux identity and endpoint evidence for the first-class browser tools.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -340,16 +341,33 @@ fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
     Ok(listeners)
 }
 
-fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+/// Chromium resolves its default profile under the browser's own
+/// `$XDG_CONFIG_HOME`, used verbatim even when relative, falling back to
+/// `$HOME/.config`, so read both from the browser process's environment. The
+/// driver runs as the same user, so its `$HOME` stands in when the browser's
+/// environment cannot be read. A relative result is resolved by the caller.
+fn default_user_data_dir(product: BrowserProduct, environ: &[u8]) -> Option<PathBuf> {
     let relative = match product {
-        BrowserProduct::GoogleChrome => ".config/google-chrome",
-        BrowserProduct::MicrosoftEdge => ".config/microsoft-edge",
-        BrowserProduct::Chromium => ".config/chromium",
-        BrowserProduct::Brave => ".config/BraveSoftware/Brave-Browser",
+        BrowserProduct::GoogleChrome => "google-chrome",
+        BrowserProduct::MicrosoftEdge => "microsoft-edge",
+        BrowserProduct::Chromium => "chromium",
+        BrowserProduct::Brave => "BraveSoftware/Brave-Browser",
         _ => return None,
     };
-    Some(home.join(relative))
+    let var = |name: &[u8]| {
+        environ
+            .split(|byte| *byte == 0)
+            .find_map(|entry| entry.strip_prefix(name)?.strip_prefix(b"="))
+            .filter(|value| !value.is_empty())
+            .map(|value| PathBuf::from(std::ffi::OsStr::from_bytes(value)))
+    };
+    let config_home = match var(b"XDG_CONFIG_HOME") {
+        Some(path) => path,
+        None => var(b"HOME")
+            .or_else(|| std::env::var_os("HOME").map(PathBuf::from))?
+            .join(".config"),
+    };
+    Some(config_home.join(relative))
 }
 
 fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
@@ -378,7 +396,7 @@ fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
     }
     directories.sort();
     directories.dedup();
-    match directories.as_slice() {
+    let path = match directories.as_slice() {
         [] => {
             let Some(executable) = std::fs::read_link(format!("/proc/{pid}/exe"))
                 .ok()
@@ -386,23 +404,30 @@ fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
             else {
                 return Ok(None);
             };
-            Ok(default_user_data_dir(browser_product(&executable)))
+            let environ = std::fs::read(format!("/proc/{pid}/environ")).unwrap_or_default();
+            let Some(path) = default_user_data_dir(browser_product(&executable), &environ) else {
+                return Ok(None);
+            };
+            path
         }
-        [path] if path.is_absolute() => Ok(Some(path.clone())),
-        [path] => {
-            let cwd = std::fs::read_link(format!("/proc/{pid}/cwd")).map_err(|_| {
-                BrowserRefusal::new(
-                    BrowserRefusalCode::BrowserBindingStale,
-                    format!("browser process {pid} working directory is unavailable"),
-                )
-            })?;
-            Ok(Some(cwd.join(path)))
+        [path] => path.clone(),
+        _ => {
+            return Err(BrowserRefusal::new(
+                BrowserRefusalCode::BrowserBindingAmbiguous,
+                "browser process has multiple distinct --user-data-dir arguments",
+            ))
         }
-        _ => Err(BrowserRefusal::new(
-            BrowserRefusalCode::BrowserBindingAmbiguous,
-            "browser process has multiple distinct --user-data-dir arguments",
-        )),
+    };
+    if path.is_absolute() {
+        return Ok(Some(path));
     }
+    let cwd = std::fs::read_link(format!("/proc/{pid}/cwd")).map_err(|_| {
+        BrowserRefusal::new(
+            BrowserRefusalCode::BrowserBindingStale,
+            format!("browser process {pid} working directory is unavailable"),
+        )
+    })?;
+    Ok(Some(cwd.join(path)))
 }
 
 fn active_port_endpoint(pid: i64) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
@@ -1294,11 +1319,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn brave_default_user_data_dir_is_its_brave_software_profile_root() {
-        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap();
+    fn default_user_data_dir_follows_the_browser_process_config_home() {
+        let brave = browser_product("/opt/brave.com/brave/brave");
         assert_eq!(
-            default_user_data_dir(browser_product("/opt/brave.com/brave/brave")),
-            Some(home.join(".config/BraveSoftware/Brave-Browser"))
+            default_user_data_dir(brave, b"HOME=/home/ana\0LANG=C\0"),
+            Some(PathBuf::from(
+                "/home/ana/.config/BraveSoftware/Brave-Browser"
+            ))
+        );
+        assert_eq!(
+            default_user_data_dir(brave, b"HOME=/home/ana\0XDG_CONFIG_HOME=/srv/cfg\0"),
+            Some(PathBuf::from("/srv/cfg/BraveSoftware/Brave-Browser"))
+        );
+        assert_eq!(
+            default_user_data_dir(
+                BrowserProduct::GoogleChrome,
+                b"XDG_CONFIG_HOME=\0HOME=/home/ana\0"
+            ),
+            Some(PathBuf::from("/home/ana/.config/google-chrome"))
+        );
+        assert_eq!(
+            default_user_data_dir(brave, b"HOME=/home/ana\0XDG_CONFIG_HOME=cfg\0"),
+            Some(PathBuf::from("cfg/BraveSoftware/Brave-Browser"))
+        );
+        assert_eq!(
+            default_user_data_dir(BrowserProduct::Vivaldi, b"HOME=/home/ana\0"),
+            None
         );
     }
 

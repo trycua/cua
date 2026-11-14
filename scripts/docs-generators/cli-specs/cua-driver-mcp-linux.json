@@ -2428,6 +2428,11 @@
       "description": "Capture the exact tab viewport through CDP without selecting the tab or foregrounding its native window. Snapshot mode only. The request refuses if capture cannot be completed.",
       "type": "boolean"
      },
+     "include_snapshot": {
+      "default": true,
+      "description": "Snapshot mode only. false returns just the requested screenshot: no DOM walk, no refs, and the tab's current snapshot and refs stay valid. Requires include_screenshot:true; refuses with snapshot_format, scope_ref, query, or continuation.",
+      "type": "boolean"
+     },
      "max_image_dimension": {
       "description": "Long-edge cap for the requested screenshot, in pixels. Omitted or 0 returns the native viewport resolution. pixel_to_css_scale_x/y describe the delivered image. Requires include_screenshot:true.",
       "minimum": 0,

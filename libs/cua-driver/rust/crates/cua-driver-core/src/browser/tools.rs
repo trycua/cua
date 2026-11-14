@@ -529,6 +529,11 @@ impl GetBrowserStateTool {
                         "default": false,
                         "description": "Capture the exact tab viewport through CDP without selecting the tab or foregrounding its native window. Snapshot mode only. The request refuses if capture cannot be completed."
                     },
+                    "include_snapshot": {
+                        "type": "boolean",
+                        "default": true,
+                        "description": "Snapshot mode only. false returns just the requested screenshot: no DOM walk, no refs, and the tab's current snapshot and refs stay valid. Requires include_screenshot:true; refuses with snapshot_format, scope_ref, query, or continuation."
+                    },
                     "screenshot_format": {
                         "type": "string",
                         "enum": ["png", "jpeg"],
@@ -554,6 +559,40 @@ impl GetBrowserStateTool {
             open_world: false,
         };
         Self { def, engine }
+    }
+}
+
+impl GetBrowserStateTool {
+    /// `include_snapshot: false`: capture the viewport without a DOM walk.
+    /// The tab's stored snapshots are neither read nor replaced, so refs
+    /// minted earlier stay resolvable.
+    async fn screenshot_only(
+        &self,
+        session: &str,
+        target_id: &str,
+        tab_id: &str,
+        max_dim: u32,
+        encoding: crate::image_utils::ScreenshotEncoding,
+    ) -> ToolResult {
+        match self
+            .engine
+            .capture_tab_screenshot(session, target_id, tab_id, max_dim, encoding)
+            .await
+        {
+            Ok(screenshot) => with_tab_screenshot(
+                ToolResult::text(format!(
+                    "screenshot of {tab_id} (no snapshot taken; existing refs unchanged)"
+                ))
+                .with_structured(json!({
+                    "status": "ok",
+                    "mode": "screenshot",
+                    "target_id": target_id,
+                    "tab_id": tab_id,
+                })),
+                screenshot,
+            ),
+            Err(refusal) => refusal.to_tool_result(),
+        }
     }
 }
 
@@ -599,6 +638,13 @@ impl Tool for GetBrowserStateTool {
                 )
             }
         };
+        let include_snapshot = match args.get("include_snapshot") {
+            None | Some(Value::Null) => None,
+            Some(Value::Bool(include)) => Some(*include),
+            Some(_) => {
+                return ToolResult::error("Field include_snapshot has wrong type: expected boolean")
+            }
+        };
         // Snapshot mode: target_id (+ tab_id) — uses existing capabilities.
         if let Some(target_id) = args.opt_str("target_id") {
             let session = match require_explicit_session(&args) {
@@ -625,6 +671,25 @@ impl Tool for GetBrowserStateTool {
                 Ok(request) => request,
                 Err(error) => return error,
             };
+            if include_snapshot == Some(false) {
+                if !include_screenshot {
+                    return invalid_browser_state_arguments(
+                        "include_snapshot: false requires include_screenshot: true",
+                    );
+                }
+                if ["snapshot_format", "scope_ref", "query", "continuation"]
+                    .iter()
+                    .any(|field| present(&args, field))
+                {
+                    return invalid_browser_state_arguments(
+                        "snapshot_format, scope_ref, query, and continuation cannot be combined \
+                         with include_snapshot: false",
+                    );
+                }
+                return self
+                    .screenshot_only(&session, &target_id, &tab_id, max_dim, encoding)
+                    .await;
+            }
             let snapshot_format = args
                 .opt_str("snapshot_format")
                 .unwrap_or_else(|| "dom_refs_v1".into());
@@ -792,6 +857,11 @@ impl Tool for GetBrowserStateTool {
             return invalid_browser_state_arguments(
                 "screenshot_format, screenshot_quality, and max_image_dimension \
                  require snapshot mode with include_screenshot: true",
+            );
+        }
+        if include_snapshot.is_some() {
+            return invalid_browser_state_arguments(
+                "include_snapshot applies only in snapshot mode (target_id + tab_id)",
             );
         }
         let pid = match args.require_i64("pid") {
@@ -3899,6 +3969,78 @@ mod tests {
         assert!(matches!(
             &result.content[0],
             Content::Text { text, .. } if text == "Field include_screenshot has wrong type: expected boolean"
+        ));
+    }
+
+    #[tokio::test]
+    async fn bind_mode_refuses_include_snapshot() {
+        for include_snapshot in [false, true] {
+            assert_eq!(
+                invalid_arguments_detail(json!({
+                    "pid": 4242,
+                    "window_id": 7,
+                    "session": "browser-run",
+                    "include_snapshot": include_snapshot
+                }))
+                .await,
+                "include_snapshot applies only in snapshot mode (target_id + tab_id)"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn include_snapshot_false_requires_a_screenshot() {
+        assert_eq!(
+            invalid_arguments_detail(json!({
+                "target_id": "bt-fixture",
+                "tab_id": "tab-fixture",
+                "session": "browser-run",
+                "include_snapshot": false
+            }))
+            .await,
+            "include_snapshot: false requires include_screenshot: true"
+        );
+    }
+
+    #[tokio::test]
+    async fn include_snapshot_false_refuses_snapshot_shaping_fields() {
+        for (field, value) in [
+            ("snapshot_format", json!("semantic_v2")),
+            ("scope_ref", json!("p1:1")),
+            ("query", json!("Reply")),
+            ("continuation", json!("next")),
+        ] {
+            let mut args = json!({
+                "target_id": "bt-fixture",
+                "tab_id": "tab-fixture",
+                "session": "browser-run",
+                "include_snapshot": false,
+                "include_screenshot": true
+            });
+            args[field] = value;
+            assert_eq!(
+                invalid_arguments_detail(args).await,
+                "snapshot_format, scope_ref, query, and continuation cannot be combined with \
+                 include_snapshot: false",
+                "{field}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn non_boolean_include_snapshot_is_a_type_error() {
+        let result = GetBrowserStateTool::new(engine())
+            .invoke(json!({
+                "target_id": "bt-fixture",
+                "tab_id": "tab-fixture",
+                "session": "browser-run",
+                "include_snapshot": "no"
+            }))
+            .await;
+        assert_eq!(result.is_error, Some(true));
+        assert!(matches!(
+            &result.content[0],
+            Content::Text { text, .. } if text == "Field include_snapshot has wrong type: expected boolean"
         ));
     }
 

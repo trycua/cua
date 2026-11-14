@@ -2503,6 +2503,41 @@ async fn requested_tab_screenshot_encodes_jpeg_when_asked() {
 }
 
 #[tokio::test]
+async fn screenshot_only_leaves_the_tab_snapshot_and_refs_untouched() {
+    let f = fixture_with(|state| state.screenshot_data = screenshot_png_base64(4, 2)).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let button = ref_of(&snap, "main", "main-btn");
+    let walks = recorded_calls(&f, "DOM.getDocument").len();
+    assert!(walks > 0, "the snapshot must have walked the DOM");
+
+    let result = GetBrowserStateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "include_snapshot": false,
+            "include_screenshot": true,
+            "screenshot_format": "jpeg",
+            "screenshot_quality": 80
+        }))
+        .await;
+    let shot = structured(&result);
+    assert_eq!(shot["status"], "ok", "{shot}");
+    assert_eq!(shot["mode"], "screenshot");
+    for key in ["snapshot_id", "refs", "outline", "url"] {
+        assert!(shot[key].is_null(), "{key} must be absent: {shot}");
+    }
+    assert_eq!(first_image(&result).1, "image/jpeg");
+    assert_eq!(shot["screenshot_mime_type"], "image/jpeg");
+    assert_eq!(recorded_calls(&f, "DOM.getDocument").len(), walks);
+    f.engine
+        .store
+        .resolve_ref(SESSION, &target, &tab, &button)
+        .expect("ref from the earlier snapshot stays valid");
+}
+
+#[tokio::test]
 async fn requested_tab_screenshot_scale_describes_the_downscaled_image() {
     let f = fixture_with(|state| {
         state.viewport_css_width = 200.0;

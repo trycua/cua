@@ -514,6 +514,7 @@ Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
 | --- | --- | --- | --- |
 | <span id="get_browser_state--continuation"></span>`continuation` | `string` |  | Opaque continuation minted by an earlier semantic_v2 response. |
 | <span id="get_browser_state--include_screenshot"></span>`include_screenshot` | `boolean` | `false` | Capture the exact tab viewport through CDP without selecting the tab or foregrounding its native window. Snapshot mode only. The request refuses if capture cannot be completed. |
+| <span id="get_browser_state--include_snapshot"></span>`include_snapshot` | `boolean` | `true` | Snapshot mode only. false returns just the requested screenshot: no DOM walk, no refs, and the tab's current snapshot and refs stay valid. Requires include_screenshot:true; refuses with snapshot_format, scope_ref, query, or continuation. |
 | <span id="get_browser_state--max_image_dimension"></span>`max_image_dimension` | `integer` |  | Long-edge cap for the requested screenshot, in pixels. Omitted or 0 returns the native viewport resolution. pixel_to_css_scale_x/y describe the delivered image. Requires include_screenshot:true. Minimum: 0. |
 | <span id="get_browser_state--pid"></span>`pid` | `integer` |  | Native browser process id (bind mode). |
 | <span id="get_browser_state--query"></span>`query` | `string` |  | Read-only semantic match over role, accessible name, and visible text. |

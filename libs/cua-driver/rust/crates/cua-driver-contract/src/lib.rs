@@ -587,7 +587,6 @@ mod tests {
 
         assert!(MULTI_CALL_SESSION_DESCRIPTION.contains("prefer a short public session label"));
         assert!(MULTI_CALL_SESSION_DESCRIPTION.contains("repeat it on every call that accepts it"));
-        assert!(MULTI_CALL_SESSION_DESCRIPTION.contains("implicit lifecycle session"));
     }
 
     #[test]

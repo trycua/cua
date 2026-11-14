@@ -121,6 +121,7 @@ pub mod session;
 pub mod session_authorization;
 pub mod session_manifest;
 pub mod session_tools;
+pub mod sheet_grid;
 pub mod single_flight;
 pub mod snapshot_store;
 #[cfg(test)]

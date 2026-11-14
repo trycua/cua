@@ -65,6 +65,8 @@ pub mod recording_hooks;
 pub mod security_prompt;
 #[cfg(target_os = "macos")]
 pub mod session;
+#[cfg(target_os = "macos")]
+pub mod sheet;
 #[cfg(all(test, target_os = "macos"))]
 mod step_latency_bench;
 #[cfg(target_os = "macos")]

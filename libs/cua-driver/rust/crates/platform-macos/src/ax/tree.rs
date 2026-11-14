@@ -1004,7 +1004,7 @@ fn render_lines(lines: &[(usize, String)]) -> String {
 }
 
 /// Filter the tree markdown to lines matching `query` plus their ancestor chain.
-fn filter_tree(markdown: &str, query: &str) -> String {
+pub(crate) fn filter_tree(markdown: &str, query: &str) -> String {
     let needle = query.to_lowercase();
     let lines: Vec<&str> = markdown.lines().collect();
 

@@ -102,6 +102,55 @@ fn def() -> &'static ToolDef {
     })
 }
 
+/// Walk `window_id`'s accessibility tree off the async runtime and snapshot
+/// it. `timeout_ms` bounds the walk itself: it returns the partial tree when
+/// the budget runs out. The outer deadline is only a backstop for an AX call
+/// that ignores the per-element messaging timeout (dropping a spawn_blocking
+/// JoinHandle cannot cancel it).
+async fn walk_window(
+    pid: i32,
+    window_id: u32,
+    query: Option<String>,
+    collapse_menus: bool,
+    max_depth: usize,
+    timeout_ms: u64,
+    max_elements: usize,
+) -> Result<
+    (
+        crate::ax::tree::TreeWalkResult,
+        crate::ax::snapshot::AxSnapshot,
+    ),
+    ToolResult,
+> {
+    let walk_future = tokio::task::spawn_blocking(move || {
+        let tree = crate::ax::tree::with_menus_collapsed(collapse_menus, || {
+            crate::ax::tree::walk_tree_budgeted(
+                pid,
+                Some(window_id),
+                query.as_deref(),
+                max_depth,
+                cua_driver_core::walk_budget::WalkBudget::new(timeout_ms, max_elements),
+            )
+        });
+        let payload = crate::ax::snapshot::AxSnapshot::from_nodes(&tree.nodes);
+        (tree, payload)
+    });
+    // A launching app is waited on for up to `timeout_ms` before the
+    // walk's own `timeout_ms` starts (see `ax::launch`).
+    let backstop = std::time::Duration::from_millis(timeout_ms) * 2 + AX_WALK_BACKSTOP_GRACE;
+    match tokio::time::timeout(backstop, walk_future).await {
+        Ok(Ok(walked)) => Ok(walked),
+        Ok(Err(e)) => Err(ToolResult::error(format!("AX tree walk failed: {e}"))),
+        Err(_elapsed) => Err(ToolResult::error(format!(
+            "AX tree walk for pid={pid} did not return within {} s: an \
+             accessibility call stopped answering past the {timeout_ms} ms \
+             timeout_ms budget. Retry, or act by pixel (x,y) off a \
+             screenshot-only get_window_state (include_accessibility_tree:false).",
+            backstop.as_secs()
+        ))),
+    }
+}
+
 /// Start `capture` on a blocking thread now, so it overlaps the AX walk of a
 /// read that wants both. `None` when nothing would overlap: no screenshot is
 /// wanted, or no tree is walked (the caller then captures in its own turn).
@@ -349,9 +398,23 @@ impl Tool for GetWindowStateTool {
             .unwrap_or(crate::ax::tree::DEFAULT_MAX_DEPTH);
         let timeout_ms = cua_driver_core::tool_schema::resolve_timeout_ms(args.get("timeout_ms"));
 
+        // A query that names a spreadsheet grid ("row", "cells", "table",
+        // the sheet's name) is answered with the whole visible grid: its cells
+        // are named by address, so a plain substring filter would return the
+        // menu items containing the word instead. The walk then skips the
+        // query filter and the menus; without a grid it is redone as usual.
+        let mut grid_query = query
+            .as_deref()
+            .filter(|_| !view.full_output && !observation_only)
+            .filter(|q| {
+                let table = crate::sheet::last_grid(pid, window_id).map(|g| g.table);
+                cua_driver_core::sheet_grid::query_names_grid(q, table.as_deref())
+            })
+            .map(str::to_owned);
         // A model-facing read lists the menu bar's top-level titles only; a
         // query or full_output walks every menu as before.
-        let collapse_menus = query.as_deref().is_none_or(|q| q.trim().is_empty())
+        let collapse_menus = (query.as_deref().is_none_or(|q| q.trim().is_empty())
+            || grid_query.is_some())
             && !view.full_output
             && !observation_only;
         // Start the screenshot grab before the tree walk so the two overlap:
@@ -361,41 +424,43 @@ impl Tool for GetWindowStateTool {
             crate::capture::screenshot_window_image(window_id)
         });
         let (mut tree_result, prepared_snapshot) = if want_tree {
-            let q = query.clone();
-            // `timeout_ms` bounds the walk itself: it returns the partial tree
-            // when the budget runs out. The outer deadline is only a backstop
-            // for an AX call that ignores the per-element messaging timeout
-            // (dropping a spawn_blocking JoinHandle cannot cancel it).
-            let walk_future = tokio::task::spawn_blocking(move || {
-                let tree = crate::ax::tree::with_menus_collapsed(collapse_menus, || {
-                    crate::ax::tree::walk_tree_budgeted(
-                        pid,
-                        Some(window_id),
-                        q.as_deref(),
-                        max_depth,
-                        cua_driver_core::walk_budget::WalkBudget::new(timeout_ms, max_elements),
-                    )
-                });
-                let payload = crate::ax::snapshot::AxSnapshot::from_nodes(&tree.nodes);
-                (tree, payload)
-            });
-            // A launching app is waited on for up to `timeout_ms` before the
-            // walk's own `timeout_ms` starts (see `ax::launch`).
-            let backstop =
-                std::time::Duration::from_millis(timeout_ms) * 2 + AX_WALK_BACKSTOP_GRACE;
-            match tokio::time::timeout(backstop, walk_future).await {
-                Ok(Ok((tree, payload))) => (Some(tree), Some(payload)),
-                Ok(Err(e)) => return ToolResult::error(format!("AX tree walk failed: {e}")),
-                Err(_elapsed) => {
-                    return ToolResult::error(format!(
-                        "AX tree walk for pid={pid} did not return within {} s: an \
-                         accessibility call stopped answering past the {timeout_ms} ms \
-                         timeout_ms budget. Retry, or act by pixel (x,y) off a \
-                         screenshot-only get_window_state (include_accessibility_tree:false).",
-                        backstop.as_secs()
-                    ));
-                }
+            let walk_query = if grid_query.is_some() {
+                None
+            } else {
+                query.clone()
+            };
+            let mut walked = match walk_window(
+                pid,
+                window_id,
+                walk_query,
+                collapse_menus,
+                max_depth,
+                timeout_ms,
+                max_elements,
+            )
+            .await
+            {
+                Ok(walked) => walked,
+                Err(refusal) => return refusal,
+            };
+            if grid_query.is_some() && crate::sheet::grid_of(&walked.0).is_none() {
+                walked = match walk_window(
+                    pid,
+                    window_id,
+                    query.clone(),
+                    false,
+                    max_depth,
+                    timeout_ms,
+                    max_elements,
+                )
+                .await
+                {
+                    Ok(walked) => walked,
+                    Err(refusal) => return refusal,
+                };
+                grid_query = None;
             }
+            (Some(walked.0), Some(walked.1))
         } else {
             (None, None)
         };
@@ -691,6 +756,46 @@ impl Tool for GetWindowStateTool {
             }
         }
 
+        // A spreadsheet grid lists one row per visible cell, most of them
+        // empty: show its filled cells one line per sheet row, and remember
+        // the grid so a keyboard action on the window can say which cells it
+        // changed (see `cua_driver_core::sheet_grid`).
+        let mut grid_answered = false;
+        if !observation_only && scope_matched {
+            if let Some(tree) = tree_result.as_mut() {
+                match crate::sheet::grid_of(tree) {
+                    Some(grid) => {
+                        if !view.full_output {
+                            tree.tree_markdown = cua_driver_core::sheet_grid::compact_markdown(
+                                &tree.tree_markdown,
+                                &grid,
+                            );
+                        }
+                        if let Some(q) = grid_query.as_deref() {
+                            if let Some(md) = cua_driver_core::sheet_grid::grid_query_markdown(
+                                &tree.tree_markdown,
+                                |rest| crate::ax::tree::filter_tree(rest, q),
+                            ) {
+                                tree.tree_markdown = md;
+                                grid_answered = true;
+                            }
+                        }
+                        crate::sheet::remember(pid, window_id, grid);
+                    }
+                    None if !tree.truncated => crate::sheet::forget(pid, window_id),
+                    None => {}
+                }
+            }
+        }
+        // A grid query the grid could not answer filters like any query.
+        if !grid_answered {
+            if let Some(q) = grid_query.take() {
+                if let Some(tree) = tree_result.as_mut() {
+                    tree.tree_markdown = crate::ax::tree::filter_tree(&tree.tree_markdown, &q);
+                }
+            }
+        }
+
         // Capture screenshot dimensions before consuming.
         let screenshot_dims = screenshot.as_ref().map(|(_, _, w, h, _, _, _, _)| (*w, *h));
         let screenshot_file_path = screenshot
@@ -847,9 +952,11 @@ impl Tool for GetWindowStateTool {
             (None, Some(r)) if scope_matched => build_elements_array_with_token(&r.nodes, None),
             _ => Vec::new(),
         };
+        // A grid query keeps every element: the grid's row lines carry the
+        // cells' indices in their own format.
         let elements_json = cua_driver_core::element_query::project_elements_for_query(
             elements_json,
-            query.as_deref(),
+            query.as_deref().filter(|_| grid_query.is_none()),
             &tree_md,
         );
         // Screenshot pixels of the delivered capture: window origin in screen

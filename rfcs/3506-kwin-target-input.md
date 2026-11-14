@@ -765,6 +765,31 @@ surface.
 
 ## Compatibility and migration
 
+### Display-server and application compatibility (Wayland-first)
+
+Cua Driver should prefer native compositor-provided capabilities for a **native
+KWin/Wayland window** and retain existing X11/Xorg and XWayland routes as
+separate compatibility paths for **actual X11 clients**. This RFC does not
+remove, deprecate, or replace those backends. Selection must be based on the
+trusted live target's display backend and identity, not on a blanket session
+assumption, application name, or the mere existence of an X11 socket.
+
+A KWin UUID or helper-issued target token is **never** an X11 window ID. A
+native Wayland target must not be reinterpreted as an XID or dispatched through
+XTest/X11, XWayland, or desktop-scoped global input if compositor-bound input
+is unavailable, refused, partial, or unknown. Refusal cannot authorize a
+backend downgrade, a focus-then-global sequence, or replay. Conversely, an
+actual XWayland/X11 target may use an existing X11 compatibility route only
+when its X11 identity and requested operation are supported, the normal Driver
+policy admits that specific route, and that route's documented target and
+result guarantees hold. Otherwise it must refuse precisely.
+
+Semantic AT-SPI operations remain a separately admitted option where they
+prove the requested target and semantics; they are not a covert substitute for
+refused raw input. Explicit user-authorized desktop-scoped input is distinct
+from an attempted fallback for a target-scoped operation. Preserve existing
+backend-specific limitations and truthful delivery/result metadata.
+
 The preferred rollout preserves the current wire-compatible discovery surface:
 
 - old driver + new helper: `GetVersion() == 1` and `GetWindows()` continue to
@@ -918,6 +943,16 @@ also apply to any accepted foreground implementation.
 ### Contract and compatibility tests
 
 Cover at least:
+- mixed native Wayland and genuine XWayland windows in the same KWin session:
+  select routes only from trusted current target type and identity;
+- never reinterpret KWin UUIDs/tokens as X11 XIDs, including after a stale
+  capture, window recreation, or compositor/helper restart;
+- retain authorized X11/Xorg and XWayland compatibility for actual X11 clients,
+  while refusing an operation whose target/transport guarantees are insufficient;
+- no implicit backend downgrade, XTest/XWayland injection, or focus-then-desktop
+  input after a native exact-target refusal, partial, or unknown result;
+- independently requested desktop-scoped input remains distinguishable from
+  an automatic fallback and cannot cause replay of uncertain target input;
 
 - old-driver/new-helper read-only discovery compatibility;
 - new-driver/old-helper read-only discovery and target-input refusal;
@@ -1053,6 +1088,12 @@ SHA.
 
 ## Related work
 
+- #7070 independently proposes a KWin-side per-event input gate; its
+  implementation and reported test results require separate review against
+  this RFC's target, ownership, lifecycle and truthful-result requirements.
+  This RFC neither incorporates nor certifies that PR.
+- #7683 separately corrects the `bring_to_front` tool description; it does not
+  change input routing or the X11/XWayland compatibility backends.
 - #3336 provides the trusted KWin identity adapter used by the proof.
 - #3972 and #1982 are conditionally unblocked by an accepted foreground proof.
 - #4034 tracks KDE recording separately; its release-build PipeWire dependency

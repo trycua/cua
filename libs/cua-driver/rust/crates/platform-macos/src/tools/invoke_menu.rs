@@ -643,22 +643,35 @@ unsafe fn require_live_menu_window(
     require_menu_window(requested, read("AXFocusedWindow"), read("AXMainWindow"))
 }
 
+/// `off_space`: WindowServer places the requested window on another Space.
+/// Foreground delivery takes the same route for that window (see
+/// [`menu_route`]), so the refusal names the Space and `bring_to_front`
+/// instead of advising `foreground`.
 fn unbound_menu_window(
     pid: i32,
     requested: u32,
     focused: Option<u32>,
     main: Option<u32>,
+    off_space: bool,
 ) -> ToolResult {
+    let mut reason = format!(
+        "invoke_menu: requested window {requested} is not the confirmed document menu context \
+         (focused={focused:?}, main={main:?}); no menu action was dispatched"
+    );
+    if off_space {
+        reason.push_str(&format!(
+            ". Window {requested} is on another Space, and making it the menu context would \
+             switch the user's Space. If the user allows it, call bring_to_front for this \
+             window first, then invoke_menu"
+        ));
+    }
     super::background_refusal_result(
         pid,
         requested,
         &cua_driver_core::background_input::BackgroundRefusal {
             code: super::WINDOW_NOT_KEY,
-            reason: format!(
-                "invoke_menu: requested window {requested} is not the confirmed document menu context \
-                 (focused={focused:?}, main={main:?}); no menu action was dispatched"
-            ),
-            advice: Some("foreground"),
+            reason,
+            advice: (!off_space).then_some("foreground"),
         },
     )
 }
@@ -919,7 +932,14 @@ pub(super) async fn run_in_background(
             requested,
             focused,
             main,
-        })) => unbound_menu_window(pid, requested, focused, main),
+        })) => {
+            let off_space = tokio::task::spawn_blocking(move || {
+                crate::windows::window_on_current_space_by_id(requested) == Some(false)
+            })
+            .await
+            .unwrap_or(false);
+            unbound_menu_window(pid, requested, focused, main, off_space)
+        }
         Ok(Err(BackgroundPressError::Other(error))) => refusal(error),
         Err(error) => refusal(format!("invoke_menu: blocking task failed: {error}")),
     }
@@ -1103,17 +1123,35 @@ mod tests {
 
     #[test]
     fn unbound_menu_refuses_before_dispatch_with_the_exact_target() {
-        let result = unbound_menu_window(42, 7, Some(8), None);
+        let result = unbound_menu_window(42, 7, Some(8), None, false);
         assert_eq!(result.is_error, Some(true));
         let data = result.structured_content.unwrap();
         assert_eq!(data["code"], "window_not_key");
         assert_eq!(data["effect"], "refused");
         assert_eq!(data["pid"], 42);
         assert_eq!(data["window_id"], 7);
+        assert_eq!(data["escalation"]["recommended"], "foreground");
         assert!(data["reason"]
             .as_str()
             .unwrap()
             .contains("no menu action was dispatched"));
+    }
+
+    /// Issue #4635: an off-Space window whose sibling holds the menu context
+    /// is refused with the Space named. Foreground takes the same route for
+    /// that window, so the refusal must not recommend it.
+    #[test]
+    fn an_unbound_off_space_window_is_refused_with_the_space_named() {
+        let result = unbound_menu_window(42, 7, Some(8), Some(8), true);
+        assert_eq!(result.is_error, Some(true));
+        let data = result.structured_content.unwrap();
+        assert_eq!(data["code"], "window_not_key");
+        assert_eq!(data["window_id"], 7);
+        assert!(data.get("escalation").is_none());
+        let reason = data["reason"].as_str().unwrap();
+        assert!(reason.contains("no menu action was dispatched"));
+        assert!(reason.contains("on another Space"));
+        assert!(reason.contains("bring_to_front"));
     }
 
     #[test]

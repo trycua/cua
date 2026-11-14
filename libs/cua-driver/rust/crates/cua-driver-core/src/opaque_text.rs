@@ -66,7 +66,7 @@ text from the screenshot is still starting: read the window again in a few secon
 pub struct OcrRow {
     pub y: f64,
     pub fragments: Vec<OcrFragment>,
-    /// Fingerprint of the row's dark pixels (see [`stamp_ink`]).
+    /// Fingerprint of the row's ink pixels (see [`stamp_ink`]).
     pub ink: Option<u16>,
 }
 
@@ -202,15 +202,19 @@ pub fn render_row(row: &OcrRow) -> String {
     line
 }
 
-/// Luminance below this counts as ink (text and glyphs on a light background).
-const INK_THRESHOLD: u8 = 128;
+/// Scanlines searched for ink above and below a row's recognized boxes.
+const BAND_SLACK: i64 = 2;
 
-/// Fingerprint each row's band of the screenshot: which pixels are dark.
+/// A pixel this far from the row's mean luminance counts as ink.
+const INK_CONTRAST: i16 = 64;
+
+/// Fingerprint each row's band of the screenshot: which pixels are ink
+/// (far from the row's mean luminance, so light and dark themes both work).
 ///
 /// Text recognition misses some glyphs (a lone `n` or `c` in a narrow cell)
 /// and a missed glyph that changes would leave the row's text identical. The
-/// fingerprint changes with any dark pixel in the band, so a `since` diff
-/// still reports the row. `luma` is the screenshot's luminance plane,
+/// fingerprint changes with any ink pixel in the band, so a `since` diff
+/// still reports the row. It also snaps the row's `y` to the band's centre. `luma` is the screenshot's luminance plane,
 /// `width` x `height`, in the same pixels as the fragments.
 pub fn stamp_ink(rows: &mut [OcrRow], luma: &[u8], width: u32, height: u32) {
     let (width, height) = (width as usize, height as usize);
@@ -231,15 +235,38 @@ pub fn stamp_ink(rows: &mut [OcrRow], luma: &[u8], width: u32, height: u32) {
         if !top.is_finite() || !bottom.is_finite() {
             continue;
         }
-        let y0 = (top.floor() as i64 - 2).clamp(0, height as i64) as usize;
-        let y1 = (bottom.ceil() as i64 + 2).clamp(0, height as i64) as usize;
+        // The band runs from the first to the last inked scanline near the
+        // row's boxes. Recognized boxes shift by a pixel between reads of the
+        // same pixels; the ink itself does not, so a band taken from it keeps
+        // the fingerprint (and the row's y label) still until the row changes.
+        let lo = (top.floor() as i64 - BAND_SLACK).clamp(0, height as i64) as usize;
+        let hi = (bottom.ceil() as i64 + BAND_SLACK).clamp(0, height as i64) as usize;
+        if lo >= hi {
+            continue;
+        }
+        // Ink is what stands out from the row's background, light or dark.
+        let window = &luma[lo * width..hi * width];
+        let background =
+            (window.iter().map(|&l| u64::from(l)).sum::<u64>() / window.len() as u64) as i16;
+        let is_ink = |l: u8| (i16::from(l) - background).abs() > INK_CONTRAST;
+        let has_ink = |y: usize| luma[y * width..(y + 1) * width].iter().any(|&l| is_ink(l));
+        let (Some(y0), Some(last)) = (
+            (lo..hi).find(|&y| has_ink(y)),
+            (lo..hi).rev().find(|&y| has_ink(y)),
+        ) else {
+            row.ink = Some(0);
+            continue;
+        };
+        let y1 = last + 1;
+        row.y = (y0 + last) as f64 / 2.0;
         // FNV-1a over the band's ink mask, one byte per 8 pixels.
         let mut hash: u32 = 0x811c_9dc5;
         for line in luma[y0 * width..y1 * width].chunks(width) {
             for chunk in line.chunks(8) {
-                let byte = chunk.iter().enumerate().fold(0u8, |acc, (bit, &l)| {
-                    acc | (u8::from(l < INK_THRESHOLD) << bit)
-                });
+                let byte = chunk
+                    .iter()
+                    .enumerate()
+                    .fold(0u8, |acc, (bit, &l)| acc | (u8::from(is_ink(l)) << bit));
                 hash ^= u32::from(byte);
                 hash = hash.wrapping_mul(0x0100_0193);
             }
@@ -420,6 +447,27 @@ mod tests {
         stamp_ink(&mut rows, &luma, w, h);
         assert_ne!(rows[0].ink, Some(before));
         assert!(render_row(&rows[0]).ends_with(&format!(" ink={:04x}", rows[0].ink.unwrap())));
+    }
+
+    #[test]
+    fn ink_and_label_hold_still_when_only_the_boxes_shift() {
+        let (w, h) = (100u32, 40u32);
+        let mut luma = vec![255u8; (w * h) as usize];
+        for y in 14..22 {
+            for x in 10..30 {
+                luma[(y * w + x) as usize] = 0;
+            }
+        }
+        let mut a = group_rows([frag("Paid", 8.0, 12.0)]);
+        let mut b = group_rows([frag("Paid", 9.0, 13.5)]);
+        stamp_ink(&mut a, &luma, w, h);
+        stamp_ink(&mut b, &luma, w, h);
+        assert_eq!(a[0].ink, b[0].ink);
+        assert_eq!(a[0].y, b[0].y);
+        assert_eq!(
+            render_row(&a[0]).split(" = ").next(),
+            Some("- OCRRow \"y=18\"")
+        );
     }
 
     #[test]

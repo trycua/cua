@@ -1,11 +1,24 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! Window screenshot via PrintWindow + GDI BitBlt on Windows.
+//! Window screenshot via PrintWindow + GDI BitBlt on Windows, with a DXGI
+//! Desktop Duplication fast path for fullscreen Direct3D windows.
 //!
 //! `PW_RENDERFULLCONTENT` (0x2) renders the window contents even if it is
 //! occluded or off-screen for GDI-backed surfaces. The result is encoded as
 //! base64 PNG in memory.
+//!
+//! ## Fullscreen Direct3D fast path
+//!
+//! A fullscreen, flip-model Direct3D swap chain — the presentation mode used
+//! by Unity / Unreal games — is scanned out by the display controller instead
+//! of being composed into the window's DWM redirection surface. DWM keeps only
+//! the last composed copy, so PrintWindow (and a BitBlt from the window DC)
+//! can return a stale frame while the display keeps updating. Windows that
+//! fully cover a monitor are therefore captured from the real display image
+//! through DXGI Desktop Duplication first ([`crate::dxgi_duplication`]); the
+//! PrintWindow / WGC / BitBlt ladder below still covers every other window,
+//! and every failure of the duplication path.
 //!
 //! ## UWP / DirectComposition fallback (CUA-542)
 //!
@@ -421,6 +434,62 @@ pub fn screenshot_window(hwnd: u64) -> Result<(String, u32, u32)> {
     Ok((BASE64.encode(&png_bytes), w, h))
 }
 
+/// Capture a window that fully covers one monitor straight from the display
+/// output via DXGI Desktop Duplication.
+///
+/// A fullscreen, flip-model Direct3D swap chain (the presentation mode Unity /
+/// Unreal games use) is scanned out by the display controller instead of being
+/// composed into the window's DWM redirection surface. DWM keeps only an old
+/// composed copy, so PrintWindow — and a BitBlt from the window DC — can return
+/// a stale frame while the display keeps updating. Desktop Duplication reads
+/// the real display image.
+///
+/// Returns `None` unless the window is unoccluded, covers a whole monitor, and
+/// duplication succeeds, so the caller keeps the PrintWindow / WGC / BitBlt
+/// ladder as the fallback for every other case.
+unsafe fn screenshot_via_dxgi_duplication(
+    hwnd: HWND,
+) -> Option<(Vec<u8>, i32, i32, FrameGeometry)> {
+    use windows::Win32::Foundation::RECT;
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+
+    if target_is_obscured(hwnd) {
+        return None;
+    }
+    let mut win_rect = RECT::default();
+    if GetWindowRect(hwnd, &mut win_rect).is_err() {
+        return None;
+    }
+    let captured = match crate::dxgi_duplication::capture_output_covered_by(win_rect) {
+        Ok(captured) => captured,
+        Err(error) => {
+            tracing::debug!(
+                target: "cua-driver",
+                "screenshot: DXGI Desktop Duplication fast path unavailable: {error:#}"
+            );
+            return None;
+        }
+    };
+    let geometry = FrameGeometry::from_bounds((
+        captured.desktop_rect.left,
+        captured.desktop_rect.top,
+        captured.desktop_rect.right,
+        captured.desktop_rect.bottom,
+    ))?;
+    tracing::debug!(
+        target: "cua-driver",
+        "screenshot: captured window via DXGI Desktop Duplication ({}x{})",
+        captured.width,
+        captured.height
+    );
+    Some((
+        captured.bgra,
+        captured.width as i32,
+        captured.height as i32,
+        geometry,
+    ))
+}
+
 unsafe fn screenshot_window_bytes_with_occlusion_unsafe(
     hwnd: u64,
 ) -> Result<(Vec<u8>, bool, Option<FrameGeometry>)> {
@@ -452,6 +521,19 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(
              BitBlt fallback both return an all-black bitmap for iconic \
              windows."
         );
+    }
+
+    // A fullscreen, flip-model Direct3D window (games) bypasses DWM
+    // composition: it is scanned out directly by the display controller, so
+    // DWM's copy of the window stays frozen at the last composed frame.
+    // PrintWindow and a BitBlt from the window DC then return that stale frame
+    // while the screen keeps updating. Capture the real display image first.
+    if let Some((pixels, w, h, geometry)) = screenshot_via_dxgi_duplication(hwnd) {
+        return Ok((
+            cua_driver_core::image_utils::encode_bgra_to_png(&pixels, w as u32, h as u32)?,
+            false,
+            Some(geometry),
+        ));
     }
 
     // CUA-542 routing: for known XAML / WinUI3 / UWP targets, the
@@ -723,6 +805,26 @@ pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
         let h = GetSystemMetrics(SM_CYSCREEN);
         if w <= 0 || h <= 0 {
             bail!("Could not get screen metrics");
+        }
+        // Fullscreen flip-model Direct3D content is scanned out without
+        // passing through DWM's redirection surface, so the GDI BitBlt below
+        // can return a stale desktop image. Prefer the real display image via
+        // DXGI Desktop Duplication and keep BitBlt as the fallback.
+        use windows::Win32::Foundation::RECT;
+        let primary_rect = RECT {
+            left: 0,
+            top: 0,
+            right: w,
+            bottom: h,
+        };
+        if let Ok(captured) = crate::dxgi_duplication::capture_output_covered_by(primary_rect) {
+            if captured.width as i32 == w && captured.height as i32 == h {
+                return cua_driver_core::image_utils::encode_bgra_to_png(
+                    &captured.bgra,
+                    captured.width,
+                    captured.height,
+                );
+            }
         }
         let screen_dc = GetDC(HWND::default());
         if screen_dc.is_invalid() {

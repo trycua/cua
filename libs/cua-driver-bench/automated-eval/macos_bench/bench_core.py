@@ -101,13 +101,22 @@ def build_pair(
 
 
 def build_blocks(
-    task_ids: list[str], arms: list[str], phase1_runs: int, phase2_runs: int, schedule_seed: int
+    task_ids: list[str],
+    arms: list[str],
+    phase1_runs: int,
+    phase2_runs: int,
+    schedule_seed: int,
+    run_offset: int = 0,
 ) -> list[dict[str, Any]]:
     """Task-major blocks. Phase 1: every task in priority order, runs 0..phase1_runs-1, each run a pair of
     back-to-back trials (one per arm). Phase 2: every task again, the next ``phase2_runs`` runs. A block is
-    the unit of completeness. Order is deterministic; no randomness is used (the seed is only recorded)."""
+    the unit of completeness. Order is deterministic; no randomness is used (the seed is only recorded).
+    ``run_offset`` shifts every run index (so a later invocation draws new task seeds, 0 = the registered runs)."""
     blocks: list[dict[str, Any]] = []
-    for phase, first, count in ((1, 0, phase1_runs), (2, phase1_runs, phase2_runs)):
+    for phase, first, count in (
+        (1, run_offset, phase1_runs),
+        (2, run_offset + phase1_runs, phase2_runs),
+    ):
         if count <= 0:
             continue
         for task in task_ids:

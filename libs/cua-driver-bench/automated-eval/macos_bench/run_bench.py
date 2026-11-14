@@ -175,6 +175,7 @@ class Ctx:
             self.args.phase1_runs,
             self.args.phase2_runs,
             self.args.schedule_seed,
+            getattr(self.args, "run_offset", 0),
         )
         kept = [b for b in blocks if b["task"] in self.task_ids]
         index = 0
@@ -475,7 +476,10 @@ def ensure_agent_daemon(ctx: Ctx, arm: str = "cc-cua-driver") -> None:
         text=True,
         timeout=15,
     )
-    if done.returncode == 0 and ctx.daemon_arm == arm:
+    # A daemon that answers `status` is not necessarily ours: when ours crashed, the MCP proxy of the next trial
+    # starts the installed app's daemon on the same socket. Keep the one we started only while its process lives.
+    ours_alive = ctx.daemon is not None and ctx.daemon.poll() is None
+    if done.returncode == 0 and ctx.daemon_arm == arm and ours_alive:
         return
     if ctx.daemon_arm == arm:
         ctx.log(f"agent daemon of {arm} not answering; restarting")
@@ -1382,6 +1386,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
                 "tool_calls", {"total": 0, "by_class": {}, "by_name": {}, "failed": 0}
             ),
             "steps": (summary.get("tool_calls") or {}).get("total", 0),
+            "batching": summary.get("batching"),
             "action_latency_ms": summary.get("action_latency_ms", {}),
             "tokens": {
                 "input": tokens.get("input", 0),
@@ -2402,7 +2407,14 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
     driver_arms = [pia.SOURCE_ARM.get(a, a) for a in ctx.arm_names]
     if any(ca.CUA_BUILDS[a].label == "main" for a in driver_arms if a in ca.CUA_BUILDS):
         main = pins.get("cua_main", {})
-        spec = ca.CUA_BUILDS["cc-cua-driver-main"]
+        # the first main-label build that is actually part of this run (a script-only run has no main app)
+        spec = ca.CUA_BUILDS[
+            next(
+                a
+                for a in dict.fromkeys(driver_arms)
+                if a in ca.CUA_BUILDS and ca.CUA_BUILDS[a].label == "main"
+            )
+        ]
         got_bin = ca.sha256_file(spec.bin) if spec.bin.is_file() else None
         for other in [
             a
@@ -2419,8 +2431,8 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
             )
         got_skills = ca.sha256_tree(spec.skills) if spec.skills.is_dir() else None
         add(
-            "pin cua_main.binary_sha256",
-            "pass" if got_bin and got_bin == main.get("binary_sha256") else "fail",
+            f"pin cua_main.{spec.binary_pin}",
+            "pass" if got_bin and got_bin == main.get(spec.binary_pin) else "fail",
             str(got_bin),
         )
         add(
@@ -2475,7 +2487,7 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
                 probe = cdb_adapter.CdbTask(spec, ctx.run_dir)
                 got = probe._digest_hidden() or cdb_adapter.tree_sha256(probe.bundle)
                 ok = got == pins_for.get(spec["pack_task"])
-                add(f"CDB pack {tid} matches its pinned digest", "pass" if ok else "fail", got[:16])
+                add(f"CDB pack {tid} matches its pinned digest", "pass" if ok else "fail", got if not ok else got[:16])
                 kit = cdb_adapter.shared_kit(spec)
                 if kit is not None and str(kit) not in kits_checked:
                     kits_checked.add(str(kit))
@@ -2588,11 +2600,19 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
         raw = ctx.recorder.stop() if started else None
         dur = rec.ffprobe_duration(raw) if raw else None
         try:
-            if not raw or not dur or dur <= 0.5:
+            if not raw or not dur:
                 raise RuntimeError(
                     f"{raw} duration={dur} err={getattr(ctx.recorder, 'last_error', None)}"
                 )
-            add("recorder real capture (3 s test)", "pass", rec.capture_detail(raw))
+            if dur <= 0.5:
+                # the recorder only writes a frame when the screen changes: an idle desktop gives a very short file
+                add(
+                    "recorder real capture (3 s test)",
+                    "warn",
+                    f"short file on an idle desktop (duration={dur}); {rec.capture_detail(raw)}",
+                )
+            else:
+                add("recorder real capture (3 s test)", "pass", rec.capture_detail(raw))
         except (OSError, RuntimeError, subprocess.SubprocessError) as error:
             add("recorder real capture (3 s test)", "fail", str(error)[:300])
     else:
@@ -2696,6 +2716,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--cutoff-utc", default=None, help="ISO time; no trial starts after it (STOPPED_TIME)"
     )
     p.add_argument("--schedule-seed", type=int, default=20261005)
+    p.add_argument(
+        "--run-offset",
+        type=int,
+        default=0,
+        help="first run index (task seeds come from task:run_index); use it so repeated invocations of the same "
+        "setup draw new instances, for example one invocation per round of an overnight comparison",
+    )
     p.add_argument("--model", default="claude-sonnet-5-5")
     p.add_argument(
         "--effort", default=None, choices=[None, "low", "medium", "high", "xhigh", "max"]

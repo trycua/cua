@@ -5230,7 +5230,7 @@ pub fn run_diagnose_cmd() {
             "{}",
             windows_diagnose_report(
                 &diagnose_runtime_section(),
-                &crate::doctor::run(),
+                &crate::doctor::run(false),
                 &socket,
                 crate::serve::is_daemon_listening(&socket),
             )

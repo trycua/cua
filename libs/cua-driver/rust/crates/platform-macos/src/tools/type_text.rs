@@ -1293,6 +1293,11 @@ fn cgevent_type_verified(
         std::thread::sleep(std::time::Duration::from_millis(settle_ms));
     }
     crate::input::keyboard::type_text_with_delay(pid, text, delay_ms)?;
+    if !readback_sees_keystrokes(element_ptr_and_idx, |ptr| {
+        crate::input::ax_actions::element_has_keyboard_focus(pid, ptr)
+    }) {
+        return Ok((false, None));
+    }
     let batched = delay_ms == 0;
 
     // CGEvent posting is asynchronous with respect to the renderer. In
@@ -1332,6 +1337,22 @@ fn cgevent_type_verified(
         }
     }
     Ok(outcome)
+}
+
+/// Whether the target's read-back can measure keystrokes just posted to the app.
+///
+/// Keystrokes go to whatever holds the app's keyboard focus, not to the target.
+/// A target that did not take focus (a button, a control that ignores
+/// `AXFocused`) never saw them, so its unchanged value is not "0 delivered".
+/// Reporting it as such asks for a retry, and retyping the "missing" tail types
+/// the whole text a second time into the field that does hold focus (Chrome's
+/// address bar next to a targeted toolbar button). Without an explicit target
+/// the read-back is the focused element itself.
+fn readback_sees_keystrokes(
+    element_ptr_and_idx: Option<(usize, Option<usize>)>,
+    has_keyboard_focus: impl FnOnce(usize) -> bool,
+) -> bool {
+    element_ptr_and_idx.is_none_or(|(ptr, _)| has_keyboard_focus(ptr))
 }
 
 fn await_typed_delivery(
@@ -2447,6 +2468,13 @@ mod tests {
         );
         assert_eq!(outcome, (false, Some(0)));
         assert!(started.elapsed() < DELIVERY_DRAIN_TIMEOUT / 2);
+    }
+
+    #[test]
+    fn readback_measures_keystrokes_only_from_the_element_holding_focus() {
+        assert!(readback_sees_keystrokes(None, |_| unreachable!()));
+        assert!(readback_sees_keystrokes(Some((7, None)), |ptr| ptr == 7));
+        assert!(!readback_sees_keystrokes(Some((7, Some(5))), |_| false));
     }
 
     #[test]

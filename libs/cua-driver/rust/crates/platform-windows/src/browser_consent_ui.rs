@@ -425,6 +425,10 @@ pub fn dismiss(pid: u32, hwnd: u64) -> Result<bool, BrowserRefusal> {
         let tree = crate::uia::walk_tree(hwnd, None);
         let invoked = match exact_cancel_button(&tree.nodes) {
             Ok(Some(element)) => unsafe { invoke(element) },
+            // No surface is shaped like the consent prompt. A prompt of any
+            // other shape cannot be told from a translate or password bubble,
+            // so it stays on screen. That grants nothing: the only action
+            // here is Cancel.
             Ok(None) => {
                 release_nodes(&tree.nodes);
                 return Ok(dismissed);

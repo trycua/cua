@@ -488,6 +488,61 @@ mod mcp_runtime_selection_tests {
     }
 }
 
+/// What the `serve` daemon's main thread runs once the serve thread is up.
+#[cfg(target_os = "macos")]
+#[derive(Debug, PartialEq, Eq)]
+enum MainThreadLoop {
+    /// The agent-cursor overlay's AppKit loop (it also drains the main queue,
+    /// and parks on its own when there is no graphic session).
+    Overlay,
+    /// A bare AppKit loop (accessory app: no Dock icon, no windows of its own).
+    AppKit,
+    /// Park on the serve thread; nothing ever runs on the main queue.
+    Join,
+}
+
+/// Choose the daemon's main-thread loop.
+///
+/// Work the daemon sends to the main queue only runs if the main thread
+/// drains it: the transparent shield window that lets a
+/// background drag-and-drop hold the pointer without the press reaching the
+/// app under it. With the overlay off the main thread used to just join the
+/// serve thread, so that work never ran and background drag-and-drop fell
+/// back to the refusal under `serve --no-overlay`. Run AppKit whenever the
+/// process has a graphic session; only a process without one (SSH, a
+/// LaunchDaemon, headless CI) joins, because `NSApplication` aborts there.
+#[cfg(target_os = "macos")]
+fn main_thread_loop(cursor_enabled: bool, graphic_access: bool) -> MainThreadLoop {
+    if cursor_enabled {
+        MainThreadLoop::Overlay
+    } else if graphic_access {
+        MainThreadLoop::AppKit
+    } else {
+        MainThreadLoop::Join
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod main_thread_loop_tests {
+    use super::{main_thread_loop, MainThreadLoop};
+
+    #[test]
+    fn overlay_keeps_its_own_loop() {
+        assert_eq!(main_thread_loop(true, true), MainThreadLoop::Overlay);
+        assert_eq!(main_thread_loop(true, false), MainThreadLoop::Overlay);
+    }
+
+    #[test]
+    fn no_overlay_still_drains_the_main_queue_in_a_graphic_session() {
+        assert_eq!(main_thread_loop(false, true), MainThreadLoop::AppKit);
+    }
+
+    #[test]
+    fn no_overlay_without_a_graphic_session_never_starts_appkit() {
+        assert_eq!(main_thread_loop(false, false), MainThreadLoop::Join);
+    }
+}
+
 // ── macOS entry-point ─────────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
@@ -773,17 +828,23 @@ fn main() {
                 );
             }
 
-            // Keep the main thread alive for the daemon.
-            //
-            // The agent-cursor overlay needs the AppKit main run loop
-            // (NSApplication.run() plus the cursor command consumer). Run it
-            // whenever the cursor is enabled; otherwise just join the serve
-            // thread so the process stays up as long as the daemon does.
-            if cursor_cfg.enabled {
-                platform_macos::cursor::overlay::run_on_main_thread();
-                let _ = serve_handle.join();
-            } else {
-                let _ = serve_handle.join();
+            // Keep the main thread alive for the daemon. See
+            // [`main_thread_loop`] for why it runs AppKit whenever it can.
+            match main_thread_loop(
+                cursor_cfg.enabled,
+                platform_macos::session::has_graphic_access(),
+            ) {
+                MainThreadLoop::Overlay => {
+                    platform_macos::cursor::overlay::run_on_main_thread();
+                    let _ = serve_handle.join();
+                }
+                MainThreadLoop::AppKit => {
+                    // The serve thread exits the process when it ends.
+                    platform_macos::appkit_loop::run_appkit_main_loop();
+                }
+                MainThreadLoop::Join => {
+                    let _ = serve_handle.join();
+                }
             }
         }
         cli::Command::Stop {

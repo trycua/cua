@@ -70,8 +70,13 @@ fn def() -> &'static ToolDef {
              main process, so pointer-capture widgets and HTML5 drag and drop also drop \
              there. Elsewhere, a drag that starts a macOS drag-and-drop session (reordering a list \
              by drag and drop, moving a file, HTML5 draggable content) cannot drop in the \
-             background, because macOS tracks those with the real pointer; the driver \
-             detects it, releases at once and returns background_unavailable with reason \
+             background with the pointer alone. Instead the driver holds the hardware button \
+             at the pointer's current position (a transparent shield window under the pointer \
+             takes that one press and release), drives the session with the gesture and drops at \
+             the target point; the pointer, the frontmost app and the window order stay as they \
+             were. It needs the user to leave the pointer alone for about two seconds and the \
+             drop point not to be covered by another window. When it can't be made, the driver \
+             releases at once and returns background_unavailable with reason \
              drag_and_drop_session. For a page in a browser \
              tab already bound with get_browser_state, browser_pointer action:\"drag\" \
              drives the same gesture through CDP with page refs. The result is not \
@@ -436,7 +441,7 @@ impl Tool for DragTool {
             prior_front,
             "drag.CGEvent",
             || async move {
-                tokio::task::spawn_blocking(move || -> anyhow::Result<bool> {
+                tokio::task::spawn_blocking(move || -> anyhow::Result<DragEnd> {
                     let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
                     let observe = move |x: f64, y: f64| {
                         crate::cursor::overlay::send_command(
@@ -476,7 +481,7 @@ impl Tool for DragTool {
                                 Ok(())
                             },
                         )
-                        .map(|()| false);
+                        .map(|()| DragEnd::Posted);
                     }
                     // A drag that starts a system drag-and-drop session
                     // (list reordering, file drags, HTML5 draggable) is
@@ -488,7 +493,21 @@ impl Tool for DragTool {
                     // moving, and report it.
                     let before = drag_image_windows(pid);
                     let mut session_seen = false;
-                    let outcome = crate::input::mouse::drag_at_xy_background(
+                    // Drag-and-drop picks the destination by the topmost
+                    // window under the drop point, so a covered drop point
+                    // would drop into the covering window: hold only when the
+                    // target window is the one under it.
+                    let dnd_enabled = cua_driver_core::delivery::background_dnd_enabled();
+                    let drop_covered = dnd_enabled
+                        && !drop_point_reaches_window(
+                            &crate::windows::on_screen_windows_any_layer(),
+                            std::process::id() as i32,
+                            wid,
+                            (to_sx, to_sy),
+                        );
+                    let mut hold = (dnd_enabled && !drop_covered)
+                        .then(crate::input::pointer_hold::PointerHold::new);
+                    let outcome = crate::input::mouse::drag_at_xy_background_held(
                         pid,
                         (from_sx, from_sy),
                         (to_sx, to_sy),
@@ -503,14 +522,29 @@ impl Tool for DragTool {
                             session_seen = !drag_image_windows(pid).is_subset(&before);
                             !session_seen
                         },
+                        hold.as_mut()
+                            .map(|hold| hold as &mut dyn crate::input::pointer_hold::DragHold),
                     )?;
+                    if matches!(
+                        outcome,
+                        crate::input::mouse::BackgroundDragOutcome::DroppedHeld
+                    ) {
+                        use crate::input::pointer_hold::DragHold;
+                        await_drag_session_end(pid);
+                        let report = hold.as_ref().map(|hold| hold.report()).unwrap_or_default();
+                        return Ok(DragEnd::HeldDrop(report));
+                    }
                     let session = session_seen
                         || !drag_image_windows(pid).is_subset(&before)
                         || matches!(
                             outcome,
                             crate::input::mouse::BackgroundDragOutcome::StoppedEarly { .. }
                         );
-                    Ok(session)
+                    Ok(if session {
+                        DragEnd::Session { drop_covered }
+                    } else {
+                        DragEnd::Posted
+                    })
                 })
                 .await
             },
@@ -520,7 +554,7 @@ impl Tool for DragTool {
             cursor_key.clone(),
             cursor_overlay::OverlayCommand::SetPressed(false),
         );
-        if matches!(&result, Ok(Ok(false))) {
+        if matches!(&result, Ok(Ok(DragEnd::Posted | DragEnd::HeldDrop(_)))) {
             self.state
                 .cursor_registry
                 .update_position(&cursor_key, to_sx, to_sy);
@@ -567,15 +601,25 @@ impl Tool for DragTool {
             )
         };
         match result {
-            Ok(Ok(true))
+            Ok(Ok(DragEnd::HeldDrop(report))) => held_drop_result(
+                pid,
+                wid,
+                (from_x, from_y, to_x, to_y),
+                (from_sx, from_sy, to_sx, to_sy),
+                report,
+                changes.result_suffix(),
+            ),
+            Ok(Ok(DragEnd::Session { .. }))
                 if cua_driver_core::delivery::brief_foreground_allowed()
                     && !cua_driver_core::delivery::background_requested_explicitly(&args) =>
             {
                 self.brief_foreground_drag(&args, pid, wid, prior_front)
                     .await
             }
-            Ok(Ok(true)) => drag_and_drop_session_result(pid, wid, changes.result_suffix()),
-            Ok(Ok(false)) => ToolResult::text(format!(
+            Ok(Ok(DragEnd::Session { drop_covered })) => {
+                drag_and_drop_session_result(pid, wid, drop_covered, changes.result_suffix())
+            }
+            Ok(Ok(DragEnd::Posted)) => ToolResult::text(format!(
                 "✅ Posted drag{btn_suffix}{mod_suffix} to pid {pid} window {wid} \
                  from window-pixel ({}, {}) → ({}, {}), \
                  screen ({}, {}) → ({}, {}) \
@@ -852,13 +896,115 @@ fn drag_image_windows(pid: i32) -> std::collections::HashSet<u32> {
         .collect()
 }
 
-fn drag_and_drop_session_result(pid: i32, wid: u32, suffix: String) -> ToolResult {
+/// How a blocking drag ended.
+enum DragEnd {
+    /// The gesture was posted (no drag-and-drop session involved).
+    Posted,
+    /// A drag-and-drop session started and the gesture was cut short.
+    /// `drop_covered`: the pointer hold was not tried because another window
+    /// covers the drop point.
+    Session { drop_covered: bool },
+    /// A drag-and-drop session started and the pointer hold carried it to the
+    /// drop point.
+    HeldDrop(crate::input::pointer_hold::HoldReport),
+}
+
+fn held_drop_result(
+    pid: i32,
+    wid: u32,
+    window: (f64, f64, f64, f64),
+    screen: (f64, f64, f64, f64),
+    report: crate::input::pointer_hold::HoldReport,
+    suffix: String,
+) -> ToolResult {
+    if report.pointer_moved {
+        // The user's own pointer movement while the button is held drags the
+        // session with it and ends it away from the drop point.
+        return ToolResult::error(format!(
+            "The drag-and-drop in pid {pid} window {wid} did not land: the pointer moved during \
+             the gesture (the held-pointer route needs the user to leave the pointer alone for \
+             about two seconds), so the session ended where the pointer went. Read the window; \
+             if nothing changed, retry when the user is not using the pointer.{suffix}"
+        ));
+    }
+    ToolResult::text(format!(
+        "✅ Posted drag-and-drop to pid {pid} window {wid} from window-pixel ({}, {}) → ({}, {}), \
+         screen ({}, {}) → ({}, {}) (held-pointer route: the pointer did not move \
+         and the window was not raised; one hardware button press and release were posted \
+         at the pointer and absorbed by a transparent shield window; not driver-verified: \
+         confirm via screenshot).{suffix}",
+        window.0 as i64,
+        window.1 as i64,
+        window.2 as i64,
+        window.3 as i64,
+        screen.0 as i64,
+        screen.1 as i64,
+        screen.2 as i64,
+        screen.3 as i64,
+    ))
+    .with_structured(serde_json::json!({
+        "path": "cgevent",
+        "delivery_mode": "background",
+        "verified": false,
+        "effect": "unverifiable",
+        "drag_and_drop": {
+            "route": "held_pointer",
+            "turned_off_by": format!("{}=0", cua_driver_core::delivery::BACKGROUND_DND_ENV),
+            "hardware_events": ["leftMouseDown", "leftMouseUp"],
+        },
+    }))
+}
+
+/// Highest window level that counts as covering a drop point: app windows,
+/// floating and modal panels and utility windows sit below the Dock's level
+/// (`kCGDockWindowLevel`, 20). The Dock, Notification Center and the menu bar
+/// keep screen-sized click-through windows at 20 and above, and desktop
+/// widgets sit below 0; none of them takes a drop in an app window's place.
+const DROP_COVER_MAX_LAYER: i32 = 19;
+
+/// Whether a drop at `point` (global display points) reaches window `wid`. `windows` is the on-screen list, front to back. Only app-level
+/// windows (layers 0 to [`DROP_COVER_MAX_LAYER`]) count, and not the driver's
+/// own (`own_pid`: the shield, the cursor overlay): the drop goes to the first
+/// such window whose frame contains the point.
+fn drop_point_reaches_window(
+    windows: &[crate::windows::WindowInfo],
+    own_pid: i32,
+    wid: u32,
+    point: (f64, f64),
+) -> bool {
+    windows
+        .iter()
+        .filter(|window| window.pid != own_pid)
+        .filter(|window| (0..=DROP_COVER_MAX_LAYER).contains(&window.layer))
+        .find(|window| {
+            let bounds = &window.bounds;
+            point.0 >= bounds.x
+                && point.0 < bounds.x + bounds.width
+                && point.1 >= bounds.y
+                && point.1 < bounds.y + bounds.height
+        })
+        .is_some_and(|window| window.window_id == wid)
+}
+
+fn drag_and_drop_session_result(
+    pid: i32,
+    wid: u32,
+    drop_covered: bool,
+    suffix: String,
+) -> ToolResult {
+    let covered_note = if drop_covered {
+        " Another window covers the drop point, and a drop always lands in the window on top \
+         there, so the driver did not try the background drop; once nothing covers that spot \
+         of the window, a background drag can drop."
+    } else {
+        ""
+    };
     cua_driver_core::delivery::background_unavailable_result(
         format!(
             "The background drag in pid {pid} window {wid} started a macOS drag-and-drop \
              session (for example reordering a list, moving a file or dragging page content). \
              macOS tracks drag-and-drop with the real pointer, so the drop did not land at the \
-             requested point; the driver released at once. Look for a route that is not a drag \
+             requested point; the driver released at once.{covered_note} Look for a route that is not a drag \
              (a Move Up/Down button or menu item, a context-menu command, a keyboard shortcut, \
              cut and paste). If the drag is the only route and the user allows the window to \
              come forward, retry with delivery_mode:\"foreground\".{suffix}"
@@ -869,6 +1015,7 @@ fn drag_and_drop_session_result(pid: i32, wid: u32, suffix: String) -> ToolResul
             "effect": "no_drop",
             "event_kind": "mouse_drag",
             "reason": "drag_and_drop_session",
+            "drop_point_covered": drop_covered,
             "requires": ["delivery_mode:foreground", "window_id"],
         }),
     )
@@ -911,6 +1058,114 @@ mod tests {
             assert_eq!(structured["code"], "window_id_required");
             assert_eq!(structured["effect"], "refused");
         }
+    }
+
+    fn window_at(
+        pid: i32,
+        window_id: u32,
+        layer: i32,
+        frame: (f64, f64, f64, f64),
+    ) -> crate::windows::WindowInfo {
+        crate::windows::WindowInfo {
+            window_id,
+            pid,
+            app_name: String::new(),
+            title: String::new(),
+            bounds: crate::windows::WindowBounds {
+                x: frame.0,
+                y: frame.1,
+                width: frame.2,
+                height: frame.3,
+            },
+            layer,
+            z_index: 0,
+            is_on_screen: true,
+            current_space_id: None,
+            on_current_space: None,
+            space_ids: None,
+        }
+    }
+
+    #[test]
+    fn a_drop_point_under_the_target_window_reaches_it() {
+        // Front to back: the user's window elsewhere, then the target.
+        let windows = [
+            window_at(20, 41, 0, (560.0, 380.0, 440.0, 330.0)),
+            window_at(9, 35, 0, (60.0, 80.0, 760.0, 560.0)),
+        ];
+        assert!(drop_point_reaches_window(&windows, 1, 35, (180.0, 331.0)));
+    }
+
+    #[test]
+    fn a_drop_point_covered_by_another_window_does_not_reach_the_target() {
+        let windows = [
+            window_at(20, 41, 0, (79.0, 55.0, 603.0, 505.0)),
+            window_at(9, 35, 0, (60.0, 80.0, 760.0, 560.0)),
+        ];
+        assert!(!drop_point_reaches_window(&windows, 1, 35, (180.0, 331.0)));
+        // A floating panel over it covers it too.
+        let windows = [
+            window_at(20, 42, 3, (150.0, 300.0, 100.0, 100.0)),
+            window_at(9, 35, 0, (60.0, 80.0, 760.0, 560.0)),
+        ];
+        assert!(!drop_point_reaches_window(&windows, 1, 35, (180.0, 331.0)));
+        // Off every window: nothing to drop on.
+        assert!(!drop_point_reaches_window(&windows, 1, 35, (5.0, 5.0)));
+    }
+
+    #[test]
+    fn system_overlays_the_shield_and_the_drag_image_do_not_cover_the_drop_point() {
+        // As listed in a macOS 26 session: the menu bar, Notification Center
+        // and the Dock span the screen above the app windows, a desktop
+        // widget sits below them.
+        let windows = [
+            window_at(1, 7, 2_147_483_629, (160.0, 311.0, 40.0, 40.0)),
+            window_at(9, 50, 500, (0.0, 0.0, 1024.0, 768.0)),
+            window_at(184, 18, 24, (0.0, 0.0, 1024.0, 30.0)),
+            window_at(524, 9, 21, (0.0, 0.0, 1024.0, 768.0)),
+            window_at(471, 6, 20, (0.0, 0.0, 1024.0, 768.0)),
+            window_at(9, 35, 0, (60.0, 80.0, 760.0, 560.0)),
+            window_at(524, 25, -2_147_483_601, (8.0, 218.0, 360.0, 180.0)),
+        ];
+        assert!(drop_point_reaches_window(&windows, 1, 35, (180.0, 331.0)));
+    }
+
+    #[test]
+    fn held_pointer_drop_reports_the_route_and_that_the_pointer_stayed() {
+        let result = held_drop_result(
+            9,
+            3,
+            (1.0, 2.0, 3.0, 4.0),
+            (101.0, 32.0, 103.0, 34.0),
+            crate::input::pointer_hold::HoldReport {
+                engaged: true,
+                pointer: Some((900.0, 700.0)),
+                pointer_moved: false,
+            },
+            String::new(),
+        );
+        assert_ne!(result.is_error, Some(true));
+        let structured = result.structured_content.unwrap();
+        assert_eq!(structured["path"], "cgevent");
+        assert_eq!(structured["effect"], "unverifiable");
+        assert_eq!(structured["drag_and_drop"]["route"], "held_pointer");
+    }
+
+    #[test]
+    fn held_pointer_drop_is_an_error_when_the_user_moved_the_pointer() {
+        let result = held_drop_result(
+            9,
+            3,
+            (1.0, 2.0, 3.0, 4.0),
+            (101.0, 32.0, 103.0, 34.0),
+            crate::input::pointer_hold::HoldReport {
+                engaged: true,
+                pointer: Some((900.0, 700.0)),
+                pointer_moved: true,
+            },
+            String::new(),
+        );
+        assert_eq!(result.is_error, Some(true));
     }
 
     #[test]

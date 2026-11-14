@@ -5350,7 +5350,7 @@ dependencies = [
  "wayland-scanner",
  "x11",
  "x11rb",
- "xkbcommon",
+ "xkeysym",
  "zbus",
 ]
 
@@ -8805,17 +8805,6 @@ checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
 dependencies = [
  "libc",
  "rustix",
-]
-
-[[package]]
-name = "xkbcommon"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7a974f48060a14e95705c01f24ad9c3345022f4d97441b8a36beb7ed5c4a02d"
-dependencies = [
- "libc",
- "memmap2",
- "xkeysym",
 ]
 
 [[package]]

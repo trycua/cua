@@ -9,9 +9,9 @@ use std::borrow::Cow;
 use std::ops::RangeInclusive;
 use std::sync::OnceLock;
 
+use super::xkb;
+use super::xkb::ffi as xkb_ffi;
 use anyhow::{anyhow, Result};
-use xkbcommon::xkb;
-use xkbcommon::xkb::ffi as xkb_ffi;
 
 /// An evdev code is its xkb keycode minus this.
 pub(in crate::wayland) const EVDEV_OFFSET: u32 = 8;
@@ -150,7 +150,7 @@ pub(in crate::wayland) fn level_mods(
     // SAFETY: `map` holds a live keymap, and `masks` has room for `masks.len()` masks.
     let count = unsafe {
         (xkb.xkb_keymap_key_get_mods_for_level)(
-            map.get_raw_ptr(),
+            map.as_ptr(),
             code.raw(),
             layout,
             level,

@@ -52,7 +52,7 @@ public final class KeyvaultBridge: ObservableObject, SignInBroker {
     public func items(for site: String) -> [KvItem] {
         let host = Self.host(site)
         return (overview?.items ?? []).filter { item in
-            guard let s = item.site.map(Self.host) else { return false }
+            guard let s = item.domain.map(Self.host) else { return false }
             return s == host || host.hasSuffix("." + s) || s.hasSuffix("." + host)
         }
     }
@@ -60,8 +60,9 @@ public final class KeyvaultBridge: ObservableObject, SignInBroker {
     static func host(_ s: String) -> String {
         let t = s.lowercased().trimmingCharacters(in: .whitespaces)
         let noScheme = t.components(separatedBy: "://").last ?? t
-        return String(noScheme.split(separator: "/").first ?? Substring(noScheme))
-            .replacingOccurrences(of: "www.", with: "")
+        var h = String(noScheme.split(separator: "/").first ?? Substring(noScheme))
+        if h.hasPrefix(".") { h.removeFirst() }
+        return h.replacingOccurrences(of: "www.", with: "")
     }
 
     // MARK: - SignInBroker
@@ -76,9 +77,9 @@ public final class KeyvaultBridge: ObservableObject, SignInBroker {
         // Touch ID; the approver below only selects what the user picked.
         // #region docs:sw-teleport
         let receipt = try await space.teleport(app: item.providerId, scope: nil,
-                                               approver: SelectItems(label: item.label))
+                                               approver: SelectItems(label: item.appDisplay))
         // #endregion docs:sw-teleport
-        return "saved sign-in \(item.account ?? item.label), \(receipt.method)"
+        return "saved sign-in \(item.key.isEmpty ? item.appDisplay : item.key), \(receipt.method)"
     }
 
     /// Approve or deny a request an agent made itself (`teleport_app`).

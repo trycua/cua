@@ -97,6 +97,7 @@ def release_contracts(version: str) -> tuple[ArchiveContract, ...]:
 
     windows_payload = (
         "cua-driver.exe",
+        "cua-driver-autostart.exe",
         "cua-cursor-theme.exe",
         "cua-driver-uia.exe",
         "cua_driver_sdk.dll",

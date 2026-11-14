@@ -938,6 +938,7 @@ fi
         )
         for binary in (
             "cua-driver.exe",
+            "cua-driver-autostart.exe",
             "cua-cursor-theme.exe",
             "cua-driver-uia.exe",
             "cua_driver_sdk.dll",

@@ -34,9 +34,36 @@ def test_release_archives_include_cli_and_uniffi_library():
     assert linux_files == ["cua-driver", "libcua_driver_sdk.so"]
     assert windows_files == [
         "cua-driver.exe",
+        "cua-driver-autostart.exe",
         "cua-driver-uia.exe",
         "cua_driver_sdk.dll",
     ]
+
+
+def test_older_windows_archive_without_autostart_launcher_still_extracts(tmp_path):
+    import zipfile
+
+    import pytest
+
+    build_wheel = load_build_wheel_module()
+    _, names = build_wheel.get_release_url("1.2.3", "windows", "x86_64")
+    archive = tmp_path / "old.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        for name in names:
+            if name != "cua-driver-autostart.exe":
+                bundle.writestr(name, b"MZ")
+
+    extracted = build_wheel.extract_binaries(archive, names, tmp_path / "bin")
+    assert [path.name for path in extracted] == [
+        "cua-driver.exe",
+        "cua-driver-uia.exe",
+        "cua_driver_sdk.dll",
+    ]
+
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr("cua-driver.exe", b"MZ")
+    with pytest.raises(ValueError, match="cua-driver-uia.exe not found"):
+        build_wheel.extract_binaries(archive, names, tmp_path / "bin2")
 
 
 def test_license_metadata_stays_legacy_upload_compatible():

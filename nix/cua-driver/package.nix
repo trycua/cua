@@ -58,7 +58,7 @@ pkgs.rustPlatform.buildRustPackage {
   # PipeWire (>= 0.3.40 needed by libspa-sys) and libei, so this feature
   # builds fine here. Release builds enable portal input as well; keeping
   # capture explicit here validates both halves of the split feature contract.
-  cargoBuildFlags = [ "-p" "cua-driver" "--features" "portal-input,portal-capture" ];
+  cargoBuildFlags = [ "-p" "cua-driver" "--bin" "cua-driver" "--features" "portal-input,portal-capture" ];
   cargoTestFlags = [ "-p" "cua-driver" "--features" "portal-input,portal-capture" ];
 
   # Mostly pure Rust:

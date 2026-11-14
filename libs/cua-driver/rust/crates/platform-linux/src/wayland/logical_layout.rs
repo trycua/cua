@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! KWin's desktop layout in logical pixels.
+//! The desktop layout in logical pixels on KWin and GNOME Mutter.
 //!
-//! Portal/libei pointer input takes logical desktop coordinates on KWin, while
-//! its screenshots are physical pixels. On a scaled output those two frames
-//! differ, so a coordinate read off the screenshot lands in the wrong place.
-//! This reads the layout into the [`DesktopFrame`] Hyprland and niri publish,
-//! so capture and input share one frame, whatever the layout's origin.
+//! Portal/libei pointer input takes logical desktop coordinates on both, while
+//! their screenshots can be physical pixels. On a scaled output those two
+//! frames differ, so a coordinate read off the screenshot lands in the wrong
+//! place. This reads the layout into the [`DesktopFrame`] Hyprland and niri
+//! publish, so capture and input share one frame, whatever the layout's origin.
 
 use anyhow::Context as _;
 use wayland_client::{
@@ -35,10 +35,54 @@ struct OutputRect {
     quarter_turned: bool,
 }
 
-/// What the compositor reported: whether it is KWin, and its outputs.
+/// A compositor whose layout this module reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Compositor {
+    KWin,
+    Mutter,
+}
+
+impl Compositor {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Compositor::KWin => "KWin",
+            Compositor::Mutter => "GNOME Mutter",
+        }
+    }
+}
+
+/// The globals that tell the compositors apart.
+#[derive(Debug, Default)]
+struct Announced {
+    kwin: bool,
+    gtk_shell: bool,
+    wlroots: bool,
+}
+
+impl Announced {
+    fn note(&mut self, interface: &str) {
+        self.kwin |= announces_kwin(interface);
+        self.gtk_shell |= interface == "gtk_shell1";
+        self.wlroots |= interface.starts_with("zwlr_");
+    }
+
+    /// `gtk_shell1` is Mutter's, but phoc (Phosh) announces it too, next to
+    /// the wlroots protocols Mutter never does.
+    fn compositor(&self) -> Option<Compositor> {
+        if self.kwin {
+            Some(Compositor::KWin)
+        } else if self.gtk_shell && !self.wlroots {
+            Some(Compositor::Mutter)
+        } else {
+            None
+        }
+    }
+}
+
+/// What the compositor reported: which globals it announced, and its outputs.
 #[derive(Debug, Default)]
 struct Report {
-    is_kwin: bool,
+    announced: Announced,
     manager: Option<ZxdgOutputManagerV1>,
     outputs: Vec<(wl_output::WlOutput, Option<ZxdgOutputV1>, OutputRect)>,
 }
@@ -60,8 +104,8 @@ impl Dispatch<wl_registry::WlRegistry, ()> for Report {
         else {
             return;
         };
+        state.announced.note(&interface);
         match interface.as_str() {
-            kwin_output if announces_kwin(kwin_output) => state.is_kwin = true,
             "wl_output" => {
                 let index = state.outputs.len();
                 let output =
@@ -168,9 +212,13 @@ fn announces_kwin(interface: &str) -> bool {
 
 /// The desktop frame of these outputs: their logical bounding box, with frame
 /// pixel (0, 0) at its top-left layout point, and the largest output scale,
-/// which is the scale KWin renders a whole-desktop capture at.
-fn frame_of(outputs: &[OutputRect]) -> anyhow::Result<DesktopFrame> {
-    anyhow::ensure!(!outputs.is_empty(), NO_OUTPUTS);
+/// which is the scale a whole-desktop capture is rendered at.
+fn frame_of(compositor: Compositor, outputs: &[OutputRect]) -> anyhow::Result<DesktopFrame> {
+    anyhow::ensure!(
+        !outputs.is_empty(),
+        "{} announced no output layout",
+        compositor.name()
+    );
     let frame_outputs = outputs
         .iter()
         .map(|output| {
@@ -184,7 +232,8 @@ fn frame_of(outputs: &[OutputRect]) -> anyhow::Result<DesktopFrame> {
                     height,
                 }),
                 _ => anyhow::bail!(
-                    "KWin output {:?} has no logical size: {}x{}",
+                    "{} output {:?} has no logical size: {}x{}",
+                    compositor.name(),
                     output.name,
                     output.width,
                     output.height
@@ -203,8 +252,6 @@ fn frame_of(outputs: &[OutputRect]) -> anyhow::Result<DesktopFrame> {
         outputs: frame_outputs,
     })
 }
-
-const NO_OUTPUTS: &str = "KWin announced no output layout";
 
 /// Physical pixels per logical pixel. Compared by area, so a rotated output
 /// (whose mode is reported before the rotation) cannot skew the result.
@@ -269,9 +316,10 @@ impl DistortedCapture {
     }
 }
 
-/// KWin's desktop frame and what its capture of that frame gets wrong.
+/// The desktop frame and what its capture gets wrong (KWin only).
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct DesktopLayout {
+    pub compositor: Compositor,
     pub frame: DesktopFrame,
     pub distorted: Option<DistortedCapture>,
 }
@@ -314,26 +362,32 @@ fn distorted_capture(
     }
 }
 
-/// KWin's desktop layout. `Ok(None)` only when the compositor answered and is
-/// not KWin. A compositor that cannot be asked might be KWin, and a layout KWin
-/// cannot report is an error too: the physical frame would miss every click.
+/// The KWin or Mutter desktop layout. `Ok(None)` only when the compositor
+/// answered and is neither. A compositor that cannot be asked might be one, and
+/// a layout it cannot report is an error too: the physical frame would miss
+/// every click.
 pub(crate) fn desktop_layout() -> anyhow::Result<Option<DesktopLayout>> {
-    let Some(outputs) = query()? else {
+    let Some((compositor, outputs)) = query()? else {
         return Ok(None);
     };
+    let distorted = match compositor {
+        Compositor::KWin => distorted_capture(&outputs, super::kwin_helper::support_information),
+        Compositor::Mutter => None,
+    };
     Ok(Some(DesktopLayout {
-        frame: frame_of(&outputs)?,
-        distorted: distorted_capture(&outputs, super::kwin_helper::support_information),
+        compositor,
+        frame: frame_of(compositor, &outputs)?,
+        distorted,
     }))
 }
 
 /// The frame plus the monitor list `get_screen_size` reports, both from one
 /// read of the layout, in the shape the Hyprland and niri adapters publish.
 pub(crate) fn screen_report() -> anyhow::Result<Option<(DesktopFrame, serde_json::Value)>> {
-    let Some(outputs) = query()? else {
+    let Some((compositor, outputs)) = query()? else {
         return Ok(None);
     };
-    let frame = frame_of(&outputs)?;
+    let frame = frame_of(compositor, &outputs)?;
     let monitors = outputs
         .iter()
         .map(|output| {
@@ -352,35 +406,39 @@ pub(crate) fn screen_report() -> anyhow::Result<Option<(DesktopFrame, serde_json
     Ok(Some((frame, serde_json::Value::Array(monitors))))
 }
 
-fn query() -> anyhow::Result<Option<Vec<OutputRect>>> {
-    let connection = Connection::connect_to_env()
-        .context("the Wayland compositor could not be asked whether it is KWin")?;
+const UNASKED: &str =
+    "the Wayland compositor could not be asked whether it is KWin or GNOME Mutter";
+
+fn query() -> anyhow::Result<Option<(Compositor, Vec<OutputRect>)>> {
+    let connection = Connection::connect_to_env().context(UNASKED)?;
     query_on(&connection)
 }
 
-fn query_on(connection: &Connection) -> anyhow::Result<Option<Vec<OutputRect>>> {
+fn query_on(connection: &Connection) -> anyhow::Result<Option<(Compositor, Vec<OutputRect>)>> {
     let mut queue = connection.new_event_queue::<Report>();
     let qh = queue.handle();
     connection.display().get_registry(&qh, ());
     let mut report = Report::default();
-    queue
-        .roundtrip(&mut report)
-        .context("the Wayland compositor could not be asked whether it is KWin")?;
-    if !report.is_kwin {
+    queue.roundtrip(&mut report).context(UNASKED)?;
+    let Some(compositor) = report.announced.compositor() else {
         return Ok(None);
-    }
+    };
+    let name = compositor.name();
     let manager = report
         .manager
         .clone()
-        .context("KWin did not announce zxdg_output_manager_v1")?;
+        .with_context(|| format!("{name} did not announce zxdg_output_manager_v1"))?;
     for index in 0..report.outputs.len() {
         let xdg = manager.get_xdg_output(&report.outputs[index].0, &qh, index);
         report.outputs[index].1 = Some(xdg);
     }
     queue
         .roundtrip(&mut report)
-        .context("KWin's output layout could not be read")?;
-    Ok(Some(report.outputs.into_iter().map(|o| o.2).collect()))
+        .with_context(|| format!("{name}'s output layout could not be read"))?;
+    Ok(Some((
+        compositor,
+        report.outputs.into_iter().map(|o| o.2).collect(),
+    )))
 }
 
 #[cfg(test)]
@@ -413,7 +471,7 @@ mod tests {
 
     #[test]
     fn frame_is_the_bounding_box_of_every_output_in_logical_pixels() {
-        let frame = frame_of(&two_monitors()).unwrap();
+        let frame = frame_of(Compositor::KWin, &two_monitors()).unwrap();
         assert_eq!(
             (frame.x, frame.y, frame.width, frame.height),
             (0, 0, 2912, 1536)
@@ -423,7 +481,11 @@ mod tests {
     #[test]
     fn a_layout_away_from_the_origin_maps_frame_pixels_onto_its_outputs() {
         // Only the output at (864, 0) is left on.
-        let frame = frame_of(&[output(864, 0, 1920, 1080, (1920, 1080))]).unwrap();
+        let frame = frame_of(
+            Compositor::KWin,
+            &[output(864, 0, 1920, 1080, (1920, 1080))],
+        )
+        .unwrap();
         assert_eq!(
             (frame.x, frame.y, frame.width, frame.height),
             (864, 0, 1920, 1080)
@@ -432,10 +494,13 @@ mod tests {
         assert_eq!(frame.to_layout(1919, 1079), (2783, 1079));
 
         // An output above and left of the layout origin.
-        let frame = frame_of(&[
-            output(-1920, -200, 1920, 1080, (1920, 1080)),
-            output(0, 0, 1920, 1080, (1920, 1080)),
-        ])
+        let frame = frame_of(
+            Compositor::KWin,
+            &[
+                output(-1920, -200, 1920, 1080, (1920, 1080)),
+                output(0, 0, 1920, 1080, (1920, 1080)),
+            ],
+        )
         .unwrap();
         assert_eq!(
             (frame.x, frame.y, frame.width, frame.height),
@@ -452,11 +517,14 @@ mod tests {
         // outputs' logical rectangles at one pixel per logical pixel, with pixel
         // (0, 0) at its top-left layout point. Here: a 1x output above and left
         // of the origin, a 2x output at it, and a 1.25x one off to the right.
-        let frame = frame_of(&[
-            output(-1920, -200, 1920, 1080, (1920, 1080)),
-            output(0, 0, 1280, 720, (2560, 1440)),
-            output(1280, 100, 2048, 1152, (2560, 1440)),
-        ])
+        let frame = frame_of(
+            Compositor::KWin,
+            &[
+                output(-1920, -200, 1920, 1080, (1920, 1080)),
+                output(0, 0, 1280, 720, (2560, 1440)),
+                output(1280, 100, 2048, 1152, (2560, 1440)),
+            ],
+        )
         .unwrap();
         assert_eq!((frame.width, frame.height), (5248, 1452));
         let window = |x, y| crate::x11::WindowInfo {
@@ -481,8 +549,13 @@ mod tests {
     fn scale_is_the_largest_output_scale_in_any_announcement_order() {
         let low = output(0, 0, 1920, 1080, (1920, 1080));
         let high = output(1920, 0, 960, 540, (1920, 1080));
-        assert_eq!(frame_of(&[low.clone(), high.clone()]).unwrap().scale, 2.0);
-        assert_eq!(frame_of(&[high, low]).unwrap().scale, 2.0);
+        assert_eq!(
+            frame_of(Compositor::KWin, &[low.clone(), high.clone()])
+                .unwrap()
+                .scale,
+            2.0
+        );
+        assert_eq!(frame_of(Compositor::KWin, &[high, low]).unwrap().scale, 2.0);
     }
 
     #[test]
@@ -507,7 +580,14 @@ mod tests {
 
     #[test]
     fn no_outputs_is_an_error() {
-        assert_eq!(frame_of(&[]).unwrap_err().to_string(), NO_OUTPUTS);
+        assert_eq!(
+            frame_of(Compositor::KWin, &[]).unwrap_err().to_string(),
+            "KWin announced no output layout"
+        );
+        assert_eq!(
+            frame_of(Compositor::Mutter, &[]).unwrap_err().to_string(),
+            "GNOME Mutter announced no output layout"
+        );
     }
 
     #[test]
@@ -515,7 +595,9 @@ mod tests {
         let mut unsized_output = output(0, 0, 0, 0, (1920, 1080));
         unsized_output.name = "DP-1".into();
         assert_eq!(
-            frame_of(&[unsized_output]).unwrap_err().to_string(),
+            frame_of(Compositor::KWin, &[unsized_output])
+                .unwrap_err()
+                .to_string(),
             "KWin output \"DP-1\" has no logical size: 0x0"
         );
     }
@@ -579,7 +661,7 @@ mod tests {
             turned_output("DP-1", 0),
             output(1080, 0, 1920, 1080, (1920, 1080)),
         ];
-        let frame = frame_of(&outputs).unwrap();
+        let frame = frame_of(Compositor::KWin, &outputs).unwrap();
         let distorted = distorted_capture(&outputs, || support("6.3.6")).unwrap();
         assert_eq!(
             distorted
@@ -694,7 +776,7 @@ mod tests {
         }
     }
 
-    fn query_script(script: Script) -> anyhow::Result<Option<Vec<OutputRect>>> {
+    fn query_script(script: Script) -> anyhow::Result<Option<(Compositor, Vec<OutputRect>)>> {
         let (client, server) = UnixStream::pair().unwrap();
         let compositor = std::thread::spawn(move || serve(server, script));
         let connection = Connection::from_backend(Backend::connect(client).unwrap());
@@ -713,14 +795,15 @@ mod tests {
 
     #[test]
     fn query_reads_every_output_of_kwin() {
-        let outputs = query_script(Script {
+        let (compositor, outputs) = query_script(Script {
             globals: KWIN_GLOBALS.to_vec(),
             logical: vec![(864, 0, 1920, 1080), (-100, 50, 1280, 720)],
             ..Script::default()
         })
         .unwrap()
         .unwrap();
-        let frame = frame_of(&outputs).unwrap();
+        assert_eq!(compositor, Compositor::KWin);
+        let frame = frame_of(Compositor::KWin, &outputs).unwrap();
         assert_eq!(
             (frame.x, frame.y, frame.width, frame.height),
             (-100, 0, 2884, 1080)
@@ -728,13 +811,70 @@ mod tests {
     }
 
     #[test]
-    fn a_compositor_that_is_not_kwin_has_no_layout_here() {
+    fn a_compositor_that_is_neither_kwin_nor_mutter_has_no_layout_here() {
         let outputs = query_script(Script {
             globals: vec!["wl_output", "zxdg_output_manager_v1"],
             ..Script::default()
         })
         .unwrap();
         assert_eq!(outputs, None);
+    }
+
+    /// What GNOME Shell 48 announces, in its order, up to the protocols that
+    /// matter here.
+    const MUTTER_GLOBALS: [&str; 5] = [
+        "wl_compositor",
+        "wl_output",
+        "zxdg_output_manager_v1",
+        "xdg_wm_base",
+        "gtk_shell1",
+    ];
+
+    #[test]
+    fn query_reads_the_logical_layout_of_mutter() {
+        // One 3840x2160 output at 150%, as `gdctl` sets it.
+        let (compositor, outputs) = query_script(Script {
+            globals: MUTTER_GLOBALS.to_vec(),
+            logical: vec![(0, 0, 2560, 1440)],
+            ..Script::default()
+        })
+        .unwrap()
+        .unwrap();
+        assert_eq!(compositor, Compositor::Mutter);
+        let frame = frame_of(compositor, &outputs).unwrap();
+        assert_eq!(
+            (frame.x, frame.y, frame.width, frame.height),
+            (0, 0, 2560, 1440)
+        );
+    }
+
+    #[test]
+    fn phoc_is_not_taken_for_mutter() {
+        // phoc (Phosh) announces gtk_shell1 next to the wlroots protocols.
+        let outputs = query_script(Script {
+            globals: vec![
+                "wl_output",
+                "zxdg_output_manager_v1",
+                "gtk_shell1",
+                "zwlr_layer_shell_v1",
+            ],
+            ..Script::default()
+        })
+        .unwrap();
+        assert_eq!(outputs, None);
+    }
+
+    #[test]
+    fn mutter_without_xdg_output_is_an_error_not_the_physical_frame() {
+        let error = query_script(Script {
+            globals: vec!["wl_output", "gtk_shell1"],
+            ..Script::default()
+        })
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "GNOME Mutter did not announce zxdg_output_manager_v1"
+        );
     }
 
     #[test]
@@ -769,9 +909,6 @@ mod tests {
             ..Script::default()
         })
         .unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "the Wayland compositor could not be asked whether it is KWin"
-        );
+        assert_eq!(error.to_string(), UNASKED);
     }
 }

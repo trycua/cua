@@ -1129,16 +1129,56 @@ impl Tool for BrowserMotionPolicyTool {
             .to_tool_result();
         }
 
-        match validated
-            .conn
-            .call(
-                Some(&validated.cdp_session),
-                "Emulation.setEmulatedMedia",
-                motion_policy.cdp_params(),
-            )
-            .await
-        {
-            Ok(_) => ToolResult::text(format!("browser motion policy for {tab_id}: {mode}"))
+        // Chromium keeps an emulation override only while the session that
+        // set it stays attached, and revalidation attaches a fresh session
+        // per call. The session that set this tab's override stays its holder,
+        // even after a failed call that may have applied it, until a clear
+        // succeeds or the session is gone, and both modes go to it.
+        let conn = &validated.conn;
+        let cdp_target_id = &validated.tab.cdp_target_id;
+        let send = |cdp_session: String| async move {
+            let sent = conn
+                .call(
+                    Some(&cdp_session),
+                    "Emulation.setEmulatedMedia",
+                    motion_policy.cdp_params(),
+                )
+                .await;
+            let gone = sent.as_ref().is_err_and(is_session_not_found);
+            if gone || (sent.is_ok() && motion_policy == BrowserMotionPolicy::Default) {
+                conn.clear_media_override_session(cdp_target_id, &cdp_session);
+            }
+            (sent.map(|_| ()), gone)
+        };
+        let applied = match (motion_policy, conn.media_override_session(cdp_target_id)) {
+            (BrowserMotionPolicy::Default, None) => Ok(()),
+            (BrowserMotionPolicy::Default, Some(holder)) => match send(holder).await {
+                // The holder's session ended, taking its override along.
+                (Err(_), true) => Ok(()),
+                (result, _) => result,
+            },
+            (BrowserMotionPolicy::Reduce, holder) => {
+                let on_holder = match holder {
+                    Some(holder) => match send(holder).await {
+                        (Err(_), true) => None,
+                        (result, _) => Some(result),
+                    },
+                    None => None,
+                };
+                match on_holder {
+                    Some(result) => result,
+                    None => {
+                        // Recorded before sending, so a detach during the
+                        // call removes it again.
+                        conn.set_media_override_session(cdp_target_id, &validated.cdp_session);
+                        send(validated.cdp_session.clone()).await.0
+                    }
+                }
+            }
+        };
+
+        match applied {
+            Ok(()) => ToolResult::text(format!("browser motion policy for {tab_id}: {mode}"))
                 .with_structured(json!({
                     "status": "ok",
                     "target_id": target_id,
@@ -1152,6 +1192,11 @@ impl Tool for BrowserMotionPolicyTool {
             Err(error) => ToolResult::error(format!("Emulation.setEmulatedMedia failed: {error}")),
         }
     }
+}
+
+/// Chromium's answer for a command on a session that no longer exists.
+fn is_session_not_found(error: &anyhow::Error) -> bool {
+    error.to_string().contains("(-32001)")
 }
 
 // ── browser_navigate ─────────────────────────────────────────────────────────

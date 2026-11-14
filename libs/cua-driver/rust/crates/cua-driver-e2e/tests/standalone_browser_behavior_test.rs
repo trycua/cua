@@ -1698,6 +1698,23 @@ fn case(browser: &str, action: &str) -> CaseSpec {
     )
 }
 
+/// The policy row checks page media state and semantic parity, not desktop
+/// posture, so only the fixture oracle applies.
+fn reduced_motion_case(browser: &str) -> CaseSpec {
+    let action = "browser_reduced_motion_policy";
+    CaseSpec::delivered(
+        format!("{}-{browser}-standalone-{action}", std::env::consts::OS),
+        browser,
+        "standalone-chromium",
+        action,
+        Targeting::Page,
+        Delivery::Background,
+        Scope::Window,
+        DriverRoute::Cdp,
+        vec![OracleKind::FixtureState],
+    )
+}
+
 fn prepare_isolated_case(browser: &str) -> CaseSpec {
     case(browser, "browser_prepare_isolated_launch")
 }
@@ -2863,164 +2880,161 @@ fn run_reduced_motion_policy(spec: &BrowserSpec) {
         std::env::consts::OS,
         spec.name
     );
-    execute_case(
-        case(&spec.name, "browser_reduced_motion_policy"),
-        |evidence| {
-            let target_server = BrowserFixtureServer::start(&standalone_reduced_motion_html());
-            let driver_profiles = driver_profile_root();
-            let profiles_before = profile_entries(&driver_profiles);
-            let mut driver = spawn_driver(&scenario);
-            *evidence = recording_evidence(driver.recording_dir());
+    execute_case(reduced_motion_case(&spec.name), |evidence| {
+        let target_server = BrowserFixtureServer::start(&standalone_reduced_motion_html());
+        let driver_profiles = driver_profile_root();
+        let profiles_before = profile_entries(&driver_profiles);
+        let mut driver = spawn_driver(&scenario);
+        *evidence = recording_evidence(driver.recording_dir());
 
-            let session = format!("standalone-reduced-motion-{}", spec.name);
-            let started = driver.call("start_session", serde_json::json!({ "session": session }));
-            assert!(!started.is_error(), "start_session failed: {}", started.raw);
+        let session = format!("standalone-reduced-motion-{}", spec.name);
+        let started = driver.call("start_session", serde_json::json!({ "session": session }));
+        assert!(!started.is_error(), "start_session failed: {}", started.raw);
 
-            let prepared = driver.call(
-                "browser_prepare",
-                serde_json::json!({
-                    "session": session,
-                    "allow_launch": true,
-                    "profile": {"mode": "isolated_new"},
-                }),
-            );
-            assert_eq!(prepared.structured()["status"], "ok", "{}", prepared.raw);
-            let prepared_pid = prepared.structured()["prepared_pid"]
-                .as_u64()
-                .expect("prepared browser pid") as u32;
-            let (_window_id, state) =
-                wait_for_exact_browser_binding(&mut driver, prepared_pid, &session)
-                    .expect("isolated browser did not expose an exactly bindable window");
-            let target = state.structured()["target_id"]
-                .as_str()
-                .expect("prepared target id")
-                .to_owned();
-            let tab = state.structured()["tabs"]
-                .as_array()
-                .and_then(|tabs| tabs.iter().find(|tab| tab["active"] == true))
-                .and_then(|tab| tab["tab_id"].as_str())
-                .expect("prepared active tab")
-                .to_owned();
+        let prepared = driver.call(
+            "browser_prepare",
+            serde_json::json!({
+                "session": session,
+                "allow_launch": true,
+                "profile": {"mode": "isolated_new"},
+            }),
+        );
+        assert_eq!(prepared.structured()["status"], "ok", "{}", prepared.raw);
+        let prepared_pid = prepared.structured()["prepared_pid"]
+            .as_u64()
+            .expect("prepared browser pid") as u32;
+        let (_window_id, state) =
+            wait_for_exact_browser_binding(&mut driver, prepared_pid, &session)
+                .expect("isolated browser did not expose an exactly bindable window");
+        let target = state.structured()["target_id"]
+            .as_str()
+            .expect("prepared target id")
+            .to_owned();
+        let tab = state.structured()["tabs"]
+            .as_array()
+            .and_then(|tabs| tabs.iter().find(|tab| tab["active"] == true))
+            .and_then(|tab| tab["tab_id"].as_str())
+            .expect("prepared active tab")
+            .to_owned();
 
-            let navigated = driver.call(
-                "browser_navigate",
-                serde_json::json!({
-                    "target_id": target,
-                    "tab_id": tab,
-                    "url": target_server.page_url(),
-                    "session": session,
-                }),
-            );
-            assert_eq!(navigated.structured()["status"], "ok", "{}", navigated.raw);
-            wait_for_observed(&target_server, "WEB_HARNESS_MARKER_v1");
-            let initial_motion = {
-                let deadline = Instant::now() + Duration::from_secs(3);
-                loop {
-                    if let Some(value) = target_server.text("standalone-motion-state") {
-                        if matches!(value.as_str(), "motion=default" | "motion=reduce") {
-                            break value;
-                        }
-                    }
-                    assert!(
-                        Instant::now() < deadline,
-                        "motion fixture did not report baseline state"
-                    );
-                    thread::sleep(Duration::from_millis(50));
-                }
-            };
-
-            let baseline = driver.call(
-                "get_browser_state",
-                serde_json::json!({
-                    "target_id": target,
-                    "tab_id": tab,
-                    "session": session,
-                    "snapshot_format": "semantic_v2",
-                }),
-            );
-            assert_eq!(baseline.structured()["status"], "ok", "{}", baseline.raw);
-            let baseline_signature = semantic_action_signature(&baseline);
-
-            let reduced = driver.call(
-                "browser_motion_policy",
-                serde_json::json!({
-                    "target_id": target,
-                    "tab_id": tab,
-                    "mode": "reduce",
-                    "session": session,
-                }),
-            );
-            assert_eq!(reduced.structured()["status"], "ok", "{}", reduced.raw);
-            assert_eq!(reduced.structured()["prefer_reduced_motion"], true);
-            assert_eq!(reduced.structured()["css_injected"], false);
-            wait_for_text(&target_server, "standalone-motion-state", "motion=reduce");
-
-            let reduced_snapshot = driver.call(
-                "get_browser_state",
-                serde_json::json!({
-                    "target_id": target,
-                    "tab_id": tab,
-                    "session": session,
-                    "snapshot_format": "semantic_v2",
-                }),
-            );
-            assert_eq!(
-                semantic_action_signature(&reduced_snapshot),
-                baseline_signature,
-                "reduced-motion policy changed the semantic action surface: {}",
-                reduced_snapshot.raw
-            );
-
-            let click_ref = semantic_ref_by_name(&reduced_snapshot, "Increment", "click");
-            let clicked = driver.call(
-                "browser_click",
-                serde_json::json!({
-                    "target_id": target,
-                    "tab_id": tab,
-                    "ref": click_ref,
-                    "input_route": "dom_event",
-                    "session": session,
-                }),
-            );
-            assert_eq!(
-                clicked.action_effect(),
-                Some("unverifiable"),
-                "{}",
-                clicked.raw
-            );
-            wait_for_text(&target_server, "lbl-counter", "counter=1");
-
-            let reset = driver.call(
-                "browser_motion_policy",
-                serde_json::json!({
-                    "target_id": target,
-                    "tab_id": tab,
-                    "mode": "default",
-                    "session": session,
-                }),
-            );
-            assert_eq!(reset.structured()["status"], "ok", "{}", reset.raw);
-            assert_eq!(reset.structured()["prefer_reduced_motion"], false);
-            wait_for_text(&target_server, "standalone-motion-state", &initial_motion);
-
-            let ended = driver.call("end_session", serde_json::json!({ "session": session }));
-            assert!(!ended.is_error(), "end_session failed: {}", ended.raw);
-            wait_for_pid_windows_to_close(&mut driver, prepared_pid);
-            let profile_deadline = Instant::now() + Duration::from_secs(5);
+        let navigated = driver.call(
+            "browser_navigate",
+            serde_json::json!({
+                "target_id": target,
+                "tab_id": tab,
+                "url": target_server.page_url(),
+                "session": session,
+            }),
+        );
+        assert_eq!(navigated.structured()["status"], "ok", "{}", navigated.raw);
+        wait_for_observed(&target_server, "WEB_HARNESS_MARKER_v1");
+        let initial_motion = {
+            let deadline = Instant::now() + Duration::from_secs(3);
             loop {
-                if profile_entries(&driver_profiles) == profiles_before {
-                    break;
+                if let Some(value) = target_server.text("standalone-motion-state") {
+                    if matches!(value.as_str(), "motion=default" | "motion=reduce") {
+                        break value;
+                    }
                 }
                 assert!(
-                    Instant::now() < profile_deadline,
-                    "isolated_new profile remained after end_session"
+                    Instant::now() < deadline,
+                    "motion fixture did not report baseline state"
                 );
-                thread::sleep(Duration::from_millis(100));
+                thread::sleep(Duration::from_millis(50));
             }
+        };
 
-            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
-        },
-    );
+        let baseline = driver.call(
+            "get_browser_state",
+            serde_json::json!({
+                "target_id": target,
+                "tab_id": tab,
+                "session": session,
+                "snapshot_format": "semantic_v2",
+            }),
+        );
+        assert_eq!(baseline.structured()["status"], "ok", "{}", baseline.raw);
+        let baseline_signature = semantic_action_signature(&baseline);
+
+        let reduced = driver.call(
+            "browser_motion_policy",
+            serde_json::json!({
+                "target_id": target,
+                "tab_id": tab,
+                "mode": "reduce",
+                "session": session,
+            }),
+        );
+        assert_eq!(reduced.structured()["status"], "ok", "{}", reduced.raw);
+        assert_eq!(reduced.structured()["prefer_reduced_motion"], true);
+        assert_eq!(reduced.structured()["css_injected"], false);
+        wait_for_text(&target_server, "standalone-motion-state", "motion=reduce");
+
+        let reduced_snapshot = driver.call(
+            "get_browser_state",
+            serde_json::json!({
+                "target_id": target,
+                "tab_id": tab,
+                "session": session,
+                "snapshot_format": "semantic_v2",
+            }),
+        );
+        assert_eq!(
+            semantic_action_signature(&reduced_snapshot),
+            baseline_signature,
+            "reduced-motion policy changed the semantic action surface: {}",
+            reduced_snapshot.raw
+        );
+
+        let click_ref = semantic_ref_by_name(&reduced_snapshot, "Increment", "click");
+        let clicked = driver.call(
+            "browser_click",
+            serde_json::json!({
+                "target_id": target,
+                "tab_id": tab,
+                "ref": click_ref,
+                "input_route": "dom_event",
+                "session": session,
+            }),
+        );
+        assert_eq!(
+            clicked.action_effect(),
+            Some("unverifiable"),
+            "{}",
+            clicked.raw
+        );
+        wait_for_text(&target_server, "lbl-counter", "counter=1");
+
+        let reset = driver.call(
+            "browser_motion_policy",
+            serde_json::json!({
+                "target_id": target,
+                "tab_id": tab,
+                "mode": "default",
+                "session": session,
+            }),
+        );
+        assert_eq!(reset.structured()["status"], "ok", "{}", reset.raw);
+        assert_eq!(reset.structured()["prefer_reduced_motion"], false);
+        wait_for_text(&target_server, "standalone-motion-state", &initial_motion);
+
+        let ended = driver.call("end_session", serde_json::json!({ "session": session }));
+        assert!(!ended.is_error(), "end_session failed: {}", ended.raw);
+        wait_for_pid_windows_to_close(&mut driver, prepared_pid);
+        let profile_deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if profile_entries(&driver_profiles) == profiles_before {
+                break;
+            }
+            assert!(
+                Instant::now() < profile_deadline,
+                "isolated_new profile remained after end_session"
+            );
+            thread::sleep(Duration::from_millis(100));
+        }
+
+        Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+    });
 }
 
 #[cfg(not(target_os = "macos"))]

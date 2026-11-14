@@ -79,6 +79,11 @@ pub(super) struct FixtureState {
     /// answer `Page.enable` on the new session.
     detach_dialog_session: bool,
     dialog_blocks_page: bool,
+    /// Fail the next `Emulation.setEmulatedMedia` after applying it, as a
+    /// lost reply would.
+    fail_next_emulated_media: bool,
+    /// Tab sessions Chromium no longer knows, as after an unseen detach.
+    gone_sessions: Vec<String>,
     /// Tab sessions that enabled the Page domain. Chromium reports a dialog
     /// to each of them, not to the session whose call opened it.
     page_sessions: Vec<String>,
@@ -153,6 +158,8 @@ impl Default for FixtureState {
             renderer_blocked: false,
             detach_dialog_session: false,
             dialog_blocks_page: false,
+            fail_next_emulated_media: false,
+            gone_sessions: Vec::new(),
             page_sessions: Vec::new(),
             semantic_large_page: false,
             semantic_html_style: String::new(),
@@ -905,6 +912,15 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     session_id: Some(sess.clone()),
                     params: json!({ "result": call.params["accept"], "userInput": "" }),
                 }])
+            }
+            "Emulation.setEmulatedMedia" if is_tab => {
+                if st.gone_sessions.contains(&sess) {
+                    MockReply::err(-32001, "Session with given id not found.")
+                } else if std::mem::take(&mut st.fail_next_emulated_media) {
+                    MockReply::err(-32000, "fixture lost reply")
+                } else {
+                    MockReply::ok(json!({}))
+                }
             }
             other => MockReply::method_not_found(other),
         }
@@ -2587,6 +2603,137 @@ async fn motion_policy_leaves_an_embedded_application_tab_unemulated() {
         "motion_policy_driver_owned_only"
     );
     assert!(recorded_calls(&f, "Emulation.setEmulatedMedia").is_empty());
+}
+
+/// Bind a driver-owned tab in its own session and return a caller for
+/// `browser_motion_policy` on it.
+#[cfg(unix)]
+async fn driver_owned_motion_tab(
+    f: &Fixture,
+    session: &'static str,
+) -> impl Fn(&'static str) -> std::pin::Pin<Box<dyn std::future::Future<Output = ToolResult> + Send>>
+{
+    let mut stand_in = std::process::Command::new("sleep");
+    stand_in.arg("30");
+    std::os::unix::process::CommandExt::process_group(&mut stand_in, 0);
+    f.engine
+        .adopt_driver_owned_browser_for_test(session, 1, stand_in.spawn().unwrap())
+        .await;
+    let bound = structured(
+        &GetBrowserStateTool::new(f.engine.clone())
+            .invoke(json!({ "pid": 1, "window_id": 7, "session": session }))
+            .await,
+    )
+    .clone();
+    assert_eq!(bound["status"], "ok", "{bound}");
+    let target = bound["target_id"].as_str().unwrap().to_owned();
+    let tab = bound["tabs"][0]["tab_id"].as_str().unwrap().to_owned();
+    let engine = f.engine.clone();
+    move |mode| {
+        let tool = BrowserMotionPolicyTool::new(engine.clone());
+        let args = json!({
+            "target_id": target,
+            "tab_id": tab,
+            "mode": mode,
+            "session": session,
+        });
+        Box::pin(async move { tool.invoke(args).await })
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn motion_policy_clears_the_override_on_the_session_that_set_it() {
+    // Chromium drops an emulated media override only on the session that
+    // set it, and every call attaches a fresh tab session (#4557).
+    const MOTION_SESSION: &str = "run-v2-motion-policy";
+    let f = fixture().await;
+    let policy = driver_owned_motion_tab(&f, MOTION_SESSION).await;
+
+    let reduced = structured(&policy("reduce").await).clone();
+    assert_eq!(reduced["status"], "ok", "{reduced}");
+    assert_eq!(reduced["prefer_reduced_motion"], true);
+    let cleared = structured(&policy("default").await).clone();
+    assert_eq!(cleared["status"], "ok", "{cleared}");
+    assert_eq!(cleared["prefer_reduced_motion"], false);
+    let cleared_again = structured(&policy("default").await).clone();
+    assert_eq!(cleared_again["status"], "ok", "{cleared_again}");
+
+    let calls = recorded_calls(&f, "Emulation.setEmulatedMedia");
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    assert_eq!(calls[0].1["features"][0]["value"], "reduce");
+    assert_eq!(calls[1].1["features"], json!([]));
+    assert_eq!(calls[0].0, calls[1].0, "{calls:?}");
+    crate::session::fire_session_end(MOTION_SESSION);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn motion_policy_clears_on_the_session_of_a_reduce_whose_reply_was_lost() {
+    // A failed reply does not prove the override was not applied, so a
+    // later default must still clear it on that session (#4557).
+    const MOTION_SESSION: &str = "run-v2-motion-policy-lost-reply";
+    let f = fixture().await;
+    let policy = driver_owned_motion_tab(&f, MOTION_SESSION).await;
+
+    f.state.lock().unwrap().fail_next_emulated_media = true;
+    let failed = policy("reduce").await;
+    assert_eq!(failed.is_error, Some(true));
+    let cleared = structured(&policy("default").await).clone();
+    assert_eq!(cleared["status"], "ok", "{cleared}");
+
+    let calls = recorded_calls(&f, "Emulation.setEmulatedMedia");
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    assert_eq!(calls[1].1["features"], json!([]));
+    assert_eq!(calls[0].0, calls[1].0, "{calls:?}");
+    crate::session::fire_session_end(MOTION_SESSION);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn motion_policy_moves_off_a_holder_session_chromium_no_longer_knows() {
+    // A holder whose detach went unseen must not wedge the tool: Chromium's
+    // session-not-found answer proves its override is gone (#4557).
+    const MOTION_SESSION: &str = "run-v2-motion-policy-gone-holder";
+    let f = fixture().await;
+    let policy = driver_owned_motion_tab(&f, MOTION_SESSION).await;
+
+    let first = structured(&policy("reduce").await).clone();
+    assert_eq!(first["status"], "ok", "{first}");
+    let first_session = recorded_calls(&f, "Emulation.setEmulatedMedia")[0]
+        .0
+        .clone();
+    f.state
+        .lock()
+        .unwrap()
+        .gone_sessions
+        .push(first_session.clone().unwrap());
+    let moved = structured(&policy("reduce").await).clone();
+    assert_eq!(moved["status"], "ok", "{moved}");
+    let cleared = structured(&policy("default").await).clone();
+    assert_eq!(cleared["status"], "ok", "{cleared}");
+
+    let calls = recorded_calls(&f, "Emulation.setEmulatedMedia");
+    assert_eq!(calls.len(), 4, "{calls:?}");
+    assert_eq!(calls[1].0, first_session, "{calls:?}");
+    assert_ne!(calls[2].0, first_session, "{calls:?}");
+    assert_eq!(calls[2].1["features"][0]["value"], "reduce");
+    assert_eq!(calls[3].0, calls[2].0, "{calls:?}");
+    assert_eq!(calls[3].1["features"], json!([]));
+
+    // A default whose holder is gone succeeds and forgets it.
+    let again = structured(&policy("reduce").await).clone();
+    assert_eq!(again["status"], "ok", "{again}");
+    let holder = recorded_calls(&f, "Emulation.setEmulatedMedia")[4]
+        .0
+        .clone();
+    f.state.lock().unwrap().gone_sessions.push(holder.unwrap());
+    let cleared_gone = structured(&policy("default").await).clone();
+    assert_eq!(cleared_gone["status"], "ok", "{cleared_gone}");
+    let none_left = structured(&policy("default").await).clone();
+    assert_eq!(none_left["status"], "ok", "{none_left}");
+    assert_eq!(recorded_calls(&f, "Emulation.setEmulatedMedia").len(), 6);
+    crate::session::fire_session_end(MOTION_SESSION);
 }
 
 #[tokio::test]

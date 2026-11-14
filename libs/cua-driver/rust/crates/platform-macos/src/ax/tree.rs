@@ -376,6 +376,7 @@ fn walk_tree_with_web_content(
             walk_element(
                 child,
                 0,
+                0,
                 None,
                 false,
                 &mut nodes,
@@ -541,10 +542,22 @@ fn collapse_layout_container(role: &str, title: Option<&str>, description: Optio
         && description.is_none_or(|text| text.trim().is_empty())
 }
 
+/// `max_depth` budget a node's children are walked at. A named layout group
+/// kept as a row indents its children but spends no budget, so `max_depth`
+/// admits the same elements as when every group collapsed.
+fn child_walk_depth(role: &str, walk_depth: usize) -> usize {
+    if is_layout_container(role) {
+        walk_depth
+    } else {
+        walk_depth + 1
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 unsafe fn walk_element(
     element: AXUIElementRef,
     depth: usize,
+    walk_depth: usize,
     parent_index: Option<usize>,
     in_web_content: bool,
     nodes: &mut Vec<AXNode>,
@@ -555,7 +568,7 @@ unsafe fn walk_element(
     max_depth: usize,
     include_web_content: bool,
 ) {
-    if depth > max_depth {
+    if walk_depth > max_depth {
         *depth_truncated = true;
         return;
     }
@@ -595,6 +608,7 @@ unsafe fn walk_element(
             walk_element(
                 child,
                 depth,
+                walk_depth,
                 parent_index,
                 in_web_content,
                 nodes,
@@ -674,6 +688,7 @@ unsafe fn walk_element(
             walk_element(
                 child,
                 depth + 1,
+                walk_depth + 1,
                 parent_index,
                 in_web_content,
                 nodes,
@@ -817,6 +832,7 @@ unsafe fn walk_element(
         walk_element(
             child,
             depth + 1,
+            child_walk_depth(&role, walk_depth),
             next_parent,
             in_web_content,
             nodes,
@@ -1084,6 +1100,16 @@ mod tests {
         // no element_index and indexes after it do not shift.
         assert!(is_layout_container("AXGroup") && is_layout_container("AXScrollArea"));
         assert!(!is_layout_container("AXButton"));
+    }
+
+    #[test]
+    fn a_kept_named_group_spends_no_max_depth_budget() {
+        // A button at walk depth 3 under a named group stays within
+        // max_depth=3, as it did when the group collapsed.
+        assert_eq!(child_walk_depth("AXGroup", 3), 3);
+        assert_eq!(child_walk_depth("AXScrollArea", 3), 3);
+        assert_eq!(child_walk_depth("AXWindow", 2), 3);
+        assert_eq!(child_walk_depth("AXButton", 2), 3);
     }
 
     #[test]

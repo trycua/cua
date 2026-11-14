@@ -66,6 +66,10 @@ pub(super) struct FixtureState {
     multiline_field: bool,
     /// `Emulation.setFocusEmulationEnabled { enabled: false }` fails.
     focus_emulation_off_fails: bool,
+    /// The Enter `char` event fails after its `keyDown` landed.
+    fail_enter_char: bool,
+    /// The single-line field probe errors instead of answering.
+    single_line_probe_fails: bool,
     /// A synthetic `this.click()` opens a confirm() dialog: the mock emits
     /// `Page.javascriptDialogOpening` and never answers the call.
     click_opens_dialog: bool,
@@ -153,6 +157,8 @@ impl Default for FixtureState {
             completed_key_pairs: 0,
             multiline_field: false,
             focus_emulation_off_fails: false,
+            fail_enter_char: false,
+            single_line_probe_fails: false,
             click_opens_dialog: false,
             dialog_vanished: false,
             trusted_click_opens_dialog: None,
@@ -785,6 +791,13 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     MockReply::err(-32000, "No node with given id")
                 }
             }
+            "Input.dispatchKeyEvent"
+                if st.fail_enter_char
+                    && call.params["type"] == "char"
+                    && call.params["key"] == "Enter" =>
+            {
+                MockReply::err(-32000, "fixture Enter char failure")
+            }
             "Input.dispatchKeyEvent" => {
                 let event_type = call.params["type"].as_str().unwrap_or_default();
                 if event_type == "keyDown" && st.fail_key_down_after == Some(st.completed_key_pairs)
@@ -886,7 +899,11 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                         declaration.contains("!this.isContentEditable && this.tagName === 'INPUT'")
                     }) =>
             {
-                MockReply::ok(json!({ "result": { "value": !st.multiline_field } }))
+                if st.single_line_probe_fails {
+                    MockReply::err(-32000, "execution context destroyed")
+                } else {
+                    MockReply::ok(json!({ "result": { "value": !st.multiline_field } }))
+                }
             }
             "Runtime.callFunctionOn" => {
                 st.dom_click_focused = true;
@@ -4700,4 +4717,51 @@ async fn a_failed_cleanup_after_the_enter_does_not_say_the_enter_was_lost() {
     let message = refusal["message"].as_str().unwrap_or_default();
     assert!(message.contains("pressed Enter"), "{refusal}");
     assert!(!message.contains("not delivered"), "{refusal}");
+}
+
+#[tokio::test]
+async fn an_enter_that_fails_after_its_keydown_is_reported_as_uncertain() {
+    let f = fixture_with(|state| state.fail_enter_char = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let input_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let result = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": input_ref,
+            "text": "hi\n", "session": SESSION
+        }))
+        .await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "refused", "{s}");
+    let refusal = &s["refusal"];
+    assert_eq!(refusal["code"], "browser_input_incomplete", "{refusal}");
+    assert_eq!(refusal["detail"]["enter_pressed"], false, "{refusal}");
+    assert_eq!(refusal["detail"]["enter_partial"], true, "{refusal}");
+    let message = refusal["message"].as_str().unwrap_or_default();
+    assert!(!message.contains("not delivered"), "{refusal}");
+    assert!(message.contains("may or may not"), "{refusal}");
+}
+
+#[tokio::test]
+async fn a_failed_single_line_probe_refuses_before_typing() {
+    let f = fixture_with(|state| state.single_line_probe_fails = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let input_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let result = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": input_ref,
+            "text": "hi\n", "session": SESSION
+        }))
+        .await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "refused", "{s}");
+    assert_eq!(
+        s["refusal"]["code"], "browser_input_trust_unavailable",
+        "{s}"
+    );
+    assert!(recorded_calls(&f, "Input.insertText").is_empty());
+    assert!(recorded_calls(&f, "Input.dispatchKeyEvent").is_empty());
 }

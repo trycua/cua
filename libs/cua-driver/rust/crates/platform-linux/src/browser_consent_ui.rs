@@ -370,7 +370,7 @@ fn exact_button_center(
 
 fn trusted_allow_click(pid: u32, window_id: u64) -> anyhow::Result<()> {
     with_target_foreground(pid, window_id, session_policy().setup, || {
-        let tree = crate::atspi::walk_tree(pid, window_id, None);
+        let tree = crate::atspi::walk_tree_native_chrome(pid, window_id);
         let index = exact_allow_button(&tree.nodes, &tree.bounds)
             .map_err(|error| anyhow::anyhow!(error.message))?
             .ok_or_else(|| {
@@ -406,7 +406,7 @@ pub fn dismiss(pid: u32, window_id: u64) -> Result<bool, BrowserRefusal> {
     let mut dismissed = false;
     loop {
         prove_window_owner(pid, window_id)?;
-        let tree = crate::atspi::walk_tree(pid, window_id, None);
+        let tree = crate::atspi::walk_tree_native_chrome(pid, window_id);
         let prompt_present = native_prompt_surface_present(&tree.nodes);
         if !prompt_present {
             return Ok(dismissed);
@@ -498,31 +498,45 @@ pub async fn handle(
     // Names are withheld: the snapshot shows the topology of the last walk
     // that failed to settle without leaking page or prompt text.
     let mut last_snapshot = serde_json::Value::Null;
+    // After a performed Allow, one walk may start past the deadline to see
+    // whether its prompt closed (as macOS honors a late confirmed press).
+    let mut late_confirmation_walk_used = false;
     loop {
-        if let Err(refusal) = check_deadline(deadline) {
-            return Err(refusal.with_detail(serde_json::json!({
-                "redacted_native_nodes": last_snapshot,
-            })));
+        if Instant::now() >= deadline {
+            if accessibility_action_at.is_none() || late_confirmation_walk_used {
+                if let Err(refusal) = check_deadline(deadline) {
+                    return Err(refusal.with_detail(serde_json::json!({
+                        "redacted_native_nodes": last_snapshot,
+                    })));
+                }
+            }
+            late_confirmation_walk_used = true;
         }
         prove_window_owner(pid, request.window_id)?;
         let window_id = request.window_id;
-        let tree =
-            tokio::task::spawn_blocking(move || crate::atspi::walk_tree(pid, window_id, None))
-                .await
-                .map_err(|error| {
-                    BrowserRefusal::new(
-                        BrowserRefusalCode::BrowserRouteUnavailable,
-                        format!("could not inspect the browser consent UI: {error}"),
-                    )
-                })?;
+        let tree = tokio::task::spawn_blocking(move || {
+            crate::atspi::walk_tree_native_chrome(pid, window_id)
+        })
+        .await
+        .map_err(|error| {
+            BrowserRefusal::new(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("could not inspect the browser consent UI: {error}"),
+            )
+        })?;
         last_snapshot = redacted_native_prompt_snapshot(&tree.nodes, &tree.bounds);
+        let prompt_present = native_prompt_surface_present(&tree.nodes);
+        saw_prompt |= prompt_present;
+        // A performed Allow whose prompt has closed is the outcome, even when
+        // the walk that observed it ended after the deadline.
+        if accessibility_action_at.is_some() && saw_prompt && !prompt_present {
+            return Ok(BrowserConsentOutcome::Accepted);
+        }
         if let Err(refusal) = check_deadline(deadline) {
             return Err(refusal.with_detail(serde_json::json!({
                 "redacted_native_nodes": last_snapshot,
             })));
         }
-        let prompt_present = native_prompt_surface_present(&tree.nodes);
-        saw_prompt |= prompt_present;
         match exact_allow_button(&tree.nodes, &tree.bounds)? {
             Some(index) if accessibility_action_at.is_none() => {
                 let node = walked_node(&tree.nodes, index)?;

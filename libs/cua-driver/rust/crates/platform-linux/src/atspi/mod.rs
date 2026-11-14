@@ -144,6 +144,13 @@ pub fn walk_tree(pid: u32, xid: u64, query: Option<&str>) -> AtspiTreeResult {
     walk_tree_bounded(pid, xid, query, None, None)
 }
 
+/// [`walk_tree`] that never descends into web documents: native browser UI
+/// only (the browser consent scans). A large page would otherwise cost
+/// seconds per walk.
+pub fn walk_tree_native_chrome(pid: u32, xid: u64) -> AtspiTreeResult {
+    native::with_web_content_skipped(|| walk_tree(pid, xid, None))
+}
+
 /// Best-effort accessibility snapshot for synchronous trajectory evidence.
 ///
 /// Recording brackets an action with before/after captures, so it must use a

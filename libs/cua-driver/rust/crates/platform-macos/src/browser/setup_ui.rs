@@ -2053,7 +2053,7 @@ mod tests {
     }
 
     #[test]
-    fn setup_ui_steps_allow_slow_browsers_within_the_overall_setup_budget() {
+    fn setup_ui_step_wait_covers_slow_browsers_and_stays_under_the_ready_timeout() {
         // Brave with ~40 tabs took ~2.8 s to expose a new tab in the AX tree.
         assert!(SETUP_UI_UPDATE_TIMEOUT >= Duration::from_secs(5));
         assert!(

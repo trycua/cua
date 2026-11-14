@@ -87,15 +87,21 @@ stop_cua_driver_daemons() {
             Darwin)
                 # Both known LaunchAgent plists. `launchctl unload` is a
                 # no-op-with-warning when the plist doesn't exist; swallow
-                # stderr to keep the install log clean.
+                # stderr to keep the install log clean. Either agent's
+                # KeepAlive respawns `serve` inside the swap window and
+                # leaves the new install with a daemon bound to the
+                # replaced bundle.
                 local plist
-                # Rust LaunchAgent plist.
-                plist="$HOME/Library/LaunchAgents/com.trycua.cua-driver-rs.plist"
-                if [ -f "$plist" ]; then
-                    if [ -f "$plist" ]; then
-                        launchctl unload "$plist" >/dev/null 2>&1 || true
-                    fi
-                fi
+                for plist in \
+                    "$HOME/Library/LaunchAgents/com.trycua.cua-driver.plist" \
+                    "$HOME/Library/LaunchAgents/com.trycua.cua-driver-rs.plist"; do
+                    [ -f "$plist" ] || continue
+                    launchctl unload "$plist" >/dev/null 2>&1 || true
+                done
+                # A job whose plist file is already gone stays loaded;
+                # remove the labels too so KeepAlive cannot respawn mid-swap.
+                launchctl remove com.trycua.cua-driver >/dev/null 2>&1 || true
+                launchctl remove com.trycua.cua-driver-rs >/dev/null 2>&1 || true
                 ;;
             Linux)
                 # systemctl --user is the only supported supervisor on
@@ -173,8 +179,9 @@ show_cua_driver_daemon_survivors() {
             waited=$((waited + 1))
         done
         printf 'Note: Cua Driver process(es) still running after the stop attempt (pid: %s).\n' "$mac_survivors"
-        printf '      They ignored SIGTERM and SIGKILL. Log out and back in, or run\n'
-        printf '      `kill -9 <pid>` yourself, then re-run this installer.\n'
+        printf '      They ignored SIGTERM and SIGKILL, or a KeepAlive LaunchAgent\n'
+        printf '      respawned them under new pids. `launchctl list | grep trycua` names\n'
+        printf '      a still-loaded supervisor; unload it or `kill -9 <pid>`, then re-run.\n'
         return 0
     fi
 

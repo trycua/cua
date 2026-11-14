@@ -163,9 +163,59 @@ fn env_off(key: &str) -> bool {
 fn app_bundle_path() -> Option<std::path::PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
-    exe.ancestors()
+    enclosing_app(&exe)
+}
+
+fn enclosing_app(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    path.ancestors()
         .find(|p| p.extension().and_then(|e| e.to_str()) == Some("app"))
         .map(std::path::Path::to_path_buf)
+}
+
+pub(crate) fn host_app_folder() -> Option<std::path::PathBuf> {
+    app_bundle_path()?
+        .parent()
+        .map(std::path::Path::to_path_buf)
+}
+
+pub(crate) fn host_app_name() -> String {
+    app_bundle_path()
+        .and_then(|bundle| unsafe { bundle_shown_name(&bundle) })
+        .unwrap_or_else(|| guide::APP_NAME.to_owned())
+}
+
+unsafe fn bundle_shown_name(bundle: &std::path::Path) -> Option<String> {
+    let ns_bundle: *mut AnyObject =
+        msg_send![class!(NSBundle), bundleWithPath: ns_string(bundle.to_str()?)];
+    if ns_bundle.is_null() {
+        return None;
+    }
+    ["CFBundleDisplayName", "CFBundleName"]
+        .into_iter()
+        .find_map(|key| {
+            let value: *mut AnyObject =
+                msg_send![ns_bundle, objectForInfoDictionaryKey: ns_string(key)];
+            string_value(value)
+        })
+}
+
+unsafe fn string_value(value: *mut AnyObject) -> Option<String> {
+    if value.is_null() {
+        return None;
+    }
+    let is_string: bool = msg_send![value, isKindOfClass: class!(NSString)];
+    if !is_string {
+        return None;
+    }
+    let utf8: *const std::ffi::c_char = msg_send![value, UTF8String];
+    if utf8.is_null() {
+        return None;
+    }
+    let text = std::ffi::CStr::from_ptr(utf8)
+        .to_string_lossy()
+        .trim()
+        .to_owned();
+    (!text.is_empty()).then_some(text)
 }
 
 fn running_inside_app_bundle() -> bool {
@@ -222,6 +272,7 @@ struct Session {
     machine: GuideMachine,
     hooks: PanelHooks,
     views: Views,
+    app: String,
     done_ticks: u32,
 }
 
@@ -238,6 +289,7 @@ fn ptr(u: usize) -> *mut AnyObject {
 unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOutcome> {
     // AppKit uses Text Input Sources on this thread from here on.
     crate::input::input_source::main_thread_runs_event_loop();
+    let app_name = host_app_name();
     let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
     let _: bool = msg_send![app, setActivationPolicy: 1i64];
     let _: () = msg_send![app, finishLaunching];
@@ -273,7 +325,8 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
     // Floating, so it stays above System Settings while the person works
     // there.
     let _: () = msg_send![window, setLevel: 3i64];
-    let _: () = msg_send![window, setTitle: ns_string(guide::WINDOW_TITLE)];
+    let _: () =
+        msg_send![window, setTitle: ns_string(&guide::for_app(guide::WINDOW_TITLE, &app_name))];
     let target = target_instance();
     let _: () = msg_send![window, setDelegate: target];
 
@@ -324,7 +377,7 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
     let _: () = msg_send![step_view, addSubview: open_btn];
 
     let hint = label(
-        guide::DRAG_HINT,
+        &guide::for_app(guide::DRAG_HINT, &app_name),
         12.0,
         false,
         rect(PAD, 228.0, CONTENT_W, 18.0),
@@ -334,7 +387,11 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
 
     let bundle = app_bundle_path();
     TILE_BUNDLE.with(|cell| *cell.borrow_mut() = bundle.clone());
-    let tile = drag_tile(rect(PAD, 250.0, CONTENT_W, TILE_H), bundle.as_deref());
+    let tile = drag_tile(
+        rect(PAD, 250.0, CONTENT_W, TILE_H),
+        bundle.as_deref(),
+        &app_name,
+    );
     let _: () = msg_send![step_view, addSubview: tile];
 
     let note = label("", 11.0, false, rect(PAD, 320.0, CONTENT_W, 32.0));
@@ -373,7 +430,7 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
     let _: () = msg_send![check, setContentTintColor: green];
     let _: () = msg_send![done_view, addSubview: check];
     let done_title = label(
-        guide::DONE_TITLE,
+        &guide::for_app(guide::DONE_TITLE, &app_name),
         17.0,
         true,
         rect(PAD, 184.0, CONTENT_W, 24.0),
@@ -401,13 +458,14 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
         how: how as usize,
         note: note as usize,
     };
-    render(&views, machine.step());
+    render(&views, machine.step(), &app_name);
     OUTCOME.with(|cell| *cell.borrow_mut() = None);
     SESSION.with(|cell| {
         *cell.borrow_mut() = Some(Session {
             machine,
             hooks,
             views,
+            app: app_name,
             done_ticks: 0,
         })
     });
@@ -443,7 +501,7 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
 }
 
 /// Draw `step`: the step's words, or the finished view.
-unsafe fn render(views: &Views, step: GuideStep) {
+unsafe fn render(views: &Views, step: GuideStep, app: &str) {
     let done = step == GuideStep::Done;
     let _: () = msg_send![ptr(views.step_view), setHidden: done];
     let _: () = msg_send![ptr(views.done_view), setHidden: !done];
@@ -452,11 +510,15 @@ unsafe fn render(views: &Views, step: GuideStep) {
     }
     let copy = step.copy();
     let _: () = msg_send![ptr(views.counter), setStringValue: ns_string(copy.counter)];
-    let _: () = msg_send![ptr(views.title), setStringValue: ns_string(copy.title)];
-    let _: () = msg_send![ptr(views.why), setStringValue: ns_string(copy.why)];
-    let _: () = msg_send![ptr(views.how), setStringValue: ns_string(copy.how)];
-    let _: () = msg_send![ptr(views.note), setStringValue: ns_string(copy.note)];
-    let _: () = msg_send![ptr(views.window), setTitle: ns_string(guide::WINDOW_TITLE)];
+    let _: () =
+        msg_send![ptr(views.title), setStringValue: ns_string(&guide::for_app(copy.title, app))];
+    let _: () =
+        msg_send![ptr(views.why), setStringValue: ns_string(&guide::for_app(copy.why, app))];
+    let _: () =
+        msg_send![ptr(views.how), setStringValue: ns_string(&guide::for_app(copy.how, app))];
+    let _: () =
+        msg_send![ptr(views.note), setStringValue: ns_string(&guide::for_app(copy.note, app))];
+    let _: () = msg_send![ptr(views.window), setTitle: ns_string(&guide::for_app(guide::WINDOW_TITLE, app))];
 }
 
 // ── Timer, buttons, window close ─────────────────────────────────────────
@@ -497,7 +559,7 @@ fn tick() {
                     if step == GuideStep::ScreenRecording {
                         guide::write_resume_marker();
                     }
-                    render(&session.views, step);
+                    render(&session.views, step, &session.app);
                 },
                 GuideEffect::Request(permission) => {
                     if permission == MissingPermission::ScreenRecording {
@@ -620,7 +682,7 @@ fn target_class() -> &'static objc2::runtime::AnyClass {
 // drag puts the app bundle's file URL on the pasteboard, which System
 // Settings' privacy lists accept, the same as dragging the app from Finder.
 
-unsafe fn drag_tile(frame: NSRect, bundle: Option<&std::path::Path>) -> *mut AnyObject {
+unsafe fn drag_tile(frame: NSRect, bundle: Option<&std::path::Path>, app: &str) -> *mut AnyObject {
     let cls = tile_class();
     let tile: *mut AnyObject = msg_send![cls, alloc];
     let tile: *mut AnyObject = msg_send![tile, initWithFrame: frame];
@@ -658,7 +720,7 @@ unsafe fn drag_tile(frame: NSRect, bundle: Option<&std::path::Path>) -> *mut Any
     let _: () = msg_send![tile, addSubview: icon_view];
 
     let name = label(
-        guide::TILE_NAME,
+        &guide::for_app(guide::TILE_NAME, app),
         15.0,
         false,
         NSRect {
@@ -706,7 +768,7 @@ unsafe fn drag_tile(frame: NSRect, bundle: Option<&std::path::Path>) -> *mut Any
     let _: () = msg_send![tile, addSubview: drag];
 
     // Tooltip, and the role VoiceOver reads.
-    let _: () = msg_send![tile, setToolTip: ns_string(guide::DRAG_HINT)];
+    let _: () = msg_send![tile, setToolTip: ns_string(&guide::for_app(guide::DRAG_HINT, app))];
     tile
 }
 
@@ -958,6 +1020,64 @@ mod tests {
             );
         }
         std::env::remove_var("CUA_DRIVER_RS_PERMISSIONS_PANEL");
+    }
+
+    #[test]
+    fn the_host_is_the_app_that_encloses_the_executable() {
+        for exe in [
+            "/Applications/Host.app/Contents/MacOS/cua-driver",
+            "/Applications/Host.app/Contents/Resources/cua-driver",
+            "/Applications/Host.app/Contents/Resources/bin/cua-driver",
+        ] {
+            assert_eq!(
+                enclosing_app(std::path::Path::new(exe)),
+                Some(std::path::PathBuf::from("/Applications/Host.app")),
+                "{exe}"
+            );
+        }
+        assert_eq!(
+            enclosing_app(std::path::Path::new("/usr/local/bin/cua-driver")),
+            None
+        );
+        assert_eq!(host_app_name(), guide::APP_NAME);
+    }
+
+    #[test]
+    fn the_shown_name_is_the_localized_one_settings_lists() {
+        let root = tempfile::tempdir().unwrap();
+        let bundle = root.path().join("Host.app");
+        let contents = bundle.join("Contents");
+        std::fs::create_dir_all(contents.join("Resources/en.lproj")).unwrap();
+        std::fs::write(
+            contents.join("Info.plist"),
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>com.example.host</string>
+<key>CFBundleDevelopmentRegion</key><string>en</string>
+<key>CFBundleName</key><string>HostRaw</string>
+</dict></plist>"#,
+        )
+        .unwrap();
+        assert_eq!(
+            unsafe { bundle_shown_name(&bundle) }.as_deref(),
+            Some("HostRaw")
+        );
+        let localized = root.path().join("Localized.app");
+        std::fs::create_dir_all(localized.join("Contents/Resources/en.lproj")).unwrap();
+        std::fs::copy(
+            contents.join("Info.plist"),
+            localized.join("Contents/Info.plist"),
+        )
+        .unwrap();
+        std::fs::write(
+            localized.join("Contents/Resources/en.lproj/InfoPlist.strings"),
+            "\u{FEFF}\"CFBundleDisplayName\" = \"Host App\";\n",
+        )
+        .unwrap();
+        assert_eq!(
+            unsafe { bundle_shown_name(&localized) }.as_deref(),
+            Some("Host App")
+        );
     }
 
     #[test]

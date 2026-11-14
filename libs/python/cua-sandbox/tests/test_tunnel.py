@@ -10,6 +10,57 @@ from cua_sandbox.transport.base import Transport
 pytestmark = pytest.mark.asyncio
 
 
+async def test_context_exit_closes_tunnel_only_once():
+    transport = AsyncMock(spec=Transport)
+    info = TunnelInfo("localhost", 45001, 9222)
+    transport.forward_tunnel.return_value = info
+
+    async with Tunnel(transport).forward(9222) as forwarded:
+        assert forwarded is info
+
+    await forwarded.close()
+    transport.close_tunnel.assert_awaited_once_with(info)
+
+
+async def test_early_close_in_context_is_not_repeated_on_exit():
+    transport = AsyncMock(spec=Transport)
+    info = TunnelInfo("localhost", 45001, 9222)
+    transport.forward_tunnel.return_value = info
+
+    async with Tunnel(transport).forward(9222) as forwarded:
+        await forwarded.close()
+
+    transport.close_tunnel.assert_awaited_once_with(info)
+
+
+async def test_context_exit_closes_multiple_tunnels_once():
+    transport = AsyncMock(spec=Transport)
+    first = TunnelInfo("localhost", 45001, 9222)
+    second = TunnelInfo("localhost", 45002, 8080)
+    transport.forward_tunnel.side_effect = [first, second]
+
+    async with Tunnel(transport).forward(9222, 8080) as forwarded:
+        assert forwarded == {9222: first, 8080: second}
+
+    await first.close()
+    await second.close()
+    assert transport.close_tunnel.await_args_list == [call(first), call(second)]
+
+
+async def test_context_exit_close_failure_can_be_retried():
+    transport = AsyncMock(spec=Transport)
+    info = TunnelInfo("localhost", 45001, 9222)
+    transport.forward_tunnel.return_value = info
+    transport.close_tunnel.side_effect = [RuntimeError("close failed"), None]
+
+    with pytest.raises(RuntimeError, match="close failed"):
+        async with Tunnel(transport).forward(9222):
+            pass
+
+    await info.close()
+    assert transport.close_tunnel.await_args_list == [call(info), call(info)]
+
+
 @pytest.mark.parametrize("use_context", [False, True])
 async def test_partial_acquisition_closes_opened_tunnel(use_context):
     transport = AsyncMock(spec=Transport)

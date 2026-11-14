@@ -752,7 +752,7 @@
    "read_only": false
   },
   {
-   "description": "Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local screenshot pixels — the same space get_window_state returns. Top-left origin of the target's window.\n\nUse for: marquee/lasso selection, drag-and-drop, resizing via a handle, scrubbing a slider, repositioning a panel.\n\n`duration_ms` (default 500) is the wall-clock budget for the path between mouse-down and mouse-up; `steps` (default 20) is the number of intermediate mouseDragged events linearly interpolated along the path. Increase both for slower, more human drags; decrease for snap gestures.\n\n`modifier` keys (cmd/shift/option/ctrl) are held across the entire gesture.\n\nWhen `from_zoom` is true, coordinates are in the last zoom image for this pid; the driver maps them back to window coordinates before dispatching.\n\nA window-scoped drag (pid + window_id) runs in the background by default: the gesture is posted to that window, the real pointer does not move, and the user's frontmost window keeps focus. It works for controls that follow the drag events: sliders, canvases, and pointer-event widgets on web pages in Chrome. In an Electron window the driver sends the gesture from the app's main process, so pointer-capture widgets and HTML5 drag and drop also drop there. Elsewhere, a drag that starts a macOS drag-and-drop session (reordering a list by drag and drop, moving a file, HTML5 draggable content) cannot drop in the background, because macOS tracks those with the real pointer; the driver detects it, releases at once and returns background_unavailable with reason drag_and_drop_session. For a page in a browser tab already bound with get_browser_state, browser_pointer action:\"drag\" drives the same gesture through CDP with page refs. The result is not driver-verified: confirm with a screenshot or the accessibility tree, and only if nothing changed retry with delivery_mode:\"foreground\", which briefly fronts the window and moves the physical pointer. Limits and fallbacks: `get_guide({topic:\"drag\"})`.",
+   "description": "Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local screenshot pixels — the same space get_window_state returns. Top-left origin of the target's window.\n\nUse for: marquee/lasso selection, drag-and-drop, resizing via a handle, scrubbing a slider, repositioning a panel.\n\n`duration_ms` (default 500) is the wall-clock budget for the path between mouse-down and mouse-up; `steps` (default 20) is the number of intermediate mouseDragged events linearly interpolated along the path. Increase both for slower, more human drags; decrease for snap gestures.\n\n`modifier` keys (cmd/shift/option/ctrl) are held across the entire gesture.\n\nWhen `from_zoom` is true, coordinates are in the last zoom image for this pid; the driver maps them back to window coordinates before dispatching.\n\nA window-scoped drag (pid + window_id) runs in the background by default: the gesture is posted to that window, the real pointer does not move, and the user's frontmost window keeps focus. It works for controls that follow the drag events: sliders, canvases, and pointer-event widgets on web pages in Chrome. In an Electron window the driver sends the gesture from the app's main process, so pointer-capture widgets and HTML5 drag and drop also drop there. Elsewhere, a drag that starts a macOS drag-and-drop session (reordering a list by drag and drop, moving a file) holds the drop point until the session ends there. If the session is still open after that, the drop did not land and the result is background_unavailable with reason drag_and_drop_session. For a page in a browser tab already bound with get_browser_state, browser_pointer action:\"drag\" drives the same gesture through CDP with page refs. The result is not driver-verified: confirm with a screenshot or the accessibility tree, and only if nothing changed retry with delivery_mode:\"foreground\", which briefly fronts the window and moves the physical pointer. Limits and fallbacks: `get_guide({topic:\"drag\"})`.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
@@ -1195,7 +1195,7 @@
    "read_only": false
   },
   {
-   "description": "Set an element's value by `element_token`. A popup button / select dropdown: selects the menu item whose title or value matches `value` (case-insensitive). Safari `<select>` is set through the DOM; AppKit and Chromium popups list items only while open, so the menu is opened, the item pressed and the menu closed again (in the background the user's front window keeps key focus). An unknown value lists the options. Any other element: writes AXValue (sliders, steppers, date pickers, native text fields).\n\nA Finder file name cell (list or icon view, not being edited) is renamed through Finder's scripting interface with Finder left in the background, and the new name is read back from disk; the value is the full new name with its extension. macOS may prompt for Automation consent; with serve --no-automation-prompts, ungranted consent refuses with automation_consent_required. Finder's Get Info `Name` field is refused with `file_name_needs_rename`. For free-form text in web inputs use `type_text_chars`: WebKit ignores AXValue writes.",
+   "description": "Set an element's value by `element_token`. A popup button / select dropdown: selects the menu item whose title or value matches `value` (case-insensitive). Safari `<select>` is set through the DOM; AppKit and Chromium popups list items only while open, so the menu is opened, the item pressed and the menu closed again (in the background the user's front window keeps key focus). An unknown value lists the options. Any other element: writes AXValue (sliders, steppers, date pickers, native text fields).\n\nA LibreOffice Calc cell ignores AXValue writes, so set_value on a cell goes to it through the Name Box with keys posted to its window (Cmd+Shift+F5, the address, Return), types the value and Return (an empty value clears the cell), and reads the cell back into cell_value; the app stays in the background. On the Name Box itself the value is a cell address to go to. A value with Tab or Return is refused: one cell takes one entry.\n\nA Finder file name cell (list or icon view, not being edited) is renamed through Finder's scripting interface with Finder left in the background, and the new name is read back from disk; the value is the full new name with its extension. macOS may prompt for Automation consent; with serve --no-automation-prompts, ungranted consent refuses with automation_consent_required. Finder's Get Info `Name` field is refused with `file_name_needs_rename`. For free-form text in web inputs use `type_text_chars`: WebKit ignores AXValue writes.",
    "destructive": true,
    "idempotent": true,
    "input_schema": {
@@ -2272,6 +2272,44 @@
     "type": "object"
    },
    "name": "browser_navigate",
+   "read_only": false
+  },
+  {
+   "description": "Apply or clear the standard prefers-reduced-motion media emulation for one exactly-bound driver-owned browser tab. This is an explicit experimental performance/accessibility policy: it does not inject CSS, freeze timers, video, canvas, or WebGL, and refuses existing user profiles in v0.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "mode": {
+      "description": "reduce emulates prefers-reduced-motion: reduce; default clears the emulated media-feature override.",
+      "enum": [
+       "reduce",
+       "default"
+      ],
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "type": "string"
+     },
+     "tab_id": {
+      "description": "Opaque tab id from get_browser_state (session-scoped).",
+      "type": "string"
+     },
+     "target_id": {
+      "description": "Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id).",
+      "type": "string"
+     }
+    },
+    "required": [
+     "target_id",
+     "tab_id",
+     "mode"
+    ],
+    "type": "object"
+   },
+   "name": "browser_motion_policy",
    "read_only": false
   },
   {

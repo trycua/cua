@@ -593,6 +593,8 @@ Effect: destructive, idempotent. Platforms: macOS, Linux, Windows.
 
 Set an element's value by `element_token`. A popup button / select dropdown: selects the menu item whose title or value matches `value` (case-insensitive). Safari `<select>` is set through the DOM; AppKit and Chromium popups list items only while open, so the menu is opened, the item pressed and the menu closed again (in the background the user's front window keeps key focus). An unknown value lists the options. Any other element: writes AXValue (sliders, steppers, date pickers, native text fields).
 
+A LibreOffice Calc cell ignores AXValue writes, so set_value on a cell goes to it through the Name Box with keys posted to its window (Cmd+Shift+F5, the address, Return), types the value and Return (an empty value clears the cell), and reads the cell back into cell_value; the app stays in the background. On the Name Box itself the value is a cell address to go to. A value with Tab or Return is refused: one cell takes one entry.
+
 A Finder file name cell (list or icon view, not being edited) is renamed through Finder's scripting interface with Finder left in the background, and the new name is read back from disk; the value is the full new name with its extension. macOS may prompt for Automation consent; with serve --no-automation-prompts, ungranted consent refuses with automation_consent_required. Finder's Get Info `Name` field is refused with `file_name_needs_rename`. For free-form text in web inputs use `type_text_chars`: WebKit ignores AXValue writes.
 
 **macOS parameters**

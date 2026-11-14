@@ -28,6 +28,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 | [`get_browser_state`](#get_browser_state) | Read-only browser inspection. | macOS, Linux, Windows |
 | [`browser_prepare`](#browser_prepare) | Attach the browser tools to a browser. | macOS, Linux, Windows |
 | [`browser_navigate`](#browser_navigate) | Navigate one tab of an exactly-bound browser target to a new URL (http/https/about only). | macOS, Linux, Windows |
+| [`browser_motion_policy`](#browser_motion_policy) | Apply or clear the standard prefers-reduced-motion media emulation for one exactly-bound driver-owned browser tab. | macOS, Linux, Windows |
 | [`browser_click`](#browser_click) | Click a page element (by ref) or viewport coordinates in an exactly-bound tab. | macOS, Linux, Windows |
 | [`browser_type`](#browser_type) | Type text into an exactly-bound tab via the Input domain. | macOS, Linux, Windows |
 | [`browser_select`](#browser_select) | Select one option of a native HTML &lt;select&gt; ref on an exactly-bound tab without opening its popup. | macOS, Linux, Windows |
@@ -59,7 +60,7 @@ Use for: marquee/lasso selection, drag-and-drop, resizing via a handle, scrubbin
 
 When `from_zoom` is true, coordinates are in the last zoom image for this pid; the driver maps them back to window coordinates before dispatching.
 
-A window-scoped drag (pid + window_id) runs in the background by default: the gesture is posted to that window, the real pointer does not move, and the user's frontmost window keeps focus. It works for controls that follow the drag events: sliders, canvases, and pointer-event widgets on web pages in Chrome. In an Electron window the driver sends the gesture from the app's main process, so pointer-capture widgets and HTML5 drag and drop also drop there. Elsewhere, a drag that starts a macOS drag-and-drop session (reordering a list by drag and drop, moving a file, HTML5 draggable content) cannot drop in the background, because macOS tracks those with the real pointer; the driver detects it, releases at once and returns background_unavailable with reason drag_and_drop_session. For a page in a browser tab already bound with get_browser_state, browser_pointer action:"drag" drives the same gesture through CDP with page refs. The result is not driver-verified: confirm with a screenshot or the accessibility tree, and only if nothing changed retry with delivery_mode:"foreground", which briefly fronts the window and moves the physical pointer. Limits and fallbacks: `get_guide({topic:"drag"})`.
+A window-scoped drag (pid + window_id) runs in the background by default: the gesture is posted to that window, the real pointer does not move, and the user's frontmost window keeps focus. It works for controls that follow the drag events: sliders, canvases, and pointer-event widgets on web pages in Chrome. In an Electron window the driver sends the gesture from the app's main process, so pointer-capture widgets and HTML5 drag and drop also drop there. Elsewhere, a drag that starts a macOS drag-and-drop session (reordering a list by drag and drop, moving a file) holds the drop point until the session ends there. If the session is still open after that, the drop did not land and the result is background_unavailable with reason drag_and_drop_session. For a page in a browser tab already bound with get_browser_state, browser_pointer action:"drag" drives the same gesture through CDP with page refs. The result is not driver-verified: confirm with a screenshot or the accessibility tree, and only if nothing changed retry with delivery_mode:"foreground", which briefly fronts the window and moves the physical pointer. Limits and fallbacks: `get_guide({topic:"drag"})`.
 
 **macOS parameters**
 
@@ -557,6 +558,25 @@ Effect: mutating. Platforms: macOS, Linux, Windows.
 
 ```json
 {"target_id":"<target_id>","tab_id":"<tab_id>","url":"<url>"}
+```
+
+### `browser_motion_policy`
+
+Apply or clear the standard prefers-reduced-motion media emulation for one exactly-bound driver-owned browser tab. This is an explicit experimental performance/accessibility policy: it does not inject CSS, freeze timers, video, canvas, or WebGL, and refuses existing user profiles in v0.
+
+Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="browser_motion_policy--mode"></span>`mode` | `"reduce" \| "default"` | required | reduce emulates prefers-reduced-motion: reduce; default clears the emulated media-feature override. |
+| <span id="browser_motion_policy--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session. |
+| <span id="browser_motion_policy--tab_id"></span>`tab_id` | `string` | required | Opaque tab id from get_browser_state (session-scoped). |
+| <span id="browser_motion_policy--target_id"></span>`target_id` | `string` | required | Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id). |
+
+**Example arguments**
+
+```json
+{"target_id":"<target_id>","tab_id":"<tab_id>","mode":"reduce"}
 ```
 
 ## Browser input tools

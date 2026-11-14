@@ -4,6 +4,7 @@
 //! MCP tool implementations for macOS.
 
 mod bring_to_front;
+mod calc_cell;
 mod capture_binding;
 mod click;
 mod clipboard;

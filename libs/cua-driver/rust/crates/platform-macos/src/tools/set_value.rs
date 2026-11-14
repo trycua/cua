@@ -51,6 +51,8 @@ fn def() -> &'static ToolDef {
         name: "set_value".into(),
         description: "Set an element's value by `element_token`. A popup button / select dropdown: selects the menu item whose title or value matches `value` (case-insensitive). Safari `<select>` is set through the DOM; AppKit and Chromium popups list items only while open, so the menu is opened, the item pressed and the menu closed again (in the background the user's front window keeps key focus). An unknown value lists the options. Any other element: writes AXValue (sliders, steppers, date pickers, native text fields).\n\
             \n\
+            A LibreOffice Calc cell ignores AXValue writes, so set_value on a cell goes to it through the Name Box with keys posted to its window (Cmd+Shift+F5, the address, Return), types the value and Return (an empty value clears the cell), and reads the cell back into cell_value; the app stays in the background. On the Name Box itself the value is a cell address to go to. A value with Tab or Return is refused: one cell takes one entry.\n\
+            \n\
             A Finder file name cell (list or icon view, not being edited) is renamed through Finder's scripting interface with Finder left in the background, and the new name is read back from disk; the value is the full new name with its extension. macOS may prompt for Automation consent; with serve --no-automation-prompts, ungranted consent refuses with automation_consent_required. Finder's Get Info `Name` field is refused with `file_name_needs_rename`. For free-form text in web inputs use `type_text_chars`: WebKit ignores AXValue writes.".into(),
         input_schema: serde_json::json!({
             "type": "object",
@@ -179,6 +181,28 @@ impl Tool for SetValueTool {
             None => {}
         }
 
+        // A LibreOffice Calc cell ignores the AX write: go to it through the
+        // Name Box with keys posted to its window and type the value.
+        let calc_guard = element_guard.clone();
+        let calc_target = tokio::task::spawn_blocking(move || unsafe {
+            super::calc_cell::target_of(pid, calc_guard.as_ptr() as AXUIElementRef)
+        })
+        .await
+        .ok()
+        .flatten();
+        if let Some(target) = calc_target {
+            return calc_set_value(
+                &_mutation_lease,
+                pid,
+                window_id,
+                element_index,
+                element_guard,
+                target,
+                value,
+            )
+            .await;
+        }
+
         let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
         let center_guard = element_guard.clone();
         if let Ok((Some((screen_x, screen_y)), target_rect)) =
@@ -279,6 +303,145 @@ impl Tool for SetValueTool {
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
+}
+
+// ── LibreOffice Calc cells ───────────────────────────────────────────────────
+
+const CALC_MULTI_ENTRY: &str = "A cell takes one entry: the value has a Tab or Return in it. \
+     set_value one cell at a time, or type rows with type_text (Tab and Return move between \
+     cells) after going to the first cell.";
+
+/// `set_value` on a Calc cell (or its Name Box) through keys posted to its
+/// window: Name Box, address, Return, then the value and Return.
+async fn calc_set_value(
+    lease: &super::BackgroundMutationLease,
+    pid: i32,
+    window_id: u32,
+    element_index: usize,
+    element_guard: crate::ax::snapshot::RetainedElement,
+    target: super::calc_cell::CalcTarget,
+    value: String,
+) -> ToolResult {
+    use super::calc_cell::CalcTarget;
+    let (address, text) = match &target {
+        CalcTarget::NameBox => match super::calc_cell::cell_address(&value) {
+            Some(address) => (address, None),
+            None => {
+                return ToolResult::error(format!(
+                    "set_value on the Name Box takes one cell address such as H9; got {value:?}."
+                ))
+            }
+        },
+        CalcTarget::Cell { address } => {
+            if !super::calc_cell::single_entry(&value) {
+                return ToolResult::error(CALC_MULTI_ENTRY);
+            }
+            (address.clone(), Some(value.clone()))
+        }
+    };
+    if let Err(refusal) = lease
+        .gate_again(
+            window_id,
+            None,
+            super::window_keyboard_action(
+                cua_driver_core::background_input::BackgroundAction::GenericKey,
+            ),
+        )
+        .await
+    {
+        return refusal;
+    }
+    let _key_scope = match super::acquire_key_scope(pid, Some(window_id), false).await {
+        Ok(scope) => scope,
+        Err(refusal) => return refusal,
+    };
+    let prior_front = apps::frontmost_pid();
+    let snapshot = WindowChangeDetector::snapshot(prior_front);
+    let typed_address = address.clone();
+    let result = focus_guard::with_focus_suppressed(
+        Some(pid),
+        prior_front,
+        "set_value.calc_cell",
+        || async move {
+            tokio::task::spawn_blocking(move || {
+                super::calc_cell::go_to_and_type(pid, &typed_address, text.as_deref())?;
+                Ok::<_, anyhow::Error>(text.map(|text| unsafe {
+                    super::calc_cell::read_back(element_guard.as_ptr() as AXUIElementRef, &text)
+                }))
+            })
+            .await
+        },
+    )
+    .await;
+    let changes = super::finish_window_observation(snapshot).await;
+    let shown = match result {
+        Ok(Ok(shown)) => shown,
+        Ok(Err(error)) => {
+            let message = format!(
+                "set_value on Calc {address} did not complete: {error}. Read the window before \
+                 retrying."
+            );
+            return ToolResult::error(&message).with_structured(serde_json::json!({
+                "code": "delivery_failed",
+                "message": message,
+                "path": "keys",
+                "cell": address,
+                "effect": "unverifiable",
+            }));
+        }
+        Err(error) => return ToolResult::error(format!("Task error: {error}")),
+    };
+    let (verified, detail) = match (&target, &shown) {
+        (CalcTarget::NameBox, _) => (true, format!("✅ Went to {address} through the Name Box.")),
+        (CalcTarget::Cell { .. }, Some(Some(shown))) => {
+            super::calc_cell::cell_outcome(&address, element_index, &value, shown)
+        }
+        (CalcTarget::Cell { .. }, _) => (
+            false,
+            format!(
+                "📨 Typed {value:?} into {address} [{element_index}] through the Name Box and \
+                 keys, but the cell could not be read back. Read the window before relying on it."
+            ),
+        ),
+    };
+    let mut structured = serde_json::json!({
+        "path": "keys",
+        "cell": address,
+        "verified": verified,
+        "effect": if verified { "confirmed" } else { "unverifiable" },
+    });
+    if let Some(Some(shown)) = shown {
+        structured["cell_value"] = serde_json::json!(shown);
+    }
+    changes.add_window_identity(&mut structured);
+    ToolResult::text(format!("{detail}{}", changes.result_suffix()))
+        .with_structured(structured)
+        .with_action_record(calc_cell_record(verified))
+}
+
+fn calc_cell_record(verified: bool) -> cua_driver_core::action_record::ActionExecutionRecord {
+    use cua_driver_core::action_record::{
+        ActionEffect, ActionEvidence, ActionExecutionRecord, ActionTransport, ActualDelivery,
+        EvidenceKind, RequestedDelivery,
+    };
+    let effect = if verified {
+        ActionEffect::Confirmed
+    } else {
+        ActionEffect::Unverifiable
+    };
+    let mut record = ActionExecutionRecord::builder(
+        effect,
+        ActionTransport::MacosCgEventPid,
+        RequestedDelivery::Background,
+    )
+    .actual_delivery(ActualDelivery::Background);
+    if verified {
+        record = record.evidence(ActionEvidence {
+            kind: EvidenceKind::AccessibilityReadback,
+            detail: "the Name Box shows the address and the cell reads the value".into(),
+        });
+    }
+    record.build().expect("calc cell record is valid")
 }
 
 // ── File name cells ──────────────────────────────────────────────────────────
@@ -631,10 +794,10 @@ fn write_not_applied(verified: Option<bool>, changed: Option<bool>) -> bool {
 /// script must stop here instead of carrying on as if it had.
 fn not_applied_result(element_index: usize, vcl: bool) -> ToolResult {
     let route = if vcl {
-        "LibreOffice ignores accessibility value writes and drops background pointer \
-         input, so its cells cannot be edited in the background. Editing them needs the \
-         window in front: bring_to_front if the user allows it, then type_text into the \
-         cell. Otherwise stop and report that the edit is blocked."
+        "LibreOffice ignores accessibility value writes and background pointer input, \
+         but takes keys posted to its window: pass window_id, go to the cell with the \
+         Name Box (hotkey cmd+shift+f5, then the address and return), then type_text the \
+         value and return."
     } else {
         "Try the control's own input route instead: click it, then type_text, or use a \
          keyboard shortcut. If that needs the window in front, bring_to_front only if the \
@@ -1314,9 +1477,9 @@ fn hex_digit(n: u8) -> char {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_surface_trust, apply_verification_label, classify_write, file_name_needs_rename,
-        is_file_name_cell, is_get_info_name_field, not_applied_result, write_not_applied,
-        SetValueOutcome, GET_INFO_RENAME_ROUTE, LIST_RENAME_ROUTE,
+        apply_surface_trust, apply_verification_label, calc_cell_record, classify_write,
+        file_name_needs_rename, is_file_name_cell, is_get_info_name_field, not_applied_result,
+        write_not_applied, SetValueOutcome, GET_INFO_RENAME_ROUTE, LIST_RENAME_ROUTE,
     };
 
     #[test]
@@ -1494,6 +1657,13 @@ mod tests {
         ] {
             assert!(reason.contains(needed), "missing {needed:?}: {reason}");
         }
+    }
+
+    #[test]
+    fn a_calc_cell_write_publishes_a_background_key_record() {
+        use cua_driver_core::action_record::ActionEffect;
+        assert_eq!(calc_cell_record(true).effect, ActionEffect::Confirmed);
+        assert_eq!(calc_cell_record(false).effect, ActionEffect::Unverifiable);
     }
 
     #[test]

@@ -668,6 +668,27 @@ async fn user_data_dir_for_pid(
     })?
 }
 
+fn native_browser_window(window: crate::windows::WindowInfo) -> NativeWindowInfo {
+    let pid = i64::from(window.pid);
+    NativeWindowInfo {
+        pid,
+        window_id: u64::from(window.window_id),
+        title: window.title,
+        bounds: Rect::new(
+            window.bounds.x,
+            window.bounds.y,
+            window.bounds.width,
+            window.bounds.height,
+        ),
+        geometry_exact: true,
+        ownership: NativeOwnershipProof {
+            method: NativeOwnershipMethod::WindowServerOwner,
+            owner_pid: pid,
+            detail: Some("CGWindow owner pid".to_owned()),
+        },
+    }
+}
+
 fn exact_browser_surface_ids(
     windows: impl IntoIterator<Item = crate::windows::WindowInfo>,
     pid: i64,
@@ -1077,22 +1098,30 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                 format!("window {window_id} is not owned by pid {pid}"),
             ));
         }
-        Ok(NativeWindowInfo {
-            pid,
-            window_id,
-            title: window.title,
-            bounds: Rect::new(
-                window.bounds.x,
-                window.bounds.y,
-                window.bounds.width,
-                window.bounds.height,
-            ),
-            geometry_exact: true,
-            ownership: NativeOwnershipProof {
-                method: NativeOwnershipMethod::WindowServerOwner,
-                owner_pid: pid,
-                detail: Some("CGWindow owner pid".to_owned()),
-            },
+        Ok(native_browser_window(window))
+    }
+
+    async fn native_windows(
+        &self,
+        pid: i64,
+    ) -> Result<Option<Vec<NativeWindowInfo>>, BrowserRefusal> {
+        tokio::task::spawn_blocking(move || {
+            let windows = crate::windows::all_windows();
+            let ids = exact_browser_surface_ids(windows.clone(), pid);
+            Some(
+                windows
+                    .into_iter()
+                    .filter(|window| ids.contains(&u64::from(window.window_id)))
+                    .map(native_browser_window)
+                    .collect(),
+            )
+        })
+        .await
+        .map_err(|error| {
+            BrowserRefusal::new(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("could not enumerate macOS browser windows: {error}"),
+            )
         })
     }
 
@@ -2295,5 +2324,22 @@ mod tests {
             42,
         );
         assert_eq!(ids, vec![7, 8]);
+    }
+    #[test]
+    fn native_browser_metadata_keeps_windowserver_identity_and_geometry() {
+        let window = window(7, 42, "Page X - Chrome");
+        let expected = Rect::new(
+            window.bounds.x,
+            window.bounds.y,
+            window.bounds.width,
+            window.bounds.height,
+        );
+        let native = native_browser_window(window);
+        assert_eq!(native.pid, 42);
+        assert_eq!(native.window_id, 7);
+        assert_eq!(native.title, "Page X - Chrome");
+        assert_eq!(native.bounds, expected);
+        assert!(native.geometry_exact);
+        assert_eq!(native.ownership.owner_pid, 42);
     }
 }

@@ -801,11 +801,10 @@ impl BrowserPrepareTool {
                 whenever the driver opens a new browser connection; sessions for the same \
                 browser share one approved connection, kept for up to 30 minutes idle and \
                 8 hours in total, so later sessions do not prompt again), existing-profile \
-                attachment refuses with \
-                background_unavailable unless delivery_mode is \"foreground\" (the app that \
-                was in front is brought back afterwards) or the browser window is on another \
-                Space than the user's, where it attaches in the background while the driver \
-                reverts the browser's own brief activations. A driver-owned isolated launch \
+                attachment runs in the background while the driver reverts the browser's own brief \
+                activations. Where the driver cannot do that, it refuses with \
+                background_unavailable unless delivery_mode is \"foreground\" (the app that was in \
+                front is brought back afterwards). A driver-owned isolated launch \
                 result carries an advisory lifecycle object: the browser process ends with the \
                 calling session after idle_expires_in_seconds without session activity, an \
                 isolated_named profile persists after the session and an isolated_new profile \
@@ -843,7 +842,7 @@ impl BrowserPrepareTool {
                         "type": "string",
                         "enum": ["background", "foreground"],
                         "default": "background",
-                        "description": "Existing-profile attachment only. background (default) attaches in the background when the browser window is on another Space than the user's, and otherwise refuses with background_unavailable, before any visible effect, where attaching would bring the browser in front of the user's app. foreground accepts that, for a screen nobody else is using or when the user agreed; the app that was in front is brought back afterwards."
+                        "description": "Existing-profile attachment only. background (default) attaches without bringing the browser in front of the user's app, and refuses with background_unavailable, before any visible effect, where the driver cannot keep the browser behind it. foreground accepts the browser coming forward, for a screen nobody else is using or when the user agreed; the app that was in front is brought back afterwards."
                     },
                     "session": schema_session(),
                 },

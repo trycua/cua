@@ -1228,9 +1228,8 @@ impl BrowserEngine {
         request: PrepareRequest,
     ) -> Result<PrepareOutcome, BrowserRefusal> {
         let browser_pid = request.pid;
-        // Where the platform can guard it (macOS: the browser window is on
-        // another Space), attach in the background under the guard instead of
-        // refusing.
+        // Where the platform can guard it, attach in the background under the
+        // guard instead of refusing.
         let background_guard = match (browser_pid, request.window_id) {
             (Some(pid), Some(window_id))
                 if !request.foreground
@@ -1300,8 +1299,7 @@ impl BrowserEngine {
                  user is working in. Nothing was changed, and browser_prepare is optional: \
                  use get_window_state on the browser window and act through its accessibility \
                  tree (set_value, click by element token), which needs no attachment. If the \
-                 first read shows only browser chrome, read the window again. A browser window \
-                 on another Space than the user's also attaches in the background. Retry with \
+                 first read shows only browser chrome, read the window again. Retry with \
                  delivery_mode:\"foreground\" only when nobody is using this screen or the \
                  user agreed to the browser coming forward; the driver then brings the user's \
                  app back."
@@ -1312,7 +1310,6 @@ impl BrowserEngine {
             "browser_pid": pid,
             "frontmost_pid": frontmost,
             "alternative_delivery_mode": "foreground",
-            "background_attach_requires": "browser_window_on_another_space",
             "visible_effects": false,
         })))
     }

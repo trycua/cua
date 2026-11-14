@@ -53,6 +53,8 @@ pub struct WalkBudget {
     time_bounded: bool,
     max_elements: usize,
     visited: usize,
+    /// Nodes held back by [`WalkBudget::reserve`] for siblings not yet walked.
+    reserved: usize,
     pending: usize,
     stop: Option<WalkStop>,
 }
@@ -68,6 +70,7 @@ impl WalkBudget {
             time_bounded: true,
             max_elements,
             visited: 0,
+            reserved: 0,
             pending: 0,
             stop: None,
         }
@@ -94,19 +97,48 @@ impl WalkBudget {
     /// a budget has run out, and the node is counted as pending.
     pub fn admit(&mut self) -> bool {
         let started = *self.started.get_or_insert_with(Instant::now);
-        if self.stop.is_none() {
-            if self.visited >= self.max_elements {
-                self.stop = Some(WalkStop::NodeBudget);
-            } else if started.elapsed() >= self.timeout {
-                self.stop = Some(WalkStop::Timeout);
-            }
-        }
-        if self.stop.is_some() {
+        // Running out of time ends the walk, and the reason says so even
+        // after a node-budget refusal. Running out of nodes refuses only
+        // this node: a sibling may still claim nodes reserved for it.
+        let refused = if matches!(
+            self.stop,
+            Some(WalkStop::Timeout | WalkStop::AppLookupTimeout)
+        ) {
+            true
+        } else if started.elapsed() >= self.timeout {
+            self.stop = Some(WalkStop::Timeout);
+            true
+        } else if self.visited + self.reserved >= self.max_elements {
+            self.stop.get_or_insert(WalkStop::NodeBudget);
+            true
+        } else {
+            false
+        };
+        if refused {
             self.pending += 1;
             return false;
         }
         self.visited += 1;
         true
+    }
+
+    /// Hold back up to `count` nodes of the unreserved node budget and return
+    /// how many were held. A walker holds nodes for the siblings it has not
+    /// walked yet and [`WalkBudget::release`]s each sibling's share before
+    /// walking it, so a deep early sibling cannot use up the nodes the later
+    /// siblings need to be listed at all.
+    pub fn reserve(&mut self, count: usize) -> usize {
+        let free = self
+            .max_elements
+            .saturating_sub(self.visited + self.reserved);
+        let held = count.min(free);
+        self.reserved += held;
+        held
+    }
+
+    /// Return `count` nodes held by [`WalkBudget::reserve`] to the budget.
+    pub fn release(&mut self, count: usize) {
+        self.reserved = self.reserved.saturating_sub(count);
     }
 
     /// Whether the wall-clock budget has run out (for phases that cannot be
@@ -246,6 +278,58 @@ mod tests {
         let outcome = budget.outcome();
         assert_eq!(outcome.reason(), Some("node_budget"));
         assert_eq!((outcome.nodes_visited, outcome.nodes_pending), (2, 2));
+    }
+
+    #[test]
+    fn a_reserved_node_survives_a_deep_earlier_sibling() {
+        // A parent and three siblings fill a budget of 4 exactly; the first
+        // sibling has a deep subtree.
+        let mut budget = WalkBudget::nodes_only(4);
+        assert!(budget.admit(), "parent");
+        assert_eq!(budget.reserve(3), 3);
+        budget.release(1);
+        assert!(budget.admit(), "first sibling");
+        assert!(!budget.admit(), "its subtree stops at the held nodes");
+        budget.release(1);
+        assert!(budget.admit(), "second sibling");
+        budget.release(1);
+        assert!(budget.admit(), "third sibling");
+        assert!(!budget.admit());
+        let outcome = budget.outcome();
+        assert_eq!(outcome.reason(), Some("node_budget"));
+        assert_eq!((outcome.nodes_visited, outcome.nodes_pending), (4, 2));
+    }
+
+    #[test]
+    fn a_timeout_after_a_node_budget_refusal_is_reported_as_timeout() {
+        // Refused for nodes, then past the deadline: with the held node
+        // given back, and with the budget still full.
+        for give_back in [true, false] {
+            let mut budget = WalkBudget::new(30, 2);
+            assert!(budget.admit());
+            assert_eq!(budget.reserve(1), 1);
+            assert!(!budget.admit(), "held node refuses the deep child");
+            std::thread::sleep(Duration::from_millis(40));
+            if give_back {
+                budget.release(1);
+            }
+            assert!(!budget.admit(), "the deadline has passed");
+            assert_eq!(budget.outcome().reason(), Some("timeout"));
+        }
+    }
+
+    #[test]
+    fn a_reservation_never_exceeds_the_free_budget() {
+        let mut budget = WalkBudget::nodes_only(3);
+        assert!(budget.admit());
+        assert_eq!(budget.reserve(10), 2);
+        assert_eq!(budget.reserve(1), 0);
+        budget.release(1);
+        budget.release(1);
+        budget.release(1);
+        assert!(budget.admit());
+        assert!(budget.admit());
+        assert!(!budget.admit());
     }
 
     #[test]

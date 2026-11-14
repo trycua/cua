@@ -31,6 +31,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
 
+#[cfg(windows)]
+mod windows_task;
+
 /// Base systemd unit name of the host service (the production home's).
 pub const SERVICE_NAME: &str = "cua-spacesd-host";
 /// Base Windows task name (the production home's).
@@ -1600,26 +1603,27 @@ impl ServiceManager for WindowsTask {
                 ),
             };
         }
-        let out = no_window(Command::new("schtasks").args([
-            "/Query",
-            "/TN",
-            &self.task(),
-            "/FO",
-            "CSV",
-            "/NH",
-        ]))
-        .output();
-        let (installed, text) = match out {
-            Ok(o) if o.status.success() && self.task_is_ours() != Some(false) => {
-                (true, String::from_utf8_lossy(&o.stdout).to_string())
+        // Task names are machine-wide. Never report another home's task
+        // as this home's running host, even when its numeric state is RUNNING.
+        if self.task_is_ours() == Some(false) {
+            return ServiceState {
+                installed: false,
+                running: false,
+                kind: "windows-task".into(),
+                detail: format!("{}; task belongs to another home", self.task()),
+            };
+        }
+        #[cfg(windows)]
+        {
+            windows_task::state(&self.task())
+        }
+        #[cfg(not(windows))]
+        {
+            ServiceState {
+                kind: "windows-task".into(),
+                detail: "Task Scheduler is only available on Windows".into(),
+                ..ServiceState::default()
             }
-            _ => (false, String::new()),
-        };
-        ServiceState {
-            installed,
-            running: text.contains("Running"),
-            kind: "windows-task".into(),
-            detail: text.trim().to_string(),
         }
     }
     fn port_free(&self, addr: std::net::SocketAddr, transport: crate::ports::Transport) -> bool {

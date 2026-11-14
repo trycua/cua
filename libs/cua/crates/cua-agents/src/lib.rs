@@ -9,14 +9,24 @@
 //! - [`events`]: the normalized event stream.
 //!
 //! Works over any [`cua_spacesd_client::SpacesdClient`]: a Space, a local container or
-//! VM, or a Fleet sandbox.
+//! VM, or a machine reached by URL.
 
+pub mod durable;
 pub mod events;
+pub mod failure;
 pub mod harness;
 pub mod installables;
+pub mod remote_login;
 pub mod runs;
+pub mod subagents;
+pub mod tool_row;
 pub mod transcript;
 
+/// Where Claude Code keeps its sign-in (the freshness check at run start reads it).
+pub use cua_agent_setup::{HostEnv, claude_login, signin};
+/// The provider registry (what each saved connection is and which app receives it).
+pub use cua_connections as connections;
+pub use durable::{DriverSpec, DurableOptions, Policy, durable_driver_spec};
 pub use events::{AgentEvent, EventPage};
 pub use harness::{Endpoint, Harness, Wire};
 pub use runs::{
@@ -33,12 +43,19 @@ pub enum Error {
     Unsupported(String),
     #[error("not found: {0}")]
     NotFound(String),
+    /// The run has no credential (nothing installed or started).
+    #[error("{0}")]
+    NoCredential(String),
     #[error("install failed: {0}")]
     Install(String),
     #[error("timed out: {0}")]
     Timeout(String),
     #[error("guest: {0}")]
     Guest(String),
+    /// A step on the computer failed, said in plain words for the person
+    /// (see [`runs::guest_command_failed`]).
+    #[error("{0}")]
+    Step(String),
     #[error(transparent)]
     Client(#[from] cua_spacesd_client::Error),
     #[error(transparent)]

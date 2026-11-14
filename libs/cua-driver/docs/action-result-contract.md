@@ -40,6 +40,8 @@ evidence rests on. A `refused` result adds `error: {code, hint}`.
 | `evidence[].detail` | optional human readback behind the evidence |
 | `summary` | optional; the result text, verbatim |
 | `error.code` / `error.hint` | only with `effect: refused` |
+| `hint` | optional; one short sentence saying what to do next (see [Recovery hints](#recovery-hints)) |
+| `next_call` | optional; `{tool, arguments}`, a call that is safe to run as is (see [Recovery hints](#recovery-hints)) |
 | `escalation.target` | `pixel`, `foreground`, `page`, `session` |
 | `escalation.reason` | `route_unavailable`, `delivery_failed`, `effect_unconfirmed`, `suspected_noop`, `permission_required` |
 
@@ -54,6 +56,31 @@ The action-result tools are:
 Other mutating tools such as application launch, window activation, browser
 navigation, dialogs, uploads, and downloads retain their own typed results.
 
+Every tool that advertises a native pointer, keyboard, menu, or window-frame
+capability must be an action-result tool. `protocol_schema_test`
+(`every_native_input_tool_publishes_the_action_result`) checks that against the
+live `tools/list` in the macOS, Windows and Linux CI lanes.
+
+### Modality-ladder audit outcome
+
+The June 2026 modality-ladder audit found desktop tools that reported success
+without confirming the effect. On macOS, Windows and Linux alike, its P0 and
+P1 items now resolve as follows:
+
+| Tool | Outcome |
+| --- | --- |
+| `type_text`, `click`, `drag`, `scroll` (P0) | shipped: action-result tools |
+| `set_value`, `right_click`, `double_click`, `press_key`, `hotkey` | shipped: action-result tools |
+| `type_text_chars` | shipped: a hidden alias of `type_text` with the same result |
+| `get_window_state`, `get_desktop_state`, `zoom` | not applicable: read-only |
+| `page`, `launch_app` | not applicable: their own typed results, not input rungs |
+
+The fix is the shared dispatch seam (`ToolRegistry::invoke_with_context`), not
+per-tool code. It turns any platform payload into an `ActionResult`, reports
+`unverifiable` when the payload carries no readback or window-change
+evidence, and refuses to publish `confirmed` without it. Escalation moved to
+the harness (see [Escalation belongs to the harness](#escalation-belongs-to-the-harness)).
+
 The contract is deliberately closed. It does not echo selectors, request
 coordinates, scope, targets, platform transport names, diagnostic pointers, or
 the old `verified` boolean as fields; `summary` is prose for the agent, not a
@@ -65,6 +92,80 @@ The invariants are:
 - `partial` has `delivery.delivered_count`;
 - `refused` has neither delivery nor evidence;
 - `error` appears only on `refused`.
+
+## Recovery hints
+
+A refusal, or an action that ran but was not confirmed, tells the agent what
+to try next. Two optional top-level fields carry it, on every tool and
+platform:
+
+- `hint`: one short sentence (at most 240 characters) saying what to do next.
+- `next_call`: `{"tool": "...", "arguments": {...}}`, the exact call that moves
+  the task forward. It is always safe to run as is: a read such as
+  `get_window_state`, `list_windows`, `get_browser_state` or
+  `check_permissions`, or a call that keeps the user's window where it is. A
+  foreground retry, or anything that needs the user's consent, is never a
+  `next_call`. The `hint` names it with its condition, for example
+  `delivery_mode:"foreground"` "only if the user allows the window to come
+  forward".
+
+They appear on three kinds of result:
+
+| Result | Where the fields sit |
+| --- | --- |
+| An error result (`isError: true`) with a `code` | next to `code` in `structuredContent` |
+| A browser refusal (`status: "refused"`, `refusal.code`) | next to `refusal` in `structuredContent` |
+| An `ActionResult` with `effect` `unverifiable`, `suspected_noop` or `refused` | `hint` and `next_call` on the `ActionResult` |
+
+For example, a background drag that macOS cannot drop returns:
+
+```json
+{
+  "code": "background_unavailable",
+  "reason": "drag_and_drop_session",
+  "hint": "No drop landed: macOS drag-and-drop needs the real pointer. Try a route that is not a drag first (Move button, menu item, shortcut). Retry with delivery_mode:\"foreground\" only if the user allows the window to come forward.",
+  "next_call": {"tool": "get_window_state", "arguments": {"pid": 811, "window_id": 659}}
+}
+```
+
+A refusal also ends its text with a line `Next: <hint>`, so a client that shows
+the agent only the text still delivers it. The first line stays the refusal.
+Every hint names only routes the driver supports in that situation, and says
+why when nothing will work. For example, an Electron window drops background
+scrolling and typing, so those hints point to `get_window_state` plus
+`element_token`, `set_value` or `invoke_menu`, and name foreground delivery only
+with its condition.
+
+A producer that already sets `hint` or `next_call` keeps its own value. In
+`run_steps`, a failed step's report carries the same `hint` and `next_call`; in
+`run_script`, the hint is appended to the error message of the failed call.
+In the typed SDK records, `next_call.arguments` is the same JSON object as
+JSON text.
+
+The codes with a hint are listed in the `RULES` table in
+`rust/crates/cua-driver-core/src/recovery_hint.rs`; its tests cover each one.
+
+### Batching suggestion
+
+An agent that acts one call at a time pays a model turn per action. After two
+direct action calls in a row in one session (reads do not count, and a pause of
+over 60 seconds starts the count again), the second result also carries a `hint`
+that suggests chaining the next steps with `run_steps` and `observe:{}` (so no
+separate read follows), with a ready call for the window the action targeted,
+and so does every second one after it. On an `unverifiable` result the suggestion follows the recovery hint
+in the same string. It is advice only: it has no `next_call`, it never rides on
+an error, and it is never sent for a step that already runs inside `run_steps`
+or `run_script`. The logic is in `rust/crates/cua-driver-core/src/batch_nudge.rs`.
+
+`suspected_noop` is advisory. It means a bounded readable state remained
+unchanged, not that the action failed. For a ref-targeted `browser_click`,
+on both the `dom_event` and `trusted` routes, the readback covers bounded
+semantic and form state on the target plus the document URL. A change in it
+reports `confirmed` with `value_readback` evidence. An unchanged readback
+remains `unverifiable`, with readback evidence: effects elsewhere on the page
+can be invisible to that readback, so verify the expected postcondition before
+retrying. A missing readback, a click that opens a page dialog, and a
+coordinate-targeted click carry no readback evidence and stay `unverifiable`.
 
 ## Window target resolution
 

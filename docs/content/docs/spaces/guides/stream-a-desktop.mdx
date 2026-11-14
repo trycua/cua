@@ -32,25 +32,25 @@ RCDP messages and framing) is open source, so any client can attach to a
 ticket.
 
 The same calls in TypeScript, Rust and Swift, from
-[the examples in other languages](/spaces/examples/other-languages). The first frame is a keyframe.
+[the examples in other languages](/spaces/guides/create-a-space-with-the-sdk#examples-in-other-languages). The first frame is a keyframe.
 
 <Tabs items={['TypeScript', 'Rust', 'Swift']}>
   <Tab value="TypeScript">
-    ```ts test="excerpt" id="ts-stream" source="samples/openkoalabot-example-ts/src/core/runtime.ts#ts-stream"
+    ```ts test="excerpt" id="ts-stream" source="examples/openkoalabot-example-ts/src/core/runtime.ts#ts-stream"
     const ticket = await space.openStream(
       SpaceStreamOptions.create({ maxFps: opts.maxFps, maxDimension: opts.maxDimension }),
     )
     const session = await space.attachStream(ticket, counter, undefined)
     ```
 
-    ```ts test="excerpt" id="ts-ticket" source="samples/openkoalabot-example-ts/src/core/runtime.ts#ts-ticket"
+    ```ts test="excerpt" id="ts-ticket" source="examples/openkoalabot-example-ts/src/core/runtime.ts#ts-ticket"
     const ticket = await space.openStream(
       SpaceStreamOptions.create({ maxFps: opts.maxFps, maxDimension: opts.maxDimension, codecs: ["h264"] }),
     )
     ```
   </Tab>
   <Tab value="Rust">
-    ```rust test="excerpt" id="rs-stream" source="samples/openkoalabot-example-tauri/src-tauri/core/src/stream.rs#rs-stream"
+    ```rust test="excerpt" id="rs-stream" source="examples/openkoalabot-example-tauri/src-tauri/core/src/stream.rs#rs-stream"
     pub async fn open_ticket(space: &Space, max_fps: u32, max_dimension: u32) -> Result<StreamTicket> {
         Ok(space
             .open_stream(
@@ -66,7 +66,7 @@ The same calls in TypeScript, Rust and Swift, from
     ```
   </Tab>
   <Tab value="Swift">
-    ```swift test="excerpt" id="sw-stream" source="samples/openkoalabot-example-swift/Sources/OpenKoalaBotExample/Scenario/ScenarioRunner.swift#sw-stream"
+    ```swift test="excerpt" id="sw-stream" source="examples/openkoalabot-example-swift/Sources/OpenKoalaBotExample/Scenario/ScenarioRunner.swift#sw-stream"
     let provider = SpaceStreamProvider(space: space)
     provider.maxFPS = UInt32(step["maxFps"] as? Int ?? 5)
     let counter = FrameCounter()
@@ -92,7 +92,7 @@ Agents use the MCP tool `stream_endpoint`. A Space without `desktop_stream`,
 
 | | Details |
 |---|---|
-| WebSocket `/media?ticket=...` on 3211 | Default. Works through the Fleet gateway, the relay and browsers. |
+| WebSocket `/media?ticket=...` on 3211 | Default. Works through the relay and browsers. |
 | QUIC (ALPN `rcdp/2`) on UDP 3212 | Lower latency when you reach the guest directly; certificate pinned from `OpenMedia`. |
 | Video | H.264 (Annex B, SPS/PPS on every keyframe). Encode: VideoToolbox (hardware) on macOS, OpenH264 (software) in Linux Spaces. SDK decode: VideoToolbox (hardware) on macOS, OpenH264 elsewhere. Browser viewers decode with WebCodecs. |
 | Audio | Opus 48 kHz stereo, 20 ms frames, same clock as video (A/V skew within ±40 ms). |
@@ -110,14 +110,14 @@ The wire format is in
 The operator and each agent join a Space with an identity and move a shared
 cursor on its desktop.
 
-```ts test="excerpt" id="ts-presence" source="samples/openkoalabot-example-ts/src/server/app.ts#ts-presence"
+```ts test="excerpt" id="ts-presence" source="examples/openkoalabot-example-ts/src/server/app.ts#ts-presence"
 const session = await space.joinPresence(
   { id: `openkoalabots-${randomBytes(4).toString("hex")}`, displayName: b.displayName || "Operator", color: "", agent: false },
   10_000n,
 )
 ```
 
-```ts test="excerpt" id="ts-cursor" source="samples/openkoalabot-example-ts/src/server/app.ts#ts-cursor"
+```ts test="excerpt" id="ts-cursor" source="examples/openkoalabot-example-ts/src/server/app.ts#ts-cursor"
 await s.presence.session.updateCursor({ displayId: "", windowId: undefined, x: b.x ?? 0, y: b.y ?? 0, visible: true, pressed: false, shape: "arrow", shapeSource: "unspecified", atMs: 0, receivedMs: 0 })
 ```
 

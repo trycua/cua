@@ -1,0 +1,37 @@
+{
+  "summary": true,
+  "phase": "vm-density",
+  "stop": "exec p95 over 2x",
+  "vcpus": 1,
+  "memory_mb": 1024,
+  "max_running": 9,
+  "host_total_mb": 7938,
+  "host_cpus": 2,
+  "per_vm_mb": 173.9,
+  "vm_private_p50_mb": 100,
+  "vm_shared_mb": 610,
+  "vm_rss_mb": 1565,
+  "vm_rss_sum_mb": 2964,
+  "available_mb_at_max": 6081,
+  "pressure_at_max": "normal",
+  "compressed_mb_at_max": 0,
+  "exec_p95_ms_one": 5.3,
+  "exec_p95_ms_max": 123.8,
+  "exec_p50_ms_max": 38.3,
+  "host_used_idle_mb": 1055,
+  "fit_by_memory": {
+    "this": 57,
+    "64g": 518,
+    "128g": 1042
+  },
+  "hypervisor_max_vms": null,
+  "host": "GitHub-hosted ubuntu-24.04 runner, 2 vCPU, 8 GB, QEMU on KVM",
+  "image": "Linux reference disk (cold boots: no golden warm start), free page reporting on (order 3)",
+  "run": "VMD_PROFILE=rollout VMD_MAX=96 VMD_LABEL=gha-kvm, CUA_VM_* defaults; run 39367668199",
+  "measured_at": "2026-10-20",
+  "thresholds": {
+    "min_running_ratio": 0.6,
+    "max_private_ratio": 1.3,
+    "max_exec_ratio": 2.5
+  }
+}

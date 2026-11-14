@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Public tool transports must fail closed when no daemon is reachable.
 
 use std::io::Write as _;
@@ -123,6 +126,28 @@ fn direct_mcp_rejects_admin_disabled_unrestricted_mode_before_requests() {
     );
 }
 
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn direct_mcp_refuses_startup_when_configured_policy_path_is_missing() {
+    let output = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
+        .arg("mcp")
+        .env("CUA_DRIVER_POLICY_FILE", "/nonexistent/cua-policy.yaml")
+        .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("run direct MCP with a missing policy path");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("configured permission policy path does not exist"),
+        "unexpected stderr: {stderr}"
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "policy rejection must precede protocol output"
+    );
+}
+
 #[test]
 fn embedded_mcp_without_private_endpoint_fails_closed() {
     let output = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
@@ -160,7 +185,7 @@ fn named_session_survives_across_one_shot_cli_calls() {
     );
     assert!(!started.is_error(), "start failed: {}", started.text());
 
-    let state = driver.call("get_session_state", serde_json::json!({"session": session}));
+    let state = driver.call("get_session", serde_json::json!({"session": session}));
     assert!(
         !state.is_error(),
         "named session did not survive the next CLI process: {}",
@@ -242,7 +267,7 @@ fn cli_call_strips_a_utf8_bom_from_piped_stdin_arguments() {
         String::from_utf8_lossy(&started.stderr)
     );
 
-    let state = driver.call("get_session_state", serde_json::json!({"session": session}));
+    let state = driver.call("get_session", serde_json::json!({"session": session}));
     assert!(
         !state.is_error(),
         "BOM-prefixed arguments were not applied: {}",
@@ -267,7 +292,7 @@ fn implicitly_started_named_session_survives_across_one_shot_cli_calls() {
         first_action.text()
     );
 
-    let state = driver.call("get_session_state", serde_json::json!({"session": session}));
+    let state = driver.call("get_session", serde_json::json!({"session": session}));
     assert!(
         !state.is_error(),
         "implicitly started session did not survive the next CLI process: {}",
@@ -304,7 +329,7 @@ fn named_cli_session_cleanup_is_isolated() {
         anonymous.text()
     );
 
-    let state = driver.call("get_session_state", serde_json::json!({"session": second}));
+    let state = driver.call("get_session", serde_json::json!({"session": second}));
     assert!(
         !state.is_error(),
         "ending another named session or cleaning an anonymous call ended the survivor: {}",
@@ -343,7 +368,7 @@ fn revoke_cli_ends_the_exact_live_session() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let state = driver.call("get_session_state", serde_json::json!({"session": session}));
+    let state = driver.call("get_session", serde_json::json!({"session": session}));
     assert!(state.is_error());
 }
 

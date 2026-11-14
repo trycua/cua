@@ -4,6 +4,8 @@ import {
   type CLIDocumentation,
   type CliReference,
   displayType,
+  flagsTable,
+  type FlagDoc,
   renderCliReference,
   splitExamples,
 } from './lib/cli-mdx';
@@ -89,7 +91,7 @@ test('CLI reference: index, one page per group, nav', () => {
   for (const [name, page] of files) {
     if (!name.endsWith('.mdx')) continue;
     assert.ok(page.includes(GENERATED_MARKER), name);
-    assert.ok(page.includes('Version: 1.2.3'), name);
+    assert.ok(!/^\s*Version:/m.test(page), `${name} carries a release version stamp`);
     assert.ok(!page.includes('secret') && !page.includes('dump-docs'), `${name} shows a hidden command`);
     assert.ok(!/undefined|\[object Object\]|—/.test(page), `${name} renders a placeholder or an em dash`);
     assertUniqueAnchors(name, page);
@@ -177,6 +179,33 @@ test('examples split from help text', () => {
   assert.deepEqual(splitExamples('No examples'), { prose: 'No examples', examples: [] });
 });
 
+test('a boolean flag with a --no- sibling leaves its default to the description', () => {
+  const enabled: FlagDoc = { name: 'provide-spaces', help: 'Enable Spaces', default_value: false };
+  const disabled: FlagDoc = { name: 'no-provide-spaces', help: 'Disable Spaces', default_value: false };
+  const force: FlagDoc = { name: 'force', help: 'Overwrite', default_value: false };
+
+  const table = flagsTable([enabled, disabled, force]).join('\n');
+  assert.ok(table.includes('| `--provide-spaces` | boolean |  | Enable Spaces. |'));
+  assert.ok(table.includes('| `--no-provide-spaces` | boolean | `false` | Disable Spaces. |'));
+  assert.ok(table.includes('| `--force` | boolean | `false` | Overwrite. |'));
+
+  const ordinary = '| `--provide-spaces` | boolean | `false` | Enable Spaces. |';
+  assert.ok(flagsTable([enabled]).join('\n').includes(ordinary));
+  assert.ok(flagsTable([enabled, { ...disabled, hidden: true }]).join('\n').includes(ordinary));
+  assert.ok(
+    flagsTable([enabled, { name: 'no-provide-spaces', help: 'Mode', type: 'String', is_optional: true }])
+      .join('\n')
+      .includes(ordinary)
+  );
+
+  const display = flagsTable([
+    { name: 'display', help: 'Resolution', type: 'String', is_optional: true, default_value: '1024x768' },
+    { name: 'no-display', help: 'Headless', default_value: false },
+  ]).join('\n');
+  assert.ok(display.includes('| `--display` | string | `1024x768` | Resolution. |'));
+  assert.ok(display.includes('| `--no-display` | boolean | `false` | Headless. |'));
+});
+
 test('types read as types', () => {
   assert.equal(displayType({ type: 'NAME' }), 'string');
   assert.equal(displayType({ type: 'Int' }), 'integer');
@@ -201,7 +230,6 @@ const mcp: McpReference = {
   server: 'demo mcp',
   generator: 'gen',
   source: 'src',
-  version: '1.2.3',
   description: 'Demo tools.',
   categories: [
     { slug: 'act', title: 'Action tools', summary: 'Act' },

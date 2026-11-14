@@ -46,7 +46,7 @@ async def main(image: str, name: str) -> None:
     # region docs:create
     c = cua.embedded()
     sb = await c.sandboxes().create(cua.SandboxCreateOptions(
-        on="local",                               # or "cloud"
+        on="local",                               # or "aws"
         image=image,                              # any image with cua-spacesd
         name=name,
         memory_mb=4096,

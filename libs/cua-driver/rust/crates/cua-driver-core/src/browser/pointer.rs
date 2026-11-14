@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Extended browser pointer actions.
 //!
 //! This module deliberately shares the exact-or-refused posture of the
@@ -309,7 +312,7 @@ impl BrowserPointerTool {
                         "session": required_session_schema(),
                         "action": { "type": "string", "enum": ["hover", "right_click", "double_click", "scroll", "drag"], "description": "Pointer gesture. scroll needs delta_x or delta_y; drag needs destination_ref or to_x/to_y." },
                         "input_route": { "type": "string", "enum": ["trusted", "dom_event"], "default": "trusted", "description": "trusted sends CDP Input events; dom_event synthesizes DOM events in the page and requires ref." },
-                        "delivery_mode": { "type": "string", "enum": ["background", "foreground"], "default": "background", "description": "background (default) refuses trusted input where it would activate the browser window (Linux Chromium). foreground accepts that activation, for a browser whose window nobody else is using (for example inside a sandbox)." },
+                        "delivery_mode": { "type": "string", "enum": ["background", "foreground"], "default": "background", "description": "background (default) refuses trusted input where it would activate the browser window, including Linux Chromium and macOS Chromium configurations whose trusted route cannot stay in the background. foreground accepts that activation, for a browser whose window nobody else is using (for example inside a sandbox)." },
                         "ref": { "type": "string", "description": "Origin page ref. Alternative to x/y." },
                         "x": { "type": "number", "description": "Origin viewport x in CSS pixels." },
                         "y": { "type": "number", "description": "Origin viewport y in CSS pixels." },
@@ -442,7 +445,29 @@ impl BrowserPointerTool {
                 json!([]),
             ),
             PointerAction::Scroll => (
-                "function(dx,dy) { const o={deltaX:dx,deltaY:dy,bubbles:true,cancelable:true,composed:true,view:this.ownerDocument.defaultView}; this.dispatchEvent(new WheelEvent('wheel',o)); let n=this; while (n && n !== this.ownerDocument.documentElement) { const s=this.ownerDocument.defaultView.getComputedStyle(n); if (/(auto|scroll)/.test(s.overflow+s.overflowX+s.overflowY)) break; n=n.parentElement; } const target=n || this.ownerDocument.scrollingElement || this.ownerDocument.documentElement; const beforeX=target.scrollLeft; const beforeY=target.scrollTop; target.scrollBy(dx,dy); const changed=target.scrollLeft !== beforeX || target.scrollTop !== beforeY; if (changed) target.dispatchEvent(new Event('scroll')); return changed; }",
+                r#"async function(dx,dy) {
+                    const view=this.ownerDocument.defaultView;
+                    const o={deltaX:dx,deltaY:dy,bubbles:true,cancelable:true,composed:true,view};
+                    this.dispatchEvent(new WheelEvent('wheel',o));
+                    let n=this;
+                    while (n && n !== this.ownerDocument.documentElement) {
+                        const s=view.getComputedStyle(n);
+                        if (/(auto|scroll)/.test(s.overflow+s.overflowX+s.overflowY)) break;
+                        n=n.parentElement;
+                    }
+                    const target=n || this.ownerDocument.scrollingElement || this.ownerDocument.documentElement;
+                    const beforeX=target.scrollLeft;
+                    const beforeY=target.scrollTop;
+                    target.scrollBy(dx,dy);
+                    // Smooth scrolling can start after this JavaScript task returns.
+                    const deadline=view.performance.now()+250;
+                    while (target.scrollLeft === beforeX && target.scrollTop === beforeY) {
+                        if (view.performance.now() >= deadline) return false;
+                        await new Promise(resolve => view.setTimeout(resolve,25));
+                    }
+                    target.dispatchEvent(new Event('scroll'));
+                    return true;
+                }"#,
                 json!([{ "value": request.delta_x }, { "value": request.delta_y }]),
             ),
             PointerAction::Drag => {
@@ -486,6 +511,7 @@ impl BrowserPointerTool {
                     "functionDeclaration": function,
                     "arguments": arguments,
                     "returnByValue": true,
+                    "awaitPromise": request.action == PointerAction::Scroll,
                 }),
             )
             .await
@@ -549,6 +575,7 @@ impl BrowserPointerTool {
             "status": "ok",
             "action": request.action.as_str(),
             "route": request.route.as_str(),
+            "delivery_mode": if request.foreground && request.route == InputRoute::Trusted { "foreground" } else { "background" },
             "target_id": validated.record.target_id,
             "tab_id": validated.tab.tab_id,
             "ref": external_ref,
@@ -745,7 +772,7 @@ impl Tool for BrowserPointerTool {
         args: &Value,
     ) -> ProtectedResourceOwnership {
         if adapter_id == "browser_bound_input" {
-            browser_resource_ownership(&self.engine, args)
+            browser_resource_ownership(&self.engine, args).await
         } else {
             ProtectedResourceOwnership::UserOwned
         }
@@ -755,7 +782,7 @@ impl Tool for BrowserPointerTool {
         &self,
         adapter_id: &str,
         args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
         if adapter_id == "browser_bound_input" {
             browser_protected_resource_scope(&self.engine, args, "browser_pointer").await
         } else {

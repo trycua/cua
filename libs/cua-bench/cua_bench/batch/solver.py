@@ -4,8 +4,8 @@
 running a task from inside a sandbox, CI jobs or custom harnesses.
 
 Environment variables:
-    CUA_ENV_API_URL: the sandbox: a ref (local:<name>, cloud:<name>,
-        direct:<host:port>) or a cua-spacesd URL (http://localhost:3211). Required.
+    CUA_ENV_API_URL: the sandbox: a ref (local:<name>, direct:<host:port>) or a
+        cua-spacesd URL (http://localhost:3211). Required.
     CUA_ENV_TOKEN: spacesd token for that URL, if it needs one.
     CUA_ENV_TYPE: linux | windows | macos | android (default linux).
     CUA_OUTPUT_DIR: where traces go (default /tmp/td_output).

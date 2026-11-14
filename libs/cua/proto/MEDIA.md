@@ -5,7 +5,7 @@ targets, negotiates the codec and limits, and mints a media ticket. The frames
 then flow over the **rcdp wire, version 2**, on either:
 
 - the `/media` WebSocket on the spacesd port (3211). This works through the
-  Fleet gateway and the relay.
+  gateways and the relay.
 - direct QUIC on UDP 3212, when the client can reach the guest directly.
 
 This document lists only what v2 changes relative to
@@ -360,7 +360,7 @@ These are JSON control messages in the v1 `{"type": …, "payload": …}` shape.
 - Grow the buffer immediately on underrun. Shrink it slowly, by at most
   about 5 ms per second, and only during `silent`/DTX periods so the shrink
   is inaudible.
-- On WebSocket-over-TCP paths (Fleet gateway, relay), head-of-line blocking
+- On WebSocket-over-TCP paths (gateways, relay), head-of-line blocking
   can exceed 60 ms. Clients may grow past 60 ms there, but must report the
   current target in their own stats.
 - **Clock drift.** Correct drift between the guest capture clock and the

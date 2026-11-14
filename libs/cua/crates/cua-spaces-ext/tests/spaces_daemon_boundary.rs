@@ -276,15 +276,11 @@ async fn scenario() {
         .unwrap();
     assert_eq!(manifest.app, "firefox");
     // The default-checked set withholds `cookies.sqlite` (a sensitive,
-    // signed-in-session item). The requester's own `include` is shown to
-    // the human as `would_send` but is never authoritative (red-team E2:
-    // an MCP/automation caller cannot dictate what moves); what actually
-    // gets captured for a whole-app request is the human's OWN choice at
-    // approval time (`ApproveOptions::paths`). Compute the same widened
-    // selection a human reviewing "would send: ..., cookies.sqlite" and
-    // choosing to include it would produce, and approve with it -- this is
-    // what makes a human's "yes, include the signed-in cookies" choice
-    // actually reach the capture.
+    // signed-in-session item), so the selection names it and acknowledges
+    // it. That selection rides the Keyvault request: it is what the human
+    // is shown (`would_send`) and what approval captures and delivers, and
+    // nothing else (red-team E2: the caller cannot widen it; the human's own
+    // `ApproveOptions::paths` can still narrow or widen it).
     let cookies_path = manifest
         .items
         .iter()

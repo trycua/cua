@@ -1,9 +1,14 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Explicit permission-policy configuration must fail before a daemon exposes
 //! an action endpoint.
 
 use std::process::{Command, Stdio};
 
 fn test_socket(directory: &tempfile::TempDir, suffix: &str) -> String {
+    #[cfg(not(unix))]
+    let _ = directory;
     #[cfg(unix)]
     {
         directory
@@ -245,7 +250,7 @@ expires_after: 1h
 idle_timeout: 10m
 resources: {}
 allow:
-  tools: [start_session, get_session_state, end_session]
+  tools: [start_session, get_session, end_session]
 deny:
   tools: [page]
 "#,

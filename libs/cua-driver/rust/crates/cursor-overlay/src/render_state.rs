@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Shared cursor-overlay render state, animation tick, and pixel pipeline.
 //!
 //! Lifts the platform-agnostic render state out of the three per-OS
@@ -8,11 +11,10 @@
 //! ## What lives here
 //!
 //! - [`RenderStateCore`] — the platform-agnostic animation and semantic state.
-//! - [`RenderStateCore::tick_motion`] — speed-profile + spring physics +
-//!   click-pulse + idle-fade using runtime [`MotionConfig`] (Windows + Linux).
-//! - [`RenderStateCore::tick_swift_constants`] — same physics but with the
-//!   hardcoded Swift reference constants used by macOS; returns whether the
-//!   path just ended (so the caller can fire arrival signals).
+//! - [`RenderStateCore::tick_motion`] — advances the planned
+//!   [`Trajectory`](crate::trajectory::Trajectory), click effects and the
+//!   idle fade on every platform; returns whether the cursor just arrived
+//!   (so the caller can fire arrival signals).
 //! - [`RenderStateCore::apply_command_base`] — the OverlayCommand match arms
 //!   that all three platforms implement identically (MoveTo / ClickPulse /
 //!   SetEnabled / SetMotion / SetTheme / semantic action events / PinAbove).
@@ -30,13 +32,14 @@
 //!   `UpdateLayeredWindow` (BGRA DIB), `XPutImage` (BGRA ZPixmap).
 //! - Origin/coordinate translation (Windows uses virtual-screen offset;
 //!   macOS uses NSScreen coordinates; Linux uses display coordinates).
-//! - Platform-specific extras like macOS's `focus_rect` (post-arrival
-//!   element highlight — drawn inside [`render_frame`] when the caller
-//!   supplies one via the optional argument).
+//! - Retired extras: the cursor draws no action marks, so the optional
+//!   `focus_rect` argument of [`render_frame`] is ignored.
 
+use crate::cursor_pose::FloatOffset;
+use crate::trajectory::{plan_move, MoveRequest, Pt, Trajectory};
 use crate::{
-    CompiledTheme, CursorAction, CursorConfig, CursorVisualState, DeliveryModifier, MotionConfig,
-    OverlayCommand, PathPlanner, PathState, PlannedPath, Spring, TargetModifier,
+    BadgeMode, CompiledTheme, CursorAction, CursorConfig, CursorOptions, CursorVisualState,
+    DeliveryModifier, MotionConfig, OverlayCommand, SessionBadgeInput, TargetModifier,
 };
 use cua_driver_core::agent_cursor::AgentCursorVisibility;
 use std::sync::Arc;
@@ -44,21 +47,64 @@ use std::sync::Arc;
 pub const SESSION_BADGE_HOLD_SECS: f64 = 2.0;
 pub const SESSION_BADGE_FADE_SECS: f64 = 0.4;
 
-/// Position of a cursor that has never been placed. It lies far outside any
-/// compositor layout: layouts reach negative coordinates when a monitor sits
-/// left of or above the primary one, so a small negative sentinel (the old
-/// `(-200, -200)`) is indistinguishable from a real position there.
-pub const UNPLACED_POS: (f64, f64) = (-1.0e9, -1.0e9);
+/// Key-combo chip timeline (verbose badge), in seconds of the cursor at rest: a short
+/// delay (so a cue that is about to move the cursor does not flash first), a
+/// quick fade in, a hold, and a fade out. About one second in all.
+pub const KEY_CHIP_DELAY_SECS: f64 = 0.12;
+pub const KEY_CHIP_FADE_IN_SECS: f64 = 0.08;
+pub const KEY_CHIP_HOLD_SECS: f64 = 0.5;
+pub const KEY_CHIP_FADE_OUT_SECS: f64 = 0.3;
+pub const KEY_CHIP_SECS: f64 =
+    KEY_CHIP_DELAY_SECS + KEY_CHIP_FADE_IN_SECS + KEY_CHIP_HOLD_SECS + KEY_CHIP_FADE_OUT_SECS;
+/// How fast the minimal badge's session name fades in or out when another
+/// agent cursor appears or leaves.
+pub const MINIMAL_NAME_FADE_SECS: f64 = 0.2;
+/// An unarmed chip plays anyway after this long, in case its action's end
+/// never arrives.
+pub const KEY_CHIP_ARM_TIMEOUT_SECS: f64 = 10.0;
 
-/// Whether `pos` is a real position rather than [`UNPLACED_POS`].
-pub fn is_placed(pos: (f64, f64)) -> bool {
-    pos.0 > -1.0e8
+/// The brief key-combo chip (such as `⌘C`) the verbose badge shows for one
+/// hotkey. The minimal badge shows only the session name.
+#[derive(Debug, Clone, PartialEq)]
+pub struct KeyChip {
+    /// Formatted combo such as `⌘C`.
+    pub key_combo: String,
+    /// Seconds played. The clock only runs once the action has ended and
+    /// the cursor is at rest.
+    pub secs: f64,
+    /// The action has ended. A real foreground click can hide the overlay
+    /// while it is delivered, so the chip plays after the action instead.
+    pub armed: bool,
+    /// Seconds waited unarmed, so a lost `EndAction` cannot pin the chip.
+    pub waiting_secs: f64,
+}
+
+impl KeyChip {
+    pub fn alpha(&self) -> f32 {
+        let smooth = |t: f64| {
+            let t = t.clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t)
+        };
+        let t = self.secs;
+        let fade_in_end = KEY_CHIP_DELAY_SECS + KEY_CHIP_FADE_IN_SECS;
+        let hold_end = fade_in_end + KEY_CHIP_HOLD_SECS;
+        let alpha = if t < KEY_CHIP_DELAY_SECS {
+            0.0
+        } else if t < fade_in_end {
+            smooth((t - KEY_CHIP_DELAY_SECS) / KEY_CHIP_FADE_IN_SECS)
+        } else if t < hold_end {
+            1.0
+        } else {
+            1.0 - smooth((t - hold_end) / KEY_CHIP_FADE_OUT_SECS)
+        };
+        alpha as f32
+    }
 }
 
 /// Platform-agnostic render state shared by macOS / Windows / Linux overlays.
 ///
 /// Each platform wraps this in its own struct that adds OS-specific fields
-/// (e.g. `virt_x/y/w/h` on Windows, `focus_rect` on macOS).
+/// (e.g. `virt_x/y/w/h` on Windows).
 pub struct RenderStateCore {
     /// Frozen copy of the launch-time CursorConfig.
     pub cfg: CursorConfig,
@@ -66,16 +112,38 @@ pub struct RenderStateCore {
     pub motion: MotionConfig,
     /// Current rendered position in screen / overlay-window coordinates.
     pub pos: (f64, f64),
+    /// Whether a positioning command or seed has established a position.
+    pub placed: bool,
     /// Visual heading in radians (tip direction = motion_dir + π).
     pub heading: f64,
-    /// In-flight planned path; `None` = at rest.
-    pub path: Option<PlannedPath>,
-    /// Arc-distance travelled along the current path so far.
-    pub dist: f64,
-    /// Post-arrival spring-settle state.
-    pub spring: Option<Spring>,
-    /// Target the spring is settling toward: `(x, y, heading)`.
-    pub spring_tgt: Option<(f64, f64, f64)>,
+    /// Planned move being played; `None` at rest. It stays a little past
+    /// its last sample while a trail or magnet glow fades out.
+    pub trajectory: Option<Trajectory>,
+    /// Seconds since the current trajectory started.
+    pub motion_t: f64,
+    /// Whether the current trajectory still owes its arrival signal.
+    pub arrival_pending: bool,
+    /// Seconds into the current trajectory at which the arrival signal
+    /// fires; see [`release_time`].
+    pub release_t: f64,
+    /// Seconds into the float loop. Owned by the cursor, not the action,
+    /// and never reset, so the phase carries on across every move, click
+    /// and cue. Only the amplitude settles to 0 for precise actions.
+    pub float_secs: f64,
+    /// Seconds since the float last settled (an arrival, or a click, press
+    /// or semantic cue at rest); see [`crate::cursor_pose::rest_amplitude`].
+    pub float_hold_secs: f64,
+    /// Float amplitude when it last settled, eased out from there.
+    pub float_from: f64,
+    /// Float amplitude when the current move began, eased out during the
+    /// move so the float never jumps.
+    pub float_start_amp: f64,
+    /// Moves planned so far; seeds each trajectory.
+    pub move_seq: u64,
+    /// Seconds since the last click, while click effects play.
+    pub click_age: Option<f64>,
+    /// Hotspot of the last click, for the ripple.
+    pub click_point: (f64, f64),
     /// Click-pulse phase 0..1; `None` = no pulse in flight.
     pub click_t: Option<f64>,
     /// Whether a button is currently being held for this cursor.
@@ -117,13 +185,29 @@ pub struct RenderStateCore {
     pub badge_modifiers: Option<(Option<DeliveryModifier>, Option<TargetModifier>)>,
     /// Elapsed chip fade time after the active semantic action clears.
     pub badge_modifier_fade_secs: Option<f64>,
+    /// Badge mode for this cursor; `None` follows the live `cursor.badges`
+    /// setting ([`crate::badge_mode::active`]).
+    pub badge_mode_override: Option<BadgeMode>,
+    /// Opt-in extras for this cursor; `None` follows the live
+    /// `cursor.float` / `cursor.rotate` / `cursor.halo` settings
+    /// ([`crate::cursor_options::active`]).
+    pub options_override: Option<CursorOptions>,
+    /// Another agent cursor is revealed on this overlay too, so the minimal
+    /// badge names this one. The render map refreshes it on every tick.
+    pub peer_cursors_visible: bool,
+    /// Minimal badge: eased 0..1 presence of the session name while other
+    /// agent cursors are on screen.
+    pub minimal_name_presence: f32,
+    /// Verbose badge: the brief chip for a key combo.
+    pub key_chip: Option<KeyChip>,
+    /// Whether this surface can alpha-blend translucent effects (glow,
+    /// trail). Platforms clear it where they cannot, such as X11 without a
+    /// compositing manager.
+    pub effects_capable: bool,
 }
 
 impl RenderStateCore {
     /// Build the core from a launch-time CursorConfig.
-    /// `pos` starts at the off-screen sentinel `(-200, -200)` to indicate
-    /// "never placed on screen yet" — the click path uses this to detect
-    /// first-placement and snap rather than animate.
     pub fn new(cfg: CursorConfig) -> Self {
         let motion = cfg.motion.clone();
         let visual = CursorVisualState {
@@ -148,12 +232,22 @@ impl RenderStateCore {
             semantic_cue: false,
             theme,
             theme_fallback,
-            pos: UNPLACED_POS,
+            pos: (0.0, 0.0),
+            placed: false,
             heading: std::f64::consts::FRAC_PI_4,
-            path: None,
-            dist: 0.0,
-            spring: None,
-            spring_tgt: None,
+            trajectory: None,
+            motion_t: 0.0,
+            arrival_pending: false,
+            release_t: 0.0,
+            float_secs: 0.0,
+            // A fresh cursor floats fully at rest.
+            float_hold_secs: crate::cursor_pose::FLOAT_HOLD_SECS
+                + crate::cursor_pose::FLOAT_EASE_IN_SECS,
+            float_from: 0.0,
+            float_start_amp: 1.0,
+            move_seq: 0,
+            click_age: None,
+            click_point: (0.0, 0.0),
             click_t: None,
             pressed: false,
             visible: true,
@@ -166,31 +260,122 @@ impl RenderStateCore {
             session_badge_hovered: false,
             badge_modifiers: None,
             badge_modifier_fade_secs: None,
+            badge_mode_override: None,
+            options_override: None,
+            peer_cursors_visible: false,
+            minimal_name_presence: 0.0,
+            key_chip: None,
+            effects_capable: true,
         }
     }
 
-    /// Whether the cursor currently paints pixels: user-visible, placed
-    /// (not [`UNPLACED_POS`]), and not fully idle-faded.
+    /// Screen-space bounds `[x, y, width, height]` (logical points, same
+    /// origin as `pos`) of the motion effects painted this frame: trail,
+    /// glow, magnet and click ripple. `None` when no effect is visible.
+    /// Platforms that repaint only a tile or dirty rect around the cursor
+    /// must union this in so effects are not clipped or left behind.
+    pub fn effect_bounds(&self) -> Option<[f64; 4]> {
+        if !self.is_revealed() || self.pinned_target_off_workspace {
+            return None;
+        }
+        let frame = self.effect_frame();
+        let mut bounds: Option<[f64; 4]> = None;
+        let mut add = |x0: f64, y0: f64, x1: f64, y1: f64| {
+            bounds = Some(match bounds {
+                None => [x0, y0, x1, y1],
+                Some([a, b, c, d]) => [a.min(x0), b.min(y0), c.max(x1), d.max(y1)],
+            });
+        };
+        if let Some(glow) = frame.glow {
+            add(
+                glow.x - glow.r,
+                glow.y - glow.r,
+                glow.x + glow.r,
+                glow.y + glow.r,
+            );
+        }
+        for seg in &frame.trail {
+            let pad = seg.width / 2.0 + 1.0;
+            add(
+                seg.a.0.min(seg.b.0) - pad,
+                seg.a.1.min(seg.b.1) - pad,
+                seg.a.0.max(seg.b.0) + pad,
+                seg.a.1.max(seg.b.1) + pad,
+            );
+        }
+        if let Some(magnet) = frame.magnet {
+            let [x, y, w, h] = magnet.rect;
+            let pad = MAGNET_INFLATE + 8.0;
+            add(x - pad, y - pad, x + w + pad, y + h + pad);
+        }
+        if let Some(ripple) = frame.ripple {
+            let r = ripple.r + ripple.width;
+            add(ripple.x - r, ripple.y - r, ripple.x + r, ripple.y + r);
+        }
+        bounds.map(|[x0, y0, x1, y1]| [x0, y0, x1 - x0, y1 - y0])
+    }
+
+    /// Whether a planned move is still travelling (not just fading effects).
+    pub fn is_moving(&self) -> bool {
+        self.trajectory
+            .as_ref()
+            .is_some_and(|traj| self.motion_t < traj.duration())
+    }
+
+    /// Drop any in-flight move and its effects, leaving the cursor where it
+    /// is. A pending arrival is dropped with it.
+    pub fn cancel_motion(&mut self) {
+        self.trajectory = None;
+        self.motion_t = 0.0;
+        self.arrival_pending = false;
+    }
+
+    fn reduced_motion(&self) -> bool {
+        self.visual.reduced_motion == crate::ReducedMotion::On
+    }
+
+    /// Geometry of the motion effects to paint this frame.
+    fn effect_frame(&self) -> EffectFrame {
+        if self.reduced_motion() {
+            return EffectFrame::default();
+        }
+        let mut frame = match self.trajectory.as_ref() {
+            Some(traj) => {
+                effects::motion_frame(traj, self.motion_t, self.pos, self.effects_capable)
+            }
+            None => EffectFrame::default(),
+        };
+        if let Some(age) = self.click_age {
+            effects::add_click(
+                &mut frame,
+                self.motion.resolved_effects(),
+                age,
+                self.click_point,
+            );
+        }
+        frame
+    }
+
+    /// Whether the cursor currently paints pixels: user-visible, placed,
+    /// and not fully idle-faded.
     pub fn is_revealed(&self) -> bool {
-        self.visible && is_placed(self.pos) && self.idle_alpha >= 0.004
+        self.visible && self.placed && self.idle_alpha >= 0.004
     }
 
     /// Whether a revealed cursor keeps changing pixels while it rests.
     ///
-    /// The default theme levitates through the shared float motion (the
-    /// resting "bob"), and a custom theme may loop a multi-frame animation for
-    /// its current action. Both are part of the cursor's visual identity, so
-    /// every platform must keep delivering frames while this holds.
+    /// Two extras animate at rest: the resting float of the built-in theme
+    /// (`cursor.float`, on by default), and a theme's multi-frame animation
+    /// for its idle state (a custom theme whose idle animation loops). With both off the cursor rests still, so the overlay
+    /// stops rendering once activity settles.
     ///
-    /// Resting motion is bounded by idle hide: the cursor levitates while its
-    /// idle-hide countdown runs and stops when the fade hides it. A cursor
-    /// configured never to hide (`idle_hide_ms == 0`) rests still, so the
-    /// overlay can stop rendering once activity settles; a full-output
-    /// redraw per frame on Wayland, or a layered-window upload on Windows,
-    /// must not run for as long as the cursor stays on screen. Reduced motion
-    /// freezes both (no bob, still frame), a hidden, unplaced, faded, or
-    /// off-workspace cursor paints nothing, and a single-frame custom theme
-    /// has nothing to animate.
+    /// Resting motion is bounded by idle hide: it runs while the idle-hide
+    /// countdown runs and stops when the fade hides the cursor. A cursor
+    /// configured never to hide (`idle_hide_ms == 0`) rests still, so a
+    /// full-output redraw per frame on Wayland, or a layered-window upload on
+    /// Windows, never runs for as long as the cursor stays on screen. Reduced
+    /// motion freezes both (no float, still frame), and a hidden, unplaced,
+    /// faded, or off-workspace cursor paints nothing.
     pub fn has_resting_motion(&self) -> bool {
         if !self.is_revealed()
             || self.motion.idle_hide_ms <= 0.0
@@ -199,14 +384,124 @@ impl RenderStateCore {
         {
             return false;
         }
+        let options = self.options();
+        let default_theme = self
+            .theme
+            .as_deref()
+            .is_none_or(|theme| theme.id == crate::DEFAULT_THEME_ID);
+        if options.float && default_theme {
+            return true;
+        }
+        let action = self.painted_action();
         match self.theme.as_deref() {
-            // The defensive no-theme fallback paints the embedded default.
-            None => true,
-            Some(theme) if theme.id == crate::DEFAULT_THEME_ID => true,
             Some(theme) => theme
-                .animation_for_action(self.visual.resolved_action)
+                .animation_for_action(action)
+                .is_some_and(|animation| animation.frames.len() > 1),
+            None => crate::embedded_default_theme()
+                .animation_for_action(action)
                 .is_some_and(|animation| animation.frames.len() > 1),
         }
+    }
+
+    /// Float offset painted this frame: the historical 4 s sway, bob and
+    /// tilt ([`crate::cursor_pose::float_at`]) at the current amplitude.
+    /// Exactly 0 at every arrival and while a click, press, drop, scroll or
+    /// typing cue holds it; [`FloatOffset::ZERO`] with `cursor.float` off,
+    /// reduced motion or a custom theme.
+    pub fn float_offset(&self) -> FloatOffset {
+        self.float_offset_at(
+            self.motion_t,
+            self.float_secs,
+            self.float_hold_secs,
+            self.float_from,
+        )
+    }
+
+    /// Float amplitude (0..1) painted this frame.
+    pub fn float_amplitude(&self) -> f64 {
+        self.float_amplitude_at(self.motion_t, self.float_hold_secs, self.float_from)
+    }
+
+    pub(crate) fn float_amplitude_at(&self, motion_t: f64, hold: f64, from: f64) -> f64 {
+        if !self.floats() {
+            return 0.0;
+        }
+        match self.trajectory.as_ref() {
+            Some(traj) if crate::cursor_pose::travelling(traj, motion_t) => {
+                crate::cursor_pose::travel_amplitude(traj, motion_t, self.float_start_amp)
+            }
+            _ => crate::cursor_pose::rest_amplitude(hold, from),
+        }
+    }
+
+    /// [`Self::float_offset`] with the move `motion_t` seconds in, the float
+    /// clock at `float_secs`, `hold` seconds since it settled from `from`.
+    pub(crate) fn float_offset_at(
+        &self,
+        motion_t: f64,
+        float_secs: f64,
+        hold: f64,
+        from: f64,
+    ) -> FloatOffset {
+        crate::cursor_pose::float_at(float_secs)
+            .scaled(self.float_amplitude_at(motion_t, hold, from))
+    }
+
+    /// Settle the float for a precise action at rest: the amplitude eases
+    /// out from where it is, holds at 0, then eases back in. The phase runs
+    /// on. While travelling the arrival settles it instead.
+    fn settle_float(&mut self) {
+        let travelling = self
+            .trajectory
+            .as_ref()
+            .is_some_and(|traj| crate::cursor_pose::travelling(traj, self.motion_t));
+        if !travelling {
+            self.float_from = self.float_amplitude();
+            self.float_hold_secs = 0.0;
+        }
+    }
+
+    /// Whether this cursor floats at all: `cursor.float` on, the built-in
+    /// theme, and no reduced motion.
+    pub fn floats(&self) -> bool {
+        let default_theme = self
+            .theme
+            .as_deref()
+            .is_none_or(|theme| theme.id == crate::DEFAULT_THEME_ID);
+        self.options().float && default_theme && !self.reduced_motion()
+    }
+
+    /// Rotation from upright (radians) painted this frame: the heading
+    /// rotation (`cursor.rotate`) plus the float tilt. Upright at every
+    /// arrival and while a click, press, scroll or typing cue holds the
+    /// float.
+    pub fn painted_rotation(&self) -> f64 {
+        self.heading_rotation_at(self.motion_t) + self.float_offset().tilt
+    }
+
+    /// The `cursor.rotate` part of [`Self::painted_rotation`] with the move
+    /// `motion_t` seconds in: only while travelling, upright at arrival.
+    pub(crate) fn heading_rotation_at(&self, motion_t: f64) -> f64 {
+        let mode = self.options().rotate;
+        match self.trajectory.as_ref() {
+            Some(traj) if !self.reduced_motion() => {
+                crate::cursor_pose::travel_rotation(traj, motion_t, mode, self.pressed)
+            }
+            _ => 0.0,
+        }
+    }
+
+    /// The opt-in extras this cursor paints with now.
+    pub fn options(&self) -> CursorOptions {
+        self.options_override
+            .unwrap_or_else(crate::cursor_options::active)
+    }
+
+    /// The action whose theme animation is painted. Always the idle frame: the
+    /// cursor draws no action marks, whatever the agent does, so it stays the
+    /// plain arrow for clicks, typing, keys, scrolling and every other action.
+    pub fn painted_action(&self) -> CursorAction {
+        CursorAction::Idle
     }
 
     /// Whether the idle-hide fade (the 180 ms alpha ramp after
@@ -226,9 +521,9 @@ impl RenderStateCore {
     /// its opaque idle-hide delay are quiescent; platforms advance that
     /// countdown with [`Self::idle_fade_wait`] or their own slow heartbeat.
     pub fn needs_frame_tick(&self) -> bool {
-        self.path.is_some()
-            || self.spring.is_some()
+        self.trajectory.is_some()
             || self.click_t.is_some()
+            || self.click_age.is_some()
             || self.session_badge_needs_frame_tick()
             || self.has_resting_motion()
             || self.idle_fade_in_progress()
@@ -240,11 +535,11 @@ impl RenderStateCore {
     /// the fade has already started.
     pub fn idle_fade_wait(&self) -> Option<std::time::Duration> {
         if !self.visible
-            || !is_placed(self.pos)
+            || !self.placed
             || self.motion.idle_hide_ms <= 0.0
-            || self.path.is_some()
-            || self.spring.is_some()
+            || self.trajectory.is_some()
             || self.click_t.is_some()
+            || self.click_age.is_some()
         {
             return None;
         }
@@ -259,9 +554,30 @@ impl RenderStateCore {
         }
     }
 
+    /// The badge mode this cursor paints with now.
+    pub fn badge_mode(&self) -> BadgeMode {
+        self.badge_mode_override
+            .unwrap_or_else(crate::badge_mode::active)
+    }
+
+    /// Opacity of the session name.
     pub fn session_badge_alpha(&self) -> f32 {
         if self.session_label.is_none() {
             return 0.0;
+        }
+        match self.badge_mode() {
+            BadgeMode::Off => return 0.0,
+            BadgeMode::Minimal => {
+                // Text never shows while the cursor moves.
+                if self.is_moving() {
+                    return 0.0;
+                }
+                if self.session_badge_hovered {
+                    return 1.0;
+                }
+                return self.minimal_name_presence;
+            }
+            BadgeMode::Verbose => {}
         }
         if self.session_badge_hovered {
             return 1.0;
@@ -275,7 +591,14 @@ impl RenderStateCore {
         (1.0 - smooth) as f32
     }
 
+    /// Opacity of the badge chips.
     pub fn session_badge_chip_alpha(&self) -> f32 {
+        match self.badge_mode() {
+            BadgeMode::Off => return 0.0,
+            // The minimal badge never shows chips, only the session name.
+            BadgeMode::Minimal => return 0.0,
+            BadgeMode::Verbose => {}
+        }
         if self.badge_modifiers.is_none() {
             return 0.0;
         }
@@ -287,17 +610,96 @@ impl RenderStateCore {
         (1.0 - smooth) as f32
     }
 
+    /// Opacity of the key-combo chip (verbose badge only, never in motion).
+    pub fn key_chip_alpha(&self) -> f32 {
+        if self.badge_mode() != BadgeMode::Verbose || self.is_moving() {
+            return 0.0;
+        }
+        self.key_chip.as_ref().map_or(0.0, KeyChip::alpha)
+    }
+
     pub fn session_badge_is_visible(&self) -> bool {
         self.is_revealed()
-            && (self.session_badge_alpha() > 0.001 || self.session_badge_chip_alpha() > 0.001)
+            && (self.session_badge_alpha() > 0.001
+                || self.session_badge_chip_alpha() > 0.001
+                || self.key_chip_alpha() > 0.001)
     }
 
     pub fn session_badge_needs_frame_tick(&self) -> bool {
-        self.is_revealed()
-            && ((self.session_label.is_some()
-                && self.session_badge_secs < SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS)
-                || self.badge_modifier_fade_secs.is_some()
-                || self.visual.resolved_action != CursorAction::Idle)
+        if !self.is_revealed() {
+            return false;
+        }
+        let acting = self.visual.resolved_action != CursorAction::Idle;
+        match self.badge_mode() {
+            BadgeMode::Verbose => {
+                (self.session_label.is_some()
+                    && self.session_badge_secs < SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS)
+                    || self.badge_modifier_fade_secs.is_some()
+                    || self.key_chip.is_some()
+                    || acting
+            }
+            BadgeMode::Minimal => {
+                self.minimal_name_presence != self.minimal_name_target() || acting
+            }
+            BadgeMode::Off => acting,
+        }
+    }
+
+    /// Where the minimal badge's session name is heading: shown at rest while
+    /// another agent cursor is on screen, hidden otherwise.
+    fn minimal_name_target(&self) -> f32 {
+        if self.session_label.is_some() && self.peer_cursors_visible && !self.is_moving() {
+            1.0
+        } else {
+            0.0
+        }
+    }
+
+    /// What the badge paints this frame, for both painting and hover
+    /// hit-testing. `cursor` is the badge anchor in the caller's pixels.
+    pub fn session_badge_input(
+        &self,
+        cursor: (f32, f32),
+        backing_scale: f32,
+        clip: Option<(f32, f32)>,
+    ) -> SessionBadgeInput<'_> {
+        let mut input = SessionBadgeInput {
+            label: None,
+            delivery: None,
+            target: None,
+            cursor,
+            backing_scale,
+            label_alpha: 0.0,
+            chip_alpha: 0.0,
+            clip,
+        };
+        match self.badge_mode() {
+            BadgeMode::Off => {}
+            BadgeMode::Verbose => {
+                let key_alpha = self.key_chip_alpha();
+                match self.key_chip.as_ref().filter(|_| key_alpha > 0.001) {
+                    // The key chip briefly takes the badge over, then the
+                    // name and its chips come back.
+                    Some(chip) => {
+                        input.label = Some(chip.key_combo.as_str());
+                        input.label_alpha = key_alpha;
+                    }
+                    None => {
+                        let (delivery, target) = self.badge_modifiers.unwrap_or((None, None));
+                        input.label = self.session_label.as_deref();
+                        input.delivery = delivery;
+                        input.target = target;
+                        input.label_alpha = self.session_badge_alpha();
+                        input.chip_alpha = self.session_badge_chip_alpha();
+                    }
+                }
+            }
+            BadgeMode::Minimal => {
+                input.label = self.session_label.as_deref();
+                input.label_alpha = self.session_badge_alpha();
+            }
+        }
+        input
     }
 
     /// Whether the platform overlay should keep a low-frequency hardware
@@ -305,7 +707,7 @@ impl RenderStateCore {
     /// from [`Self::session_badge_needs_frame_tick`]: a faded badge needs hover
     /// hit-testing, not continuous 60 fps repainting.
     pub fn session_badge_needs_hover_poll(&self) -> bool {
-        self.session_label.is_some() && self.is_revealed()
+        self.badge_mode() != BadgeMode::Off && self.session_label.is_some() && self.is_revealed()
     }
 
     /// Update hover state from a platform-native hardware pointer sample.
@@ -322,16 +724,11 @@ impl RenderStateCore {
                 if dx * dx + dy * dy <= HOVER_RADIUS * HOVER_RADIUS {
                     return true;
                 }
-                crate::session_badge_layout(crate::SessionBadgeInput {
-                    label: self.session_label.as_deref(),
-                    delivery: self.badge_modifiers.and_then(|modifiers| modifiers.0),
-                    target: self.badge_modifiers.and_then(|modifiers| modifiers.1),
-                    cursor: (self.pos.0 as f32, self.pos.1 as f32),
-                    backing_scale: 1.0,
-                    label_alpha: self.session_badge_alpha(),
-                    chip_alpha: self.session_badge_chip_alpha(),
-                    clip: None,
-                })
+                crate::session_badge_layout(self.session_badge_input(
+                    (self.pos.0 as f32, self.pos.1 as f32),
+                    1.0,
+                    None,
+                ))
                 .is_some_and(|layout| {
                     let rect = layout.rect;
                     x >= rect.x() as f64
@@ -364,215 +761,52 @@ impl RenderStateCore {
         }
     }
 
-    /// Advance the animation by `dt` seconds using runtime [`MotionConfig`]
-    /// for peak / floor / spring constants. Used by Windows + Linux.
+    /// Advance the animation by `dt` seconds on every platform: play the
+    /// planned trajectory, age click effects, and run the idle fade.
     ///
-    /// The speed profile is `16·u²·(1-u)²` (peaks at 1.0 at u=0.5) — the
-    /// 1:1 port of `AgentCursorRenderer`'s smootherstep envelope. Floor
-    /// speed switches from `min_start_speed` to `min_end_speed` at the
-    /// midpoint so the cursor decelerates as it approaches the target.
-    /// Spring overshoot is `0.5` (Windows/Linux convention).
-    ///
-    /// Returns `true` when the planned path just ended (so the caller can
-    /// fire an arrival oneshot to unblock `animate_cursor_to`).
+    /// Returns `true` on the tick the cursor arrives (the hotspot first
+    /// reaches the target), so the caller can fire the arrival oneshot that
+    /// unblocks `animate_cursor_to`. Any follow-through or settle keeps
+    /// playing after that, during the click.
     pub fn tick_motion(&mut self, dt: f64) -> bool {
-        let spring_k = self.motion.spring * 400.0;
-        let spring_c = self.motion.spring * 20.0;
-
+        let dt = if dt.is_finite() { dt.max(0.0) } else { 0.0 };
         let mut fire_arrival = false;
-
-        if let Some(ref p) = self.path {
-            let path_len = p.length.max(1.0);
-            let path_frac = (self.dist / path_len).clamp(0.0, 1.0);
-            let profile = 16.0 * path_frac * path_frac * (1.0 - path_frac) * (1.0 - path_frac);
-            let floor = if path_frac < 0.5 {
-                self.motion.min_start_speed
-            } else {
-                self.motion.min_end_speed
-            };
-            let speed_based = (floor + (self.motion.peak_speed - floor) * profile).max(floor);
-            // Fixed-duration override: when `glide_duration_ms > 0` the move
-            // takes exactly that long regardless of distance, so an orchestrator
-            // can lock glides to a known cadence. `0` (the default) keeps the
-            // speed-based timing untouched. Shared verbatim with the macOS
-            // reference path (`tick_swift_constants`) — no platform drift.
-            let speed = if self.motion.glide_duration_ms > 0.0 {
-                path_len / (self.motion.glide_duration_ms / 1000.0)
-            } else {
-                speed_based
-            };
-            self.dist += speed * dt;
-
-            if self.dist >= path_len {
-                let end = p.sample(path_len);
-                let end_heading = p.end_visual_heading;
-                let vh = end.heading;
-                // In fixed-duration mode the constant speed can be large; base
-                // the settle impulse on the normal end-floor so the landing
-                // stays as crisp as a speed-based glide instead of overshooting
-                // proportionally to a short duration.
-                let impulse = if self.motion.glide_duration_ms > 0.0 {
-                    self.motion.min_end_speed
-                } else {
-                    speed
-                };
-                self.spring = Some(Spring {
-                    ox: 0.0,
-                    oy: 0.0,
-                    vx: impulse * 0.5 * vh.cos(),
-                    vy: impulse * 0.5 * vh.sin(),
-                });
-                self.spring_tgt = Some((end.x, end.y, end_heading));
-                self.pos = (end.x, end.y);
-                self.heading = end_heading;
-                self.path = None;
-                self.dist = 0.0;
+        self.float_secs = (self.float_secs + dt) % (86_400.0 * crate::cursor_pose::FLOAT_SECS);
+        self.float_hold_secs = (self.float_hold_secs + dt).min(3_600.0);
+        if let Some(traj) = self.trajectory.as_ref() {
+            let was_travelling = crate::cursor_pose::travelling(traj, self.motion_t);
+            self.motion_t += dt;
+            if was_travelling && !crate::cursor_pose::travelling(traj, self.motion_t) {
+                // The travel float is exactly 0 at arrival: it holds there
+                // for the click, drop or typing that follows. The phase
+                // runs on.
+                self.float_hold_secs = self.motion_t - traj.arrival_t;
+                self.float_from = 0.0;
+            }
+            let s = traj.sample_at(self.motion_t);
+            self.pos = crate::anchor_for_pointer(s.x, s.y, s.heading);
+            self.heading = s.heading;
+            if self.arrival_pending && self.motion_t >= self.release_t {
+                self.arrival_pending = false;
                 fire_arrival = true;
-            } else {
-                let s: PathState = p.sample(self.dist);
-                self.pos = (s.x, s.y);
-                // Point the arrow exactly along the path tangent (the renderer
-                // adds π, so we store tangent+π). Assigned directly rather than
-                // rate-limited toward it, so the tip actually tracks the
-                // trajectory instead of lagging behind on fast/short glides.
-                self.heading = s.heading + std::f64::consts::PI;
             }
-        } else if let Some(mut s) = self.spring {
-            if let Some((tx, ty, th)) = self.spring_tgt {
-                let substeps = 4;
-                let sdt = dt / substeps as f64;
-                for _ in 0..substeps {
-                    s.vx += (-spring_k * s.ox - spring_c * s.vx) * sdt;
-                    s.vy += (-spring_k * s.oy - spring_c * s.vy) * sdt;
-                    s.ox += s.vx * sdt;
-                    s.oy += s.vy * sdt;
+            if self.motion_t >= effects::linger(traj) {
+                if self.arrival_pending {
+                    self.arrival_pending = false;
+                    fire_arrival = true;
                 }
-                self.pos = (tx + s.ox, ty + s.oy);
-                self.heading = th;
-                if s.ox.hypot(s.oy) < 0.3 && s.vx.hypot(s.vy) < 2.0 {
-                    self.pos = (tx, ty);
-                    self.spring = None;
-                } else {
-                    self.spring = Some(s);
-                }
+                self.trajectory = None;
+                self.motion_t = 0.0;
             }
         }
 
-        if let Some(t) = self.click_t {
-            let next = t + dt * 4.0;
-            self.click_t = if next >= 1.0 { None } else { Some(next) };
-        }
-
-        self.tick_idle(dt);
-
-        fire_arrival
-    }
-
-    /// Advance the animation by `dt` seconds using the hardcoded Swift
-    /// reference constants (`peakSpeed=900`, `minStart=300`, `minEnd=200`,
-    /// `springK=400`, `springC=17`, `springOvershoot=0.8`).  Used by macOS,
-    /// which mirrors `AgentCursorRenderer.swift` 1:1.
-    ///
-    /// Returns `true` when the path just ended (so the caller can fire its
-    /// arrival oneshot to unblock `animate_cursor_to`).
-    ///
-    /// The speed profile is `(30·u²·(1-u)²) / 1.875` which is algebraically
-    /// equivalent to the `16·u²·(1-u)²` form used by [`tick_motion`]; both
-    /// peak at 1.0 at u=0.5.  The original Swift code uses the 30/1.875
-    /// form so we preserve it here for parity.
-    pub fn tick_swift_constants(&mut self, dt: f64) -> bool {
-        const PEAK_SPEED: f64 = 900.0;
-        const MIN_START_SPEED: f64 = 300.0;
-        const MIN_END_SPEED: f64 = 200.0;
-        const SPRING_K: f64 = 400.0;
-        const SPRING_C: f64 = 17.0;
-        const SPRING_OVERSHOOT: f64 = 0.8;
-
-        let mut fire_arrival = false;
-
-        if let Some(ref p) = self.path {
-            let path_len = p.length.max(1.0);
-            let u = (self.dist / path_len).min(1.0);
-
-            // Smootherstep speed profile (normalised: peak = 1.0).
-            let profile = (30.0 * u * u * (1.0 - u) * (1.0 - u)) / 1.875;
-            let floor_speed = if u < 0.5 {
-                MIN_START_SPEED
-            } else {
-                MIN_END_SPEED
-            };
-            let speed_based = floor_speed + (PEAK_SPEED - floor_speed) * profile;
-            // Fixed-duration override: when `glide_duration_ms > 0` the move
-            // takes exactly that long regardless of distance, so an orchestrator
-            // can lock glides to a known cadence. `0` (the default) keeps the
-            // speed-based timing untouched. Shared verbatim with the
-            // Windows/Linux path (`tick_motion`) — no platform drift.
-            let current_speed = if self.motion.glide_duration_ms > 0.0 {
-                path_len / (self.motion.glide_duration_ms / 1000.0)
-            } else {
-                speed_based
-            };
-            self.dist += current_speed * dt;
-
-            if self.dist >= path_len {
-                // Transition to spring settle.
-                let end = p.sample(path_len);
-                let end_heading = p.end_visual_heading;
-                let vh = end.heading;
-                // In fixed-duration mode the constant speed can be large; base
-                // the settle impulse on the normal end-floor so the landing
-                // stays as crisp as a speed-based glide instead of overshooting
-                // proportionally to a short duration.
-                let impulse = if self.motion.glide_duration_ms > 0.0 {
-                    MIN_END_SPEED
-                } else {
-                    current_speed
-                };
-                self.spring = Some(Spring {
-                    ox: 0.0,
-                    oy: 0.0,
-                    vx: impulse * SPRING_OVERSHOOT * vh.cos(),
-                    vy: impulse * SPRING_OVERSHOOT * vh.sin(),
-                });
-                self.spring_tgt = Some((end.x, end.y, end_heading));
-                self.pos = (end.x, end.y);
-                self.heading = end_heading;
-                self.path = None;
-                self.dist = 0.0;
-                fire_arrival = true;
-            } else {
-                let s: PathState = p.sample(self.dist);
-                self.pos = (s.x, s.y);
-                // Point the arrow exactly along the path tangent (renderer adds
-                // π, so store tangent+π). Direct assignment, not rate-limited, so
-                // the tip tracks the trajectory instead of lagging on fast moves.
-                self.heading = s.heading + std::f64::consts::PI;
-            }
-        } else if let Some(mut s) = self.spring {
-            if let Some((tx, ty, th)) = self.spring_tgt {
-                let substeps = 4;
-                let sdt = dt / substeps as f64;
-                for _ in 0..substeps {
-                    s.vx += (-SPRING_K * s.ox - SPRING_C * s.vx) * sdt;
-                    s.vy += (-SPRING_K * s.oy - SPRING_C * s.vy) * sdt;
-                    s.ox += s.vx * sdt;
-                    s.oy += s.vy * sdt;
-                }
-                self.pos = (tx + s.ox, ty + s.oy);
-                self.heading = th;
-                if s.ox.hypot(s.oy) < 0.3 && s.vx.hypot(s.vy) < 2.0 {
-                    self.pos = (tx, ty);
-                    self.spring = None;
-                } else {
-                    self.spring = Some(s);
-                }
-            }
-        }
-
-        // Advance click pulse.
         if let Some(t) = self.click_t {
             let next = t + dt * 4.0; // full pulse over 0.25s
             self.click_t = if next >= 1.0 { None } else { Some(next) };
+        }
+        if let Some(age) = self.click_age {
+            let next = age + dt;
+            self.click_age = (next < CLICK_FX_SECS).then_some(next);
         }
 
         self.tick_idle(dt);
@@ -609,6 +843,7 @@ impl RenderStateCore {
             self.session_badge_secs = (self.session_badge_secs + dt)
                 .min(SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS);
         }
+        self.tick_minimal_badge(dt);
         // The idle clock and fade curve are the shared agent cursor contract
         // (`cua_driver_core::agent_cursor`); this only feeds it frame deltas.
         let idle_hide_ms = self.motion.idle_hide_ms;
@@ -618,8 +853,7 @@ impl RenderStateCore {
             // like motion does. The display action a move, snap or click
             // plays after itself does not: that motion already restarted
             // the clock, and the timeout counts from it.
-            let moving = self.path.is_some()
-                || self.spring.is_some()
+            let moving = self.is_moving()
                 || self.click_t.is_some()
                 || self.pressed
                 || (self.semantic_cue && self.visual.resolved_action != CursorAction::Idle);
@@ -633,6 +867,36 @@ impl RenderStateCore {
         }
     }
 
+    /// Advance the badge timers: the key chip clock runs only at rest, and the
+    /// minimal badge's session name eases toward its target and drops at once
+    /// on motion.
+    fn tick_minimal_badge(&mut self, dt: f64) {
+        let moving = self.is_moving();
+        if let Some(chip) = self.key_chip.as_mut() {
+            if !chip.armed {
+                // The tick that arms the chip does not play it.
+                chip.waiting_secs += dt.max(0.0);
+                chip.armed = chip.waiting_secs >= KEY_CHIP_ARM_TIMEOUT_SECS;
+            } else if !moving {
+                chip.secs += dt.max(0.0);
+                if chip.secs >= KEY_CHIP_SECS {
+                    self.key_chip = None;
+                }
+            }
+        }
+        let target = self.minimal_name_target();
+        self.minimal_name_presence = if moving {
+            0.0
+        } else {
+            let step = (dt.max(0.0) / MINIMAL_NAME_FADE_SECS) as f32;
+            if self.minimal_name_presence < target {
+                (self.minimal_name_presence + step).min(target)
+            } else {
+                (self.minimal_name_presence - step).max(target)
+            }
+        };
+    }
+
     /// Handle the OverlayCommand variants that are identical across all
     /// three platforms.  Returns `true` if the command was consumed; `false`
     /// for variants the platform must handle itself (e.g. macOS's
@@ -640,12 +904,12 @@ impl RenderStateCore {
     ///
     /// `move_to_snap_sentinel` controls macOS-only behaviour: when `true`,
     /// `MoveTo` snaps `self.pos` to the offset target if the cursor is
-    /// still at [`UNPLACED_POS`].  Windows/Linux
+    /// not yet placed.  Windows/Linux
     /// pass `false` here.
     ///
     /// `click_pulse_sentinel_only` likewise controls macOS-only behaviour:
     /// when `true`, `ClickPulse` only updates `self.pos` if the cursor is
-    /// still at the sentinel (the animation already landed it there
+    /// not yet placed (the animation already landed it there
     /// otherwise).  Windows/Linux pass `false`, which always snaps
     /// `self.pos` to the click point.
     pub fn apply_command_base(
@@ -659,37 +923,35 @@ impl RenderStateCore {
                 x,
                 y,
                 end_heading_radians,
+                target,
             } => {
                 let reveal_badge = !self.is_revealed();
-                // Plan the anchor, not the pointer point, so the hotspot lands
-                // on `(x, y)` once the cursor settles at `end_heading`
-                // (Swift `moveTo(point:endAngleRadians:)` click offset).
-                let turn_radius = self.motion.turn_radius;
-                let (tx, ty) = crate::anchor_for_pointer(x, y, end_heading_radians);
-
-                // macOS-only: if the cursor is still at the initial off-screen
-                // sentinel, snap it to the offset target so the path starts on-screen.
-                if move_to_snap_sentinel && !is_placed(self.pos) {
-                    self.pos = (tx, ty);
+                // macOS-only: if the cursor has never been placed, put it on
+                // the target so the move starts on-screen.
+                if move_to_snap_sentinel && !self.placed {
+                    self.pos = crate::anchor_for_pointer(x, y, end_heading_radians);
+                    self.heading = end_heading_radians;
                 }
-                let (x0, y0) = self.pos;
-                let th0 = self.heading + std::f64::consts::PI;
-                let th1 = end_heading_radians + std::f64::consts::PI;
-                let plan =
-                    PathPlanner::plan(x0, y0, th0, tx, ty, th1, end_heading_radians, turn_radius);
-                self.path = Some(plan);
-                self.dist = 0.0;
-                self.spring = None;
-                self.spring_tgt = None;
-                if matches!(
-                    self.visual.resolved_action,
-                    CursorAction::Idle | CursorAction::Navigate
-                ) {
-                    let delivery = self.visual.delivery;
-                    let target = self.visual.target;
-                    self.visual.begin(CursorAction::Navigate, delivery, target);
-                    self.semantic_cue = false;
-                }
+                // Plan the hotspot so it lands on `(x, y)`; the anchor follows
+                // from the heading at every sample.
+                let (fx, fy) = crate::pointer_for_anchor(self.pos.0, self.pos.1, self.heading);
+                self.float_start_amp = self.float_amplitude();
+                self.move_seq += 1;
+                let request = MoveRequest {
+                    from: Pt::new(fx, fy),
+                    from_heading: self.heading,
+                    to: Pt::new(x, y),
+                    end_heading: end_heading_radians,
+                    target,
+                    seed: format!("{}|{}", self.cfg.cursor_id, self.move_seq),
+                    reduced_motion: self.reduced_motion(),
+                };
+                let trajectory = plan_move(&self.motion, &request);
+                self.release_t = release_time(&self.motion, &request, &trajectory);
+                self.trajectory = Some(trajectory);
+                self.motion_t = 0.0;
+                self.arrival_pending = true;
+                self.placed = true;
                 self.idle_secs = 0.0;
                 self.idle_alpha = 1.0;
                 if reveal_badge {
@@ -707,19 +969,19 @@ impl RenderStateCore {
                 if let Some(heading) = heading_radians {
                     self.heading = heading;
                 }
-                self.path = None;
-                self.dist = 0.0;
-                self.spring = None;
-                self.spring_tgt = None;
-                if matches!(
-                    self.visual.resolved_action,
-                    CursorAction::Idle | CursorAction::Navigate
-                ) {
-                    let delivery = self.visual.delivery;
-                    let target = self.visual.target;
-                    self.visual.begin(CursorAction::Navigate, delivery, target);
-                    self.semantic_cue = false;
+                // A snap mid-move settles the float from where it was; at
+                // rest it carries on.
+                let travelling = self
+                    .trajectory
+                    .as_ref()
+                    .is_some_and(|traj| crate::cursor_pose::travelling(traj, self.motion_t));
+                let amplitude = self.float_amplitude();
+                self.cancel_motion();
+                if travelling {
+                    self.float_from = amplitude;
+                    self.float_hold_secs = 0.0;
                 }
+                self.placed = true;
                 self.idle_secs = 0.0;
                 self.idle_alpha = 1.0;
                 if reveal_badge {
@@ -733,19 +995,22 @@ impl RenderStateCore {
                 // that the cursor stays where the animation landed. Windows
                 // and Linux always snap. Both anchor the click point so the
                 // hotspot stays on it instead of jumping by the anchor offset.
-                if !click_pulse_sentinel_only || !is_placed(self.pos) {
+                // A move still settling onto this click point (follow-through,
+                // bounce) finishes on it by itself; snapping would cut it off.
+                let settling_here = self.trajectory.as_ref().is_some_and(|traj| {
+                    let end = traj.end();
+                    self.motion_t < traj.duration() && (end.x - x).hypot(end.y - y) <= 2.0
+                });
+                if (!click_pulse_sentinel_only || !self.placed) && !settling_here {
                     self.pos = crate::anchor_for_pointer(x, y, self.heading);
                 }
                 self.click_t = Some(0.0);
-                if matches!(
-                    self.visual.resolved_action,
-                    CursorAction::Idle | CursorAction::Navigate | CursorAction::Click
-                ) {
-                    let delivery = self.visual.delivery;
-                    let target = self.visual.target;
-                    self.visual.begin(CursorAction::Click, delivery, target);
-                    self.semantic_cue = false;
-                }
+                self.click_age = Some(0.0);
+                self.click_point = (x, y);
+                // The move here already settled the float to 0; keep it
+                // there through the click (and a double click's second).
+                self.settle_float();
+                self.placed = true;
                 self.idle_secs = 0.0;
                 self.idle_alpha = 1.0;
                 if reveal_badge {
@@ -755,6 +1020,8 @@ impl RenderStateCore {
             }
             OverlayCommand::SetPressed(v) => {
                 self.pressed = v;
+                // Drag start and drop land on the hotspot.
+                self.settle_float();
                 if v {
                     let delivery = self.visual.delivery;
                     let target = self.visual.target;
@@ -779,6 +1046,12 @@ impl RenderStateCore {
                 self.motion = m;
                 true
             }
+            OverlayCommand::ApplyMotion(args) => {
+                if let Ok(motion) = self.motion.with_motion_args(&args) {
+                    self.motion = motion;
+                }
+                true
+            }
             OverlayCommand::PinAbove(wid) => {
                 self.pinned_wid = Some(wid);
                 true
@@ -790,6 +1063,8 @@ impl RenderStateCore {
             } => {
                 self.visual.begin(action, delivery, target);
                 self.semantic_cue = true;
+                // Typing focus, scrolls and keys hold the float at 0 too.
+                self.settle_float();
                 // A semantic cue re-reveals an idle-faded cursor that already
                 // has a position; `tick_idle` keeps it visible until the cue ends.
                 self.idle_secs = 0.0;
@@ -800,9 +1075,29 @@ impl RenderStateCore {
                     None
                 };
                 self.badge_modifier_fade_secs = None;
+                // A new action replaces any key chip still playing.
+                self.key_chip = None;
+                true
+            }
+            OverlayCommand::ShowKeyCombo(keys) => {
+                let Some(combo) = crate::badge_mode::format_key_combo(&keys) else {
+                    return false;
+                };
+                // Plays once its own action (started just before) ends.
+                self.key_chip = Some(KeyChip {
+                    key_combo: combo,
+                    secs: 0.0,
+                    armed: false,
+                    waiting_secs: 0.0,
+                });
                 true
             }
             OverlayCommand::EndAction(action) => {
+                // The action is over: its chip plays from now.
+                if let Some(chip) = self.key_chip.as_mut().filter(|chip| !chip.armed) {
+                    chip.armed = true;
+                    chip.secs = 0.0;
+                }
                 self.visual.end(action);
                 true
             }
@@ -841,10 +1136,201 @@ impl RenderStateCore {
     }
 }
 
+// ── Motion effects ───────────────────────────────────────────────────────
+//
+// The effect geometry (trail, glow, magnet, ripple, squish) comes from
+// `cua_cursor_motion::effects`; this module only paints it.
+
+use cua_cursor_motion::effects::{self, EffectFrame, CLICK_FX_SECS, MAGNET_INFLATE};
+
+/// When a move releases the action waiting on it, in seconds into `planned`.
+///
+/// A floor timing (`relaxed`, `steady`, `calm`) stretches a short hop so a
+/// person watching can follow it. The action does not wait for the stretch:
+/// it is released when the same move under `native` timing would have
+/// arrived, and the glide plays on to the target during the action. A move
+/// the floor did not stretch (its native arrival is past the floor), and
+/// every other timing, releases at its own arrival.
+fn release_time(motion: &MotionConfig, request: &MoveRequest, planned: &Trajectory) -> f64 {
+    let Some(floor_ms) = motion.timing.floor_ms() else {
+        return planned.arrival_t;
+    };
+    let native = MotionConfig {
+        timing: crate::MotionTiming::Native,
+        ..motion.clone()
+    };
+    let native_arrival = plan_move(&native, request).arrival_t;
+    if native_arrival * 1000.0 >= floor_ms {
+        planned.arrival_t
+    } else {
+        native_arrival.min(planned.arrival_t)
+    }
+}
+
+/// Effect colour: the session tint lifted toward white.
+fn effect_rgb(tint: [u8; 4]) -> (u8, u8, u8) {
+    let [r, g, b] = effects::effect_rgb([tint[0], tint[1], tint[2]]);
+    (r, g, b)
+}
+
+fn effect_paint(rgb: (u8, u8, u8), alpha: f64) -> tiny_skia::Paint<'static> {
+    tiny_skia::Paint {
+        shader: tiny_skia::Shader::SolidColor(tiny_skia::Color::from_rgba8(
+            rgb.0,
+            rgb.1,
+            rgb.2,
+            (alpha.clamp(0.0, 1.0) * 255.0).round() as u8,
+        )),
+        anti_alias: true,
+        ..Default::default()
+    }
+}
+
+/// Paint the motion effects that sit under the cursor artwork. Coordinates
+/// are logical; `to_px` maps them into the pixmap.
+fn paint_effects_under(
+    pm: &mut tiny_skia::Pixmap,
+    frame: &EffectFrame,
+    rgb: (u8, u8, u8),
+    alpha_scale: f64,
+    to_px: &dyn Fn(f64, f64) -> (f32, f32),
+    s: f32,
+) {
+    use tiny_skia::{
+        GradientStop, PathBuilder, Point, RadialGradient, SpreadMode, Stroke, Transform,
+    };
+    if let Some(glow) = frame.glow {
+        let (gx, gy) = to_px(glow.x, glow.y);
+        let r = glow.r as f32 * s;
+        let a = glow.alpha * alpha_scale;
+        let color = |a: f64| {
+            tiny_skia::Color::from_rgba8(rgb.0, rgb.1, rgb.2, (a.clamp(0.0, 1.0) * 255.0) as u8)
+        };
+        if let Some(shader) = RadialGradient::new(
+            Point::from_xy(gx, gy),
+            Point::from_xy(gx, gy),
+            r,
+            vec![
+                GradientStop::new(0.0, color(a)),
+                GradientStop::new(1.0, color(0.0)),
+            ],
+            SpreadMode::Pad,
+            Transform::identity(),
+        ) {
+            let paint = tiny_skia::Paint {
+                shader,
+                anti_alias: true,
+                ..Default::default()
+            };
+            if let Some(circle) = PathBuilder::from_circle(gx, gy, r) {
+                pm.fill_path(
+                    &circle,
+                    &paint,
+                    tiny_skia::FillRule::Winding,
+                    Transform::identity(),
+                    None,
+                );
+            }
+        }
+    }
+    for seg in &frame.trail {
+        let mut pb = PathBuilder::new();
+        let (ax, ay) = to_px(seg.a.0, seg.a.1);
+        let (bx, by) = to_px(seg.b.0, seg.b.1);
+        pb.move_to(ax, ay);
+        pb.line_to(bx, by);
+        if let Some(path) = pb.finish() {
+            let stroke = Stroke {
+                width: seg.width as f32 * s,
+                line_cap: tiny_skia::LineCap::Round,
+                ..Default::default()
+            };
+            pm.stroke_path(
+                &path,
+                &effect_paint(rgb, seg.alpha * alpha_scale),
+                &stroke,
+                Transform::identity(),
+                None,
+            );
+        }
+    }
+    if let Some(magnet) = frame.magnet {
+        let [x, y, w, h] = magnet.rect;
+        let i = MAGNET_INFLATE;
+        let (x0, y0) = to_px(x - i, y - i);
+        let (x1, y1) = to_px(x + w + i, y + h + i);
+        let radius = (8.0 * s).min((x1 - x0) / 2.0).min((y1 - y0) / 2.0);
+        if let Some(path) = rounded_rect(x0, y0, x1 - x0, y1 - y0, radius) {
+            // Wide faint strokes stand in for a blur.
+            for (width, a) in [(14.0, 0.10), (8.0, 0.22), (3.0, 0.9)] {
+                let stroke = Stroke {
+                    width: width * s,
+                    ..Default::default()
+                };
+                pm.stroke_path(
+                    &path,
+                    &effect_paint(rgb, a * magnet.glow * alpha_scale),
+                    &stroke,
+                    Transform::identity(),
+                    None,
+                );
+            }
+        }
+    }
+}
+
+/// Paint the click ripple, which sits over the cursor artwork.
+fn paint_effects_over(
+    pm: &mut tiny_skia::Pixmap,
+    frame: &EffectFrame,
+    rgb: (u8, u8, u8),
+    alpha_scale: f64,
+    to_px: &dyn Fn(f64, f64) -> (f32, f32),
+    s: f32,
+) {
+    if let Some(ripple) = frame.ripple {
+        let (cx, cy) = to_px(ripple.x, ripple.y);
+        if let Some(circle) = tiny_skia::PathBuilder::from_circle(cx, cy, ripple.r as f32 * s) {
+            let stroke = tiny_skia::Stroke {
+                width: ripple.width as f32 * s,
+                ..Default::default()
+            };
+            pm.stroke_path(
+                &circle,
+                &effect_paint(rgb, ripple.alpha * alpha_scale),
+                &stroke,
+                tiny_skia::Transform::identity(),
+                None,
+            );
+        }
+    }
+}
+
+fn rounded_rect(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<tiny_skia::Path> {
+    if !(w > 0.0 && h > 0.0) {
+        return None;
+    }
+    let r = r.max(0.0);
+    let k = 0.552_284_8 * r;
+    let mut pb = tiny_skia::PathBuilder::new();
+    pb.move_to(x + r, y);
+    pb.line_to(x + w - r, y);
+    pb.cubic_to(x + w - r + k, y, x + w, y + r - k, x + w, y + r);
+    pb.line_to(x + w, y + h - r);
+    pb.cubic_to(x + w, y + h - r + k, x + w - r + k, y + h, x + w - r, y + h);
+    pb.line_to(x + r, y + h);
+    pb.cubic_to(x + r - k, y + h, x, y + h - r + k, x, y + h - r);
+    pb.line_to(x, y + r);
+    pb.cubic_to(x, y + r - k, x + r - k, y, x + r, y);
+    pb.close();
+    pb.finish()
+}
+
 // ── tiny-skia rendering ──────────────────────────────────────────────────
 
-/// Optional focus-rect overlay drawn on top of the cursor (macOS only at
-/// the moment — the other platforms always pass `None`).
+/// Retired focus-rect highlight. The cursor draws no action marks, so a
+/// focus rect passed to the paint functions is ignored; the type and the
+/// parameter stay so every platform's call keeps compiling.
 #[derive(Clone, Copy)]
 pub struct FocusRect {
     /// Rectangle `[x, y, w, h]` in screen coordinates (top-left origin),
@@ -859,8 +1345,8 @@ pub struct FocusRect {
 ///
 /// `origin_x`, `origin_y` are subtracted from the cursor `core.pos` before
 /// drawing — Windows passes the virtual-screen `(virt_x, virt_y)` so the
-/// pixmap is laid out in window-local coordinates.  macOS / Linux pass
-/// `(0.0, 0.0)`.
+/// pixmap is laid out in window-local coordinates; macOS and Linux pass the
+/// origin of the tile they paint.
 ///
 /// `backing_scale` is the destination-pixmap-pixels per logical-point ratio
 /// (e.g. 2.0 on a retina display where the pixmap is sized at physical
@@ -889,7 +1375,7 @@ pub fn render_frame(
 /// render N owned cursors into one buffer / one NSWindow.
 ///
 /// `origin_x` / `origin_y` are subtracted from `core.pos` before drawing
-/// (Windows passes the virtual-screen origin; macOS / Linux pass `(0.0, 0.0)`).
+/// (Windows passes the virtual-screen origin; macOS and Linux pass their tile's).
 /// Both are in **logical** screen points, just like `core.pos`.
 ///
 /// `backing_scale` is the destination-pixmap-pixels per logical-point ratio.
@@ -913,6 +1399,28 @@ pub fn paint_cursor(
     focus_rect: Option<FocusRect>,
     backing_scale: f32,
 ) {
+    paint_cursor_with_badge(
+        pm,
+        core,
+        origin_x,
+        origin_y,
+        focus_rect,
+        backing_scale,
+        true,
+    );
+}
+
+/// Paint cursor art across a display seam, keeping its badge on the anchor display.
+#[allow(clippy::too_many_arguments)]
+pub fn paint_cursor_with_badge(
+    pm: &mut tiny_skia::Pixmap,
+    core: &RenderStateCore,
+    origin_x: f64,
+    origin_y: f64,
+    _focus_rect: Option<FocusRect>,
+    backing_scale: f32,
+    show_badge: bool,
+) {
     if !core.is_revealed() || core.pinned_target_off_workspace {
         return;
     }
@@ -923,77 +1431,68 @@ pub fn paint_cursor(
     // Cursor anchor in pixmap-pixel space: subtract the (logical) origin
     // first, then scale into pixmap pixels.
     let (px, py) = ((core.pos.0 - origin_x) * s, (core.pos.1 - origin_y) * s);
-    let heading = core.heading;
+    let options = core.options();
     // Themes pivot on their hotspot, which is drawn at the pointer point.
-    let (tip_x, tip_y) = crate::pointer_for_anchor(core.pos.0, core.pos.1, heading);
+    let (tip_x, tip_y) = crate::pointer_for_anchor(core.pos.0, core.pos.1, core.heading);
+    // The arrow is upright (the rest heading) unless `cursor.rotate` turns
+    // it while it travels. The hotspot above still follows the planned
+    // heading, so it lands on the target either way.
+    let rotation = core.painted_rotation();
+    let heading = crate::trajectory::REST_HEADING + rotation;
+    let float = core.float_offset();
     let (tip_x, tip_y) = ((tip_x - origin_x) * s, (tip_y - origin_y) * s);
     let alpha_scale = core.idle_alpha as f32;
 
-    // --- Focus rect highlight (macOS only — others pass None) ---
-    // Cyan glow border + faint fill, matching Swift AgentCursor.showFocusRect.
-    if let Some(fr) = focus_rect {
-        let [fx, fy, fw, fh] = fr.rect;
-        let t = fr.t as f32;
-        let fade = (1.0 - t) * (1.0 - t); // quadratic ease-out
-        let border_a = (230.0 * fade * alpha_scale) as u8;
-        let fill_a = (20.0 * fade * alpha_scale) as u8;
-        // Cyan: #5EC0E8
-        let (cr, cg, cb) = (0x5Eu8, 0xC0u8, 0xE8u8);
-
-        if let Some(rect) = tiny_skia::Rect::from_xywh(
-            (fx * s) as f32,
-            (fy * s) as f32,
-            (fw * s) as f32,
-            (fh * s) as f32,
-        ) {
-            // Faint fill
-            let fill_paint = tiny_skia::Paint {
-                shader: tiny_skia::Shader::SolidColor(tiny_skia::Color::from_rgba8(
-                    cr, cg, cb, fill_a,
-                )),
-                ..Default::default()
-            };
-            pm.fill_rect(rect, &fill_paint, tiny_skia::Transform::identity(), None);
-
-            // Border stroke (2px glow)
-            let border_paint = tiny_skia::Paint {
-                shader: tiny_skia::Shader::SolidColor(tiny_skia::Color::from_rgba8(
-                    cr, cg, cb, border_a,
-                )),
-                anti_alias: true,
-                ..Default::default()
-            };
-            let stroke = tiny_skia::Stroke {
-                width: 2.5 * sf,
-                ..Default::default()
-            };
-            let mut pb = tiny_skia::PathBuilder::new();
-            pb.push_rect(rect);
-            if let Some(path) = pb.finish() {
-                pm.stroke_path(
-                    &path,
-                    &border_paint,
-                    &stroke,
-                    tiny_skia::Transform::identity(),
-                    None,
-                );
-            }
-        }
+    let effects = core.effect_frame();
+    let effect_rgb = effect_rgb(crate::session_fill_rgba(&core.cfg.cursor_id));
+    let to_px = |x: f64, y: f64| (((x - origin_x) * s) as f32, ((y - origin_y) * s) as f32);
+    // The halo (`cursor.halo`) sits behind the arrow body and moves, floats
+    // and turns with it. Translucent, so not on surfaces that cannot blend.
+    if options.halo && core.effects_capable {
+        let (bx, by) = crate::cursor_pose::BODY_OFFSET_PT;
+        let (sin, cos) = rotation.sin_cos();
+        let cx = tip_x + (bx * cos - by * sin + float.dx) * s;
+        let cy = tip_y + (bx * sin + by * cos + float.dy) * s;
+        crate::cursor_pose::paint_halo(
+            pm,
+            cx as f32,
+            cy as f32,
+            crate::cursor_pose::HALO_RADIUS_PT * sf,
+            crate::cursor_pose::halo_rgb(core.theme.as_deref(), &core.cfg.cursor_id),
+            crate::cursor_pose::HALO_PEAK_ALPHA * alpha_scale,
+        );
     }
+    paint_effects_under(pm, &effects, effect_rgb, f64::from(alpha_scale), &to_px, sf);
+    // Click squish scales the artwork about its hotspot.
+    let art_scale = backing_scale.max(1.0) * (1.0 - effects.squish as f32);
 
+    // Every theme paints its idle frame: the cursor draws no action marks.
+    let idle_visual;
+    let visual = if core.painted_action() == core.visual.resolved_action {
+        &core.visual
+    } else {
+        idle_visual = CursorVisualState {
+            requested_action: CursorAction::Idle,
+            resolved_action: CursorAction::Idle,
+            ..core.visual.clone()
+        };
+        &idle_visual
+    };
     if let Some(theme) = core.theme.as_deref() {
         let tint = (theme.id == crate::DEFAULT_THEME_ID)
             .then(|| crate::session_fill_rgba(&core.cfg.cursor_id));
-        crate::paint_compiled_theme_with_tint(
+        crate::paint_compiled_theme_with_float(
             pm,
             theme,
-            &core.visual,
+            visual,
             tip_x as f32,
             tip_y as f32,
             heading as f32,
-            backing_scale.max(1.0),
+            art_scale,
             alpha_scale,
             tint,
+            float.dx as f32,
+            float.dy as f32,
         );
     } else {
         // Defensive fallback for a manually constructed RenderStateCore. The
@@ -1001,27 +1500,25 @@ pub fn paint_cursor(
         // embedded default.
         crate::theme::paint_default_theme_with_fill(
             pm,
-            &core.visual,
+            visual,
             tip_x as f32,
             tip_y as f32,
             heading as f32,
-            backing_scale.max(1.0),
+            art_scale,
             alpha_scale,
             crate::session_fill_rgba(&core.cfg.cursor_id),
         );
     }
+    paint_effects_over(pm, &effects, effect_rgb, f64::from(alpha_scale), &to_px, sf);
 
-    let (delivery, target) = core.badge_modifiers.unwrap_or((None, None));
-    if let Some(layout) = crate::session_badge_layout(crate::SessionBadgeInput {
-        label: core.session_label.as_deref(),
-        delivery,
-        target,
-        cursor: (px as f32, py as f32),
-        backing_scale: backing_scale.max(1.0),
-        label_alpha: core.session_badge_alpha(),
-        chip_alpha: core.session_badge_chip_alpha(),
-        clip: Some((pm.width() as f32, pm.height() as f32)),
-    }) {
+    if !show_badge {
+        return;
+    }
+    if let Some(layout) = crate::session_badge_layout(core.session_badge_input(
+        (px as f32, py as f32),
+        backing_scale.max(1.0),
+        Some((pm.width() as f32, pm.height() as f32)),
+    )) {
         crate::paint_session_badge(
             pm,
             &layout,
@@ -1034,29 +1531,94 @@ pub fn paint_cursor(
 #[cfg(test)]
 mod glide_duration_tests {
     use super::*;
-    use crate::{CursorConfig, PathPlanner};
+    use crate::{CursorConfig, MotionStyle, MotionTiming};
 
-    /// Run a glide of `dist_pts` to completion and return how many seconds it
-    /// took. `tick` selects the platform path: `false` = `tick_motion`
-    /// (Windows/Linux), `true` = `tick_swift_constants` (macOS reference).
-    fn arrival_secs(glide_ms: f64, dist_pts: f64, swift: bool) -> f64 {
+    #[test]
+    fn unplaced_coordinates_do_not_reveal_or_schedule_idle_fade() {
+        for pos in [(0.0, 0.0), (-200.0, -200.0), (-1.0e9, -1.0e9)] {
+            let mut core = RenderStateCore::new(CursorConfig::default());
+            core.pos = pos;
+            assert!(!core.is_revealed());
+            assert!(core.idle_fade_wait().is_none());
+        }
+    }
+
+    #[test]
+    fn positioning_establishes_placement_independent_of_coordinates() {
+        for macos in [false, true] {
+            for pos in [(-200.0, -200.0), (-1.0e9, -1.0e9)] {
+                for command in [
+                    OverlayCommand::SnapTo {
+                        x: pos.0,
+                        y: pos.1,
+                        heading_radians: None,
+                    },
+                    OverlayCommand::MoveTo {
+                        x: pos.0,
+                        y: pos.1,
+                        end_heading_radians: 0.0,
+                        target: None,
+                    },
+                    OverlayCommand::ClickPulse { x: pos.0, y: pos.1 },
+                ] {
+                    let mut core = RenderStateCore::new(CursorConfig::default());
+                    core.apply_command_base(command, macos, macos);
+                    assert!(core.placed);
+                    assert!(core.is_revealed());
+                    core.apply_command_base(
+                        OverlayCommand::SnapTo {
+                            x: pos.0,
+                            y: pos.1,
+                            heading_radians: None,
+                        },
+                        macos,
+                        macos,
+                    );
+                    core.apply_command_base(
+                        OverlayCommand::MoveTo {
+                            x: 50.0,
+                            y: 50.0,
+                            end_heading_radians: 0.0,
+                            target: None,
+                        },
+                        macos,
+                        macos,
+                    );
+                    assert_eq!(core.pos, pos);
+                    assert!(core.trajectory.is_some());
+                    core.apply_command_base(OverlayCommand::SetEnabled(false), macos, macos);
+                    assert!(core.placed);
+                }
+            }
+        }
+    }
+
+    /// Run a move of `dist_pts` until it arrives and return how many seconds
+    /// it took.
+    fn arrival_secs(style: MotionStyle, glide_ms: f64, dist_pts: f64) -> f64 {
         let mut core = RenderStateCore::new(CursorConfig::default());
+        core.motion.style = style;
         core.motion.glide_duration_ms = glide_ms;
         core.motion.idle_hide_ms = 0.0;
-        core.pos = (0.0, 0.0);
-        // Aligned headings → an effectively straight path of length ~dist_pts.
-        core.path = Some(PathPlanner::plan(
-            0.0, 0.0, 0.0, dist_pts, 0.0, 0.0, 0.0, 80.0,
-        ));
-        core.dist = 0.0;
+        // Heading pi: the classic glide leaves and arrives heading +x, an
+        // effectively straight path of length ~dist_pts.
+        core.heading = std::f64::consts::PI;
+        core.pos = crate::anchor_for_pointer(0.0, 0.0, core.heading);
+        core.placed = true;
+        core.apply_command_base(
+            OverlayCommand::MoveTo {
+                x: dist_pts,
+                y: 0.0,
+                end_heading_radians: std::f64::consts::PI,
+                target: None,
+            },
+            false,
+            false,
+        );
         let dt = 1.0 / 240.0;
         let mut t = 0.0;
         for _ in 0..200_000 {
-            let arrived = if swift {
-                core.tick_swift_constants(dt)
-            } else {
-                core.tick_motion(dt)
-            };
+            let arrived = core.tick_motion(dt);
             t += dt;
             if arrived {
                 break;
@@ -1065,29 +1627,237 @@ mod glide_duration_tests {
         t
     }
 
+    /// Seconds until a `dist_pts` move under `timing` releases its action,
+    /// and the trajectory's own duration.
+    fn release_and_duration(timing: MotionTiming, dist_pts: f64) -> (f64, f64) {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.motion.timing = timing;
+        core.motion.idle_hide_ms = 0.0;
+        core.pos = crate::anchor_for_pointer(0.0, 0.0, core.heading);
+        core.placed = true;
+        core.apply_command_base(
+            OverlayCommand::MoveTo {
+                x: dist_pts,
+                y: 0.0,
+                end_heading_radians: std::f64::consts::FRAC_PI_4,
+                target: None,
+            },
+            false,
+            false,
+        );
+        let duration = core.trajectory.as_ref().unwrap().arrival_t;
+        let dt = 1.0 / 240.0;
+        let mut t = 0.0;
+        while !core.tick_motion(dt) {
+            t += dt;
+            assert!(t < 10.0, "the move never released its action");
+        }
+        (t + dt, duration)
+    }
+
+    /// The floor timings slow a short hop for the person watching, not for
+    /// the action: it is released when the native move would have arrived,
+    /// while the cursor glides on. A long move, which the floor does not
+    /// stretch, and the native timing release at their own arrival.
     #[test]
-    fn fixed_duration_is_distance_independent_on_both_paths() {
-        for swift in [false, true] {
-            let short = arrival_secs(300.0, 120.0, swift);
-            let long = arrival_secs(300.0, 1400.0, swift);
-            // Both land in ~300ms regardless of distance (within a few ticks).
-            assert!((short - 0.3).abs() < 0.05, "swift={swift} short={short}");
-            assert!((long - 0.3).abs() < 0.05, "swift={swift} long={long}");
+    fn a_floor_timing_releases_the_action_at_the_native_arrival() {
+        let dt = 1.0 / 240.0;
+        for timing in [
+            MotionTiming::Relaxed,
+            MotionTiming::Steady,
+            MotionTiming::Calm,
+        ] {
+            let floor = timing.floor_ms().unwrap() / 1000.0;
+            let (native_release, _) = release_and_duration(MotionTiming::Native, 20.0);
+            let (release, arrival) = release_and_duration(timing, 20.0);
+            assert!(
+                arrival >= 0.8 * floor,
+                "{timing:?}: the hop is still slowed"
+            );
+            assert!(
+                (release - native_release).abs() <= 2.0 * dt,
+                "{timing:?}: released at {release}, native arrives at {native_release}"
+            );
+            assert!(
+                release + 0.1 < arrival,
+                "{timing:?}: {release} vs {arrival}"
+            );
+        }
+        let (native_release, native_arrival) = release_and_duration(MotionTiming::Native, 20.0);
+        assert!((native_release - native_arrival).abs() <= 2.0 * dt);
+        let (long_release, long_arrival) = release_and_duration(MotionTiming::Steady, 1400.0);
+        assert!((long_release - long_arrival).abs() <= 2.0 * dt);
+    }
+
+    #[test]
+    fn fixed_duration_is_distance_independent() {
+        for style in [MotionStyle::Classic, MotionStyle::SignatureArc] {
+            let short = arrival_secs(style, 300.0, 120.0);
+            let long = arrival_secs(style, 300.0, 1400.0);
+            assert!((short - 0.3).abs() < 0.06, "{style:?} short={short}");
+            assert!((long - 0.3).abs() < 0.06, "{style:?} long={long}");
         }
     }
 
     #[test]
-    fn zero_keeps_speed_based_timing() {
-        // glide_duration_ms == 0 (the default) → longer paths take longer, on
-        // both platform paths, exactly as before this field was implemented.
-        for swift in [false, true] {
-            let short = arrival_secs(0.0, 120.0, swift);
-            let long = arrival_secs(0.0, 1400.0, swift);
-            assert!(
-                long > short + 0.2,
-                "swift={swift} short={short} long={long}"
-            );
+    fn zero_keeps_distance_aware_timing() {
+        for style in MotionStyle::ALL {
+            let short = arrival_secs(style, 0.0, 120.0);
+            let long = arrival_secs(style, 0.0, 1400.0);
+            assert!(long > short + 0.1, "{style:?} short={short} long={long}");
         }
+    }
+
+    #[test]
+    fn arrival_lets_the_settle_play_during_the_click() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.motion.style = MotionStyle::SpringSettle;
+        core.pos = (100.0, 100.0);
+        core.placed = true;
+        core.apply_command_base(
+            OverlayCommand::MoveTo {
+                x: 700.0,
+                y: 400.0,
+                end_heading_radians: std::f64::consts::FRAC_PI_4,
+                target: None,
+            },
+            false,
+            false,
+        );
+        let dt = 1.0 / 120.0;
+        while !core.tick_motion(dt) {}
+        assert!(core.is_moving(), "the bounce is still playing at arrival");
+        // Windows/Linux snap on ClickPulse; a settling move must not be cut.
+        core.apply_command_base(
+            OverlayCommand::ClickPulse { x: 700.0, y: 400.0 },
+            false,
+            false,
+        );
+        assert!(core.is_moving());
+        for _ in 0..600 {
+            core.tick_motion(dt);
+        }
+        assert!(core.trajectory.is_none());
+        let (px, py) = crate::pointer_for_anchor(core.pos.0, core.pos.1, core.heading);
+        assert!((px - 700.0).abs() < 1e-6 && (py - 400.0).abs() < 1e-6);
+    }
+
+    /// The comet trail starts at the arrow's body, under the artwork, not at
+    /// the tip: the head sits `POINTER_ANCHOR_OFFSET` behind the hotspot along
+    /// the arrow's axis, so the tip stays clean.
+    #[test]
+    fn the_comet_trail_starts_behind_the_tip() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.motion.style = MotionStyle::CometSwoop;
+        core.pos = (100.0, 100.0);
+        core.placed = true;
+        core.apply_command_base(
+            OverlayCommand::MoveTo {
+                x: 900.0,
+                y: 500.0,
+                end_heading_radians: std::f64::consts::FRAC_PI_4,
+                target: None,
+            },
+            false,
+            false,
+        );
+        let mut checked = 0;
+        for _ in 0..240 {
+            core.tick_motion(1.0 / 120.0);
+            let frame = core.effect_frame();
+            // The head segment (full width) is the one that ends at the cursor;
+            // a slow last step leaves it out.
+            let Some(head) = frame.trail.last().filter(|seg| seg.width > 11.99) else {
+                continue;
+            };
+            let tip = crate::pointer_for_anchor(core.pos.0, core.pos.1, core.heading);
+            let to_tip = (head.b.0 - tip.0).hypot(head.b.1 - tip.1);
+            assert!(
+                (to_tip - crate::POINTER_ANCHOR_OFFSET).abs() < 1e-6,
+                "trail head {:?} is {to_tip} from the tip {tip:?}",
+                head.b
+            );
+            assert!(
+                (head.b.0 - core.pos.0).hypot(head.b.1 - core.pos.1) < 1e-6,
+                "the head is the cursor's anchor"
+            );
+            checked += 1;
+        }
+        assert!(checked > 20, "the trail was only drawn {checked} times");
+    }
+
+    /// A very short trail (the first frames of a move) fades out instead of
+    /// showing a stub.
+    #[test]
+    fn a_very_short_comet_trail_is_faint() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.motion.style = MotionStyle::CometSwoop;
+        core.pos = (100.0, 100.0);
+        core.placed = true;
+        core.apply_command_base(
+            OverlayCommand::MoveTo {
+                x: 900.0,
+                y: 500.0,
+                end_heading_radians: std::f64::consts::FRAC_PI_4,
+                target: None,
+            },
+            false,
+            false,
+        );
+        let mut strongest_early = 0.0_f64;
+        let mut strongest_cruise = 0.0_f64;
+        for frame_no in 0..240 {
+            core.tick_motion(1.0 / 120.0);
+            let alpha = core
+                .effect_frame()
+                .trail
+                .iter()
+                .map(|seg| seg.alpha)
+                .fold(0.0_f64, f64::max);
+            if frame_no < 4 {
+                strongest_early = strongest_early.max(alpha);
+            } else if frame_no > 40 {
+                strongest_cruise = strongest_cruise.max(alpha);
+            }
+        }
+        assert!(
+            strongest_early < strongest_cruise * 0.5,
+            "early {strongest_early} vs cruising {strongest_cruise}"
+        );
+    }
+
+    #[test]
+    fn effects_report_bounds_while_they_play() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.motion.style = MotionStyle::CometSwoop;
+        core.pos = (100.0, 100.0);
+        core.placed = true;
+        core.apply_command_base(
+            OverlayCommand::MoveTo {
+                x: 900.0,
+                y: 500.0,
+                end_heading_radians: std::f64::consts::FRAC_PI_4,
+                target: None,
+            },
+            false,
+            false,
+        );
+        for _ in 0..30 {
+            core.tick_motion(1.0 / 120.0);
+        }
+        let bounds = core.effect_bounds().expect("trail bounds while moving");
+        assert!(bounds[2] > 10.0 && bounds[3] > 5.0);
+        core.effects_capable = false;
+        assert!(
+            core.effect_bounds().is_none(),
+            "no trail without alpha blending"
+        );
+        core.effects_capable = true;
+        for _ in 0..600 {
+            core.tick_motion(1.0 / 120.0);
+        }
+        assert!(core.effect_bounds().is_none());
+        assert!(!core.needs_frame_tick() || core.has_resting_motion());
     }
 }
 
@@ -1095,6 +1865,305 @@ mod glide_duration_tests {
 mod session_badge_and_action_tests {
     use super::*;
     use crate::{CursorConfig, DeliveryModifier, TargetModifier};
+
+    /// The earlier badge, kept as `cursor.badges = verbose`.
+    fn verbose_core() -> RenderStateCore {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.badge_mode_override = Some(BadgeMode::Verbose);
+        core
+    }
+
+    fn minimal_core() -> RenderStateCore {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.badge_mode_override = Some(BadgeMode::Minimal);
+        core.motion.idle_hide_ms = 0.0;
+        core.apply_command_base(
+            OverlayCommand::SetSessionLabel("Research run".into()),
+            false,
+            false,
+        );
+        core
+    }
+
+    const FRAME: f64 = 1.0 / 60.0;
+
+    fn move_to(core: &mut RenderStateCore, x: f64, y: f64) {
+        core.apply_command_base(
+            OverlayCommand::MoveTo {
+                x,
+                y,
+                end_heading_radians: std::f64::consts::FRAC_PI_4,
+                target: None,
+            },
+            true,
+            true,
+        );
+    }
+
+    /// Tick until the move ends, checking the badge stays empty throughout.
+    fn settle_without_text(core: &mut RenderStateCore) {
+        for _ in 0..600 {
+            if !core.is_moving() {
+                return;
+            }
+            assert_eq!(core.session_badge_alpha(), 0.0, "no name while moving");
+            assert_eq!(core.session_badge_chip_alpha(), 0.0, "no chip while moving");
+            core.tick_motion(FRAME);
+        }
+        panic!("the move never ended");
+    }
+
+    fn shown(core: &RenderStateCore) -> Option<crate::SessionBadgeLayout> {
+        crate::session_badge_layout(core.session_badge_input(
+            (core.pos.0 as f32, core.pos.1 as f32),
+            1.0,
+            None,
+        ))
+    }
+
+    #[test]
+    fn minimal_is_the_default_badge_mode() {
+        let core = RenderStateCore::new(CursorConfig::default());
+        assert_eq!(core.badge_mode_override, None);
+        assert_eq!(BadgeMode::default(), BadgeMode::Minimal);
+    }
+
+    #[test]
+    fn minimal_badge_shows_nothing_for_routine_actions() {
+        let mut core = minimal_core();
+        move_to(&mut core, 300.0, 240.0);
+        settle_without_text(&mut core);
+        for _ in 0..30 {
+            core.tick_motion(FRAME);
+        }
+        assert!(core.is_revealed());
+        assert!(shown(&core).is_none(), "no session name at rest when alone");
+
+        for delivery in [None, Some(DeliveryModifier::Background)] {
+            core.apply_command_base(
+                OverlayCommand::BeginAction {
+                    action: CursorAction::Click,
+                    delivery,
+                    target: Some(TargetModifier::Ax),
+                },
+                false,
+                false,
+            );
+            for _ in 0..30 {
+                core.tick_motion(FRAME);
+                assert!(shown(&core).is_none(), "{delivery:?} earns no chip");
+            }
+            core.apply_command_base(OverlayCommand::EndAction(CursorAction::Click), false, false);
+        }
+        // A bare key press has no combo to show.
+        core.apply_command_base(
+            OverlayCommand::ShowKeyCombo(vec!["return".into()]),
+            false,
+            false,
+        );
+        core.tick_motion(0.3);
+        assert!(shown(&core).is_none());
+    }
+
+    #[test]
+    fn minimal_badge_shows_no_foreground_or_key_combo_chip() {
+        let mut core = minimal_core();
+        move_to(&mut core, 300.0, 240.0);
+        settle_without_text(&mut core);
+        core.apply_command_base(
+            OverlayCommand::BeginAction {
+                action: CursorAction::Key,
+                delivery: Some(DeliveryModifier::Foreground),
+                target: None,
+            },
+            false,
+            false,
+        );
+        core.apply_command_base(
+            OverlayCommand::ShowKeyCombo(vec!["cmd".into(), "c".into()]),
+            false,
+            false,
+        );
+        core.apply_command_base(OverlayCommand::EndAction(CursorAction::Key), false, false);
+        let mut rest_secs = 0.0;
+        while rest_secs < KEY_CHIP_SECS + 0.5 {
+            core.tick_motion(FRAME);
+            rest_secs += FRAME;
+            assert!(shown(&core).is_none(), "minimal shows only the name");
+            assert_eq!(core.key_chip_alpha(), 0.0);
+        }
+    }
+
+    #[test]
+    fn verbose_key_combo_chip_waits_for_rest_then_fades_within_a_second() {
+        let mut core = minimal_core();
+        core.badge_mode_override = Some(BadgeMode::Verbose);
+        move_to(&mut core, 300.0, 240.0);
+        for _ in 0..600 {
+            if !core.is_moving() {
+                break;
+            }
+            core.tick_motion(FRAME);
+        }
+        // Let the reveal name fade first so only the chip is on screen.
+        core.tick_motion(SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS);
+        core.apply_command_base(
+            OverlayCommand::BeginAction {
+                action: CursorAction::Key,
+                delivery: Some(DeliveryModifier::Foreground),
+                target: None,
+            },
+            false,
+            false,
+        );
+        assert!(core.apply_command_base(
+            OverlayCommand::ShowKeyCombo(vec!["cmd".into(), "c".into()]),
+            false,
+            false,
+        ));
+        // Nothing plays until the action ends.
+        for _ in 0..30 {
+            core.tick_motion(FRAME);
+            assert_eq!(core.key_chip_alpha(), 0.0, "waits for the action to end");
+        }
+        core.apply_command_base(OverlayCommand::EndAction(CursorAction::Key), false, false);
+
+        let expected = crate::badge_mode::format_key_combo(&["cmd".into(), "c".into()]);
+        let mut peak: f32 = 0.0;
+        let mut visible_secs = 0.0;
+        let mut rest_secs = 0.0;
+        while core.key_chip.is_some() {
+            core.tick_motion(FRAME);
+            rest_secs += FRAME;
+            let alpha = core.key_chip_alpha();
+            peak = peak.max(alpha);
+            if alpha > 0.001 {
+                visible_secs += FRAME;
+                let layout = shown(&core).expect("the chip paints");
+                assert_eq!(
+                    layout.label.as_ref().map(|label| label.text.clone()),
+                    expected
+                );
+            }
+            if core.key_chip.is_some() {
+                assert!(
+                    core.session_badge_needs_frame_tick(),
+                    "the chip keeps frames coming"
+                );
+            }
+            assert!(rest_secs < 2.0, "the chip must end");
+        }
+        assert_eq!(peak, 1.0);
+        assert!(
+            (KEY_CHIP_SECS - 0.05..=KEY_CHIP_SECS + 0.05).contains(&rest_secs),
+            "{rest_secs}"
+        );
+        assert!(visible_secs <= 1.0, "{visible_secs}");
+    }
+
+    #[test]
+    fn minimal_name_shows_on_hover_and_with_peers_but_never_while_moving() {
+        let mut core = minimal_core();
+        move_to(&mut core, 300.0, 240.0);
+        settle_without_text(&mut core);
+        assert_eq!(core.session_badge_alpha(), 0.0);
+
+        // Hover reveals the name at once.
+        assert!(core.update_session_badge_hover(Some((core.pos.0, core.pos.1))));
+        assert_eq!(core.session_badge_alpha(), 1.0);
+        assert!(core.update_session_badge_hover(Some((900.0, 900.0))));
+        assert_eq!(core.session_badge_alpha(), 0.0);
+
+        // A second agent cursor on screen fades the name in quickly.
+        core.peer_cursors_visible = true;
+        assert!(core.session_badge_needs_frame_tick());
+        core.tick_motion(MINIMAL_NAME_FADE_SECS + FRAME);
+        assert_eq!(core.session_badge_alpha(), 1.0);
+        let layout = shown(&core).expect("the name paints");
+        assert_eq!(
+            layout.label.map(|label| label.text),
+            Some("Research run".to_owned())
+        );
+
+        // It drops the moment the cursor moves, and comes back at rest.
+        move_to(&mut core, 600.0, 400.0);
+        core.tick_motion(FRAME);
+        settle_without_text(&mut core);
+        core.tick_motion(MINIMAL_NAME_FADE_SECS + FRAME);
+        assert_eq!(core.session_badge_alpha(), 1.0);
+
+        core.peer_cursors_visible = false;
+        core.tick_motion(MINIMAL_NAME_FADE_SECS + FRAME);
+        assert_eq!(core.session_badge_alpha(), 0.0);
+    }
+
+    #[test]
+    fn key_chip_plays_even_if_its_action_never_ends() {
+        let mut core = minimal_core();
+        move_to(&mut core, 300.0, 240.0);
+        settle_without_text(&mut core);
+        core.badge_mode_override = Some(BadgeMode::Verbose);
+        core.apply_command_base(
+            OverlayCommand::BeginAction {
+                action: CursorAction::Key,
+                delivery: Some(DeliveryModifier::Foreground),
+                target: None,
+            },
+            false,
+            false,
+        );
+        core.apply_command_base(
+            OverlayCommand::ShowKeyCombo(vec!["cmd".into(), "c".into()]),
+            false,
+            false,
+        );
+        core.tick_motion(KEY_CHIP_ARM_TIMEOUT_SECS);
+        assert_eq!(core.key_chip_alpha(), 0.0);
+        core.tick_motion(0.3);
+        assert!(core.key_chip_alpha() > 0.0);
+        core.tick_motion(KEY_CHIP_SECS);
+        assert!(core.key_chip.is_none());
+    }
+
+    #[test]
+    fn off_mode_paints_no_badge_at_all() {
+        let mut core = minimal_core();
+        core.badge_mode_override = Some(BadgeMode::Off);
+        move_to(&mut core, 300.0, 240.0);
+        settle_without_text(&mut core);
+        core.peer_cursors_visible = true;
+        core.apply_command_base(
+            OverlayCommand::BeginAction {
+                action: CursorAction::Key,
+                delivery: Some(DeliveryModifier::Foreground),
+                target: Some(TargetModifier::Desktop),
+            },
+            false,
+            false,
+        );
+        core.apply_command_base(
+            OverlayCommand::ShowKeyCombo(vec!["cmd".into(), "v".into()]),
+            false,
+            false,
+        );
+        assert!(!core.session_badge_needs_hover_poll());
+        for _ in 0..90 {
+            core.tick_motion(FRAME);
+            assert!(shown(&core).is_none());
+            assert!(!core.session_badge_is_visible());
+        }
+    }
+
+    #[test]
+    fn switching_modes_applies_to_a_cursor_already_on_screen() {
+        let mut core = minimal_core();
+        core.badge_mode_override = Some(BadgeMode::Verbose);
+        move_to(&mut core, 300.0, 240.0);
+        core.tick_motion(FRAME);
+        assert_eq!(core.session_badge_alpha(), 1.0, "verbose names on reveal");
+        core.badge_mode_override = Some(BadgeMode::Minimal);
+        assert_eq!(core.session_badge_alpha(), 0.0, "minimal drops it at once");
+    }
 
     #[test]
     fn idle_hide_zero_keeps_a_positioned_session_cursor_visible() {
@@ -1155,7 +2224,7 @@ mod session_badge_and_action_tests {
 
     #[test]
     fn session_badge_holds_then_fades_once() {
-        let mut core = RenderStateCore::new(CursorConfig::default());
+        let mut core = verbose_core();
         assert_eq!(core.session_badge_alpha(), 0.0);
         assert!(core.apply_command_base(
             OverlayCommand::SetSessionLabel("Research".into()),
@@ -1175,7 +2244,7 @@ mod session_badge_and_action_tests {
 
     #[test]
     fn repeated_session_label_metadata_does_not_restart_badge_timer() {
-        let mut core = RenderStateCore::new(CursorConfig::default());
+        let mut core = verbose_core();
         core.apply_command_base(
             OverlayCommand::SetSessionLabel("Research".into()),
             false,
@@ -1201,7 +2270,7 @@ mod session_badge_and_action_tests {
 
     #[test]
     fn revealing_hidden_cursor_restarts_badge_without_restarting_on_every_move() {
-        let mut core = RenderStateCore::new(CursorConfig::default());
+        let mut core = verbose_core();
         core.apply_command_base(
             OverlayCommand::SetSessionLabel("Research".into()),
             false,
@@ -1241,6 +2310,7 @@ mod session_badge_and_action_tests {
     fn hardware_pointer_hover_reveals_only_while_over_cursor() {
         let mut core = RenderStateCore::new(CursorConfig::default());
         core.pos = (300.0, 240.0);
+        core.placed = true;
         core.apply_command_base(
             OverlayCommand::SetSessionLabel("Research".into()),
             false,
@@ -1266,6 +2336,7 @@ mod session_badge_and_action_tests {
         for action in [CursorAction::Text, CursorAction::Click] {
             let mut core = RenderStateCore::new(CursorConfig::default());
             core.pos = (20.0, 20.0);
+            core.placed = true;
             core.apply_command_base(
                 OverlayCommand::BeginAction {
                     action,
@@ -1280,6 +2351,7 @@ mod session_badge_and_action_tests {
                     x: 200.0,
                     y: 100.0,
                     end_heading_radians: 0.0,
+                    target: None,
                 },
                 false,
                 false,
@@ -1311,8 +2383,9 @@ mod session_badge_and_action_tests {
 
     #[test]
     fn modifiers_live_in_the_badge_then_fade_after_action_completion() {
-        let mut core = RenderStateCore::new(CursorConfig::default());
+        let mut core = verbose_core();
         core.pos = (200.0, 200.0);
+        core.placed = true;
         core.apply_command_base(
             OverlayCommand::BeginAction {
                 action: CursorAction::Click,
@@ -1347,7 +2420,7 @@ mod session_badge_and_action_tests {
 
     #[test]
     fn modifier_preemption_replaces_the_badge_context_without_cross_fading() {
-        let mut core = RenderStateCore::new(CursorConfig::default());
+        let mut core = verbose_core();
         core.apply_command_base(
             OverlayCommand::BeginAction {
                 action: CursorAction::Observe,
@@ -1416,6 +2489,7 @@ mod backing_scale_tests {
         // idle-fade so the arrow paints at full alpha regardless of timing.
         let centre = logical_size as f64 / 2.0;
         core.pos = (centre, centre);
+        core.placed = true;
         core.idle_alpha = 1.0;
         core.visible = true;
 
@@ -1432,6 +2506,7 @@ mod backing_scale_tests {
     fn cursor_pinned_to_an_off_workspace_window_paints_nothing() {
         let mut core = RenderStateCore::new(CursorConfig::default());
         core.pos = (32.0, 32.0);
+        core.placed = true;
         core.idle_alpha = 1.0;
         core.visible = true;
         core.pinned_target_off_workspace = true;
@@ -1639,6 +2714,11 @@ mod pointer_anchor_tests {
     fn cursor() -> RenderStateCore {
         let mut core = RenderStateCore::new(CursorConfig::default());
         core.theme = Some(hotspot_marker_theme());
+        // The halo would pull the measured centroid off the marker.
+        core.options_override = Some(crate::CursorOptions {
+            halo: false,
+            ..crate::CursorOptions::DEFAULT
+        });
         core.motion.idle_hide_ms = 0.0;
         core
     }
@@ -1674,14 +2754,10 @@ mod pointer_anchor_tests {
         );
     }
 
-    fn settle(core: &mut RenderStateCore, macos: bool) {
+    fn settle(core: &mut RenderStateCore, _macos: bool) {
         for _ in 0..1200 {
-            if macos {
-                core.tick_swift_constants(1.0 / 60.0);
-            } else {
-                core.tick_motion(1.0 / 60.0);
-            }
-            if core.path.is_none() && core.spring.is_none() {
+            core.tick_motion(1.0 / 60.0);
+            if core.trajectory.is_none() && core.click_age.is_none() {
                 return;
             }
         }
@@ -1710,6 +2786,7 @@ mod pointer_anchor_tests {
                             x: 220.0,
                             y: 160.0,
                             end_heading_radians: heading,
+                            target: None,
                         },
                         macos,
                         macos,
@@ -1729,6 +2806,7 @@ mod pointer_anchor_tests {
                             x: 90.0,
                             y: 70.0,
                             end_heading_radians: heading,
+                            target: None,
                         },
                         macos,
                         macos,
@@ -1739,6 +2817,924 @@ mod pointer_anchor_tests {
                 core.apply_command_base(track_pointer_command(150.0, 110.0), macos, macos);
                 assert_hotspot_at(&core, backing_scale, 150.0, 110.0, "tracked drag");
             }
+        }
+    }
+}
+
+/// Proof that moving the motion math into the `cua-cursor-motion` crate changed no
+/// behaviour. `tests/fixtures/motion_equivalence.json` was captured from the
+/// driver before the move (origin/main 79a4a4635) by this module's
+/// `capture()`: a SHA-256 over the bits of every sample of 1650 planned
+/// trajectories (6 styles x 3 timings x 8 knob sets x 11 moves, plus reduced
+/// motion) and of every effect frame of 24 scripted move-and-click runs, with
+/// a few readable spot samples, counts and per-case sums. On the capture
+/// platform it must stay bit-identical; elsewhere, within 1e-12 relative.
+#[cfg(test)]
+mod motion_equivalence_tests {
+    use super::*;
+    use crate::trajectory::{plan_move, MoveRequest, Pt};
+    use crate::{CursorConfig, MotionConfig, MotionEffects, MotionStyle, MotionTiming};
+    use serde_json::{json, Value};
+    use sha2::{Digest, Sha256};
+    use std::f64::consts::{FRAC_PI_4, PI};
+
+    /// Effects as each style resolved them when the fixture was captured.
+    /// `signature_arc` has since turned glow, ripple and squish off by
+    /// default; pinning them keeps this a test of the motion math alone.
+    fn fixture_effects(style: MotionStyle) -> MotionEffects {
+        match style {
+            MotionStyle::SignatureArc => MotionEffects {
+                glow: Some(true),
+                ripple: Some(true),
+                squish: Some(true),
+                ..MotionEffects::default()
+            },
+            _ => MotionEffects::default(),
+        }
+    }
+
+    /// A SHA-256 over the exact bits of every value, plus a count and two
+    /// sums (plain and position-weighted) that survive the last-bit
+    /// differences between platforms' math libraries.
+    struct Bits {
+        sha: Sha256,
+        n: u64,
+        s0: f64,
+        s1: f64,
+    }
+
+    impl Bits {
+        fn new() -> Self {
+            Self {
+                sha: Sha256::new(),
+                n: 0,
+                s0: 0.0,
+                s1: 0.0,
+            }
+        }
+        fn add(&mut self, v: f64) {
+            self.n += 1;
+            self.s0 += v;
+            self.s1 += v * (self.n % 1000) as f64;
+        }
+        fn f(&mut self, v: f64) {
+            self.sha.update(v.to_bits().to_le_bytes());
+            self.add(v);
+        }
+        fn opt(&mut self, v: Option<f64>) {
+            match v {
+                Some(v) => {
+                    self.sha.update([1]);
+                    self.add(1.0);
+                    self.f(v);
+                }
+                None => {
+                    self.sha.update([0]);
+                    self.add(0.0);
+                }
+            }
+        }
+        fn flag(&mut self, v: bool) {
+            self.sha.update([u8::from(v)]);
+            self.add(f64::from(u8::from(v)));
+        }
+        fn done(self) -> (String, Value) {
+            let sha = self
+                .sha
+                .finalize()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            (sha, json!([self.n, self.s0, self.s1]))
+        }
+    }
+
+    type Move = ((f64, f64), f64, (f64, f64), f64, Option<[f64; 4]>);
+
+    fn moves() -> Vec<Move> {
+        vec![
+            (
+                (100.0, 100.0),
+                FRAC_PI_4,
+                (600.0, 420.0),
+                FRAC_PI_4,
+                Some([560.0, 400.0, 80.0, 40.0]),
+            ),
+            (
+                (600.0, 420.0),
+                FRAC_PI_4,
+                (120.0, 80.0),
+                FRAC_PI_4,
+                Some([100.0, 70.0, 40.0, 20.0]),
+            ),
+            (
+                (50.0, 700.0),
+                0.0,
+                (1240.0, 60.0),
+                FRAC_PI_4,
+                Some([1220.0, 50.0, 40.0, 20.0]),
+            ),
+            (
+                (300.0, 300.0),
+                FRAC_PI_4,
+                (310.0, 304.0),
+                FRAC_PI_4,
+                Some([305.0, 300.0, 10.0, 8.0]),
+            ),
+            ((800.0, 200.0), -PI / 2.0, (800.0, 640.0), FRAC_PI_4, None),
+            (
+                (10.0, 10.0),
+                FRAC_PI_4,
+                (10.0, 10.0),
+                FRAC_PI_4,
+                Some([0.0, 0.0, 20.0, 20.0]),
+            ),
+            ((0.0, 0.0), 3.0, (2400.0, 1300.0), 0.0, None),
+            ((900.0, 500.0), FRAC_PI_4, (897.0, 501.0), FRAC_PI_4, None),
+            (
+                (1400.0, 90.0),
+                2.2,
+                (40.0, 880.0),
+                -1.0,
+                Some([20.0, 860.0, 300.0, 200.0]),
+            ),
+            (
+                (200.0, 600.0),
+                FRAC_PI_4,
+                (700.0, 600.0),
+                FRAC_PI_4,
+                Some([f64::NAN, 0.0, 10.0, 10.0]),
+            ),
+            (
+                (640.0, 360.0),
+                FRAC_PI_4,
+                (660.0, 900.0),
+                FRAC_PI_4,
+                Some([655.0, 895.0, 12.0, 12.0]),
+            ),
+        ]
+    }
+
+    fn knobs() -> Vec<(&'static str, MotionConfig)> {
+        let d = MotionConfig::default();
+        vec![
+            ("default", d.clone()),
+            (
+                "straight",
+                MotionConfig {
+                    arc_size: 0.0,
+                    ..d.clone()
+                },
+            ),
+            (
+                "wide",
+                MotionConfig {
+                    arc_size: 0.6,
+                    arc_flow: -0.7,
+                    ..d.clone()
+                },
+            ),
+            (
+                "handles",
+                MotionConfig {
+                    start_handle: 0.1,
+                    end_handle: 0.8,
+                    arc_flow: 0.9,
+                    ..d.clone()
+                },
+            ),
+            (
+                "springy",
+                MotionConfig {
+                    spring: 0.35,
+                    turn_radius: 30.0,
+                    ..d.clone()
+                },
+            ),
+            (
+                "legacy_glide",
+                MotionConfig {
+                    glide_duration_ms: 300.0,
+                    ..d.clone()
+                },
+            ),
+            (
+                "long_glide",
+                MotionConfig {
+                    glide_duration_ms: 2500.0,
+                    ..d.clone()
+                },
+            ),
+            (
+                "speeds",
+                MotionConfig {
+                    peak_speed: 1500.0,
+                    min_start_speed: 100.0,
+                    min_end_speed: 50.0,
+                    ..d
+                },
+            ),
+        ]
+    }
+
+    fn trajectories() -> Value {
+        let mut cases = Vec::new();
+        for style in MotionStyle::ALL {
+            for timing in [
+                MotionTiming::Native,
+                MotionTiming::Fitts,
+                MotionTiming::Fixed,
+            ] {
+                for (knob, base) in knobs() {
+                    for (i, (from, fh, to, eh, target)) in moves().into_iter().enumerate() {
+                        for reduced in [false, true] {
+                            if reduced && (knob != "default" || timing != MotionTiming::Native) {
+                                continue;
+                            }
+                            let m = MotionConfig {
+                                style,
+                                timing,
+                                effects: fixture_effects(style),
+                                ..base.clone()
+                            };
+                            let req = MoveRequest {
+                                from: Pt::new(from.0, from.1),
+                                from_heading: fh,
+                                to: Pt::new(to.0, to.1),
+                                end_heading: eh,
+                                target,
+                                seed: format!("eq|{i}"),
+                                reduced_motion: reduced,
+                            };
+                            let traj = plan_move(&m, &req);
+                            let mut h = Bits::new();
+                            for s in &traj.samples {
+                                h.f(s.t);
+                                h.f(s.x);
+                                h.f(s.y);
+                                h.f(s.heading);
+                            }
+                            h.f(traj.arrival_t);
+                            h.opt(traj.snap_t);
+                            for v in traj.target {
+                                h.f(v);
+                            }
+                            h.flag(traj.target_known);
+                            let fx = traj.effects;
+                            for v in [fx.trail, fx.glow, fx.magnet, fx.ripple, fx.squish] {
+                                h.flag(v);
+                            }
+                            let spots: Vec<Value> = (0..=2)
+                                .map(|k| {
+                                    let s = traj.sample_at(traj.duration() * k as f64 / 2.0);
+                                    json!([s.t, s.x, s.y, s.heading])
+                                })
+                                .collect();
+                            let (sha, agg) = h.done();
+                            cases.push(json!({
+                                "style": style.as_str(),
+                                "timing": timing.as_str(),
+                                "knobs": knob,
+                                "move": i,
+                                "reduced": reduced,
+                                "samples": traj.samples.len(),
+                                "arrival_t": traj.arrival_t,
+                                "snap_t": traj.snap_t,
+                                "spots": spots,
+                                "sha256": sha,
+                                "agg": agg,
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+        Value::Array(cases)
+    }
+
+    fn hash_frame(h: &mut Bits, core: &RenderStateCore) {
+        h.f(core.pos.0);
+        h.f(core.pos.1);
+        h.f(core.heading);
+        let frame = core.effect_frame();
+        h.flag(frame.glow.is_some());
+        if let Some(g) = frame.glow {
+            for v in [g.x, g.y, g.r, g.alpha] {
+                h.f(v);
+            }
+        }
+        h.f(frame.trail.len() as f64);
+        for seg in &frame.trail {
+            for v in [seg.a.0, seg.a.1, seg.b.0, seg.b.1, seg.width, seg.alpha] {
+                h.f(v);
+            }
+        }
+        h.flag(frame.magnet.is_some());
+        if let Some(m) = frame.magnet {
+            for v in m.rect {
+                h.f(v);
+            }
+            h.f(m.glow);
+        }
+        h.flag(frame.ripple.is_some());
+        if let Some(r) = frame.ripple {
+            for v in [r.x, r.y, r.r, r.width, r.alpha] {
+                h.f(v);
+            }
+        }
+        h.f(frame.squish);
+        h.opt(
+            core.effect_bounds()
+                .map(|b| b[0] + b[1] * 3.0 + b[2] * 7.0 + b[3] * 11.0),
+        );
+    }
+
+    fn effect_runs() -> Value {
+        let all_on = MotionEffects {
+            trail: Some(true),
+            glow: Some(true),
+            magnet: Some(true),
+            ripple: Some(true),
+            squish: Some(true),
+        };
+        let mut runs = Vec::new();
+        for style in MotionStyle::ALL {
+            for (fx_name, effects) in [("default", fixture_effects(style)), ("all_on", all_on)] {
+                for capable in [true, false] {
+                    let mut core = RenderStateCore::new(CursorConfig::default());
+                    // The fixture pins the pre-crate driver, which had native timing.
+                    core.motion = MotionConfig {
+                        style,
+                        effects,
+                        timing: MotionTiming::Native,
+                        ..MotionConfig::default()
+                    };
+                    core.effects_capable = capable;
+                    core.pos = (100.0, 100.0);
+                    core.placed = true;
+                    let mut h = Bits::new();
+                    let mut arrivals = 0;
+                    let script: [(usize, OverlayCommand); 4] = [
+                        (
+                            0,
+                            OverlayCommand::MoveTo {
+                                x: 900.0,
+                                y: 500.0,
+                                end_heading_radians: FRAC_PI_4,
+                                target: Some([860.0, 480.0, 80.0, 40.0]),
+                            },
+                        ),
+                        (150, OverlayCommand::ClickPulse { x: 900.0, y: 500.0 }),
+                        (
+                            200,
+                            OverlayCommand::MoveTo {
+                                x: 140.0,
+                                y: 620.0,
+                                end_heading_radians: FRAC_PI_4,
+                                target: None,
+                            },
+                        ),
+                        (260, OverlayCommand::ClickPulse { x: 140.0, y: 620.0 }),
+                    ];
+                    let mut script = script.into_iter().peekable();
+                    for frame_no in 0..420 {
+                        while script.peek().is_some_and(|(at, _)| *at == frame_no) {
+                            let (_, cmd) = script.next().unwrap();
+                            core.apply_command_base(cmd, false, false);
+                        }
+                        if core.tick_motion(1.0 / 120.0) {
+                            arrivals += 1;
+                            h.f(frame_no as f64);
+                        }
+                        hash_frame(&mut h, &core);
+                    }
+                    let (sha, agg) = h.done();
+                    runs.push(json!({
+                        "style": style.as_str(),
+                        "effects": fx_name,
+                        "capable": capable,
+                        "arrivals": arrivals,
+                        "sha256": sha,
+                                "agg": agg,
+                    }));
+                }
+            }
+        }
+        Value::Array(runs)
+    }
+
+    fn capture() -> Value {
+        json!({ "trajectories": trajectories(), "effect_runs": effect_runs() })
+    }
+
+    /// Numbers within 1e-12 relative plus 1e-9 absolute (last-bit rounding
+    /// differences stay far below that; any real change does not); strings,
+    /// booleans and nulls exactly.
+    fn close(path: &str, was: &Value, is: &Value) {
+        match (was, is) {
+            (Value::Number(a), Value::Number(b)) => {
+                let (a, b) = (a.as_f64().unwrap(), b.as_f64().unwrap());
+                let tol = 1e-12 * a.abs().max(b.abs()) + 1e-9;
+                assert!((a - b).abs() <= tol, "{path}: {a} vs {b}");
+            }
+            (Value::Array(a), Value::Array(b)) => {
+                assert_eq!(a.len(), b.len(), "{path}: length");
+                for (i, (a, b)) in a.iter().zip(b).enumerate() {
+                    close(&format!("{path}[{i}]"), a, b);
+                }
+            }
+            (Value::Object(a), Value::Object(b)) => {
+                assert_eq!(a.len(), b.len(), "{path}: keys");
+                for (k, v) in a {
+                    if k != "sha256" {
+                        close(&format!("{path}.{k}"), v, &b[k]);
+                    }
+                }
+            }
+            _ => assert_eq!(was, is, "{path}"),
+        }
+    }
+
+    /// The motion did not change when its math moved into
+    /// `cua-cursor-motion`. On macOS arm64, where the fixture was captured,
+    /// every sample is bit-identical (the SHA-256s match). Other platforms'
+    /// math libraries round the last bit of `sin`, `exp` and friends
+    /// differently, so there the sample counts must match exactly and every
+    /// spot sample, timing and per-case sum within 1e-12 relative.
+    #[test]
+    fn motion_is_unchanged_from_the_pre_cua_cursor_motion_driver() {
+        let fixture: Value =
+            serde_json::from_str(include_str!("../tests/fixtures/motion_equivalence.json"))
+                .expect("fixture json");
+        // Parse both through the same JSON reader: serde_json's default float
+        // parsing is not round-trip exact.
+        let now: Value = serde_json::from_str(&capture().to_string()).unwrap();
+        let bit_exact = cfg!(all(target_os = "macos", target_arch = "aarch64"));
+        for kind in ["trajectories", "effect_runs"] {
+            let (was, is) = (
+                fixture[kind].as_array().unwrap(),
+                now[kind].as_array().unwrap(),
+            );
+            assert_eq!(was.len(), is.len(), "{kind} count");
+            for (i, (was, is)) in was.iter().zip(is).enumerate() {
+                close(&format!("{kind}[{i}]"), was, is);
+                if bit_exact {
+                    assert_eq!(was["sha256"], is["sha256"], "{kind}[{i}] bits changed");
+                }
+            }
+        }
+        assert_eq!(fixture["trajectories"].as_array().unwrap().len(), 1650);
+        assert_eq!(fixture["effect_runs"].as_array().unwrap().len(), 24);
+    }
+}
+
+#[cfg(test)]
+mod plain_cursor_tests {
+    use super::*;
+    use crate::{CursorConfig, CursorOptions, MotionStyle, RotateMode};
+    use std::f64::consts::FRAC_PI_4;
+
+    fn core(options: CursorOptions) -> RenderStateCore {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.options_override = Some(options);
+        core.motion.idle_hide_ms = 0.0;
+        core.pos = crate::anchor_for_pointer(100.0, 100.0, FRAC_PI_4);
+        core.placed = true;
+        core
+    }
+
+    fn paint(core: &RenderStateCore, focus: Option<FocusRect>) -> Vec<u8> {
+        let mut pixmap = tiny_skia::Pixmap::new(240, 240).unwrap();
+        paint_cursor(&mut pixmap, core, 0.0, 0.0, focus, 1.0);
+        pixmap.data().to_vec()
+    }
+
+    #[test]
+    fn the_float_the_halo_and_heading_are_on_by_default() {
+        assert_eq!(
+            CursorOptions::default(),
+            CursorOptions {
+                float: true,
+                rotate: RotateMode::Heading,
+                halo: true,
+            }
+        );
+        let core = RenderStateCore::new(CursorConfig::default());
+        assert_eq!(core.options_override, None);
+    }
+
+    #[test]
+    fn moves_and_clicks_start_no_mark() {
+        for options in [CursorOptions::NONE, CursorOptions::ALL_ON] {
+            let mut plain = core(options);
+            plain.apply_command_base(
+                OverlayCommand::MoveTo {
+                    x: 160.0,
+                    y: 140.0,
+                    end_heading_radians: FRAC_PI_4,
+                    target: None,
+                },
+                true,
+                true,
+            );
+            assert_eq!(plain.visual.resolved_action, CursorAction::Idle);
+            plain.apply_command_base(
+                OverlayCommand::ClickPulse { x: 160.0, y: 140.0 },
+                true,
+                true,
+            );
+            assert_eq!(plain.visual.resolved_action, CursorAction::Idle);
+        }
+    }
+
+    #[test]
+    fn every_action_paints_the_plain_arrow() {
+        let idle = paint(&core(CursorOptions::NONE), None);
+        for action in CursorAction::ALL {
+            let mut plain = core(CursorOptions::NONE);
+            plain.apply_command_base(
+                OverlayCommand::BeginAction {
+                    action,
+                    delivery: None,
+                    target: None,
+                },
+                false,
+                false,
+            );
+            for fraction in [0.0, 0.4, 0.9] {
+                plain.visual.elapsed_secs = action.duration_secs() * fraction;
+                assert_eq!(
+                    paint(&plain, None),
+                    idle,
+                    "{} painted a mark at {fraction}",
+                    action.as_str()
+                );
+            }
+            assert_eq!(plain.painted_action(), CursorAction::Idle);
+        }
+    }
+
+    #[test]
+    fn the_arrow_stays_upright_unless_rotation_is_on() {
+        let options = |rotate| CursorOptions {
+            rotate,
+            ..CursorOptions::NONE
+        };
+        let mut upright = core(options(RotateMode::Off));
+        move_to(&mut upright, 200.0, 190.0);
+        let mut lean = core(options(RotateMode::Lean));
+        move_to(&mut lean, 200.0, 190.0);
+        let mut heading = core(options(RotateMode::Heading));
+        move_to(&mut heading, 200.0, 190.0);
+        for cursor in [&mut upright, &mut lean, &mut heading] {
+            let t = cursor.trajectory.as_ref().unwrap().arrival_t * 0.5;
+            cursor.tick_motion(t);
+        }
+        assert_eq!(upright.painted_rotation(), 0.0);
+        assert!(lean.painted_rotation().abs() > 0.1);
+        assert!(lean.painted_rotation().abs() <= crate::cursor_pose::LEAN_MAX_RADIANS);
+        assert!(heading.painted_rotation().abs() > lean.painted_rotation().abs());
+        // Paint the same pose with and without the turn.
+        heading.pos = upright.pos;
+        heading.heading = upright.heading;
+        assert_ne!(
+            paint(&heading, None),
+            paint(&upright, None),
+            "heading turns it"
+        );
+        // A turned planner heading at rest never turns the art.
+        let mut resting = core(options(RotateMode::Heading));
+        let still = paint(&resting, None);
+        resting.heading = FRAC_PI_4 + 0.6;
+        resting.pos = crate::anchor_for_pointer(100.0, 100.0, resting.heading);
+        assert_eq!(paint(&resting, None), still);
+    }
+
+    #[test]
+    fn the_resting_cursor_floats_unless_float_is_off() {
+        let mut still = core(CursorOptions::NONE);
+        still.motion.idle_hide_ms = 20_000.0;
+        let before = paint(&still, None);
+        still.float_secs = 1.3;
+        assert_eq!(paint(&still, None), before);
+        assert!(!still.has_resting_motion());
+
+        let mut floating = core(CursorOptions::default());
+        floating.motion.idle_hide_ms = 20_000.0;
+        let before = paint(&floating, None);
+        floating.float_secs = 1.3;
+        assert_ne!(paint(&floating, None), before);
+        assert!(floating.has_resting_motion());
+    }
+
+    #[test]
+    fn a_new_action_keeps_the_phase_and_settles_the_float_upright() {
+        use crate::cursor_pose::{
+            float_at, FLOAT_EASE_IN_SECS, FLOAT_EASE_OUT_SECS, FLOAT_HOLD_SECS,
+        };
+        for action in [CursorAction::Scroll, CursorAction::Text, CursorAction::Key] {
+            let mut cursor = core(CursorOptions::default());
+            cursor.tick_motion(1.3);
+            let before = cursor.float_offset();
+            assert!(before.dy < -1.0 && before.dx.abs() > 1.0, "{before:?}");
+            let phase = cursor.float_secs;
+            cursor.apply_command_base(
+                OverlayCommand::BeginAction {
+                    action,
+                    delivery: None,
+                    target: None,
+                },
+                false,
+                false,
+            );
+            let label = action.as_str();
+            assert_eq!(cursor.float_secs, phase, "{label}: the phase runs on");
+            assert_eq!(cursor.float_offset(), before, "{label}: no jump");
+            cursor.tick_motion(FLOAT_EASE_OUT_SECS);
+            assert_eq!(cursor.float_offset(), FloatOffset::ZERO, "{label}: settled");
+            assert_eq!(cursor.painted_rotation(), 0.0, "{label}: upright");
+            cursor.tick_motion(FLOAT_HOLD_SECS + FLOAT_EASE_IN_SECS);
+            assert_eq!(
+                cursor.float_offset(),
+                float_at(cursor.float_secs),
+                "{label}: eases back in on the same clock"
+            );
+            assert!((cursor.float_secs - (phase + 1.5)).abs() < 1e-9);
+        }
+    }
+
+    fn move_to(cursor: &mut RenderStateCore, x: f64, y: f64) {
+        cursor.apply_command_base(
+            OverlayCommand::MoveTo {
+                x,
+                y,
+                end_heading_radians: FRAC_PI_4,
+                target: None,
+            },
+            true,
+            true,
+        );
+    }
+
+    /// Play the current move at 120 Hz to the hotspot's arrival, where the
+    /// click, press or drop shows. Returns the float and rotation on the
+    /// arrival tick, plus the peak lift and peak rotation. The float phase
+    /// runs on at exactly the tick rate throughout.
+    fn play(cursor: &mut RenderStateCore) -> (FloatOffset, f64, f64, f64) {
+        let mut at_arrival = None;
+        let (mut peak_lift, mut peak_turn) = (0.0f64, 0.0f64);
+        let mut last = (cursor.float_offset(), cursor.float_secs);
+        let arrival_t = cursor
+            .trajectory
+            .as_ref()
+            .map_or(0.0, |traj| traj.arrival_t);
+        while cursor.trajectory.is_some() {
+            cursor.tick_motion(1.0 / 120.0);
+            let arrived = cursor.motion_t >= arrival_t;
+            let float = cursor.float_offset();
+            peak_lift = peak_lift.min(float.dy);
+            peak_turn = peak_turn.max(cursor.painted_rotation().abs());
+            assert!(
+                (float.dx - last.0.dx).abs() < 0.2 && (float.dy - last.0.dy).abs() < 0.2,
+                "the float jumped: {:?} -> {float:?}",
+                last.0
+            );
+            assert!(
+                (cursor.float_secs - last.1 - 1.0 / 120.0).abs() < 1e-9,
+                "phase reset"
+            );
+            last = (float, cursor.float_secs);
+            if arrived {
+                at_arrival = Some((float, cursor.painted_rotation()));
+                break;
+            }
+        }
+        let (float, rot) = at_arrival.expect("the move arrives");
+        (float, rot, peak_lift, peak_turn)
+    }
+
+    #[test]
+    fn every_motion_style_floats_while_travelling_and_settles_on_arrival() {
+        for style in MotionStyle::ALL {
+            for rotate in [RotateMode::Off, RotateMode::Lean, RotateMode::Heading] {
+                let mut cursor = core(CursorOptions {
+                    rotate,
+                    ..CursorOptions::DEFAULT
+                });
+                cursor.motion.style = style;
+                cursor.tick_motion(1.3); // mid resting bob
+                move_to(&mut cursor, 700.0, 420.0);
+                let (float, rot, lift, turn) = play(&mut cursor);
+                let label = format!("{style:?} {rotate:?}");
+                assert_eq!(float, FloatOffset::ZERO, "{label}: float at arrival");
+                assert_eq!(rot, 0.0, "{label}: upright at arrival");
+                assert!(lift < -1.5, "{label}: floats while travelling ({lift})");
+                match rotate {
+                    RotateMode::Off => assert!(
+                        turn <= crate::cursor_pose::FLOAT_TILT_RADIANS + 1e-9,
+                        "{label}: only the float tilt ({turn})"
+                    ),
+                    RotateMode::Lean => assert!(
+                        turn > 0.1 && turn <= crate::cursor_pose::LEAN_MAX_RADIANS + 1e-9,
+                        "{label}: {turn}"
+                    ),
+                    RotateMode::Heading => assert!(turn > 0.1, "{label}: {turn}"),
+                }
+                // The click that follows, and a double click's second, land
+                // on the hotspot: float exactly 0 and upright.
+                for _ in 0..2 {
+                    cursor.apply_command_base(
+                        OverlayCommand::ClickPulse { x: 700.0, y: 420.0 },
+                        true,
+                        true,
+                    );
+                    assert_eq!(cursor.float_offset(), FloatOffset::ZERO, "{label}: click");
+                    assert_eq!(cursor.painted_rotation(), 0.0, "{label}: click upright");
+                    cursor.tick_motion(0.12);
+                    assert_eq!(cursor.float_offset(), FloatOffset::ZERO, "{label}: held");
+                }
+                // Then it eases back in on the same clock.
+                cursor.tick_motion(1.4);
+                assert!(cursor.float_amplitude() > 0.99, "{label}: back in");
+            }
+        }
+    }
+
+    #[test]
+    fn drags_float_and_lean_less_and_the_drop_lands_settled() {
+        let mut cursor = core(CursorOptions {
+            rotate: RotateMode::Lean,
+            ..CursorOptions::DEFAULT
+        });
+        cursor.tick_motion(1.3);
+        move_to(&mut cursor, 160.0, 300.0);
+        play(&mut cursor);
+        // Drag start: on the hotspot.
+        cursor.apply_command_base(OverlayCommand::SetPressed(true), false, false);
+        assert_eq!(cursor.float_offset(), FloatOffset::ZERO, "press settled");
+        move_to(&mut cursor, 600.0, 380.0);
+        let (float, rot, lift, turn) = play(&mut cursor);
+        assert!(
+            float == FloatOffset::ZERO && rot == 0.0,
+            "drop settled: {float:?} {rot}"
+        );
+        assert!(lift < -1.5, "floats during the drag: {lift}");
+        assert!(
+            turn > 0.05
+                && turn
+                    <= crate::cursor_pose::LEAN_MAX_DRAG_RADIANS
+                        + crate::cursor_pose::FLOAT_TILT_RADIANS
+                        + 1e-9,
+            "{turn}"
+        );
+        cursor.apply_command_base(OverlayCommand::SetPressed(false), false, false);
+        assert_eq!(cursor.float_offset(), FloatOffset::ZERO, "drop settled");
+        assert_eq!(cursor.painted_rotation(), 0.0);
+    }
+
+    #[test]
+    fn short_hops_and_snaps_stay_upright() {
+        let mut cursor = core(CursorOptions {
+            rotate: RotateMode::Heading,
+            ..CursorOptions::DEFAULT
+        });
+        move_to(&mut cursor, 125.0, 110.0);
+        let (float, _, lift, turn) = play(&mut cursor);
+        assert!(
+            turn <= crate::cursor_pose::FLOAT_TILT_RADIANS + 1e-9,
+            "no heading turn on a short hop: {turn}"
+        );
+        assert!(
+            lift > -0.5 && float == FloatOffset::ZERO,
+            "no travel float on a short hop: {lift}"
+        );
+        cursor.apply_command_base(
+            OverlayCommand::SnapTo {
+                x: 400.0,
+                y: 300.0,
+                heading_radians: None,
+            },
+            false,
+            false,
+        );
+        assert_eq!(cursor.painted_rotation(), 0.0);
+    }
+
+    /// How much alpha the halo adds 9 pt from the body centre: the pixel
+    /// painted as is, minus the same frame with `cursor.halo` off.
+    fn halo_probe(cursor: &mut RenderStateCore) -> u8 {
+        let alpha_at = |cursor: &RenderStateCore| {
+            let mut pixmap = tiny_skia::Pixmap::new(240, 240).unwrap();
+            paint_cursor(&mut pixmap, cursor, 0.0, 0.0, None, 1.0);
+            let (tx, ty) = crate::pointer_for_anchor(cursor.pos.0, cursor.pos.1, cursor.heading);
+            let (bx, by) = crate::cursor_pose::BODY_OFFSET_PT;
+            let (x, y) = (tx + bx - 9.0, ty + by + 2.0);
+            pixmap
+                .pixel(x.round() as u32, y.round() as u32)
+                .unwrap()
+                .alpha()
+        };
+        let with = alpha_at(cursor);
+        let saved = cursor.options_override;
+        let options = cursor.options();
+        cursor.options_override = Some(CursorOptions {
+            halo: false,
+            ..options
+        });
+        let without = alpha_at(cursor);
+        cursor.options_override = saved;
+        with.saturating_sub(without)
+    }
+
+    #[test]
+    fn the_halo_shows_in_every_state_follows_drags_and_hides_with_the_cursor() {
+        let mut cursor = core(CursorOptions {
+            float: false,
+            // The probe reads the upright body; rotation has its own tests.
+            rotate: RotateMode::Off,
+            ..CursorOptions::DEFAULT
+        });
+        let resting = halo_probe(&mut cursor);
+        assert!(resting > 0, "halo at rest");
+        let mut plain = core(CursorOptions::NONE);
+        assert_eq!(halo_probe(&mut plain), 0, "cursor.halo off");
+        plain.options_override = Some(CursorOptions {
+            halo: true,
+            ..CursorOptions::NONE
+        });
+        assert_eq!(
+            halo_probe(&mut plain),
+            resting,
+            "the halo needs no other extra"
+        );
+
+        // Click: no ring, no grow, no pulse; the halo is unchanged.
+        cursor.apply_command_base(
+            OverlayCommand::ClickPulse { x: 100.0, y: 100.0 },
+            true,
+            true,
+        );
+        assert_eq!(
+            halo_probe(&mut cursor),
+            resting,
+            "no click effect on the halo"
+        );
+
+        // Drag: pressed and moving, the halo travels with the arrow.
+        cursor.apply_command_base(OverlayCommand::SetPressed(true), false, false);
+        assert_eq!(
+            halo_probe(&mut cursor),
+            resting,
+            "no press effect on the halo"
+        );
+        move_to(&mut cursor, 180.0, 160.0);
+        cursor.tick_motion(cursor.trajectory.as_ref().unwrap().arrival_t * 0.5);
+        assert!(halo_probe(&mut cursor) > 0, "halo mid-drag");
+        play(&mut cursor);
+        assert_eq!(halo_probe(&mut cursor), resting, "halo at the drop point");
+
+        // Scroll and typing keep it.
+        cursor.apply_command_base(
+            OverlayCommand::BeginAction {
+                action: CursorAction::Scroll,
+                delivery: None,
+                target: None,
+            },
+            false,
+            false,
+        );
+        assert_eq!(halo_probe(&mut cursor), resting);
+
+        // It fades with the idle fade and is gone when the session ends.
+        cursor.idle_alpha = 0.5;
+        assert!(halo_probe(&mut cursor) < resting);
+        cursor.idle_alpha = 1.0;
+        cursor.apply_command_base(OverlayCommand::SetEnabled(false), false, false);
+        assert_eq!(halo_probe(&mut cursor), 0, "hidden with the cursor");
+        // Surfaces that cannot blend get no halo.
+        cursor.apply_command_base(OverlayCommand::SetEnabled(true), false, false);
+        cursor.effects_capable = false;
+        assert_eq!(halo_probe(&mut cursor), 0);
+    }
+
+    #[test]
+    fn each_session_cursor_gets_its_own_halo_colour() {
+        let colours: std::collections::HashSet<_> = ["default", "agent-1", "agent-2", "agent-3"]
+            .into_iter()
+            .map(|id| crate::cursor_pose::halo_rgb(None, id))
+            .collect();
+        assert_eq!(colours.len(), 4);
+    }
+
+    #[test]
+    fn the_focus_rect_is_never_painted() {
+        let focus = Some(FocusRect {
+            rect: [20.0, 20.0, 60.0, 30.0],
+            t: 0.0,
+        });
+        for options in [CursorOptions::NONE, CursorOptions::ALL_ON] {
+            let cursor = core(options);
+            assert_eq!(paint(&cursor, focus), paint(&cursor, None));
         }
     }
 }

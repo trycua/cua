@@ -71,7 +71,7 @@ mkdir -p "$state/artifacts"
 on="${CUA_SB_ON:-local}"
 case "$on" in
     local | docker | qemu | lume) ref="local:$name" ;;
-    cloud | fleet) ref="cloud:$name"; on=cloud ;;
+    cloud) ref="cloud:$name"; on=cloud ;;
     # Contrib providers (a cua built with --features contrib and the
     # provider's key in the step env).
     e2b | daytona | modal) ref="$on:$name" ;;
@@ -102,9 +102,9 @@ install_cua() {
     mkdir -p "$dir"
     url="https://github.com/trycua/cua/releases/download/cua-sdk-v$version"
     log "installing cua $version ($platform)"
-    curl -fsSL --retry 3 -o "$dir/cua.tar.gz" "$url/cua-cli-$version-$platform.tar.gz" \
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 -o "$dir/cua.tar.gz" "$url/cua-cli-$version-$platform.tar.gz" \
         || die "cua $version is not released for $platform ($url); pin another cua-version or pass cua-bin"
-    curl -fsSL --retry 3 -o "$dir/checksums.txt" "$url/checksums.txt" || die "no checksums.txt in $url"
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 -o "$dir/checksums.txt" "$url/checksums.txt" || die "no checksums.txt in $url"
     local want got
     want="$(awk -v f="cua-cli-$version-$platform.tar.gz" '$2 == f || $2 == "*"f {print $1}' "$dir/checksums.txt")"
     if command -v sha256sum >/dev/null 2>&1; then

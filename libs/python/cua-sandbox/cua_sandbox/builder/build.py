@@ -77,6 +77,9 @@ if (!(Test-Path $TokenFile)) {
 }
 
 netsh advfirewall firewall add rule name="cua-spacesd $Port" dir=in action=allow protocol=TCP localport=$Port
+# A program rule too: a port rule alone still raises the "allow public and private networks" prompt, which
+# blocks the daemon until someone clicks it (nobody does in an unattended build).
+netsh advfirewall firewall add rule name="cua-spacesd program" dir=in action=allow program="$Exe" enable=yes profile=any
 
 $StartScript = Join-Path $InstallDir 'start-spacesd.ps1'
 @"
@@ -423,13 +426,13 @@ async def resolve_backing_disk(image: Image) -> Path:
     """Resolve the disk a local session overlays, preferring the registry containerDisk.
 
     Built-in images (and explicit ``Image.from_registry(...)`` refs) map to a
-    KubeVirt containerDisk in the registry — the very image Fleet cloud boots. Pulling
-    it keeps local QEMU runs on the same disk as the cloud instead of a separately
-    built base. Images with no registry counterpart fall back to the local base build.
+    KubeVirt containerDisk in the registry. Pulling it keeps local QEMU runs on
+    the published disk instead of a separately built base. Images with no
+    registry counterpart fall back to the local base build.
     """
-    from cua_sandbox.image import cloud_registry_image
+    from cua_sandbox.image import registry_image
 
-    ref = cloud_registry_image(image)
+    ref = registry_image(image)
     if ref is not None:
         from cua_sandbox._sdk import local_runtime, native
 
@@ -456,8 +459,8 @@ async def create_session_disk(
     """Create a session overlay for a sandbox run.
 
     If the image has layers and a cached user image exists, overlay on that.
-    Otherwise overlay on the registry containerDisk (the same disk Fleet cloud
-    boots) or on a locally built base image. If the image carries a direct disk
+    Otherwise overlay on the registry containerDisk or on a locally built base
+    image. If the image carries a direct disk
     path and no layers, that disk is returned as-is (no overlay).
 
     Returns the disk path to boot.

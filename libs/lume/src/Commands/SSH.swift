@@ -17,6 +17,11 @@ struct SSH: AsyncParsableCommand {
               lume ssh my-vm                       # Interactive shell
               lume ssh my-vm "ls -la"              # Execute command
               lume ssh my-vm "cd /app && npm test" # Execute complex command
+              lume ssh my-vm -- /usr/bin/test 'two words' = 'two words'
+
+            A single command argument is passed to the remote shell unchanged, so it
+            may use shell syntax (pipes, &&, redirection). Several arguments are run
+            as one argv: each is shell-quoted so its boundaries survive the remote shell.
             """
     )
 
@@ -95,7 +100,7 @@ struct SSH: AsyncParsableCommand {
         if command.isEmpty {
             try await sshClient.interactive()
         } else {
-            let fullCommand = command.joined(separator: " ")
+            let fullCommand = formatRemoteCommand(command)
             let result = try await sshClient.execute(
                 command: fullCommand,
                 timeout: TimeInterval(timeout)
@@ -123,7 +128,7 @@ struct SSH: AsyncParsableCommand {
         if command.isEmpty {
             try systemClient.interactive()
         } else {
-            let fullCommand = command.joined(separator: " ")
+            let fullCommand = formatRemoteCommand(command)
             let result = try systemClient.execute(
                 command: fullCommand,
                 timeout: TimeInterval(timeout)
@@ -137,5 +142,36 @@ struct SSH: AsyncParsableCommand {
                 throw ExitCode(result.exitCode)
             }
         }
+    }
+
+    /// Builds the command string the remote shell runs.
+    ///
+    /// A single argument is a complete shell command (`lume ssh vm "ls -la"`)
+    /// and is passed through unchanged. Several arguments are an argv
+    /// (`lume ssh vm -- /usr/bin/test 'two words' = 'two words'`): each one is
+    /// quoted so a single remote-shell parse reconstructs the same arguments.
+    static func formatRemoteCommand(_ args: [String]) -> String {
+        if args.count == 1 {
+            return args[0]
+        }
+        return args.map { shellEscape($0) }.joined(separator: " ")
+    }
+
+    /// Escape a single argument so that the remote shell interprets it literally
+    static func shellEscape(_ arg: String) -> String {
+        if arg.isEmpty {
+            return "''"
+        }
+        // Safe characters that require no quoting
+        let safeCharacters = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_./:=+,@")
+        if arg.rangeOfCharacter(from: safeCharacters.inverted) == nil {
+            return arg
+        }
+        // Wrap in single quotes, replacing internal ' with '\''
+        return "'" + arg.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    private func formatRemoteCommand(_ args: [String]) -> String {
+        Self.formatRemoteCommand(args)
     }
 }

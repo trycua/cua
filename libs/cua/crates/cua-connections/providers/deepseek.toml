@@ -1,0 +1,26 @@
+id = "deepseek"
+name = "DeepSeek"
+icon = "deepseek"
+tier = "top"
+rank = 60
+kind = "hosted"
+wire = "openai-chat"
+base_url = "https://api.deepseek.com/v1"
+default_model = "deepseek-flash"
+hermes_id = "deepseek"
+key_help = "Create a key at platform.deepseek.com. Every app that uses DeepSeek can use it."
+placeholder = "sk-…"
+check = { path = "/models", auth = "bearer" }
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "DEEPSEEK_API_KEY"
+
+[[model]]
+id = "deepseek-flash"
+name = "DeepSeek Flash"
+fast = true
+
+[delivery]
+hermes = ["DEEPSEEK_API_KEY"]

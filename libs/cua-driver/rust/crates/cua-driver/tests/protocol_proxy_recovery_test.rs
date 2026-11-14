@@ -180,6 +180,15 @@ fn recovery_idle_seconds() -> u64 {
 
 impl Drop for Process {
     fn drop(&mut self) {
+        // An unbundled macOS `serve` re-execs itself, and that grandchild is the
+        // real daemon. It stays in this child's process group (`spawn_in_job`
+        // made the child a group leader), so killing only the child orphans it.
+        #[cfg(unix)]
+        if let Ok(pid) = i32::try_from(self.0.id()) {
+            unsafe {
+                libc::kill(-pid, libc::SIGKILL);
+            }
+        }
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
@@ -261,7 +270,7 @@ impl Client {
             .iter()
             .find(|tool| tool["name"] == name)
             .and_then(|tool| tool.get("outputSchema"));
-        if name == "get_session_state" {
+        if name == "get_session" {
             assert!(schema.is_some(), "session state must advertise a schema");
         }
         let response = self.request("tools/call", json!({"name":name,"arguments":arguments}));
@@ -398,7 +407,7 @@ async fn real_proxies_recover_from_control_loss_without_waiting_for_stdin() {
     session_absent(&daemon_endpoint, "peer-client").await;
     session_active(&daemon_endpoint, "idle-client").await;
     idle.call("get_config", json!({"session":"idle-client"}));
-    idle.call("get_session_state", json!({"session":"idle-client"}));
+    idle.call("get_session", json!({"session":"idle-client"}));
 
     let mut survivor = Client::spawn(&proxy_endpoint);
     let _survivor_control = tokio::time::timeout(BOUND, controls.recv())
@@ -430,7 +439,7 @@ async fn real_proxies_recover_from_control_loss_without_waiting_for_stdin() {
         .unwrap();
     fresh.call("get_config", json!({}));
     fresh.call("start_session", json!({"session":"fresh-client"}));
-    fresh.call("get_session_state", json!({"session":"fresh-client"}));
+    fresh.call("get_session", json!({"session":"fresh-client"}));
     survivor.call("get_config", json!({"session":"survivor"}));
     relay_task.abort();
 }

@@ -5,9 +5,8 @@
       "at": "launch",
       "signals": [
         {
-          "ok": true,
-          "step": "app_launched",
-          "type": "step"
+          "onboardingEligible": true,
+          "type": "launched"
         }
       ]
     },
@@ -19,6 +18,12 @@
     },
     {
       "action": "telemetry-loaded",
+      "at": "onboarding",
+      "page": "welcome",
+      "signals": []
+    },
+    {
+      "action": "welcome-shown",
       "at": "onboarding",
       "page": "welcome",
       "signals": []
@@ -266,15 +271,15 @@
       "signals": []
     },
     {
-      "action": "signed-in",
+      "action": "telemetry-loaded",
       "at": "skipping",
       "page": "welcome",
       "signals": []
     },
     {
-      "action": "start",
+      "action": "welcome-shown",
       "at": "skipping",
-      "page": "signin",
+      "page": "welcome",
       "signals": [
         {
           "ok": true,
@@ -286,12 +291,70 @@
           "choice": "none",
           "page": "welcome",
           "type": "onboarding-page"
-        },
+        }
+      ]
+    },
+    {
+      "action": "signed-in",
+      "at": "skipping",
+      "page": "welcome",
+      "signals": [
         {
           "ok": true,
           "step": "signed_in",
           "type": "step"
+        }
+      ]
+    },
+    {
+      "action": "start",
+      "at": "skipping",
+      "page": "signin",
+      "signals": [
+        {
+          "action": "completed",
+          "choice": "none",
+          "page": "welcome",
+          "type": "onboarding-page"
         },
+        {
+          "action": "shown",
+          "choice": "none",
+          "page": "signin",
+          "type": "onboarding-page"
+        }
+      ]
+    },
+    {
+      "action": "back",
+      "at": "skipping",
+      "page": "welcome",
+      "signals": [
+        {
+          "action": "back",
+          "choice": "none",
+          "page": "signin",
+          "type": "onboarding-page"
+        },
+        {
+          "action": "shown",
+          "choice": "none",
+          "page": "welcome",
+          "type": "onboarding-page"
+        }
+      ]
+    },
+    {
+      "action": "welcome-shown",
+      "at": "skipping",
+      "page": "welcome",
+      "signals": []
+    },
+    {
+      "action": "start",
+      "at": "skipping",
+      "page": "signin",
+      "signals": [
         {
           "action": "completed",
           "choice": "none",
@@ -569,12 +632,15 @@
       "signals": [
         {
           "elapsedMs": 47000,
+          "errorSubclass": "none",
+          "errorVariant": "",
           "failedPhase": "none",
           "gpu": false,
           "guestOs": "linux",
           "kind": "container",
           "location": "local",
           "outcome": "ok",
+          "retryAttempt": 0,
           "stalled": false,
           "type": "space-create"
         },
@@ -590,14 +656,14 @@
       "at": "creates",
       "signals": [
         {
-          "feature": "space_create_cloud",
+          "feature": "space_create_local",
           "type": "feature"
         },
         {
           "gpu": false,
           "guestOs": "windows",
           "kind": "vm",
-          "location": "cloud",
+          "location": "direct",
           "type": "space-create-started"
         },
         {
@@ -618,12 +684,15 @@
       "signals": [
         {
           "elapsedMs": 45000,
+          "errorSubclass": "none",
+          "errorVariant": "InsufficientDisk",
           "failedPhase": "booting",
           "gpu": false,
           "guestOs": "windows",
           "kind": "vm",
-          "location": "cloud",
+          "location": "direct",
           "outcome": "error",
+          "retryAttempt": 0,
           "stalled": false,
           "type": "space-create"
         }
@@ -672,12 +741,15 @@
       "signals": [
         {
           "elapsedMs": 7201000,
+          "errorSubclass": "none",
+          "errorVariant": "",
           "failedPhase": "pulling",
           "gpu": false,
           "guestOs": "linux",
           "kind": "container",
           "location": "local",
           "outcome": "error",
+          "retryAttempt": 0,
           "stalled": true,
           "type": "space-create"
         }
@@ -721,12 +793,15 @@
       "signals": [
         {
           "elapsedMs": 31000,
+          "errorSubclass": "none",
+          "errorVariant": "",
           "failedPhase": "pulling",
           "gpu": true,
           "guestOs": "macos",
           "kind": "vm",
           "location": "local",
           "outcome": "cancelled",
+          "retryAttempt": 0,
           "stalled": false,
           "type": "space-create"
         }
@@ -737,14 +812,14 @@
       "at": "creates",
       "signals": [
         {
-          "feature": "space_create_cloud",
+          "feature": "space_create_local",
           "type": "feature"
         },
         {
           "gpu": false,
           "guestOs": "linux",
           "kind": "container",
-          "location": "cloud",
+          "location": "direct",
           "type": "space-create-started"
         },
         {
@@ -770,12 +845,15 @@
       "signals": [
         {
           "elapsedMs": 40000,
+          "errorSubclass": "none",
+          "errorVariant": "",
           "failedPhase": "none",
           "gpu": false,
           "guestOs": "linux",
           "kind": "container",
-          "location": "cloud",
+          "location": "direct",
           "outcome": "ok",
+          "retryAttempt": 0,
           "stalled": false,
           "type": "space-create"
         },
@@ -819,12 +897,15 @@
       "signals": [
         {
           "elapsedMs": 4000,
+          "errorSubclass": "none",
+          "errorVariant": "",
           "failedPhase": "preparing",
           "gpu": true,
           "guestOs": "linux",
           "kind": "container",
           "location": "local",
           "outcome": "cancelled",
+          "retryAttempt": 0,
           "stalled": false,
           "type": "space-create"
         }
@@ -892,6 +973,8 @@
       "signals": [
         {
           "action": "share",
+          "errorKind": "none",
+          "failedStage": "none",
           "outcome": "ok",
           "role": "viewer",
           "type": "share"
@@ -904,6 +987,8 @@
       "signals": [
         {
           "action": "change_role",
+          "errorKind": "none",
+          "failedStage": "none",
           "outcome": "ok",
           "role": "editor",
           "type": "share"
@@ -916,6 +1001,8 @@
       "signals": [
         {
           "action": "unshare",
+          "errorKind": "none",
+          "failedStage": "none",
           "outcome": "ok",
           "role": "none",
           "type": "share"
@@ -928,12 +1015,28 @@
       "signals": [
         {
           "action": "share",
+          "errorKind": "other",
+          "failedStage": "other",
           "outcome": "error",
           "role": "editor",
           "type": "share"
         }
       ],
       "step": "share failed"
+    },
+    {
+      "at": "share",
+      "signals": [
+        {
+          "action": "share",
+          "errorKind": "presence_cancelled",
+          "failedStage": "presence",
+          "outcome": "cancelled",
+          "role": "viewer",
+          "type": "share"
+        }
+      ],
+      "step": "confirmation dismissed"
     },
     {
       "at": "share",

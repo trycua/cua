@@ -1,8 +1,11 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Cursor hook — a per-process callback fired whenever the agent cursor moves
 //! or a press happens, so an embedder (for example a remote-desktop host) can
 //! observe where every cursor is without polling or driving the overlay itself.
 //!
-//! Mirrors the `pip_hook` / `session` hook idiom: a single registered closure,
+//! Mirrors the `session` hook idiom: a single registered closure,
 //! fired from the platform cursor-state write path. Coordinates are SCREEN
 //! points (the space the overlay works in); the embedder maps them to whatever
 //! window/target space it needs. No-op until an embedder registers a hook, so

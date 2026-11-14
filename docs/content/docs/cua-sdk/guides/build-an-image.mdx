@@ -1,0 +1,75 @@
+---
+title: Build an image from a Dockerfile
+description: Build a Dockerfile or a list of steps in a Space with `cua build` or `Spaces.build`. Each layer is a pinned checkpoint, so rebuilds run only what changed and Spaces fork from the result in under a second.
+---
+
+`cua build` turns a Dockerfile into a checkpoint that Spaces fork from. It works in any directory, not
+only inside a repository. The build runs inside a Space (never as a host process), and every
+filesystem step is saved as a pinned checkpoint, so a rebuild runs only the steps that changed.
+
+```bash test="cli-shape" id="build-basic"
+cua build -t app ./services/api
+cua spaces create build:app
+cua build -f docker/Dockerfile.dev --build-arg PY=3.12 -t app-dev ./services/api
+cua build --no-cache -t app ./services/api
+```
+
+## How a build runs
+
+1. The first layer is the base image: a Cua image, `ubuntu:<version>`, `debian:<version>` or
+   `python:<version>` (Cua's Linux image, with Python installed by uv for `python:`). Any other base
+   is refused with a message that names what works, because an arbitrary container image does not
+   carry cua-spacesd.
+2. Each `RUN`, `COPY`/`ADD` and `WORKDIR` is a layer. Its cache key is the hash of the previous key
+   and the step. A `COPY` step includes the hashes of the files it copies, and the first key
+   includes the base image's digest, so a base that moved under its tag rebuilds every layer.
+3. A build forks the deepest layer already built, runs the remaining layers in one builder Space,
+   saves a pinned checkpoint `build-<key>` after each, and deletes the builder.
+4. A failed step names its command, exit code and last output lines. Earlier layers stay cached.
+
+Identical builds running at the same time share one run.
+
+## What it supports
+
+`FROM` (one stage), `ARG` before and after `FROM`, `RUN` (shell and exec form), `ENV`, `WORKDIR`,
+`USER`, `COPY` and `ADD` of local files (`--chown`, `--chmod`; `ADD` unpacks a local tar archive),
+`CMD`, `ENTRYPOINT`, `SHELL`, `LABEL`, `EXPOSE`, `VOLUME`, `STOPSIGNAL`, `HEALTHCHECK`, comments,
+line continuations, and `$VAR`, `${VAR:-x}` and `${VAR:+x}` expansion. `.dockerignore` in the context
+applies.
+
+These are refused, with the line named: a second `FROM` (multi-stage), `COPY --from`,
+`RUN --mount`, `--network` and `--security`, heredocs, `ONBUILD`, and `ADD` of a URL.
+
+`ENV`, `WORKDIR` and `USER` become the image's configuration. Commands run through Cua in a Space
+made from the build (`exec`, `Space.bash`, `cua sb exec`) get them.
+
+## From the SDK
+
+```python skip="local-vm"
+import cua
+
+spaces = cua.embedded().spaces()
+built = await spaces.build(cua.BuildOptions(
+    dockerfile=open("Dockerfile").read(),
+    context_dir=".",
+    tag="app",
+))
+print(built.checkpoint, built.cached)
+space = await spaces.create(cua.SpaceCreateOptions(image="build:app"))
+```
+
+`SpaceCreateOptions.build` builds first (or finds the build cached) and then forks it:
+
+```python skip="local-vm"
+space = await spaces.create(cua.SpaceCreateOptions(
+    build=cua.BuildOptions(base="ubuntu:24.04", steps=[cua.BuildStep.RUN(command="apt-get update")]),
+))
+```
+
+`Spaces.builds()` lists builds and `Spaces.delete_build(tag)` removes one with the layer
+checkpoints no other build uses. `Spaces.fork(tag, name)` and `cua sb fork build-<key> name` start
+a Space from a build.
+
+A build's layers are checkpoints, which live on the machine that took them, so `--on` other than
+local is refused. Build on the machine that will run it, or copy the checkpoint with
+`cua sb publish`.

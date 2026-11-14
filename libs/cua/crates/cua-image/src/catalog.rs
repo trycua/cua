@@ -18,7 +18,7 @@ use crate::error::{ImageError, Result};
 use crate::resolve::NormalizedRef;
 
 /// The catalog file, as built into this crate.
-pub const CATALOG_JSON: &str = include_str!("../../../../images/sandbox-images.json");
+pub const CATALOG_JSON: &str = include_str!(concat!(env!("OUT_DIR"), "/sandbox-images.json"));
 
 /// One catalog entry (the fields the resolver needs).
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -49,6 +49,21 @@ pub struct CatalogEntry {
     /// (`scripts/images/record-image-sizes.py`).
     #[serde(default)]
     pub sizes: Option<CatalogSizes>,
+    /// `Some(false)`: the guest cannot use GPU acceleration (absent: no claim).
+    #[serde(default)]
+    pub gpu: Option<bool>,
+    /// The published image this one is built from on the user's own machine
+    /// when it is not available to pull: the macOS Space with developer tools
+    /// is the full macOS image plus the Xcode the Mac already has. Such an
+    /// entry resolves even while `published` is false (to that build, which
+    /// the Lume runtime does on first use) and is pulled once it is published.
+    #[serde(default)]
+    pub derived_from: Option<String>,
+    /// How this image is made on the user's machine when nothing is pulled:
+    /// `windows-iso` installs Windows unattended from an ISO on first use
+    /// ([`crate::windows`]). Such an entry resolves while `published` is false.
+    #[serde(default)]
+    pub local_build: Option<String>,
 }
 
 /// The guest distribution a catalog entry names (`distro`).
@@ -116,12 +131,32 @@ pub fn find(reference: &str) -> Option<&'static CatalogEntry> {
 }
 
 /// `Ok(reference)` unless the catalog lists it as unpublished. References
-/// the catalog does not list pass through (other versions, local builds).
+/// the catalog does not list pass through (other versions, local builds), and
+/// so do the ones built on the user's machine ([`derived_from`]).
 pub fn require_published(reference: String) -> Result<String> {
     match find(&reference) {
-        Some(e) if !e.published => Err(ImageError::NotPublished { reference }),
+        Some(e) if !e.published && e.derived_from.is_none() && e.local_build.is_none() => {
+            Err(ImageError::NotPublished { reference })
+        }
         _ => Ok(reference),
     }
+}
+
+/// The published image `reference` is built from on this computer, when the
+/// catalog lists it as derived ([`CatalogEntry::derived_from`]). A digest on
+/// `reference` is ignored: it names the parent's.
+pub fn derived_from(reference: &str) -> Option<&'static str> {
+    derived_from_in(reference, entries())
+}
+
+/// [`derived_from`] over explicit entries (tests).
+pub fn derived_from_in<'a>(reference: &str, entries: &'a [CatalogEntry]) -> Option<&'a str> {
+    let wanted = NormalizedRef::parse(reference.trim()).ok()?;
+    entries.iter().find_map(|e| {
+        let parent = e.derived_from.as_deref()?;
+        let n = NormalizedRef::parse(&e.reference).ok()?;
+        (n.repo() == wanted.repo() && n.tag == wanted.tag).then_some(parent)
+    })
 }
 
 /// `(ref, os)` of every catalog entry, for [`catalog_os`].
@@ -234,6 +269,47 @@ mod tests {
     }
 
     #[test]
+    fn the_developer_tools_image_falls_back_to_a_local_build() {
+        let x = "ghcr.io/trycua/macos:26-xcode";
+        let e = find(x).expect("listed");
+        assert_eq!(e.derived_from.as_deref(), Some("ghcr.io/trycua/macos:26"));
+        assert_eq!(require_published(x.into()).as_deref().ok(), Some(x));
+        assert_eq!(derived_from(x), Some("ghcr.io/trycua/macos:26"));
+        let pinned = format!("{x}@sha256:{}", "a".repeat(64));
+        assert_eq!(derived_from(&pinned), Some("ghcr.io/trycua/macos:26"));
+        assert_eq!(derived_from("ghcr.io/trycua/macos:26"), None);
+        assert_eq!(derived_from("ghcr.io/trycua/macos:26-slim"), None);
+        // The parent is published, or the derive would have nothing to start from.
+        assert!(find("ghcr.io/trycua/macos:26").is_some_and(|p| p.published));
+        // Nothing else is derived.
+        for e in entries().iter().filter(|e| e.derived_from.is_some()) {
+            assert_eq!(e.reference, x);
+        }
+    }
+
+    #[test]
+    fn windows_local_builds_resolve_while_unpublished() {
+        let built: Vec<_> = entries()
+            .iter()
+            .filter(|e| e.local_build.is_some())
+            .collect();
+        assert!(built.len() >= 2);
+        for e in built {
+            assert_eq!(e.os, "windows");
+            assert!(!e.published, "{}", e.reference);
+            assert_eq!(e.local_build.as_deref(), Some("windows-iso"));
+            let tag = e.reference.rsplit(':').next().unwrap();
+            assert!(crate::windows::lookup(tag).is_some_and(|v| v.builds_locally()));
+            assert!(require_published(e.reference.clone()).is_ok());
+            // The create path reads the guest OS from here: a local build has
+            // no image metadata to say it is Windows.
+            assert_eq!(catalog_os(&e.reference).as_deref(), Some("windows"));
+        }
+        // The published default is pulled, never built.
+        assert!(find("ghcr.io/trycua/windows:2022").is_some_and(|e| e.local_build.is_none()));
+    }
+
+    #[test]
     fn every_entry_names_its_distro() {
         for e in entries() {
             let d = e
@@ -272,6 +348,9 @@ mod tests {
             digest: None,
             local: None,
             sizes: None,
+            gpu: None,
+            derived_from: None,
+            local_build: None,
             distro: Some(Distro {
                 id: id.into(),
                 name: n.into(),

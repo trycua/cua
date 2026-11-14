@@ -44,6 +44,16 @@ if ($null -eq $ffmpeg -or $null -eq $ffprobe) {
 & (Join-Path $scriptDir "verify-user-session.ps1")
 if ($RequireGui) { $env:CUA_REQUIRE_GUI = "1" }
 
+# Harness hosts named by CUA_E2E_HARNESS_FILTER (the Rust test reads the same
+# variable and keeps only those hosts); empty means every host. The fixture
+# target "webview" is the host "webview2".
+function Test-HarnessWanted([string]$Name) {
+    $selected = @(([string]$env:CUA_E2E_HARNESS_FILTER).Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if ($selected.Count -eq 0) { return $true }
+    if ($Name -eq "webview") { $Name = "webview2" }
+    return $selected -contains $Name
+}
+
 $env:CUA_TEST_WORKSPACE_ROOT = $rustRoot
 $env:CUA_TEST_DRIVER_BIN = Join-Path $rustRoot "target\release\cua-driver.exe"
 $env:CUA_TEST_APPS_ROOT = Join-Path $rustRoot "test-apps"
@@ -83,7 +93,9 @@ if (-not $NoBuild) {
     }
     if ($buildExit -ne 0) { throw "Rust driver build failed" }
     $fixtureTargets = switch ($suite) {
-        "shared" { @("electron", "tauri", "webview") }
+        # The PR quick lane sets CUA_E2E_HARNESS_FILTER=electron: build only the
+        # harnesses it names, like the Linux runner does. Empty builds them all.
+        "shared" { @(@("electron", "tauri", "webview") | Where-Object { Test-HarnessWanted $_ }) }
         "native" { @("wpf", "winui3", "webview", "electron") }
         "capture" { @("wpf", "electron") }
         default { @("wpf", "winui3", "webview", "electron", "tauri") }
@@ -96,13 +108,13 @@ if (-not (Test-Path $env:CUA_TEST_DRIVER_BIN)) {
 }
 $requiredFixtures = @()
 $requiredFixtures += Join-Path $env:CUA_TEST_APPS_ROOT "harness-electron\CuaTestHarness.Electron.exe"
-if ($suite -in @("shared", "all")) {
+if (($suite -in @("shared", "all")) -and (Test-HarnessWanted "tauri")) {
     $requiredFixtures += Join-Path $env:CUA_TEST_APPS_ROOT "harness-tauri\CuaTestHarness.Tauri.exe"
 }
 if ($suite -in @("native", "capture", "all")) {
     $requiredFixtures += Join-Path $env:CUA_TEST_APPS_ROOT "harness-wpf\CuaTestHarness.Wpf.exe"
 }
-if ($suite -in @("shared", "native", "all")) {
+if (($suite -in @("shared", "native", "all")) -and (Test-HarnessWanted "webview")) {
     $requiredFixtures += Join-Path $env:CUA_TEST_APPS_ROOT "harness-webview\CuaTestHarness.WebView.exe"
 }
 if ($suite -in @("native", "all")) {
@@ -177,12 +189,10 @@ if ($preflightExit -ne 0) {
     throw "Windows E2E environment preflight failed"
 }
 
-function Invoke-CargoTest {
-    param([string]$Name, [string[]]$Arguments)
-    Write-Host "[RUN] $Name" -ForegroundColor Yellow
+function Invoke-CargoTestAttempt {
+    param([string[]]$Arguments, [string]$LogPath)
     Push-Location $rustRoot
     try {
-        $logPath = Join-Path $artifactDir ("$($Name -replace '[^A-Za-z0-9_.-]', '-').log")
         $previousPreference = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
         try {
@@ -197,12 +207,52 @@ function Invoke-CargoTest {
         } finally {
             $ErrorActionPreference = $previousPreference
         }
-        $output | Tee-Object -FilePath $logPath
-        if ($exitCode -ne 0) {
-            $script:FailureCount++
-        }
+        $output | Tee-Object -FilePath $LogPath | Out-Host
+        return $exitCode
     } finally {
         Pop-Location
+    }
+}
+
+# With CUA_E2E_RETRY_ONCE=1 a failed case is rerun exactly once. A pass on the
+# rerun is "flaky": it is recorded in flaky-cases.jsonl and does not fail the
+# gate. Two failures are a real failure. Mirrors scripts/ci/lib/e2e-retry-once.sh.
+function Invoke-CargoTest {
+    param([string]$Name, [string[]]$Arguments)
+    Write-Host "[RUN] $Name" -ForegroundColor Yellow
+    $logPath = Join-Path $artifactDir ("$($Name -replace '[^A-Za-z0-9_.-]', '-').log")
+    $retry = $env:CUA_E2E_RETRY_ONCE -eq "1"
+    if ($retry) {
+        $resultsLines = @(Get-Content $resultsPath).Count
+        $caseLines = @(Get-Content $casesPath).Count
+        $beforeDirs = @(Get-ChildItem -Path $recordingRoot -Directory | ForEach-Object { $_.FullName })
+    }
+    $exitCode = Invoke-CargoTestAttempt -Arguments $Arguments -LogPath $logPath
+    if ($exitCode -ne 0 -and $retry) {
+        Write-Host "[RETRY] $Name failed (exit $exitCode); rerunning once" -ForegroundColor Yellow
+        $quarantine = Join-Path $artifactDir ("retried-attempts\" + ($Name -replace '[^A-Za-z0-9_.-]', '-'))
+        New-Item -ItemType Directory -Force (Join-Path $quarantine "recordings") | Out-Null
+        Copy-Item $logPath (Join-Path $quarantine "attempt1.log")
+        $resultRows = @(Get-Content $resultsPath)
+        $caseRows = @(Get-Content $casesPath)
+        $resultRows | Select-Object -Skip $resultsLines | Set-Content (Join-Path $quarantine "results.jsonl")
+        $caseRows | Select-Object -Skip $caseLines | Set-Content (Join-Path $quarantine "cases.jsonl")
+        Set-Content -Path $resultsPath -Value ($resultRows | Select-Object -First $resultsLines)
+        Set-Content -Path $casesPath -Value ($caseRows | Select-Object -First $caseLines)
+        Get-ChildItem -Path $recordingRoot -Directory | Where-Object { $beforeDirs -notcontains $_.FullName } |
+            ForEach-Object { Move-Item $_.FullName (Join-Path $quarantine "recordings") }
+        $secondExit = Invoke-CargoTestAttempt -Arguments $Arguments -LogPath $logPath
+        if ($secondExit -eq 0) {
+            Write-Host "[FLAKY] $Name failed once (exit $exitCode) then passed; not failing the gate"
+            $record = [ordered]@{ case = $Name; platform = "windows"; first_attempt_exit = $exitCode; second_attempt = "passed" }
+            Add-Content -Path (Join-Path $artifactDir "flaky-cases.jsonl") -Value ($record | ConvertTo-Json -Compress)
+            return
+        }
+        Write-Host "[FAIL] $Name failed twice (exit $exitCode, then $secondExit); real failure"
+        $exitCode = $secondExit
+    }
+    if ($exitCode -ne 0) {
+        $script:FailureCount++
     }
 }
 

@@ -333,13 +333,16 @@ mod tests {
     #[test]
     fn a_success_missing_required_nullable_fields_becomes_a_conforming_error() {
         let structured = json!({
-            "session": "schema-test",
-            "capture_scope": "window",
-            "effective_scope": "window",
-            "desktop_capture_authorized": false,
-            "desktop_unlocked": false,
+            "implicit": false,
+            "state": "active",
+            "client_kind": "mcp",
+            "transport": "mcp_stdio",
+            "cursor_visible": false,
+            "recording_active": false,
+            "idle_seconds": 0,
+            "expires_in_seconds": 300,
         });
-        let tool = "get_session_state";
+        let tool = "get_session";
         assert!(validate_success_output(tool, structured.clone()).is_ok());
         let result = conforming_tool_result(
             tool,
@@ -358,8 +361,8 @@ mod tests {
         );
         assert_eq!(result["structuredContent"]["execution_state"], "unknown");
         assert_eq!(
-            result["structuredContent"]["invalid_output"]["session"],
-            "schema-test"
+            result["structuredContent"]["invalid_output"]["state"],
+            "active"
         );
         assert!(result["content"][0]["text"]
             .as_str()
@@ -398,6 +401,15 @@ mod tests {
                 "dwell_after_click_ms": 400.0,
                 "idle_hide_ms": 3000.0,
                 "turn_radius": 12.0,
+                "style": "signature_arc",
+                "timing": "native",
+                "effects": {
+                    "trail": false,
+                    "glow": true,
+                    "magnet": false,
+                    "ripple": true,
+                    "squish": true,
+                },
             },
         })
     }

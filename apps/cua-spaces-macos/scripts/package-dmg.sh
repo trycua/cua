@@ -49,7 +49,7 @@ rm -f "$out"
   -D app="$app" -D alias="$work/Applications" -D art="$art" \
   "Cua Spaces" "$out" >&2
 if [ -n "$identity" ]; then
-  codesign --force --timestamp --sign "$identity" "$out"
+  "$here/retry-apple.sh" -- codesign --force --timestamp --sign "$identity" "$out"
   codesign --verify --strict --verbose=2 "$out" >&2
 fi
 hdiutil verify -quiet "$out"

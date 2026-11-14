@@ -96,14 +96,14 @@ class NativeQEMURuntime(NativeRuntime):
 
     async def _image_ref(self, image: Image, name: str, **opts) -> str:
         from cua_sandbox.builder.build import create_session_disk, has_build_work
-        from cua_sandbox.image import cloud_registry_image
+        from cua_sandbox.image import registry_image
 
         disk = opts.get("disk_path") or image._disk_path
-        ref = cloud_registry_image(image)
+        ref = registry_image(image)
         if disk and not has_build_work(image):
             return f"disk:{disk}"
         if ref is not None and not disk and not has_build_work(image):
-            # The SDK pulls the pinned containerDisk (the disk Fleet boots).
+            # The SDK pulls the pinned containerDisk.
             return f"vm:{ref}"
         session = await create_session_disk(image, name, base_disk=Path(disk) if disk else None)
         if "sessions" in str(session):
@@ -326,6 +326,10 @@ class QEMUBaremetalRuntime(Runtime):
             info = await native.start(image, name, ephemeral=ephemeral, **opts)
             self._native_names = getattr(self, "_native_names", set()) | {name}
             return info
+
+        # The SDK-backed path above takes the readiness budget; this one waits
+        # on its own timeouts.
+        opts.pop("ready_timeout", None)
 
         # Guest egress is on by default (slirp NAT, like a Docker container);
         # network="none" adds restrict=on, which keeps the loopback forwards.

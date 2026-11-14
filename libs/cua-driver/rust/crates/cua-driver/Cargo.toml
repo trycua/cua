@@ -21,7 +21,6 @@ cua-driver-core = { path = "../cua-driver-core" }
 cua-driver-contract = { path = "../cua-driver-contract" }
 cua-driver-sdk = { path = "../cua-driver-sdk" }
 cursor-overlay = { path = "../cursor-overlay" }
-pip-preview = { path = "../pip-preview" }
 async-trait = "0.1"
 httparse = "1.10.1"
 base64 = { workspace = true }
@@ -35,6 +34,12 @@ ureq = { version = "3", features = ["json"] }
 # `[telemetry] enabled` in $CUA_HOME/config.toml). Only its config reader
 # is used; no sender.
 cua-telemetry = { path = "../../../../cua/crates/cua-telemetry", default-features = false }
+# `connect --replace` switches an agent's `cua-driver` server through the
+# step Cua Spaces' Set up runs (`AgentSetup::configure_mcp`).
+cua-agent-setup = { path = "../../../../cua/crates/cua-agent-setup" }
+# Reads Codex's config.toml in `connect`. Already in the tree through
+# cua-telemetry, at the same version.
+toml_edit = "0.25"
 # Strict semver comparison for the startup update-available banner so that
 # pre-release tags (`-dev`, `-rc.1`) sort below their corresponding release
 # and we never recommend a pre-release as an "update".
@@ -103,6 +108,12 @@ base64 = { workspace = true }
 # Isolated HOME / cache directories for `version_check` unit tests so they
 # never touch the developer's real `~/.cua-driver/version_check.json`.
 tempfile = "3"
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+# Private session and accessibility buses for the AT-SPI listener tests: the
+# test owns `org.a11y.Bus` and `org.a11y.atspi.Registry` itself and reads
+# the bus daemon's per-connection statistics.
+zbus = { version = "5", default-features = false, features = ["tokio"] }
 
 [target.'cfg(target_os = "windows")'.dev-dependencies]
 platform-windows = { path = "../platform-windows" }

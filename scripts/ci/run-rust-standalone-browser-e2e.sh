@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Run the cross-platform external Chromium browser matrix in the caller's desktop session.
 set -euo pipefail
+# macOS shells default to 256 open files, too few for the cua-spaces test binaries (see scripts/ci/tests/test_nofile_limit.py).
+[ "$(ulimit -Sn)" = unlimited ] || [ "$(ulimit -Sn)" -ge 10240 ] || ulimit -Sn 10240 2>/dev/null || ulimit -Sn "$(ulimit -Hn)" 2>/dev/null || true # nofile-limit
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -115,6 +117,7 @@ else
     tests+=(
       standalone_browser_dialog_background_refusal
       standalone_browser_capture_bound_pixel_click_background_refusal
+      standalone_browser_capture_bound_pixel_click_background_control
     )
   fi
   tests+=(
@@ -140,21 +143,26 @@ else
     standalone_browser_window_collision
   )
   if [[ "${HOST_OS}" == Darwin ]]; then
-    # macOS-only native-chrome keyboard regressions.
-    tests+=(standalone_browser_native_omnibox_select_all)
+    # macOS-only native-chrome keyboard regressions, and the background
+    # web-press no-op report (#4243).
+    tests+=(
+      standalone_browser_native_omnibox_select_all
+      standalone_browser_background_web_click_noop
+    )
   fi
 fi
+# shellcheck source=lib/e2e-retry-once.sh
+source "${REPO_ROOT}/scripts/ci/lib/e2e-retry-once.sh"
+export CUA_E2E_PLATFORM=browsers
 failure_count=0
 for test_name in "${tests[@]}"; do
   echo "[RUN] ${test_name}"
-  set +e
-  (cd "${RUST_ROOT}" && cargo test --release -p cua-driver-e2e \
+  test_status=0
+  cua_e2e_run_case "${test_name}" "${ARTIFACT_DIR}/${test_name}.log" "${RUST_ROOT}" \
+    cargo test --release -p cua-driver-e2e \
     ${CARGO_DRIVER_FEATURE_ARGS[@]+"${CARGO_DRIVER_FEATURE_ARGS[@]}"} \
     --test standalone_browser_behavior_test "${test_name}" -- \
-    --ignored --exact --nocapture --test-threads=1) \
-    2>&1 | tee "${ARTIFACT_DIR}/${test_name}.log"
-  test_status=${PIPESTATUS[0]}
-  set -e
+    --ignored --exact --nocapture --test-threads=1 || test_status=$?
   if [[ "${test_status}" != 0 ]]; then
     failure_count=$((failure_count + 1))
   fi

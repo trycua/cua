@@ -20,7 +20,7 @@ cua-media-codec = { path = "../../crates/cua-media-codec", default-features = fa
 cua-media-client = { path = "../../crates/cua-media-client", features = ["media-decode"] }
 tonic = { version = "0.14", features = ["transport"] }
 tokio = { version = "1", features = ["full"] }
-tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "handshake"] }
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
 quinn = { version = "0.11.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 futures-util = { version = "0.3", features = ["sink"] }
 serde = { version = "1", features = ["derive"] }

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! ffmpeg-subprocess video backend (Windows + Linux).
 //!
 //! macOS uses native ScreenCaptureKit in `platform_macos::video_sckit`
@@ -12,6 +15,10 @@
 //! Encoder is `libx264 -preset ultrafast -pix_fmt yuv420p` everywhere.
 //! Lifecycle: spawn → caller stays alive → send `q\n` on stdin for a
 //! clean shutdown that finalizes the moov atom (force-kill on stall).
+//!
+//! On Windows the encoder runs in its own job object, because the `ffmpeg`
+//! on PATH is often a package-manager shim (Chocolatey) whose real encoder
+//! is a child process. Killing only the shim leaves that encoder running.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -28,8 +35,17 @@ impl VideoBackendFactory for FfmpegVideoBackendFactory {
     }
 }
 
+/// How long a clean shutdown may take after `q`. ffmpeg reads stdin between
+/// frames, so a stalled desktop grab (gdigrab can block for seconds while the
+/// desktop changes) delays the read; a three-second deadline killed encoders
+/// that went on to finalize (#3713). Stays well under callers' tool-call
+/// timeouts.
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
+
 pub struct FfmpegVideoBackend {
     child: Child,
+    #[cfg(windows)]
+    job: windows_job::EncoderJob,
     output_path: PathBuf,
     started_at: Instant,
     /// Drains ffmpeg's stderr so its pipe doesn't fill up and block the
@@ -85,6 +101,10 @@ impl FfmpegVideoBackend {
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
 
+        #[cfg(windows)]
+        let (mut child, job) = windows_job::spawn(&mut cmd)
+            .map_err(|e| anyhow::anyhow!("Failed to spawn ffmpeg ({}): {e}", ffmpeg.display()))?;
+        #[cfg(not(windows))]
         let mut child = cmd
             .spawn()
             .map_err(|e| anyhow::anyhow!("Failed to spawn ffmpeg ({}): {e}", ffmpeg.display()))?;
@@ -128,6 +148,8 @@ impl FfmpegVideoBackend {
 
         Ok(FfmpegVideoBackend {
             child,
+            #[cfg(windows)]
+            job,
             output_path,
             started_at: Instant::now(),
             stderr_thread,
@@ -143,8 +165,7 @@ impl VideoBackend for FfmpegVideoBackend {
             let _ = stdin.flush();
         }
 
-        let shutdown_timeout = Duration::from_millis(3000);
-        let deadline = Instant::now() + shutdown_timeout;
+        let deadline = Instant::now() + SHUTDOWN_TIMEOUT;
         let result = loop {
             match self.child.try_wait()? {
                 Some(status) if status.success() => break Ok(()),
@@ -155,11 +176,13 @@ impl VideoBackend for FfmpegVideoBackend {
                     break Err(anyhow::anyhow!("ffmpeg exited with {cause}"));
                 }
                 None if Instant::now() > deadline => {
+                    #[cfg(windows)]
+                    self.job.terminate();
                     let _ = self.child.kill();
                     let _ = self.child.wait();
                     break Err(anyhow::anyhow!(
                         "ffmpeg shutdown timed out after {} ms",
-                        shutdown_timeout.as_millis()
+                        SHUTDOWN_TIMEOUT.as_millis()
                     ));
                 }
                 None => std::thread::sleep(Duration::from_millis(80)),
@@ -180,6 +203,107 @@ impl VideoBackend for FfmpegVideoBackend {
             duration_ms: elapsed.as_millis() as u64,
             finalized: true,
         })
+    }
+}
+
+#[cfg(windows)]
+mod windows_job {
+    use std::os::windows::io::AsRawHandle;
+    use std::os::windows::process::CommandExt;
+    use std::process::{Child, Command};
+
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
+    };
+    use windows::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+    use windows::Win32::System::Threading::{
+        OpenThread, ResumeThread, CREATE_SUSPENDED, THREAD_SUSPEND_RESUME,
+    };
+
+    /// A kill-on-close job holding the encoder and every process it starts.
+    /// The handle is kept as an integer so the backend stays `Send`.
+    pub(super) struct EncoderJob(isize);
+
+    impl EncoderJob {
+        fn handle(&self) -> HANDLE {
+            HANDLE(self.0 as _)
+        }
+
+        pub(super) fn terminate(&self) {
+            let _ = unsafe { TerminateJobObject(self.handle(), 1) };
+        }
+    }
+
+    impl Drop for EncoderJob {
+        fn drop(&mut self) {
+            let _ = unsafe { CloseHandle(self.handle()) };
+        }
+    }
+
+    /// Spawn `cmd` suspended, place it in a new job, then resume it, so a
+    /// shim cannot start the real encoder outside the job.
+    pub(super) fn spawn(cmd: &mut Command) -> std::io::Result<(Child, EncoderJob)> {
+        let job = unsafe {
+            let handle = CreateJobObjectW(None, PCWSTR::null())?;
+            let job = EncoderJob(handle.0 as isize);
+            let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            SetInformationJobObject(
+                handle,
+                JobObjectExtendedLimitInformation,
+                &limits as *const _ as *const core::ffi::c_void,
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )?;
+            job
+        };
+        let mut child = cmd.creation_flags(CREATE_SUSPENDED.0).spawn()?;
+        let started = unsafe {
+            AssignProcessToJobObject(job.handle(), HANDLE(child.as_raw_handle() as _))
+                .map_err(std::io::Error::from)
+                .and_then(|()| resume(child.id()))
+        };
+        if let Err(error) = started {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+        Ok((child, job))
+    }
+
+    /// Resume the only thread of a process created suspended. `Child` does
+    /// not expose its primary thread handle, so find it by owner pid.
+    unsafe fn resume(pid: u32) -> std::io::Result<()> {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0)?;
+        let mut entry = THREADENTRY32 {
+            dwSize: std::mem::size_of::<THREADENTRY32>() as u32,
+            ..Default::default()
+        };
+        let mut thread_id = None;
+        let mut more = Thread32First(snapshot, &mut entry).is_ok();
+        while more {
+            if entry.th32OwnerProcessID == pid {
+                thread_id = Some(entry.th32ThreadID);
+                break;
+            }
+            more = Thread32Next(snapshot, &mut entry).is_ok();
+        }
+        let _ = CloseHandle(snapshot);
+        let thread_id = thread_id.ok_or_else(|| {
+            std::io::Error::other(format!("no thread found for suspended ffmpeg {pid}"))
+        })?;
+        let thread = OpenThread(THREAD_SUSPEND_RESUME, false, thread_id)?;
+        let resumed = ResumeThread(thread);
+        let _ = CloseHandle(thread);
+        if resumed == u32::MAX {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(())
     }
 }
 
@@ -208,7 +332,9 @@ pub fn find_ffprobe() -> Option<PathBuf> {
     }
 }
 
-pub(crate) fn find_ffmpeg() -> Option<PathBuf> {
+/// Locate `ffmpeg`, preferring PATH and falling back to the winget install
+/// location on Windows. Shared by every subprocess-encoding video backend.
+pub fn find_ffmpeg() -> Option<PathBuf> {
     if Command::new("ffmpeg")
         .arg("-version")
         .stdout(Stdio::null())

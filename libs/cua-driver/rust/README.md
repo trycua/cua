@@ -17,7 +17,6 @@ implementations, testkit, and helper crates.
 | `cua-driver-uia` | Windows UIAccess worker |
 | `cursor-overlay` | Cross-platform semantic cursor renderer and bounded compiled-theme loader |
 | `cursor-theme-cli` | Short-lived dotLottie validation, compilation, preview, and installation sidecar |
-| `pip-preview` | Packaging preview helper |
 
 Platform crates are selected with `cfg(target_os)` from the main driver crate.
 Keep platform-specific behavior inside the matching `platform-<os>` crate.
@@ -71,6 +70,17 @@ cargo test -p cua-driver-e2e --test harness_wpf_test -- --ignored --nocapture
 See `crates/cua-driver-e2e/tests/README.md` for the desktop E2E suites and
 `crates/cua-driver/tests/README.md` for the hermetic driver tests.
 
+Testkit-owned daemons use a temporary `CUA_DRIVER_RS_HOME` on every platform.
+A nonempty override also places Computer History data and its `admission.json`
+under `<CUA_DRIVER_RS_HOME>/computer-history`. Without an override (or with an
+empty value), History keeps its platform-specific default location. Existing
+data is not migrated, and installed-product admission checks still apply.
+On Windows this isolates driver state without redirecting `LOCALAPPDATA`,
+`APPDATA`, or `USERPROFILE`, which Windows app discovery needs. Explicit caller
+environment values take precedence; `SHARE_HOST_STATE` opts a testkit spawn out
+of isolation. Use separate roots for independent driver instances. This isolates
+files, not the operating system's credential store.
+
 ## Generated Outputs
 
 - `target/`: Cargo output, ignored.
@@ -80,20 +90,24 @@ See `crates/cua-driver-e2e/tests/README.md` for the desktop E2E suites and
 ## Permission Policies
 
 Set `CUA_DRIVER_POLICY_FILE` on the daemon to enforce a deny-by-default policy
-on all tool calls from MCP and CLI clients. If the variable is unset, or points to a path that does
-not exist, the driver keeps its backward-compatible behavior with no policy
-enforcement. Supported paths are:
+on all tool calls from MCP and CLI clients. Supported paths are:
 
 - `.yaml` / `.yml`: a single YAML policy file.
 - `.rego`: a single Rego policy file.
 - A directory: all top-level `.rego` files are loaded in sorted order.
+
+If `CUA_DRIVER_POLICY_FILE` is **unset**, the driver keeps its
+backward-compatible behavior with no policy enforcement. If it is **set to a
+path that does not exist, or that fails to load**, startup is a hard error: the
+daemon refuses to expose an action endpoint rather than silently running
+unconstrained.
 
 YAML policies allow unconstrained tools through `allow.tools`, constrained
 calls through `allow.rules`, and explicit overrides through `deny.tools`:
 
 ```yaml
 allow:
-  tools: [screenshot, scroll, wait]
+  tools: [get_window_state, get_desktop_state, scroll, wait]
   rules:
     - tool: click
       constraints:
@@ -107,7 +121,7 @@ allow:
         app:
           allowed: [Calculator, TextEdit, Safari]
 deny:
-  tools: [shell_execute, file_delete]
+  tools: [kill_app, browser_download]
 ```
 
 Rego policies must expose a boolean rule at `data.cua.policy.allow`. The input

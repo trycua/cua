@@ -324,9 +324,19 @@ gone "$HOME/.cua/agent-mcp.json"
 
 say "Logs and transient per-boot state"
 gone "$HOME/Library/Logs/Unity"
-# The spacesd token (whoever Init'ed the build VM) must never ship: every
-# clone boots in bootstrap mode and gets its own token from its first client.
-gone "$HOME/.cua/spacesd/token"
+# cua-spacesd's per-machine state must never ship: the token (whoever
+# Init'ed the build VM; every clone boots in bootstrap mode and gets its own
+# from its first client), its machine-seal key (a sealed delivery to one
+# clone would open on every other), the relay machine id, mesh keys, the
+# access log and the teleport ledger. Remove its whole state directory (and
+# the older names' directories). The running driver is left up (verify-golden.sh
+# probes it): it writes its key only at start (older drivers) or once it has a
+# token (current ones), and the token is gone, so nothing comes back before the
+# shutdown; the checks below prove it.
+for d in spacesd env-driver guestd; do
+  gone "$HOME/.cua/$d"
+done
+mkdir -p "$HOME/.cua/spacesd" && chmod 700 "$HOME/.cua" "$HOME/.cua/spacesd"
 gone "$HOME/.cua/env-token"
 gone "$HOME/.rcdp-token"
 gone "$HOME/.rcdp-handoff-token"
@@ -375,6 +385,19 @@ for s in "$HOME"/.claude/skills/*/SKILL.md; do
   [ -f "$s" ] && echo "  present: $s" || { echo "  MISSING: agent skills"; fail=1; }
 done
 check_absent "$HOME/biome-tiles"
+check_absent "$HOME/.cua/spacesd/machine-seal.key"
+check_absent "$HOME/.cua/spacesd/token"
+if [ -n "$(ls -A "$HOME/.cua/spacesd" 2>/dev/null)" ]; then
+  echo "  STILL PRESENT: cua-spacesd state: $(ls -A "$HOME/.cua/spacesd" | tr '\n' ' ')"; fail=1
+else
+  echo "  clean: cua-spacesd state directory is empty"
+fi
+seal_keys=$(sudo_run /usr/bin/find /Users /var/root /private/etc -name machine-seal.key 2>/dev/null)
+if [ -n "$seal_keys" ]; then
+  echo "  STILL PRESENT: machine-seal.key:"; printf '%s\n' "$seal_keys" | sed 's/^/    /'; fail=1
+else
+  echo "  clean: no machine-seal.key anywhere"
+fi
 check_absent "$HOME/Library/Application Support/Google/Chrome"
 if security find-generic-password -s unity >/dev/null 2>&1; then
   echo "  STILL PRESENT: keychain 'unity'"; fail=1

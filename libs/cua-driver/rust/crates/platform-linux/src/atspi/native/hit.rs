@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! AT-SPI hit-test for presence cursor shapes: the chain of accessibles from
 //! a top-level frame down to the deepest one under a point, with role and
 //! the states the shape table needs. Read-only: no action, focus or pointer
@@ -11,6 +14,7 @@ use anyhow::Result;
 use atspi::proxy::accessible::AccessibleProxy;
 use atspi::proxy::proxy_ext::ProxyExt;
 use atspi::{CoordType, State};
+use atspi_connection::AccessibilityConnection;
 
 use super::{accessible_for, app_for_pid, call, runtime, shared_connection, RawObjectRef};
 use crate::pointer_shape_map::RoleSample;
@@ -89,7 +93,7 @@ fn inside(extents: Option<(i32, i32, i32, i32)>, x: i32, y: i32) -> bool {
 /// smallest showing child containing the point, else (in a page tab list)
 /// the selected page, whose body the tab's own extents do not cover.
 async fn child_under(
-    conn: &atspi::connection::AccessibilityConnection,
+    conn: &AccessibilityConnection,
     parent: &AccessibleProxy<'_>,
     x: i32,
     y: i32,

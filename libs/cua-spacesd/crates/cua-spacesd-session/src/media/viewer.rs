@@ -16,6 +16,8 @@
 //!   Past that the viewer stops sending dependent frames and resumes on a
 //!   keyframe. A client that stops acking for 4 s is stalled and is probed
 //!   with one keyframe every 2 s.
+//! - A viewer waiting for a keyframe with room in its ack window asks for
+//!   one on every maintenance tick (the session rate limits the asks).
 //! - Packed/PNG frames are independent: the queue keeps only the newest one.
 //!
 //! Audio keeps at most 200 ms per track; the oldest packet is dropped past
@@ -448,6 +450,20 @@ impl ViewerShared {
                     }
                 }
             }
+            // A viewer that could take a frame but is waiting for a keyframe
+            // keeps asking: the drop that set the wait may not have asked (ack
+            // window), or its ask was swallowed by the session's rate limit.
+            let window_open = !queues.ack.enabled
+                || (queues.ack.stalled_since.is_none()
+                    && queues.ack.in_flight.len() < ack_allowance(&queues.ack));
+            if self.codec == VideoCodec::H264
+                && queues.awaiting_keyframe
+                && window_open
+                && queues.close.is_none()
+                && !queues.terminated
+            {
+                needs_keyframe = true;
+            }
         }
         if notify {
             self.notify.notify_one();
@@ -581,6 +597,8 @@ async fn run_input_job(
     let started = Instant::now();
     let events = batch.events.len() as u64;
     let nack = |code: ActionErrorCode, message: String| {
+        tracing::warn!(target: "cua_spacesd_client::host_input", ?code,
+            "viewer input dispatch rejected");
         ServerMessage::InteractiveInputAcknowledgement(InteractiveInputAcknowledgement {
             session_id: session_id.clone(),
             through_sequence: through,
@@ -832,6 +850,10 @@ impl Viewer {
     async fn dispatch_input(&mut self, batch: InteractiveInputBatch) -> Option<ServerMessage> {
         let session_id = self.session_id();
         let nack = |through: u64, code: ActionErrorCode, message: String| {
+            // Admission errors contain permission/lease state, never the
+            // contents of a user's keyboard or pointer batch.
+            tracing::warn!(target: "cua_spacesd_client::host_input", ?code,
+                reason = %message, "viewer input admission rejected");
             ServerMessage::InteractiveInputAcknowledgement(InteractiveInputAcknowledgement {
                 session_id: session_id.clone(),
                 through_sequence: through,

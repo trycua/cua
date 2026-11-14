@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! The platform-adapter contract for the browser-tool surface.
 //!
 //! Core owns schemas, semantics, CDP handling, the target/ref store,
@@ -156,6 +159,11 @@ pub struct PrepareRequest {
     /// Allows launching a separate driver-owned isolated browser process.
     /// It never authorizes terminating or modifying the requested process.
     pub allow_launch: bool,
+    /// `delivery_mode:"foreground"`: the caller accepts that existing-profile
+    /// attachment may bring the browser to the front. Without it, a platform
+    /// that cannot attach in the background refuses with
+    /// `background_unavailable` before any visible effect.
+    pub foreground: bool,
 }
 
 /// What a platform adapter actually did (or found) during prepare.
@@ -315,6 +323,9 @@ pub struct PrepareSideEffects {
     pub focused_setup_address_field: bool,
     pub foregrounded_window: bool,
     pub injected_global_input: bool,
+    /// A foreground attachment left the browser in front, and the app that
+    /// was in front before the call was brought back.
+    pub restored_frontmost_app: bool,
 }
 
 /// OS-identity services a platform crate provides to the browser-tool
@@ -325,6 +336,9 @@ pub struct PrepareSideEffects {
 /// conditions the calling agent should see as a structured refusal
 /// (including infrastructure failures, which map naturally onto
 /// `browser_route_unavailable`).
+///
+/// Each platform adapter declares, with a reason, every defaulted method it
+/// leaves in place; `ACCEPTED_DEFAULTS` in this file's tests asserts it.
 #[async_trait]
 pub trait BrowserPlatform: Send + Sync {
     /// Resolve a canonical installed Chromium-family executable for a
@@ -360,11 +374,62 @@ pub trait BrowserPlatform: Send + Sync {
             })
     }
 
+    /// Whether an OS keychain or password prompt is on screen now: on macOS
+    /// a SecurityAgent or LocalAuthentication window, such as "<app> wants to use your confidential
+    /// information stored in ... in your keychain". Core checks it before and
+    /// while it launches an isolated browser and stops the launch when one is
+    /// open, because a browser that asks for a keychain secret waits on the
+    /// prompt and every further launch adds another. Implementations only
+    /// look; nothing may ever answer, dismiss or type into the prompt. The
+    /// default reports none.
+    fn security_prompt_open(&self) -> bool {
+        false
+    }
+
     /// Explain why a trusted CDP Input route cannot preserve background
     /// posture for a standalone browser on this platform. Embedded Chromium
     /// routes are independently proven and do not consult this capability.
     fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
         None
+    }
+
+    /// Explain why attaching to an existing browser profile cannot keep the
+    /// browser in the background on this platform, for example because the
+    /// browser brings itself to the front to show its own remote-debugging
+    /// consent prompt. `None` (the default) means attachment needs no
+    /// background check. When this returns `Some` and the browser is not the
+    /// frontmost app, a background `browser_prepare` refuses with
+    /// `background_unavailable` before discovery, setup or connection.
+    fn existing_profile_attach_background_limitation(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// Guard a background existing-profile attachment that
+    /// [`Self::existing_profile_attach_background_limitation`] would refuse,
+    /// when the platform can keep it out of the user's way: while the returned
+    /// value is alive, every self-activation of `browser_pid` is reverted
+    /// within milliseconds. `None` (the default) keeps the refusal. macOS
+    /// returns a guard only when `window_id` is on another Space than the
+    /// user's active one, where the browser's consent window stays out of
+    /// sight.
+    fn guard_background_attach(
+        &self,
+        _browser_pid: i64,
+        _window_id: u64,
+    ) -> Option<Box<dyn std::any::Any + Send>> {
+        None
+    }
+
+    /// Pid of the app the user has in front, when the platform can tell.
+    fn frontmost_app_pid(&self) -> Option<i64> {
+        None
+    }
+
+    /// After a foreground attachment, bring `previous_pid` back to the front
+    /// if `browser_pid` is still in front. Returns true when it did so.
+    /// Implementations must not act when another app took the front since.
+    fn restore_frontmost_app(&self, _previous_pid: i64, _browser_pid: i64) -> bool {
+        false
     }
 
     /// Best-effort, visual-only feedback for an authorized browser action.
@@ -538,6 +603,166 @@ mod tests {
             assert_eq!(result.is_ok(), succeeds);
             assert!(observer.started());
             assert!(!super::BrowserConsentAction::default().started());
+        }
+    }
+
+    /// Defaulted `BrowserPlatform` methods each platform adapter deliberately
+    /// leaves to the trait default, with the reason. A defaulted method a
+    /// platform does not override must be listed here, and a listed one must
+    /// not be overridden, so a new default or a dropped override cannot become
+    /// a silent no-op on one platform (trycua/cua#2884).
+    const ACCEPTED_DEFAULTS: &[(&str, &[(&str, &str)])] = &[
+        (
+            "platform-linux/src/browser_platform.rs",
+            &[
+                (
+                    "spawn_isolated_browser",
+                    "the driver launches the isolated browser with its own credentials",
+                ),
+                (
+                    "security_prompt_open",
+                    "isolated launches pass --password-store=basic, so no keyring prompt is raised",
+                ),
+                (
+                    "existing_profile_attach_background_limitation",
+                    "existing-profile attachment does not bring the browser forward",
+                ),
+                (
+                    "guard_background_attach",
+                    "only consulted when an attach background limitation is declared",
+                ),
+                (
+                    "frontmost_app_pid",
+                    "not implemented: a foreground attachment leaves the browser in front",
+                ),
+                (
+                    "restore_frontmost_app",
+                    "not implemented: a foreground attachment leaves the browser in front",
+                ),
+                (
+                    "discover_spawned_endpoint",
+                    "the spawned browser owns its listener; launcher handoff is Windows-only",
+                ),
+            ],
+        ),
+        (
+            "platform-macos/src/browser/platform.rs",
+            &[
+                (
+                    "spawn_isolated_browser",
+                    "the driver launches the isolated browser with its own credentials",
+                ),
+                (
+                    "discover_spawned_endpoint",
+                    "the spawned browser owns its listener; launcher handoff is Windows-only",
+                ),
+            ],
+        ),
+        (
+            "platform-windows/src/browser_platform.rs",
+            &[
+                (
+                    "security_prompt_open",
+                    "Chromium protects its Safe Storage key with DPAPI, which shows no prompt",
+                ),
+                (
+                    "standalone_trusted_input_background_limitation",
+                    "trusted CDP input reaches a background standalone browser without activating it",
+                ),
+                (
+                    "existing_profile_attach_background_limitation",
+                    "existing-profile attachment does not bring the browser forward",
+                ),
+                (
+                    "guard_background_attach",
+                    "only consulted when an attach background limitation is declared",
+                ),
+                (
+                    "frontmost_app_pid",
+                    "not implemented: a foreground attachment leaves the browser in front",
+                ),
+                (
+                    "restore_frontmost_app",
+                    "not implemented: a foreground attachment leaves the browser in front",
+                ),
+            ],
+        ),
+    ];
+
+    /// The item block that opens at the first line starting with `header`
+    /// and closes at the next column-0 `}`.
+    fn item_block<'a>(source: &'a str, header: &str) -> &'a str {
+        let start = source
+            .find(&format!("\n{header}"))
+            .unwrap_or_else(|| panic!("`{header}` not found"));
+        let body = &source[start + 1..];
+        &body[..body.find("\n}").expect("item block closes at column 0")]
+    }
+
+    /// Methods declared directly in a trait or impl block, with whether each
+    /// carries a body.
+    fn block_methods(block: &str) -> Vec<(String, bool)> {
+        let mut methods = Vec::new();
+        for (offset, _) in block.match_indices("\n    ") {
+            let line = &block[offset + 5..];
+            let Some(rest) = line
+                .strip_prefix("fn ")
+                .or_else(|| line.strip_prefix("async fn "))
+            else {
+                continue;
+            };
+            let name: String = rest
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            let has_body = rest
+                .chars()
+                .find(|c| *c == '{' || *c == ';')
+                .expect("method signature ends")
+                == '{';
+            methods.push((name, has_body));
+        }
+        methods
+    }
+
+    #[test]
+    fn every_platform_declares_the_browser_platform_defaults_it_accepts() {
+        let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let trait_methods = block_methods(item_block(
+            include_str!("platform.rs"),
+            "pub trait BrowserPlatform",
+        ));
+        let defaulted: std::collections::BTreeSet<_> = trait_methods
+            .iter()
+            .filter(|(_, has_body)| *has_body)
+            .map(|(name, _)| name.as_str())
+            .collect();
+        assert!(
+            defaulted.contains("visualize_browser_action")
+                && defaulted.contains("discover_spawned_endpoint"),
+            "trait parse lost known defaulted methods: {defaulted:?}"
+        );
+
+        for (path, accepted) in ACCEPTED_DEFAULTS {
+            let source = std::fs::read_to_string(crates.join(path))
+                .unwrap_or_else(|error| panic!("read {path}: {error}"));
+            let overridden: std::collections::BTreeSet<_> =
+                block_methods(item_block(&source, "impl BrowserPlatform for "))
+                    .into_iter()
+                    .map(|(name, _)| name)
+                    .collect();
+            let left_default: std::collections::BTreeSet<_> = defaulted
+                .iter()
+                .copied()
+                .filter(|name| !overridden.contains(*name))
+                .collect();
+            let declared: std::collections::BTreeSet<_> =
+                accepted.iter().map(|(name, _)| *name).collect();
+            assert_eq!(
+                left_default, declared,
+                "{path}: the BrowserPlatform defaults it leaves in place must match its \
+                 ACCEPTED_DEFAULTS entry. Override the method, or declare it with a reason."
+            );
         }
     }
 

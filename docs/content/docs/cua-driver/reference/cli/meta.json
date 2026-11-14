@@ -2,13 +2,7 @@
   "title": "CLI",
   "pages": [
     "index",
-    "mcp",
-    "daemon",
-    "permissions",
-    "recording",
-    "history",
-    "config",
-    "extensions",
-    "updates"
+    "serve-and-configure",
+    "skills-recording-and-history"
   ]
 }

@@ -11,7 +11,7 @@ One-shot computer actions against the selected target
 Usage: cua do [OPTIONS] <COMMAND>
 
 Commands:
-  switch      Select the target: a sandbox name, `host`, `url <URL>`, or a legacy `<provider> <name>` pair
+  switch      Select the target: a sandbox name or ref, a relay Space (`relay:<id>`), `host`, `url <URL>`, or a legacy `<provider> <name>` pair
   status      Show the current target and zoom state
   ls          List targets (optionally of one provider)
   zoom        Crop screenshots to a window and map coordinates into it
@@ -41,7 +41,7 @@ Options:
 ## cua do switch
 
 ```text
-Select the target: a sandbox name, `host`, `url <URL>`, or a legacy `<provider> <name>` pair
+Select the target: a sandbox name or ref, a relay Space (`relay:<id>`), `host`, `url <URL>`, or a legacy `<provider> <name>` pair
 
 Usage: cua do switch [OPTIONS] <TARGET> [NAME]
 

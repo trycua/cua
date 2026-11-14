@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! FocusGuard — Rust port of Swift's `FocusGuard.withFocusSuppressed`
 //! (`libs/cua-driver/Sources/CuaDriverCore/Focus/FocusGuard.swift`).
 //!
@@ -105,6 +108,18 @@ where
         ))
     } else {
         None
+    };
+
+    // Hand key focus back to the user's app if the target opens a menu
+    // (popup, select, context menu) while it is in the background.
+    let _key_focus = match target_pid {
+        Some(tp) if prior_frontmost != Some(tp) => {
+            tokio::task::spawn_blocking(move || crate::key_focus_guard::protect(tp))
+                .await
+                .ok()
+                .flatten()
+        }
+        _ => None,
     };
 
     let result = f().await;

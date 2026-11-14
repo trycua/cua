@@ -151,10 +151,8 @@ test(
       const driver = CuaDriver.connect(socketPath)
       const expectedMethods = [
         "startSession",
-        "escalateSession",
         "getSession",
         "listSessions",
-        "getSessionState",
         "endSession",
         "getDesktopState",
         "listApps",
@@ -266,6 +264,7 @@ test(
         pid: 42, window_id: 123, session: "node-run", query: "Save",
         include_screenshot: true, include_accessibility_tree: true,
         max_elements: 10, max_depth: 3, max_dimension: 800, max_image_dimension: 1600,
+        full_output: true,
       })
       assert.deepEqual(requests[5].args, {
         target: { kind: "window", pid: 42, window_id: 123 },
@@ -320,7 +319,7 @@ test(
   { skip: !existsSync(library), timeout: 10_000 },
   async () => {
     const { CuaDriver, DriverExecutionMode } = await import("@trycua/cua-driver")
-    const driver = CuaDriver.create(undefined)
+    const driver = CuaDriver.create({ embedded: true })
     try {
       assert.equal(driver.executionMode(), DriverExecutionMode.Embedded)
       assert.equal(driver.socketPath(), "")

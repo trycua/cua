@@ -1,9 +1,9 @@
 {
   "serverName": "cua-driver",
   "outputSchemaCountByPlatform": {
-    "darwin": 35,
-    "linux": 39,
-    "win32": 35
+    "darwin": 33,
+    "linux": 37,
+    "win32": 33
   },
   "baseTools": [
     "bring_to_front",
@@ -13,6 +13,7 @@
     "browser_navigate",
     "browser_pointer",
     "browser_prepare",
+    "browser_select",
     "browser_set_input_files",
     "browser_type",
     "check_for_update",
@@ -23,17 +24,16 @@
     "double_click",
     "drag",
     "end_session",
-    "escalate_session",
     "get_accessibility_tree",
     "get_agent_cursor_state",
     "get_browser_state",
     "get_config",
     "get_cursor_position",
     "get_desktop_state",
+    "get_guide",
     "get_recording_state",
     "get_screen_size",
     "get_session",
-    "get_session_state",
     "get_window_state",
     "health_report",
     "hotkey",
@@ -51,6 +51,8 @@
     "press_key",
     "replay_trajectory",
     "right_click",
+    "run_script",
+    "run_steps",
     "scroll",
     "set_agent_cursor_enabled",
     "set_agent_cursor_motion",

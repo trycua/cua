@@ -7,8 +7,9 @@ import CuaSpacesFFI
 import Observation
 import SwiftUI
 
-/// Space rows in the main window's sidebar as drop targets for a dragged
-/// real window (the notch's tiles are the other target). The drag itself is
+/// Space rows in the main window's sidebar (or Space tiles in the New UI
+/// window, whose page reports them) as drop targets for a dragged real
+/// window (the notch's tiles are the other target). The drag itself is
 /// the SDK's window-drag monitor, which the notch controller already
 /// follows; this hit-tests the global cursor against the rows. Which Spaces
 /// take a drop is the core's decision (`appSpaceAcceptsDrop`, the notch
@@ -18,6 +19,8 @@ import SwiftUI
 public final class SidebarDropTargets {
     /// The row under a dragged window.
     public private(set) var targetedId: String?
+    /// Told when the targeted row changes (the New UI window tells its page).
+    @ObservationIgnored var onTargeted: ((String?) -> Void)?
     /// Row frames in the window's content, top-left origin (SwiftUI's
     /// window space).
     @ObservationIgnored private(set) var frames: [String: CGRect] = [:]
@@ -37,6 +40,8 @@ public final class SidebarDropTargets {
 
     func setFrame(_ id: String, _ rect: CGRect) { frames[id] = rect }
     func removeFrame(_ id: String) { frames[id] = nil }
+    /// Every row's frame at once (the New UI page reports all its tiles).
+    func setFrames(_ all: [String: CGRect]) { frames = all }
 
     /// A global top-left point (the drag events' space: origin at the
     /// primary display's top left, y down) in a window's content, top-left
@@ -71,16 +76,22 @@ public final class SidebarDropTargets {
     func handle(phase: String, target: String?) -> String? {
         switch phase {
         case "start", "move":
-            targetedId = target
+            setTargeted(target)
             return nil
         case "end":
             let committed = target
-            targetedId = nil
+            setTargeted(nil)
             return committed
         default:
-            targetedId = nil
+            setTargeted(nil)
             return nil
         }
+    }
+
+    private func setTargeted(_ id: String?) {
+        guard id != targetedId else { return }
+        targetedId = id
+        onTargeted?(id)
     }
 }
 

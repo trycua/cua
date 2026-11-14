@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! CLI transport: one `cua-driver call <tool>` process per action, all backed
 //! by a shared test-owned daemon.
 //!
@@ -111,6 +114,7 @@ impl Driver for CliDriver {
             }
         };
 
+        let args = crate::driver::with_full_window_state(tool, args);
         if let Some(mut stdin) = child.stdin.take() {
             let _ = writeln!(stdin, "{}", serde_json::to_string(&args).unwrap());
         }

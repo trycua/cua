@@ -1,0 +1,9 @@
+[toolchain]
+# Keep in lockstep with libs/cua/rust-toolchain.toml and
+# libs/cua-driver/rust/rust-toolchain.toml; ci-cua-spacesd.yml pins the same
+# version (.github/scripts/tests/test_rust_toolchain_pinned.py enforces it).
+# The release build installs the cross targets for this pinned toolchain
+# itself (cd-cua-spacesd.yml), because rustup only adds them to the default one.
+channel = "1.97.1"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

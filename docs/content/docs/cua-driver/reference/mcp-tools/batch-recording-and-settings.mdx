@@ -70,7 +70,7 @@ Effect: destructive. Platforms: macOS, Linux, Windows.
 | <span id="run_steps--foreground_fallback"></span>`foreground_fallback` | `boolean` |  | When a step is refused because its target ignores background input (Electron, LibreOffice and other toolkits), retry it once with delivery_mode:"foreground": the window is activated and the pointer may move. Default false. |
 | <span id="run_steps--observe"></span>`observe` | `object` |  | Optional end-of-batch observation: arguments for ONE get_window_state call. `pid` and `window_id` default to those of the last step that names both. Defaults to since="latest" (only what changed since your last read of that window with the same query/max_elements/max_depth; a full read when there is none), include_screenshot=false and max_elements=250; pass include_screenshot=true to see the window, or since=null for a full read. Omit to read nothing. &#123;&#125; observes the last window. |
 | <span id="run_steps--pid"></span>`pid` | `integer` |  | Default pid for steps that name no window (a step's own pid/window_id/app/window wins). |
-| <span id="run_steps--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="run_steps--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 | <span id="run_steps--steps"></span>`steps` | `object[]` | required | Ordered actions. Execution stops at the first failing step. Each step is &#123;tool, args&#125;, &#123;tool, &lt;argument fields beside tool&gt;&#125; or &#123;&lt;tool&gt;: args&#125;, plus optional wait_for / expect / timeout_ms; a step may also be only a wait_for or expect check. Items: 1 to 64. |
 | <span id="run_steps--window"></span>`window` | `string` |  | Default window title substring for steps that name no window. |
 | <span id="run_steps--window_id"></span>`window_id` | `integer` |  | Default window_id for steps that name no window, with `pid`. |
@@ -111,7 +111,7 @@ Effect: destructive. Platforms: macOS, Linux, Windows.
 | --- | --- | --- | --- |
 | <span id="run_script--max_calls"></span>`max_calls` | `integer` |  | Most driver calls the script may make. Default 100. Range: 1 to 500. |
 | <span id="run_script--script"></span>`script` | `string` | required | JavaScript: the body of an async function. `return` the result. |
-| <span id="run_script--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="run_script--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 | <span id="run_script--timeout_ms"></span>`timeout_ms` | `integer` |  | Wall-time limit. Default 30000. Range: 100 to 120000. |
 
 **Example arguments**
@@ -163,7 +163,7 @@ Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
 | <span id="start_recording--output_dir"></span>`output_dir` | `string` | required | Absolute or ~-rooted directory where turn folders and (when enabled) the video file are written. |
 | <span id="start_recording--record_video"></span>`record_video` | `boolean` |  | Capture the main display to &lt;output_dir&gt;/recording.mp4. Default: false. Set to true to also capture the main display to recording.mp4 (otherwise only the per-turn screenshots + JSON are recorded). On macOS this uses native ScreenCaptureKit (macOS 15.0+); macOS 26 can show a one-time direct screen-capture consent on first use (see `cua-driver permissions grant`). On Windows + Linux it requires ffmpeg on PATH. |
 | <span id="start_recording--redact_values"></span>`redact_values` | `string[]` |  | Secret values, such as passwords or tokens, that must never be written to the recording. Every occurrence in a turn's action.json and state files is replaced with `[redacted]`, and the turn is marked `redacted: true` so replay_trajectory skips it. The values are held in memory only, never written, and cleared when recording stops. Screenshots and video are not altered. Items: 1 to 64. |
-| <span id="start_recording--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="start_recording--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 | <span id="start_recording--state_timeout_ms"></span>`state_timeout_ms` | `integer` | `1000` | Wall-clock budget in milliseconds for EACH per-turn before/after accessibility walk (same default and bounds as get_window_state's timeout_ms). A walk that runs out records the partial tree and marks it truncated in evidence.json. Range: 100 to 120000. |
 
 **Example arguments**
@@ -183,7 +183,7 @@ Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="stop_recording--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="stop_recording--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 
 ### `get_recording_state`
 
@@ -196,7 +196,7 @@ Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="get_recording_state--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="get_recording_state--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 
 ### `replay_trajectory`
 
@@ -214,7 +214,7 @@ Effect: destructive. Platforms: macOS, Linux, Windows.
 | --- | --- | --- | --- |
 | <span id="replay_trajectory--delay_ms"></span>`delay_ms` | `integer` |  | Milliseconds to sleep between turns, for human-observable pacing. Default 500. Range: 0 to 10000. |
 | <span id="replay_trajectory--dir"></span>`dir` | `string` | required | Trajectory directory previously written by `start_recording`. Absolute or ~-rooted. |
-| <span id="replay_trajectory--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="replay_trajectory--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 | <span id="replay_trajectory--stop_on_error"></span>`stop_on_error` | `boolean` |  | Stop replay on the first tool-call error. Default true: set false to best-effort through the full trajectory. |
 
 **Example arguments**
@@ -233,7 +233,7 @@ Effect: destructive. Platforms: macOS, Linux, Windows.
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="install_ffmpeg--confirm"></span>`confirm` | `boolean` |  | Run the install command. Without it, only the planned command is reported. |
-| <span id="install_ffmpeg--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="install_ffmpeg--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 
 ## Configuration and maintenance tools
 
@@ -280,7 +280,7 @@ Current schema (Windows):
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="get_config--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="get_config--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 
 ### `set_config`
 
@@ -363,7 +363,7 @@ Returns the full updated config in the same shape as `get_config`.
 | <span id="set_config--cursor-rotate"></span>`cursor.rotate` | `"off" \| "lean" \| "heading" \| "on" \| "default"` |  | Agent cursor rotation while it moves: heading (default) points the tip along the path; lean tilts the arrow at most 30 degrees toward where it is going (on is the same as heading). Both return upright before arrival, so clicks, typing and scrolling stay upright. off: the arrow always stays upright. Applies immediately to every cursor. |
 | <span id="set_config--fast_path"></span>`fast_path` | `"off" \| "shadow" \| "guard" \| "on"` |  | Experimental fast path (default off). shadow: check cached targets at act time and report would-refuse verdicts; guard: refuse an action whose target changed since it was read (target_changed); on: guard, plus a small delta in each action result and tree-only re-reads. Runtime only, not saved; env CUA_DRIVER_FAST_PATH seeds it at start. |
 | <span id="set_config--max_image_dimension"></span>`max_image_dimension` | `integer` |  | Max dimension for screenshot resizing (0 = no limit). |
-| <span id="set_config--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="set_config--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 
 ### `check_permissions`
 
@@ -415,7 +415,7 @@ How to get them granted: `get_guide({topic:"permissions"})`.
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="check_permissions--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="check_permissions--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 
 ### `health_report`
 
@@ -468,7 +468,7 @@ Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="health_report--include"></span>`include` | `string[]` |  | Only run these checks (canonical names). Wins over `skip`. |
-| <span id="health_report--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="health_report--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 | <span id="health_report--skip"></span>`skip` | `string[]` |  | Skip these checks (canonical names). Ignored when `include` is set. |
 
 ### `check_for_update`
@@ -480,7 +480,7 @@ Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="check_for_update--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="check_for_update--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 
 ### `install_extension`
 
@@ -493,7 +493,7 @@ Effect: destructive. Platforms: macOS, Linux, Windows.
 | --- | --- | --- | --- |
 | <span id="install_extension--confirm"></span>`confirm` | `boolean` |  | Install the previewed extension. Omit or false for a read-only plan. |
 | <span id="install_extension--name"></span>`name` | `"perception"` | required | Extension to preview or install. Only perception (the local visual-region parser used by parse_visual_regions) is available. |
-| <span id="install_extension--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="install_extension--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 
 **Example arguments**
 
@@ -510,5 +510,5 @@ Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="get_guide--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="get_guide--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 | <span id="get_guide--topic"></span>`topic` | `string` |  | One of: overview, drag, browser, permissions, batching, menus. Omit to list the topics. |

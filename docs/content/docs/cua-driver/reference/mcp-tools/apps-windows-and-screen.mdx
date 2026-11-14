@@ -102,7 +102,7 @@ Use this for "is X installed?" as well as "is X running?". For per-window state,
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="list_apps--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="list_apps--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 
 ### `list_windows`
 
@@ -163,7 +163,7 @@ Inputs: pid (optional pid filter), app (app-name filter), on_screen_only (bool, 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="list_windows--app"></span>`app` | `string` |  | Only windows of apps whose name contains this text (case-insensitive), or whose bundle id equals it. Prefer this or `pid` over an unfiltered call, which returns every window on the host. |
-| <span id="list_windows--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="list_windows--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 
 ### `launch_app`
 
@@ -250,7 +250,7 @@ Windows-only field: `path` (Swift uses `bundle_id` since macOS apps resolve via 
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="launch_app--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="launch_app--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 
 ### `kill_app`
 
@@ -282,7 +282,7 @@ Use when the standard close path (Alt+F4 / WM_CLOSE via `click` on the X button)
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="kill_app--pid"></span>`pid` | `integer` | required | PID of the process to terminate. |
-| <span id="kill_app--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="kill_app--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 
 **Example arguments**
 
@@ -343,7 +343,7 @@ Implementation uses the `AttachThreadInput` trick to bypass Windows' foreground-
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="bring_to_front--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="bring_to_front--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 
 **Example arguments**
 
@@ -361,7 +361,7 @@ Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
 | --- | --- | --- | --- |
 | <span id="set_window_frame--height"></span>`height` | `number` | required | New height, in the same units as list_windows bounds. Minimum: 1. |
 | <span id="set_window_frame--pid"></span>`pid` | `integer` | required | Process ID that owns the window. Minimum: 1. |
-| <span id="set_window_frame--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="set_window_frame--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 | <span id="set_window_frame--width"></span>`width` | `number` | required | New width, in the same units as list_windows bounds. Minimum: 1. |
 | <span id="set_window_frame--window_id"></span>`window_id` | `integer` | required | Window ID from list_windows. Minimum: 1. |
 | <span id="set_window_frame--x"></span>`x` | `number` | required | New left edge in the desktop coordinate space reported by list_windows. |
@@ -385,7 +385,7 @@ Effect: destructive. Platforms: macOS, Linux, Windows.
 | <span id="invoke_menu--delivery_mode"></span>`delivery_mode` | `"background" \| "foreground"` |  | `background` (default) never takes the user's keyboard or pointer and refuses with `background_unavailable` when the item can only be reached by opening a menu. `foreground` is the explicit escalation that may activate the window and open menus. Linux honors it; macOS and Windows accept it and keep their existing menu behavior. |
 | <span id="invoke_menu--path"></span>`path` | `string[]` | required | Menu labels from the top-level menu to the item, e.g. `["File", "Save As..."]` (1 to 16 labels). Items: 1 to 16. |
 | <span id="invoke_menu--pid"></span>`pid` | `integer` | required | Process ID of the application that owns the menu. Minimum: 1. |
-| <span id="invoke_menu--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="invoke_menu--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 | <span id="invoke_menu--window_id"></span>`window_id` | `integer` | required | Window ID from list_windows whose menu is invoked. Minimum: 1. |
 
 **Example arguments**
@@ -404,7 +404,7 @@ Effect: read-only, idempotent. Platforms: Windows.
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="debug_window_info--pid"></span>`pid` | `integer` | required | PID of the process to inspect. |
-| <span id="debug_window_info--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="debug_window_info--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 
 **Example arguments**
 
@@ -449,7 +449,6 @@ Refusals: `window_id_not_found`; `window_owner_pid_mismatch` names the real `own
 | <span id="get_window_state--macos--screenshot_format"></span>`screenshot_format` | `"png" \| "jpeg"` |  | Encoding of the returned screenshot. Default "png". "jpeg" is smaller, drops alpha, and mints no capture_id (capture_id-bound tools need a PNG read); pixel coordinates are unchanged. |
 | <span id="get_window_state--macos--screenshot_out_file"></span>`screenshot_out_file` | `string` |  | When set, write the screenshot (PNG, or JPEG with screenshot_format:"jpeg") to this file path (~ expanded) instead of embedding base64 in the response. The structured output will contain screenshot_file_path instead. |
 | <span id="get_window_state--macos--screenshot_quality"></span>`screenshot_quality` | `integer` |  | JPEG quality, 1-95, with screenshot_format:"jpeg" only. Default 85. Range: 1 to 95. |
-| <span id="get_window_state--macos--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 | <span id="get_window_state--macos--window_id"></span>`window_id` | `integer` | required | Target window ID from list_windows. |
 
 </Tab>
@@ -487,7 +486,6 @@ POPUP MENUS: a context menu / popover / combo list is an override-redirect windo
 | <span id="get_window_state--linux--pid"></span>`pid` | `integer` | required | Process ID that owns the window. |
 | <span id="get_window_state--linux--query"></span>`query` | `string` |  | Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count. |
 | <span id="get_window_state--linux--screenshot_out_file"></span>`screenshot_out_file` | `string` |  | When set, write the PNG to this file path (~ expanded) instead of embedding base64 in the response. The structured output carries screenshot_file_path instead. |
-| <span id="get_window_state--linux--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 | <span id="get_window_state--linux--window_id"></span>`window_id` | `integer` |  | Native window identifier from list_windows, or the `popup.window_id` a click / right_click result named (an open context menu / popover; its menu items then get element indices). Omitted: the pid's open popup menu when one is mapped, else its focused / active / largest window. |
 
 </Tab>
@@ -533,7 +531,6 @@ Windows requires no special permissions.
 | <span id="get_window_state--windows--pid"></span>`pid` | `integer` | required | Process ID from `list_apps`. |
 | <span id="get_window_state--windows--query"></span>`query` | `string` |  | Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count; elements_complete continues to describe the underlying unprojected walk. |
 | <span id="get_window_state--windows--screenshot_out_file"></span>`screenshot_out_file` | `string` |  | When set, write the PNG to this file path instead of embedding base64 in the response. The structured output will contain `screenshot_file_path` instead. |
-| <span id="get_window_state--windows--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 | <span id="get_window_state--windows--window_id"></span>`window_id` | `integer` | required | HWND of the target window. Must belong to `pid`. Enumerate via `list_windows` or read from `launch_app`'s `windows` array. |
 
 </Tab>
@@ -546,6 +543,7 @@ Windows requires no special permissions.
 | <span id="get_window_state--capture_mode"></span>`capture_mode` | `"ax" \| "vision"` |  | DEPRECATED and ignored. get_window_state always returns BOTH the element tree and a screenshot: ground on both. The modality is chosen at action time by how you address the target: an element ax action (element_token) or an element px action (x,y). Any value (including the old "som"/"screenshot" aliases) is accepted but has no effect. |
 | <span id="get_window_state--display_only"></span>`display_only` | `boolean` |  | Default false. With include_accessibility_tree:false, returns pixels for display without registering an action capture or replacing the agent snapshot. The image cannot ground input actions. |
 | <span id="get_window_state--full_output"></span>`full_output` | `boolean` |  | Default false. Set true to restore the previous full response: both `elements` and `tree_markdown`, all metadata, and the platform's own walk limits unless max_elements / max_depth are passed. Does not combine with `since`. |
+| <span id="get_window_state--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 | <span id="get_window_state--since"></span>`since` | `string` |  | A `snapshot_id` from an earlier get_window_state of the same window, or "latest" for this window's most recent read with the same query/max_elements/max_depth. Use it on every re-read after acting. Returns only what changed against that snapshot: `+` added rows, `~` changed rows, `-` removed rows (removed ids are the old snapshot's), or `no change`. Falls back to a full read when the snapshot is unknown, expired, belongs to another window, or was read with a different query/max_elements/max_depth; `since_status` says which. The response still carries a NEW snapshot_id and its element_tokens; rows not listed keep their previous [N] unless a `reindexed:` line says otherwise. |
 | <span id="get_window_state--timeout_ms"></span>`timeout_ms` | `integer` | `1000` | Wall-clock budget in milliseconds for the accessibility-tree walk (default 1000, min 100, max 120000). Bounds the WHOLE walk. When the budget runs out the tool returns the PARTIAL tree it has, flagged with `truncated: true`, `truncation_reason`, `nodes_visited`, `nodes_pending` and `elements_complete: false`; retry with a larger value (e.g. 5000) or narrow with `query` / `max_depth`. Range: 100 to 120000. |
 | <span id="get_window_state--tree_format"></span>`tree_format` | `"markdown" \| "elements" \| "both"` |  | Which tree representation to return. Default "markdown": the compact `tree_markdown` only, where a row `[N]` is addressed with element_token `<snapshot_id>:N`. "elements": the structured `elements` array only (per-element element_token, frame, parent_index, value). "both": the two together, as before; roughly doubles the size. |
@@ -589,7 +587,7 @@ For the full UIA subtree of a single window (with interactive element indices yo
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="get_accessibility_tree--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="get_accessibility_tree--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 
 ### `verify_state`
 
@@ -603,7 +601,7 @@ Effect: read-only. Platforms: macOS, Linux, Windows.
 | <span id="verify_state--expect"></span>`expect` | `object[]` | required | One to eight predicates, combined with logical AND. Items: 1 to 8. |
 | <span id="verify_state--include_screenshot"></span>`include_screenshot` | `boolean` |  | Return the final window screenshot as image content for a multimodal caller. The driver does not interpret that image. |
 | <span id="verify_state--pid"></span>`pid` | `integer` | required | Exact process whose window may be observed. Minimum: 1. |
-| <span id="verify_state--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. This field never selects capture modality or authorization. |
+| <span id="verify_state--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. This field never selects capture modality or authorization. |
 | <span id="verify_state--stable_samples"></span>`stable_samples` | `integer` | `2` | Consecutive satisfied samples required before returning success. Range: 1 to 5. |
 | <span id="verify_state--timeout_ms"></span>`timeout_ms` | `integer` | `5000` | Bounded wait. Zero performs one sample. Range: 0 to 10000. |
 | <span id="verify_state--window_id"></span>`window_id` | `integer` | required | Exact native window identifier. |
@@ -627,7 +625,7 @@ Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
 | <span id="parse_visual_regions--options-kinds"></span>`options.kinds` | `"text" \| "icon"[]` |  | Region kinds to return (`text`, `icon`). Omit for all kinds. Items: 1 to 2. |
 | <span id="parse_visual_regions--options-max_regions"></span>`options.max_regions` | `integer` |  | Return at most this many regions. Minimum: 1. |
 | <span id="parse_visual_regions--options-min_confidence"></span>`options.min_confidence` | `number` |  | Drop regions below this confidence (0 to 1). Range: 0 to 1. |
-| <span id="parse_visual_regions--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="parse_visual_regions--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 
 **Example arguments**
 
@@ -670,7 +668,7 @@ Use its PNG as the coordinate source for actions whose target is &#123;kind:"des
 | --- | --- | --- | --- |
 | <span id="get_desktop_state--max_image_dimension"></span>`max_image_dimension` | `integer` |  | Optional long-edge cap for the returned PNG, in pixels (aspect ratio preserved). Omitted or 0 returns the full-size capture. When the cap downsizes the image, the response reports `screenshot_original_width/height`, and x/y read off it for this session's later scope:"desktop" actions (or passed with its `capture_id`) are mapped back to the full-size frame automatically. Minimum: 0. |
 | <span id="get_desktop_state--screenshot_out_file"></span>`screenshot_out_file` | `string` |  | Write PNG here instead of base64. |
-| <span id="get_desktop_state--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="get_desktop_state--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 
 ### `get_screen_size`
 
@@ -701,7 +699,7 @@ On Windows, screenshots and pixel clicks use this same physical-pixel coordinate
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="get_screen_size--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="get_screen_size--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 
 ### `get_cursor_position`
 
@@ -711,7 +709,7 @@ Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="get_cursor_position--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="get_cursor_position--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 
 ### `zoom`
 
@@ -787,7 +785,7 @@ Windows-specific: `window_id` is the canonical addressing field (HWND). `pid` is
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="zoom--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="zoom--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 
 **Example arguments**
 

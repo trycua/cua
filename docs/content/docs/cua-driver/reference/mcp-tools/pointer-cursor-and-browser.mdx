@@ -75,7 +75,7 @@ A window-scoped drag (pid + window_id) runs in the background by default: the ge
 | <span id="drag--macos--from_zoom"></span>`from_zoom` | `boolean` |  | When true, coordinates are in the last zoom image for this pid; driver maps back to window coordinates. |
 | <span id="drag--macos--modifier"></span>`modifier` | `string[]` |  | Modifier keys held across the entire gesture: cmd/shift/option/ctrl. |
 | <span id="drag--macos--pid"></span>`pid` | `integer` |  | Target process ID. |
-| <span id="drag--macos--post_action_wait"></span>`post_action_wait` | `"default" \| "none"` |  | Whether the result waits for the post-action window-change report (default "default": up to 300 ms for a new window, menu, dialog or foreground change). "none" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged. |
+| <span id="drag--macos--post_action_wait"></span>`post_action_wait` | `"default" \| "none"` |  | "none" returns without waiting up to 300 ms for a new window, menu, dialog or foreground change; a change seen later is reported on the next action's result. |
 | <span id="drag--macos--scope"></span>`scope` | `"window" \| "desktop"` | `"window"` | Use desktop with no pid/window_id for native get_desktop_state screenshot coordinates. |
 | <span id="drag--macos--steps"></span>`steps` | `integer` |  | Number of intermediate mouseDragged events linearly interpolated along the path. Default: 20. Range: 1 to 200. |
 | <span id="drag--macos--to_x"></span>`to_x` | `number` | required | Drag-end X in window-local screenshot pixels. |
@@ -139,12 +139,12 @@ duration_ms (default 500) is the wall-clock budget; steps (default 20) interpola
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="drag--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="drag--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 | <span id="drag--target"></span>`target` | `object` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
-| <span id="drag--target-display_id"></span>`target.display_id` | `string` |  | Display id. Required when kind is desktop; use "primary". |
-| <span id="drag--target-kind"></span>`target.kind` | `"window" \| "desktop"` |  | window requires pid and window_id; desktop requires display_id. |
-| <span id="drag--target-pid"></span>`target.pid` | `integer` |  | Process id. Required when kind is window. Minimum: 0. |
-| <span id="drag--target-window_id"></span>`target.window_id` | `integer` |  | Window id from list_windows. Required when kind is window. Minimum: 0. |
+| <span id="drag--target-display_id"></span>`target.display_id` | `string` |  |  |
+| <span id="drag--target-kind"></span>`target.kind` | `"window" \| "desktop"` |  |  |
+| <span id="drag--target-pid"></span>`target.pid` | `integer` |  | Minimum: 0. |
+| <span id="drag--target-window_id"></span>`target.window_id` | `integer` |  | Minimum: 0. |
 
 **Example arguments**
 
@@ -173,9 +173,8 @@ Electron/Chromium windows drop background wheel events: there a background scrol
 | <span id="scroll--macos--amount"></span>`amount` | `integer` |  | Wheel notches or key repetitions, clamped to the maximum. Default 3. Range: 1 to 50. |
 | <span id="scroll--macos--delivery_mode"></span>`delivery_mode` | `"background" \| "foreground"` |  | Default "background": no fronting or focus steal. "foreground": briefly front the window, act, restore the prior app; last resort when background did not land. |
 | <span id="scroll--macos--pid"></span>`pid` | `integer` |  | Target process ID. Required unless scope is "desktop" or element_token is supplied. |
-| <span id="scroll--macos--post_action_wait"></span>`post_action_wait` | `"default" \| "none"` |  | Whether the result waits for the post-action window-change report (default "default": up to 300 ms for a new window, menu, dialog or foreground change). "none" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged. |
+| <span id="scroll--macos--post_action_wait"></span>`post_action_wait` | `"default" \| "none"` |  | "none" returns without waiting up to 300 ms for a new window, menu, dialog or foreground change; a change seen later is reported on the next action's result. |
 | <span id="scroll--macos--scope"></span>`scope` | `"window" \| "desktop"` | `"window"` | "desktop" with x,y and no pid/window_id uses get_desktop_state coordinates. |
-| <span id="scroll--macos--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 | <span id="scroll--macos--window_id"></span>`window_id` | `integer` |  | Window ID. Required with x/y; optional with element_token. |
 | <span id="scroll--macos--x"></span>`x` | `number` |  | Window-local screenshot X (get_window_state PNG). With y, wheel-scrolls at that point; needs window_id. |
 | <span id="scroll--macos--y"></span>`y` | `number` |  | Window-local screenshot Y. |
@@ -196,7 +195,6 @@ direction required; by defaults to line, amount defaults to 3.
 | <span id="scroll--linux--delivery_mode"></span>`delivery_mode` | `"background" \| "foreground"` | `"background"` | Input delivery mode. 'background' (default) never activates or raises the target window. On X11 it injects via XTEST / the XInput2 master pointer (no focus steal). On Wayland it goes through libei + xdg-desktop-portal, which injects to the compositor's input focus: Wayland's security model has no per-window background targeting, so a specific non-focused window cannot be aimed at; when no libei backend is available the tool returns a structured background_unavailable error. 'foreground' is the explicit escalation: activate the target (X11 _NET_ACTIVE_WINDOW; Wayland compositor activate), inject, then restore the prior active window; a brief focus swap unless the target was already active. Matches the macOS / Windows delivery_mode surface. |
 | <span id="scroll--linux--pid"></span>`pid` | `integer` |  | Target process ID. Required unless scope is "desktop" or element_token is supplied (the token carries the pid). |
 | <span id="scroll--linux--scope"></span>`scope` | `"window" \| "desktop"` | `"window"` | Use "desktop" with x,y and no pid/window_id for get_desktop_state screen coordinates. Default "window". |
-| <span id="scroll--linux--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 | <span id="scroll--linux--window_id"></span>`window_id` | `integer` |  | Window id from list_windows. Required with x/y; optional with element_token (the token carries it). |
 | <span id="scroll--linux--x"></span>`x` | `number` |  | Window-local screenshot-pixel X of the scroll target. Pass with y and without element_token. |
 | <span id="scroll--linux--y"></span>`y` | `number` |  | Window-local screenshot-pixel Y of the scroll target. Pass with x and without element_token. |
@@ -220,7 +218,6 @@ Note: `element_token` is accepted for cross-platform parity but currently no-op 
 | <span id="scroll--windows--delivery_mode"></span>`delivery_mode` | `"background" \| "foreground"` |  | Input delivery mode. 'background' (default) never swaps foreground: it routes through UIA Invoke / PostMessage and the window is never raised. For targets whose input stack silently drops posted events (Chromium/Electron content, GTK buttons, VCL/LibreOffice accelerators) the tool returns a structured background_unavailable error rather than fronting. 'foreground' is the explicit escalation: a brief SetForegroundWindow swap + SendInput, restoring the prior foreground afterward. IMPORTANT: 'background' is not a hint to weigh; it is the mandatory first attempt. Do NOT pass 'foreground' preemptively because a target 'looks like' GTK/Chromium/Electron; the DRIVER decides when background is impossible and tells you so via a background_unavailable error (or a verified no-op). Only THEN re-issue the same action with 'foreground'. The lists above are the driver's detectors, not a checklist for you to front on a guess: fronting up-front needlessly steals the user's focus and is a bug, not a shortcut. Matches the macOS delivery_mode surface. |
 | <span id="scroll--windows--pid"></span>`pid` | `integer` |  | Target process ID for window scope. Optional with element_token (the token carries the pid). Omit with scope=desktop for screen-absolute coordinates from get_desktop_state. |
 | <span id="scroll--windows--scope"></span>`scope` | `"window" \| "desktop"` | `"window"` | Use "desktop" with x,y and no pid/window_id for screen-absolute coordinates from get_desktop_state. Default "window". |
-| <span id="scroll--windows--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 | <span id="scroll--windows--window_id"></span>`window_id` | `integer` |  | HWND of the target window. Omit when element_token is supplied; otherwise auto-resolves the pid's first visible window. |
 | <span id="scroll--windows--x"></span>`x` | `number` |  | With pid/window_id: window-local screenshot X used to target a nested scroll surface in foreground mode. Without pid/window_id: screen-absolute X for desktop scope. Must be paired with y. |
 | <span id="scroll--windows--y"></span>`y` | `number` |  | With pid/window_id: window-local screenshot Y used to target a nested scroll surface in foreground mode. Without pid/window_id: screen-absolute Y for desktop scope. Must be paired with x. |
@@ -234,12 +231,13 @@ Note: `element_token` is accepted for cross-platform parity but currently no-op 
 | --- | --- | --- | --- |
 | <span id="scroll--by"></span>`by` | `"line" \| "page"` |  | Scroll granularity. Default: line. |
 | <span id="scroll--direction"></span>`direction` | `"up" \| "down" \| "left" \| "right"` | required | Scroll direction. |
-| <span id="scroll--element_token"></span>`element_token` | `string` |  | Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is "s0000002a:11" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
+| <span id="scroll--element_token"></span>`element_token` | `string` |  | Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of snapshot s0000002a is "s0000002a:11". |
+| <span id="scroll--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 | <span id="scroll--target"></span>`target` | `object` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
-| <span id="scroll--target-display_id"></span>`target.display_id` | `string` |  | Display id. Required when kind is desktop; use "primary". |
-| <span id="scroll--target-kind"></span>`target.kind` | `"window" \| "desktop"` |  | window requires pid and window_id; desktop requires display_id. |
-| <span id="scroll--target-pid"></span>`target.pid` | `integer` |  | Process id. Required when kind is window. Minimum: 0. |
-| <span id="scroll--target-window_id"></span>`target.window_id` | `integer` |  | Window id from list_windows. Required when kind is window. Minimum: 0. |
+| <span id="scroll--target-display_id"></span>`target.display_id` | `string` |  |  |
+| <span id="scroll--target-kind"></span>`target.kind` | `"window" \| "desktop"` |  |  |
+| <span id="scroll--target-pid"></span>`target.pid` | `integer` |  | Minimum: 0. |
+| <span id="scroll--target-window_id"></span>`target.window_id` | `integer` |  | Minimum: 0. |
 
 **Example arguments**
 
@@ -299,12 +297,12 @@ Does NOT move the real mouse cursor.
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="move_cursor--cursor_id"></span>`cursor_id` | `string` |  | Cursor instance to move. Default: 'default'. |
-| <span id="move_cursor--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="move_cursor--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 | <span id="move_cursor--target"></span>`target` | `object` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
-| <span id="move_cursor--target-display_id"></span>`target.display_id` | `string` |  | Display id. Required when kind is desktop; use "primary". |
-| <span id="move_cursor--target-kind"></span>`target.kind` | `"window" \| "desktop"` |  | window requires pid and window_id; desktop requires display_id. |
-| <span id="move_cursor--target-pid"></span>`target.pid` | `integer` |  | Process id. Required when kind is window. Minimum: 0. |
-| <span id="move_cursor--target-window_id"></span>`target.window_id` | `integer` |  | Window id from list_windows. Required when kind is window. Minimum: 0. |
+| <span id="move_cursor--target-display_id"></span>`target.display_id` | `string` |  |  |
+| <span id="move_cursor--target-kind"></span>`target.kind` | `"window" \| "desktop"` |  |  |
+| <span id="move_cursor--target-pid"></span>`target.pid` | `integer` |  | Minimum: 0. |
+| <span id="move_cursor--target-window_id"></span>`target.window_id` | `integer` |  | Minimum: 0. |
 | <span id="move_cursor--y"></span>`y` | `number` | required | Destination Y, in the same space as x. |
 
 **Example arguments**
@@ -327,7 +325,7 @@ Effect: destructive. Platforms: Linux.
 | <span id="mouse_button_down--cursor_id"></span>`cursor_id` | `string` |  | Optional multi-cursor instance id. Default: 'default'. |
 | <span id="mouse_button_down--from_zoom"></span>`from_zoom` | `boolean` |  | Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space. |
 | <span id="mouse_button_down--pid"></span>`pid` | `integer` | required | Target process ID. |
-| <span id="mouse_button_down--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. When both are present, session takes precedence over cursor_id. |
+| <span id="mouse_button_down--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. When both are present, session takes precedence over cursor_id. |
 | <span id="mouse_button_down--window_id"></span>`window_id` | `integer` | required | Window id from list_windows. |
 | <span id="mouse_button_down--x"></span>`x` | `number` | required | Window-local pixel X of the target window's own get_window_state screenshot (0..screenshot_width). For get_desktop_state pixels pass scope:"desktop" (or coordinate_frame:"desktop"). |
 | <span id="mouse_button_down--y"></span>`y` | `number` | required | Window-local pixel Y of the target window's own get_window_state screenshot (0..screenshot_height); see x. |
@@ -351,7 +349,7 @@ Effect: destructive. Platforms: Linux.
 | <span id="mouse_button_up--cursor_id"></span>`cursor_id` | `string` |  | Optional multi-cursor instance id. Default: 'default'. |
 | <span id="mouse_button_up--from_zoom"></span>`from_zoom` | `boolean` |  | Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space. |
 | <span id="mouse_button_up--pid"></span>`pid` | `integer` |  | Optional process ID; must match the held button's target. |
-| <span id="mouse_button_up--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. When both are present, session takes precedence over cursor_id. |
+| <span id="mouse_button_up--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. When both are present, session takes precedence over cursor_id. |
 | <span id="mouse_button_up--window_id"></span>`window_id` | `integer` |  | Optional window id; must match the held button's target. |
 | <span id="mouse_button_up--x"></span>`x` | `number` |  | Window-local pixel X of the target window's own get_window_state screenshot (0..screenshot_width). For get_desktop_state pixels pass scope:"desktop" (or coordinate_frame:"desktop"). |
 | <span id="mouse_button_up--y"></span>`y` | `number` |  | Window-local pixel Y of the target window's own get_window_state screenshot (0..screenshot_height); see x. |
@@ -369,7 +367,7 @@ Effect: destructive. Platforms: Linux.
 | <span id="mouse_drag--duration_ms"></span>`duration_ms` | `integer` |  | Total drag duration. Default: 500. Range: 0 to 10000. |
 | <span id="mouse_drag--from_zoom"></span>`from_zoom` | `boolean` |  | Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space. |
 | <span id="mouse_drag--pid"></span>`pid` | `integer` |  | Optional process ID; must match the held button's target. |
-| <span id="mouse_drag--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. When both are present, session takes precedence over cursor_id. |
+| <span id="mouse_drag--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. When both are present, session takes precedence over cursor_id. |
 | <span id="mouse_drag--steps"></span>`steps` | `integer` |  | Intermediate MotionNotify events. Default: 20. Range: 1 to 200. |
 | <span id="mouse_drag--window_id"></span>`window_id` | `integer` |  | Optional window id; must match the held button's target. |
 | <span id="mouse_drag--x"></span>`x` | `number` | required | Window-local pixel X of the target window's own get_window_state screenshot (0..screenshot_width). For get_desktop_state pixels pass scope:"desktop" (or coordinate_frame:"desktop"). |
@@ -391,7 +389,7 @@ Effect: destructive. Platforms: Linux.
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="parallel_mouse_drag--drags"></span>`drags` | `object[]` | required | Two or more drag gestures to run concurrently, each on its own virtual master pointer. Items: 2 to any. |
-| <span id="parallel_mouse_drag--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="parallel_mouse_drag--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 
 **Example arguments**
 
@@ -508,7 +506,7 @@ Effect: mutating. Platforms: macOS, Linux, Windows.
 | <span id="page--attributes"></span>`attributes` | `string[]` |  | Element attributes to include in query_dom results. |
 | <span id="page--css_selector"></span>`css_selector` | `string` |  | CSS selector for query_dom (e.g. 'a', 'button', 'input', 'h1'-'h6', 'p', 'img', 'select', '*'). |
 | <span id="page--pid"></span>`pid` | `integer` |  | Target process ID. |
-| <span id="page--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="page--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 | <span id="page--window_id"></span>`window_id` | `integer` |  | Target window ID from list_windows. |
 
 **Example arguments**
@@ -531,7 +529,7 @@ Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
 | <span id="get_browser_state--pid"></span>`pid` | `integer` |  | Native browser process id (bind mode). |
 | <span id="get_browser_state--query"></span>`query` | `string` |  | Read-only semantic match over role, accessible name, and visible text. |
 | <span id="get_browser_state--scope_ref"></span>`scope_ref` | `string` |  | Current semantic/content ref whose subtree should be observed. |
-| <span id="get_browser_state--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session. |
+| <span id="get_browser_state--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session. |
 | <span id="get_browser_state--snapshot_format"></span>`snapshot_format` | `"dom_refs_v1" \| "semantic_v2"` |  | Versioned snapshot contract. dom_refs_v1 remains the compatibility default. |
 | <span id="get_browser_state--tab_id"></span>`tab_id` | `string` |  | Opaque tab id from get_browser_state (session-scoped). |
 | <span id="get_browser_state--target_id"></span>`target_id` | `string` |  | Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id). |
@@ -552,7 +550,7 @@ Effect: destructive. Platforms: macOS, Linux, Windows.
 | <span id="browser_prepare--profile"></span>`profile` | `object` |  | Driver-owned isolated Chromium profile to launch with allow_launch=true. mode=isolated_new creates a fresh throwaway profile; mode=isolated_named reuses the named driver-owned profile. Never an existing user profile. |
 | <span id="browser_prepare--profile-mode"></span>`profile.mode` | `"isolated_new" \| "isolated_named"` |  |  |
 | <span id="browser_prepare--profile-name"></span>`profile.name` | `string` |  | Required only for isolated_named; 1-64 path-safe ASCII characters. |
-| <span id="browser_prepare--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session. |
+| <span id="browser_prepare--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session. |
 | <span id="browser_prepare--strategy"></span>`strategy` | `object` |  | Attach to an already-running browser instead of launching one. Pass an object, &#123;"kind":"existing_profile"&#125;, not a string. kind=existing_profile attaches to the user's running profile at pid/window_id under the runtime's profile authorization. |
 | <span id="browser_prepare--strategy-kind"></span>`strategy.kind` | `"existing_profile"` |  |  |
 | <span id="browser_prepare--window_id"></span>`window_id` | `integer` |  | Exact native window approval anchor; required for strategy.kind=existing_profile. |
@@ -566,7 +564,7 @@ Effect: mutating. Platforms: macOS, Linux, Windows.
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="browser_navigate--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session. |
+| <span id="browser_navigate--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session. |
 | <span id="browser_navigate--tab_id"></span>`tab_id` | `string` | required | Opaque tab id from get_browser_state (session-scoped). |
 | <span id="browser_navigate--target_id"></span>`target_id` | `string` | required | Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id). |
 | <span id="browser_navigate--url"></span>`url` | `string` | required | Destination URL (http:, https:, or about:). |
@@ -612,7 +610,7 @@ Effect: mutating. Platforms: macOS, Linux, Windows.
 | <span id="browser_click--delivery_mode"></span>`delivery_mode` | `"background" \| "foreground"` | `"background"` | background (default) refuses trusted input where it would activate the browser window, including Linux Chromium and macOS Chromium configurations whose trusted route cannot stay in the background. foreground accepts that activation, for a browser whose window nobody else is using (for example inside a sandbox). |
 | <span id="browser_click--input_route"></span>`input_route` | `"trusted" \| "dom_event"` |  | "trusted" (default): Input.dispatchMouseEvent. It refuses rather than foregrounding a standalone browser. "dom_event": synthetic full-background DOM click, only when explicitly requested. Dispatch does not prove the control activated; refresh page state and verify the expected postcondition. |
 | <span id="browser_click--ref"></span>`ref` | `string` |  | Page element ref in the p&lt;snapshot&gt;:&lt;index&gt; namespace from get_browser_state. Refs are invalidated by navigation and by newer snapshots of the same tab. |
-| <span id="browser_click--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session. |
+| <span id="browser_click--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session. |
 | <span id="browser_click--tab_id"></span>`tab_id` | `string` | required | Opaque tab id from get_browser_state (session-scoped). |
 | <span id="browser_click--target_id"></span>`target_id` | `string` | required | Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id). |
 | <span id="browser_click--x"></span>`x` | `number` |  | Viewport x (CSS px): alternative to ref. |
@@ -636,7 +634,7 @@ Effect: mutating. Platforms: macOS, Linux, Windows.
 | <span id="browser_type--mode"></span>`mode` | `"insert_text" \| "keystrokes"` |  | insert_text (default): bulk Input.insertText. keystrokes: per-character Input.dispatchKeyEvent. |
 | <span id="browser_type--ref"></span>`ref` | `string` | required | Page element ref in the p&lt;snapshot&gt;:&lt;index&gt; namespace from get_browser_state. Refs are invalidated by navigation and by newer snapshots of the same tab. |
 | <span id="browser_type--replace"></span>`replace` | `boolean` |  | false (default): insert at the caret, appending to whatever the field already holds. true: select the element's whole content first so the text replaces it; with an empty text this clears the field. Replacement goes through the selection, so beforeinput/input still fire and framework state stays consistent. |
-| <span id="browser_type--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session. |
+| <span id="browser_type--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session. |
 | <span id="browser_type--tab_id"></span>`tab_id` | `string` | required | Opaque tab id from get_browser_state (session-scoped). |
 | <span id="browser_type--target_id"></span>`target_id` | `string` | required | Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id). |
 | <span id="browser_type--text"></span>`text` | `string` | required | Text to type. |
@@ -658,7 +656,7 @@ Effect: mutating. Platforms: macOS, Linux, Windows.
 | --- | --- | --- | --- |
 | <span id="browser_select--label"></span>`label` | `string` |  | Exact visible label of the option to select. |
 | <span id="browser_select--ref"></span>`ref` | `string` | required | Page element ref in the p&lt;snapshot&gt;:&lt;index&gt; namespace from get_browser_state. Refs are invalidated by navigation and by newer snapshots of the same tab. |
-| <span id="browser_select--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session. |
+| <span id="browser_select--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session. |
 | <span id="browser_select--tab_id"></span>`tab_id` | `string` | required | Opaque tab id from get_browser_state (session-scoped). |
 | <span id="browser_select--target_id"></span>`target_id` | `string` | required | Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id). |
 | <span id="browser_select--value"></span>`value` | `string` |  | Exact value attribute of the option to select. |
@@ -712,7 +710,7 @@ Effect: mutating. Platforms: macOS, Linux, Windows.
 | <span id="browser_dialog--delivery_mode"></span>`delivery_mode` | `"background" \| "foreground"` | `"background"` | Requested foreground posture for accept/dismiss. Linux Chromium requires foreground; inspect is read-only. |
 | <span id="browser_dialog--dialog_id"></span>`dialog_id` | `string` |  | Opaque current dialog generation returned by action=inspect. |
 | <span id="browser_dialog--prompt_text"></span>`prompt_text` | `string` |  | Sensitive response text, valid only when accepting a prompt dialog. |
-| <span id="browser_dialog--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session. |
+| <span id="browser_dialog--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session. |
 | <span id="browser_dialog--tab_id"></span>`tab_id` | `string` | required | Opaque tab id from get_browser_state (session-scoped). |
 | <span id="browser_dialog--target_id"></span>`target_id` | `string` | required | Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id). |
 
@@ -733,7 +731,7 @@ Effect: mutating. Platforms: macOS, Linux, Windows.
 | --- | --- | --- | --- |
 | <span id="browser_set_input_files--files"></span>`files` | `string[]` | required | Absolute paths of 1 to 32 local regular files to assign to the input. Items: 1 to 32. |
 | <span id="browser_set_input_files--ref"></span>`ref` | `string` | required | Page element ref in the p&lt;snapshot&gt;:&lt;index&gt; namespace from get_browser_state. Refs are invalidated by navigation and by newer snapshots of the same tab. |
-| <span id="browser_set_input_files--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session. |
+| <span id="browser_set_input_files--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session. |
 | <span id="browser_set_input_files--tab_id"></span>`tab_id` | `string` | required | Opaque tab id from get_browser_state (session-scoped). |
 | <span id="browser_set_input_files--target_id"></span>`target_id` | `string` | required | Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id). |
 

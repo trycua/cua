@@ -8,7 +8,7 @@
     "additionalProperties": false,
     "properties": {
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -37,7 +37,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -110,7 +110,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "since": {
@@ -256,7 +256,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session. This\nfield never selects capture modality or authorization.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. This field never selects capture modality or authorization.",
       "type": "string"
      },
      "stable_samples": {
@@ -315,7 +315,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "urls": {
@@ -343,7 +343,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -367,7 +367,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "window_id": {
@@ -401,7 +401,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it.",
       "type": "string"
      },
      "width": {
@@ -469,7 +469,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it.",
       "type": "string"
      },
      "window_id": {
@@ -536,7 +536,7 @@
       "type": "string"
      },
      "element_token": {
-      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is \"s0000002a:11\" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of snapshot s0000002a is \"s0000002a:11\".",
       "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
@@ -565,7 +565,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "target": {
@@ -573,11 +573,9 @@
       "description": "Exact window (kind \"window\", with pid and window_id) or desktop (kind \"desktop\", with display_id). \"primary\" is the portable desktop target.",
       "properties": {
        "display_id": {
-        "description": "Display id. Required when kind is desktop; use \"primary\".",
         "type": "string"
        },
        "kind": {
-        "description": "window requires pid and window_id; desktop requires display_id.",
         "enum": [
          "window",
          "desktop"
@@ -585,12 +583,10 @@
         "type": "string"
        },
        "pid": {
-        "description": "Process id. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        },
        "window_id": {
-        "description": "Window id from list_windows. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        }
@@ -648,7 +644,7 @@
       "type": "string"
      },
      "element_token": {
-      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is \"s0000002a:11\" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of snapshot s0000002a is \"s0000002a:11\".",
       "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
@@ -661,7 +657,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "window_id": {
@@ -712,7 +708,7 @@
       "type": "string"
      },
      "element_token": {
-      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is \"s0000002a:11\" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of snapshot s0000002a is \"s0000002a:11\".",
       "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
@@ -732,7 +728,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "window_id": {
@@ -830,7 +826,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "steps": {
@@ -844,11 +840,9 @@
       "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`).",
       "properties": {
        "display_id": {
-        "description": "Display id. Required when kind is desktop; use \"primary\".",
         "type": "string"
        },
        "kind": {
-        "description": "window requires pid and window_id; desktop requires display_id.",
         "enum": [
          "window",
          "desktop"
@@ -856,12 +850,10 @@
         "type": "string"
        },
        "pid": {
-        "description": "Process id. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        },
        "window_id": {
-        "description": "Window id from list_windows. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        }
@@ -932,7 +924,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. When both are present, session takes precedence over cursor_id.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. When both are present, session takes precedence over cursor_id.",
       "type": "string"
      },
      "window_id": {
@@ -985,7 +977,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. When both are present, session takes precedence over cursor_id.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. When both are present, session takes precedence over cursor_id.",
       "type": "string"
      },
      "steps": {
@@ -1044,7 +1036,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. When both are present, session takes precedence over cursor_id.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. When both are present, session takes precedence over cursor_id.",
       "type": "string"
      },
      "window_id": {
@@ -1161,7 +1153,7 @@
       "type": "array"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -1204,7 +1196,7 @@
       "type": "string"
      },
      "element_token": {
-      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is \"s0000002a:11\" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of snapshot s0000002a is \"s0000002a:11\".",
       "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
@@ -1222,7 +1214,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "target": {
@@ -1230,11 +1222,9 @@
       "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`).",
       "properties": {
        "display_id": {
-        "description": "Display id. Required when kind is desktop; use \"primary\".",
         "type": "string"
        },
        "kind": {
-        "description": "window requires pid and window_id; desktop requires display_id.",
         "enum": [
          "window",
          "desktop"
@@ -1242,12 +1232,10 @@
         "type": "string"
        },
        "pid": {
-        "description": "Process id. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        },
        "window_id": {
-        "description": "Window id from list_windows. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        }
@@ -1307,7 +1295,7 @@
       "type": "string"
      },
      "element_token": {
-      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is \"s0000002a:11\" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of snapshot s0000002a is \"s0000002a:11\".",
       "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
@@ -1336,7 +1324,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "target": {
@@ -1344,11 +1332,9 @@
       "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`).",
       "properties": {
        "display_id": {
-        "description": "Display id. Required when kind is desktop; use \"primary\".",
         "type": "string"
        },
        "kind": {
-        "description": "window requires pid and window_id; desktop requires display_id.",
         "enum": [
          "window",
          "desktop"
@@ -1356,12 +1342,10 @@
         "type": "string"
        },
        "pid": {
-        "description": "Process id. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        },
        "window_id": {
-        "description": "Window id from list_windows. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        }
@@ -1409,7 +1393,7 @@
       "type": "string"
      },
      "element_token": {
-      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is \"s0000002a:11\" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of snapshot s0000002a is \"s0000002a:11\".",
       "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
@@ -1435,7 +1419,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "target": {
@@ -1443,11 +1427,9 @@
       "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`).",
       "properties": {
        "display_id": {
-        "description": "Display id. Required when kind is desktop; use \"primary\".",
         "type": "string"
        },
        "kind": {
-        "description": "window requires pid and window_id; desktop requires display_id.",
         "enum": [
          "window",
          "desktop"
@@ -1455,12 +1437,10 @@
         "type": "string"
        },
        "pid": {
-        "description": "Process id. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        },
        "window_id": {
-        "description": "Window id from list_windows. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        }
@@ -1508,7 +1488,7 @@
       "type": "string"
      },
      "element_token": {
-      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is \"s0000002a:11\" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of snapshot s0000002a is \"s0000002a:11\".",
       "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
@@ -1517,7 +1497,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "value": {
@@ -1590,7 +1570,7 @@
       "type": "string"
      },
      "element_token": {
-      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is \"s0000002a:11\" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of snapshot s0000002a is \"s0000002a:11\".",
       "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
@@ -1608,7 +1588,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "target": {
@@ -1616,11 +1596,9 @@
       "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`).",
       "properties": {
        "display_id": {
-        "description": "Display id. Required when kind is desktop; use \"primary\".",
         "type": "string"
        },
        "kind": {
-        "description": "window requires pid and window_id; desktop requires display_id.",
         "enum": [
          "window",
          "desktop"
@@ -1628,12 +1606,10 @@
         "type": "string"
        },
        "pid": {
-        "description": "Process id. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        },
        "window_id": {
-        "description": "Window id from list_windows. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        }
@@ -1677,7 +1653,7 @@
       "type": "boolean"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it.",
       "type": "string"
      }
     },
@@ -1703,7 +1679,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it.",
       "type": "string"
      },
      "text": {
@@ -1725,7 +1701,7 @@
     "additionalProperties": false,
     "properties": {
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -1751,7 +1727,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -1768,7 +1744,7 @@
     "additionalProperties": false,
     "properties": {
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -1798,7 +1774,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "target": {
@@ -1806,11 +1782,9 @@
       "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`).",
       "properties": {
        "display_id": {
-        "description": "Display id. Required when kind is desktop; use \"primary\".",
         "type": "string"
        },
        "kind": {
-        "description": "window requires pid and window_id; desktop requires display_id.",
         "enum": [
          "window",
          "desktop"
@@ -1818,12 +1792,10 @@
         "type": "string"
        },
        "pid": {
-        "description": "Process id. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        },
        "window_id": {
-        "description": "Window id from list_windows. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        }
@@ -2079,7 +2051,7 @@
       "type": "boolean"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -2103,7 +2075,7 @@
       "type": "array"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "skip": {
@@ -2127,7 +2099,7 @@
     "additionalProperties": false,
     "properties": {
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -2291,7 +2263,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -2308,7 +2280,7 @@
     "additionalProperties": false,
     "properties": {
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -2329,7 +2301,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "window_id": {
@@ -2396,7 +2368,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "window_id": {
@@ -2441,7 +2413,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
       "type": "string"
      },
      "snapshot_format": {
@@ -2516,7 +2488,7 @@
       "type": "object"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
       "type": "string"
      },
      "strategy": {
@@ -2554,7 +2526,7 @@
     "additionalProperties": true,
     "properties": {
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
       "type": "string"
      },
      "tab_id": {
@@ -2609,7 +2581,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
       "type": "string"
      },
      "tab_id": {
@@ -2662,7 +2634,7 @@
       "type": "boolean"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
       "type": "string"
      },
      "tab_id": {
@@ -2705,7 +2677,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
       "type": "string"
      },
      "tab_id": {
@@ -2765,7 +2737,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
       "type": "string"
      },
      "tab_id": {
@@ -2809,7 +2781,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
       "type": "string"
      },
      "tab_id": {
@@ -2995,7 +2967,7 @@
       "type": "array"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "state_timeout_ms": {
@@ -3022,7 +2994,7 @@
     "additionalProperties": false,
     "properties": {
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -3039,7 +3011,7 @@
     "additionalProperties": false,
     "properties": {
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -3066,7 +3038,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "stop_on_error": {
@@ -3094,7 +3066,7 @@
       "type": "boolean"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -3341,7 +3313,7 @@
     "additionalProperties": false,
     "properties": {
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "topic": {
@@ -3392,7 +3364,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "steps": {
@@ -3482,7 +3454,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "timeout_ms": {
@@ -3508,7 +3480,7 @@
     "additionalProperties": false,
     "properties": {
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -3536,7 +3508,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -3595,7 +3567,7 @@
       "type": "object"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },

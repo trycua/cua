@@ -36,7 +36,7 @@ fn def() -> &'static ToolDef {
             \n\
             DIFF READS (use them for every re-read after acting): `since:\"latest\"`, or `since:<snapshot_id>` from an earlier read of the same window, returns only what changed: `+` added, `~` changed, `-` removed rows (removed ids are the old snapshot's), a `reindexed:` line if indices shifted, or `no change since …; focused element is …`. The response carries a NEW snapshot_id: use it in tokens. An unknown, expired, other-window or differently-scoped (query/max_elements/max_depth) `since` falls back to a full read; `since_status` says why.\n\
             \n\
-            A new snapshot of the same (pid, window_id) replaces the previous one and stales its tokens (`invalidated_snapshot_ids`). `include_screenshot:false` returns the tree only and keeps the last screenshot's pixel frame while the window keeps its size; `include_accessibility_tree:false` returns only the screenshot and keeps the current snapshot's rows and tokens valid (use it, not `max_elements:1`, when you just need to look); adding `display_only:true` (live previews) also leaves the pixel frame alone. The tree can lie on some surfaces (Electron, Catalyst, virtualized rows with `h:1` frames): cross-check the screenshot, and use pixel x,y at action time only for elements missing from the tree.\n\
+            The first read of an app that has notes (LibreOffice, GnuCash, Electron apps) also carries `app_notes`, repeated as the first line of `tree_markdown`, once per session. A new snapshot of the same (pid, window_id) replaces the previous one and stales its tokens (`invalidated_snapshot_ids`). `include_screenshot:false` returns the tree only and keeps the last screenshot's pixel frame while the window keeps its size; `include_accessibility_tree:false` returns only the screenshot and keeps the current snapshot's rows and tokens valid (use it, not `max_elements:1`, when you just need to look); adding `display_only:true` (live previews) also leaves the pixel frame alone. The tree can lie on some surfaces (Electron, Catalyst, virtualized rows with `h:1` frames): cross-check the screenshot, and use pixel x,y at action time only for elements missing from the tree.\n\
             \n\
             Refusals: `window_id_not_found`; `window_owner_pid_mismatch` names the real `owner_pid` (sandboxed Open/Save panels belong to a panel service). `degraded_reason` `ax_window_unresolved` or `ax_app_launching` (the latter with `truncation_reason: app_lookup_timeout`) means an empty tree: re-snapshot, or act with `delivery_mode:\"foreground\"`. `degraded_reason` `screen_locked` means the screen saver, display sleep or a lock hid every window from accessibility: wake and unlock the Mac, then re-snapshot; foreground input would reach the lock screen. `px_frame_mismatch` / `px_capture_unavailable` omit the unprovable screenshot; the AX payload stays valid.".into(),
         input_schema: cua_driver_core::window_state_view::extend_input_schema(serde_json::json!({
@@ -928,6 +928,8 @@ impl Tool for GetWindowStateTool {
         }
         if !observation_only {
             let focus_probe = || focused_element_description(pid, tree_result.as_ref());
+            let app_bundle_id = crate::apps::bundle_id_for_pid(pid);
+            let app_name = crate::apps::get_app_name_for_pid(pid);
             cua_driver_core::window_state_view::apply(
                 &view,
                 &cua_driver_core::window_state_view::ViewContext {
@@ -942,6 +944,11 @@ impl Tool for GetWindowStateTool {
                             .map(|v| v as usize),
                     },
                     focus_probe: Some(&focus_probe),
+                    app: Some(cua_driver_core::app_notes::AppIdentity {
+                        bundle_id: app_bundle_id.as_deref(),
+                        name: app_name.as_deref(),
+                        session_id: session_id.as_deref(),
+                    }),
                 },
                 &mut content,
                 &mut structured,

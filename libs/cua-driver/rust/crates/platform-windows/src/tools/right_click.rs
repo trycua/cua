@@ -191,7 +191,7 @@ impl Tool for RightClickTool {
                 .await;
                 return match inj {
                     Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Injected right-click to [{idx}] at screen ({cx},{cy}) (background, no foreground swap)."
+                        "Injected right-click to [{idx}] at screen ({cx},{cy}) (background, no foreground swap)."
                     )),
                     Ok(Err(e)) => crate::input::delivery::background_unavailable_error_with_cause(
                         hwnd,
@@ -223,7 +223,7 @@ impl Tool for RightClickTool {
                 tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
                 return match send_result {
                     Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Sent right-click via SendInput on [{idx}] at screen ({cx},{cy}) (delivery_mode:foreground)."
+                        "Sent right-click via SendInput on [{idx}] at screen ({cx},{cy}) (delivery_mode:foreground)."
                     )),
                     Ok(Err(e)) => ToolResult::error(e.to_string()),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -241,9 +241,9 @@ impl Tool for RightClickTool {
                     let _admission = &admitted;
                     crate::input::post_click_screen(hwnd, cx, cy, 1, "right")?;
                     // Match Swift's element-path text 1:1
-                    // (`"✅ Shown menu for [N] role \"title\"."`).  UIA role/title
+                    // (`"Shown menu for [N] role \"title\"."`).  UIA role/title
                     // placeholder pending element-cache enrichment.
-                    Ok(format!("✅ Shown menu for [{idx}] (screen ({cx}, {cy}))."))
+                    Ok(format!("Shown menu for [{idx}] (screen ({cx}, {cy}))."))
                 }
             })
             .await;
@@ -309,7 +309,7 @@ impl Tool for RightClickTool {
                 .await;
                 return match inj {
                     Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Injected right-click to pid {pid} at screen ({sx_i},{sy_i}) (background, no foreground swap)."
+                        "Injected right-click to pid {pid} at screen ({sx_i},{sy_i}) (background, no foreground swap)."
                     )),
                     Ok(Err(e)) => crate::input::delivery::background_unavailable_error_with_cause(
                         hwnd,
@@ -341,7 +341,7 @@ impl Tool for RightClickTool {
                 tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
                 return match send_result {
                     Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Sent right-click via SendInput to pid {pid} at screen ({sx_i},{sy_i}) (delivery_mode:foreground)."
+                        "Sent right-click via SendInput to pid {pid} at screen ({sx_i},{sy_i}) (delivery_mode:foreground)."
                     )),
                     Ok(Err(e)) => ToolResult::error(e.to_string()),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -366,7 +366,7 @@ impl Tool for RightClickTool {
                 Ok(Ok(())) => {
                     // Swift pixel-path text 1:1.
                     ToolResult::text(format!(
-                        "✅ Posted right-click to pid {pid} at window-pixel ({xi}, {yi}) → screen-point ({sx_i}, {sy_i})."))
+                        "Posted right-click to pid {pid} at window-pixel ({xi}, {yi}) → screen-point ({sx_i}, {sy_i})."))
                 }
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),

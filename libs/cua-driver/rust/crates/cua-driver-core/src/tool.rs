@@ -1688,12 +1688,39 @@ impl ToolRegistry {
     }
 
     pub fn tools_list(&self) -> Value {
+        #[cfg(feature = "script")]
+        let script_only = crate::script_tool::script_only();
+        #[cfg(not(feature = "script"))]
+        let script_only = false;
+        self.tools_list_for(script_only)
+    }
+
+    /// `tools/list`; in script-only mode only `run_script`, when registered.
+    pub(crate) fn tools_list_for(&self, script_only: bool) -> Value {
+        // Script-only applies only when run_script is registered and policy
+        // lists it, so the list is never emptied.
+        let script_only = script_only
+            && self.tools.contains_key("run_script")
+            && crate::policy::is_tool_listable("run_script");
+        // Alone in the list, run_script names every tool it reaches.
+        #[cfg(feature = "script")]
+        let script_only_description =
+            script_only.then(|| crate::script_tool::script_only_description(self));
+        #[cfg(not(feature = "script"))]
+        let script_only_description: Option<String> = None;
         let list: Vec<Value> = self
             .order
             .iter()
+            .filter(|name| !script_only || name.as_str() == "run_script")
             .filter(|name| crate::policy::is_tool_listable(name))
             .filter_map(|name| self.tools.get(name))
-            .map(|tool| tool.def().to_list_entry())
+            .map(|tool| {
+                let mut entry = tool.def().to_list_entry();
+                if let Some(description) = &script_only_description {
+                    entry["description"] = description.clone().into();
+                }
+                entry
+            })
             .collect();
         // `capability_version` is the contract version for the
         // capability tokens claimed by each tool entry. Bumped on
@@ -1907,7 +1934,8 @@ impl ToolRegistry {
 
     /// The canonical native dispatch boundary. Every refusal and every
     /// unconfirmed action leaves it with a `hint` (and a `next_call` when one
-    /// exists); see [`crate::recovery_hint`].
+    /// exists), see [`crate::recovery_hint`], and every action result's text
+    /// starts with its verdict, see [`crate::verdict`].
     async fn invoke_authorized(
         &self,
         name: &str,
@@ -1963,6 +1991,7 @@ impl ToolRegistry {
             crate::fast_path::wire::attach_delta(&mut result, delta);
         }
         crate::recovery_hint::annotate(tool, &seed, &mut result);
+        crate::verdict::annotate(tool, &mut result);
         crate::batch_nudge::annotate(tool, session.as_deref(), in_batch, &nudge_args, &mut result);
         result
     }

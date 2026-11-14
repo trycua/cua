@@ -313,7 +313,7 @@ fn ax_double_click(
         crate::input::mouse::WindowClickDelivery::from_foreground(foreground),
     )?;
     Ok(format!(
-        "✅ Double-clicked element [{idx}] at ({cx:.1}, {cy:.1})."
+        "Double-clicked element [{idx}] at ({cx:.1}, {cy:.1})."
     ))
 }
 

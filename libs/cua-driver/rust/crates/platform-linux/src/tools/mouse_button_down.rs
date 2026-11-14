@@ -190,7 +190,7 @@ impl Tool for MouseButtonDownTool {
                     );
                 }
                 ToolResult::text(format!(
-                    "✅ Cursor '{cursor_id}' held {} button down at ({x:.1}, {y:.1}).",
+                    "Cursor '{cursor_id}' held {} button down at ({x:.1}, {y:.1}).",
                     mouse_button_name(button),
                 ))
                 .with_structured(mouse_hold_json(&cursor_id, Some(&hold)))

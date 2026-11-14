@@ -576,7 +576,7 @@ impl Tool for DragTool {
             }
             Ok(Ok(true)) => drag_and_drop_session_result(pid, wid, changes.result_suffix()),
             Ok(Ok(false)) => ToolResult::text(format!(
-                "✅ Posted drag{btn_suffix}{mod_suffix} to pid {pid} window {wid} \
+                "Posted drag{btn_suffix}{mod_suffix} to pid {pid} window {wid} \
                  from window-pixel ({}, {}) → ({}, {}), \
                  screen ({}, {}) → ({}, {}) \
                  in {duration_ms}ms / {steps} steps ({route_note}; not driver-verified — \
@@ -751,7 +751,7 @@ impl DragTool {
                     ""
                 };
                 ToolResult::text(format!(
-                    "✅ Posted drag to Electron pid {pid} window {wid} from window-point \
+                    "Posted drag to Electron pid {pid} window {wid} from window-point \
                      ({:.0}, {:.0}) → ({:.0}, {:.0}) through the app's main process \
                      ({route}); pointer not moved, window not raised, focus kept.{dnd} \
                      Not driver-verified — confirm via screenshot.",

@@ -179,7 +179,9 @@ impl Tool for RunStepsTool {
                 actions that reshuffle the window, or target later steps by role/name. A token \
                 that went stale is retried once on the element with the same role and label, if \
                 exactly one matches.\n\n\
-                Returns per-step status (`ok` or the error message) and, when `observe` is \
+                Returns per-step status (`ok`; `UNCONFIRMED` when the step ran but nothing \
+                confirmed it, so look before relying on it; or the error message) and \
+                time (`steps[].ms`), and, when `observe` is \
                 given, ONE bounded get_window_state read after the last executed step (after a \
                 failure caused by a dialog holding focus, that dialog is read, even without \
                 `observe`). A step refused because its app ignores background input says \
@@ -391,6 +393,8 @@ struct StepOutcome {
     report: Value,
     line: String,
     ok: bool,
+    /// The step ran, but nothing confirmed its action took effect.
+    unconfirmed: bool,
 }
 
 /// Where in a step a failure happened.
@@ -638,6 +642,7 @@ impl Plan {
             }
         }
         let mut reports = Vec::with_capacity(total);
+        let mut unconfirmed = 0;
         let mut lines = Vec::with_capacity(total + 2);
         let mut failed_step = None;
         // The window later steps inherit, and the last concrete window used.
@@ -661,7 +666,8 @@ impl Plan {
             if index > 0 && !self.delay.is_zero() {
                 tokio::time::sleep(self.delay).await;
             }
-            let outcome = if started.elapsed() >= Duration::from_millis(MAX_BATCH_MS) {
+            let step_started = Instant::now();
+            let mut outcome = if started.elapsed() >= Duration::from_millis(MAX_BATCH_MS) {
                 failure(
                     index,
                     step.label(),
@@ -697,12 +703,14 @@ impl Plan {
                 )
                 .await
             };
+            outcome.report["ms"] = json!(step_started.elapsed().as_millis() as u64);
             if !outcome.ok {
                 recovery = Recovery::after(&outcome.report, last_window.as_ref());
                 if let Some(Recovery { window, .. }) = &recovery {
                     last_window = Some(window.clone());
                 }
             }
+            unconfirmed += usize::from(outcome.unconfirmed);
             lines.push(outcome.line);
             reports.push(outcome.report);
             if !outcome.ok {
@@ -720,6 +728,7 @@ impl Plan {
             "steps": reports,
         });
         let header = match failed_step {
+            None if unconfirmed > 0 => format!("run_steps: {total}/{total} steps ran"),
             None => format!("run_steps: {total}/{total} steps ok"),
             Some(index) => format!(
                 "run_steps: step {} of {total} failed; {} step(s) ran before it, {} not run",
@@ -729,6 +738,11 @@ impl Plan {
             ),
         };
         lines.insert(0, header);
+        if unconfirmed > 0 {
+            lines.push(format!(
+                "{unconfirmed} of {executed} steps unconfirmed: look before relying on them"
+            ));
+        }
 
         // One observation at the end, also after a failure so the caller can
         // see where the app was left.
@@ -845,6 +859,7 @@ async fn run_step(
     let step_has_no_action = step.action.is_none();
     let mut report = json!({ "index": index, "tool": label });
     let mut notes: Vec<String> = Vec::new();
+    let mut verdict = None;
 
     if step.skipped_read.is_some() {
         let note = "skipped: a read between actions cannot change the later steps; the \
@@ -857,6 +872,7 @@ async fn run_step(
             line: format!("{}. {label} {note}", index + 1),
             report,
             ok: true,
+            unconfirmed: false,
         };
     }
 
@@ -1056,10 +1072,13 @@ async fn run_step(
                 line: format!("{}. {label} ERROR (action): {message}", index + 1),
                 report: with_phase(report, Phase::Action),
                 ok: false,
+                unconfirmed: false,
             };
         }
-        if !message.is_empty() {
-            notes.insert(0, message);
+        verdict = crate::verdict::Verdict::of_structured(result.structured_content.as_ref());
+        let said = crate::verdict::strip(&message);
+        if !said.is_empty() {
+            notes.insert(0, said.to_owned());
         }
     }
 
@@ -1112,7 +1131,8 @@ async fn run_step(
             }
         }
     }
-    if !checked.is_empty() {
+    let any_check_held = !checked.is_empty();
+    if any_check_held {
         notes.push(format!("{} check(s) held", checked.len()));
         report["expect"] = Value::Array(checked);
     }
@@ -1121,9 +1141,15 @@ async fn run_step(
         report["message"] = json!(notes.join("; "));
     }
     let detail = notes.join("; ");
+    // A check that held confirms the step whatever the action could say.
+    let unconfirmed = !any_check_held && verdict.is_some_and(|v| v.needs_a_look());
+    let status = match verdict {
+        Some(verdict) if unconfirmed => verdict.word(),
+        _ => "ok",
+    };
     StepOutcome {
         line: format!(
-            "{}. {label} ok{}",
+            "{}. {label} {status}{}",
             index + 1,
             if detail.is_empty() {
                 String::new()
@@ -1133,6 +1159,7 @@ async fn run_step(
         ),
         report,
         ok: true,
+        unconfirmed,
     }
 }
 
@@ -1155,6 +1182,7 @@ fn failure(
         ),
         report: with_phase(report, phase),
         ok: false,
+        unconfirmed: false,
     }
 }
 

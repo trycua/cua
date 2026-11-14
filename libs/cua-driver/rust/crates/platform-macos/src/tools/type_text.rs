@@ -480,7 +480,7 @@ impl Tool for TypeTextTool {
                 // confirmed insert — tell the agent to look, and point at the
                 // right next rung.
                 let (mark, note) = if verified {
-                    ("✅ Inserted", String::new())
+                    ("Inserted", String::new())
                 } else if untrusted_web_readback {
                     let next_step = if electron_web_content && used_pixel_focus {
                         "The pixel-focus rung already ran, so do not repeat it; verify the \
@@ -490,7 +490,7 @@ impl Tool for TypeTextTool {
                          embedded web view, re-type with the px form (x,y)."
                     };
                     (
-                        "📨 Sent (unverified)",
+                        "Sent",
                         format!(
                             " — web-content surface (Chromium / WebKit / Electron): \
                              AXValue read-back is not independent proof that the \
@@ -498,15 +498,11 @@ impl Tool for TypeTextTool {
                         ),
                     )
                 } else if path == PATH_KEY_EVENTS_FG {
-                    (
-                        "📨 Sent (unverified)",
-                        " — driver could not confirm; verify via screenshot.".to_string(),
-                    )
+                    ("Sent", String::new())
                 } else {
                     (
-                        "📨 Sent (unverified)",
-                        " — driver could not confirm the text landed; verify via screenshot, \
-                      and re-call with delivery_mode:\"foreground\" if it didn't."
+                        "Sent",
+                        " If it didn't land, re-call with delivery_mode:\"foreground\"."
                             .to_string(),
                     )
                 };

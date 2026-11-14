@@ -2350,8 +2350,7 @@ pub(crate) fn push_evidence(structured: &mut Value, item: Value) {
 pub(crate) fn key_route_result(action: &str, route: KeyRoute, mode_label: &str) -> ToolResult {
     match route {
         KeyRoute::Foreground(report) => ToolResult::text(format!(
-            "{action} as a real key event (delivery_mode=foreground, focus_after={}); \
-             not verified — confirm with a screenshot.{}",
+            "{action} as a real key event (delivery_mode=foreground, focus_after={}).{}",
             report.focus_after.as_str(),
             report.focus_note()
         ))
@@ -2366,8 +2365,7 @@ pub(crate) fn key_route_result(action: &str, route: KeyRoute, mode_label: &str) 
             structured["delivery_mode"] = json!(mode_label);
             structured["effect"] = json!("unverifiable");
             let mut text = format!(
-                "{action} as real key events {} (delivery_mode={mode_label}); not verified — \
-                 confirm with a screenshot.",
+                "{action} as real key events {} (delivery_mode={mode_label}).",
                 report.route_phrase()
             );
             let closed_target = report
@@ -2761,12 +2759,12 @@ impl PointerRoute {
                 if hit.selection_verified {
                     " — the item is selected."
                 } else {
-                    "; confirm with a screenshot."
+                    "."
                 }
             ),
             Self::Atspi(hit) => format!(
                 "(delivery_mode={mode_label}, path=x11_atspi); {}; the AT-SPI action was \
-                 dispatched, not verified — confirm with a screenshot.",
+                 dispatched.",
                 hit.describe()
             ),
             Self::Mpx(effect) if effect.landed() => format!(
@@ -2788,7 +2786,7 @@ impl PointerRoute {
             Self::Mpx(effect) => format!(
                 "(delivery_mode={mode_label}, path={}, focus {}); real button events were \
                  delivered but the screen around the point did not visibly change \
-                 ({}) — confirm with a screenshot.",
+                 ({}).",
                 crate::input::MPX_POINTER_PATH,
                 if effect.focus_unchanged {
                     "untouched"
@@ -2801,7 +2799,7 @@ impl PointerRoute {
                     .unwrap_or_else(|| "region capture unavailable".to_owned())
             ),
             _ => format!(
-                "(delivery_mode={mode_label}{}); not verified — confirm with a screenshot.",
+                "(delivery_mode={mode_label}{}).",
                 self.path()
                     .map(|p| format!(", path={p}"))
                     .unwrap_or_default()

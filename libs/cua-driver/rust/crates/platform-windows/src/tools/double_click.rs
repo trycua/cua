@@ -196,7 +196,7 @@ impl Tool for DoubleClickTool {
                 .await;
                 return match inj {
                     Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Injected double-click to [{idx}] at screen ({cx},{cy}) (background, no foreground swap)."
+                        "Injected double-click to [{idx}] at screen ({cx},{cy}) (background, no foreground swap)."
                     )),
                     Ok(Err(e)) => crate::input::delivery::background_unavailable_error_with_cause(
                         hwnd,
@@ -229,7 +229,7 @@ impl Tool for DoubleClickTool {
                 tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
                 return match send_result {
                     Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Sent double-click via SendInput on [{idx}] at screen ({cx},{cy}) (delivery_mode:foreground)."
+                        "Sent double-click via SendInput on [{idx}] at screen ({cx},{cy}) (delivery_mode:foreground)."
                     )),
                     Ok(Err(e)) => ToolResult::error(e.to_string()),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -246,10 +246,10 @@ impl Tool for DoubleClickTool {
                 move || -> anyhow::Result<String> {
                     let _admission = &admitted;
                     crate::input::post_click_screen(hwnd, cx, cy, 2, "left")?;
-                    // Swift text format 1:1: `"✅ Posted double-click to [N] role \"title\" at screen-point (X, Y)."`.
+                    // Swift text format 1:1: `"Posted double-click to [N] role \"title\" at screen-point (X, Y)."`.
                     // UIA role/title placeholder pending element-cache enrichment.
                     Ok(format!(
-                        "✅ Posted double-click to [{idx}] at screen-point ({cx}, {cy})."
+                        "Posted double-click to [{idx}] at screen-point ({cx}, {cy})."
                     ))
                 }
             })
@@ -317,7 +317,7 @@ impl Tool for DoubleClickTool {
                 .await;
                 return match inj {
                     Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Injected double-click to pid {pid} at screen ({sx_i},{sy_i}) (background, no foreground swap)."
+                        "Injected double-click to pid {pid} at screen ({sx_i},{sy_i}) (background, no foreground swap)."
                     )),
                     Ok(Err(e)) => crate::input::delivery::background_unavailable_error_with_cause(
                         hwnd,
@@ -350,7 +350,7 @@ impl Tool for DoubleClickTool {
                 tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
                 return match send_result {
                     Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Sent double-click via SendInput to pid {pid} at screen ({sx_i},{sy_i}) (delivery_mode:foreground)."
+                        "Sent double-click via SendInput to pid {pid} at screen ({sx_i},{sy_i}) (delivery_mode:foreground)."
                     )),
                     Ok(Err(e)) => ToolResult::error(e.to_string()),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -375,7 +375,7 @@ impl Tool for DoubleClickTool {
                 Ok(Ok(())) => {
                     // Match Swift's pixel-path text 1:1.
                     ToolResult::text(format!(
-                        "✅ Posted double-click to pid {pid} at window-pixel ({xi}, {yi}) → screen-point ({sx_i}, {sy_i})."))
+                        "Posted double-click to pid {pid} at window-pixel ({xi}, {yi}) → screen-point ({sx_i}, {sy_i})."))
                 }
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),

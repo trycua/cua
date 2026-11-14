@@ -24,7 +24,16 @@ Every successful action returns a closed `structuredContent` object:
 }
 ```
 
-`effect` and `route` are required. `summary` repeats the result's text
+`effect` and `route` are required. The result text, and so `summary`,
+starts with a verdict built from `effect` at the dispatch seam, the same on
+every platform: `CONFIRMED:`, `UNCONFIRMED:` (for `unverifiable` and
+`suspected_noop`), `PARTIAL:` or `REFUSED:`, followed by what the tool did. An
+`UNCONFIRMED` or `PARTIAL` headline ends with the read to make, for example
+`UNCONFIRMED: Clicked element [2] with a real pointer click; nothing read back.
+Look first: get_window_state {"pid":811,"since":"latest","window_id":659}`.
+Inside `run_steps` such a step reads `UNCONFIRMED` instead of `ok`, and
+`run_script`'s call log marks the call the same way; both end with a count
+(`1 of 3 steps unconfirmed`). `summary` repeats the result's text
 content (resolved `window_point` / `screen_point`, the element hit, popups
 that opened and the call that targets them, focus outcome, retargeting) so a
 client that hands the model only `structuredContent` still sees everything a

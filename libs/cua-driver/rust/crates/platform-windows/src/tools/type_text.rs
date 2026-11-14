@@ -354,7 +354,7 @@ impl Tool for TypeTextTool {
             .await;
             return match r {
                 Ok(Ok(())) => ToolResult::text(format!(
-                    "✅ Typed {text_len} char(s) on pid {raw_pid} via SendInput (delivery_mode:foreground)."
+                    "Typed {text_len} char(s) on pid {raw_pid} via SendInput (delivery_mode:foreground)."
                 ))
                 .with_structured(serde_json::json!({
                     "path": "key_events",
@@ -489,10 +489,10 @@ impl Tool for TypeTextTool {
                     verify == "confirmed" && crate::input::is_chromium_target_window(hwnd);
                 let verified = verify == "confirmed" && !ax_echo_surface;
                 let (mark, note) = if verified {
-                    ("✅ Wrote", String::new())
+                    ("Wrote", String::new())
                 } else if ax_echo_surface {
                     (
-                        "📨 Sent (unverified)",
+                        "Sent",
                         " — Electron/web surface: the UIA layer accepts and echoes the \
                       write but the renderer may not have observed it, so the driver \
                       cannot confirm via UIA. Verify via the screenshot; if it didn't \
@@ -502,7 +502,7 @@ impl Tool for TypeTextTool {
                     )
                 } else {
                     (
-                        "📨 Accepted (verification pending)",
+                        "Accepted",
                         " — the provider may publish its new value only after this call returns. Take a fresh snapshot before retrying."
                             .to_string(),
                     )
@@ -631,14 +631,14 @@ impl Tool for TypeTextTool {
                 // prove final state from a fresh snapshot before any retry.
                 match (&before, &after) {
                     (Some(_), Some(_)) if observed => ToolResult::text(format!(
-                        "📨 Sent {text_len} char(s) to pid {raw_pid} via PostMessage \
+                        "Sent {text_len} char(s) to pid {raw_pid} via PostMessage \
                          ({_delay_ms}ms delay; the field changed and now contains the \
                          requested text, but the insertion point is not known). Take a \
                          fresh snapshot to verify the intended final value before retrying."
                     ))
                     .with_structured(changed_contains_post_message_result(text_len)),
                     (Some(_), Some(_)) => ToolResult::text(format!(
-                        "📨 Sent {text_len} char(s) to pid {raw_pid} via PostMessage, but \
+                        "Sent {text_len} char(s) to pid {raw_pid} via PostMessage, but \
                          the focused field's value did not contain the requested text \
                          after dispatch — delivery was incomplete or dropped (e.g. a \
                          VCL/LibreOffice grid not in cell-edit mode). \
@@ -656,8 +656,8 @@ impl Tool for TypeTextTool {
                         },
                     })),
                     _ => ToolResult::text(format!(
-                        "📨 Sent {text_len} char(s) to pid {raw_pid} via PostMessage \
-                         ({_delay_ms}ms delay; not verified — could not read \
+                        "Sent {text_len} char(s) to pid {raw_pid} via PostMessage \
+                         ({_delay_ms}ms delay; could not read \
                          the focused field back, e.g. the target isn't foreground or \
                          exposes no ValuePattern). If it didn't land, retry with \
                          delivery_mode:\"foreground\"."

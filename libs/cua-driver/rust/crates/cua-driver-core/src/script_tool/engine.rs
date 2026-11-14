@@ -20,7 +20,7 @@ use rquickjs::{context::EvalOptions, Context, Function, Runtime, Value as JsValu
 use serde_json::{json, Value};
 
 /// Ops that do not count as driver calls.
-const FREE_OPS: &[&str] = &["platform", "sleep"];
+const FREE_OPS: &[&str] = &["platform", "sleep", "describe"];
 /// Longest console output kept.
 const CONSOLE_MAX_LINES: usize = 200;
 const CONSOLE_MAX_BYTES: usize = 32 * 1024;

@@ -311,10 +311,10 @@ impl Tool for PressKeyTool {
             .await;
             return match send_result {
                 Ok(Ok(())) => ToolResult::text(format!(
-                    "✅ Sent {key_display} via SendInput on pid {raw_pid} (delivery_mode:foreground)."
+                    "Sent {key_display} via SendInput on pid {raw_pid} (delivery_mode:foreground)."
                 )),
                 Ok(Err(e)) => crate::typing_turn::foreground_input_error(e),
-                Err(e)     => ToolResult::error(format!("Task error: {e}")),
+                Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
         let result = tokio::task::spawn_blocking({
@@ -328,7 +328,7 @@ impl Tool for PressKeyTool {
         .await;
         match result {
             Ok(Ok(())) => ToolResult::text(format!(
-                "📨 Sent {key_display} to pid {raw_pid} via PostMessage (not verified). \
+                "Sent {key_display} to pid {raw_pid} via PostMessage. \
                  If it didn't land, retry with delivery_mode:\"foreground\"."
             ))
             .with_structured(serde_json::json!({

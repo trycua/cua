@@ -1137,7 +1137,7 @@ pub(crate) async fn chromium_click_short_circuit(
     tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
     Some(match send_result {
         Ok(Ok(())) => ToolResult::text(format!(
-            "✅ Sent {gesture} via SendInput to pid {pid} at screen ({sx},{sy}) (Chromium target)."
+            "Sent {gesture} via SendInput to pid {pid} at screen ({sx},{sy}) (Chromium target)."
         )),
         Ok(Err(e)) => ToolResult::error(e.to_string()),
         Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -1256,7 +1256,7 @@ pub(crate) async fn winui3_background_gesture(
             .flatten();
             if let Some(Ok(())) = uia {
                 return Some(ToolResult::text(format!(
-                    "✅ Double-invoked WinUI3 element [{idx}] x{count} via UIA \
+                    "Double-invoked WinUI3 element [{idx}] x{count} via UIA \
                      (pid {pid}, background, no foreground swap)."
                 )));
             }

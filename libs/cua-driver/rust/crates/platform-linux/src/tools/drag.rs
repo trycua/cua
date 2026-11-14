@@ -664,7 +664,7 @@ impl Tool for DragTool {
             }
             return match drag_result {
                 Ok(Ok(())) => ToolResult::text(format!(
-                    "✅ Posted drag ({button_str}) to pid {pid} \
+                    "Posted drag ({button_str}) to pid {pid} \
                      from ({from_x:.0}, {from_y:.0}) → ({to_x:.0}, {to_y:.0}) \
                      in {duration_ms}ms / {steps} steps."
                 )),

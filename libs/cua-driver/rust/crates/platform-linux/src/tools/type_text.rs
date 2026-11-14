@@ -189,7 +189,7 @@ mod type_text_readback_tests {
 fn type_text_ax_result(pid: u32, text_len: usize, route: &str) -> ToolResult {
     if is_chromium_embedder(pid) {
         return ToolResult::text(format!(
-            "📨 Sent (unverified) {text_len} character(s) ({route}). — Electron/web \
+            "Sent {text_len} character(s) ({route}). Electron/web \
              surface: the AX layer accepts and echoes the write but the renderer may \
              not have observed it, so the driver cannot confirm via AX. Verify via the \
              screenshot; if it didn't land, re-type with the px form (pass x,y to \
@@ -858,8 +858,7 @@ impl Tool for TypeTextTool {
                     extra.insert("characters".into(), json!(text_len));
                     ToolResult::text(format!(
                         "Typed {text_len} character(s) as real key events \
-                         (delivery_mode=foreground, focus_after={}); not verified — \
-                         confirm with a screenshot.{}",
+                         (delivery_mode=foreground, focus_after={}).{}",
                         report.focus_after.as_str(),
                         report.focus_note()
                     ))
@@ -1154,8 +1153,7 @@ fn type_text_mpx_result(
         "Partial typing result".to_owned()
     };
     let mut text = format!(
-        "{outcome} as real key events {} (delivery_mode=background); \
-         not verified — confirm with a screenshot.",
+        "{outcome} as real key events {} (delivery_mode=background).",
         report.route_phrase()
     );
     if !report.skipped_characters.is_empty() {

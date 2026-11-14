@@ -62,6 +62,25 @@ impl Tool for Fake {
             _ if args["refuse"] == true => ToolResult::error(format!("{name} refused: stale token"))
                 .with_structured(json!({"code": "stale_element_token"})),
             _ if args["fail"] == true => ToolResult::error(format!("{name} refused: asked to fail")),
+            // The Linux driver's real-pointer click: dispatched, not confirmed.
+            _ if args["unconfirmed"] == true => ToolResult::text(
+                "Clicked element [2] (pid 42) with a real pointer click (delivery_mode=foreground, \
+                 focus_after=target).",
+            )
+            .with_structured(json!({"verified": false, "effect": "unverifiable"})),
+            _ if args["confirmed"] == true => {
+                let structured = json!({
+                    "path": "atspi", "verified": true, "effect": "confirmed",
+                    "evidence": [{"kind": "window_change", "detail": "1 window(s) appeared"}],
+                });
+                let record = crate::action_record::ActionExecutionRecord::from_legacy(
+                    &name, &args, &structured,
+                )
+                .expect("a click normalizes");
+                ToolResult::text("Clicked element [2] (pid 42) via AT-SPI action 'click'; window opened.")
+                    .with_structured(structured)
+                    .with_action_record(record)
+            }
             _ => ToolResult::text(format!("{name} done")),
         }
     }
@@ -75,14 +94,28 @@ struct Harness {
 
 impl Harness {
     fn new() -> Self {
+        Self::with(&[])
+    }
+
+    /// The fake registry plus fake tools named `extra`.
+    fn with(extra: &[&str]) -> Self {
         let calls: Calls = Arc::default();
         let pacings: Pacings = Arc::default();
         let mut registry = ToolRegistry::new();
         for name in crate::batch_tools::BATCHABLE_TOOLS
             .iter()
             .copied()
-            .chain(super::READ_TOOLS.iter().copied())
-            .chain(["kill_app"])
+            .chain([
+                "launch_app",
+                "list_apps",
+                "list_windows",
+                "get_window_state",
+                "verify_state",
+                "zoom",
+                "check_permissions",
+                "kill_app",
+            ])
+            .chain(extra.iter().copied())
         {
             registry.register(Box::new(Fake {
                 def: ToolDef {
@@ -178,7 +211,7 @@ return {value: field.value, platform: cua.computer.target};"#,
         "{log:?}"
     );
     assert!(
-        text(&result).contains("3. line 4 click ok"),
+        text(&result).contains("3. line 4 click UNCONFIRMED (") && text(&result).contains("on [2] AXButton \"Save\": click done; nothing read back. Look first: get_window_state"),
         "{}",
         text(&result)
     );
@@ -282,13 +315,9 @@ return probes;"#,
 }
 
 #[tokio::test]
-async fn only_driver_tools_on_the_allowlist_are_reachable() {
+async fn nesting_tools_and_unknown_tools_are_unreachable() {
     let harness = Harness::new();
     for (script, needle) in [
-        (
-            "await cua.call('kill_app', {pid: 42})",
-            "not available to scripts",
-        ),
         (
             "await cua.call('run_steps', {steps: []})",
             "not available to scripts",
@@ -322,7 +351,6 @@ async fn only_driver_tools_on_the_allowlist_are_reachable() {
             text(&result)
         );
     }
-    assert!(harness.calls("kill_app").is_empty());
     assert!(harness.calls("click").is_empty());
 }
 
@@ -590,4 +618,289 @@ async fn script_actions_are_paced_as_batched_steps_and_reads_are_not() {
         "reads keep their own timing: {:?}",
         of("get_window_state")
     );
+}
+
+#[test]
+fn script_only_mode_is_opt_in_and_yields_to_an_opt_out() {
+    use super::script_only_from as only;
+    assert!(!only(None, true), "off by default");
+    assert!(!only(Some("0"), true));
+    assert!(!only(Some("maybe"), true));
+    assert!(only(Some("1"), true));
+    assert!(only(Some(" On "), true));
+    assert!(!only(Some("1"), false), "an opt-out of run_script wins");
+}
+
+#[test]
+fn script_only_lists_run_script_alone_and_never_empties_the_list() {
+    let harness = Harness::new();
+    let names = |listed: Value| -> Vec<String> {
+        listed["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    // The harness registers run_script twice (session tools, then explicitly); compare names as a set.
+    let only: std::collections::BTreeSet<String> = names(harness.registry.tools_list_for(true))
+        .into_iter()
+        .collect();
+    assert_eq!(only, ["run_script".to_owned()].into());
+    let all = names(harness.registry.tools_list_for(false));
+    assert!(all.len() > 1 && all.iter().any(|name| name == "click"));
+    // A registry without run_script keeps its tools in script-only mode.
+    let mut bare = ToolRegistry::new();
+    bare.register(Box::new(Fake {
+        def: ToolDef {
+            name: "click".into(),
+            description: "fake".into(),
+            input_schema: json!({"type": "object"}),
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        },
+        calls: Calls::default(),
+        pacings: Pacings::default(),
+    }));
+    assert_eq!(names(bare.tools_list_for(true)), ["click"]);
+}
+
+#[tokio::test]
+async fn every_registered_tool_but_the_nesting_ones_is_callable_by_name() {
+    let harness = Harness::new();
+    // check_permissions was on no default-mode list; any registered tool is
+    // reachable now, through cua.tools and cua.call.
+    let result = harness
+        .run(
+            "await cua.tools.check_permissions({});\n\
+             await cua.call('check_permissions', {});\n\
+             return Object.keys(cua.tools);",
+        )
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    assert_eq!(harness.calls("check_permissions").len(), 2);
+    let names: std::collections::BTreeSet<String> = structured(&result)["value"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|name| name.as_str().unwrap().to_owned())
+        .collect();
+    let mut want: std::collections::BTreeSet<String> =
+        harness.registry.tool_names().map(str::to_owned).collect();
+    want.remove("run_script");
+    want.remove("run_steps");
+    assert_eq!(names, want);
+    for tool in ["kill_app", "move_cursor", "get_guide", "end_session"] {
+        assert!(names.contains(tool), "{tool}");
+    }
+
+    // The generated functions take the tool's own arguments, and the action
+    // tools resolve a {role, name} target the same way the helpers do.
+    let direct = harness
+        .run("await cua.tools.click({pid: 42, role: 'button', name: 'Save'});\nreturn 1;")
+        .await;
+    assert_ne!(direct.is_error, Some(true), "{}", text(&direct));
+    let click = &harness.calls("click")[0];
+    assert_eq!(click["element_token"], "s00000009:2");
+    assert_eq!(click["window_id"], 7);
+    assert!(click.get("role").is_none());
+
+    // What a script may do is the driver's call, as for a direct call: kill_app
+    // reaches the tool's own authorization, which refuses a process this
+    // runtime did not launch.
+    let killed = harness.run("await cua.tools.kill_app({pid: 42});").await;
+    assert_eq!(killed.is_error, Some(true));
+    assert_ne!(structured(&killed)["error"]["code"], "not_allowed");
+    assert!(
+        text(&killed).contains("launched by this Cua runtime"),
+        "{}",
+        text(&killed)
+    );
+    assert!(harness.calls("kill_app").is_empty());
+
+    for tool in ["run_script", "run_steps"] {
+        let result = harness
+            .run(&format!(
+                "if (cua.tools.{tool} !== undefined) return 'exposed';\nawait cua.call('{tool}', {{}});"
+            ))
+            .await;
+        assert_eq!(result.is_error, Some(true), "{tool}: {}", text(&result));
+        assert_eq!(
+            structured(&result)["error"]["code"],
+            "not_allowed",
+            "{tool}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn describe_returns_a_tools_schema_and_lists_the_callable_tools() {
+    let harness = Harness::new();
+    let result = harness
+        .run(
+            "const all = await cua.describe();\n\
+             const one = await cua.describe('get_guide');\n\
+             let missing;\n\
+             try { await cua.describe('run_steps'); } catch (e) { missing = e.code; }\n\
+             return {all, one, missing};",
+        )
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    let value = &structured(&result)["value"];
+    let def = harness.registry.get_def("get_guide").unwrap();
+    assert_eq!(value["one"]["signature"], "get_guide(topic?)");
+    assert_eq!(
+        value["one"]["description"],
+        def.to_list_entry()["description"]
+    );
+    assert_eq!(
+        value["one"]["input_schema"],
+        def.to_list_entry()["inputSchema"]
+    );
+    assert_eq!(value["missing"], "not_found");
+    let all: Vec<&str> = value["all"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|line| line.as_str().unwrap())
+        .collect();
+    assert!(all.contains(&"get_guide(topic?)"), "{all:?}");
+    assert!(!all.iter().any(|line| line.starts_with("run_s")), "{all:?}");
+    // describe is free: it does not count against max_calls.
+    assert_eq!(structured(&result)["driver_calls"], 0);
+}
+
+#[test]
+fn a_signature_lists_required_arguments_then_optional_ones_and_never_session() {
+    let def = ToolDef {
+        name: "set_window_frame".into(),
+        description: "fake".into(),
+        input_schema: json!({
+            "type": "object",
+            "required": ["pid", "width"],
+            "properties": {
+                "session": {"type": "string"},
+                "width": {"type": "number"},
+                "window_id": {"type": "integer"},
+                "pid": {"type": "integer"}
+            },
+            "additionalProperties": false
+        }),
+        read_only: false,
+        destructive: false,
+        idempotent: false,
+        open_world: false,
+    };
+    assert_eq!(
+        super::signature(&def),
+        "set_window_frame(pid, width, window_id?)"
+    );
+    let bare = ToolDef {
+        name: "get_screen_size".into(),
+        input_schema: json!({"type": "object"}),
+        ..def
+    };
+    assert_eq!(super::signature(&bare), "get_screen_size()");
+}
+
+#[test]
+fn the_script_only_description_is_generated_from_the_registry() {
+    // A tool on no list anywhere shows up.
+    let harness = Harness::with(&["brand_new_tool"]);
+    let description = super::script_only_description(&harness.registry);
+    let listed = &harness.registry.tools_list_for(true)["tools"][0];
+    assert_eq!(listed["name"], "run_script");
+    assert_eq!(listed["description"], description);
+    let signatures: Vec<&str> = description
+        .split_once("Tools (`?` = optional):\n")
+        .unwrap()
+        .1
+        .split("\n\n")
+        .next()
+        .unwrap()
+        .lines()
+        .collect();
+    let mut want: Vec<String> = Vec::new();
+    for name in harness.registry.tool_names() {
+        if !matches!(name, "run_script" | "run_steps")
+            && !want.iter().any(|w| w.starts_with(&format!("{name}(")))
+        {
+            want.push(super::signature(harness.registry.get_def(name).unwrap()));
+        }
+    }
+    assert_eq!(signatures, want);
+    assert!(signatures.contains(&"brand_new_tool()"));
+    assert!(signatures.contains(&"move_cursor()"), "{signatures:?}");
+    assert!(description.contains("cua.tools.<name>(args)"));
+    assert!(description.contains("cua.describe(name)"));
+    assert!(description.contains(crate::protocol::SCRIPT_PACING));
+
+    // The default mode lists every tool beside run_script, so its
+    // description names the rule, not the tools.
+    let default = harness
+        .registry
+        .get_def("run_script")
+        .unwrap()
+        .description
+        .clone();
+    assert!(!default.contains("brand_new_tool"));
+    assert!(default.contains("except run_script and run_steps"));
+    assert!(
+        !default.contains("launch_app, list_apps"),
+        "no hand-written list"
+    );
+}
+
+#[tokio::test]
+async fn a_role_name_call_keeps_the_tools_verification_warning_in_the_call_log() {
+    let harness = Harness::new();
+    let result = harness
+        .run(
+            "await cua.tools.click({pid: 42, role: 'button', name: 'Save', unconfirmed: true});\n\
+             await cua.tools.click({pid: 42, role: 'button', name: 'Save', confirmed: true});\n\
+             return 1;",
+        )
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    let message = text(&result);
+    assert!(
+        message.contains("1. line 1 click UNCONFIRMED (")
+            && message.contains(
+                "on [2] AXButton \"Save\": Clicked element [2] (pid 42) with a real pointer click \
+                 (delivery_mode=foreground, focus_after=target); nothing read back. Look first: \
+                 get_window_state {\"pid\":42,\"since\":\"latest\",\"window_id\":7}"
+            ),
+        "{message}"
+    );
+    assert!(
+        message.contains("1 of 2 calls unconfirmed: look before relying on them"),
+        "{message}"
+    );
+    // A confirmed call stays plain `ok` and keeps its own text too.
+    assert!(message.contains("2. line 2 click ok ("), "{message}");
+    assert!(!message.contains("CONFIRMED: Clicked"), "{message}");
+    assert!(
+        message.contains("via AT-SPI action 'click'; window opened."),
+        "{message}"
+    );
+    let calls = structured(&result)["calls"].clone();
+    let clicks: Vec<&Value> = calls
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| entry["op"] == "click")
+        .collect();
+    assert_eq!(clicks[0]["verified"], false);
+    assert!(clicks[1].get("verified").is_none(), "{calls}");
+}
+
+#[tokio::test]
+async fn a_script_whose_calls_all_confirm_has_no_unverified_line() {
+    let harness = Harness::new();
+    let result = harness
+        .run("await cua.tools.click({pid: 42, role: 'button', name: 'Save', confirmed: true});\nreturn 1;")
+        .await;
+    assert!(!text(&result).contains("unverified"), "{}", text(&result));
 }

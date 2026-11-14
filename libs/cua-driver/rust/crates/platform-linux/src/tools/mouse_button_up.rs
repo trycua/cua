@@ -151,7 +151,7 @@ impl Tool for MouseButtonUpTool {
                             cursor_overlay::OverlayCommand::SetPressed(false),
                         );
                         return ToolResult::text(format!(
-                            "✅ Cursor '{cursor_id}' released a button an earlier call pressed but could not record."
+                            "Cursor '{cursor_id}' released a button an earlier call pressed but could not record."
                         ))
                         .with_structured(unheld);
                     }
@@ -252,7 +252,7 @@ impl Tool for MouseButtonUpTool {
                 clear_mouse_hold_after_release(&self.state, &cursor_id);
                 let cleared = mouse_hold_json(&cursor_id, None);
                 ToolResult::text(format!(
-                    "✅ Cursor '{cursor_id}' released held {} button at ({x:.1}, {y:.1}).",
+                    "Cursor '{cursor_id}' released held {} button at ({x:.1}, {y:.1}).",
                     mouse_button_name(button),
                 ))
                 .with_structured(cleared)

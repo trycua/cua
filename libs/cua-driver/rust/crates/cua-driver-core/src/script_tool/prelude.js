@@ -204,7 +204,18 @@
     async call(tool, args = {}) {
       return call(String(tool), args);
     },
+    /** A tool's description and input schema; with no name, every tool's signature. */
+    async describe(tool) {
+      return tool === undefined ? call("describe", {}).tools : call("describe", { name: String(tool) });
+    },
+    /** One function per driver tool a script may call, from the driver's own registry. */
+    tools: {},
   };
+  for (const signature of call("describe", {}).tools) {
+    const name = signature.slice(0, signature.indexOf("("));
+    cua.tools[name] = async (args = {}) => call(name, args);
+  }
+  Object.freeze(cua.tools);
   Object.freeze(cua.computer);
   Object.freeze(cua);
   Object.defineProperty(globalThis, "cua", { value: cua, writable: false, configurable: false });

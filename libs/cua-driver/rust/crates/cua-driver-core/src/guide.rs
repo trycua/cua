@@ -159,7 +159,7 @@ const TOPICS: &[Topic] = &[
             on(
                 Platform::Macos,
                 "MACOS.md",
-                "Menus opened in the background keep the user's keyboard",
+                "Menus are not opened in a covered background window",
             ),
             on(
                 Platform::Windows,

@@ -629,24 +629,34 @@ the z-stack, macOS's "switch to Space with windows for app" follow is
 suppressed, and the user's front window keeps key status, so their
 typing keeps landing there.
 
-### Menus opened in the background keep the user's keyboard
+### Menus are not opened in a covered background window
 
-A popup button, a `<select>`, or a context menu opened in a background
-app takes key focus from the user's front window for as long as the menu
-is open (AppKit's menu tracking steals it). While a background action
-runs, Cua Driver watches for that and hands key focus straight back, so
-the user's window never loses it. The menu stays open and its items are
-chosen with `click` on the `AXMenuItem` (or in one call with
-`set_value` on the popup). Keyboard navigation of such a menu with
-`press_key` is not the route; pick the item by element.
+Opening a menu in a background app (a popup button, a `<select>`, a
+context menu) brings the app's window above the user's window as the menu
+appears, and no client can stop that. Cua Driver can put the user's window
+back, but only a frame or two later, so the user still sees the window
+jump. In the background, Cua Driver therefore never opens a menu in a
+window that another app's window covers:
 
-Opening a menu also brings the app's window above the user's window for a
-moment, and no client can stop that. So in the background, a `click` on a
-web `<select>` in Chrome or an Electron app is refused before anything is
-sent (`select_menu_would_raise_window`): choose the option with
-`set_value` on the same element, which types the option's text into the
-closed control and never opens the menu. Native popups and context menus
-still open and flash the window briefly.
+- A web `<select>` in Chrome or an Electron app: `set_value` types the
+  option's text into the closed control and the menu never opens. A
+  `click` on it is refused (`select_menu_would_raise_window`).
+- A native popup button (`AXPopUpButton`): AppKit lists its items only
+  while the menu is open, so `set_value`, `click` and `right_click` on it
+  are refused with `background_unavailable`, reason
+  `popup_menu_would_raise_window`, and nothing changes. The refusal gives
+  the current value.
+- A context menu (an element that lists `show_menu`): `right_click`, or
+  `click` with `button:"right"`, is refused with `background_unavailable`,
+  reason `context_menu_would_raise_window`. Run the same command from the
+  menu bar with `invoke_menu`, or with its keyboard shortcut.
+
+If the user agrees to the window coming forward, call `bring_to_front`
+for it first; the menu then opens normally. A menu that is already open,
+or a window that already sits above every other app's window, is used as
+before. If an app still raises its window or activates itself during
+`set_value`, Cua Driver puts the user's window back and the result says so
+in `user_disturbance`.
 
 ### Apps that activate themselves
 

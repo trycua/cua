@@ -566,7 +566,16 @@ fn handle_activation(dispatcher: &Arc<Dispatcher>, note: &objc2_foundation::NSNo
 
 /// Re-activate `pid` if it's still running. Safe to call from any
 /// thread — Apple documents `activateWithOptions:` as thread-safe.
+/// Activations of a background target undone since the daemon started.
+static RESTORES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many activations this observer has undone since the daemon started.
+pub fn restores() -> u64 {
+    RESTORES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 fn restore_focus(pid: i32) {
+    RESTORES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     unsafe {
         if let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) {
             let _ = app.activateWithOptions(NSApplicationActivationOptions(0));

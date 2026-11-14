@@ -1025,6 +1025,7 @@ mod sway_tests {
                         to: Some(2),
                     }],
                     leaked_input_events: vec![],
+                    transient_raises: vec![],
                 })
             }
         }

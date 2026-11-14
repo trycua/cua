@@ -868,6 +868,17 @@ fn background_unavailable(c: &Ctx) -> RecoveryHint {
              menu item or keyboard route). {foreground}"
         ))
         .call(c.read_window()),
+        (_, Some("popup_menu_would_raise_window")) => RecoveryHint::new(format!(
+            "Nothing changed: opening this popup's menu would raise its window above the user's. \
+             Call bring_to_front, then set_value, {FOREGROUND_CONDITION}; otherwise report the \
+             step as blocked."
+        )),
+        (_, Some("context_menu_would_raise_window")) => RecoveryHint::new(format!(
+            "Nothing changed: this context menu would raise its window above the user's. Run the \
+             same command with invoke_menu or its keyboard shortcut. bring_to_front first \
+             {FOREGROUND_CONDITION}."
+        ))
+        .call(c.read_window()),
         (_, Some("pointer_reading_toolkit")) => RecoveryHint::new(format!(
             "This app's toolkit reads the real pointer, so background pixel clicks miss. Act by element \
              (get_window_state, then element_token) or invoke_menu. {foreground}"

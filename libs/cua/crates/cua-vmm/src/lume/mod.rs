@@ -384,12 +384,20 @@ fn url_port(url: &str) -> Option<u16> {
 /// names a Lume image so its cached base follows the digest) pulls by tag,
 /// since lume cannot pull by digest; anything else is used as given.
 pub fn lume_pull_ref(reference: &str) -> &str {
-    match reference.rsplit_once('@') {
-        Some((tag_ref, digest)) if digest.starts_with("sha256:") && tag_ref.contains(':') => {
-            tag_ref
-        }
-        _ => reference,
-    }
+    lume_tag_and_digest(reference).map_or(reference, |(tag_ref, _)| tag_ref)
+}
+
+/// `tag-ref@sha256:…` split into the tag reference Lume pulls and the
+/// digest the base is named for; `None` for any other reference. The tag is
+/// a `:` in the last path segment, so a registry port is not one.
+fn lume_tag_and_digest(reference: &str) -> Option<(&str, &str)> {
+    reference.rsplit_once('@').filter(|&(tag_ref, digest)| {
+        digest.starts_with("sha256:")
+            && tag_ref
+                .rsplit_once('/')
+                .map_or(tag_ref, |(_, name)| name)
+                .contains(':')
+    })
 }
 
 /// Stable base-VM name for an OCI reference: `cua-base-<sha256[:12]>`
@@ -1638,6 +1646,9 @@ impl LumeRuntime {
             }
             return Err(e);
         }
+        if let Some((_, want)) = lume_tag_and_digest(pinned) {
+            self.check_pulled_digest(reference, want, base_name).await?;
+        }
         OwnedVms::default().mark(base_name, OwnedKind::Base, Some(pinned));
         Ok(CheckpointInfo::now(
             base_name,
@@ -1777,6 +1788,41 @@ impl LumeRuntime {
         owned.mark(base_name, OwnedKind::Base, Some(reference));
         owned.touch(&parent_base);
         Ok(info())
+    }
+
+    /// Lume pulled `tag` into `base_name`, which is named for digest `want`.
+    /// When the tag has moved since (or the reference pinned an older
+    /// digest), the pull fetched another image: the base is removed rather
+    /// than kept under `want`'s name for every later clone to inherit. A
+    /// Lume that recorded no digest cannot be checked.
+    async fn check_pulled_digest(&self, tag: &str, want: &str, base_name: &str) -> Result<()> {
+        let Some(got) = lease::pulled_digest(&host::home_dir(), base_name) else {
+            tracing::warn!(
+                base_name,
+                want,
+                "Lume recorded no manifest digest for the pulled base; it is not checked"
+            );
+            return Ok(());
+        };
+        // Registries may spell a digest's hex in upper case.
+        if got.eq_ignore_ascii_case(want) {
+            return Ok(());
+        }
+        let note = match self.client.delete(base_name).await {
+            Ok(()) => {
+                OwnedVms::default().forget(base_name);
+                String::new()
+            }
+            Err(e) => format!(
+                " (the pulled base {base_name} could not be removed: {e}; `lume delete {base_name}`)"
+            ),
+        };
+        Err(VmmError::DigestMoved {
+            tag: tag.into(),
+            want: want.into(),
+            got,
+            note,
+        })
     }
 
     /// Installs the start spec's workload environment in a booted macOS
@@ -3627,6 +3673,15 @@ mod tests {
         assert_eq!(
             lume_pull_ref("ghcr.io/trycua/macos@sha256:ab"),
             "ghcr.io/trycua/macos@sha256:ab"
+        );
+        // Nor is a registry port.
+        assert_eq!(
+            lume_pull_ref("localhost:5000/macos@sha256:ab"),
+            "localhost:5000/macos@sha256:ab"
+        );
+        assert_eq!(
+            lume_pull_ref("localhost:5000/macos:26@sha256:ab"),
+            "localhost:5000/macos:26"
         );
         // A moved tag names a different base.
         assert_ne!(

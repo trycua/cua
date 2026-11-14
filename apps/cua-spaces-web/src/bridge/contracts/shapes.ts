@@ -380,6 +380,9 @@ const SpaceRowShape = ref(
     host: opt(str),
     hostName: opt(str),
     parent: opt(str),
+    jobName: opt(str),
+    jobGpu: opt(bool),
+    jobRun: opt(str),
     power: opt(str),
     powerState: opt(str),
     stopReason: opt(str),
@@ -1506,7 +1509,17 @@ const SpaceNetworkShape = ref(
 );
 const NetworkEventShape = ref("NetworkEvent", obj<NetworkEventWire>()({ reason: str, dst: str, proto: optNull(str), count: num, lastUnix: optNull(num) }));
 
-const TreeNodeShape = ref("TreeNode", obj<TreeNodeWire>()({ id: str, parent: optNull(str), depth: num, children: bool, home: optNull(str) }));
+const TreeNodeShape = ref(
+  "TreeNode",
+  obj<TreeNodeWire>()({
+    id: str,
+    parent: optNull(str),
+    depth: num,
+    children: bool,
+    home: optNull(str),
+    job: optNull(object({ run: str, name: str, gpu: bool, host: str, state: oneOf("queued", "starting", "running", "failed"), members: num, error: opt(str) })),
+  }),
+);
 const TreeBudgetLimitsShape = ref(
   "TreeBudgetLimits",
   obj<TreeBudgetLimitsWire>()({

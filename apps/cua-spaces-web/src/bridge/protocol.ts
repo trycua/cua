@@ -483,6 +483,21 @@ export interface TreeNodeWire {
    * Absent or null: it is not one. The host reads it from the Space's labels, so a home is found again on
    * a new device or after the app's storage is cleared. */
   home?: string | null;
+  /** A job of this Space, wherever it runs (from the run ledger and the pool, not a Space record): one logical child. */
+  job?: JobNodeWire | null;
+}
+
+/** A job as a logical child of its submitting Space. */
+export interface JobNodeWire {
+  run: string;
+  name: string;
+  gpu: boolean;
+  /** Where it runs in words ("mac-m2max", "this computer"); empty while it waits. A secondary detail, never a place in the tree. */
+  host: string;
+  /** `queued`, `starting`, `running` or `failed`. */
+  state: "queued" | "starting" | "running" | "failed";
+  members: number;
+  error?: string;
 }
 
 /** A tree's limits (the SDK's `TreeBudgetLimits`, camelCase); unset: the default. */

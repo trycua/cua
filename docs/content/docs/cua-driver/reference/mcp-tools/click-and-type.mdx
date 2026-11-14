@@ -36,7 +36,8 @@ Effect: destructive. Platforms: macOS, Linux, Windows.
 <Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
 <Tab value="macOS">
 
-Click a target pid. Prefer `element_token` (from get_window_state): it identifies one snapshot element, works on backgrounded, minimized or off-Space windows, and moves no cursor or focus. Use `x, y` only for canvas / video / WebGL / custom-drawn surfaces missing from the AX tree.
+Click a target pid.
+Prefer `element_token` (from get_window_state): it identifies one snapshot element, works on backgrounded, minimized or off-Space windows, and moves no cursor or focus. Use `x, y` only for canvas / video / WebGL / custom-drawn surfaces missing from the AX tree.
 
 - element_token: AX action path. Tokens are scoped to (pid, window_id) and stale once the window is snapshotted again.
 - x, y: window-local pixels of the get_window_state screenshot, sent as CGEvent mouse events. Needs a visible window. `modifier` takes cmd/shift/option/ctrl.
@@ -66,7 +67,8 @@ Click a target pid. Prefer `element_token` (from get_window_state): it identifie
 </Tab>
 <Tab value="Linux">
 
-Click against a target pid. **Prefer `element_token` over pixel coordinates**: element_token works on backgrounded / hidden windows, surfaces a stable handle, and tells you what you're clicking via the cached AT-SPI element's role + label. Reach for `x, y` only when the target is a canvas / custom-drawn surface that doesn't appear in the AT-SPI tree.
+Click against a target pid.
+**Prefer `element_token` over pixel coordinates**: element_token works on backgrounded / hidden windows, surfaces a stable handle, and tells you what you're clicking via the cached AT-SPI element's role + label. Reach for `x, y` only when the target is a canvas / custom-drawn surface that doesn't appear in the AT-SPI tree.
 
 Provide either (window_id + x/y) or (pid + element_token). x/y are WINDOW-LOCAL pixels of window_id (the get_window_state screenshot frame); a point outside the window is refused (point_outside_window) and every pixel result reports the resolved window_point / screen_point. Background delivery first resolves the accessible under the point and fires its action (the result says `hit: <role> "<name>" action=...`; a file / list item is selected through its container: `selected: ...`), else presses the real virtual pointer there. A click that opens a popup menu names it (`popup: {window_id, bounds}`): pass that window_id to get_window_state to index its items. The token is stale once the next get_window_state of the same window replaces its snapshot: re-snapshot every turn before clicking.
 
@@ -98,7 +100,8 @@ button: "left" (default), "right", or "middle". Defaults to left so the field is
 </Tab>
 <Tab value="Windows">
 
-Left-click against a target pid. **Prefer `element_token` over pixel coordinates**: element_token works on backgrounded / minimized / hidden / off-desktop windows, surfaces a stable handle that survives rebuilds, and tells you what you're clicking via the cached element's role + label. Reach for `x, y` only when the target is a canvas / video / WebGL / custom-drawn surface that doesn't appear in the UIA tree.
+Left-click against a target pid.
+**Prefer `element_token` over pixel coordinates**: element_token works on backgrounded / minimized / hidden / off-desktop windows, surfaces a stable handle that survives rebuilds, and tells you what you're clicking via the cached element's role + label. Reach for `x, y` only when the target is a canvas / video / WebGL / custom-drawn surface that doesn't appear in the UIA tree.
 
 Two addressing modes:
 
@@ -172,7 +175,8 @@ Pixel path (x, y provided): two down/up pairs ~80 ms apart at the given coordina
 </Tab>
 <Tab value="Linux">
 
-Double-click at (x,y) or an element_token (AT-SPI bounds). Background delivery on X11 sends real button events from the session's virtual master pointer (path mpx_pointer); a point covered by another application's window is refused (target_occluded), one covered by this app's own dialog is retargeted to it (retargeted_to). No focus steal. Provide either (window_id + x/y) or (pid + element_token). After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.
+Double-click at (x,y) or an element_token (AT-SPI bounds).
+Background delivery on X11 sends real button events from the session's virtual master pointer (path mpx_pointer); a point covered by another application's window is refused (target_occluded), one covered by this app's own dialog is retargeted to it (retargeted_to). No focus steal. Provide either (window_id + x/y) or (pid + element_token). After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.
 
 **Linux parameters**
 
@@ -189,7 +193,8 @@ Double-click at (x,y) or an element_token (AT-SPI bounds). Background delivery o
 </Tab>
 <Tab value="Windows">
 
-Double-click against a target pid. Two addressing modes:
+Double-click against a target pid.
+Two addressing modes:
 
 - `element_token` (from the last `get_window_state` snapshot of that window): synthesizes a stamped pixel double-click at the element's cached on-screen center via PostMessage. (Windows has no AXOpen analogue; Swift's AXOpen-first path falls through to the same pixel recipe when the element doesn't advertise AXOpen, so the user-visible behavior matches.)
 
@@ -226,7 +231,8 @@ Effect: destructive. Platforms: macOS, Linux, Windows.
 <Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
 <Tab value="macOS">
 
-Right-click against a target pid. Two addressing modes:
+Right-click against a target pid.
+Two addressing modes:
 
 - `element_token` (from the last `get_window_state` snapshot): performs `AXShowMenu` on the cached element. Pure AX RPC, works on backgrounded / hidden windows, no cursor move or focus steal. Requires a prior `get_window_state(pid, window_id)` in this turn.
 
@@ -248,7 +254,8 @@ Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is requi
 </Tab>
 <Tab value="Linux">
 
-Right-click at (x,y) or an element_token (AT-SPI bounds). Background delivery on X11 sends real button events from the session's virtual master pointer (path mpx_pointer); a point covered by another application's window is refused (target_occluded), one covered by this app's own dialog is retargeted to it (retargeted_to), one outside the window is refused (point_outside_window; x/y are window-local pixels, the result reports window_point / screen_point). No focus steal. When a context menu opens, the result names it (`popup: {window_id, bounds, title}`): call get_window_state(pid, window_id=&lt;that id&gt;) to index its menu items and click them by element_token. Provide either (window_id + x/y) or (pid + element_token). After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.
+Right-click at (x,y) or an element_token (AT-SPI bounds).
+Background delivery on X11 sends real button events from the session's virtual master pointer (path mpx_pointer); a point covered by another application's window is refused (target_occluded), one covered by this app's own dialog is retargeted to it (retargeted_to), one outside the window is refused (point_outside_window; x/y are window-local pixels, the result reports window_point / screen_point). No focus steal. When a context menu opens, the result names it (`popup: {window_id, bounds, title}`): call get_window_state(pid, window_id=&lt;that id&gt;) to index its menu items and click them by element_token. Provide either (window_id + x/y) or (pid + element_token). After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.
 
 **Linux parameters**
 
@@ -266,7 +273,8 @@ Right-click at (x,y) or an element_token (AT-SPI bounds). Background delivery on
 </Tab>
 <Tab value="Windows">
 
-Right-click against a target pid. Two addressing modes:
+Right-click against a target pid.
+Two addressing modes:
 
 - `element_token` (from the last `get_window_state` snapshot of that window): posts WM_RBUTTONDOWN/UP at the element's cached on-screen center via PostMessage. (Windows has no AXShowMenu analogue wired up yet; Swift's AX-action path falls through to the same pixel recipe on non-advertising elements, so user-visible behavior matches.)
 
@@ -307,7 +315,8 @@ Effect: destructive. Platforms: macOS, Linux, Windows.
 <Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
 <Tab value="macOS">
 
-Insert text via `AXSetAttribute(kAXSelectedText)` into the element given by `element_token`, or the pid's focused element. Does not press keys: use `press_key` / `hotkey` for Return, Escape, arrows. If AX insertion is unsupported (Chromium/Electron), it falls back to CGEvent typing when the route fits the transport budget; longer routes are refused with a safe chunk size.
+Insert text via `AXSetAttribute(kAXSelectedText)` into the element given by `element_token`, or the pid's focused element.
+Does not press keys: use `press_key` / `hotkey` for Return, Escape, arrows. If AX insertion is unsupported (Chromium/Electron), it falls back to CGEvent typing when the route fits the transport budget; longer routes are refused with a safe chunk size.
 
 Web content (browser tabs, Slack, VS Code): AXValue is not proof the DOM saw the text, so the result is `effect:"unverifiable"` and Electron web content refuses background delivery. For a browser tab use the `page` tool. For an embedded web view pass `x, y` (no element_token) to pixel-click the field then type in one call; a pixel click will not reliably open a closed control, so AX-press it open first. Confirm from the screenshot, and use `delivery_mode:"foreground"` only if background still drops the text. Several known actions: one `run_steps` (`get_guide({topic:"batching"})`).
 
@@ -330,7 +339,8 @@ Web content (browser tabs, Slack, VS Code): AXValue is not proof the DOM saw the
 </Tab>
 <Tab value="Linux">
 
-Type text to a window via XSendEvent (KeyPress/KeyRelease). No focus steal. Several known actions: one `run_steps` (`get_guide({topic:"batching"})`).
+Type text to a window via XSendEvent (KeyPress/KeyRelease).
+No focus steal. Several known actions: one `run_steps` (`get_guide({topic:"batching"})`).
 
 **Linux parameters**
 
@@ -351,7 +361,8 @@ Type text to a window via XSendEvent (KeyPress/KeyRelease). No focus steal. Seve
 </Tab>
 <Tab value="Windows">
 
-Insert text into the target pid via character-by-character PostMessage(WM_CHAR) to the focused window. No focus steal.
+Insert text into the target pid via character-by-character PostMessage(WM_CHAR) to the focused window.
+No focus steal.
 
 Special keys (Return, Escape, arrows, Tab) go through `press_key` / `hotkey`: they are not text.
 
@@ -404,7 +415,8 @@ Effect: destructive. Platforms: macOS, Linux, Windows.
 <Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
 <Tab value="macOS">
 
-Press and release one key. `delivery_mode` as in click/type_text.
+Press and release one key.
+`delivery_mode` as in click/type_text.
 - `background` (default): posts to the pid without raising the window; with `element_token` it focuses that element first.
 - `foreground`: fronts the exact window (needs `window_id`), sends a real HID key transition (Chromium content, inline editors, menu equivalents), then restores the prior app.
 
@@ -429,7 +441,8 @@ Confirmed only when a native AX value/selection read-back changes; otherwise `ef
 </Tab>
 <Tab value="Linux">
 
-Press a key via XSendEvent to a window. No focus steal. Several known actions: one `run_steps` (`get_guide({topic:"batching"})`).
+Press a key via XSendEvent to a window.
+No focus steal. Several known actions: one `run_steps` (`get_guide({topic:"batching"})`).
 
 **Linux parameters**
 
@@ -449,7 +462,8 @@ Press a key via XSendEvent to a window. No focus steal. Several known actions: o
 </Tab>
 <Tab value="Windows">
 
-Press and release a single key, delivered directly to the target pid's top-level window via PostMessage(WM_KEYDOWN/WM_KEYUP). The target does NOT need to be frontmost: no focus steal.
+Press and release a single key, delivered directly to the target pid's top-level window via PostMessage(WM_KEYDOWN/WM_KEYUP).
+The target does NOT need to be frontmost: no focus steal.
 
 Optional `window_id` selects a specific HWND when the pid owns more than one; without it the first visible top-level window for the pid is used.
 
@@ -498,7 +512,8 @@ Effect: destructive. Platforms: macOS, Linux, Windows.
 <Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
 <Tab value="macOS">
 
-Press a key combination: e.g. `["cmd", "c"]` for Copy, `["cmd", "shift", "4"]` for screenshot selection. Follows the same `delivery_mode` ladder as click/type_text: it does NOT raise the window by default:
+Press a key combination: e.g. `["cmd", "c"]` for Copy, `["cmd", "shift", "4"]` for screenshot selection.
+Follows the same `delivery_mode` ladder as click/type_text: it does NOT raise the window by default:
 • `background` (default): post the combo to the target pid WITHOUT fronting or raising it; uses the macOS 14+ auth-message envelope so Chromium/Electron accept it as trusted live input. With an AX target, focus that exact element first. No top-level focus steal. `window_id` here only targets the combo; it does not raise. Background key events never reach a native app's menus, so when the combo is a menu item's key equivalent (cmd+s, cmd+w, ...) and the app is not in front, that menu item runs through accessibility instead (a disabled Save is saved through the app's scripting interface and verified on disk); a menu item macOS keeps disabled in the background is refused with `background_unavailable`. With serve --no-automation-prompts, scripting without granted consent refuses with `automation_consent_required`, without keyboard fallback.
 • `foreground`: briefly front the window (NSMenu path, &lt; 1 ms via SLPSSetFrontProcessWithOptions) so native menu key-equivalents (Cmd+Z, Cmd+W) dispatch, then restore the prior frontmost; the explicit escalation for menu-bar shortcuts on non-Chromium apps that ignore a background combo. With an AX target or x,y, the focused field receives the chord through the foreground HID queue (needed by native Chromium fields such as the omnibox). Requires window_id.
 
@@ -522,7 +537,8 @@ Recognized modifiers: cmd/command, shift, option/alt, ctrl/control, fn. Non-modi
 </Tab>
 <Tab value="Linux">
 
-Press a combination of keys simultaneously, e.g. ["ctrl","c"] for Copy. Delivered to the target window without focus steal (real key events from a virtual master keyboard on X11); target does NOT need to be frontmost. Window-manager chords cannot reach the WM that way: alt+F4 on a window target closes that window through the WM (_NET_CLOSE_WINDOW, effect confirmed when it unmaps); super+*, alt+tab, ctrl+alt+* and other WM bindings are refused with code wm_chord_unavailable; use bring_to_front / list_windows / kill_app or delivery_mode:"foreground" instead.
+Press a combination of keys simultaneously, e.g. ["ctrl","c"] for Copy.
+Delivered to the target window without focus steal (real key events from a virtual master keyboard on X11); target does NOT need to be frontmost. Window-manager chords cannot reach the WM that way: alt+F4 on a window target closes that window through the WM (_NET_CLOSE_WINDOW, effect confirmed when it unmaps); super+*, alt+tab, ctrl+alt+* and other WM bindings are refused with code wm_chord_unavailable; use bring_to_front / list_windows / kill_app or delivery_mode:"foreground" instead.
 
 **Linux parameters**
 
@@ -539,7 +555,8 @@ Press a combination of keys simultaneously, e.g. ["ctrl","c"] for Copy. Delivere
 </Tab>
 <Tab value="Windows">
 
-Press a combination of keys simultaneously: e.g. `["ctrl", "c"]` for Copy, `["ctrl", "shift", "t"]` for reopen-closed-tab. Dispatch is target-aware:
+Press a combination of keys simultaneously: e.g. `["ctrl", "c"]` for Copy, `["ctrl", "shift", "t"]` for reopen-closed-tab.
+Dispatch is target-aware:
 
 - **Modern XAML / WinUI / UWP targets** route through UI Automation: the driver walks the target's accessibility subtree, finds a descendant whose AcceleratorKey matches the combo, and invokes it. No focus steal, no system-queue input.
 
@@ -597,7 +614,8 @@ Effect: destructive, idempotent. Platforms: macOS, Linux, Windows.
 <Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
 <Tab value="macOS">
 
-Set an element's value by `element_token`. A popup button / select dropdown: selects the menu item whose title or value matches `value` (case-insensitive). Safari `<select>` is set through the DOM; AppKit and Chromium popups list items only while open, so the menu is opened, the item pressed and the menu closed again (in the background the user's front window keeps key focus). An unknown value lists the options. Any other element: writes AXValue (sliders, steppers, date pickers, native text fields).
+Set an element's value by `element_token`.
+A popup button / select dropdown: selects the menu item whose title or value matches `value` (case-insensitive). Safari `<select>` is set through the DOM; AppKit and Chromium popups list items only while open, so the menu is opened, the item pressed and the menu closed again (in the background the user's front window keeps key focus). An unknown value lists the options. Any other element: writes AXValue (sliders, steppers, date pickers, native text fields).
 
 A Finder file name cell (list or icon view, not being edited) is renamed through Finder's scripting interface with Finder left in the background, and the new name is read back from disk; the value is the full new name with its extension. macOS may prompt for Automation consent; with serve --no-automation-prompts, ungranted consent refuses with automation_consent_required. Finder's Get Info `Name` field is refused with `file_name_needs_rename`. For free-form text in web inputs use `type_text_chars`: WebKit ignores AXValue writes.
 
@@ -662,7 +680,8 @@ For free-form text entry that the target accepts via keystrokes only, prefer `ty
 
 ### `clipboard_read`
 
-List available system clipboard types and optionally return privacy-sensitive plain text. Clipboard content is never retained in telemetry.
+List available system clipboard types and optionally return privacy-sensitive plain text.
+Clipboard content is never retained in telemetry.
 
 Effect: read-only. Platforms: macOS, Linux, Windows.
 
@@ -673,7 +692,8 @@ Effect: read-only. Platforms: macOS, Linux, Windows.
 
 ### `clipboard_write`
 
-Replace the system clipboard with exactly one value: plain text, an image from an absolute local path, or a file URL from an absolute local path. Returns the available types for read-back before paste.
+Replace the system clipboard with exactly one value: plain text, an image from an absolute local path, or a file URL from an absolute local path.
+Returns the available types for read-back before paste.
 
 Effect: destructive, idempotent. Platforms: macOS, Linux, Windows.
 

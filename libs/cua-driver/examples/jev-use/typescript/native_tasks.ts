@@ -898,7 +898,9 @@ export function checkIntermediateEffect(
   currentOracle: Record<string, unknown>,
 ): boolean | null {
   if (!candidateId || !task.intermediateEffect) return null;
-  return task.intermediateEffect(candidateId, preOracle, currentOracle);
+  // A foreground retry performs the same step, so it owes the same effect.
+  const base = candidateId.replace(/:foreground$/, '');
+  return task.intermediateEffect(base, preOracle, currentOracle);
 }
 
 /** Build one AppKit harness task (kept for Phase 1 callers). */

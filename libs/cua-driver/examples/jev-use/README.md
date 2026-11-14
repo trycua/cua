@@ -174,26 +174,22 @@ Save-note text entry, custom tasks, terminal actions, empty step lists, and
 exhausted action budgets keep the original 20-attempt wait. A driver
 dispatch receipt is never treated as completion.
 
-Offline checks stay on the deterministic mock path. After the locked Python
-and npm installs above:
+Offline checks stay on the deterministic mock path:
 
 ```bash
-.venv/bin/python -m unittest discover -s python/tests
+uv run python -m unittest discover -s python/tests
 npm test
 npm run typecheck
-.venv/bin/python verify_native_waits.py
+uv run python verify_native_waits.py
 ```
 
 `verify_native_waits.py` compiles the immutable Git `poll_oracle` (default
 baseline `62cdfbcd9356cf2e1b47ab09fee94eddd1d881cc`) and compares it with this
 checkout under a fake clock. Nine delayed-effect cells must all terminate
-verified. Printed timings are virtual policy latency (25.5s baseline versus
-9.3s candidate on this corpus), not a live or model benchmark. Optional
-`--baseline-sha` selects another Git revision; optional `--output` writes JSON
-only to that path. Without `--output`, the script writes only to stdout. Sanitized live
-macOS evidence and limits are in
-[native-verification-proof.md](docs/native-verification-proof.md). Do not run
-`verify_native.py` unless you intend to launch the desktop harness.
+verified. Printed timings are virtual policy latency, not a live or model
+benchmark. Optional `--baseline-sha` selects another Git revision; optional
+`--output` writes JSON only to that path. Without `--output`, the script writes
+only to stdout.
 
 `--capture-dir` also records sanitized `get_window_state` fixtures like the
 ones under `fixtures/native/`. On Linux, Cua Driver 0.30.2 and earlier report
@@ -622,7 +618,7 @@ The tests use the deterministic provider and do not require
 uv run python -m unittest discover -s python/tests
 npm test
 npm run typecheck
-.venv/bin/python verify_native_waits.py
+uv run python verify_native_waits.py
 ```
 
 ## Other decision models

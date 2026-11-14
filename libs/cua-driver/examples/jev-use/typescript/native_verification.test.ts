@@ -199,6 +199,23 @@ test('pollOracle intermediate effect never applied times out conservatively', as
   }
 });
 
+test('foreground retry owes the same intermediate effect', async () => {
+  const task = appkitTask('appkit-counter', '/tmp/none.json', { pid: 42, allowForeground: true });
+  assert.equal(
+    checkIntermediateEffect(task, 'ax:button:increment:foreground', { counter: 0 }, { counter: 1 }),
+    true,
+  );
+  const candidate: Candidate = {
+    id: 'ax:button:increment:foreground', source: 'ax', tool: 'press', description: 'test', arguments: { pid: 42 },
+  };
+  const history = [task.historyEntry(1, candidate.id)];
+  task.readOracle = async () => ({ schema: 'cua.appkit_task_state_v1', pid: 42, counter: 0 });
+
+  const result = await pollOracle(task, 1, candidate, { counter: 0 }, history);
+  assert.equal(result.status, 'intermediate_timeout');
+  assert.equal(result.canContinue, false);
+});
+
 test('terminal action with satisfied low-level effect waits for terminal oracle', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'jev-test-'));
   const statePath = join(dir, 'state.json');

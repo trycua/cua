@@ -223,6 +223,22 @@ class TestNativeVerification(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(result.can_continue)
             self.assertEqual(mock_sleep.call_count, 20)
 
+    async def test_foreground_retry_owes_the_same_intermediate_effect(self) -> None:
+        task = appkit_task("appkit-counter", self.state_path, pid=42, allow_foreground=True)
+        self.assertTrue(
+            check_intermediate_effect(task, "ax:button:increment:foreground", {"counter": 0}, {"counter": 1})
+        )
+        cand = Candidate("ax:button:increment:foreground", "ax", "press", {"pid": 42})
+        history = [task.history_entry(1, cand.id)]
+        self.write_state({"counter": 0})
+
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            result = await poll_oracle(
+                task, steps=1, candidate=cand, pre_oracle={"counter": 0}, history=history
+            )
+        self.assertEqual(result.status, "intermediate_timeout")
+        self.assertFalse(result.can_continue)
+
     async def test_terminal_action_with_satisfied_low_level_effect_waits_for_terminal_oracle(self) -> None:
         # On a declared terminal action (3rd increment of 3), the intermediate low-level effect
         # is satisfied (counter=3 == pre 2 + 1), but declared steps remaining is 0!

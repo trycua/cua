@@ -850,7 +850,9 @@ def check_intermediate_effect(
     """
     if candidate_id is None or task.intermediate_effect is None:
         return None
-    return task.intermediate_effect(candidate_id, pre_oracle, current_oracle)
+    # A foreground retry performs the same step, so it owes the same effect.
+    base = candidate_id.removesuffix(":foreground")
+    return task.intermediate_effect(base, pre_oracle, current_oracle)
 
 
 def harness_task_ids(harness: str) -> tuple[str, ...]:

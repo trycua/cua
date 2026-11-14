@@ -1650,14 +1650,21 @@ impl BrowserEngine {
                 }
             };
         let displayed_consent_prompt = displayed_consent_prompt || fresh_consent_prompt;
-        if let Err(_final_claim_error) = claimed {
+        if let Err(final_claim_error) = claimed {
             self.revoke_existing_profile_grant(
                 &request.session,
                 request.transport_session.as_deref(),
                 pid,
             )
             .await;
-            let error = with_prepare_side_effects(
+            // Chromium answers 403 when its prompt is cancelled, closed or
+            // turned off, or when it has no window to show it in. Only a dial
+            // the driver accepted no prompt for is read that way.
+            let refusal = if initial_claim_error.is_none()
+                && super::cdp_ws::handshake_refused(&final_claim_error)
+            {
+                BrowserRefusal::connection_declined()
+            } else {
                 BrowserRefusal::new(
                     BrowserRefusalCode::BrowserReconnectExhausted,
                     "the approved browser socket could not be claimed",
@@ -1665,10 +1672,9 @@ impl BrowserEngine {
                 .with_detail(serde_json::json!({
                     "retried_after_consent": initial_claim_error.is_some(),
                     "fresh_claim_failed": initial_claim_error.is_some(),
-                })),
-                &setup,
-                displayed_consent_prompt,
-            );
+                }))
+            };
+            let error = with_prepare_side_effects(refusal, &setup, displayed_consent_prompt);
             return Err(rollback_pending_setup(pending_setup, error).await);
         }
         if let Some(pending_setup) = pending_setup {

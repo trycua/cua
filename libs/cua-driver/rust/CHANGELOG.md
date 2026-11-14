@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.50.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.12...cua-driver-rs-v0.50.0) (2026-11-14)
+
+
+### Features
+
+* **cua-driver:** add browser_motion_policy for driver-owned tabs ([#7734](https://github.com/trycua/cua/issues/7734)) ([c9b1eb7](https://github.com/trycua/cua/commit/c9b1eb760073826154d217d00fc178274b83e778))
+* **cua-driver:** background drag-and-drop on macOS ([#7730](https://github.com/trycua/cua/issues/7730)) ([361bc24](https://github.com/trycua/cua/commit/361bc2440ecfaf3882a035c7eeae868c04faf742))
+* **cua-driver:** set_value on LibreOffice Calc cells through the Name Box ([#7744](https://github.com/trycua/cua/issues/7744)) ([cf7642e](https://github.com/trycua/cua/commit/cf7642e231e9fbfacf0c8dfd4908be8335a35349))
+
+
+### Bug Fixes
+
+* **cua-driver:** capture the app's main window when an action closes its target window ([#7760](https://github.com/trycua/cua/issues/7760)) ([f41a0c5](https://github.com/trycua/cua/commit/f41a0c50a448bd3843f2167db4fa928d2bcbbcbe))
+* **cua-driver:** count a macOS AXOpen that replaced its own element ([#7757](https://github.com/trycua/cua/issues/7757)) ([b4e764f](https://github.com/trycua/cua/commit/b4e764f2fbe40884d99ee03195e39f781fa0241d))
+* **cua-driver:** keep a macOS menu command's window key within its app ([#7761](https://github.com/trycua/cua/issues/7761)) ([bb7e850](https://github.com/trycua/cua/commit/bb7e850cadddba0a25e6d7c46f4bb29441b1cea0))
+* **cua-driver:** keep named macOS accessibility groups in the tree ([#7762](https://github.com/trycua/cua/issues/7762)) ([555dac4](https://github.com/trycua/cua/commit/555dac439e61e89b1370e0d3cd75f9b6a84e434a))
+* **cua-driver:** release a background Command chord's base key without Command ([#7755](https://github.com/trycua/cua/issues/7755)) ([7af608b](https://github.com/trycua/cua/commit/7af608b205eb84c468e6d6978c7568703b3606d4))
+* **cua-driver:** report macOS 27 browser profile denials ([#7745](https://github.com/trycua/cua/issues/7745)) ([7893549](https://github.com/trycua/cua/commit/78935496488ffe3eef11999d50405481d79f1b0f))
+* **cua-driver:** report native Windows diagnostics ([#7763](https://github.com/trycua/cua/issues/7763)) ([8b2228a](https://github.com/trycua/cua/commit/8b2228a2d7608b3da8d5b416413016dcd11347a1))
+* **cua-driver:** run invoke_menu on a macOS window on another Space without raising it ([#7756](https://github.com/trycua/cua/issues/7756)) ([25dad98](https://github.com/trycua/cua/commit/25dad981a7599ba20ec09e5b9abab689c7d58dbd))
+* **cua-driver:** say when a refused Catalyst menu item leaves its menu open ([#7746](https://github.com/trycua/cua/issues/7746)) ([e97749d](https://github.com/trycua/cua/commit/e97749d219d771b0106ce6eaa892912f5f44202c))
+* **cua-driver:** send AXEnhancedUserInterface only to Chromium and Electron apps ([#7751](https://github.com/trycua/cua/issues/7751)) ([e02cf9f](https://github.com/trycua/cua/commit/e02cf9f9c71a36b8829c077a770b4c1919be6be7))
+
 ## [0.49.12](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.11...cua-driver-rs-v0.49.12) (2026-11-14)
 
 

@@ -1243,6 +1243,7 @@ dependencies = [
  "ring",
  "rustix",
  "semver",
+ "security-framework",
  "serde",
  "serde_json",
  "sha2",

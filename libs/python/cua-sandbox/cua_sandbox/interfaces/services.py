@@ -90,9 +90,10 @@ class ServiceHandle:
         if isinstance(body, str):
             body = body.encode()
         n = native()
+        path = path if path.startswith("/") else f"/{path}"
         response = await (await self._native()).request(
             method.upper(),
-            path if path.startswith("/") else f"/{path}",
+            path,
             body,
             millis(timeout),
             [n.HttpHeader(name=k, value=v) for k, v in pairs],

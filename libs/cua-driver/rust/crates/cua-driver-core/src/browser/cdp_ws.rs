@@ -275,6 +275,16 @@ impl Drop for CdpConnection {
     }
 }
 
+/// Whether the browser answered the WebSocket upgrade with HTTP 403, Chromium's reply to a connection its approval prompt denied.
+pub(crate) fn handshake_refused(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<tokio_tungstenite::tungstenite::Error>(),
+            Some(tokio_tungstenite::tungstenite::Error::Http(response)) if response.status() == 403
+        )
+    })
+}
+
 impl CdpConnection {
     pub async fn connect(ws_url: &str) -> anyhow::Result<Self> {
         validate_loopback_ws_url(ws_url).map_err(|e| anyhow::anyhow!(e))?;
@@ -979,6 +989,35 @@ mod tests {
         ] {
             assert!(validate_loopback_ws_url(bad).is_err(), "{bad}");
         }
+    }
+
+    #[tokio::test]
+    async fn only_a_403_answer_to_the_handshake_is_a_refusal() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        async fn dial(answer: &'static [u8]) -> anyhow::Error {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = [0u8; 1024];
+                let _ = stream.read(&mut request).await;
+                let _ = stream.write_all(answer).await;
+            });
+            let url = format!("ws://127.0.0.1:{port}/devtools/browser/x");
+            match CdpConnection::connect(&url).await {
+                Ok(_) => panic!("the handshake must fail"),
+                Err(error) => error,
+            }
+        }
+
+        assert!(handshake_refused(
+            &dial(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n").await
+        ));
+        assert!(!handshake_refused(
+            &dial(b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n").await
+        ));
+        assert!(!handshake_refused(&dial(b"").await));
     }
 
     #[tokio::test]

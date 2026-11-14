@@ -986,8 +986,8 @@ impl BrowserEngine {
                 old_generation,
                 new_generation,
             ));
-            let reconnected = tokio::select! {
-                result = &mut reconnect => result,
+            let (reconnected, accepted_consent) = tokio::select! {
+                result = &mut reconnect => (result, false),
                 _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
                     match self.platform.handle_existing_profile_consent(BrowserConsentRequest {
                         action: Default::default(),
@@ -995,8 +995,8 @@ impl BrowserEngine {
                         window_id: grant.window_id,
                         attempt,
                     }).await {
-                        Ok(BrowserConsentOutcome::Accepted | BrowserConsentOutcome::NotPresent) => {
-                            reconnect.await
+                        Ok(outcome) => {
+                            (reconnect.await, outcome == BrowserConsentOutcome::Accepted)
                         }
                         Err(error) => {
                             // The reconnect future may be waiting on browser
@@ -1019,6 +1019,13 @@ impl BrowserEngine {
                         .await?
                         .expect("grant exists after successful generation bump");
                     return Ok((conn, grant));
+                }
+                // A redial would put the prompt the person just declined
+                // back on screen, for this driver to accept.
+                Err(error) if !accepted_consent && super::cdp_ws::handshake_refused(&error) => {
+                    self.revoke_existing_profile_grant(session, transport_session, pid)
+                        .await;
+                    return Err(BrowserRefusal::connection_declined());
                 }
                 Err(error) => {
                     last_error = Some(error.to_string());

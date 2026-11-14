@@ -1238,6 +1238,14 @@ impl crate::consent::ProtectedConsentProvider for FixtureProtectedProvider {
 async fn protected_existing_profile_fixture() -> (Fixture, Arc<FixtureProtectedProvider>) {
     let state = Arc::new(StdMutex::new(FixtureState::default()));
     let server = MockCdpServer::start(fixture_handler(state.clone())).await;
+    protected_existing_profile_fixture_at(server.ws_url(), state, server)
+}
+
+fn protected_existing_profile_fixture_at(
+    ws_url: String,
+    state: SharedState,
+    server: MockCdpServer,
+) -> (Fixture, Arc<FixtureProtectedProvider>) {
     let setup_invoked = Arc::new(AtomicBool::new(false));
     let provider = Arc::new(FixtureProtectedProvider {
         consent_seen: AtomicBool::new(false),
@@ -1245,7 +1253,7 @@ async fn protected_existing_profile_fixture() -> (Fixture, Arc<FixtureProtectedP
     let engine = BrowserEngine::new_with_protected_consent_provider(
         Arc::new(FixturePlatform {
             endpoint_state: None,
-            ws_url: server.ws_url(),
+            ws_url,
             trusted_input_limited: false,
             managed_endpoint_visible: false,
             process_role: BrowserProcessRole::StandaloneConsumer,
@@ -1680,6 +1688,49 @@ async fn protected_provider_accepts_exact_attach_and_session_end_revokes_the_gra
         }))
         .await;
     assert_eq!(structured(&state)["status"], "refused");
+}
+
+#[tokio::test]
+async fn an_attach_the_browser_answers_with_403_is_consent_revoked_after_one_dial() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let ws_url = format!(
+        "ws://127.0.0.1:{}/devtools/browser/declined",
+        listener.local_addr().unwrap().port()
+    );
+    let dials = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = dials.clone();
+    tokio::spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            counted.fetch_add(1, Ordering::SeqCst);
+            let mut request = [0u8; 1024];
+            let _ = stream.read(&mut request).await;
+            let _ = stream
+                .write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
+                .await;
+        }
+    });
+    let state = Arc::new(StdMutex::new(FixtureState::default()));
+    let server = MockCdpServer::start(fixture_handler(state.clone())).await;
+    let (f, _provider) = protected_existing_profile_fixture_at(ws_url, state, server);
+
+    let prepare = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": "declined-prompt",
+            "_transport_session_id": "declined-prompt-transport",
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+
+    let prepared = structured(&prepare);
+    assert_eq!(
+        prepared["refusal"]["code"], "browser_consent_revoked",
+        "{prepared}"
+    );
+    assert_eq!(dials.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]

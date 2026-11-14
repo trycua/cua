@@ -122,6 +122,14 @@ impl BrowserRefusal {
         self.detail = Some(detail);
         self
     }
+
+    /// The refusal for a dial Chromium answered with 403 while this driver had accepted no prompt for it.
+    pub(crate) fn connection_declined() -> Self {
+        Self::new(
+            BrowserRefusalCode::BrowserConsentRevoked,
+            "the browser refused the remote-debugging connection: a person declined its prompt, or it had no window to ask in",
+        )
+    }
 }
 
 /// Raw OS error number for "too many open files in this process"

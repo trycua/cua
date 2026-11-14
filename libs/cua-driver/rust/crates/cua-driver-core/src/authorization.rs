@@ -352,6 +352,7 @@ const LEGACY_PAGE_MUTATING_ACTIONS: &[&str] = &[
 
 const BROWSER_BOUND_INPUT_OPERATIONS: &[&str] = &[
     "browser_navigate",
+    "browser_motion_policy",
     "browser_click",
     "browser_type",
     "browser_select",
@@ -964,6 +965,7 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "get_browser_state"
         | "browser_prepare"
         | "browser_navigate"
+        | "browser_motion_policy"
         | "browser_click"
         | "browser_type"
         | "browser_select"
@@ -1581,6 +1583,25 @@ mod tests {
         );
         assert_eq!(isolated.class, RiskClass::R1);
         assert_eq!(isolated.enforcement, RiskEnforcement::Active);
+    }
+
+    #[test]
+    fn motion_policy_is_reviewed_r2_and_bound_without_whitelisting_unknown_tools() {
+        let risk = advertised_risk_for("browser_motion_policy");
+        assert_eq!(risk.class, RiskClass::R2);
+        assert_eq!(risk.enforcement, RiskEnforcement::Active);
+        let adapters = enforcement_adapters_for_call(
+            "browser_motion_policy",
+            &serde_json::json!({"target_id": "t", "tab_id": "tab", "mode": "reduce"}),
+        );
+        assert_eq!(
+            adapters.iter().map(|adapter| adapter.id).collect::<Vec<_>>(),
+            vec!["browser_bound_input"]
+        );
+        assert_eq!(
+            advertised_risk_for("browser_motion_policy_unreviewed").class,
+            RiskClass::Unclassified
+        );
     }
 
     #[test]

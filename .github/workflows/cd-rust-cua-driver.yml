@@ -1826,6 +1826,13 @@ jobs:
               }
             echo "Opened ${PR_URL}"
 
+            # Older bookkeeping PRs that never merged are obsolete once this
+            # one exists. Best effort: never block queuing the new PR.
+            python3 .github/scripts/supersede_post_publish_installer_prs.py \
+              --repo "${{ github.repository }}" \
+              --new-pr "${PR_URL##*/}" \
+              --version "$VERSION" || echo "Could not close superseded PRs." >&2
+
             # Queue the merge and stop. Repository auto-merge is on, so the PR
             # merges itself once the required checks (including the local-ci
             # sign-off, which can take 20-40 minutes) pass. Do not watch the

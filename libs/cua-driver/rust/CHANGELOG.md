@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.49.12](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.11...cua-driver-rs-v0.49.12) (2026-11-14)
+
+
+### Bug Fixes
+
+* **cua-driver:** count focus in a window's inline rename field as focus on that window ([#7725](https://github.com/trycua/cua/issues/7725)) ([3026079](https://github.com/trycua/cua/commit/302607951843a2bab88efd5dd21799170e147357))
+
 ## [0.49.11](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.10...cua-driver-rs-v0.49.11) (2026-11-14)
 
 

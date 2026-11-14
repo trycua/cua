@@ -59,6 +59,13 @@ pub fn current_dispatch_runtime_scope() -> Option<String> {
         .or_else(|| CONSTRUCTION_RUNTIME_SCOPE.with(|scope| scope.borrow().clone()))
 }
 
+#[cfg(feature = "test-support")]
+pub(crate) fn hook_registration_runtime_scope() -> Option<String> {
+    CONSTRUCTION_RUNTIME_SCOPE
+        .with(|scope| scope.borrow().clone())
+        .or_else(current_dispatch_runtime_scope)
+}
+
 #[doc(hidden)]
 pub fn with_runtime_scope<T>(scope: String, action: impl FnOnce() -> T) -> T {
     struct RestoreScope(Option<String>);
@@ -6751,6 +6758,33 @@ resources:
                     if text.contains("browser_ref_stale")
             )
         }));
+    }
+
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn hook_registration_prefers_nested_construction_scope() {
+        let outer = uuid::Uuid::new_v4().to_string();
+        let inner = uuid::Uuid::new_v4().to_string();
+        let hook = DISPATCH_RUNTIME_SCOPE
+            .scope(outer.clone(), async {
+                super::with_runtime_scope(inner.clone(), || {
+                    crate::session::register_scoped_session_end_hook(|_| {})
+                })
+            })
+            .await;
+        assert_eq!(
+            crate::session::session_end_hook_count_for_runtime(&outer),
+            0
+        );
+        assert_eq!(
+            crate::session::session_end_hook_count_for_runtime(&inner),
+            1
+        );
+        drop(hook);
+        assert_eq!(
+            crate::session::session_end_hook_count_for_runtime(&inner),
+            0
+        );
     }
 
     #[tokio::test]

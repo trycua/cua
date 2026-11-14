@@ -2424,7 +2424,6 @@ mod tests {
     #[tokio::test]
     async fn direct_runtimes_have_independent_sessions_and_shutdown() {
         let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
-        let hook_baseline = cua_driver_core::session::session_end_hook_count();
         let first = configured_standard_driver();
         let second = CuaDriver::create_configured(ConfiguredDriverOptions {
             claude_code_compatibility: false,
@@ -2442,6 +2441,19 @@ mod tests {
             },
         })
         .unwrap();
+        let runtime_scope = |driver: &CuaDriver| match &driver.backend {
+            DriverBackend::Embedded(runtime) => runtime.runtime_scope_key().to_owned(),
+            _ => panic!("expected embedded runtime"),
+        };
+        let first_scope = runtime_scope(&first);
+        let second_scope = runtime_scope(&second);
+        for scope in [&first_scope, &second_scope] {
+            assert!(cua_driver_core::session::session_end_hook_count_for_runtime(scope) > 0);
+        }
+        let unrelated = cua_driver_core::session::register_scoped_session_end_hook(|_| {});
+        let owned_probe = cua_driver_core::tool::with_runtime_scope(first_scope.clone(), || {
+            cua_driver_core::session::register_scoped_session_end_hook(|_| {})
+        });
         let first_session = first
             .create_trusted_session(TrustedSessionOptions {
                 public_session: "same-public-label".into(),
@@ -2589,9 +2601,19 @@ mod tests {
         drop(second_session);
         drop(second);
         assert_eq!(
-            cua_driver_core::session::session_end_hook_count(),
-            hook_baseline
+            cua_driver_core::session::session_end_hook_count_for_runtime(&first_scope),
+            1
         );
+        assert_eq!(
+            cua_driver_core::session::session_end_hook_count_for_runtime(&second_scope),
+            0
+        );
+        drop(owned_probe);
+        assert_eq!(
+            cua_driver_core::session::session_end_hook_count_for_runtime(&first_scope),
+            0
+        );
+        drop(unrelated);
     }
 
     #[tokio::test]

@@ -230,7 +230,7 @@ fn def() -> &'static ToolDef {
             "type": "object",
             "required": ["key"],
             "properties": {
-                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it." },
+                "session": cua_driver_core::tool_schema::session_schema(),
                 "pid": { "type": "integer", "description": "Target process ID." },
                 "key": { "type": "string", "description": "Key name." },
                 "modifiers": {

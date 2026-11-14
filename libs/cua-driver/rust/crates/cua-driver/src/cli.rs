@@ -1362,17 +1362,16 @@ fn check_options(args: &[String], positionals: &[&str]) -> Result<(), String> {
         }
     }
 
+    // A lone `-` or a number is a value, never an option. A value that starts
+    // with `-` otherwise has to be written `--option=-value`, so a value
+    // option can never swallow the option after it.
+    let is_value = |arg: &str| !arg.starts_with('-') || arg == "-" || arg.parse::<f64>().is_ok();
     let mut index = 0;
     while index < args.len() {
         let arg = args[index].as_str();
         index += 1;
-        // A lone `-` or a negative number is a value, and macOS
-        // LaunchServices may add `-psn_*`.
-        if !arg.starts_with('-')
-            || arg == "-"
-            || arg.parse::<f64>().is_ok()
-            || arg.starts_with("-psn_")
-        {
+        // macOS LaunchServices may add `-psn_*` to an app launch.
+        if is_value(arg) || arg.starts_with("-psn_") {
             continue;
         }
         let (name, inline_value) = match arg.split_once('=') {
@@ -1380,7 +1379,7 @@ fn check_options(args: &[String], positionals: &[&str]) -> Result<(), String> {
             _ => (arg, false),
         };
         match accepted.iter().find(|(option, _)| option == name) {
-            Some((_, true)) if !inline_value && index == args.len() => {
+            Some((_, true)) if !inline_value && !args.get(index).is_some_and(|v| is_value(v)) => {
                 return Err(format!(
                     "cua-driver {}: option '{arg}' needs a value.",
                     help_path.join(" ")
@@ -6404,6 +6403,8 @@ mod tests {
                 "0",
             ],
             &["config", "set", "max_image_dimension", "-1"],
+            &["mcp", "--direct", "--glide-ms", "-1"],
+            &["status", "--socket=-odd"],
             &[
                 "skills",
                 "install",
@@ -6497,6 +6498,14 @@ mod tests {
             (
                 &["status", "--socket"],
                 "cua-driver status: option '--socket' needs a value",
+            ),
+            (
+                &["stop", "--socket", "/s", "--socket", "--expected-pidd", "1"],
+                "cua-driver stop: option '--socket' needs a value",
+            ),
+            (
+                &["serve", "--socket", "--bogus"],
+                "cua-driver serve: option '--socket' needs a value",
             ),
             (
                 &["sessions", "--json=yes"],

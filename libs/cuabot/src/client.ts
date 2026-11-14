@@ -9,6 +9,7 @@ import { join, dirname } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { checkDependencies } from './utils.js';
+import type { BashResult } from './bashResult.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -107,7 +108,7 @@ export class CuaBotClient {
     command: string,
     run_in_background?: boolean,
     timeout?: number
-  ): Promise<{ stdout: string; stderr: string; pid?: number }> {
+  ): Promise<BashResult> {
     return this.request('bash', { command, run_in_background, timeout });
   }
 

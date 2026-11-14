@@ -1,6 +1,6 @@
 """The cua-sandbox `driver` extra must cover the newest Cua Driver release.
 
-The extra pins a range (`cua-driver>=0.37.0,<0.50`). Cua Driver is 0.x, where a
+The extra pins a range (`cua-driver>=0.37.0,<0.51`). Cua Driver is 0.x, where a
 minor may break the typed SDK, so the upper bound stays below the next minor
 instead of being open. That only works if a new minor cannot ship without
 someone raising the bound: until 12 Nov 2026 the bound sat at `<0.48` while

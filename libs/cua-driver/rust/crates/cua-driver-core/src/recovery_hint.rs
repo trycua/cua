@@ -859,8 +859,8 @@ fn background_unavailable(c: &Ctx) -> RecoveryHint {
         )
         .call(c.look_at_window()),
         (_, Some("drag_and_drop_session")) => RecoveryHint::new(format!(
-            "No drop landed: macOS drag-and-drop needs the real pointer. Try a route that is not a drag \
-             first (Move button, menu item, shortcut). {foreground}"
+            "No drop landed: the drag-and-drop session did not end at the drop point. Try a route that \
+             is not a drag first (Move button, menu item, shortcut). {foreground}"
         ))
         .call(c.read_window()),
         (_, Some("electron_main_process_unavailable")) => RecoveryHint::new(format!(

@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.11.4](https://github.com/trycua/cua/compare/sandbox-v0.11.3...sandbox-v0.11.4) (2026-11-14)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** allow cua-driver 0.50 ([#7767](https://github.com/trycua/cua/issues/7767)) ([e31ab77](https://github.com/trycua/cua/commit/e31ab7705de2806bd22492b70867cb5fb767f224))
+
+## [0.11.3](https://github.com/trycua/cua/compare/sandbox-v0.11.2...sandbox-v0.11.3) (2026-11-14)
+
+
+### Bug Fixes
+
+* **core:** upgrade dnspython and the OpenTelemetry stack (CVE-2026-128089, CVE-2026-126360) ([#7699](https://github.com/trycua/cua/issues/7699)) ([79c4a8d](https://github.com/trycua/cua/commit/79c4a8dd7e0de599cd29739f6c04523aca54835c))
+
 ## [0.11.2](https://github.com/trycua/cua/compare/sandbox-v0.11.1...sandbox-v0.11.2) (2026-11-13)
 
 

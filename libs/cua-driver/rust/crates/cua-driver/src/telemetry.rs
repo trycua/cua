@@ -590,6 +590,7 @@ impl AgentSessionState {
             "get_browser_state"
                 | "browser_prepare"
                 | "browser_navigate"
+                | "browser_motion_policy"
                 | "browser_click"
                 | "browser_type"
                 | "browser_dialog"
@@ -3547,6 +3548,7 @@ mod tests {
         };
 
         for (tool_name, operation) in [
+            ("browser_motion_policy", ToolOperation::NotApplicable),
             ("browser_dialog", ToolOperation::BrowserDialogAccept),
             (
                 "browser_set_input_files",

@@ -959,6 +959,35 @@ mod tests {
     }
 
     #[test]
+    fn display_only_row_satisfies_existence_when_no_control_matches() {
+        let outcomes = evaluate_predicates(
+            &[labelled("Saved", None)],
+            &observed(vec![json!({
+                "role": "AXStaticText",
+                "label": "Saved",
+                "display_only": true
+            })]),
+        );
+        assert_eq!(outcomes[0].status, VerificationStatus::Satisfied);
+    }
+
+    #[test]
+    fn duplicate_display_only_value_is_multi_match() {
+        let caption = json!({
+            "role": "AXStaticText",
+            "label": "Total",
+            "value": "42",
+            "display_only": true
+        });
+        let outcomes = evaluate_predicates(
+            &[labelled("Total", Some("42"))],
+            &observed(vec![caption.clone(), caption]),
+        );
+        assert_eq!(outcomes[0].status, VerificationStatus::Unknown);
+        assert_eq!(outcomes[0].unknown_reason, Some(UnknownReason::MultiMatch));
+    }
+
+    #[test]
     fn display_only_web_text_stays_untrusted() {
         let outcomes = evaluate_predicates(
             &[labelled("Saved", Some("Saved"))],

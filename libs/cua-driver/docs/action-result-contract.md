@@ -117,13 +117,13 @@ They appear on three kinds of result:
 | A browser refusal (`status: "refused"`, `refusal.code`) | next to `refusal` in `structuredContent` |
 | An `ActionResult` with `effect` `unverifiable`, `suspected_noop` or `refused` | `hint` and `next_call` on the `ActionResult` |
 
-For example, a background drag that macOS cannot drop returns:
+For example, a background drag whose drag-and-drop session did not end at the drop point returns:
 
 ```json
 {
   "code": "background_unavailable",
   "reason": "drag_and_drop_session",
-  "hint": "No drop landed: macOS drag-and-drop needs the real pointer. Try a route that is not a drag first (Move button, menu item, shortcut). Retry with delivery_mode:\"foreground\" only if the user allows the window to come forward.",
+  "hint": "No drop landed: the drag-and-drop session did not end at the drop point. Try a route that is not a drag first (Move button, menu item, shortcut). Retry with delivery_mode:\"foreground\" only if the user allows the window to come forward.",
   "next_call": {"tool": "get_window_state", "arguments": {"pid": 811, "window_id": 659}}
 }
 ```

@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.6](https://github.com/trycua/cua/compare/bench-v0.4.5...bench-v0.4.6) (2026-11-14)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** allow cua-driver 0.50 ([#7767](https://github.com/trycua/cua/issues/7767)) ([e31ab77](https://github.com/trycua/cua/commit/e31ab7705de2806bd22492b70867cb5fb767f224))
+
+## [0.4.5](https://github.com/trycua/cua/compare/bench-v0.4.4...bench-v0.4.5) (2026-11-14)
+
+
+### Bug Fixes
+
+* **core:** upgrade dnspython and the OpenTelemetry stack (CVE-2026-128089, CVE-2026-126360) ([#7699](https://github.com/trycua/cua/issues/7699)) ([79c4a8d](https://github.com/trycua/cua/commit/79c4a8dd7e0de599cd29739f6c04523aca54835c))
+
 ## [0.4.4](https://github.com/trycua/cua/compare/bench-v0.4.3...bench-v0.4.4) (2026-11-13)
 
 

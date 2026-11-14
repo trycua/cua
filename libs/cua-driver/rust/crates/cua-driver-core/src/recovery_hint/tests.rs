@@ -225,8 +225,8 @@ fn a_drag_refused_by_macos_drag_and_drop_names_a_non_drag_route_and_the_foregrou
     );
     assert_eq!(
         hint.hint,
-        "No drop landed: macOS drag-and-drop needs the real pointer. Try a route that is not a drag first \
-         (Move button, menu item, shortcut). Retry with delivery_mode:\"foreground\" \
+        "No drop landed: the drag-and-drop session did not end at the drop point. Try a route that is \
+         not a drag first (Move button, menu item, shortcut). Retry with delivery_mode:\"foreground\" \
          only if the user allows the window to come forward."
     );
     assert_eq!(

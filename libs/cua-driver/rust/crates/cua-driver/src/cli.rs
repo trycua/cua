@@ -4861,7 +4861,7 @@ fn cli_docs_literal() -> serde_json::Value {
             {
                 "name": "test",
                 "abstract": "Check that Cua Driver works on this computer.",
-                "discussion": "Checks permissions, a screen read, Cua Driver's own pointer, and (macOS) typing in a background TextEdit window that is closed without saving. Exit code is 0 when everything works and 1 when something needs fixing.",
+                "discussion": "Checks the macOS permissions (Linux and Windows have none to check), a screen read, Cua Driver's own pointer, and (macOS) typing in a background TextEdit window that is closed without saving. Exit code is 0 when everything works and 1 when something needs fixing.",
                 "arguments": no_args,
                 "options": no_options,
                 "flags": [{"name":"json","short_name":null,"help":"Emit the result as JSON.","default_value":false}],

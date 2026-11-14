@@ -343,7 +343,7 @@ fn def() -> &'static ToolDef {
                 "capture_id": { "type": "string", "description": "Optional capture ID from get_window_state or get_desktop_state. With x,y it is consumed atomically; stale or mismatched captures are refused." },
                 "x":             { "type": "number",  "description": "X in screenshot pixels (get_window_state PNG, or get_desktop_state PNG for a desktop target)." },
                 "y":             { "type": "number",  "description": "Y in screenshot pixels from the image selected by target." },
-                "action":        { "type": "string",  "description": "AX action: press (default), show_menu, pick, confirm, cancel, open, show_alternate_ui, show_default_ui. show_alternate_ui reveals hover-only controls on an element that lists it, without the pointer." },
+                "action":        { "type": "string",  "description": "AX action: press (default), show_menu, pick, confirm, cancel, open, show_alternate_ui, show_default_ui; or an element's published custom_actions name or raw envelope. show_alternate_ui reveals hover-only controls on an element that lists it, without the pointer." },
                 "button":        {
                     "type": "string",
                     "enum": ["left", "right", "middle"],
@@ -561,7 +561,11 @@ impl ClickTool {
             .opt_f64("y")
             .or_else(|| args.opt_i64("y").map(|i| i as f64));
         let action = args.str_or("action", "press");
-        if let Err(error) = validate_click_action(&action, element_guard.is_some()) {
+        let element_actions = element_guard.as_ref().map(|guard| {
+            let element = guard.as_ptr();
+            move || unsafe { copy_action_names(element as AXUIElementRef) }
+        });
+        if let Err(error) = validate_click_action(&action, element_actions) {
             return ToolResult::error(format!("click: {error}"));
         }
         // Surface 5: optional `button` arg, default "left" preserves legacy behaviour.
@@ -1780,8 +1784,12 @@ fn perform_ax_click(
     let (element_ptr, idx) = element;
     let (pid, window_id) = window;
     let (foreground, prompt) = delivery;
-    let ax_action = crate::input::ax_actions::map_action(action_str)?;
     let element = element_ptr as AXUIElementRef;
+
+    // Capture advertised actions BEFORE dispatching so we can detect silent no-ops
+    // (AX returns success even when the element doesn't advertise the action).
+    let advertised = unsafe { copy_action_names(element) };
+    let ax_action = crate::ax::actions::wire_name(&advertised, action_str)?;
 
     // Check the live value immediately before dispatch. Foreground assist can
     // enable menu items that were disabled in the cached snapshot, while a
@@ -1796,10 +1804,6 @@ fn perform_ax_click(
     } else {
         crate::input::ax_actions::ensure_ax_action_enabled(element_ptr, ax_action)?;
     }
-
-    // Capture advertised actions BEFORE dispatching so we can detect silent no-ops
-    // (AX returns success even when the element doesn't advertise the action).
-    let advertised = unsafe { copy_action_names(element) };
 
     let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
     let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
@@ -2202,15 +2206,24 @@ fn ax_click_structured(
 }
 
 /// Check `click`'s `action` before any dispatch. Element clicks take the
-/// AX action names `map_action` knows. A pixel click also takes `focus`: the
-/// background focus rung that pixel `type_text`, `press_key` and `scroll`
-/// use to put the keyboard focus on a point (`focus_by_pixel`). It sets
-/// AXFocused on the element under the point instead of pressing it.
-fn validate_click_action(action: &str, element_target: bool) -> anyhow::Result<()> {
-    if !element_target && action == "focus" {
-        return Ok(());
+/// AX action names `map_action` knows, or a custom action the element
+/// advertises, by its `custom_actions` name or raw envelope. A pixel click
+/// also takes `focus`: the background focus rung that pixel `type_text`,
+/// `press_key` and `scroll` use to put the keyboard focus on a point
+/// (`focus_by_pixel`). It sets AXFocused on the element under the point
+/// instead of pressing it.
+fn validate_click_action(
+    action: &str,
+    element_actions: Option<impl FnOnce() -> Vec<String>>,
+) -> anyhow::Result<()> {
+    let known = crate::input::ax_actions::map_action(action).map(|_| ());
+    match element_actions {
+        None if action == "focus" => Ok(()),
+        Some(advertised) if known.is_err() => {
+            crate::ax::actions::wire_name(&advertised(), action).map(|_| ())
+        }
+        _ => known,
     }
-    crate::input::ax_actions::map_action(action).map(|_| ())
 }
 
 #[cfg(test)]
@@ -2221,11 +2234,16 @@ mod tests {
     /// started refusing: background pixel typing into Electron depended on it.
     #[test]
     fn pixel_click_accepts_the_internal_focus_action() {
-        assert!(validate_click_action("focus", false).is_ok());
-        assert!(validate_click_action("press", false).is_ok());
-        assert!(validate_click_action("show_alternate_ui", true).is_ok());
-        assert!(validate_click_action("focus", true).is_err());
-        assert!(validate_click_action("hover", false).is_err());
+        let pixel = None::<fn() -> Vec<String>>;
+        let element = Some(Vec::<String>::new);
+        assert!(validate_click_action("focus", pixel).is_ok());
+        assert!(validate_click_action("press", pixel).is_ok());
+        assert!(validate_click_action("show_alternate_ui", element).is_ok());
+        assert!(validate_click_action("focus", element).is_err());
+        assert!(validate_click_action("hover", element).is_err());
+        assert!(validate_click_action("hover", pixel).is_err());
+        let paste = || vec!["Name:Paste\nTarget:0x0\nSelector:(null)".to_owned()];
+        assert!(validate_click_action("Paste", Some(paste)).is_ok());
     }
 
     fn window(window_id: u32) -> crate::window_change_detector::WindowEvent {

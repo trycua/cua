@@ -391,6 +391,207 @@ pub fn compact_markdown(markdown: &str, grid: &Grid) -> String {
     out
 }
 
+/// One element on the keyboard-focus chain: role and name.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FocusElement {
+    pub role: String,
+    pub name: String,
+}
+
+/// The element holding keyboard focus after an action, then its ancestors
+/// nearest first (a few levels are enough to tell a cell editor from a
+/// toolbar field).
+pub type FocusChain = Vec<FocusElement>;
+
+/// Whether keyboard focus is on the grid: anything inside a table or grid
+/// (a cell, or an in-cell editor while a cell is being edited). A lone
+/// address-named cell counts when its ancestors could not be read; a field
+/// named like a cell elsewhere (a name box) does not.
+fn focus_in_grid(chain: &[FocusElement], grid: &Grid) -> bool {
+    let Some(focused) = chain.first() else {
+        return true;
+    };
+    if chain.iter().any(|e| TABLE_ROLES.contains(&e.role.as_str())) {
+        return true;
+    }
+    chain.len() == 1
+        && CELL_ROLES.contains(&focused.role.as_str())
+        && parse_address(&focused.name).is_some_and(|at| grid.cells.contains_key(&at))
+}
+
+/// While keyboard focus is in a combo box (a name box being typed into), the
+/// combo box's value is the text being typed, not the active cell: keep the
+/// active cell `before` named, so a half-typed address is not reported as a
+/// move.
+pub fn hold_active_while_combo_focused(
+    after: &mut Grid,
+    before: &Grid,
+    focus: Option<&[FocusElement]>,
+) {
+    let in_combo = focus.is_some_and(|chain| {
+        !focus_in_grid(chain, after) && chain.iter().any(|e| e.role == "AXComboBox")
+    });
+    if in_combo {
+        after.active = before.active;
+    }
+}
+
+/// Whether a keyboard action is expected to commit an entry or move the
+/// active cell: Return, Enter or Tab (no modifier other than Shift), or typed
+/// text ending in a newline or tab.
+pub fn expects_cell_move(key: Option<&str>, modifiers: &[&str], text: Option<&str>) -> bool {
+    let key_moves = key.is_some_and(|k| {
+        let k = k.trim().to_lowercase();
+        matches!(
+            k.as_str(),
+            "return" | "enter" | "tab" | "kpenter" | "numpadenter"
+        ) && modifiers.iter().all(|m| m.eq_ignore_ascii_case("shift"))
+    });
+    key_moves || text.is_some_and(|t| t.ends_with('\n') || t.ends_with('\t'))
+}
+
+/// What an action's result adds about keyboard focus on a sheet window: where
+/// focus is when it is not on the grid (typed text and keys go there, not
+/// into a cell), and that the active cell did not move when the action was a
+/// Return/Tab that should have committed or moved it.
+pub fn render_focus_note(
+    change: &GridChange,
+    after: &Grid,
+    focus: Option<&[FocusElement]>,
+    expected_move: bool,
+) -> Option<String> {
+    let mut out = Vec::new();
+    if expected_move
+        && change.changed.is_empty()
+        && change.active_was.is_none()
+        && change.table_was.is_none()
+    {
+        let at = after
+            .active
+            .map(|a| format!(" (still {a})"))
+            .unwrap_or_default();
+        out.push(format!(
+            "The active cell did not move{at} and no cell changed: the key committed nothing on the sheet."
+        ));
+    }
+    // An unnamed focused element is not reported: an in-cell editor may sit
+    // outside the table in the tree, and naming it would mislead.
+    if let Some(chain) =
+        focus.filter(|c| !focus_in_grid(c, after) && c.first().is_some_and(|f| !f.name.is_empty()))
+    {
+        let describe = |e: &FocusElement| {
+            if e.name.is_empty() {
+                e.role.clone()
+            } else {
+                format!("{} {}", e.role, shown(&e.name))
+            }
+        };
+        let mut text = format!("Keyboard focus: {}", describe(&chain[0]));
+        if let Some(parent) = chain.get(1).filter(|p| !p.role.is_empty()) {
+            text.push_str(&format!(" in {}", describe(parent)));
+        }
+        text.push_str(", not a cell: typed text and keys go there, not into the sheet.");
+        out.push(text);
+    }
+    (!out.is_empty()).then(|| out.join(" "))
+}
+
+/// Query words that ask for a spreadsheet grid itself rather than for text
+/// inside it (cells are named by address, so none of these match a cell).
+const GRID_QUERY_WORDS: [&str; 11] = [
+    "row",
+    "rows",
+    "cell",
+    "cells",
+    "grid",
+    "table",
+    "sheet",
+    "sheets",
+    "column",
+    "columns",
+    "spreadsheet",
+];
+
+/// Whether a window-read `query` names the grid: one of the grid words
+/// (`row`, `cells`, `table`, `sheet`, ...), or the grid's table name or part
+/// of it (`Sheet Budget`, `budget`). Such a query is answered with the whole
+/// visible grid instead of the menu items whose names contain the word.
+pub fn query_names_grid(query: &str, table: Option<&str>) -> bool {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return false;
+    }
+    if GRID_QUERY_WORDS.contains(&q.as_str()) {
+        return true;
+    }
+    table.is_some_and(|t| {
+        let t = t.trim().to_lowercase();
+        !t.is_empty() && (q == t || (q.chars().count() >= 3 && t.contains(&q)))
+    })
+}
+
+/// Answer a grid-naming query from a window's compacted markdown (see
+/// [`compact_markdown`]): the grid block (its table line, the `grid` header
+/// and every `row` line) first, then the other lines `filter` keeps for the
+/// query. `None` when the markdown has no compacted grid block.
+pub fn grid_query_markdown(compacted: &str, filter: impl Fn(&str) -> String) -> Option<String> {
+    let lines: Vec<&str> = compacted.lines().collect();
+    let indent_of = |line: &str| line.len() - line.trim_start().len();
+    let header = lines
+        .iter()
+        .position(|l| l.trim_start().starts_with("- grid \""))?;
+    let header_indent = indent_of(lines[header]);
+    // The table line is the nearest line above the header with less indent.
+    let start = (0..header)
+        .rev()
+        .find(|&i| indent_of(lines[i]) < header_indent)
+        .unwrap_or(header);
+    let mut end = header + 1;
+    while end < lines.len() && indent_of(lines[end]) >= header_indent {
+        end += 1;
+    }
+    // Ancestors of the table line, so the block reads in context.
+    let mut ancestors: Vec<&str> = Vec::new();
+    let mut want = indent_of(lines[start]);
+    for line in lines[..start].iter().rev() {
+        if want == 0 {
+            break;
+        }
+        if indent_of(line) < want {
+            want = indent_of(line);
+            ancestors.push(line);
+        }
+    }
+    ancestors.reverse();
+    let mut out = String::new();
+    for line in ancestors.iter().chain(lines[start..end].iter()) {
+        out.push_str(line);
+        out.push('\n');
+    }
+    let rest: Vec<&str> = lines[..start]
+        .iter()
+        .chain(lines[end..].iter())
+        .copied()
+        .collect();
+    let mut rest_md = rest.join("\n");
+    rest_md.push('\n');
+    let filtered = filter(&rest_md);
+    // Drop the ancestor lines the grid block already shows.
+    let mut skip = 0;
+    let filtered_lines: Vec<&str> = filtered.lines().collect();
+    while skip < filtered_lines.len()
+        && skip < ancestors.len()
+        && filtered_lines[skip] == ancestors[skip]
+    {
+        skip += 1;
+    }
+    for line in &filtered_lines[skip..] {
+        out.push_str(line);
+        out.push('\n');
+    }
+    Some(out)
+}
+
 /// One grid cell as walked: its index, position and value.
 type WalkedCell = (usize, CellRef, String);
 
@@ -785,5 +986,108 @@ mod tests {
         let grid = find_grid(&sheet(&CELLS, None), true).unwrap();
         let md = "- [0] AXWindow \"book.ods\"\n  - [90] AXComboBox \"B2\" = \"B2\"";
         assert_eq!(compact_markdown(md, &grid), md);
+    }
+    #[test]
+    fn grid_words_and_table_name_name_the_grid() {
+        for q in ["row", " Rows ", "cells", "TABLE", "sheet", "grid", "column"] {
+            assert!(query_names_grid(q, None), "{q}");
+        }
+        assert!(query_names_grid(
+            "Sheet Reconciliation",
+            Some("Sheet Reconciliation")
+        ));
+        assert!(query_names_grid("reconcil", Some("Sheet Reconciliation")));
+        assert!(!query_names_grid("re", Some("Sheet Reconciliation")));
+        assert!(!query_names_grid("Save", Some("Sheet Reconciliation")));
+        assert!(!query_names_grid("A5", Some("Sheet Reconciliation")));
+        assert!(!query_names_grid("arrow", None));
+        assert!(!query_names_grid("  ", None));
+    }
+
+    #[test]
+    fn grid_query_puts_the_whole_grid_first() {
+        let md = "- [0] AXWindow \"book.ods\"\n  - AXGroup\n    - AXTable \"Sheet A\"\n      \
+                  - grid \"A1:B2\" (cells by row)\n      - row \"1\": [3] A1=\"Name\" | [4] B1 empty\n      \
+                  - row \"2\": [5..6] A2..B2 empty\n  - [7] AXButton \"Insert Rows\"\n  - [8] AXButton \"Save\"\n";
+        let out = grid_query_markdown(md, |rest| {
+            rest.lines()
+                .filter(|l| l.contains("AXWindow") || l.to_lowercase().contains("row"))
+                .map(|l| format!("{l}\n"))
+                .collect()
+        })
+        .unwrap();
+        assert_eq!(
+            out,
+            "- [0] AXWindow \"book.ods\"\n  - AXGroup\n    - AXTable \"Sheet A\"\n      \
+             - grid \"A1:B2\" (cells by row)\n      - row \"1\": [3] A1=\"Name\" | [4] B1 empty\n      \
+             - row \"2\": [5..6] A2..B2 empty\n  - [7] AXButton \"Insert Rows\"\n"
+        );
+        assert!(
+            grid_query_markdown("- [0] AXWindow\n  - [1] AXButton \"Row\"\n", |r| r
+                .to_owned())
+            .is_none()
+        );
+    }
+    #[test]
+    fn focus_note_names_a_non_cell_focus_and_a_stuck_active_cell() {
+        let grid = find_grid(&sheet(&CELLS, None), true).unwrap();
+        let fe = |role: &str, name: &str| FocusElement {
+            role: role.into(),
+            name: name.into(),
+        };
+        let none = GridChange::default();
+        let name_box = vec![
+            fe("AXTextArea", "A1"),
+            fe("AXComboBox", "A1"),
+            fe("AXToolbar", "Formula Tool Bar"),
+        ];
+        let note = render_focus_note(&none, &grid, Some(&name_box), true).unwrap();
+        assert!(note.contains("The active cell did not move"), "{note}");
+        assert!(
+            note.contains("Keyboard focus: AXTextArea \"A1\" in AXComboBox \"A1\", not a cell"),
+            "{note}"
+        );
+        // A focused cell of the grid, or an editor inside the table, is on the sheet.
+        let cell = vec![fe("AXTextField", "A1"), fe("AXTable", "Sheet A")];
+        assert_eq!(render_focus_note(&none, &grid, Some(&cell), false), None);
+        let editor = vec![
+            fe("AXTextArea", ""),
+            fe("AXTextField", "B2"),
+            fe("AXTable", "Sheet A"),
+        ];
+        assert_eq!(render_focus_note(&none, &grid, Some(&editor), false), None);
+        // A move that happened is not reported as stuck.
+        let moved = GridChange {
+            active_was: Some(None),
+            ..GridChange::default()
+        };
+        assert_eq!(render_focus_note(&moved, &grid, Some(&cell), true), None);
+    }
+
+    #[test]
+    fn commit_keys_expect_a_move() {
+        assert!(expects_cell_move(Some("Return"), &[], None));
+        assert!(expects_cell_move(Some("tab"), &["shift"], None));
+        assert!(!expects_cell_move(Some("return"), &["cmd"], None));
+        assert!(!expects_cell_move(Some("down"), &[], None));
+        assert!(expects_cell_move(None, &[], Some("abc\t")));
+        assert!(expects_cell_move(None, &[], Some("E1\n")));
+        assert!(!expects_cell_move(None, &[], Some("E1")));
+    }
+    #[test]
+    fn a_name_box_being_typed_into_is_not_the_active_cell() {
+        let before = find_grid(&sheet(&CELLS, Some("A1")), true).unwrap();
+        let mut after = find_grid(&sheet(&CELLS, Some("B2")), true).unwrap();
+        let fe = |role: &str, name: &str| FocusElement {
+            role: role.into(),
+            name: name.into(),
+        };
+        let name_box = vec![fe("AXTextArea", "B2"), fe("AXComboBox", "B2")];
+        hold_active_while_combo_focused(&mut after, &before, Some(&name_box));
+        assert_eq!(after.active, parse_address("A1"));
+        let mut moved = find_grid(&sheet(&CELLS, Some("B2")), true).unwrap();
+        let cell = vec![fe("AXTextField", "B2"), fe("AXTable", "Sheet Data")];
+        hold_active_while_combo_focused(&mut moved, &before, Some(&cell));
+        assert_eq!(moved.active, parse_address("B2"));
     }
 }

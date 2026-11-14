@@ -409,7 +409,7 @@ Press and release one key. `delivery_mode` as in click/type_text.
 - `foreground`: fronts the exact window (needs `window_id`), sends a real HID key transition (Chromium content, inline editors, menu equivalents), then restores the prior app.
 
 An element target whose focus cannot be confirmed is refused with `target_focus_unconfirmed`, effect "refused", and no key dispatched.
-Confirmed only when a native AX value/selection read-back changes; otherwise `effect:"unverifiable"` (not a delivery failure). Keys: return, tab, escape, up/down/left/right, space, delete, home, end, pageup, pagedown, f1-f12, any letter or digit. Several known actions: one `run_steps` (`get_guide({topic:"batching"})`).
+Confirmed only when a native AX value/selection read-back changes; otherwise `effect:"unverifiable"` (not a delivery failure). Keys: return, tab, escape, up/down/left/right, space, delete (Backspace), forwarddelete, home, end, pageup, pagedown, f1-f12, any letter, digit or punctuation character, or a punctuation name (asterisk, plus, slash, bracketleft, ...); a shifted character adds Shift. Several known actions: one `run_steps` (`get_guide({topic:"batching"})`).
 
 **macOS parameters**
 

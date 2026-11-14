@@ -304,6 +304,38 @@ fn append_text(result: &mut ToolResult, text: String) {
 
 /// Read `window_id`'s text in `frame`, off the async runtime and
 /// within `budget`.
+/// The element of `window_id` holding keyboard focus, then up to three of its
+/// ancestors, as role and name (title, else description).
+/// `None` when the app's focus is not in that window.
+fn focus_chain(pid: i32, window_id: u32) -> Option<cua_driver_core::sheet_grid::FocusChain> {
+    use crate::ax::bindings::{copy_element_attr, copy_string_attr};
+    use core_foundation::base::{CFRelease, CFTypeRef};
+    unsafe {
+        let mut element = crate::ax::exact_target::focused_element_in_window(pid, window_id)?;
+        let mut chain = Vec::new();
+        for level in 0..4 {
+            let attr = |name: &str| copy_string_attr(element, name).filter(|v| !v.is_empty());
+            chain.push(cua_driver_core::sheet_grid::FocusElement {
+                role: attr("AXRole").unwrap_or_default(),
+                name: attr("AXTitle")
+                    .or_else(|| attr("AXDescription"))
+                    .unwrap_or_default(),
+            });
+            let parent = if level < 3 {
+                copy_element_attr(element, "AXParent")
+            } else {
+                None
+            };
+            CFRelease(element as CFTypeRef);
+            match parent {
+                Some(parent) => element = parent,
+                None => break,
+            }
+        }
+        Some(chain)
+    }
+}
+
 /// Read `window_id`'s spreadsheet grid now, off the async runtime.
 async fn read_grid(pid: i32, window_id: u32) -> Option<cua_driver_core::sheet_grid::Grid> {
     let task = tokio::task::spawn_blocking(move || crate::sheet::read_grid(pid, window_id));
@@ -412,6 +444,26 @@ impl<T: Tool + 'static> Tool for ActionEvidence<T> {
             }
         }
 
+        // A Return/Tab (or text ending in one) is expected to commit an entry
+        // or move the active cell; the result says so when it did not.
+        let expected_move = {
+            let modifiers: Vec<&str> = args
+                .get("modifiers")
+                .and_then(Value::as_array)
+                .map(|m| m.iter().filter_map(Value::as_str).collect())
+                .unwrap_or_default();
+            let name = self.inner.def().name.as_str();
+            cua_driver_core::sheet_grid::expects_cell_move(
+                (name == "press_key")
+                    .then(|| args.get("key").and_then(Value::as_str))
+                    .flatten(),
+                &modifiers,
+                (name == "type_text")
+                    .then(|| args.get("text").and_then(Value::as_str))
+                    .flatten(),
+            )
+        };
+
         let mut result = self.inner.invoke(args).await;
         if !action_ran(&result) {
             return result;
@@ -440,10 +492,29 @@ impl<T: Tool + 'static> Tool for ActionEvidence<T> {
             // No grid read in time (or the window closed): nothing is
             // reported, and the next read of the window decides whether it
             // still shows one.
-            if let Some(after) = after {
+            if let Some(mut after) = after {
+                let focus = tokio::task::spawn_blocking(move || focus_chain(pid, window))
+                    .await
+                    .ok()
+                    .flatten();
+                cua_driver_core::sheet_grid::hold_active_while_combo_focused(
+                    &mut after,
+                    &before,
+                    focus.as_deref(),
+                );
                 let change = cua_driver_core::sheet_grid::diff(&before, &after);
+                let mut text = cua_driver_core::sheet_grid::render_change(&change, &after);
+                if let Some(note) = cua_driver_core::sheet_grid::render_focus_note(
+                    &change,
+                    &after,
+                    focus.as_deref(),
+                    expected_move,
+                ) {
+                    text.push(' ');
+                    text.push_str(&note);
+                }
                 findings.sheet = Some(SheetFinding {
-                    text: cua_driver_core::sheet_grid::render_change(&change, &after),
+                    text,
                     changed: change.is_change(),
                 });
                 crate::sheet::remember(pid, window, after);

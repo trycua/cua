@@ -1317,7 +1317,7 @@ fn cgevent_type_verified(
         if let (false, Some(done)) = outcome {
             let total = text.chars().count();
             let web = target_in_web_area(pid, element_ptr_and_idx, window_id);
-            if done < total && !web {
+            if retype_tail_after(done, total, web) {
                 let tail: String = text.chars().skip(done).collect();
                 crate::input::keyboard::type_text_with_delay(pid, &tail, RETYPE_TAIL_DELAY_MS)?;
                 let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
@@ -1332,6 +1332,15 @@ fn cgevent_type_verified(
         }
     }
     Ok(outcome)
+}
+
+/// Whether a batched send that read back `done` of `total` characters is
+/// finished by retyping the rest. Only a partial read-back proves the field
+/// shows typing as it happens; a field that read back nothing may hold the
+/// text without showing it yet (a spreadsheet cell or a name box shows typed
+/// text only once it is committed), and retyping there doubled the text.
+fn retype_tail_after(done: usize, total: usize, web: bool) -> bool {
+    !web && done > 0 && done < total
 }
 
 fn await_typed_delivery(
@@ -1808,9 +1817,13 @@ fn type_text_in_key_window(
                 }
                 None => "",
             };
+            // The insert lands at the caret: say what the field holds when
+            // that is more than the text (an insert into a field that still
+            // held other text appends to it).
+            let now_reads = field_now_reads(after.as_deref(), ax_text);
             return Ok(TypeTextDelivery::Typed(TypeTextOutcome {
                 detail: format!(
-                    " into{idx_str} {role} \"{title}\"{}{submitted}",
+                    " into{idx_str} {role} \"{title}\"{now_reads}{}{submitted}",
                     document.note().trim_end_matches('.')
                 ),
                 path: PATH_AX,
@@ -1891,6 +1904,24 @@ fn type_text_in_key_window(
         verified,
         delivered_chars,
     }))
+}
+
+/// `; the field now reads "…"` when a short field holds more than the
+/// inserted text after an insert, else nothing.
+fn field_now_reads(after: Option<&str>, inserted: &str) -> String {
+    const MAX_SHOWN: usize = 120;
+    match after {
+        Some(value)
+            if value != inserted && value.chars().count() <= MAX_SHOWN && !value.contains('\n') =>
+        {
+            format!(
+                "; the field now reads \"{}\" (inserted at the caret; to replace a field's \
+                 text, select it first, e.g. hotkey cmd+a)",
+                value.replace('"', "\\\"")
+            )
+        }
+        _ => String::new(),
+    }
 }
 
 /// Whether a focused element takes typed text: a text role, or any element
@@ -2654,5 +2685,22 @@ mod tests {
         }
         assert!(screen_sharing_delivery_error(true, true, Some(7)).is_none());
         assert!(screen_sharing_delivery_error(false, false, None).is_none());
+    }
+    #[test]
+    fn an_insert_next_to_other_text_says_what_the_field_reads() {
+        assert_eq!(field_now_reads(Some("E1"), "E1"), "");
+        assert_eq!(field_now_reads(None, "E1"), "");
+        let note = field_now_reads(Some("A1E1"), "E1");
+        assert!(note.starts_with("; the field now reads \"A1E1\""), "{note}");
+        assert!(note.contains("cmd+a"), "{note}");
+        assert_eq!(field_now_reads(Some("line one\nE1"), "E1"), "");
+        assert_eq!(field_now_reads(Some(&"x".repeat(200)), "E1"), "");
+    }
+    #[test]
+    fn only_a_partial_read_back_retypes_the_tail() {
+        assert!(retype_tail_after(1, 4, false));
+        assert!(!retype_tail_after(0, 4, false));
+        assert!(!retype_tail_after(4, 4, false));
+        assert!(!retype_tail_after(1, 4, true));
     }
 }

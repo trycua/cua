@@ -35,6 +35,10 @@ const MATERIALIZE_TIMEOUT_SECONDS: f64 = 4.0;
 const MATERIALIZE_POLL_SECONDS: f64 = 0.1;
 const MATERIALIZE_MAX_ATTEMPTS: u32 = 3;
 const MATERIALIZE_RETRY_BACKOFF_SECONDS: f64 = 30.0;
+// Chrome reports the opt-in as refused, yet turns its web tree on once two
+// seconds pass with no further request, and every request restarts that
+// countdown. The backoff has to outlast it.
+const REFUSED_RETRY_BACKOFF_SECONDS: f64 = 3.0;
 const RUN_LOOP_PUMPS_PER_POLL: u32 = 4;
 const WEB_AREA_ROLE: &str = "AXWebArea";
 const MENU_BAR_ROLE: &str = "AXMenuBar";
@@ -55,6 +59,10 @@ enum Wait {
     Complete,
     TimedOut {
         attempts: u32,
+        attempted_at: Instant,
+    },
+    Refused {
+        prior_timeouts: u32,
         attempted_at: Instant,
     },
 }
@@ -108,22 +116,25 @@ fn next_attempt(
     if cached.stamp != observed {
         return fresh;
     }
-    match cached.wait {
-        Wait::Complete => Attempt::Skip,
+    let (timeouts, attempted_at, backoff_seconds) = match cached.wait {
+        Wait::Complete => return Attempt::Skip,
         Wait::TimedOut {
             attempts,
             attempted_at,
-        } => {
-            let backoff_elapsed = now.saturating_duration_since(attempted_at)
-                >= Duration::from_secs_f64(MATERIALIZE_RETRY_BACKOFF_SECONDS);
-            if attempts < MATERIALIZE_MAX_ATTEMPTS && backoff_elapsed {
-                Attempt::Run {
-                    prior_timeouts: attempts,
-                }
-            } else {
-                Attempt::Skip
-            }
+        } => (attempts, attempted_at, MATERIALIZE_RETRY_BACKOFF_SECONDS),
+        Wait::Refused {
+            prior_timeouts,
+            attempted_at,
+        } => (prior_timeouts, attempted_at, REFUSED_RETRY_BACKOFF_SECONDS),
+    };
+    let backoff_elapsed =
+        now.saturating_duration_since(attempted_at) >= Duration::from_secs_f64(backoff_seconds);
+    if timeouts < MATERIALIZE_MAX_ATTEMPTS && backoff_elapsed {
+        Attempt::Run {
+            prior_timeouts: timeouts,
         }
+    } else {
+        Attempt::Skip
     }
 }
 
@@ -131,15 +142,23 @@ fn wait_outcome(
     opt_in: AccessibilityOptIn,
     prior_timeouts: u32,
     attempted_at: Instant,
-    await_tree: impl FnOnce() -> bool,
+    await_tree: impl FnOnce(bool) -> bool,
 ) -> Option<Wait> {
     match opt_in {
         AccessibilityOptIn::NotAccepted => None,
-        // Chrome builds its web tree asynchronously after either opt-in, so
-        // both wait for it. Returning at once for `AXEnhancedUserInterface`
+        AccessibilityOptIn::Refused => Some(Wait::Refused {
+            prior_timeouts,
+            attempted_at,
+        }),
+        // Chrome builds its web tree asynchronously after any of these, so
+        // all wait for it. Returning at once for `AXEnhancedUserInterface`
         // let the first read return browser chrome only (CUA-1766).
-        AccessibilityOptIn::EnhancedUserInterface | AccessibilityOptIn::ManualAccessibility => {
-            Some(if await_tree() {
+        AccessibilityOptIn::EnhancedUserInterface
+        | AccessibilityOptIn::ManualAccessibility
+        | AccessibilityOptIn::Deferred => {
+            // Writing a deferred opt-in again restarts the app's countdown.
+            let reassert = opt_in != AccessibilityOptIn::Deferred;
+            Some(if await_tree(reassert) {
                 Wait::Complete
             } else {
                 Wait::TimedOut {
@@ -285,11 +304,13 @@ pub unsafe fn ensure_chromium_ax_enabled(pid: i32, app_element: AXUIElementRef) 
         enable_chromium_accessibility(app_element),
         prior_timeouts,
         attempted_at,
-        || {
+        |reassert| {
             await_web_content(
                 || probe_web_content(app_element),
                 || {
-                    enable_chromium_accessibility(app_element);
+                    if reassert {
+                        enable_chromium_accessibility(app_element);
+                    }
                 },
                 pump_for,
             )
@@ -302,9 +323,13 @@ pub unsafe fn ensure_chromium_ax_enabled(pid: i32, app_element: AXUIElementRef) 
     }
 }
 
-/// Whether the cached opt-in belongs to the process lifetime observed now.
+/// Whether the cached entry is an accepted opt-in of the process lifetime observed now.
 fn opted_in(cached: Option<&ProcessEnablement>, observed: Option<ProcessStartStamp>) -> bool {
-    matches!((cached, observed), (Some(cached), Some(observed)) if cached.stamp == observed)
+    matches!(
+        (cached, observed),
+        (Some(cached), Some(observed))
+            if cached.stamp == observed && !matches!(cached.wait, Wait::Refused { .. })
+    )
 }
 
 /// Whether this process lifetime accepted the Chromium accessibility opt-in,
@@ -508,6 +533,17 @@ mod tests {
             !opted_in(None, Some(launch)),
             "a process that never accepted the opt-in (native app) gets no flush"
         );
+        let refused = ProcessEnablement {
+            stamp: launch,
+            wait: Wait::Refused {
+                prior_timeouts: 0,
+                attempted_at: now,
+            },
+        };
+        assert!(
+            !opted_in(Some(&refused), Some(launch)),
+            "a process that refused the opt-in gets no flush"
+        );
     }
 
     #[test]
@@ -566,21 +602,26 @@ mod tests {
     }
 
     #[test]
-    fn both_chromium_opt_ins_wait_for_web_content_and_others_do_not() {
+    fn chromium_opt_ins_wait_for_web_content_and_others_do_not() {
         let now = Instant::now();
-        for opt_in in [
-            AccessibilityOptIn::EnhancedUserInterface,
-            AccessibilityOptIn::ManualAccessibility,
+        for (opt_in, may_reassert) in [
+            (AccessibilityOptIn::EnhancedUserInterface, true),
+            (AccessibilityOptIn::ManualAccessibility, true),
+            (AccessibilityOptIn::Deferred, false),
         ] {
             let polls = Cell::new(0u32);
-            let ready = wait_outcome(opt_in, 0, now, || {
+            let ready = wait_outcome(opt_in, 0, now, |reassert| {
                 polls.set(polls.get() + 1);
+                assert_eq!(
+                    reassert, may_reassert,
+                    "{opt_in:?}: writing a deferred opt-in again restarts Chrome's countdown"
+                );
                 true
             });
             assert_eq!(ready, Some(Wait::Complete));
             assert_eq!(polls.get(), 1, "{opt_in:?} must wait for the web tree");
             assert_eq!(
-                wait_outcome(opt_in, 1, now, || false),
+                wait_outcome(opt_in, 1, now, |_| false),
                 Some(Wait::TimedOut {
                     attempts: 2,
                     attempted_at: now
@@ -590,7 +631,7 @@ mod tests {
         }
         let polls = Cell::new(0u32);
         assert_eq!(
-            wait_outcome(AccessibilityOptIn::NotAccepted, 0, now, || {
+            wait_outcome(AccessibilityOptIn::NotAccepted, 0, now, |_| {
                 polls.set(polls.get() + 1);
                 false
             }),
@@ -600,11 +641,39 @@ mod tests {
     }
 
     #[test]
+    fn a_refused_opt_in_is_not_repeated_until_chrome_had_time_to_act_on_it() {
+        let now = Instant::now();
+        let stamp = (100, 10);
+        let backoff = Duration::from_secs_f64(REFUSED_RETRY_BACKOFF_SECONDS);
+        let polls = Cell::new(0u32);
+        let wait = wait_outcome(AccessibilityOptIn::Refused, 1, now, |_| {
+            polls.set(polls.get() + 1);
+            false
+        });
+        assert_eq!(polls.get(), 0, "a refusal must not pay the wait");
+
+        let refused = ProcessEnablement {
+            stamp,
+            wait: wait.expect("a refusal must be cached"),
+        };
+        assert_eq!(
+            next_attempt(Some(&refused), Some(stamp), now + backoff / 2),
+            Attempt::Skip,
+            "a repeated request restarts Chrome's countdown, so its web tree never appears"
+        );
+        assert_eq!(
+            next_attempt(Some(&refused), Some(stamp), now + backoff),
+            Attempt::Run { prior_timeouts: 1 },
+            "a refusal must keep the timeouts already paid for this process"
+        );
+    }
+
+    #[test]
     fn a_materialized_tree_is_cached_for_the_process_lifetime() {
         let now = Instant::now();
         let stamp = (100, 10);
 
-        let wait = wait_outcome(AccessibilityOptIn::ManualAccessibility, 0, now, || true);
+        let wait = wait_outcome(AccessibilityOptIn::ManualAccessibility, 0, now, |_| true);
         assert_eq!(wait, Some(Wait::Complete));
 
         let cached = ProcessEnablement {
@@ -624,7 +693,7 @@ mod tests {
         let stamp = (100, 10);
         let backoff = Duration::from_secs_f64(MATERIALIZE_RETRY_BACKOFF_SECONDS);
 
-        let wait = wait_outcome(AccessibilityOptIn::ManualAccessibility, 0, now, || false);
+        let wait = wait_outcome(AccessibilityOptIn::ManualAccessibility, 0, now, |_| false);
         assert_eq!(
             wait,
             Some(Wait::TimedOut {

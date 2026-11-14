@@ -2443,6 +2443,7 @@ fn run_web_type_text_verification(spec: &BrowserSpec) {
             launch_browser_with_html(spec, &scenario, standalone_generic_type_text_html());
         *evidence = recording_evidence(fixture.driver.recording_dir());
         let (x, y) = generic_editor_coordinates(&mut fixture);
+        fixture.driver.start_behavior_recording();
         let payload = "cua-web-verification-honesty";
         let typed = fixture.driver.call(
             "type_text",

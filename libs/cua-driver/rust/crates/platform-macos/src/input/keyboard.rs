@@ -1351,8 +1351,9 @@ mod tests {
         assert!(combo.contains("modifiers"), "{combo}");
         assert!(combo.contains("hotkey"), "{combo}");
         assert!(combo.contains("key:\"Right\""), "{combo}");
-        let symbol = key_name_to_code("asterisk").unwrap_err().to_string();
-        assert!(symbol.contains("type_text"), "{symbol}");
+        let symbol = key_name_to_code("snowman").unwrap_err().to_string();
+        assert!(symbol.contains("punctuation name"), "{symbol}");
+        assert!(symbol.contains("forwarddelete"), "{symbol}");
         assert!(key_name_to_code("shift").is_ok());
     }
 

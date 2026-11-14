@@ -399,6 +399,11 @@ fn agent_instructions() -> String {
         ""
     };
 
+    let profile_note = crate::tool_profile::ToolProfile::from_env()
+        .instructions_note()
+        .map(|note| format!("\n\n{note}"))
+        .unwrap_or_default();
+
     format!(
         r#"cua-driver: background GUI automation. No shell: for non-GUI outcomes use an app API/SDK, CLI or filesystem and read the result back there.
 
@@ -414,7 +419,7 @@ Chrome/Edge/Brave page: `get_browser_state({{pid, window_id}})`, its `detail.nex
 
 `start_session` is optional; repeat a short `session` label on every call that accepts it.{permission_line}
 
-Guides: `get_guide({{topic}})` (drag, browser, permissions, batching, menus), `skill://cua-driver/SKILL.md`{platform_skill_pointer}."#
+Guides: `get_guide({{topic}})` (drag, browser, permissions, batching, menus), `skill://cua-driver/SKILL.md`{platform_skill_pointer}.{profile_note}"#
     )
 }
 

@@ -884,7 +884,11 @@ async fn dispatch_request(
             Response::ok(id, initialize_result())
         }
 
-        "tools/list" => Response::ok(id, provider.tools_list()),
+        "tools/list" => {
+            let mut list = provider.tools_list();
+            crate::tool_profile::ToolProfile::from_env().apply(&mut list);
+            Response::ok(id, list)
+        }
 
         "tools/call" => match req.tool_call() {
             Err(e) => Response::error(id, -32602, format!("Invalid params: {e}")),

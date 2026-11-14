@@ -15,7 +15,7 @@
 //! `perform_action`, `set_value`, and `get_element_bounds` index into that same
 //! ordered set.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -1461,6 +1461,9 @@ async fn collect_visited_bounded_opts<'a>(
     max_depth: Option<usize>,
     walk_closed_menus: bool,
 ) -> Result<Option<Collected<'a>>> {
+    if still_unresponsive(pid) {
+        return Ok(Some(unresponsive_collected()));
+    }
     let ResolvedApp {
         app,
         children: probed,
@@ -1516,15 +1519,12 @@ async fn collect_visited_bounded_opts<'a>(
         // modal-grabbed app. Report it as unresponsive rather than as an
         // application without windows — the caller can retry later.
         dlog!("application for pid {pid} did not answer GetChildren");
-        return Ok(Some(Collected {
-            visited: Vec::new(),
-            scoped_frame: None,
-            truncation: Some(Truncation {
-                reason: "app_unresponsive",
-                visited: 0,
-                pending: 0,
-            }),
-        }));
+        mark_unresponsive(
+            pid,
+            app.inner().destination().to_string(),
+            app.inner().path().to_string(),
+        );
+        return Ok(Some(unresponsive_collected()));
     }
 
     // Resolve which seed is the caller's window before walking, from the same
@@ -2490,6 +2490,85 @@ fn is_indexable_capabilities(
 }
 
 // ── Public (sync) entry points ───────────────────────────────────────────────
+
+struct Unresponsive {
+    bus: String,
+    path: String,
+    probing: bool,
+}
+
+fn unresponsive_apps() -> &'static Mutex<HashMap<u32, Unresponsive>> {
+    static APPS: OnceLock<Mutex<HashMap<u32, Unresponsive>>> = OnceLock::new();
+    APPS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn unresponsive_collected<'a>() -> Collected<'a> {
+    Collected {
+        visited: Vec::new(),
+        scoped_frame: None,
+        truncation: Some(Truncation {
+            reason: "app_unresponsive",
+            visited: 0,
+            pending: 0,
+        }),
+    }
+}
+
+fn mark_unresponsive(pid: u32, bus: String, path: String) {
+    unresponsive_apps().lock().unwrap().insert(
+        pid,
+        Unresponsive {
+            bus,
+            path,
+            probing: false,
+        },
+    );
+    still_unresponsive(pid);
+}
+
+fn still_unresponsive(pid: u32) -> bool {
+    let mut apps = unresponsive_apps().lock().unwrap();
+    let Some(app) = apps.get_mut(&pid) else {
+        return false;
+    };
+    if let Some((bus, path)) = claim_probe(app) {
+        runtime().spawn(async move {
+            let answered = match shared_connection().await {
+                Ok(conn) => tokio::time::timeout(
+                    OP_TIMEOUT,
+                    conn.connection().call_method(
+                        Some(bus.as_str()),
+                        path.as_str(),
+                        Some("org.a11y.atspi.Accessible"),
+                        "GetState",
+                        &(),
+                    ),
+                )
+                .await
+                .is_ok(),
+                Err(_) => false,
+            };
+            probed(&mut unresponsive_apps().lock().unwrap(), pid, answered);
+        });
+    }
+    true
+}
+
+fn claim_probe(app: &mut Unresponsive) -> Option<(String, String)> {
+    if app.probing {
+        return None;
+    }
+    app.probing = true;
+    Some((app.bus.clone(), app.path.clone()))
+}
+
+fn probed(apps: &mut HashMap<u32, Unresponsive>, pid: u32, answered: bool) {
+    if answered {
+        apps.remove(&pid);
+    } else if let Some(app) = apps.get_mut(&pid) {
+        app.probing = false;
+    }
+}
 
 fn first_application_walk(pid: u32) -> bool {
     static PIDS: OnceLock<Mutex<HashSet<u32>>> = OnceLock::new();
@@ -9387,5 +9466,36 @@ mod editable_insert_length_tests {
         // GTK reads bytes (8) and Qt UTF-16 units (5): either guess breaks one.
         assert_eq!(editable_insert_length(None, "ñ🙂ab"), None);
         assert_eq!(editable_insert_length(None, "abc"), Some(3));
+    }
+}
+
+#[cfg(test)]
+mod unresponsive_tests {
+    use super::{claim_probe, probed, Unresponsive};
+    use std::collections::HashMap;
+
+    #[test]
+    fn one_probe_runs_at_a_time_and_only_an_answer_clears_the_mark() {
+        let mut apps = HashMap::from([(
+            7,
+            Unresponsive {
+                bus: ":1.9".into(),
+                path: "/org/a11y/atspi/accessible/root".into(),
+                probing: false,
+            },
+        )]);
+        let probe = claim_probe(apps.get_mut(&7).unwrap());
+        assert_eq!(
+            probe,
+            Some((":1.9".into(), "/org/a11y/atspi/accessible/root".into()))
+        );
+        assert_eq!(claim_probe(apps.get_mut(&7).unwrap()), None);
+        probed(&mut apps, 7, false);
+        assert!(apps.contains_key(&7));
+        assert!(claim_probe(apps.get_mut(&7).unwrap()).is_some());
+        probed(&mut apps, 7, true);
+        assert!(!apps.contains_key(&7));
+        probed(&mut apps, 7, false);
+        assert!(apps.is_empty());
     }
 }

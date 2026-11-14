@@ -54,7 +54,7 @@ pub const ROW_ROLE: &str = "OCRRow";
 pub const HEADER_TEXT: &str = "window content is not in the accessibility tree; rows below are \
 text read from this window's screenshot (text + @(x,y)). Act by those pixels; each action's result \
 lists the rows that changed and any new window, so no screenshot is needed to check it \
-(a row's ink= changes with its pixels, also where no text was read)";
+(a cell `?` is a mark no text was read for; a row's ink= changes with its pixels)";
 
 /// Block shown while the recognizer is still loading (first use after boot).
 pub const PENDING_BLOCK: &str =
@@ -281,10 +281,296 @@ pub fn stamp_ink(rows: &mut [OcrRow], luma: &[u8], width: u32, height: u32) {
     }
 }
 
+/// Whether a fragment from the second recognition pass (see
+/// [`merge_second_pass`]) carries text worth keeping: at least one letter or
+/// digit, and no lone non-Latin letter (the older recognizer reads Latin
+/// only, so a lone `П` is a misread `n`).
+fn second_pass_text_is_useful(text: &str) -> bool {
+    let text = text.trim();
+    if !text.chars().any(char::is_alphanumeric) {
+        return false;
+    }
+    let mut chars = text.chars();
+    match (chars.next(), chars.next()) {
+        (Some(only), None) => only.is_ascii_alphanumeric(),
+        _ => true,
+    }
+}
+
+/// Overlap of two fragments' boxes as a share of the smaller box's area.
+fn overlap_share(a: &OcrFragment, b: &OcrFragment) -> f64 {
+    let w = (a.x + a.width).min(b.x + b.width) - a.x.max(b.x);
+    let h = (a.y + a.height).min(b.y + b.height) - a.y.max(b.y);
+    if w <= 0.0 || h <= 0.0 {
+        return 0.0;
+    }
+    let smaller = (a.width * a.height).min(b.width * b.height).max(1e-6);
+    (w * h) / smaller
+}
+
+/// Add a second recognition pass's fragments to the first pass's.
+///
+/// The current text recognizer drops a glyph that stands alone in a narrow
+/// cell (a register's one-letter reconcile flag, a status column of `y`/`n`),
+/// however the image is scaled; the previous recognizer revision reads them.
+/// The first pass stays the source of truth: a second-pass fragment is kept
+/// only where it overlaps no first-pass box, and only when it has a letter
+/// or digit (rules and borders read as `---` or `|`).
+pub fn merge_second_pass(
+    mut primary: Vec<OcrFragment>,
+    second: impl IntoIterator<Item = OcrFragment>,
+) -> Vec<OcrFragment> {
+    let extra: Vec<OcrFragment> = second
+        .into_iter()
+        .filter(|f| second_pass_text_is_useful(&f.text))
+        .filter(|f| primary.iter().all(|p| overlap_share(p, f) < 0.2))
+        .collect();
+    primary.extend(extra);
+    primary
+}
+
+/// Text of a placeholder cell: ink that looks like a glyph where nothing was
+/// read.
+pub const UNREAD_TEXT: &str = "?";
+
+/// Columns this close to the screenshot's left or right edge get no
+/// placeholder (window borders and rounded corners).
+const EDGE_MARGIN: usize = 6;
+
+/// Add a [`UNREAD_TEXT`] cell for each glyph-sized blob of ink in a text row's
+/// band that no fragment covers, so a glyph the recognizer missed still shows up
+/// as a cell (and a diff reports that cell as changed, not as gone).
+///
+/// The band and the ink test are [`stamp_ink`]'s. Scanlines inked across most
+/// of the width (row rules) are ignored; a blob must be at least 3 pixels wide
+/// (grid lines are not) and no larger than about one glyph of the row's text.
+pub fn mark_unread_ink(rows: &mut [OcrRow], luma: &[u8], width: u32, height: u32) {
+    let (width, height) = (width as usize, height as usize);
+    if width == 0 || luma.len() < width * height {
+        return;
+    }
+    for row in rows.iter_mut() {
+        let read: Vec<&OcrFragment> = row
+            .fragments
+            .iter()
+            .filter(|f| f.text != UNREAD_TEXT)
+            .collect();
+        // Only rows of words: a row of icons with a stray symbol read off
+        // one of them would be all placeholders.
+        let has_word = read
+            .iter()
+            .any(|f| f.text.chars().filter(|c| c.is_alphanumeric()).count() >= 2);
+        if !has_word {
+            continue;
+        }
+        let top = read.iter().map(|f| f.y).fold(f64::INFINITY, f64::min);
+        let bottom = read
+            .iter()
+            .map(|f| f.y + f.height)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let mut heights: Vec<f64> = read.iter().map(|f| f.height).collect();
+        heights.sort_by(f64::total_cmp);
+        let text_h = heights[heights.len() / 2].max(4.0);
+        let lo = (top.floor() as i64 - BAND_SLACK).clamp(0, height as i64) as usize;
+        let hi = (bottom.ceil() as i64 + BAND_SLACK).clamp(0, height as i64) as usize;
+        if lo >= hi {
+            continue;
+        }
+        let band = &luma[lo * width..hi * width];
+        let background =
+            (band.iter().map(|&l| u64::from(l)).sum::<u64>() / band.len() as u64) as i16;
+        let is_ink = |l: u8| (i16::from(l) - background).abs() > INK_CONTRAST;
+        // Columns a fragment already covers, with a little slack.
+        let mut covered = vec![false; width];
+        for f in &row.fragments {
+            let x0 = (f.x.floor() as i64 - 2).clamp(0, width as i64) as usize;
+            let x1 = ((f.x + f.width).ceil() as i64 + 2).clamp(0, width as i64) as usize;
+            covered[x0..x1].iter_mut().for_each(|c| *c = true);
+        }
+        let lines: Vec<usize> = (lo..hi)
+            .filter(|&y| {
+                let line = &luma[y * width..(y + 1) * width];
+                line.iter().filter(|&&l| is_ink(l)).count() * 2 < width
+            })
+            .collect();
+        let column_has_ink =
+            |x: usize| !covered[x] && lines.iter().any(|&y| is_ink(luma[y * width + x]));
+        let mut blobs: Vec<(usize, usize)> = Vec::new();
+        let mut x = 0;
+        while x < width {
+            if !column_has_ink(x) {
+                x += 1;
+                continue;
+            }
+            let start = x;
+            let mut end = x + 1;
+            // Join columns separated by a one-pixel gap (a glyph's counter).
+            while end < width
+                && (column_has_ink(end) || (end + 1 < width && column_has_ink(end + 1)))
+            {
+                end += 1;
+            }
+            blobs.push((start, end));
+            x = end;
+        }
+        for (x0, x1) in blobs {
+            let blob_w = (x1 - x0) as f64;
+            let inked: Vec<usize> = lines
+                .iter()
+                .copied()
+                .filter(|&y| (x0..x1).any(|x| is_ink(luma[y * width + x])))
+                .collect();
+            let (Some(&y0), Some(&y1)) = (inked.first(), inked.last()) else {
+                continue;
+            };
+            let blob_h = (y1 + 1 - y0) as f64;
+            // The window's own edge and corners are not glyphs.
+            if x0 < EDGE_MARGIN || x1 + EDGE_MARGIN > width {
+                continue;
+            }
+            // A blob that fills the whole band top to bottom is a cell border
+            // or a highlight edge, not a glyph.
+            if y0 <= lo && y1 + 1 >= hi {
+                continue;
+            }
+            if blob_w < 3.0
+                || blob_w > 1.2 * text_h
+                || blob_h < 0.3 * text_h
+                || blob_h > 1.1 * text_h
+            {
+                continue;
+            }
+            row.fragments.push(OcrFragment {
+                text: UNREAD_TEXT.to_owned(),
+                x: x0 as f64,
+                y: y0 as f64,
+                width: blob_w,
+                height: blob_h,
+                confidence: 0.0,
+            });
+        }
+        row.fragments.sort_by(|a, b| a.x.total_cmp(&b.x));
+    }
+}
+
+/// Header row text of a picture region's block (see [`picture_region`]).
+pub const REGION_HEADER_TEXT: &str = "part of this window is a picture whose text is not in the \
+accessibility tree; rows below are text read from that part of this window's screenshot \
+(text + @(x,y) in screenshot pixels). Act by those pixels or read them instead of a screenshot";
+
+/// What [`picture_region`] needs to know about one walked accessibility node.
+#[derive(Clone, Copy, Debug)]
+pub struct RegionFacts<'a> {
+    pub role: &'a str,
+    /// Whether the node has a non-empty title, value or description.
+    pub has_text: bool,
+    /// Screen frame `[x, y, width, height]`, when the node reported one.
+    pub frame: Option<[f64; 4]>,
+}
+
+/// Roles that can hold a picture the tree says nothing about: an image, a
+/// web area or canvas, and the containers toolkits wrap them in.
+const PICTURE_ROLES: &[&str] = &[
+    "AXImage",
+    "AXGroup",
+    "AXWebArea",
+    "AXScrollArea",
+    "AXLayoutArea",
+    "AXUnknown",
+];
+
+/// A picture region covers at least this share of the window.
+pub const MIN_PICTURE_SHARE: f64 = 0.3;
+/// At most this many text-bearing elements may sit inside a picture region
+/// (a viewer's header and file name).
+const MAX_TEXTS_IN_PICTURE: usize = 6;
+/// At most this many elements of any kind may sit inside it (a short list
+/// of files or controls is content the tree describes, not a picture).
+const MAX_ELEMENTS_IN_PICTURE: usize = 12;
+/// Their frames may cover at most this share of the region.
+const MAX_TEXT_SHARE_IN_PICTURE: f64 = 0.15;
+
+fn clip(frame: [f64; 4], to: [f64; 4]) -> Option<[f64; 4]> {
+    let x0 = frame[0].max(to[0]);
+    let y0 = frame[1].max(to[1]);
+    let x1 = (frame[0] + frame[2]).min(to[0] + to[2]);
+    let y1 = (frame[1] + frame[3]).min(to[1] + to[3]);
+    (x1 > x0 && y1 > y0).then_some([x0, y0, x1 - x0, y1 - y0])
+}
+
+/// The largest region of an accessible window that is a picture as far as
+/// the tree goes: an element covering at least [`MIN_PICTURE_SHARE`] of
+/// `window` (screen frame) with almost no text-bearing elements inside it,
+/// such as an attachment viewer that renders a document as an image. Its
+/// text can only come from the screenshot.
+///
+/// `None` for windows whose content the tree describes; the check is
+/// geometric only, so such windows pay nothing else.
+pub fn picture_region<'a>(
+    nodes: impl IntoIterator<Item = RegionFacts<'a>>,
+    window: [f64; 4],
+) -> Option<[f64; 4]> {
+    let window_area = window[2] * window[3];
+    if window_area <= 0.0 {
+        return None;
+    }
+    let nodes: Vec<RegionFacts<'a>> = nodes.into_iter().collect();
+    let framed: Vec<(bool, [f64; 4])> = nodes
+        .iter()
+        .filter_map(|n| {
+            n.frame
+                .and_then(|f| clip(f, window))
+                .map(|f| (n.has_text, f))
+        })
+        .collect();
+    nodes
+        .iter()
+        .filter(|n| PICTURE_ROLES.contains(&n.role))
+        .filter_map(|n| n.frame.and_then(|f| clip(f, window)))
+        .filter(|r| r[2] * r[3] >= MIN_PICTURE_SHARE * window_area)
+        .filter(|r| {
+            let area = r[2] * r[3];
+            // Text elements inside the region; the region's own label and
+            // its ancestors' (frames as large as the region) do not count.
+            let inside: Vec<&(bool, [f64; 4])> = framed
+                .iter()
+                .filter(|(_, t)| t[2] * t[3] < 0.5 * area)
+                .filter(|(_, t)| {
+                    let (cx, cy) = (t[0] + t[2] / 2.0, t[1] + t[3] / 2.0);
+                    cx >= r[0] && cx <= r[0] + r[2] && cy >= r[1] && cy <= r[1] + r[3]
+                })
+                .collect();
+            let texts = inside.iter().filter(|(has_text, _)| *has_text);
+            let text_count = texts.clone().count();
+            let text_area: f64 = texts.map(|(_, t)| t[2] * t[3]).sum();
+            inside.len() <= MAX_ELEMENTS_IN_PICTURE
+                && text_count <= MAX_TEXTS_IN_PICTURE
+                && text_area <= MAX_TEXT_SHARE_IN_PICTURE * area
+        })
+        .max_by(|a, b| (a[2] * a[3]).total_cmp(&(b[2] * b[3])))
+}
+
+/// Move rows read from a crop of a screenshot into the full screenshot's
+/// pixels.
+pub fn offset_rows(rows: &mut [OcrRow], dx: f64, dy: f64) {
+    for row in rows {
+        row.y += dy;
+        for fragment in &mut row.fragments {
+            fragment.x += dx;
+            fragment.y += dy;
+        }
+    }
+}
+
 /// The OCR block appended to a window's tree markdown: a header row and one
 /// indented row per visual line. With a `query`, only rows containing it
 /// (case-insensitive) are kept, and nothing renders when none match.
 pub fn render_block(rows: &[OcrRow], query: Option<&str>) -> String {
+    render_block_with_header(rows, query, HEADER_TEXT)
+}
+
+/// [`render_block`] with its own header text (see [`REGION_HEADER_TEXT`]).
+pub fn render_block_with_header(rows: &[OcrRow], query: Option<&str>, header: &str) -> String {
     let needle = query
         .map(str::trim)
         .filter(|q| !q.is_empty())
@@ -302,7 +588,7 @@ pub fn render_block(rows: &[OcrRow], query: Option<&str>) -> String {
     if lines.is_empty() {
         return String::new();
     }
-    let mut out = format!("- {HEADER_ROLE} \"{HEADER_TEXT}\"\n");
+    let mut out = format!("- {HEADER_ROLE} \"{header}\"\n");
     for line in &lines {
         out.push_str("  ");
         out.push_str(line);
@@ -740,6 +1026,140 @@ mod tests {
             render_row(&a[0]).split(" = ").next(),
             Some("- OCRRow \"y=18\"")
         );
+    }
+
+    #[test]
+    fn a_second_pass_fills_gaps_and_never_overrides_the_first() {
+        let first = vec![
+            frag("Assets:Checking", 700.0, 100.0),
+            frag("73.10", 990.0, 100.0),
+        ];
+        let second = vec![
+            // Same cell as a first-pass fragment, read differently: dropped.
+            frag("Assets:Checkinq", 702.0, 101.0),
+            // A lone flag the first pass missed: kept.
+            OcrFragment {
+                width: 8.0,
+                ..frag("c", 843.0, 103.0)
+            },
+            // Borders and misread Cyrillic: dropped.
+            frag("---", 300.0, 100.0),
+            frag("\u{41f}", 400.0, 100.0),
+        ];
+        let merged = merge_second_pass(first, second);
+        let texts: Vec<&str> = merged.iter().map(|f| f.text.as_str()).collect();
+        assert_eq!(texts, ["Assets:Checking", "73.10", "c"]);
+        let rows = group_rows(merged);
+        assert_eq!(row_text(&rows[0]), "Assets:Checking | c | 73.10");
+    }
+
+    fn paint(luma: &mut [u8], w: u32, xs: std::ops::Range<u32>, ys: std::ops::Range<u32>) {
+        for y in ys {
+            for x in xs.clone() {
+                luma[(y * w + x) as usize] = 0;
+            }
+        }
+    }
+
+    #[test]
+    fn an_unread_glyph_becomes_a_placeholder_cell() {
+        let (w, h) = (200u32, 40u32);
+        let mut luma = vec![255u8; (w * h) as usize];
+        let mut row = group_rows([frag("Paid", 10.0, 10.0)]);
+        paint(&mut luma, w, 12..48, 13..22); // the read word
+        paint(&mut luma, w, 120..127, 15..22); // a glyph nothing read
+        paint(&mut luma, w, 100..101, 8..30); // a grid line
+        paint(&mut luma, w, 0..w, 26..27); // a row rule
+        paint(&mut luma, w, 197..200, 12..20); // the window edge
+        mark_unread_ink(&mut row, &luma, w, h);
+        assert_eq!(row_cells(&row[0]), "Paid @(30,17) | ? @(124,19)");
+        // Read again, the placeholder is not duplicated.
+        mark_unread_ink(&mut row, &luma, w, h);
+        assert_eq!(row[0].fragments.len(), 2);
+    }
+
+    #[test]
+    fn rows_without_words_or_with_big_blobs_get_no_placeholders() {
+        let (w, h) = (200u32, 60u32);
+        let mut luma = vec![255u8; (w * h) as usize];
+        // A toolbar: one symbol read, icons around it.
+        paint(&mut luma, w, 40..56, 10..26);
+        let mut icons = group_rows([frag("+", 80.0, 10.0)]);
+        mark_unread_ink(&mut icons, &luma, w, h);
+        assert_eq!(icons[0].fragments.len(), 1);
+        // A word next to a picture far taller than its text.
+        paint(&mut luma, w, 120..150, 30..60);
+        let mut row = group_rows([frag("Photo", 10.0, 36.0)]);
+        mark_unread_ink(&mut row, &luma, w, h);
+        assert_eq!(row[0].fragments.len(), 1);
+    }
+
+    fn node(role: &'static str, has_text: bool, frame: [f64; 4]) -> RegionFacts<'static> {
+        RegionFacts {
+            role,
+            has_text,
+            frame: Some(frame),
+        }
+    }
+
+    #[test]
+    fn a_large_element_without_text_is_a_picture_region() {
+        let window = [100.0, 100.0, 1000.0, 800.0];
+        let nodes = [
+            node("AXWebArea", false, [100.0, 130.0, 1000.0, 770.0]),
+            node("AXStaticText", true, [120.0, 140.0, 300.0, 20.0]),
+            node("AXStaticText", true, [120.0, 165.0, 200.0, 20.0]),
+            // The viewer's picture: a group that holds no text.
+            node("AXGroup", false, [150.0, 200.0, 900.0, 650.0]),
+            node("AXButton", true, [1000.0, 140.0, 60.0, 20.0]),
+        ];
+        assert_eq!(
+            picture_region(nodes, window),
+            Some([100.0, 130.0, 1000.0, 770.0])
+        );
+    }
+
+    #[test]
+    fn a_window_the_tree_describes_has_no_picture_region() {
+        let window = [0.0, 0.0, 800.0, 600.0];
+        let mut nodes = vec![node("AXScrollArea", false, [0.0, 40.0, 800.0, 560.0])];
+        for i in 0..20 {
+            nodes.push(node(
+                "AXStaticText",
+                true,
+                [10.0, 50.0 + 25.0 * f64::from(i), 300.0, 20.0],
+            ));
+        }
+        assert_eq!(picture_region(nodes.iter().copied(), window), None);
+        // A small image is not a region either.
+        let small = [node("AXImage", false, [10.0, 10.0, 100.0, 100.0])];
+        assert_eq!(picture_region(small, window), None);
+        // Nor is a big text field or table, whatever it holds.
+        let field = [node("AXTextArea", false, [0.0, 0.0, 800.0, 600.0])];
+        assert_eq!(picture_region(field, window), None);
+        // Nor a group of many unlabeled controls.
+        let mut controls = vec![node("AXGroup", false, [0.0, 0.0, 800.0, 600.0])];
+        for i in 0..16 {
+            controls.push(node(
+                "AXButton",
+                false,
+                [10.0 + 40.0 * f64::from(i), 300.0, 30.0, 30.0],
+            ));
+        }
+        assert_eq!(picture_region(controls.iter().copied(), window), None);
+    }
+
+    #[test]
+    fn region_rows_move_into_window_pixels_and_render_with_their_header() {
+        let mut rows = group_rows([frag("Total due", 10.0, 20.0)]);
+        offset_rows(&mut rows, 100.0, 50.0);
+        assert_eq!(row_cells(&rows[0]), "Total due @(130,77)");
+        let block = render_block_with_header(&rows, None, REGION_HEADER_TEXT);
+        assert!(
+            block.starts_with("- OCR \"part of this window is a picture"),
+            "{block}"
+        );
+        assert!(block.contains("Total due @(130,77)"));
     }
 
     #[test]

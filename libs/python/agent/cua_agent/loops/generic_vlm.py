@@ -140,6 +140,48 @@ def _parse_tool_call_from_text(text: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _computer_action_to_qwen_args(
+    action: Dict[str, Any], dims: Tuple[int, int]
+) -> Optional[Dict[str, Any]]:
+    """Inverse of convert_qwen_tool_args_to_computer_action, with pixels scaled back to 0..1000."""
+    kind = action.get("type")
+    if not isinstance(kind, str) or "action" in action:
+        return None
+    width, height = float(dims[0]), float(dims[1])
+
+    def coord(x: Any, y: Any) -> List[int]:
+        return [round(float(x) / width * 1000), round(float(y) / height * 1000)]
+
+    try:
+        if kind == "click":
+            name = {"right": "right_click", "middle": "middle_click"}.get(
+                action.get("button", "left"), "left_click"
+            )
+            return {"action": name, "coordinate": coord(action["x"], action["y"])}
+        if kind == "double_click":
+            return {"action": "double_click", "coordinate": coord(action["x"], action["y"])}
+        if kind == "move":
+            return {"action": "mouse_move", "coordinate": coord(action["x"], action["y"])}
+        if kind == "type":
+            return {"action": "type", "text": action.get("text", "")}
+        keys = action.get("keys") or []
+        keys = [keys] if isinstance(keys, str) else list(keys)
+        if kind == "keypress":
+            return {"action": "key", "keys": keys}
+        if kind in ("key_down", "key_up"):
+            return {"action": kind, "keys": keys}
+        if kind == "scroll":
+            out: Dict[str, Any] = {"action": "scroll", "pixels": action.get("scroll_y", 0)}
+            if "x" in action and "y" in action:
+                out["coordinate"] = coord(action["x"], action["y"])
+            return out
+        if kind in ("wait", "screenshot"):
+            return {"action": kind}
+    except (KeyError, TypeError, ValueError):
+        return None
+    return None
+
+
 async def _unnormalize_coordinate(args: Dict[str, Any], dims: Tuple[int, int]) -> Dict[str, Any]:
     """Coordinates appear in 0..1000 space, scale to actual screen size using dims if provided."""
     coord = args.get("coordinate")
@@ -384,6 +426,23 @@ class GenericVlmConfig(AsyncAgentConfig):
                         part["min_pixels"] = MIN_PIXELS
                         part["max_pixels"] = MAX_PIXELS
                         last_rw, last_rh = rw, rh
+
+        # History replays computer calls in the Computer Calls schema (pixel x/y);
+        # restate them in the Qwen tool schema (0..1000 coordinates) so the model
+        # sees its own format instead of drifting to mixed coordinate spaces.
+        if last_rw and last_rh:
+            for msg in completion_messages:
+                for tc in msg.get("tool_calls") or []:
+                    fn = tc.get("function") or {}
+                    if fn.get("name") != "computer":
+                        continue
+                    try:
+                        call_args = json.loads(fn.get("arguments") or "{}")
+                    except (TypeError, ValueError):
+                        continue
+                    qwen_args = _computer_action_to_qwen_args(call_args, (last_rw, last_rh))
+                    if qwen_args is not None:
+                        fn["arguments"] = json.dumps(qwen_args)
 
         api_kwargs: Dict[str, Any] = {
             "model": model,

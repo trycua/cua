@@ -308,6 +308,7 @@ class BatchRunner:
                         await session.close()
                 result.reward = episode.reward
                 result.evaluation = episode.evaluation
+                result.extra.update(episode.extra)
                 result._timing = episode.timing  # type: ignore[attr-defined]
                 if episode.success:
                     result.status = "completed"

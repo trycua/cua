@@ -335,6 +335,21 @@ get_browser_state
     "screenshot_quality":80,"max_image_dimension":1280}'
 ```
 
+When only the picture is needed, add `include_snapshot:false` with
+`include_screenshot:true`: the driver takes the screenshot without walking the
+DOM. The response carries `mode:"screenshot"` and the image, with no `refs`,
+`snapshot_id`, or `url`, and the refs from the tab's current snapshot stay
+valid. It refuses with `invalid_arguments` without `include_screenshot:true`,
+with `snapshot_format`, `scope_ref`, `query`, or `continuation`, and on a bind
+call.
+
+```text
+get_browser_state
+  '{"target_id":"<target>","tab_id":"<tab>","session":"browser-run-1",
+    "include_snapshot":false,"include_screenshot":true,
+    "screenshot_format":"jpeg","max_image_dimension":1280}'
+```
+
 From the CLI, add `--screenshot-out-file /absolute/run-dir/page.jpg` to write
 the image to a file instead of printing it as base64.
 

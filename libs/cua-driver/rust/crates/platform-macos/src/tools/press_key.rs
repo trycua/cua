@@ -217,6 +217,21 @@ fn delivery_failed(error: anyhow::Error) -> ToolResult {
     }))
 }
 
+/// `key` as the key that types it: a punctuation name or character is
+/// resolved on the current keyboard layout, adding Shift to `modifiers` when
+/// the character is typed shifted. Other keys pass through unchanged.
+fn shifted_printable_key(key: &str, modifiers: &mut Vec<String>) -> String {
+    match crate::input::keyboard::printable_key(key) {
+        Some((base, shift)) => {
+            if shift && !modifiers.iter().any(|m| m.eq_ignore_ascii_case("shift")) {
+                modifiers.push("shift".to_string());
+            }
+            base
+        }
+        None => key.to_owned(),
+    }
+}
+
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "press_key".into(),
@@ -225,7 +240,7 @@ fn def() -> &'static ToolDef {
             - `foreground`: fronts the exact window (needs `window_id`), sends a real HID key transition (Chromium content, inline editors, menu equivalents), then restores the prior app.\n\
             \n\
             An element target whose focus cannot be confirmed is refused with `target_focus_unconfirmed`, effect \"refused\", and no key dispatched.\n\
-            Confirmed only when a native AX value/selection read-back changes; otherwise `effect:\"unverifiable\"` (not a delivery failure). Keys: return, tab, escape, up/down/left/right, space, delete, home, end, pageup, pagedown, f1-f12, any letter or digit.".into(),
+            Confirmed only when a native AX value/selection read-back changes; otherwise `effect:\"unverifiable\"` (not a delivery failure). Keys: return, tab, escape, up/down/left/right, space, delete (Backspace), forwarddelete, home, end, pageup, pagedown, f1-f12, any letter, digit or punctuation character, or a punctuation name (asterisk, plus, slash, bracketleft, ...); a shifted character adds Shift.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "required": ["key"],
@@ -271,8 +286,8 @@ impl Tool for PressKeyTool {
                 Err(result) => return result,
             };
             let key = input.key;
-            let modifiers = input.modifiers.unwrap_or_default();
-            let key_for_input = key.clone();
+            let mut modifiers = input.modifiers.unwrap_or_default();
+            let key_for_input = shifted_printable_key(&key, &mut modifiers);
             super::cursor_tools::position_desktop_keyboard_cursor(&self.state, &args).await;
             let prompt = PromptInput::from_args(&args);
             let result = tokio::task::spawn_blocking(move || {
@@ -319,15 +334,9 @@ impl Tool for PressKeyTool {
             return delivery_failed(error);
         }
 
-        // Remap "+" / "plus" → "=" + Shift (same physical key on US layout).
-        let key = if key_raw == "+" || key_raw == "plus" {
-            if !modifiers.iter().any(|m| m.eq_ignore_ascii_case("shift")) {
-                modifiers.push("shift".to_string());
-            }
-            "=".to_string()
-        } else {
-            key_raw.clone()
-        };
+        // A punctuation name or character ("asterisk", "*", "plus") is the
+        // key that types it on the current layout, plus Shift when shifted.
+        let key = shifted_printable_key(&key_raw, &mut modifiers);
         let display_key = key_raw.clone();
         // delivery_mode gates the raise: background (default) never fronts the
         // window (auth-envelope post, even with window_id); foreground is the

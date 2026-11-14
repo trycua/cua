@@ -705,7 +705,13 @@ fn physical_key_for_char(ch: char) -> Option<(u16, bool)> {
             .map(|code| (code, false));
     }
 
-    let (base, shift) = match ch {
+    let (base, shift) = us_key_for_char(ch)?;
+    key_name_to_code(base).ok().map(|code| (code, shift))
+}
+
+/// The US-layout key name that types `ch`, and whether Shift is held for it.
+fn us_key_for_char(ch: char) -> Option<(&'static str, bool)> {
+    Some(match ch {
         ' ' => ("space", false),
         '\t' => ("tab", false),
         '\n' | '\r' => ("return", false),
@@ -742,8 +748,7 @@ fn physical_key_for_char(ch: char) -> Option<(u16, bool)> {
         '(' => ("9", true),
         ')' => ("0", true),
         _ => return None,
-    };
-    key_name_to_code(base).ok().map(|code| (code, shift))
+    })
 }
 
 /// Post a keyboard event to `pid` via SLEventPostToPid (with auth message for
@@ -930,6 +935,8 @@ struct KeyLayout {
     plain: Vec<(u16, char)>,
     command: Vec<(u16, char)>,
     control: Vec<(u16, char)>,
+    /// What each key types with Shift held (`*` on the US 8 key).
+    shift: Vec<(u16, char)>,
 }
 
 impl KeyLayout {
@@ -949,7 +956,13 @@ impl KeyLayout {
             plain,
             command,
             control,
+            shift: Vec::new(),
         }
+    }
+
+    fn with_shift(mut self, shift: Vec<(u16, char)>) -> Self {
+        self.shift = shift;
+        self
     }
 }
 
@@ -1100,6 +1113,8 @@ fn read_current_layout() -> Option<KeyLayout> {
     // `cmdKey >> 8` and `controlKey >> 8`, the modifier states UCKeyTranslate takes.
     const COMMAND_STATE: u32 = 0x01;
     const CONTROL_STATE: u32 = 0x10;
+    // `shiftKey >> 8`.
+    const SHIFT_STATE: u32 = 0x02;
 
     unsafe {
         let source = TISCopyCurrentKeyboardLayoutInputSource();
@@ -1138,10 +1153,98 @@ fn read_current_layout() -> Option<KeyLayout> {
                     .collect()
             };
             KeyLayout::new(layer(0), layer(COMMAND_STATE), layer(CONTROL_STATE))
+                .with_shift(layer(SHIFT_STATE))
         });
         CFRelease(source);
         layout
     }
+}
+
+/// The character a punctuation key name stands for (`asterisk` is `*`).
+fn punctuation_name_char(key: &str) -> Option<char> {
+    let compact: String = key
+        .trim()
+        .to_lowercase()
+        .chars()
+        .filter(|c| !matches!(c, ' ' | '_' | '-'))
+        .collect();
+    Some(match compact.as_str() {
+        "asterisk" | "star" | "multiply" => '*',
+        "plus" => '+',
+        "minus" | "hyphen" | "dash" => '-',
+        "equal" | "equals" => '=',
+        "slash" | "divide" => '/',
+        "backslash" => '\\',
+        "comma" => ',',
+        "period" | "dot" | "fullstop" => '.',
+        "semicolon" => ';',
+        "colon" => ':',
+        "quote" | "apostrophe" | "singlequote" => '\'',
+        "doublequote" | "quotedbl" | "dquote" => '"',
+        "grave" | "backtick" | "backquote" => '`',
+        "bracketleft" | "leftbracket" | "openbracket" => '[',
+        "bracketright" | "rightbracket" | "closebracket" => ']',
+        "braceleft" | "leftbrace" => '{',
+        "braceright" | "rightbrace" => '}',
+        "parenleft" | "leftparen" | "leftparenthesis" => '(',
+        "parenright" | "rightparen" | "rightparenthesis" => ')',
+        "at" => '@',
+        "hash" | "numbersign" | "pound" => '#',
+        "dollar" => '$',
+        "percent" => '%',
+        "caret" | "asciicircum" | "circumflex" => '^',
+        "ampersand" => '&',
+        "underscore" => '_',
+        "question" | "questionmark" => '?',
+        "exclam" | "exclamation" | "exclamationmark" | "bang" => '!',
+        "less" | "lessthan" => '<',
+        "greater" | "greaterthan" => '>',
+        "tilde" => '~',
+        "bar" | "pipe" | "verticalbar" => '|',
+        _ => return None,
+    })
+}
+
+/// The key a `press_key` name for a printable character is pressed with, and
+/// whether Shift is added: a punctuation name (`asterisk`, `plus`,
+/// `bracketleft`) or a single printable character other than a letter or
+/// digit is pressed by the key that types it on the current keyboard layout,
+/// with Shift when the layout types it shifted (`*` is Shift+8 on US).
+/// Returns the key's unshifted character as the key name. `None` for every
+/// other key name (letters, digits, named keys), which resolve as before.
+pub fn printable_key(key: &str) -> Option<(String, bool)> {
+    printable_key_on(key, current_layout().as_deref())
+}
+
+fn printable_key_on(key: &str, layout: Option<&KeyLayout>) -> Option<(String, bool)> {
+    let mut chars = key.chars();
+    let ch = match (chars.next(), chars.next()) {
+        (Some(ch), None) => ch,
+        _ => punctuation_name_char(key)?,
+    };
+    if ch.is_alphanumeric() || ch.is_whitespace() || ch.is_control() {
+        return None;
+    }
+    if let Some(layout) = layout {
+        if layout.plain.iter().any(|&(_, typed)| typed == ch) {
+            return Some((ch.to_string(), false));
+        }
+        let shifted = layout
+            .shift
+            .iter()
+            .filter(|&&(_, typed)| typed == ch)
+            .find_map(|&(code, _)| {
+                layout
+                    .plain
+                    .iter()
+                    .find(|&&(key, typed)| key == code && !typed.is_control())
+                    .map(|&(_, typed)| typed)
+            });
+        if let Some(base) = shifted {
+            return Some((base.to_string(), true));
+        }
+    }
+    us_key_for_char(ch).map(|(base, shift)| (base.to_owned(), shift))
 }
 
 /// The error for a name `key_name_to_code` does not know, saying what to send
@@ -1164,9 +1267,10 @@ fn unknown_key_message(key: &str) -> String {
         );
     }
     format!(
-        "Unknown key name: {key}. Use a key name such as return, tab, escape, space, delete, \
-         left, right, up, down, pageup, pagedown, home, end, f1..f12, or a single letter or \
-         digit; to enter other characters (for example * or $) use type_text."
+        "Unknown key name: {key}. Use a key name such as return, tab, escape, space, delete \
+         (Backspace), forwarddelete, left, right, up, down, pageup, pagedown, home, end, \
+         f1..f12, a single letter, digit or punctuation character, or a punctuation name such \
+         as asterisk, plus, slash or bracketleft."
     )
 }
 
@@ -1469,6 +1573,62 @@ mod tests {
                 .collect()
         };
         KeyLayout::new(keys(plain), keys(command), keys(control))
+    }
+
+    #[test]
+    fn printable_keys_resolve_to_the_key_and_shift_that_type_them() {
+        let us_shift: Vec<(u16, char)> = (0u16..)
+            .zip("ASDFHGZXCV±BQWERYT!@#$^%+(&_*)}OU{IP\rLJ\"K:|<?NM>\t ~".chars())
+            .collect();
+        let us = layout(US).with_shift(us_shift);
+        let us = Some(&us);
+        let k = |key: &str| printable_key_on(key, us);
+        assert_eq!(k("asterisk"), Some(("8".to_owned(), true)));
+        assert_eq!(k("*"), Some(("8".to_owned(), true)));
+        assert_eq!(k("plus"), Some(("=".to_owned(), true)));
+        assert_eq!(k("minus"), Some(("-".to_owned(), false)));
+        assert_eq!(k("slash"), Some(("/".to_owned(), false)));
+        assert_eq!(k("question"), Some(("/".to_owned(), true)));
+        assert_eq!(k("bracketleft"), Some(("[".to_owned(), false)));
+        assert_eq!(k("braceright"), Some(("]".to_owned(), true)));
+        assert_eq!(k("Dollar"), Some(("4".to_owned(), true)));
+        assert_eq!(k("paren_left"), Some(("9".to_owned(), true)));
+        assert_eq!(k("tilde"), Some(("`".to_owned(), true)));
+        assert_eq!(k("bar"), Some(("\\".to_owned(), true)));
+        assert_eq!(k("quote"), Some(("'".to_owned(), false)));
+        assert_eq!(k("colon"), Some((";".to_owned(), true)));
+        // Letters, digits and named keys resolve as before.
+        for key in [
+            "a",
+            "A",
+            "8",
+            "return",
+            "delete",
+            "forwarddelete",
+            "f5",
+            "pagedown",
+        ] {
+            assert_eq!(k(key), None, "{key}");
+        }
+        // German: `*` is Shift + the `+` key, `+` itself is unshifted.
+        let german = layout(GERMAN).with_shift(vec![(30, '*'), (28, '(')]);
+        assert_eq!(
+            printable_key_on("asterisk", Some(&german)),
+            Some(("+".to_owned(), true))
+        );
+        assert_eq!(
+            printable_key_on("plus", Some(&german)),
+            Some(("+".to_owned(), false))
+        );
+        // No layout: US positions.
+        assert_eq!(
+            printable_key_on("asterisk", None),
+            Some(("8".to_owned(), true))
+        );
+        assert_eq!(printable_key_on("at", None), Some(("2".to_owned(), true)));
+        // The base key of a shifted character resolves to a key code.
+        assert_eq!(chord_key_code("8", &["shift"], us).unwrap(), 28);
+        assert_eq!(chord_key_code("+", &["shift"], Some(&german)).unwrap(), 30);
     }
 
     /// ABC: plain, Command and Control layers.

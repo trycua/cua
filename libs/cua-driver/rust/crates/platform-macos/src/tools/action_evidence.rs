@@ -17,9 +17,17 @@
 //!   `confirmed` with `window_change` evidence; one whose rows are all the
 //!   same is `suspected_noop`.
 //!
+//! - Cell changes in spreadsheet grids (see
+//!   [`cua_driver_core::sheet_grid`]): typing into a sheet gives no element to
+//!   read the entry back from, so for a window whose last read showed a grid
+//!   the grid is read again after the action and the result lists the cells
+//!   whose values changed, the active cell and its value, and a switch to
+//!   another sheet. A change confirms the action.
+//!
 //! The text check runs only for windows the last read found opaque, and is
 //! bounded: past [`EVIDENCE_BUDGET`] the result is returned as the action
-//! produced it, with `ocr_status`.
+//! produced it, with `ocr_status`. The grid check runs only for windows whose
+//! last read or action showed a grid.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -42,6 +50,11 @@ const SETTLE: Duration = Duration::from_millis(250);
 const EVIDENCE_BUDGET: Duration = Duration::from_millis(2500);
 /// Longest the before-action read may take (only when no earlier read exists).
 const BASELINE_BUDGET: Duration = Duration::from_millis(2000);
+/// Extra time a sheet gets to apply queued input when the first read after an
+/// action shows no change (a long `type_text` is still being processed).
+const GRID_RETRY: Duration = Duration::from_millis(400);
+/// Longest one grid read may take, off the async runtime.
+const GRID_READ_BUDGET: Duration = Duration::from_millis(3000);
 /// At most this many text rows are shown for a new opaque window.
 const NEW_WINDOW_ROWS: usize = 12;
 /// Windows smaller than this (either edge, points) are not reported as new.
@@ -137,11 +150,24 @@ pub(crate) struct Findings {
     pub new_windows: Vec<(NewWindow, Option<String>)>,
     /// Why the text was not read, when it should have been.
     pub ocr_status: Option<String>,
+    /// What the action did to a spreadsheet grid in the window.
+    pub sheet: Option<SheetFinding>,
+}
+
+/// A spreadsheet grid read back after an action.
+#[derive(Debug)]
+pub(crate) struct SheetFinding {
+    pub text: String,
+    /// Whether any cell, the active cell, the sheet or the view changed.
+    pub changed: bool,
 }
 
 impl Findings {
     fn is_empty(&self) -> bool {
-        self.changes.is_none() && self.new_windows.is_empty() && self.ocr_status.is_none()
+        self.changes.is_none()
+            && self.new_windows.is_empty()
+            && self.ocr_status.is_none()
+            && self.sheet.is_none()
     }
 
     /// The text appended to the action's result.
@@ -159,6 +185,9 @@ impl Findings {
                 opaque_text::render_changes(changes)
             )),
             None => {}
+        }
+        if let Some(sheet) = &self.sheet {
+            out.push(sheet.text.clone());
         }
         for (window, rows) in &self.new_windows {
             let [x, y, w, h] = window.bounds;
@@ -202,12 +231,18 @@ impl Findings {
         let changed = self.changes.as_ref().is_some_and(|c| !c.is_empty());
         let unchanged = self.changes.as_ref().is_some_and(Vec::is_empty);
         let appeared = !self.new_windows.is_empty();
+        let sheet_changed = self.sheet.as_ref().is_some_and(|s| s.changed);
         let effect = structured
             .get("effect")
             .and_then(Value::as_str)
             .map(str::to_owned);
         let unconfirmed = matches!(effect.as_deref(), None | Some("unverifiable"));
-        if changed || appeared {
+        if sheet_changed {
+            // The cells were read back: no read is needed to check the entry.
+            structured.remove("next_call");
+            structured.remove("hint");
+        }
+        if changed || appeared || sheet_changed {
             let evidence = structured
                 .entry("evidence")
                 .or_insert_with(|| Value::Array(Vec::new()));
@@ -269,6 +304,16 @@ fn append_text(result: &mut ToolResult, text: String) {
 
 /// Read `window_id`'s text in `frame`, off the async runtime and
 /// within `budget`.
+/// Read `window_id`'s spreadsheet grid now, off the async runtime.
+async fn read_grid(pid: i32, window_id: u32) -> Option<cua_driver_core::sheet_grid::Grid> {
+    let task = tokio::task::spawn_blocking(move || crate::sheet::read_grid(pid, window_id));
+    tokio::time::timeout(GRID_READ_BUDGET, task)
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .flatten()
+}
+
 async fn read_rows(
     window_id: u32,
     frame: RowFrame,
@@ -356,13 +401,24 @@ impl<T: Tool + 'static> Tool for ActionEvidence<T> {
             }
         }
 
+        // A sheet's grid before the action: the last read's, when it saw the
+        // whole window, else read now.
+        let grid_window = window_id.filter(|&w| crate::sheet::last_grid(pid, w).is_some());
+        let mut grid_before = None;
+        if let Some(window) = grid_window {
+            grid_before = crate::sheet::last_grid(pid, window).filter(|g| g.complete);
+            if grid_before.is_none() {
+                grid_before = read_grid(pid, window).await;
+            }
+        }
+
         let mut result = self.inner.invoke(args).await;
         if !action_ran(&result) {
             return result;
         }
-        // Only a text check waits for a repaint; new windows are checked
-        // right away, so other apps' actions return as fast as before.
-        if opaque_window.is_some() {
+        // Only a text or grid check waits for a repaint; new windows are
+        // checked right away, so other apps' actions return as fast as before.
+        if opaque_window.is_some() || grid_before.is_some() {
             tokio::time::sleep(SETTLE).await;
         }
 
@@ -370,6 +426,29 @@ impl<T: Tool + 'static> Tool for ActionEvidence<T> {
             ocr_status,
             ..Findings::default()
         };
+        if let (Some(window), Some(before)) = (grid_window, grid_before) {
+            let mut after = read_grid(pid, window).await;
+            let unchanged = |after: &Option<cua_driver_core::sheet_grid::Grid>| {
+                after
+                    .as_ref()
+                    .is_some_and(|a| !cua_driver_core::sheet_grid::diff(&before, a).is_change())
+            };
+            if unchanged(&after) {
+                tokio::time::sleep(GRID_RETRY).await;
+                after = read_grid(pid, window).await;
+            }
+            // No grid read in time (or the window closed): nothing is
+            // reported, and the next read of the window decides whether it
+            // still shows one.
+            if let Some(after) = after {
+                let change = cua_driver_core::sheet_grid::diff(&before, &after);
+                findings.sheet = Some(SheetFinding {
+                    text: cua_driver_core::sheet_grid::render_change(&change, &after),
+                    changed: change.is_change(),
+                });
+                crate::sheet::remember(pid, window, after);
+            }
+        }
         if let Some((window, baseline)) = opaque_window.zip(baseline) {
             let frame = RowFrame::MaxEdge(baseline.width.max(baseline.height));
             match read_rows(window, frame, EVIDENCE_BUDGET).await {
@@ -641,6 +720,56 @@ mod tests {
         findings.apply(&mut map, &text);
         assert_eq!(map["effect"], "unverifiable");
         assert_eq!(map["ocr_status"], "timed out");
+    }
+
+    #[test]
+    fn a_changed_sheet_confirms_and_drops_the_reread_hint() {
+        let findings = Findings {
+            sheet: Some(SheetFinding {
+                text: "Sheet table \"Sheet Data\" read back after the action: 1 cell(s) \
+                       changed: B2 \"\" -> \"12.5\". Active cell B3, empty."
+                    .into(),
+                changed: true,
+            }),
+            ..Findings::default()
+        };
+        let text = findings.render(Some(5));
+        assert!(text.starts_with("Sheet table \"Sheet Data\" read back"));
+        let mut map = json!({
+            "effect": "unverifiable",
+            "hint": "Read the field before typing again",
+            "next_call": {"tool": "get_window_state"}
+        })
+        .as_object()
+        .cloned()
+        .unwrap();
+        findings.apply(&mut map, &text);
+        assert_eq!(map["effect"], "confirmed");
+        assert_eq!(map["evidence"][0]["kind"], "window_change");
+        assert!(map.get("hint").is_none());
+        assert!(map.get("next_call").is_none());
+    }
+
+    #[test]
+    fn an_unchanged_sheet_is_reported_without_a_verdict() {
+        let findings = Findings {
+            sheet: Some(SheetFinding {
+                text:
+                    "Sheet table \"S\" read back after the action: no visible cell changed value."
+                        .into(),
+                changed: false,
+            }),
+            ..Findings::default()
+        };
+        let text = findings.render(Some(5));
+        let mut map = json!({"effect": "unverifiable", "hint": "h"})
+            .as_object()
+            .cloned()
+            .unwrap();
+        findings.apply(&mut map, &text);
+        assert_eq!(map["effect"], "unverifiable");
+        assert_eq!(map["hint"], "h");
+        assert!(text.contains("no visible cell changed value"));
     }
 
     #[test]

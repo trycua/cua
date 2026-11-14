@@ -691,6 +691,28 @@ impl Tool for GetWindowStateTool {
             }
         }
 
+        // A spreadsheet grid lists one row per visible cell, most of them
+        // empty: show its filled cells one line per sheet row, and remember
+        // the grid so a keyboard action on the window can say which cells it
+        // changed (see `cua_driver_core::sheet_grid`).
+        if !observation_only && scope_matched {
+            if let Some(tree) = tree_result.as_mut() {
+                match crate::sheet::grid_of(tree) {
+                    Some(grid) => {
+                        if !view.full_output {
+                            tree.tree_markdown = cua_driver_core::sheet_grid::compact_markdown(
+                                &tree.tree_markdown,
+                                &grid,
+                            );
+                        }
+                        crate::sheet::remember(pid, window_id, grid);
+                    }
+                    None if !tree.truncated => crate::sheet::forget(pid, window_id),
+                    None => {}
+                }
+            }
+        }
+
         // Capture screenshot dimensions before consuming.
         let screenshot_dims = screenshot.as_ref().map(|(_, _, w, h, _, _, _, _)| (*w, *h));
         let screenshot_file_path = screenshot

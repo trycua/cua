@@ -2136,10 +2136,9 @@ impl ToolRegistry {
                 && crate::session::is_session_ended(session)
                 && !crate::session::recreates_on_next_call(session, owner)
             {
-                let message = ended_session_refusal_message(
+                let mut result = session_ended_refusal(
                     args.get("_public_session_label").and_then(Value::as_str),
                 );
-                let mut result = protected_refusal("session_ended", &message);
                 restore_public_runtime_result(&mut result, &runtime_prefix);
                 return result;
             }
@@ -7154,16 +7153,18 @@ fn protected_scope_error_refusal(error: &ProtectedResourceScopeError) -> ToolRes
     )
 }
 
-/// Recovery text for a call on an ended lifecycle episode. A named session is
-/// restarted by name from its own transport; an unnamed one has no label to
-/// pass, so naming one would only start an unrelated session.
-fn ended_session_refusal_message(public_label: Option<&str>) -> String {
-    match public_label {
+/// The `session_ended` refusal for a call on an ended lifecycle episode, with
+/// the recovery that applies to it. A named session is restarted by name from
+/// its own transport; an unnamed one has no label to pass, so naming one would
+/// only start an unrelated session.
+pub fn session_ended_refusal(public_label: Option<&str>) -> ToolResult {
+    let message = match public_label {
         Some(label) => format!(
             "session '{label}' has ended; call start_session with session '{label}' to start it again, or use a new session label"
         ),
         None => "this transport's unnamed session has ended; call start_session without a session label to start a new one".to_owned(),
-    }
+    };
+    protected_refusal("session_ended", &message)
 }
 
 fn protected_refusal(code: &str, message: &str) -> ToolResult {

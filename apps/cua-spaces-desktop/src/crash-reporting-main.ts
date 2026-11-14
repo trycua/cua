@@ -21,6 +21,7 @@ import {
   crashEnv,
   crashTestKind,
   environmentFor,
+  isStdioWriteEvent,
   onConsentMayHaveChanged,
   parseCrashConfig,
   releaseFor,
@@ -29,6 +30,7 @@ import {
   type ConsentSource,
   type ScrubbableEvent,
 } from "./crash-reporting";
+import { setUpdateFailureSink } from "./update-report";
 
 /** The DSN, from config/spaces-crash-reporting.json at build time (tsdown.config.mts). Absent in a test run. */
 declare const __CUA_CRASH_CONFIG__: string | undefined;
@@ -96,11 +98,29 @@ export function initCrashReporting(): void {
     integrations: (defaults) => defaults.filter((i) => !DROPPED.has(i.name)),
     beforeBreadcrumb: () => null,
     beforeSendTransaction: () => null,
-    beforeSend: (event) => (crashConsent(machine()).allowed ? (scrubEvent(event as unknown as ScrubbableEvent, home) as unknown as typeof event) : null),
+    // A closed stdout/stderr is not a crash (isStdioWriteEvent); everything else is scrubbed and sent.
+    beforeSend: (event) =>
+      !isStdioWriteEvent(event as unknown as ScrubbableEvent) && crashConsent(machine()).allowed
+        ? (scrubEvent(event as unknown as ScrubbableEvent, home) as unknown as typeof event)
+        : null,
   });
+
+  // A failed update check is a handled warning. The event scrub empties exception
+  // messages, so the reason travels in `extra`, which it keeps and scrubs of paths.
+  setUpdateFailureSink(({ kind, reason, error }) =>
+    Sentry.withScope((scope) => {
+      scope.setLevel("warning");
+      scope.setTag("component", "updater");
+      scope.setTag("update.failure", kind);
+      scope.setFingerprint(["update-failure", kind]);
+      scope.setExtra("reason", reason);
+      Sentry.captureException(error);
+    }),
+  );
 
   onConsentMayHaveChanged(() => {
     if (crashConsent(machine()).allowed) return;
+    setUpdateFailureSink(null);
     setCrashSettings(null);
     void Sentry.close(0);
   });

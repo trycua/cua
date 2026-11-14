@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import * as path from "node:path";
 import { app, BrowserWindow, dialog, nativeTheme, Notification, screen, shell } from "electron";
 import { initCrashReporting } from "./crash-reporting-main";
+import { protectLogging } from "./stdio-guard";
 import { createBridge } from "./bridge";
 import { hasBrowser } from "./browser";
 import { appBuild } from "./bundle-version";
@@ -52,6 +53,8 @@ import { WindowDropTargets, windowNumberOf, type DropWindow } from "./window-dro
 // Must match `appId` (Windows; macOS has the Swift app's bundle id) and the
 // Linux desktop entry in electron-builder.config.cjs. Cua Spaces Local has its
 // own (src/channel.ts, packaging/electron-builder.local.cjs).
+// A closed stdout/stderr must never throw (stdio-guard.ts).
+protectLogging();
 const APP_USER_MODEL_ID = channel.appUserModelId;
 const LINUX_ID = "cua-spaces";
 

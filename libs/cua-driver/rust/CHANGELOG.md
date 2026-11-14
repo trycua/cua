@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.49.11](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.10...cua-driver-rs-v0.49.11) (2026-11-14)
+
+
+### Bug Fixes
+
+* **cua-driver:** resolve Brave's default profile root on Linux and macOS ([#7717](https://github.com/trycua/cua/issues/7717)) ([e4d8c41](https://github.com/trycua/cua/commit/e4d8c411934aa89a4174bdd809915a66dd422377))
+
 ## [0.49.10](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.9...cua-driver-rs-v0.49.10) (2026-11-14)
 
 

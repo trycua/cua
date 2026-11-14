@@ -317,9 +317,10 @@ impl ToolDef {
         // Tools that most often need a guide point at `get_guide`, so an agent
         // that never reads the skill still learns where the guidance lives.
         let deprecation = crate::deprecation::lookup(&self.name);
+        let description = lead_on_own_line(&self.description);
         let description = match crate::guide::description_hint(&self.name) {
-            Some(hint) => format!("{} {hint}", self.description),
-            None => self.description.clone(),
+            Some(hint) => format!("{description} {hint}"),
+            None => description,
         };
         let description = match deprecation {
             Some(entry) => format!("{} {description}", entry.description_prefix()),
@@ -764,6 +765,37 @@ fn normalize_zoom_args(tool_name: &str, args: &mut Value) {
             arguments.insert(second.to_owned(), serde_json::json!(start + size));
         }
     }
+}
+
+/// `description` with its first sentence on a line of its own. Clients that
+/// show one line per tool (tool search results, `list-tools`) then show that
+/// sentence instead of the whole first paragraph. Only the space after the
+/// sentence becomes a line break; no text is added or removed.
+pub fn lead_on_own_line(description: &str) -> String {
+    let first_line = description.split('\n').next().unwrap_or_default();
+    let mut in_code = false;
+    let mut depth = 0u32;
+    let mut previous = None;
+    for (i, ch) in first_line.char_indices() {
+        match ch {
+            '`' => in_code = !in_code,
+            '(' | '[' | '{' if !in_code => depth += 1,
+            ')' | ']' | '}' if !in_code => depth = depth.saturating_sub(1),
+            ' ' if !in_code
+                && depth == 0
+                && matches!(previous, Some('.' | '?' | '!'))
+                && !first_line[..i].ends_with("e.g.")
+                && !first_line[..i].ends_with("i.e.") =>
+            {
+                let mut out = description.to_owned();
+                out.replace_range(i..i + 1, "\n");
+                return out;
+            }
+            _ => {}
+        }
+        previous = Some(ch);
+    }
+    description.to_owned()
 }
 
 pub(crate) fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -> Value {
@@ -7640,6 +7672,43 @@ mod capability_tests {
                 "tool {name:?} accepts element_token but is missing the \
                  accessibility.element_tokens capability claim — add it \
                  in default_capabilities_for()"
+            );
+        }
+    }
+
+    #[test]
+    fn listed_description_puts_its_first_sentence_on_its_own_line() {
+        let mut def = dummy_def("zoom");
+        def.description = "Click a target pid. Prefer `element_token` (from get_window_state). \
+             Use pixels (x, y. z) e.g. for canvases.\n\nMore detail."
+            .into();
+        let listed = def.to_list_entry()["description"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert_eq!(
+            listed,
+            "Click a target pid.\nPrefer `element_token` (from get_window_state). \
+             Use pixels (x, y. z) e.g. for canvases.\n\nMore detail."
+        );
+        assert_eq!(
+            listed.replace('\n', " "),
+            def.description.replace('\n', " ")
+        );
+
+        for (text, lead) in [
+            (
+                "Press a key — e.g. `[\"cmd\", \"c\"]`. Then more.",
+                "Press a key — e.g. `[\"cmd\", \"c\"]`.",
+            ),
+            ("Read `a. b` first. Then more.", "Read `a. b` first."),
+            ("One sentence only.", "One sentence only."),
+            ("Header line:\n- item. More", "Header line:"),
+        ] {
+            assert_eq!(
+                lead_on_own_line(text).split('\n').next(),
+                Some(lead),
+                "{text}"
             );
         }
     }

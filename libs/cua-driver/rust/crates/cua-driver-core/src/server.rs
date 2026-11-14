@@ -304,6 +304,7 @@ pub enum ToolOperation {
     BrowserBind,
     BrowserSnapshotDomRefsV1,
     BrowserSnapshotSemanticV2,
+    BrowserScreenshot,
     BrowserClickTrusted,
     BrowserClickDomEvent,
     BrowserTypeInsertText,
@@ -337,6 +338,7 @@ impl ToolOperation {
             Self::BrowserBind => "browser_bind",
             Self::BrowserSnapshotDomRefsV1 => "browser_snapshot_dom_refs_v1",
             Self::BrowserSnapshotSemanticV2 => "browser_snapshot_semantic_v2",
+            Self::BrowserScreenshot => "browser_screenshot",
             Self::BrowserClickTrusted => "browser_click_trusted",
             Self::BrowserClickDomEvent => "browser_click_dom_event",
             Self::BrowserTypeInsertText => "browser_type_insert_text",
@@ -375,7 +377,16 @@ pub fn tool_operation(tool_name: &str, args: Option<&serde_json::Value>) -> Tool
             _ => ToolOperation::Other,
         },
         "get_browser_state" => {
-            if string_arg("target_id").is_some() {
+            // Observation runs before schema coercion, so a string "false"
+            // is the same request as the boolean.
+            let screenshot_only = match args.and_then(|value| value.get("include_snapshot")) {
+                Some(serde_json::Value::Bool(include)) => !include,
+                Some(serde_json::Value::String(text)) => text.trim().eq_ignore_ascii_case("false"),
+                _ => false,
+            };
+            if string_arg("target_id").is_some() && screenshot_only {
+                ToolOperation::BrowserScreenshot
+            } else if string_arg("target_id").is_some() {
                 match string_arg("snapshot_format") {
                     Some("semantic_v2") => ToolOperation::BrowserSnapshotSemanticV2,
                     None | Some("dom_refs_v1") => ToolOperation::BrowserSnapshotDomRefsV1,
@@ -1679,6 +1690,34 @@ mod observation_tests {
         assert_eq!(
             ToolOperation::BrowserSnapshotSemanticV2.as_str(),
             "browser_snapshot_semantic_v2"
+        );
+        assert_eq!(
+            ToolOperation::BrowserScreenshot.as_str(),
+            "browser_screenshot"
+        );
+    }
+
+    #[test]
+    fn screenshot_only_browser_reads_have_their_own_operation() {
+        use serde_json::{json, Value};
+        for include_snapshot in [json!(false), json!("false"), json!(" FALSE ")] {
+            let args = json!({"target_id": "bt-1", "tab_id": "tab-1", "include_snapshot": include_snapshot});
+            assert_eq!(
+                tool_operation("get_browser_state", Some(&args)),
+                ToolOperation::BrowserScreenshot
+            );
+        }
+        for include_snapshot in [json!(true), json!("true"), Value::Null] {
+            let args = json!({"target_id": "bt-1", "tab_id": "tab-1", "include_snapshot": include_snapshot});
+            assert_eq!(
+                tool_operation("get_browser_state", Some(&args)),
+                ToolOperation::BrowserSnapshotDomRefsV1
+            );
+        }
+        let bind = json!({"pid": 1, "window_id": 2, "include_snapshot": false});
+        assert_eq!(
+            tool_operation("get_browser_state", Some(&bind)),
+            ToolOperation::BrowserBind
         );
     }
 }

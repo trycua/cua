@@ -2113,8 +2113,18 @@
      },
      "include_screenshot": {
       "default": false,
-      "description": "Capture the exact tab viewport as PNG through CDP without selecting the tab or foregrounding its native window. The request refuses if capture cannot be completed.",
+      "description": "Capture the exact tab viewport through CDP without selecting the tab or foregrounding its native window. Snapshot mode only. The request refuses if capture cannot be completed.",
       "type": "boolean"
+     },
+     "include_snapshot": {
+      "default": true,
+      "description": "Snapshot mode only. false returns just the requested screenshot: no DOM walk, no refs, and the tab's current snapshot and refs stay valid. Requires include_screenshot:true; refuses with snapshot_format, scope_ref, query, or continuation.",
+      "type": "boolean"
+     },
+     "max_image_dimension": {
+      "description": "Long-edge cap for the requested screenshot, in pixels. Omitted or 0 returns the native viewport resolution. pixel_to_css_scale_x/y describe the delivered image. Requires include_screenshot:true.",
+      "minimum": 0,
+      "type": "integer"
      },
      "pid": {
       "description": "Native browser process id (bind mode).",
@@ -2127,6 +2137,51 @@
      "scope_ref": {
       "description": "Current semantic/content ref whose subtree should be observed.",
       "type": "string"
+     },
+     "screenshot_clip": {
+      "additionalProperties": false,
+      "description": "Capture only this region of the viewport, in viewport CSS pixels from its top-left corner (the space of pixel_to_css_scale_x/y and browser_pointer). A region running past the right or bottom edge is cut to the viewport and reported with clip_clamped:true. A region with no visible part refuses. Requires include_screenshot:true.",
+      "properties": {
+       "height": {
+        "description": "Height in CSS px, greater than 0.",
+        "type": "number"
+       },
+       "width": {
+        "description": "Width in CSS px, greater than 0.",
+        "type": "number"
+       },
+       "x": {
+        "description": "Left edge, CSS px from the viewport's left.",
+        "minimum": 0,
+        "type": "number"
+       },
+       "y": {
+        "description": "Top edge, CSS px from the viewport's top.",
+        "minimum": 0,
+        "type": "number"
+       }
+      },
+      "required": [
+       "x",
+       "y",
+       "width",
+       "height"
+      ],
+      "type": "object"
+     },
+     "screenshot_format": {
+      "description": "Encoding of the requested screenshot: \"png\" (default) or \"jpeg\". Requires include_screenshot:true.",
+      "enum": [
+       "png",
+       "jpeg"
+      ],
+      "type": "string"
+     },
+     "screenshot_quality": {
+      "description": "JPEG quality, 1-95, with screenshot_format:\"jpeg\" only. Default 85.",
+      "maximum": 95,
+      "minimum": 1,
+      "type": "integer"
      },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",

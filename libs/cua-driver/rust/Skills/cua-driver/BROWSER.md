@@ -308,14 +308,70 @@ get_browser_state
     "include_screenshot":true}'
 ```
 
-The result includes a PNG image part, the flat compatibility fields
+The result includes an image part, the flat compatibility fields
 `screenshot_width`, `screenshot_height`, and `screenshot_mime_type`, plus a
 structured `screenshot` object. That object identifies the coordinate space as
 `viewport_css_px` and reports `viewport_css_width`, `viewport_css_height`,
 `pixel_to_css_scale_x`, and `pixel_to_css_scale_y`. When grounding a coordinate
-action from the PNG, convert image pixels to the browser action space with
+action from the image, convert image pixels to the browser action space with
 `css_x = png_x * pixel_to_css_scale_x` and
 `css_y = png_y * pixel_to_css_scale_y`; do not assume device scale factor 1.
+
+Without further options the image is the viewport PNG at native resolution
+(device pixels, so twice the CSS size on a Retina display). For a small image,
+such as review evidence, add `screenshot_format:"jpeg"`,
+`screenshot_quality` (1-95, default 85) and `max_image_dimension` (a long-edge
+cap in pixels; 0 means native). The scale fields always describe the delivered
+image. Read the format from `screenshot_mime_type`: the CLI's
+`screenshot_png_b64` field keeps its name when it carries a JPEG. These options
+apply only with `include_screenshot:true` in snapshot mode; anywhere else the
+call refuses with `invalid_arguments`, and so does `include_screenshot:true`
+on a bind call.
+
+```text
+get_browser_state
+  '{"target_id":"<target>","tab_id":"<tab>","session":"browser-run-1",
+    "include_screenshot":true,"screenshot_format":"jpeg",
+    "screenshot_quality":80,"max_image_dimension":1280}'
+```
+
+When only the picture is needed, add `include_snapshot:false` with
+`include_screenshot:true`: the driver takes the screenshot without walking the
+DOM. The response carries `mode:"screenshot"` and the image, with no `refs`,
+`snapshot_id`, or `url`, and the refs from the tab's current snapshot stay
+valid. It refuses with `invalid_arguments` without `include_screenshot:true`,
+with `snapshot_format`, `scope_ref`, `query`, or `continuation`, and on a bind
+call.
+
+```text
+get_browser_state
+  '{"target_id":"<target>","tab_id":"<tab>","session":"browser-run-1",
+    "include_snapshot":false,"include_screenshot":true,
+    "screenshot_format":"jpeg","max_image_dimension":1280}'
+```
+
+To capture one region, such as a dialog or a block of a review page, add
+`screenshot_clip:{"x":…,"y":…,"width":…,"height":…}` in viewport CSS pixels
+from the viewport's top-left corner. Read the numbers off a viewport screenshot
+with the conversion above. The response then reports `screenshot.scope:"clip"`
+and the captured `screenshot.clip`, and image pixels map back to the viewport
+with `css_x = clip.x + img_x * pixel_to_css_scale_x` and
+`css_y = clip.y + img_y * pixel_to_css_scale_y`. A region that runs past the
+right or bottom edge is cut to the viewport (`clip_clamped:true`). A region
+with no visible part refuses with `invalid_arguments`, so scroll it into view
+first. The capture shows the rendered pixels: content behind an overlay keeps
+the overlay's tint.
+
+```text
+get_browser_state
+  '{"target_id":"<target>","tab_id":"<tab>","session":"browser-run-1",
+    "include_snapshot":false,"include_screenshot":true,
+    "screenshot_format":"jpeg","screenshot_clip":
+    {"x":0,"y":0,"width":640,"height":180}}'
+```
+
+From the CLI, add `--screenshot-out-file /absolute/run-dir/page.jpg` to write
+the image to a file instead of printing it as base64.
 
 Cua Driver captures the exact tab viewport through CDP. It does not select the
 tab or foreground the browser window. Capture is opt-in because authenticated

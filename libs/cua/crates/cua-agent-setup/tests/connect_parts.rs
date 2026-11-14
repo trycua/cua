@@ -6,6 +6,8 @@
 
 mod common;
 
+use common::JoinRel;
+
 use cua_agent_setup::{
     AgentSetup, HostEnv, ImportedSignIn, McpServer, SignInCopy, SignInVault,
     connection::{
@@ -56,7 +58,7 @@ impl World {
         let cua = common::write_script(&bin, "cua", "exit 0");
         let bundled = dir
             .path()
-            .join("Applications/Cua Spaces.app/Contents/Helpers/cua-driver");
+            .rel("Applications/Cua Spaces.app/Contents/Helpers/cua-driver");
         std::fs::create_dir_all(bundled.parent().unwrap()).unwrap();
         common::write_executable(&bundled, "#!/bin/sh\nexit 0\n");
         let mut env = HostEnv::isolated(&home);
@@ -82,7 +84,7 @@ impl World {
 
     /// The bundled driver's entry, as Cua Spaces for macOS writes it.
     fn driver(&self, permissions: Option<bool>) -> DriverTarget {
-        let socket = self.home.join(".cua/run/cua-driver.sock");
+        let socket = self.home.rel(".cua/run/cua-driver.sock");
         DriverTarget {
             server: McpServer {
                 args: vec![
@@ -127,7 +129,7 @@ impl World {
     }
 
     fn codex_config(&self) -> String {
-        std::fs::read_to_string(self.home.join(".codex/config.toml")).unwrap_or_default()
+        std::fs::read_to_string(self.home.rel(".codex/config.toml")).unwrap_or_default()
     }
 }
 
@@ -203,10 +205,10 @@ fn the_driver_entry_runs_the_bundled_cua_driver_never_the_standalone_app() {
         .collect();
     assert_eq!(&args[..2], ["mcp", "--embedded"]);
     // Recorded like Cua's own entry, so it can be removed exactly.
-    let state = std::fs::read_to_string(w.home.join(".cua/agent-setup.json")).unwrap();
+    let state = std::fs::read_to_string(w.home.rel(".cua/agent-setup.json")).unwrap();
     assert!(state.contains("cua-driver"), "{state}");
     // And Cua's skill for it is there.
-    assert!(w.home.join(".agents/skills/cua-driver/SKILL.md").exists());
+    assert!(w.home.rel(".agents/skills/cua-driver/SKILL.md").exists());
 }
 
 #[test]
@@ -227,7 +229,7 @@ fn permissions_off_writes_the_entry_and_says_what_to_allow() {
 fn a_missing_bundled_driver_fails_its_row_only_and_writes_nothing_for_it() {
     let w = World::new();
     let mut d = w.driver(Some(true));
-    d.server.command = w.home.join("gone/cua-driver").display().to_string();
+    d.server.command = w.home.rel("gone/cua-driver").display().to_string();
     let r = w.connect(TOOLS_AND_DRIVER, Some(&d));
     let dr = part(&r, Part::Driver);
     assert_eq!(dr.status, PartStatus::Failed);
@@ -257,7 +259,7 @@ fn a_missing_bundled_driver_fails_its_row_only_and_writes_nothing_for_it() {
 #[test]
 fn a_config_cua_cant_read_fails_with_the_file_and_the_reason() {
     let w = World::new();
-    std::fs::write(w.home.join(".codex/config.toml"), "this is = = not toml [").unwrap();
+    std::fs::write(w.home.rel(".codex/config.toml"), "this is = = not toml [").unwrap();
     let r = w.connect(TOOLS_AND_DRIVER, Some(&w.driver(Some(true))));
     let m = part(&r, Part::Mcp);
     assert_eq!(m.status, PartStatus::Failed);
@@ -317,7 +319,7 @@ fn the_sign_in_row_says_where_it_went_or_why_not() {
         "refreshToken": "sk-ant-ort01-FAKE", "expiresAt": 4_102_444_800_000u64,
         "scopes": ["user:inference"], "subscriptionType": "max"
     }});
-    std::fs::write(w.home.join(".claude/.credentials.json"), creds.to_string()).unwrap();
+    std::fs::write(w.home.rel(".claude/.credentials.json"), creds.to_string()).unwrap();
     std::fs::write(
         w.home.join(".claude.json"),
         r#"{"oauthAccount":{"emailAddress":"ada@example.com"}}"#,

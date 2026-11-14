@@ -6,6 +6,8 @@
 
 mod common;
 
+use common::JoinRel;
+
 use cua_agent_setup::{AGENTS, AgentSetup, Change, HostEnv, McpServer, Parts, Target};
 use std::path::{Path, PathBuf};
 
@@ -78,7 +80,7 @@ fn every_agent_with_a_skills_folder_gets_the_driver_skill_by_default() {
         assert_eq!(skill[0].change, Change::Created, "{}: {out:#?}", agent.id);
         assert_eq!(skill[0].path, skills_dir.join("cua-driver"), "{}", agent.id);
         let md =
-            std::fs::read_to_string(skills_dir.join("cua-driver/SKILL.md")).unwrap_or_else(|e| {
+            std::fs::read_to_string(skills_dir.rel("cua-driver/SKILL.md")).unwrap_or_else(|e| {
                 panic!("{}: no SKILL.md in {}: {e}", agent.id, skills_dir.display())
             });
         assert!(md.contains("\nname: cua-driver\n"), "{}", agent.id);
@@ -142,7 +144,7 @@ fn skills_only_installs_the_skill_without_touching_mcp_config() {
     assert!(out.iter().all(|o| o.target == Target::Skill), "{out:#?}");
     assert!(
         home.path
-            .join(".claude/skills/cua-driver/SKILL.md")
+            .rel(".claude/skills/cua-driver/SKILL.md")
             .is_file()
     );
     assert!(!home.path.join(".claude.json").exists());

@@ -451,7 +451,7 @@ fn hermes_home(env: &HostEnv) -> PathBuf {
         let local = env
             .var("LOCALAPPDATA")
             .map(PathBuf::from)
-            .unwrap_or_else(|| env.home.join("AppData/Local"));
+            .unwrap_or_else(|| env.home.join("AppData").join("Local"));
         return local.join("hermes");
     }
     env.home.join(".hermes")

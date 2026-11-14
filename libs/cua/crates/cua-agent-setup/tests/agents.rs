@@ -3,6 +3,8 @@
 
 mod common;
 
+use common::JoinRel;
+
 use cua_agent_setup::{
     AGENTS, AgentSetup, Change, Format, HostEnv, McpServer, Outcome, Parts, Target, registry,
 };
@@ -31,7 +33,7 @@ impl T {
         AgentSetup::new(self.env.clone())
     }
     fn write(&self, rel: &str, text: &str) -> PathBuf {
-        let p = self.home.join(rel);
+        let p = self.home.rel(rel);
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(&p, text).unwrap();
         p
@@ -76,10 +78,10 @@ fn windows_gui_finds_claude_in_user_install_dirs_without_path() {
     assert_eq!(
         t.env.well_known_bin_dirs(),
         vec![
-            t.home.join(".local/bin"),
-            t.home.join("AppData/Roaming/npm"),
-            t.home.join(".bun/bin"),
-            t.home.join(".cargo/bin"),
+            t.home.rel(".local/bin"),
+            t.home.rel("AppData/Roaming/npm"),
+            t.home.rel(".bun/bin"),
+            t.home.rel(".cargo/bin"),
         ]
     );
     let roaming = t.home.join("roaming");
@@ -99,12 +101,12 @@ fn windows_gui_finds_claude_in_user_install_dirs_without_path() {
     std::fs::remove_file(exe).unwrap();
     assert_eq!(
         t.env.which("claude"),
-        Some(t.home.join(".local/bin/claude.cmd"))
+        Some(t.home.rel(".local/bin/claude.cmd"))
     );
-    std::fs::remove_file(t.home.join(".local/bin/claude.cmd")).unwrap();
+    std::fs::remove_file(t.home.rel(".local/bin/claude.cmd")).unwrap();
     assert_eq!(
         t.env.which("claude"),
-        Some(t.home.join(".local/bin/claude.bat"))
+        Some(t.home.rel(".local/bin/claude.bat"))
     );
     t.env.path.insert(0, t.home.join("inherited"));
     let inherited = t.write("inherited/claude.exe", "MZ");
@@ -118,11 +120,11 @@ fn windows_gui_finds_claude_in_user_install_dirs_without_path() {
     assert_eq!(
         t.env.well_known_bin_dirs(),
         vec![
-            t.home.join(".local/bin"),
-            t.home.join(".claude/local"),
-            t.home.join(".npm-global/bin"),
-            t.home.join(".bun/bin"),
-            t.home.join(".cargo/bin"),
+            t.home.rel(".local/bin"),
+            t.home.rel(".claude/local"),
+            t.home.rel(".npm-global/bin"),
+            t.home.rel(".bun/bin"),
+            t.home.rel(".cargo/bin"),
             PathBuf::from("/opt/homebrew/bin"),
             PathBuf::from("/usr/local/bin"),
         ]
@@ -373,13 +375,13 @@ fn missing_configs_are_created_with_private_permissions() {
             assert_eq!(mode & 0o777, 0o600, "{}", o.path.display());
         }
     }
-    let codex = t.read(&t.home.join(".codex/config.toml"));
+    let codex = t.read(&t.home.rel(".codex/config.toml"));
     assert_eq!(
         codex,
         "[mcp_servers.cua]\ncommand = \"/opt/cua/bin/cua\"\nargs = [\"mcp\"]\n"
     );
     let oc: Value =
-        serde_json::from_str(&t.read(&t.home.join(".config/opencode/opencode.json"))).unwrap();
+        serde_json::from_str(&t.read(&t.home.rel(".config/opencode/opencode.json"))).unwrap();
     assert_eq!(
         oc["mcp"]["cua"],
         json!({"type": "local", "command": ["/opt/cua/bin/cua", "mcp"], "enabled": true})
@@ -468,7 +470,7 @@ fn a_foreign_cua_entry_is_restored_on_remove_and_user_edits_are_respected() {
     let t = T::new();
     let s = t.setup();
     s.configure_mcp(&ids(&["gemini-cli"]), &server()).unwrap();
-    let file = t.home.join(".gemini/settings.json");
+    let file = t.home.rel(".gemini/settings.json");
     let edited = "{\"mcpServers\": {\"cua\": {\"command\": \"/opt/cua/bin/cua\", \"args\": [\"mcp\", \"--permissions\", \"sandbox:all\"]}}}";
     std::fs::write(&file, edited).unwrap();
     let o = one(s.remove(&ids(&["gemini-cli"]), Parts::ALL).unwrap());
@@ -484,8 +486,8 @@ fn a_foreign_cua_entry_is_restored_on_remove_and_user_edits_are_respected() {
 #[test]
 fn agent_overrides_and_xdg_are_honored() {
     let mut t = T::new();
-    let codex_home = t.home.join("elsewhere/codex");
-    let claude_dir = t.home.join("elsewhere/claude");
+    let codex_home = t.home.rel("elsewhere/codex");
+    let claude_dir = t.home.rel("elsewhere/claude");
     let xdg = t.home.join("xdg");
     t.env
         .vars
@@ -509,14 +511,14 @@ fn agent_overrides_and_xdg_are_honored() {
         [
             codex_home.join("config.toml"),
             claude_dir.join(".claude.json"),
-            xdg.join("opencode/opencode.json"),
-            xdg.join("amp/settings.json"),
+            xdg.rel("opencode/opencode.json"),
+            xdg.rel("amp/settings.json"),
         ]
     );
     let skills = s
         .install_skills(&ids(&["claude-code"]), &ids(&["cua-spaces"]), false)
         .unwrap();
-    assert_eq!(one(skills).path, claude_dir.join("skills/cua-spaces"));
+    assert_eq!(one(skills).path, claude_dir.rel("skills/cua-spaces"));
     // CUA_HOME moves the state file.
     t.env.vars.insert(
         "CUA_HOME".into(),
@@ -524,7 +526,7 @@ fn agent_overrides_and_xdg_are_honored() {
     );
     assert_eq!(
         t.setup().state_path(),
-        t.home.join("cuahome/agent-setup.json")
+        t.home.rel("cuahome/agent-setup.json")
     );
 }
 
@@ -538,7 +540,7 @@ fn opencode_prefers_an_existing_jsonc_file() {
         .unwrap());
     assert_eq!(o.path, file);
     assert!(t.read(&file).contains("// keep"));
-    assert!(!t.home.join(".config/opencode/opencode.json").exists());
+    assert!(!t.home.rel(".config/opencode/opencode.json").exists());
 }
 
 #[cfg(unix)]
@@ -547,7 +549,7 @@ fn a_symlinked_config_is_edited_through_the_link() {
     let t = T::new();
     let real = t.write("dotfiles/mcp.json", "{\"mcpServers\": {}}");
     std::fs::create_dir_all(t.home.join(".cursor")).unwrap();
-    let link = t.home.join(".cursor/mcp.json");
+    let link = t.home.rel(".cursor/mcp.json");
     std::os::unix::fs::symlink(&real, &link).unwrap();
     t.setup()
         .configure_mcp(&ids(&["cursor"]), &server())
@@ -580,9 +582,12 @@ fn detection_uses_path_markers_and_app_bundles() {
         // A non-executable file is not a binary.
         std::fs::write(bin.join("claude"), "").unwrap();
     }
+    // Windows has no execute bit: any codex.exe is the binary.
+    #[cfg(not(unix))]
+    std::fs::write(&codex, "MZ").unwrap();
     t.env.path = vec![bin.clone()];
     std::fs::create_dir_all(t.home.join(".kiro")).unwrap();
-    std::fs::create_dir_all(t.home.join("Applications/Cursor.app")).unwrap();
+    std::fs::create_dir_all(t.home.rel("Applications/Cursor.app")).unwrap();
     let s = t.setup();
     let st = s.detect();
     let get = |id: &str| st.iter().find(|a| a.id == id).unwrap();
@@ -628,12 +633,12 @@ fn skills_install_once_per_shared_dir_and_remove_only_when_unused() {
         out.iter()
             .all(|o| o.change == Change::Created && o.target == Target::Skill)
     );
-    let shared = t.home.join(".agents/skills");
+    let shared = t.home.rel(".agents/skills");
     for sk in &bundled {
         assert!(shared.join(&sk.name).join("SKILL.md").is_file());
         assert!(
             t.home
-                .join(".claude/skills")
+                .rel(".claude/skills")
                 .join(&sk.name)
                 .join("SKILL.md")
                 .is_file()
@@ -658,15 +663,15 @@ fn skills_install_once_per_shared_dir_and_remove_only_when_unused() {
     assert!(shared.join("cua-volume").is_dir());
 
     // A user edit survives removal.
-    std::fs::write(shared.join("cua-spaces/NOTES.md"), "mine").unwrap();
+    std::fs::write(shared.rel("cua-spaces/NOTES.md"), "mine").unwrap();
     s.remove(&ids(&["gemini-cli", "pi"]), Parts::ALL).unwrap();
     assert!(!shared.join("cua-volume").exists());
-    assert!(shared.join("cua-spaces/NOTES.md").is_file());
+    assert!(shared.rel("cua-spaces/NOTES.md").is_file());
     // Cua Driver's skill is not Cua Spaces': removing Spaces' entries leaves
     // it, here and in Claude's copies (untouched by removing other agents).
     assert!(shared.join("cua-driver").is_dir());
-    assert!(t.home.join(".claude/skills/cua-volume").is_dir());
-    assert!(t.home.join(".claude/skills/cua-driver").is_dir());
+    assert!(t.home.rel(".claude/skills/cua-volume").is_dir());
+    assert!(t.home.rel(".claude/skills/cua-driver").is_dir());
 }
 
 #[test]
@@ -674,8 +679,8 @@ fn agents_that_also_read_claude_skills_are_served_from_there() {
     let t = T::new();
     let s = t.setup();
     let n = s.bundled_skills().len();
-    let claude = t.home.join(".claude/skills");
-    let shared = t.home.join(".agents/skills");
+    let claude = t.home.rel(".claude/skills");
+    let shared = t.home.rel(".agents/skills");
 
     // Claude Code + Cursor: one copy, in ~/.claude/skills (Cursor loads it).
     let out = s
@@ -701,7 +706,7 @@ fn agents_that_also_read_claude_skills_are_served_from_there() {
 
     // Codex does not read ~/.claude/skills: it gets the shared directory.
     s.install_skills(&ids(&["codex"]), &[], false).unwrap();
-    assert!(shared.join("cua-driver/SKILL.md").is_file());
+    assert!(shared.rel("cua-driver/SKILL.md").is_file());
 
     // Removing Claude Code keeps the copies Cursor and OpenCode use.
     s.remove(&ids(&["claude-code"]), Parts::ALL).unwrap();
@@ -777,7 +782,7 @@ fn update_refreshes_outdated_copies_cua_wrote() {
     let s = t.setup();
     s.install_skills(&ids(&["cline"]), &ids(&["cua-sandboxes"]), false)
         .unwrap();
-    let dest = t.home.join(".cline/skills/cua-sandboxes");
+    let dest = t.home.rel(".cline/skills/cua-sandboxes");
     // Pretend an older cua wrote an older version: change the content and
     // record its hash as the one cua wrote.
     std::fs::write(
@@ -813,7 +818,7 @@ fn a_skill_the_user_installed_another_way_is_not_outdated() {
     let s = t.setup();
     s.install_skills(&ids(&["cline"]), &ids(&["cua-sandboxes"]), false)
         .unwrap();
-    let dest = t.home.join(".cline/skills/cua-sandboxes");
+    let dest = t.home.rel(".cline/skills/cua-sandboxes");
     // Another installer replaced it with different content that cua never
     // wrote: setup skips it without --force, so it can never match the
     // bundled copy and must not keep the agent in "not set up".
@@ -879,10 +884,10 @@ fn state_file_records_what_cua_wrote() {
         .unwrap();
     let state: Value = serde_json::from_str(&t.read(s.state_path())).unwrap();
     assert_eq!(state["version"], 1);
-    let file = t.home.join(".kiro/settings/mcp.json").display().to_string();
+    let file = t.home.rel(".kiro/settings/mcp.json").display().to_string();
     assert_eq!(state["mcp"][&file]["value"]["command"], "/opt/cua/bin/cua");
     assert_eq!(state["mcp"][&file]["agents"], json!(["kiro"]));
-    let dir = t.home.join(".kiro/skills/cua-spaces").display().to_string();
+    let dir = t.home.rel(".kiro/skills/cua-spaces").display().to_string();
     assert_eq!(state["skills"][&dir]["skill"], "cua-spaces");
     // Pi supports skills only; MCP is skipped with a reason.
     let o = one(s.configure_mcp(&ids(&["pi"]), &server()).unwrap());
@@ -900,7 +905,7 @@ fn cua_driver_setup_adds_its_skill_and_server_beside_cua_and_removes_both() {
     let agents = ids(&["claude-code", "codex", "pi"]);
     s.configure_mcp(&ids(&["claude-code"]), &server()).unwrap();
 
-    let exe = fake_driver(&t.home.join("opt/drv/bin/cua-driver"), true);
+    let exe = fake_driver(&t.home.rel("opt/drv/bin/cua-driver"), true);
     let exe_s = exe.display().to_string();
     let driver = McpServer::driver(exe_s.as_str());
     assert_eq!(driver.name, cua_agent_setup::DRIVER_MCP_SERVER_NAME);
@@ -917,8 +922,8 @@ fn cua_driver_setup_adds_its_skill_and_server_beside_cua_and_removes_both() {
             .all(|o| o.item == "cua-driver" && o.change == Change::Created),
         "{skills:#?}"
     );
-    assert!(t.home.join(".claude/skills/cua-driver/SKILL.md").is_file());
-    assert!(!t.home.join(".claude/skills/cua-spaces").exists());
+    assert!(t.home.rel(".claude/skills/cua-driver/SKILL.md").is_file());
+    assert!(!t.home.rel(".claude/skills/cua-spaces").exists());
     // The MCP server for the agents that have MCP (Pi has none: no row).
     let mcp: Vec<&Outcome> = out.iter().filter(|o| o.target == Target::Mcp).collect();
     assert_eq!(mcp.len(), 2, "{mcp:#?}");
@@ -984,7 +989,7 @@ fn cua_driver_setup_adds_its_skill_and_server_beside_cua_and_removes_both() {
     assert!(cua_agent_setup_get(m.format, &file, &left, m.key_path, "cua").is_none());
     assert!(cua_agent_setup_get(m.format, &file, &left, m.key_path, "cua-driver").is_some());
     assert!(cua_agent_setup_get(m.format, &file, &left, m.key_path, "other").is_some());
-    assert!(t.home.join(".claude/skills/cua-driver/SKILL.md").is_file());
+    assert!(t.home.rel(".claude/skills/cua-driver/SKILL.md").is_file());
     let state: Value = serde_json::from_str(&t.read(s.state_path())).unwrap();
     assert!(state["servers"]["cua-driver"][&key].is_object(), "{state}");
 
@@ -1011,7 +1016,7 @@ fn cua_driver_setup_adds_its_skill_and_server_beside_cua_and_removes_both() {
     let left = t.read(&file);
     assert!(cua_agent_setup_get(m.format, &file, &left, m.key_path, "cua-driver").is_none());
     assert!(cua_agent_setup_get(m.format, &file, &left, m.key_path, "other").is_some());
-    assert!(!t.home.join(".claude/skills/cua-driver").exists());
+    assert!(!t.home.rel(".claude/skills/cua-driver").exists());
     let state: Value = serde_json::from_str(&t.read(s.state_path())).unwrap();
     assert!(state.get("servers").is_none(), "{state}");
 
@@ -1026,7 +1031,7 @@ fn cua_driver_setup_adds_its_skill_and_server_beside_cua_and_removes_both() {
 fn the_driver_command_resolves_from_path_then_local_bin() {
     let t = T::new();
     assert_eq!(McpServer::driver_for(&t.env).command, "cua-driver");
-    let bin = t.home.join(".local/bin");
+    let bin = t.home.rel(".local/bin");
     std::fs::create_dir_all(&bin).unwrap();
     let exe = bin.join(if cfg!(windows) {
         "cua-driver.exe"
@@ -1073,9 +1078,9 @@ fn a_missing_cua_driver_fails_with_a_reason_and_leaves_configs_alone() {
     assert!(mcp[0].detail.contains("isn't installed"), "{mcp:#?}");
     assert_eq!(t.read(&file), text);
     // The skill still installs.
-    assert!(t.home.join(".claude/skills/cua-driver/SKILL.md").is_file());
+    assert!(t.home.rel(".claude/skills/cua-driver/SKILL.md").is_file());
     // An absolute path that doesn't exist fails the same way.
-    let gone = McpServer::driver(t.home.join("nope/cua-driver").display().to_string());
+    let gone = McpServer::driver(t.home.rel("nope/cua-driver").display().to_string());
     let out = s
         .setup_cua_driver(
             &ids(&["claude-code"]),
@@ -1098,7 +1103,7 @@ fn a_cua_driver_that_does_not_answer_mcp_fails() {
     let t = T::new();
     let (rel, text) = fixture("claude-code");
     let file = t.write(rel, &text);
-    let exe = fake_driver(&t.home.join(".local/bin/cua-driver"), false);
+    let exe = fake_driver(&t.home.rel(".local/bin/cua-driver"), false);
     let o = one(t
         .setup()
         .setup_cua_driver(
@@ -1133,9 +1138,9 @@ fn set_up_again_repairs_a_bare_cua_driver_entry() {
     let entry = cua_agent_setup_get(m.format, &file, &before, m.key_path, "cua-driver").unwrap();
     assert_eq!(entry["command"], "cua-driver");
 
-    let exe = fake_driver(&t.home.join(".local/bin/cua-driver"), true);
+    let exe = fake_driver(&t.home.rel(".local/bin/cua-driver"), true);
     let mut env = t.env.clone();
-    env.path = vec![t.home.join(".local/bin")];
+    env.path = vec![t.home.rel(".local/bin")];
     let s = AgentSetup::new(env.clone());
     // The bare name resolves to the installed binary, checked, then written.
     for driver in [McpServer::driver("cua-driver"), McpServer::driver_for(&env)] {
@@ -1170,7 +1175,7 @@ fn cua_driver_is_found_inside_its_app_on_macos() {
     env.os = cua_agent_setup::Os::MacOs;
     let exe = t
         .home
-        .join("Applications/CuaDriver.app/Contents/MacOS/cua-driver");
+        .rel("Applications/CuaDriver.app/Contents/MacOS/cua-driver");
     std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
     #[cfg(unix)]
     common::write_executable(&exe, "#!/bin/sh\n");
@@ -1202,7 +1207,7 @@ fn hermes_is_detected_from_its_bin_home_or_app() {
     assert_eq!(registry::find("hermes-agent").unwrap().id, "hermes");
 
     // The `hermes` launcher on PATH (the installer's ~/.local/bin/hermes).
-    let bin = t.home.join(".local/bin");
+    let bin = t.home.rel(".local/bin");
     std::fs::create_dir_all(&bin).unwrap();
     let exe = bin.join(if cfg!(windows) {
         "hermes.exe"
@@ -1228,14 +1233,14 @@ fn hermes_is_detected_from_its_bin_home_or_app() {
     std::fs::remove_dir_all(t.home.join(hermes_rel(""))).unwrap();
 
     // Hermes.app (macOS only).
-    std::fs::create_dir_all(t.home.join("Applications/Hermes.app")).unwrap();
+    std::fs::create_dir_all(t.home.rel("Applications/Hermes.app")).unwrap();
     assert_eq!(get(&t.setup()).installed, cfg!(target_os = "macos"));
 }
 
 #[test]
 fn hermes_follows_hermes_home_and_the_windows_default() {
     let mut t = T::new();
-    let hh = t.home.join("profiles/work");
+    let hh = t.home.rel("profiles/work");
     t.env
         .vars
         .insert("HERMES_HOME".into(), hh.display().to_string());
@@ -1246,7 +1251,7 @@ fn hermes_follows_hermes_home_and_the_windows_default() {
     let skills = s
         .install_skills(&ids(&["hermes"]), &ids(&["cua-spaces"]), false)
         .unwrap();
-    assert_eq!(one(skills).path, hh.join("skills/cua-spaces"));
+    assert_eq!(one(skills).path, hh.rel("skills/cua-spaces"));
     let st = s.detect().into_iter().find(|a| a.id == "hermes").unwrap();
     assert!(st.installed, "HERMES_HOME exists now: {st:?}");
 
@@ -1386,14 +1391,14 @@ fn hermes_gets_its_own_skill_copies() {
     );
     assert!(!dir.join("cua-spaces").exists());
     assert!(dir.join("cua-driver").is_dir(), "Cua Driver's stays");
-    assert!(t.home.join(".agents/skills/cua-spaces/SKILL.md").is_file());
+    assert!(t.home.rel(".agents/skills/cua-spaces/SKILL.md").is_file());
 }
 
 #[test]
 fn the_docs_and_readme_list_every_agent() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let docs = std::fs::read_to_string(
-        root.join("../../../../docs/content/docs/cua-cli/guides/mcp-server.mdx"),
+        root.rel("../../../../docs/content/docs/cua-cli/guides/mcp-server.mdx"),
     )
     .unwrap();
     let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
@@ -1455,7 +1460,7 @@ fn sign_in_runs_the_agents_own_login_and_detect_sees_it() {
     let mut t = T::new();
     let bin = t.home.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    let auth = t.home.join(".codex/auth.json");
+    let auth = t.home.rel(".codex/auth.json");
     let log = t.home.join("codex-argv.log");
     // A fake `codex`: records its argv and signs in inside the temp home.
     let script = format!(

@@ -71,6 +71,7 @@ fn def() -> &'static ToolDef {
                 "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it." },
                 "pid":  { "type": "integer", "description": "Target process ID." },
                 "text": { "type": "string",  "description": "Text to insert." },
+                "literal": { "type": "boolean", "description": "Type text exactly as given; by default a trailing run of unbalanced agent-protocol closing tags is dropped." },
                 "window_id": {
                     "type": "integer",
                     "description": "Window ID. Omit with element_token."
@@ -142,9 +143,8 @@ impl Tool for TypeTextTool {
                 Ok(input) => input,
                 Err(result) => return result,
             };
-            let text =
-                cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&input.text)
-                    .into_owned();
+            let text = cua_driver_core::text_sanitize::strip_unless_literal(&input.text, &args)
+                .into_owned();
             let delay_ms = args.u64_or("delay_ms", DEFAULT_DELAY_MS).min(200);
             if let Some(refusal) = synthesis_preflight(
                 TextDeliveryRoute::UnicodeSynthesis,
@@ -186,8 +186,8 @@ impl Tool for TypeTextTool {
         };
         // Strip trailing agent-protocol closing tags — see
         // cua_driver_core::text_sanitize docs for rationale.
-        let text = cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
-            .into_owned();
+        let text =
+            cua_driver_core::text_sanitize::strip_unless_literal(&text_raw, &args).into_owned();
         let window_id_arg = args.opt_u64("window_id");
         let resolved = match self.state.snapshots.resolve(pid, &args) {
             Ok(r) => r,

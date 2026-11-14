@@ -917,6 +917,10 @@
       "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
+     "literal": {
+      "description": "Type text exactly as given; by default a trailing run of unbalanced agent-protocol closing tags is dropped.",
+      "type": "boolean"
+     },
      "pid": {
       "description": "Target process ID.",
       "type": "integer"

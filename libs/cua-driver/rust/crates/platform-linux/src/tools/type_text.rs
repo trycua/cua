@@ -253,6 +253,7 @@ impl Tool for TypeTextTool {
                     "window_id":{"type":"integer","description":"Window id from list_windows. Required with x/y; optional with element_token (the token carries it)."},
                     "text":{"type":"string","description":"Text to type."},
                     "delay_ms":{"type":"integer","minimum":0,"maximum":200,"description":"Milliseconds between characters. Default 0 sends batched key events (up to 16 per batch; Return and Tab stay real key presses). A positive value sends one key per character with this pause, for debounced search boxes and autocomplete."},
+                    "literal":{"type":"boolean","description":"Type text exactly as given; by default a trailing run of unbalanced agent-protocol closing tags is dropped."},
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
                     "x":{"type":"number","description":"Pixel X of the field to type into — the element px action form. Pass x,y (no element_token) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the AX path can't reach. Window-local pixels of the target window's own get_window_state screenshot by default (same convention as click); for get_desktop_state pixels pass scope:\"desktop\" (or coordinate_frame:\"desktop\") — a bare pid+x/y is otherwise misinterpreted as window-local and can focus the wrong widget."},
                     "y":{"type":"number","description":"Pixel Y of the field (see x)."},
@@ -276,9 +277,8 @@ impl Tool for TypeTextTool {
                 Ok(input) => input,
                 Err(result) => return result,
             };
-            let text =
-                cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&input.text)
-                    .into_owned();
+            let text = cua_driver_core::text_sanitize::strip_unless_literal(&input.text, &args)
+                .into_owned();
             position_named_session_keyboard_cursor(&self.state, &args, 0, 0, None, None, false)
                 .await;
             let wayland = crate::wayland::is_wayland();
@@ -311,8 +311,8 @@ impl Tool for TypeTextTool {
         };
         // Strip trailing agent-protocol closing tags — see
         // cua_driver_core::text_sanitize docs for rationale.
-        let text = cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
-            .into_owned();
+        let text =
+            cua_driver_core::text_sanitize::strip_unless_literal(&text_raw, &args).into_owned();
         let resolved = match self.state.snapshots.resolve(pid as i32, &args) {
             Ok(r) => r,
             Err(e) => return e,

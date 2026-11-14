@@ -396,7 +396,7 @@ fn with_tab_screenshot(mut result: ToolResult, screenshot: BrowserTabScreenshot)
         structured["screenshot"] = json!({
             "source": "cdp_tab",
             "scope": "viewport",
-            "mime_type": "image/png",
+            "mime_type": screenshot.mime_type,
             "width": screenshot.width,
             "height": screenshot.height,
             "coordinate_space": "viewport_css_px",
@@ -409,12 +409,69 @@ fn with_tab_screenshot(mut result: ToolResult, screenshot: BrowserTabScreenshot)
         });
         structured["screenshot_width"] = json!(screenshot.width);
         structured["screenshot_height"] = json!(screenshot.height);
-        structured["screenshot_mime_type"] = json!("image/png");
+        structured["screenshot_mime_type"] = json!(screenshot.mime_type);
     }
+    let image = if screenshot.mime_type == "image/jpeg" {
+        Content::image_jpeg(screenshot.data_base64)
+    } else {
+        Content::image_png(screenshot.data_base64)
+    };
+    result.content.insert(0, image);
     result
-        .content
-        .insert(0, Content::image_png(screenshot.data_base64));
-    result
+}
+
+/// Screenshot encoding fields of `get_browser_state`. They apply only to a
+/// snapshot-mode call that sets `include_screenshot: true`.
+const SCREENSHOT_OPTION_FIELDS: [&str; 3] = [
+    "screenshot_format",
+    "screenshot_quality",
+    "max_image_dimension",
+];
+
+fn invalid_browser_state_arguments(detail: impl Into<String>) -> ToolResult {
+    let detail = detail.into();
+    ToolResult::error(format!("get_browser_state: {detail}")).with_structured(json!({
+        "code": "invalid_arguments",
+        "tool": "get_browser_state",
+        "detail": detail,
+    }))
+}
+
+fn present(args: &Value, field: &str) -> bool {
+    args.get(field).is_some_and(|value| !value.is_null())
+}
+
+fn screenshot_options_present(args: &Value) -> bool {
+    SCREENSHOT_OPTION_FIELDS
+        .iter()
+        .any(|field| present(args, field))
+}
+
+/// Resolve the long-edge cap and encoding for a requested tab screenshot.
+/// Omitted fields keep the native-resolution PNG.
+fn screenshot_request(
+    args: &Value,
+) -> Result<(u32, crate::image_utils::ScreenshotEncoding), ToolResult> {
+    let encoding = crate::image_utils::ScreenshotEncoding::from_args(
+        "screenshot_format",
+        args.get("screenshot_format"),
+        "screenshot_quality",
+        args.get("screenshot_quality"),
+    )
+    .map_err(invalid_browser_state_arguments)?;
+    let max_dim = match args.get("max_image_dimension") {
+        None | Some(Value::Null) => 0,
+        Some(value) => value
+            .as_u64()
+            .and_then(|dim| u32::try_from(dim).ok())
+            .ok_or_else(|| {
+                invalid_browser_state_arguments(format!(
+                    "max_image_dimension must be an integer from 0 to {}, got {value}",
+                    u32::MAX
+                ))
+            })?,
+    };
+    Ok((max_dim, encoding))
 }
 
 // ── get_browser_state ────────────────────────────────────────────────────────
@@ -470,7 +527,23 @@ impl GetBrowserStateTool {
                     "include_screenshot": {
                         "type": "boolean",
                         "default": false,
-                        "description": "Capture the exact tab viewport as PNG through CDP without selecting the tab or foregrounding its native window. The request refuses if capture cannot be completed."
+                        "description": "Capture the exact tab viewport through CDP without selecting the tab or foregrounding its native window. Snapshot mode only. The request refuses if capture cannot be completed."
+                    },
+                    "screenshot_format": {
+                        "type": "string",
+                        "enum": ["png", "jpeg"],
+                        "description": "Encoding of the requested screenshot: \"png\" (default) or \"jpeg\". Requires include_screenshot:true."
+                    },
+                    "screenshot_quality": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 95,
+                        "description": "JPEG quality, 1-95, with screenshot_format:\"jpeg\" only. Default 85."
+                    },
+                    "max_image_dimension": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Long-edge cap for the requested screenshot, in pixels. Omitted or 0 returns the native viewport resolution. pixel_to_css_scale_x/y describe the delivered image. Requires include_screenshot:true."
                     },
                 },
                 "additionalProperties": true
@@ -517,6 +590,15 @@ impl Tool for GetBrowserStateTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        let include_screenshot = match args.get("include_screenshot") {
+            None => false,
+            Some(Value::Bool(include)) => *include,
+            Some(_) => {
+                return ToolResult::error(
+                    "Field include_screenshot has wrong type: expected boolean",
+                )
+            }
+        };
         // Snapshot mode: target_id (+ tab_id) — uses existing capabilities.
         if let Some(target_id) = args.opt_str("target_id") {
             let session = match require_explicit_session(&args) {
@@ -533,18 +615,19 @@ impl Tool for GetBrowserStateTool {
                     .to_tool_result()
                 }
             };
+            if screenshot_options_present(&args) && !include_screenshot {
+                return invalid_browser_state_arguments(
+                    "screenshot_format, screenshot_quality, and max_image_dimension \
+                     apply only with include_screenshot: true",
+                );
+            }
+            let (max_dim, encoding) = match screenshot_request(&args) {
+                Ok(request) => request,
+                Err(error) => return error,
+            };
             let snapshot_format = args
                 .opt_str("snapshot_format")
                 .unwrap_or_else(|| "dom_refs_v1".into());
-            let include_screenshot = match args.get("include_screenshot") {
-                None => false,
-                Some(Value::Bool(include)) => *include,
-                Some(_) => {
-                    return ToolResult::error(
-                        "Field include_screenshot has wrong type: expected boolean",
-                    )
-                }
-            };
             if snapshot_format != "dom_refs_v1" && snapshot_format != "semantic_v2" {
                 return ToolResult::error(format!(
                     "snapshot_format must be \"dom_refs_v1\" or \"semantic_v2\", got {snapshot_format:?}"
@@ -634,7 +717,7 @@ impl Tool for GetBrowserStateTool {
                 if include_screenshot {
                     return match self
                         .engine
-                        .capture_tab_screenshot(&session, &target_id, &tab_id)
+                        .capture_tab_screenshot(&session, &target_id, &tab_id, max_dim, encoding)
                         .await
                     {
                         Ok(screenshot) => with_tab_screenshot(snapshot, screenshot),
@@ -687,7 +770,7 @@ impl Tool for GetBrowserStateTool {
             if include_screenshot {
                 return match self
                     .engine
-                    .capture_tab_screenshot(&session, &target_id, &tab_id)
+                    .capture_tab_screenshot(&session, &target_id, &tab_id, max_dim, encoding)
                     .await
                 {
                     Ok(screenshot) => with_tab_screenshot(snapshot, screenshot),
@@ -697,7 +780,20 @@ impl Tool for GetBrowserStateTool {
             return snapshot;
         }
 
-        // Bind mode: pid + window_id.
+        // Bind mode: pid + window_id. Binding never captures, so a capture
+        // request refuses instead of silently returning no image.
+        if include_screenshot {
+            return invalid_browser_state_arguments(
+                "include_screenshot requires snapshot mode: call get_browser_state \
+                 again with the returned target_id and tab_id",
+            );
+        }
+        if screenshot_options_present(&args) {
+            return invalid_browser_state_arguments(
+                "screenshot_format, screenshot_quality, and max_image_dimension \
+                 require snapshot mode with include_screenshot: true",
+            );
+        }
         let pid = match args.require_i64("pid") {
             Ok(v) => v,
             Err(e) => return e,
@@ -3705,6 +3801,104 @@ mod tests {
         assert!(matches!(
             &result.content[0],
             Content::Text { text, .. } if text.contains("expected boolean")
+        ));
+    }
+
+    async fn invalid_arguments_detail(args: Value) -> String {
+        let result = GetBrowserStateTool::new(engine()).invoke(args).await;
+        assert_eq!(result.is_error, Some(true));
+        let structured = structured(&result);
+        assert_eq!(structured["code"], "invalid_arguments", "{structured}");
+        assert_eq!(structured["tool"], "get_browser_state");
+        structured["detail"].as_str().expect("detail").to_owned()
+    }
+
+    #[tokio::test]
+    async fn screenshot_options_refuse_without_a_requested_screenshot() {
+        for options in [
+            json!({"screenshot_format": "jpeg"}),
+            json!({"screenshot_quality": 80}),
+            json!({"max_image_dimension": 1280}),
+            json!({"include_screenshot": false, "screenshot_format": "png"}),
+        ] {
+            let mut args = json!({
+                "target_id": "bt-fixture",
+                "tab_id": "tab-fixture",
+                "session": "browser-run"
+            });
+            for (key, value) in options.as_object().unwrap() {
+                args[key] = value.clone();
+            }
+            assert_eq!(
+                invalid_arguments_detail(args).await,
+                "screenshot_format, screenshot_quality, and max_image_dimension apply only with \
+                 include_screenshot: true"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn screenshot_quality_refuses_without_jpeg() {
+        assert_eq!(
+            invalid_arguments_detail(json!({
+                "target_id": "bt-fixture",
+                "tab_id": "tab-fixture",
+                "session": "browser-run",
+                "include_screenshot": true,
+                "screenshot_quality": 80
+            }))
+            .await,
+            "screenshot_quality applies only with screenshot_format: \"jpeg\""
+        );
+    }
+
+    #[tokio::test]
+    async fn bind_mode_refuses_a_screenshot_request_it_cannot_capture() {
+        assert_eq!(
+            invalid_arguments_detail(json!({
+                "pid": 4242,
+                "window_id": 7,
+                "session": "browser-run",
+                "include_screenshot": true
+            }))
+            .await,
+            "include_screenshot requires snapshot mode: call get_browser_state again with the \
+             returned target_id and tab_id"
+        );
+        for field in [
+            "screenshot_format",
+            "screenshot_quality",
+            "max_image_dimension",
+        ] {
+            let value = if field == "screenshot_format" {
+                json!("jpeg")
+            } else {
+                json!(80)
+            };
+            let mut args = json!({"pid": 4242, "window_id": 7, "session": "browser-run"});
+            args[field] = value;
+            assert_eq!(
+                invalid_arguments_detail(args).await,
+                "screenshot_format, screenshot_quality, and max_image_dimension require snapshot \
+                 mode with include_screenshot: true"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn bind_mode_still_rejects_a_non_boolean_include_screenshot() {
+        let result = GetBrowserStateTool::new(engine())
+            .invoke(json!({
+                "pid": 4242,
+                "window_id": 7,
+                "session": "browser-run",
+                "include_screenshot": "yes"
+            }))
+            .await;
+        assert_eq!(result.is_error, Some(true));
+        assert!(matches!(
+            &result.content[0],
+            Content::Text { text, .. } if text == "Field include_screenshot has wrong type: expected boolean"
         ));
     }
 

@@ -2429,6 +2429,121 @@ async fn requested_tab_screenshot_refuses_malformed_image_data() {
         .all(|content| !matches!(content, Content::Image { .. })));
 }
 
+fn first_image(result: &ToolResult) -> (String, String) {
+    result
+        .content
+        .iter()
+        .find_map(|content| match content {
+            Content::Image {
+                data, mime_type, ..
+            } => Some((data.clone(), mime_type.clone())),
+            _ => None,
+        })
+        .expect("screenshot image content")
+}
+
+async fn tab_screenshot(f: &Fixture, options: Value) -> ToolResult {
+    let (target, tab) = bind(f).await;
+    let mut args = json!({
+        "target_id": target,
+        "tab_id": tab,
+        "session": SESSION,
+        "include_screenshot": true
+    });
+    for (key, value) in options.as_object().expect("options object") {
+        args[key] = value.clone();
+    }
+    GetBrowserStateTool::new(f.engine.clone())
+        .invoke(args)
+        .await
+}
+
+#[tokio::test]
+async fn requested_tab_screenshot_without_options_returns_endpoint_png_bytes() {
+    let f = fixture_with(|state| {
+        state.viewport_css_width = 2.0;
+        state.viewport_css_height = 1.0;
+        state.screenshot_data = screenshot_png_base64(4, 2);
+    })
+    .await;
+    let expected = f.state.lock().unwrap().screenshot_data.clone();
+    let result = tab_screenshot(&f, json!({})).await;
+    let snapshot = structured(&result);
+    assert_eq!(snapshot["status"], "ok", "{snapshot}");
+    assert_eq!(first_image(&result), (expected, "image/png".to_owned()));
+    assert_eq!(snapshot["screenshot_mime_type"], "image/png");
+    assert_eq!(snapshot["screenshot"]["mime_type"], "image/png");
+    assert_eq!(snapshot["screenshot_width"], 4);
+    assert_eq!(snapshot["screenshot_height"], 2);
+}
+
+#[tokio::test]
+async fn requested_tab_screenshot_encodes_jpeg_when_asked() {
+    let f = fixture_with(|state| {
+        state.viewport_css_width = 2.0;
+        state.viewport_css_height = 1.0;
+        state.screenshot_data = screenshot_png_base64(4, 2);
+    })
+    .await;
+    let result = tab_screenshot(
+        &f,
+        json!({"screenshot_format": "jpeg", "screenshot_quality": 80}),
+    )
+    .await;
+    let snapshot = structured(&result);
+    assert_eq!(snapshot["status"], "ok", "{snapshot}");
+    let (data, mime_type) = first_image(&result);
+    assert_eq!(mime_type, "image/jpeg");
+    let bytes = BASE64.decode(data).expect("base64 JPEG");
+    assert_eq!(&bytes[..3], &[0xFF, 0xD8, 0xFF]);
+    assert_eq!(snapshot["screenshot_mime_type"], "image/jpeg");
+    assert_eq!(snapshot["screenshot"]["mime_type"], "image/jpeg");
+    assert_eq!(snapshot["screenshot_width"], 4);
+    assert_eq!(snapshot["screenshot_height"], 2);
+}
+
+#[tokio::test]
+async fn requested_tab_screenshot_scale_describes_the_downscaled_image() {
+    let f = fixture_with(|state| {
+        state.viewport_css_width = 200.0;
+        state.viewport_css_height = 100.0;
+        state.screenshot_data = screenshot_png_base64(400, 200);
+    })
+    .await;
+    let result = tab_screenshot(&f, json!({"max_image_dimension": 100})).await;
+    let snapshot = structured(&result);
+    assert_eq!(snapshot["status"], "ok", "{snapshot}");
+    let (data, mime_type) = first_image(&result);
+    assert_eq!(mime_type, "image/png");
+    let delivered = crate::image_utils::png_dimensions(&BASE64.decode(data).unwrap()).unwrap();
+    assert_eq!(delivered, (100, 50));
+    assert_eq!(snapshot["screenshot_width"], 100);
+    assert_eq!(snapshot["screenshot_height"], 50);
+    assert_eq!(snapshot["screenshot"]["viewport_css_width"], 200.0);
+    assert_eq!(snapshot["screenshot"]["pixel_to_css_scale_x"], 2.0);
+    assert_eq!(snapshot["screenshot"]["pixel_to_css_scale_y"], 2.0);
+}
+
+#[tokio::test]
+async fn requested_tab_screenshot_refuses_an_unusable_long_edge_cap() {
+    let f = fixture().await;
+    for (value, shown) in [
+        (json!(-1), "-1"),
+        (json!(1.5), "1.5"),
+        (json!("wide"), "\"wide\""),
+        (json!(u64::from(u32::MAX) + 1), "4294967296"),
+    ] {
+        let result = tab_screenshot(&f, json!({"max_image_dimension": value})).await;
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(structured(&result)["code"], "invalid_arguments");
+        assert_eq!(
+            structured(&result)["detail"],
+            format!("max_image_dimension must be an integer from 0 to 4294967295, got {shown}")
+        );
+    }
+    assert!(recorded_calls(&f, "Page.captureScreenshot").is_empty());
+}
+
 #[tokio::test]
 async fn semantic_continuation_is_opaque_single_use_and_reaches_offscreen_content() {
     let f = fixture_with(|st| st.semantic_large_page = true).await;

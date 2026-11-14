@@ -2113,8 +2113,13 @@
      },
      "include_screenshot": {
       "default": false,
-      "description": "Capture the exact tab viewport as PNG through CDP without selecting the tab or foregrounding its native window. The request refuses if capture cannot be completed.",
+      "description": "Capture the exact tab viewport through CDP without selecting the tab or foregrounding its native window. Snapshot mode only. The request refuses if capture cannot be completed.",
       "type": "boolean"
+     },
+     "max_image_dimension": {
+      "description": "Long-edge cap for the requested screenshot, in pixels. Omitted or 0 returns the native viewport resolution. pixel_to_css_scale_x/y describe the delivered image. Requires include_screenshot:true.",
+      "minimum": 0,
+      "type": "integer"
      },
      "pid": {
       "description": "Native browser process id (bind mode).",
@@ -2127,6 +2132,20 @@
      "scope_ref": {
       "description": "Current semantic/content ref whose subtree should be observed.",
       "type": "string"
+     },
+     "screenshot_format": {
+      "description": "Encoding of the requested screenshot: \"png\" (default) or \"jpeg\". Requires include_screenshot:true.",
+      "enum": [
+       "png",
+       "jpeg"
+      ],
+      "type": "string"
+     },
+     "screenshot_quality": {
+      "description": "JPEG quality, 1-95, with screenshot_format:\"jpeg\" only. Default 85.",
+      "maximum": 95,
+      "minimum": 1,
+      "type": "integer"
      },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",

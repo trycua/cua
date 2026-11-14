@@ -28,9 +28,9 @@ pub struct WindowPxFrame {
 
 impl WindowPxFrame {
     /// Window-local capture pixels → `(screen_x, screen_y, local_pt_x,
-    /// local_pt_y)`. Background clicks use the local-point pair for
-    /// `CGEventSetWindowLocation` on macOS 27+, or the screen-point pair before,
-    /// for both SkyLight and public PID routes.
+    /// local_pt_y)`. Routed clicks post the screen pair as the event location
+    /// and stamp the local pair as its window location, as a real click carries
+    /// them.
     pub fn to_screen(&self, cx: f64, cy: f64) -> (f64, f64, f64, f64) {
         let lx = cx / self.scale;
         let ly = cy / self.scale;

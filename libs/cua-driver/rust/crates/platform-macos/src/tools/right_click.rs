@@ -218,6 +218,13 @@ impl Tool for RightClickTool {
         } else {
             None
         };
+        if let Some(wid) = window_id.filter(|_| !delivery_mode.is_foreground()) {
+            if let Err(refusal) =
+                super::refuse_point_under_own_popup(pid, wid, screen_x, screen_y).await
+            {
+                return refusal;
+            }
+        }
 
         // Pin overlay above the target window before animating.
         if let Some(wid) = window_id {

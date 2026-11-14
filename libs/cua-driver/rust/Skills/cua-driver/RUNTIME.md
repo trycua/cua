@@ -43,7 +43,7 @@ cua-driver start_session '{"session":"run-1"}'
 cua-driver end_session '{"session":"run-1"}'
 ```
 
-Explicit targets own observation/input modality, not session configuration. There is no `deescalate_session`. Do not use retired `capture_scope` settings or legacy escalation-session tools in new workflows. Reserved fields such as `_session_id` belong to the transport, never to an agent.
+Explicit targets own observation/input modality, not session configuration. Do not use retired `capture_scope` settings; the `escalate_session` and `get_session_state` tools were removed, so choose window or desktop on each action and use `get_session` for session state. Reserved fields such as `_session_id` belong to the transport, never to an agent.
 
 Keep one controller per shared desktop. Separate sessions/cursors do not isolate global keyboard focus, physical input, a single-instance application, or another observer's snapshot cache. `creates_new_application_instance:true` requests a separate instance where supported; verify distinct processes/windows before concurrent work. For independent MCP work, use independent connections as well.
 

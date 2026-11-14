@@ -24,9 +24,12 @@ Driver SDK:
 pip install 'cua-sandbox[driver]'
 ```
 
-The `driver` extra requires `cua-driver>=0.37.0,<0.48`. From 0.37.0 the Driver
+The `driver` extra requires `cua-driver>=0.37.0,<0.50`. From 0.37.0 the Driver
 provides the typed-window API and the remote channel bridge. It is a range, not an
 exact pin, so an install keeps resolving when a single Driver release leaves PyPI.
+The upper bound is the minor after the newest Driver release. CI fails when a
+release leaves the range, so the bound is raised, after checking the typed API
+cua-sandbox calls, in the same change as the release.
 
 ```python
 from cua_driver import GetScreenSizeInput

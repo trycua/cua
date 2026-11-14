@@ -66,10 +66,13 @@ const suggestionRefs = () =>
     .map((option) => option.querySelector(".wz-combo-ref")!.textContent);
 
 describe("the image field", () => {
-  // What pickers offer: published entries of groups without `picker: false`
+  // What pickers offer: published entries (or ones built on this computer on
+  // first use, `local_build`) of groups without `picker: false`
   // (benchmark images are for cua-bench, not Spaces).
   const offeredGroups = new Set(list.groups.filter((g) => !("picker" in g) || g.picker !== false).map((g) => g.id));
-  const offered = list.images.filter((image) => image.published && offeredGroups.has(image.group));
+  const offered = list.images.filter(
+    (image) => (image.published || "local_build" in image) && offeredGroups.has(image.group),
+  );
   const pressedOs = () =>
     ["Linux", "macOS", "Windows"].filter(
       (name) => screen.getByRole("button", { name: new RegExp(`^${name}`) }).getAttribute("aria-pressed") === "true",
@@ -92,7 +95,8 @@ describe("the image field", () => {
     expect(pressedOs()).toEqual([]);
     fireEvent.keyDown(imageField(), { key: "Escape" });
     fireEvent.click(imageField());
-    expect(suggestionRefs()).toEqual(offered.map((i) => i.ref));
+    // Every OS's images are searched; the order puts built-on-first-use images where the host's catalog does.
+    expect([...suggestionRefs()].sort()).toEqual(offered.map((i) => i.ref).sort());
   });
 
   it("groups the suggestions the way the file groups them, one line a row", () => {
@@ -265,11 +269,13 @@ describe("New Space wizard", () => {
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
   });
 
-  it("shows Windows as coming soon on a Mac and cannot pick it", () => {
-    renderWizard();
+  it("offers Windows on a Mac and picks the build it runs (Windows 11)", () => {
+    renderWizard({ hostArch: "arm64" });
     const tile = screen.getByRole("button", { name: /^Windows/ });
-    expect(tile).toHaveTextContent("coming soon");
-    expect(tile).toBeDisabled();
+    expect(tile).not.toHaveTextContent("coming soon");
+    expect(tile).toBeEnabled();
+    fireEvent.click(tile);
+    expect(imageField()).toHaveValue("ghcr.io/trycua/windows:11");
   });
 
   it("the OS tiles pick that system's first image", () => {
@@ -477,7 +483,7 @@ describe("QEMU VMs", () => {
     runOn("local");
     pick("ghcr.io/trycua/windows:2022");
     expect(continueButton()).toBeDisabled();
-    expect(screen.getByRole("alert")).toHaveTextContent("cannot run QEMU Spaces");
+    expect(screen.getByRole("alert")).toHaveTextContent("Needs QEMU");
     pick("ghcr.io/trycua/linux:24.04-disk");
     expect(continueButton()).toBeDisabled();
     pick("ghcr.io/trycua/linux:24.04");
@@ -491,7 +497,7 @@ describe("QEMU VMs", () => {
     runOn("local");
     pick("ghcr.io/trycua/windows:2022");
     expect(continueButton()).toBeDisabled();
-    expect(screen.getByRole("alert")).toHaveTextContent("cannot run QEMU Spaces");
+    expect(screen.getByRole("alert")).toHaveTextContent("Needs QEMU");
     pick("ghcr.io/trycua/macos:26");
     expect(continueButton()).toBeEnabled();
     pick("ghcr.io/trycua/linux:24.04");

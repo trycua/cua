@@ -45,6 +45,7 @@ pub mod rootfs;
 pub mod sidecar;
 pub mod spec;
 pub mod testing;
+pub mod windows;
 
 pub use cache::ImageCache;
 pub use containerdisk::ContainerDiskResolver;

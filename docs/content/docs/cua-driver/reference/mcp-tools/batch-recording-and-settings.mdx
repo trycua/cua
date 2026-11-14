@@ -70,7 +70,7 @@ Effect: destructive. Platforms: macOS, Linux, Windows.
 | <span id="run_steps--observe"></span>`observe` | `object` |  | Optional end-of-batch observation: arguments for ONE get_window_state call. `pid` and `window_id` default to those of the last step that names both. Defaults to since="latest" (only what changed since your last read of that window with the same query/max_elements/max_depth; a full read when there is none), include_screenshot=false and max_elements=250; pass include_screenshot=true to see the window, or since=null for a full read. Omit to read nothing. &#123;&#125; observes the last window. |
 | <span id="run_steps--pid"></span>`pid` | `integer` |  | Default pid for steps that name no window (a step's own pid/window_id/app/window wins). |
 | <span id="run_steps--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
-| <span id="run_steps--steps"></span>`steps` | `object[]` | required | Ordered actions. Execution stops at the first failing step. Each step is &#123;tool, args&#125; or &#123;&lt;tool&gt;: args&#125;, plus optional wait_for / expect / timeout_ms; a step may also be only a wait_for or expect check. Items: 1 to 64. |
+| <span id="run_steps--steps"></span>`steps` | `object[]` | required | Ordered actions. Execution stops at the first failing step. Each step is &#123;tool, args&#125;, &#123;tool, &lt;argument fields beside tool&gt;&#125; or &#123;&lt;tool&gt;: args&#125;, plus optional wait_for / expect / timeout_ms; a step may also be only a wait_for or expect check. Items: 1 to 64. |
 | <span id="run_steps--window"></span>`window` | `string` |  | Default window title substring for steps that name no window. |
 | <span id="run_steps--window_id"></span>`window_id` | `integer` |  | Default window_id for steps that name no window, with `pid`. |
 
@@ -282,7 +282,7 @@ Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
 <Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
 <Tab value="macOS">
 
-Update cua-driver-rs configuration. Changes to max_image_dimension take effect immediately. The experimental_pip keys are persisted to ~/.cua-driver/config.json and take effect on the next daemon restart (the PiP backend is initialised once at startup).
+Update cua-driver-rs configuration. Changes to max_image_dimension take effect immediately.
 
 Note: capture_mode is a per-call param (on get_window_state / click), not a stored setting. Capture modality is selected by each action's target; the old capture_scope config key is retired.
 
@@ -292,21 +292,12 @@ Agent cursor badge: cursor.badges is minimal (default), verbose or off, saved to
 
 Agent cursor extras: cursor.float (float at rest and while moving) and cursor.halo (soft glow) are on (default), off or default; cursor.rotate is heading (default), lean, off or default. The cursor never draws action marks (cursor.marks is retired and ignored). All are saved to ~/.cua-driver/config.json and applied to every cursor at once.
 
-**macOS parameters**
-
-| Parameter | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="set_config--macos--experimental_pip"></span>`experimental_pip` | `boolean` |  | Enable the experimental picture-in-picture preview window. Applies on next daemon restart. |
-| <span id="set_config--macos--experimental_pip_geometry"></span>`experimental_pip_geometry` | `string` |  | PiP window size + optional position in `WxH` or `WxH+X+Y` form (e.g. `320x200+24+24`). Applies on next daemon restart. |
-
 </Tab>
 <Tab value="Linux">
 
 Update cua-driver-rs configuration. capture_mode / max_image_dimension take effect immediately.
 
 Pass each setting as its own field: `{"capture_mode": "som", "max_image_dimension": 0}`.
-
-The experimental_pip keys persist to ~/.cua-driver/config.json and apply on next daemon restart (the PiP backend is initialised once at startup; Linux ships only the trait stub today: see issue #1729).
 
 `cursor.motion.style`, `cursor.motion.timing` and `cursor.motion.effects.<name>` (`on`, `off`, or `default`) save the default cursor motion for sessions started afterwards. `cursor.motion: "default"` clears every saved cursor motion default.
 
@@ -319,8 +310,6 @@ The experimental_pip keys persist to ~/.cua-driver/config.json and apply on next
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="set_config--linux--capture_mode"></span>`capture_mode` | `"ax" \| "vision"` |  | Default capture mode for get_window_state. ("som"/"screenshot" still decode as deprecated aliases.). |
-| <span id="set_config--linux--experimental_pip"></span>`experimental_pip` | `boolean` |  | Enable the experimental PiP preview window (applies next restart; Linux backend stubbed). |
-| <span id="set_config--linux--experimental_pip_geometry"></span>`experimental_pip_geometry` | `string` |  | PiP window size + optional position in `WxH` or `WxH+X+Y` form. |
 
 </Tab>
 <Tab value="Windows">
@@ -330,9 +319,6 @@ Write a setting into the persistent driver config. Values take effect immediatel
 Known keys:
 - `capture_mode` (string: `vision` | `ax` | `som`); DEPRECATED and ignored; `get_window_state` always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect.
 - `max_image_dimension` (integer)
-- `experimental_pip` (boolean; persisted to config.json, applies on next daemon restart: Windows backend stubbed today, see issue #1729)
-- `experimental_pip_geometry` (string `WxH` or `WxH+X+Y`; persisted; applies on next daemon restart)
-
 - `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>` (`on`, `off`, or `default`): saved default cursor motion for sessions started afterwards. `cursor.motion: "default"` clears every saved cursor motion default.
 - `cursor.badges` (`minimal` default, `verbose`, or `off`): agent cursor badge; applies to every cursor at once.
 - `cursor.float` (float at rest and while moving), `cursor.halo` (soft glow): `on` (default), `off`, or `default`. `cursor.rotate`: `heading` (default), `lean`, `off`, or `default`. All apply to every cursor at once. The cursor never draws action marks (`cursor.marks` is retired and ignored).
@@ -344,8 +330,6 @@ Returns the full updated config in the same shape as `get_config`.
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="set_config--windows--capture_mode"></span>`capture_mode` | `"ax" \| "vision"` |  | DEPRECATED and ignored: get_window_state always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect. ("som"/"screenshot" still decode as deprecated aliases.). |
-| <span id="set_config--windows--experimental_pip"></span>`experimental_pip` | `boolean` |  | Enables PiP preview (applies next restart). |
-| <span id="set_config--windows--experimental_pip_geometry"></span>`experimental_pip_geometry` | `string` |  | PiP window size + optional position. |
 
 </Tab>
 </Tabs>

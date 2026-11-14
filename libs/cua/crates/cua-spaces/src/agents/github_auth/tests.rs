@@ -34,11 +34,14 @@ fn temp_keys() -> (AgentKeys, std::path::PathBuf) {
 /// A fake `gh` on a private PATH: it answers `--version`, `auth status
 /// --json hosts` and `auth token --hostname H [--user U]` from fixed
 /// accounts, and writes every call (and whether a sign-in variable was in
-/// its environment) to a log.
+/// its environment) to a log. It is a `/bin/sh` script, so the tests that
+/// use it run on Unix only.
+#[cfg(unix)]
 struct Fake {
     dir: tempfile::TempDir,
 }
 
+#[cfg(unix)]
 const ACCOUNTS: &str = r#"{"hosts":{
   "github.com":[
     {"state":"success","active":true,"host":"github.com","login":"ada","tokenSource":"keyring","scopes":"gist, read:org, repo","gitProtocol":"https"},
@@ -48,6 +51,7 @@ const ACCOUNTS: &str = r#"{"hosts":{
     {"state":"success","active":true,"host":"ghe.example.com","login":"ada-corp","tokenSource":"keyring","scopes":"repo","gitProtocol":"ssh"}
   ]}}"#;
 
+#[cfg(unix)]
 impl Fake {
     fn new(version: &str, status_json: &str) -> Fake {
         use std::os::unix::fs::PermissionsExt as _;
@@ -110,11 +114,13 @@ exit 2
     }
 }
 
+#[cfg(unix)]
 fn auth<'k>(keys: &'k AgentKeys, f: &Fake, e: &[(&str, &str)]) -> GithubAuth<'k> {
     GithubAuth::new(keys, f.gh(), env(e))
 }
 
 #[test]
+#[cfg(unix)]
 fn saved_token_wins_over_the_environment_and_gh() {
     let (keys, dir) = temp_keys();
     keys.set("other", Some(SAVED_KEY), "ghp_SAVED_SECRET")
@@ -134,6 +140,7 @@ fn saved_token_wins_over_the_environment_and_gh() {
 }
 
 #[test]
+#[cfg(unix)]
 fn environment_token_wins_over_gh_and_github_token_is_the_second_name() {
     let (keys, dir) = temp_keys();
     let f = Fake::new("2.101.0", ACCOUNTS);
@@ -159,6 +166,7 @@ fn environment_token_wins_over_gh_and_github_token_is_the_second_name() {
 }
 
 #[test]
+#[cfg(unix)]
 fn gh_is_the_third_source_and_its_token_is_read_only_when_asked_for() {
     let (keys, dir) = temp_keys();
     let f = Fake::new("2.101.0", ACCOUNTS);
@@ -187,6 +195,7 @@ fn gh_is_the_third_source_and_its_token_is_read_only_when_asked_for() {
 }
 
 #[test]
+#[cfg(unix)]
 fn a_chosen_account_is_used_and_a_gone_one_is_never_replaced() {
     let (keys, dir) = temp_keys();
     let f = Fake::new("2.101.0", ACCOUNTS);
@@ -224,6 +233,7 @@ fn a_chosen_account_is_used_and_a_gone_one_is_never_replaced() {
 }
 
 #[test]
+#[cfg(unix)]
 fn a_host_can_be_switched_off_and_the_other_hosts_keep_working() {
     let (keys, dir) = temp_keys();
     let f = Fake::new("2.101.0", ACCOUNTS);
@@ -250,6 +260,7 @@ fn a_host_can_be_switched_off_and_the_other_hosts_keep_working() {
 }
 
 #[test]
+#[cfg(unix)]
 fn enterprise_takes_gh_enterprise_token_only_for_gh_host() {
     let (keys, dir) = temp_keys();
     let f = Fake::new("2.101.0", r#"{"hosts":{}}"#);
@@ -312,6 +323,7 @@ fn nothing_signed_in_says_what_to_do() {
 }
 
 #[test]
+#[cfg(unix)]
 fn an_old_gh_is_read_from_its_text_and_cannot_pick_another_account() {
     let (keys, dir) = temp_keys();
     let f = Fake::new("2.40.1", "unused");
@@ -334,6 +346,7 @@ fn an_old_gh_is_read_from_its_text_and_cannot_pick_another_account() {
 }
 
 #[test]
+#[cfg(unix)]
 fn scopes_beyond_push_and_pull_requests_are_warned_about() {
     let l = |s: &str| {
         s.split(',')
@@ -390,6 +403,7 @@ fn a_token_never_prints_and_is_scrubbed_from_messages() {
 }
 
 #[test]
+#[cfg(unix)]
 fn status_plan_and_errors_never_carry_a_token() {
     let (keys, dir) = temp_keys();
     keys.set("other", Some(SAVED_KEY), "ghp_SAVED_SECRET")
@@ -447,6 +461,7 @@ fn the_host_only_names_are_refused_for_a_space() {
 }
 
 #[test]
+#[cfg(unix)]
 fn the_app_methods_are_not_contract_tools_and_answer_json() {
     for m in APP_METHODS {
         assert!(
@@ -496,6 +511,7 @@ fn the_app_methods_are_not_contract_tools_and_answer_json() {
 }
 
 /// A tiny HTTP server that answers `GET /user` like GitHub.
+#[cfg(unix)]
 async fn fake_api(status: u16, login: &str, scopes: &str) -> String {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -518,6 +534,7 @@ async fn fake_api(status: u16, login: &str, scopes: &str) -> String {
 }
 
 #[tokio::test]
+#[cfg(unix)]
 async fn a_rescan_asks_the_host_whose_token_it_is_and_warns_about_scopes() {
     let (keys, dir) = temp_keys();
     keys.set("other", Some(SAVED_KEY), "ghp_SAVED_SECRET")
@@ -536,6 +553,7 @@ async fn a_rescan_asks_the_host_whose_token_it_is_and_warns_about_scopes() {
 }
 
 #[tokio::test]
+#[cfg(unix)]
 async fn a_token_the_host_refuses_is_said_so() {
     let (keys, dir) = temp_keys();
     keys.set("other", Some(SAVED_KEY), "ghp_SAVED_SECRET")

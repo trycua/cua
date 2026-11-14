@@ -324,6 +324,11 @@ impl Tool for DragTool {
             {
                 return refusal;
             }
+            if let Err(refusal) =
+                super::refuse_point_under_own_popup(pid, wid, from_sx, from_sy).await
+            {
+                return refusal;
+            }
             // Chromium reads a mouse event's held buttons from the hardware
             // state, which a window-routed press does not change, so an
             // Electron page sees the drag moves with buttons == 0, releases
@@ -613,7 +618,7 @@ impl DragTool {
         wid: u32,
         prior_front: Option<i32>,
     ) -> ToolResult {
-        let pointer_before = tokio::task::spawn_blocking(pointer_location)
+        let pointer_before = tokio::task::spawn_blocking(super::cursor_tools::pointer_location)
             .await
             .ok()
             .flatten();
@@ -636,7 +641,7 @@ impl DragTool {
                 tokio::task::spawn_blocking(move || crate::input::mouse::move_cursor_desktop(x, y))
                     .await;
         }
-        let pointer_after = tokio::task::spawn_blocking(pointer_location)
+        let pointer_after = tokio::task::spawn_blocking(super::cursor_tools::pointer_location)
             .await
             .ok()
             .flatten();
@@ -795,15 +800,6 @@ fn await_drag_session_end(pid: i32) {
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
     std::thread::sleep(std::time::Duration::from_millis(150));
-}
-
-/// Current hardware pointer location in global display points.
-fn pointer_location() -> Option<(f64, f64)> {
-    use core_graphics::event::CGEvent;
-    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
-    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState).ok()?;
-    let location = CGEvent::new(source).ok()?.location();
-    Some((location.x, location.y))
 }
 
 /// Structured record of a brief foreground step, for the agent and the log.

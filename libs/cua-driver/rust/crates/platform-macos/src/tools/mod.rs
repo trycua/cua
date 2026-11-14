@@ -569,6 +569,66 @@ pub(crate) async fn acquire_key_scope(
     }
 }
 
+/// Refuse a background pointer press at screen point `(x, y)` of `window_id`
+/// when a popup or menu of the same app covers that point (issue #4242). The
+/// press is routed to `window_id` by number, so it would land on the window
+/// under the popup the caller sees. Foreground delivery is not checked: it
+/// goes through the HID tap and hits the surface on top.
+pub(crate) async fn refuse_point_under_own_popup(
+    pid: i32,
+    window_id: u32,
+    x: f64,
+    y: f64,
+) -> Result<(), cua_driver_core::protocol::ToolResult> {
+    let cover = tokio::task::spawn_blocking(move || {
+        crate::windows::same_app_surface_over(pid, window_id, x, y)
+    })
+    .await
+    .ok()
+    .flatten();
+    match cover {
+        Some(cover) => Err(own_popup_refusal(pid, window_id, x, y, &cover)),
+        None => Ok(()),
+    }
+}
+
+fn own_popup_refusal(
+    pid: i32,
+    window_id: u32,
+    x: f64,
+    y: f64,
+    cover: &crate::windows::WindowDescription,
+) -> cua_driver_core::protocol::ToolResult {
+    let hint = format!(
+        "A popup or menu of this app (window {}) covers that point, so a background click \
+         would land on window {window_id} under it. Click its item by element_token from \
+         get_window_state, dismiss it, or use delivery_mode:\"foreground\".",
+        cover.window_id
+    );
+    cua_driver_core::protocol::ToolResult::error(format!(
+        "Background pointer press refused at screen ({x:.1}, {y:.1}): window {} of pid {pid} \
+         is drawn over window {window_id} there. {hint}",
+        cover.window_id
+    ))
+    .with_structured(serde_json::json!({
+        "code": "target_occluded",
+        "effect": "refused",
+        "pid": pid,
+        "target_window": window_id,
+        "covering_window": cover.window_id,
+        "covering_pid": cover.pid,
+        "covering_layer": cover.layer,
+        "covering_bounds": {
+            "x": cover.bounds.x,
+            "y": cover.bounds.y,
+            "width": cover.bounds.width,
+            "height": cover.bounds.height,
+        },
+        "screen_point": [x, y],
+        "hint": hint,
+    }))
+}
+
 /// Refusal code when the addressed window cannot be confirmed as the app's
 /// key window: no key is sent, none could be proven to reach it.
 pub(crate) const WINDOW_NOT_KEY: &str = "window_not_key";
@@ -1098,6 +1158,12 @@ pub fn register_all(
         host_owns_permission_ux,
         host_bundle_id,
     ));
+    {
+        let state = state.clone();
+        registry.set_token_window_resolver(Arc::new(move |args| {
+            state.snapshots.window_for_token(args)
+        }));
+    }
     let cursor_outcome_reader = {
         let cursor_registry = state.cursor_registry.clone();
         cua_driver_core::session::register_scoped_cursor_outcome_reader(std::sync::Arc::new(

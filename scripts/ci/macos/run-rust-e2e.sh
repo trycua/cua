@@ -378,6 +378,7 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     harness_appkit_exact_activation_ignores_competing_application_window \
     harness_appkit_foreground_single_click_has_one_ordered_native_pair \
     harness_appkit_middle_click_px_background_reaches_exact_window \
+    harness_appkit_left_click_px_background_refuses_point_under_own_popup \
     harness_appkit_right_click_px_foreground \
     harness_appkit_right_click_px_background \
     harness_appkit_double_click_px_foreground \
@@ -423,6 +424,9 @@ EOF
       --nocapture --test-threads=1
     run_test installed-app-textedit-hotkey-sibling cargo test -p cua-driver-e2e --test installed_app_textedit_macos_test -- \
       --ignored --exact foreground_window_hotkey_reaches_an_unfocused_sibling_of_the_frontmost_app \
+      --nocapture --test-threads=1
+    run_test installed-app-screen-sharing cargo test -p cua-driver-e2e --test screen_sharing_macos_test -- \
+      --ignored --exact foreground_type_text_reaches_a_minimized_screen_sharing_window \
       --nocapture --test-threads=1
     # These rows assert through System Events and CoreGraphics oracles rather
     # than typed matrix results, so they must not leave unowned trajectories.

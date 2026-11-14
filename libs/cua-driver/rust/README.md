@@ -17,7 +17,6 @@ implementations, testkit, and helper crates.
 | `cua-driver-uia` | Windows UIAccess worker |
 | `cursor-overlay` | Cross-platform semantic cursor renderer and bounded compiled-theme loader |
 | `cursor-theme-cli` | Short-lived dotLottie validation, compilation, preview, and installation sidecar |
-| `pip-preview` | Packaging preview helper |
 
 Platform crates are selected with `cfg(target_os)` from the main driver crate.
 Keep platform-specific behavior inside the matching `platform-<os>` crate.
@@ -91,13 +90,17 @@ files, not the operating system's credential store.
 ## Permission Policies
 
 Set `CUA_DRIVER_POLICY_FILE` on the daemon to enforce a deny-by-default policy
-on all tool calls from MCP and CLI clients. If the variable is unset, or points to a path that does
-not exist, the driver keeps its backward-compatible behavior with no policy
-enforcement. Supported paths are:
+on all tool calls from MCP and CLI clients. Supported paths are:
 
 - `.yaml` / `.yml`: a single YAML policy file.
 - `.rego`: a single Rego policy file.
 - A directory: all top-level `.rego` files are loaded in sorted order.
+
+If `CUA_DRIVER_POLICY_FILE` is **unset**, the driver keeps its
+backward-compatible behavior with no policy enforcement. If it is **set to a
+path that does not exist, or that fails to load**, startup is a hard error: the
+daemon refuses to expose an action endpoint rather than silently running
+unconstrained.
 
 YAML policies allow unconstrained tools through `allow.tools`, constrained
 calls through `allow.rules`, and explicit overrides through `deny.tools`:
@@ -118,7 +121,7 @@ allow:
         app:
           allowed: [Calculator, TextEdit, Safari]
 deny:
-  tools: [shell_execute, file_delete]
+  tools: [kill_app, browser_download]
 ```
 
 Rego policies must expose a boolean rule at `data.cua.policy.allow`. The input

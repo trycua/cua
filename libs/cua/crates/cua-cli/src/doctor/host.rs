@@ -129,6 +129,20 @@ pub fn host_service_check(s: &cua_host::HostStatus) -> Option<Check> {
         .fix("`cua host migrate` (macOS then asks once for Screen Recording and Accessibility)"),
         kind => Check::new("host.service", Status::Pass, format!("{kind} ({state})")),
     };
+    // systemd stops a user's services at their last logout unless linger is
+    // on: a headless computer then drops off after the ssh session closes.
+    let check = match (&s.service_warning, check.status) {
+        (Some(_), Status::Pass) => Check::new(
+            "host.service",
+            Status::Warn,
+            format!(
+                "{} ({state}), but it stops when the last login session ends",
+                s.service.kind
+            ),
+        )
+        .fix(s.service_warning.clone().unwrap_or_default()),
+        _ => check,
+    };
     Some(with_severity(check, false))
 }
 
@@ -590,6 +604,13 @@ mod host_service_tests {
         assert!(c.remediation.contains("cua host migrate"));
         let c = host_service_check(&status("systemd", false, false)).unwrap();
         assert_eq!(c.message, "systemd (running)");
+        // Linger off: a Warn that names the one fix.
+        let mut s = status("systemd", false, false);
+        s.service_warning = Some(cua_host::service::linger_warning("ana"));
+        let c = host_service_check(&s).unwrap();
+        assert_eq!(c.status, Status::Warn);
+        assert!(c.message.contains("last login session"), "{}", c.message);
+        assert!(c.remediation.contains("sudo loginctl enable-linger ana"));
     }
 }
 

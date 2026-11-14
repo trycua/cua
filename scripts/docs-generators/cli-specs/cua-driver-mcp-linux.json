@@ -2137,7 +2137,7 @@
    "read_only": true
   },
   {
-   "description": "Update cua-driver-rs configuration. capture_mode / max_image_dimension take effect immediately.\n\nPass each setting as its own field: `{\"capture_mode\": \"som\", \"max_image_dimension\": 0}`.\n\nThe experimental_pip keys persist to ~/.cua-driver/config.json and apply on next daemon restart (the PiP backend is initialised once at startup; Linux ships only the trait stub today — see issue #1729).\n\n`cursor.motion.style`, `cursor.motion.timing` and `cursor.motion.effects.<name>` (`on`, `off`, or `default`) save the default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.\n\n`cursor.badges` (`minimal` default, `verbose`, or `off`) sets the agent cursor badge for every cursor at once.\n\n`cursor.float` (float at rest and while moving) and `cursor.halo` (soft glow) are `on` (default), `off` or `default`; `cursor.rotate` is `heading` (default), `lean`, `off` or `default`. All apply to every cursor at once. The cursor never draws action marks (`cursor.marks` is retired and ignored).",
+   "description": "Update cua-driver-rs configuration. capture_mode / max_image_dimension take effect immediately.\n\nPass each setting as its own field: `{\"capture_mode\": \"som\", \"max_image_dimension\": 0}`.\n\n`cursor.motion.style`, `cursor.motion.timing` and `cursor.motion.effects.<name>` (`on`, `off`, or `default`) save the default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.\n\n`cursor.badges` (`minimal` default, `verbose`, or `off`) sets the agent cursor badge for every cursor at once.\n\n`cursor.float` (float at rest and while moving) and `cursor.halo` (soft glow) are `on` (default), `off` or `default`; `cursor.rotate` is `heading` (default), `lean`, `off` or `default`. All apply to every cursor at once. The cursor never draws action marks (`cursor.marks` is retired and ignored).",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -2274,14 +2274,6 @@
        "on",
        "default"
       ],
-      "type": "string"
-     },
-     "experimental_pip": {
-      "description": "Enable the experimental PiP preview window (applies next restart; Linux backend stubbed).",
-      "type": "boolean"
-     },
-     "experimental_pip_geometry": {
-      "description": "PiP window size + optional position in `WxH` or `WxH+X+Y` form.",
       "type": "string"
      },
      "fast_path": {
@@ -3283,43 +3275,6 @@
    "read_only": false
   },
   {
-   "description": "Deprecated compatibility tool for legacy capture-scope sessions. New callers select window or desktop modality on each action. No deescalate_session tool exists.",
-   "destructive": false,
-   "idempotent": false,
-   "input_schema": {
-    "additionalProperties": true,
-    "properties": {
-     "detail": {
-      "description": "Optional bounded diagnostic detail. Never use secrets or page content.",
-      "maxLength": 200,
-      "type": "string"
-     },
-     "reason": {
-      "description": "Why the window-scoped attempt failed and desktop capture is needed.",
-      "enum": [
-       "ax_tree_pixel_mismatch",
-       "background_delivery_failed",
-       "foreground_ineffective",
-       "no_window_target",
-       "other"
-      ],
-      "type": "string"
-     },
-     "session": {
-      "description": "Public label of the legacy capture-scope session to escalate.",
-      "type": "string"
-     }
-    },
-    "required": [
-     "session",
-     "reason"
-    ],
-    "type": "object"
-   },
-   "name": "escalate_session",
-   "read_only": false
-  },
-  {
    "description": "Read content-free lifecycle, cursor, recording, and idle status for one session visible to this authenticated transport. Omit `session` to inspect its implicit session.",
    "destructive": false,
    "idempotent": true,
@@ -3358,24 +3313,6 @@
     "type": "object"
    },
    "name": "list_sessions",
-   "read_only": true
-  },
-  {
-   "description": "Deprecated compatibility alias that reads a live legacy session's capture policy. Use get_session for lifecycle state.",
-   "destructive": false,
-   "idempotent": true,
-   "input_schema": {
-    "additionalProperties": true,
-    "properties": {
-     "session": {
-      "description": "Optional public label. When omitted, inspect the caller's attached\nimplicit session.",
-      "type": "string"
-     }
-    },
-    "required": [],
-    "type": "object"
-   },
-   "name": "get_session_state",
    "read_only": true
   },
   {
@@ -3459,7 +3396,7 @@
       "type": "string"
      },
      "steps": {
-      "description": "Ordered actions. Execution stops at the first failing step. Each step is {tool, args} or {<tool>: args}, plus optional wait_for / expect / timeout_ms; a step may also be only a wait_for or expect check.",
+      "description": "Ordered actions. Execution stops at the first failing step. Each step is {tool, args}, {tool, <argument fields beside tool>} or {<tool>: args}, plus optional wait_for / expect / timeout_ms; a step may also be only a wait_for or expect check.",
       "items": {
        "additionalProperties": true,
        "properties": {

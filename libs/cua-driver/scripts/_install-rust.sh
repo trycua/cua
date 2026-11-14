@@ -687,7 +687,7 @@ done
 # asset — see the recovery at the download step below.
 #
 # ~~~ BAKED_VERSION: auto-updated after release publication — do not edit ~~~
-CUA_DRIVER_RS_BAKED_VERSION="0.49.7" # published-installer-version
+CUA_DRIVER_RS_BAKED_VERSION="0.49.8" # published-installer-version
 # ~~~ END_BAKED_VERSION ~~~
 #
 # Withdrawn releases (for example, a macOS archive published unsigned) are

@@ -560,41 +560,48 @@ impl Tool for GetWindowStateTool {
                         if scale.is_some() {
                             screenshot_resize_scale = scale;
                         }
-                        Some(Ok(page))
+                        Some(OcrRead::Page(page))
                     }
-                    Ok(Ok(Err(e))) => {
-                        tracing::warn!("text recognition for window {window_id} failed: {e}");
-                        None
-                    }
-                    Ok(Err(e)) => {
-                        tracing::warn!("text recognition for window {window_id} failed: {e}");
-                        None
-                    }
+                    Ok(Ok(Err(e))) => Some(OcrRead::Failed(e.to_string())),
+                    Ok(Err(e)) => Some(OcrRead::Failed(e.to_string())),
                     // The recognizer is still loading (first use after boot);
                     // it keeps running and the next read gets the text.
-                    Err(_) => Some(Err(())),
+                    Err(_) => Some(OcrRead::Starting),
                 },
+                // No screenshot to read the text from.
+                None if want_tree => Some(OcrRead::Failed(match &screenshot_frame_error {
+                    Some(error) => format!("no screenshot of the window: {error:?}"),
+                    None => "no screenshot of the window".to_owned(),
+                })),
                 None => None,
             }
         } else {
             None
         };
         let mut ocr_row_count = None;
-        let mut ocr_pending = false;
+        let mut ocr_status: Option<String> = None;
         if let Some(tree) = tree_result.as_mut() {
             use cua_driver_core::opaque_text;
             match ocr_page {
-                Some(Ok(page)) => {
+                Some(OcrRead::Page(page)) => {
                     let mut rows = opaque_text::group_rows(page.fragments);
                     opaque_text::stamp_ink(&mut rows, &page.luma, page.width, page.height);
                     let block = opaque_text::render_block(&rows, query.as_deref());
                     tree.tree_markdown = opaque_text::insert_block(&tree.tree_markdown, &block);
                     ocr_row_count = Some(rows.len());
                 }
-                Some(Err(())) => {
-                    ocr_pending = true;
+                Some(OcrRead::Starting) => {
+                    ocr_status = Some("starting".to_owned());
                     tree.tree_markdown =
                         opaque_text::insert_block(&tree.tree_markdown, opaque_text::PENDING_BLOCK);
+                }
+                Some(OcrRead::Failed(reason)) => {
+                    tracing::warn!("text recognition for window {window_id} failed: {reason}");
+                    tree.tree_markdown = opaque_text::insert_block(
+                        &tree.tree_markdown,
+                        &opaque_text::failed_block(&reason),
+                    );
+                    ocr_status = Some(format!("failed: {reason}"));
                 }
                 None => {}
             }
@@ -799,8 +806,8 @@ impl Tool for GetWindowStateTool {
             if let Some(rows) = ocr_row_count {
                 structured["ocr_text_rows"] = serde_json::json!(rows);
             }
-            if ocr_pending {
-                structured["ocr_status"] = serde_json::json!("starting");
+            if let Some(status) = ocr_status {
+                structured["ocr_status"] = serde_json::json!(status);
             }
         }
         // Surface 6: an opaque snapshot identifier consumers can log
@@ -1045,6 +1052,15 @@ const OCR_WAIT: std::time::Duration = std::time::Duration::from_secs(4);
 /// Capture `window_id` for text recognition only (the read returns no image):
 /// its text, in the pixels the image would have been delivered at, and that
 /// image's downscale factor from the native capture.
+/// The outcome of reading an opaque window's text for one read.
+enum OcrRead {
+    Page(crate::ocr::TextPage),
+    /// The recognizer is still loading; the next read gets the text.
+    Starting,
+    /// No text this read, and why; shown to the caller as `ocr_status`.
+    Failed(String),
+}
+
 fn ocr_only_capture(
     pid: i32,
     window_id: u32,

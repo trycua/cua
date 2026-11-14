@@ -61,6 +61,15 @@ pub const PENDING_BLOCK: &str =
     "- OCR \"window content is not in the accessibility tree; reading its \
 text from the screenshot is still starting: read the window again in a few seconds\"\n";
 
+/// Block shown when the window's text could not be read this time.
+pub fn failed_block(reason: &str) -> String {
+    let reason = reason.replace(['"', '\n'], " ");
+    format!(
+        "- {HEADER_ROLE} \"window content is not in the accessibility tree; reading its text \
+from the screenshot failed: {reason}\"\n"
+    )
+}
+
 /// A visual line: fragments whose vertical centres overlap, left to right.
 #[derive(Clone, Debug, PartialEq)]
 pub struct OcrRow {
@@ -77,8 +86,8 @@ pub struct NodeFacts<'a> {
     pub depth: usize,
     pub role: &'a str,
     pub subrole: Option<&'a str>,
-    /// The node carries a non-empty title, value or description.
-    pub has_text: bool,
+    /// The node's first non-empty title, value or description, if any.
+    pub text: Option<&'a str>,
 }
 
 /// Title-bar buttons every window has, whatever draws its content.
@@ -97,8 +106,9 @@ const WINDOW_ROLES: &[&str] = &["AXWindow", "AXSheet", "AXDrawer"];
 ///
 /// `None` when the walk did not cover the window (no window row, or the walk
 /// stopped early): the caller should reuse an earlier verdict, not guess.
-/// `Some(true)` when the window's subtree holds nothing but its frame
-/// buttons, plus at most two unlabeled containers.
+/// `Some(true)` when the window's subtree holds nothing but its frame (the
+/// title-bar buttons and the static text that repeats the window's title),
+/// plus at most two unlabeled containers.
 pub fn content_is_opaque<'a>(
     nodes: impl IntoIterator<Item = NodeFacts<'a>>,
     walk_complete: bool,
@@ -108,11 +118,14 @@ pub fn content_is_opaque<'a>(
     }
     let mut saw_window = false;
     let mut in_window = false;
+    let mut window_title = None;
     let mut content = 0usize;
     for node in nodes {
+        let text = node.text.map(str::trim).filter(|text| !text.is_empty());
         if node.depth == 0 {
             in_window = WINDOW_ROLES.contains(&node.role);
             saw_window |= in_window;
+            window_title = text;
             continue;
         }
         if !in_window {
@@ -124,7 +137,13 @@ pub fn content_is_opaque<'a>(
         {
             continue;
         }
-        if node.has_text {
+        // The title bar's own label (a static text child repeating the
+        // window's title, as GTK windows expose it) is frame, not content.
+        if node.depth == 1 && node.role == "AXStaticText" && text.is_some() && text == window_title
+        {
+            continue;
+        }
+        if text.is_some() {
             return Some(false);
         }
         content += 1;
@@ -359,7 +378,7 @@ mod tests {
             depth,
             role,
             subrole,
-            has_text: false,
+            text: None,
         }
     }
 
@@ -372,7 +391,7 @@ mod tests {
             facts(1, "AXButton", Some("AXMinimizeButton")),
             facts(0, "AXMenuBar", None),
             NodeFacts {
-                has_text: true,
+                text: Some("File"),
                 ..facts(1, "AXMenuBarItem", None)
             },
         ];
@@ -380,11 +399,65 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_read_is_one_header_row_with_its_reason() {
+        let block = failed_block("Vision text recognition failed: \"no model\"\nretry");
+        assert_eq!(block.lines().count(), 1);
+        assert!(block.starts_with("- OCR \"window content is not in the accessibility tree;"));
+        assert!(block.contains("failed: Vision text recognition failed:  no model  retry\""));
+        assert!(block.ends_with("\"\n"));
+    }
+
+    #[test]
+    fn the_title_bar_label_is_frame_not_content() {
+        // GnuCash (GTK, quartz backend) as walked in a live read: the window,
+        // its title-bar buttons, a static text repeating the window title,
+        // then the menu bar.
+        let title = "kw.gnucash - Accounts - GnuCash";
+        let window = NodeFacts {
+            text: Some(title),
+            ..facts(0, "AXWindow", Some("AXStandardWindow"))
+        };
+        let nodes = [
+            window,
+            facts(1, "AXButton", Some("AXCloseButton")),
+            facts(1, "AXButton", Some("AXFullScreenButton")),
+            facts(1, "AXButton", Some("AXMinimizeButton")),
+            NodeFacts {
+                text: Some(title),
+                ..facts(1, "AXStaticText", None)
+            },
+            facts(0, "AXMenuBar", None),
+            NodeFacts {
+                text: Some("File"),
+                ..facts(1, "AXMenuBarItem", None)
+            },
+        ];
+        assert_eq!(content_is_opaque(nodes, true), Some(true));
+        // Other text, or the title repeated inside the content, is content.
+        let other = [
+            window,
+            NodeFacts {
+                text: Some("Assets"),
+                ..facts(1, "AXStaticText", None)
+            },
+        ];
+        assert_eq!(content_is_opaque(other, true), Some(false));
+        let nested = [
+            window,
+            NodeFacts {
+                text: Some(title),
+                ..facts(2, "AXStaticText", None)
+            },
+        ];
+        assert_eq!(content_is_opaque(nested, true), Some(false));
+    }
+
+    #[test]
     fn labeled_content_or_many_rows_is_not_opaque() {
         let labeled = [
             facts(0, "AXWindow", None),
             NodeFacts {
-                has_text: true,
+                text: Some("Total"),
                 ..facts(1, "AXStaticText", None)
             },
         ];

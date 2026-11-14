@@ -228,8 +228,13 @@ fn verdicts() -> &'static Mutex<HashMap<(i32, u32), bool>> {
     VERDICTS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn has_text(value: Option<&String>) -> bool {
-    value.is_some_and(|text| !text.trim().is_empty())
+/// The first non-empty of a node's title, value and description.
+fn first_text(values: [Option<&String>; 3]) -> Option<&str> {
+    values
+        .into_iter()
+        .flatten()
+        .map(String::as_str)
+        .find(|text| !text.trim().is_empty())
 }
 
 /// Whether `window_id`'s content is missing from the accessibility tree,
@@ -243,9 +248,11 @@ pub fn window_content_is_opaque(
         depth: node.depth,
         role: &node.role,
         subrole: node.subrole.as_deref(),
-        has_text: has_text(node.title.as_ref())
-            || has_text(node.value.as_ref())
-            || has_text(node.description.as_ref()),
+        text: first_text([
+            node.title.as_ref(),
+            node.value.as_ref(),
+            node.description.as_ref(),
+        ]),
     });
     let mut verdicts = verdicts().lock().unwrap_or_else(|e| e.into_inner());
     match content_is_opaque(facts, !tree.truncated) {

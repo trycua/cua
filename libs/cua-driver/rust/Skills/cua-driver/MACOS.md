@@ -228,6 +228,18 @@ Rule of thumb:
   inspection (reading a chart). You address by `x,y` off the screenshot
   that's already in the snapshot response.
 
+### Windows whose content is missing from the tree (GTK, Java, canvas UIs)
+
+Some toolkits expose only the window frame and its title-bar buttons. For
+such a window `get_window_state` lists the text it reads from the
+window's screenshot as `OCRRow` rows (`text @(x,y)` per cell), also on a
+picture-only read (`include_accessibility_tree:false`). Read those rows
+and act by their pixels. Each click, key, typed text, drag or scroll on
+the window then returns the rows that changed (`y=...: "before" ->
+"after"`, with the new cell pixels) and any window the action opened
+(id, title, bounds, and its text), so no screenshot is needed to check
+it: unchanged rows come back as `effect:"suspected_noop"`.
+
 ### Self-check pattern
 
 Before every `Bash` call whose command line touches any macOS app

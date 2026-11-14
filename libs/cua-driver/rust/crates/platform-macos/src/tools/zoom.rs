@@ -117,8 +117,17 @@ impl Tool for ZoomTool {
             y2 * screenshot.scale,
         );
         let state = self.state.clone();
+        let frame_scale = screenshot.scale;
+        // Every zoom captures the window now, so it shows the window as it is
+        // after any earlier action, never an older frame.
         let result = tokio::task::spawn_blocking(move || {
             let png_bytes = crate::capture::screenshot_window_bytes(window_id)?;
+            let (width, height) = image::ImageReader::new(std::io::Cursor::new(&png_bytes))
+                .with_guessed_format()?
+                .into_dimensions()?;
+            if let Some(message) = region_outside_frame(x1, y1, width, height, frame_scale) {
+                anyhow::bail!(message);
+            }
             cursor_overlay::capture_utils::crop_png_to_jpeg(&png_bytes, x1, y1, x2, y2, 500)
         })
         .await;
@@ -144,7 +153,8 @@ impl Tool for ZoomTool {
                     content: vec![
                         Content::image_jpeg(b64),
                         Content::text(format!(
-                            "Zoom region ({x1:.0},{y1:.0})–({x2:.0},{y2:.0}) → {w}×{h} px JPEG."
+                            "Zoom region ({x1:.0},{y1:.0})–({x2:.0},{y2:.0}) → {w}×{h} px JPEG, \
+                             captured now."
                         )),
                     ],
                     is_error: None,
@@ -166,9 +176,38 @@ impl Tool for ZoomTool {
     }
 }
 
+/// Why a region whose top-left corner (native capture pixels) lies outside a
+/// `width` x `height` capture cannot be zoomed: its coordinates came from a
+/// different frame than the window's latest screenshot. `scale` converts
+/// native pixels back to that screenshot's pixels.
+fn region_outside_frame(x1: f64, y1: f64, width: u32, height: u32, scale: f64) -> Option<String> {
+    if x1 < f64::from(width) && y1 < f64::from(height) {
+        return None;
+    }
+    let scale = if scale > 0.0 { scale } else { 1.0 };
+    Some(format!(
+        "the region starts outside the window's latest screenshot ({}x{} screenshot pixels). \
+         zoom takes coordinates in the frame of the latest get_window_state read of this window; \
+         a read with another max_dimension or a resized window changes that frame",
+        (f64::from(width) / scale).round(),
+        (f64::from(height) / scale).round()
+    ))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::def;
+    use super::{def, region_outside_frame};
+
+    #[test]
+    fn a_region_inside_the_frame_is_kept() {
+        assert_eq!(region_outside_frame(10.0, 10.0, 1600, 1200, 2.0), None);
+    }
+
+    #[test]
+    fn a_region_from_another_frame_is_refused_with_the_frame_size() {
+        let message = region_outside_frame(1700.0, 10.0, 1600, 1200, 2.0).expect("outside");
+        assert!(message.contains("(800x600 screenshot pixels)"), "{message}");
+    }
 
     #[test]
     fn schema_keeps_pid_optional_for_window_owned_zoom_lookup() {

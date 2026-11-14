@@ -41,6 +41,32 @@ use cua_driver_core::security_prompt::PromptInput;
 use super::pixel_route::PixelClickRoute;
 use super::ToolState;
 
+/// The completed dispatch path, not proof of focus or the click's effect.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MiddleClickDelivery {
+    BackgroundCgEvent,
+    ForegroundAssistedCgEvent,
+    ForegroundHid,
+}
+
+fn middle_click_result(pid: i32, idx: usize, delivery: MiddleClickDelivery) -> ToolResult {
+    let (label, path) = match delivery {
+        MiddleClickDelivery::BackgroundCgEvent => ("background CGEvent", "cgevent"),
+        MiddleClickDelivery::ForegroundAssistedCgEvent => (
+            "CGEvent with foreground assist; activation not verified",
+            "cgevent_fg",
+        ),
+        MiddleClickDelivery::ForegroundHid => ("foreground HID", "cgevent_fg"),
+    };
+    ToolResult::text(format!(
+        "✅ Posted middle-click to pid {pid} at element [{idx}] center \
+         ({label}; not driver-verified — confirm via screenshot)."
+    ))
+    .with_structured(serde_json::json!({
+        "path": path, "verified": false, "effect": "unverifiable"
+    }))
+}
+
 pub struct ClickTool {
     state: Arc<ToolState>,
 }
@@ -783,6 +809,7 @@ impl ClickTool {
                                 )
                             },
                         )
+                        .map(|()| MiddleClickDelivery::ForegroundHid)
                     } else if foreground {
                         crate::input::skylight::with_foreground_assist(
                             pid as libc::pid_t,
@@ -792,23 +819,27 @@ impl ClickTool {
                                 routed_middle_click()
                             },
                         )
-                        .map(|_| ())
+                        .map(|assisted| {
+                            // The helper's bool reports its SPI path, not
+                            // whether the target's focus was observed.
+                            if assisted {
+                                MiddleClickDelivery::ForegroundAssistedCgEvent
+                            } else {
+                                MiddleClickDelivery::BackgroundCgEvent
+                            }
+                        })
                     } else {
                         ensure_enabled()?;
-                        routed_middle_click()
+                        routed_middle_click().map(|()| MiddleClickDelivery::BackgroundCgEvent)
                     }
                 })
                 .await;
                 return match result {
-                    Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Posted middle-click to pid {pid} at element [{idx}] center \
-                         (background CGEvent; not driver-verified — confirm via screenshot)."
-                    ))
-                    .with_structured(serde_json::json!({ "path": "cgevent", "verified": false, "effect": "unverifiable" })),
+                    Ok(Ok(delivery)) => middle_click_result(pid, idx, delivery),
                     Ok(Err(e)) => crate::security_prompt::tool_result(&e)
                         .or_else(|| super::element_disabled_error(pid, wid, &e, foreground))
                         .unwrap_or_else(|| ToolResult::error(format!("Middle-click failed: {e}"))),
-                    Err(e)     => ToolResult::error(format!("Task error: {e}")),
+                    Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
             }
 
@@ -2343,6 +2374,41 @@ fn validate_click_action(action: &str, element_target: bool) -> anyhow::Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn middle_click_result_reports_dispatch_without_verifying_focus_or_effect() {
+        for (delivery, path, label) in [
+            (
+                MiddleClickDelivery::BackgroundCgEvent,
+                "cgevent",
+                "background CGEvent",
+            ),
+            (
+                MiddleClickDelivery::ForegroundAssistedCgEvent,
+                "cgevent_fg",
+                "CGEvent with foreground assist; activation not verified",
+            ),
+            (
+                MiddleClickDelivery::ForegroundHid,
+                "cgevent_fg",
+                "foreground HID",
+            ),
+        ] {
+            let result = middle_click_result(42, 7, delivery);
+            let structured = result.structured_content.as_ref().expect("delivery facts");
+            assert_eq!(structured["path"], path);
+            assert_eq!(structured["verified"], false);
+            assert_eq!(structured["effect"], "unverifiable");
+            let serialized = serde_json::to_value(&result).expect("serializable tool result");
+            let text = serialized["content"][0]["text"]
+                .as_str()
+                .expect("text result");
+            assert!(text.contains("pid 42 at element [7]"));
+            assert!(text.contains(label));
+            assert!(text.contains("not driver-verified"));
+            assert_eq!(result.is_error, None);
+        }
+    }
 
     /// The pixel focus rung keeps working after unknown AX action names
     /// started refusing: background pixel typing into Electron depended on it.

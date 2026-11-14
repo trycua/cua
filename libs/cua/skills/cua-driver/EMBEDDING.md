@@ -283,6 +283,29 @@ Measured on macOS 27 with TextEdit in the background, typing a 185-character
 ASCII sentence through the PID-routed key path took about 3650 ms at the default
 and about 980 ms at `2`. All ten read-backs (five per value) matched exactly.
 
+## Desktop text behind a keyboard event tap (macOS)
+
+Desktop-scope `type_text` sends each character as a Unicode string attached to
+key code 0, the `a` key. A tool that intercepts keyboard events and posts them
+again from the key code and flags alone drops that string, so every character
+arrives as `a`. Karabiner-Elements does this when its CGEventTap option is on.
+A host behind such a tap selects physical key presses at trusted launch, in the
+same environment as the variables above. `EmbeddedCuaDriverHost` admits it too:
+
+| Variable                     | Meaning                                           | Default   | Accepted values           |
+| ---------------------------- | ------------------------------------------------- | --------- | ------------------------- |
+| `CUA_DRIVER_TEXT_KEY_EVENTS` | Key events that desktop-scope `type_text` sends.  | `unicode` | `unicode`, `physical`     |
+
+`physical` presses the key, with Shift where needed, that types each character
+on a US keyboard, so the target's input source must be U.S. It covers printable
+ASCII, Tab, and Return. Text with any other character is refused with
+`physical_key_unavailable`, naming the character, before any key is sent. Any
+other variable value makes desktop-scope `type_text` refuse with
+`text_key_events_invalid` instead of typing. No tool argument can change it.
+
+- **macOS desktop scope only.** Window-targeted `type_text` and interactive
+  remote-control text still send Unicode. Linux and Windows do not read it.
+
 ## What embedded mode changes (and what it doesn't)
 
 |                                               | Standalone                    | Embedded (`CUA_DRIVER_EMBEDDED=1`)     |

@@ -15,6 +15,7 @@ use cua_driver_core::input_pacing::{
 };
 use cua_driver_core::key_pacing::KEY_GAP_ENV;
 use cua_driver_core::step_pacing::BATCH_PACING_ENV;
+use cua_driver_core::text_key_events::TEXT_KEY_EVENTS_ENV;
 use cua_driver_core::window_observation::{WINDOW_CHANGE_POLL_ENV, WINDOW_CHANGE_TIMEOUT_ENV};
 use std::collections::BTreeMap;
 use std::process::{ExitStatus, Stdio};
@@ -1034,6 +1035,7 @@ pub(crate) fn allowed_environment_name(name: &str) -> bool {
         || upper == MULTI_CLICK_GAP_ENV
         || upper == WEBKIT_SETTLE_ENV
         || upper == BATCH_PACING_ENV
+        || upper == TEXT_KEY_EVENTS_ENV
         || matches!(
             upper.as_str(),
             "PATH"
@@ -1896,6 +1898,23 @@ mod tests {
         assert!(merged
             .iter()
             .any(|v| v.name.eq_ignore_ascii_case("CUA_DRIVER_BATCH_PACING") && v.value == "full"));
+    }
+
+    /// `CUA_DRIVER_TEXT_KEY_EVENTS` must reach an embedded child, or a host
+    /// behind a payload-dropping event tap keeps typing every character as `a`.
+    #[test]
+    fn text_key_events_env_propagates() {
+        assert!(allowed_environment_name("CUA_DRIVER_TEXT_KEY_EVENTS"));
+        let merged = merge_safe_environment(
+            [(
+                "CUA_DRIVER_TEXT_KEY_EVENTS".to_owned(),
+                "physical".to_owned(),
+            )],
+            &[],
+        );
+        assert!(merged.iter().any(
+            |v| v.name.eq_ignore_ascii_case("CUA_DRIVER_TEXT_KEY_EVENTS") && v.value == "physical"
+        ));
     }
 
     #[cfg(target_os = "windows")]

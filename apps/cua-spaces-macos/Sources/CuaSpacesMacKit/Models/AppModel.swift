@@ -145,6 +145,10 @@ public final class AppModel {
     /// A sign-in still waiting after this fails (a device code lives
     /// about this long).
     public var signInTimeout: Duration = .seconds(600)
+    /// Brings the app in front of the browser once the browser confirmed a
+    /// sign-in: the next step is here, and a covered window plays no video.
+    /// `NSApp.activate()` alone is declined while the browser is in front.
+    var comeForward: @MainActor () -> Void = { if NSApp != nil { PermissionGuide.bringAppForward() } }
     /// Tells one sign-in from the next (a timeout of an old one is ignored).
     private var signInAttempt = 0
     /// The attempt in progress asked for a code instead of the browser's way back.
@@ -1822,6 +1826,11 @@ public final class AppModel {
             // take it, even when a retry or Cancel superseded this one (an
             // earlier tab confirmed after all). Only a sign-out since then
             // leaves it.
+            // Only a sign-in still waiting on screen brings the app forward;
+            // one a retry, Cancel or the timeout ended must not pull the
+            // person out of what they went on to do.
+            let waiting = if case .waiting = signIn { true } else { false }
+            let shown = signInAttempt == current && waiting
             guard signInAttempt == current || identity == nil else { return }
             signInAttempt += 1
             let previous = identity
@@ -1836,6 +1845,7 @@ public final class AppModel {
             }
             signIn = .idle
             signInURL = nil
+            if shown { comeForward() }
             // Relay sharing paused while signed out comes back for its
             // owner (another account is asked to set it up again).
             await host.reconcileAccount()

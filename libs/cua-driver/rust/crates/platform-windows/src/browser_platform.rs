@@ -53,7 +53,7 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::NetworkManagement::IpHelper::{
     GetExtendedTcpTable, MIB_TCP6ROW_OWNER_PID, MIB_TCP6TABLE_OWNER_PID, MIB_TCPROW_OWNER_PID,
-    MIB_TCPTABLE_OWNER_PID, MIB_TCP_STATE_LISTEN, TCP_TABLE_OWNER_PID_LISTENER,
+    MIB_TCPTABLE_OWNER_PID, TCP_TABLE_OWNER_PID_LISTENER,
 };
 use windows::Win32::Networking::WinSock::{AF_INET, AF_INET6};
 use windows::Win32::Storage::FileSystem::{
@@ -1221,11 +1221,14 @@ fn overlay_window_and_scale(window_id: u64) -> Option<(u64, f64)> {
     Some((overlay_window, scale))
 }
 
+/// `dwState` is not kept: on Windows 11 10.0.26300.9818 it is unreliable even
+/// in the listener-only table (live listeners report 0, 1, 2 or 6). A
+/// listening socket has no remote peer, which `remote_unspecified` records.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TcpOwnerRow {
     local_ip: IpAddr,
     local_port: u16,
-    state: u32,
+    remote_unspecified: bool,
     owner_pid: u32,
 }
 
@@ -1240,7 +1243,7 @@ fn select_loopback_listeners(rows: &[TcpOwnerRow], allowed_pids: &[u32]) -> Vec<
     let mut listeners = rows
         .iter()
         .filter(|row| {
-            row.state == MIB_TCP_STATE_LISTEN.0 as u32
+            row.remote_unspecified
                 && row.local_ip.is_loopback()
                 && allowed_pids.contains(&row.owner_pid)
         })
@@ -1412,7 +1415,7 @@ fn windows_loopback_listeners_with(
             .map(|row| TcpOwnerRow {
                 local_ip: IpAddr::V4(Ipv4Addr::from(u32::from_be(row.dwLocalAddr))),
                 local_port: network_port(row.dwLocalPort),
-                state: row.dwState,
+                remote_unspecified: row.dwRemoteAddr == 0 && network_port(row.dwRemotePort) == 0,
                 owner_pid: row.dwOwningPid,
             }),
         );
@@ -1429,7 +1432,8 @@ fn windows_loopback_listeners_with(
             .map(|row| TcpOwnerRow {
                 local_ip: IpAddr::V6(Ipv6Addr::from(row.ucLocalAddr)),
                 local_port: network_port(row.dwLocalPort),
-                state: row.dwState,
+                remote_unspecified: Ipv6Addr::from(row.ucRemoteAddr).is_unspecified()
+                    && network_port(row.dwRemotePort) == 0,
                 owner_pid: row.dwOwningPid,
             }),
         );
@@ -2643,6 +2647,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use windows::Win32::NetworkManagement::IpHelper::MIB_TCP_STATE_LISTEN;
 
     fn display(left: i32, top: i32, right: i32, bottom: i32, scale: f64) -> PhysicalDisplay {
         PhysicalDisplay {
@@ -3198,36 +3203,36 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn native_listener_selection_requires_loopback_listen_state_and_process_tree() {
+    fn native_listener_selection_requires_loopback_listener_and_process_tree() {
         let rows = [
             TcpOwnerRow {
                 local_ip: "127.0.0.1".parse().unwrap(),
                 local_port: 9222,
-                state: MIB_TCP_STATE_LISTEN.0 as u32,
+                remote_unspecified: true,
                 owner_pid: 42,
             },
             TcpOwnerRow {
                 local_ip: "0.0.0.0".parse().unwrap(),
                 local_port: 9333,
-                state: MIB_TCP_STATE_LISTEN.0 as u32,
+                remote_unspecified: true,
                 owner_pid: 43,
             },
             TcpOwnerRow {
                 local_ip: "::1".parse().unwrap(),
                 local_port: 9444,
-                state: MIB_TCP_STATE_LISTEN.0 as u32,
+                remote_unspecified: true,
                 owner_pid: 43,
             },
             TcpOwnerRow {
                 local_ip: "127.0.0.1".parse().unwrap(),
                 local_port: 9555,
-                state: MIB_TCP_STATE_LISTEN.0 as u32,
+                remote_unspecified: true,
                 owner_pid: 7,
             },
             TcpOwnerRow {
                 local_ip: "127.0.0.1".parse().unwrap(),
                 local_port: 9666,
-                state: 5,
+                remote_unspecified: false,
                 owner_pid: 42,
             },
         ];
@@ -3242,7 +3247,7 @@ mod tests {
         let row = TcpOwnerRow {
             local_ip: "127.0.0.1".parse().unwrap(),
             local_port: 9222,
-            state: MIB_TCP_STATE_LISTEN.0 as u32,
+            remote_unspecified: true,
             owner_pid: 43,
         };
         assert_eq!(
@@ -3351,6 +3356,73 @@ mod tests {
         })
         .unwrap();
         assert_eq!(listeners, vec![(9222, 42)]);
+    }
+
+    #[test]
+    fn native_listener_discovery_ignores_unreliable_row_states() {
+        // 10.0.26300.9818 reports live listeners as 0, 1 or 6 and some
+        // connected sockets as LISTEN, so only the remote endpoint counts.
+        const LISTEN: u32 = MIB_TCP_STATE_LISTEN.0 as u32;
+        let ipv4_offset = std::mem::offset_of!(MIB_TCPTABLE_OWNER_PID, table);
+        let row = |state: u32, local_port: u16, remote_addr: Ipv4Addr, remote_port: u16| {
+            MIB_TCPROW_OWNER_PID {
+                dwState: state,
+                dwLocalAddr: u32::from_ne_bytes(Ipv4Addr::LOCALHOST.octets()),
+                dwLocalPort: u32::from(local_port.to_be()),
+                dwRemoteAddr: u32::from_ne_bytes(remote_addr.octets()),
+                dwRemotePort: u32::from(remote_port.to_be()),
+                dwOwningPid: 42,
+            }
+        };
+        let ipv4 = owner_table_bytes(
+            ipv4_offset,
+            &[
+                row(0, 9222, Ipv4Addr::UNSPECIFIED, 0),
+                row(1, 9223, Ipv4Addr::UNSPECIFIED, 0),
+                row(6, 9224, Ipv4Addr::UNSPECIFIED, 0),
+                row(LISTEN, 9225, Ipv4Addr::UNSPECIFIED, 0),
+                row(LISTEN, 9226, Ipv4Addr::LOCALHOST, 50_000),
+            ],
+        );
+        let ipv6_offset = std::mem::offset_of!(MIB_TCP6TABLE_OWNER_PID, table);
+        let ipv6 = owner_table_bytes(
+            ipv6_offset,
+            &[
+                MIB_TCP6ROW_OWNER_PID {
+                    ucLocalAddr: Ipv6Addr::LOCALHOST.octets(),
+                    dwLocalScopeId: 0,
+                    dwLocalPort: u32::from(9227_u16.to_be()),
+                    ucRemoteAddr: Ipv6Addr::UNSPECIFIED.octets(),
+                    dwRemoteScopeId: 0,
+                    dwRemotePort: 0,
+                    dwState: 0,
+                    dwOwningPid: 42,
+                },
+                MIB_TCP6ROW_OWNER_PID {
+                    ucLocalAddr: Ipv6Addr::LOCALHOST.octets(),
+                    dwLocalScopeId: 0,
+                    dwLocalPort: u32::from(9228_u16.to_be()),
+                    ucRemoteAddr: Ipv6Addr::LOCALHOST.octets(),
+                    dwRemoteScopeId: 0,
+                    dwRemotePort: u32::from(50_001_u16.to_be()),
+                    dwState: LISTEN,
+                    dwOwningPid: 42,
+                },
+            ],
+        );
+
+        let listeners = windows_loopback_listeners_with(&[42], |family| {
+            if family == u32::from(AF_INET.0) {
+                Ok(ipv4.clone())
+            } else {
+                Ok(ipv6.clone())
+            }
+        })
+        .unwrap();
+        assert_eq!(
+            listeners,
+            vec![(9222, 42), (9223, 42), (9224, 42), (9225, 42), (9227, 42)]
+        );
     }
 
     #[test]

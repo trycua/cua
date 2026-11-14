@@ -362,6 +362,31 @@ fn disabled_refusal(
     cua_driver_core::protocol::ToolResult::error(text).with_structured(structured)
 }
 
+/// Chromium and Electron renderers often discard a background PID-routed key
+/// event without any sign. No oracle tells that drop apart from a key that
+/// landed, so an unverifiable background key result for such an app names the
+/// foreground rung instead of leaving the caller to find the miss on screen.
+pub(super) const CHROMIUM_BACKGROUND_KEY_NOTE: &str =
+    "Chromium and Electron apps often drop background key events, so this one may not \
+     have arrived. If the window shows no change, retry with delivery_mode:\"foreground\" \
+     and window_id.";
+
+/// The `escalation` for an unverifiable key result: present only for a
+/// background post to a Chromium or Electron app, in the same shape as the
+/// Screen Sharing refusals.
+pub(super) fn chromium_background_key_escalation(
+    foreground: bool,
+    chromium_embedder: bool,
+) -> Option<serde_json::Value> {
+    (!foreground && chromium_embedder).then(|| {
+        serde_json::json!({
+            "recommended": "foreground",
+            "reason": CHROMIUM_BACKGROUND_KEY_NOTE,
+            "requires": ["window_id"]
+        })
+    })
+}
+
 /// Re-read `AXEnabled` on a token target and refuse a disabled one before any
 /// cursor or input work. The snapshot's `enabled` can be stale. A foreground
 /// call into an app that is not frontmost skips the read: activation can

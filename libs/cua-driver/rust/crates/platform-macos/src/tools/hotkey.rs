@@ -624,12 +624,24 @@ impl Tool for HotkeyTool {
                 } else {
                     ""
                 };
+                let chromium_embedder = !fg
+                    && tokio::task::spawn_blocking(move || {
+                        super::type_text::is_chromium_embedder(pid)
+                    })
+                    .await
+                    .unwrap_or(false);
+                let structured = delivered_structured(fg, chromium_embedder);
+                let note = if structured.get("escalation").is_some() {
+                    format!(" {}", super::CHROMIUM_BACKGROUND_KEY_NOTE)
+                } else {
+                    String::new()
+                };
                 ToolResult::text(format!(
                     "Pressed {key_display} on pid {pid}{label}. Read the window before \
-                     sending it again.{}",
+                     sending it again.{note}{}",
                     changes.result_suffix()
                 ))
-                .with_structured(delivered_structured(fg))
+                .with_structured(structured)
             }
             Ok(Err(e)) => crate::security_prompt::tool_result(&e)
                 .unwrap_or_else(|| ToolResult::error(format!("hotkey failed: {e}"))),
@@ -647,12 +659,18 @@ fn menu_allows_key_fallback(result: &ToolResult) -> bool {
             == Some("background_unavailable")
 }
 
-fn delivered_structured(foreground: bool) -> Value {
-    serde_json::json!({
+fn delivered_structured(foreground: bool, chromium_embedder: bool) -> Value {
+    let mut structured = serde_json::json!({
         "path": if foreground { "key_events_fg" } else { "key_events" },
         "verified": false,
         "effect": "unverifiable",
-    })
+    });
+    if let Some(escalation) =
+        super::chromium_background_key_escalation(foreground, chromium_embedder)
+    {
+        structured["escalation"] = escalation;
+    }
+    structured
 }
 
 #[cfg(test)]
@@ -679,12 +697,45 @@ mod tests {
 
     #[test]
     fn a_delivered_combo_suggests_no_resend() {
-        for foreground in [false, true] {
-            let structured = delivered_structured(foreground);
-            assert!(structured.get("escalation").is_none());
-            assert_eq!(structured["effect"], "unverifiable");
-            assert_eq!(structured["verified"], false);
+        for (foreground, path) in [(false, "key_events"), (true, "key_events_fg")] {
+            assert_eq!(
+                delivered_structured(foreground, false),
+                serde_json::json!({
+                    "path": path,
+                    "verified": false,
+                    "effect": "unverifiable",
+                })
+            );
         }
+    }
+
+    #[test]
+    fn a_background_combo_to_a_chromium_app_recommends_foreground() {
+        assert_eq!(
+            delivered_structured(false, true),
+            serde_json::json!({
+                "path": "key_events",
+                "verified": false,
+                "effect": "unverifiable",
+                "escalation": {
+                    "recommended": "foreground",
+                    "reason": super::super::CHROMIUM_BACKGROUND_KEY_NOTE,
+                    "requires": ["window_id"]
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn a_foreground_combo_to_a_chromium_app_suggests_no_resend() {
+        assert_eq!(
+            delivered_structured(true, true),
+            serde_json::json!({
+                "path": "key_events_fg",
+                "verified": false,
+                "effect": "unverifiable",
+            })
+        );
     }
 
     #[tokio::test]

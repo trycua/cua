@@ -885,20 +885,12 @@ fn dismiss_popup_menu(popup: AXUIElementRef, pid: i32) {
     }
 }
 
-/// Whether a popup belongs to a Chromium renderer (Chrome-family browsers and
-/// Electron apps), whose `<select>` menu is a native popup.
-fn is_chromium_popup_owner(pid: i32) -> bool {
-    let bundle_id = crate::apps::bundle_id_for_pid(pid).unwrap_or_default();
-    super::type_text::is_chromium_identity(&bundle_id)
-        || crate::browser::electron_js::ElectronJs::is_electron(pid)
-}
-
 /// Whether pressing `element` would open a Chromium or Electron `<select>`
 /// menu: an `AXPopUpButton` inside web content of a Chromium renderer. The
 /// browser's own toolbar popups have no web-area ancestor and do not match.
 pub(super) fn is_chromium_web_select(pid: i32, window_id: u32, element: AXUIElementRef) -> bool {
     unsafe { copy_string_attr(element, "AXRole") }.as_deref() == Some("AXPopUpButton")
-        && is_chromium_popup_owner(pid)
+        && super::type_text::is_chromium_embedder(pid)
         && super::type_text::target_in_web_area(
             pid,
             Some((element as usize, None)),
@@ -969,7 +961,7 @@ fn select_chromium_popup_by_typeahead(
     if wanted.is_empty()
         || crate::apps::frontmost_pid() == Some(pid)
         || popup_menu_is_open(popup)
-        || !is_chromium_popup_owner(pid)
+        || !super::type_text::is_chromium_embedder(pid)
     {
         return None;
     }

@@ -276,6 +276,25 @@ pub fn jwt(claims: serde_json::Value) -> String {
     )
 }
 
+/// Attaches the viewer's media socket through `origin`, a loopback proxy, and
+/// checks that it reached `env`: a proxy that answers but forwards elsewhere
+/// fails.
+pub async fn assert_viewer_reaches(origin: &str, env: &cua_daemon::fixtures::SpacesdFixture) {
+    let before = env.media.lock().unwrap().attaches;
+    let ws = origin.replacen("http://", "ws://", 1);
+    let ticket = cua_daemon::fixtures::MOCK_TICKET;
+    tokio_tungstenite::connect_async(format!("{ws}/media?ticket={ticket}"))
+        .await
+        .unwrap_or_else(|e| {
+            panic!("the viewer's media socket does not attach through {origin}: {e}")
+        });
+    assert_eq!(
+        env.media.lock().unwrap().attaches,
+        before + 1,
+        "{origin} does not lead to the sandbox"
+    );
+}
+
 pub fn read_json(p: &Path) -> serde_json::Value {
     serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap()
 }

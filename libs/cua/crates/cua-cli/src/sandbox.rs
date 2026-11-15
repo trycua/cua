@@ -133,6 +133,15 @@ pub struct CreateArgs {
     /// Sandbox name (generated when omitted).
     #[arg(long)]
     name: Option<String>,
+    /// Windows images built here (`windows:11`, `windows:2025`, ...): install
+    /// from this ISO instead of downloading Microsoft's evaluation media. The
+    /// first Space of that version builds the image (20 to 40 minutes with
+    /// hardware acceleration) and later ones reuse it.
+    #[arg(long, value_name = "PATH")]
+    iso: Option<PathBuf>,
+    /// With --iso: the SHA-256 the ISO must have.
+    #[arg(long, value_name = "HEX", requires = "iso")]
+    iso_sha256: Option<String>,
     /// Start Chromium in it for the cua-driver browser tools (IMAGE
     /// defaults to `linux`).
     #[arg(long)]
@@ -1548,6 +1557,76 @@ pub const MAX_BARE_MEMORY_GB: f64 = 512.0;
 /// Largest memory a sandbox can ask for: 1 TiB.
 pub const MAX_MEMORY_MIB: u64 = 1024 * 1024;
 
+/// For a Windows image built on this computer (`windows:11`): checks and
+/// remembers `--iso` (the daemon that builds reads it back), or says what the
+/// first create will download. `--iso` on any other image is an error.
+fn windows_build_note(
+    resolved: &str,
+    iso: Option<&std::path::Path>,
+    sha256: Option<&str>,
+) -> Result<(), CuaError> {
+    use cua_image::windows::{WindowsArch, build, iso as isomod};
+    let version = build::local_build_target(resolved);
+    let (Some(version), arch) = (version, WindowsArch::host()) else {
+        return match iso {
+            Some(_) => Err(CuaError::InvalidArgument(
+                "--iso applies to the Windows images built on this computer (windows:11, windows:2025, ...)".into(),
+            )),
+            None => Ok(()),
+        };
+    };
+    let invalid = |e: cua_image::ImageError| CuaError::InvalidArgument(e.to_string());
+    version.check_arch(arch).map_err(invalid)?;
+    let layout = build::Layout::default_root();
+    match iso {
+        Some(path) => {
+            isomod::register(&layout.iso_dir(), version, arch, path).map_err(invalid)?;
+            if let Some(want) = sha256 {
+                let got = isomod::sha256_file(path)
+                    .map_err(|e| CuaError::InvalidArgument(format!("{}: {e}", path.display())))?;
+                if !got.eq_ignore_ascii_case(want.trim()) {
+                    return Err(CuaError::InvalidArgument(format!(
+                        "{} has SHA-256 {got}, not {want}",
+                        path.display()
+                    )));
+                }
+            }
+        }
+        None if build::cached_base(&layout, version, arch).is_none() => {
+            use cua_image::windows::table::Media;
+            let (source, licence) = if isomod::registered(&layout.iso_dir(), version, arch)
+                .is_some()
+            {
+                ("from the ISO you gave earlier", String::new())
+            } else {
+                match version.media(arch) {
+                    Media::Evaluation => (
+                        "from Microsoft's evaluation ISO (a download of about 7 GB, kept for next time)",
+                        format!(" It is a {}-day evaluation.", version.eval_days),
+                    ),
+                    Media::Consumer(_) => (
+                        "from the Windows ISO Microsoft offers for download (about 8 GB, checked against Microsoft's published checksum, kept for next time)",
+                        " Windows installs unactivated: it runs, with a watermark and limited personalisation, until you add a licence.".into(),
+                    ),
+                    Media::None => {
+                        return Err(CuaError::InvalidArgument(format!(
+                            "Microsoft publishes no {} ISO for {}: pass your own with --iso <path>",
+                            arch.as_str(),
+                            version.name
+                        )));
+                    }
+                }
+            };
+            eprintln!(
+                "note: {} is built on this computer the first time, {source}: about 20 to 40 minutes with hardware acceleration, then every create is fast.{licence}",
+                version.name
+            );
+        }
+        None => {}
+    }
+    Ok(())
+}
+
 /// Resolves an image alias to (image reference, guest OS). The aliases
 /// `linux`, `windows` and `macos` (optionally `:<version>`, e.g.
 /// `macos:tahoe`) and the bare word `ubuntu` name the canonical images `ghcr.io/trycua/{linux:24.04,
@@ -1812,6 +1891,30 @@ fn in_a_space(e: CuaError) -> CuaError {
     e
 }
 
+/// Whether this command creates a Windows or macOS computer here: one that
+/// only a long-running runtime (the cua daemon) can keep.
+pub fn creates_vm_here(cmd: &SandboxCmd) -> bool {
+    let SandboxCmd::Create(a) = cmd else {
+        return false;
+    };
+    let Some(image) = a.image.as_deref().or(a.image_flag.as_deref()) else {
+        return false;
+    };
+    if !matches!(a.on, None | Some(On::Local)) {
+        return false;
+    }
+    let Ok((resolved, os)) = resolve_image(image, a.tier.as_deref()) else {
+        return false;
+    };
+    let os = os.or_else(|| cua_image::catalog::catalog_os(&resolved));
+    matches!(os.as_deref(), Some("windows" | "macos"))
+}
+
+/// The refusal for a Windows or macOS computer in a runtime that ends with
+/// this command (`--embedded`): it would be stopped the moment the command
+/// returns.
+pub const EMBEDDED_VM_REFUSED: &str = "A Windows or macOS computer stops when this command ends if no cua daemon holds it. Leave out --embedded: the cua daemon starts by itself and keeps it running.";
+
 async fn create(
     cua: &Arc<Cua>,
     a: CreateArgs,
@@ -1860,6 +1963,18 @@ async fn create(
         }
         if let Some(image) = image {
             let (resolved, os) = resolve_image(&image, a.tier.as_deref())?;
+            if cua.embedded_runtime().is_some()
+                && on == On::Local
+                && matches!(
+                    os.clone()
+                        .or_else(|| cua_image::catalog::catalog_os(&resolved))
+                        .as_deref(),
+                    Some("windows" | "macos")
+                )
+            {
+                return Err(CuaError::InvalidArgument(EMBEDDED_VM_REFUSED.into()));
+            }
+            windows_build_note(&resolved, a.iso.as_deref(), a.iso_sha256.as_deref())?;
             o.image = resolved;
             o.os = os;
         }
@@ -2712,7 +2827,7 @@ pub async fn run(
                         )));
                     }
                     Some(sb) => {
-                        return exec_agentless(&sb, &name, &command.join(" "), json_global, out)
+                        return exec_agentless(&sb, &name, &exec_line(&command), json_global, out)
                             .await;
                     }
                     None => return Err(CuaError::SpacesdNotAvailable(m)),
@@ -2733,7 +2848,7 @@ pub async fn run(
             }
             let o = env
                 .run(shell::with_opts(
-                    shell::command_of(&sh_argv(&image_defaults(&name, command.join(" ")))),
+                    shell::command_of(&guest_argv(&env, &name, exec_line(&command)).await),
                     flags.opts(Some(120_000)),
                 ))
                 .await?;
@@ -2770,11 +2885,14 @@ pub async fn run(
             let name = at.apply(&name)?;
             let env = env_of(cua, &name).await?;
             if !command.is_empty() && !util::interactive() {
-                let line = image_defaults(&name, command.join(" "));
-                return shell::exec(&env, &sh_argv(&line), out).await;
+                let argv = guest_argv(&env, &name, exec_line(&command)).await;
+                return shell::exec(&env, &argv, out).await;
             }
-            let cmd =
-                (!command.is_empty()).then(|| sh_argv(&image_defaults(&name, command.join(" "))));
+            let cmd = if command.is_empty() {
+                None
+            } else {
+                Some(guest_argv(&env, &name, exec_line(&command)).await)
+            };
             return shell::interactive(&env, cmd, cols, rows).await;
         }
         SandboxCmd::Screenshot { name, at, output } => {
@@ -3082,8 +3200,61 @@ pub(crate) async fn sandbox_with_token(
     sbx.connect(info.id).await
 }
 
+/// The shell line for `cua sb exec NAME ARG...`. One argument is a shell
+/// line as typed (`'ls /tmp | wc -l'`). Several are an argv the shell on this
+/// side already split, so a word with spaces or quotes in it (`bash -c 'echo
+/// "a b"'`) is quoted again to arrive whole; shell operators passed as their
+/// own words (`'|'`, `'&&'`) stay operators.
+fn exec_line(args: &[String]) -> String {
+    const OPERATORS: [&str; 9] = ["|", "||", "&", "&&", ";", ">", ">>", "<", "2>&1"];
+    if args.len() < 2 {
+        return args.join(" ");
+    }
+    args.iter()
+        .map(|a| {
+            let needs = a.is_empty()
+                || (!OPERATORS.contains(&a.as_str())
+                    && a.chars()
+                        .any(|c| c.is_whitespace() || matches!(c, '\'' | '"' | '\\' | '$' | '`')));
+            if needs {
+                format!("'{}'", a.replace('\'', "'\\''"))
+            } else {
+                a.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn sh_argv(line: &str) -> Vec<String> {
     vec!["/bin/sh".into(), "-c".into(), line.into()]
+}
+
+/// Whether the guest of `env` is Windows (no `/bin/sh`: its shell is `cmd.exe`).
+async fn is_windows(env: &cua_sdk::SpacesdClient) -> bool {
+    env.capabilities()
+        .await
+        .is_ok_and(|c| c.os_family.eq_ignore_ascii_case("windows"))
+}
+
+/// The argv that runs `line` in `env`'s guest.
+async fn guest_argv(env: &cua_sdk::SpacesdClient, name: &str, line: String) -> Vec<String> {
+    if is_windows(env).await {
+        windows_argv(&line)
+    } else {
+        sh_argv(&image_defaults(name, line))
+    }
+}
+
+/// `cmd.exe /d /s /c "line"`: `/s` keeps the quotes of the line as typed.
+fn windows_argv(line: &str) -> Vec<String> {
+    vec![
+        "cmd.exe".into(),
+        "/d".into(),
+        "/s".into(),
+        "/c".into(),
+        line.into(),
+    ]
 }
 
 /// suspend / resume / restart by sandbox name.
@@ -3947,6 +4118,53 @@ mod tests {
         }
     }
 
+    #[test]
+    fn exec_keeps_words_with_quotes_and_spaces_whole() {
+        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // One argument is a shell line, as before.
+        assert_eq!(exec_line(&v(&["ls /tmp | wc -l"])), "ls /tmp | wc -l");
+        // Plain words and operators pass through.
+        assert_eq!(
+            exec_line(&v(&["ls", "/tmp", "|", "wc", "-l"])),
+            "ls /tmp | wc -l"
+        );
+        // `bash -c '...'` keeps its script as one word, with its quotes.
+        assert_eq!(
+            exec_line(&v(&["bash", "-c", r#"echo "a b" && echo it's"#])),
+            r#"bash -c 'echo "a b" && echo it'\''s'"#
+        );
+        // A backslash path survives.
+        assert_eq!(exec_line(&v(&["cmd", r"C:\x y"])), r"cmd 'C:\x y'");
+        assert_eq!(exec_line(&v(&["echo", ""])), "echo ''");
+    }
+
+    #[test]
+    fn a_windows_guest_runs_the_line_in_cmd_not_sh() {
+        assert_eq!(
+            windows_argv("echo hi & ver"),
+            ["cmd.exe", "/d", "/s", "/c", "echo hi & ver"]
+        );
+        assert_eq!(sh_argv("ls"), ["/bin/sh", "-c", "ls"]);
+    }
+
+    #[test]
+    fn iso_belongs_to_the_windows_images_built_here() {
+        let iso = std::path::Path::new("w.iso");
+        for image in ["ghcr.io/trycua/linux:24.04", "ghcr.io/trycua/windows:2022"] {
+            let e = windows_build_note(image, Some(iso), None)
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains("windows:11"), "{image}: {e}");
+        }
+        // No --iso on an image that is pulled: nothing to say.
+        assert!(windows_build_note("ghcr.io/trycua/windows:2022", None, None).is_ok());
+        // The alias resolves to the local build the note recognises.
+        let (r, os) = resolve_image("windows:11", None).unwrap();
+        assert_eq!(r, "ghcr.io/trycua/windows:11");
+        assert_eq!(os.as_deref(), Some("windows"));
+        assert!(cua_image::windows::build::local_build_target(&r).is_some());
+    }
+
     #[tokio::test]
     async fn post_create_registration_outage_does_not_enter_cleanup() {
         let mut images = cua_image::testing::FakeRegistry::default();
@@ -4382,7 +4600,8 @@ mod tests {
         ));
         // Derived on the user's Mac (the developer tools image) counts as available.
         let published = |x: &str| {
-            cua_image::catalog::find(x).is_none_or(|e| e.published || e.derived_from.is_some())
+            cua_image::catalog::find(x)
+                .is_none_or(|e| e.published || e.derived_from.is_some() || e.local_build.is_some())
         };
         for (got, want, os) in [
             (

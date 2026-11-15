@@ -78,6 +78,11 @@ const SETTLE_TIMEOUT: Duration = Duration::from_secs(60);
 const MIGRATE_TIMEOUT: Duration = Duration::from_secs(600);
 /// A golden snapshot being recorded (renamed to its key when done).
 const REC_PREFIX: &str = ".rec-";
+/// `<key><COLD_SUFFIX>` in the golden root: this configuration's VMs boot
+/// cold (its image cannot take a restored VM's identity); holds why.
+const COLD_SUFFIX: &str = ".cold";
+/// A cold marker is dropped after this long (see `gc_golden`).
+const COLD_MARKER_TTL: Duration = Duration::from_secs(30 * 24 * 3600);
 /// A recording older than this was left by a process that died.
 const STALE_RECORDING: Duration = Duration::from_secs(3600);
 /// The migration stream inside a snapshot directory.
@@ -437,17 +442,25 @@ impl QemuRuntime {
             headless: super::no_desktop(spec),
             bulk: false,
         };
+        let marker = self.golden_root().join(format!("{key}{COLD_SUFFIX}"));
         let refused = || {
             NO_GOLDEN
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .iter()
                 .any(|k| k == key)
+                || marker.is_file()
         };
         let no_golden = || {
-            Err(VmmError::other(
-                "this image's cua-spacesd cannot become a new machine; booting cold",
-            ))
+            let why = std::fs::read_to_string(&marker).unwrap_or_default();
+            Err(VmmError::other(format!(
+                "this image's VMs cannot share a golden snapshot{}; booting cold",
+                if why.trim().is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", why.trim())
+                }
+            )))
         };
         if refused() {
             return no_golden();
@@ -595,6 +608,29 @@ impl QemuRuntime {
                         rev.map_or("unknown".to_string(), |r| r.to_string())
                     )));
                 }
+            }
+            // A restore renews the guest's identity as root through its
+            // agent. One that cannot (the OSWorld disk's cua-spacesd runs
+            // as `user`, without passwordless sudo) would fail every
+            // restore after the budget it spent retrying: its VMs boot
+            // cold, on this host from now on, without recording again.
+            // A guest that did not answer the question records nothing
+            // this time and is asked again next time.
+            if let Some(identity) = &self.cfg.identity
+                && let Some(why) = identity.check_renewable(&ep, &secret).await?
+            {
+                if let Some(key) = target.file_name() {
+                    let key = key.to_string_lossy().into_owned();
+                    let _ = std::fs::write(root.join(format!("{key}{COLD_SUFFIX}")), &why);
+                    NO_GOLDEN
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .push(key);
+                }
+                return Err(VmmError::other(format!(
+                    "this image's guest cannot take a restored VM's identity ({why}), so its \
+                     VMs boot cold rather than restore a golden snapshot"
+                )));
             }
             let mut q = self.qmp_at(&tpl).await?;
             q.stop().await?;
@@ -1188,6 +1224,21 @@ impl QemuRuntime {
             tracing::debug!(golden = %p.display(), "removing a golden QEMU snapshot");
             let _ = std::fs::remove_dir_all(&p);
         }
+        // Cold markers of configurations not started for a month (their
+        // key names an image file that has likely changed since).
+        if let Ok(rd) = std::fs::read_dir(self.golden_root()) {
+            for e in rd.flatten() {
+                let stale = e.file_name().to_string_lossy().ends_with(COLD_SUFFIX)
+                    && e.metadata()
+                        .and_then(|m| m.modified())
+                        .ok()
+                        .and_then(|t| t.elapsed().ok())
+                        .is_some_and(|age| age > COLD_MARKER_TTL);
+                if stale {
+                    let _ = std::fs::remove_file(e.path());
+                }
+            }
+        }
     }
 
     /// Files under the golden root that some entry uses (its disk's
@@ -1362,6 +1413,44 @@ mod tests {
         assert!(ram.exists());
         assert_eq!(r.own_memory(&st, true).unwrap(), want);
         assert!(!ram.exists());
+    }
+
+    /// A configuration whose guest could not take a restored VM's identity
+    /// is marked cold on disk: later starts (other processes too) boot it
+    /// cold at once, without booting a template to record and refuse again,
+    /// and say why.
+    #[tokio::test]
+    async fn a_cold_marked_configuration_records_no_golden() {
+        let d = tempfile::tempdir().unwrap();
+        let r = rt(d.path(), 3);
+        let st = entry("vm", d.path().join("vm").join("disk.qcow2"));
+        let spec = StartSpec::new("vm", ImageSource::Existing);
+        let root = d.path().join("_golden");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join(format!("k1{COLD_SUFFIX}")),
+            "its cua-spacesd cannot run the identity renewal as root",
+        )
+        .unwrap();
+        let backing = d.path().join("base.qcow2");
+        let err = r
+            .golden(&st, &spec, &backing, "k1")
+            .await
+            .expect_err("a cold configuration records nothing");
+        let msg = err.to_string();
+        assert!(msg.contains("booting cold"), "{msg}");
+        assert!(
+            msg.contains("cannot run the identity renewal as root"),
+            "{msg}"
+        );
+        assert!(!root.join("k1").exists());
+        assert!(
+            std::fs::read_dir(&root)
+                .unwrap()
+                .flatten()
+                .all(|e| !e.file_name().to_string_lossy().starts_with(REC_PREFIX)),
+            "no template VM was started"
+        );
     }
 
     #[test]

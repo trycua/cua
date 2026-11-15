@@ -976,6 +976,14 @@ def rust_checks(changes: Changes, ctx: "Context") -> List[Check]:
                          clippy_cmd, cwd=root,
                          tools=("cargo",), group=group, tier="build",
                          hint="fix the warnings above; `cargo clippy --fix --allow-dirty` applies the machine-applicable ones"))
+        if root == "libs/cua" and (changes.full or "cua-vmm" in names):
+            # cua-vmm's backends are features; other crates build it with only some on
+            # (cua-ci: just `lume`), so each one alone must lint clean.
+            vmm = "cargo clippy --locked -p cua-vmm --all-targets --no-default-features"
+            out.append(Check(f"rust-vmm-features:{root}", "clippy -D warnings (cua-vmm, each backend feature alone)",
+                             " && ".join(f"{vmm}{f} -- -D warnings" for f in ("", " --features lume", " --features container")),
+                             cwd=root, tools=("cargo",), group=group, tier="build",
+                             hint="gate code that needs a backend feature with #[cfg(feature = \"...\")] (and its else path)"))
         lane = windows_lane(root)
         if lane:
             args, lane_pkgs = lane

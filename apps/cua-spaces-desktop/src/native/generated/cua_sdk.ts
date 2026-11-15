@@ -27513,10 +27513,14 @@ export interface AgentSetupLike {
  * Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
  * (`server`, default this channel's cua), and with `sign_in` the
  * agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
- * sign-in it already has, read from where Claude Code keeps it). JSON:
- * one result per agent.
+ * sign-in it already has, read from where Claude Code keeps it). With
+ * `driver`, the `cua-driver` entry the host app wants (the Cua Driver it
+ * carries, by absolute path) is written too; `driver_permissions_granted`
+ * says whether Screen Recording and Accessibility are on for it (None:
+ * unknown). Each part asked for is reported on its own (`parts`), so
+ * one can be retried by asking for it alone. JSON: one result per agent.
  */
-    connectJson(agents: Array<string>, server: AgentMcpServer | undefined, skills: boolean, mcp: boolean, signIn: boolean, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
+    connectJson(agents: Array<string>, server: AgentMcpServer | undefined, skills: boolean, mcp: boolean, signIn: boolean, driver: AgentMcpServer | undefined, driverPermissionsGranted: boolean | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
 /**
  * Whether each agent is really connected (CONTRACT §4: `{agents,
  * checked_at_ms}`), as JSON, the same JSON `cua connect status --json`
@@ -27664,17 +27668,21 @@ private constructor(pointer: UniffiHandle) {
  * Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
  * (`server`, default this channel's cua), and with `sign_in` the
  * agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
- * sign-in it already has, read from where Claude Code keeps it). JSON:
- * one result per agent.
+ * sign-in it already has, read from where Claude Code keeps it). With
+ * `driver`, the `cua-driver` entry the host app wants (the Cua Driver it
+ * carries, by absolute path) is written too; `driver_permissions_granted`
+ * says whether Screen Recording and Accessibility are on for it (None:
+ * unknown). Each part asked for is reported on its own (`parts`), so
+ * one can be retried by asking for it alone. JSON: one result per agent.
  */
-    async connectJson(agents: Array<string>, server: AgentMcpServer | undefined, skills: boolean, mcp: boolean, signIn: boolean, asyncOpts_?: { signal: AbortSignal }): Promise<string> /*throws*/ {
+    async connectJson(agents: Array<string>, server: AgentMcpServer | undefined, skills: boolean, mcp: boolean, signIn: boolean, driver: AgentMcpServer | undefined, driverPermissionsGranted: boolean | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<string> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
     try {
         return await uniffiRustCallAsync(
             /*rustCaller:*/ uniffiCaller,
             /*rustFutureFunc:*/ () => {
                 return nativeModule().uniffi_cua_sdk_fn_method_agentsetup_connect_json(
-                    uniffiTypeAgentSetupObjectFactory.clonePointer(this),FfiConverterSequenceString.lower(agents, nativeModule().rustbuffer_alloc),FfiConverterOptionalTypeAgentMcpServer.lower(server, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(skills, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(mcp, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(signIn, nativeModule().rustbuffer_alloc)
+                    uniffiTypeAgentSetupObjectFactory.clonePointer(this),FfiConverterSequenceString.lower(agents, nativeModule().rustbuffer_alloc),FfiConverterOptionalTypeAgentMcpServer.lower(server, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(skills, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(mcp, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(signIn, nativeModule().rustbuffer_alloc),FfiConverterOptionalTypeAgentMcpServer.lower(driver, nativeModule().rustbuffer_alloc),FfiConverterOptionalBoolean.lower(driverPermissionsGranted, nativeModule().rustbuffer_alloc)
                 );
             },
             /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
@@ -49652,7 +49660,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp() !== 53713) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_connect_json() !== 21138) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_connect_json() !== 1379) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_agentsetup_connect_json");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_connection_status_json() !== 47692) {

@@ -57,15 +57,19 @@ def test_actionlint_is_cached_and_has_a_second_download_path():
     assert "gh release download" in run and "--repo rhysd/actionlint" in run
 
 
-def run_actionlint_install(tmp_path: pathlib.Path, curl_ok: bool, cached: bool) -> tuple[subprocess.CompletedProcess, str]:
-    """Run the install step with stub curl, gh and tar; returns the result and what was called."""
+def run_actionlint_install(
+    tmp_path: pathlib.Path, curl_ok: bool, cached: bool, gh_ok: bool = True
+) -> tuple[subprocess.CompletedProcess, str]:
+    """Run the install step with stub curl, gh, tar and go; returns the result and what was called."""
     stubs = tmp_path / "bin"
     stubs.mkdir()
     calls = tmp_path / "calls"
+    fake = 'printf "#!/bin/sh\\necho 1.7.12\\n" > "$1/actionlint"; chmod +x "$1/actionlint"'
     for name, body in {
         "curl": f'echo curl >> "{calls}"; exit {0 if curl_ok else 22}',
-        "gh": f'echo gh >> "{calls}"',
-        "tar": f'echo tar >> "{calls}"; printf "#!/bin/sh\\necho 1.7.12\\n" > "$4/actionlint"; chmod +x "$4/actionlint"',
+        "gh": f'echo gh >> "{calls}"; exit {0 if gh_ok else 1}',
+        "tar": f'echo tar >> "{calls}"; set -- "$4"; {fake}',
+        "go": f'echo "go $*" >> "{calls}"; set -- "$GOBIN"; {fake}',
     }.items():
         (stubs / name).write_text(f"#!/bin/sh\n{body}\n")
         (stubs / name).chmod(0o755)
@@ -75,7 +79,7 @@ def run_actionlint_install(tmp_path: pathlib.Path, curl_ok: bool, cached: bool) 
         (temp / "actionlint-bin/actionlint").write_text("#!/bin/sh\necho 1.7.12\n")
         (temp / "actionlint-bin/actionlint").chmod(0o755)
     env = {"PATH": f"{stubs}:/usr/bin:/bin", "RUNNER_TEMP": str(temp), "GITHUB_PATH": str(tmp_path / "path"),
-           "VERSION": "1.7.12", "GH_TOKEN": "t"}
+           "VERSION": "1.7.12", "GH_TOKEN": "t", "RUNNER_TOOL_CACHE": str(tmp_path / "toolcache")}
     done = subprocess.run(["bash", "-e", "-c", actionlint_steps()[1]["run"]], env=env, capture_output=True, text=True, timeout=20)
     return done, calls.read_text() if calls.exists() else ""
 
@@ -85,6 +89,16 @@ def test_actionlint_install_falls_back_to_gh_when_the_release_download_fails(tmp
     assert done.returncode == 0, done.stderr
     assert calls.split() == ["curl", "gh", "tar"]
     assert "falling back to gh release download" in done.stdout
+
+
+def test_actionlint_install_builds_from_the_go_proxy_when_github_releases_fail(tmp_path):
+    # 9 Nov 2026: curl got six 504s from the release CDN; gh reads the same CDN.
+    done, calls = run_actionlint_install(tmp_path, curl_ok=False, cached=False, gh_ok=False)
+    assert done.returncode == 0, done.stderr
+    assert calls.splitlines() == ["curl", "gh", "go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12"]
+    assert (tmp_path / "temp/actionlint-bin/actionlint").exists()
+    assert "1.7.12" in done.stdout
+    assert (tmp_path / "path").read_text().strip() == str(tmp_path / "temp/actionlint-bin")
 
 
 def test_actionlint_install_makes_no_network_call_on_a_cache_hit(tmp_path):

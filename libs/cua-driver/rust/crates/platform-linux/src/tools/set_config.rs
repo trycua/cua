@@ -35,23 +35,18 @@ impl Tool for SetConfigTool {
             description: "Update cua-driver-rs configuration. capture_mode / \
                 max_image_dimension take effect immediately.\n\n\
                 Pass each setting as its own field: `{\"capture_mode\": \"som\", \"max_image_dimension\": 0}`.\n\n\
-                The experimental_pip keys persist to ~/.cua-driver/config.json and apply on next \
-                daemon restart (the PiP backend is initialised once at startup; \
-                Linux ships only the trait stub today — see issue #1729).\n\n\
                 `cursor.motion.style`, `cursor.motion.timing` and `cursor.motion.effects.<name>` \
                 (`on`, `off`, or `default`) save the default cursor motion for sessions started afterwards. \
                 `cursor.motion: \"default\"` clears every saved cursor motion default.\n\n\
                 `cursor.badges` (`minimal` default, `verbose`, or `off`) sets the agent cursor badge \
                 for every cursor at once.\n\n\
                 `cursor.float` (float at rest and while moving) and `cursor.halo` (soft glow) are \
-                `on` (default), `off` or `default`; `cursor.marks` (action marks) is `on`, \
-                `off` (default) or `default`; `cursor.rotate` is `heading` (default), `lean`, \
-                `off` or `default`. All apply to every cursor at once.".into(),
+                `on` (default), `off` or `default`; `cursor.rotate` is `heading` (default), `lean`, \
+                `off` or `default`. All apply to every cursor at once. The cursor never draws \
+                action marks (`cursor.marks` is retired and ignored).".into(),
             input_schema: with_cursor_motion_config_properties(json!({"type":"object","properties":{
                 "capture_mode":{"type":"string","enum":["ax","vision"],"description":"Default capture mode for get_window_state. (\"som\"/\"screenshot\" still decode as deprecated aliases.)"},
                 "max_image_dimension":{"type":"integer","description":"Max dimension for screenshot resizing (0 = no limit)."},
-                "experimental_pip":{"type":"boolean","description":"Enable the experimental PiP preview window (applies next restart; Linux backend stubbed)."},
-                "experimental_pip_geometry":{"type":"string","description":"PiP window size + optional position in `WxH` or `WxH+X+Y` form."},
                 "fast_path": cua_driver_core::fast_path::wire::config_schema()
             },"additionalProperties":false})),
             read_only: false, destructive: false, idempotent: true, open_world: false,
@@ -93,9 +88,10 @@ impl Tool for SetConfigTool {
                 .map(|key| format!("{key} (applies now)")),
         );
         if let Some(mode) = args.opt_str("capture_mode") {
-            if let Err(e) =
-                pip_preview::write_config_key("capture_mode", Value::String(mode.clone()))
-            {
+            if let Err(e) = cua_driver_core::config_file::write_config_key(
+                "capture_mode",
+                Value::String(mode.clone()),
+            ) {
                 tracing::warn!("set_config: failed to persist capture_mode: {e}");
             }
             parts.push(format!("capture_mode={mode}"));
@@ -111,45 +107,22 @@ impl Tool for SetConfigTool {
         }
         if let Some(dim) = args.opt_u64("max_image_dimension") {
             cfg.max_image_dimension = dim as u32;
-            if let Err(e) = pip_preview::write_config_key("max_image_dimension", Value::from(dim)) {
+            if let Err(e) = cua_driver_core::config_file::write_config_key(
+                "max_image_dimension",
+                Value::from(dim),
+            ) {
                 tracing::warn!("set_config: failed to persist max_image_dimension: {e}");
             }
             parts.push(format!("max_image_dimension={dim}"));
-        }
-        if let Some(enabled) = args.get("experimental_pip").and_then(|v| v.as_bool()) {
-            if let Err(e) = pip_preview::write_config_key("experimental_pip", Value::Bool(enabled))
-            {
-                return ToolResult::error(format!("failed to persist experimental_pip: {e}"));
-            }
-            parts.push(format!("experimental_pip={enabled} (next restart)"));
-        }
-        if let Some(geom) = args.opt_str("experimental_pip_geometry") {
-            if pip_preview::PipGeometry::parse(&geom).is_none() {
-                return ToolResult::error(format!(
-                    "experimental_pip_geometry `{geom}` is not a valid WxH or WxH+X+Y string"
-                ));
-            }
-            if let Err(e) = pip_preview::write_config_key(
-                "experimental_pip_geometry",
-                Value::String(geom.clone()),
-            ) {
-                return ToolResult::error(format!(
-                    "failed to persist experimental_pip_geometry: {e}"
-                ));
-            }
-            parts.push(format!("experimental_pip_geometry={geom} (next restart)"));
         }
         let msg = if parts.is_empty() {
             "Config unchanged (no known parameters).".to_owned()
         } else {
             format!("Config updated: {}", parts.join(", "))
         };
-        let (pip_enabled, pip_geometry) = pip_preview::read_pip_keys_from_file();
         ToolResult::text(msg).with_structured(json!({
             "capture_mode": cfg.capture_mode,
             "max_image_dimension": cfg.max_image_dimension,
-            "experimental_pip": pip_enabled,
-            "experimental_pip_geometry": pip_geometry,
             "fast_path": cua_driver_core::fast_path::wire::config_value()
         }))
     }

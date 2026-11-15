@@ -197,38 +197,53 @@ impl WalkOutcome {
     }
 }
 
-/// The note that heads a partial tree, naming why the walk stopped.
+/// The note that heads a partial tree, naming why the walk stopped and the
+/// retry that can get past that stop. Callers follow the remedy literally, so
+/// it must name the knob that lifts this cut and no other.
 pub fn truncation_note(
     reason: Option<&str>,
     timeout_ms: u64,
     visited: usize,
     pending: usize,
 ) -> String {
-    let why = match reason {
-        Some("timeout") => format!("the {timeout_ms} ms timeout_ms budget ran out"),
-        Some("node_budget") => "the max_elements node budget ran out".to_owned(),
-        Some("app_unresponsive") => {
-            "the application stopped answering its accessibility API".to_owned()
-        }
-        Some("app_lookup_timeout") => format!(
-            "the application was not reachable through its accessibility API (AT-SPI, AX) \
-             within {timeout_ms} ms; it may still be launching"
+    const NARROW: &str = "or narrow with query / max_depth";
+    let (why, remedy) = match reason {
+        Some("timeout") => (
+            format!("the {timeout_ms} ms timeout_ms budget ran out"),
+            format!("retry with a larger timeout_ms (e.g. 5000) {NARROW}"),
         ),
-        Some("huge_container") => "a container with more children than can be enumerated \
-            (e.g. a spreadsheet's cell grid) was not expanded"
-            .to_owned(),
-        Some(other) => other.to_owned(),
-        None => "the walk stopped early".to_owned(),
-    };
-    let remedy = if reason == Some("node_budget") {
-        "retry with a larger max_elements"
-    } else {
-        "retry with a larger timeout_ms (e.g. 5000)"
+        Some("node_budget") => (
+            "the max_elements node budget ran out".to_owned(),
+            format!("retry with a larger max_elements {NARROW}"),
+        ),
+        Some("app_unresponsive") => (
+            "the application stopped answering its accessibility API".to_owned(),
+            "retry in a moment or with a larger timeout_ms (e.g. 5000)".to_owned(),
+        ),
+        Some("app_lookup_timeout") => (
+            format!(
+                "the application was not reachable through its accessibility API (AT-SPI, AX) \
+                 within {timeout_ms} ms; it may still be launching"
+            ),
+            "retry in a moment or with a larger timeout_ms (e.g. 5000)".to_owned(),
+        ),
+        Some("huge_container") => (
+            "a container with more children than can be enumerated \
+             (e.g. a spreadsheet's cell grid) was not expanded"
+                .to_owned(),
+            "retry with a max_elements above that container's child count, or act inside it \
+             by pixel (x,y) off the screenshot"
+                .to_owned(),
+        ),
+        other => (
+            other.unwrap_or("the walk stopped early").to_owned(),
+            format!("retry with a larger timeout_ms (e.g. 5000) {NARROW}"),
+        ),
     };
     format!(
         "⚠️ PARTIAL TREE: {why} after {visited} node(s) ({pending} discovered but not visited). \
          Every element listed is real; elements after the cut are missing. If the element you \
-         need is absent, {remedy} or narrow with query / max_depth."
+         need is absent, {remedy}."
     )
 }
 
@@ -321,17 +336,19 @@ mod tests {
         assert!(note.starts_with("⚠️ PARTIAL TREE: the 1000 ms timeout_ms budget ran out"));
     }
 
+    /// The advice after "If the element you need is absent,".
+    fn remedy(note: &str) -> &str {
+        note.split_once("If the element you need is absent, ")
+            .expect("note carries a remedy")
+            .1
+    }
+
     #[test]
-    fn truncation_note_names_the_budget_and_the_remedy() {
+    fn truncation_note_names_the_budget_and_the_counts() {
         let note = truncation_note(Some("timeout"), 1000, 240, 88);
-        assert!(note.contains("PARTIAL TREE"));
-        assert!(note.contains("1000 ms"));
+        assert!(note.starts_with("⚠️ PARTIAL TREE: the 1000 ms timeout_ms budget ran out"));
         assert!(note.contains("240 node(s)"));
         assert!(note.contains("88 discovered"));
-        assert!(note.contains("timeout_ms"));
-        assert!(note.contains("query"));
-        let note = truncation_note(Some("node_budget"), 1000, 5000, 3);
-        assert!(note.contains("max_elements"));
         let note = truncation_note(Some("app_unresponsive"), 1000, 3, 0);
         assert!(note.contains("stopped answering"));
         let note = truncation_note(Some("app_lookup_timeout"), 250, 0, 0);
@@ -339,5 +356,75 @@ mod tests {
         assert!(note.contains("still be launching"));
         let note = truncation_note(Some("huge_container"), 1000, 1918, 0);
         assert!(note.contains("not expanded"));
+    }
+
+    /// Each cut names the knob that lifts it, and never one that cannot: a
+    /// caller told to raise timeout_ms after a max_elements cut gets the same
+    /// partial tree back (#4720).
+    #[test]
+    fn truncation_note_remedy_matches_the_cut() {
+        let cases: [(Option<&str>, &str, &[&str]); 6] = [
+            (
+                Some("timeout"),
+                "retry with a larger timeout_ms (e.g. 5000) or narrow with query / max_depth.",
+                &["max_elements"],
+            ),
+            (
+                Some("node_budget"),
+                "retry with a larger max_elements or narrow with query / max_depth.",
+                &["timeout_ms"],
+            ),
+            (
+                Some("app_unresponsive"),
+                "retry in a moment or with a larger timeout_ms (e.g. 5000).",
+                &["max_elements", "query"],
+            ),
+            (
+                Some("app_lookup_timeout"),
+                "retry in a moment or with a larger timeout_ms (e.g. 5000).",
+                &["max_elements", "query"],
+            ),
+            (
+                Some("huge_container"),
+                "retry with a max_elements above that container's child count, or act inside it \
+                 by pixel (x,y) off the screenshot.",
+                &["timeout_ms", "query"],
+            ),
+            (
+                None,
+                "retry with a larger timeout_ms (e.g. 5000) or narrow with query / max_depth.",
+                &["max_elements"],
+            ),
+        ];
+        for (reason, expected, wrong_knobs) in cases {
+            let note = truncation_note(reason, 1000, 20, 15);
+            let advice = remedy(&note);
+            assert_eq!(advice, expected, "{reason:?}");
+            for knob in wrong_knobs {
+                assert!(
+                    !advice.contains(knob),
+                    "{reason:?} advises {knob}: {advice}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_max_elements_cut_advises_max_elements_not_timeout_ms() {
+        let mut budget = WalkBudget::new(1000, 20);
+        for _ in 0..20 {
+            assert!(budget.admit());
+        }
+        for _ in 0..15 {
+            assert!(!budget.admit());
+        }
+        let note = budget.outcome().note().unwrap();
+        assert_eq!(
+            note,
+            "⚠️ PARTIAL TREE: the max_elements node budget ran out after 20 node(s) \
+             (15 discovered but not visited). Every element listed is real; elements after \
+             the cut are missing. If the element you need is absent, retry with a larger \
+             max_elements or narrow with query / max_depth."
+        );
     }
 }

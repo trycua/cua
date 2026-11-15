@@ -28,7 +28,7 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
-use cua_driver_contract::{CaptureScope, EscalationReason};
+use cua_driver_contract::CaptureScope;
 
 pub const DEFAULT_SESSION_IDLE_TTL: Duration = Duration::from_secs(5 * 60);
 
@@ -88,6 +88,17 @@ pub enum SessionTransport {
     Daemon,
     McpStdio,
     McpHttp,
+}
+
+impl SessionTransport {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Cli => "cli",
+            Self::Daemon => "daemon",
+            Self::McpStdio => "mcp_stdio",
+            Self::McpHttp => "mcp_http",
+        }
+    }
 }
 
 /// Closed entry-surface category for one explicit session episode. This is
@@ -192,7 +203,6 @@ pub trait SessionObserver: Send + Sync + 'static {
         transport: SessionTransport,
         computer_action: bool,
         capture_modality: Option<CaptureModality>,
-        escalation_reason: Option<EscalationReason>,
         outcome: &crate::server::ToolCompletionObservation,
     );
     fn on_session_ended(
@@ -309,7 +319,6 @@ pub struct SessionToolContext {
     transport: SessionTransport,
     computer_action: bool,
     capture_modality: Option<CaptureModality>,
-    escalation_reason: Option<EscalationReason>,
 }
 
 impl SessionToolContext {
@@ -320,7 +329,6 @@ impl SessionToolContext {
                 self.transport,
                 self.computer_action,
                 self.capture_modality,
-                self.escalation_reason,
                 outcome,
             );
         }
@@ -379,6 +387,30 @@ pub struct LifecycleSessionSnapshot {
     pub expires_in: Duration,
 }
 
+/// Why [`begin_session_dispatch`] did not admit a call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DispatchRefusal {
+    /// The lifecycle episode has ended and this call may not start a new one.
+    Ended,
+    /// The ended episode's cleanup has not finished yet.
+    CleanupIncomplete,
+    /// The episode is live and held by another transport, of this kind.
+    OwnedByOtherTransport(SessionTransport),
+    /// The episode is waiting for in-flight calls before it ends.
+    Ending,
+}
+
+impl DispatchRefusal {
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::Ended => "session has ended",
+            Self::CleanupIncomplete => "session cleanup is incomplete; retry the call",
+            Self::OwnedByOtherTransport(_) => "session is not available to this transport",
+            Self::Ending => "session is ending",
+        }
+    }
+}
+
 /// RAII protection for one admitted session-requiring dispatch. Idle eviction
 /// cannot end the session while this guard is alive. Dropping it refreshes the
 /// idle clock at platform-dispatch completion and completes any end that raced
@@ -424,7 +456,7 @@ pub fn begin_session_dispatch(
     implicit: bool,
     transport: SessionTransport,
     client_kind: SessionClientKind,
-) -> Result<SessionDispatchGuard, &'static str> {
+) -> Result<SessionDispatchGuard, DispatchRefusal> {
     begin_session_dispatch_inner(
         session_id,
         public_label,
@@ -445,7 +477,7 @@ pub fn begin_session_dispatch_with_ttl(
     transport: SessionTransport,
     client_kind: SessionClientKind,
     idle_ttl: Duration,
-) -> Result<SessionDispatchGuard, &'static str> {
+) -> Result<SessionDispatchGuard, DispatchRefusal> {
     begin_session_dispatch_inner(
         session_id,
         public_label,
@@ -466,9 +498,9 @@ fn begin_session_dispatch_inner(
     transport: SessionTransport,
     client_kind: SessionClientKind,
     idle_ttl: Option<Duration>,
-) -> Result<SessionDispatchGuard, &'static str> {
+) -> Result<SessionDispatchGuard, DispatchRefusal> {
     if !is_trackable(session_id) {
-        return Err("session has ended");
+        return Err(DispatchRefusal::Ended);
     }
     // An unnamed transport session reclaimed by the idle sweep starts a new
     // lifecycle episode on its owner's next call instead of refusing every
@@ -478,7 +510,7 @@ fn begin_session_dispatch_inner(
     // and recordings from the ended episode stay retired.
     let recreate = recreates_on_next_call(session_id, owner_transport);
     if recreate && !retry_session_cleanup(session_id).complete {
-        return Err("session cleanup is incomplete; retry the call");
+        return Err(DispatchRefusal::CleanupIncomplete);
     }
     let now = Instant::now();
     let recreated = {
@@ -497,10 +529,10 @@ fn begin_session_dispatch_inner(
                         .is_some_and(|owner| owner.as_deref() == Some(owner_transport)))
                     || released_to_next_call(&ended, session_id, owner_transport)))
         {
-            return Err("session has ended");
+            return Err(DispatchRefusal::Ended);
         }
         if recreated && cleanup_pending(session_id) {
-            return Err("session cleanup is incomplete; retry the call");
+            return Err(DispatchRefusal::CleanupIncomplete);
         }
         let mut records = lifecycle_records().lock().unwrap();
         let record = records
@@ -519,10 +551,10 @@ fn begin_session_dispatch_inner(
                 pending_explicit_end: false,
             });
         if record.owner_transport != owner_transport {
-            return Err("session is not available to this transport");
+            return Err(DispatchRefusal::OwnedByOtherTransport(record.transport));
         }
         if record.pending_end.is_some() {
-            return Err("session is ending");
+            return Err(DispatchRefusal::Ending);
         }
         if idle_ttl.is_some() {
             record.idle_ttl = idle_ttl;
@@ -955,10 +987,6 @@ pub fn begin_tool_call_with_state(
             .or_else(|| crate::capture_scope::get_session(session_id).map(|state| state.policy))
             .unwrap_or_default()
     };
-    let escalation_reason = (tool_name == "escalate_session")
-        .then(|| args.get("reason").cloned())
-        .flatten()
-        .and_then(|value| serde_json::from_value(value).ok());
     let capture_modality = capture_modality_for(tool_name, args);
     if !is_end {
         if let Some(observer) = SESSION_OBSERVER.get() {
@@ -987,7 +1015,6 @@ pub fn begin_tool_call_with_state(
             crate::server::tool_operation(tool_name, Some(args)),
         ),
         capture_modality,
-        escalation_reason,
     })
 }
 
@@ -2099,7 +2126,6 @@ mod tests {
             _: SessionTransport,
             _: bool,
             _: Option<CaptureModality>,
-            _: Option<EscalationReason>,
             _: &crate::server::ToolCompletionObservation,
         ) {
         }
@@ -2117,7 +2143,7 @@ mod tests {
     }
 
     /// One completed session-requiring call by the session's own transport.
-    fn use_session(session_id: &str) -> Result<(), &'static str> {
+    fn use_session(session_id: &str) -> Result<(), DispatchRefusal> {
         begin_session_dispatch(
             session_id,
             None,
@@ -2145,6 +2171,7 @@ mod tests {
         let args = serde_json::json!({"session": "test-session"});
         for tool_name in [
             "browser_navigate",
+            "browser_motion_policy",
             "browser_click",
             "browser_type",
             "browser_set_input_files",
@@ -2500,10 +2527,18 @@ mod tests {
         // While A is live its labels stay its own, including the one it ended.
         assert_eq!(
             begin(label, owner_b).err(),
-            Some("session is not available to this transport")
+            Some(DispatchRefusal::OwnedByOtherTransport(
+                SessionTransport::McpStdio
+            ))
         );
-        assert_eq!(begin(ended_label, owner_b).err(), Some("session has ended"));
-        assert_eq!(begin(ended_label, owner_a).err(), Some("session has ended"));
+        assert_eq!(
+            begin(ended_label, owner_b).err(),
+            Some(DispatchRefusal::Ended)
+        );
+        assert_eq!(
+            begin(ended_label, owner_a).err(),
+            Some(DispatchRefusal::Ended)
+        );
         assert_eq!(
             start(ended_label, owner_b),
             Err("session is not available to this transport")
@@ -2518,8 +2553,8 @@ mod tests {
         // A late call from the closed transport resurrects nothing, and its
         // own unnamed id is never released.
         assert!(!recreates_on_next_call(label, owner_a));
-        assert_eq!(begin(label, owner_a).err(), Some("session has ended"));
-        assert_eq!(begin(owner_a, owner_b).err(), Some("session has ended"));
+        assert_eq!(begin(label, owner_a).err(), Some(DispatchRefusal::Ended));
+        assert_eq!(begin(owner_a, owner_b).err(), Some(DispatchRefusal::Ended));
         assert_eq!(
             start(ended_label, owner_a),
             Err("session is not available to this transport"),
@@ -2540,7 +2575,7 @@ mod tests {
         // but any other transport may now restart it with start_session.
         for ended in [ended_label, pending_label] {
             assert!(!recreates_on_next_call(ended, owner_b));
-            assert_eq!(begin(ended, owner_b).err(), Some("session has ended"));
+            assert_eq!(begin(ended, owner_b).err(), Some(DispatchRefusal::Ended));
             assert!(is_session_ended(ended));
         }
         assert_eq!(start(ended_label, owner_b), Ok(true));
@@ -2550,10 +2585,12 @@ mod tests {
         // The new owner holds them like any live transport.
         assert_eq!(
             begin(label, owner_c).err(),
-            Some("session is not available to this transport")
+            Some(DispatchRefusal::OwnedByOtherTransport(
+                SessionTransport::McpStdio
+            ))
         );
         assert!(end_session_for_owner(label, owner_b));
-        assert_eq!(begin(label, owner_c).err(), Some("session has ended"));
+        assert_eq!(begin(label, owner_c).err(), Some(DispatchRefusal::Ended));
         assert_eq!(
             end_sessions_for_owner(owner_b, SessionEndReason::ProcessExit),
             2
@@ -2783,11 +2820,13 @@ mod tests {
         // Forgetting A loosens nothing: its own unnamed id and its late calls
         // stay refused.
         assert!(is_session_ended(owner_a));
-        assert_eq!(begin(owner_a, owner_b).err(), Some("session has ended"));
-        assert_eq!(begin(owner_a, owner_a).err(), Some("session has ended"));
+        assert_eq!(begin(owner_a, owner_b).err(), Some(DispatchRefusal::Ended));
+        assert_eq!(begin(owner_a, owner_a).err(), Some(DispatchRefusal::Ended));
         assert_eq!(
             begin(label, owner_a).err(),
-            Some("session is not available to this transport")
+            Some(DispatchRefusal::OwnedByOtherTransport(
+                SessionTransport::McpStdio
+            ))
         );
         assert_eq!(
             end_sessions_for_owner(owner_b, SessionEndReason::ProcessExit),
@@ -3009,18 +3048,18 @@ mod tests {
         assert!(!recreates_on_next_call(&named, &named_owner));
         assert_eq!(
             begin(&named, Some("named"), &named_owner).err(),
-            Some("session has ended")
+            Some(DispatchRefusal::Ended)
         );
         // Another transport cannot claim the unnamed id.
         assert_eq!(
             begin(&implicit, None, "another-transport").err(),
-            Some("session has ended")
+            Some(DispatchRefusal::Ended)
         );
         // Unfinished cleanup is retried by the call and blocks recreation.
         assert!(recreates_on_next_call(&implicit, &implicit));
         assert_eq!(
             begin(&implicit, None, &implicit).err(),
-            Some("session cleanup is incomplete; retry the call")
+            Some(DispatchRefusal::CleanupIncomplete)
         );
         let guard = begin(&implicit, None, &implicit).expect("recreated after cleanup");
         assert!(!is_session_ended(&implicit));
@@ -3035,7 +3074,7 @@ mod tests {
         assert!(!recreates_on_next_call(&implicit, &implicit));
         assert_eq!(
             begin(&implicit, None, &implicit).err(),
-            Some("session has ended")
+            Some(DispatchRefusal::Ended)
         );
         assert!(revive_session(&implicit));
         assert!(revive_session(&named));
@@ -3325,10 +3364,10 @@ mod tests {
         assert!(pointer.computer_action);
 
         let page_write = begin_tool_call(
-            "page",
+            "browser_type",
             &serde_json::json!({
                 "session": "test-action-page-write-CD34",
-                "action": "insert_text",
+                "mode": "insert_text",
                 "text": "not retained"
             }),
             true,
@@ -3362,23 +3401,6 @@ mod tests {
         )
         .unwrap();
         assert!(!state_read.computer_action);
-
-        let escalation = begin_tool_call(
-            "escalate_session",
-            &serde_json::json!({
-                "session": "test-action-escalate-IJ90",
-                "reason": "no_window_target",
-                "detail": "private free-form detail is not observed"
-            }),
-            true,
-            SessionTransport::Daemon,
-            SessionClientKind::TypescriptSdk,
-        )
-        .unwrap();
-        assert_eq!(
-            escalation.escalation_reason,
-            Some(EscalationReason::NoWindowTarget)
-        );
 
         assert_eq!(
             capture_modality_for(

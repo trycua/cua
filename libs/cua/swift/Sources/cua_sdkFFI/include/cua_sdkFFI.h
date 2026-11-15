@@ -380,7 +380,7 @@ uint64_t uniffi_cua_sdk_fn_method_agentsetup_configure_mcp(uint64_t ptr, RustBuf
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_CONNECT_JSON
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_CONNECT_JSON
-uint64_t uniffi_cua_sdk_fn_method_agentsetup_connect_json(uint64_t ptr, RustBuffer agents, RustBuffer server, int8_t skills, int8_t mcp, int8_t sign_in
+uint64_t uniffi_cua_sdk_fn_method_agentsetup_connect_json(uint64_t ptr, RustBuffer agents, RustBuffer server, int8_t skills, int8_t mcp, int8_t sign_in, RustBuffer driver, RustBuffer driver_permissions_granted
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_CONNECTION_STATUS_JSON

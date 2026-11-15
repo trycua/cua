@@ -48,7 +48,7 @@ use super::platform::{
     BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, BrowserVisualAction,
     BrowserVisualActionKind, ExistingProfileSetupRequest,
 };
-use super::prepare::ManagedBrowsers;
+use super::prepare::{IsolatedLaunchBreaker, ManagedBrowsers};
 use super::reconnect::{ReconnectGates, ReconnectKey};
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::semantic::{
@@ -86,6 +86,7 @@ pub struct BrowserEngine {
     pub(crate) store: BrowserStore,
     pub(crate) pool: CdpPool,
     pub(crate) managed_browsers: ManagedBrowsers,
+    pub(crate) isolated_launch_breaker: IsolatedLaunchBreaker,
     pub(crate) existing_profile_grants: ExistingProfileGrants,
     pub(crate) approval_broker: Arc<crate::consent::ApprovalBroker>,
     pub(crate) protected_resource_ownership: Arc<crate::consent::ProtectedResourceOwnershipStore>,
@@ -671,6 +672,7 @@ impl BrowserEngine {
             store: BrowserStore::new(),
             pool: CdpPool::new(),
             managed_browsers: Default::default(),
+            isolated_launch_breaker: Default::default(),
             existing_profile_grants: ExistingProfileGrants::new(),
             approval_broker,
             protected_resource_ownership,

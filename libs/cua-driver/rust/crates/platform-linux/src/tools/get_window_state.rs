@@ -825,7 +825,11 @@ impl Tool for GetWindowStateTool {
                     // the window's scope (`snapshot_binds_window`).
                     let target_scoped = binds_window;
                     if !observation_only && !target_scoped {
-                        invalidated.extend(state.snapshots.remove(pid as i32, xid));
+                        invalidated.extend(state.snapshots.remove(
+                            pid as i32,
+                            xid,
+                            session_id.as_deref(),
+                        ));
                         crate::atspi::snapshot::forget_window(pid, xid);
                     }
                     let (snapshot_id, replaced) = (!observation_only && target_scoped)
@@ -1185,7 +1189,9 @@ mod get_window_state_actions_tests {
             checked: None,
             enabled: Some(true),
             selected: None,
+            focused: None,
             description: None,
+            document_uri: None,
             actions,
             element_key: 1,
             identity: None,

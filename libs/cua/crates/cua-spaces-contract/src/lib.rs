@@ -2343,6 +2343,52 @@ mod tests {
     use super::*;
 
     #[test]
+    fn create_space_exposes_optional_resource_sizes() {
+        let create = tool("create_space").unwrap();
+        let resize = tool("resize_space").unwrap();
+        for field in ["cpus", "memory_mb"] {
+            let mut actual = create.input_schema["properties"][field].clone();
+            let mut expected = resize.input_schema["properties"][field].clone();
+            assert!(actual.is_object(), "create_space is missing {field}");
+            actual.as_object_mut().unwrap().remove("description");
+            expected.as_object_mut().unwrap().remove("description");
+            assert_eq!(actual, expected, "{field} uses the existing resource type");
+            assert!(
+                !create.input_schema["required"]
+                    .as_array()
+                    .is_some_and(|required| required.contains(&serde_json::json!(field))),
+                "{field} must remain optional"
+            );
+        }
+    }
+
+    #[test]
+    fn create_space_resource_sizes_parse_like_resize() {
+        let sizes: inputs::CreateSpace = serde_json::from_value(serde_json::json!({
+            "cpus": 1, "memory_mb": 1536
+        }))
+        .unwrap();
+        assert_eq!(sizes.cpus, Some(1));
+        assert_eq!(sizes.memory_mb, Some(1536));
+        let defaults: inputs::CreateSpace = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert_eq!(defaults.cpus, None);
+        assert_eq!(defaults.memory_mb, None);
+        for field in ["cpus", "memory_mb"] {
+            for invalid in [
+                serde_json::json!(-1),
+                serde_json::json!(1.5),
+                serde_json::json!("1"),
+            ] {
+                let value = serde_json::json!({field: invalid});
+                assert!(
+                    serde_json::from_value::<inputs::CreateSpace>(value.clone()).is_err(),
+                    "{value}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn persistent_agent_create_carries_brief_and_standby() {
         let m: crate::inputs::PersistentAgentCreate = serde_json::from_value(serde_json::json!({
             "agent": "claude-code", "name": "ada", "space": "s",

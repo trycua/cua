@@ -257,6 +257,27 @@ impl NodeAttributes {
             && AXValueGetValue(value as AXValueRef, kind, out.as_mut_ptr().cast())
     }
 
+    /// Whether the batched read of `attr` came back as an error other than
+    /// "no such attribute" or "no value": the application failed to answer it.
+    pub(crate) unsafe fn read_failed(&self, attr: NodeAttr) -> bool {
+        const AX_VALUE_AX_ERROR_TYPE: AXValueType = 5;
+        let Some(value) = self.raw(attr) else {
+            return false;
+        };
+        if CFGetTypeID(value) != AXValueGetTypeID()
+            || AXValueGetType(value as AXValueRef) != AX_VALUE_AX_ERROR_TYPE
+        {
+            return false;
+        }
+        let mut error: AXError = kAXErrorSuccess;
+        AXValueGetValue(
+            value as AXValueRef,
+            AX_VALUE_AX_ERROR_TYPE,
+            (&mut error as *mut AXError).cast(),
+        );
+        is_failed_read(error)
+    }
+
     /// [`copy_children`]: every child element, retained; release each.
     pub(crate) unsafe fn children(&self) -> Vec<AXUIElementRef> {
         match *self {
@@ -285,9 +306,30 @@ impl NodeAttributes {
     }
 }
 
+/// Whether an AXError in a batched reply means the read failed, as opposed to
+/// the element having no such attribute or no value for it.
+fn is_failed_read(error: AXError) -> bool {
+    error != kAXErrorNoValue && error != kAXErrorAttributeUnsupported
+}
+
 #[cfg(test)]
 mod tests {
     use super::NodeAttr;
+
+    #[test]
+    fn only_an_unanswered_attribute_is_a_failed_read() {
+        use super::super::bindings::*;
+        assert!(!super::is_failed_read(kAXErrorNoValue));
+        assert!(!super::is_failed_read(kAXErrorAttributeUnsupported));
+        for error in [
+            kAXErrorFailure,
+            kAXErrorCannotComplete,
+            kAXErrorInvalidUIElement,
+            kAXErrorIllegalArgument,
+        ] {
+            assert!(super::is_failed_read(error), "{error}");
+        }
+    }
 
     #[test]
     fn every_attribute_has_a_distinct_slot_and_name() {

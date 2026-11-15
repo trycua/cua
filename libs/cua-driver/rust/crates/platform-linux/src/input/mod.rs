@@ -210,14 +210,13 @@ static MPX_OP_LOCK: Mutex<()> = Mutex::new(());
 static MPX_LAST_USE: OnceLock<Mutex<HashMap<String, std::time::Instant>>> = OnceLock::new();
 static MPX_IDLE_REAPER: std::sync::Once = std::sync::Once::new();
 static MPX_CLICK_POPUPS: OnceLock<Mutex<HashMap<String, ClickPopups>>> = OnceLock::new();
-/// A session's retained master pair is removed after this much inactivity;
-/// `end_session` and the startup reaper cover the explicit and crash cases.
-/// `XIRemoveMaster` churns the XInput hierarchy, and mutter 42.x segfaults when
-/// it processes that churn (the same reason per-call teardown crashes LibreOffice
-/// VCL), so the pair must outlive the inter-action idle of a live session; a
-/// long terminal-only stretch leaves the pointer unused far past a few minutes.
-/// The window is only a leak backstop for a client that dies without
-/// `end_session`; the startup reaper reclaims anything it misses.
+/// A session's master pair goes back to the pool after this much inactivity;
+/// `end_session` and the startup recovery cover the explicit and crash cases.
+/// Releasing unplugs the session's uinput slaves, and re-plugging them on the
+/// next action costs a hotplug (per-call churn crashes LibreOffice VCL), so
+/// the pair must outlive the inter-action idle of a live session; a long
+/// terminal-only stretch leaves the pointer unused far past a few minutes.
+/// Pairs are never removed; see [`release_master_pair`].
 const MPX_IDLE_TTL: Duration = Duration::from_secs(1800);
 const MPX_IDLE_REAPER_PERIOD: Duration = Duration::from_secs(60);
 const MPX_POPUP_QUIET: Duration = Duration::from_millis(250);
@@ -326,7 +325,7 @@ fn mpx_op_guard(cursor_id: &str) -> std::sync::MutexGuard<'static, ()> {
                     stale_cursor_ids(&last_use, std::time::Instant::now(), MPX_IDLE_TTL)
                 };
                 for cursor_id in stale {
-                    tracing::info!(cursor_id, "removing idle MPX master pair");
+                    tracing::info!(cursor_id, "releasing idle MPX master pair");
                     forget_master_pointer_locked(&cursor_id);
                 }
             })
@@ -427,10 +426,6 @@ pub fn is_uinput_unavailable(error: &anyhow::Error) -> bool {
 
 fn master_pointer_device_name(master_name: &str) -> String {
     format!("{master_name} pointer")
-}
-
-fn master_keyboard_device_name(master_name: &str) -> String {
-    format!("{master_name} keyboard")
 }
 
 fn open_display() -> Result<*mut x11::xlib::Display> {
@@ -733,90 +728,50 @@ fn ensure_master_pointer_for_session(
     }
 
     let display = open_display()?;
+    let result = take_master_pair(display, cursor_id);
+    unsafe { x11::xlib::XCloseDisplay(display) };
+    result
+}
+
+/// Plug in the session's uinput pointer, take a master pair from the pool
+/// (adding one only when none is free), and attach the pointer to it.
+fn take_master_pair(display: *mut x11::xlib::Display, cursor_id: &str) -> Result<MasterPointerIds> {
     let mut major = 2;
     let mut minor = 3;
     let rc = unsafe { x11::xinput2::XIQueryVersion(display, &mut major, &mut minor) };
     if rc != 0 {
-        unsafe { x11::xlib::XCloseDisplay(display) };
         bail!("XIQueryVersion failed with status {rc}");
     }
 
     let base = master_pointer_name(cursor_id);
     let device_name = slave_pointer_name(&base);
-    // Acquire the non-X resource before mutating the XInput hierarchy. The
-    // inexpensive availability probe above handles the normal permission
-    // denial; this ordering also prevents a race or late open failure from
-    // leaking a newly created master pair.
-    let uinput_device = match create_uinput_pointer(&device_name) {
-        Ok(device) => device,
-        Err(error) => {
-            unsafe { x11::xlib::XCloseDisplay(display) };
-            return Err(error);
-        }
-    };
-    let mut change = x11::xinput2::XIAnyHierarchyChangeInfo::default();
-    let name = CString::new(base.clone())?;
-    unsafe {
-        let add = change.add();
-        (*add)._type = x11::xinput2::XIAddMaster;
-        (*add).name = name.as_ptr() as *mut _;
-        // Core events stay on so core-only apps (xterm, Tk, …) receive the
-        // drags too. Note this is not what makes the WM focus the dragged
-        // window — XI2-aware WMs grab buttons for XIAllMasterDevices — see
-        // the active-window save/restore in send_parallel_virtual_pointer_drags.
-        (*add).send_core = 1;
-        (*add).enable = 1;
-    }
-    let rc = unsafe { x11::xinput2::XIChangeHierarchy(display, &mut change, 1) };
-    unsafe {
-        x11::xlib::XSync(display, 0);
-    }
-    if rc != 0 {
-        unsafe { x11::xlib::XCloseDisplay(display) };
-        bail!("XIChangeHierarchy(XIAddMaster) failed with status {rc}");
-    }
-
-    let devices = xi2_query_devices(display)?;
-    let mut pointer_id = None;
-    let mut keyboard_id = None;
-    let pointer_name = master_pointer_device_name(&base);
-    let keyboard_name = master_keyboard_device_name(&base);
-    for (device_id, use_, device_name) in devices {
-        if use_ == x11::xinput2::XIMasterPointer && device_name == pointer_name {
-            pointer_id = Some(device_id);
-        } else if use_ == x11::xinput2::XIMasterKeyboard && device_name == keyboard_name {
-            keyboard_id = Some(device_id);
-        }
-    }
-
-    let pointer_id = pointer_id
-        .ok_or_else(|| anyhow!("failed to locate created master pointer for '{cursor_id}'"))?;
-    let keyboard_id = keyboard_id
-        .ok_or_else(|| anyhow!("failed to locate created master keyboard for '{cursor_id}'"))?;
-
-    let slave_pointer_id = match wait_for_slave_id(
+    // The uinput slave must show up as an X device before any master pair is
+    // taken or added. A server without uinput hotplug (no udev/libinput) then
+    // fails here with its hierarchy untouched, and never gains a pair that
+    // could only be removed again.
+    let uinput_device = create_uinput_pointer(&device_name)?;
+    let slave_pointer_id = wait_for_slave_id(
         display,
         &device_name,
         x11::xinput2::XISlavePointer,
         Duration::from_secs(5),
-    ) {
-        Ok(id) => id,
-        Err(error) => {
-            // Never leave the fresh master pair behind when the slave never
-            // hotplugs (no udev/libinput on this server): a stray master with
-            // nothing attached is exactly the leak the startup reaper exists for.
-            let _ = remove_master_pointer(display, pointer_id);
-            unsafe { x11::xlib::XCloseDisplay(display) };
-            return Err(error);
-        }
-    };
-    attach_slave_to_master(display, slave_pointer_id, pointer_id)?;
+    )?;
+    let pair = claim_master_pair(display, &base)?;
+    if let Err(error) = attach_slave_to_master(display, slave_pointer_id, pair.pointer_id) {
+        free_master_pair(display, pair.pointer_id);
+        return Err(error);
+    }
     set_flat_pointer_accel(display, slave_pointer_id);
-    unsafe { x11::xlib::XCloseDisplay(display) };
+    tracing::debug!(
+        cursor_id,
+        pointer_id = pair.pointer_id,
+        added = pair.added,
+        "took MPX master pair"
+    );
 
     let ids = MasterPointerIds {
-        pointer_id,
-        keyboard_id,
+        pointer_id: pair.pointer_id,
+        keyboard_id: pair.keyboard_id,
         _slave_pointer_id: slave_pointer_id,
     };
     mpx_pointers()
@@ -855,7 +810,7 @@ fn forget_master_pointer_locked(cursor_id: &str) {
         _ => {
             tracked.remove(cursor_id);
             last_use.remove(cursor_id);
-            remove_master_pair(cursor_id);
+            release_master_pair(cursor_id);
         }
     }
 }
@@ -898,17 +853,23 @@ fn spawn_popup_waiter(cursor_id: String, remove_by: Instant) -> Result<()> {
                 }
                 if popup_wait_over(popups_mapped(&popups.windows), &mut quiet, remove_by) {
                     tracked.remove(&cursor_id);
-                    return remove_master_pair(&cursor_id);
+                    return release_master_pair(&cursor_id);
                 }
             }
         })?;
     Ok(())
 }
 
-fn remove_master_pair(cursor_id: &str) {
-    // Drop the uinput slaves first: closing the fds unplugs them, so the master
-    // removal below never has to hand a live slave back to the user's core
-    // devices (XIAttachToMaster only re-homes slaves that still exist).
+/// Hand the session's master pair back to the pool. The uinput slaves are
+/// unplugged (closing their fds removes them from the server), the pair's
+/// cursor is parked and its holder mark cleared; the pair itself stays.
+///
+/// Never `XIRemoveMaster` here or anywhere else: every Qt 6.5+ client on the
+/// display segfaults when any master device is removed (QTBUG-146876,
+/// trycua/cua#7325), and mutter 42.x crashes on the hierarchy churn. Pairs
+/// live until the X server exits, as many as sessions that ever held one at
+/// the same time, the pattern long-lived MPX tools use.
+fn release_master_pair(cursor_id: &str) {
     uinput_pointers().lock().unwrap().remove(cursor_id);
     mpx_keyboard::unplug_keyboard(cursor_id);
     let Some(ids) = mpx_pointers().lock().unwrap().remove(cursor_id) else {
@@ -918,94 +879,325 @@ fn remove_master_pair(cursor_id: &str) {
     let Ok(display) = open_display() else {
         return;
     };
-    let _ = remove_master_pointer(display, ids.pointer_id);
+    free_master_pair(display, ids.pointer_id);
+    tracing::debug!(
+        cursor_id,
+        pointer_id = ids.pointer_id,
+        "freed MPX master pair"
+    );
     unsafe { x11::xlib::XCloseDisplay(display) };
 }
 
-fn remove_master_pointer(display: *mut x11::xlib::Display, pointer_id: i32) -> Result<()> {
-    let devices = xi2_query_devices(display)?;
+/// Device property on a pooled master pointer naming the process that holds
+/// the pair ([`mpx_owner::Owner::holder_token`]); empty when the pair is free.
+const MPX_HOLDER_PROPERTY: &std::ffi::CStr = c"_CUA_MPX_HOLDER";
+/// Holder mark of a process whose identity procfs cannot prove. Nobody can
+/// tell whether it is gone, so only that process frees the pair again.
+const UNVERIFIABLE_HOLDER: &[u8] = b"?";
 
-    let mut virtual_core_pointer = None;
-    let mut virtual_core_keyboard = None;
-    for (device_id, use_, device_name) in devices {
-        if device_name == "Virtual core pointer" && use_ == x11::xinput2::XIMasterPointer {
-            virtual_core_pointer = Some(device_id);
-        } else if device_name == "Virtual core keyboard" && use_ == x11::xinput2::XIMasterKeyboard {
-            virtual_core_keyboard = Some(device_id);
-        }
-    }
-
-    let (Some(return_pointer), Some(return_keyboard)) =
-        (virtual_core_pointer, virtual_core_keyboard)
-    else {
-        bail!("cannot remove MPX master without its virtual core return devices");
-    };
-
-    let mut change = x11::xinput2::XIAnyHierarchyChangeInfo::default();
-    unsafe {
-        let remove = change.remove();
-        (*remove)._type = x11::xinput2::XIRemoveMaster;
-        (*remove).deviceid = pointer_id;
-        (*remove).return_mode = x11::xinput2::XIAttachToMaster;
-        (*remove).return_pointer = return_pointer;
-        (*remove).return_keyboard = return_keyboard;
-        let rc = x11::xinput2::XIChangeHierarchy(display, &mut change, 1);
-        x11::xlib::XSync(display, 0);
-        if rc != 0 {
-            bail!("XIChangeHierarchy(XIRemoveMaster) failed with status {rc}");
-        }
-    }
-    Ok(())
+/// Who holds a pooled master pair, read from its holder mark (or, with no
+/// mark, from the creator encoded in the master's name).
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum PairHolder {
+    Free,
+    Owner(mpx_owner::Owner),
+    /// Not a Cua pair, or a holder nobody can verify: never touched.
+    Unknown,
 }
 
-/// Recover only versioned masters whose local owner is provably gone. A PID
-/// alone cannot identify an owner on a shared/remote X server or across restarts.
-pub(crate) fn reap_orphaned_master_pointers() {
+fn pair_holder(mark: Option<&[u8]>, pointer_name: &str) -> PairHolder {
+    let owner = match mark {
+        Some([]) => return PairHolder::Free,
+        Some(token) => mpx_owner::Owner::from_holder_token(token),
+        // A pair just added (or added by a driver from before the pool) has no
+        // mark yet; its creator, encoded atomically in the name, holds it.
+        None => mpx_owner::Owner::from_pointer_name(pointer_name),
+    };
+    owner.map_or(PairHolder::Unknown, PairHolder::Owner)
+}
+
+/// A pair can be taken when it is free or its holder is provably gone.
+fn pair_claimable(holder: &PairHolder, gone: impl Fn(&mpx_owner::Owner) -> bool) -> bool {
+    match holder {
+        PairHolder::Free => true,
+        PairHolder::Owner(owner) => gone(owner),
+        PairHolder::Unknown => false,
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ClaimedPair {
+    pointer_id: i32,
+    keyboard_id: i32,
+    added: bool,
+}
+
+/// Master pointers with their paired master keyboard (`attachment`).
+fn xi2_master_pointers(display: *mut x11::xlib::Display) -> Result<Vec<(i32, i32, String)>> {
+    let mut count = 0;
+    let ptr = unsafe {
+        x11::xinput2::XIQueryDevice(display, x11::xinput2::XIAllMasterDevices, &mut count)
+    };
+    if ptr.is_null() {
+        bail!("XIQueryDevice returned null");
+    }
+    let mut out = Vec::new();
+    for i in 0..count {
+        let info = unsafe { *ptr.add(i as usize) };
+        if info._use != x11::xinput2::XIMasterPointer || info.name.is_null() {
+            continue;
+        }
+        let name = unsafe { CStr::from_ptr(info.name) }
+            .to_string_lossy()
+            .into_owned();
+        out.push((info.deviceid, info.attachment, name));
+    }
+    unsafe { x11::xinput2::XIFreeDeviceInfo(ptr) };
+    Ok(out)
+}
+
+fn holder_atom(display: *mut x11::xlib::Display) -> x11::xlib::Atom {
+    unsafe { x11::xlib::XInternAtom(display, MPX_HOLDER_PROPERTY.as_ptr(), x11::xlib::False) }
+}
+
+/// The holder mark on `pointer_id`, or `None` when it has none.
+fn read_holder_mark(
+    display: *mut x11::xlib::Display,
+    pointer_id: i32,
+    atom: x11::xlib::Atom,
+) -> Option<Vec<u8>> {
+    let mut type_ret: x11::xlib::Atom = 0;
+    let mut format_ret: std::os::raw::c_int = 0;
+    let mut num_items: std::os::raw::c_ulong = 0;
+    let mut bytes_after: std::os::raw::c_ulong = 0;
+    let mut data: *mut std::os::raw::c_uchar = ptr::null_mut();
+    let previous_handler = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
+    let rc = unsafe {
+        x11::xinput2::XIGetProperty(
+            display,
+            pointer_id,
+            atom,
+            0,
+            64,
+            x11::xlib::False,
+            x11::xlib::XA_STRING,
+            &mut type_ret,
+            &mut format_ret,
+            &mut num_items,
+            &mut bytes_after,
+            &mut data,
+        )
+    };
+    unsafe { x11::xlib::XSetErrorHandler(previous_handler) };
+    let mark =
+        (rc == x11::xlib::Success as i32 && type_ret == x11::xlib::XA_STRING && format_ret == 8)
+            .then(|| {
+                if data.is_null() || num_items == 0 {
+                    Vec::new()
+                } else {
+                    unsafe { std::slice::from_raw_parts(data, num_items as usize) }.to_vec()
+                }
+            });
+    if !data.is_null() {
+        unsafe { x11::xlib::XFree(data as *mut _) };
+    }
+    mark
+}
+
+fn write_holder_mark(
+    display: *mut x11::xlib::Display,
+    pointer_id: i32,
+    atom: x11::xlib::Atom,
+    mark: &[u8],
+) {
+    // Xlib copies the bytes; an empty mark still needs a valid pointer.
+    let mut bytes = mark.to_vec();
+    bytes.push(0);
+    let previous_handler = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
+    unsafe {
+        x11::xinput2::XIChangeProperty(
+            display,
+            pointer_id,
+            atom,
+            x11::xlib::XA_STRING,
+            8,
+            x11::xlib::PropModeReplace,
+            bytes.as_mut_ptr(),
+            mark.len() as std::os::raw::c_int,
+        );
+        x11::xlib::XSync(display, 0);
+        x11::xlib::XSetErrorHandler(previous_handler);
+    }
+}
+
+/// This process's holder mark.
+fn own_holder_mark(owner: Option<&mpx_owner::Owner>) -> Vec<u8> {
+    owner.map_or_else(
+        || UNVERIFIABLE_HOLDER.to_vec(),
+        |owner| owner.holder_token().into_bytes(),
+    )
+}
+
+/// Run `f` under `XGrabServer`, so no other client (another driver process
+/// included) changes the hierarchy or a holder mark between our read and
+/// write. A panic under the grab would freeze the whole desktop until this
+/// process dies, so it is caught and the grab always released.
+fn with_server_grabbed<T>(
+    display: *mut x11::xlib::Display,
+    f: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    unsafe { x11::xlib::XGrabServer(display) };
+    let result = catch_unwind(AssertUnwindSafe(f));
+    unsafe {
+        x11::xlib::XUngrabServer(display);
+        x11::xlib::XSync(display, 0);
+    }
+    match result {
+        Ok(result) => result,
+        Err(payload) => Err(anyhow!(
+            "MPX pool operation panicked (server grab released): {}",
+            panic_payload_message(payload.as_ref())
+        )),
+    }
+}
+
+/// Take a free master pair (or one whose holder is provably gone) and mark it
+/// as ours; add a new pair named `base` only when none can be taken.
+fn claim_master_pair(display: *mut x11::xlib::Display, base: &str) -> Result<ClaimedPair> {
+    let current = mpx_owner::Owner::current().ok();
+    let mark = own_holder_mark(current.as_ref());
+    let atom = holder_atom(display);
+    if atom == 0 {
+        bail!("could not intern {MPX_HOLDER_PROPERTY:?}");
+    }
+    with_server_grabbed(display, || {
+        for (pointer_id, keyboard_id, name) in xi2_master_pointers(display)? {
+            if !name.starts_with("CUA ") {
+                continue;
+            }
+            let holder = pair_holder(
+                read_holder_mark(display, pointer_id, atom).as_deref(),
+                &name,
+            );
+            let gone = |owner: &mpx_owner::Owner| {
+                current
+                    .as_ref()
+                    .is_some_and(|current| owner.stale_in(current))
+            };
+            if pair_claimable(&holder, gone) {
+                write_holder_mark(display, pointer_id, atom, &mark);
+                return Ok(ClaimedPair {
+                    pointer_id,
+                    keyboard_id,
+                    added: false,
+                });
+            }
+        }
+
+        let mut change = x11::xinput2::XIAnyHierarchyChangeInfo::default();
+        let name = CString::new(base)?;
+        unsafe {
+            let add = change.add();
+            (*add)._type = x11::xinput2::XIAddMaster;
+            (*add).name = name.as_ptr() as *mut _;
+            // Core events stay on so core-only apps (xterm, Tk, …) receive the
+            // drags too. Note this is not what makes the WM focus the dragged
+            // window — XI2-aware WMs grab buttons for XIAllMasterDevices — see
+            // the active-window save/restore in send_parallel_virtual_pointer_drags.
+            (*add).send_core = 1;
+            (*add).enable = 1;
+        }
+        let rc = unsafe { x11::xinput2::XIChangeHierarchy(display, &mut change, 1) };
+        unsafe { x11::xlib::XSync(display, 0) };
+        if rc != 0 {
+            bail!("XIChangeHierarchy(XIAddMaster) failed with status {rc}");
+        }
+        let pointer_name = master_pointer_device_name(base);
+        let (pointer_id, keyboard_id, _) = xi2_master_pointers(display)?
+            .into_iter()
+            .find(|(_, _, name)| *name == pointer_name)
+            .ok_or_else(|| anyhow!("failed to locate created master pointer '{pointer_name}'"))?;
+        write_holder_mark(display, pointer_id, atom, &mark);
+        Ok(ClaimedPair {
+            pointer_id,
+            keyboard_id,
+            added: true,
+        })
+    })
+}
+
+/// Park a pair's cursor in the bottom-right corner of the screen and mark the
+/// pair free. Its slaves are already unplugged (or never attached).
+fn free_master_pair(display: *mut x11::xlib::Display, pointer_id: i32) {
+    let screen = unsafe { x11::xlib::XDefaultScreen(display) };
+    let width = unsafe { x11::xlib::XDisplayWidth(display, screen) };
+    let height = unsafe { x11::xlib::XDisplayHeight(display, screen) };
+    let root = unsafe { x11::xlib::XDefaultRootWindow(display) };
+    let previous_handler = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
+    unsafe {
+        x11::xinput2::XIWarpPointer(
+            display,
+            pointer_id,
+            0,
+            root,
+            0.0,
+            0.0,
+            0,
+            0,
+            f64::from((width - 1).max(0)),
+            f64::from((height - 1).max(0)),
+        );
+        x11::xlib::XSync(display, 0);
+        x11::xlib::XSetErrorHandler(previous_handler);
+    }
+    let atom = holder_atom(display);
+    if atom != 0 {
+        write_holder_mark(display, pointer_id, atom, b"");
+    }
+}
+
+/// Startup recovery: return pairs whose holder is provably gone (a driver
+/// that was killed) to the pool, parking their cursors. Nothing is removed.
+/// A PID alone cannot identify a holder on a shared/remote X server or across
+/// restarts, so only versioned, same-domain holders are considered.
+pub(crate) fn release_orphaned_master_pairs() {
     if crate::desktop::desktop() != crate::desktop::Desktop::X11 {
         return;
     }
     let Ok(owner) = mpx_owner::Owner::current() else {
         return;
     };
+    let _op = MPX_OP_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let Ok(display) = open_display() else {
         return;
     };
-    // Prevent an ID from being removed/reused by another X client between our
-    // enumeration and removal. No network or arbitrary filesystem reads occur
-    // under this grab: owner checks inspect local procfs and kill(pid, 0).
-    unsafe {
-        x11::xlib::XGrabServer(display);
-    }
-    // A panic while the server is grabbed would freeze every other X client
-    // (the whole desktop) until this process dies. Catch it so the ungrab
-    // below always runs, and report it like any other incomplete recovery.
-    let result = catch_unwind(AssertUnwindSafe(|| -> Result<()> {
-        for (id, use_, name) in xi2_query_devices(display)? {
-            if use_ != x11::xinput2::XIMasterPointer {
+    let atom = holder_atom(display);
+    // No network or arbitrary filesystem reads occur under this grab: holder
+    // checks inspect local procfs and kill(pid, 0).
+    let result = with_server_grabbed(display, || {
+        for (pointer_id, _, name) in xi2_master_pointers(display)? {
+            if !name.starts_with("CUA ") {
                 continue;
             }
-            let Some(candidate) = mpx_owner::Owner::from_pointer_name(&name) else {
-                continue;
-            };
-            if candidate.stale_in(&owner) {
-                remove_master_pointer(display, id)?;
-                tracing::info!(device_id = id, "removed orphaned Cua MPX master pair");
+            let holder = pair_holder(
+                read_holder_mark(display, pointer_id, atom).as_deref(),
+                &name,
+            );
+            if matches!(&holder, PairHolder::Owner(holder) if holder.stale_in(&owner)) {
+                free_master_pair(display, pointer_id);
+                tracing::info!(
+                    device_id = pointer_id,
+                    "returned orphaned Cua MPX master pair to the pool"
+                );
             }
         }
         Ok(())
-    }));
-    unsafe {
-        x11::xlib::XUngrabServer(display);
-        x11::xlib::XSync(display, 0);
-        x11::xlib::XCloseDisplay(display);
-    }
-    match result {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => tracing::warn!("MPX orphan recovery incomplete: {error}"),
-        Err(payload) => tracing::warn!(
-            "MPX orphan recovery panicked (server grab released): {}",
-            panic_payload_message(payload.as_ref())
-        ),
+    });
+    unsafe { x11::xlib::XCloseDisplay(display) };
+    if let Err(error) = result {
+        tracing::warn!("MPX orphan recovery incomplete: {error}");
     }
 }
 
@@ -2965,6 +3157,8 @@ pub fn send_virtual_pointer_scroll(cursor_id: &str, scroll: &VirtualPointerScrol
         if detents == 0 {
             return Ok(());
         }
+        prime_scroll_slave(display, ids, &device, scroll.x, scroll.y);
+        settle_pointer_enter(scroll.target_window);
         let unit = if scroll.ticks >= 0 { 1 } else { -1 };
         for _ in 0..detents {
             {
@@ -2982,6 +3176,113 @@ pub fn send_virtual_pointer_scroll(cursor_id: &str, scroll: &VirtualPointerScrol
         x11::xlib::XCloseDisplay(display);
     }
     result
+}
+
+/// Where the server has the master pointer `pointer_id` now.
+fn master_pointer_position(
+    display: *mut x11::xlib::Display,
+    pointer_id: i32,
+) -> Option<(i32, i32)> {
+    let root = unsafe { x11::xlib::XDefaultRootWindow(display) };
+    let (mut root_ret, mut child_ret) = (0, 0);
+    let (mut rx, mut ry, mut wx, mut wy) = (0f64, 0f64, 0f64, 0f64);
+    let mut buttons = x11::xinput2::XIButtonState::default();
+    let mut mods = x11::xinput2::XIModifierState::default();
+    let mut group = x11::xinput2::XIModifierState::default();
+    let prev = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
+    let rc = unsafe {
+        x11::xinput2::XIQueryPointer(
+            display,
+            pointer_id,
+            root,
+            &mut root_ret,
+            &mut child_ret,
+            &mut rx,
+            &mut ry,
+            &mut wx,
+            &mut wy,
+            &mut buttons,
+            &mut mods,
+            &mut group,
+        )
+    };
+    unsafe { x11::xlib::XSetErrorHandler(prev) };
+    if !buttons.mask.is_null() {
+        unsafe { x11::xlib::XFree(buttons.mask as *mut _) };
+    }
+    (rc != 0).then(|| (rx.round() as i32, ry.round() as i32))
+}
+
+/// Emit a relative step on the uinput slave and wait until the server has
+/// moved the master to `expect`.
+fn step_and_confirm(
+    display: *mut x11::xlib::Display,
+    ids: MasterPointerIds,
+    device: &Mutex<VirtualDevice>,
+    dx: i32,
+    expect: (i32, i32),
+) -> bool {
+    if emit_relative_motion(&mut device.lock().unwrap(), dx, 0).is_err() {
+        return false;
+    }
+    let deadline = Instant::now() + Duration::from_millis(300);
+    while Instant::now() < deadline {
+        if master_pointer_position(display, ids.pointer_id) == Some(expect) {
+            return true;
+        }
+        sleep(Duration::from_millis(2));
+    }
+    false
+}
+
+/// Make the uinput slave the master's last-used device before the first
+/// wheel detent.
+///
+/// After `XIWarpPointer` the first detent arrives as a slave switch (Qt's
+/// input log shows a valuator re-read ahead of every scroll, not only the
+/// first): the server sends a `DeviceChanged(SlaveSwitch)` first, and Qt
+/// answers it by re-reading the slave's scroll valuators with a synchronous
+/// `XIQueryDevice`. When that
+/// query runs after the server already applied the next detents, Qt takes the
+/// post-scroll value as its baseline and the detents cancel out: 3 down moved
+/// a Qt list 0 rows (trycua/cua#7369, Qt 5.15 and 6.4 on Xorg). A one-pixel
+/// step and back on the slave makes the switch happen now, with nothing to
+/// lose; [`settle_pointer_enter`] then waits until the target has handled it.
+fn prime_scroll_slave(
+    display: *mut x11::xlib::Display,
+    ids: MasterPointerIds,
+    device: &Mutex<VirtualDevice>,
+    x: i32,
+    y: i32,
+) {
+    let step = if x > 0 { -1 } else { 1 };
+    if step_and_confirm(display, ids, device, step, (x + step, y)) {
+        step_and_confirm(display, ids, device, -step, (x, y));
+    }
+}
+
+/// Wait until the target has handled the events the warp and the slave
+/// switch just caused.
+///
+/// Qt re-reads its scroll devices' valuators (a synchronous `XIQueryDevice`)
+/// when a pointer enters one of its windows and on a slave switch, because
+/// the valuator may have moved elsewhere. A wheel detent the server applied
+/// before that re-read is folded into Qt's baseline, so it is lost, and the
+/// detents read against the later baseline scroll the wrong way: 3 down moved
+/// a Qt list 0 or 2 detents (trycua/cua#7369). A `_NET_WM_PING` sent now sits
+/// behind those events in the target's queue, so its answer means the re-read
+/// is done and every detent from here on counts.
+fn settle_pointer_enter(target_window: u64) {
+    let Ok((conn, _)) = RustConnection::connect(None) else {
+        return;
+    };
+    let Ok(window) = Window::try_from(target_window) else {
+        return;
+    };
+    if sync_client(&conn, Some(window)) != ClientSync::Confirmed {
+        // No ping support or no answer: give the app's event loop a moment.
+        sleep(Duration::from_millis(60));
+    }
 }
 
 /// Pre-drag focus snapshot: the EWMH active window when a conforming WM is
@@ -5677,7 +5978,7 @@ mod path_tests {
     }
 
     #[test]
-    fn an_end_without_tracked_popups_removes_the_master_at_once() {
+    fn an_end_without_tracked_popups_releases_the_master_at_once() {
         let _op = mpx_op_lock();
         end_session_after_click("popup-test-no-popup", &[]);
         assert_eq!(popup_removal_due("popup-test-no-popup"), None);
@@ -5713,7 +6014,7 @@ mod path_tests {
     }
 
     #[test]
-    fn a_popup_that_remaps_during_the_quiet_wait_keeps_the_master_until_the_deadline() {
+    fn a_popup_that_remaps_during_the_quiet_wait_holds_the_master_until_the_deadline() {
         use super::{popup_wait_over, MPX_POPUP_QUIET};
         let now = std::time::Instant::now();
         let deadline = now + std::time::Duration::from_secs(60);
@@ -6100,5 +6401,89 @@ mod type_pacing_tests {
     fn the_delay_is_clamped() {
         let pacing = TypePacing::from_args(&serde_json::json!({"delay_ms": 100_000}));
         assert_eq!(pacing.delay_ms, 200);
+    }
+}
+
+#[cfg(test)]
+mod mpx_pool_tests {
+    use super::{mpx_owner::Owner, pair_claimable, pair_holder, PairHolder};
+
+    fn this_process() -> Owner {
+        Owner::current().expect("procfs identity")
+    }
+
+    #[test]
+    fn an_empty_mark_frees_a_pair_and_a_token_names_its_holder() {
+        let owner = this_process();
+        let name = format!("{} pointer", owner.master_name(1));
+        assert_eq!(pair_holder(Some(b""), &name), PairHolder::Free);
+        assert_eq!(
+            pair_holder(
+                Some(owner.holder_token().as_bytes()),
+                "CUA anything pointer"
+            ),
+            PairHolder::Owner(owner.clone())
+        );
+        // A pair with no mark yet is held by the creator named in its name.
+        assert_eq!(pair_holder(None, &name), PairHolder::Owner(owner));
+        // Legacy names, foreign masters and unverifiable marks are never ours.
+        assert_eq!(
+            pair_holder(None, "CUA cursor mp-12-3 pointer"),
+            PairHolder::Unknown
+        );
+        assert_eq!(
+            pair_holder(None, "Virtual core pointer"),
+            PairHolder::Unknown
+        );
+        assert_eq!(pair_holder(Some(b"?"), &name), PairHolder::Unknown);
+    }
+
+    #[test]
+    fn only_free_pairs_and_pairs_whose_holder_is_gone_are_taken() {
+        let owner = this_process();
+        assert!(pair_claimable(&PairHolder::Free, |_| panic!(
+            "free needs no check"
+        )));
+        assert!(pair_claimable(&PairHolder::Owner(owner.clone()), |_| true));
+        assert!(!pair_claimable(&PairHolder::Owner(owner.clone()), |_| {
+            false
+        }));
+        assert!(!pair_claimable(&PairHolder::Unknown, |_| true));
+        // This live process's own pair is never taken from under it.
+        assert!(!pair_claimable(&PairHolder::Owner(owner.clone()), |held| {
+            held.stale_in(&owner)
+        }));
+    }
+
+    /// trycua/cua#7325: removing any XI2 master device segfaults every running
+    /// Qt 6.5+ client on the display (QTBUG-146876). The driver must never
+    /// issue a master removal; pairs are pooled for the X server's lifetime.
+    #[test]
+    fn no_code_path_removes_an_xi2_master_device() {
+        let forbidden = ["XIRemove", "Master"].concat();
+        let shell = ["remove", "-master"].concat();
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut stack = vec![src];
+        let mut offenders = Vec::new();
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|ext| ext == "rs") {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    for (line_no, line) in text.lines().enumerate() {
+                        let code = line.split("//").next().unwrap_or("");
+                        if code.contains(&forbidden) || code.contains(&shell) {
+                            offenders.push(format!("{}:{}", path.display(), line_no + 1));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "XI2 master removal crashes Qt 6.5+ apps (#7325): {offenders:?}"
+        );
     }
 }

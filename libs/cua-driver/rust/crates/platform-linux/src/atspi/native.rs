@@ -1533,20 +1533,23 @@ async fn collect_visited_bounded_opts<'a>(
     } else {
         resolve_window_frame(conn, pid, xid, &seeds).await
     };
-    // Concurrent first walks of one pid share this wake: a second caller
-    // waits for it instead of walking a tree that is still empty.
-    application_wake(pid)
+    // Wake the application once, then settle each window once. A concurrent
+    // walk of the same pid or window waits for these instead of walking a
+    // tree that is still empty.
+    once_per(pid, None)
         .get_or_init(|| async {
             let _ = call(app.get_attributes()).await;
-            let root = match scoped_frame {
-                Some(ordinal) => seeds[ordinal].clone(),
-                None => RawObjectRef {
-                    name: app.inner().destination().to_string(),
-                    path: app.inner().path().to_string(),
-                },
-            };
-            settle_woken_chromium_tree(conn, &app, &root).await;
         })
+        .await;
+    let root = match scoped_frame {
+        Some(ordinal) => seeds[ordinal].clone(),
+        None => RawObjectRef {
+            name: app.inner().destination().to_string(),
+            path: app.inner().path().to_string(),
+        },
+    };
+    once_per(pid, Some(&root))
+        .get_or_init(|| settle_woken_chromium_tree(conn, &app, &root))
         .await;
 
     // Walk the caller's window FIRST when it was resolved: under a short
@@ -2575,15 +2578,18 @@ async fn web_document_populated(
     Some(false)
 }
 
-/// The once-per-pid wake of an application's accessibility tree.
-fn application_wake(pid: u32) -> std::sync::Arc<tokio::sync::OnceCell<()>> {
-    static WAKES: OnceLock<Mutex<HashMap<u32, std::sync::Arc<tokio::sync::OnceCell<()>>>>> =
+/// A step that runs once per process: its accessibility wake (`root` None),
+/// or the settle of one window or application root.
+type OnceKey = (u32, Option<(String, String)>);
+
+fn once_per(pid: u32, root: Option<&RawObjectRef>) -> std::sync::Arc<tokio::sync::OnceCell<()>> {
+    static ONCE: OnceLock<Mutex<HashMap<OnceKey, std::sync::Arc<tokio::sync::OnceCell<()>>>>> =
         OnceLock::new();
-    WAKES
-        .get_or_init(Default::default)
+    let key = (pid, root.map(|root| (root.name.clone(), root.path.clone())));
+    ONCE.get_or_init(Default::default)
         .lock()
         .unwrap()
-        .entry(pid)
+        .entry(key)
         .or_default()
         .clone()
 }
@@ -8652,7 +8658,7 @@ mod budget_tests {
             tokio::time::sleep(Duration::from_millis(50)).await;
             settled.fetch_add(1, Ordering::SeqCst);
         };
-        let (cell_a, cell_b) = (application_wake(u32::MAX), application_wake(u32::MAX));
+        let (cell_a, cell_b) = (once_per(u32::MAX, None), once_per(u32::MAX, None));
         let first = cell_a.get_or_init(wake);
         let second = async {
             cell_b.get_or_init(wake).await;
@@ -8664,7 +8670,25 @@ mod budget_tests {
             seen_by_second, 1,
             "the second walk ran before the wake settled"
         );
-        assert!(!application_wake(u32::MAX - 1).initialized());
+        assert!(!once_per(u32::MAX - 1, None).initialized());
+    }
+
+    #[tokio::test]
+    async fn each_window_of_a_pid_settles_once() {
+        let window = |path: &str| RawObjectRef {
+            name: ":1.7".to_owned(),
+            path: path.to_owned(),
+        };
+        let pid = u32::MAX - 2;
+        once_per(pid, None).get_or_init(|| async {}).await;
+        once_per(pid, Some(&window("/frame/1")))
+            .get_or_init(|| async {})
+            .await;
+        assert!(once_per(pid, Some(&window("/frame/1"))).initialized());
+        assert!(
+            !once_per(pid, Some(&window("/frame/2"))).initialized(),
+            "a second window of a woken pid must still get its own settle"
+        );
     }
 
     #[test]

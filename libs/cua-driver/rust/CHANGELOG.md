@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.52.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.52.1...cua-driver-rs-v0.52.2) (2026-11-15)
+
+
+### Bug Fixes
+
+* **cua-driver:** let users admit apps past Hyprland background input quirks ([#7867](https://github.com/trycua/cua/issues/7867)) ([cee9e81](https://github.com/trycua/cua/commit/cee9e81613149b96c85362803f63ad6d4882cc66))
+* **cua-driver:** return a native set_value once its field settles ([#7874](https://github.com/trycua/cua/issues/7874)) ([9dc5dc7](https://github.com/trycua/cua/commit/9dc5dc7e3543f44f234e2db6635749903e82a511))
+
 ## [0.52.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.52.0...cua-driver-rs-v0.52.1) (2026-11-15)
 
 

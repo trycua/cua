@@ -321,17 +321,19 @@ mod tests {
         assert!(note.starts_with("⚠️ PARTIAL TREE: the 1000 ms timeout_ms budget ran out"));
     }
 
+    /// The advice after "If the element you need is absent,".
+    fn remedy(note: &str) -> &str {
+        note.split_once("If the element you need is absent, ")
+            .expect("note carries a remedy")
+            .1
+    }
+
     #[test]
-    fn truncation_note_names_the_budget_and_the_remedy() {
+    fn truncation_note_names_the_budget_and_the_counts() {
         let note = truncation_note(Some("timeout"), 1000, 240, 88);
-        assert!(note.contains("PARTIAL TREE"));
-        assert!(note.contains("1000 ms"));
+        assert!(note.starts_with("⚠️ PARTIAL TREE: the 1000 ms timeout_ms budget ran out"));
         assert!(note.contains("240 node(s)"));
         assert!(note.contains("88 discovered"));
-        assert!(note.contains("timeout_ms"));
-        assert!(note.contains("query"));
-        let note = truncation_note(Some("node_budget"), 1000, 5000, 3);
-        assert!(note.contains("max_elements"));
         let note = truncation_note(Some("app_unresponsive"), 1000, 3, 0);
         assert!(note.contains("stopped answering"));
         let note = truncation_note(Some("app_lookup_timeout"), 250, 0, 0);
@@ -339,5 +341,74 @@ mod tests {
         assert!(note.contains("still be launching"));
         let note = truncation_note(Some("huge_container"), 1000, 1918, 0);
         assert!(note.contains("not expanded"));
+    }
+
+    /// Each cut names the knob that lifts it, and never one that cannot: a
+    /// caller told to raise timeout_ms after a max_elements cut gets the same
+    /// partial tree back (#4720).
+    #[test]
+    fn truncation_note_remedy_matches_the_cut() {
+        let cases: [(Option<&str>, &str, &[&str]); 6] = [
+            (
+                Some("timeout"),
+                "retry with a larger timeout_ms (e.g. 5000) or narrow with query / max_depth.",
+                &["max_elements"],
+            ),
+            (
+                Some("node_budget"),
+                "retry with a larger max_elements or narrow with query / max_depth.",
+                &["timeout_ms"],
+            ),
+            (
+                Some("app_unresponsive"),
+                "retry in a moment or with a larger timeout_ms (e.g. 5000).",
+                &["max_elements", "query"],
+            ),
+            (
+                Some("app_lookup_timeout"),
+                "retry in a moment or with a larger timeout_ms (e.g. 5000).",
+                &["max_elements", "query"],
+            ),
+            (
+                Some("huge_container"),
+                "act inside that container by pixel (x,y) off the screenshot.",
+                &["timeout_ms", "max_elements", "query"],
+            ),
+            (
+                None,
+                "retry with a larger timeout_ms (e.g. 5000) or narrow with query / max_depth.",
+                &["max_elements"],
+            ),
+        ];
+        for (reason, expected, wrong_knobs) in cases {
+            let note = truncation_note(reason, 1000, 20, 15);
+            let advice = remedy(&note);
+            assert_eq!(advice, expected, "{reason:?}");
+            for knob in wrong_knobs {
+                assert!(
+                    !advice.contains(knob),
+                    "{reason:?} advises {knob}: {advice}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_max_elements_cut_advises_max_elements_not_timeout_ms() {
+        let mut budget = WalkBudget::new(1000, 20);
+        for _ in 0..20 {
+            assert!(budget.admit());
+        }
+        for _ in 0..15 {
+            assert!(!budget.admit());
+        }
+        let note = budget.outcome().note().unwrap();
+        assert_eq!(
+            note,
+            "⚠️ PARTIAL TREE: the max_elements node budget ran out after 20 node(s) \
+             (15 discovered but not visited). Every element listed is real; elements after \
+             the cut are missing. If the element you need is absent, retry with a larger \
+             max_elements or narrow with query / max_depth."
+        );
     }
 }

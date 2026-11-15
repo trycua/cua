@@ -533,6 +533,26 @@ fn the_producers_own_attach_call_wins_over_the_rebuilt_one() {
 }
 
 #[test]
+fn an_unprepared_electron_app_keeps_the_launch_call_it_was_given() {
+    let launch = json!({"tool": "browser_prepare", "arguments": {
+        "pid": 659, "session": "web", "allow_launch": true,
+        "profile": {"mode": "isolated_new"},
+    }});
+    let hint = hint_for(
+        "get_browser_state",
+        &seed(json!({"pid": 659, "window_id": 12, "session": "web"})),
+        false,
+        json!({"status": "refused", "refusal": {
+            "code": "browser_requires_setup",
+            "message": "m",
+            "detail": {"next_call": launch.clone()},
+        }}),
+    );
+    assert!(hint.hint.contains("browser_prepare call in next_call"));
+    assert_eq!(call_value(&hint), launch);
+}
+
+#[test]
 fn a_refused_browser_prepare_leads_to_the_accessibility_tree() {
     let hint = hint_for(
         "browser_prepare",

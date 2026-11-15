@@ -26,8 +26,8 @@ use cua_driver_core::browser::types::{
     NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
 };
 use cua_driver_core::browser::{
-    existing_profile_setup_descriptor, fetch_json_version_ws_url, is_firefox,
-    parse_devtools_active_port, BrowserCursorTracker,
+    existing_profile_setup_descriptor, fetch_json_version_ws_url, is_electron_app_layout,
+    is_firefox, parse_devtools_active_port, BrowserCursorTracker,
 };
 
 use crate::browser_installation_path::{
@@ -2099,11 +2099,18 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 format!("pid {pid} is outside the Windows process-id range"),
             )
         })?;
-        let name = tokio::task::spawn_blocking(move || {
-            crate::win32::list_processes()
+        let (name, electron_app) = tokio::task::spawn_blocking(move || {
+            let name = crate::win32::list_processes()
                 .into_iter()
                 .find(|process| process.pid == pid_u32)
-                .map(|process| process.name)
+                .map(|process| process.name)?;
+            let electron_app = process_identity(pid_u32)
+                .ok()
+                .and_then(|(_, executable)| executable)
+                .is_some_and(|executable| {
+                    is_electron_app_layout(std::path::Path::new(&executable))
+                });
+            Some((name, electron_app))
         })
         .await
         .ok()
@@ -2114,9 +2121,13 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 format!("browser process {pid} is no longer available"),
             )
         })?;
-        let chromium = is_chromium(&name);
+        let chromium = electron_app || is_chromium(&name);
         let gecko = is_firefox(&name);
-        let product_kind = browser_product(&name);
+        let product_kind = if electron_app {
+            BrowserProduct::Electron
+        } else {
+            browser_product(&name)
+        };
         let command_line = if chromium {
             browser_command_line(pid_u32).await.ok()
         } else {

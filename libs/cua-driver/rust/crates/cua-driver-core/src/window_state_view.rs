@@ -273,6 +273,13 @@ pub fn apply(
     content: &mut [Content],
     structured: &mut Value,
 ) {
+    let no_match = structured
+        .get("tree_markdown")
+        .and_then(Value::as_str)
+        .and_then(|md| no_match_line(&ctx.key, md, structured));
+    if let Some(line) = &no_match {
+        append_to_tree_block(content, line);
+    }
     if opts.full_output {
         return;
     }
@@ -417,6 +424,48 @@ pub fn apply(
 
     rewrite_tree_block(content, &md, &header_extra, &body);
     drop_walk_diagnostics(opts, structured);
+}
+
+/// A `query` that matched no row would otherwise return a bare header over an
+/// empty tree, which callers read as a failed walk and retry unchanged.
+fn no_match_line(key: &ViewKey, md: &str, structured: &Value) -> Option<String> {
+    let query = key.query.as_deref().filter(|q| !q.trim().is_empty())?;
+    if crate::element_query::matching_rows(md, query) > 0 {
+        return None;
+    }
+    let total = structured
+        .get("element_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    Some(format!(
+        "0 of {total} elements match query {query:?}. A query is a case-insensitive \
+         substring of a row's role, label, value or id; \"a|b\" matches either. Try a \
+         shorter or different word, or read without query."
+    ))
+}
+
+/// Append `line` to the platform's tree block, after whatever tree or note it
+/// ends with. Only a read that walked a tree has one: its first line is the
+/// `window_id=… elements=N` header, which a capture-only read lacks.
+fn append_to_tree_block(content: &mut [Content], line: &str) {
+    let block = content.iter_mut().find_map(|part| match part {
+        Content::Text { text, .. }
+            if text.starts_with("window_id=")
+                && text
+                    .lines()
+                    .next()
+                    .is_some_and(|h| h.contains(" elements=")) =>
+        {
+            Some(text)
+        }
+        _ => None,
+    });
+    if let Some(text) = block {
+        if !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(line);
+    }
 }
 
 /// Walk diagnostics cost every read context and no caller acts on them:
@@ -1388,6 +1437,91 @@ mod tests {
         );
         assert_eq!(s3["since_status"], "no_change");
         assert_eq!(s3["since"], "s000000f2");
+    }
+
+    fn query_ctx(window_id: u64, query: &str) -> ViewContext<'static> {
+        let mut ctx = ctx(window_id);
+        ctx.key.query = Some(query.into());
+        ctx
+    }
+
+    #[test]
+    fn a_query_that_matches_nothing_says_so() {
+        // What a backend renders when its filtered tree is empty.
+        let (mut content, mut s) = payload("s000000i1", "");
+        s["element_count"] = json!(150);
+        apply(
+            &opts(json!({})),
+            &query_ctx(7030, "Build|Reload"),
+            &mut content,
+            &mut s,
+        );
+        let text = text_of(&content);
+        assert!(text.starts_with("window_id=7 pid=9 size=10x10 elements=4\n"));
+        assert!(
+            text.contains("0 of 150 elements match query \"Build|Reload\"."),
+            "{text}"
+        );
+        assert!(text.contains("\"a|b\" matches either"));
+    }
+
+    #[test]
+    fn a_zero_match_line_follows_a_walk_note() {
+        // macOS appends its walk note to the (empty) filtered tree.
+        let md = "\n⚠️ PARTIAL TREE: walk stopped";
+        let (mut content, mut s) = payload("s000000i2", md);
+        apply(
+            &opts(json!({})),
+            &query_ctx(7031, "Settings"),
+            &mut content,
+            &mut s,
+        );
+        let text = text_of(&content);
+        assert!(
+            text.contains("PARTIAL TREE: walk stopped\n0 of 4 elements match query \"Settings\".")
+        );
+    }
+
+    #[test]
+    fn a_full_output_read_still_says_its_query_matched_nothing() {
+        let (mut content, mut s) = payload("s000000i5", "");
+        let before = s.clone();
+        apply(
+            &opts(json!({"full_output": true})),
+            &query_ctx(7035, "Build|Reload"),
+            &mut content,
+            &mut s,
+        );
+        assert_eq!(s, before);
+        assert!(text_of(&content).ends_with("\n0 of 4 elements match query \"Build|Reload\". A query is a case-insensitive substring of a row's role, label, value or id; \"a|b\" matches either. Try a shorter or different word, or read without query."));
+    }
+
+    #[test]
+    fn a_capture_only_read_with_a_query_adds_no_line() {
+        let mut content = vec![Content::text("window_id=7 pid=9 size=10x10")];
+        let mut s = json!({"window_id": 7, "pid": 9, "tree_markdown": "", "element_count": 0});
+        apply(
+            &opts(json!({})),
+            &query_ctx(7034, "Settings"),
+            &mut content,
+            &mut s,
+        );
+        assert_eq!(text_of(&content), "window_id=7 pid=9 size=10x10");
+    }
+
+    #[test]
+    fn a_query_with_matches_and_a_read_without_query_add_no_line() {
+        let (mut content, mut s) = payload("s000000i3", OLD);
+        apply(
+            &opts(json!({})),
+            &query_ctx(7032, "Save"),
+            &mut content,
+            &mut s,
+        );
+        assert!(!text_of(&content).contains("elements match query"));
+        let (mut content, mut s) = payload("s000000i4", "");
+        apply(&opts(json!({})), &ctx(7033), &mut content, &mut s);
+        assert!(!text_of(&content).contains("elements match query"));
     }
 
     #[test]

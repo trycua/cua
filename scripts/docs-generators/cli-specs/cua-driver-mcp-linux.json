@@ -102,7 +102,7 @@
       "type": "integer"
      },
      "query": {
-      "description": "Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count.",
+      "description": "Optional case-insensitive substring; `a|b` matches either. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count. A query that matches nothing says `0 of N elements match`.",
       "type": "string"
      },
      "screenshot_out_file": {

@@ -41,6 +41,7 @@ from native_tasks import (
     NATIVE_TASK_IDS,
     NativeTask,
     OracleError,
+    WindowScope,
     check_intermediate_effect,
     has_declared_steps_remaining,
     native_task,
@@ -130,7 +131,11 @@ async def find_window(driver: Driver, pid: int, title: str) -> dict[str, Any]:
 
 
 async def observe(
-    driver: Driver, task: NativeTask, pid: int, window_id: int, timeout_ms: int | None = None
+    driver: Driver,
+    scope: WindowScope | None,
+    pid: int,
+    window_id: int,
+    timeout_ms: int | None = None,
 ) -> NativeObservation:
     arguments: dict[str, Any] = {
         "pid": pid,
@@ -141,7 +146,7 @@ async def observe(
         # completeness flags of the walk; cua-driver 0.35 returns the lean
         # markdown-only read unless asked for the full response.
         "full_output": True,
-        **task.scope.window_state_arguments(),
+        **(scope.window_state_arguments() if scope else {}),
     }
     if timeout_ms is not None:
         arguments["timeout_ms"] = timeout_ms
@@ -189,7 +194,7 @@ async def observe_step(
         return TaskSources(ax=ax, foreground_ids=foreground_ids)
 
     observe_started = time.perf_counter()
-    first = await observe(driver, task, pid, window_id)
+    first = await observe(driver, task.scope, pid, window_id)
     add_phase(phase_timings, "semantic_observe_ms", observe_started)
     build_started = time.perf_counter()
     sources = build(first)
@@ -201,7 +206,7 @@ async def observe_step(
     if observation.truncated or (observation.partial and native_count == 0):
         record = {"reobserved": True, "reason": "truncated" if observation.truncated else "partial_empty"}
         observe_started = time.perf_counter()
-        second = await observe(driver, task, pid, window_id, timeout_ms=REOBSERVE_TIMEOUT_MS)
+        second = await observe(driver, task.scope, pid, window_id, timeout_ms=REOBSERVE_TIMEOUT_MS)
         add_phase(phase_timings, "semantic_observe_ms", observe_started)
         build_started = time.perf_counter()
         sources = build(second)

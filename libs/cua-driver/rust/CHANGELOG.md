@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.51.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.51.2...cua-driver-rs-v0.51.3) (2026-11-15)
+
+
+### Bug Fixes
+
+* **cua-driver-core:** advise only the retry that lifts each PARTIAL TREE cut ([#7800](https://github.com/trycua/cua/issues/7800)) ([7bb1254](https://github.com/trycua/cua/commit/7bb125461ed442e7e95eeb265fef5435c4c29f51))
+
 ## [0.51.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.51.1...cua-driver-rs-v0.51.2) (2026-11-15)
 
 

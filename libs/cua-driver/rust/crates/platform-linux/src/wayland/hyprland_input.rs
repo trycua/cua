@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, TryLockError};
 use std::time::{Duration, Instant};
 
+use super::hyprland_compatibility::Admission;
 use crate::interaction::operation_deadline;
 use anyhow::{bail, ensure, Context, Result};
 use serde_json::{json, Value};
@@ -263,7 +264,7 @@ pub fn enabled() -> bool {
 /// meaningful while [`enabled`].
 pub fn background_admission(pid: u32, address: u64) -> std::result::Result<(), &'static str> {
     if protocol() == InputProtocol::Production {
-        super::hyprland_compatibility::admit(pid, address, false)
+        super::hyprland_compatibility::admit(pid, address, false).map(|_| ())
     } else {
         Ok(())
     }
@@ -1235,12 +1236,14 @@ fn execute_actions_routed(
         route == DeliveryRoute::Background || protocol() == InputProtocol::Production,
         "foreground input requires production protocol; no downgrade is permitted"
     );
+    let mut admission = Admission::Driver;
     if route == DeliveryRoute::Background && protocol() == InputProtocol::Production {
         let keyboard = actions
             .iter()
             .any(|action| matches!(action, Action::Key { .. } | Action::TextKey { .. }));
-        if let Err(reason) = super::hyprland_compatibility::admit(pid, address, keyboard) {
-            return Ok(json!({"ok":false,"code":reason,"detail":reason}));
+        match super::hyprland_compatibility::admit(pid, address, keyboard) {
+            Ok(admitted) => admission = admitted,
+            Err(reason) => return Ok(json!({"ok":false,"code":reason,"detail":reason})),
         }
     }
     let client = session_client(&owner)?;
@@ -1271,7 +1274,12 @@ fn execute_actions_routed(
     slot.as_mut()
         .context("missing input connection")?
         .cancellation = cancellation;
-    dispatch_actions_in_slot(&mut slot, actions, started, route, text, Client::attest)
+    let mut value =
+        dispatch_actions_in_slot(&mut slot, actions, started, route, text, Client::attest)?;
+    if admission == Admission::User {
+        value["admission"] = json!("user");
+    }
+    Ok(value)
 }
 
 fn dispatch_actions_in_slot(

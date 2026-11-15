@@ -17,8 +17,9 @@ hoy start dev --wait ready
 
 A VM made by an earlier release becomes snapshot-capable the next time it
 starts, with no change to its data. A VM that was running when you updated needs
-one `hoy stop` and `hoy start`. A VM created with `--gpu-models` (experimental)
-cannot be snapshotted.
+one `hoy stop` and `hoy start`. A VM created with `--gpu-acceleration` (experimental)
+cannot be snapshotted while a program in it has a GPU renderer session open (exit
+5). Stop that program first.
 
 ## Take a snapshot
 

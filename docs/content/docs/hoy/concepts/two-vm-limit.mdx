@@ -57,9 +57,10 @@ slot is free.
 - **Graphics.** Under heavy graphics load the guest's frame rate is below what
   Apple's Virtualization framework reaches. Headless and light desktop use is not
   affected.
-- **GPU models are experimental.** `hoy create --gpu-models` is off by default.
-  Such a VM cannot be snapshotted or forked yet. See the
-  [CLI reference](/hoy/guides/cli-reference#gpu-models-experimental).
+- **GPU acceleration is experimental.** `hoy create --gpu-acceleration` is off
+  by default. A VM cannot be snapshotted while a program in it has a GPU
+  renderer session open. See the
+  [CLI reference](/hoy/guides/cli-reference#gpu-acceleration-experimental).
 - **Apple Account, iCloud and App Store sign-in** do not work in a Hoy VM. See
   [Apple Account and iCloud](/hoy/concepts/apple-account).
 - **Desktop console.** `--vnc` publishes the VM's console on a Unix socket in the

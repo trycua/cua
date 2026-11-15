@@ -1,6 +1,6 @@
 ---
 title: CLI reference
-description: 'Every hoy command and flag, grouped by task: images, VMs, snapshots, import, clipboard and sound, GPU models, health, updates, data switches and exit codes.'
+description: 'Every hoy command and flag, grouped by task: images, VMs, snapshots, import, clipboard and sound, GPU acceleration, health, updates, data switches and exit codes.'
 ---
 
 ```text output
@@ -96,7 +96,7 @@ version a plain name picks as `default`.
 | `--restart no\|always` | Whether Hoy restarts the VM after it exits. |
 | `--stop-timeout S` | How long an ordered stop waits before forcing. |
 | `--engine hoy-native` | The engine. This is the default. |
-| `--gpu-models` | Experimental, off by default. See [GPU models](#gpu-models-experimental). |
+| `--gpu-acceleration auto\|renderer\|shim\|off` | GPU acceleration for local AI models in the VM. Experimental, `off` by default. See [GPU acceleration](#gpu-acceleration-experimental). |
 
 Every VM gets its own identity: a new MAC address and ECID at create, and on its
 first boot its own host name and ssh host keys. The new key is pinned in
@@ -163,14 +163,20 @@ Brings a macOS VM from Tart, Lume or UTM into Hoy. See
 See [Clipboard sharing](/hoy/guides/clipboard-sharing). Clipboard changes apply
 at once to a running VM.
 
-## GPU models (experimental)
+## GPU acceleration (experimental)
 
-`hoy create --gpu-models` is experimental and off by default. Local models in
-the guest (with the GPU models package installed) run on the host Mac's GPU
-through a per-VM model renderer that Hoy starts with the VM, restarts if it
-crashes and stops with it. Such a VM cannot be snapshotted or forked yet.
-`hoy inspect` shows its state and `hoy logs <vm> --kind models` its log.
-VMs created without the flag are unchanged.
+`hoy create --gpu-acceleration` is experimental and off by default. It lets
+local AI models in the guest (with the GPU guest package installed) run on the
+host Mac's GPU. The modes are `auto`, `renderer`, `shim` and `off`. `auto` gives
+each program the fastest way to the GPU that works for it. `renderer` and `shim`
+force one way. `hoy set <vm> --gpu-acceleration MODE` changes a stopped VM.
+
+The renderer is a per-VM program that Hoy starts with the VM, restarts if it
+crashes and stops with it. A VM cannot be snapshotted while a program in it has
+a renderer session open (exit 5); restore and fork work. `hoy inspect` shows the
+state of the renderer, `hoy doctor` has a `gpu-acceleration` line and
+`hoy logs <vm> --kind models` shows its log. VMs created without the flag are
+unchanged.
 
 ## Health and diagnostics
 

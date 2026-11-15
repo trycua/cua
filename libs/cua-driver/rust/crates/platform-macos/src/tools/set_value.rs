@@ -274,15 +274,8 @@ impl Tool for SetValueTool {
         // keeps the full wait.
         let changes = match &result {
             Ok(Ok(outcome)) if !ax_echo_surface && outcome.verified == Some(true) => {
-                let mut settle = FieldSettle::new(outcome.value.clone(), std::time::Instant::now());
-                snapshot
-                    .detect_async_until(move || {
-                        let current = unsafe {
-                            copy_string_attr(settle_guard.as_ptr() as AXUIElementRef, "AXValue")
-                        };
-                        settle.observe(std::time::Instant::now(), current.as_deref())
-                    })
-                    .await
+                let settled = watch_field_settle(settle_guard, outcome.value.clone());
+                snapshot.detect_async_until(settled).await
             }
             _ => {
                 drop(settle_guard);
@@ -828,6 +821,11 @@ impl FieldSettle {
         }
     }
 
+    /// False once a read has ruled settling out.
+    fn can_settle(&self) -> bool {
+        self.expected.is_some()
+    }
+
     /// Record one read of the field at `now`; true once it has settled.
     fn observe(&mut self, now: std::time::Instant, current: Option<&str>) -> bool {
         if self.expected.is_none() || current != self.expected.as_deref() {
@@ -837,6 +835,41 @@ impl FieldSettle {
         now.duration_since(self.written_at) >= FIELD_QUIET
     }
 }
+
+/// Watch a written field on its own thread and return a check that is true
+/// once it has settled. The detector's poll loop only reads the flag, so an
+/// app that stops answering accessibility calls stalls this thread, never the
+/// window-change watch or its focus-steal lease. The thread ends when the
+/// field settles or reads anything else, or when the detector drops the check.
+fn watch_field_settle(
+    element: crate::ax::snapshot::RetainedElement,
+    expected: Option<String>,
+) -> impl FnMut() -> bool + Send + 'static {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let settled = Arc::new(AtomicBool::new(false));
+    let flag = Arc::downgrade(&settled);
+    let mut settle = FieldSettle::new(expected, std::time::Instant::now());
+    let _ = std::thread::Builder::new()
+        .name("cua-field-settle".into())
+        .spawn(move || loop {
+            std::thread::sleep(FIELD_POLL);
+            if flag.strong_count() == 0 {
+                return;
+            }
+            let current =
+                unsafe { copy_string_attr(element.as_ptr() as AXUIElementRef, "AXValue") };
+            let done = settle.observe(std::time::Instant::now(), current.as_deref());
+            match flag.upgrade() {
+                Some(flag) if done => return flag.store(true, Ordering::Release),
+                Some(_) if settle.can_settle() => {}
+                _ => return,
+            }
+        });
+    move || settled.load(Ordering::Acquire)
+}
+
+/// How often [`watch_field_settle`] re-reads the field.
+const FIELD_POLL: std::time::Duration = std::time::Duration::from_millis(25);
 
 /// Re-reads (100 ms apart) before an unchanged value counts as not applied.
 const NOT_APPLIED_REREADS: usize = 3;
@@ -1793,6 +1826,7 @@ mod tests {
         let mut settle = FieldSettle::new(Some("hello".into()), t0);
         assert!(!settle.observe(t0 + Duration::from_millis(25), Some("hello")));
         assert!(!settle.observe(t0 + Duration::from_millis(125), Some("hello")));
+        assert!(settle.can_settle());
         assert!(settle.observe(t0 + FIELD_QUIET, Some("hello")));
     }
 
@@ -1811,6 +1845,7 @@ mod tests {
         let mut lost = FieldSettle::new(Some("hello".into()), t0);
         assert!(!lost.observe(t0 + Duration::from_millis(50), None));
         assert!(!lost.observe(t0 + Duration::from_millis(400), Some("hello")));
+        assert!(!lost.can_settle());
         let mut unknown = FieldSettle::new(None, t0);
         assert!(!unknown.observe(t0 + Duration::from_millis(400), None));
     }

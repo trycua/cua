@@ -3712,12 +3712,13 @@ pub fn run_permissions_cmd(subcommand: &str, json: bool) {
     }
 }
 
-/// Report Cua Driver's own Accessibility and Screen Recording status —
-/// reliably, or not at all.
+/// Report the Accessibility and Screen Recording status Cua Driver runs
+/// with — reliably, or not at all.
 ///
-/// macOS attributes these permissions to the *responsible process*, so only
-/// a process that is the Cua Driver app can read the app's real grants. When
-/// the background service is running, we ask it. When it isn't, we start the
+/// macOS attributes these permissions to the *responsible process*. When
+/// the background service is running, we ask it: its answer is the one its
+/// tool calls get, and its `source` names whose grants they are (Cua
+/// Driver's own, or the app that started it). When it isn't, we start the
 /// app briefly in the background (LaunchServices, so it is its own
 /// responsible process) to read the status, then it exits. We never fall
 /// back to an in-process check: that would report the *calling terminal's*
@@ -3754,7 +3755,7 @@ fn run_permissions_status(json: bool) {
         }
         result
             .and_then(|res| res.get("structuredContent").cloned())
-            .filter(answers_for_cua_driver)
+            .filter(|status| status.get("accessibility").is_some())
     } else {
         None
     };
@@ -3902,8 +3903,8 @@ fn permission_status_text(structured: &serde_json::Value, cli_name: &str) -> Str
             }
         }
     }
-    let attribution = structured
-        .get("source")
+    let source = structured.get("source");
+    let attribution = source
         .and_then(|s| s.get("attribution"))
         .and_then(|v| v.as_str());
     if attribution == Some("host") {
@@ -3911,6 +3912,35 @@ fn permission_status_text(structured: &serde_json::Value, cli_name: &str) -> Str
             out,
             "These are the permissions of the app Cua Driver runs inside."
         );
+        if !(ax && sr) {
+            let _ = writeln!(
+                out,
+                "Next: turn them on for the app Cua Driver runs inside."
+            );
+        }
+        return out;
+    }
+    if attribution == Some("caller") {
+        let starter = source
+            .and_then(|s| {
+                s.get("responsible_bundle_id")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| s.get("responsible_executable").and_then(|v| v.as_str()))
+            })
+            .unwrap_or("the app that started Cua Driver");
+        let _ = writeln!(
+            out,
+            "These are the permissions of {starter}, not the Cua Driver app. \
+             Cua Driver uses them for as long as it runs this way."
+        );
+        if !(ax && sr) {
+            let _ = writeln!(
+                out,
+                "Next: turn them on for {starter}, or run `{cli_name} stop` and then \
+                 `{cli_name} permissions grant` to use Cua Driver's own permissions."
+            );
+        }
+        return out;
     }
     let direct_capture_unverified = structured.get("direct_capture_status")
         == Some(&serde_json::json!("not_checked"))
@@ -6946,6 +6976,62 @@ mod tests {
             for banned in ["TCC", "daemon", "unknown", "CuaDriver ", "AX "] {
                 assert!(!text.contains(banned), "{text:?} contains {banned:?}");
             }
+        }
+    }
+
+    /// #4802: a daemon started inside another app's process tree uses that
+    /// app's grants, so status names that app and how to switch.
+    #[test]
+    fn permission_status_text_names_the_app_whose_grants_the_daemon_uses() {
+        let started_by_host = serde_json::json!({
+            "accessibility": true,
+            "screen_recording": false,
+            "source": {
+                "attribution": "caller",
+                "pid": 500,
+                "responsible_pid": 42,
+                "responsible_bundle_id": "com.example.host",
+            },
+        });
+        let text = permission_status_text(&started_by_host, "cua-driver");
+        assert!(
+            text.contains("These are the permissions of com.example.host, not the Cua Driver app."),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "Next: turn them on for com.example.host, or run `cua-driver stop` and then \
+                 `cua-driver permissions grant` to use Cua Driver's own permissions."
+            ),
+            "{text}"
+        );
+        assert_eq!(text.matches("Next:").count(), 1);
+
+        let granted = serde_json::json!({
+            "accessibility": true,
+            "screen_recording": true,
+            "source": {"attribution": "caller", "responsible_executable": "/opt/host/bin/agent"},
+        });
+        let text = permission_status_text(&granted, "cua-driver");
+        assert!(
+            text.contains("permissions of /opt/host/bin/agent"),
+            "{text}"
+        );
+        assert!(!text.contains("Next:"), "{text}");
+
+        let embedded = serde_json::json!({
+            "accessibility": false,
+            "screen_recording": true,
+            "source": {"attribution": "host"},
+        });
+        let text = permission_status_text(&embedded, "cua-driver");
+        assert!(
+            text.contains("Next: turn them on for the app Cua Driver runs inside."),
+            "{text}"
+        );
+        assert!(!text.contains("permissions grant"), "{text}");
+        for banned in ["TCC", "daemon", "unknown", "CuaDriver ", "AX "] {
+            assert!(!text.contains(banned), "{text:?} contains {banned:?}");
         }
     }
 

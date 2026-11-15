@@ -180,7 +180,7 @@ still succeeds and copies Hoy.app; the two approvals are the part that needs a s
 2. **Give the operator account a temporary password** (a cloud Mac often has none), and keep it out of shell history
    and logs:
 
-   ```sh
+   ```bash skip="host-install"
    sudo dscl . -passwd /Users/operator
    ```
 
@@ -188,7 +188,7 @@ still succeeds and copies Hoy.app; the two approvals are the part that needs a s
    first.) The account must be an administrator, because both approvals ask for an administrator password.
 3. **Turn on Screen Sharing and reach it through an ssh tunnel**, so port 5900 is never exposed to the network:
 
-   ```sh
+   ```bash skip="host-install"
    sudo launchctl enable system/com.apple.screensharing
    sudo launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.screensharing.plist
    ```
@@ -206,7 +206,7 @@ still succeeds and copies Hoy.app; the two approvals are the part that needs a s
 7. **Close the door again.** Turn Screen Sharing off, stop the tunnel and rotate the password to a new random value
    (or lock it, if you will only use ssh keys):
 
-   ```sh
+   ```bash skip="host-install"
    sudo launchctl bootout system/com.apple.screensharing
    sudo launchctl disable system/com.apple.screensharing
    sudo dscl . -passwd /Users/operator

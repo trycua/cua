@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.52.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.51.6...cua-driver-rs-v0.52.0) (2026-11-15)
+
+
+### Features
+
+* **cua-driver:** add deepseek-harness to mcp-config and skills install ([#7826](https://github.com/trycua/cua/issues/7826)) ([b99b2bf](https://github.com/trycua/cua/commit/b99b2bf2c078ff794e2dd31381c4b16b6a839c40)), closes [#4727](https://github.com/trycua/cua/issues/4727)
+
+
+### Bug Fixes
+
+* **cua-driver-rs:** refuse the stale-transform probes from a client that never read the window ([#7831](https://github.com/trycua/cua/issues/7831)) ([a21cc64](https://github.com/trycua/cua/commit/a21cc640c57340321b891017edd98c2bd971295b))
+* **cua-driver:** bind Electron apps by their runtime and name the isolated launch ([#7818](https://github.com/trycua/cua/issues/7818)) ([dbd817a](https://github.com/trycua/cua/commit/dbd817a617ddfb7342f32dfd907daa84f8ef8550))
+* **cua-driver:** revive an idle-reaped named session on its owner's next call ([#7832](https://github.com/trycua/cua/issues/7832)) ([e3a1e11](https://github.com/trycua/cua/commit/e3a1e1158183cbf2c87332f1910d7e84b74be532))
+* **cua-driver:** state zero-match get_window_state queries and match a|b alternatives ([#7819](https://github.com/trycua/cua/issues/7819)) ([8551265](https://github.com/trycua/cua/commit/8551265453ae1851a4cdbafc8338800d0f00e79f))
+
 ## [0.51.6](https://github.com/trycua/cua/compare/cua-driver-rs-v0.51.5...cua-driver-rs-v0.51.6) (2026-11-15)
 
 

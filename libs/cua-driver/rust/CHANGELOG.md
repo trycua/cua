@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.51.6](https://github.com/trycua/cua/compare/cua-driver-rs-v0.51.5...cua-driver-rs-v0.51.6) (2026-11-15)
+
+
+### Bug Fixes
+
+* **cua-driver-core:** keep each session's own snapshot of a shared window ([#7809](https://github.com/trycua/cua/issues/7809)) ([8f94138](https://github.com/trycua/cua/commit/8f94138cde273d07f8a645f6424dd4f8f0d605b1))
+
 ## [0.51.5](https://github.com/trycua/cua/compare/cua-driver-rs-v0.51.4...cua-driver-rs-v0.51.5) (2026-11-15)
 
 

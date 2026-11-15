@@ -116,8 +116,7 @@ The loop still closes for most questions, and none of this needs a vision model:
 `xprop -root _NET_ACTIVE_WINDOW` proves which window holds focus; and scanning the
 written capture for colour transitions (PIL or equivalent) proves coarse layout.
 What none of them prove is that a specific small control was activated. For that
-use the `cua-perception` extension (see `VISUAL.md`) or an app that exposes a
-usable accessibility tree.
+use an app that exposes a usable accessibility tree.
 
 **Windows without `_NET_WM_PID`.** Tk, many Java/AWT builds, Wine, and legacy
 Xlib/Xt clients do not publish `_NET_WM_PID`. On X11, `list_windows` then asks

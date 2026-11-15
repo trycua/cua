@@ -399,7 +399,7 @@ fn restore_front_app_if_browser_front(previous_pid: i64, browser_pid: i64) -> bo
     crate::apps::reactivate_app(previous)
 }
 
-fn is_chromium(name: &str, bundle_id: &str) -> bool {
+pub(crate) fn is_chromium(name: &str, bundle_id: &str) -> bool {
     let value = format!("{name} {bundle_id}").to_ascii_lowercase();
     let products = [
         "chrome", "chromium", "electron", "brave", "edge", "vivaldi", "opera", "arc", "thorium",
@@ -531,6 +531,7 @@ fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
         BrowserProduct::GoogleChrome => "Library/Application Support/Google/Chrome",
         BrowserProduct::MicrosoftEdge => "Library/Application Support/Microsoft Edge",
         BrowserProduct::Chromium => "Library/Application Support/Chromium",
+        BrowserProduct::Brave => "Library/Application Support/BraveSoftware/Brave-Browser",
         _ => return None,
     };
     Some(home.join(relative))
@@ -768,6 +769,27 @@ async fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
     )))
 }
 
+/// macOS 27 and later answer EPERM when an app without Full Disk Access or a
+/// per-app grant reads a protected browser profile folder, root and
+/// LaunchAgents included.
+const PROFILE_PROTECTION_HINT: &str = "on macOS 27 and later, reading this browser's profile folder needs Full Disk Access or a per-app grant; grant Full Disk Access to CuaDriver.app and restart the daemon, or attach from `cua-driver mcp --direct` in an app that has it";
+
+fn devtools_active_port_read_refusal(error: &std::io::Error) -> BrowserRefusal {
+    let message = format!("could not read the browser's DevToolsActivePort file: {error}");
+    if error.raw_os_error() != Some(libc::EPERM) {
+        return BrowserRefusal::new(BrowserRefusalCode::BrowserRouteUnavailable, message);
+    }
+    BrowserRefusal::new(
+        BrowserRefusalCode::BrowserRouteUnavailable,
+        format!("{message}; {PROFILE_PROTECTION_HINT}"),
+    )
+    .with_detail(serde_json::json!({
+        "resource": "browser_profile",
+        "os_error": libc::EPERM,
+        "hint": PROFILE_PROTECTION_HINT,
+    }))
+}
+
 async fn active_port_endpoint(
     pid: i64,
     product: BrowserProduct,
@@ -791,12 +813,7 @@ async fn active_port_endpoint_with_relative_fallback(
     let text = match tokio::fs::read_to_string(user_data_dir.join("DevToolsActivePort")).await {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => {
-            return Err(BrowserRefusal::new(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not read the browser's DevToolsActivePort file: {error}"),
-            ))
-        }
+        Err(error) => return Err(devtools_active_port_read_refusal(&error)),
     };
     let Some((port, path)) = parse_devtools_active_port(&text) else {
         return Err(BrowserRefusal::new(
@@ -847,6 +864,10 @@ impl BrowserPlatform for MacOsBrowserPlatform {
             BrowserRefusalCode::BrowserRouteUnavailable,
             "no vendor-signed system Chromium executable is available for isolated launch",
         ))
+    }
+
+    fn security_prompt_open(&self) -> bool {
+        crate::security_prompt::security_prompt_on_screen()
     }
 
     fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
@@ -1478,6 +1499,15 @@ mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+    #[test]
+    fn brave_default_user_data_dir_is_its_brave_software_profile_root() {
+        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap();
+        assert_eq!(
+            default_user_data_dir(browser_product("Brave Browser", "com.brave.Browser")),
+            Some(home.join("Library/Application Support/BraveSoftware/Brave-Browser"))
+        );
+    }
+
     fn consent_surface(window_id: u32) -> ConsentSurfaceEvidence {
         ConsentSurfaceEvidence {
             window_id,
@@ -1849,6 +1879,31 @@ mod tests {
         assert!(!restore_front_app_if_browser_front(42, 42));
         assert!(!restore_front_app_if_browser_front(i64::MAX, 42));
         assert!(!restore_front_app_if_browser_front(42, i64::MIN));
+    }
+
+    #[test]
+    fn devtools_active_port_read_refusal_names_the_macos_profile_protection() {
+        let protected =
+            devtools_active_port_read_refusal(&std::io::Error::from_raw_os_error(libc::EPERM));
+        assert_eq!(protected.code, BrowserRefusalCode::BrowserRouteUnavailable);
+        assert!(protected
+            .message
+            .starts_with("could not read the browser's DevToolsActivePort file: "));
+        assert!(
+            protected.message.contains("Full Disk Access"),
+            "{}",
+            protected.message
+        );
+        let detail = protected.detail.expect("an EPERM denial carries detail");
+        assert_eq!(detail["resource"], "browser_profile");
+        assert_eq!(detail["os_error"], libc::EPERM);
+        assert_eq!(detail["hint"], PROFILE_PROTECTION_HINT);
+
+        let mode_bits =
+            devtools_active_port_read_refusal(&std::io::Error::from_raw_os_error(libc::EACCES));
+        assert_eq!(mode_bits.code, BrowserRefusalCode::BrowserRouteUnavailable);
+        assert!(!mode_bits.message.contains("Full Disk Access"));
+        assert!(mode_bits.detail.is_none());
     }
 
     #[test]

@@ -1892,7 +1892,7 @@ external fun uniffi_cua_sdk_fn_free_agentsetup(`handle`: Long,uniffi_out_err: Un
 ): Unit
 external fun uniffi_cua_sdk_fn_method_agentsetup_configure_mcp(`ptr`: Long,`agents`: RustBuffer.ByValue,`server`: RustBuffer.ByValue,
 ): Long
-external fun uniffi_cua_sdk_fn_method_agentsetup_connect_json(`ptr`: Long,`agents`: RustBuffer.ByValue,`server`: RustBuffer.ByValue,`skills`: Byte,`mcp`: Byte,`signIn`: Byte,
+external fun uniffi_cua_sdk_fn_method_agentsetup_connect_json(`ptr`: Long,`agents`: RustBuffer.ByValue,`server`: RustBuffer.ByValue,`skills`: Byte,`mcp`: Byte,`signIn`: Byte,`driver`: RustBuffer.ByValue,`driverPermissionsGranted`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_agentsetup_connection_status_json(`ptr`: Long,`expected`: RustBuffer.ByValue,`refresh`: Byte,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
@@ -3396,7 +3396,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp() != 53713.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_agentsetup_connect_json() != 21138.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_agentsetup_connect_json() != 1379.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_agentsetup_connection_status_json() != 47692.toShort()) {
@@ -5941,10 +5941,14 @@ public interface AgentSetupInterface {
      * Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
      * (`server`, default this channel's cua), and with `sign_in` the
      * agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
-     * sign-in it already has, read from where Claude Code keeps it). JSON:
-     * one result per agent.
+     * sign-in it already has, read from where Claude Code keeps it). With
+     * `driver`, the `cua-driver` entry the host app wants (the Cua Driver it
+     * carries, by absolute path) is written too; `driver_permissions_granted`
+     * says whether Screen Recording and Accessibility are on for it (None:
+     * unknown). Each part asked for is reported on its own (`parts`), so
+     * one can be retried by asking for it alone. JSON: one result per agent.
      */
-    suspend fun `connectJson`(`agents`: List<kotlin.String>, `server`: AgentMcpServer?, `skills`: kotlin.Boolean, `mcp`: kotlin.Boolean, `signIn`: kotlin.Boolean): kotlin.String
+    suspend fun `connectJson`(`agents`: List<kotlin.String>, `server`: AgentMcpServer?, `skills`: kotlin.Boolean, `mcp`: kotlin.Boolean, `signIn`: kotlin.Boolean, `driver`: AgentMcpServer?, `driverPermissionsGranted`: kotlin.Boolean?): kotlin.String
 
     /**
      * Whether each agent is really connected (CONTRACT §4: `{agents,
@@ -6176,17 +6180,21 @@ open class AgentSetup: Disposable, AutoCloseable, AgentSetupInterface
      * Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
      * (`server`, default this channel's cua), and with `sign_in` the
      * agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
-     * sign-in it already has, read from where Claude Code keeps it). JSON:
-     * one result per agent.
+     * sign-in it already has, read from where Claude Code keeps it). With
+     * `driver`, the `cua-driver` entry the host app wants (the Cua Driver it
+     * carries, by absolute path) is written too; `driver_permissions_granted`
+     * says whether Screen Recording and Accessibility are on for it (None:
+     * unknown). Each part asked for is reported on its own (`parts`), so
+     * one can be retried by asking for it alone. JSON: one result per agent.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
-    override suspend fun `connectJson`(`agents`: List<kotlin.String>, `server`: AgentMcpServer?, `skills`: kotlin.Boolean, `mcp`: kotlin.Boolean, `signIn`: kotlin.Boolean) : kotlin.String {
+    override suspend fun `connectJson`(`agents`: List<kotlin.String>, `server`: AgentMcpServer?, `skills`: kotlin.Boolean, `mcp`: kotlin.Boolean, `signIn`: kotlin.Boolean, `driver`: AgentMcpServer?, `driverPermissionsGranted`: kotlin.Boolean?) : kotlin.String {
         return uniffiRustCallAsync(
         callWithHandle { uniffiHandle ->
             UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_connect_json(
                 uniffiHandle,
-                FfiConverterSequenceString.lower(`agents`),FfiConverterOptionalTypeAgentMcpServer.lower(`server`),FfiConverterBoolean.lower(`skills`),FfiConverterBoolean.lower(`mcp`),FfiConverterBoolean.lower(`signIn`),
+                FfiConverterSequenceString.lower(`agents`),FfiConverterOptionalTypeAgentMcpServer.lower(`server`),FfiConverterBoolean.lower(`skills`),FfiConverterBoolean.lower(`mcp`),FfiConverterBoolean.lower(`signIn`),FfiConverterOptionalTypeAgentMcpServer.lower(`driver`),FfiConverterOptionalBoolean.lower(`driverPermissionsGranted`),
             )
         },
         { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },

@@ -611,7 +611,7 @@ fn shell_helper_pose_update(
     if let Some(track) = track {
         if matches!(command.cmd, OverlayCommand::MoveTo { .. }) {
             if let Some(seq) = poses.model.move_seq(&command.key) {
-                update.arrival = Some((Duration::from_secs_f64(track.arrival_secs()), seq));
+                update.arrival = Some((Duration::from_secs_f64(track.release_secs()), seq));
             }
         }
         update.track = Some(track.to_json());
@@ -714,7 +714,7 @@ fn dispatch_shell_helper_command(
             crate::wayland::shell_helper::move_cursor(*x as i32, *y as i32);
         }
         OverlayCommand::BeginAction {
-            action,
+            action: _,
             delivery,
             target,
         } if semantic => {
@@ -724,12 +724,8 @@ fn dispatch_shell_helper_command(
                 cursor_overlay::BadgeMode::Verbose => (*delivery, *target),
                 cursor_overlay::BadgeMode::Minimal | cursor_overlay::BadgeMode::Off => (None, None),
             };
-            // Its action marks are opt-in too (`cursor.marks`).
-            let action = if cursor_overlay::cursor_options::active().marks {
-                *action
-            } else {
-                cursor_overlay::CursorAction::Idle
-            };
+            // The cursor draws no action marks: always the idle frame.
+            let action = cursor_overlay::CursorAction::Idle;
             crate::wayland::shell_helper::set_cursor_state(
                 action.as_str(),
                 delivery.as_ref().map_or("", |value| value.as_str()),

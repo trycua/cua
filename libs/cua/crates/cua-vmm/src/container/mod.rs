@@ -1471,7 +1471,9 @@ impl Runtime for ContainerRuntime {
                     match boxed(|| self.start_policed(&spec.name)).await {
                         Ok(()) => break,
                         Err(e) => {
-                            self.unpolice(&spec.name).await;
+                            // Created just now: it has a resolv.conf exactly
+                            // under the secure default (`prepare_resolv`).
+                            self.unpolice(&spec.name, egress::secure()).await;
                             self.remove_force(&spec.name).await;
                             let msg = e.to_string();
                             if attempt < PORT_CONFLICT_ATTEMPTS && is_port_conflict(&msg) {
@@ -1974,13 +1976,16 @@ impl Runtime for ContainerRuntime {
             ..Default::default()
         };
         // A restored container: the engine forgets it, and a fork that never
-        // started still owns its private checkpoint.
-        let (restored, image_id) = match self.inspect(name).await {
+        // started still owns its private checkpoint. Its resolv.conf is
+        // removed only when it mounts one (when it can't be told, as before).
+        let (restored, image_id, resolv) = match self.inspect(name).await {
             Ok(Some(i)) => (
                 restore_dir(&i).map(|d| (i.id.clone().unwrap_or_default(), d)),
                 i.image.clone(),
+                egress::has_resolv_bind(i.host_config.as_ref().and_then(|h| h.binds.as_ref())),
             ),
-            _ => (None, None),
+            Ok(None) => (None, None, false),
+            Err(_) => (None, None, true),
         };
         // Sidecars first: they hold the sandbox's network namespace.
         for sc in self.sidecar_names(name).await.unwrap_or_default() {
@@ -1994,7 +1999,7 @@ impl Runtime for ContainerRuntime {
             }
             Err(e) => return Err(engine_err(e)),
         }
-        self.unpolice(name).await;
+        self.unpolice(name, resolv).await;
         if let Some((id, dir)) = restored {
             let helper = self.helper();
             let _ = helper.forget(&[&id]).await;

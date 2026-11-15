@@ -156,10 +156,6 @@ fn native_prompt_surfaces(nodes: &[UiaNode]) -> Vec<(usize, usize)> {
         .collect()
 }
 
-fn native_prompt_surface_present(nodes: &[UiaNode]) -> bool {
-    !native_prompt_surfaces(nodes).is_empty()
-}
-
 fn native_button_properties(element_ptr: usize) -> Result<(String, bool), BrowserRefusal> {
     let element = unsafe { IUIAutomationElement::from_raw(element_ptr as *mut _) };
     let properties = unsafe {
@@ -293,6 +289,47 @@ fn select_language_independent_actions(
     ))
 }
 
+fn dialog_buttons<F>(
+    nodes: &[UiaNode],
+    (start, end): (usize, usize),
+    properties: &mut F,
+) -> Result<Vec<ConsentButtonCandidate>, BrowserRefusal>
+where
+    F: FnMut(usize) -> Result<(String, bool), BrowserRefusal>,
+{
+    let mut candidates = Vec::new();
+    for node in nodes[(start + 1)..end].iter().filter(|node| {
+        is_trusted_prompt_node(nodes, node)
+            && node.control_type == "Button"
+            && node.actions.iter().any(|action| action == "invoke")
+            && node.enabled != Some(false)
+            && node.element_ptr != 0
+            && node.rect.is_some()
+    }) {
+        let (class_name, has_keyboard_focus) = properties(node.element_ptr)?;
+        if class_name != CHROMIUM_DIALOG_BUTTON_CLASS {
+            continue;
+        }
+        let rect = node.rect.expect("filtered above");
+        if rect.0 >= rect.2 || rect.1 >= rect.3 {
+            continue;
+        }
+        if candidates
+            .iter()
+            .any(|candidate: &ConsentButtonCandidate| candidate.rect == rect)
+        {
+            continue;
+        }
+        candidates.push(ConsentButtonCandidate {
+            element_ptr: node.element_ptr,
+            rect,
+            has_keyboard_focus,
+        });
+    }
+    Ok(candidates)
+}
+
+/// `None` unless a native surface carries three Chromium buttons; translate or password bubbles are not consent prompts.
 fn exact_consent_actions_with<F>(
     nodes: &[UiaNode],
     mut properties: F,
@@ -300,39 +337,11 @@ fn exact_consent_actions_with<F>(
 where
     F: FnMut(usize) -> Result<(String, bool), BrowserRefusal>,
 {
-    let surfaces = native_prompt_surfaces(nodes);
-    if surfaces.is_empty() {
-        return Ok(None);
-    }
     let mut matches = Vec::new();
-    for (start, end) in surfaces {
-        let mut candidates = Vec::new();
-        for node in nodes[(start + 1)..end].iter().filter(|node| {
-            is_trusted_prompt_node(nodes, node)
-                && node.control_type == "Button"
-                && node.actions.iter().any(|action| action == "invoke")
-                && node.element_ptr != 0
-                && node.rect.is_some()
-        }) {
-            let (class_name, has_keyboard_focus) = properties(node.element_ptr)?;
-            if class_name != CHROMIUM_DIALOG_BUTTON_CLASS {
-                continue;
-            }
-            let rect = node.rect.expect("filtered above");
-            if rect.0 >= rect.2 || rect.1 >= rect.3 {
-                continue;
-            }
-            if candidates
-                .iter()
-                .any(|candidate: &ConsentButtonCandidate| candidate.rect == rect)
-            {
-                continue;
-            }
-            candidates.push(ConsentButtonCandidate {
-                element_ptr: node.element_ptr,
-                rect,
-                has_keyboard_focus,
-            });
+    for (start, end) in native_prompt_surfaces(nodes) {
+        let candidates = dialog_buttons(nodes, (start, end), &mut properties)?;
+        if candidates.len() != 3 {
+            continue;
         }
         let (allow, cancel) = select_language_independent_actions(&candidates)?;
         let rect_of = |ptr: usize| {
@@ -353,6 +362,7 @@ where
         }
     }
     match matches.as_slice() {
+        [] => Ok(None),
         [(element, _)] => Ok(Some(*element)),
         _ => Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
@@ -413,18 +423,12 @@ pub fn dismiss(pid: u32, hwnd: u64) -> Result<bool, BrowserRefusal> {
     loop {
         prove_window_owner(hwnd, pid)?;
         let tree = crate::uia::walk_tree(hwnd, None);
-        let prompt_present = native_prompt_surface_present(&tree.nodes);
-        if !prompt_present {
-            release_nodes(&tree.nodes);
-            return Ok(dismissed);
-        }
-        let cancel = exact_cancel_button(&tree.nodes);
-        let invoked = match cancel {
+        let invoked = match exact_cancel_button(&tree.nodes) {
             Ok(Some(element)) => unsafe { invoke(element) },
-            Ok(None) => Err(BrowserRefusal::new(
-                BrowserRefusalCode::BrowserWrongTargetRefused,
-                "the exact remote-debugging consent prompt exposed no structural cancel action",
-            )),
+            Ok(None) => {
+                release_nodes(&tree.nodes);
+                return Ok(dismissed);
+            }
             Err(error) => Err(error),
         };
         release_nodes(&tree.nodes);
@@ -451,7 +455,6 @@ pub async fn handle(
     })?;
     prove_window_owner(request.window_id, pid)?;
     let deadline = Instant::now() + Duration::from_secs(4);
-    let mut saw_prompt = false;
     loop {
         prove_window_owner(request.window_id, pid)?;
         let hwnd = request.window_id;
@@ -465,8 +468,6 @@ pub async fn handle(
                 format!("could not inspect the browser consent UI: {error}"),
             )
         })?;
-        let prompt_present = native_prompt_surface_present(&tree.0);
-        saw_prompt |= prompt_present;
         match exact_allow_button(&tree.0) {
             Ok(Some(element)) => {
                 let invoked = request.action.perform(|| unsafe { invoke(element) });
@@ -479,12 +480,6 @@ pub async fn handle(
                 drop(tree);
                 return Err(error);
             }
-        }
-        if saw_prompt && !prompt_present {
-            return Err(BrowserRefusal::new(
-                BrowserRefusalCode::BrowserConsentRevoked,
-                "the person dismissed the browser consent prompt",
-            ));
         }
         if Instant::now() >= deadline {
             return Err(BrowserRefusal::new(
@@ -888,7 +883,7 @@ mod tests {
     }
 
     #[test]
-    fn matcher_refuses_chromium_buttons_outside_the_bound_prompt_subtree() {
+    fn matcher_ignores_chromium_buttons_outside_the_bound_prompt_subtree() {
         let title = "opaque consent surface";
         let nodes = vec![
             dialog_node("Pane", title, 2),
@@ -900,11 +895,38 @@ mod tests {
             button("C", 13, (-5549, 343, -5452, 399)),
         ];
 
+        assert_eq!(exact_allow_button_with(&nodes, properties).unwrap(), None);
+    }
+
+    /// Edge 156 on a page in another language: the translate bubble is a sibling native surface.
+    fn translate_bubble() -> Vec<UiaNode> {
+        let title = "Translate page from Russian?";
+        let mut more = button("More", 23, (700, 200, 730, 232));
+        more.actions = vec!["expand".to_owned()];
+        vec![
+            dialog_node("Pane", title, 2),
+            dialog_node("Text", title, 3),
+            dialog_node("Text", title, 7),
+            button("Close", 21, (730, 100, 750, 120)),
+            button("Translate", 22, (600, 200, 690, 232)),
+            more,
+        ]
+    }
+
+    #[test]
+    fn matcher_skips_other_native_bubbles_beside_the_consent_prompt() {
+        let mut nodes = translate_bubble();
+        nodes.extend(chromium_153_prompt(
+            "Allow remote debugging?",
+            ["Turn off in settings", "Allow", "Cancel"],
+        ));
         assert_eq!(
-            exact_allow_button_with(&nodes, properties)
-                .unwrap_err()
-                .code,
-            BrowserRefusalCode::BrowserWrongTargetRefused
+            exact_consent_actions_with(&nodes, properties).unwrap(),
+            Some((12, 13))
+        );
+        assert_eq!(
+            exact_allow_button_with(&translate_bubble(), properties).unwrap(),
+            None
         );
     }
 
@@ -943,9 +965,8 @@ mod tests {
                     element_ptr == 13,
                 ))
             })
-            .unwrap_err()
-            .code,
-            BrowserRefusalCode::BrowserWrongTargetRefused
+            .unwrap(),
+            None
         );
     }
 }

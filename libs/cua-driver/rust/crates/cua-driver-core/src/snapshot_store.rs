@@ -848,6 +848,22 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
         self.inner.lock().unwrap().pid_of_current(snapshot_id)
     }
 
+    /// The `(pid, window_id)` a live `element_token` was minted for. `None`
+    /// when the token is absent, malformed, or no longer current.
+    pub fn window_for_token(&self, args: &serde_json::Value) -> Option<(i32, u64)> {
+        let token = args.get("element_token")?.as_str()?;
+        let (snapshot_id, _) = parse_token(token)?;
+        let inner = self.inner.lock().unwrap();
+        let pid = inner.pid_of_current(snapshot_id)?;
+        let window_id = inner
+            .lanes
+            .get(&pid)?
+            .iter()
+            .find(|entry| entry.id == snapshot_id)?
+            .window_id;
+        Some((pid, window_id))
+    }
+
     /// Who a call's `element_token` belonged to, and that process's current
     /// snapshots, for the refusal [`crate::element_token::fill_pid_from_token`]
     /// reports when the token is gone.

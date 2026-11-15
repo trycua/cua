@@ -73,6 +73,66 @@ fn standalone_trust_gated_click_html() -> String {
     )
 }
 
+/// A control that acts only for a focused page next to the fixture's plain
+/// increment button. A background accessibility press reaches the document
+/// while it is unfocused, so only the plain button reacts (#4243).
+#[cfg(target_os = "macos")]
+fn standalone_focus_gated_click_html() -> String {
+    standalone_fixture_html().replace(
+        "</body>",
+        r#"<fieldset>
+  <legend>focus-gated click</legend>
+  <button id="standalone-focus-gated" data-cua-id="standalone-focus-gated">
+    Activate focus-gated control
+  </button>
+  <span id="standalone-focus-gated-state" data-cua-id="standalone-focus-gated-state">
+    activation=idle
+  </span>
+</fieldset>
+<script>
+  document.getElementById('standalone-focus-gated').addEventListener('click', () => {
+    if (document.hasFocus()) {
+      document.getElementById('standalone-focus-gated-state').textContent = 'activation=accepted';
+    }
+  });
+</script>
+</body>"#,
+    )
+}
+
+fn standalone_reduced_motion_html() -> String {
+    standalone_fixture_html().replace(
+        "</body>",
+        r#"<style>
+@keyframes cua-motion-probe {
+  from { transform: translateX(0); }
+  to { transform: translateX(20px); }
+}
+#standalone-motion-probe {
+  animation: cua-motion-probe 5s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  #standalone-motion-probe {
+    animation-duration: 0.001ms;
+    animation-iteration-count: 1;
+  }
+}
+</style>
+<span id="standalone-motion-state" data-cua-id="standalone-motion-state">motion=unknown</span>
+<div id="standalone-motion-probe" aria-hidden="true">motion probe</div>
+<script>
+  const motionQuery = matchMedia('(prefers-reduced-motion: reduce)');
+  const motionState = document.getElementById('standalone-motion-state');
+  const publishMotionState = () => {
+    motionState.textContent = motionQuery.matches ? 'motion=reduce' : 'motion=default';
+  };
+  motionQuery.addEventListener('change', publishMotionState);
+  publishMotionState();
+</script>
+</body>"#,
+    )
+}
+
 #[cfg(target_os = "macos")]
 fn standalone_generic_type_text_html() -> String {
     standalone_fixture_html().replace(
@@ -970,6 +1030,10 @@ fn configure_macos_test_browser_command(command: &mut Command) {
     // unexpected native prompt; this keeps the setup-success row focused on
     // the exact remote-debugging page instead of pre-answering OS consent.
     command.arg("--disable-features=MediaRouter");
+    // Throwaway test profiles must not read the login keychain: each launch
+    // of a binary missing from the "Safe Storage" item's access list shows a
+    // Keychain prompt, as Cua Driver's own isolated launches avoid.
+    command.arg("--use-mock-keychain");
 }
 
 fn browser_stderr() -> Stdio {
@@ -1217,6 +1281,7 @@ fn wait_for_devtools_listener_to_close(profile: &Path, port: u16) {
 struct BrowserLaunchFlags {
     force_high_device_scale: bool,
     disable_quiet_notification_prompts: bool,
+    force_renderer_accessibility: bool,
 }
 
 fn spawn_browser_command(
@@ -1231,6 +1296,7 @@ fn spawn_browser_command(
     let BrowserLaunchFlags {
         force_high_device_scale,
         disable_quiet_notification_prompts,
+        force_renderer_accessibility,
     } = flags;
     let mut command = command_for_browser(
         spec,
@@ -1248,6 +1314,11 @@ fn spawn_browser_command(
     }
     if force_high_device_scale {
         command.arg("--force-device-scale-factor=2");
+    }
+    if force_renderer_accessibility {
+        // A fresh window can otherwise hold back its page tree from the
+        // native accessibility API for minutes on a loaded runner.
+        command.arg("--force-renderer-accessibility");
     }
     let child = spawn_in_job(&mut command).expect("launch standalone browser");
     eprintln!(
@@ -1290,6 +1361,7 @@ fn launch_browser_with_driver(
         BrowserLaunchFlags {
             force_high_device_scale: label.contains("multi-tab"),
             disable_quiet_notification_prompts: label.contains("browser-owned-permission"),
+            force_renderer_accessibility: label.contains("background-web-click-noop"),
         },
     );
     navigate_initial_page(cdp_port, &server);
@@ -1406,6 +1478,23 @@ fn wait_for_observed(server: &BrowserFixtureServer, marker: &str) {
         "fixture never observed {marker:?}: {}",
         server.snapshot()
     );
+}
+
+fn semantic_action_signature(snapshot: &ToolResponse) -> Vec<serde_json::Value> {
+    snapshot.structured()["refs"]
+        .as_array()
+        .expect("semantic refs")
+        .iter()
+        .map(|entry| {
+            serde_json::json!({
+                "role": entry["role"],
+                "name": entry["name"],
+                "actions": entry["actions"],
+                "visibility": entry["visibility"],
+                "frame": entry["frame"],
+            })
+        })
+        .collect()
 }
 
 fn ref_by_label(snapshot: &ToolResponse, fragment: &str) -> String {
@@ -1606,6 +1695,23 @@ fn case(browser: &str, action: &str) -> CaseSpec {
         Scope::Window,
         DriverRoute::Cdp,
         oracles,
+    )
+}
+
+/// The policy row checks page media state and semantic parity, not desktop
+/// posture, so only the fixture oracle applies.
+fn reduced_motion_case(browser: &str) -> CaseSpec {
+    let action = "browser_reduced_motion_policy";
+    CaseSpec::delivered(
+        format!("{}-{browser}-standalone-{action}", std::env::consts::OS),
+        browser,
+        "standalone-chromium",
+        action,
+        Targeting::Page,
+        Delivery::Background,
+        Scope::Window,
+        DriverRoute::Cdp,
+        vec![OracleKind::FixtureState],
     )
 }
 
@@ -2456,6 +2562,122 @@ fn run_web_type_text_verification(spec: &BrowserSpec) {
     });
 }
 
+/// The element token of the page control labelled `label`, read again for a
+/// bounded time while Chrome finishes building the page tree.
+#[cfg(target_os = "macos")]
+fn web_element_token(fixture: &mut BrowserFixture, label: &str) -> String {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let state = fixture.driver.call(
+            "get_window_state",
+            serde_json::json!({
+                "pid": fixture.pid as i64,
+                "window_id": fixture.window_id,
+                "include_screenshot": false,
+            }),
+        );
+        assert!(!state.is_error(), "native browser snapshot: {}", state.raw);
+        if let Some(index) = element_index_containing(state.tree_text(), label) {
+            return state.element_token(index).to_owned();
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{label} missing from the AX tree: {}",
+            state.raw
+        );
+        thread::sleep(Duration::from_millis(250));
+    }
+}
+
+/// #4243: a background element click on web content that leaves the page
+/// unchanged reports `suspected_noop` with a foreground escalation, not a bare
+/// `unverifiable`; a press the page handles stays `unverifiable` and lands.
+#[cfg(target_os = "macos")]
+fn run_background_web_click_noop(spec: &BrowserSpec) {
+    let scenario = format!("macos-{}-standalone-background-web-click-noop", spec.name);
+    let case = CaseSpec::delivered(
+        scenario.clone(),
+        spec.name.clone(),
+        "standalone-chromium",
+        "background_web_click_noop",
+        Targeting::Ax,
+        Delivery::Background,
+        Scope::Window,
+        DriverRoute::MacosAxAction,
+        vec![
+            OracleKind::FixtureState,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::NoLeakedInput,
+        ],
+    );
+    execute_case(case, |evidence| {
+        let mut fixture =
+            launch_browser_with_html(spec, &scenario, standalone_focus_gated_click_html());
+        *evidence = recording_evidence(fixture.driver.recording_dir());
+        wait_for_text(&fixture.server, "lbl-counter", "counter=0");
+        // Chrome builds the page's accessibility tree on the first reads.
+        web_element_token(&mut fixture, "Activate focus-gated control");
+        run_with_background_oracles(&mut fixture, |fixture| {
+            let click = |fixture: &mut BrowserFixture, label: &str| {
+                let token = web_element_token(fixture, label);
+                // The pid lets the recording mark where a suspected no-op was
+                // aimed; its evidence check requires that marker.
+                fixture.driver.call(
+                    "click",
+                    serde_json::json!({
+                        "pid": fixture.pid as i64,
+                        "element_token": token,
+                        "delivery_mode": "background",
+                    }),
+                )
+            };
+
+            let gated = click(fixture, "Activate focus-gated control");
+            assert!(!gated.is_error(), "focus-gated click: {}", gated.raw);
+            assert_eq!(
+                gated.action_effect(),
+                Some("suspected_noop"),
+                "{}",
+                gated.raw
+            );
+            assert_eq!(gated.action_route(), Some("accessibility"), "{}", gated.raw);
+            assert_eq!(
+                gated.structured()["escalation"]["target"],
+                "foreground",
+                "{}",
+                gated.raw
+            );
+            assert_eq!(
+                gated.structured()["escalation"]["reason"],
+                "suspected_noop",
+                "{}",
+                gated.raw
+            );
+            assert_eq!(
+                fixture
+                    .server
+                    .text("standalone-focus-gated-state")
+                    .as_deref(),
+                Some("activation=idle"),
+                "the background press must not have activated the gated control"
+            );
+
+            let plain = click(fixture, "Increment");
+            assert!(!plain.is_error(), "plain click: {}", plain.raw);
+            assert_eq!(plain.action_effect(), Some("unverifiable"), "{}", plain.raw);
+            assert!(
+                plain.structured().get("escalation").is_none(),
+                "a press the page handled must not escalate: {}",
+                plain.raw
+            );
+            wait_for_text(&fixture.server, "lbl-counter", "counter=1");
+
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+        })
+    });
+}
+
 fn run_trusted_click(spec: &BrowserSpec) {
     let scenario = format!(
         "{}-{}-standalone-trusted-click",
@@ -2649,6 +2871,169 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
             thread::sleep(Duration::from_millis(100));
         }
         observation
+    });
+}
+
+fn run_reduced_motion_policy(spec: &BrowserSpec) {
+    let scenario = format!(
+        "{}-{}-standalone-reduced-motion",
+        std::env::consts::OS,
+        spec.name
+    );
+    execute_case(reduced_motion_case(&spec.name), |evidence| {
+        let target_server = BrowserFixtureServer::start(&standalone_reduced_motion_html());
+        let driver_profiles = driver_profile_root();
+        let profiles_before = profile_entries(&driver_profiles);
+        let mut driver = spawn_driver(&scenario);
+        *evidence = recording_evidence(driver.recording_dir());
+
+        let session = format!("standalone-reduced-motion-{}", spec.name);
+        let started = driver.call("start_session", serde_json::json!({ "session": session }));
+        assert!(!started.is_error(), "start_session failed: {}", started.raw);
+
+        let prepared = driver.call(
+            "browser_prepare",
+            serde_json::json!({
+                "session": session,
+                "allow_launch": true,
+                "profile": {"mode": "isolated_new"},
+            }),
+        );
+        assert_eq!(prepared.structured()["status"], "ok", "{}", prepared.raw);
+        let prepared_pid = prepared.structured()["prepared_pid"]
+            .as_u64()
+            .expect("prepared browser pid") as u32;
+        let (_window_id, state) =
+            wait_for_exact_browser_binding(&mut driver, prepared_pid, &session)
+                .expect("isolated browser did not expose an exactly bindable window");
+        let target = state.structured()["target_id"]
+            .as_str()
+            .expect("prepared target id")
+            .to_owned();
+        let tab = state.structured()["tabs"]
+            .as_array()
+            .and_then(|tabs| tabs.iter().find(|tab| tab["active"] == true))
+            .and_then(|tab| tab["tab_id"].as_str())
+            .expect("prepared active tab")
+            .to_owned();
+
+        let navigated = driver.call(
+            "browser_navigate",
+            serde_json::json!({
+                "target_id": target,
+                "tab_id": tab,
+                "url": target_server.page_url(),
+                "session": session,
+            }),
+        );
+        assert_eq!(navigated.structured()["status"], "ok", "{}", navigated.raw);
+        wait_for_observed(&target_server, "WEB_HARNESS_MARKER_v1");
+        let initial_motion = {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                if let Some(value) = target_server.text("standalone-motion-state") {
+                    if matches!(value.as_str(), "motion=default" | "motion=reduce") {
+                        break value;
+                    }
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "motion fixture did not report baseline state"
+                );
+                thread::sleep(Duration::from_millis(50));
+            }
+        };
+
+        let baseline = driver.call(
+            "get_browser_state",
+            serde_json::json!({
+                "target_id": target,
+                "tab_id": tab,
+                "session": session,
+                "snapshot_format": "semantic_v2",
+            }),
+        );
+        assert_eq!(baseline.structured()["status"], "ok", "{}", baseline.raw);
+        let baseline_signature = semantic_action_signature(&baseline);
+
+        let reduced = driver.call(
+            "browser_motion_policy",
+            serde_json::json!({
+                "target_id": target,
+                "tab_id": tab,
+                "mode": "reduce",
+                "session": session,
+            }),
+        );
+        assert_eq!(reduced.structured()["status"], "ok", "{}", reduced.raw);
+        assert_eq!(reduced.structured()["prefer_reduced_motion"], true);
+        assert_eq!(reduced.structured()["css_injected"], false);
+        wait_for_text(&target_server, "standalone-motion-state", "motion=reduce");
+
+        let reduced_snapshot = driver.call(
+            "get_browser_state",
+            serde_json::json!({
+                "target_id": target,
+                "tab_id": tab,
+                "session": session,
+                "snapshot_format": "semantic_v2",
+            }),
+        );
+        assert_eq!(
+            semantic_action_signature(&reduced_snapshot),
+            baseline_signature,
+            "reduced-motion policy changed the semantic action surface: {}",
+            reduced_snapshot.raw
+        );
+
+        let click_ref = semantic_ref_by_name(&reduced_snapshot, "Increment", "click");
+        let clicked = driver.call(
+            "browser_click",
+            serde_json::json!({
+                "target_id": target,
+                "tab_id": tab,
+                "ref": click_ref,
+                "input_route": "dom_event",
+                "session": session,
+            }),
+        );
+        assert_eq!(
+            clicked.action_effect(),
+            Some("unverifiable"),
+            "{}",
+            clicked.raw
+        );
+        wait_for_text(&target_server, "lbl-counter", "counter=1");
+
+        let reset = driver.call(
+            "browser_motion_policy",
+            serde_json::json!({
+                "target_id": target,
+                "tab_id": tab,
+                "mode": "default",
+                "session": session,
+            }),
+        );
+        assert_eq!(reset.structured()["status"], "ok", "{}", reset.raw);
+        assert_eq!(reset.structured()["prefer_reduced_motion"], false);
+        wait_for_text(&target_server, "standalone-motion-state", &initial_motion);
+
+        let ended = driver.call("end_session", serde_json::json!({ "session": session }));
+        assert!(!ended.is_error(), "end_session failed: {}", ended.raw);
+        wait_for_pid_windows_to_close(&mut driver, prepared_pid);
+        let profile_deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if profile_entries(&driver_profiles) == profiles_before {
+                break;
+            }
+            assert!(
+                Instant::now() < profile_deadline,
+                "isolated_new profile remained after end_session"
+            );
+            thread::sleep(Duration::from_millis(100));
+        }
+
+        Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
     });
 }
 
@@ -5429,10 +5814,19 @@ standalone_browser_test!(
     standalone_browser_web_type_text_verification,
     run_web_type_text_verification
 );
+#[cfg(target_os = "macos")]
+standalone_browser_test!(
+    standalone_browser_background_web_click_noop,
+    run_background_web_click_noop
+);
 standalone_browser_test!(standalone_browser_trusted_click, run_trusted_click);
 standalone_browser_test!(
     standalone_browser_prepare_isolated,
     run_prepare_isolated_launch
+);
+standalone_browser_test!(
+    standalone_browser_reduced_motion_policy,
+    run_reduced_motion_policy
 );
 #[cfg(not(target_os = "macos"))]
 standalone_browser_test!(

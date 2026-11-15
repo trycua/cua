@@ -19,13 +19,13 @@ use super::impl_::{
     foreground_hyprland_refusal, foreground_structured, hyprland_foreground, input_error_result,
     isolated_hyprland_action, isolated_hyprland_background, isolated_hyprland_refusal,
     isolated_hyprland_result, isolated_hyprland_task_error, named_session_cursor_key,
-    non_ax_escalation, parse_mouse_button, prove_token_element, push_evidence, require_point_args,
-    resolve_cursor_key, resolve_element_local_coords, reveal_pointer_action_for,
-    reveal_pointer_action_target_for, screenshot_scale, spawn_blocking_bounded,
-    spawn_isolated_hyprland, synthetic_pointer_is_dropped, unavailable_chromium_background,
-    unavailable_wayland_focused_input_background, window_local_to_screen,
-    window_scope_unproven_refusal, with_pixel_points, x11_pixel_click_no_focus_steal, AimedPoint,
-    CoordinateContext, PointerRoute, ToolState,
+    non_ax_escalation, parse_mouse_button, prove_token_element, push_evidence, refuse_if_disabled,
+    require_point_args, resolve_cursor_key, resolve_element_local_coords,
+    reveal_pointer_action_for, reveal_pointer_action_target_for, screenshot_scale,
+    spawn_blocking_bounded, spawn_isolated_hyprland, synthetic_pointer_is_dropped,
+    unavailable_chromium_background, unavailable_wayland_focused_input_background,
+    window_local_to_screen, window_scope_unproven_refusal, with_pixel_points,
+    x11_pixel_click_no_focus_steal, AimedPoint, CoordinateContext, PointerRoute, ToolState,
 };
 
 #[cfg(test)]
@@ -102,6 +102,7 @@ mod token_window_scope_tests {
             identity: identity(path),
             object_ref: object_ref(path),
             role: "text".into(),
+            disabled: false,
             in_web_content: false,
             bounds: None,
         }
@@ -116,7 +117,9 @@ mod token_window_scope_tests {
             checked: None,
             enabled: Some(true),
             selected: None,
+            focused: None,
             description: None,
+            document_uri: None,
             actions: Vec::new(),
             element_key: 0,
             identity: Some(identity(path)),
@@ -1025,6 +1028,9 @@ impl Tool for ClickTool {
             Ok(token) => token,
             Err(refusal) => return refusal,
         };
+        if let Some(refusal) = refuse_if_disabled(pid, &resolved, "click").await {
+            return refusal;
+        }
         let elem_idx_resolved: Option<usize> = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } => {
                 Some(*element_index)

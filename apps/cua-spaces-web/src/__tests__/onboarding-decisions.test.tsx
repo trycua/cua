@@ -222,6 +222,11 @@ describe("Cua Driver in setup (A, CUA-2706): the permissions step is the Cua Dri
     await waitFor(() => expect(heading()).toBe("Which agents do you use?"), { timeout: 15_000 });
     note();
     fireEvent.click(q("[data-onboarding-primary]")!);
+    // Cua Driver is one row of the agents' checklist (CUA-4067), not a screen of its own.
+    await waitFor(() => expect(q("[data-checklist-row='codex:driver']")).not.toBeNull(), { timeout: 15_000 });
+    await waitFor(() => expect((q("[data-onboarding-primary]") as HTMLButtonElement).disabled).toBe(false), { timeout: 20_000 });
+    note();
+    fireEvent.click(q("[data-onboarding-primary]")!);
     await waitFor(() => expect(heading()).toBe("Codex can now use this Mac"), { timeout: 15_000 });
     note();
     expect(seen.filter((h) => /see and use apps/.test(h))).toHaveLength(1);

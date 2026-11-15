@@ -32,7 +32,10 @@ name: "CD: cua SDK"
 # publishes it before the rolling cua-install-latest feed moves. A hand-pushed
 # tag with no release gets a new draft here.
 #
-# Canonical vs staging: only trycua/cua publishes to PyPI and npm and fails
+# PyPI: the wheels are attached to the GitHub release; only pypi-promote.yml
+# uploads them to PyPI (weekly, or by hand: docs/pypi-publishing.md).
+#
+# Canonical vs staging: only trycua/cua publishes to npm and fails
 # closed on missing signing secrets. Any other repository (trycua/cua-staging)
 # runs the same pipeline end to end but PyPI gets `twine check` (and TestPyPI
 # when TEST_PYPI_TOKEN is set), npm gets `npm publish --dry-run`, crates.io
@@ -54,13 +57,9 @@ on:
         description: "Version to build (without the cua-sdk-v prefix)"
         required: true
       publish:
-        description: "Publish to PyPI/npm and attach to the GitHub release"
+        description: "Publish to npm and crates.io and attach to the GitHub release (PyPI: pypi-promote.yml)"
         type: boolean
         default: false
-      pypi:
-        description: "Upload the wheels to PyPI (with publish; off publishes npm, crates and the GitHub release only)"
-        type: boolean
-        default: true
 
 permissions:
   contents: read
@@ -485,6 +484,11 @@ jobs:
           python -m pip install --force-reinstall dist/*.whl
           cd / && python -c "import cua, sys; v = cua.cua_sdk_version(); print(v); cua.embedded(); sys.exit(v != sys.argv[1])" "$VERSION"
           test "$(cua --version | tr -d '\r')" = "cua $VERSION"
+      # The cua-cli wheel with the binary inside only served the smoke test
+      # above. The release ships one thin cua-cli wheel, built in `publish`
+      # from the CLI archives (libs/cua/python/cli/build_thin_wheel.py).
+      - name: Drop the bundled cua-cli wheel
+        run: rm libs/cua/python/dist/cua_cli-*.whl
       - uses: actions/upload-artifact@v4
         with:
           name: wheel-${{ matrix.platform }}-${{ matrix.arch }}
@@ -546,22 +550,32 @@ jobs:
           path: ${{ runner.temp }}/npm/*.tgz
           if-no-files-found: error
 
-  xcframework:
+  # The four Rust slices of the xcframework build on parallel runners: they
+  # took about 25 minutes each, one after the other (1h40 to 2h30 on a single
+  # runner, with the 150 minute limit cancelling some runs). The `xcframework`
+  # job below joins them in about two minutes.
+  xcframework-slice:
+    name: xcframework-slice (${{ matrix.target }})
     needs: version
     runs-on: macos-26
-    # A normal build takes 80-100 min (iOS + macOS slices). Nothing waits on
-    # it except attach-xcframework, so the CLI, registries and installer feed
-    # ship without it.
-    timeout-minutes: 150
+    # A slice takes about 25 minutes.
+    timeout-minutes: 60
+    strategy:
+      fail-fast: true
+      matrix:
+        target:
+          - aarch64-apple-darwin
+          - x86_64-apple-darwin
+          - aarch64-apple-ios
+          - aarch64-apple-ios-sim
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@1.97.1
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin,aarch64-apple-ios,aarch64-apple-ios-sim
-      - name: Build CuaSDKFFI.xcframework.zip
-        # `shell: bash` adds pipefail, so a failed build is not hidden by tee.
+          targets: ${{ matrix.target }}
+      - name: Build libcua_sdk.a (${{ matrix.target }})
         shell: bash
         env:
           CUA_SDK_RELEASE_VERSION: ${{ needs.version.outputs.version }}
@@ -570,7 +584,32 @@ jobs:
           # ___chkstk_darwin.
           MACOSX_DEPLOYMENT_TARGET: "12.0"
           IPHONEOS_DEPLOYMENT_TARGET: "15.0"
-        run: libs/cua/swift/scripts/build-xcframework.sh --ios --zip | tee xcframework.log
+        run: libs/cua/swift/scripts/build-xcframework.sh --slice "${{ matrix.target }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xcframework-slice-${{ matrix.target }}
+          path: libs/cua/swift/build/slices/${{ matrix.target }}/libcua_sdk.a
+          if-no-files-found: error
+
+  xcframework:
+    needs: [version, xcframework-slice]
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: xcframework-slice-*
+          path: ${{ runner.temp }}/slices
+      - name: Assemble CuaSDKFFI.xcframework.zip
+        # `shell: bash` adds pipefail, so a failed step is not hidden by tee.
+        shell: bash
+        run: |
+          # download-artifact makes one directory per slice (the target name).
+          for t in aarch64-apple-darwin x86_64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim; do
+            mv "$RUNNER_TEMP/slices/xcframework-slice-$t" "$RUNNER_TEMP/slices/$t"
+          done
+          libs/cua/swift/scripts/build-xcframework.sh --assemble "$RUNNER_TEMP/slices" --ios --zip | tee xcframework.log
       - uses: actions/upload-artifact@v4
         with:
           name: xcframework
@@ -634,32 +673,16 @@ jobs:
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
-      # trycua/cua publishes; any other repository checks the wheels (and
-      # uploads to TestPyPI when TEST_PYPI_TOKEN is set) without touching PyPI.
-      - name: Publish wheels to PyPI (trycua/cua) or check them (staging)
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
-          TEST_PYPI_TOKEN: ${{ secrets.TEST_PYPI_TOKEN }}
-          # Tag pushes have no inputs and always upload.
-          PYPI: ${{ github.event_name == 'workflow_dispatch' && inputs.pypi == false && 'false' || 'true' }}
+      # PyPI gets the wheels only when pypi-promote.yml promotes this release
+      # (weekly, or by hand: docs/pypi-publishing.md); they are attached to
+      # the release below, with the thin cua-cli wheel built from the CLI
+      # archives.
+      - name: Check the cua wheels
         run: |
           python -m pip install --upgrade twine
           python -m twine check --strict dist/wheel-*/*.whl
-          # cua-cli first: `cua` depends on it at the same version, so `cua`
-          # never resolves before its CLI is on the index.
-          wheels=(dist/wheel-*/cua_cli-*.whl dist/wheel-*/cua-[0-9]*.whl)
-          all=(dist/wheel-*/*.whl); test "${#wheels[@]}" = "${#all[@]}"
-          if [ "$CANONICAL" = true ] && [ "$PYPI" = false ]; then
-            echo "::notice::pypi=false: wheels checked, not uploaded to PyPI"
-          elif [ "$CANONICAL" = true ]; then
-            python -m twine upload --skip-existing "${wheels[@]}"
-          elif [ -n "$TEST_PYPI_TOKEN" ]; then
-            TWINE_PASSWORD="$TEST_PYPI_TOKEN" python -m twine upload --skip-existing \
-              --repository-url https://test.pypi.org/legacy/ "${wheels[@]}"
-          else
-            echo "::notice::$GITHUB_REPOSITORY is not trycua/cua: wheels checked, not uploaded to PyPI (DRY RUN)"
-          fi
+          n=$(ls dist/wheel-*/cua-[0-9]*.whl | wc -l); all=$(ls dist/wheel-*/*.whl | wc -l)
+          test "$n" = 6 && test "$all" = 6
       - name: Publish npm packages, native first (trycua/cua) or dry-run them (staging)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -721,9 +744,29 @@ jobs:
               tar -czf "release/cua-cli-$VERSION-$platform.tar.gz" -C "$d" cua "${extra[@]}"
             fi
           done
+          BASE="https://github.com/$GITHUB_REPOSITORY/releases/download"
+          # The thin cua-cli wheel on PyPI pins these archives by SHA-256. Once
+          # this version is on PyPI, a re-run keeps the published archives
+          # instead of repacking them (a repack changes the bytes).
+          if [ "$CANONICAL" = true ] && curl -fsS -o /dev/null "https://pypi.org/pypi/cua-cli/$VERSION/json"; then
+            echo "::notice::cua-cli $VERSION is on PyPI: keeping the release's CLI archives"
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir release --clobber \
+              --pattern "cua-cli-$VERSION-*.tar.gz" --pattern "cua-cli-$VERSION-*.zip"
+          fi
+          python -m pip install --upgrade build hatchling
+          python libs/cua/python/cli/build_thin_wheel.py --version "$VERSION" --archives release \
+            --base-url "$BASE/$TAG/" --out-dir release
+          # The thin wheel installs next to the Linux cua wheel, downloads
+          # its CLI from these archives, checks the hash and runs it.
+          python -m venv "$RUNNER_TEMP/thin"
+          "$RUNNER_TEMP/thin/bin/pip" install -q release/cua_cli-*-py3-none-any.whl \
+            release/cua-[0-9]*-manylinux_2_31_x86_64.whl
+          test "$(CUA_CLI_DOWNLOAD_BASE="file://$PWD/release/" CUA_CLI_CACHE_DIR="$RUNNER_TEMP/cli-cache" \
+            "$RUNNER_TEMP/thin/bin/cua" --version)" = "cua $VERSION"
+          size=$(wc -c < release/cua_cli-*-py3-none-any.whl | tr -d ' ')
+          echo "thin cua-cli wheel: $size bytes"; test "$size" -lt 1048576
           # release-artifacts.json: this CLI + the newest Spaces app from the
           # rolling cua-install-latest manifest (scripts/install/README.md).
-          BASE="https://github.com/$GITHUB_REPOSITORY/releases/download"
           gh release download cua-install-latest --pattern release-artifacts.json \
             --dir previous --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
           # Keyless Sigstore bundles next to each asset; release_manifest.py
@@ -744,6 +787,16 @@ jobs:
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "${FLAGS[@]}"
           fi
           gh release upload "$TAG" release/* --clobber --repo "$GITHUB_REPOSITORY"
+      # Staging rehearses the PyPI upload on TestPyPI (cua-cli before cua).
+      - name: Upload to TestPyPI (staging)
+        if: env.CANONICAL != 'true'
+        env:
+          TWINE_USERNAME: __token__
+          TEST_PYPI_TOKEN: ${{ secrets.TEST_PYPI_TOKEN }}
+        run: |
+          if [ -z "$TEST_PYPI_TOKEN" ]; then echo "no TEST_PYPI_TOKEN: skipped"; exit 0; fi
+          TWINE_PASSWORD="$TEST_PYPI_TOKEN" python -m twine upload --skip-existing \
+            --repository-url https://test.pypi.org/legacy/ release/cua_cli-*.whl release/cua-[0-9]*.whl
       # Release Please creates the release as a draft, whose assets are not
       # downloadable; publish it before the installer feed points at it.
       - name: Publish the release

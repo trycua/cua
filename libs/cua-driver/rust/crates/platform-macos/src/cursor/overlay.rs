@@ -548,14 +548,13 @@ pub async fn animate_cursor_to_target(key: CursorKey, x: f64, y: f64, target: Op
     // should-animate check passes on the first action just like later ones.
     seed_start_if_unplaced(&key, x, y);
 
-    // Check whether animation should run for THIS cursor. A disabled cursor
-    // never animates; an absent cursor (seed found nothing to prime) is skipped.
+    // An absent cursor (seed found nothing to prime) is skipped.
     let should_animate = {
         let guard = RENDER.lock().unwrap();
-        matches!(
-            guard.as_ref().and_then(|m| m.cursors.get(&key)),
-            Some(rs) if rs.core.cfg.enabled && rs.core.placed
-        )
+        guard
+            .as_ref()
+            .and_then(|m| m.cursors.get(&key))
+            .is_some_and(|rs| rs.core.animates())
     };
     if !should_animate {
         return;
@@ -1533,6 +1532,38 @@ mod tests {
             done.is_ok(),
             "animate_cursor_to waited for a render loop that is not running"
         );
+    }
+
+    /// A cursor turned off with `set_agent_cursor_enabled(false)` after it was
+    /// shown never registers a glide waiter, so the action does not wait for
+    /// an arrival the hidden cursor never reports (#4276).
+    #[test]
+    fn a_cursor_turned_off_at_runtime_registers_no_glide_wait() {
+        init(CursorConfig {
+            enabled: true,
+            ..CursorConfig::default()
+        });
+        let waits = |key: &str| {
+            ARRIVAL_TX
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|map| map.contains_key(key))
+        };
+        let rt = runtime();
+        for (key, enabled) in [("session-runtime-on", true), ("session-runtime-off", false)] {
+            rt.block_on(animate_cursor_to(key.to_owned(), 240.0, 180.0));
+            assert!(waits(key), "{key}: a shown cursor glides");
+            arrival_cancel(&key.to_owned());
+            // The render loop applies queued commands; none runs in a test.
+            let mut guard = RENDER.lock().unwrap();
+            let map = guard.as_mut().unwrap();
+            map.apply_command(key.to_owned(), OverlayCommand::SetEnabled(enabled));
+            drop(guard);
+            rt.block_on(animate_cursor_to(key.to_owned(), 300.0, 220.0));
+            assert_eq!(waits(key), enabled, "{key}");
+            arrival_cancel(&key.to_owned());
+        }
     }
 
     #[test]

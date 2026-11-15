@@ -403,7 +403,7 @@ pub(crate) fn is_chromium(name: &str, bundle_id: &str) -> bool {
     let value = format!("{name} {bundle_id}").to_ascii_lowercase();
     let products = [
         "chrome", "chromium", "electron", "brave", "edge", "vivaldi", "opera", "arc", "thorium",
-        "iridium", "yandex",
+        "iridium", "yandex", "comet",
     ];
     value
         .split(|ch: char| !ch.is_ascii_alphanumeric())
@@ -427,6 +427,8 @@ fn browser_product(name: &str, bundle_id: &str) -> BrowserProduct {
         BrowserProduct::Opera
     } else if bundle_id.starts_with("company.thebrowser.browser") || name == "arc" {
         BrowserProduct::Arc
+    } else if bundle_id.starts_with("ai.perplexity.comet") || name == "comet" {
+        BrowserProduct::Comet
     } else if bundle_id == "com.apple.safari" || name == "safari" {
         BrowserProduct::Safari
     } else if bundle_id.contains("firefox") || name == "firefox" {
@@ -532,6 +534,7 @@ fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
         BrowserProduct::MicrosoftEdge => "Library/Application Support/Microsoft Edge",
         BrowserProduct::Chromium => "Library/Application Support/Chromium",
         BrowserProduct::Brave => "Library/Application Support/BraveSoftware/Brave-Browser",
+        BrowserProduct::Comet => "Library/Application Support/Comet",
         _ => return None,
     };
     Some(home.join(relative))
@@ -1038,6 +1041,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                 | BrowserProduct::Vivaldi
                 | BrowserProduct::Opera
                 | BrowserProduct::Arc
+                | BrowserProduct::Comet
         ) {
             BrowserProcessRole::StandaloneConsumer
         } else {
@@ -1514,6 +1518,20 @@ mod tests {
         assert_eq!(
             default_user_data_dir(browser_product("Brave Browser", "com.brave.Browser")),
             Some(home.join("Library/Application Support/BraveSoftware/Brave-Browser"))
+        );
+    }
+
+    #[test]
+    fn comet_is_a_standalone_chromium_browser_with_its_own_profile_root() {
+        assert!(is_chromium("Comet", "ai.perplexity.comet"));
+        assert_eq!(
+            browser_product("Comet", "ai.perplexity.comet"),
+            BrowserProduct::Comet
+        );
+        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap();
+        assert_eq!(
+            default_user_data_dir(browser_product("Comet", "ai.perplexity.comet")),
+            Some(home.join("Library/Application Support/Comet"))
         );
     }
 

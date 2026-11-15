@@ -791,6 +791,7 @@ impl Tool for GetWindowStateTool {
                                     .map(|v| v as usize),
                             },
                             focus_probe: None,
+                            app: None,
                         },
                         &mut content,
                         &mut structured,

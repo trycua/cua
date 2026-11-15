@@ -1141,6 +1141,7 @@ impl Tool for GetWindowStateTool {
                                 max_depth,
                             },
                             focus_probe: None,
+                            app: None,
                         },
                         &mut content,
                         &mut structured,

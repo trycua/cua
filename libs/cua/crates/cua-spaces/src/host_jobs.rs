@@ -568,6 +568,62 @@ impl SpacesExecutor {
         }
     }
 
+    /// Makes the job's Space a child of the Space its run was submitted from
+    /// ([`cua_cluster::model::ENV_PARENT_SPACE`]): on this computer a real
+    /// tree record (listed under it, deleted with it, its network no more
+    /// open than the parent's); on another, the labels a child placed from
+    /// another computer carries and the parent's network settings it sent.
+    fn bind_to_parent(&self, job: &JobSpec, opts: &mut SpaceCreate) {
+        use cua_cluster::model::{
+            ENV_PARENT_NETWORK, ENV_PARENT_SPACE, ENV_ROOT_SPACE, ENV_TREE_DEPTH,
+        };
+        let get = |k: &str| job.env.get(k).map(|v| v.trim()).filter(|v| !v.is_empty());
+        // The job's row: one Space, a JOB badge, its name (never an id) and a GPU mark.
+        {
+            use cua_cluster::model::{
+                ENV_JOB_NAME, LABEL_JOB, LABEL_JOB_GPU, LABEL_JOB_NAME, LABEL_JOB_RUN,
+                job_display_name,
+            };
+            opts.labels.insert(LABEL_JOB.into(), "1".into());
+            opts.labels.insert(
+                LABEL_JOB_NAME.into(),
+                job_display_name(get(ENV_JOB_NAME), &job.run_id),
+            );
+            if !job.accelerator.is_empty() {
+                opts.labels.insert(LABEL_JOB_GPU.into(), "1".into());
+            }
+            if !job.run_id.is_empty() {
+                opts.labels.insert(LABEL_JOB_RUN.into(), job.run_id.clone());
+            }
+        }
+        let Some(parent) = get(ENV_PARENT_SPACE) else {
+            return;
+        };
+        if self.spaces.registry().meta(parent).is_some() {
+            opts.parent = Some(parent.to_string());
+            return;
+        }
+        opts.labels.insert("cua.parent".into(), parent.to_string());
+        opts.labels.insert(
+            "cua.root".into(),
+            get(ENV_ROOT_SPACE).unwrap_or(parent).to_string(),
+        );
+        opts.labels.insert(
+            "cua.depth".into(),
+            get(ENV_TREE_DEPTH).unwrap_or("1").to_string(),
+        );
+        // The parent's network, cut down from what this host would give
+        // (a parent whose settings do not parse leaves the job with none).
+        let asked = match get(ENV_PARENT_NETWORK) {
+            Some(j) => serde_json::from_str::<cua_vmm::network::NetworkSettings>(j).ok(),
+            None => None,
+        };
+        opts.network_settings = Some(match asked {
+            Some(n) => crate::network::NetworkSettings::internet().intersect(&n),
+            None => crate::network::NetworkSettings::none(),
+        });
+    }
+
     async fn create(
         &self,
         job: &JobSpec,
@@ -586,7 +642,7 @@ impl SpacesExecutor {
             // Lume runs macOS members (paravirtual GPU acceleration).
             runtime = Runtime::parse("lume").map_err(place)?;
         }
-        let opts = SpaceCreate {
+        let mut opts = SpaceCreate {
             image: Some(image.to_string()),
             on: Some(On::Local),
             kind,
@@ -607,6 +663,7 @@ impl SpacesExecutor {
             spacesd: Some(true),
             ..Default::default()
         };
+        self.bind_to_parent(job, &mut opts);
         let created = tokio::select! {
             r = self.spaces.create(opts) => r,
             _ = cancel.cancelled() => {
@@ -878,15 +935,28 @@ impl JobExecutor for SpacesExecutor {
     fn offers(&self) -> Offers {
         // Checked at each call: a provider installed while the daemon runs
         // is offered without a restart.
-        let mut base = self.offers.clone();
+        let mut o = self.space_offers();
         if !cfg!(target_os = "macos") {
             // Every job member mounts the host's work, data, cache and tools
             // directories, which QEMU cannot do: a `vm` member here would
             // fail to start on every retry. Not offering it makes the
-            // placement refuse it up front. (Spaces made outside a job still
-            // use QEMU: this is only what the job executor offers.)
-            base.kinds.retain(|k| k != "vm");
-            base.runtimes.retain(|r| r != "qemu");
+            // admission of a job refuse it up front. (Spaces made outside a
+            // job still use QEMU: [`SpacesExecutor::space_offers`] lists it,
+            // and it is what the host reports for placing Spaces and forks.)
+            o.kinds.retain(|k| k != "vm");
+            o.runtimes.retain(|r| r != "qemu");
+        }
+        o
+    }
+
+    fn space_offers(&self) -> Offers {
+        let mut base = self.offers.clone();
+        // QEMU installed after the daemon started (`cua runtime setup qemu`)
+        // is offered without a restart: two file checks, not a re-detection.
+        if cfg!(target_os = "linux") && !base.kinds.iter().any(|k| k == "vm") && linux_qemu_ready()
+        {
+            base.kinds.push("vm".into());
+            base.runtimes.push("qemu".into());
         }
         let mut o = with_external_runtimes(
             base,
@@ -1048,6 +1118,15 @@ pub fn with_external_runtimes(
     offers
 }
 
+/// Whether this Linux machine can run QEMU VMs now: KVM and a QEMU for its
+/// architecture where the runtime looks for it.
+fn linux_qemu_ready() -> bool {
+    std::path::Path::new("/dev/kvm").exists()
+        && ["qemu-system-x86_64", "qemu-system-aarch64"]
+            .iter()
+            .any(|b| cua_vmm::host::which(b).is_some())
+}
+
 /// What this machine's runtimes create: containers with Docker (`runc`,
 /// and `gvisor` when Docker has `runsc`), VMs with QEMU and KVM (Linux) or
 /// Lume (macOS), microVMs with Firecracker and KVM when this build knows
@@ -1063,10 +1142,10 @@ pub fn detect_offers() -> Offers {
             .filter(|o| o.status.success())
             .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
     };
-    let on_path = |bin: &str| {
-        std::env::var_os("PATH")
-            .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(bin).is_file()))
-    };
+    // Where the runtimes themselves look (`PATH`, the usual install
+    // directories and cua's own `bin`, where `cua runtime setup qemu` puts
+    // QEMU): a daemon's `PATH` is short, and a QEMU it installed must count.
+    let on_path = |bin: &str| cua_vmm::host::which(bin).is_some();
     let mut kinds = Vec::new();
     let mut runtimes = Vec::new();
     if let Some(info) = ok("docker", &["info", "--format", "{{json .Runtimes}}"]) {
@@ -1092,7 +1171,7 @@ pub fn detect_offers() -> Offers {
             kinds.push("microvm".into());
             runtimes.push("containerization".into());
         }
-    } else if kvm && (on_path("qemu-system-x86_64") || on_path("qemu-system-aarch64")) {
+    } else if kvm && linux_qemu_ready() {
         kinds.push("vm".into());
         runtimes.push("qemu".into());
     }

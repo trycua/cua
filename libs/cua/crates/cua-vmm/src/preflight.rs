@@ -79,13 +79,16 @@ pub async fn gather_waiting(req: &Request, patience: std::time::Duration) -> Fac
     } else {
         None
     };
-    gather_with_virtualization(req, gap, patience).await
+    gather_with_virtualization(req, gap, Some(patience)).await
 }
 
+/// `patience`: how long a macOS guest's Local Network check waits for an
+/// answer to macOS's prompt; `None` makes no local network connect at all
+/// (one would make macOS ask).
 async fn gather_with_virtualization(
     req: &Request,
     gap: Option<VirtGap>,
-    patience: std::time::Duration,
+    patience: Option<std::time::Duration>,
 ) -> Facts {
     let mut facts = Facts {
         free_bytes: crate::disk::space(&crate::host::cua_home())
@@ -102,7 +105,10 @@ async fn gather_with_virtualization(
         // A Linux container here runs in the built-in runtime's VM.
         facts.virtualization = Some(VirtGap::MacUnsupported);
     }
-    if req.host == Host::Macos && req.guest == Guest::Macos {
+    if req.host == Host::Macos
+        && req.guest == Guest::Macos
+        && let Some(patience) = patience
+    {
         facts.local_network_blocked = local_network_blocked(patience).await;
     }
     facts
@@ -150,7 +156,10 @@ fn qemu_issue(req: &Request, installed: impl FnOnce() -> bool) -> Option<Issue> 
 /// `linux_vm`, `macos_vm`, `windows_vm`), with the image sizes estimated.
 /// Hosts that cannot run a Space (a macOS guest off a Mac) are left out.
 /// The daemon puts this in its runtime doctor report under `preflight`, so
-/// every app and the CLI read it from one place.
+/// every app and the CLI read it from one place. Local Network access is
+/// not checked here: the app reads this report at launch, and a connect
+/// then would make macOS ask before anything explained why. The create of a
+/// macOS Space checks it ([`gather_waiting`]).
 pub async fn report() -> BTreeMap<String, Vec<Issue>> {
     let mut out = BTreeMap::new();
     let gap = virtualization(Host::current()).await;
@@ -167,7 +176,7 @@ pub async fn report() -> BTreeMap<String, Vec<Issue>> {
         // The image's real size is unknown here and it may already be on
         // disk, so a guess must not block a create that would work: the
         // create's own disk guards decide.
-        let mut facts = gather_with_virtualization(&req, gap, std::time::Duration::ZERO).await;
+        let mut facts = gather_with_virtualization(&req, gap, None).await;
         facts.free_bytes = None;
         out.insert(name.to_string(), evaluate(&req, &facts));
     }
@@ -260,6 +269,8 @@ fn parse_hypervisor_platform(stdout: &str) -> Option<VirtGap> {
 /// macOS ask, in the daemon's name, before anything is pulled.
 async fn local_network_blocked(patience: std::time::Duration) -> bool {
     use cua_create_failure::local_network::Access;
+    #[cfg(test)]
+    tests::LOCAL_NETWORK_CHECKS.with(|n| n.set(n.get() + 1));
     #[cfg(feature = "lume")]
     {
         use crate::local_network::Probe;
@@ -357,6 +368,26 @@ mod tests {
         assert!(
             !text.contains('\u{2014}') && !text.contains("hypervisor") && !text.contains("path")
         );
+    }
+
+    thread_local! {
+        /// `local_network_blocked` calls on this thread.
+        pub(super) static LOCAL_NETWORK_CHECKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    /// Regression (first run): the app reads the report at launch, and its
+    /// connect to the router made macOS show the Local Network prompt before
+    /// anything explained it. A macOS create still checks.
+    #[tokio::test(flavor = "current_thread")]
+    async fn only_a_macos_create_checks_local_network_access() {
+        LOCAL_NETWORK_CHECKS.with(|n| n.set(0));
+        let r = report().await;
+        assert!(r.contains_key("macos_vm") || !cfg!(target_os = "macos"));
+        assert_eq!(LOCAL_NETWORK_CHECKS.with(|n| n.get()), 0, "the report");
+        let mut req = request(Guest::Macos, Runs::Vm, None);
+        req.host = Host::Macos;
+        gather_waiting(&req, std::time::Duration::ZERO).await;
+        assert_eq!(LOCAL_NETWORK_CHECKS.with(|n| n.get()), 1, "a create");
     }
 
     #[tokio::test]

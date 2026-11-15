@@ -37,7 +37,7 @@ pub enum StreamTarget {
 }
 
 /// A window target as listed.
-#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct WindowTarget {
     /// Window handle (`WindowRef.id`).
     pub window_id: String,
@@ -60,8 +60,12 @@ pub struct WindowTarget {
     /// Streamable right now.
     pub available: bool,
     /// Why not, when not.
-    #[serde(skip_serializing_if = "String::is_empty")]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub limitation: String,
+    /// Where the picture comes from when the window lives in another Space
+    /// ([`crate::stream_registry`]); absent on a Space's own windows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<crate::stream_registry::StreamOrigin>,
 }
 
 /// A window narrower or shorter than this (logical points) is a strip, a
@@ -358,6 +362,7 @@ impl Space {
                     focused: w.focused,
                     available,
                     limitation,
+                    origin: None,
                 }
             })
             .filter(|w| {
@@ -382,6 +387,26 @@ impl Space {
             })
             .max_by(|a, b| a.area().total_cmp(&b.area()))
             .ok_or_else(|| Error::NotFound(format!("a visible {app:?} window in {}", self.id())))
+    }
+
+    /// [`Self::find_window`], waiting up to `wait` for the app's window to appear. `launch_app`
+    /// answers when the process starts, a moment before its window exists, so an agent that
+    /// launches an app and then asks for its window would otherwise get "not found" every time.
+    /// Any other error is returned at once.
+    pub async fn find_window_within(
+        &self,
+        app: &str,
+        wait: std::time::Duration,
+    ) -> Result<WindowTarget> {
+        let deadline = std::time::Instant::now() + wait;
+        loop {
+            match self.find_window(app).await {
+                Err(Error::NotFound(_)) if std::time::Instant::now() < deadline => {
+                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                }
+                other => return other,
+            }
+        }
     }
 
     /// Opens a media session and returns its ticket and URL.
@@ -487,10 +512,25 @@ impl Space {
         frames: Arc<dyn FrameSink>,
         audio: Option<Arc<dyn AudioSink>>,
     ) -> Result<StreamSession> {
+        let started = std::time::Instant::now();
         let ticket = self.open_stream(target, options).await?;
+        // `stream.open` timing (debug): the ticket is the OpenMedia call,
+        // which also waits for the guest's first frame.
+        tracing::debug!(
+            target: "cua::stream::timing",
+            hop = "ticket",
+            ms = started.elapsed().as_secs_f64() * 1e3,
+            "stream.open"
+        );
         let headers = self.websocket_headers().await?;
         match StreamSession::attach(&ticket, &headers, frames, audio).await {
             Ok(mut s) => {
+                tracing::debug!(
+                    target: "cua::stream::timing",
+                    hop = "attached",
+                    ms = started.elapsed().as_secs_f64() * 1e3,
+                    "stream.open"
+                );
                 s.rpc = Some((self.clone(), ticket.media_session_id.clone()));
                 Ok(s)
             }
@@ -852,6 +892,7 @@ mod streamable_tests {
             focused: false,
             available: on_screen,
             limitation: String::new(),
+            origin: None,
         }
     }
 

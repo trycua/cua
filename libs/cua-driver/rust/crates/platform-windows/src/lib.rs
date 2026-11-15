@@ -29,7 +29,6 @@ use cua_driver_core::tool::ToolRegistry;
 pub mod diagnostics;
 pub mod health_report;
 pub mod overlay;
-pub mod pip;
 pub mod recording_hooks;
 pub mod terminal;
 pub mod tools;
@@ -75,6 +74,10 @@ pub fn install_pointer_shape_backend() -> bool {
 
 #[cfg(any(target_os = "windows", test))]
 mod process_selection;
+
+// Pure restore rule for foreground input turns; runs its table test on any host.
+#[cfg(any(target_os = "windows", test))]
+mod typing_turn;
 
 #[cfg(target_os = "windows")]
 pub mod win32;

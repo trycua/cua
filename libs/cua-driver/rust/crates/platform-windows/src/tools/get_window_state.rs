@@ -156,9 +156,9 @@ impl Tool for GetWindowStateTool {
                 back to a full read and `since_status` says why. The focused element is not \
                 reported on Windows yet.\n\n\
                 INVARIANT: call `get_window_state` once per turn per (pid, window_id) before \
-                any element action against that window. The next snapshot of the same \
-                (pid, window_id) replaces this one, stales its element tokens, and lists the \
-                replaced ids in `invalidated_snapshot_ids`. A screenshot-only read \
+                any element action against that window. This session's next snapshot of the \
+                same (pid, window_id) replaces this one, stales its element tokens, and lists \
+                the replaced ids in `invalidated_snapshot_ids`. A screenshot-only read \
                 (`include_accessibility_tree:false`) keeps the current snapshot's rows and \
                 tokens valid, and `display_only:true` also leaves its pixel frame alone.\n\n\
                 The UIA tree walked is the window's tree (HWND-scoped); the screenshot and \
@@ -197,7 +197,7 @@ impl Tool for GetWindowStateTool {
                 CHROMIUM COVERAGE: a browser-owned permission bubble can be \
                 composited outside the requested native window. Chromium-family \
                 snapshots therefore describe this limit in structuredContent.capture_coverage. \
-                After a verified ineffective window action, call escalate_session, take a \
+                After a verified ineffective window action, take a \
                 fresh get_desktop_state snapshot, act explicitly in desktop scope if needed, \
                 then verify with another fresh desktop snapshot. \
                 This is separate from page JavaScript dialogs, which remain on \

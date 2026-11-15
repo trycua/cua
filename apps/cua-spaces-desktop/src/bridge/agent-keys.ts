@@ -6,7 +6,7 @@
 // travels once, in `agentKeys.set`'s arguments; answers never carry one.
 import type { BridgeContext } from "./context";
 import { optionalString, string } from "./args";
-import type { Handlers } from "./host";
+import { Failure, type Handlers } from "./host";
 
 /** The non-secret choices a connection carries: a plan or region, and its fields (a model, a custom endpoint's URL). */
 function choices(args: Record<string, unknown>): Record<string, unknown> {
@@ -63,5 +63,10 @@ export function agentKeysMethods({ model }: BridgeContext): Handlers {
     // Which provider keys your login shell has (names only), and one saved from it (the value never crosses the bridge).
     "agentKeys.shell": () => model.agents.keys.call("agent_keys.shell"),
     "agentKeys.fromShell": (args) => model.agents.keys.call("agent_keys.from_shell", { env: string(args, "env"), ...choices(args) }),
+    // "Copy my sign-in to my other computers" (off by default, CUA-3907).
+    "agentKeys.copySignIn": (args) => {
+      if (typeof args.on !== "boolean") throw Failure.badArgs("on: boolean");
+      return model.agents.keys.call("agent_keys.copy_sign_in", { on: args.on });
+    },
   };
 }

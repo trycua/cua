@@ -3,14 +3,7 @@
 
 import { useEffect } from "react";
 
-import {
-  teamName,
-  useFeatureRecorded,
-  useFlag,
-  useSession,
-  useShareSheet,
-  useTeamChoices,
-} from "@/bridge";
+import { teamName, useFeatureRecorded, useShareSheet, useTeamChoices } from "@/bridge";
 import { useAddAgentLauncher } from "@/components/add-agent/add-agent-launcher";
 import { Button } from "@/components/ui/button";
 import { GroupedRow, GroupedSection } from "@/components/ui/grouped";
@@ -34,9 +27,7 @@ export default function ShareSheet() {
   const { session, sharing } = useShareSheet();
   useFeatureRecorded("share_open", Boolean(session));
   const choices = useTeamChoices(Boolean(session?.input.signedIn && session.input.shareable));
-  const { openExternal } = useSession();
   const { hasTeam } = choices;
-  const cards = useFlag("upsell_cards");
   // The Space page that shows this Space's thread can add an agent to it instead.
   const addAgent = useAddAgentLauncher(session?.input.spaceId);
   useEffect(() => {
@@ -67,16 +58,11 @@ export default function ShareSheet() {
           <DialogTitle className="text-[15px] font-semibold" data-share-title>
             {v.title}
           </DialogTitle>
-          {gate && !v.disabledReason && cards ? <UpgradeCard reason="invite" className="mt-3" /> : null}
-          {(v.disabledReason || gate) && !(cards && gate && !v.disabledReason) ? (
+          {gate && !v.disabledReason ? <UpgradeCard reason="invite" className="mt-3" /> : null}
+          {v.disabledReason ? (
             <p className="mt-1.5 text-[13px] text-muted-foreground" data-share-disabled>
-              {v.disabledReason ?? gate?.reason}
+              {v.disabledReason}
             </p>
-          ) : null}
-          {!v.disabledReason && gate && !cards ? (
-            <Button size="sm" variant="secondary" className="mt-2" onClick={() => void openExternal(gate.action.url).catch(() => {})} data-share-action>
-              {gate.action.label}
-            </Button>
           ) : null}
 
           <form
@@ -95,7 +81,13 @@ export default function ShareSheet() {
               data-share-who
             />
             <span data-share-role={v.role}>
-              <Select aria-label="Role" className="h-8 min-w-28" value={v.role} options={roles} onValueChange={(role) => void send({ type: "set-role", role })} />
+              <Select
+                aria-label="Role"
+                className="h-8 min-w-28"
+                value={v.role}
+                options={roles}
+                onValueChange={(role) => void send({ type: "set-role", role })}
+              />
             </span>
             <Button type="submit" disabled={!v.canShare || closed} data-share-submit>
               {v.shareLabel}

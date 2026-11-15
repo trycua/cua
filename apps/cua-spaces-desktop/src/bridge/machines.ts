@@ -26,6 +26,32 @@ export function hostStatus(model: AppModel): unknown {
   return out;
 }
 
+/** Whether `spaceId` is the removed machine's own row (`relay:<machine>`) or a Space on it (`relay:<machine>/<name>`). */
+export function isOnMachine(spaceId: string | null | undefined, machine: string): boolean {
+  return spaceId === `relay:${machine}` || (spaceId?.startsWith(`relay:${machine}/`) ?? false);
+}
+
+/**
+ * After a machine leaves the account: if the saved default Space (or a
+ * fallback) was on it, the setting stops pointing at it, so nothing names a
+ * removed computer (`cua spaces default` printed its raw id). Best-effort:
+ * the removal itself has already happened.
+ */
+async function forgetRemovedDefault(model: AppModel, machine: string): Promise<void> {
+  if (!model.servicesIn || !model.devices.signedIn) return;
+  try {
+    const d = model.devices.devices();
+    if (!d) return;
+    const settings = await d.spacesSettings();
+    const fallback = settings.fallback.filter((id) => !isOnMachine(id, machine));
+    const cleared = isOnMachine(settings.defaultSpace, machine);
+    if (!cleared && fallback.length === settings.fallback.length) return;
+    await d.setSpacesSettings({ ...settings, defaultSpace: cleared ? undefined : settings.defaultSpace, fallback });
+  } catch {
+    // The setting is read again on the next visit; a failed clear must not fail the removal.
+  }
+}
+
 /** `relay:<machine>` rows' reported hostnames, by machine id. */
 export function relayHostnames(model: AppModel): Record<string, string> {
   return model.relayHostnames;
@@ -36,7 +62,12 @@ export function machinesState(model: AppModel) {
   const devices = model.devices;
   return {
     // The web page reads the status as text.
-    thisMachine: sidebar.thisMachine ? { ...(encode(sidebar.thisMachine) as Record<string, unknown>), statusText: messageText({ code: sidebar.thisMachine.statusText.code, vars: Object.fromEntries(sidebar.thisMachine.statusText.vars) }) } : null,
+    thisMachine: sidebar.thisMachine
+      ? {
+          ...(encode(sidebar.thisMachine) as Record<string, unknown>),
+          statusText: messageText({ code: sidebar.thisMachine.statusText.code, vars: Object.fromEntries(sidebar.thisMachine.statusText.vars) }),
+        }
+      : null,
     sections: encode(sidebar.sections),
     devices: devices.snapshot === null ? null : encode(devices.view),
     accessNotice: encode(devices.accessNotice),
@@ -135,11 +166,17 @@ export function machinesMethods({ model }: BridgeContext): Handlers {
     },
     // Remove from account: the machine leaves the relay directory, then
     // the device on it is revoked; the Spaces and machines are read again.
+    // The Spaces made on it are detached (they come back when it is added
+    // again), or with `deleteSpaces` deleted with it.
     "machines.remove": async (args) => {
       const machine = optionalString(args, "machine");
       const device = optionalString(args, "device");
+      const deleteSpaces = args.deleteSpaces === true;
       if (!machine && !device) throw Failure.badArgs("machine or device");
-      if (machine) await relayCall(model, () => model.backend.relayUnregister(machine));
+      if (machine) {
+        await relayCall(model, () => model.backend.relayUnregister(machine, deleteSpaces));
+        await forgetRemovedDefault(model, machine);
+      }
       if (device) await relayCall(model, () => model.devices.revoke(device));
       else await model.devices.refresh();
       await model.refresh();

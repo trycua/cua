@@ -16,6 +16,14 @@ struct Gw {
     _dir: tempfile::TempDir,
 }
 
+/// An `Authorization: Basic` value for `user:pass`, built at runtime so no
+/// encoded credential sits in the source.
+fn basic_auth(user: &str, pass: &str) -> String {
+    use base64::Engine;
+    let token = base64::engine::general_purpose::STANDARD.encode(format!("{user}:{pass}"));
+    format!("Basic {token}")
+}
+
 async fn start(ports: &[(u16, String)]) -> Gw {
     let dir = tempfile::tempdir().unwrap();
     let backend = Arc::new(MockBackend::new());
@@ -236,18 +244,16 @@ async fn a_root_command_names_root_to_an_agent_that_switches_users() {
     // The mock agent is not root and switches users by capability (as the
     // Linux image's `cua` agent does): a command sent without a user runs
     // as the agent, so `root` must be named.
-    use base64::Engine;
     let g = start(&[]).await;
     let sb = g.sandbox(json!({"templateID": "base"})).await;
     let body = envelope(&json!({
         "process": {"cmd": "/bin/bash", "args": ["-l", "-c", "echo hi"], "envs": {}},
         "stdin": false
     }));
-    let basic = base64::engine::general_purpose::STANDARD.encode("root:");
     let r = g
         .envd(&sb, "process.Process/Start")
         .header("content-type", "application/connect+json")
-        .header("authorization", format!("Basic {basic}"))
+        .header("authorization", basic_auth("root", ""))
         .body(body)
         .send()
         .await
@@ -262,6 +268,39 @@ async fn a_root_command_names_root_to_an_agent_that_switches_users() {
         .find(|c| c.args.iter().any(|a| a == "echo hi"))
         .expect("the command reached the agent");
     assert_eq!(run.user, "root");
+}
+
+/// What the command itself sees: run as root, it is root. The mock agent
+/// is `cua` and runs unnamed work as `cua` (as the Linux image does), so a
+/// root command that reached it without a user prints `cua`.
+#[tokio::test]
+async fn a_root_command_runs_as_root_on_a_non_root_agent() {
+    use base64::Engine;
+    let g = start(&[]).await;
+    let sb = g.sandbox(json!({"templateID": "base"})).await;
+    let mut seen = Vec::new();
+    for line in ["whoami", "id -u", "printf %s \"$HOME\""] {
+        let body = envelope(&json!({
+            "process": {"cmd": "/bin/bash", "args": ["-l", "-c", line], "envs": {}},
+            "stdin": false
+        }));
+        let r = g
+            .envd(&sb, "process.Process/Start")
+            .header("content-type", "application/connect+json")
+            .header("authorization", basic_auth("root", ""))
+            .body(body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 200);
+        let out: Vec<u8> = frames(&r.bytes().await.unwrap())
+            .iter()
+            .filter_map(|(_, v)| v["event"]["data"]["stdout"].as_str())
+            .flat_map(|b| base64::engine::general_purpose::STANDARD.decode(b).unwrap())
+            .collect();
+        seen.push(String::from_utf8(out).unwrap().trim().to_string());
+    }
+    assert_eq!(seen, ["root", "0", "/root"]);
 }
 
 #[tokio::test]
@@ -982,7 +1021,7 @@ async fn start_warmed_makes_the_first_create_before_it_returns() {
     }
 }
 
-/// An account at its live-session limit gets E2B's rate-limit error (HTTP
+/// An account at its computers-in-use limit gets E2B's rate-limit error (HTTP
 /// 429, which the SDKs raise as RateLimitException), with the plan-limit
 /// sentence and its upgrade path verbatim.
 #[tokio::test]
@@ -990,7 +1029,8 @@ async fn the_live_session_limit_is_a_429_with_its_sentence() {
     let dir = tempfile::tempdir().unwrap();
     let backend = Arc::new(MockBackend::new());
     *backend.create_fails.lock().await = Some(cua_compat::backend::BackendError::RateLimited(
-        "You're using 2 of 2 live sessions on the free plan. Close one or upgrade to Pro.".into(),
+        "You have 2 of 2 computers in use at once on the free plan. Close one or upgrade to Pro."
+            .into(),
     ));
     let mut o = GatewayOptions::new(Provider::E2b);
     o.listen = "127.0.0.1:0".parse().unwrap();
@@ -1009,7 +1049,7 @@ async fn the_live_session_limit_is_a_429_with_its_sentence() {
         let v: Value = r.json().await.unwrap();
         assert_eq!(
             v["message"],
-            "You're using 2 of 2 live sessions on the free plan. Close one or upgrade to Pro."
+            "You have 2 of 2 computers in use at once on the free plan. Close one or upgrade to Pro."
         );
     }
 }
@@ -1045,4 +1085,104 @@ async fn set_timeout_zero_kills_before_it_answers() {
         404,
         "gone the moment set_timeout(0) answered"
     );
+}
+
+#[tokio::test]
+async fn root_file_calls_name_root_to_an_agent_that_switches_users() {
+    // The mock agent switches users by capability and is not root itself
+    // (as the Linux image's `cua` agent): a file call without `run_as` runs
+    // as the agent. envd acts with root's rights, so each call names root,
+    // including cua-spacesd's own calls a guest without GNU tools gets.
+    let g = start(&[]).await;
+    let sb = g.sandbox(json!({"templateID": "base"})).await;
+    let name = g.mock.created.lock().await[0].name.clone();
+    let st = g.mock.state(&name).await.unwrap();
+    st.put_file("/tmp/r/a", b"1".to_vec());
+    let call = |method: &str, body: Value| {
+        g.envd(&sb, &format!("filesystem.Filesystem/{method}"))
+            .header("content-type", "application/json")
+            .header("authorization", basic_auth("root", ""))
+            .body(body.to_string())
+            .send()
+    };
+    for (method, body) in [
+        ("Stat", json!({"path": "/tmp/r/a"})),
+        ("ListDir", json!({"path": "/tmp/r", "depth": 1})),
+        ("MakeDir", json!({"path": "/tmp/r/d"})),
+        (
+            "Move",
+            json!({"source": "/tmp/r/a", "destination": "/tmp/r/b"}),
+        ),
+        ("Remove", json!({"path": "/tmp/r/b"})),
+    ] {
+        let r = call(method, body).await.unwrap();
+        assert_eq!(r.status(), 200, "{method}: {}", r.text().await.unwrap());
+    }
+    st.put_file("/tmp/r/c", b"2".to_vec());
+    let r = g
+        .http
+        .get(format!("{}/files?path=/tmp/r/c&username=root", g.base))
+        .header("e2b-sandbox-id", sb["sandboxID"].as_str().unwrap())
+        .header("x-access-token", sb["envdAccessToken"].as_str().unwrap())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.text().await.unwrap(), "2");
+    for (call, path) in [
+        ("Stat", "/tmp/r/a"),
+        ("ListDir", "/tmp/r"),
+        ("MakeDir", "/tmp/r/d"),
+        ("Move", "/tmp/r/a"),
+        ("Remove", "/tmp/r/b"),
+        ("ReadFile", "/tmp/r/c"),
+    ] {
+        let seen = st.observed.run_as_of(call, path);
+        assert!(!seen.is_empty(), "{call} {path} reached the agent");
+        assert!(seen.iter().all(|u| u == "root"), "{call} {path}: {seen:?}");
+    }
+}
+
+#[tokio::test]
+async fn native_file_calls_give_what_they_make_to_the_user() {
+    // Without the guest's `sh` scripts (the mock runs none), MakeDir and
+    // Move make directories as root; the ones a call created go to the
+    // request's user, and a moved file keeps its owner.
+    let g = start(&[]).await;
+    let sb = g.sandbox(json!({"templateID": "base"})).await;
+    let name = g.mock.created.lock().await[0].name.clone();
+    let st = g.mock.state(&name).await.unwrap();
+    st.put_file("/tmp/a", b"1".to_vec());
+    for (method, body) in [
+        ("MakeDir", json!({"path": "/tmp/new/d"})),
+        (
+            "Move",
+            json!({"source": "/tmp/a", "destination": "/tmp/moved/a"}),
+        ),
+    ] {
+        let r = g
+            .envd(&sb, &format!("filesystem.Filesystem/{method}"))
+            .header("content-type", "application/json")
+            .header("authorization", basic_auth("alice", ""))
+            .body(body.to_string())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 200, "{method}: {}", r.text().await.unwrap());
+    }
+    let chowns: Vec<Vec<String>> = st
+        .started_processes()
+        .iter()
+        .filter_map(|p| p.config.as_ref())
+        .filter(|c| c.command == "chown")
+        .map(|c| c.args.clone())
+        .collect();
+    assert_eq!(
+        chowns,
+        [["-R", "alice:", "/tmp/new"], ["-R", "alice:", "/tmp/moved"]]
+    );
+    // The parent was made before the move, not by it, and what the calls
+    // created was looked up as root.
+    assert_eq!(st.observed.run_as_of("MakeDir", "/tmp/moved"), ["root"]);
+    assert_eq!(st.observed.run_as_of("Stat", "/tmp/new"), ["root"]);
 }

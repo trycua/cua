@@ -27,6 +27,8 @@ export interface ConnectorAppInput {
   skills: boolean;
   mcp: boolean | null;
   mcpConfig: string | null;
+  /** The app's own sign-in is on this computer: a run here uses it, nothing to sign in to. */
+  signedIn?: boolean;
 }
 
 export interface ConnectorsInput {
@@ -293,8 +295,9 @@ export function connectorsInputOf(
       skills: r.skillsTotal > 0 ? r.skillsInstalled >= r.skillsTotal : r.configured,
       mcp: r.mcpConfig ? r.configured || /MCP/i.test(r.detail) : null,
       mcpConfig: r.mcpConfig,
+      signedIn: r.signedIn,
     })),
-    keys: { keys: keys.keys, unavailable: keys.unavailable, error: keys.error },
+    keys: { keys: keys.keys, unavailable: keys.unavailable, ...(keys.warning ? { warning: keys.warning } : {}), error: keys.error },
     ...(keys.extras?.length ? { keyExtras: keys.extras } : {}),
     ...(keys.uses && Object.keys(keys.uses).length ? { uses: keys.uses } : {}),
     shellKeys: extra.shellKeys ?? [],
@@ -313,13 +316,25 @@ export const connectorsView = (core: CoreClient, input: ConnectorsInput, os: Hos
 export const connectPlan = (core: CoreClient, input: ConnectorsInput, agent: string): ConnectPlan | null =>
   core.tryCall<ConnectPlan>("connectors.connectPlan", { input: input as unknown as Json, agent }) ?? null;
 
-export const providerSheet = (core: CoreClient, input: ConnectorsInput, provider: string, os: HostOs = hostOs(), forApp: string | null = null): ProviderSheetView | null =>
+export const providerSheet = (
+  core: CoreClient,
+  input: ConnectorsInput,
+  provider: string,
+  os: HostOs = hostOs(),
+  forApp: string | null = null,
+): ProviderSheetView | null =>
   core.tryCall<ProviderSheetView | null>("connectors.providerSheet", { input: input as unknown as Json, provider, hostOs: os, forApp }) ?? null;
 
 export const importSheet = (core: CoreClient, os: HostOs = hostOs()): ImportSheetView | null =>
   core.tryCall<ImportSheetView>("connectors.importSheet", { hostOs: os }) ?? null;
 
-export const providerPicker = (core: CoreClient, input: ConnectorsInput, forApp: string | null = null, query = "", expanded = false): ProviderPickerView | null =>
+export const providerPicker = (
+  core: CoreClient,
+  input: ConnectorsInput,
+  forApp: string | null = null,
+  query = "",
+  expanded = false,
+): ProviderPickerView | null =>
   core.tryCall<ProviderPickerView>("connectors.providerPicker", { input: input as unknown as Json, forApp, query, expanded }) ?? null;
 
 /** One model row of the prompt box's model menu. */
@@ -330,6 +345,8 @@ export interface ModelChoice {
   fast: boolean;
   /** The provider's own default. */
   default: boolean;
+  /** An older id kept so a saved choice still works: accepted, but not shown in the menu. */
+  legacy?: boolean;
 }
 
 export interface ModelGroup {
@@ -454,7 +471,12 @@ export const setupCard = (core: CoreClient, input: ConnectorsInput, agent: strin
 /* ---- Summoning agents in a Space ---------------------------------------------------- */
 
 export interface SummonMember {
+  /** What the Space calls it (`claude`): the handle the thread matches. */
   handle: string;
+  /** The host's name for it (`claude-8`), an alias only. */
+  key?: string;
+  /** Runs on this device's own sign-ins (a Home's agent): waking it checks them. */
+  mine?: boolean;
   harness: string;
   label: string;
 }
@@ -463,6 +485,8 @@ export interface SummonInput {
   members: SummonMember[];
   people: string[];
   canAdd: boolean;
+  /** Report an @mention of nobody in the Space (the thread's composer; not Ask first's job). */
+  reportUnknown?: boolean;
   connectors: ConnectorsInput;
 }
 
@@ -475,7 +499,7 @@ export interface SummonCandidate {
 }
 
 export interface CantWake {
-  reason: "not-connected" | "cant-add" | "failed";
+  reason: "not-connected" | "cant-add" | "failed" | "no-such-member";
   handle: string;
   harness: string;
   name: string;
@@ -506,7 +530,7 @@ export const queuedNote = (core: CoreClient, creating: boolean): LocalNote | nul
 export interface SummonStep {
   handle: string;
   harness: string;
-  action: "wake" | "add" | "blocked";
+  action: "wake" | "add" | "blocked" | "unknown";
   cantWake: CantWake | null;
 }
 

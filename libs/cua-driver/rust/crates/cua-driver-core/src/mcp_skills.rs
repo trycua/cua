@@ -314,7 +314,7 @@ mod tests {
         let yaml = source.split("---").nth(1).unwrap();
         let expected: Value = serde_yaml_ng::from_str(yaml).unwrap();
         assert_eq!(pack().entry["frontmatter"], expected);
-        assert!(expected["version"].is_string());
+        assert!(expected["metadata"]["version"].is_string());
         assert_eq!(
             expected["metadata"]["openclaw"]["envVars"][0]["required"],
             false

@@ -104,6 +104,16 @@ pub(crate) struct RelayBearer {
 /// removing it from the account counts it as a stale entry.
 const LIVE_PROBE: std::time::Duration = std::time::Duration::from_secs(6);
 
+/// How long deleting one child Space through its computer may take when a
+/// computer is removed with its Spaces.
+const CHILD_DELETE: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// How long the account's default Space is kept before the relay is asked
+/// again (lists mark it from this).
+const DEFAULT_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+/// The most a list waits for the default (never holds a list up).
+const DEFAULT_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
 impl cua_spacesd_client::BearerProvider for RelayBearer {
@@ -238,6 +248,7 @@ impl crate::Spaces {
     pub(crate) async fn forget_relay_machine(
         &self,
         machine_id: &str,
+        delete_spaces: bool,
     ) -> crate::Result<Option<RelayMachine>> {
         use crate::Error;
         let id = format!("relay:{machine_id}");
@@ -290,12 +301,57 @@ impl crate::Spaces {
         }
         #[cfg(feature = "spaces-agents")]
         self.detach_attached_driver(machine_id).await;
-        match client.delete(&token, machine_id).await {
+        match client
+            .delete_machine(&token, machine_id, delete_spaces)
+            .await
+        {
             Ok(()) | Err(cua_host::Error::NotFound(_)) => {}
             Err(e) => return Err(e.into()),
         }
         self.forget_relay_locally(machine_id).await;
         Ok(Some(m))
+    }
+
+    /// Removes one of your computers from the relay. With `delete_spaces`
+    /// the Spaces it provides are deleted first, files included, through the
+    /// computer while it answers (best effort), and then their records go
+    /// with it; without, they stay on the account, detached. Returns false
+    /// when it was not on the relay.
+    ///
+    /// Kept apart from [`crate::Spaces::relay_unregister_computer`] (which
+    /// only changes what the relay forgets) because deleting a Space can
+    /// itself unregister a computer.
+    pub async fn remove_computer(&self, space: &str, delete_spaces: bool) -> crate::Result<bool> {
+        if delete_spaces && let Ok(crate::SpaceId::Relay { machine_id }) = self.resolve(space) {
+            self.delete_children_through_computer(&machine_id).await;
+        }
+        self.relay_unregister_computer(space, delete_spaces).await
+    }
+
+    /// Deletes the Spaces `machine_id` provides, files included, through
+    /// the computer while it answers. Best effort: one that cannot be
+    /// reached is logged, and the relay forgets its record either way
+    /// (`spaces=delete`).
+    pub(crate) async fn delete_children_through_computer(&self, machine_id: &str) {
+        let children: Vec<String> = self
+            .inner
+            .relay_cache
+            .lock()
+            .expect("relay cache")
+            .iter()
+            .filter(|m| m.host.as_deref() == Some(machine_id))
+            .map(|m| format!("relay:{}", m.id))
+            .collect();
+        for child in children {
+            let done = tokio::time::timeout(CHILD_DELETE, self.delete(&child)).await;
+            match done {
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => {
+                    tracing::warn!(space = %child, error = %e, "child Space not deleted on its computer")
+                }
+                Err(_) => tracing::warn!(space = %child, "child Space delete timed out"),
+            }
+        }
     }
 
     /// [`adopt_machine_name`] for this runtime: its cached directory too.
@@ -328,6 +384,76 @@ impl crate::Spaces {
             Ok(Err(e)) => crate::host_spaces::is_stopped_sharing(&e.to_string()),
             Err(_) => false,
         }
+    }
+
+    async fn relay_client_and_token(&self) -> crate::Result<(cua_host::RelayClient, String)> {
+        let relay = self.relay()?;
+        let token = relay.tokens.access_token().await?;
+        Ok((relay.client().await?, token))
+    }
+
+    /// The account's default Space settings, from the relay.
+    pub async fn spaces_settings(&self) -> crate::Result<cua_host::SpacesSettings> {
+        let (client, token) = self.relay_client_and_token().await?;
+        Ok(client.spaces_settings(&token).await?)
+    }
+
+    /// Replaces the account's default Space settings (the whole object).
+    pub async fn set_spaces_settings(
+        &self,
+        settings: &cua_host::SpacesSettings,
+    ) -> crate::Result<cua_host::SpacesSettings> {
+        let (client, token) = self.relay_client_and_token().await?;
+        let saved = client.set_spaces_settings(&token, settings).await?;
+        *self.inner.default_cache.lock().expect("default cache") = Some((
+            std::time::Instant::now(),
+            saved.default_space.clone().filter(|d| !d.is_empty()),
+        ));
+        Ok(saved)
+    }
+
+    /// Where "my default Space" resolves now. `here` is this computer's
+    /// relay machine id (filled from this install's host setup when not
+    /// given).
+    pub async fn resolve_default_space(
+        &self,
+        here: Option<&str>,
+    ) -> crate::Result<cua_host::DefaultSpace> {
+        let (client, token) = self.relay_client_and_token().await?;
+        let own = self.this_relay_machine_id();
+        let here = here.map(str::to_string).or(own);
+        Ok(client
+            .resolve_default_space(&token, here.as_deref())
+            .await?)
+    }
+
+    /// The default Space's id, for marking it in a list: from a short
+    /// cache, else asked of the relay within [`DEFAULT_WAIT`]. Signed out,
+    /// a relay that is down or too old, or a slow answer is `None` (and
+    /// remembered for a moment): a list never waits on it or fails on it.
+    pub async fn default_space_id(&self) -> Option<String> {
+        if let Some((at, id)) = self
+            .inner
+            .default_cache
+            .lock()
+            .expect("default cache")
+            .clone()
+            && at.elapsed() < DEFAULT_TTL
+        {
+            return id;
+        }
+        let id = match self.relay_account() {
+            None => None,
+            Some(_) => tokio::time::timeout(DEFAULT_WAIT, self.spaces_settings())
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .and_then(|s| s.default_space)
+                .filter(|d| !d.is_empty()),
+        };
+        *self.inner.default_cache.lock().expect("default cache") =
+            Some((std::time::Instant::now(), id.clone()));
+        id
     }
 
     /// Forgets `relay:<machine_id>` on this device: the cached row, any

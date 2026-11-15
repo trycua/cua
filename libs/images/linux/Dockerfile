@@ -20,6 +20,7 @@
 # PipeWire (null sink cua_desktop, virtual source cua_mic)
 # + Chromium (the browser cua-driver's browser tools drive over CDP)
 # + cua-spacesd (3211: gRPC, media, and the HTML5 viewer at /viewer)
+# + the `cua` CLI (child Spaces from inside a Space)
 # + conformance fixtures under
 # /opt/cua/fixtures. This file builds the container rootfs (docker / gVisor,
 # supervisord as PID 1). The KubeVirt containerDisk is derived from THIS image
@@ -42,6 +43,15 @@
 # The older build args (CUA_GUESTD_* and CUA_ENV_DRIVER_* SOURCE/_VERSION/
 # _RELEASE_URL) are still honoured when the CUA_SPACESD_* one is not given.
 #
+# CUA_CLI_SOURCE (the `cua` CLI an agent in the Space uses to make child Spaces)
+#   local    copy linux/dist/<TARGETARCH>/cua (linux/build-cua-cli-linux.sh builds it;
+#            CI hands over the CLI it built from the same commit). Missing = build error.
+#            What the publish workflow says (release.json cli_source=local).
+#   release  the default, at CUA_CLI_DEFAULT_VERSION (0.10.1, sha256 pinned here): download cua-cli-<version>-linux-<x64|arm64>.tar.gz of the cua-sdk-v<version>
+#            release; CUA_CLI_VERSION, when given, must be pinned (never `latest`) and the archive is
+#            checked against CUA_CLI_SHA256 or the release's checksums.txt.
+#   none     no CLI.
+#
 # Compat for one release, for both older names (cua-env-driver, cua-guestd):
 # /usr/local/bin/<old> links to cua-spacesd, <old>.service is an alias of
 # cua-spacesd.service, and /opt/cua/bin/start-<old>.sh links to
@@ -62,6 +72,17 @@ ARG CUA_GUESTD_RELEASE_URL=
 ARG CUA_ENV_DRIVER_SOURCE=
 ARG CUA_ENV_DRIVER_VERSION=
 ARG CUA_ENV_DRIVER_RELEASE_URL=
+# The cua CLI (see its RUN below): local (linux/dist/<arch>/cua, default) | release | none.
+ARG CUA_CLI_SOURCE=
+ARG CUA_CLI_VERSION=
+ARG CUA_CLI_RELEASE_URL=
+ARG CUA_CLI_SHA256=
+# The release a build without a CLI of its own takes (ad-hoc builds, e2e and nightly jobs), pinned with
+# the sha256 of its archives (checksums.txt of cua-sdk-v0.10.1). The image publish workflow says
+# CUA_CLI_SOURCE=local instead (the CLI built from the same commit).
+ARG CUA_CLI_DEFAULT_VERSION=0.10.1
+ARG CUA_CLI_DEFAULT_SHA256_AMD64=ea420b0ac21c524b09507c576cf9c55a2177ce3c84169dcb5e2d1792f18c2929
+ARG CUA_CLI_DEFAULT_SHA256_ARM64=fd6e24accb572350a433935a67e1b5a21302786ef8bf1cb3b5237d611822c0ac
 ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=Etc/UTC
 
 # Desktop, display, a11y and test tooling. No snaps anywhere (the full tier's
@@ -233,6 +254,51 @@ RUN --mount=type=bind,source=linux/dist,target=/dist \
     ln -s spacesd-source /etc/cua-image/env-driver-source; \
     ln -s spacesd-source /etc/cua-image/guestd-source
 
+# The `cua` CLI (/usr/local/bin/cua), so an agent in a Space can run `cua spaces create`, `ls` and
+# `delete`: inside a Space whose host turned child Spaces on, the CLI finds the Space's own spawn
+# channel (CUA_SPAWN / the files cua-spacesd keeps, served by the cua-spacesd above) with nothing to
+# configure and no token in the image. The CLI must be cua-sdk 0.10.1 or later (the first with
+# child Spaces).
+RUN --mount=type=bind,source=linux/dist,target=/dist \
+    set -eu; \
+    bin=/usr/local/bin/cua; \
+    CUA_CLI_SOURCE="${CUA_CLI_SOURCE:-release}"; \
+    default_url='https://github.com/trycua/cua/releases/download/cua-sdk-v{version}/cua-cli-{version}-linux-{arch}.tar.gz'; \
+    CUA_CLI_RELEASE_URL="${CUA_CLI_RELEASE_URL:-$default_url}"; \
+    case "$CUA_CLI_SOURCE" in \
+      local) \
+        src="/dist/$TARGETARCH/cua"; \
+        [ -f "$src" ] || { echo "CUA_CLI_SOURCE=local but $src is missing; run linux/build-cua-cli-linux.sh or pass CUA_CLI_SOURCE=release|none" >&2; exit 1; }; \
+        install -m 0755 "$src" "$bin" ;; \
+      release) \
+        case "$TARGETARCH" in amd64) arch=x64 ;; arm64) arch=arm64 ;; *) echo "no cua CLI release for $TARGETARCH" >&2; exit 1 ;; esac; \
+        CUA_CLI_VERSION="${CUA_CLI_VERSION:-$CUA_CLI_DEFAULT_VERSION}"; \
+        CUA_CLI_VERSION="${CUA_CLI_VERSION#cua-sdk-v}"; CUA_CLI_VERSION="${CUA_CLI_VERSION#v}"; \
+        case "$CUA_CLI_VERSION" in ""|latest) echo "CUA_CLI_SOURCE=release needs a pinned CUA_CLI_VERSION (not latest)" >&2; exit 1 ;; esac; \
+        url="$(echo "$CUA_CLI_RELEASE_URL" | sed "s/{version}/$CUA_CLI_VERSION/g; s/{arch}/$arch/g")"; \
+        echo "fetching $url"; \
+        curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o /tmp/cua-cli.tar.gz "$url"; \
+        if [ -z "$CUA_CLI_SHA256" ] && [ "$CUA_CLI_VERSION" = "$CUA_CLI_DEFAULT_VERSION" ]; then \
+          case "$TARGETARCH" in amd64) CUA_CLI_SHA256="$CUA_CLI_DEFAULT_SHA256_AMD64" ;; arm64) CUA_CLI_SHA256="$CUA_CLI_DEFAULT_SHA256_ARM64" ;; esac; \
+        fi; \
+        if [ -z "$CUA_CLI_SHA256" ]; then \
+          sums="https://github.com/trycua/cua/releases/download/cua-sdk-v$CUA_CLI_VERSION/checksums.txt"; \
+          CUA_CLI_SHA256="$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 "$sums" | awk -v f="$(basename "$url")" '$2 == f || $2 == "*" f { print $1 }')"; \
+          [ -n "$CUA_CLI_SHA256" ] || { echo "no sha256 for $(basename "$url") in $sums" >&2; exit 1; }; \
+        fi; \
+        echo "$CUA_CLI_SHA256  /tmp/cua-cli.tar.gz" | sha256sum -c -; \
+        tar -xzf /tmp/cua-cli.tar.gz -C /usr/local/bin cua; \
+        rm /tmp/cua-cli.tar.gz; \
+        chmod 0755 "$bin"; \
+        echo "$CUA_CLI_VERSION" >/tmp/cua-cli-version ;; \
+      none) echo "building without the cua CLI" ;; \
+      *) echo "unknown CUA_CLI_SOURCE=$CUA_CLI_SOURCE" >&2; exit 1 ;; \
+    esac; \
+    if [ -x "$bin" ]; then ldd "$bin" | grep 'not found' && exit 1 || true; "$bin" --version; fi; \
+    mkdir -p /etc/cua-image; \
+    echo "$CUA_CLI_SOURCE" >/etc/cua-image/cua-cli-source; \
+    if [ -f /tmp/cua-cli-version ]; then mv /tmp/cua-cli-version /etc/cua-image/cua-cli-release; fi
+
 COPY linux/files/supervisor/supervisord.conf /etc/supervisor/supervisord.conf
 COPY linux/files/start-spacesd.sh linux/files/ensure-env-token.sh \
      linux/files/env-token-mode.sh linux/files/start-token-sync.sh \
@@ -403,7 +469,7 @@ RUN set -eu; \
       arm64) node_arch=arm64; go_sha="$GO_SHA256_ARM64"; node_sha="$NODE_SHA256_ARM64"; uv_t=aarch64; uv_sha="$UV_SHA256_ARM64"; gh_sha="$GH_SHA256_ARM64"; ru_t=aarch64; ru_sha="$RUSTUP_SHA256_ARM64" ;; \
       *) echo "unsupported arch $TARGETARCH" >&2; exit 1 ;; \
     esac; \
-    fetch() { curl -fsSL --retry 5 -o "$1" "$2" && echo "$3  $1" | sha256sum -c -; }; \
+    fetch() { curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "$1" "$2" && echo "$3  $1" | sha256sum -c -; }; \
     cd /tmp; \
     fetch node.tar.xz "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${node_arch}.tar.xz" "$node_sha"; \
     mkdir -p /usr/local/lib/nodejs && tar -xJf node.tar.xz -C /usr/local/lib/nodejs --strip-components=1; \

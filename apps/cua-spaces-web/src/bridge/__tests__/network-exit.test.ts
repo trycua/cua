@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { exitDescription, exitLabel, validProxy } from "@/components/network/presets";
 
-import { networkFromWire, topologyFromJson } from "../network";
+import { blockedFromWire, isBackgroundNoise, networkFromWire, reasonWords, topologyFromJson } from "../network";
 
 const wire = {
   preset: "internet",
@@ -28,7 +28,12 @@ describe("Exit through", () => {
     const t = topologyFromJson(
       JSON.stringify({
         space: { id: "local:w1", name: "w1.swarm" },
-        tree: { members: [{ id: "local:swarm", name: "swarm.swarm", relation: "parent" }, { id: "local:w1", name: "w1.swarm", relation: "self" }] },
+        tree: {
+          members: [
+            { id: "local:swarm", name: "swarm.swarm", relation: "parent" },
+            { id: "local:w1", name: "w1.swarm", relation: "self" },
+          ],
+        },
         via: { kind: "space", label: "swarm" },
         exit: { state: "unreachable", note: "It's stopped." },
         host: { reach: ["localhost:3000"] },
@@ -76,5 +81,20 @@ describe("Exit through", () => {
     expect(validProxy("socks5://proxy.example:1080")).toBe(true);
     expect(validProxy("http://proxy.example:8080")).toBe(false);
     expect(validProxy("socks5://proxy.example")).toBe(false);
+  });
+});
+
+describe("The blocked-connection line", () => {
+  it("reads as a sentence for a reason the page has no words for", () => {
+    // "Blocked: this Space can't reach {what}": an unknown reason used to say "can't reach not allowed by ...".
+    expect(reasonWords("default:something-new")).toBe("a destination its settings don't allow");
+    expect(blockedFromWire({ dst: "10.0.3.255:137", reason: "x", lastUnix: 1 } as never).what).toBe("a destination its settings don't allow");
+  });
+
+  it("leaves the guest's own name-service broadcast out of the notice", () => {
+    expect(isBackgroundNoise("10.0.3.255:137")).toBe(true);
+    expect(isBackgroundNoise("192.168.1.255:138")).toBe(true);
+    expect(isBackgroundNoise("10.0.2.2:5432")).toBe(false);
+    expect(isBackgroundNoise("10.0.3.255:5353")).toBe(false);
   });
 });

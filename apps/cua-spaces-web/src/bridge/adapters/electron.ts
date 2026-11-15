@@ -14,9 +14,6 @@ import type { DataAdapter } from "../adapter";
 import type { HostWindow } from "../detect";
 import { createWebkitAdapter, type WebkitAdapterOptions } from "./webkit";
 
-export function createElectronAdapter(
-  win: HostWindow = globalThis.window as HostWindow,
-  options: Omit<WebkitAdapterOptions, "host"> = {},
-): DataAdapter {
+export function createElectronAdapter(win: HostWindow = globalThis.window as HostWindow, options: Omit<WebkitAdapterOptions, "host"> = {}): DataAdapter {
   return createWebkitAdapter(win, { ...options, host: "electron" });
 }

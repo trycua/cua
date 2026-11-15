@@ -1051,7 +1051,9 @@ pub fn onboarding_page(page: &str, action: &str, choice: &str) -> Option<Event> 
 
 /// One of the first-run funnel events: `step_viewed`, `step_completed`,
 /// `step_failed` (with `reason`) or `skipped` (with `how`, from the same
-/// last argument). None for a step, action or
+/// last argument). On the `ready` step the last argument is the picked
+/// agent, and `step_command_copied` and `step_chat_picked_up` are its two
+/// extra events. None for a step, action or
 /// reason outside the vocabulary. `step_index` and `onboarding_version`
 /// come from the step, so a caller cannot send a wrong one.
 pub fn first_run_step(step: &str, action: &str, reason: &str) -> Option<Event> {
@@ -1061,13 +1063,29 @@ pub fn first_run_step(step: &str, action: &str, reason: &str) -> Option<Event> {
         "step_completed" => event::ONBOARDING_STEP_COMPLETED,
         "step_failed" => event::ONBOARDING_STEP_FAILED,
         "step_skipped" => event::ONBOARDING_SKIPPED,
+        // Only the Ready screen has a command to copy and chats to continue.
+        "step_command_copied" if step == "ready" => event::ONBOARDING_COMMAND_COPIED,
+        "step_chat_picked_up" if step == "ready" => event::ONBOARDING_CHAT_PICKED_UP,
         _ => return None,
     };
     let index = schema::FIRST_RUN_STEPS.iter().position(|s| *s == step)?;
-    let e = Event::new(name)
+    let mut e = Event::new(name)
         .s("step", step)
         .n("step_index", index as u64 + 1)
         .n("onboarding_version", schema::FIRST_RUN_VERSION);
+    // Viewed, completed, copied and picked up carry the Ready screen's agent
+    // (the last argument); every other screen sends `none`.
+    if !matches!(
+        name,
+        event::ONBOARDING_STEP_FAILED | event::ONBOARDING_SKIPPED
+    ) {
+        let agent = if step == "ready" {
+            pick(schema::FIRST_RUN_AGENTS, reason, "other")
+        } else {
+            "none"
+        };
+        e = e.s("agent", agent);
+    }
     Some(match name {
         event::ONBOARDING_STEP_FAILED => e.s(
             "reason",

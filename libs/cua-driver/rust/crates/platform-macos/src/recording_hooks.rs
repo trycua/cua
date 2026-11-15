@@ -7,6 +7,36 @@ use cua_driver_core::element_token::ResolvedElement;
 use cua_driver_core::snapshot_store::current_runtime_store;
 use serde_json::Value;
 
+pub(crate) fn install() {
+    cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
+        let main_window_bytes = |pid: i64| {
+            crate::windows::resolve_main_window_id(pid as i32)
+                .ok()
+                .and_then(|window_id| crate::capture::screenshot_window_bytes(window_id).ok())
+        };
+        if let Some(window_id) = window_id {
+            // An action can dismiss the very window it targeted (Escape sent to
+            // a save sheet's own id closes the sheet). The "after" evidence is
+            // then the app's remaining main window, not a missing image.
+            crate::capture::screenshot_window_bytes(window_id as u32)
+                .ok()
+                .or_else(|| pid.and_then(main_window_bytes))
+        } else if let Some(pid) = pid {
+            main_window_bytes(pid)
+        } else {
+            crate::capture::screenshot_display_bytes().ok()
+        }
+    });
+    cua_driver_core::recording::set_click_marker_fn(|png_bytes, x, y| {
+        crate::capture::crosshair_png_bytes(png_bytes, x, y).ok()
+    });
+    cua_driver_core::recording::set_budgeted_ax_snapshot_fn(app_state_json_for);
+    cua_driver_core::recording::set_element_bounds_fn(element_window_local_xy);
+    cua_driver_core::video::set_video_backend_factory(Box::new(
+        crate::video_sckit::SckitVideoBackendFactory,
+    ));
+}
+
 /// Per-turn application state for trajectory recording. The walk shares the
 /// `get_window_state` budget semantics: it stops when `budget.timeout_ms` runs
 /// out and reports the shared walk fields so the turn evidence can say the

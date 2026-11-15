@@ -85,6 +85,11 @@ pub trait Runtime: Send + Sync {
         })
     }
 
+    /// Whether [`Runtime::save_prepared`] keeps an image on this backend.
+    fn keeps_prepared(&self) -> bool {
+        false
+    }
+
     /// Saves the filesystem of the running instance `name` as an image that
     /// instances start from instead of the one they were made from (what is
     /// installed in it stays), named `tag`, and returns it. Used by the warm
@@ -190,6 +195,14 @@ pub trait Runtime: Send + Sync {
 
     /// How to reach a running instance.
     async fn endpoints(&self, name: &str) -> Result<Endpoints>;
+
+    /// Repairs a running instance that lost what it needs to be reached
+    /// (a macOS VM whose network gateway ended), returning it as it is
+    /// now when it had to be restarted. Default: nothing to repair.
+    async fn mend(&self, name: &str) -> Result<Option<Instance>> {
+        let _ = name;
+        Ok(None)
+    }
 
     /// Whether a TCP listener on `guest_port` exists *inside* the guest, as
     /// seen from the guest side of any host forwarder. `None` when the
@@ -312,6 +325,19 @@ pub trait GuestIdentity: Send + Sync {
     async fn resync_clock(&self, endpoints: &Endpoints, token: &str) -> Result<()> {
         let _ = (endpoints, token);
         Ok(())
+    }
+
+    /// Whether [`Self::renew`] can work in the guest reachable at
+    /// `endpoints` (token `token`): `Ok(None)` when it can, `Ok(Some(why))`
+    /// when the guest says it cannot (say its agent runs as an
+    /// unprivileged user without passwordless sudo), `Err` when it did not
+    /// answer. A golden memory snapshot is recorded only from a guest that
+    /// can: one that cannot boots cold every time instead of restoring,
+    /// failing to renew until the readiness budget is gone, and then
+    /// booting cold anyway.
+    async fn check_renewable(&self, endpoints: &Endpoints, token: &str) -> Result<Option<String>> {
+        let _ = (endpoints, token);
+        Ok(None)
     }
 }
 

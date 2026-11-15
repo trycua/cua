@@ -80,6 +80,18 @@ class LargerRunnerCheck(unittest.TestCase):
         self.assertEqual(chk.find_uses(REPO), [])
         self.assertEqual(chk.load_allowed(REPO), set())
 
+    def test_missing_pyyaml_gives_a_clear_error_not_a_traceback(self):
+        import os
+        import subprocess
+
+        block = Path(tempfile.mkdtemp())
+        (block / "yaml.py").write_text("raise ImportError('blocked')\n")
+        env = {"PYTHONPATH": str(block), "CUA_LARGER_RUNNERS_REEXEC": "1", "PATH": os.environ.get("PATH", "")}
+        done = subprocess.run([sys.executable, str(Path(chk.__file__))], env=env, capture_output=True, text=True)
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("needs PyYAML", done.stderr)
+        self.assertNotIn("Traceback", done.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

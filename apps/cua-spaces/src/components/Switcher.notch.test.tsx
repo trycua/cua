@@ -9,8 +9,24 @@ import type { SpacesListBridge } from "../native/spacesList";
 import { Switcher } from "./Switcher";
 
 const spaces: Space[] = [
-  { id: "this-mac", name: "This machine", os: "macos", status: "local", detail: "Local", lastUsedAt: 2, scene: "blank" },
-  { id: "direct:aurora", name: "Aurora", os: "linux", status: "running", detail: "Agent testing", lastUsedAt: 1, scene: "blank" },
+  {
+    id: "this-mac",
+    name: "This computer",
+    os: "macos",
+    status: "local",
+    detail: "Local",
+    lastUsedAt: 2,
+    scene: "blank",
+  },
+  {
+    id: "direct:aurora",
+    name: "Aurora",
+    os: "linux",
+    status: "running",
+    detail: "Agent testing",
+    lastUsedAt: 1,
+    scene: "blank",
+  },
 ];
 
 function fakeSpacesList(): SpacesListBridge {
@@ -70,7 +86,7 @@ describe("Switcher (the notch panel)", () => {
 
   it("This machine opens its page in the main window", () => {
     const { spacesList, onSelect } = renderSwitcher();
-    fireEvent.click(screen.getByRole("option", { name: /This machine/ }));
+    fireEvent.click(screen.getByRole("option", { name: /This computer/ }));
     expect(onSelect).not.toHaveBeenCalled();
     expect(spacesList.open).toHaveBeenCalledWith(expect.objectContaining({ selectedId: "this-mac" }));
   });

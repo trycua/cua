@@ -13,7 +13,18 @@ const ME = { participantId: "p1", principalId: "user:ada", displayName: "Ada", c
 const BOB = { participantId: "p2", principalId: "user:bob", displayName: "Bob", color: "#4363d8", kind: "human" };
 
 function cursor(x: number, y: number, windowId?: string) {
-  return { displayId: "", ...(windowId ? { windowId } : {}), x, y, visible: true, pressed: false, shape: "arrow", shapeSource: "unspecified", atMs: 0, receivedMs: 0 };
+  return {
+    displayId: "",
+    ...(windowId ? { windowId } : {}),
+    x,
+    y,
+    visible: true,
+    pressed: false,
+    shape: "arrow",
+    shapeSource: "unspecified",
+    atMs: 0,
+    receivedMs: 0,
+  };
 }
 
 /** A shell that joins `spaceId` as Ada with Bob already there, and pushes events to the page. */
@@ -25,7 +36,14 @@ function fakeShell(join: Partial<PresenceJoinInfo> = {}) {
       const r = request as { id: string; method: string; args: Record<string, unknown> };
       calls.push({ method: r.method, args: r.args });
       if (r.method === "presence.join") {
-        const info: PresenceJoinInfo = { handle: "h1", me: ME, members: [{ participant: BOB, cursor: cursor(0.5, 0.5) }], delayMs: 0, datagrams: false, ...join };
+        const info: PresenceJoinInfo = {
+          handle: "h1",
+          me: ME,
+          members: [{ participant: BOB, cursor: cursor(0.5, 0.5) }],
+          delayMs: 0,
+          datagrams: false,
+          ...join,
+        };
         return { id: r.id, ok: true, result: info };
       }
       return { id: r.id, ok: true, result: null };
@@ -108,7 +126,17 @@ describe("presence over the page's video", () => {
   it("publishes your pointer over the picture, and a hide when it leaves", async () => {
     const shell = fakeShell({ members: [] });
     const { host, canvas } = surface();
-    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 200, height: 100, right: 200, bottom: 100, x: 0, y: 0, toJSON: () => ({}) });
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      top: 0,
+      width: 200,
+      height: 100,
+      right: 200,
+      bottom: 100,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
     const p = attachPresence(shell.desktop, canvas, host, { spaceId: "local:a", interactive: true });
     await flush();
     p.setLive(true);

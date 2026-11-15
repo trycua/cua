@@ -358,12 +358,13 @@ def test_workflow_wiring():
     # the merge job that needs the shards: skipping the builds skips the rest.
     builds = ["build-sdk", "build-cli", "build-fixtures", "build-rust-tests", "build-images"]
     for name in builds:
-        assert jobs[name]["needs"] == "changes", name
+        assert jobs[name]["needs"] == ["quick", "changes"], name
         # Only an explicit `false` skips the suite.
         assert "needs.changes.outputs.run != 'false'" in jobs[name]["if"], name
-    assert sorted(jobs["shard"]["needs"]) == sorted(builds)
-    assert jobs["matrix"]["needs"] == "shard"
-    assert "needs" not in jobs["shard"].get("if", "")
+    assert sorted(jobs["shard"]["needs"]) == sorted(builds + ["quick"])
+    assert jobs["matrix"]["needs"] == ["quick", "shard"]
+    # The shard is not behind the scope job: it depends only on the build results.
+    assert "needs.changes" not in jobs["shard"].get("if", "")
     assert changes["outputs"] == {"run": "${{ steps.scope.outputs.run }}"}
     checkout = changes["steps"][0]
     assert checkout["with"]["fetch-depth"] == 2
@@ -371,7 +372,7 @@ def test_workflow_wiring():
     # The nightly lane is not behind the scope job.
     assert live["needs"] == "quick"  # the quick stage only; not behind the scope job
     assert "github.event_name == 'schedule'" in live["if"] and "needs.changes" not in live["if"]
-    assert set(WORKFLOW[True]) == {"pull_request", "schedule", "workflow_dispatch"}
+    assert set(WORKFLOW[True]) == {"pull_request", "merge_group", "schedule", "workflow_dispatch"}
 
 
 # --- git: the real change list --------------------------------------------------
@@ -531,3 +532,61 @@ def test_gate_does_not_wait_for_a_workflow_that_never_started():
     done = run_gate("1\t11\tbuild\tsuccess\tcompleted", "test\tsuccess")
     assert done.returncode == 0
     assert "E2E: cua SDK" not in done.stdout
+
+
+# --- the package graph narrows libs/cua and libs/cua-spacesd (CUA-3558) ------------
+
+GRAPH = scope.ci_graph.load(ROOT)
+
+
+def graph_decide(*paths):
+    return scope.decide([scope.Change("M", p) for p in paths], lambda side, path: None, graph=GRAPH)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "libs/cua/crates/cua-spaces-app-core/src/connectors.rs",
+        "libs/cua/crates/cua-spaces-cluster/src/pool/mod.rs",
+        "libs/cua/bench/streaming/budgets.json",
+        "libs/cua/swift/Package.swift",
+        "libs/cua-spacesd/CHANGELOG.md",
+        "libs/cua/CHANGELOG.md",
+        "libs/cua-spacesd/crates/cua-oidc/src/lib.rs",
+    ],
+)
+def test_out_of_closure_files_skip_with_the_graph(path):
+    assert not graph_decide(path)[0]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "libs/cua/crates/cua-sdk/src/lib.rs",
+        "libs/cua/crates/cua-cli/src/main.rs",
+        "libs/cua/crates/cua-daemon/src/lib.rs",
+        "libs/cua/crates/cua-mesh/src/lib.rs",
+        "libs/cua/typescript/src/index.ts",
+        "libs/cua/python/cua/__init__.py",
+        "libs/cua/scripts/build-test-fixtures.sh",
+        "libs/cua/skills/cua-spaces/SKILL.md",
+        "libs/cua/proto/cua/env/v1/env.proto",
+        "libs/cua/Cargo.lock",
+        "libs/cua-spacesd/Cargo.lock",
+        "libs/cua-spacesd/crates/cua-spacesd-server/src/lib.rs",
+        "libs/cua-spacesd/crates/cua-relay/src/lib.rs",
+        "libs/cua-spacesd/tests/spaces-e2e/src/main.rs",
+        "libs/cua-spacesd/scripts/ci/relay-e2e.sh",
+        "libs/images/linux/build.sh",
+    ],
+)
+def test_closure_files_and_unknown_files_run_with_the_graph(path):
+    assert graph_decide(path)[0]
+
+
+def test_without_a_graph_every_path_in_the_filter_still_runs():
+    assert scope.decide([scope.Change("M", "libs/cua/crates/cua-spaces-app-core/src/x.rs")], lambda s, p: None)[0]
+
+
+def test_one_input_among_out_of_closure_files_runs():
+    assert graph_decide("libs/cua/crates/cua-spaces-app-core/src/x.rs", "libs/cua/crates/cua-sdk/src/lib.rs")[0]

@@ -696,7 +696,8 @@ mod launch_resolution_tests {
         let none = std::collections::HashSet::new();
         let is_splash = |w: &crate::x11::WindowInfo| w.xid == 10;
 
-        assert!(settle_launch(&[splash.clone()], 377, "libreoffice", &none, is_splash).is_none());
+        let splash_only = std::slice::from_ref(&splash);
+        assert!(settle_launch(splash_only, 377, "libreoffice", &none, is_splash).is_none());
 
         let launched =
             settle_launch(&[splash, calc], 377, "libreoffice", &none, is_splash).unwrap();

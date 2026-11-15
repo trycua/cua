@@ -20,9 +20,9 @@ use super::impl_::{
     keyboard_window_center, named_session_cursor_key, prove_token_element, resolve_cursor_key,
     resolve_element_local_coords, reveal_pointer_action_for, screenshot_scale,
     spawn_blocking_bounded, spawn_isolated_hyprland, stale_observed_element,
-    unavailable_chromium_background, unavailable_gtk_pointer_background,
-    unavailable_wayland_focused_input_background, unavailable_webkit_background,
-    window_local_to_screen, window_screen_center, ToolState,
+    synthetic_pointer_is_dropped, unavailable_chromium_background,
+    unavailable_synthetic_pointer_background, unavailable_wayland_focused_input_background,
+    unavailable_webkit_background, window_local_to_screen, window_screen_center, ToolState,
 };
 
 /// Wheel detents for a compositor scroll: one per line. On niri a page is
@@ -292,7 +292,7 @@ impl Tool for ScrollTool {
                 crate::wayland::niri::is_session(),
             );
             let display = direction.clone();
-            let wayland = crate::wayland::wayland_input_enabled();
+            let wayland = crate::wayland::is_wayland();
             let path = if wayland { "wayland_desktop" } else { "xtest" };
             let space = match desktop_input_space().await {
                 Ok(space) => space,
@@ -495,7 +495,7 @@ impl Tool for ScrollTool {
             // event at the resolved element instead of reporting a silent
             // success. Other AX targets keep their semantic route before any
             // coordinate-based compositor fallback.
-            if !(crate::wayland::wayland_input_enabled() && is_webkitgtk_embedder(pid)) {
+            if !(crate::wayland::is_wayland() && is_webkitgtk_embedder(pid)) {
                 let direction_for_ax = direction.clone();
                 let ax_result = tokio::task::spawn_blocking(move || {
                     crate::atspi::scroll_token(pid, &element, &direction_for_ax, amount, by)
@@ -618,7 +618,7 @@ impl Tool for ScrollTool {
             };
         }
 
-        if crate::wayland::wayland_input_enabled() {
+        if crate::wayland::is_wayland() {
             if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, false) {
                 return refusal;
             }
@@ -662,7 +662,7 @@ impl Tool for ScrollTool {
                     crate::interaction::with_target_foreground(
                         pid,
                         xid,
-                        crate::interaction::pointer_gesture_restore(),
+                        crate::interaction::session_policy().gesture,
                         || {
                             crate::wayland::scroll_at(
                                 xid,
@@ -687,7 +687,7 @@ impl Tool for ScrollTool {
         if let Some(refusal) = unavailable_webkit_background(pid, delivery) {
             return refusal;
         }
-        if let Some(refusal) = unavailable_gtk_pointer_background(pid, delivery) {
+        if let Some(refusal) = unavailable_synthetic_pointer_background(pid, delivery) {
             return refusal;
         }
 
@@ -740,11 +740,11 @@ impl Tool for ScrollTool {
             "scroll",
             foreground_budget(amount_u32 as usize),
             move || -> anyhow::Result<()> {
-                if crate::wayland::wayland_input_enabled() {
+                if crate::wayland::is_wayland() {
                     return crate::interaction::with_target_foreground(
                         pid,
                         xid,
-                        crate::interaction::pointer_gesture_restore(),
+                        crate::interaction::session_policy().gesture,
                         || crate::wayland::scroll(xid, &direction_for_wayland, amount_u32),
                     );
                 }
@@ -783,6 +783,15 @@ impl Tool for ScrollTool {
                                 Err(error) if crate::input::is_uinput_unavailable(&error) => {
                                     return Err(error)
                                 }
+                                // GTK, Qt and VCL drop the synthetic Button4-7
+                                // fallback: report the failed wheel instead of
+                                // a scroll that moved nothing (#7369).
+                                Err(error) if synthetic_pointer_is_dropped(pid) => {
+                                    return Err(error.context(
+                                        "the agent pointer's wheel was not delivered, and this \
+                                         app drops synthetic wheel events",
+                                    ))
+                                }
                                 Err(e) => tracing::warn!("MPX scroll fell back to XSendEvent: {e}"),
                             }
                         }
@@ -805,6 +814,7 @@ impl Tool for ScrollTool {
                     crate::interaction::with_x11_foreground(
                         xid,
                         crate::input::ForegroundOptions::pointer(),
+                        crate::interaction::session_policy().gesture,
                         || {
                             crate::input::send_click_xtest_desktop(
                                 point.0 as i32,
@@ -828,9 +838,14 @@ impl Tool for ScrollTool {
         };
         match result {
             Ok(Ok(())) => ToolResult::text(format!(
-                "Scrolled {direction} {amount} ticks (delivery_mode={mode_label})."
+                "Sent {amount} wheel detent(s) {direction} (delivery_mode={mode_label}); the \
+                 scroll position is not verified, so confirm it from fresh state."
             ))
-            .with_structured(json!({ "verified": false, "delivery_mode": mode_label })),
+            .with_structured(json!({
+                "verified": false,
+                "effect": "unverifiable",
+                "delivery_mode": mode_label,
+            })),
             Ok(Err(e)) => input_error_result(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }

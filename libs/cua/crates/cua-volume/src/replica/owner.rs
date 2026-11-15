@@ -1065,12 +1065,31 @@ impl Inner {
     }
 
     pub(super) async fn save_pending_put(&self, key: &str, body: Body) -> Result<ObjectMeta> {
-        let base = self.pending_base(key).await;
+        let mut base = self.pending_base(key).await;
         let meta = match body {
             Body::Bytes(b) => self.spool.put(key, b, Condition::None).await?,
             Body::File(p) => self.spool.put_file(key, &p, Condition::None).await?,
         };
         let mut st = self.st.lock().await;
+        if key.starts_with(crate::feed::DEVICES_PREFIX) {
+            // A presence record keeps only its newest version (the spool
+            // just dropped the older ones), so an older saved heartbeat
+            // can never be sent. It is replaced, and the new one follows
+            // whatever the oldest of them followed.
+            let older: Vec<(String, Option<String>)> = st
+                .outbox
+                .items()
+                .iter()
+                .filter(|p| p.key == key && p.meta.is_some() && matches!(p.src, Src::Spool { .. }))
+                .map(|p| (p.id.clone(), p.base.clone()))
+                .collect();
+            for (i, (id, old_base)) in older.into_iter().enumerate() {
+                if i == 0 {
+                    base = old_base;
+                }
+                st.outbox.remove(&id)?;
+            }
+        }
         st.outbox.add(Pending {
             id: crate::new_id(),
             key: key.to_string(),
@@ -1121,8 +1140,35 @@ impl Inner {
         Ok(())
     }
 
+    /// Forgets saved changes whose bytes are gone from this machine: they
+    /// can never be sent or applied, and keeping them made every pass over
+    /// the outbox fail again (and log the same warning) without end. This
+    /// is what an older build left behind for a device's presence record.
+    async fn forget_lost_changes(&self) {
+        let mut st = self.st.lock().await;
+        let lost: Vec<Pending> = st
+            .outbox
+            .items()
+            .iter()
+            .filter(|p| {
+                p.meta.is_some()
+                    && !match &p.src {
+                        Src::Spool { key, version } => self.spool.version_file(key, version),
+                        Src::Data { key, version } => self.store.version_file(key, version),
+                    }
+                    .is_ok_and(|f| f.is_file())
+            })
+            .cloned()
+            .collect();
+        for p in lost {
+            tracing::warn!(key = %p.key, "replica: dropped a saved change whose content is gone");
+            let _ = st.outbox.remove(&p.id);
+        }
+    }
+
     /// Hands the outbox to the owner once this machine is caught up with it.
     pub(super) async fn submit_outbox(self: &Arc<Self>) {
+        self.forget_lost_changes().await;
         if self.drain_own_outbox().await {
             return;
         }

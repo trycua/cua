@@ -189,7 +189,7 @@ fn store_err(e: impl std::fmt::Display) -> Error {
 
 /// Tokens issued to the public client. The JSON shape is shared with the
 /// former Python CLI, so an existing keychain entry keeps working.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Credentials {
     /// Access token.
     pub access_token: String,
@@ -207,6 +207,22 @@ pub struct Credentials {
     /// ID token, when issued.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id_token: Option<String>,
+}
+
+impl std::fmt::Debug for Credentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Credentials")
+            .field("access_token", &"<redacted>")
+            .field(
+                "refresh_token",
+                &self.refresh_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field("expires_at", &self.expires_at)
+            .field("token_type", &self.token_type)
+            .field("scope", &self.scope)
+            .field("id_token", &self.id_token.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 fn bearer() -> String {
@@ -403,26 +419,39 @@ pub fn signed_by_cua() -> bool {
     })
 }
 
+/// Whether the default store is the OS vault, from the `CUA_CREDENTIAL_STORE`
+/// setting, the channel and whether this build is signed by Cua. Never on the
+/// Local channel (not even when the setting asks for it): see
+/// `CuaChannel::uses_login_keychain`.
+fn wants_vault(setting: &str, channel: cua_home::channel::CuaChannel, signed: bool) -> bool {
+    if !channel.uses_login_keychain() {
+        return false;
+    }
+    match setting {
+        "file" => false,
+        "keychain" | "keyring" => cfg!(any(target_os = "macos", target_os = "windows")),
+        _ => cfg!(target_os = "windows") || (cfg!(target_os = "macos") && signed),
+    }
+}
+
 impl Store {
     /// `CUA_CREDENTIAL_STORE` (`file` | `keychain`) or the default: the OS
     /// vault on Windows and for Cua-signed macOS builds, else the file.
     pub fn from_env() -> Self {
-        let file = || Store::File(cua_home().join("credentials.json"));
         let setting = std::env::var("CUA_CREDENTIAL_STORE").unwrap_or_default();
         if let Some(dir) = setting.strip_prefix("test-keychain:") {
             return Store::TestKeychain(PathBuf::from(dir));
         }
-        match setting.as_str() {
-            "file" => file(),
+        let channel = cua_home::channel::CuaChannel::current();
+        #[cfg(target_os = "macos")]
+        let signed = signed_by_cua();
+        #[cfg(not(target_os = "macos"))]
+        let signed = false;
+        if wants_vault(&setting, channel, signed) {
             #[cfg(any(target_os = "macos", target_os = "windows"))]
-            "keychain" | "keyring" => Store::Keyring,
-            #[cfg(target_os = "macos")]
-            _ if signed_by_cua() => Store::Keyring,
-            #[cfg(target_os = "windows")]
-            _ => Store::Keyring,
-            #[cfg(not(target_os = "windows"))]
-            _ => file(),
+            return Store::Keyring;
         }
+        Store::File(cua_home().join("credentials.json"))
     }
 
     /// `keychain` (the OS credential vault, or its test stand-in) or `file`.
@@ -860,6 +889,7 @@ impl Store {
             std::env::var("CUA_CREDENTIAL_STORE").ok().as_deref(),
             cua_home::is_test_process(),
             cua_home::is_under_real_home(path),
+            cua_home::channel::CuaChannel::current(),
         ) && cfg!(target_os = "macos")
     }
 
@@ -885,9 +915,12 @@ impl Store {
     /// build (see [`Store::reads_vault_fallback`]). A refusal (the user
     /// denied the keychain prompt) reads as nothing.
     fn read_vault_fallback(&self, name: &str) -> Option<String> {
-        if !self.reads_vault_fallback() {
-            return None;
-        }
+        vault_fallback_when(self.reads_vault_fallback(), || {
+            self.read_vault_fallback_now(name)
+        })
+    }
+
+    fn read_vault_fallback_now(&self, name: &str) -> Option<String> {
         #[cfg(target_os = "macos")]
         {
             // A signed build that has not run since the service was renamed
@@ -1636,11 +1669,20 @@ fn vault_fallback_applies(
     setting: Option<&str>,
     test_process: bool,
     under_real_home: bool,
+    channel: cua_home::channel::CuaChannel,
 ) -> bool {
-    !test_process
+    // The Local channel never reads the login Keychain (see `wants_vault`).
+    channel.uses_login_keychain()
+        && !test_process
         && under_real_home
         && setting.is_none_or(|s| s.trim().is_empty())
         && path == default_path
+}
+
+/// `read` (the vault) only when the fallback `applies`; else nothing, and the
+/// vault is never touched.
+fn vault_fallback_when(applies: bool, read: impl FnOnce() -> Option<String>) -> Option<String> {
+    if applies { read() } else { None }
 }
 
 fn read_optional(path: &Path) -> Result<Option<String>> {
@@ -2751,6 +2793,29 @@ mod tests {
         }
     }
 
+    /// `{:?}` (and so any log line or error that formats the credentials)
+    /// never carries a token.
+    #[test]
+    fn credentials_debug_redacts_every_token() {
+        let mut creds = session("sekret-access-1234", 1);
+        creds.refresh_token = Some("sekret-refresh-5678".into());
+        creds.id_token = Some("sekret-id-9012".into());
+        for out in [format!("{creds:?}"), format!("{creds:#?}")] {
+            for secret in [
+                "sekret-access-1234",
+                "sekret-refresh-5678",
+                "sekret-id-9012",
+            ] {
+                assert!(!out.contains(secret), "{out}");
+            }
+            assert!(out.contains("<redacted>"), "{out}");
+            assert!(out.contains("Bearer"), "{out}");
+        }
+        creds.refresh_token = None;
+        creds.id_token = None;
+        assert!(format!("{creds:?}").contains("refresh_token: None"));
+    }
+
     fn vault_token(vault: &Store) -> Option<String> {
         vault.load_stored().unwrap().map(|c| c.access_token)
     }
@@ -3079,21 +3144,68 @@ mod tests {
     #[test]
     fn only_the_default_file_store_outside_tests_reads_the_vault() {
         let d = Path::new("/h/.cua/credentials.json");
-        assert!(vault_fallback_applies(d, d, None, false, true));
-        assert!(vault_fallback_applies(d, d, Some(" "), false, true));
-        assert!(!vault_fallback_applies(d, d, Some("file"), false, true));
-        assert!(!vault_fallback_applies(d, d, None, true, true));
+        use cua_home::channel::CuaChannel::{Local, Stable};
+        assert!(vault_fallback_applies(d, d, None, false, true, Stable));
+        assert!(vault_fallback_applies(d, d, Some(" "), false, true, Stable));
+        assert!(!vault_fallback_applies(
+            d,
+            d,
+            Some("file"),
+            false,
+            true,
+            Stable
+        ));
+        assert!(!vault_fallback_applies(d, d, None, true, true, Stable));
         // A temporary CUA_HOME (a test harness, a sandbox) never does.
-        assert!(!vault_fallback_applies(d, d, None, false, false));
+        assert!(!vault_fallback_applies(d, d, None, false, false, Stable));
         assert!(!vault_fallback_applies(
             Path::new("/elsewhere/credentials.json"),
             d,
             None,
             false,
-            true
+            true,
+            Stable
         ));
+        // The Local channel never reads the login Keychain, whatever else holds.
+        assert!(!vault_fallback_applies(d, d, None, false, true, Local));
         // This test process never does.
         assert!(!Store::File(cua_home().join("credentials.json")).reads_vault_fallback());
+    }
+
+    #[test]
+    fn local_never_touches_the_vault_and_stable_still_does() {
+        use cua_home::channel::CuaChannel::{Local, Stable};
+        // The Local store is the file whatever is asked, signed or not.
+        for setting in ["", "file", "keychain", "keyring"] {
+            for signed in [false, true] {
+                assert!(!wants_vault(setting, Local, signed), "{setting} {signed}");
+            }
+        }
+        // Stable is unchanged: an explicit vault, Cua-signed macOS, Windows.
+        assert!(!wants_vault("file", Stable, true));
+        assert_eq!(
+            wants_vault("keychain", Stable, false),
+            cfg!(any(target_os = "macos", target_os = "windows"))
+        );
+        assert_eq!(
+            wants_vault("", Stable, true),
+            cfg!(any(target_os = "macos", target_os = "windows"))
+        );
+        assert_eq!(wants_vault("", Stable, false), cfg!(target_os = "windows"));
+        // The vault's copy is not read when the fallback does not apply (Local),
+        // and is when it does (Stable's unsigned default store).
+        let d = Path::new("/h/.cua/credentials.json");
+        let touched = std::cell::Cell::new(false);
+        let read = || {
+            touched.set(true);
+            Some("secret".to_string())
+        };
+        let local = vault_fallback_applies(d, d, None, false, true, Local);
+        assert_eq!(vault_fallback_when(local, read), None);
+        assert!(!touched.get(), "the Local channel touched the vault");
+        let stable = vault_fallback_applies(d, d, None, false, true, Stable);
+        assert_eq!(vault_fallback_when(stable, read).as_deref(), Some("secret"));
+        assert!(touched.get());
     }
 
     #[test]

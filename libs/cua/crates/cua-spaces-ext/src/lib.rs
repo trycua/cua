@@ -319,6 +319,16 @@ impl SpacesExtension for DriveExtension {
         })
     }
 
+    fn space_deleted<'a>(
+        &'a self,
+        spaces: &'a cua_spaces::Spaces,
+        space: &'a str,
+    ) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            spaces.persistent().space_deleted(space).await;
+        })
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }

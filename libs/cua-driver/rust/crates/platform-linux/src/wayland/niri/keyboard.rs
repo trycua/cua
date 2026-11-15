@@ -39,6 +39,10 @@ use wayland_client::protocol::{wl_callback, wl_keyboard, wl_registry, wl_seat};
 use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum};
 use xkbcommon::xkb;
 
+use super::super::text_keys::{
+    chromium_receives, evdev_in, find_key, level_mods, refused, text_sym, with_line_feeds, xkb1,
+    Xkb1, CHROMIUM_CODES,
+};
 use super::super::virtual_keyboard::protocol::zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1;
 use super::super::virtual_keyboard::protocol::zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1;
 
@@ -77,60 +81,16 @@ struct Part {
 /// The highest keycode Xwayland clients can receive.
 const MAX_X11_KEYCODE: u32 = 255;
 
-/// The evdev codes up to `MAX_X11_KEYCODE` that Chromium gives a DOM `code`
-/// (the rows of `ui/events/keycodes/dom/dom_code_data.inc` with an evdev
-/// code and a code string). Chromium and Electron drop a key without one.
-const CHROMIUM_CODES: [RangeInclusive<u32>; 22] = [
-    1..=83,
-    85..=94,
-    96..=100,
-    102..=111,
-    113..=117,
-    119..=129,
-    131..=138,
-    140..=140,
-    142..=144,
-    155..=156,
-    158..=159,
-    161..=161,
-    163..=168,
-    171..=173,
-    179..=180,
-    183..=194,
-    201..=201,
-    207..=208,
-    217..=217,
-    224..=225,
-    227..=227,
-    231..=233,
-];
-
 /// F13 to F24: Chromium knows them, keymaps give them symbols, and few
 /// keyboards have them, so a keymap may borrow them once its keys without
 /// symbols run out.
 const BORROWABLE: RangeInclusive<u32> = 183..=194;
 
-fn evdev_in(code: xkb::Keycode, ranges: &[RangeInclusive<u32>]) -> bool {
-    code.raw()
-        .checked_sub(8)
-        .is_some_and(|evdev| ranges.iter().any(|range| range.contains(&evdev)))
-}
-
-/// Whether Chromium receives evdev `code` (all of these are within
-/// `MAX_X11_KEYCODE`). A symbol the layout has only on other keys, such as
-/// US's `EuroSign` on `<I443>` (evdev 435), counts as missing and goes on a
-/// spare key.
-fn chromium_receives(code: u32) -> bool {
-    CHROMIUM_CODES.iter().any(|range| range.contains(&code))
-}
-
-fn refused(detail: impl std::fmt::Display) -> anyhow::Error {
-    anyhow!("foreground_unavailable: {detail}; nothing was typed")
-}
-
 /// `text`'s keys in layout `group` of `map`, cut into parts whose symbols
 /// the layout lacks fit on the keymap's spare keys.
-fn plan_text(map: &str, group: u32, text: &str) -> Result<Vec<Part>> {
+fn plan_text(xkb: &Xkb1, map: &str, group: u32, text: &str) -> Result<Vec<Part>> {
+    let text = with_line_feeds(text);
+    let text: &str = &text;
     let keymap = compile(map)?;
     if group >= keymap.num_layouts() {
         return Err(refused(format!(
@@ -138,45 +98,28 @@ fn plan_text(map: &str, group: u32, text: &str) -> Result<Vec<Part>> {
         )));
     }
     let spare = spare_keys(&keymap).len();
-    split(&keymap, group, text, spare)?
+    split(xkb, &keymap, group, text, spare)?
         .into_iter()
         .map(|(part, missing)| {
             if missing.is_empty() {
                 return Ok(Part {
-                    keys: characters(&keymap, group, part)?,
+                    keys: characters(xkb, &keymap, group, part)?,
                     extended: None,
                 });
             }
-            let (extended, serialized) = extend(map, &keymap, &missing)?;
+            let (extended, serialized) = extend(xkb, map, &keymap, &missing)?;
             Ok(Part {
-                keys: characters(&extended, group, part)?,
+                keys: characters(xkb, &extended, group, part)?,
                 extended: Some(serialized),
             })
         })
         .collect()
 }
 
-/// The keysym that types `c`. A line feed and a tab are the Return and Tab
-/// keys, as `wtype` types them; any other control character is refused.
-fn text_sym(c: char) -> Result<xkb::Keysym> {
-    match c {
-        '\n' => Ok(xkb::Keysym::Return),
-        '\t' => Ok(xkb::Keysym::Tab),
-        c if c.is_control() => Err(refused(format!(
-            "control character U+{:04X} cannot be typed",
-            u32::from(c)
-        ))),
-        c => match xkb::utf32_to_keysym(u32::from(c)) {
-            sym if sym.raw() == 0 => Err(refused(format!("U+{:04X} has no keysym", u32::from(c)))),
-            sym => Ok(sym),
-        },
-    }
-}
-
-fn characters(keymap: &xkb::Keymap, group: u32, text: &str) -> Result<Vec<Key>> {
+fn characters(xkb: &Xkb1, keymap: &xkb::Keymap, group: u32, text: &str) -> Result<Vec<Key>> {
     text.chars()
         .map(|c| {
-            find(keymap, group, text_sym(c)?)
+            find(xkb, keymap, group, text_sym(xkb, c)?)
                 .ok_or_else(|| refused(format!("U+{:04X} is absent from the keymap", u32::from(c))))
         })
         .collect()
@@ -185,6 +128,7 @@ fn characters(keymap: &xkb::Keymap, group: u32, text: &str) -> Result<Vec<Key>> 
 /// `text` cut at character boundaries into parts, each with the distinct
 /// symbols the layout lacks, in order of use, at most `spare` of them.
 fn split<'t>(
+    xkb: &Xkb1,
     keymap: &xkb::Keymap,
     group: u32,
     text: &'t str,
@@ -194,8 +138,8 @@ fn split<'t>(
     let (mut rest, mut start) = (text, 0);
     let mut missing = Vec::new();
     for (at, c) in text.char_indices() {
-        let sym = text_sym(c)?;
-        let present = find(keymap, group, sym).is_some_and(|key| chromium_receives(key.code));
+        let sym = text_sym(xkb, c)?;
+        let present = find(xkb, keymap, group, sym).is_some_and(|key| chromium_receives(key.code));
         if present || missing.contains(&sym) {
             continue;
         }
@@ -219,7 +163,12 @@ fn split<'t>(
 /// Put each of `syms` on a spare key of `map` and prove every other key, the
 /// layouts and the modifiers unchanged. Returns the extended keymap compiled
 /// and the exact text that was proven.
-fn extend(map: &str, keymap: &xkb::Keymap, syms: &[xkb::Keysym]) -> Result<(xkb::Keymap, String)> {
+fn extend(
+    xkb: &Xkb1,
+    map: &str,
+    keymap: &xkb::Keymap,
+    syms: &[xkb::Keysym],
+) -> Result<(xkb::Keymap, String)> {
     let spare = spare_keys(keymap);
     if syms.len() > spare.len() {
         return Err(refused("more missing symbols than spare keys"));
@@ -243,7 +192,7 @@ fn extend(map: &str, keymap: &xkb::Keymap, syms: &[xkb::Keysym]) -> Result<(xkb:
         .take(syms.len())
         .map(|(code, _)| *code)
         .collect();
-    if !unchanged(keymap, &extended, &used) {
+    if !unchanged(xkb, keymap, &extended, &used) {
         return Err(refused(
             "extending niri's keymap would change existing keys",
         ));
@@ -292,7 +241,12 @@ fn symbols_end(map: &str) -> Option<usize> {
 
 /// Every key but `added` is the same in both keymaps, and each of `added`
 /// had no symbols or is borrowable, and now types only its one symbol.
-fn unchanged(original: &xkb::Keymap, extended: &xkb::Keymap, added: &[xkb::Keycode]) -> bool {
+fn unchanged(
+    xkb: &Xkb1,
+    original: &xkb::Keymap,
+    extended: &xkb::Keymap,
+    added: &[xkb::Keycode],
+) -> bool {
     let mods = |map: &xkb::Keymap| -> Vec<String> {
         (0..map.num_mods())
             .map(|index| map.mod_get_name(index).to_owned())
@@ -303,14 +257,19 @@ fn unchanged(original: &xkb::Keymap, extended: &xkb::Keymap, added: &[xkb::Keyco
         && (original.min_keycode().raw()..=original.max_keycode().raw())
             .map(xkb::Keycode::new)
             .filter(|code| !added.contains(code))
-            .all(|code| same_key(original, extended, code))
+            .all(|code| same_key(xkb, original, extended, code))
         && added.iter().all(|&code| {
             (original.num_layouts_for_key(code) == 0 || evdev_in(code, &[BORROWABLE]))
                 && inert(extended, code)
         })
 }
 
-fn same_key(original: &xkb::Keymap, extended: &xkb::Keymap, code: xkb::Keycode) -> bool {
+fn same_key(
+    xkb: &Xkb1,
+    original: &xkb::Keymap,
+    extended: &xkb::Keymap,
+    code: xkb::Keycode,
+) -> bool {
     let layouts = original.num_layouts_for_key(code);
     layouts == extended.num_layouts_for_key(code)
         && (0..layouts).all(|layout| {
@@ -319,16 +278,10 @@ fn same_key(original: &xkb::Keymap, extended: &xkb::Keymap, code: xkb::Keycode) 
                 && (0..levels).all(|level| {
                     original.key_get_syms_by_level(code, layout, level)
                         == extended.key_get_syms_by_level(code, layout, level)
-                        && level_mods(original, code, layout, level)
-                            == level_mods(extended, code, layout, level)
+                        && level_mods(xkb, original, code, layout, level)
+                            == level_mods(xkb, extended, code, layout, level)
                 })
         })
-}
-
-fn level_mods(map: &xkb::Keymap, code: xkb::Keycode, layout: u32, level: u32) -> Vec<u32> {
-    let mut masks = [0_u32; 32];
-    let count = map.key_get_mods_for_level(code, layout, level, &mut masks);
-    masks.iter().take(count).copied().collect()
 }
 
 /// An added key has one symbol, in one layout and level, and changes no
@@ -355,34 +308,18 @@ fn compile(map: &str) -> Result<xkb::Keymap> {
     .ok_or_else(|| refused("niri supplied a keymap libxkbcommon cannot compile"))
 }
 
-/// The key and modifiers that type `sym` in layout `group`: one Chromium
-/// receives first, then the fewest modifiers, then the lowest code.
-fn find(map: &xkb::Keymap, group: u32, sym: xkb::Keysym) -> Option<Key> {
-    let mut candidates = Vec::new();
-    for raw in map.min_keycode().raw().max(8)..=map.max_keycode().raw() {
-        let code = xkb::Keycode::new(raw);
-        for level in 0..map.num_levels_for_key(code, group) {
-            if map.key_get_syms_by_level(code, group, level) != [sym] {
-                continue;
-            }
-            let masks = level_mods(map, code, group, level);
-            candidates.extend(masks.into_iter().filter_map(|modifiers| {
-                let mut state = xkb::State::new(map);
-                state.update_mask(modifiers, 0, 0, 0, 0, group);
-                (state.key_get_one_sym(code) == sym).then_some(Key {
-                    code: raw - 8,
-                    modifiers,
-                    group,
-                })
-            }));
-        }
-    }
-    candidates.into_iter().min_by_key(|key| {
-        (
-            !chromium_receives(key.code),
-            key.modifiers.count_ones(),
-            key.code,
-        )
+/// The key and modifiers that type `sym` in layout `group`. A virtual keyboard
+/// sets niri's modifier state outright, so nothing else is on when the key goes.
+fn find(xkb: &Xkb1, map: &xkb::Keymap, group: u32, sym: xkb::Keysym) -> Option<Key> {
+    let (code, modifiers) = find_key(xkb, map, group, sym, |code, modifiers| {
+        let mut state = xkb::State::new(map);
+        state.update_mask(modifiers, 0, 0, 0, 0, group);
+        (state.key_get_one_sym(code) == sym).then_some((modifiers.count_ones(), modifiers))
+    })?;
+    Some(Key {
+        code,
+        modifiers,
+        group,
     })
 }
 
@@ -390,18 +327,18 @@ fn find(map: &xkb::Keymap, group: u32, sym: xkb::Keysym) -> Option<Key> {
 /// `modifiers` held: in the active layout `group`, or else in the first other
 /// layout that has it, so `ctrl+c` still copies while a layout without Latin
 /// letters is active.
-fn plan_key(map: &str, group: u32, modifiers: &[String], name: &str) -> Result<Key> {
+fn plan_key(xkb: &Xkb1, map: &str, group: u32, modifiers: &[String], name: &str) -> Result<Key> {
     let keymap = compile(map)?;
     let sym = [xkb::KEYSYM_NO_FLAGS, xkb::KEYSYM_CASE_INSENSITIVE]
         .into_iter()
         .map(|flags| xkb::keysym_from_name(name, flags))
         .find(|sym| sym.raw() != 0)
         .ok_or_else(|| refused(format!("{name:?} is not a key name")))?;
-    let mut key = find(&keymap, group, sym)
+    let mut key = find(xkb, &keymap, group, sym)
         .or_else(|| {
             (0..keymap.num_layouts())
                 .filter(|&other| other != group)
-                .find_map(|other| find(&keymap, other, sym))
+                .find_map(|other| find(xkb, &keymap, other, sym))
         })
         .ok_or_else(|| refused(format!("key {name:?} is in no layout of niri's keymap")))?;
     for modifier in modifiers {
@@ -430,8 +367,8 @@ pub(in crate::wayland) fn type_text(expected: Option<u64>, text: &str) -> Result
         return Ok(());
     }
     let (total, sent, typed, finished) =
-        run_session(expected, text.chars().count(), |map, group| {
-            plan_text(map, group, text)
+        run_session(expected, text.chars().count(), |xkb, map, group| {
+            plan_text(xkb, map, group, text)
         })?;
     outcome(sent, total, typed, finished)
 }
@@ -445,9 +382,9 @@ pub(in crate::wayland) fn press(
     modifiers: &[String],
     name: &str,
 ) -> Result<()> {
-    let (_, sent, typed, finished) = run_session(expected, 1, |map, group| {
+    let (_, sent, typed, finished) = run_session(expected, 1, |xkb, map, group| {
         Ok(vec![Part {
-            keys: vec![plan_key(map, group, modifiers, name)?],
+            keys: vec![plan_key(xkb, map, group, modifiers, name)?],
             extended: None,
         }])
     })?;
@@ -482,8 +419,10 @@ fn session_deadline(now: Instant, keys: usize, call: Option<Instant>) -> Instant
 fn run_session(
     expected: Option<u64>,
     keys: usize,
-    plan: impl FnOnce(&str, u32) -> Result<Vec<Part>>,
+    plan: impl FnOnce(&Xkb1, &str, u32) -> Result<Vec<Part>>,
 ) -> Result<(usize, Sent, Result<()>, Result<()>)> {
+    // Refuse before asking niri anything or binding a keyboard.
+    let xkb = xkb1()?;
     let deadline = session_deadline(
         Instant::now(),
         keys,
@@ -493,7 +432,7 @@ fn run_session(
     let target = admitted_target(expected, focused)?;
     let group = super::keyboard_layout().map_err(super::input_unavailable)?;
     let mut keyboard = Keyboard::bind(deadline).map_err(|error| refused(format!("{error:#}")))?;
-    let parts = plan(&keyboard.base.text, group)?;
+    let parts = plan(xkb, &keyboard.base.text, group)?;
     let total = parts.iter().map(|part| part.keys.len()).sum();
     let mut sent = Sent::default();
     let typed = type_parts(&mut keyboard, &parts, group, deadline, &mut sent, |sent| {
@@ -874,7 +813,7 @@ mod tests {
     const ENTER: u32 = 28;
 
     fn codes(group: u32, text: &str) -> Vec<u32> {
-        let parts = plan_text(US_DE, group, text).unwrap();
+        let parts = plan_text(xkb1().unwrap(), US_DE, group, text).unwrap();
         assert!(
             parts.iter().all(|part| part.extended.is_none()),
             "{text:?} is all in layout {group}"
@@ -901,8 +840,27 @@ mod tests {
     }
 
     #[test]
+    fn ascii_goes_out_on_the_main_typing_block_in_both_layouts() {
+        // `us` also has `(` and `)` with no modifier on `KEY_KPLEFTPAREN` and
+        // `KEY_KPRIGHTPAREN`, which terminals can read as commands.
+        assert_eq!(codes(0, "()"), [10, 11]);
+        assert_eq!(codes(1, "()"), [9, 10]);
+        let ascii: String = (' '..='~').collect();
+        // German has `^` and `` ` `` only as dead keys, so those go on spare keys.
+        let german: String = ascii.chars().filter(|c| !"^`".contains(*c)).collect();
+        for (group, text) in [(0, ascii.as_str()), (1, german.as_str())] {
+            for code in codes(group, text) {
+                assert!(
+                    crate::wayland::text_keys::is_typing_key(code),
+                    "layout {group} types ASCII on evdev {code}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn text_uses_the_active_layout_and_its_shift_level() {
-        let shift = plan_text(US_DE, 0, "Z").unwrap()[0].keys[0].modifiers;
+        let shift = plan_text(xkb1().unwrap(), US_DE, 0, "Z").unwrap()[0].keys[0].modifiers;
         assert_ne!(shift, 0);
         // German swaps Y and Z.
         assert_eq!(codes(0, "yz"), [21, 44]);
@@ -916,8 +874,13 @@ mod tests {
     }
 
     #[test]
+    fn a_windows_line_ending_is_one_return() {
+        assert_eq!(codes(0, "a\r\nb\rc"), [30, ENTER, 48, ENTER, 46]);
+    }
+
+    #[test]
     fn a_control_character_refuses_before_anything_is_typed() {
-        let error = plan_text(US_DE, 0, "ok\u{7}").unwrap_err();
+        let error = plan_text(xkb1().unwrap(), US_DE, 0, "ok\u{7}").unwrap_err();
         assert_eq!(
             crate::input::foreground::error_code(&error),
             Some(crate::input::foreground::CODE_UNAVAILABLE)
@@ -927,33 +890,38 @@ mod tests {
 
     #[test]
     fn a_layout_niri_does_not_have_refuses() {
-        assert!(plan_text(US_DE, 2, "a").is_err());
+        assert!(plan_text(xkb1().unwrap(), US_DE, 2, "a").is_err());
     }
 
     #[test]
     fn a_symbol_the_layout_lacks_goes_on_a_spare_key_and_every_other_key_stays() {
         let original = compile(US_DE).unwrap();
-        let [part] = <[Part; 1]>::try_from(plan_text(US_DE, 0, "a→😀").unwrap()).unwrap();
+        let [part] =
+            <[Part; 1]>::try_from(plan_text(xkb1().unwrap(), US_DE, 0, "a→😀").unwrap()).unwrap();
         let extended = compile(part.extended.as_deref().unwrap()).unwrap();
         assert_eq!(part.keys[0].code, 30);
         let state = xkb::State::new(&extended);
         for (key, c) in part.keys.iter().zip("a→😀".chars()).skip(1) {
             let code = xkb::Keycode::new(key.code + 8);
             assert!(evdev_in(code, &CHROMIUM_CODES), "{c} on code {}", key.code);
-            assert_eq!(state.key_get_one_sym(code), text_sym(c).unwrap());
+            assert_eq!(
+                state.key_get_one_sym(code),
+                text_sym(xkb1().unwrap(), c).unwrap()
+            );
         }
         let used: Vec<xkb::Keycode> = part.keys[1..]
             .iter()
             .map(|key| xkb::Keycode::new(key.code + 8))
             .collect();
-        assert!(unchanged(&original, &extended, &used));
+        assert!(unchanged(xkb1().unwrap(), &original, &extended, &used));
     }
 
     #[test]
     fn a_symbol_only_on_a_key_chromium_drops_goes_on_a_spare_key() {
         // US has `EuroSign` only on <I443> (evdev 435): past Xwayland's last
         // keycode and without a DOM code, so Chromium dropped the €.
-        let [part] = <[Part; 1]>::try_from(plan_text(US_DE, 0, "a€").unwrap()).unwrap();
+        let [part] =
+            <[Part; 1]>::try_from(plan_text(xkb1().unwrap(), US_DE, 0, "a€").unwrap()).unwrap();
         assert!(part.extended.is_some());
         let euro = xkb::Keycode::new(part.keys[1].code + 8);
         assert!(
@@ -964,10 +932,11 @@ mod tests {
         let extended = compile(part.extended.as_deref().unwrap()).unwrap();
         assert_eq!(
             xkb::State::new(&extended).key_get_one_sym(euro),
-            text_sym('€').unwrap()
+            text_sym(xkb1().unwrap(), '€').unwrap()
         );
         // German has it on AltGr+E, which every client receives.
-        let [part] = <[Part; 1]>::try_from(plan_text(US_DE, 1, "€").unwrap()).unwrap();
+        let [part] =
+            <[Part; 1]>::try_from(plan_text(xkb1().unwrap(), US_DE, 1, "€").unwrap()).unwrap();
         assert!(part.extended.is_none());
         assert_eq!(part.keys[0].code, 18);
     }
@@ -978,7 +947,7 @@ mod tests {
         let text: String = (0..=spare as u32)
             .map(|i| char::from_u32(0x2190 + i).unwrap())
             .collect();
-        let parts = plan_text(US_DE, 0, &text).unwrap();
+        let parts = plan_text(xkb1().unwrap(), US_DE, 0, &text).unwrap();
         assert_eq!(parts.len(), 2);
         assert_eq!(
             parts.iter().map(|part| part.keys.len()).sum::<usize>(),
@@ -994,27 +963,27 @@ mod tests {
 
     #[test]
     fn a_chord_goes_out_on_the_layouts_key_with_its_modifier() {
-        let copy = plan_key(US_DE, 0, &["ctrl".into()], "c").unwrap();
+        let copy = plan_key(xkb1().unwrap(), US_DE, 0, &["ctrl".into()], "c").unwrap();
         assert_eq!((copy.code, copy.modifiers, copy.group), (46, ctrl(), 0));
         // German has Z where US has Y.
-        let undo = plan_key(US_DE, 1, &["ctrl".into()], "z").unwrap();
+        let undo = plan_key(xkb1().unwrap(), US_DE, 1, &["ctrl".into()], "z").unwrap();
         assert_eq!((undo.code, undo.group), (21, 1));
-        let enter = plan_key(US_DE, 0, &[], "Return").unwrap();
+        let enter = plan_key(xkb1().unwrap(), US_DE, 0, &[], "Return").unwrap();
         assert_eq!((enter.code, enter.modifiers), (ENTER, 0));
     }
 
     #[test]
     fn a_key_the_active_layout_lacks_goes_out_in_one_that_has_it() {
         // German has no plain `grave` keysym (only a dead key).
-        let grave = plan_key(US_DE, 1, &[], "grave").unwrap();
+        let grave = plan_key(xkb1().unwrap(), US_DE, 1, &[], "grave").unwrap();
         assert_eq!((grave.code, grave.group), (41, 0));
     }
 
     #[test]
     fn an_unknown_key_or_modifier_refuses() {
         for error in [
-            plan_key(US_DE, 0, &[], "NoSuchKey").unwrap_err(),
-            plan_key(US_DE, 0, &["hyper".into()], "a").unwrap_err(),
+            plan_key(xkb1().unwrap(), US_DE, 0, &[], "NoSuchKey").unwrap_err(),
+            plan_key(xkb1().unwrap(), US_DE, 0, &["hyper".into()], "a").unwrap_err(),
         ] {
             assert_eq!(
                 crate::input::foreground::error_code(&error),
@@ -1053,7 +1022,7 @@ mod tests {
 
     #[test]
     fn an_extended_keymap_goes_up_before_its_first_key() {
-        let parts = plan_text(US_DE, 0, "a→").unwrap();
+        let parts = plan_text(xkb1().unwrap(), US_DE, 0, "a→").unwrap();
         let mut recorder = Recorder::default();
         let mut sent = Sent::default();
         type_parts(&mut recorder, &parts, 0, later(), &mut sent, |_| Ok(())).unwrap();
@@ -1064,7 +1033,7 @@ mod tests {
 
     #[test]
     fn typing_stops_when_focus_leaves_and_reports_the_partial_effect() {
-        let parts = plan_text(US_DE, 0, "hello").unwrap();
+        let parts = plan_text(xkb1().unwrap(), US_DE, 0, "hello").unwrap();
         let mut recorder = Recorder::default();
         let mut sent = Sent::default();
         let mut checks = 0;
@@ -1167,7 +1136,7 @@ mod tests {
 
     #[test]
     fn a_stroke_that_fails_after_sending_says_its_key_may_have_gone_out() {
-        let parts = plan_text(US_DE, 0, "hello").unwrap();
+        let parts = plan_text(xkb1().unwrap(), US_DE, 0, "hello").unwrap();
         for (fails, message) in [
             (
                 2,
@@ -1209,7 +1178,7 @@ mod tests {
 
     #[test]
     fn typing_stops_at_the_deadline() {
-        let parts = plan_text(US_DE, 0, "hello").unwrap();
+        let parts = plan_text(xkb1().unwrap(), US_DE, 0, "hello").unwrap();
         let mut recorder = Recorder::default();
         let mut sent = Sent::default();
         let typed = type_parts(&mut recorder, &parts, 0, Instant::now(), &mut sent, |_| {

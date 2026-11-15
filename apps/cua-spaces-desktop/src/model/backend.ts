@@ -97,7 +97,9 @@ export interface ShareSettingsRow {
 
 /** The binding's enum values are its words, spelled its own way ("OnlyMyCloud", "only_my_cloud"): compare without case or underscores. */
 const landingWord = (l: ShareLanding): ShareSettingsRow["landing"] => {
-  const w = String(l).toLowerCase().replace(/[^a-z]/g, "");
+  const w = String(l)
+    .toLowerCase()
+    .replace(/[^a-z]/g, "");
   return w === "onlymycloud" ? "only_my_cloud" : w === "allowrelay" ? "allow_relay" : "auto";
 };
 
@@ -247,8 +249,9 @@ export interface SpacesBackend {
   /** `services.list` / `services.control`: the commands a Space keeps running. */
   services?(id: string): Promise<ServiceJson[]>;
   controlService?(id: string, name: string, action: string): Promise<void>;
-  /** Takes one of your machines off the relay directory (`relay:<machine>`), refused while it is online. */
-  relayUnregister(machineId: string): Promise<void>;
+  /** Takes one of your machines off the relay directory (`relay:<machine>`), refused while it is online. The Spaces made on
+   * it are detached, or with `deleteSpaces` deleted too (the SDK's `relay_unregister_computer`). */
+  relayUnregister(machineId: string, deleteSpaces?: boolean): Promise<void>;
   /** A machine's health as its own cua daemon checks it (the SDK's `Spaces.machine_health`): null for this one, else another of yours by id. */
   machineHealth(machine: string | null): Promise<MachineHealthReport>;
   setPower(id: string, on: boolean): Promise<void>;
@@ -468,7 +471,17 @@ export function gpuChoices(support: GpuSupport[]): AppGpuChoice[] {
     const o = s.options[0];
     if (!o) return [];
     const reason = o.reason.trim();
-    return [{ runtime: s.runtime, id: o.id, label: o.label, experimental: o.experimental, supported: o.supported, reason: reason || undefined, learnMore: o.learnMore }];
+    return [
+      {
+        runtime: s.runtime,
+        id: o.id,
+        label: o.label,
+        experimental: o.experimental,
+        supported: o.supported,
+        reason: reason || undefined,
+        learnMore: o.learnMore,
+      },
+    ];
   });
 }
 
@@ -501,7 +514,14 @@ export class LiveSpacesBackend implements SpacesBackend {
   /** This machine's Spaces at once, your other computers as far as they answered (`Spaces.list_known`). */
   async listRead(): Promise<ListRead> {
     const list = await this.cua.spaces().listKnown();
-    const creating = (list.creating ?? []).map((c) => ({ machineId: c.machineId, machineName: c.machineName, name: c.name, os: c.os, phase: c.phase, percent: c.percent }));
+    const creating = (list.creating ?? []).map((c) => ({
+      machineId: c.machineId,
+      machineName: c.machineName,
+      name: c.name,
+      os: c.os,
+      phase: c.phase,
+      percent: c.percent,
+    }));
     return { rows: await this.probe(list.spaces), incomplete: list.incomplete, reaching: list.reaching, stale: list.stale, notice: list.notice, creating };
   }
 
@@ -525,6 +545,8 @@ export class LiveSpacesBackend implements SpacesBackend {
           imageDigest: text(info.imageDigest),
           kind: kindOf(this.native, info.kind),
           arch: text(info.arch),
+          // The home warming for Home's prompt box (label `cua.hidden`): no list shows it.
+          hidden: Boolean(info.labels?.has("cua.hidden")),
           reachable: false,
           error: undefined,
           host: text(info.host),
@@ -742,7 +764,14 @@ export class LiveSpacesBackend implements SpacesBackend {
 
   async services(id: string): Promise<ServiceJson[]> {
     const space = await this.cua.spaces().space(id);
-    return (await space.keptServices()).map((s) => ({ name: s.name, command: s.command, state: s.state, restarts: Number(s.restarts), lastEnd: s.lastEnd, probeError: s.probeError }));
+    return (await space.keptServices()).map((s) => ({
+      name: s.name,
+      command: s.command,
+      state: s.state,
+      restarts: Number(s.restarts),
+      lastEnd: s.lastEnd,
+      probeError: s.probeError,
+    }));
   }
 
   async controlService(id: string, name: string, action: string): Promise<void> {
@@ -765,8 +794,9 @@ export class LiveSpacesBackend implements SpacesBackend {
     }
   }
 
-  async relayUnregister(machineId: string): Promise<void> {
-    await this.cua.spaces().relayUnregister(`relay:${machineId}`);
+  async relayUnregister(machineId: string, deleteSpaces = false): Promise<void> {
+    if (deleteSpaces) await this.cua.spaces().relayUnregisterComputer(`relay:${machineId}`, true);
+    else await this.cua.spaces().relayUnregister(`relay:${machineId}`);
   }
 
   async machineHealth(machine: string | null): Promise<MachineHealthReport> {
@@ -881,7 +911,19 @@ export class LiveSpacesBackend implements SpacesBackend {
 
   async usage(id: string): Promise<AppSpaceUsage | null> {
     const u = await bounded(5, async () => (await this.cua.spaces().space(id)).usage());
-    return u ? { cpuCount: u.cpuCount, cpuPercent: u.cpuPercent, loadAverage1m: u.loadAverage1m, memoryUsed: u.memoryUsed, memoryTotal: u.memoryTotal, memoryLimited: u.memoryLimited, diskUsed: u.diskUsed, diskTotal: u.diskTotal, diskLimited: u.diskLimited } : null;
+    return u
+      ? {
+          cpuCount: u.cpuCount,
+          cpuPercent: u.cpuPercent,
+          loadAverage1m: u.loadAverage1m,
+          memoryUsed: u.memoryUsed,
+          memoryTotal: u.memoryTotal,
+          memoryLimited: u.memoryLimited,
+          diskUsed: u.diskUsed,
+          diskTotal: u.diskTotal,
+          diskLimited: u.diskLimited,
+        }
+      : null;
   }
 
   async resources(visible: boolean): Promise<ResourcesSnapshot | null> {
@@ -904,7 +946,9 @@ export class LiveSpacesBackend implements SpacesBackend {
   }
 
   async thumbnail(id: string, maxAgeMs: number | null): Promise<SpaceThumbnailData | null> {
-    const t = await bounded(5, async () => (await this.cua.spaces().space(id)).thumbnail(maxAgeMs === null ? undefined : BigInt(Math.max(0, Math.round(maxAgeMs)))));
+    const t = await bounded(5, async () =>
+      (await this.cua.spaces().space(id)).thumbnail(maxAgeMs === null ? undefined : BigInt(Math.max(0, Math.round(maxAgeMs)))),
+    );
     if (!t || t.image.byteLength === 0) return null;
     return {
       image: new Uint8Array(t.image),
@@ -946,10 +990,25 @@ export class LiveSpacesBackend implements SpacesBackend {
     return linkRow(await this.cua.share(target, a, ttlSeconds ?? undefined, name ?? undefined));
   }
 
-  async createTcpLink(target: string, service: string | null, ttlSeconds: number | null, name: string | null, options: TcpShareOptions = {}): Promise<ShareLinkRow> {
+  async createTcpLink(
+    target: string,
+    service: string | null,
+    ttlSeconds: number | null,
+    name: string | null,
+    options: TcpShareOptions = {},
+  ): Promise<ShareLinkRow> {
     const allow = options.allow && options.allow.length > 0 ? options.allow : undefined;
     return linkRow(
-      await this.cua.shareTcp(target, service ?? undefined, ttlSeconds ?? undefined, name ?? undefined, options.route ?? undefined, allow, options.checkHost === true, options.consent === true),
+      await this.cua.shareTcp(
+        target,
+        service ?? undefined,
+        ttlSeconds ?? undefined,
+        name ?? undefined,
+        options.route ?? undefined,
+        allow,
+        options.checkHost === true,
+        options.consent === true,
+      ),
     );
   }
 
@@ -1118,7 +1177,13 @@ function budgetJson(b: SdkBudget): TreeBudgetJson {
   const opt = (v: bigint | number | undefined) => (v === undefined || v === null ? null : Number(v));
   return {
     root: b.root,
-    set: { maxSpaces: opt(b.set.maxSpaces), maxVcpus: opt(b.set.maxVcpus), maxMemoryMb: opt(b.set.maxMemoryMb), usdPerHour: opt(b.set.usdPerHour), usdTotal: opt(b.set.usdTotal) },
+    set: {
+      maxSpaces: opt(b.set.maxSpaces),
+      maxVcpus: opt(b.set.maxVcpus),
+      maxMemoryMb: opt(b.set.maxMemoryMb),
+      usdPerHour: opt(b.set.usdPerHour),
+      usdTotal: opt(b.set.usdTotal),
+    },
     maxSpaces: Number(b.maxSpaces),
     maxVcpus: Number(b.maxVcpus),
     maxMemoryMb: Number(b.maxMemoryMb),
@@ -1159,21 +1224,31 @@ export function createExtrasOf(config: Record<string, unknown>): CreateExtras {
   if (config.children === true) out.children = true;
   const l = config.labels;
   if (l && typeof l === "object" && !Array.isArray(l)) {
-    const labels = Object.fromEntries(Object.entries(l as Record<string, unknown>).filter(([k, v]) => k !== "" && typeof v === "string" && v !== "")) as Record<string, string>;
+    const labels = Object.fromEntries(Object.entries(l as Record<string, unknown>).filter(([k, v]) => k !== "" && typeof v === "string" && v !== "")) as Record<
+      string,
+      string
+    >;
     if (Object.keys(labels).length) out.labels = labels;
   }
   return out;
 }
 
 /** The SDK's `NetworkSettings` for a preset word (`internet`, `none`,
- * `localhost:5432,3000`, `localhost:all`, `lan`, `custom`, `custom:none`,
- * `unprotected`) and lists. `via`: where its internet traffic leaves
+ * `localhost:5432,3000`, `localhost:all`, `lan`, `localhost+lan:5432,3000`, `custom`,
+ * `custom:none`, `unprotected`) and lists. `via`: where its internet traffic leaves
  * (`internet`, `this-machine`, `space:<id>`, `socks5://...`); left out:
  * the exit it has. */
 export function networkSettingsOf(word: string, allow: string[], deny: string[], via?: string) {
   const [preset, rest = ""] = word.trim().toLowerCase().split(":", 2) as [string, string?];
-  const all = preset === "localhost" && rest === "all";
-  const ports = preset === "localhost" && !all ? rest.split(",").map((p) => Number(p.trim())).filter((p) => Number.isInteger(p) && p > 0 && p < 65536) : [];
+  const opensLocalhost = preset === "localhost" || preset === "localhost+lan";
+  const all = opensLocalhost && rest === "all";
+  const ports =
+    opensLocalhost && !all
+      ? rest
+          .split(",")
+          .map((p) => Number(p.trim()))
+          .filter((p) => Number.isInteger(p) && p > 0 && p < 65536)
+      : [];
   return {
     preset,
     localhostPorts: ports,

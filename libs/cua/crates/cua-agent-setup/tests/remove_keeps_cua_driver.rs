@@ -22,11 +22,12 @@ use std::path::{Path, PathBuf};
 const AGENTS: [&str; 3] = ["claude-code", "codex", "cursor"];
 
 /// The Cua Spaces skills `cua agents setup` installs next to Cua Driver's.
-const SPACES_SKILLS: [&str; 4] = [
+const SPACES_SKILLS: [&str; 5] = [
     "cua-sandboxes",
     "cua-spaces",
     "cua-volume",
     "gui-automation",
+    "supercomputer",
 ];
 
 struct Home {

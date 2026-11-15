@@ -848,6 +848,14 @@ pub fn supervisor_wake() -> Arc<tokio::sync::Notify> {
     W.get_or_init(Default::default).clone()
 }
 
+/// Wakes the dispatcher of this process alone (it runs apart from the
+/// supervisor's pass, so a pass held up by a slow Space never delays a
+/// new message reaching its agent).
+pub fn dispatch_wake() -> Arc<tokio::sync::Notify> {
+    static W: OnceLock<Arc<tokio::sync::Notify>> = OnceLock::new();
+    W.get_or_init(Default::default).clone()
+}
+
 fn fold_cache() -> &'static Mutex<HashMap<PathBuf, Fold>> {
     static CACHE: OnceLock<Mutex<HashMap<PathBuf, Fold>>> = OnceLock::new();
     CACHE.get_or_init(Default::default)
@@ -1078,6 +1086,7 @@ impl ThreadStore {
         self.notifier().notify_waiters();
         if wakes {
             supervisor_wake().notify_one();
+            dispatch_wake().notify_one();
         }
         if let Some(hook) = APPEND_HOOK.get() {
             hook(self.space(), &out);
@@ -1477,6 +1486,31 @@ pub fn dm_summary(
 }
 
 /// One task, as the entries so far say.
+/// The first few words of a task's text for a notice, without the leading
+/// `@handle`s that addressed it, in curly quotes: `“look at the flaky test”`.
+pub fn task_words(text: &str) -> String {
+    let body: Vec<&str> = text
+        .split_whitespace()
+        .skip_while(|w| w.starts_with('@'))
+        .take(6)
+        .collect();
+    let mut out = body.join(" ");
+    let more = text
+        .split_whitespace()
+        .skip_while(|w| w.starts_with('@'))
+        .count()
+        > 6;
+    out = out.trim_end_matches(['.', ',', ':', ';']).to_string();
+    if more {
+        out.push('…');
+    }
+    if out.is_empty() {
+        out = "its task".into();
+        return out;
+    }
+    format!("\u{201c}{out}\u{201d}")
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct TaskInfo {
     /// The task's entry.

@@ -91,12 +91,7 @@ function reduceOnce(core: CoreClient, state: OnboardingFlowState, action: Onboar
  * Menu bar, the choice starts from the setting now (it may have changed in
  * Settings since the flow started), as the SwiftUI page does on appear.
  */
-export function onboardingReduce(
-  core: CoreClient,
-  state: OnboardingFlowState,
-  action: OnboardingAction,
-  ctx: OnboardingContext,
-): OnboardingFlowState {
+export function onboardingReduce(core: CoreClient, state: OnboardingFlowState, action: OnboardingAction, ctx: OnboardingContext): OnboardingFlowState {
   const passed = passedSteps(ctx.os);
   let s = reduceOnce(core, state, action, ctx);
   for (let guard = 0; guard < passed.length + 1 && passed.includes(s.step); guard++) {
@@ -144,9 +139,7 @@ export function onboardingCopy(core: CoreClient): OnboardingCopy {
 
 /** "Signed in as ada@example.com." */
 export function signedInText(core: CoreClient, identity: string | null): string {
-  return (
-    core.tryCall<string>("onboarding.signedInText", { identity }) ?? (identity ? `Signed in as ${identity}.` : "Signed in.")
-  );
+  return core.tryCall<string>("onboarding.signedInText", { identity }) ?? (identity ? `Signed in as ${identity}.` : "Signed in.");
 }
 
 /** "Confirm ABCD-EFGH in your browser." or "Finish in your browser." */
@@ -168,9 +161,7 @@ export function permissionRows(core: CoreClient, hints: PermissionHint[]): Permi
   }));
   return (
     core.tryCall<PermissionRow[]>("host.permissionRows", { permissions }) ??
-    permissions
-      .filter((p) => !p.granted)
-      .map((p) => ({ id: p.id, title: p.title, help: p.instructions ?? "", settingsUrl: p.settingsUrl || null }))
+    permissions.filter((p) => !p.granted).map((p) => ({ id: p.id, title: p.title, help: p.instructions ?? "", settingsUrl: p.settingsUrl || null }))
   );
 }
 
@@ -266,10 +257,14 @@ function thisComputer(os: HostOs): string {
 
 function fallbackView(s: OnboardingFlowState, os: HostOs): OnboardingView {
   const pages: Partial<Record<OnboardingStep, [string, string, string]>> = {
-    welcome: ["Welcome to Cua Spaces", "Computers for you and your AI agents. Setup takes about a minute.", "Get started"],
+    welcome: ["Welcome to Cua Spaces", "Computers for you and your AI agents.", "Get started"],
     signin: ["Sign in", "Sign in to reach your computers and Spaces from any of your computers. You can skip this and sign in later.", "Continue"],
     presentation: ["Where should Cua Spaces show up?", "You can change this in Settings.", "Continue"],
-    mode: [`How do you want to use ${thisComputer(os)}?`, "Use it only to open your other computers, or let your other computers reach it too. You can change this later.", "Continue"],
+    mode: [
+      `How do you want to use ${thisComputer(os)}?`,
+      "Use it only to open your other computers, or let your other computers reach it too. You can change this later.",
+      "Continue",
+    ],
     done: ["You're all set", os === "macos" ? "Cua Spaces is in your menu bar." : "Cua Spaces is in your system tray.", "Start using Cua Spaces"],
   };
   const todos = s.step === "done" ? fallbackTodos(s) : [];
@@ -315,11 +310,17 @@ function fallbackView(s: OnboardingFlowState, os: HostOs): OnboardingView {
     presentations:
       s.step === "presentation"
         ? [
-            { menuBar: false, title: "Notch and menu bar", id: "onboarding-notch", imageLabel: "The Spaces tiles open from the notch, and the menu bar menu", selected: !s.menuBar },
+            {
+              menuBar: false,
+              title: "Notch and menu bar",
+              id: "onboarding-notch",
+              imageLabel: "The Spaces tiles open from the notch, and the menu bar menu",
+              selected: !s.menuBar,
+            },
             { menuBar: true, title: "Menu bar only", id: "onboarding-menu-bar", imageLabel: "The menu bar menu alone", selected: s.menuBar },
           ]
         : [],
-    notice: s.step === "welcome" ? "Cua collects usage data, like which features you use and when something goes wrong. When you're signed in, it's linked to your account through a random ID. Never your files, what you type or your screen. Change this here or in Settings, Privacy." : null,
+    notice: s.step === "welcome" ? "Features you use and errors, linked to your account. Never your files, typing or screen." : null,
     noticeLinkLabel: s.step === "welcome" ? "What is collected" : null,
     noticeLinkUrl: s.step === "welcome" ? "https://cua.ai/docs/cua-sdk/concepts/telemetry" : null,
     usage:

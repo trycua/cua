@@ -25,6 +25,14 @@ beforeAll(async () => {
 const warning: RelayUsage = { ...demoRelayUsage(), hoursUsed: 16.5, liveSessions: 0 };
 const reached: RelayUsage = { ...demoRelayUsage(), hoursUsed: 20.2, softLimitReached: true, reasons: ["hours"] };
 
+/** Waits for the limit card (a used allowance is a card, not the thin line). */
+const limitCard = () =>
+  waitFor(() => {
+    const el = document.querySelector("[data-relay-allowance='limit-card'] [data-upgrade-card]");
+    expect(el).toBeTruthy();
+    return el as HTMLElement;
+  });
+
 /** The demo host answering `usage`, recording the links it opens. */
 function host(usage: RelayUsage | null, accountUrl?: string) {
   const demo = createDemoAdapter({ latencyMs: 0 });
@@ -57,28 +65,21 @@ describe.skipIf(!wasmBuilt)("<RelayAllowanceNotice>", () => {
     expect(document.querySelector("[data-relay-allowance]")).toBeNull();
   });
 
-  it("past the allowance: says the Spaces keep working, and Upgrade opens the plan's page", async () => {
+  it("past the allowance: a card says what Pro gives, and Upgrade opens the plan's page", async () => {
     const { view, opened } = host(reached);
     view();
-    const notice = await screen.findByRole("status");
-    expect(notice.textContent).toContain("You're using 20.2 of 20 remote hours on the free plan. Your Spaces keep working.");
-    fireEvent.click(screen.getByRole("button", { name: "Upgrade" }));
-    await waitFor(() => expect(opened).toEqual(["https://app.cua.ai/buy/pro?from=app_meter"]));
+    const card = await limitCard();
+    expect(card.textContent).toContain("Pro gives you 200 hours");
+    fireEvent.click(screen.getByRole("button", { name: "Upgrade to Pro" }));
+    await waitFor(() => expect(opened).toEqual(["https://app.cua.ai/buy/pro?from=app_card_hours"]));
   });
 
-  it("Upgrade opens the host's account app: Free to Pro, Pro to Teams", async () => {
+  it("Upgrade opens the host's account app", async () => {
     const staging = host({ ...reached, upgradeUrl: null }, "https://app.staging.cua.ai");
     staging.view();
-    await waitFor(() => {
-      fireEvent.click(screen.getByRole("button", { name: "Upgrade" }));
-      expect(staging.opened).toContain("https://app.staging.cua.ai/buy/pro?from=app_meter");
-    });
-    cleanup();
-    localStorage.clear();
-    const pro = host({ ...reached, plan: "pro", upgradeUrl: null });
-    pro.view();
-    fireEvent.click(await screen.findByRole("button", { name: "Upgrade" }));
-    await waitFor(() => expect(pro.opened).toEqual(["https://app.cua.ai/buy/teams?from=app_meter"]));
+    await limitCard();
+    fireEvent.click(screen.getByRole("button", { name: "Upgrade to Pro" }));
+    await waitFor(() => expect(staging.opened).toContain("https://app.staging.cua.ai/buy/pro?from=app_card_hours"));
   });
 
   it("at 80% of the hours: a heads-up that says nothing stops, with Pro's checkout", async () => {
@@ -98,7 +99,7 @@ describe.skipIf(!wasmBuilt)("<RelayAllowanceNotice>", () => {
     expect(document.querySelector("[data-relay-allowance]")).toBeNull();
     cleanup();
     host({ ...reached, liveSessions: 1 }).view();
-    expect(await screen.findByRole("status")).toBeTruthy();
+    await limitCard();
   });
 
   it("the heads-up shows once: one prompt every three days, and a closed one stays closed", async () => {
@@ -111,13 +112,14 @@ describe.skipIf(!wasmBuilt)("<RelayAllowanceNotice>", () => {
     cleanup();
     // The limit notice has its own dismissal and is not held back by the heads-up's.
     host(reached).view();
-    expect(await screen.findByRole("status")).toBeTruthy();
+    await limitCard();
   });
 
   it("dismissed, it stays hidden for that month and reason, and shows again for another", async () => {
     const first = host(reached);
     first.view();
-    fireEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
+    await limitCard();
+    fireEvent.click(screen.getByRole("button", { name: "Not now" }));
     expect(document.querySelector("[data-relay-allowance]")).toBeNull();
     cleanup();
 
@@ -127,6 +129,6 @@ describe.skipIf(!wasmBuilt)("<RelayAllowanceNotice>", () => {
     cleanup();
 
     host({ ...reached, reasons: ["sessions", "hours"] }).view();
-    expect(await screen.findByRole("status")).toBeTruthy();
+    await limitCard();
   });
 });

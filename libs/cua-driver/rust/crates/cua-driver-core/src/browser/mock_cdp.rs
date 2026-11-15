@@ -37,6 +37,8 @@ pub(crate) struct MockEvent {
 pub(crate) struct MockReply {
     pub events: Vec<MockEvent>,
     pub suppress_response: bool,
+    /// Hold the reply this long before sending it (a slow but live page).
+    pub delay: Option<std::time::Duration>,
     pub result: Result<Value, (i64, String)>,
 }
 
@@ -46,6 +48,7 @@ impl MockReply {
             events: Vec::new(),
             result: Ok(result),
             suppress_response: false,
+            delay: None,
         }
     }
 
@@ -55,6 +58,7 @@ impl MockReply {
             events: Vec::new(),
             result: Ok(json!({})),
             suppress_response: true,
+            delay: None,
         }
     }
 
@@ -63,6 +67,7 @@ impl MockReply {
             events: Vec::new(),
             result: Err((code, message.to_owned())),
             suppress_response: false,
+            delay: None,
         }
     }
 
@@ -141,6 +146,9 @@ impl MockCdpServer {
                         }
                         if reply.suppress_response {
                             continue;
+                        }
+                        if let Some(delay) = reply.delay {
+                            tokio::time::sleep(delay).await;
                         }
                         let mut response = match reply.result {
                             Ok(result) => json!({ "id": id, "result": result }),

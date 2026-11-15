@@ -55,6 +55,16 @@ export type IconName = keyof typeof MAP;
 
 export function Icon({ name, size = 20, color, weight = "medium" }: { name: IconName; size?: number; color: string; weight?: SymbolViewProps["weight"] }) {
   const [sf, ion] = MAP[name];
-  if (Platform.OS === "ios") return <SymbolView name={sf as SymbolViewProps["name"]} size={size} tintColor={color} weight={weight} resizeMode="scaleAspectFit" style={{ width: size, height: size }} />;
+  if (Platform.OS === "ios")
+    return (
+      <SymbolView
+        name={sf as SymbolViewProps["name"]}
+        size={size}
+        tintColor={color}
+        weight={weight}
+        resizeMode="scaleAspectFit"
+        style={{ width: size, height: size }}
+      />
+    );
   return <Ionicons name={ion as keyof typeof Ionicons.glyphMap} size={size} color={color} />;
 }

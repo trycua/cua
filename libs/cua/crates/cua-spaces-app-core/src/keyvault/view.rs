@@ -893,6 +893,8 @@ mod sharing_tests {
 
     fn space(id: &str, name: &str) -> crate::model::Space {
         let row = crate::model::SpaceRow {
+            hidden: false,
+            parent: None,
             id: id.into(),
             name: name.into(),
             display_name: None,

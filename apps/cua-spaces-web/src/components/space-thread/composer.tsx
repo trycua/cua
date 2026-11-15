@@ -215,10 +215,20 @@ export function Composer({
           ))}
         </div>
       ) : null}
-      <div className={cn("relative flex gap-2 rounded-lg bg-muted py-1.5 pr-1.5 pl-3 focus-within:ring-2 focus-within:ring-ring/50", footer ? "flex-col" : "items-end")}>
+      <div
+        className={cn(
+          "relative flex gap-2 rounded-lg bg-muted py-1.5 pr-1.5 pl-3 focus-within:ring-2 focus-within:ring-ring/50",
+          footer ? "flex-col" : "items-end",
+        )}
+      >
         <div className="min-w-0 flex-1">
           {chips.length && addressee ? (
-            <div role="group" aria-label={`Talking to ${chips.map(addressee.label).join(", ")}`} data-addressee="" className="flex flex-wrap items-center gap-1.5 pt-1">
+            <div
+              role="group"
+              aria-label={`Talking to ${chips.map(addressee.label).join(", ")}`}
+              data-addressee=""
+              className="flex flex-wrap items-center gap-1.5 pt-1"
+            >
               {chips.map((h) => {
                 const problem = addressee.problem(h);
                 return (
@@ -248,40 +258,44 @@ export function Composer({
             </div>
           ) : null}
           <div className="relative">
-          {/* What you typed, with mentions as chips; the textarea above it draws only the caret. */}
-          <div ref={layer} aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden py-1.5 text-[13px] leading-5 break-words whitespace-pre-wrap text-foreground">
-            {mentionSegments(text, handles).map((s, i) =>
-              s.mention ? (
-                <span key={i} className="text-brand-strong">
-                  {s.text}
-                </span>
-              ) : (
-                <span key={i}>{s.text}</span>
-              ),
-            )}
-            {"​"}
-          </div>
-          <textarea
-            ref={area}
-            data-composer=""
-            rows={1}
-            value={text}
-            placeholder={disabledReason || placeholder}
-            aria-label={placeholder}
-            data-composer-off={disabledReason ? "" : undefined}
-            disabled={off}
-            onChange={(e) => sync(e.currentTarget)}
-            onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
-            onKeyDown={onKeyDown}
-            onScroll={(e) => {
-              if (layer.current) layer.current.scrollTop = e.currentTarget.scrollTop;
-            }}
-            className={cn(
-              "relative block w-full resize-none bg-transparent py-1.5 text-[13px] leading-5 break-words text-transparent caret-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50",
-              // A guest's reason reads as a sentence, not a faded hint.
-              disabledReason && "disabled:opacity-100",
-            )}
-          />
+            {/* What you typed, with mentions as chips; the textarea above it draws only the caret. */}
+            <div
+              ref={layer}
+              aria-hidden
+              className="pointer-events-none absolute inset-0 overflow-hidden py-1.5 text-[13px] leading-5 break-words whitespace-pre-wrap text-foreground"
+            >
+              {mentionSegments(text, handles).map((s, i) =>
+                s.mention ? (
+                  <span key={i} className="text-brand-strong">
+                    {s.text}
+                  </span>
+                ) : (
+                  <span key={i}>{s.text}</span>
+                ),
+              )}
+              {"​"}
+            </div>
+            <textarea
+              ref={area}
+              data-composer=""
+              rows={1}
+              value={text}
+              placeholder={disabledReason || placeholder}
+              aria-label={placeholder}
+              data-composer-off={disabledReason ? "" : undefined}
+              disabled={off}
+              onChange={(e) => sync(e.currentTarget)}
+              onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
+              onKeyDown={onKeyDown}
+              onScroll={(e) => {
+                if (layer.current) layer.current.scrollTop = e.currentTarget.scrollTop;
+              }}
+              className={cn(
+                "relative block w-full resize-none bg-transparent py-1.5 text-[13px] leading-5 break-words text-transparent caret-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50",
+                // A guest's reason reads as a sentence, not a faded hint.
+                disabledReason && "disabled:opacity-100",
+              )}
+            />
           </div>
         </div>
         {disabledReason ? null : footer ? (
@@ -299,16 +313,16 @@ export function Composer({
 
   function sendButton() {
     return (
-        <button
-          type="button"
-          data-send=""
-          aria-label="Send"
-          disabled={!text.trim() || sending || off}
-          onClick={send}
-          className="mb-0.5 inline-flex size-7 shrink-0 cursor-default items-center justify-center rounded-lg text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-40 enabled:bg-primary enabled:text-primary-foreground enabled:hover:bg-primary/90"
-        >
-          <SendHorizontalIcon className="size-3.5" />
-        </button>
+      <button
+        type="button"
+        data-send=""
+        aria-label="Send"
+        disabled={!text.trim() || sending || off}
+        onClick={send}
+        className="mb-0.5 inline-flex size-7 shrink-0 cursor-default items-center justify-center rounded-lg text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-40 enabled:bg-primary enabled:text-primary-foreground enabled:hover:bg-primary/90"
+      >
+        <SendHorizontalIcon className="size-3.5" />
+      </button>
     );
   }
 }

@@ -34,7 +34,7 @@ impl Tool for GetDesktopStateTool {
                 Use the returned PNG directly as the coordinate source for actions whose target is \
                 {kind:\"desktop\",display_id:\"primary\"}. No AT-SPI walk.".into(),
             input_schema: json!({"type":"object","properties":{
-                "session":{"type":"string","description":"For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session."},
+                "session": cua_driver_core::tool_schema::session_schema(),
                 "screenshot_out_file":{"type":"string","description":"Write PNG here instead of base64."},
                 "max_image_dimension": cua_driver_core::tool_schema::desktop_max_image_dimension_schema()
             },"additionalProperties":false}),
@@ -73,6 +73,14 @@ impl Tool for GetDesktopStateTool {
             let niri_frame = (crate::wayland::is_wayland() && crate::wayland::niri::is_session())
                 .then(|| crate::wayland::niri::desktop_snapshot().map(|snapshot| snapshot.frame))
                 .transpose()?;
+            // KWin and Mutter: the logical frame, read before the capture and
+            // compared after it. Their capture is that frame at the largest
+            // output scale, or already logical.
+            let (logical_layout, kwin_distorted) = match crate::wayland::logical_desktop_layout()? {
+                Some(layout) => (Some((layout.compositor, layout.frame)), layout.distorted),
+                None => (None, None),
+            };
+            let logical_frame = logical_layout.as_ref().map(|(_, frame)| frame);
             let (native_png, overlay_capture) =
                 cursor_overlay::capture_exclusion::capture_excluding_overlays(
                     &crate::overlay_capture::OverlayExcluder,
@@ -103,6 +111,8 @@ impl Tool for GetDesktopStateTool {
             let hyprland_frame = hyprland_plan.map(|plan| plan.frame);
             let (screen_w, screen_h) = if let Some(frame) = &hyprland_frame {
                 (frame.width, frame.height)
+            } else if let Some(frame) = logical_frame {
+                (frame.width, frame.height)
             } else if crate::wayland::is_wayland() {
                 crate::capture_action_frame::desktop_action_dimensions((native_w, native_h))?
             } else {
@@ -110,6 +120,8 @@ impl Tool for GetDesktopStateTool {
             };
             let (png, shot_w, shot_h, scale_factor) =
                 normalize_desktop_capture_for_action_frame(native_png, screen_w, screen_h)?;
+            // One number for one desktop: get_screen_size reports this too.
+            let scale_factor = logical_frame.map_or(scale_factor, |frame| frame.scale);
             // Opt-in long-edge cap: the full-size capture is the desktop
             // action frame; a capped image is mapped back at dispatch
             // (cua_driver_core::desktop_capture_scale) and by its capture_id.
@@ -156,6 +168,17 @@ impl Tool for GetDesktopStateTool {
                     "the niri output layout changed during get_desktop_state; call it again"
                 );
                 frame.rebase_windows(&mut windows);
+            } else if let Some((compositor, frame)) = &logical_layout {
+                // KWin and Mutter window geometry is in layout coordinates too.
+                anyhow::ensure!(
+                    crate::wayland::logical_desktop_layout()?
+                        .map(|layout| layout.frame)
+                        .as_ref()
+                        == Some(frame),
+                    "the {} output layout changed during get_desktop_state; call it again",
+                    compositor.name()
+                );
+                frame.rebase_windows(&mut windows);
             }
             let capture_id = crate::capture_action_frame::publish_desktop(
                 &capture_service,
@@ -175,6 +198,7 @@ impl Tool for GetDesktopStateTool {
                 windows,
                 capture_id,
                 overlay_capture,
+                kwin_distorted,
             ))
         })
         .await;
@@ -191,6 +215,7 @@ impl Tool for GetDesktopStateTool {
                 windows,
                 capture_id,
                 overlay_capture,
+                kwin_distorted,
             ))) => {
                 let frame_scale = if shot_w > 0 {
                     f64::from(screen_w) / f64::from(shot_w)
@@ -233,6 +258,15 @@ impl Tool for GetDesktopStateTool {
                     &mut frame_note,
                     &overlay_capture,
                 );
+                if let Some(distorted) = kwin_distorted {
+                    frame_note.push_str(&format!(
+                        "; KWin {} captures rotated output {} distorted: this screenshot does \
+                         not match the screen there, and desktop input there is refused",
+                        distorted.kwin_version,
+                        distorted.outputs.join(", ")
+                    ));
+                    structured["distorted_outputs"] = json!(distorted.outputs);
+                }
                 if let Some(path) = written {
                     structured["screenshot_file_path"] = json!(path);
                     content.push(cua_driver_core::protocol::Content::text(format!(

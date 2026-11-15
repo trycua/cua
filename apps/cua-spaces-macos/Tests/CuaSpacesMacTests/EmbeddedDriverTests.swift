@@ -12,6 +12,7 @@ struct EmbeddedDriverTests {
                                                       bundleId: "com.trycua.spaces.macos", home: "/Users/ada"))
         #expect(stable.socket == "/Users/ada/.cua/run/cua-driver.sock")
         #expect(stable.pausedMarker == "/Users/ada/.cua/run/cua-driver.off")
+        #expect(stable.startRequest == "/Users/ada/.cua/run/cua-driver.start")
         #expect(stable.serverName == "cua-driver")
         #expect(stable.mcpArguments == ["mcp", "--embedded", "--socket", "/Users/ada/.cua/run/cua-driver.sock",
                                         "--host-bundle-id", "com.trycua.spaces.macos"])
@@ -26,11 +27,55 @@ struct EmbeddedDriverTests {
         #expect(EmbeddedDriver.make(binary: "/x", info: ["CuaChannel": "local"], bundleId: "x.local", home: "/Users/ada") == nil)
     }
 
+    /// Set up and Repair start a driver that isn't answering through its
+    /// own login item, then restart that item. Never while the person has
+    /// paused agents, and never "set up this Mac first": whether this Mac is
+    /// set up, shared, paused for another account or signed out plays no
+    /// part (CUA-3638).
+    @Test func setUpStartsADriverThatIsntRunning() {
+        typealias D = EmbeddedDriver
+        #expect(D.startStep(paused: false, answering: true, askedLoginItem: false) == .none)
+        #expect(D.startStep(paused: true, answering: false, askedLoginItem: false) == .none)
+        #expect(D.startStep(paused: false, answering: false, askedLoginItem: false) == .startLoginItem)
+        #expect(D.startStep(paused: false, answering: false, askedLoginItem: true) == .restartLoginItem)
+    }
+
+    /// Each channel has its own Cua Driver login item, named after its host
+    /// service's.
+    @Test func theDriverLoginItemFollowsTheChannel() throws {
+        #expect(DriverService.label(info: [:]) == "com.trycua.spaces.driver")
+        #expect(DriverService.plistName(info: nil) == "com.trycua.spaces.driver.plist")
+        #expect(DriverService.label(info: ["CuaHelperLabel": "com.trycua.spaces.local.helper"]) == "com.trycua.spaces.local.driver")
+        let d = try #require(EmbeddedDriver.make(binary: "/A/Contents/Helpers/cua-driver", info: [:], bundleId: nil, home: "/Users/ada"))
+        #expect(d.statusFile == "/Users/ada/.cua/run/cua-driver.status.json")
+        #expect(d.logFile == "/Users/ada/.cua/logs/cua-driver.log")
+    }
+
     @Test func knowsItsOwnEntry() throws {
         let d = try #require(EmbeddedDriver.make(binary: "/A/Contents/Helpers/cua-driver", info: [:], bundleId: nil, home: "/h"))
         #expect(d.isOurs(command: d.binary, args: d.mcpArguments))
         #expect(!d.isOurs(command: d.binary, args: ["mcp"]))
         #expect(!d.isOurs(command: "/Applications/CuaDriver.app/Contents/MacOS/cua-driver", args: d.mcpArguments))
+    }
+
+    /// Setup's Cua Driver row (CUA-4067) writes the driver this app carries,
+    /// run through its embedded proxy, never a separately installed
+    /// `/Applications/CuaDriver.app`, and says whether its permissions are on.
+    @Test func setupsDriverEntryIsTheBundledDriver() throws {
+        let d = try #require(EmbeddedDriver.make(binary: "/Applications/Cua Spaces.app/Contents/Helpers/cua-driver", info: [:],
+                                                 bundleId: "com.trycua.spaces.macos", home: "/Users/ada"))
+        let entry = DriverConnect.embedded(d, permissionsGranted: false)
+        #expect(entry.command == "/Applications/Cua Spaces.app/Contents/Helpers/cua-driver")
+        #expect(!entry.command.contains("CuaDriver.app"))
+        #expect(entry.args == d.mcpArguments)
+        #expect(entry.args.prefix(2) == ["mcp", "--embedded"])
+        #expect(entry.serverName == "cua-driver")
+        #expect(entry.permissionsGranted == false)
+        #expect(d.isOurs(command: entry.command, args: entry.args))
+        let local = try #require(EmbeddedDriver.make(binary: "/L/Contents/Helpers/cua-driver",
+                                                     info: ["CuaHome": "~/.cua-local", "CuaChannel": "local"],
+                                                     bundleId: "com.trycua.spaces.macos.local", home: "/Users/ada"))
+        #expect(DriverConnect.embedded(local, permissionsGranted: true).serverName == "cua-driver-local")
     }
 
     @Test func readsClaudeCodesAndCodexsEntries() throws {

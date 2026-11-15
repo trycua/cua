@@ -4,8 +4,7 @@ Reference guest images for the cua SDK, built for amd64 and arm64:
 
 | Image | Contents | Used for |
 |---|---|---|
-| `linux` | Ubuntu 24.04, XFCE on Xvfb `:1`, AT-SPI, headless PipeWire audio, Firefox, **cua-spacesd** on `:3211` (with the HTML5 viewer at `/viewer`), conformance fixtures | The default recommended "Spaces image": `ghcr.io/trycua/linux` |
-| `agent-home` | The slim `linux` image plus the **cua** CLI (`cua spaces create`, `ls`, `delete` reach the Space's spawn channel on their own) | A home for an agent that makes child Spaces; the children case of the runtime conformance suite runs in it. `ghcr.io/trycua/agent-home:24.04[-disk]` (not published yet; the catalog lists it as unpublished) <!-- cua-image-unverified --> |
+| `linux` | Ubuntu 24.04, XFCE on Xvfb `:1`, AT-SPI, headless PipeWire audio, Firefox, **cua-spacesd** on `:3211` (with the HTML5 viewer at `/viewer`), the **cua** CLI, conformance fixtures | The default recommended "Spaces image": `ghcr.io/trycua/linux` |
 | `plain/ubuntu-xfce-vnc` | Ubuntu 24.04, XFCE on Xvnc `:1` (RFB `:5901`) and nothing else | Proving that sandboxes don't need cua daemons (VNC only) |
 | `plain/ubuntu-server` | Ubuntu 24.04 and OpenSSH | Proving that sandboxes don't need cua daemons (SSH only) |
 | `macos` | The Lume macOS base plus **cua-spacesd** at login, TCC grants seeded (see [macOS](#macos-lume)) | `ghcr.io/trycua/macos`, local Lume on Apple silicon |
@@ -61,26 +60,6 @@ Pass the same `--stamp` (and `--work`, when set) to every run of one release. `t
 - **Identity:** `/etc/cua-image/manifest.json` (from `image.json` claims and `cua-spacesd build-info`), `/etc/cua-image/spacesd-source`, `/etc/cua-image/variant` (`lume`).
 - **Gate:** `doctor-gate.sh` runs `cua-spacesd doctor --strict` in the guest over `lume ssh` after a reboot, then `tools/ax_probe.py` (the official MCP SDK against the image's `/mcp`: permissions, an AX tree read, CGEvent clicks in Calculator and a session-keyed `move_cursor` that must return). The build fails unless both pass. The release's `input/arm64/lume` gate (`live-input-gate.sh`) then boots a clone of the built VM and runs `libs/cua/crates/cua-spaces-ext/tests/e2e_macos_input.rs`: a Dock click on a whole-display stream must be delivered and change the screen. The pushed VM itself never boots again after its sanitize.
 
-## agent-home
-
-`agent-home/` is `FROM ghcr.io/trycua/linux:24.04-slim` (override with `--build-arg BASE=`) plus `/usr/local/bin/cua`, so it has every runtime the slim image has: a container rootfs for docker, gVisor and the microVM runtimes, and the VM disk derived from it for QEMU and KubeVirt. Inside a Space with child Spaces on, `cua` finds the Space's spawn channel without configuration and the image holds no token.
-
-`CUA_CLI_SOURCE` selects where the CLI comes from, the way `CUA_SPACESD_SOURCE` does for the driver:
-
-| Value | Behaviour |
-|---|---|
-| `local` (default) | Copies `agent-home/dist/<arch>/cua`. `agent-home/build-cua-linux.sh [arm64] [amd64]` builds `libs/cua` in `rust:1-bookworm`, natively or under emulation. |
-| `release` | Downloads `cua-cli-<version>-linux-<x64\|arm64>.tar.gz` from the `cua-sdk-v<version>` release (`CUA_CLI_VERSION`, or `latest`; `CUA_CLI_RELEASE_URL` has `{version}` and `{arch}`; `CUA_CLI_SHA256` checks it). The release must be cua-sdk 0.10.1 or later, the first with child Spaces. |
-| `none` | No CLI: the slim image. |
-
-```bash
-libs/images/agent-home/build-cua-linux.sh                       # host arch CLI into dist/<arch>/
-libs/images/build.sh agent-home --outputs rootfs,disk           # cua-e2e-local/agent-home:docker-local-<arch>
-libs/images/build.sh agent-home --build-arg CUA_CLI_SOURCE=release --build-arg CUA_CLI_VERSION=0.10.1
-```
-
-`libs/cua/scripts/conformance/run.py` makes its home Spaces from this image when the Space under test has no `cua` CLI: `--home-image` names it (default `ghcr.io/trycua/agent-home:24.04`; a VM runtime adds `-disk`), and `--entry-home-image ID=IMAGE` points one runtime at a local build. <!-- cua-image-unverified -->
-
 ## Built-in Linux runtime (`runtime-gvisor`)
 
 `runtime-gvisor/` builds `ghcr.io/trycua/runtime-gvisor`, the disk of the VM a Mac with no Docker runs Linux Spaces in (`cua_vmm::managed`, the Linux row of Settings → Runtimes, `cua config set runtime.linux auto|builtin|system`). It is not a Space image and not in the catalog.
@@ -95,7 +74,7 @@ libs/images/build.sh agent-home --build-arg CUA_CLI_SOURCE=release --build-arg C
 `sandbox-images.json` is the one list of images the repo points at: the apps, the CLI (`cua images ls`), the docs tables and cua-bench read it. Benchmark entries name their `bench/<id>/lock.json` pins and the benchmarks they run.
 
 - A new or renamed tag goes in `sandbox-images.json` first. Then run `pnpm --dir docs docs:generate:sandbox` and `python3 scripts/images/gen-image-constants.py`.
-- `scripts/images/check-image-refs.py` (**CI: Check Image Refs**) fails on any image ref in code, tests, CI, Dockerfiles or docs that is not a catalog entry, a lock pin, or a reasoned entry of `scripts/images/image-refs-allowlist.json` (legacy, cloud-built, third-party and synthetic test refs). Unused allowlist entries fail too.
+- `scripts/images/check-image-refs.py` (the image-refs check in `bin/ci --quick`) fails on any image ref in code, tests, CI, Dockerfiles or docs that is not a catalog entry, a lock pin, or a reasoned entry of `scripts/images/image-refs-allowlist.json` (legacy, cloud-built, third-party and synthetic test refs). Unused allowlist entries fail too.
 - Docs pages list images through generated regions (`GENERATED:catalog-cua-images`, `GENERATED:catalog-benchmarks`), not hand-typed tables.
 
 ## One definition, two outputs
@@ -280,8 +259,8 @@ Nobody dispatches the image builds after a cua-spacesd release:
 
 | Value | Behaviour |
 |---|---|
-| `local` (default) | Copies `linux/dist/<arch>/cua-spacesd`. `linux/build-spacesd-linux.sh [arm64] [amd64]` produces it by building `libs/cua-spacesd` in `rust:1-bookworm`: natively, via a multiarch cross toolchain (`CROSS_MODE=cross`), or under emulation (`CROSS_MODE=emulate`). |
-| `release` | Downloads `CUA_SPACESD_RELEASE_URL`, a placeholder pattern with `{version}` and `{arch}`. |
+| `local` | What the publish workflow uses (`release.json` sets it). Copies `linux/dist/<arch>/cua-spacesd`. `linux/build-spacesd-linux.sh [arm64] [amd64]` produces it by building `libs/cua-spacesd` in `rust:1-bookworm`: natively, via a multiarch cross toolchain (`CROSS_MODE=cross`), or under emulation (`CROSS_MODE=emulate`). |
+| `release` (default) | Pinned to cua-sdk 0.10.1 with its sha256 in the Dockerfile unless `CUA_CLI_VERSION` says otherwise, so ad-hoc, e2e and nightly builds need no CLI built first. Downloads `CUA_SPACESD_RELEASE_URL`, a placeholder pattern with `{version}` and `{arch}`. |
 | `none` | No driver. The supervisor program idles. |
 
 The driver runs inside the desktop session, bound to `0.0.0.0:$CUA_ENV_PORT` (3211, QUIC media on 3212). A non-loopback bind needs a token, so a missing token is fatal rather than anonymous.
@@ -312,6 +291,25 @@ Requirements for the pod spec (trycua/cloud#7885):
 - Mount the Secret as a directory at `/run/cua`. Do not use `subPath`: a `subPath` file is not a mount point of `/run/cua` and never receives updates.
 - Keep the container's user root (the image default). supervisord runs the root sync helper and drops the desktop, driver and other programs to `cua`.
 - If the pod must run as non-root (`runAsUser`), set `fsGroup: 1000` and the Secret's `defaultMode: 0440`. The `cua` user can then read the file and the driver follows it directly. Keep it out of "other" (not 0444): the driver refuses world-readable token files unless it runs as root in a container.
+
+### The cua CLI (slim tier, so every tier)
+
+`ghcr.io/trycua/linux:24.04-slim[-disk]` also carries `/usr/local/bin/cua`, so an agent in a Space (the Home Space of the ask-first flow runs on it) can run `cua spaces create`, `ls` and `delete`. In a Space whose host turned child Spaces on, the CLI finds the Space's own spawn channel (`CUA_SPAWN`, or the files the spawn-capable cua-spacesd keeps) with nothing to configure, and the image holds no token. `full` and `docker` are `FROM slim`, so they have it too. The CLI is not small: the released archive is about 85 MB compressed on x64 (78 MB on arm64), so slim grows from about 0.49 GB to about 0.58 GB compressed and from 1.23 GB to 1.43 GB unpacked on amd64. Child Spaces from a Home Space need it, so the slim gate (`size/{arch}` in `release.json`) allows 1.55 GB unpacked per arch; a thinner in-Space CLI would cut it. The slim tier claims `cua --version` and the `spawn` feature, so `cua-spacesd doctor --strict` fails an image without them.
+
+`CUA_CLI_SOURCE` selects where the CLI comes from, the way `CUA_SPACESD_SOURCE` does for the driver:
+
+| Value | Behaviour |
+|---|---|
+| `local` | What the publish workflow uses (`release.json` sets it). Copies `linux/dist/<arch>/cua`. `linux/build-cua-cli-linux.sh [arm64] [amd64]` builds `libs/cua` in `rust:1-bookworm`; `CUA_CLI_BIN=<path>` stages a binary you already built (CI hands over the one it built from the same commit). |
+| `release` (default) | Pinned to cua-sdk 0.10.1 with its sha256 in the Dockerfile unless `CUA_CLI_VERSION` says otherwise, so ad-hoc, e2e and nightly builds need no CLI built first. Downloads `cua-cli-<version>-linux-<x64\|arm64>.tar.gz` of the `cua-sdk-v<version>` release. `CUA_CLI_VERSION` must be pinned (never `latest`, cua-sdk 0.10.1 or later, the first with child Spaces); the archive is checked against `CUA_CLI_SHA256` or the release's `checksums.txt`. |
+| `none` | No CLI. |
+
+```bash
+libs/images/linux/build-cua-cli-linux.sh                       # host arch CLI into dist/<arch>/
+libs/images/build.sh linux --build-arg CUA_CLI_SOURCE=release --build-arg CUA_CLI_VERSION=0.10.1
+```
+
+`libs/cua/scripts/conformance/run.py` makes its home Spaces from the slim image when the Space under test has no `cua` CLI: `--home-image` names it (default `ghcr.io/trycua/linux:24.04-slim`; a VM runtime adds `-disk`), and `--entry-home-image ID=IMAGE` points one runtime at a local build.
 
 ## Test
 

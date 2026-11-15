@@ -183,7 +183,8 @@ class ReleaseTest(unittest.TestCase):
             python.symlink_to(sys.executable)
         return subprocess.run(["bash", "-e", "-c", script], cwd=self.repo,
                               env={**os.environ, "PATH": f"{binaries}:{os.environ['PATH']}",
-                                   "GITHUB_REF": "refs/heads/main", "REQUESTED_VERSION": version,
+                                   "GITHUB_REF": "refs/heads/main", "RELEASE_REF": "refs/heads/main",
+                                   "REQUESTED_VERSION": version,
                                    "GITHUB_OUTPUT": str(self.root / "step-output")},
                               capture_output=True, text=True)
 

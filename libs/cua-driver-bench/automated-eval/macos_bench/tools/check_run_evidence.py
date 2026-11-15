@@ -21,6 +21,10 @@ CUA_ARMS = (
     "cc-cua-driver-main",
     "cc-cua-driver-main-skill",
     "cc-cua-driver-script",
+    "pi-cua-driver",
+    "pi-cua-driver-main",
+    "pi-cua-driver-main-skill",
+    "pi-cua-driver-script",
 )
 
 
@@ -140,14 +144,25 @@ def _video_problem(attempt: Path) -> str | None:
     return None
 
 
+RUN_MARKERS = ("run.lock", "results.jsonl", "manifest.json")  # a runner start writes run.lock first
+
+
 def check_run(run: Path) -> list[str]:
+    if not any((run / name).exists() for name in RUN_MARKERS):
+        return [f"not a run directory: none of {', '.join(RUN_MARKERS)}"]
     problems: list[str] = []
     results = run / "results.jsonl"
     rows: list[dict] = []
+    stopped = not (run / "DONE").exists()
     try:
-        lines = results.read_text("utf-8").splitlines()
+        text = results.read_text("utf-8")
+    except FileNotFoundError:
+        text = ""  # checked below: only a stopped run may have no rows yet
     except OSError as error:
         return [f"results unreadable: {results}: {error}"]
+    lines = text.splitlines()
+    if lines and not text.endswith("\n") and stopped:
+        lines.pop()  # a row cut off by the stop; resuming the run drops it and redoes that attempt
     for number, line in enumerate(lines, 1):
         if not line.strip():
             continue
@@ -160,8 +175,9 @@ def check_run(run: Path) -> list[str]:
             problems.append(f"results.jsonl:{number} malformed row: {invalid}")
             continue
         rows.append(row)
-    if not rows and not problems:
+    if not rows and not problems and not stopped:
         problems.append("results.jsonl has no rows")
+    finished = (run / "DONE").exists()
     recorder, sentinel = "none", True
     try:
         manifest = json.loads((run / "manifest.json").read_text("utf-8"))
@@ -172,7 +188,8 @@ def check_run(run: Path) -> list[str]:
             raise ValueError("manifest needs string recorder and list argv")
         sentinel = "--no-sentinel" not in argv
     except (OSError, ValueError) as error:
-        problems.append(f"manifest.json unreadable or invalid: {error}")
+        if rows or not stopped:  # a run stopped before its first trial may have no manifest yet
+            problems.append(f"manifest.json unreadable or invalid: {error}")
     seen: set[tuple] = set()
     for row in rows:
         key = (row["trial_id"], row["attempt"])
@@ -208,19 +225,27 @@ def check_run(run: Path) -> list[str]:
                 problems.append(f"{name}: recording not started")
             else:
                 video = _video_problem(attempt)
-                if video:
+                # The raw file is kept until compression succeeds, and a stopped run's resume compresses it.
+                pending = not finished and _nonempty(attempt / "rec" / "recording.mp4")
+                if video and not pending:
                     problems.append(f"{name}: {video}")
     trials = run / "trials"
+    final = {str(r["trial_id"]) for r in rows if r.get("final", True) and not r.get("smoke")}
+    orphans, in_flight = [], []
     if trials.is_dir():
         for directory in sorted(trials.glob("*/a*")):
             if directory.is_dir():
                 suffix = directory.name[1:]
-                if not any(
-                    str(k[0]) == directory.parent.name and str(k[1]) == suffix for k in seen
-                ):
-                    problems.append(
-                        f"orphan attempt directory {directory.parent.name}/{directory.name}"
-                    )
+                recorded = [k[1] for k in seen if str(k[0]) == directory.parent.name]
+                if any(str(k) == suffix for k in recorded):
+                    continue
+                name = f"{directory.parent.name}/{directory.name}"
+                nxt = suffix == str(max(recorded, default=0) + 1)
+                (in_flight if nxt and directory.parent.name not in final else orphans).append(name)
+    # The runner is serial: a stopped run that is not DONE has at most one attempt cut short, which a resume redoes.
+    if finished or len(in_flight) > 1:
+        orphans += in_flight
+    problems += [f"orphan attempt directory {name}" for name in sorted(orphans)]
     for session in run.resolve().parents[:2]:
         ledger = session / "pids.jsonl"
         if ledger.is_file():

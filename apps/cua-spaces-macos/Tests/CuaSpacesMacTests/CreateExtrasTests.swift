@@ -8,6 +8,11 @@ import Testing
 /// What `spaces.create` forwards for an agent home (CUA-2630): the spawn capability and its `cua.home.*` labels.
 @Suite("A create's extras")
 struct CreateExtrasTests {
+    @Test func theWarmingHomesLabelsComeAsTheyCome() {
+        let e = CreateExtrasValue.parse(["image": "x", "labels": ["cua.hidden": "home", "cua.relay": "off"]])
+        #expect(e.labels == ["cua.hidden": "home", "cua.relay": "off"])
+    }
+
     @Test func carryAnAgentHomesChildrenAndLabels() {
         let e = CreateExtrasValue.parse([
             "image": "x", "children": true,

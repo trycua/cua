@@ -63,6 +63,85 @@ pub fn macos_limit_message(others: &[String]) -> String {
     )
 }
 
+/// The capacity error when Apple Virtualization refused the boot for the
+/// limit and the VMs holding it are not ones this Lume lists (another Cua
+/// Spaces, another Lume, any app running macOS VMs).
+pub fn macos_limit_unlisted_message() -> String {
+    format!(
+        "this Mac is already running its limit of macOS VMs; Apple allows {MACOS_VMS_PER_MAC} at \
+         once, and others outside this Space (another Cua Spaces, Lume or a virtualization app) \
+         hold them. Stop or delete one of them and try again"
+    )
+}
+
+/// `secs` since the Unix epoch as Lume stamps its log lines
+/// (`2026-11-07T04:07:15Z`, UTC), so stamps compare as text.
+pub fn utc_stamp(secs: u64) -> String {
+    let (days, rem) = ((secs / 86_400) as i64, secs % 86_400);
+    // Days since 1970-01-01 to a civil date (Howard Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        rem / 3_600,
+        rem % 3_600 / 60,
+        rem % 60
+    )
+}
+
+/// The stamp of the log line that holds byte `at` of `log` (the last
+/// `[2026-11-07T04:07:15Z]` before it), if there is one close by.
+fn line_stamp(log: &[u8], at: usize) -> Option<String> {
+    let start = at.saturating_sub(600);
+    let head = &log[start..at];
+    (0..head.len().saturating_sub(22)).rev().find_map(|i| {
+        let w = &head[i..i + 22];
+        let ok = w[0] == b'['
+            && w[21] == b']'
+            && w[5] == b'-'
+            && w[11] == b'T'
+            && w[20] == b'Z'
+            && w[1..5].iter().all(u8::is_ascii_digit);
+        ok.then(|| String::from_utf8_lossy(&w[1..21]).into_owned())
+    })
+}
+
+/// Whether `log` (bytes of a `lume serve` log) says, in a line stamped
+/// `since` or later, that Apple Virtualization refused to run VM `name` for
+/// the limit on active virtual machines. Lume's log has lines of many MB
+/// (whole API responses) and several `lume serve` write into one file at
+/// their own offsets, so this looks for the refusal itself, reads a little
+/// around it and trusts its stamp rather than its place in the file.
+pub fn log_says_vm_limit(log: &[u8], name: &str, since: &str) -> bool {
+    const NEEDLE: &[u8] = b"number of virtual machines exceeds the limit";
+    const AROUND: usize = 700;
+    let tag = format!("name={name}");
+    let mut from = 0;
+    while let Some(at) = log[from..]
+        .windows(NEEDLE.len())
+        .position(|w| w == NEEDLE)
+        .map(|p| p + from)
+    {
+        let near = &log[at.saturating_sub(AROUND)..(at + AROUND).min(log.len())];
+        if String::from_utf8_lossy(near)
+            .split_whitespace()
+            .any(|t| t == tag)
+            && line_stamp(log, at).is_some_and(|stamp| stamp.as_str() >= since)
+        {
+            return true;
+        }
+        from = at + NEEDLE.len();
+    }
+    false
+}
+
 /// The host a macOS guest's published ports are dialed on once they are
 /// forwarded over vsock ([`client::VmDetails::forwards`]).
 pub const VSOCK_HOST: &str = "127.0.0.1";
@@ -230,6 +309,13 @@ pub struct LumeRuntime {
     /// The version of a too-old Lume `runtime.lume = system` made cua use,
     /// named in a failed start.
     old_lume: std::sync::Mutex<Option<String>>,
+    /// One restart of a VM whose gateway ended at a time
+    /// ([`LumeRuntime::mend_gateway`]).
+    mending: tokio::sync::Mutex<()>,
+    /// VMs restarted behind a new gateway whose callers have not been told
+    /// yet ([`Runtime::mend`] says so once): their open connections are
+    /// stale whoever noticed first.
+    mended: std::sync::Mutex<std::collections::BTreeSet<String>>,
 }
 
 /// Configured `lume serve` URL -> the one this process moved to because an
@@ -513,6 +599,8 @@ impl LumeRuntime {
             gpu_pref: Arc::new(gpu::Defaults),
             accepted: Default::default(),
             old_lume: Default::default(),
+            mending: Default::default(),
+            mended: Default::default(),
         }
     }
 
@@ -547,6 +635,55 @@ impl LumeRuntime {
         self.gpu()
             .before_start(name)
             .map_err(|e| VmmError::other(format!("GPU acceleration for {name}: {e}")))
+    }
+
+    /// Whether VM `name` (as Lume reports it) runs behind a network gateway
+    /// that has ended: a protected macOS VM, running, whose gateway process
+    /// is gone. Its network cable is cut for good (a gateway cannot be
+    /// attached to a VM that already runs), so nothing reaches its agent.
+    fn gateway_lost(&self, name: &str, vm: &VmDetails) -> bool {
+        vm.os.eq_ignore_ascii_case("macos")
+            && map_status(&vm.status) == Status::Running
+            && self.kept_network(name).is_some()
+            && self.load_gateway(name).is_some()
+            && !crate::netgw::gateway_running(&self.cfg.root.join(name))
+    }
+
+    /// Makes a running protected macOS VM whose gateway ended reachable
+    /// again by restarting it behind a new gateway (the gateway dies with
+    /// a signal that reaches it, as when an app update stops everything of
+    /// the old bundle; the VM, run by `lume serve`, does not). Unsaved work
+    /// in the guest is lost, as in any restart; left as it is the VM would
+    /// run without a network and without its agent.
+    async fn mend_gateway(&self, name: &str, vm: VmDetails) -> Result<VmDetails> {
+        if !self.gateway_lost(name, &vm) {
+            return Ok(vm);
+        }
+        let _one_at_a_time = self.mending.lock().await;
+        // Another caller may have mended it while this one waited.
+        let vm = self
+            .client
+            .get(name)
+            .await?
+            .ok_or_else(|| VmmError::NotFound(name.into()))?;
+        if !self.gateway_lost(name, &vm) {
+            return Ok(vm);
+        }
+        tracing::warn!(
+            vm = name,
+            "the VM's network gateway ended while it kept running, so it has no network and \
+             no agent; restarting it behind a new gateway"
+        );
+        self.stop_vm(name).await?;
+        self.resume(name).await?;
+        self.mended
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(name.to_string());
+        self.client
+            .get(name)
+            .await?
+            .ok_or_else(|| VmmError::NotFound(name.into()))
     }
 
     /// The macOS VMs Lume runs on this Mac other than `name` (Spaces or
@@ -842,6 +979,15 @@ impl LumeRuntime {
         let mut last_state = String::new();
         let leases_path = std::path::PathBuf::from(&self.cfg.leases_path);
         let before = lease::read_leases(&leases_path).await;
+        // The boot began just now (the run request went out a moment ago):
+        // a refusal `lume serve` logs from a few seconds before counts.
+        let since = utc_stamp(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+                .saturating_sub(5),
+        );
         let mut missing_since: Option<tokio::time::Instant> = None;
         // Bounded by the deadline; at most ip_timeout / 0.5 s iterations.
         while tokio::time::Instant::now() < deadline {
@@ -874,6 +1020,11 @@ impl LumeRuntime {
                             && others.len() as u32 >= MACOS_VMS_PER_MAC
                         {
                             return Err(VmmError::HostCapacity(macos_limit_message(&others)));
+                        }
+                        // The VMs holding the limit may be another Lume's,
+                        // which this one does not list: its own log says so.
+                        if self.serve_log_says_vm_limit_soon(name, &since).await {
+                            return Err(VmmError::HostCapacity(macos_limit_unlisted_message()));
                         }
                         return Err(VmmError::other(format!(
                             "lume VM '{name}' stopped while booting{}",
@@ -918,6 +1069,38 @@ impl LumeRuntime {
                 self.run_log_tail(name)
             ),
         })
+    }
+
+    /// Whether `lume serve`'s log says VM `name` was refused for the limit
+    /// on active virtual machines since `since` (a [`utc_stamp`]).
+    fn serve_log_says_vm_limit(&self, name: &str, since: &str) -> bool {
+        use std::io::{Read as _, Seek as _, SeekFrom};
+        // The log is large; its recent part is enough.
+        const TAIL: u64 = 96 * 1024 * 1024;
+        let Ok(mut f) = std::fs::File::open(self.cfg.root.join("serve.log")) else {
+            return false;
+        };
+        let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+        let mut bytes = Vec::new();
+        if f.seek(SeekFrom::Start(len.saturating_sub(TAIL))).is_err()
+            || f.read_to_end(&mut bytes).is_err()
+        {
+            return false;
+        }
+        log_says_vm_limit(&bytes, name, since)
+    }
+
+    /// [`Self::serve_log_says_vm_limit`], looked at again for up to 10
+    /// seconds: Lume writes the refusal to its log a moment after the VM
+    /// has stopped, and cua notices the stop first.
+    async fn serve_log_says_vm_limit_soon(&self, name: &str, since: &str) -> bool {
+        for _ in 0..20 {
+            if self.serve_log_says_vm_limit(name, since) {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        false
     }
 
     fn run_log_tail(&self, name: &str) -> String {
@@ -1083,6 +1266,17 @@ impl LumeRuntime {
         Ok(run)
     }
 
+    /// The guest ports a VM's gateway forwards: the ports its start
+    /// published ([`Self::save_ports`], recorded before the gateway starts)
+    /// and SSH.
+    fn gateway_guest_ports(&self, name: &str) -> Vec<u16> {
+        let mut guest = self.load_ports(name);
+        guest.push(22);
+        guest.sort_unstable();
+        guest.dedup();
+        guest
+    }
+
     /// Starts the gateway of VM `name` for one run and returns its
     /// `gateway:<socket>` network, when the VM's network is protected
     /// ([`Self::keep_network`]); `None` for a VM on Apple's NAT. The gateway
@@ -1131,10 +1325,7 @@ impl LumeRuntime {
         // Lume finds the control socket beside the network socket.
         let sock = run.join("net.sock");
         let control = run.join("control.sock");
-        let mut guest: Vec<u16> = self.load_ports(name);
-        guest.push(22);
-        guest.sort_unstable();
-        guest.dedup();
+        let guest = self.gateway_guest_ports(name);
         let hosts = host::free_ports(guest.len())?;
         let ports: std::collections::BTreeMap<u16, u16> =
             guest.iter().copied().zip(hosts).collect();
@@ -2085,6 +2276,11 @@ impl LumeRuntime {
                 crate::egress::check(BackendKind::Lume, &spec.egress)?;
             }
         }
+        // Record the published guest ports before anything starts: the VM's
+        // gateway forwards exactly the ports recorded here, so recording
+        // them only after boot (`finish_start`) left a first start's
+        // gateway with SSH alone and the host with no route to cua-spacesd.
+        self.save_ports(&spec.name, &spec.ports);
         crate::types::reject_injection(BackendKind::Lume, spec)?;
         if macos_guest(spec) {
             macos_mount_shares(&spec.mounts)?;
@@ -2975,6 +3171,35 @@ impl Runtime for LumeRuntime {
         Ok(crate::netgw::read_events(&self.cfg.root.join(name)))
     }
 
+    async fn mend(&self, name: &str) -> Result<Option<Instance>> {
+        // Restarted by whoever noticed first (an endpoints read): tell the
+        // daemon once, so it drops what it holds for the old run.
+        let was_mended = self
+            .mended
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(name);
+        if was_mended && let Some(vm) = self.client.get(name).await.ok().flatten() {
+            return Ok(Some(self.instance_gw(&vm, None, &self.load_ports(name))));
+        }
+        // Cheap first: only a protected VM whose gateway process is gone
+        // (files on this Mac) is worth asking Lume about.
+        if self.kept_network(name).is_none()
+            || self.load_gateway(name).is_none()
+            || crate::netgw::gateway_running(&self.cfg.root.join(name))
+        {
+            return Ok(None);
+        }
+        let Some(vm) = self.client.get(name).await.ok().flatten() else {
+            return Ok(None);
+        };
+        if !self.gateway_lost(name, &vm) {
+            return Ok(None);
+        }
+        let vm = self.mend_gateway(name, vm).await?;
+        Ok(Some(self.instance_gw(&vm, None, &self.load_ports(name))))
+    }
+
     async fn endpoints(&self, name: &str) -> Result<Endpoints> {
         // As in `delete`: a `lume serve` that exited (a crash, an update,
         // `lume stop` on a VM it hosted) is started again rather than leave a
@@ -2985,6 +3210,7 @@ impl Runtime for LumeRuntime {
             .get(name)
             .await?
             .ok_or_else(|| VmmError::NotFound(name.into()))?;
+        let vm = self.mend_gateway(name, vm).await?;
         Ok(self.with_gateway(
             name,
             Self::endpoints_from(&vm, None, &self.load_ports(name)),
@@ -4003,6 +4229,134 @@ mod tests {
         LumeRuntime::new(cfg()).save_ports("m", &[3211, 8080]);
         // A fresh runtime (another CLI process) reads them back.
         assert_eq!(LumeRuntime::new(cfg()).load_ports("m"), vec![3211, 8080]);
+    }
+
+    #[test]
+    fn a_running_protected_vm_without_its_gateway_is_lost() {
+        let dir = tempfile::tempdir().unwrap();
+        let rt = LumeRuntime::new(LumeConfig {
+            root: dir.path().to_path_buf(),
+            ..LumeConfig::default()
+        });
+        let vm = |os: &str, status: &str| -> VmDetails {
+            serde_json::from_value(serde_json::json!({
+                "name": "m", "os": os, "status": status, "cpuCount": 2,
+                "memorySize": 4u64 << 30, "display": "1024x768",
+                "diskSize": {"allocated": 1u64, "total": 2u64}
+            }))
+            .unwrap()
+        };
+        let mac = vm("macOS", "running");
+        // No network settings kept: not behind a gateway at all.
+        assert!(!rt.gateway_lost("m", &mac));
+        rt.keep_network("m", &crate::network::NetworkSettings::internet())
+            .unwrap();
+        // Settings but no gateway ever started: nothing to mend.
+        assert!(!rt.gateway_lost("m", &mac));
+        let gw = LumeGateway {
+            network: "gateway:/x".into(),
+            ports: [(22, 1), (3211, 2)].into(),
+        };
+        std::fs::write(rt.gateway_file("m"), serde_json::to_vec(&gw).unwrap()).unwrap();
+        // A gateway that ran, whose process is gone (no pid file): lost.
+        #[cfg(unix)]
+        assert!(rt.gateway_lost("m", &mac));
+        // Only a running macOS VM is concerned.
+        assert!(!rt.gateway_lost("m", &vm("macOS", "stopped")));
+        assert!(!rt.gateway_lost("m", &vm("linux", "running")));
+    }
+
+    #[test]
+    fn stamps_are_written_the_way_lume_writes_them() {
+        assert_eq!(utc_stamp(0), "1970-01-01T00:00:00Z");
+        assert_eq!(utc_stamp(1_794_024_435), "2026-11-07T04:07:15Z");
+        assert_eq!(utc_stamp(951_782_400), "2000-02-29T00:00:00Z");
+    }
+
+    #[test]
+    fn the_vm_limit_is_read_from_lume_serves_own_log() {
+        let line = |stamp: &str, tail: &str| {
+            format!(
+                "[{stamp}] ERROR: Failed in VM.run error=The number of virtual machines exceeds the limit. The maximum supported number of active virtual machines has been reached. {tail}\n"
+            )
+        };
+        let since = "2026-11-07T04:07:10Z";
+        let log = line(
+            "2026-11-07T04:07:15Z",
+            "name=child-safari errorType=NSError",
+        );
+        assert!(log_says_vm_limit(log.as_bytes(), "child-safari", since));
+        // Lume orders the fields as it likes: the name may come last.
+        let last = line("2026-11-07T04:07:15Z", "errorType=NSError name=hold-one");
+        assert!(log_says_vm_limit(last.as_bytes(), "hold-one", since));
+        assert!(!log_says_vm_limit(last.as_bytes(), "hold", since));
+        assert!(!log_says_vm_limit(log.as_bytes(), "other-vm", since));
+        // An older refusal (an earlier boot of the same name) is not this one.
+        let old = line("2026-11-07T03:00:00Z", "name=child-safari");
+        assert!(!log_says_vm_limit(old.as_bytes(), "child-safari", since));
+        assert!(!log_says_vm_limit(
+            b"[2026-11-07T04:07:15Z] INFO: all fine name=child-safari",
+            "child-safari",
+            since
+        ));
+        let msg = macos_limit_unlisted_message();
+        assert!(msg.contains("Apple allows 2"), "{msg}");
+        assert!(!msg.contains("stopped while booting"), "{msg}");
+    }
+
+    #[test]
+    fn the_serve_log_is_read_wherever_the_refusal_sits_among_huge_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let rt = LumeRuntime::new(LumeConfig {
+            root: dir.path().to_path_buf(),
+            ..LumeConfig::default()
+        });
+        // Lume logs whole API responses (single lines of many MB), and more
+        // than one `lume serve` writes into the file at its own offset, so
+        // a refusal can sit far before the end of a file that is longer.
+        let huge = format!(
+            "[2026-11-07T04:07:20Z] INFO: response {}\n",
+            "x".repeat(3 * 1024 * 1024)
+        );
+        let refusal = "[2026-11-07T04:07:15Z] ERROR: Failed in VM.run error=The number of virtual machines exceeds the limit. name=w errorType=NSError\n";
+        std::fs::write(
+            dir.path().join("serve.log"),
+            format!("{refusal}{huge}{huge}{huge}"),
+        )
+        .unwrap();
+        assert!(rt.serve_log_says_vm_limit("w", "2026-11-07T04:07:10Z"));
+        assert!(!rt.serve_log_says_vm_limit("w", "2026-11-07T04:07:16Z"));
+        assert!(!rt.serve_log_says_vm_limit("z", "2026-11-07T04:07:10Z"));
+    }
+
+    #[test]
+    fn a_gateway_forwards_the_ports_a_start_recorded_so_the_probe_port_resolves() {
+        let dir = tempfile::tempdir().unwrap();
+        let rt = LumeRuntime::new(LumeConfig {
+            root: dir.path().to_path_buf(),
+            ..LumeConfig::default()
+        });
+        // Nothing recorded yet: the gateway would forward SSH alone, and
+        // cua-spacesd's port would have no route (the bug).
+        assert_eq!(rt.gateway_guest_ports("m"), vec![22]);
+        rt.save_ports("m", &[3211]);
+        assert_eq!(rt.gateway_guest_ports("m"), vec![22, 3211]);
+        // The gateway's forwards decide the endpoints the probes dial.
+        let gw = LumeGateway {
+            network: "gateway:/x".into(),
+            ports: [(22, 50022), (3211, 50211)].into(),
+        };
+        std::fs::create_dir_all(dir.path().join("m")).unwrap();
+        std::fs::write(rt.gateway_file("m"), serde_json::to_vec(&gw).unwrap()).unwrap();
+        let ep = rt.with_gateway(
+            "m",
+            Endpoints {
+                host: "192.168.64.5".into(),
+                ports: [(22, 22), (3211, 3211)].into(),
+                ..Default::default()
+            },
+        );
+        assert_eq!(ep.addr(3211).as_deref(), Some("127.0.0.1:50211"));
     }
 
     #[tokio::test]

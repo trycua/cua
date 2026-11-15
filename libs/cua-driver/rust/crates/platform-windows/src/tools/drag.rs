@@ -121,7 +121,7 @@ impl Tool for DragTool {
                     to_y,
                     duration_ms,
                     steps,
-                    &button,
+                    button,
                     &modifier_refs,
                 )
             });

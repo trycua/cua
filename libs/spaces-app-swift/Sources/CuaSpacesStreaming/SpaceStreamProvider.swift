@@ -86,8 +86,8 @@ public final class SpaceStreamProvider: SpaceStreamSourceProviding, @unchecked S
     /// every click on a desktop stream went nowhere. The desktop is driven
     /// like a physical mouse and keyboard, which is `allow_activation`: the
     /// same policy the Tauri and HTML5 viewers use for it. A window whose
-    /// input the Space can only deliver by activating it (Hyprland outside
-    /// its qualified apps, X11 toolkits that drop synthetic events) is
+    /// input the Space can only deliver by activating it (an XWayland window
+    /// on Hyprland, X11 toolkits that drop synthetic events) is
     /// refused as would-require-activation; `LiveStreamSession` then reopens
     /// that window with `allow_activation`.
     public static func inputPolicy(for source: StreamSource) -> String {
@@ -98,8 +98,15 @@ public final class SpaceStreamProvider: SpaceStreamSourceProviding, @unchecked S
     }
 
     public func joinPresence(name: String, color: String?) async throws -> SpacePresence {
+        try await joinPresence(name: name, color: color, source: .desktop)
+    }
+
+    public func joinPresence(name: String, color: String?, source: StreamSource) async throws -> SpacePresence {
         let id = "swift-\(ProcessInfo.processInfo.processIdentifier)-\(name)"
-        return try await handle().joinPresence(
+        var window: String?
+        if case let .window(w) = source { window = w.id }
+        return try await handle().joinPresenceFor(
+            windowId: window,
             identity: PresenceIdentity(id: id, displayName: name, color: color ?? "", agent: false),
             timeoutMs: 10_000)
     }
@@ -117,6 +124,9 @@ extension StreamWindow {
                   surfaceSize: window.pixelSize,
                   scaleFactor: window.scaleFactor,
                   appID: window.appID,
-                  processID: UInt32(clamping: max(0, window.processID ?? 0)))
+                  processID: UInt32(clamping: max(0, window.processID ?? 0)),
+                  origin: window.origin.map {
+                      StreamWindowOrigin(spaceID: $0.spaceID, name: $0.name, os: $0.os)
+                  })
     }
 }

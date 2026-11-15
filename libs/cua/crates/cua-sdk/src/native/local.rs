@@ -122,9 +122,9 @@ pub struct LocalStorage {
     pub linux_runtime_download_bytes: u64,
 }
 
-impl From<cua_daemon::storage::StorageReport> for LocalStorage {
-    fn from(r: cua_daemon::storage::StorageReport) -> Self {
-        let vol = |v: Option<cua_daemon::storage::Volume>| {
+impl From<cua_daemon_core::storage::StorageReport> for LocalStorage {
+    fn from(r: cua_daemon_core::storage::StorageReport) -> Self {
+        let vol = |v: Option<cua_daemon_core::storage::Volume>| {
             v.map(|v| StorageVolume {
                 available_bytes: v.available,
                 total_bytes: v.total,
@@ -273,7 +273,7 @@ impl Local {
         let backend = self.backend.clone();
         run(async move {
             let r = match &backend {
-                Backend::Embedded(_) => cua_daemon::local::doctor_response().await,
+                Backend::Embedded(_) => cua_daemon_core::local::doctor_response().await,
                 Backend::Daemon(d) => d.doctor().await?,
             };
             Ok(DoctorReport {
@@ -289,7 +289,7 @@ impl Local {
     /// catalog images are already pulled. Read-only and bounded; probed in
     /// this process (the daemon runs on the same host).
     pub async fn storage(&self) -> Result<LocalStorage> {
-        run(async move { Ok(cua_daemon::storage::storage_report().await.into()) }).await
+        run(async move { Ok(cua_daemon_core::storage::storage_report().await.into()) }).await
     }
 
     /// Provisions `components` (`qemu`, `lume`; `runsc` reports its plan).
@@ -298,7 +298,7 @@ impl Local {
         let backend = self.backend.clone();
         run(async move {
             let steps = match &backend {
-                Backend::Embedded(_) => cua_daemon::local::setup(&components, dry_run).await?,
+                Backend::Embedded(_) => cua_daemon_core::local::setup(&components, dry_run).await?,
                 Backend::Daemon(d) => d.setup(components, dry_run).await?,
             };
             Ok(steps
@@ -320,7 +320,7 @@ impl Local {
         run(async move {
             Ok(match &backend {
                 Backend::Embedded(rt) => {
-                    let i = cua_daemon::local::pull_image(rt.vmm()?, &reference).await?;
+                    let i = cua_daemon_core::local::pull_image(rt.vmm()?, &reference).await?;
                     LocalImage {
                         reference: i.reference,
                         kind: i.kind,
@@ -355,13 +355,17 @@ impl Local {
         run(async move {
             match &backend {
                 Backend::Embedded(rt) => {
-                    let out = cua_daemon::cua_home()
+                    let out = cua_daemon_core::cua_home()
                         .join("build")
                         .join(format!("out-{}", std::process::id()));
-                    Ok(
-                        cua_daemon::local::build_image(rt.vmm()?, &spec_json, &base, &out, push)
-                            .await?,
+                    Ok(cua_daemon_core::local::build_image(
+                        rt.vmm()?,
+                        &spec_json,
+                        &base,
+                        &out,
+                        push,
                     )
+                    .await?)
                 }
                 Backend::Daemon(d) => Ok(d.build_image(&spec_json, &base, push).await?),
             }
@@ -376,7 +380,7 @@ impl Local {
         run(async move {
             match &backend {
                 Backend::Embedded(_) => {
-                    Ok(cua_daemon::local::push_image(&reference, &destination).await?)
+                    Ok(cua_daemon_core::local::push_image(&reference, &destination).await?)
                 }
                 Backend::Daemon(d) => Ok(d.push_image(&reference, &destination).await?),
             }
@@ -385,8 +389,8 @@ impl Local {
     }
 }
 
-impl From<CuaError> for cua_daemon::Error {
+impl From<CuaError> for cua_daemon_core::Error {
     fn from(e: CuaError) -> Self {
-        cua_daemon::Error::Internal(e.to_string())
+        cua_daemon_core::Error::Internal(e.to_string())
     }
 }

@@ -6,7 +6,7 @@
 //! state "Signed in, not sharing"), a collapsed "Offline for 30+ days", "Team
 //! machines"), one
 //! muted line per row, and each machine's page (its name and rename, the
-//! "Let other machines control this desktop" switch, the Spaces on it as
+//! "Let other computers control this desktop" switch, the Spaces on it as
 //! links, New Space here, Details, and Remove from account).
 //!
 //! The page is about the hardware. Opening, starting, stopping, teleporting
@@ -112,7 +112,7 @@ pub struct MachinesViewInput {
 pub struct MachinesViewToggle {
     /// `spaces` or `desktop`.
     pub id: String,
-    /// "Let other machines create Spaces here", "Let other machines control
+    /// "Let other computers create Spaces here", "Let other computers control
     /// this desktop".
     pub label: String,
     /// One line under it.
@@ -148,7 +148,7 @@ pub struct MachinesViewSpace {
     pub running: bool,
 }
 
-/// A machine's own desktop, listed first under "Spaces on this machine"
+/// A machine's own desktop, listed first under "Spaces on this computer"
 /// when it shares it, as any Space row (its name, system, status), with a
 /// quiet "Desktop" label. It is not one of the Spaces counted (the sidebar
 /// and the machine's line leave it out).
@@ -262,7 +262,8 @@ pub struct MachinesViewMachine {
     pub current: bool,
     /// Someone shares it with you (a team machine).
     pub team: bool,
-    /// The page's status line ("Online", "Offline").
+    /// The page's status line ("Online", "Offline"; "Online, 1 thing to
+    /// fix" when it has issues, so the words agree with the dot).
     pub status: String,
     /// After the status: who shares it ("Shared by your team").
     #[serde(default)]
@@ -289,7 +290,7 @@ pub struct MachinesViewMachine {
     /// Under read-only switches: where they change.
     #[serde(default)]
     pub toggles_note: Option<String>,
-    /// "Spaces on this machine".
+    /// "Spaces on this computer".
     pub spaces_title: String,
     /// The Spaces on it.
     pub spaces: Vec<MachinesViewSpace>,
@@ -310,11 +311,11 @@ pub struct MachinesViewMachine {
     pub remove: Option<MachinesViewRemove>,
 }
 
-/// "Remove old machines": every machine of the group that can go.
+/// "Remove old computers": every machine of the group that can go.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MachinesViewRemoveAll {
-    /// "Remove old machines".
+    /// "Remove old computers".
     pub label: String,
     /// Asked first.
     pub confirm: HostConfirm,
@@ -328,7 +329,7 @@ pub struct MachinesViewRemoveAll {
 pub struct MachinesViewGroup {
     /// `yours`, `old` or `team`.
     pub id: String,
-    /// "Your machines", "Offline for 30+ days (2)", "Team machines".
+    /// "Your computers", "Offline for 30+ days (2)", "Team computers".
     pub title: String,
     /// Collapsed until opened (the old machines).
     pub collapsed: bool,
@@ -343,7 +344,7 @@ pub struct MachinesViewGroup {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MachinesView {
-    /// "3 machines, 2 online".
+    /// "3 computers, 2 online".
     pub summary: String,
     /// The list's groups (only those with machines).
     pub groups: Vec<MachinesViewGroup>,
@@ -360,13 +361,13 @@ pub struct MachinesView {
 
 /// The quiet label on a machine's own desktop among its Spaces.
 pub const DESKTOP_LABEL: &str = "Desktop";
-/// "Your machines".
-pub const YOURS_TITLE: &str = "Your machines";
+/// "Your computers".
+pub const YOURS_TITLE: &str = "Your computers";
 /// The state of a row that is only a signed-in machine: it can't run Spaces
 /// and nothing is shared from it.
 pub const DEVICE_LINE: &str = "Signed in, not sharing";
-/// "Team machines".
-pub const TEAM_TITLE: &str = "Team machines";
+/// "Team computers".
+pub const TEAM_TITLE: &str = "Team computers";
 /// The button that removes a machine.
 pub const REMOVE_LABEL: &str = "Remove from account";
 /// The button that revokes a signed-in machine that shares nothing.
@@ -374,7 +375,7 @@ pub const REVOKE_LABEL: &str = "Revoke";
 /// The button that opens New Space with the machine chosen.
 pub const NEW_SPACE_LABEL: &str = "New Space here";
 /// Under another machine's switches.
-pub const OFFLINE_NOTICE: &str = "This machine is offline. Open Cua Spaces on it to use it.";
+pub const OFFLINE_NOTICE: &str = "This computer is offline. Open Cua Spaces on it to use it.";
 
 /// "just now", "5 minutes ago", "1 day ago", "9 days ago".
 pub fn ago(then_secs: u64, now_secs: u64) -> String {
@@ -398,7 +399,7 @@ pub(crate) fn that_machine(os: &str) -> &'static str {
     match os {
         "macos" => "that Mac",
         "windows" => "that PC",
-        _ => "that machine",
+        _ => "that computer",
     }
 }
 
@@ -465,8 +466,8 @@ struct Switches {
     share: bool,
 }
 
-/// This machine's switch on its page: "Let other machines control this
-/// desktop", off until the person turns it on. ("Let other machines create
+/// This machine's switch on its page: "Let other computers control this
+/// desktop", off until the person turns it on. ("Let other computers create
 /// Spaces here" is a Settings row on this Mac.) Both switches off is fine:
 /// the machine just is not shared, with no error.
 fn host_toggles(s: Option<&HostState>) -> Vec<MachinesViewToggle> {
@@ -534,15 +535,15 @@ fn remote_toggles(sw: &Switches, team: bool) -> Vec<MachinesViewToggle> {
 fn remove_confirm(name: &str, current: bool, device_only: bool) -> HostConfirm {
     let message = if current {
         "Everyone connected is disconnected, the host service is uninstalled and \
-         this machine leaves your machines. Turning a switch on again sets it up again."
+         this computer leaves your computers. Turning a switch on again sets it up again."
             .to_string()
     } else if device_only {
         format!(
-            "{name} will no longer see or reach your machines. Signing in on it again adds it back."
+            "{name} will no longer see or reach your computers. Signing in on it again adds it back."
         )
     } else {
         format!(
-            "{name} leaves your machines, and its Spaces are no longer listed here. \
+            "{name} leaves your computers, and its Spaces are no longer listed here. \
              Setting it up again on it adds it back."
         )
     };
@@ -673,7 +674,7 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
             machines::ONLINE.into()
         };
         let shared_by = team.then(|| {
-            let r = relay.expect("a team machine has a relay row");
+            let r = relay.expect("a team computer has a relay row");
             if r.team.as_deref().is_some_and(s_nonempty) {
                 "Shared by your team".to_string()
             } else {
@@ -699,7 +700,7 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
         .map(|(target, id)| MachinesViewRename {
             target: target.into(),
             id,
-            title: "Rename Machine".into(),
+            title: "Rename Computer".into(),
             confirm_label: "Rename".into(),
         });
 
@@ -759,14 +760,14 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
             help: if row.current {
                 None
             } else if row.device_only {
-                Some("It is signed in, but it does not share this machine.".into())
+                Some("It is signed in, but it does not share this computer.".into())
             } else if !row.online {
                 Some("It\u{2019}s offline.".into())
             } else if stopped {
                 Some("It isn\u{2019}t sharing.".into())
             } else if !sw.provide {
                 Some(format!(
-                    "It doesn\u{2019}t let other machines create Spaces. Turn on \u{201c}{}\u{201d} in Settings on {}.",
+                    "It doesn\u{2019}t let other computers create Spaces. Turn on \u{201c}{}\u{201d} in Settings on {}.",
                     SPACES_SWITCH,
                     that_machine(&row.os)
                 ))
@@ -931,6 +932,7 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
             input.health.iter().find(|h| h.id == row.id),
             host.filter(|_| row.current),
         );
+        let status = crate::machines_health::status_with_issues(status, &issues);
         list.push(MachinesViewMachine {
             id: row.id.clone(),
             name,
@@ -962,7 +964,7 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
             spaces_title: if row.device_only {
                 String::new()
             } else {
-                "Spaces on this machine".into()
+                "Spaces on this computer".into()
             },
             desktop,
             spaces_empty: (on.is_empty() && !row.device_only).then(|| {
@@ -971,7 +973,7 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
                 } else if row.online {
                     "No Spaces yet.".into()
                 } else {
-                    "No Spaces. The machine is offline.".into()
+                    "No Spaces. The computer is offline.".into()
                 }
             }),
             spaces: on
@@ -1009,12 +1011,12 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
             collapsed: true,
             ids: old,
             remove_all: (n > 0).then(|| MachinesViewRemoveAll {
-                label: "Remove old machines".into(),
+                label: "Remove old computers".into(),
                 confirm: HostConfirm {
                     title: if n == 1 {
-                        "Remove 1 old machine?".into()
+                        "Remove 1 old computer?".into()
                     } else {
-                        format!("Remove {n} old machines?")
+                        format!("Remove {n} old computers?")
                     },
                     message: "They have been offline for 30 days or more. They leave your \
                               account; setting one up again adds it back."
@@ -1047,7 +1049,7 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
     let online = list.iter().filter(|m| m.online).count();
     MachinesView {
         summary: format!(
-            "{total} machine{}, {online} online",
+            "{total} computer{}, {online} online",
             if total == 1 { "" } else { "s" }
         ),
         order: std::iter::once("clouds".to_string())
@@ -1237,12 +1239,12 @@ mod tests {
             [
                 (
                     "yours",
-                    "Your machines",
+                    "Your computers",
                     false,
                     vec!["this-mac", "studio", "byoc"]
                 ),
                 ("old", "Offline for 30+ days (1)", true, vec!["old1"]),
-                ("team", "Team machines", false, vec!["team"]),
+                ("team", "Team computers", false, vec!["team"]),
             ]
         );
         let lines: Vec<(&str, &str, Option<&str>)> = v
@@ -1264,9 +1266,9 @@ mod tests {
                 ("build-mini-01", "Desktop shared", None),
             ]
         );
-        assert_eq!(v.summary, "5 machines, 3 online");
+        assert_eq!(v.summary, "5 computers, 3 online");
         let all = v.groups[1].remove_all.as_ref().unwrap();
-        assert_eq!(all.label, "Remove old machines");
+        assert_eq!(all.label, "Remove old computers");
         assert_eq!(all.removes[0].machine.as_deref(), Some("old1"));
         assert_eq!(all.removes[0].device.as_deref(), Some("dev_old1"));
     }
@@ -1309,7 +1311,7 @@ mod tests {
                 [
                     (
                         "yours",
-                        "Your machines",
+                        "Your computers",
                         false,
                         vec!["this-mac", "studio", "byoc", "dev_lap", "dev_away"]
                     ),
@@ -1319,7 +1321,7 @@ mod tests {
                         true,
                         vec!["old1", "dev_stale"]
                     ),
-                    ("team", "Team machines", false, vec!["team"]),
+                    ("team", "Team computers", false, vec!["team"]),
                 ]
             );
             let flat: Vec<&str> = v
@@ -1378,7 +1380,10 @@ mod tests {
             .collect();
         // This Mac's page has the desktop switch; the Spaces switch is a
         // Settings row.
-        assert_eq!(t, [("Let other machines control this desktop", true, true)]);
+        assert_eq!(
+            t,
+            [("Let other computers control this desktop", true, true)]
+        );
         assert_eq!(me.toggles[0].id, "desktop");
         assert_eq!(me.toggles[0].actions, [HostActionId::HideDesktop]);
         assert_eq!(me.toggles_note, None);
@@ -1392,8 +1397,8 @@ mod tests {
                 .map(|t| t.label.as_str())
                 .collect::<Vec<_>>(),
             [
-                "Let other machines create Spaces here",
-                "Let other machines control this desktop"
+                "Let other computers create Spaces here",
+                "Let other computers control this desktop"
             ]
         );
         assert_eq!(
@@ -1495,7 +1500,7 @@ mod tests {
         assert_eq!(me.health, "fail");
         let issue = me.issues.iter().find(|i| i.id == "service").unwrap();
         assert_eq!(issue.action.as_ref().unwrap().label, "Restart service");
-        assert!(issue.text.contains("other machines"));
+        assert!(issue.text.contains("other computers"));
         // Nothing to share: the stopped service is expected, so no issue.
         input.host = Some(HostState {
             service_installed: true,
@@ -1526,7 +1531,7 @@ mod tests {
         );
         assert_eq!(
             me.toggles[0].label,
-            "Let other machines control this desktop"
+            "Let other computers control this desktop"
         );
         assert!(me.remove.is_none() && me.rename.is_none());
         assert_eq!(me.name, "Ada's MacBook Pro");
@@ -1557,7 +1562,7 @@ mod tests {
         assert!(!byoc.new_space.enabled);
         assert_eq!(
             byoc.spaces_empty.as_deref(),
-            Some("No Spaces. The machine is offline.")
+            Some("No Spaces. The computer is offline.")
         );
         assert!(by_id(&v, "team").new_space.enabled);
     }

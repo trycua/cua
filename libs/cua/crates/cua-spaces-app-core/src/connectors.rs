@@ -250,6 +250,8 @@ pub struct ConnectorAppInput {
     pub mcp: Option<bool>,
     /// The app's settings file, for its page.
     pub mcp_config: Option<String>,
+    /// The app's own sign-in is on this computer (`agents.setup`' `signedIn`): a run here uses it as is.
+    pub signed_in: bool,
 }
 
 /// Something running for a row: `app:<id>` or `provider:<id>`.
@@ -653,7 +655,13 @@ fn vault(os: SpaceOs) -> Option<&'static str> {
     }
 }
 
-fn notice(input: &ConnectorsInput) -> Option<String> {
+/// The warning shown beside working buttons (keys kept unencrypted).
+fn warning(input: &ConnectorsInput) -> Option<String> {
+    input.keys.warning.as_ref().map(|w| format!("{w}."))
+}
+
+/// What turns the buttons off, in words (credentials can't be read or saved).
+fn blocked(input: &ConnectorsInput) -> Option<String> {
     input
         .keys
         .error
@@ -666,6 +674,11 @@ fn notice(input: &ConnectorsInput) -> Option<String> {
                 .as_ref()
                 .map(|why| format!("Sign-ins can't be saved here: {why}."))
         })
+}
+
+/// The notice: why the buttons are off, else the unencrypted-keys warning.
+fn notice(input: &ConnectorsInput) -> Option<String> {
+    blocked(input).or_else(|| warning(input))
 }
 
 fn app_row(input: &ConnectorsInput, a: &ConnectorAppInput) -> ConnectorAppRow {
@@ -909,7 +922,7 @@ pub fn view(input: &ConnectorsInput) -> ConnectorsView {
 /// [`view`] in a shell on `os`.
 pub fn view_on(input: &ConnectorsInput, os: SpaceOs) -> ConnectorsView {
     let notice = notice(input);
-    let can_edit = notice.is_none();
+    let can_edit = blocked(input).is_none();
     // Every agent harness (installed here or not), then the other apps found here.
     let apps: Vec<ConnectorAppRow> = HARNESS_APPS
         .iter()
@@ -1546,6 +1559,9 @@ pub struct ModelChoice {
     pub fast: bool,
     /// The provider's own default.
     pub default: bool,
+    /// An older id kept so a saved choice still works: accepted, but not in the menu and never a default.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub legacy: bool,
 }
 
 /// The models of one provider the person has connected (or must reconnect).
@@ -1579,8 +1595,9 @@ pub struct ModelsView {
     /// Connected providers first (in the registry's order), then those that
     /// need a reconnect.
     pub groups: Vec<ModelGroup>,
-    /// What a new prompt starts with: the first fast model of the first
-    /// connected provider that has one, else that provider's default.
+    /// What a new prompt starts with: the default model of the first
+    /// connected provider (Sonnet 5.5 for Anthropic: an agent does multi-step
+    /// tool work, so the default is the reliable one, not the fastest).
     pub default: Option<ModelRef>,
     /// The line under the list that opens Connections.
     pub connect_label: String,
@@ -1616,6 +1633,7 @@ pub fn models_view(input: &ConnectorsInput) -> ModelsView {
                 label: m.name.into(),
                 fast: m.fast,
                 default: m.id == p.default_model,
+                legacy: m.legacy,
             })
             .collect();
         if models.is_empty() {
@@ -1649,17 +1667,13 @@ pub fn models_view(input: &ConnectorsInput) -> ModelsView {
         }
     }
     let default = groups
-        .iter()
-        .find_map(|g| g.models.iter().find(|m| m.fast).map(|m| (g, m)));
-    let default = default
-        .or_else(|| {
-            groups.first().and_then(|g| {
-                g.models
-                    .iter()
-                    .find(|m| m.default)
-                    .or_else(|| g.models.first())
-                    .map(|m| (g, m))
-            })
+        .first()
+        .and_then(|g| {
+            g.models
+                .iter()
+                .find(|m| m.default)
+                .or_else(|| g.models.iter().find(|m| !m.legacy))
+                .map(|m| (g, m))
         })
         .map(|(g, m)| ModelRef {
             provider: g.provider.clone(),
@@ -1877,6 +1891,7 @@ pub(crate) fn menu_groups(input: &ConnectorsInput) -> Vec<AgentGroup> {
                         label: m.clone(),
                         fast: false,
                         default: true,
+                        legacy: false,
                     }],
                     _ => p
                         .model_list()
@@ -1886,6 +1901,7 @@ pub(crate) fn menu_groups(input: &ConnectorsInput) -> Vec<AgentGroup> {
                             label: m.name.into(),
                             fast: m.fast,
                             default: m.id == p.default_model,
+                            legacy: m.legacy,
                         })
                         .collect(),
                 };
@@ -1905,14 +1921,22 @@ pub(crate) fn menu_groups(input: &ConnectorsInput) -> Vec<AgentGroup> {
                     selected: Some(i) == selected_ix,
                     default_model: models
                         .iter()
-                        .find(|m| m.fast)
-                        .or_else(|| models.iter().find(|m| m.default))
+                        .find(|m| m.default)
+                        .or_else(|| models.iter().find(|m| !m.legacy))
                         .or_else(|| models.first())
                         .map(|m| m.id.clone()),
                     models,
                 }
             })
             .collect();
+        // Nothing saved in Cua, but the app is signed in on This Mac: a run here uses that sign-in, as the app
+        // itself would, so the menu offers it and asks for nothing. Another computer needs its own sign-in.
+        let mut accounts = accounts;
+        if accounts.is_empty()
+            && let Some(acc) = this_mac_account(input, h.app, true)
+        {
+            accounts.push(acc);
+        }
         let expired = accounts.is_empty()
             && app_sign_in(h.app).is_some_and(|a| {
                 a.providers
@@ -1947,6 +1971,50 @@ pub(crate) fn menu_groups(input: &ConnectorsInput) -> Vec<AgentGroup> {
             .map(build),
     );
     groups
+}
+
+/// The account of an app that signs in on its own (Claude Code, Codex) and is signed in on This Mac, with
+/// nothing saved in Cua: `Signed in on This Mac`, via `this-mac`. A run on This Mac uses the app's own
+/// sign-in; nothing is copied.
+fn this_mac_account(input: &ConnectorsInput, app: &str, selected: bool) -> Option<AgentAccount> {
+    if !input.app(app).is_some_and(|a| a.installed && a.signed_in) {
+        return None;
+    }
+    let a = app_sign_in(app)?;
+    let (p, env) = a.providers.iter().find_map(|p| {
+        provider_envs(p)
+            .into_iter()
+            .find(|e| p.scope_of(e).is_some() && a.reads.contains(e))
+            .map(|e| (*p, e))
+    })?;
+    let models: Vec<ModelChoice> = p
+        .model_list()
+        .iter()
+        .map(|m| ModelChoice {
+            id: m.id.into(),
+            label: m.name.into(),
+            fast: m.fast,
+            default: m.id == p.default_model,
+            legacy: m.legacy,
+        })
+        .collect();
+    Some(AgentAccount {
+        provider: p.id.into(),
+        provider_label: p.name.into(),
+        icon: p.icon.into(),
+        env: env.into(),
+        slot: Some("this-mac".into()),
+        line: "Signed in on This Mac".into(),
+        via: "this-mac".into(),
+        selected,
+        default_model: models
+            .iter()
+            .find(|m| m.default)
+            .or_else(|| models.iter().find(|m| !m.legacy))
+            .or_else(|| models.first())
+            .map(|m| m.id.clone()),
+        models,
+    })
 }
 
 /// [`agents_view`] with the person's choice of which apps the menu shows ([`crate::agent_menu`]): a
@@ -2026,9 +2094,8 @@ pub fn import_sheet_on(os: SpaceOs) -> ImportSheetView {
     };
     ImportSheetView {
         title: "Use your Claude Code sign-in".into(),
-        lede: format!(
-            "Run Claude Code in your Spaces with the Claude plan you already use on {this}."
-        ),
+        // The one line most people need; `points` (what is read, kept and sent) go under "How this works".
+        lede: format!("Cua uses the Claude Code sign-in on {this}. You stay signed in."),
         points: vec![
             format!("Cua reads your Claude Code sign-in from {from}."),
             format!(
@@ -2308,7 +2375,7 @@ pub fn app_detail(input: &ConnectorsInput, agent: &str) -> Option<AppDetailView>
     let row = app_row(input, a);
     // An agent harness that is not on this machine has no local tools to switch.
     let local = a.installed || a.configured;
-    let can_edit = notice(input).is_none();
+    let can_edit = blocked(input).is_none();
     let busy = input.busy(&format!("app:{agent}")).is_some();
     let mut toggles = vec![];
     if local {
@@ -2503,6 +2570,7 @@ mod tests {
             skills: configured,
             mcp: Some(configured),
             mcp_config: Some(format!("~/.{agent}/settings.json")),
+            signed_in: false,
         }
     }
 
@@ -2534,6 +2602,44 @@ mod tests {
             ],
             ..Default::default()
         }
+    }
+
+    /// A new Claude prompt starts on Sonnet 5.5 (reliable at tool use), not the
+    /// fastest model; the older ids stay accepted but are marked legacy.
+    #[test]
+    fn anthropic_starts_on_sonnet_5_5_and_keeps_older_ids_accepted() {
+        let mut i = input();
+        i.keys.keys = vec![key("ANTHROPIC_API_KEY", "4f2a")];
+        let v = models_view(&i);
+        assert_eq!(
+            v.default.as_ref().map(|d| d.model.as_str()),
+            Some("claude-sonnet-5-5")
+        );
+        let g = &v.groups[0];
+        let id = |m: &ModelChoice| m.id.clone();
+        let shown: Vec<String> = g.models.iter().filter(|m| !m.legacy).map(id).collect();
+        assert_eq!(
+            shown,
+            [
+                "claude-haiku-5-5",
+                "claude-sonnet-5-5",
+                "claude-opus-5-5",
+                "claude-fable-5-1"
+            ]
+        );
+        // A saved Haiku 4.5 is still offered (hidden from the menu), never the default.
+        let old = g
+            .models
+            .iter()
+            .find(|m| m.id == "claude-haiku-4-5")
+            .unwrap();
+        assert!(old.legacy && !old.default);
+        // The default model is in the list.
+        assert!(
+            g.models
+                .iter()
+                .any(|m| m.default && m.id == "claude-sonnet-5-5")
+        );
     }
 
     /// The credentials an app reads here are the ones its harness reads
@@ -3309,6 +3415,27 @@ mod tests {
         assert!(v.providers.iter().all(|p| !p.button.enabled));
     }
 
+    #[test]
+    fn the_unencrypted_keys_warning_shows_while_buttons_stay_on() {
+        let mut i = input();
+        i.keys.warning = Some("Keychain not available in this development build".into());
+        let v = view(&i);
+        assert!(v.can_edit);
+        assert_eq!(
+            v.notice.as_deref(),
+            Some("Keychain not available in this development build.")
+        );
+        assert!(v.providers.iter().any(|p| p.button.enabled));
+        i.keys.unavailable = Some("no Keychain".into());
+        let v = view(&i);
+        assert!(
+            !v.can_edit
+                && v.notice
+                    .unwrap()
+                    .starts_with("Sign-ins can't be saved here")
+        );
+    }
+
     fn keyed(env: &str, provider: &str) -> AgentKeyInput {
         let mut k = key(env, "abcd");
         k.provider = provider.into();
@@ -3953,6 +4080,51 @@ mod tests {
             (cc.state.as_str(), cc.sign_in_label.as_str()),
             ("needs-reconnect", "Sign in again")
         );
+    }
+
+    #[test]
+    fn an_app_signed_in_on_this_mac_runs_here_without_a_sign_in() {
+        let mut i = with_keys(vec![], vec![]);
+        for (agent, name) in [
+            ("codex", "OpenAI Codex"),
+            ("claude-code", "Claude Code"),
+            ("hermes", "Hermes"),
+        ] {
+            i.apps.retain(|a| a.agent != agent);
+            let mut a = app(agent, name, true);
+            a.signed_in = true;
+            i.apps.push(a);
+        }
+        let v = agents_view(&i);
+        for (app, env) in [
+            ("codex", "CODEX_AUTH_JSON"),
+            ("claude-code", "CLAUDE_CODE_OAUTH_TOKEN"),
+        ] {
+            let g = group(&v, app);
+            assert_eq!(g.state, "connected", "{app}");
+            let [a] = g.accounts.as_slice() else {
+                panic!("{app}: {:?}", g.accounts)
+            };
+            assert_eq!(
+                (a.line.as_str(), a.via.as_str(), a.env.as_str()),
+                ("Signed in on This Mac", "this-mac", env)
+            );
+            assert!(a.selected && a.default_model.is_some(), "{app}");
+        }
+        // Hermes runs on provider keys: its own sign-in is not an account of the menu.
+        assert!(group(&v, "hermes").accounts.is_empty());
+        assert!(v.default.is_some() && v.empty.is_none());
+        // A sign-in saved in Cua is listed instead of This Mac's.
+        let v = agents_view(&{
+            let mut j = i.clone();
+            j.keys.keys = vec![named(
+                "CODEX_AUTH_JSON",
+                "Signed in with ChatGPT as ada@example.com",
+            )];
+            j
+        });
+        assert_eq!(group(&v, "codex").accounts.len(), 1);
+        assert_eq!(group(&v, "codex").accounts[0].via, "sign-in");
     }
 
     #[test]

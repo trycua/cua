@@ -219,7 +219,7 @@ pub struct Directory {
     storage: std::sync::Arc<Storage>,
 }
 
-fn hash_token(token: &str) -> String {
+pub(crate) fn hash_token(token: &str) -> String {
     hex::encode(ring::digest::digest(&ring::digest::SHA256, token.as_bytes()).as_ref())
 }
 

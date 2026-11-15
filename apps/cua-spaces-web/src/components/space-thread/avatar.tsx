@@ -22,7 +22,7 @@ export function personHue(name: string): number {
 }
 
 export function agentHue(harness: string, name: string): number {
-  return AGENT_HUES[harness] ?? (hash(name) % 360);
+  return AGENT_HUES[harness] ?? hash(name) % 360;
 }
 
 /** What an agent's owner badge is cut out of: the surface the avatar sits on. */
@@ -121,7 +121,10 @@ export function MemberAvatar({
   presence?: "online" | null;
   className?: string;
 }) {
-  const dot = presence === "online" ? <span data-presence="" className="absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full border-2 border-background bg-success" /> : null;
+  const dot =
+    presence === "online" ? (
+      <span data-presence="" className="absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full border-2 border-background bg-success" />
+    ) : null;
   if (kind === "agent") {
     return (
       <span className={cn("relative inline-flex shrink-0", className)}>

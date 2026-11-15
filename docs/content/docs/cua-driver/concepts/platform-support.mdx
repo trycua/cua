@@ -57,20 +57,28 @@ that received it and may prompt again after a restart.
 Omarchy is an Arch setup built on Hyprland. Modern Hyprland is not wlroots, so
 Sway results do not carry over. An optional Hyprland plugin, off by default and
 outside the normal installer, adds two independent agent seats (`Cua-Agent`,
-`Cua-Agent-2`) for isolated background input. Cua Driver 0.24.0 shipped it with
-a narrow qualification:
+`Cua-Agent-2`) for isolated background input:
 
-- Apps: Calc from `libreoffice-fresh 26.2.5-3` and Inkscape `1.4.4-6`, checked
-  against package metadata before every action.
+- Apps: any native Wayland app that binds the agent seats, such as GTK 3 and 4
+  and Qt 6 apps. Before every action the driver checks that the target is a
+  native Wayland window of that process, and the plugin refuses an app that never
+  bound the agent seat (`client_not_bound`). Chromium and Electron bind only the
+  user's seat, so drive their pages with the browser tools.
+- Qt 6 apps take background clicks, scrolls and drags but not keys: Qt sends keys
+  only to the window the user has active, so background keys refuse
+  (`client_drops_background_keys`).
 - The plugin's Hyprland ABI and compiler toolchain must match the compositor.
-- Not covered: Chromium, Electron, and XWayland raw input; Unicode and IME;
-  multiple layouts; modified pointer gestures.
+- Not covered: XWayland raw input; Unicode and IME; multiple layouts; modified
+  pointer gestures.
 - Explicit foreground actions change focus and pointer and do not restore them.
 
 Evidence for this feature is recorded in PRs
 [#3547](https://github.com/trycua/cua/pull/3547),
 [#3557](https://github.com/trycua/cua/pull/3557), and
-[#3572](https://github.com/trycua/cua/pull/3572). General Hyprland support
+[#3572](https://github.com/trycua/cua/pull/3572). A menu or list an app opens
+in the background, for example from a combo box, opens without taking the
+user's keyboard, and a drag-and-drop it starts is cancelled rather than handed
+the user's pointer. General Hyprland support
 still needs an accepted input and permission design, packaged install and
 upgrade proof, and the full native catalog on an integrated candidate.
 

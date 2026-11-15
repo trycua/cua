@@ -15,7 +15,8 @@
 //!   accounts' chains are separate and still verify), pairing codes;
 //! - **teams** (leave, delete the ones solely owned, scrub invites and the
 //!   audit log), who-reached-what rows (`grants`), usage and queued
-//!   analytics events, the account's default Space settings, the cached
+//!   analytics events, the account's default Space settings and its removed
+//!   computers' pending Space deletions, the cached
 //!   plan, cached team-access answers, mesh nodes and pairings, and the
 //!   account's pool.
 //!
@@ -239,6 +240,10 @@ fn run(relay: &Relay, sub: &str, given: &[String]) -> Result<serde_json::Value, 
         .pool
         .erase_account(sub)
         .map_err(|e| failed("pool", e))?;
+    let pending_deletions = relay
+        .pending_deletions
+        .erase_account(sub)
+        .map_err(|e| failed("pending_deletions", e))?;
 
     Ok(serde_json::json!({
         "machines": machine_ids.len(),
@@ -251,6 +256,7 @@ fn run(relay: &Relay, sub: &str, given: &[String]) -> Result<serde_json::Value, 
         "plan_cache": plan_cache,
         "pool": pool,
         "spaces_settings": spaces_settings,
+        "pending_deletions": pending_deletions,
         "teams": teams,
         "grants": grants,
         "posthog_distinct_id": crate::meter::posthog_distinct_id(sub),

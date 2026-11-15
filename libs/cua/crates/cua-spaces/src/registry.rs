@@ -28,6 +28,7 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// File name of the registry.
 pub const SPACES_FILE: &str = "spaces.json";
@@ -190,6 +191,23 @@ impl VolumeSetting {
 /// (`cua.relay=off`; `--no-relay`).
 pub const RELAY_LABEL: &str = "cua.relay";
 
+/// The label on a Space no list shows (value [`HIDDEN_HOME`]): the home that
+/// warms in the background for Home's prompt box. The app makes it with this
+/// label and `cua.relay=off`; it stays out of the apps' lists and off the
+/// owner's account until a person writes into its thread
+/// ([`crate::Spaces::reveal`]). `cua spaces ls` and the tools still list it.
+pub const HIDDEN_LABEL: &str = "cua.hidden";
+/// [`HIDDEN_LABEL`]'s value for the home warming for Home's prompt box.
+pub const HIDDEN_HOME: &str = "home";
+
+/// What `ls` says of a hidden Space with [`HIDDEN_LABEL`] value `value`.
+pub fn hidden_note(value: &str) -> String {
+    match value {
+        HIDDEN_HOME => "hidden: warming for Home".into(),
+        _ => "hidden".into(),
+    }
+}
+
 /// Whether a Space is listed on the owner's cua.ai account (the phone and
 /// the owner's other computers see and open it).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -344,6 +362,7 @@ impl std::fmt::Debug for Credential {
 pub struct Registry {
     dir: PathBuf,
     lock: Mutex<()>,
+    spaces_reads: AtomicU64,
 }
 
 impl Registry {
@@ -352,7 +371,15 @@ impl Registry {
         Self {
             dir: dir.into(),
             lock: Mutex::new(()),
+            spaces_reads: AtomicU64::new(0),
         }
+    }
+
+    /// How many times this registry has read `spaces.json` (the scale
+    /// test's budget of reads per connect).
+    #[doc(hidden)]
+    pub fn spaces_reads(&self) -> u64 {
+        self.spaces_reads.load(Ordering::Relaxed)
     }
 
     /// The directory.
@@ -754,6 +781,7 @@ impl Registry {
                 self.spaces_path().display()
             ))
         };
+        self.spaces_reads.fetch_add(1, Ordering::Relaxed);
         let spaces: Vec<dpb::Space> = match std::fs::read(self.spaces_path()) {
             Ok(bytes) if bytes.iter().all(u8::is_ascii_whitespace) => vec![],
             Ok(bytes) => {

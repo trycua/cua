@@ -151,12 +151,12 @@ fn setup() -> LoSession {
 ///
 /// Failures point at:
 ///   - (1) MSAA walker not finding Font Color (check msaa.rs walker
-///         budget / depth, or LO renamed the button).
+///     budget / depth, or LO renamed the button).
 ///   - (2) cua-driver click tool's MSAA dispatch broke (check
-///         `tools/click.rs` BUTTONDROPDOWN branch).
+///     `tools/click.rs` BUTTONDROPDOWN branch).
 ///   - (3) Right-edge offset wrong for current LO version's toolbar
-///         scale (check `rect.right - 4` heuristic in
-///         `tools/impl_.rs`).
+///     scale (check `rect.right - 4` heuristic in
+///     `tools/impl_.rs`).
 #[test]
 #[ignore]
 fn harness_lo_vcl_font_color_expand_opens_picker() {
@@ -216,7 +216,7 @@ fn harness_lo_vcl_font_color_expand_opens_picker() {
     );
     let resp_text = resp.text();
     assert!(
-        resp_text.starts_with("✅"),
+        !resp.is_error(),
         "click(action:expand) failed: {resp_text:?}"
     );
     assert!(

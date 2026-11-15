@@ -30,7 +30,16 @@
 import { Emitter, HostError, type DataAdapter } from "../adapter";
 import { hostOs, THIS_MACHINE, type HostOs } from "../host-os";
 import { electronTransport, webkitTransport, type HostTransport } from "../transport";
-import type { AgentEventsPage, AgentMessageSent, AgentSetupRow, AgentStarted, ConnectionReport, ConnectResult, PersistentAgent, SpaceAgentRun } from "../contracts/agents";
+import type {
+  AgentEventsPage,
+  AgentMessageSent,
+  AgentSetupRow,
+  AgentStarted,
+  ConnectionReport,
+  ConnectResult,
+  PersistentAgent,
+  SpaceAgentRun,
+} from "../contracts/agents";
 import type { CancelOutcome, HostActionId, HostStatus, MachinePageRow, MachineRow, MachinesView, SpacePowerReport } from "../contracts/host";
 import type { HostWindow } from "../detect";
 import {
@@ -58,6 +67,7 @@ import { teleportProgressFromWk, webkitPageOps } from "../ops/webkit-pages";
 import { webkitAgentDetailOps } from "../ops/agent-detail";
 import { webkitThreadOps } from "../ops/thread";
 import { webkitAgentThreadsOps } from "../ops/agent-threads";
+import { webkitAgentSignInOps } from "../ops/agent-sign-in";
 import { webkitAgentKeysOps } from "../ops/agent-keys";
 import { webkitGithubOps } from "../ops/github";
 import { webkitKeyvaultManageOps } from "../ops/keyvault-manage";
@@ -67,6 +77,7 @@ import { startupFromHost, webkitStartupOps } from "../ops/startup";
 import { webkitTelemetryNoticeOps } from "../ops/telemetry";
 import { unsupportedStreamOps, type StreamTicket } from "../ops/stream";
 import type { RelayUsage } from "../ops/relay-usage";
+import type { DefaultSpace, SpacesSettings } from "../ops/spaces-settings";
 import type { RiskyRequest } from "../ops/nudges";
 import type { ResourcesSnapshot } from "../ops/resources";
 import type { HostChecklistState } from "../ops/checklist";
@@ -136,6 +147,7 @@ export function spaceToRow(s: WkSpace): SpaceRow {
     error: opt(s.sdk?.error),
     host: opt(s.host),
     hostName: opt(s.hostName),
+    parent: opt(s.parent),
     power: s.power?.control,
     powerState: running ? "running" : powerState,
     stopReason: off ? opt(s.power?.stopReason) : undefined,
@@ -152,9 +164,7 @@ export function spaceToRow(s: WkSpace): SpaceRow {
 export function sharingOf(a: SpaceAccess): SpaceSharingFacts | undefined {
   if (a.kind === "mine" && a.people.length === 0) return undefined;
   const people = (role: "editor" | "viewer") => a.people.filter((p) => !p.team && p.role === role).map((p) => p.who);
-  const teams = a.people
-    .filter((p) => p.team)
-    .map((p) => ({ key: p.who.replace(/^team:/, ""), name: p.name ?? p.who.replace(/^team:/, ""), role: p.role }));
+  const teams = a.people.filter((p) => p.team).map((p) => ({ key: p.who.replace(/^team:/, ""), name: p.name ?? p.who.replace(/^team:/, ""), role: p.role }));
   const owner = a.role === "owner";
   return {
     ownerId: a.ownerEmail ?? a.ownerName ?? "",
@@ -311,9 +321,7 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
   // The rows only this host lays out: what they show now, so the core lays
   // them out again on the page (null: the host has none).
   const on = (id: string) => (rows.has(id) ? active(rows.get(id)) === "on" : null);
-  const protection = [...rows.values()]
-    .filter((r) => r.id.startsWith("keyvault-protection:"))
-    .map((r) => ({ label: r.label, value: r.value ?? "" }));
+  const protection = [...rows.values()].filter((r) => r.id.startsWith("keyvault-protection:")).map((r) => ({ label: r.label, value: r.value ?? "" }));
   return {
     values: {
       theme: page.theme,
@@ -323,7 +331,8 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
       defaultLocation: DEFAULT_SETTINGS.defaultLocation,
       // The core lays out `launch-at-login` once the host read the login item.
       launchAtLogin: loginRow && loginRow.enabled ? active(loginRow) === "on" : null,
-      updateChannel: s.updateChannel === "beta" || s.updateChannel === "stable" ? s.updateChannel : null,
+      // `beta` (a host from before Nightly) is Nightly.
+      updateChannel: s.updateChannel === "stable" ? "stable" : s.updateChannel === "nightly" || s.updateChannel === "beta" ? "nightly" : null,
       // The core's General row (`settings::auto_connect_row`), when the host lays it out.
       ...(rows.has("auto-connect") ? { autoConnect: active(rows.get("auto-connect")) === "on" } : {}),
       // The core's own settings the page changes (`settings.update`); an older host has none.
@@ -346,6 +355,8 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
       runtimes: s.runtimes ?? null,
       autoConnect: on("auto-connect"),
       overflow: on("placement-overflow"),
+      closeWindowKeepsRunning: rows.has("close-window") ? active(rows.get("close-window")) === "keep" : null,
+      closeNotice: on("close-notice"),
       keyvaultAutoWipe: on("keyvault-auto-wipe"),
       keyvaultUnlockPrompt: on("keyvault-unlock-prompt"),
       keyvaultSiteIcons: on("keyvault-site-icons"),
@@ -354,6 +365,7 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
     globalShortcut: s.globalShortcut ? { label: s.globalShortcut.label, registered: s.globalShortcut.registered } : null,
     accountUrl: s.accountUrl ?? null,
     cli: s.cli && s.cli.name ? { name: s.cli.name, installed: Boolean(s.cli.installed) } : null,
+    target: s.target ? { channel: s.target.channel, env: s.target.env, authHost: s.target.authHost ?? "" } : null,
   };
 }
 
@@ -386,7 +398,11 @@ const snakeKey = (k: string) => k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`
 function snake(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(snake);
   if (v && typeof v === "object") {
-    return Object.fromEntries(Object.entries(v).filter(([k]) => k !== "blob").map(([k, x]) => [snakeKey(k), x === null ? undefined : snake(x)]));
+    return Object.fromEntries(
+      Object.entries(v)
+        .filter(([k]) => k !== "blob")
+        .map(([k, x]) => [snakeKey(k), x === null ? undefined : snake(x)]),
+    );
   }
   return v;
 }
@@ -503,10 +519,7 @@ const BACKGROUND = { light: "#f7f8fa", dark: "#16181c" } as const;
 
 /* ---- The adapter ---------------------------------------------------------------- */
 
-export function createWebkitAdapter(
-  win: HostWindow = globalThis.window as HostWindow,
-  options: WebkitAdapterOptions = {},
-): DataAdapter {
+export function createWebkitAdapter(win: HostWindow = globalThis.window as HostWindow, options: WebkitAdapterOptions = {}): DataAdapter {
   const electron = options.host === "electron";
   const transport: HostTransport | null = electron ? electronTransport(win) : webkitTransport(win);
   if (!transport) throw new Error(electron ? "window.cuaDesktop is not available" : "window.webkit.messageHandlers.cua is not available");
@@ -547,7 +560,13 @@ export function createWebkitAdapter(
           else if (r.ok) resolve(r.result as T);
           else {
             const e = r.error;
-            reject(new HostError(e?.message ?? `${method} failed`, e?.code, e && { title: e.title, details: e.details, actionLabel: e.actionLabel }));
+            reject(
+              new HostError(
+                e?.message ?? `${method} failed`,
+                e?.code,
+                e && { title: e.title, details: e.details, actionLabel: e.actionLabel, kind: e.kind, refusalCode: e.refusalCode },
+              ),
+            );
           }
         },
         (e: unknown) => {
@@ -567,7 +586,6 @@ export function createWebkitAdapter(
     // title bar, its controls); the SwiftUI host reads only `color`.
     void request("window.setBackgroundColor", { color: BACKGROUND[dark ? "dark" : "light"], appearance: theme }).catch(() => {});
   }
-
 
   // Creates this page started: the host lists each as its own pending row
   // too, which the store already draws.
@@ -653,8 +671,9 @@ export function createWebkitAdapter(
       machinesView = machines?.view ? fromHostView(machines.view) : null;
       return toMachineRows(spaces, machines, os);
     },
-    "host.status": async () => {
-      const h = await request<WkHostState | null>("host.status");
+    // The args (localNetwork, localNetworkCheck) go to the app: without them it never lists the Local Network row.
+    "host.status": async (args) => {
+      const h = await request<WkHostState | null>("host.status", { ...args });
       if (!h) throw new HostError("This Mac has not reported its sharing status yet", "not_found");
       return toHostStatus(h);
     },
@@ -756,11 +775,18 @@ export function createWebkitAdapter(
     "agents.configure": async ({ agents }) => list(await request("agents.configure", { agents: agents ?? null })) as AgentSetupRow[],
     "agents.signIn": async ({ agent }) => list(await request("agents.signIn", { agent })) as AgentSetupRow[],
     "agents.status": ({ refresh }) => request<ConnectionReport>("agents.status", { refresh: refresh ?? false }),
-    "agents.connect": async ({ agents, signIn, skills, mcp }) =>
+    "agents.connect": async ({ agents, signIn, skills, mcp, driver }) =>
       // No timeout: Claude Code's sign-in waits for its one browser approval.
-      list(await request("agents.connect", { agents, signIn, skills: skills ?? true, mcp: mcp ?? true }, null)) as ConnectResult[],
+      list(
+        await request("agents.connect", { agents, signIn, skills: skills ?? true, mcp: mcp ?? true, ...(driver ? { driver } : {}) }, null),
+      ) as ConnectResult[],
     "agents.disconnect": ({ agents, signIn, skills, mcp }) =>
-      request<{ removed_sign_ins: string[] }>("agents.disconnect", { agents, signIn, ...(skills === undefined ? {} : { skills }), ...(mcp === undefined ? {} : { mcp }) }),
+      request<{ removed_sign_ins: string[] }>("agents.disconnect", {
+        agents,
+        signIn,
+        ...(skills === undefined ? {} : { skills }),
+        ...(mcp === undefined ? {} : { mcp }),
+      }),
     "agents.signInStart": ({ agent }) => request<OpResult<"agents.signInStart">>("agents.signInStart", { agent }),
     "agents.signInWait": ({ id }) => request<OpResult<"agents.signInWait">>("agents.signInWait", { id }),
     "session.openExternal": async ({ url }) => {
@@ -774,6 +800,7 @@ export function createWebkitAdapter(
     ...webkitAgentDetailOps(request),
     ...webkitThreadOps(request),
     ...webkitAgentThreadsOps(request),
+    ...webkitAgentSignInOps(request),
     ...webkitAgentKeysOps(request),
     ...webkitGithubOps(request),
     ...webkitKeyvaultManageOps(request, toKeyvaultOverview as (wk: never) => KeyvaultOverview),
@@ -795,10 +822,16 @@ export function createWebkitAdapter(
       await request("machines.checkHealth");
       return null;
     },
-    "machines.remove": async ({ machine, device }) => {
-      await request("machines.remove", { machine: machine ?? null, device: device ?? null });
+    "machines.remove": async ({ machine, device, deleteSpaces }) => {
+      // `deleteSpaces` only when asked: an older host never sees it.
+      await request("machines.remove", { machine: machine ?? null, device: device ?? null, ...(deleteSpaces ? { deleteSpaces: true } : {}) });
       return null;
     },
+    // The default Space (ops/spaces-settings.ts): the relay's own words.
+    "spaces.settings": () => request<SpacesSettings | null>("spaces.settings"),
+    "spaces.setSettings": ({ defaultSpace, fallback, fallbackOn }) =>
+      request<SpacesSettings | null>("spaces.setSettings", { defaultSpace, fallback: [...(fallback ?? [])], fallbackOn: fallbackOn ?? true }),
+    "spaces.resolveDefault": () => request<DefaultSpace | null>("spaces.resolveDefault"),
     "checklist.get": () => request<{ state: HostChecklistState }>("checklist.get"),
     "checklist.send": ({ action }) => request<{ state: HostChecklistState }>("checklist.send", { action }),
     "links.list": () => request<{ links: ShareLink[] }>("links.list"),

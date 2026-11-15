@@ -15,6 +15,7 @@ on:
       - "apps/cua-spaces/src-tauri/installer/**"
       - "apps/cua-spaces/tests/installer/**"
       - ".github/workflows/ci-installers.yml"
+  merge_group:
   workflow_dispatch:
 
 permissions:
@@ -32,12 +33,12 @@ env:
 jobs:
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   lint:
     needs: quick
-    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) && needs.quick.outputs.skip != 'true' }}
     name: shellcheck + shfmt + manifest unit tests
     runs-on: ubuntu-24.04
     steps:
@@ -59,7 +60,7 @@ jobs:
 
   installer-smoke-linux:
     needs: quick
-    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) && needs.quick.outputs.skip != 'true' }}
     name: installer smoke (Linux containers)
     runs-on: ubuntu-24.04
     strategy:
@@ -105,7 +106,7 @@ jobs:
 
   installer-smoke-macos:
     needs: quick
-    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) && needs.quick.outputs.skip != 'true' }}
     name: installer smoke (macOS, temp prefix + dmg mount + pkg)
     runs-on: macos-15
     steps:
@@ -119,7 +120,7 @@ jobs:
 
   installer-smoke-windows:
     needs: quick
-    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) && needs.quick.outputs.skip != 'true' }}
     name: installer smoke (Windows, install.ps1)
     runs-on: windows-latest
     steps:

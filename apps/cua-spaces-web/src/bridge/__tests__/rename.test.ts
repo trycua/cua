@@ -38,9 +38,7 @@ describe.skipIf(!wasmBuilt)("renaming a Space", () => {
     await store.renameSpace("local:design-review", "review-board");
     await until(() => expect(row()?.name).toBe("review-board"));
     expect(spaces()).toHaveLength(count);
-    expect(calls.filter((c) => c.op === "spaces.rename")).toEqual([
-      { op: "spaces.rename", args: { spaceId: "local:design-review", name: "review-board" } },
-    ]);
+    expect(calls.filter((c) => c.op === "spaces.rename")).toEqual([{ op: "spaces.rename", args: { spaceId: "local:design-review", name: "review-board" } }]);
 
     // Refused in plain words; nothing changes.
     await expect(store.renameSpace("local:design-review", "Review Board")).rejects.toThrow(/lowercase letters, digits and dashes/);

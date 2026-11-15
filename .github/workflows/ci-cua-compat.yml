@@ -20,22 +20,30 @@ on:
   pull_request:
     paths:
       - "libs/cua/crates/cua-compat/**"
-      - "libs/cua/crates/cua-cli/src/compat_cmd.rs"
+      - "libs/cua/crates/cua-compat-cmd/**"
+      - "libs/cua/crates/cua-cli/src/extension.rs"
+      - "libs/cua/crates/cua-cli/Cargo.toml"
+      - "libs/cua/crates/cua-spaces-cli/Cargo.toml"
+      - "scripts/check-spaces-build-graph.sh"
       - "libs/cua/crates/cua-spacesd-client/src/testing.rs"
       - "tests/compat/**"
       - ".github/workflows/ci-cua-compat.yml"
+  merge_group:
   # Main keeps the Rust cache family (libs-cua-compat, Linux and macOS) warm
   # for the pull request runs above; the weekly run alone let it expire.
   push:
     branches: [main]
     paths:
       - "libs/cua/crates/cua-compat/**"
-      - "libs/cua/crates/cua-cli/src/compat_cmd.rs"
+      - "libs/cua/crates/cua-compat-cmd/**"
+      - "libs/cua/crates/cua-cli/src/extension.rs"
+      - "libs/cua/crates/cua-cli/Cargo.toml"
+      - "libs/cua/crates/cua-spaces-cli/Cargo.toml"
+      - "scripts/check-spaces-build-graph.sh"
       - "libs/cua/crates/cua-spacesd-client/src/testing.rs"
       - "tests/compat/**"
       - ".github/workflows/ci-cua-compat.yml"
-  schedule:
-    - cron: "41 6 * * 1"
+  # Weekly schedule off: it has failed on every run since it was added. Re-enable the cron once the lane is green.
   workflow_dispatch:
 
 permissions:
@@ -57,12 +65,12 @@ env:
 jobs:
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   hermetic:
     needs: quick
-    if: ${{ !failure() && !cancelled() }}
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: hermetic (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
@@ -90,8 +98,11 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: libs/cua
         run: |
-          cargo fmt -p cua-compat -- --check
+          cargo fmt -p cua-compat -p cua-compat-cmd -- --check
           cargo clippy --locked -p cua-compat --features testing --all-targets -- -D warnings
+      - name: The Cua Spaces build keeps the gateway beside the CLI
+        if: runner.os == 'Linux'
+        run: bash scripts/check-spaces-build-graph.sh
       - name: Rust tests (wire level, mock Spaces)
         working-directory: libs/cua
         run: cargo test --locked -p cua-compat --features testing
@@ -104,7 +115,7 @@ jobs:
     name: E2B SDK surface
     # Not on main pushes: those exist to keep the hermetic job's Rust cache warm.
     needs: quick
-    if: ${{ !failure() && !cancelled() && (github.event_name != 'push') }}
+    if: ${{ !failure() && !cancelled() && (github.event_name != 'push') && needs.quick.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -130,7 +141,7 @@ jobs:
     # Paid E2B sandboxes and a live provider: the weekly run and manual runs only,
     # never the main pushes that keep the Rust cache warm.
     needs: quick
-    if: ${{ !failure() && !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ !failure() && !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.quick.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:

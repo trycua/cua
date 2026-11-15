@@ -363,6 +363,7 @@ pub fn theme_store_root() -> Result<PathBuf> {
         return Ok(path);
     }
     #[cfg(target_os = "windows")]
+    #[allow(clippy::needless_return)]
     {
         let root = std::env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)

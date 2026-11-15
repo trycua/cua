@@ -24,10 +24,9 @@ pub enum Error {
     NotFound(String),
     /// The target has no cua-spacesd, and nothing else answered either
     /// (a Space without spacesd needs a declared service or an MCP URL).
-    #[error(
-        "{space} has no cua-spacesd ({reason}); the spacesd primitives need an \
-         image that runs it, for example ghcr.io/trycua/linux:24.04"
-    )]
+    /// A computer the relay lists offline says so instead
+    /// ([`cua_spaces_contract::presence::LISTED_OFFLINE`]).
+    #[error("{}", spacesd_missing(.space, .reason))]
     SpacesdNotAvailable {
         /// The Space or URL.
         space: String,
@@ -171,6 +170,17 @@ fn limitation_suffix(limitation: &str) -> String {
         String::new()
     } else {
         format!(": {limitation}")
+    }
+}
+
+fn spacesd_missing(space: &str, reason: &str) -> String {
+    if cua_spaces_contract::presence::says_listed_offline(reason) {
+        format!("{space}: {reason}")
+    } else {
+        format!(
+            "{space} has no cua-spacesd ({reason}); the spacesd primitives need an \
+             image that runs it, for example ghcr.io/trycua/linux:24.04"
+        )
     }
 }
 

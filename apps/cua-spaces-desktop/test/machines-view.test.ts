@@ -40,7 +40,14 @@ describe.skipIf(!built)("the Machines page on the app core", () => {
 
   beforeAll(async () => {
     home = mkdtempSync(path.join(tmpdir(), "cua-machines-"));
-    Object.assign(process.env, { HOME: home, USERPROFILE: home, CUA_HOME: path.join(home, ".cua"), CUA_TELEMETRY: "0", DO_NOT_TRACK: "1", CUA_KEYCHAIN_NONINTERACTIVE: "1" });
+    Object.assign(process.env, {
+      HOME: home,
+      USERPROFILE: home,
+      CUA_HOME: path.join(home, ".cua"),
+      CUA_TELEMETRY: "0",
+      DO_NOT_TRACK: "1",
+      CUA_KEYCHAIN_NONINTERACTIVE: "1",
+    });
     native = await loadNative(dir);
   });
 
@@ -68,7 +75,14 @@ describe.skipIf(!built)("the Machines page on the app core", () => {
       about: () => ({ computerName: "Ada's MacBook Pro", appVersion: "0.9.1", osVersion: "macOS 26.5.2" }),
     });
     model.devices.signedIn = true;
-    bridge = createBridge({ model, supervisor: null, version: "1.2.3", platform: "darwin", env: {}, ui: { openSpace: () => {}, setBackground: () => {}, activate: () => {} } } as never);
+    bridge = createBridge({
+      model,
+      supervisor: null,
+      version: "1.2.3",
+      platform: "darwin",
+      env: {},
+      ui: { openSpace: () => {}, setBackground: () => {}, activate: () => {} },
+    } as never);
   });
 
   const call = (method: string, args: Record<string, unknown> = {}) => bridge.registry.handle(method, args, { window: "win-1" });
@@ -121,7 +135,18 @@ describe.skipIf(!built)("the Machines page on the app core", () => {
     const url = "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork";
     backend.health.set("this", {
       cuaVersion: "0.4.1",
-      checks: [{ id: "machine.local_network", status: "fail", message: "blocked", remediation: "", facts: new Map([["app", "Cua Spaces"], ["settings_url", url]]) }],
+      checks: [
+        {
+          id: "machine.local_network",
+          status: "fail",
+          message: "blocked",
+          remediation: "",
+          facts: new Map([
+            ["app", "Cua Spaces"],
+            ["settings_url", url],
+          ]),
+        },
+      ],
     });
     const targets = model.machinesView.machines.filter((m) => m.healthTarget !== undefined && m.healthTarget !== null);
     expect(targets.some((m) => m.current)).toBe(true);
@@ -181,6 +206,8 @@ describe.skipIf(!built)("the Machines page on the app core", () => {
     await model.refresh();
     await expect(call("machines.remove", { machine: "m2", device: "dev_old" })).resolves.toBeNull();
     expect(backend.unregistered).toEqual(["m2"]);
+    // Detached, not deleted, unless the page asks.
+    expect(backend.unregisteredWithSpaces).toEqual([]);
     expect(devices.calls).toContain("revoke:dev_old");
     await expect(call("machines.remove", {})).rejects.toMatchObject({ code: "bad_args" });
     // Signed out: no relay to ask.
@@ -188,5 +215,48 @@ describe.skipIf(!built)("the Machines page on the app core", () => {
     const signedOut = new DevicesModel(native, () => null);
     Object.assign(model, { devices: signedOut });
     await expect(call("machines.remove", { machine: "m2" })).rejects.toMatchObject({ code: "unsupported" });
+  });
+
+  it("clears the saved default when the removed computer was it, and keeps one that was not", async () => {
+    await model.refresh();
+    await call("spaces.setSettings", { defaultSpace: "relay:m2", fallback: ["relay:m2/box", "relay:m3"], fallbackOn: true });
+    await call("machines.remove", { machine: "m2", device: "dev_old" });
+    await expect(call("spaces.settings")).resolves.toMatchObject({ defaultSpace: null, fallback: ["relay:m3"], fallbackOn: true });
+    await call("spaces.setSettings", { defaultSpace: "relay:m3", fallback: [], fallbackOn: true });
+    await call("machines.remove", { machine: "m2" });
+    await expect(call("spaces.settings")).resolves.toMatchObject({ defaultSpace: "relay:m3" });
+  });
+
+  it("removes a computer with the Spaces made on it when the page asks (CUA-3413)", async () => {
+    await model.refresh();
+    await expect(call("machines.remove", { machine: "m2", deleteSpaces: true })).resolves.toBeNull();
+    expect(backend.unregisteredWithSpaces).toEqual(["m2"]);
+  });
+
+  it("reads, replaces and resolves the default Space from this enrolled device (CUA-3413)", async () => {
+    await model.refresh();
+    const unset = await call("spaces.settings");
+    expect(unset).toEqual({ defaultSpace: null, fallback: [], fallbackOn: true, updatedAt: 0 });
+    expect(validate(WEBKIT_SHAPES["spaces.settings"]!, unset, SHAPE_DEFS)).toEqual([]);
+
+    const saved = (await call("spaces.setSettings", { defaultSpace: "relay:m2", fallback: [], fallbackOn: true })) as { defaultSpace: string };
+    expect(saved.defaultSpace).toBe("relay:m2");
+    expect(devices.calls).toContain("set-spaces-settings:relay:m2");
+    expect(validate(WEBKIT_SHAPES["spaces.setSettings"]!, saved, SHAPE_DEFS)).toEqual([]);
+
+    // m2 is offline in the fixture account: the next online computer, else this one; nothing is made.
+    const resolved = (await call("spaces.resolveDefault")) as { reason: string; defaultOnline: boolean; order: { role: string }[] };
+    expect(validate(WEBKIT_SHAPES["spaces.resolveDefault"]!, resolved, SHAPE_DEFS)).toEqual([]);
+    expect(resolved).toMatchObject({ reason: "here", defaultOnline: false });
+    expect(resolved.order.map((o) => o.role)).toEqual(["default", "here"]);
+
+    // A bad id is refused before the relay is asked.
+    await expect(call("spaces.setSettings", { defaultSpace: "local:aurora", fallback: [], fallbackOn: true })).rejects.toMatchObject({ code: "bad_args" });
+    await expect(call("spaces.setSettings", { defaultSpace: null, fallback: "relay:m2", fallbackOn: true })).rejects.toMatchObject({ code: "bad_args" });
+
+    // Signed out: nothing to read.
+    model.devices.signedIn = false;
+    await expect(call("spaces.settings")).resolves.toBeNull();
+    await expect(call("spaces.resolveDefault")).resolves.toBeNull();
   });
 });

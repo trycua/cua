@@ -63,14 +63,14 @@ CI: `.github/workflows/ci-check-docs.yml` runs the drift check;
 
 The Python generator runs griffe through `uv run --no-project` (Python 3.12); the
 TypeScript generator needs `npm ci --ignore-scripts` in `libs/cua/typescript`.
-Docs are generated for the latest source only; the version is stamped in each page banner.
+Docs are generated for the latest source only. Generated pages carry no release version: a release stamp goes stale for any page regenerated before a release and merged after it, which broke the docs checks on main. Pages that must name a version show a placeholder (`cua-sdk-v<version>`). `docs-version-stamp.test.ts` fails the build if a stamp comes back.
 
 ## Curated headers and examples
 
 Reference pages hold only generated content. Facts the source cannot carry
 (install lines, topology tables, one-line contracts) live in
 `headers/<product>/<page>.md`; the generator that owns the page inserts the
-header under its intro and fills `{{version}}`. Keep headers to a few lines
+header under its intro and fills `{{name}}` placeholders from the variables the generator passes (never a release version). Keep headers to a few lines
 or one table; explanations belong in guides.
 
 Examples are programs under `examples/<product>/`, named after what they show

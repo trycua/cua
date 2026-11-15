@@ -125,7 +125,17 @@ function JobRow({
   );
 }
 
-function JobDetail({ detail, log, onOpen, onShowLog }: { detail: CiJobDetail; log?: CiLog; onOpen(url: string): void; onShowLog(ref: { jobKey: string; pool: string; slot: string }): void }) {
+function JobDetail({
+  detail,
+  log,
+  onOpen,
+  onShowLog,
+}: {
+  detail: CiJobDetail;
+  log?: CiLog;
+  onOpen(url: string): void;
+  onShowLog(ref: { jobKey: string; pool: string; slot: string }): void;
+}) {
   const t = detail.timeline;
   return (
     <div className="pr-4 pb-3.5 pl-[3.1rem]" data-ci-detail="">

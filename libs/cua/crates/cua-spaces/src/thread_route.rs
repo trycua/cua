@@ -385,6 +385,18 @@ impl crate::host_spaces::HostSpacesServer {
                 && (p.relay_machine == machine || (caller.space.is_none() && p.local_space == id))
         }) {
             Some(p) => p.local_space.clone(),
+            // A Space of this computer that Cua listed on the account
+            // itself (it names this computer as host): its thread is here,
+            // under its local id.
+            None if !machine.is_empty()
+                && let Some((local, _)) = self
+                    .spaces()
+                    .attached_machines()
+                    .into_iter()
+                    .find(|(_, m)| *m == machine) =>
+            {
+                local
+            }
             // The owner, from another of their devices: any of their Spaces.
             None if caller.is_owner() && !id.is_empty() => id.to_string(),
             None => {

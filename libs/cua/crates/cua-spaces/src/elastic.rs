@@ -1471,7 +1471,7 @@ impl Spaces {
             // places its first solve reserved without solving again.
             let (target, label, _in_cloud) = {
                 let _g = self.inner.elastic.placing.lock().await;
-                // What the plan leaves of live sessions: read under the turn,
+                // What the plan leaves of computers in use: read under the turn,
                 // so the creates of a burst count each other.
                 let room = self.cloud_session_room().await;
                 let (target, label) = if let Some(t) = self.take_reservation(&key, &excluded) {
@@ -2260,7 +2260,7 @@ pub struct SessionRoom {
     /// Counted as used: the relay's live sessions, or this home's cloud
     /// Spaces when more, plus cloud creates under way.
     pub used: u32,
-    /// The plan's live-session limit.
+    /// The plan's computers-in-use limit.
     pub limit: u32,
     /// `free`, `pro`, `team`, ...
     pub plan: String,
@@ -2307,7 +2307,7 @@ impl SessionRoom {
             _ => format!("Upgrade to Pro or Teams ({upgrade})"),
         };
         Error::LimitExceeded(format!(
-            "Your plan allows {} live sessions ({} in use); {what} needs {asked}. A Space in \
+            "Your plan allows {} computers in use at once ({} in use now); {what} needs {asked}. A Space in \
              your own cloud uses one, so no cloud machine was started. {next}, or lower --count.",
             self.limit, self.used
         ))
@@ -2659,7 +2659,9 @@ mod tests {
             .refusal(16)
             .to_string();
         assert!(
-            m.contains("Your plan allows 2 live sessions (2 in use); this burst needs 16."),
+            m.contains(
+                "Your plan allows 2 computers in use at once (2 in use now); this burst needs 16."
+            ),
             "{m}"
         );
         assert!(

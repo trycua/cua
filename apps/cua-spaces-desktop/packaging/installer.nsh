@@ -36,6 +36,9 @@ Var pid
 ; cua-host's Windows service (libs/cua/crates/cua-host/src/service.rs).
 !define CUA_HOST_TASK "Cua\SpacesdHost"
 !define CUA_HOST_RUN_NAME "CuaSpacesdHost"
+; The staging home's (~/.cua/envs/staging): its own names (CUA-3512).
+!define CUA_HOST_TASK_STAGING "Cua\SpacesdHost-staging"
+!define CUA_HOST_RUN_NAME_STAGING "CuaSpacesdHost-staging"
 
 !macro customCheckAppRunning
   !insertmacro IS_POWERSHELL_AVAILABLE
@@ -111,7 +114,12 @@ Var pid
   Pop $0
   nsExec::Exec '"$SYSDIR\schtasks.exe" /Delete /TN "${CUA_HOST_TASK}" /F'
   Pop $0
+  nsExec::Exec '"$SYSDIR\schtasks.exe" /End /TN "${CUA_HOST_TASK_STAGING}"'
+  Pop $0
+  nsExec::Exec '"$SYSDIR\schtasks.exe" /Delete /TN "${CUA_HOST_TASK_STAGING}" /F'
+  Pop $0
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${CUA_HOST_RUN_NAME}"
+  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${CUA_HOST_RUN_NAME_STAGING}"
   ; The driver, and the conhost/cmd.exe that runs it and holds driver.log
   ; open (`>> driver.log`), with their children: killing only the driver
   ; left cmd.exe writing the log, so driver.log outlived the folder (CUA-1749).

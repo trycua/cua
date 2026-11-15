@@ -214,6 +214,13 @@ pub trait SpacesExtension: Send + Sync + 'static {
         Box::pin(async {})
     }
 
+    /// A Space was deleted for good (its sandbox is gone): what lived in it
+    /// ends here. Not called when a Space is only forgotten or released.
+    fn space_deleted<'a>(&'a self, spaces: &'a Spaces, space: &'a str) -> BoxFuture<'a, ()> {
+        let _ = (spaces, space);
+        Box::pin(async {})
+    }
+
     /// For [`Spaces::extension`] (downcasting to the concrete type).
     fn as_any(&self) -> &dyn Any;
 }

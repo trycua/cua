@@ -1,6 +1,7 @@
 {
   "name": "@cua/cua-spaces-mobile",
   "version": "0.1.0",
+  "packageManager": "pnpm@9.0.4",
   "main": "expo-router/entry",
   "dependencies": {
     "@bufbuild/protobuf": "2.15.0",

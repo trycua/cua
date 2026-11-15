@@ -10,7 +10,13 @@
 
 /** An APNs body as the relay builds it (`cua-push` `Payload::apns_json`): `aps` for the system, and the keys the app routes from at the top level. */
 export interface PushPayload {
-  aps: { alert: { title: string; body: string }; category: "CUA_APPROVAL" | "CUA_DONE"; "thread-id": string; sound: "default"; "interruption-level": "time-sensitive" | "active" };
+  aps: {
+    alert: { title: string; body: string };
+    category: "CUA_APPROVAL" | "CUA_DONE";
+    "thread-id": string;
+    sound: "default";
+    "interruption-level": "time-sensitive" | "active";
+  };
   v: 1;
   kind: "approval" | "done" | "error" | "blocked";
   space: string;
@@ -45,12 +51,26 @@ export class MockPushProvider {
 
   /** What the relay would send for an approval. */
   approval(space: string, entry: number, title = "Needs you", body = "An agent is waiting for your answer."): PushPayload {
-    return { aps: { alert: { title, body }, category: "CUA_APPROVAL", "thread-id": space, sound: "default", "interruption-level": "time-sensitive" }, v: 1, kind: "approval", space, entry, approval: entry, scope_choices: ["once"] };
+    return {
+      aps: { alert: { title, body }, category: "CUA_APPROVAL", "thread-id": space, sound: "default", "interruption-level": "time-sensitive" },
+      v: 1,
+      kind: "approval",
+      space,
+      entry,
+      approval: entry,
+      scope_choices: ["once"],
+    };
   }
 
   /** What the relay would send when an agent finishes. */
   done(space: string, entry: number, title = "Done", body = "An agent finished."): PushPayload {
-    return { aps: { alert: { title, body }, category: "CUA_DONE", "thread-id": space, sound: "default", "interruption-level": "active" }, v: 1, kind: "done", space, entry };
+    return {
+      aps: { alert: { title, body }, category: "CUA_DONE", "thread-id": space, sound: "default", "interruption-level": "active" },
+      v: 1,
+      kind: "done",
+      space,
+      entry,
+    };
   }
 
   /** Whether a push to this phone would be sent for `kind`, from what it registered. */

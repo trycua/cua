@@ -118,7 +118,10 @@ describe("stream surface helpers", () => {
     expect(isOccluded(slot, clip)).toBe(true);
     expect(videoHoles(slot, clip)).toEqual([]);
     // A menu (or a toast, marked `data-video-occluder`) over it: a hole, clipped to the slot; the video stays.
-    for (const mark of [["role", "menu"], ["data-video-occluder", ""]] as const) {
+    for (const mark of [
+      ["role", "menu"],
+      ["data-video-occluder", ""],
+    ] as const) {
       dialog.removeAttribute("role");
       dialog.removeAttribute("data-video-occluder");
       dialog.setAttribute(mark[0], mark[1]);
@@ -187,7 +190,10 @@ describe("stream surface helpers", () => {
       reporter.register(tile, { spaceId: "a", tier: "tile", interactive: false, radius: 8 }, () => {}),
     ];
     const last = (space: string) => {
-      const m = [...posted].reverse().find((x) => x.type === "surfaces" && x.update.some((u) => u.spaceId === space)) as Extract<StreamSurfaceMessage, { type: "surfaces" }>;
+      const m = [...posted].reverse().find((x) => x.type === "surfaces" && x.update.some((u) => u.spaceId === space)) as Extract<
+        StreamSurfaceMessage,
+        { type: "surfaces" }
+      >;
       return m.update.find((u) => u.spaceId === space)!;
     };
     const focusPosts = () => posted.filter((m) => m.type === "focus");
@@ -383,6 +389,89 @@ describe("stream surface helpers", () => {
 });
 
 describe("VideoSlotReporter", () => {
+  // CUA-SPACES-DESKTOP-3: WebKit's postMessage returns a promise that rejects with InvalidAccessError once the host
+  // removed the handler (its window closed) while this page's poll and frames keep running.
+  describe("when the host removes its handler", () => {
+    const gone = () => Object.assign(new Error("The object does not support the operation or argument."), { name: "InvalidAccessError" });
+
+    function setup(postMessage: (m: StreamSurfaceMessage) => unknown) {
+      vi.useFakeTimers();
+      vi.stubGlobal("innerWidth", 1000);
+      vi.stubGlobal("innerHeight", 700);
+      document.elementFromPoint = () => null;
+      document.elementsFromPoint = () => [];
+      const reporter = new VideoSlotReporter({ postMessage });
+      const el = document.createElement("div");
+      document.body.append(el);
+      box(el, { x: 10, y: 20, width: 232, height: 145 });
+      reporter.register(el, { spaceId: "a", tier: "tile", interactive: false, radius: 8 }, () => {});
+      return { reporter, el };
+    }
+
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    });
+
+    it("stops its poll and frames, never leaves a rejection unhandled, and warns once", async () => {
+      const unhandled: unknown[] = [];
+      const onUnhandled = (e: unknown) => unhandled.push(e);
+      process.on("unhandledRejection", onUnhandled);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      let removed = false;
+      let calls = 0;
+      const { reporter, el } = setup(() => {
+        calls += 1;
+        return removed ? Promise.reject(gone()) : Promise.resolve();
+      });
+      expect(calls).toBe(1);
+      removed = true;
+      el.style.width = "300px"; // something that changes the report
+      box(el, { x: 10, y: 20, width: 300, height: 145 });
+      await vi.advanceTimersByTimeAsync(400);
+      const afterFirst = calls;
+      expect(afterFirst).toBe(2);
+      expect(warn).toHaveBeenCalledTimes(1);
+      // The handler stays gone: later polls, frames and focus changes post nothing.
+      box(el, { x: 10, y: 20, width: 400, height: 145 });
+      reporter.schedule();
+      reporter.focus("x");
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(calls).toBe(afterFirst);
+      expect(warn).toHaveBeenCalledTimes(1);
+      vi.useRealTimers();
+      await new Promise<void>((r) => setTimeout(r, 20));
+      process.off("unhandledRejection", onUnhandled);
+      expect(unhandled).toEqual([]);
+    });
+
+    it("treats a synchronous throw the same way", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      let calls = 0;
+      setup(() => {
+        calls += 1;
+        throw gone();
+      });
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(calls).toBe(1);
+    });
+
+    it("keeps reporting after any other failure, warning only once", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      let calls = 0;
+      const { el } = setup(() => {
+        calls += 1;
+        return Promise.reject(new Error("transient"));
+      });
+      for (const w of [300, 320, 340]) {
+        box(el, { x: 10, y: 20, width: w, height: 145 });
+        await vi.advanceTimersByTimeAsync(400);
+      }
+      expect(calls).toBe(4);
+      expect(warn).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("batches what changed, removes slots and relays the host's state and focus", () => {
     vi.stubGlobal("innerWidth", 1000);
     vi.stubGlobal("innerHeight", 700);
@@ -398,9 +487,7 @@ describe("VideoSlotReporter", () => {
     const tileStatus: SlotStatus[] = [];
     const viewerStatus: SlotStatus[] = [];
     const stopTile = reporter.register(tile, { spaceId: "a", tier: "tile", interactive: false, radius: 8 }, (s) => tileStatus.push(s));
-    const stopViewer = reporter.register(viewer, { spaceId: "b", tier: "full", interactive: true, radius: 12, inset: 1 }, (s) =>
-      viewerStatus.push(s),
-    );
+    const stopViewer = reporter.register(viewer, { spaceId: "b", tier: "full", interactive: true, radius: 12, inset: 1 }, (s) => viewerStatus.push(s));
     const viewerId = reporter.idOf(viewer)!;
     expect(posted).toHaveLength(2);
     const second = posted[1];

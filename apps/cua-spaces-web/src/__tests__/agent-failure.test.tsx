@@ -19,8 +19,11 @@ stubBrowserApis();
 const q = (s: string) => document.querySelector<HTMLElement>(s);
 const qa = (s: string) => [...document.querySelectorAll<HTMLElement>(s)];
 const path = `/spaces/${encodeURIComponent(DEMO_THREAD_SPACE)}`;
-/** The failed agent's reply (its own row: the one with a Connect), named by what it says. */
-const failureReply = (who: string) => qa("[data-entry]").find((e) => e.querySelector("[data-failure-connect]") && e.textContent?.includes(who));
+/** The failed agent's reply (its own row: the one with Connect, or Sign in on another computer), named by what it says. */
+const failureReply = (who: string) =>
+  qa("[data-entry]").find(
+    (e) => e.querySelector("[data-failure-connect], [data-signin-start]") && e.querySelector("[data-failure]") && e.textContent?.includes(who),
+  );
 const host = { failsCreates: false, listsGhost: false, demo: { threadAuthFailed: true } };
 
 describe("an agent that is not connected", () => {
@@ -42,19 +45,37 @@ describe("an agent that is not connected", () => {
     // Flat: the reply is its own row after the task, not inside it.
     expect(claude.querySelector("[data-task-replies]")).toBeNull();
     const reply = failureReply("Claude")!;
-    expect(reply.querySelector("[data-failure-connect]")).not.toBeNull();
     expect(reply.textContent).toContain("I can't reach Claude yet. Connect Claude, then try again.");
     expect(reply.textContent).not.toMatch(/401|authentication_error|OAuth/);
-    // Connect opens the same sheet as Settings, Connections, on the provider that refused it; Retry is there too.
-    const connect = reply.querySelector<HTMLButtonElement>("[data-failure-connect]")!;
-    expect(connect.tagName).toBe("BUTTON");
+    // Claude Code runs on another computer (a Space, not This Mac): it signs in there itself, with
+    // an API key as the other way (CUA-3907). Cua never copies the sign-in there.
+    expect(reply.querySelector("[data-failure-connect]")).toBeNull();
+    const signIn = await waitFor(() => {
+      const b = reply.querySelector<HTMLButtonElement>("[data-signin-start]")!;
+      expect(b.disabled).toBe(false);
+      return b;
+    });
+    expect(signIn.textContent).toMatch(/^ ?Sign in to Claude Code on /);
     await act(async () => {
-      fireEvent.click(connect);
+      fireEvent.click(signIn);
+    });
+    // The agent's own sign-in shows its link, and asks for the code that page shows.
+    const going = await waitFor(() => {
+      const g = reply.querySelector<HTMLElement>('[data-signin-state="signing_in"] [data-signin-open]')!;
+      expect(g).not.toBeNull();
+      return g;
+    });
+    expect(going.dataset.signinOpen).toMatch(/^https:\/\//);
+    expect(reply.querySelector("[data-signin-paste]")).not.toBeNull();
+    // "or use an API key" opens the same sheet as Settings, Connections; Retry is there too.
+    await act(async () => {
+      fireEvent.click(reply.querySelector("[data-signin-use-key]")!);
     });
     await waitFor(() => expect(q("[data-import-sheet], [data-provider-sheet]")).not.toBeNull());
     expect(reply.querySelector("[data-failure-retry]")).not.toBeNull();
-    // No middle dot anywhere in what the failure draws.
+    // No middle dot anywhere in what the failure draws, and no jargon.
     expect(claude.textContent).not.toContain("·");
+    expect(reply.textContent).not.toMatch(/token|OAuth/i);
   });
 
   it("keeps the complete error under Show details, selectable, with Copy", async () => {

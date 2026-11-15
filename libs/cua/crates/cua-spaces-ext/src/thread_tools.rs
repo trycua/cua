@@ -126,6 +126,12 @@ pub(crate) async fn call(
                     }),
                 })
                 .await?;
+            // A person writing into a hidden Space (the home warming for
+            // Home's prompt box) makes it visible: listed in the apps and on
+            // the owner's account from now on.
+            if e.author.kind == crate::thread::AuthorKind::Person {
+                let _ = spaces.reveal(t.store().space()).await;
+            }
             Ok(ToolOutcome::json(&json!({"entry": e})))
         }
         "thread_inbox" => {
@@ -335,6 +341,7 @@ pub(crate) async fn agent_add(
             harness: a.agent,
             space,
             model: a.model,
+            effort: a.effort,
             brief: a.brief,
             base_url: a.base_url,
             env_from_host: a.env_from_host,

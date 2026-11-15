@@ -13,7 +13,7 @@
 
 #![cfg(target_os = "macos")]
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::ffi::c_void;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -52,14 +52,6 @@ struct Occluder {
     pid: u32,
 }
 
-impl Drop for Occluder {
-    fn drop(&mut self) {
-        let _ = Command::new("kill")
-            .args(["-TERM", &self.pid.to_string()])
-            .status();
-    }
-}
-
 fn harness_exe() -> std::path::PathBuf {
     std::env::var("HARNESS_APPKIT_APP")
         .map(std::path::PathBuf::from)
@@ -94,54 +86,19 @@ fn launch(driver: &mut McpDriver, mode: Option<&str>) -> Fixture {
     Fixture { pid, report }
 }
 
-fn running_executable_pids(exe: &std::path::Path) -> HashSet<u32> {
-    let output = Command::new("pgrep")
-        .args([
-            "-f",
-            "-x",
-            "--",
-            exe.to_str().expect("UTF-8 SwiftUI fixture path"),
-        ])
-        .output()
-        .expect("query SwiftUI fixture processes");
-    if !output.status.success() {
-        return HashSet::new();
-    }
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| line.trim().parse().ok())
-        .collect()
-}
-
-fn launch_occluder(_driver: &mut McpDriver) -> Occluder {
+fn launch_occluder(driver: &mut McpDriver) -> Occluder {
     let exe = occluder_exe();
     assert!(
         exe.exists(),
         "required distinct-bundle SwiftUI occluder missing at {exe:?}"
     );
-    let app = exe
-        .ancestors()
-        .nth(3)
-        .expect("SwiftUI executable is inside an app bundle");
-    let previous = running_executable_pids(&exe);
-    let opened = Command::new("open")
-        .args(["-n", "-g"])
-        .arg(app)
-        .status()
-        .expect("launch SwiftUI occluder through LaunchServices");
-    assert!(opened.success(), "LaunchServices rejected SwiftUI occluder");
-
-    let deadline = Instant::now() + Duration::from_secs(12);
-    loop {
-        if let Some(pid) = running_executable_pids(&exe).difference(&previous).next() {
-            return Occluder { pid: *pid };
-        }
-        assert!(
-            Instant::now() < deadline,
-            "LaunchServices SwiftUI process did not appear"
-        );
-        std::thread::sleep(Duration::from_millis(100));
-    }
+    let mut command = Command::new(exe);
+    command.stdout(Stdio::null()).stderr(Stdio::null());
+    let child = cua_driver_testkit::spawn_in_job(&mut command)
+        .expect("launch SwiftUI occluder in the test job");
+    let pid = child.id();
+    driver.reaper().push(child);
+    Occluder { pid }
 }
 
 fn wait_for_ordinary_window(pid: u32) -> u32 {
@@ -387,6 +344,134 @@ fn modal_sheet_never_yields_false_parent_success() {
     );
     assert_eq!(result.structured()["activated"], false);
     assert_ne!(focused_window_title(target.pid), MAIN_TITLE);
+}
+
+/// The sheet's text field value, read through System Events. `Err` carries
+/// the oracle's error while the sheet is not readable yet.
+fn sheet_field_value(pid: u32) -> Result<String, String> {
+    let script = format!(
+        "tell application \"System Events\" to tell (first process whose unix id is {pid}) to get value of text field 1 of sheet 1 of window \"{MAIN_TITLE}\""
+    );
+    let output = Command::new("osascript")
+        .args(["-e", &script])
+        .output()
+        .expect("query sheet field");
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_owned())
+    }
+}
+
+fn wait_for_sheet_field(pid: u32, expected: &str, context: &str) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let value = sheet_field_value(pid);
+        if value.as_deref() == Ok(expected) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{context}: sheet field is {value:?}, expected {expected:?}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// Keys addressed to a sheet's own id and to its parent's id both reach the
+/// sheet's focused field, and a snapshot of the sheet's id holds only the
+/// sheet, while the parent's snapshot holds both (Finder's Go to Folder).
+#[test]
+#[ignore]
+fn sheet_and_parent_ids_both_reach_the_sheet_and_the_sheet_snapshot_is_isolated() {
+    let mut driver = McpDriver::spawn_macos_daemon_proxy_named("macos-sheet-input")
+        .expect("start installed macOS daemon proxy");
+    let target = launch(&mut driver, Some("sheet-input"));
+    let windows = wait_for_window_ids(&target, &["main", "sheet"]);
+    let (parent, sheet) = (windows["main"], windows["sheet"]);
+    wait_for_sheet_field(target.pid, "", "sheet before input");
+
+    let mut typed = String::new();
+    for (window_id, text) in [(sheet, "sheet"), (parent, "parent")] {
+        let result = driver.call(
+            "type_text",
+            serde_json::json!({
+                "pid": target.pid, "window_id": window_id, "text": text,
+                "delivery_mode": "background",
+            }),
+        );
+        assert!(
+            !result.is_error(),
+            "keys to window {window_id}: {}",
+            result.raw
+        );
+        typed.push_str(text);
+        wait_for_sheet_field(target.pid, &typed, &format!("keys to window {window_id}"));
+    }
+    for window_id in [sheet, parent] {
+        let result = driver.call(
+            "press_key",
+            serde_json::json!({"pid": target.pid, "window_id": window_id, "key": "delete"}),
+        );
+        assert!(
+            !result.is_error(),
+            "press_key to window {window_id}: {}",
+            result.raw
+        );
+        typed.pop();
+        wait_for_sheet_field(
+            target.pid,
+            &typed,
+            &format!("press_key to window {window_id}"),
+        );
+    }
+
+    let state = |window_id: u32, driver: &mut McpDriver| {
+        let state = driver.call(
+            "get_window_state",
+            serde_json::json!({"pid": target.pid, "window_id": window_id, "tree_format": "both"}),
+        );
+        assert!(
+            !state.is_error(),
+            "get_window_state {window_id}: {}",
+            state.raw
+        );
+        state.structured().clone()
+    };
+    let sheet_state = state(sheet, &mut driver);
+    let sheet_tree = sheet_state["tree_markdown"]
+        .as_str()
+        .expect("tree_markdown");
+    assert!(sheet_tree.contains("txt-sheet"), "{sheet_tree}");
+    assert!(
+        !sheet_tree.contains("btn-increment") && !sheet_tree.contains("AXMenuBar"),
+        "sheet snapshot carries parent controls: {sheet_tree}"
+    );
+    let parent_state = state(parent, &mut driver);
+    let parent_tree = parent_state["tree_markdown"]
+        .as_str()
+        .expect("tree_markdown");
+    assert!(
+        parent_tree.contains("btn-increment") && parent_tree.contains("txt-sheet"),
+        "{parent_tree}"
+    );
+
+    // An element of the sheet's own snapshot passes the sheet-addressed
+    // ancestry gate on real AX.
+    let token = sheet_state["elements"]
+        .as_array()
+        .expect("elements")
+        .iter()
+        .find(|element| element["role"] == "AXTextField")
+        .and_then(|element| element["element_token"].as_str())
+        .unwrap_or_else(|| panic!("sheet field token: {sheet_state}"))
+        .to_owned();
+    let result = driver.call(
+        "set_value",
+        serde_json::json!({"element_token": token, "value": "token"}),
+    );
+    assert!(!result.is_error(), "set_value in the sheet: {}", result.raw);
+    wait_for_sheet_field(target.pid, "token", "set_value in the sheet");
 }
 
 #[test]

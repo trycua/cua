@@ -3001,7 +3001,7 @@ mod tests {
     }
 
     #[test]
-    fn only_the_owners_unnamed_session_is_recreated_after_an_idle_end() {
+    fn only_the_owner_recreates_an_idle_ended_session_on_its_next_call() {
         let pid = std::process::id();
         let implicit = format!("idle-recreate-implicit-{pid}");
         let named = format!("idle-recreate-named-{pid}");
@@ -3044,7 +3044,23 @@ mod tests {
             std::slice::from_ref(&named)
         );
 
-        // A named episode keeps its resurrection guard.
+        // Another transport cannot claim the named label or the unnamed id.
+        assert!(!recreates_on_next_call(&named, "another-transport"));
+        assert_eq!(
+            begin(&named, Some("named"), "another-transport").err(),
+            Some(DispatchRefusal::Ended)
+        );
+        // The label's owner gets it back on its next ordinary call.
+        assert!(recreates_on_next_call(&named, &named_owner));
+        let guard = begin(&named, Some("named"), &named_owner).expect("named recreated");
+        assert!(!is_session_ended(&named));
+        assert!(
+            session_snapshot(&named, &named_owner, DEFAULT_SESSION_IDLE_TTL)
+                .is_some_and(|snapshot| snapshot.public_label.as_deref() == Some("named"))
+        );
+        drop(guard);
+        // An explicit end of the label stays terminal until start_session.
+        end_session(&named);
         assert!(!recreates_on_next_call(&named, &named_owner));
         assert_eq!(
             begin(&named, Some("named"), &named_owner).err(),

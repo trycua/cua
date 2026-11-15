@@ -1307,11 +1307,14 @@ const UNLISTED_OPTIONS: &[(&str, &str, bool)] = &[
 /// `UNLISTED_OPTIONS`. Without this, a misspelled option was skipped and the
 /// command ran as if it were absent (#4698).
 fn check_options(args: &[String], positionals: &[&str]) -> Result<(), String> {
-    if positionals
+    // These get only the words after their own name, so nothing before it
+    // is read by anyone.
+    if let Some(command) = positionals
         .first()
-        .is_some_and(|command| SELF_PARSING_COMMANDS.contains(command))
+        .filter(|command| SELF_PARSING_COMMANDS.contains(command))
     {
-        return Ok(());
+        let before = args.iter().position(|arg| arg == command).unwrap_or(0);
+        return check_against(&args[..before], &[], command, command);
     }
     let docs = cli_docs_json();
     fn find<'a>(nodes: &'a serde_json::Value, name: &str) -> Option<&'a serde_json::Value> {
@@ -1362,6 +1365,22 @@ fn check_options(args: &[String], positionals: &[&str]) -> Result<(), String> {
         }
     }
 
+    let command = help_path.join(" ");
+    let shown = match first {
+        Some(tool) if root == "call" && tool != "call" => tool,
+        _ => &command,
+    };
+    check_against(args, &accepted, shown, &command)
+}
+
+/// Check every option in `args` against `accepted` (`(option, takes_value)`).
+/// Errors name `shown` and point at `cua-driver <help> --help`.
+fn check_against(
+    args: &[String],
+    accepted: &[(String, bool)],
+    shown: &str,
+    help: &str,
+) -> Result<(), String> {
     // A lone `-` or a number is a value, never an option. A value that starts
     // with `-` otherwise has to be written `--option=-value`, so a value
     // option can never swallow the option after it.
@@ -1388,22 +1407,14 @@ fn check_options(args: &[String], positionals: &[&str]) -> Result<(), String> {
         };
         match accepted.iter().find(|(option, _)| option == name) {
             Some((_, true)) if !inline_value && !args.get(index).is_some_and(|v| is_value(v)) => {
-                return Err(format!(
-                    "cua-driver {}: option '{arg}' needs a value.",
-                    help_path.join(" ")
-                ));
+                return Err(format!("cua-driver {shown}: option '{arg}' needs a value."));
             }
             Some((_, true)) if !inline_value => index += 1,
             Some((_, true)) => {}
             Some((_, false)) if !inline_value => {}
             _ => {
-                let command = help_path.join(" ");
-                let shown = match first {
-                    Some(tool) if root == "call" && tool != "call" => tool,
-                    _ => &command,
-                };
                 return Err(format!(
-                    "cua-driver {shown}: unknown option '{arg}'. Run `cua-driver {command} --help` for the options it takes."
+                    "cua-driver {shown}: unknown option '{arg}'. Run `cua-driver {help} --help` for the options it takes."
                 ));
             }
         }
@@ -6514,6 +6525,14 @@ mod tests {
             (
                 &["stop", "--socket", "/s", "-psn_expected-pidd", "1"],
                 "cua-driver stop: unknown option '-psn_expected-pidd'",
+            ),
+            (
+                &["--bogus", "extension", "status"],
+                "cua-driver extension: unknown option '--bogus'",
+            ),
+            (
+                &["--json", "perception", "parse"],
+                "cua-driver perception: unknown option '--json'",
             ),
             (
                 &["serve", "--socket", "--bogus"],

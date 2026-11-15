@@ -176,7 +176,8 @@ crashes and stops with it. A VM cannot be snapshotted while a program in it has
 a renderer session open (exit 5); restore and fork work. `hoy inspect` shows the
 state of the renderer, `hoy doctor` has a `gpu-acceleration` line and
 `hoy logs <vm> --kind models` shows its log. VMs created without the flag are
-unchanged.
+unchanged. Step by step, with measured speed and limits:
+[Run local models on the GPU](/hoy/guides/gpu-acceleration).
 
 ## Health and diagnostics
 

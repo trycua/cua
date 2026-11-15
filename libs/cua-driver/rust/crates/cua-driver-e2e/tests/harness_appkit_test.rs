@@ -1080,6 +1080,38 @@ fn harness_appkit_query_projects_structured_elements() {
             );
             assert!(has_id(response.tree_text(), "btn-increment"));
             let _ = element_token_by_id(&response, "btn-increment");
+            assert!(!response.text().contains("elements match query"));
+
+            let mut query = |query: &str| {
+                driver.call(
+                    "get_window_state",
+                    serde_json::json!({
+                        "pid": pid as i64,
+                        "window_id": wid,
+                        "query": query,
+                        "include_screenshot": false
+                    }),
+                )
+            };
+            // `|` separates alternatives: each one's row is kept.
+            let either = query("btn-increment|btn-reset");
+            assert!(!either.is_error(), "alternation read: {}", either.text());
+            assert!(
+                has_id(either.tree_text(), "btn-increment"),
+                "{}",
+                either.text()
+            );
+            assert!(has_id(either.tree_text(), "btn-reset"), "{}", either.text());
+
+            // A query that matches nothing says so in the text.
+            let none = query("no-such-control|nor-this-one");
+            assert!(!none.is_error(), "empty query read: {}", none.text());
+            assert!(
+                none.text()
+                    .contains("elements match query \"no-such-control|nor-this-one\""),
+                "{}",
+                none.text()
+            );
             Observation::delivered(vec![OracleKind::AxState], Evidence::default())
         },
     );

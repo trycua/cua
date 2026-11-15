@@ -203,8 +203,11 @@ ids are invalid. The grant lives in memory: it expires after 30 minutes idle or
 off Chrome's remote-debugging setting; do that in Chrome.
 
 Supported: Chrome and Edge on macOS, Windows, and Linux X11; Chrome on GNOME
-Wayland; Chrome, Edge, and Chromium on Sway. On Linux, start the browser
-with `--force-renderer-accessibility`. Setup recognizes English UI labels only.
+Wayland; Chrome, Edge, and Chromium on Sway. On Linux, the desktop's
+accessibility bus must be on before the browser starts (`gsettings set
+org.gnome.desktop.interface toolkit-accessibility true`); Cua Driver turns on
+the browser's accessibility tree itself, so no `--force-renderer-accessibility`
+flag is needed. Setup recognizes English UI labels only.
 
 On macOS 27 and later, reading the Chrome and Edge profile folders needs Full
 Disk Access or a per-app grant, so attachment through the daemon refuses with

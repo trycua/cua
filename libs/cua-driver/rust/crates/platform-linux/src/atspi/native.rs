@@ -1548,8 +1548,9 @@ async fn collect_visited_bounded_opts<'a>(
             path: app.inner().path().to_string(),
         },
     };
-    once_per(pid, Some(&root))
-        .get_or_init(|| settle_woken_chromium_tree(conn, &app, &root))
+    // A settle the budget cut short is not cached, so a later walk retries it.
+    let _ = once_per(pid, Some(&root))
+        .get_or_try_init(|| settle_woken_chromium_tree(conn, &app, &root))
         .await;
 
     // Walk the caller's window FIRST when it was resolved: under a short
@@ -2521,29 +2522,42 @@ const CHROMIUM_TREE_POLL: Duration = Duration::from_millis(25);
 /// document exists with no children, and a walk started then returns only
 /// the window chrome. Every probe shares the settle deadline, so a slow
 /// accessibility service costs at most that, never the walk's budget.
+///
+/// `Err` when the wait proved nothing because it got less than its full
+/// window or no answer; the caller retries it on its next walk. A page that
+/// stays empty for the full window (about:blank) is final.
 async fn settle_woken_chromium_tree(
     conn: &AccessibilityConnection,
     app: &AccessibleProxy<'_>,
     root: &RawObjectRef,
-) {
-    let until = tokio::time::Instant::now() + CHROMIUM_TREE_SETTLE.min(remaining_budget() / 2);
+) -> std::result::Result<(), ()> {
+    let window = CHROMIUM_TREE_SETTLE.min(remaining_budget() / 2);
+    let until = tokio::time::Instant::now() + window;
     OP_DEADLINE
         .scope(until, async {
-            let chromium = toolkit_of(app)
-                .await
-                .is_some_and(|toolkit| toolkit.trim().eq_ignore_ascii_case("chromium"));
-            if !chromium {
-                return;
+            match toolkit_of(app).await {
+                Some(toolkit) if toolkit.trim().eq_ignore_ascii_case("chromium") => {}
+                Some(_) => return Ok(()),
+                None => return Err(()),
             }
-            while web_document_populated(conn, root).await == Some(false) {
+            loop {
+                match web_document_populated(conn, root).await {
+                    Some(true) => return Ok(()),
+                    Some(false) => {}
+                    None => return Err(()),
+                }
                 if tokio::time::Instant::now() + CHROMIUM_TREE_POLL >= until {
                     dlog!("woken Chromium tree published no web content in time; walking it as is");
-                    return;
+                    return if window < CHROMIUM_TREE_SETTLE {
+                        Err(())
+                    } else {
+                        Ok(())
+                    };
                 }
                 tokio::time::sleep(CHROMIUM_TREE_POLL).await;
             }
         })
-        .await;
+        .await
 }
 
 /// Whether any web document under `root` has children, found with one
@@ -8689,6 +8703,23 @@ mod budget_tests {
             !once_per(pid, Some(&window("/frame/2"))).initialized(),
             "a second window of a woken pid must still get its own settle"
         );
+    }
+
+    #[tokio::test]
+    async fn a_settle_cut_short_is_retried_by_the_next_walk() {
+        let root = RawObjectRef {
+            name: ":1.8".to_owned(),
+            path: "/frame/1".to_owned(),
+        };
+        let pid = u32::MAX - 3;
+        let _ = once_per(pid, Some(&root))
+            .get_or_try_init(|| async { Err::<(), ()>(()) })
+            .await;
+        assert!(!once_per(pid, Some(&root)).initialized());
+        let _ = once_per(pid, Some(&root))
+            .get_or_try_init(|| async { Ok::<(), ()>(()) })
+            .await;
+        assert!(once_per(pid, Some(&root)).initialized());
     }
 
     #[test]

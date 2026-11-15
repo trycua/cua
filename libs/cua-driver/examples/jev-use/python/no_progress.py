@@ -44,6 +44,7 @@ class NoProgressGuard:
         self.pending: tuple[StepKind, str] | None = None
         self.streak = 0
         self.recent: list[str] = []
+        self.tried: set[str] = set()
 
     def note(self, kind: StepKind, candidate_id: str) -> None:
         self.pending = (kind, candidate_id.removesuffix(":foreground"))
@@ -55,6 +56,7 @@ class NoProgressGuard:
 
         if score is not None and (self.best_progress is None or score > self.best_progress):
             self.best_progress = score
+            self.tried.clear()
             self._reset_evidence()
             return None
 
@@ -63,15 +65,13 @@ class NoProgressGuard:
         kind, candidate_id = pending
         token = f"performed:{candidate_id}" if kind == "performed" else kind
 
-        if kind == "performed" and score is None:
-            # A successful dispatch is not proof of progress. Only a switch
-            # from a previously delivered candidate starts fresh evidence;
-            # stale/refused/reobserve signals must not erase the streak.
-            prior_performed = next(
-                (item for item in reversed(self.recent) if item.startswith("performed:")),
-                None,
-            )
-            if prior_performed is not None and prior_performed != token:
+        if kind != "reobserve" and score is None:
+            # A successful dispatch is not proof of progress. Only the first
+            # attempt at a candidate not tried since the last observed
+            # progress starts fresh evidence, so each candidate opens at most
+            # one window and alternating between tried candidates stays bounded.
+            if candidate_id not in self.tried:
+                self.tried.add(candidate_id)
                 self._reset_evidence()
 
         return self._record(token)

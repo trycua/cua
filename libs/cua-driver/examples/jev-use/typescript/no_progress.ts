@@ -32,6 +32,7 @@ export class NoProgressGuard {
   private pending: { kind: StepKind; candidateId: string } | undefined;
   private streak = 0;
   private recent: string[] = [];
+  private readonly tried = new Set<string>();
 
   constructor(
     readonly taskId: string,
@@ -51,6 +52,7 @@ export class NoProgressGuard {
 
     if (score !== undefined && (this.bestProgress === undefined || score > this.bestProgress)) {
       this.bestProgress = score;
+      this.tried.clear();
       this.resetEvidence();
       return undefined;
     }
@@ -59,11 +61,12 @@ export class NoProgressGuard {
     const token =
       pending.kind === 'performed' ? `performed:${pending.candidateId}` : pending.kind;
 
-    if (pending.kind === 'performed' && score === undefined) {
-      // Only a changed previously delivered candidate starts fresh evidence.
-      // Recovery signals are not proof of app-owned progress.
-      const priorPerformed = [...this.recent].reverse().find((item) => item.startsWith('performed:'));
-      if (priorPerformed !== undefined && priorPerformed !== token) {
+    if (pending.kind !== 'reobserve' && score === undefined) {
+      // Only the first attempt at a candidate not tried since the last observed
+      // progress starts fresh evidence, so each candidate opens at most one
+      // window and alternating between tried candidates stays bounded.
+      if (!this.tried.has(pending.candidateId)) {
+        this.tried.add(pending.candidateId);
         this.resetEvidence();
       }
     }

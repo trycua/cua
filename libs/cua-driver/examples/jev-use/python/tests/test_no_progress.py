@@ -97,7 +97,39 @@ class NoProgressGuardTest(unittest.TestCase):
         guard.before_step({"note_saved": None})
         guard.note("performed", "ax:button:save-note:foreground")
         self.assertIsNone(guard.before_step({"note_saved": None}))
-        self.assertEqual(guard.streak, 1)
+        # The window opens at save-note's first attempt, the refusal.
+        self.assertEqual(guard.streak, 2)
+
+    def test_recovery_on_the_next_step_after_delivery_starts_fresh_window(self) -> None:
+        # Normal recovery: each step needs one stale/refused retry. Moving on
+        # from the delivered set-note to save-note is not the same loop.
+        for recovery in ("stale", "refused"):
+            with self.subTest(recovery=recovery):
+                guard = NoProgressGuard("appkit-save-note")
+                guard.before_step({"note_saved": None})
+                for kind, candidate in (
+                    (recovery, "ax:text_input:note:set:note"),
+                    ("performed", "ax:text_input:note:set:note:foreground"),
+                    (recovery, "ax:button:save-note"),
+                ):
+                    guard.note(kind, candidate)
+                    self.assertIsNone(guard.before_step({"note_saved": None}))
+                self.assertEqual(guard.streak, 1)
+
+    def test_alternating_tried_candidates_remain_bounded(self) -> None:
+        guard = NoProgressGuard("appkit-save-note")
+        guard.before_step({"note_saved": None})
+        for kind, candidate in (
+            ("performed", "ax:text_input:note:set:note"),
+            ("stale", "ax:button:save-note"),
+        ):
+            guard.note(kind, candidate)
+            self.assertIsNone(guard.before_step({"note_saved": None}))
+        guard.note("performed", "ax:text_input:note:set:note")
+        self.assertIsNone(guard.before_step({"note_saved": None}))
+        guard.note("stale", "ax:button:save-note")
+        stop = guard.before_step({"note_saved": None})
+        self.assertEqual((stop.pattern, stop.streak), ("recovery", 3))
 
     def test_observed_scores_are_value_free_and_task_local(self) -> None:
         self.assertEqual(observed_progress_score("appkit-counter", {"counter": 2}), 2)

@@ -95,6 +95,35 @@ test('unobservable new candidate after recovery resets', () => {
   assert.equal(guard.beforeStep({ note_saved: null }), undefined);
 });
 
+test('recovery on the next step after delivery starts a fresh window', () => {
+  for (const recovery of ['stale', 'refused'] as const) {
+    const guard = new NoProgressGuard('appkit-save-note');
+    guard.beforeStep({ note_saved: null });
+    const sequence = [
+      [recovery, 'ax:text_input:note:set:note'],
+      ['performed', 'ax:text_input:note:set:note:foreground'],
+      [recovery, 'ax:button:save-note'],
+    ] as const;
+    for (const [kind, candidate] of sequence) {
+      guard.note(kind, candidate);
+      assert.equal(guard.beforeStep({ note_saved: null }), undefined);
+    }
+  }
+});
+
+test('alternating tried candidates remain bounded', () => {
+  const guard = new NoProgressGuard('appkit-save-note');
+  guard.beforeStep({ note_saved: null });
+  guard.note('performed', 'ax:text_input:note:set:note');
+  assert.equal(guard.beforeStep({ note_saved: null }), undefined);
+  guard.note('stale', 'ax:button:save-note');
+  assert.equal(guard.beforeStep({ note_saved: null }), undefined);
+  guard.note('performed', 'ax:text_input:note:set:note');
+  assert.equal(guard.beforeStep({ note_saved: null }), undefined);
+  guard.note('stale', 'ax:button:save-note');
+  assert.deepEqual(guard.beforeStep({ note_saved: null }), { pattern: 'recovery', streak: 3 });
+});
+
 test('observed scores are task-local', () => {
   assert.equal(observedProgressScore('appkit-counter', { counter: 2 }), 2);
   assert.equal(observedProgressScore('gtk3-choose-size', { size: 'large', agreed: false }), 1);

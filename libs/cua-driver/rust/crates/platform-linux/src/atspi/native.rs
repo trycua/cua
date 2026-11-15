@@ -1477,7 +1477,7 @@ async fn collect_visited_bounded_opts<'a>(
         }
     };
     if first_application_walk(pid) {
-        let _ = call(app.get_attributes()).await;
+        wake_application_tree(conn, &app).await;
     }
     let zconn = conn.connection();
     // Mapped popups of this pid, read once and only when a menubar menu's
@@ -2490,6 +2490,71 @@ fn is_indexable_capabilities(
 }
 
 // ── Public (sync) entry points ───────────────────────────────────────────────
+
+/// Longest wait for a woken Chromium tree to publish its page. A tab without
+/// content (about:blank) never does, and costs this once per process.
+const CHROMIUM_TREE_SETTLE: Duration = Duration::from_millis(500);
+const CHROMIUM_TREE_POLL: Duration = Duration::from_millis(25);
+
+/// Turn on an application's accessibility tree before its first walk.
+///
+/// Chromium, and so every Chromium browser and Electron app, keeps its tree
+/// off on Linux until a client reads an object's attributes or relations, as
+/// Orca does. No `--force-renderer-accessibility` flag is needed. Chromium
+/// builds the tree asynchronously after that call: for a few tens of
+/// milliseconds its web document exists with no children, and a walk started
+/// then returns only the window chrome. So for Chromium, wait (bounded) until
+/// a web document has children.
+async fn wake_application_tree(conn: &AccessibilityConnection, app: &AccessibleProxy<'_>) {
+    let _ = call(app.get_attributes()).await;
+    let chromium = toolkit_of(app)
+        .await
+        .is_some_and(|toolkit| toolkit.trim().eq_ignore_ascii_case("chromium"));
+    if !chromium {
+        return;
+    }
+    let until = tokio::time::Instant::now() + CHROMIUM_TREE_SETTLE.min(remaining_budget() / 2);
+    while web_document_populated(conn, app).await == Some(false) {
+        if tokio::time::Instant::now() + CHROMIUM_TREE_POLL >= until {
+            dlog!("woken Chromium tree published no web content in time; walking it as is");
+            return;
+        }
+        tokio::time::sleep(CHROMIUM_TREE_POLL).await;
+    }
+}
+
+/// Whether any web document under `app` has children, found with one
+/// `Collection.GetMatches` instead of a walk. `None` when the application
+/// cannot answer.
+async fn web_document_populated(
+    conn: &AccessibilityConnection,
+    app: &AccessibleProxy<'_>,
+) -> Option<bool> {
+    let inner = app.inner();
+    let collection = atspi::proxy::collection::CollectionProxy::builder(inner.connection())
+        .cache_properties(zbus::proxy::CacheProperties::No)
+        .destination(inner.destination().to_owned())
+        .ok()?
+        .path(inner.path().to_owned())
+        .ok()?
+        .build()
+        .await
+        .ok()?;
+    let rule = atspi::ObjectMatchRule::builder()
+        .roles(&[atspi::Role::DocumentWeb], atspi::MatchType::Any)
+        .build();
+    let documents = call(collection.get_matches(rule, atspi::SortOrder::Canonical, 0, true))
+        .await?
+        .ok()?;
+    for document in documents.iter().filter_map(RawObjectRef::from_atspi) {
+        if let Some(Ok(count)) = call(raw_child_count(conn.connection(), &document)).await {
+            if count > 0 {
+                return Some(true);
+            }
+        }
+    }
+    Some(false)
+}
 
 fn first_application_walk(pid: u32) -> bool {
     static PIDS: OnceLock<Mutex<HashSet<u32>>> = OnceLock::new();

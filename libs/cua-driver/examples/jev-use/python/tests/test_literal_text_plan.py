@@ -145,17 +145,42 @@ class ExecuteTests(unittest.IsolatedAsyncioTestCase):
     async def test_risky_label_is_refused(self):
         state = window_state()
         state["elements"][1]["label"] = "Delete account"
-        driver = Driver([state])
+        driver = Driver([state, state])
         with self.assertRaises(LiteralPlanHandoff):
             await self.run_plan(driver, steps=[LiteralTextStep("Delete account", "x")])
         self.assertEqual(driver.inputs, [])
 
     async def test_wrong_owner_or_context_hands_off(self):
         for payload, context_ok in [(window_state(pid=8), True), (window_state(), False)]:
-            driver = Driver([payload])
+            driver = Driver([payload, payload])
             with self.subTest(context_ok=context_ok), self.assertRaises(LiteralPlanHandoff):
                 await self.run_plan(driver, context_ok=context_ok)
             self.assertEqual(driver.inputs, [])
+
+    async def test_context_is_checked_before_reobserving(self):
+        seen = []
+
+        def verify_context(observation):
+            seen.append(observation.truncated)
+            return not observation.truncated
+
+        async def verified(*_):
+            return True
+
+        driver = Driver([window_state(truncated=True), window_state(), window_state()])
+        with self.assertRaises(LiteralPlanHandoff):
+            await execute_literal_text_plan(
+                driver,
+                pid=7,
+                window_id=9,
+                platform="macos",
+                steps=[LiteralTextStep("Email", "x")],
+                verify_step=verified,
+                verify_final=verified,
+                verify_context=verify_context,
+            )
+        self.assertEqual(seen, [True])
+        self.assertEqual(driver.inputs, [])
 
     async def test_acknowledged_input_is_not_completion(self):
         for step_ok, final_ok in [(False, True), (True, False)]:

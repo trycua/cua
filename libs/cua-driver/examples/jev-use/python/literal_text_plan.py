@@ -109,11 +109,11 @@ async def execute_literal_text_plan(
                 observation = await bounded(observe(driver, None, pid, window_id, timeout_ms))
             except NativeObservationError as exc:
                 raise LiteralPlanHandoff("Observation owner or schema mismatch") from exc
+            if not verify_context(observation):
+                raise LiteralPlanHandoff("Caller context guard failed")
             source = NativeAccessibilitySource.from_observation(observation, platform)
             if observation.truncated or (observation.partial and not source.controls):
                 continue
-            if not verify_context(observation):
-                raise LiteralPlanHandoff("Caller context guard failed")
             return source
         raise LiteralPlanHandoff("No complete actionable observation")
 

@@ -2463,7 +2463,7 @@ mod tests {
 
     #[test]
     fn advertises_every_tool() {
-        assert_eq!(tools().len(), 122);
+        assert_eq!(tools().len(), 123);
     }
 
     #[test]

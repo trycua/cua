@@ -35,6 +35,7 @@ from decision_models import DecisionRequest, TypeSafeDecisionModel, choose
 from driver_env import driver_environment
 from jev_adapter import choose_mock_for_task
 from native import NativeObservation, NativeObservationError
+from no_progress import NoProgressGuard
 from native_roles import Platform
 from native_tasks import (
     NATIVE_TASK_IDS,
@@ -349,6 +350,7 @@ async def run_task(args: argparse.Namespace, task: NativeTask) -> str:
         log_path.write_text("", encoding="utf-8")
     history: list[dict[str, Any]] = []
     foreground_ids: set[str] = set()
+    no_progress = NoProgressGuard(task.id)
     label = f"jev-native-python-{uuid.uuid4().hex[:8]}"
     params = StdioServerParameters(
         command=os.getenv("CUA_DRIVER_BIN", "cua-driver"), args=["mcp"], env=driver_environment()
@@ -368,10 +370,24 @@ async def run_task(args: argparse.Namespace, task: NativeTask) -> str:
                  "platform": platform, "pid": args.pid, "window_id": window_id},
             )
             for step in range(1, task.max_steps + 1):
-                current = task.classify(task.read_oracle(), steps=step - 1)
+                oracle_state = task.read_oracle()
+                current = task.classify(oracle_state, steps=step - 1)
                 if current in {"verified", "refuted"}:
                     write_event(log_path, {"event": "outcome", "outcome": current, "step": step - 1})
                     return current
+                if (stop := no_progress.before_step(oracle_state)) is not None:
+                    write_event(
+                        log_path,
+                        {
+                            "event": "outcome",
+                            "outcome": "abstained",
+                            "reason": "no_progress",
+                            "pattern": stop.pattern,
+                            "streak": stop.streak,
+                            "step": step - 1,
+                        },
+                    )
+                    return "abstained"
 
                 started = time.perf_counter()
                 phase_timings: dict[str, float] = {}
@@ -443,6 +459,7 @@ async def run_task(args: argparse.Namespace, task: NativeTask) -> str:
 
                 if candidate.id == "reobserve":
                     history.append(task.history_entry(step, candidate.id))
+                    no_progress.note("reobserve", candidate.id)
                     write_event(log_path, {**base_event, "tool": None, "act_ms": 0.0, "action_ms": 0.0,
                                            "total_step_ms": round((time.perf_counter() - started) * 1000, 2)})
                     continue
@@ -460,6 +477,7 @@ async def run_task(args: argparse.Namespace, task: NativeTask) -> str:
                     if is_stale_token_error(error):
                         # Nothing else is dispatched; the next step observes again.
                         history.append(task.history_entry(step, candidate.id, stale=True))
+                        no_progress.note("stale", candidate.id)
                         write_event(log_path, {**base_event, "tool": candidate.tool,
                                                "act_ms": act_ms, "action_ms": act_ms,
                                                "total_step_ms": round((time.perf_counter() - started) * 1000, 2),
@@ -469,6 +487,7 @@ async def run_task(args: argparse.Namespace, task: NativeTask) -> str:
                     if refusal is not None:
                         foreground_ids.add(candidate.id)
                         history.append(task.history_entry(step, candidate.id, refusal=refusal))
+                        no_progress.note("refused", candidate.id)
                         write_event(log_path, {**base_event, "tool": candidate.tool, "act_ms": act_ms,
                                                "action_ms": act_ms,
                                                "total_step_ms": round((time.perf_counter() - started) * 1000, 2),
@@ -484,6 +503,7 @@ async def run_task(args: argparse.Namespace, task: NativeTask) -> str:
                 history.append(
                     task.history_entry(step, candidate.id, outcome=plan.outcomes.get(candidate.id))
                 )
+                no_progress.note("performed", candidate.id)
                 write_event(log_path, {**base_event, "tool": candidate.tool, "act_ms": act_ms,
                                        "action_ms": act_ms,
                                        "total_step_ms": round((time.perf_counter() - started) * 1000, 2),

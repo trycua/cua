@@ -158,7 +158,7 @@ async fn lists_owned_and_shared_relay_machines_as_spaces() {
     assert_eq!(err.tag(), "unauthenticated");
     assert_eq!(
         err.to_string(),
-        "Relay authentication failed. Sign in again to refresh your machines."
+        "Relay authentication failed. Sign in again to refresh your computers."
     );
 }
 
@@ -177,6 +177,14 @@ async fn relay_spaces_need_an_account() {
     assert_eq!(err.tag(), "host_capability_missing", "{err}");
     let err = spaces.space(&format!("relay:{MACHINE}")).await.unwrap_err();
     assert_eq!(err.tag(), "host_capability_missing", "{err}");
+    assert_eq!(
+        spaces
+            .find(&format!("relay:{MACHINE}"))
+            .await
+            .unwrap_err()
+            .tag(),
+        "not_found"
+    );
 }
 
 #[tokio::test]
@@ -229,6 +237,72 @@ async fn connects_through_the_relay_path_with_the_account_token_per_call() {
     assert!(wrong.space(&format!("relay:{MACHINE}")).await.is_err());
 }
 
+/// What a relay machine reported at connect reaches the next process: the
+/// CLI lists the machine's OS without connecting first.
+#[tokio::test]
+async fn a_later_process_lists_the_os_a_relay_machine_reported() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("tok", "ada", None);
+    cua_host::RelayClient::new(&relay.url)
+        .unwrap()
+        .register(
+            "tok",
+            &cua_host::relay::RegisterRequest {
+                id: MACHINE.into(),
+                name: "studio".into(),
+                allow: vec![],
+                host: None,
+                meta: Default::default(),
+            },
+        )
+        .await
+        .unwrap();
+    relay.set_online(MACHINE, true, "1.0.0");
+    let srv = MockServer::start(MockAuth {
+        token: None,
+        gateway: None,
+        prefix: None,
+    })
+    .await;
+    relay.tunnel(MACHINE, &srv.url());
+    let home = tempfile::tempdir().unwrap();
+    let build = || {
+        Spaces::builder()
+            .home(home.path())
+            .relay(RelayAccount::new(
+                relay.url.clone(),
+                Arc::new(StaticToken("tok".into())),
+            ))
+            .build()
+    };
+    let id = format!("relay:{MACHINE}");
+    let first = build();
+    first.list_all().await.unwrap();
+    first.space(&id).await.unwrap();
+    let os = |s: &Spaces| {
+        s.list()
+            .unwrap()
+            .into_iter()
+            .find(|i| i.id == id)
+            .map(|i| i.os)
+    };
+    // Saved in the background: give it a moment.
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let later = build();
+        later.list_all().await.unwrap();
+        if os(&later).as_deref() == Some("linux") {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "listed {:?}",
+            os(&later)
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
 /// The relay requires an enrolled client device: the account token alone
 /// lists nothing, and with the device every directory call and every
 /// connection to `relay:<id>` carries the device's session.
@@ -261,6 +335,12 @@ async fn relay_spaces_carry_the_enrolled_device_session() {
         .build();
     let err = bare.relay_machines().await.unwrap_err();
     assert_eq!(err.tag(), "permission_denied", "{err}");
+    let err = bare.find(&format!("relay:{MACHINE}")).await.unwrap_err();
+    assert_eq!(err.tag(), "permission_denied", "{err}");
+    assert_eq!(
+        err.to_string(),
+        "This device could not list relay computers. Check its account access."
+    );
     assert_eq!(
         bare.list_all().await.unwrap_err().tag(),
         "permission_denied"
@@ -426,6 +506,47 @@ async fn discovery_failure_is_not_stale_success_and_empty_recovery_clears_cache(
     assert_eq!(recovered.len(), 1);
     assert_eq!(recovered[0].id, local.id);
     assert_eq!(spaces.list().unwrap().len(), 1);
+
+    *tokens.current.lock().unwrap() = "owner".into();
+    let calls = tokens.calls.load(Ordering::SeqCst);
+    let found = spaces.find(&format!("relay:{MACHINE}")).await.unwrap();
+    assert_eq!(found.name, "studio");
+    assert_eq!(tokens.calls.load(Ordering::SeqCst), calls + 1);
+    let calls = tokens.calls.load(Ordering::SeqCst);
+    spaces.find(&format!("relay:{MACHINE}")).await.unwrap();
+    assert_eq!(tokens.calls.load(Ordering::SeqCst), calls, "max-age hit");
+    for id in ["direct:127.0.0.1:1", "local:nope", "some-name"] {
+        assert_eq!(
+            spaces.find(id).await.unwrap_err().tag(),
+            "not_found",
+            "{id}"
+        );
+    }
+    assert_eq!(tokens.calls.load(Ordering::SeqCst), calls, "non-relay");
+    let second = "abcdef0123456789";
+    cua_host::RelayClient::new(&relay.url)
+        .unwrap()
+        .register(
+            "owner",
+            &cua_host::relay::RegisterRequest {
+                id: second.into(),
+                name: "second".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(spaces.find(&format!("relay:{second}")).await.is_ok());
+    assert_eq!(tokens.calls.load(Ordering::SeqCst), calls + 1, "late join");
+    *tokens.current.lock().unwrap() = "bad".into();
+    assert_eq!(
+        spaces
+            .find("relay:ffffffffffffffff")
+            .await
+            .unwrap_err()
+            .tag(),
+        "unauthenticated"
+    );
 }
 
 #[tokio::test]
@@ -452,6 +573,134 @@ async fn discovery_errors_do_not_expose_provider_payloads() {
     assert_eq!(error.tag(), "relay");
     assert_eq!(
         error.to_string(),
-        "relay: Could not refresh relay machines."
+        "relay: Could not refresh relay computers."
     );
+}
+
+/// Signed out (no account at all, the normal state of many hosts) lists
+/// this machine's own Spaces and drops the machines of the account that
+/// signed out, while a refused sign-in stays an error.
+#[tokio::test]
+async fn signed_out_lists_this_machines_spaces() {
+    struct SignOut {
+        token: std::sync::Mutex<Option<String>>,
+    }
+    #[async_trait::async_trait]
+    impl AccountTokens for SignOut {
+        async fn access_token(&self) -> cua_host::Result<String> {
+            self.token
+                .lock()
+                .unwrap()
+                .clone()
+                .ok_or_else(|| cua_host::Error::Unauthenticated("not signed in".into()))
+        }
+        async fn signed_in(&self) -> bool {
+            self.token.lock().unwrap().is_some()
+        }
+    }
+    let relay = FakeRelay::start().await;
+    relay.add_account("owner", "owner", None);
+    cua_host::RelayClient::new(&relay.url)
+        .unwrap()
+        .register(
+            "owner",
+            &cua_host::relay::RegisterRequest {
+                id: MACHINE.into(),
+                name: "studio".into(),
+                allow: vec![],
+                host: None,
+                meta: Default::default(),
+            },
+        )
+        .await
+        .unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let tokens = Arc::new(SignOut {
+        token: std::sync::Mutex::new(Some("owner".into())),
+    });
+    let spaces = Spaces::builder()
+        .home(home.path())
+        .relay(RelayAccount::new(&relay.url, tokens.clone()))
+        .build();
+    let direct = MockServer::start(MockAuth::default()).await;
+    let local = spaces
+        .add(&direct.url(), None, Some("registered".into()))
+        .await
+        .unwrap();
+    assert_eq!(spaces.list_all().await.unwrap().len(), 2);
+
+    *tokens.token.lock().unwrap() = None;
+    let listed = spaces.list_all().await.unwrap();
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    assert_eq!(listed[0].id, local.id);
+    assert_eq!(
+        spaces.list().unwrap().len(),
+        1,
+        "the account's machines are dropped"
+    );
+
+    // A configured account with nothing to present (`NoAccount`) knows of
+    // no sign-out: it is refused like a revoked token, not an empty list.
+    let none = Spaces::builder()
+        .home(home.path())
+        .relay(RelayAccount::new(&relay.url, Arc::new(cua_host::NoAccount)))
+        .build();
+    let err = none.list_all().await.unwrap_err();
+    assert_eq!(err.tag(), "unauthenticated", "{err}");
+
+    // Signed in again: the machines come back.
+    *tokens.token.lock().unwrap() = Some("owner".into());
+    assert_eq!(spaces.list_all().await.unwrap().len(), 2);
+}
+
+/// A relay deploy (the proxy in front of it answers 503 "no available
+/// server" for a while) keeps the machines it listed a moment ago instead
+/// of failing the whole Space list; with nothing listed before, or a
+/// failure that is not a hiccup, the list fails as before.
+#[tokio::test]
+async fn a_relay_hiccup_lists_the_last_directory() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("owner-token", "user-1", Some("ada@example.com"));
+    cua_host::RelayClient::new(&relay.url)
+        .unwrap()
+        .register(
+            "owner-token",
+            &cua_host::relay::RegisterRequest {
+                id: MACHINE.into(),
+                name: "studio-mac".into(),
+                allow: vec![],
+                host: None,
+                meta: Default::default(),
+            },
+        )
+        .await
+        .unwrap();
+    let account = || RelayAccount::new(&relay.url, Arc::new(StaticToken("owner-token".into())));
+    let home = tempfile::tempdir().unwrap();
+    let spaces = Spaces::builder().home(home.path()).relay(account()).build();
+    assert_eq!(spaces.list_all().await.unwrap().len(), 1);
+
+    relay.set_reads_down(true);
+    let all = spaces.list_all().await.unwrap();
+    assert_eq!(all.len(), 1);
+    assert_eq!(all[0].id, format!("relay:{MACHINE}"));
+
+    // Nothing listed before: the failure shows.
+    let other = tempfile::tempdir().unwrap();
+    let fresh = Spaces::builder()
+        .home(other.path())
+        .relay(account())
+        .build();
+    let err = fresh.list_all().await.unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("Could not refresh relay computers."),
+        "{err}"
+    );
+
+    // Not a hiccup (a 500): the failure shows.
+    relay.set_reads_down(false);
+    relay.fail_reads(&[500]);
+    assert!(spaces.list_all().await.is_err());
+    assert_eq!(spaces.list_all().await.unwrap().len(), 1);
 }

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! One strict GUI/recording preflight before a canonical E2E lane runs.
 
 #![cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
@@ -289,6 +292,43 @@ fn run_preflight() {
         recording_dir.starts_with(&recordings_root),
         "preflight recording escaped the artifact root"
     );
+
+    for tool in ["health_report", "check_permissions"] {
+        let response = driver.call(tool, serde_json::json!({}));
+        std::fs::write(
+            recording_dir.join(format!("{tool}.json")),
+            serde_json::to_vec_pretty(&response.structured()).unwrap(),
+        )
+        .unwrap();
+        assert!(!response.is_error(), "{tool} failed: {}", response.text());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{FileTypeExt, MetadataExt};
+        let socket = std::fs::metadata(driver.daemon_socket()).expect("daemon socket metadata");
+        let uid = Command::new("id").arg("-u").output().unwrap();
+        let uid: u32 = String::from_utf8(uid.stdout)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        assert!(socket.file_type().is_socket());
+        assert_eq!(socket.uid(), uid, "daemon socket is not owned by us");
+        assert_eq!(
+            socket.mode() & 0o077,
+            0,
+            "daemon socket permits other users"
+        );
+        std::fs::write(
+            recording_dir.join("daemon.json"),
+            serde_json::to_vec_pretty(
+                &serde_json::json!({"pid": driver.daemon_pid(), "socket": driver.daemon_socket(),
+                "uid": socket.uid(), "mode": socket.mode() & 0o777, "config": config.structured()}),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    }
 
     let before = driver.call("list_windows", serde_json::json!({}));
     assert!(!before.is_error(), "list_windows failed: {}", before.text());

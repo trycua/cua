@@ -71,6 +71,10 @@ class FormWindow(Gtk.Window):
         self.check.connect("toggled", lambda c: log.emit("toggled", widget="Subscribe", active=c.get_active()))
         self.combo.connect("changed", lambda c: log.emit("combo_changed", widget="Color", value=c.get_active_text()))
         self.button.connect("clicked", self.on_submit)
+        # Keyboard focus of the Name entry: the doctor types only once the
+        # entry really holds it (the ready record says focus_events).
+        self.entry.connect("focus-in-event", lambda *_: log.emit("widget_focus", widget="Name", focused=True) or False)
+        self.entry.connect("focus-out-event", lambda *_: log.emit("widget_focus", widget="Name", focused=False) or False)
         self.connect("key-press-event", self.on_key, "key_press")
         self.connect("key-release-event", self.on_key, "key_release")
         self.connect("button-press-event", self.on_button, "button_press")
@@ -136,7 +140,7 @@ def main() -> int:
     win.show_all()
     GLib.timeout_add(
         300,
-        lambda: log.emit("ready", pid=os.getpid(), title=TITLE, wm_class=f"cua-fixture-{NAME}", **win.form_state())
+        lambda: log.emit("ready", pid=os.getpid(), title=TITLE, wm_class=f"cua-fixture-{NAME}", focus_events=True, **win.form_state())
         or False,
     )
     Gtk.main()

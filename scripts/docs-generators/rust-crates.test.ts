@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import test from 'node:test';
 
 import {
+  CRATES,
   PAGES,
   assign,
   cleanSignature,
@@ -17,9 +18,11 @@ import {
   type ItemDoc,
 } from './rust-crates';
 
-const dump: Dump = JSON.parse(
+const fixture: Dump = JSON.parse(
   fs.readFileSync(path.join(__dirname, 'fixtures', 'rust-crates-dump.json'), 'utf-8')
 );
+// The fixture also holds crates that have no pages (the unstable ones).
+const dump: Dump = { ...fixture, crates: fixture.crates.filter((c) => CRATES.includes(c.name)) };
 
 test('every item lands on exactly one page of its crate', () => {
   const pages = assign(dump);
@@ -30,8 +33,7 @@ test('every item lands on exactly one page of its crate', () => {
   assert.equal(slugOf('cua_sdk::Sandbox'), 'cua-sdk');
   // Unclaimed sources fall back to the crate's primary page.
   assert.equal(slugOf('cua_sdk::Stray'), 'cua-sdk');
-  assert.equal(slugOf('cua_spaces::client::model::Space'), 'cua-spaces-client');
-  assert.equal(slugOf('cua_spaces::mcp'), 'cua-spaces-agents-mcp');
+  assert.ok(!fixture.crates.some((c) => c.name === 'cua-spaces') || !PAGES.some((p) => p.crate === 'cua-spaces'));
 });
 
 test('a crate without a page is an error, not silently dropped', () => {
@@ -53,8 +55,8 @@ test('rustdoc Markdown becomes MDX-safe Markdown', () => {
 test('rendered pages are deterministic, bannered, compact and listed in meta.json', () => {
   const out = '/virtual/rust';
   const uniffi = new Map([['Sandbox', '/cua-sdk/reference/sandbox#sandbox']]);
-  const a = renderAll(dump, '9.9.9', out, uniffi);
-  const b = renderAll(dump, '9.9.9', out, uniffi);
+  const a = renderAll(dump, out, uniffi);
+  const b = renderAll(dump, out, uniffi);
   assert.deepEqual([...a], [...b]);
   const meta = JSON.parse(a.get(`${out}/meta.json`)!);
   assert.deepEqual(meta.pages, PAGES.map((p) => p.slug));
@@ -63,7 +65,7 @@ test('rendered pages are deterministic, bannered, compact and listed in meta.jso
   assert.match(index, /\| `cua-sdk` \|[^\n]*\[cua-sdk\]\(\/cua-sdk\/reference\/rust\/cua-sdk\)[,)| ]/);
   const sdk = a.get(`${out}/cua-sdk.mdx`)!;
   assert.match(sdk, /AUTO-GENERATED FILE - DO NOT EDIT DIRECTLY/);
-  assert.match(sdk, /Version: 9\.9\.9/);
+  assert.doesNotMatch(sdk, /^\s*Version:/m);
   assert.match(sdk, /nightly-2026-09-20, format 61/);
   // A type: heading (anchor), summary line, one declaration block with its methods.
   assert.match(sdk, /### `Cua`\n\n[^\n]+\n\n```rust\npub struct Cua \{ \/\* private fields \*\/ \}\nimpl Cua \{\n  fn connect\(address: Option<String>\) -> Result<Arc<Self>>;\n\}\n```/);

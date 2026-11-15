@@ -72,8 +72,8 @@ pub enum GuestOs {
     Windows,
 }
 
-/// Boot firmware preference for VM guests (a Fleet template's
-/// `vmTemplate.firmware`). `None` in a [`StartSpec`] lets the backend decide
+/// Boot firmware preference for VM guests (an image's
+/// `firmware`). `None` in a [`StartSpec`] lets the backend decide
 /// (QEMU: UEFI on aarch64, for Windows and for GPT disks without a BIOS boot
 /// partition; SeaBIOS otherwise, as KubeVirt does).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -110,6 +110,15 @@ pub enum BackendKind {
     Container,
     /// The SDK-managed "cua-runtime" VM that hosts containerd + runsc.
     Managed,
+    /// A Firecracker microVM booting an OCI rootfs (Linux/KVM hosts).
+    Firecracker,
+    /// A lightweight VM per OCI image through Apple's Containerization
+    /// framework (its `container` CLI; macOS 26 on Apple silicon).
+    Containerization,
+    /// A microVM booting an OCI rootfs on a Mac (macOS 14+, Apple silicon):
+    /// Virtualization.framework through cua's own monitor, `cua-vz`, with
+    /// memory checkpoints, forks and warm starts.
+    Vz,
 }
 
 impl BackendKind {
@@ -120,6 +129,9 @@ impl BackendKind {
             BackendKind::QemuDocker => "qemu-docker",
             BackendKind::Container => "container",
             BackendKind::Managed => "managed",
+            BackendKind::Firecracker => "firecracker",
+            BackendKind::Containerization => "containerization",
+            BackendKind::Vz => "vz",
         }
     }
 }
@@ -193,7 +205,7 @@ impl Probe {
 /// How to get an SSH login into a VM guest. For QEMU the runtime forwards guest
 /// port 22 and, when no user-data is given, seeds `authorized_keys` through a
 /// cloud-init NoCloud ISO.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SshAccess {
     pub user: String,
     /// Private key used to log in. Its `.pub` sibling is injected via cloud-init.
@@ -201,6 +213,16 @@ pub struct SshAccess {
     /// Password, for images that allow password auth (e.g. lume `lume`/`lume`).
     #[serde(default)]
     pub password: Option<String>,
+}
+
+impl std::fmt::Debug for SshAccess {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SshAccess")
+            .field("user", &self.user)
+            .field("private_key", &self.private_key)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 /// Everything needed to start (or create-and-start) one sandbox.
@@ -248,6 +270,24 @@ pub struct StartSpec {
     /// ([`reject_restricted_network`]).
     #[serde(default)]
     pub restrict_network: bool,
+    /// Egress policy ([`crate::egress`]), enforced by the host before the
+    /// guest's first instruction; empty: none. A backend with no host-side
+    /// point for it refuses a non-empty policy ([`crate::egress::support`]).
+    /// The backend keeps it with the instance: later starts, resumes and
+    /// forks apply it again, and [`crate::Runtime::set_egress`] replaces it.
+    #[serde(default, skip_serializing_if = "crate::egress::EgressPolicy::is_empty")]
+    pub egress: crate::egress::EgressPolicy,
+    /// The Space's network settings ([`crate::network`]): its preset and
+    /// lists, compiled by the runtime with what only it knows (resolver,
+    /// host aliases, tree). `None`: a caller from before network settings;
+    /// the runtime keeps to `restrict_network` and `egress`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<crate::network::NetworkSettings>,
+    /// The tree the sandbox belongs to (its top-level Space's id): members
+    /// of one tree share a network and reach each other; other trees are
+    /// blocked. `None`: a tree of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree: Option<String>,
     #[serde(default)]
     pub labels: BTreeMap<String, String>,
     /// Backend-specific extra arguments (appended to the qemu command line).
@@ -278,6 +318,160 @@ pub struct StartSpec {
     /// by layer.
     #[serde(default)]
     pub pull_layers: Vec<(String, u64)>,
+    /// What pulling the image writes on this host, when the caller knows
+    /// it (the image catalog's download plus unpacked size for this
+    /// platform): a Lume base pull checks the disk for this instead of
+    /// [`crate::disk::LUME_PULL_ESTIMATE`].
+    #[serde(default)]
+    pub pull_bytes: Option<u64>,
+    /// Start a warm-pool member: the instance boots to readiness with no
+    /// identity of its own. Its Spaces token (`CUA_ENV_TOKEN` in `env`) is
+    /// the member's *pool secret*, never shown to anyone; a claim
+    /// ([`crate::Runtime::claim`]) binds the member to a Space and the
+    /// caller then rotates the token to the Space's with cua-spacesd's
+    /// `Init`, authenticated with that secret. Members are named with
+    /// [`POOL_MEMBER_PREFIX`], so lists hide them.
+    #[serde(default)]
+    pub pool_member: bool,
+    /// Host directories mounted into the guest ([`Mount`]): containers bind
+    /// them, a macOS guest on Lume gets them as shared directories under
+    /// [`crate::lume::MACOS_SHARE_ROOT`]. Backends that cannot mount a host
+    /// directory refuse a spec with mounts ([`reject_mounts`]).
+    #[serde(default)]
+    pub mounts: Vec<Mount>,
+    /// A fork source ("bake" VM): guest RAM is a file the VM writes through
+    /// (QEMU `memory-backend-file,share=on`), so a memory checkpoint is its
+    /// device state plus a copy-on-write clone of that file, taken in
+    /// milliseconds, and forks of the checkpoint map the clone copy-on-write
+    /// and share its unwritten pages. Other VMs' checkpoints become the same
+    /// shape too, at the cost of loading their RAM once more. Backends
+    /// without memory checkpoints ignore it.
+    #[serde(default)]
+    pub forkable: bool,
+    /// A static cua-spacesd (the host's file) to inject into an OCI image
+    /// that has none, and run as the guest's PID 1 around the image's
+    /// command ([`crate::inject`]). Containers and microVMs; the other
+    /// backends refuse it. `None` runs the image as it is.
+    #[serde(default)]
+    pub inject_spacesd: Option<PathBuf>,
+}
+
+/// A host directory mounted into a sandbox ([`StartSpec::mounts`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Mount {
+    /// The directory on the host (absolute; it must exist).
+    pub host: PathBuf,
+    /// Where the guest sees it (absolute). A macOS guest on Lume sees each
+    /// shared directory under [`crate::lume::MACOS_SHARE_ROOT`] by its
+    /// name, so there it must be `<that root>/<the host directory's name>`.
+    pub guest: String,
+    /// The guest cannot write to it.
+    #[serde(default)]
+    pub read_only: bool,
+}
+
+/// Checks `mounts` for any backend: absolute paths, existing host
+/// directories, no guest path twice.
+/// Where the built-in Linux runtime on Windows mounts cua's job directories
+/// inside its distribution (`drvfs`): a mount's host side that starts here is a
+/// path in the engine's own filesystem, not a Windows path.
+pub const ENGINE_MOUNT_ROOT: &str = "/mnt/cua-host/";
+
+/// Whether `host` is a path in the engine's own filesystem
+/// ([`ENGINE_MOUNT_ROOT`]), which only a Windows host has no way to check.
+pub fn is_engine_path(host: &std::path::Path) -> bool {
+    cfg!(windows)
+        && host
+            .to_string_lossy()
+            .replace('\\', "/")
+            .starts_with(ENGINE_MOUNT_ROOT)
+}
+
+pub fn check_mounts(backend: BackendKind, mounts: &[Mount]) -> crate::Result<()> {
+    let mut seen = std::collections::BTreeSet::new();
+    for m in mounts {
+        if !is_engine_path(&m.host) && (!m.host.is_absolute() || !m.host.is_dir()) {
+            return Err(crate::VmmError::invalid(format!(
+                "{}: a mount's host side must be an existing directory given by its absolute path ({})",
+                backend.as_str(),
+                m.host.display()
+            )));
+        }
+        if !m.guest.starts_with('/') || m.guest.contains(':') {
+            return Err(crate::VmmError::invalid(format!(
+                "{}: a mount's guest path must be absolute ({:?})",
+                backend.as_str(),
+                m.guest
+            )));
+        }
+        if !seen.insert(m.guest.trim_end_matches('/').to_string()) {
+            return Err(crate::VmmError::invalid(format!(
+                "{}: two mounts at {}",
+                backend.as_str(),
+                m.guest
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Backends that cannot mount a host directory into the guest refuse
+/// [`StartSpec::mounts`] instead of starting without them.
+pub fn reject_mounts(backend: BackendKind, spec: &StartSpec) -> crate::Result<()> {
+    if spec.mounts.is_empty() {
+        return Ok(());
+    }
+    Err(crate::VmmError::Unsupported {
+        backend: backend.as_str(),
+        op: "host directories mounted into the guest (containers bind them; macOS VMs on Lume \
+             share them)",
+    })
+}
+
+/// Backends that cannot run an injected cua-spacesd ([`crate::inject`]) refuse
+/// [`StartSpec::inject_spacesd`] instead of starting without it. A VM boots
+/// from a disk image with its own kernel and bootloader: it needs a Cua image
+/// (or a `cua build` from one), not a bare OCI image.
+pub fn reject_injection(backend: BackendKind, spec: &StartSpec) -> crate::Result<()> {
+    if spec.inject_spacesd.is_none() {
+        return Ok(());
+    }
+    Err(crate::VmmError::Unsupported {
+        backend: backend.as_str(),
+        op: "an injected cua-spacesd (use kind container or microvm for a bare OCI image, \
+             or `cua build` FROM a Cua image for a VM)",
+    })
+}
+
+/// Name prefix of a warm-pool member ([`StartSpec::pool_member`]) until a
+/// claim renames it: lists hide these instances, and a backend's idle stop
+/// does not count them as Spaces in use.
+pub const POOL_MEMBER_PREFIX: &str = "cua-pool-";
+
+/// Whether `name` is an unclaimed warm-pool member.
+pub fn is_pool_member(name: &str) -> bool {
+    name.starts_with(POOL_MEMBER_PREFIX)
+}
+
+/// What a claimed warm-pool member receives ([`crate::Runtime::claim`]):
+/// everything that makes a Space its own. A backend that restores or forks
+/// memory also re-seeds the guest's entropy, sets its clock and renews its
+/// network lease, so no two Spaces share random state, keys or addresses.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct ClaimIdentity {
+    /// The Spaces token cua-spacesd starts accepting.
+    pub token: Option<String>,
+    /// Hostname (default: the Space's name).
+    pub hostname: Option<String>,
+}
+
+impl std::fmt::Debug for ClaimIdentity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClaimIdentity")
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("hostname", &self.hostname)
+            .finish()
+    }
 }
 
 /// Refuses a GPU option `backend` does not offer (`offered`: the ones it
@@ -316,6 +510,14 @@ pub fn reject_sidecars(backend: BackendKind, spec: &StartSpec) -> crate::Result<
 /// ports refuse [`StartSpec::restrict_network`] instead of ignoring it.
 pub fn reject_restricted_network(backend: BackendKind, spec: &StartSpec) -> crate::Result<()> {
     if !spec.restrict_network {
+        return Ok(());
+    }
+    // Under the secure default a container's network is cut by its rules
+    // on the engine host (`none` drops everything), its published ports
+    // still answering.
+    if matches!(backend, BackendKind::Container | BackendKind::Managed)
+        && crate::network::Mode::from_env() == crate::network::Mode::Secure
+    {
         return Ok(());
     }
     Err(crate::VmmError::Unsupported {
@@ -398,7 +600,7 @@ pub fn registry_of(reference: &str) -> &str {
 
 /// An extra container that shares a sandbox's network namespace. The
 /// sandbox reaches it at its name (or `localhost`) and it reaches the
-/// sandbox at `main`, as on Fleet.
+/// sandbox at `main`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SidecarSpec {
     /// Name, unique within the sandbox (a DNS label other than `main`);
@@ -415,6 +617,25 @@ pub struct SidecarSpec {
     /// `localhost`, and published like the sandbox's own ports).
     #[serde(default)]
     pub ports: Vec<u16>,
+}
+
+/// A new shape for an instance ([`crate::Runtime::resize`]); unset fields
+/// stay as they are.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Resize {
+    pub cpus: Option<u32>,
+    pub memory_mb: Option<u64>,
+    /// Grow the disk to this many GiB (a disk never shrinks).
+    pub disk_gb: Option<u32>,
+    /// What to wait for after the instance boots again.
+    #[serde(default)]
+    pub probes: Vec<Probe>,
+}
+
+impl Resize {
+    pub fn is_empty(&self) -> bool {
+        self.cpus.is_none() && self.memory_mb.is_none() && self.disk_gb.is_none()
+    }
 }
 
 impl StartSpec {
@@ -436,6 +657,9 @@ impl StartSpec {
             ssh: None,
             cloud_init_user_data: None,
             restrict_network: false,
+            egress: Default::default(),
+            network: None,
+            tree: None,
             labels: BTreeMap::new(),
             extra_args: Vec::new(),
             sidecars: Vec::new(),
@@ -443,6 +667,11 @@ impl StartSpec {
             container_runtime: None,
             gpu: None,
             pull_layers: vec![],
+            pull_bytes: None,
+            pool_member: false,
+            mounts: Vec::new(),
+            forkable: false,
+            inject_spacesd: None,
         }
     }
 
@@ -527,7 +756,7 @@ pub struct HostPort {
 }
 
 /// VNC access to the guest framebuffer (VMM-level; no guest agent needed).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VncEndpoint {
     pub host: String,
     pub port: u16,
@@ -535,8 +764,18 @@ pub struct VncEndpoint {
     pub password: Option<String>,
 }
 
+impl std::fmt::Debug for VncEndpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VncEndpoint")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
+}
+
 /// SSH access into the guest, when the image has sshd.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SshEndpoint {
     pub host: String,
     pub port: u16,
@@ -545,6 +784,18 @@ pub struct SshEndpoint {
     pub private_key: Option<PathBuf>,
     #[serde(default)]
     pub password: Option<String>,
+}
+
+impl std::fmt::Debug for SshEndpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SshEndpoint")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("user", &self.user)
+            .field("private_key", &self.private_key)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 /// How to reach a running instance from the host.
@@ -568,6 +819,10 @@ pub struct Endpoints {
     pub ssh: Option<SshEndpoint>,
     #[serde(default)]
     pub container_id: Option<String>,
+    /// The bulk lane's disk file (see [`crate::bulk`]), when the VM has one:
+    /// a client on this machine moves file content through it.
+    #[serde(default)]
+    pub bulk: Option<PathBuf>,
 }
 
 impl Endpoints {
@@ -621,6 +876,15 @@ pub struct Instance {
     pub arch: Option<Arch>,
 }
 
+/// How a stopped instance ended, as its engine recorded it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExitRecord {
+    /// The exit code (137: killed with SIGKILL).
+    pub exit_code: i64,
+    /// The kernel killed it for memory (the engine's `OOMKilled`).
+    pub oom_killed: bool,
+}
+
 /// One row of [`crate::Runtime::list`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InstanceSummary {
@@ -638,6 +902,10 @@ pub struct CheckpointInfo {
     pub created_at: u64,
     #[serde(default)]
     pub source: Option<String>,
+    /// A memory checkpoint whose RAM is a file its forks map copy-on-write:
+    /// every fork shares the pages it has not written.
+    #[serde(default)]
+    pub shared_memory: bool,
 }
 
 impl CheckpointInfo {
@@ -651,6 +919,7 @@ impl CheckpointInfo {
             backend,
             created_at,
             source,
+            shared_memory: false,
         }
     }
 }
@@ -692,6 +961,24 @@ mod duration_secs {
 mod tests {
     use super::*;
 
+    /// On Windows a mount under the engine's own `/mnt/cua-host/` (the job
+    /// directories mounted into its distribution) is not a Windows folder.
+    #[cfg(windows)]
+    #[test]
+    fn engine_paths_are_mounts_without_a_windows_folder() {
+        let m = |host: &str| Mount {
+            host: std::path::PathBuf::from(host),
+            guest: "/cua/job".into(),
+            read_only: false,
+        };
+        assert!(check_mounts(BackendKind::Container, &[m("/mnt/cua-host/jobs/a/job")]).is_ok());
+        assert!(check_mounts(BackendKind::Container, &[m("/mnt/elsewhere")]).is_err());
+        assert!(is_engine_path(std::path::Path::new(
+            "/mnt/cua-host/job-cache"
+        )));
+        assert!(!is_engine_path(std::path::Path::new(r"C:\x")));
+    }
+
     #[test]
     fn egress_is_on_by_default_and_only_qemu_can_cut_it() {
         let mut spec = StartSpec::new("x", ImageSource::Existing);
@@ -703,9 +990,14 @@ mod tests {
             assert!(reject_restricted_network(b, &spec).is_ok());
         }
         spec.restrict_network = true;
-        for b in [BackendKind::Container, BackendKind::Lume] {
-            let e = reject_restricted_network(b, &spec).unwrap_err().to_string();
-            assert!(e.contains("network=\"none\""), "{e}");
+        let e = reject_restricted_network(BackendKind::Lume, &spec)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("network=\"none\""), "{e}");
+        // A container cuts it with its engine-host rules under the secure
+        // default (the test process runs with it unless told otherwise).
+        if crate::network::Mode::from_env() == crate::network::Mode::Secure {
+            assert!(reject_restricted_network(BackendKind::Container, &spec).is_ok());
         }
     }
 

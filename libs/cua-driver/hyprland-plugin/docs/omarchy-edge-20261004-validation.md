@@ -117,9 +117,13 @@ this kit's upstream source does not have:
 - a typing check that admits keymap remaps by testing only the chords Driver types;
 - an IME popup guard that hooks Hyprland's input-method popup functions.
 
-Keep the patch until both land upstream and ship in a qualified kit. Applying
-it to this kit changes the source, module and package bytes, so the patched
-package needs its own evidence, as the downstream recipe already requires.
+Both behaviours are now in the upstream source: `typing_keymap_equivalent` in
+`src/keymap_equivalence.hpp`, and `src/ime_popup_guard.cpp`, installed in every
+input build and reported as `ime_popup_guard` in `cua:status`. The first kit
+built from a Driver release that contains them makes the patch unnecessary;
+drop it when the package rebases onto that kit. Until then, applying it to this
+kit changes the source, module and package bytes, so the patched package needs
+its own evidence, as the downstream recipe already requires.
 
 ## Ownership
 

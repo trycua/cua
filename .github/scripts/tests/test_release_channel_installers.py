@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import re
 import subprocess
@@ -25,8 +26,18 @@ def shell_function(source: str, name: str) -> str:
     raise AssertionError(f"could not find end of {name}")
 
 
-def run_lume_resolver(tmp_path: Path, version: str, baked: str = "") -> subprocess.CompletedProcess[str]:
+def run_lume_resolver(
+    tmp_path: Path,
+    version: str,
+    baked: str = "",
+    channel: str = "stable",
+    releases: list[dict] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run the installer's tag resolver. `curl` is stubbed: it records each URL
+    in `curl.log` and serves `releases` as the GitHub releases list."""
     source = LUME_INSTALLER.read_text()
+    prefix = {"stable": "lume-v", "nightly": "nightly-lume-v"}[channel]
+    (tmp_path / "releases.json").write_text(json.dumps(releases or [], indent=2))
     script = tmp_path / "lume-resolver.sh"
     script.write_text(
         textwrap.dedent(
@@ -38,14 +49,78 @@ def run_lume_resolver(tmp_path: Path, version: str, baked: str = "") -> subproce
             GITHUB_REPO="trycua/cua"
             LUME_VERSION="{version}"
             LUME_BAKED_VERSION="{baked}"
-            LUME_CHANNEL="stable"
-            LUME_TAG_PREFIX="lume-v"
+            LUME_CHANNEL="{channel}"
+            LUME_TAG_PREFIX="{prefix}"
+            curl() {{
+              printf '%s\\n' "${{@: -1}}" >> "{tmp_path}/curl.log"
+              cat "{tmp_path}/releases.json"
+            }}
             {shell_function(source, "get_latest_lume_tag")}
             get_latest_lume_tag
             """
         )
     )
     return subprocess.run(["bash", str(script)], capture_output=True, text=True)
+
+
+def curl_urls(tmp_path: Path) -> list[str]:
+    log = tmp_path / "curl.log"
+    return log.read_text().splitlines() if log.exists() else []
+
+
+def release(tag: str, draft: bool = False, prerelease: bool = False) -> dict:
+    return {"tag_name": tag, "draft": draft, "prerelease": prerelease}
+
+
+# A monorepo release list where the repo-wide Latest is another component and
+# drafts carry the highest Lume versions. The expected picks (1.10.0 over
+# 1.9.0, build 10 over build 3) differ from lexical ordering.
+MONOREPO_RELEASES = [
+    release("cua-driver-rs-v9.0.0"),
+    release("lume-v1.11.0", draft=True),
+    release("nightly-lume-v1.12.0-nightly.20261101.3", prerelease=True),
+    release("nightly-lume-v1.12.0-nightly.20261101.10", prerelease=True),
+    release("nightly-lume-v1.12.0-nightly.20261031.20", prerelease=True),
+    release("nightly-lume-v1.13.0-nightly.20261102.1", draft=True, prerelease=True),
+    release("lume-v1.9.0"),
+    release("lume-v1.10.0"),
+    release("lume-v1.10.0-rc.1"),
+    release("cua-spaces-v20.0.0"),
+]
+
+
+def test_lume_baked_version_resolves_its_exact_tag_without_the_api(tmp_path: Path):
+    result = run_lume_resolver(tmp_path, "", baked="1.2.3", releases=MONOREPO_RELEASES)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "lume-v1.2.3"
+    assert curl_urls(tmp_path) == []
+
+
+def test_lume_version_override_wins_over_the_baked_version(tmp_path: Path):
+    result = run_lume_resolver(tmp_path, "1.4.0", baked="1.2.3")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "lume-v1.4.0"
+    assert curl_urls(tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    ("channel", "expected"),
+    [
+        ("stable", "lume-v1.10.0"),
+        ("nightly", "nightly-lume-v1.12.0-nightly.20261101.10"),
+    ],
+)
+def test_lume_api_fallback_picks_the_highest_lume_release_not_repo_latest(
+    tmp_path: Path, channel: str, expected: str
+):
+    result = run_lume_resolver(tmp_path, "", channel=channel, releases=MONOREPO_RELEASES)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == expected
+    urls = curl_urls(tmp_path)
+    assert urls, "the fallback should list releases"
+    for url in urls:
+        assert url.startswith("https://api.github.com/repos/trycua/cua/releases?"), url
+        assert "releases/latest" not in url
 
 
 @pytest.mark.parametrize(

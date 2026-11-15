@@ -12,6 +12,9 @@
 //!   live desktop).
 //! - A Space that cannot stream (off, starting, being created or deleted,
 //!   unreachable) shows the detail's own line ([`super::sidebar::SpaceDetail::preview_text`]).
+//! - A stream that dropped (its Space or the local `cua daemon` went away
+//!   and came back) opens again by itself: "Reconnecting…" over the
+//!   preview, then the live desktop, or the failure after a few tries.
 //! - A stream that failed says so, with Try again.
 //!
 //! The preview is the Space's latest thumbnail, the same one the notch
@@ -23,6 +26,8 @@ use serde::{Deserialize, Serialize};
 
 /// The cover's line while the stream opens.
 pub const CONNECTING_TEXT: &str = "Connecting\u{2026}";
+/// The cover's line while a dropped stream opens again.
+pub const RECONNECTING_TEXT: &str = "Reconnecting\u{2026}";
 /// The manual-connect button.
 pub const CONNECT_BUTTON: &str = "Connect";
 /// Its tooltip.
@@ -44,6 +49,8 @@ pub enum StreamPhase {
     Idle,
     /// Opening (no frame yet).
     Connecting,
+    /// Opening again by itself after the stream dropped (no frame yet).
+    Reconnecting,
     /// Frames arrive.
     Streaming,
     /// Paused by the Space (the stream view says why).
@@ -152,6 +159,14 @@ pub fn desktop_cover(input: &DesktopCoverInput) -> DesktopCover {
         StreamPhase::Streaming | StreamPhase::Suspended => {
             cover(DesktopCoverKind::Stream, None, None, None)
         }
+        // It dropped while shown: it comes back by itself, whatever the
+        // setting says.
+        StreamPhase::Reconnecting => cover(
+            DesktopCoverKind::Connecting,
+            Some(RECONNECTING_TEXT),
+            None,
+            None,
+        ),
         StreamPhase::Failed => DesktopCover {
             retry: input.connect_requested,
             ..cover(
@@ -346,9 +361,23 @@ mod tests {
     }
 
     #[test]
+    fn a_dropped_stream_says_reconnecting_and_opens_nothing_new() {
+        for auto_connect in [true, false] {
+            let c = desktop_cover(&DesktopCoverInput {
+                auto_connect,
+                ..input(StreamPhase::Reconnecting)
+            });
+            assert_eq!(c.kind, DesktopCoverKind::Connecting);
+            assert_eq!(c.text.as_deref(), Some(RECONNECTING_TEXT));
+            assert!(c.button.is_none() && !c.open_stream && !c.retry);
+        }
+    }
+
+    #[test]
     fn copy_has_no_em_dashes() {
         for text in [
             CONNECTING_TEXT,
+            RECONNECTING_TEXT,
             CONNECT_BUTTON,
             CONNECT_HELP,
             FAILED_TEXT,

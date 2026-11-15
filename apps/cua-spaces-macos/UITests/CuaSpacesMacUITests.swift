@@ -3,7 +3,7 @@
 
 import XCTest
 
-/// UI tests for the main views, on fixtures (`CUA_SPACES_FIXTURES=1`: no
+/// UI tests for the app's windows, on fixtures (`CUA_SPACES_FIXTURES=1`: no
 /// daemon, no Space, no Keyvault broker; nothing leaves the process). They
 /// drive only this app. Built by project.yml (XcodeGen) on a macOS runner
 /// with Xcode; `swift test` cannot run XCUITest.
@@ -23,38 +23,26 @@ final class CuaSpacesMacUITests: XCTestCase {
         return app
     }
 
-    func testSidebarListsSpacesByLocation() {
+    /// A launch opens the web UI window: the app has no native main window.
+    func testLaunchOpensTheWebUIWindow() {
         let app = launch()
-        XCTAssertTrue(app.staticTexts["Aurora"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["Cua Cloud"].exists)
-        XCTAssertTrue(app.staticTexts["Connected"].exists)
-        XCTAssertTrue(app.staticTexts["All Items"].exists, "the Keyvault categories are in the sidebar")
+        XCTAssertTrue(app.windows["cua-new-ui"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.staticTexts["All Items"].exists, "no native sidebar")
     }
 
-    func testNewSpaceWalksToCreate() {
+    /// New Space (⌘N, the menu bar) is the web wizard, in the same window.
+    func testNewSpaceOpensTheWebUIWindow() {
         let app = launch("new-space")
-        let next = app.buttons["Continue"]
-        XCTAssertTrue(next.waitForExistence(timeout: 10))
-        next.click()
-        next.click()
-        next.click()
-        XCTAssertTrue(app.buttons["Create Space"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.otherElements["wizard-summary"].exists || app.staticTexts["Runs on"].exists)
+        XCTAssertTrue(app.windows["cua-new-ui"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.buttons["Create Space"].exists && app.otherElements["wizard-summary"].exists,
+                       "no native New Space sheet")
     }
 
-    func testOnboardingStartsWithWelcome() {
+    /// The first run is the shared web onboarding in the web UI window: no
+    /// native Welcome.
+    func testFirstRunOpensTheNewUIWindow() {
         let app = launch(onboarded: false)
-        XCTAssertTrue(app.staticTexts["Welcome to Cua Spaces"].waitForExistence(timeout: 10))
-        app.buttons["Get started"].click()
-        // First run no longer has a Command line page: Sign in follows Welcome.
-        XCTAssertTrue(app.staticTexts["Connect your machines and your team."].waitForExistence(timeout: 5))
-    }
-
-    func testSpaceDetailShowsFactsAndTheDropWell() {
-        let app = launch()
-        XCTAssertTrue(app.staticTexts["Aurora"].waitForExistence(timeout: 10))
-        app.staticTexts["Aurora"].click()
-        XCTAssertTrue(app.staticTexts["Identifier"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Drop a file or window"].exists)
+        XCTAssertTrue(app.windows["cua-new-ui"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.staticTexts["Welcome to Cua Spaces"].exists, "no native onboarding")
     }
 }

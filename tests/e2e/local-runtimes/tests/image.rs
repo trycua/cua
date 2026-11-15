@@ -1,11 +1,6 @@
-//! cua-image e2e: containerDisk pulls from the public Fleet registry booted
-//! under QEMU, a local registry push/pull round trip, and the local builder
+//! cua-image e2e: a local registry push/pull round trip and the local builder
 //! for both containers and VMs.
 //!
-//! * `CUA_E2E_FLEET_DISK=1` — pull the public Fleet containerDisk for the
-//!   host arch (~1.7 GB arm64) and boot it under QEMU (hvf on Apple Silicon).
-//! * `CUA_E2E_FLEET_DISK_X86=1` — pull the x86_64 containerDisk (~1.4 GB) and
-//!   boot it under TCG (slow; waits for the serial boot log).
 //! * `CUA_E2E_IMAGE=1` — local `registry:2` + container build + VM build.
 
 use std::path::PathBuf;
@@ -21,8 +16,6 @@ use cua_vmm::{
     Arch, ExecRequest, GuestExec, ImageSource, Probe, Runtime, SshAccess, SshExec, StartSpec,
 };
 
-const FLEET: &str = "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04";
-
 fn cache() -> PathBuf {
     PathBuf::from(std::env::var("HOME").unwrap()).join(".cua/e2e-cache")
 }
@@ -34,141 +27,6 @@ fn qemu_with(resolver: Arc<dyn cua_vmm::DiskResolver>) -> QemuRuntime {
         graceful_stop: Duration::from_secs(30),
         ..Default::default()
     })
-}
-
-fn serial_tail(path: &std::path::Path, n: usize) -> String {
-    let s = std::fs::read_to_string(path).unwrap_or_default();
-    let v: Vec<&str> = s.lines().rev().take(n).collect();
-    v.into_iter().rev().collect::<Vec<_>>().join("\n")
-}
-
-async fn wait_serial(
-    path: &std::path::Path,
-    needles: &[&str],
-    timeout: Duration,
-) -> Option<String> {
-    let deadline = std::time::Instant::now() + timeout;
-    while std::time::Instant::now() < deadline {
-        let s = std::fs::read_to_string(path).unwrap_or_default();
-        if let Some(n) = needles.iter().find(|n| s.contains(**n)) {
-            return Some(n.to_string());
-        }
-        tokio::time::sleep(Duration::from_secs(3)).await;
-    }
-    None
-}
-
-async fn boot_fleet(arch: Arch, reference: &str, boot_timeout: Duration) {
-    init_tracing();
-    let resolver = Arc::new(ContainerDiskResolver {
-        client: RegistryClient::default(),
-        cache: ImageCache::new(cache().join("images")),
-    });
-    let t = Timer::start();
-    let disk = cua_vmm::DiskResolver::resolve(resolver.as_ref(), reference, arch)
-        .await
-        .expect("pull containerDisk");
-    t.lap(&format!(
-        "pull + extract containerDisk ({reference}, {arch})"
-    ));
-    eprintln!(
-        "disk: {} ({} MB)",
-        disk.display(),
-        std::fs::metadata(&disk).unwrap().len() >> 20
-    );
-    let rt = qemu_with(resolver);
-    let key = cua_vmm::cloudinit::ensure_ssh_key(&cache().join("id_ed25519"))
-        .await
-        .unwrap();
-    let name = format!("cua-e2e-fleet-{}-{}", arch.oci(), run_id());
-    let spec = StartSpec::new(&name, ImageSource::oci(reference))
-        .arch(arch)
-        .cpus(4)
-        .memory_mb(4096)
-        .ssh(SshAccess {
-            user: "cua".into(),
-            private_key: key,
-            password: None,
-        })
-        .ready_timeout(Duration::from_secs(60));
-    let t2 = Timer::start();
-    let res = async {
-        let inst = rt.start(&spec).await?;
-        t2.lap("qemu running");
-        eprintln!("isolation {:?}", inst.isolation);
-        let log = inst.endpoints.serial_log.clone().unwrap();
-        let kernel = wait_serial(&log, &["Linux version", "Booting Linux"], boot_timeout).await;
-        t2.lap(&format!("serial kernel banner: {kernel:?}"));
-        let login = wait_serial(
-            &log,
-            &["login:", "Reached target Multi-User", "Cloud-init v."],
-            boot_timeout,
-        )
-        .await;
-        t2.lap(&format!("serial userspace marker: {login:?}"));
-        // SSH via the cloud-init seed if the image honours NoCloud.
-        let ssh = SshExec::from_endpoint(inst.endpoints.ssh.as_ref().unwrap());
-        match ssh
-            .wait_until_ready(Duration::from_secs(if arch == Arch::host() {
-                240
-            } else {
-                60
-            }))
-            .await
-        {
-            Ok(()) => {
-                t2.lap("ssh ready");
-                let out = ssh
-                    .exec(ExecRequest::sh(
-                        "uname -m; systemctl is-system-running 2>/dev/null; ss -ltn | head -20",
-                    ))
-                    .await?;
-                eprintln!("guest:\n{}", out.stdout_str());
-            }
-            Err(e) => eprintln!("ssh not available on this image: {e}"),
-        }
-        let png = cache().join(format!("{name}.png"));
-        if rt.qmp(&name).await?.screendump(&png).await.is_ok() {
-            eprintln!(
-                "screendump: {} ({} bytes)",
-                png.display(),
-                std::fs::metadata(&png).map(|m| m.len()).unwrap_or(0)
-            );
-        }
-        eprintln!("--- serial tail ---\n{}", serial_tail(&log, 12));
-        assert!(
-            kernel.is_some() || login.is_some(),
-            "no boot output on the serial console"
-        );
-        Ok::<_, cua_vmm::VmmError>(())
-    }
-    .await;
-    let _ = rt.delete(&name).await;
-    t.lap("total");
-    res.unwrap();
-}
-
-#[tokio::test]
-async fn fleet_containerdisk_boots_natively() {
-    if !gated("CUA_E2E_FLEET_DISK") {
-        return;
-    }
-    boot_fleet(
-        Arch::host(),
-        &format!("{FLEET}:latest"),
-        Duration::from_secs(300),
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn fleet_containerdisk_x86_boots_under_tcg() {
-    if !gated("CUA_E2E_FLEET_DISK_X86") {
-        return;
-    }
-    let reference =
-        std::env::var("CUA_E2E_FLEET_X86_REF").unwrap_or_else(|_| format!("{FLEET}:main-38352d34"));
-    boot_fleet(Arch::X86_64, &reference, Duration::from_secs(1500)).await;
 }
 
 /// Local `registry:2` for push/pull round trips; removed on drop.

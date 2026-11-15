@@ -1,0 +1,37 @@
+name: "CI: Images, Chromium pin"
+
+# The Linux image installs Chromium from the xtradeb/apps PPA at a pinned major
+# per arch (libs/images/linux/Dockerfile, CHROMIUM_MAJOR_AMD64/ARM64). The PPA
+# keeps only its newest build per arch, so a pinned major can vanish overnight.
+# The image build then falls back to the newest build (and warns); this check
+# fails loudly with the versions the PPA has, on PRs that touch the pin and
+# once a day, so the pin is bumped on purpose.
+
+on:
+  pull_request:
+    paths:
+      - "libs/images/linux/Dockerfile"
+      - "scripts/images/check-chromium-pin.sh"
+      - ".github/workflows/ci-images-chromium-pin.yml"
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-images-chromium-pin-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pin:
+    name: The PPA has the pinned Chromium majors
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Check the pinned majors against the PPA
+        run: scripts/images/check-chromium-pin.sh libs/images/linux/Dockerfile

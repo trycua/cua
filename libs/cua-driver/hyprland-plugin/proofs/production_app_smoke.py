@@ -520,7 +520,10 @@ def observe(mcp, target, filename):
     """
     attempts = []
     for attempt in range(1, OBSERVATION_ATTEMPTS + 1):
-        result = content(mcp.tool('get_window_state', {**target, 'timeout_ms': OBSERVATION_TIMEOUT_MS}))
+        # full_output: grounding needs structured elements from a complete
+        # walk, not the lean 250-node markdown read (cua-driver 0.35).
+        result = content(mcp.tool('get_window_state', {**target, 'timeout_ms': OBSERVATION_TIMEOUT_MS,
+                                                       'full_output': True}))
         assert filename in result.get('window_title', ''), 'snapshot is not the synthetic document'
         retryable = identity_unproven_only(result)
         if not retryable:

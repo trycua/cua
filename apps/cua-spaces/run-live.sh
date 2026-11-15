@@ -2,17 +2,15 @@
 # SPDX-License-Identifier: FSL-1.1-MIT
 # Copyright (c) 2026 Cua AI, Inc.
 
-# Prepare a live Cua Spaces session: load Fleet credentials, make sure the
-# shared `cua daemon` is running, then print (or, with --launch, run) the
-# command that starts the app.
+# Prepare a live Cua Spaces session: make sure the shared `cua daemon` is
+# running, then print (or, with --launch, run) the command that starts the app.
 #
-#   ./run-live.sh            # load ~/.env, start `cua daemon`, print the launch command
+#   ./run-live.sh            # start `cua daemon`, print the launch command
 #   ./run-live.sh --launch   # ...and exec `pnpm tauri dev` (opens the app's windows)
 #
-# Credentials come from ~/.env (CUA_CLIENT_ID / CUA_CLIENT_SECRET /
-# CUA_TOKEN_URL / CUA_FLEET_BASE_URL, or FLEETS_TOKEN). They are exported into
-# this process and the daemon; nothing here prints them. Without them the app
-# still works with Local and "Add by address" Spaces.
+# Local, "Add by address", relay and your own machines' Spaces need no
+# credentials here: sign in from the app (Settings -> Account) or with
+# `cua auth login`. Cua Cloud has ended.
 #
 # The daemon is shared: the app, the `cua` CLI and `cua daemon mcp` (Claude,
 # Codex, OpenClaw) all see the same Spaces registry (~/.cua/spaces.json).
@@ -25,20 +23,6 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 LAUNCH=0
 [ "${1:-}" = "--launch" ] && LAUNCH=1
-
-if [ -f "$HOME/.env" ]; then
-  set -a
-  # shellcheck disable=SC1091
-  . "$HOME/.env"
-  set +a
-  if [ -n "${CUA_CLIENT_ID:-}${FLEETS_TOKEN:-}" ]; then
-    echo "==> Fleet credentials loaded from ~/.env (${CUA_FLEET_BASE_URL:-https://run.cua.ai})"
-  else
-    echo "==> ~/.env has no Fleet credentials; Cloud Spaces will be unavailable"
-  fi
-else
-  echo "==> no ~/.env; Cloud Spaces will be unavailable (Local and Add-by-address still work)"
-fi
 
 # Resolve the cua CLI.
 cua_cmd=()
@@ -69,7 +53,7 @@ The daemon is up. To start the app (this opens its windows on your desktop):
 
     cd $HERE && ./run-live.sh --launch
 
-or, in a shell that already has the credentials exported:
+or directly:
 
     cd $HERE && CUA_BIN=$CUA_BIN pnpm tauri dev
 

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Standard-user app launches for an elevated Windows Driver (#3607).
 //!
 //! A process inherits its creator's primary token. An elevated Driver (the

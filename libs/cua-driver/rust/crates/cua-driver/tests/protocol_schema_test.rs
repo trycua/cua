@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Pure `tools/list` schema-shape assertions.
 //!
 //! These never invoke a tool — they only inspect the advertised schemas: that
@@ -51,8 +54,21 @@ fn tools_list_schema_shape() {
     //! no `type_text_chars` either — the old Windows mirror asserted it was
     //! exposed, but that had never been run). The advertised schemas must still
     //! carry their expected knobs.
-    let mut d = RawDriver::spawn().expect("spawn source-built driver for schema test");
+    assert_tools_list_schema_shape(
+        RawDriver::spawn().expect("spawn source-built driver for schema test"),
+    );
+}
 
+#[cfg(target_os = "linux")]
+#[test]
+fn explicit_direct_tools_list_schema_shape() {
+    // Supported direct stdio transport. This does not replace the daemon gate.
+    assert_tools_list_schema_shape(
+        RawDriver::spawn_explicit_direct().expect("spawn source-built direct MCP driver"),
+    );
+}
+
+fn assert_tools_list_schema_shape(mut d: RawDriver) {
     d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
     d.recv();
 
@@ -61,6 +77,37 @@ fn tools_list_schema_shape() {
     let tools = list_resp["result"]["tools"]
         .as_array()
         .expect("tools array");
+    assert!(!tools.is_empty(), "tools/list must not be empty");
+    assert!(
+        list_resp["result"]["nextCursor"].is_null(),
+        "unread tool page"
+    );
+    let names: BTreeSet<&str> = tools
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names.len(), tools.len(), "duplicate tool name");
+    assert!(
+        names.contains("run_steps"),
+        "runtime-only batch tool missing"
+    );
+    let platform = if cfg!(target_os = "macos") {
+        cua_driver_contract::Platform::Macos
+    } else if cfg!(target_os = "windows") {
+        cua_driver_contract::Platform::Windows
+    } else {
+        cua_driver_contract::Platform::Linux
+    };
+    for tool in cua_driver_contract::manifest().tools {
+        if tool.platforms.contains(&platform) {
+            assert!(
+                names.contains(tool.name.as_str()),
+                "missing portable tool {}",
+                tool.name
+            );
+        }
+    }
+    eprintln!("linted {} live tool input schemas", tools.len());
 
     let properties = |name: &str| {
         &tools
@@ -93,9 +140,13 @@ fn tools_list_schema_shape() {
                 "{name} top-level {unsupported} is rejected by Bedrock: {schema}"
             );
         }
-        for field in ["inputSchema", "outputSchema"] {
-            assert_string_enums(&tool[field], &format!("{name}.{field}"));
-        }
+        assert_string_enums(&tool["outputSchema"], &format!("{name}.outputSchema"));
+        let violations = cua_driver_testkit::vertex::input_schema_violations(schema);
+        assert!(
+            violations.is_empty(),
+            "{name} inputSchema is outside the Vertex AI Schema object (#4798):\n{}",
+            violations.join("\n")
+        );
     }
     assert!(
         undocumented.is_empty(),
@@ -185,11 +236,22 @@ fn tools_list_schema_shape() {
         "press_key",
         "hotkey",
         "scroll",
+        // Foreground may activate the window and open menus (Linux).
+        "invoke_menu",
         "browser_dialog",
         // Trusted browser input may activate the browser window (Linux
         // Chromium); foreground accepts that.
         "browser_click",
         "browser_pointer",
+        // Existing-profile attachment that would bring the browser forward
+        // (macOS Chrome); foreground accepts that.
+        "browser_prepare",
+        // The batch's default for its steps' own delivery_mode.
+        "run_steps",
+        // macOS desktop move_cursor refuses over a background app unless
+        // foreground is requested.
+        #[cfg(target_os = "macos")]
+        "move_cursor",
         // macOS set_value has no delivery ladder.
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         "set_value",
@@ -201,6 +263,30 @@ fn tools_list_schema_shape() {
             "{tool}.delivery_mode should advertise background and foreground: {delivery:?}"
         );
     }
+    for tool in ["browser_click", "browser_pointer"] {
+        let tool = tools
+            .iter()
+            .find(|candidate| candidate["name"] == tool)
+            .unwrap_or_else(|| panic!("{tool} not found in tools/list"));
+        let description = tool["inputSchema"]["properties"]["delivery_mode"]["description"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{tool}.delivery_mode description missing"));
+        assert!(
+            description.contains("including Linux Chromium and macOS Chromium configurations"),
+            "{tool}.delivery_mode should name macOS and Linux: {description}"
+        );
+    }
+    let browser_click = tools
+        .iter()
+        .find(|tool| tool["name"] == "browser_click")
+        .expect("browser_click not found in tools/list");
+    assert!(
+        browser_click["description"].as_str().is_some_and(
+            |description| description.contains("including Linux Chromium configurations")
+        ),
+        "browser_click description should name Linux: {}",
+        browser_click["description"]
+    );
     let schema_tools: BTreeSet<&str> = tools
         .iter()
         .filter(|tool| tool["inputSchema"]["properties"]["delivery_mode"].is_object())
@@ -222,14 +308,12 @@ fn tools_list_schema_shape() {
             "start_session.capture_scope should advertise {expected}: {capture_scope:?}"
         );
     }
-    assert!(
-        tools.iter().any(|tool| tool["name"] == "escalate_session"),
-        "escalate_session missing from tools/list"
-    );
-    assert!(
-        tools.iter().any(|tool| tool["name"] == "get_session_state"),
-        "get_session_state missing from tools/list"
-    );
+    for removed in ["escalate_session", "get_session_state"] {
+        assert!(
+            !tools.iter().any(|tool| tool["name"] == removed),
+            "{removed} was removed and must not be advertised in tools/list"
+        );
+    }
     assert!(
         properties("set_config")["capture_scope"].is_null(),
         "persistent set_config.capture_scope must remain retired"
@@ -309,47 +393,92 @@ fn tools_list_schema_shape() {
     }
 }
 
-#[test]
-fn legacy_page_mutation_requires_unrestricted_launch_and_operator_opt_in() {
-    let args = serde_json::json!({
-        "action": "enable_javascript_apple_events",
-        "user_has_confirmed_enabling": false
-    });
+/// Capabilities that mean the tool drives native input or window state. A tool
+/// advertising one sends input whose effect the driver must account for, so
+/// it has to publish the closed `ActionResult`: the dispatch seam then reports
+/// an unproven effect as `unverifiable` instead of a plain success.
+fn drives_native_input(capability: &str) -> bool {
+    capability.starts_with("input.pointer.")
+        || capability.starts_with("input.keyboard.")
+        || capability.starts_with("menu.")
+        || capability == "window.frame.set"
+}
 
-    {
+#[test]
+fn every_native_input_tool_publishes_the_action_result() {
+    let mut d = RawDriver::spawn().expect("spawn source-built driver for schema test");
+    d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    d.recv();
+    d.send(&serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}));
+    let list_resp = d.recv();
+    let tools = list_resp["result"]["tools"]
+        .as_array()
+        .expect("tools array");
+
+    let expected_schema = cua_driver_contract::advertised_output_schema(
+        <cua_driver_contract::ActionResult as cua_driver_contract::ToolOutput>::output_schema(),
+    );
+    let mut checked = 0;
+    let mut violations = Vec::new();
+    for tool in tools {
+        let name = tool["name"].as_str().expect("tool name");
+        let native_input = tool["capabilities"].as_array().is_some_and(|capabilities| {
+            capabilities
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .any(drives_native_input)
+        });
+        if !native_input {
+            continue;
+        }
+        checked += 1;
+        if !cua_driver_contract::is_action_result_tool(name) {
+            violations.push(format!("{name} is not an action-result tool"));
+        } else if tool["outputSchema"] != expected_schema {
+            violations.push(format!("{name} does not advertise the ActionResult schema"));
+        }
+    }
+    // click, type_text, press_key, hotkey, scroll and drag exist everywhere.
+    assert!(
+        checked >= 6,
+        "only {checked} native input tools found in tools/list"
+    );
+    assert!(
+        violations.is_empty(),
+        "native input tools that can report success without effect evidence:\n  {}",
+        violations.join("\n  ")
+    );
+}
+
+#[test]
+fn removed_legacy_page_actions_are_refused_even_with_the_old_opt_in() {
+    for action in [
+        "execute_javascript",
+        "click_element",
+        "insert_text",
+        "type_keystrokes",
+        "enable_javascript_apple_events",
+    ] {
+        let args = serde_json::json!({"action": action, "pid": 1, "window_id": 1});
+
         let mut driver = McpDriver::spawn().expect("spawn default source-built driver");
         let response = driver.call("page", args.clone());
-        assert!(response.is_error(), "mutation must refuse by default");
+        assert!(response.is_error(), "{action} must refuse by default");
+
+        // The old operator switch no longer enables anything.
+        let mut driver = McpDriver::spawn_with_env(&[
+            ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
+            ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
+            ("CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS", "1"),
+        ])
+        .expect("spawn source-built driver with the removed switch set");
+        let response = driver.call("page", args);
         assert!(
-            response.text().contains("requires unrestricted mode"),
-            "default refusal must name the trusted launch gate: {}",
+            response.is_error(),
+            "{action} must stay refused when the removed switch is set: {}",
             response.text()
         );
     }
-
-    let mut driver = McpDriver::spawn_with_env(&[
-        ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
-        ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
-        ("CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS", "1"),
-    ])
-    .expect("spawn source-built driver with unrestricted legacy compatibility enabled");
-    let response = driver.call("page", args);
-    assert!(
-        response.is_error(),
-        "unconfirmed mutation must still refuse"
-    );
-    assert!(
-        response
-            .text()
-            .contains("Set user_has_confirmed_enabling=true"),
-        "enabled daemon should reach the explicit confirmation gate: {}",
-        response.text()
-    );
-    assert!(
-        !response.text().contains("disabled by default"),
-        "the daemon did not observe its startup environment: {}",
-        response.text()
-    );
 }
 
 #[test]
@@ -362,7 +491,7 @@ fn cursor_motion_knobs_are_applied() {
     // macOS serves cursor-overlay controls only when the daemon hosts the
     // overlay; Linux applies the knobs without one.
     #[cfg(target_os = "macos")]
-    let driver = RawDriver::spawn_with_overlay();
+    let driver = RawDriver::spawn_with_overlay_and_env(&[]);
     #[cfg(not(target_os = "macos"))]
     let driver = RawDriver::spawn();
     let mut driver = driver.expect("spawn source-built driver");

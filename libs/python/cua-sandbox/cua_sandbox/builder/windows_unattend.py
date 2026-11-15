@@ -7,6 +7,7 @@ from scratch via Autounattend.xml + CUA server setup script.
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 from pathlib import Path
 from typing import Optional
@@ -156,8 +157,12 @@ def generate_autounattend_xml(
     *,
     include_virtio_drivers: bool = True,
     version: str = "11",
+    username: Optional[str] = None,
 ) -> str:
     """Generate a Windows Autounattend.xml for unattended installation.
+
+    The local administrator account is ``username``, else the CUA_WINDOWS_USER environment variable, else "User"
+    (Windows Agent Arena tasks assume the user Docker, so a benchmark image sets CUA_WINDOWS_USER=Docker).
 
     Args:
         product_key: Windows product key. If None, uses generic key for edition.
@@ -237,6 +242,7 @@ def generate_autounattend_xml(
       </DriverPaths>
     </component>"""
 
+    account = username or os.environ.get("CUA_WINDOWS_USER") or "User"
     return f"""<?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
   <settings pass="windowsPE">
@@ -369,7 +375,7 @@ def generate_autounattend_xml(
       <UserAccounts>
         <LocalAccounts>
           <LocalAccount wcm:action="add">
-            <Name>User</Name>
+            <Name>{account}</Name>
             <Group>Administrators</Group>
             <Password>
               <Value />
@@ -379,7 +385,7 @@ def generate_autounattend_xml(
         </LocalAccounts>
       </UserAccounts>
       <AutoLogon>
-        <Username>User</Username>
+        <Username>{account}</Username>
         <Enabled>true</Enabled>
         <LogonCount>65432</LogonCount>
         <Password>

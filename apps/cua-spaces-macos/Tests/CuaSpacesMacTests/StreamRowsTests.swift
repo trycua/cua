@@ -7,6 +7,7 @@ import CuaSpacesFFI
 @testable import CuaSpacesMacKit
 import CuaSpacesStreaming
 import Foundation
+import os
 import Testing
 
 /// Stream rows fixtures: an Ubuntu Space with a screen target, two Firefox
@@ -72,19 +73,22 @@ struct StreamRowsTests {
     /// A listing that never answers does not keep "Looking for this
     /// Space's windows…" up: past the bound it reads as failed, with the
     /// Desktop row still there.
+    /// The deadline fires at once here, so the test does not depend on the
+    /// runner's speed.
     @Test func aHungWindowListingFailsInsteadOfLoadingForever() async {
-        let saved = StreamRowsModel.windowsTimeout
-        StreamRowsModel.windowsTimeout = 0.2
-        defer { StreamRowsModel.windowsTimeout = saved }
+        let scheduled = OSAllocatedUnfairLock<[Double]>(initialState: [])
         let m = StreamRowsModel(os: .linux, osName: "Ubuntu 24.04",
                                 windows: {
                                     try await Task.sleep(for: .seconds(3600))
                                     return []
                                 },
-                                display: { nil }, icons: { _ in [] })
-        let started = ContinuousClock.now
+                                display: { nil }, icons: { _ in [] },
+                                deadline: { seconds, fire in
+                                    scheduled.withLock { $0.append(seconds) }
+                                    fire()
+                                })
         await m.refresh()
-        #expect(ContinuousClock.now - started < .seconds(5))
+        #expect(scheduled.withLock { $0 } == [StreamRowsModel.windowsTimeout])
         #expect(m.failed)
         #expect(m.windows == [])
         #expect(m.section().rows.map(\.label) == ["Desktop"])
@@ -101,7 +105,7 @@ struct StreamRowsTests {
         let m = StreamFixture.model()
         await m.refresh()
         let s = m.section()
-        #expect(s.rows.map(\.label) == ["Desktop (1280\u{d7}800)", "Mozilla Firefox", "Release notes", "xterm",
+        #expect(s.rows.map(\.label) == ["Desktop", "Mozilla Firefox", "Release notes", "xterm",
                                          StreamFixture.longTitle])
         #expect(s.rows[0].resolution == "1280\u{d7}800")
         #expect(s.rows[0].icon == .os(id: "os-ubuntu"))
@@ -142,7 +146,7 @@ struct StreamRowsTests {
         await m.refresh()
         let s = m.section()
         #expect(s.rows.map(\.label) == ["Desktop"])
-        #expect(s.statusText == "No windows: the Space\u{2019}s window host is not up.")
+        #expect(s.statusText == "Can\u{2019}t see this Space\u{2019}s windows yet.")
     }
 
     @Test func fixtureBackendReportsADisplay() async {

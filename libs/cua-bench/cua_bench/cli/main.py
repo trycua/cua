@@ -12,7 +12,6 @@ from .commands import (
     env,
     image,
     interact,
-    login,
     platform,
     prune,
     run,
@@ -99,7 +98,7 @@ def build_parser() -> argparse.ArgumentParser:
     """The full ``cb`` argument parser (no side effects; used by the CLI goldens)."""
     parser = argparse.ArgumentParser(
         prog="cb",
-        description="cua-bench: run computer-use tasks and benchmark datasets on local and cloud sandboxes",
+        description="cua-bench: run computer-use tasks and benchmark datasets on sandboxes",
         **examples(
             ("Run a task with its oracle solution", "cb run ./tasks/hello_file_env"),
             ("List the tasks in a directory", "cb task list ./tasks"),
@@ -228,9 +227,9 @@ def build_parser() -> argparse.ArgumentParser:
         **examples(
             ("Run variant 0 with the oracle solution", "cb run task ./tasks/hello_file_env"),
             (
-                "Run variant 2 with an agent in the cloud",
+                "Run variant 2 with an agent on this machine",
                 "cb run task ./tasks/hello_file_env --variant-id 2 --agent cua-agent "
-                "--model anthropic/claude-sonnet-4-20250514 --on cloud",
+                "--model anthropic/claude-sonnet-4-20250514 --on local",
             ),
             (
                 "Show what would run without starting a sandbox",
@@ -274,7 +273,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="max_parallel",
         type=int,
         default=4,
-        help="Variants running at once; in the cloud also the managed pool's max size (default: 4)",
+        help="Variants running at once (default: 4)",
     )
     run_dataset_parser.add_argument(
         "--max-variants",
@@ -429,21 +428,8 @@ def build_parser() -> argparse.ArgumentParser:
     # prune command (top-level) - clean up data and docker resources
     prune.register_parser(subparsers)
 
-    # env command (top-level) - managed cloud pools and local sandboxes
+    # env command (top-level) - local sandboxes
     env.register_parser(subparsers)
-
-    # login command (top-level) - authenticate with CUA Cloud
-    login_parser = subparsers.add_parser(
-        "login",
-        help="Sign in for --on cloud (runs `cua auth login`)",
-        **examples(
-            ("Sign in with a browser", "cb login"),
-            ("Print the sign-in URL instead of opening a browser", "cb login --no-browser"),
-        ),
-    )
-    login_parser.add_argument(
-        "--no-browser", dest="no_browser", action="store_true", help="Print the sign-in URL only"
-    )
 
     return parser
 
@@ -514,8 +500,6 @@ def main(argv: list[str] | None = None):
         prune.execute(args)
     elif args.command == "env":
         sys.exit(env.execute(args) or 0)
-    elif args.command == "login":
-        sys.exit(login.execute(args) or 0)
     else:
         parser.print_help()
         sys.exit(1)

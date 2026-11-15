@@ -1,0 +1,5 @@
+**/target
+**/node_modules
+**/.git
+**/*.qcow2
+**/*.img

@@ -1,0 +1,48 @@
+name: "CI: Cache warm"
+
+# Pull requests restore main's sccache entries. An entry that nobody touches
+# for 7 days is evicted, and a family is re-saved only by a main run. This
+# dispatches the Rust workflows that seed the caches when none of them has run
+# on main for WARM_AFTER_HOURS (a quiet weekend), so Monday's pull requests
+# still start warm. The dispatched run is the normal workflow on main: its
+# first run of the UTC day saves each family.
+
+on:
+  schedule:
+    - cron: "37 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+env:
+  WARM_AFTER_HOURS: "36"
+
+jobs:
+  warm:
+    name: Dispatch stale seeders
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Dispatch workflows with no recent main run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          WORKFLOWS: >-
+            ci-rust-linux.yml ci-rust-windows.yml ci-rust-macos.yml
+            ci-cua-spaces.yml ci-cua-spacesd.yml ci-nix-linux.yml
+            ci-cua-sdk.yml
+        run: |
+          set -eu
+          cutoff="$(date -u -d "-${WARM_AFTER_HOURS} hours" +%Y-%m-%dT%H:%M:%SZ)"
+          for wf in $WORKFLOWS; do
+            recent="$(gh api "repos/$REPO/actions/workflows/$wf/runs?branch=main&status=success&per_page=1" \
+              --jq '.workflow_runs[0].created_at // ""')"
+            if [ -n "$recent" ] && [ "$recent" \> "$cutoff" ]; then
+              echo "$wf: fresh ($recent)"
+              continue
+            fi
+            echo "$wf: last green main run '${recent:-never}', dispatching"
+            gh workflow run "$wf" --repo "$REPO" --ref main
+          done

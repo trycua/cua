@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Compatibility lock for selected stable CLI and MCP fields from 0.12.6.
 
 use std::collections::HashSet;
@@ -85,8 +88,15 @@ fn released_cli_help_and_manifest_fields_remain_compatible() {
 
 #[test]
 fn prime_agent_connection_guidance_uses_the_skill_and_cli_path() {
+    // `mcp-config --client` installs the skill pack for that agent by default,
+    // so this run gets a throwaway home instead of the developer's own.
+    let home = tempfile::tempdir().expect("throwaway home");
     let output = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
         .args(["mcp-config", "--client", "prime-agent"])
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
+        .env("CUA_DRIVER_RS_HOME", home.path().join("driver"))
+        .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "0")
         .output()
         .expect("run Prime Agent connection guidance");
 

@@ -6,7 +6,7 @@
 #   1. $CUA_ENV_TOKEN
 #   2. the file named by $CUA_ENV_TOKEN_FILE
 #   3. /run/cua/env-token     (written by the container entrypoint hook, a
-#                              Fleet/K8s secret mount, or cloud-init)
+#                              K8s secret mount, or cloud-init)
 #   4. /etc/cua/env-token     (persistent, e.g. baked by cloud-init write_files)
 # The container entrypoint hook generates /run/cua/env-token when none of the
 # above exist, so the driver never starts unauthenticated.
@@ -14,7 +14,7 @@
 # The token reaches the driver through the CUA_ENV_TOKEN environment variable,
 # never argv (argv is world-readable in /proc).
 #
-# Fleet (await-token-file mode, see env-token-mode.sh): no token is resolved
+# Await-token-file mode (see env-token-mode.sh): no token is resolved
 # here. The driver binds with no token, serves only GetCapabilities/Health,
 # and follows the claim's token file: /run/cua/env-token directly when this
 # user can read it (pod fsGroup + defaultMode 0440), else the copy that the
@@ -82,9 +82,11 @@ else
 fi
 
 ENV_FILE="${CUA_DESKTOP_RUNTIME_DIR:-/run/cua-desktop}/desktop.env"
-for _ in $(seq 1 60); do
+# Up to 60 s, checked every 0.1 s: the desktop writes it about a second
+# after start, and every Space create waits for this daemon.
+for _ in $(seq 1 600); do
     [ -r "$ENV_FILE" ] && break
-    sleep 1
+    sleep 0.1
 done
 if [ -r "$ENV_FILE" ]; then set -a; . "$ENV_FILE"; set +a; else export DISPLAY="${CUA_DISPLAY:-:1}"; fi
 

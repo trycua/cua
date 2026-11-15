@@ -145,7 +145,7 @@ pub async fn run(ctx: &Ctx, rec: &mut Recorder<'_>) {
             args.push(format!("{set}={port}"));
             args.extend([exe.clone(), "--print-config".to_owned()]);
             let args: Vec<&str> = args.iter().map(String::as_str).collect();
-            let got = sys::run_local("env", &args, &[], Duration::from_secs(10))
+            let got = sys::run_local_keeping_token("env", &args, Duration::from_secs(10))
                 .await
                 .ok()
                 .and_then(|o| port_of(&o.stdout));

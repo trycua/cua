@@ -75,7 +75,41 @@ pub mod chrome {
         // these an obviously-teleportable window reads as unsupported.
         "Google Chrome",
         "Google Chrome Canary",
+        // Microsoft Edge (Chromium): the default browser on Windows. Same
+        // profile layout and cookie store as Chrome, in its own user-data dir.
+        "edge",
+        "msedge",
+        "microsoft-edge",
+        "microsoft-edge-stable",
+        "com.microsoft.edgemac",
+        "Microsoft Edge",
     ];
+
+    /// The subset of [`APP_IDS`] that names Microsoft Edge.
+    pub const EDGE_APP_IDS: &[&str] = &[
+        "edge",
+        "msedge",
+        "microsoft-edge",
+        "microsoft-edge-stable",
+        "com.microsoft.edgemac",
+        "Microsoft Edge",
+    ];
+
+    /// Whether `app_id` names Microsoft Edge (case-insensitive).
+    pub fn is_edge(app_id: &str) -> bool {
+        EDGE_APP_IDS.iter().any(|e| e.eq_ignore_ascii_case(app_id))
+    }
+
+    /// Edge's user-data dir on `platform`, relative to that platform's home.
+    /// Only the *source* side reads it; the bundle stays in the canonical
+    /// Chrome layout and the receiver opens it in the Space's Chrome.
+    pub fn edge_user_data_dir_for(platform: Platform) -> &'static str {
+        match platform {
+            Platform::MacOS => "Library/Application Support/Microsoft Edge",
+            Platform::Linux => ".config/microsoft-edge",
+            Platform::Windows => "AppData/Local/Microsoft/Edge/User Data",
+        }
+    }
 
     /// Curated files copied for a full-profile transfer, with sensitivity flags.
     /// Caches, GPU, and code-cache directories are intentionally excluded.
@@ -190,6 +224,72 @@ pub mod chrome {
         }
     }
 
+    /// A Chromium-family browser a Linux guest may carry.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct LinuxBrowser {
+        /// What the browser is called to people and agents (`chromium`).
+        pub name: &'static str,
+        /// The program to start: absolute, or a name on `PATH`.
+        pub program: &'static str,
+        /// Its user-data dir, relative to the home: where a plain launch of
+        /// this browser (no `--user-data-dir`) reads its profile.
+        pub user_data_dir: &'static str,
+    }
+
+    /// The browsers a Linux guest is launched with, in the order preferred.
+    /// Google Chrome first; the Spaces Linux image ships Chromium only, started
+    /// through its wrapper (`/opt/cua/bin/cua-chromium`, which adds the sandbox
+    /// flags the runtime needs) and reading `~/.config/chromium`.
+    pub const LINUX_BROWSERS: &[LinuxBrowser] = &[
+        LinuxBrowser {
+            name: "google-chrome",
+            program: "google-chrome",
+            user_data_dir: LINUX_USER_DATA_DIR,
+        },
+        LinuxBrowser {
+            name: "google-chrome",
+            program: "google-chrome-stable",
+            user_data_dir: LINUX_USER_DATA_DIR,
+        },
+        LinuxBrowser {
+            name: "chromium",
+            program: "/opt/cua/bin/cua-chromium",
+            user_data_dir: ".config/chromium",
+        },
+        LinuxBrowser {
+            name: "chromium",
+            program: "chromium",
+            user_data_dir: ".config/chromium",
+        },
+        LinuxBrowser {
+            name: "chromium",
+            program: "chromium-browser",
+            user_data_dir: ".config/chromium",
+        },
+    ];
+
+    /// Whether `name` is a Chrome profile directory (`Default`, `Profile 1`).
+    pub fn is_profile_dir(name: &str) -> bool {
+        name == "Default" || name.strip_prefix("Profile ").is_some_and(|n| !n.is_empty())
+    }
+
+    /// Where a bundle path lands under `user_data_dir` (home-relative): the
+    /// canonical Linux prefix is replaced and the sender's profile directory
+    /// (`Profile 1`) becomes `Default`, so everything of one capture lives in
+    /// one profile, the one a plain launch opens. Returns the path and the
+    /// sender's profile name when the path was inside one.
+    pub fn land_path<'a>(rel_path: &'a str, user_data_dir: &str) -> (String, Option<&'a str>) {
+        let Some(within) = rel_path.strip_prefix(&format!("{LINUX_USER_DATA_DIR}/")) else {
+            return (rel_path.to_string(), None);
+        };
+        match within.split_once('/') {
+            Some((profile, rest)) if is_profile_dir(profile) => {
+                (format!("{user_data_dir}/Default/{rest}"), Some(profile))
+            }
+            _ => (format!("{user_data_dir}/{within}"), None),
+        }
+    }
+
     /// Where the app is installed on a macOS source (install probe).
     pub const MACOS_APP: &str = "/Applications/Google Chrome.app";
 }
@@ -291,6 +391,24 @@ user_pref("network.proxy.socks_remote_dns", true);
             Platform::MacOS => "Library/Application Support/Firefox",
             Platform::Linux => ".mozilla/firefox",
             Platform::Windows => "AppData/Roaming/Mozilla/Firefox",
+        }
+    }
+
+    /// Where Firefox may keep its profiles on the machine the app is taken
+    /// from, relative to the home, most likely first. Linux has several: the
+    /// classic `~/.mozilla/firefox`, the XDG location current Firefox uses
+    /// (`~/.config/mozilla/firefox`), Ubuntu's snap and the Flatpak. (A
+    /// destination always uses [`root_for`].)
+    pub fn source_roots_for(platform: Platform) -> &'static [&'static str] {
+        match platform {
+            Platform::MacOS => &["Library/Application Support/Firefox"],
+            Platform::Linux => &[
+                ".mozilla/firefox",
+                ".config/mozilla/firefox",
+                "snap/firefox/common/.mozilla/firefox",
+                ".var/app/org.mozilla.firefox/.mozilla/firefox",
+            ],
+            Platform::Windows => &["AppData/Roaming/Mozilla/Firefox"],
         }
     }
 
@@ -774,6 +892,38 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_capture_lands_in_one_profile_whatever_the_sender_profile_was() {
+        use chrome::{LINUX_BROWSERS, land_path};
+        let ud = ".config/chromium";
+        assert_eq!(
+            land_path(".config/google-chrome/Profile 1/Cookies", ud),
+            (".config/chromium/Default/Cookies".into(), Some("Profile 1"))
+        );
+        assert_eq!(
+            land_path(".config/google-chrome/Default/Local Storage/x", ud),
+            (
+                ".config/chromium/Default/Local Storage/x".into(),
+                Some("Default")
+            )
+        );
+        // Not inside a profile: kept (under the destination's dir), no profile.
+        assert_eq!(
+            land_path(".config/google-chrome/Local State", ud),
+            (".config/chromium/Local State".into(), None)
+        );
+        assert_eq!(land_path("other/x", ud), ("other/x".into(), None));
+        assert!(!chrome::is_profile_dir("Profile "));
+        assert!(!chrome::is_profile_dir("Crashpad"));
+        // Chromium (the Spaces image) is a candidate, after Google Chrome.
+        assert_eq!(LINUX_BROWSERS[0].program, "google-chrome");
+        assert!(
+            LINUX_BROWSERS
+                .iter()
+                .any(|b| b.program == "/opt/cua/bin/cua-chromium" && b.name == "chromium")
+        );
+    }
+
+    #[test]
     fn provider_ids_are_unique_and_stable() {
         let mut ids = PROVIDER_IDS.to_vec();
         ids.sort();
@@ -863,6 +1013,15 @@ mod tests {
     #[test]
     fn firefox_layout_per_platform() {
         assert_eq!(firefox::root_for(Platform::Linux), ".mozilla/firefox");
+        assert_eq!(
+            firefox::source_roots_for(Platform::Linux)[0],
+            ".mozilla/firefox"
+        );
+        assert!(firefox::source_roots_for(Platform::Linux).contains(&".config/mozilla/firefox"));
+        assert!(
+            firefox::source_roots_for(Platform::Linux)
+                .contains(&"snap/firefox/common/.mozilla/firefox")
+        );
         assert_eq!(
             firefox::root_for(Platform::MacOS),
             "Library/Application Support/Firefox"

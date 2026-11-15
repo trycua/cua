@@ -387,3 +387,100 @@ async fn daemon_cancel_stops_the_create() {
         .await
         .expect("timed out");
 }
+
+/// `Sandboxes::create_reporting` (what `cua sandbox create` prints): the
+/// runtime's pull with its bytes, then the boot, embedded and through the
+/// daemon (`CreateSandboxStream`).
+async fn sandbox_create_reports(daemon: bool) {
+    let w = world(daemon, false).await;
+    let heard: Arc<Mutex<Vec<Progress>>> = Arc::default();
+    let h = heard.clone();
+    let mut o = cua_sdk::SandboxCreateOptions::new("local", "ghcr.io/trycua/linux:24.04");
+    o.kind = Some("container".into());
+    o.name = Some("cua-e2e-sandbox-progress".into());
+    let sandbox = w
+        .cua
+        .sandboxes()
+        .create_reporting(o, Arc::new(move |p| h.lock().unwrap().push(p.clone())))
+        .await
+        .unwrap();
+    assert_eq!(sandbox.info().name, "cua-e2e-sandbox-progress");
+    let heard = heard.lock().unwrap().clone();
+    let mut phases: Vec<Phase> = heard.iter().map(|p| p.phase).collect();
+    phases.dedup();
+    assert!(
+        phases
+            .windows(2)
+            .any(|w| w == [Phase::Pulling, Phase::Booting]),
+        "{phases:?}"
+    );
+    let bytes: Vec<_> = heard.iter().filter_map(|p| p.bytes).collect();
+    assert_eq!(bytes.len(), 1, "{heard:?}");
+    assert_eq!(
+        (bytes[0].done, bytes[0].total, bytes[0].per_second),
+        (250, 1000, Some(100.0))
+    );
+    assert!(
+        heard
+            .iter()
+            .any(|p| p.detail == "ghcr.io/trycua/linux:24.04")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn embedded_sandbox_create_reports_progress() {
+    tokio::time::timeout(Duration::from_secs(60), sandbox_create_reports(false))
+        .await
+        .expect("timed out");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn daemon_streams_sandbox_create_progress() {
+    tokio::time::timeout(Duration::from_secs(60), sandbox_create_reports(true))
+        .await
+        .expect("timed out");
+}
+
+/// Closing the daemon's create stream (a `cua sandbox create` that went
+/// away) cancels the create, as for a unary `CreateSandbox`: nothing is
+/// left running.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_closed_sandbox_create_stream_cancels_the_create() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let w = world_with(true, false, true).await;
+        let heard: Arc<Mutex<Vec<Progress>>> = Arc::default();
+        let h = heard.clone();
+        let mut o = cua_sdk::SandboxCreateOptions::new("local", "ghcr.io/trycua/linux:24.04");
+        o.kind = Some("container".into());
+        o.name = Some("cua-e2e-sandbox-gone".into());
+        let sandboxes = w.cua.sandboxes();
+        let create = {
+            let sandboxes = sandboxes.clone();
+            tokio::spawn(async move {
+                sandboxes
+                    .create_reporting(o, Arc::new(move |p| h.lock().unwrap().push(p.clone())))
+                    .await
+            })
+        };
+        while !heard.lock().unwrap().iter().any(|p| p.bytes.is_some()) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        create.abort();
+        let _ = create.await;
+        // The daemon notices the closed stream and drops the create.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+        loop {
+            let listed = sandboxes.list(Some("local".into())).await.unwrap();
+            if !listed.iter().any(|s| s.name == "cua-e2e-sandbox-gone") {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "still listed: {listed:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("timed out");
+}

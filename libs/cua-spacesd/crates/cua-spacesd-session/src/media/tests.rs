@@ -297,6 +297,8 @@ impl InteractiveInputProvider for Inputs {
 #[derive(Default)]
 struct FakeAudio {
     sinks: Mutex<Vec<Arc<dyn AudioFrameSink>>>,
+    /// `start` fails, as capture does with no reachable sound server.
+    unavailable: std::sync::atomic::AtomicBool,
 }
 
 struct FakeAudioLease;
@@ -329,6 +331,12 @@ impl AudioProvider for AudioProviderImpl {
         _: &AudioTrackConfig,
         sink: Arc<dyn AudioFrameSink>,
     ) -> Result<Arc<dyn AudioTrackLease>, ProviderError> {
+        if self.0.unavailable.load(Ordering::Relaxed) {
+            return Err(ProviderError::new(
+                ProviderErrorCode::Internal,
+                "audio: pa_simple_new(@DEFAULT_MONITOR@): Connection refused",
+            ));
+        }
         self.0.sinks.lock().unwrap().push(sink);
         Ok(Arc::new(FakeAudioLease))
     }
@@ -934,6 +942,195 @@ async fn acking_clients_are_held_to_an_ack_window() {
     }
     assert!((8..200).contains(&sent), "sent {sent}");
     assert!(viewer.stats().frames_dropped > 0);
+}
+
+/// Emit deltas every 100 ms for `duration`, so the stream stays active and
+/// idle refresh never fires.
+async fn keep_streaming(fixture: &Fixture, duration: Duration) {
+    let until = Instant::now() + duration;
+    while Instant::now() < until {
+        fixture.capture.emit(false, 640, 480, 1);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+#[tokio::test]
+async fn a_viewer_dropped_by_the_ack_window_gets_a_keyframe_requested() {
+    let fixture = fixture();
+    fixture.runtime.set_idle_keyframe_interval(None);
+    let opened = open(&fixture, params(display())).await;
+    let mut viewer = opened.session.attach().unwrap();
+    let first = videos(&drain(&viewer));
+    viewer
+        .handle(ClientMessage::FrameAck(FrameAck {
+            session_id: WindowSessionId(String::new()),
+            sequence: first[0].sequence(),
+            decode_us: Some(100),
+            decode_queue: None,
+        }))
+        .await;
+    let mut last_sent = first[0].sequence();
+    for _ in 0..200 {
+        fixture.capture.emit(false, 640, 480, 1);
+        if let Some(packet) = videos(&drain(&viewer)).last() {
+            last_sent = packet.sequence();
+        }
+    }
+    assert!(
+        viewer.stats().frames_dropped > 0,
+        "the ack window overflowed"
+    );
+    // The client catches up: everything it was sent is acknowledged.
+    viewer
+        .handle(ClientMessage::FrameAck(FrameAck {
+            session_id: WindowSessionId(String::new()),
+            sequence: last_sent,
+            decode_us: Some(100),
+            decode_queue: None,
+        }))
+        .await;
+    let before = fixture.capture.keyframe_requests.load(Ordering::SeqCst);
+    keep_streaming(&fixture, Duration::from_millis(1_500)).await;
+    assert!(
+        fixture.capture.keyframe_requests.load(Ordering::SeqCst) > before,
+        "a viewer waiting for a keyframe asks the encoder for one"
+    );
+    fixture.capture.emit(true, 640, 480, 1);
+    let recovered = videos(&drain(&viewer));
+    assert!(recovered[0].keyframe);
+}
+
+#[tokio::test]
+async fn a_rate_limited_keyframe_request_is_retried_while_a_viewer_waits() {
+    let fixture = fixture();
+    fixture.runtime.set_idle_keyframe_interval(None);
+    let opened = open(&fixture, params(display())).await;
+    let slow = opened.session.attach().unwrap();
+    drain(&slow);
+    let sink = fixture
+        .capture
+        .sinks
+        .lock()
+        .unwrap()
+        .last()
+        .cloned()
+        .unwrap();
+    let big = Arc::<[u8]>::from({
+        let mut bytes = DELTA.to_vec();
+        bytes.resize(512 * 1024, 7);
+        bytes
+    });
+    let overflow = || {
+        for _ in 0..12 {
+            sink.on_event(CaptureEvent::Frame(OwnedFrame {
+                bytes: big.clone(),
+                format: PixelFormat::H264AnnexB,
+                width_px: 640,
+                height_px: 480,
+                bytes_per_row: None,
+                capture_timestamp_us: clock::now_us(),
+                encode_duration_us: None,
+                codec_epoch: 1,
+                keyframe: false,
+            }));
+        }
+    };
+    // First overflow: answered by an IDR right away.
+    overflow();
+    fixture.capture.emit(true, 640, 480, 1);
+    assert!(videos(&drain(&slow)).iter().any(|packet| packet.keyframe));
+    // Second overflow inside the rate limit: the immediate request is
+    // suppressed, so the session must ask again once the limit allows.
+    overflow();
+    let before = fixture.capture.keyframe_requests.load(Ordering::SeqCst);
+    keep_streaming(&fixture, Duration::from_millis(1_500)).await;
+    assert!(
+        fixture.capture.keyframe_requests.load(Ordering::SeqCst) > before,
+        "the suppressed request is retried"
+    );
+    fixture.capture.emit(true, 640, 480, 1);
+    let recovered = videos(&drain(&slow));
+    assert!(recovered[0].keyframe);
+}
+
+#[tokio::test]
+async fn concurrent_limited_keyframe_requests_reach_the_encoder_once() {
+    let fixture = fixture();
+    let opened = open(&fixture, params(display())).await;
+    tokio::time::sleep(Duration::from_millis(1_100)).await;
+    let before = fixture.capture.keyframe_requests.load(Ordering::SeqCst);
+    let start = Arc::new(std::sync::Barrier::new(8));
+    let callers: Vec<_> = (0..8)
+        .map(|_| {
+            let session = opened.session.clone();
+            let start = start.clone();
+            std::thread::spawn(move || {
+                start.wait();
+                session.request_keyframe_limited();
+            })
+        })
+        .collect();
+    for caller in callers {
+        caller.join().unwrap();
+    }
+    assert_eq!(
+        fixture.capture.keyframe_requests.load(Ordering::SeqCst),
+        before + 1
+    );
+}
+
+fn desktop_audio(source_ids: Vec<String>) -> AudioRequest {
+    AudioRequest {
+        downlink: true,
+        source_ids,
+        config: AudioTrackConfig {
+            source_id: String::new(),
+            codec: AudioCodecName::PcmS16le,
+            sample_rate_hz: 48_000,
+            channels: 2,
+            frame_ms: 20,
+            bitrate_kbps: 0,
+            fec: false,
+            dtx: false,
+            expected_loss_percent: 0,
+        },
+        uplink: None,
+    }
+}
+
+#[tokio::test]
+async fn video_opens_without_audio_when_the_default_source_cannot_start() {
+    let fixture = fixture();
+    fixture.audio.unavailable.store(true, Ordering::Relaxed);
+    let mut with_audio = params(display());
+    with_audio.audio = Some(desktop_audio(vec![]));
+    let opened = open(&fixture, with_audio).await;
+    assert!(opened.audio.as_ref().unwrap().tracks.is_empty());
+    assert!(!opened.session.audio_enabled());
+    let viewer = opened.session.attach().unwrap();
+    fixture.capture.emit(true, 640, 480, 2);
+    assert!(drain(&viewer)
+        .iter()
+        .any(|item| matches!(item, Outbound::Video(_))));
+
+    // A source the client asked for by id still fails the open.
+    let mut named = params(display());
+    named.audio = Some(desktop_audio(vec!["desktop".into()]));
+    let runtime = fixture.runtime.clone();
+    let failed = tokio::task::spawn_blocking(move || runtime.open(named))
+        .await
+        .unwrap();
+    assert!(matches!(failed, Err(MediaError::Provider(_))));
+
+    // So does an audio-only session: without audio it has nothing to send.
+    let mut audio_only = params(display());
+    audio_only.disable_video = true;
+    audio_only.audio = Some(desktop_audio(vec![]));
+    let runtime = fixture.runtime.clone();
+    let failed = tokio::task::spawn_blocking(move || runtime.open(audio_only))
+        .await
+        .unwrap();
+    assert!(failed.is_err());
 }
 
 #[tokio::test]

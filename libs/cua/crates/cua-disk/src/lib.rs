@@ -28,6 +28,9 @@ pub mod scan;
 pub mod scratch;
 
 pub use cua_vmm::disk::{Budget, CacheConfig, InsufficientDisk, Space, format_size, parse_size};
-pub use gc::{GcOptions, GcReport, Removed, auto_gc, collect, plan};
+pub use gc::{
+    BASE_POLICY, BasePolicy, GcOptions, GcReport, KeepReason, KeptBase, Removed, auto_gc, collect,
+    plan,
+};
 pub use layout::Layout;
 pub use scan::{Category, Item, Report, Scanner, Target};

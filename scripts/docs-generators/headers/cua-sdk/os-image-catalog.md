@@ -1,4 +1,3 @@
-<span id="hosted-fleet-images" />
 <span id="ubuntu-2404" />
 
 Any image works as a sandbox; nothing in lifecycle or readiness needs a guest

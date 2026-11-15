@@ -8,10 +8,6 @@
   followed by a ``# {...}`` / ``# [...]`` comment must print that literal.
 * ``container``: the same runner in the container lane (local sandboxes on
   Docker / gVisor), for ``local=True`` examples.
-* ``fleet``: whole scripts against live Fleet (nightly), with
-  ``CUA_POOL_NAME`` set to ``cua-e2e-<run>-docs-<n>``; the pool is deleted
-  afterwards even when the guide intentionally leaves it warm.
-* ``terraform``: ``terraform init/validate`` of the HCL (needs terraform).
 * ``contrib``: blocks on contrib providers (``on="daytona"``) against
   ``cua-contrib-fixtures`` (schema mocks of the provider APIs, not recorded
   traffic, and a mock cua-spacesd). Needs ``CUA_CONTRIB_FIXTURES`` and a
@@ -19,9 +15,7 @@
   provides both.
 
 Hidden preludes (``prelude="a,b"``) set the block up without showing it:
-``fakefleet`` points the SDK at the fake Fleet API of cua-test-fixtures
-(``CUA_FLEET_BASE_URL`` / ``FLEETS_TOKEN``) so cloud examples run on PRs
-unchanged; ``spacesd`` exposes the fixtures' MockServer spacesd as
+``spacesd`` exposes the fixtures' MockServer spacesd as
 ``CUA_DOCS_SPACESD_URL`` / ``CUA_DOCS_SPACESD_TOKEN``; a file
 ``../docs/preludes/<name>.py`` (or ``.ts``) is prepended to the program.
 Every block runs with a temporary ``HOME`` / ``CUA_HOME``, never the
@@ -36,7 +30,6 @@ from __future__ import annotations
 import ast
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -44,8 +37,6 @@ from pathlib import Path
 
 import e2e
 import pytest
-
-import cua
 
 sys.path.insert(0, str(e2e.SUITE / "docs"))
 import extract  # noqa: E402
@@ -56,9 +47,6 @@ PRELUDES = e2e.SUITE / "docs" / "preludes"
 TS_LANGS = ("ts", "typescript")
 # Credentials a hermetic block must never see.
 LIVE_CREDENTIALS = (
-    "CUA_CLIENT_ID",
-    "CUA_CLIENT_SECRET",
-    "FLEETS_TOKEN",
     "CUA_API_KEY",
     # Contrib provider keys: hermetic blocks talk to the fixtures only.
     "E2B_API_KEY",
@@ -149,9 +137,6 @@ DOCS = [b for b in BLOCKS if "docs" in b.lanes and b.lang == "python"]
 CONTAINER = [b for b in BLOCKS if "container" in b.lanes and b.lang == "python"]
 DOCS_TS = [b for b in BLOCKS if "docs" in b.lanes and b.lang in TS_LANGS]
 CONTAINER_TS = [b for b in BLOCKS if "container" in b.lanes and b.lang in TS_LANGS]
-FLEET_PY = [b for b in BLOCKS if "fleet" in b.lanes and b.lang == "python"]
-FLEET_TS = [b for b in BLOCKS if "fleet" in b.lanes and b.lang in TS_LANGS]
-TERRAFORM = [b for b in BLOCKS if "terraform" in b.lanes]
 CONTRIB = [b for b in BLOCKS if "contrib" in b.lanes and b.lang == "python"]
 
 
@@ -159,15 +144,9 @@ def _preludes(block) -> list[str]:
     return [p.strip() for p in block.prelude.split(",") if p.strip()]
 
 
-# Preludes that only point a block at fixtures: the live fleet lane drops them.
-HERMETIC_PRELUDES = {"fakefleet", "spacesd", "space", "space-url", "spaces"}
-
-
-def _prelude_code(block, ext: str, live: bool = False) -> str:
+def _prelude_code(block, ext: str) -> str:
     parts = []
     for name in _preludes(block):
-        if live and name in HERMETIC_PRELUDES:
-            continue
         f = PRELUDES / f"{name}.{ext}"
         if f.exists():
             parts.append(f.read_text())
@@ -176,8 +155,8 @@ def _prelude_code(block, ext: str, live: bool = False) -> str:
 
 @pytest.fixture
 def docs_fixtures():
-    """A fresh cua-test-fixtures per block: a docs block's fake Fleet state
-    (managed pools, claims) never leaks into other tests, or other blocks."""
+    """A fresh cua-test-fixtures per block: a docs block's fixture state never
+    leaks into other tests, or other blocks."""
     binary = e2e.fixtures_binary()
     if binary is None:
         pytest.skip("cua-test-fixtures is not built")
@@ -247,10 +226,6 @@ def _hermetic_env(block, request, home: Path) -> dict:
         "XDG_CONFIG_HOME": str(home / ".config"),
         "XDG_DATA_HOME": str(home / ".local" / "share"),
         "CUA_NO_DAEMON_AUTOSTART": "1",
-        # The names a page asks the reader to pick (preludes and .subst.json
-        # read them); the fleet lane sets per-run names instead.
-        "CUA_POOL_NAME": "cua-e2e-docs-pool",
-        "CUA_CLAIM_NAME": "cua-e2e-docs-claim",
     }
     # The temp HOME hides the engine's socket discovery (~/.colima, ...):
     # hand the real one over explicitly.
@@ -264,16 +239,8 @@ def _hermetic_env(block, request, home: Path) -> dict:
         env["DAYTONA_API_KEY"] = fx["daytona_key"]
         # No registry here: images run as tagged.
         env["CUA_IMAGE_RESOLVE"] = "0"
-    if names & {"fakefleet", "spacesd", "space", "space-url", "spaces"}:
+    if names & {"spacesd", "space", "space-url", "spaces"}:
         fx = request.getfixturevalue("docs_fixtures")
-        if "fakefleet" in names:
-            env["CUA_FLEET_BASE_URL"] = fx["fleet_base_url"]
-            env["FLEETS_TOKEN"] = fx["fleet_token"]
-            # Picking gVisor or KubeVirt for an image reads its manifest, as
-            # for a reader (run.py turns inspection off), from the fixtures'
-            # registry mirror: no network, no Docker Hub rate limit.
-            env["CUA_FLEET_IMAGE_INSPECT"] = "1"
-            env["CUA_REGISTRY_MIRRORS"] = fx["registry_mirror"]
         if "spacesd" in names:
             env["CUA_DOCS_SPACESD_URL"] = fx["env_url"]
             env["CUA_DOCS_SPACESD_TOKEN"] = fx["env_token"]
@@ -379,24 +346,16 @@ def _ts_project(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _run_ts(block, request, tmp_path, extra_env: dict | None = None):
+def _run_ts(block, request, tmp_path):
     project = _ts_project(tmp_path / "project")
     script = project / "block.ts"
-    code = "\n".join([_prelude_code(block, "ts", live=extra_env is not None), block.code])
-    code = _substitute(
-        block,
-        code,
-        extra_env if extra_env is not None else _hermetic_env(block, request, tmp_path / "home"),
-    )
+    extra_env = _hermetic_env(block, request, tmp_path / "home")
+    code = _substitute(block, "\n".join([_prelude_code(block, "ts"), block.code]), extra_env)
     script.write_text(code)
-    if extra_env is None:
-        extra_env = _hermetic_env(block, request, tmp_path / "home")
-        env = dict(os.environ, **extra_env)
-        for k in LIVE_CREDENTIALS:
-            if k not in extra_env:
-                env.pop(k, None)
-    else:
-        env = dict(os.environ, **extra_env)
+    env = dict(os.environ, **extra_env)
+    for k in LIVE_CREDENTIALS:
+        if k not in extra_env:
+            env.pop(k, None)
     out = subprocess.run(
         [*_tsx(), str(script)],
         capture_output=True,
@@ -450,90 +409,9 @@ if CONTAINER_TS:
         _run_ts(block, request, tmp_path)
 
 
-def _delete_pool(pool: str) -> None:
-    async def body():
-        try:
-            await cua.embedded(fleet_from_env=True).fleet().delete_pool(pool)
-        except cua.CuaError:
-            pass
-
-    e2e.run_async(body(), timeout=300)
-
-
-@pytest.mark.e2e("docs-blocks", "fleet")
-@pytest.mark.parametrize("block", FLEET_PY, ids=_ids(FLEET_PY))
-def test_fleet_script(block, sandbox_python, tmp_path):
-    # Inputs the guide asks the reader to export (e.g. OMARCHY_IMAGE, an
-    # image this repo does not publish); the harness sets only the pool names.
-    needed = sorted(
-        set(re.findall(r"""os\.environ\[["']([A-Z0-9_]+)["']\]""", block.code))
-        - {"CUA_POOL_NAME", "CUA_CLAIM_NAME"}
-    )
-    missing = [n for n in needed if not os.environ.get(n)]
-    if missing:
-        pytest.skip(f"docs block input {', '.join(missing)} is unset")
-    pool = f"cua-e2e-{e2e.RUN}-docs-{block.index}"[:63]
-    names = {"CUA_POOL_NAME": pool, "CUA_CLAIM_NAME": f"{pool}-claim"}
-    # The same preludes as on PRs, minus the ones that point at fixtures, so
-    # a fragment runs live exactly as it runs against the fake Fleet.
-    program = "\n".join([_prelude_code(block, "py", live=True), block.code])
-    script = tmp_path / (block.title or "block.py")
-    script.write_text(_substitute(block, program, names))
-    try:
-        out = subprocess.run(
-            [sandbox_python, "-c", _BOOTSTRAP, str(script)],
-            capture_output=True,
-            text=True,
-            timeout=2700,
-            cwd=tmp_path,
-            env=_env(sandbox_python, names),
-        )
-        print(out.stdout[-2000:])
-        assert out.returncode == 0, f"{block.guide}:{block.line}\n{out.stderr[-3000:]}"
-    finally:
-        _delete_pool(pool)
-
-
-@pytest.mark.e2e("docs-blocks", "fleet")
-# The TypeScript guide page (create-pool-with-typescript) was removed upstream;
-# when no Fleet TS block is tagged, report that instead of an empty parameter set.
-@pytest.mark.parametrize(
-    "block",
-    FLEET_TS
-    or [
-        pytest.param(
-            None, marks=pytest.mark.skip(reason="no Fleet TypeScript docs block is tagged")
-        )
-    ],
-    ids=_ids(FLEET_TS) if FLEET_TS else ["none"],
-)
-def test_fleet_ts_script(block, request, tmp_path):
-    """A TypeScript guide script against live Fleet, with @trycua/cua from
-    the repo (libs/cua/typescript) and tsx."""
-    pool = f"cua-e2e-{e2e.RUN}-docs-ts-{block.index}"[:63]
-    try:
-        _run_ts(
-            block, request, tmp_path, {"CUA_POOL_NAME": pool, "CUA_CLAIM_NAME": f"{pool}-claim"}
-        )
-    finally:
-        _delete_pool(pool)
-
-
 if CONTRIB:
 
     @pytest.mark.e2e("docs-blocks", "contrib")
     @pytest.mark.parametrize("block", CONTRIB, ids=_ids(CONTRIB))
     def test_contrib_block(block, sandbox_python, request, tmp_path):
         _run_python(block, CONTRIB, sandbox_python, request, tmp_path)
-
-
-@pytest.mark.e2e("docs-blocks", "docs")
-@pytest.mark.parametrize("block", TERRAFORM, ids=_ids(TERRAFORM))
-def test_terraform_block(block, tmp_path):
-    tf = shutil.which("terraform") or shutil.which("tofu")
-    if not tf:
-        pytest.skip("terraform (or tofu) is not installed")
-    (tmp_path / (block.title or "main.tf")).write_text(block.code)
-    for args in (["init", "-backend=false", "-input=false"], ["validate"]):
-        out = subprocess.run([tf, *args], capture_output=True, text=True, timeout=600, cwd=tmp_path)
-        assert out.returncode == 0, f"terraform {args[0]}: {_tail(out.stderr)}"

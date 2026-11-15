@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Custom motions: describe a path shape, a speed curve, an overshoot or
 //! settle, a duration model and a trail, and get the same kind of
 //! trajectory the built-in styles produce. `signature_arc`, `spring_settle`

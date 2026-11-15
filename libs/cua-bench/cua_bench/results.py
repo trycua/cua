@@ -73,13 +73,12 @@ class SummaryResult(TypedDict):
     variant: int
     status: str
     reward: Optional[float]
-    pool: Optional[str]
     duration_s: float
     error: Optional[str]
     #: ``container`` or ``vm``.
     kind: Optional[str]
-    #: The engine (gvisor, runc, qemu, lume, kubevirt) when one was chosen,
-    #: else ``null`` (the SDK picked).
+    #: The engine (gvisor, runc, qemu, lume) when one was chosen, else
+    #: ``null`` (the SDK picked).
     runtime: Optional[str]
     image_variant: Optional[str]
     image_digest: Optional[str]

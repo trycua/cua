@@ -18,6 +18,7 @@ COMPONENT_PATHS = {
     "cua-spacesd": "libs/cua-spacesd",
     "cua-sdk": "libs/cua",
     "cua-spaces": "apps/cua-spaces-macos",
+    "bench": "libs/cua-bench",
 }
 SEMVER = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 BUMP_TYPES = {"automatic", "patch", "minor", "major"}

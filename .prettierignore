@@ -38,5 +38,15 @@ docs/next-env.d.ts
 # MDX files (prettier mangles {/* */} comment syntax into {/_ _/})
 *.mdx
 
+# Generated files in the Cua Spaces apps. Their drift checks compare the generator's
+# output byte for byte, so Prettier must not rewrite them.
+apps/cua-spaces-desktop/src/native/generated/
+apps/cua-spaces-mobile/src/data/live/gen/
+apps/cua-spaces-web/src/__tests__/fixtures/mac-host-settings-*.json
+apps/cua-spaces-web/src/bridge/contracts/bridge-shapes.json
+apps/cua-spaces-web/src/bridge/generated/
+apps/cua-spaces-web/src/lib/pet-names.generated.ts
+apps/cua-spaces-web/src/routeTree.gen.ts
+
 # Git worktrees (separate branches)
 .worktrees/

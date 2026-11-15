@@ -674,6 +674,10 @@ def main() -> int:
                         # cheap on Electron/Unity windows that slip the size
                         # gate.
                         "max_elements": 200,
+                        # The buttons come from `elements` and the summary
+                        # from `tree_markdown`; since cua-driver 0.35 a read
+                        # returns only the markdown unless asked for both.
+                        "tree_format": "both",
                     })
                 except OSError:
                     # window_id_not_found, or a window owned by a process we

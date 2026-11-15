@@ -10,7 +10,7 @@ import coverage
 import extract
 
 POLICY = {
-    "lanes": {"docs": {"e2e": "docs"}, "terraform": {"e2e": "docs"}, "fleet": {"e2e": "fleet"}},
+    "lanes": {"docs": {"e2e": "docs"}, "shell": {"e2e": "docs"}, "container": {"e2e": "container"}},
     "skip": {},
 }
 
@@ -20,8 +20,8 @@ class CoverageTest(unittest.TestCase):
         tmp = Path(tempfile.mkdtemp())
         (tmp / "p.mdx").write_text(
             '```python test="docs" id="a"\nx\n```\n'
-            '```python test="docs,fleet" id="b"\nx\n```\n'
-            '```hcl test="terraform" id="c"\nx\n```\n'
+            '```python test="docs,container" id="b"\nx\n```\n'
+            '```bash test="shell" id="c"\nx\n```\n'
         )
         self.blocks = extract.all_blocks(tmp)
 
@@ -37,17 +37,17 @@ class CoverageTest(unittest.TestCase):
         )
         self.assertEqual(len(problems), 2)
         self.assertIn("p#b (docs) failed", problems[0])
-        self.assertIn("p#c (terraform) produced no result in lane docs", problems[1])
+        self.assertIn("p#c (shell) produced no result in lane docs", problems[1])
 
     def test_lanes_that_did_not_run_are_ignored(self):
-        rows, problems = coverage.join(self.blocks, [], POLICY, {"container"})
+        rows, problems = coverage.join(self.blocks, [], POLICY, {"qemu"})
         self.assertEqual((rows, problems), ([], []))
 
     def test_skips_and_xfails_are_not_missing(self):
         results = [
-            self.row("p#b", "fleet", "skip"),
+            self.row("p#b", "container", "skip"),
         ]
-        rows, problems = coverage.join(self.blocks, results, POLICY, {"fleet"})
+        rows, problems = coverage.join(self.blocks, results, POLICY, {"container"})
         self.assertEqual([(r["block_id"], r["status"]) for r in rows], [("p#b", "skip")])
         self.assertEqual(problems, [])
         self.assertIn("| p.mdx | 0 | 0 | 1 | 0 | 0 |", coverage.summary(rows))

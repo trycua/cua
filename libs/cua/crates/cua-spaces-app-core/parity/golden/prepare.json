@@ -1,0 +1,698 @@
+{
+  "flow": "prepare",
+  "frames": [
+    {
+      "effects": [],
+      "list": [
+        "local:build-box",
+        "home-pending",
+        "pending:home-pending",
+        "local:home-fix-the-failing-tests",
+        "local:home-claude-code",
+        "local:notes"
+      ],
+      "metrics": [
+        "runtime=- image=- home=- agent=- prepare=- onboarding_to_ready=-"
+      ],
+      "page": [
+        "idle: Getting your agent ready",
+        "Linux runtime (pending)",
+        "Agent image (pending)",
+        "Home Space (pending)",
+        "Claude Code (pending)"
+      ],
+      "step": "nothing started"
+    },
+    {
+      "effects": [
+        "create"
+      ],
+      "list": [
+        "local:build-box",
+        "pending:home-pending",
+        "local:home-fix-the-failing-tests",
+        "local:home-claude-code",
+        "local:notes"
+      ],
+      "metrics": [
+        "runtime=- image=- home=- agent=- prepare=- onboarding_to_ready=-"
+      ],
+      "page": [
+        "preparing: Getting your agent ready",
+        "Linux runtime (running) - Setting up",
+        "Agent image (pending)",
+        "Home Space (pending)",
+        "Claude Code (pending)",
+        "hint: Your message sends as soon as your agent is ready"
+      ],
+      "step": "first launch starts preparing"
+    },
+    {
+      "effects": [],
+      "list": [
+        "local:build-box",
+        "pending:home-pending",
+        "local:home-fix-the-failing-tests",
+        "local:home-claude-code",
+        "local:notes"
+      ],
+      "metrics": [
+        "runtime=- image=- home=- agent=- prepare=- onboarding_to_ready=-"
+      ],
+      "page": [
+        "preparing: Getting your agent ready",
+        "Linux runtime (running) - 120 MB of 440 MB, about 1 minute left [bar 27%]",
+        "Agent image (pending)",
+        "Home Space (pending)",
+        "Claude Code (pending)",
+        "hint: Your message sends as soon as your agent is ready"
+      ],
+      "step": "the Linux runtime downloads"
+    },
+    {
+      "effects": [],
+      "list": [
+        "local:build-box",
+        "pending:home-pending",
+        "local:home-fix-the-failing-tests",
+        "local:home-claude-code",
+        "local:notes"
+      ],
+      "metrics": [
+        "runtime=- image=- home=- agent=- prepare=- onboarding_to_ready=-"
+      ],
+      "page": [
+        "preparing: Getting your agent ready",
+        "Linux runtime (running) - 120 MB of 440 MB, about 1 minute left [bar 27%]",
+        "Agent image (pending)",
+        "Home Space (pending)",
+        "Claude Code (pending)",
+        "hint: Your message sends as soon as your agent is ready"
+      ],
+      "step": "onboarding ends while it is still downloading"
+    },
+    {
+      "effects": [],
+      "list": [
+        "local:build-box",
+        "home-pending",
+        "pending:home-pending",
+        "local:home-fix-the-failing-tests",
+        "local:home-claude-code",
+        "local:notes"
+      ],
+      "metrics": [
+        "runtime=- image=- home=- agent=- prepare=- onboarding_to_ready=-",
+        "message m1 delivered=- first_token=-"
+      ],
+      "page": [
+        "preparing: Getting your agent ready",
+        "Linux runtime (running) - 120 MB of 440 MB, about 1 minute left [bar 27%]",
+        "Agent image (pending)",
+        "Home Space (pending)",
+        "Claude Code (pending)",
+        "queued: Fix the failing tests in my repo (Sends when your agent is ready)",
+        "hint: Your message sends as soon as your agent is ready"
+      ],
+      "step": "a message is typed and kept"
+    },
+    {
+      "effects": [],
+      "list": [
+        "local:build-box",
+        "home-pending",
+        "pending:home-pending",
+        "local:home-fix-the-failing-tests",
+        "local:home-claude-code",
+        "local:notes"
+      ],
+      "metrics": [
+        "runtime=- image=- home=- agent=- prepare=- onboarding_to_ready=-",
+        "message m1 delivered=- first_token=-"
+      ],
+      "page": [
+        "preparing: Getting your agent ready",
+        "Linux runtime (running) - 120 MB of 440 MB, about 1 minute left [bar 27%]",
+        "Agent image (pending)",
+        "Home Space (pending)",
+        "Claude Code (pending)",
+        "queued: Fix the failing tests in my repo (Sends when your agent is ready)",
+        "hint: Your message sends as soon as your agent is ready"
+      ],
+      "step": "the same message sent twice is one"
+    },
+    {
+      "effects": [
+        "wakeAt at 1042000"
+      ],
+      "list": [
+        "local:build-box",
+        "home-pending",
+        "pending:home-pending",
+        "local:home-fix-the-failing-tests",
+        "local:home-claude-code",
+        "local:notes"
+      ],
+      "metrics": [
+        "runtime=- image=- home=- agent=- prepare=- onboarding_to_ready=-",
+        "message m1 delivered=- first_token=-"
+      ],
+      "page": [
+        "waiting: Getting your agent ready",
+        "The connection dropped. Trying again, nothing downloaded is lost",
+        "Linux runtime (waiting) - Waiting for the connection",
+        "Agent image (pending)",
+        "Home Space (pending)",
+        "Claude Code (pending)",
+        "queued: Fix the failing tests in my repo (Sends when your agent is ready)",
+        "hint: Your message sends as soon as your agent is ready"
+      ],
+      "step": "the connection drops"
+    },
+    {
+      "effects": [],
+      "list": [
+        "local:build-box",
+        "home-pending",
+        "pending:home-pending",
+        "local:home-fix-the-failing-tests",
+        "local:home-claude-code",
+        "local:notes"
+      ],
+      "metrics": [
+        "runtime=- image=- home=- agent=- prepare=- onboarding_to_ready=-",
+        "message m1 delivered=- first_token=-"
+      ],
+      "page": [
+        "waiting: Getting your agent ready",
+        "The connection dropped. Trying again, nothing downloaded is lost",
+        "Linux runtime (waiting) - Waiting for the connection",
+        "Agent image (pending)",
+        "Home Space (pending)",
+        "Claude Code (pending)",
+        "queued: Fix the failing tests in my repo (Sends when your agent is ready)",
+        "hint: Your message sends as soon as your agent is ready"
+      ],
+      "step": "a tick before the retry time does nothing"
+    },
+    {
+      "effects": [
+        "create"
+      ],
+      "list": [
+        "local:build-box",
+        "home-pending",
+        "pending:home-pending",
+        "local:home-fix-the-failing-tests",
+        "local:home-claude-code",
+        "local:notes"
+      ],
+      "metrics": [
+        "runtime=- image=- home=- agent=- prepare=- onboarding_to_ready=-",
+        "message m1 delivered=- first_token=-"
+      ],
+      "page": [
+        "preparing: Getting your agent ready",
+        "Linux runtime (running) - 120 MB of 440 MB [bar 27%]",
+        "Agent image (pending)",
+        "Home Space (pending)",
+        "Claude Code (pending)",
+        "queued: Fix the failing tests in my repo (Sends when your agent is ready)",
+        "hint: Your message sends as soon as your agent is ready"
+      ],
+      "step": "the retry time comes and it carries on"
+    },
+    {
+      "effects": [],
+      "list": [
+        "local:build-box",
+        "home-pending",
+        "pending:home-pending",
+        "local:home-fix-the-failing-tests",
+        "local:home-claude-code",
+        "local:notes"
+      ],
+      "metrics": [
+        "runtime=- image=- home=- agent=- prepare=- onboarding_to_ready=-",
+        "message m1 delivered=- first_token=-"
+      ],
+      "page": [
+        "waiting: Getting your agent ready",
+        "No internet connection. Preparing carries on when you are back online",
+        "Linux runtime (waiting) - Waiting for the connection",
+        "Agent image (pending)",
+        "Home Space (pending)",
+        "Claude Code (pending)",
+        "queued: Fix the failing tests in my repo (Sends when your agent is ready)",
+        "hint: Your message sends as soon as your agent is ready"
+      ],
+      "step": "the machine goes offline"
+    },
+    {
+      "effects": [
+        "create"
+      ],
+      "list": [
+        "local:build-box",
+        "home-pending",
+        "pending:home-pending",
+        "local:home-fix-the-failing-tests",
+        "local:home-claude-code",
+        "local:notes"
+      ],
+      "metrics": [
+        "runtime=- image=- home=- agent=- prepare=- onboarding_to_ready=-",
+        "message m1 delivered=- first_token=-"
+      ],
+      "page": [
+        "preparing: Getting your agent ready",
+        "Linux runtime (running) - 120 MB of 440 MB [bar 27%]",
+        "Agent image (pending)",
+        "Home Space (pending)",
+        "Claude Code (pending)",
+        "queued: Fix the failing tests in my repo (Sends when your agent is ready)",
+        "hint: Your message sends as soon as your agent is ready"
+      ],
+      "step": "back online resumes at once"
+    },
+    {
+      "effects": [],
+      "list": [
+        "local:build-box",
+        "home-pending",
+        "pending:home-pending",
+        "local:home-fix-the-failing-tests",
+        "local:home-claude-code",
+        "local:notes"
+      ],
+      "metrics": [
+        "runtime=100000 image=- home=- agent=- prepare=- onboarding_to_ready=-",
+        "message m1 delivered=- first_token=-"
+      ],
+      "page": [
+        "preparing: Getting your agent ready",
+        "Linux runtime (done)",
+        "Agent image (running) - 96 MB of 366 MB, about 1 minute left [bar 26%]",
+        "Home Space (pending)",
+        "Claude Code (pending)",
+        "queued: Fix the failing tests in my repo (Sends when your agent is ready)",
+        "hint: Your message sends as soon as your agent is ready"
+      ],
+      "step": "the runtime is done and the image downloads"
+    },
+    {
+      "effects": [
+        "create"
+      ],
+      "list": [
+        "local:build-box",
+        "home-pending",
+        "pending:home-pending",
+        "local:home-fix-the-failing-tests",
+        "local:home-claude-code",
+        "local:notes"
+      ],
+      "metrics": [
+        "runtime=100000 image=- home=- agent=- prepare=- onboarding_to_ready=-",
+        "message m1 delivered=- first_token=-"
+      ],
+      "page": [
+        "preparing: Getting your agent ready",
+        "Linux runtime (done)",
+        "Agent image (running) - 96 MB of 366 MB [bar 26%]",
+        "Home Space (pending)",
+        "Claude Code (pending)",
+        "queued: Fix the failing tests in my repo (Sends when your agent is ready)",
+        "hint: Your message sends as soon as your agent is ready"
+      ],
+      "step": "the app quits and starts again"
+    },
+    {
+      "effects": [],
+      "list": [
+        "local:build-box",
+        "home-pending",
+        "pending:home-pending",
+        "local:home-fix-the-failing-tests",
+        "local:home-claude-code",
+        "local:notes"
+      ],
+      "metrics": [
+        "runtime=100000 image=410000 home=- agent=- prepare=- onboarding_to_ready=-",
+        "message m1 delivered=- first_token=-"
+      ],
+      "page": [
+        "preparing: Getting your agent ready",
+        "Linux runtime (done)",
+        "Agent image (done)",
+        "Home Space (running) - Starting",
+        "Claude Code (pending)",
+        "queued: Fix the failing tests in my repo (Sends when your agent is ready)",
+        "hint: Your message sends as soon as your agent is ready"
+      ],
+      "step": "the home Space boots"
+    },
+    {
+      "effects": [
+        "attachAgent"
+      ],
+      "list": [
+        "local:build-box",
+        "home-pending",
+        "pending:home-pending",
+        "local:home-fix-the-failing-tests",
+        "local:home-claude-code",
+        "local:notes"
+      ],
+      "metrics": [
+        "runtime=100000 image=410000 home=10000 agent=- prepare=- onboarding_to_ready=-",
+        "message m1 delivered=- first_token=-"
+      ],
+      "page": [
+        "preparing: Getting your agent ready",
+        "Linux runtime (done)",
+        "Agent image (done)",
+        "Home Space (done)",
+        "Claude Code (running) - Getting ready",
+        "queued: Fix the failing tests in my repo (Sends when your agent is ready)",
+        "hint: Your message sends as soon as your agent is ready"
+      ],
+      "step": "the home is running and the agent is added"
+    },
+    {
+      "effects": [
+        "deliver m1"
+      ],
+      "list": [
+        "local:build-box",
+        "home-pending",
+        "pending:home-pending",
+        "local:home-fix-the-failing-tests",
+        "local:home-claude-code",
+        "local:notes"
+      ],
+      "metrics": [
+        "runtime=100000 image=410000 home=10000 agent=3000 prepare=523000 onboarding_to_ready=493000",
+        "message m1 delivered=- first_token=-"
+      ],
+      "page": [
+        "ready: Claude Code is ready",
+        "Your home Space is running",
+        "Linux runtime (done)",
+        "Agent image (done)",
+        "Home Space (done)",
+        "Claude Code (done)",
+        "queued: Fix the failing tests in my repo (Sending)"
+      ],
+      "step": "the agent is ready and the message is sent"
+    },
+    {
+      "effects": [],
+      "list": [
+        "local:build-box",
+        "home-pending",
+        "pending:home-pending",
+        "local:home-fix-the-failing-tests",
+        "local:home-claude-code",
+        "local:notes"
+      ],
+      "metrics": [
+        "runtime=100000 image=410000 home=10000 agent=3000 prepare=523000 onboarding_to_ready=493000",
+        "message m1 delivered=492100 first_token=-"
+      ],
+      "page": [
+        "ready: Claude Code is ready",
+        "Your home Space is running",
+        "Linux runtime (done)",
+        "Agent image (done)",
+        "Home Space (done)",
+        "Claude Code (done)"
+      ],
+      "step": "the post reached the thread"
+    },
+    {
+      "effects": [],
+      "list": [
+        "local:build-box",
+        "home-pending",
+        "pending:home-pending",
+        "local:home-fix-the-failing-tests",
+        "local:home-claude-code",
+        "local:notes"
+      ],
+      "metrics": [
+        "runtime=100000 image=410000 home=10000 agent=3000 prepare=523000 onboarding_to_ready=493000",
+        "message m1 delivered=492100 first_token=494500"
+      ],
+      "page": [
+        "ready: Claude Code is ready",
+        "Your home Space is running",
+        "Linux runtime (done)",
+        "Agent image (done)",
+        "Home Space (done)",
+        "Claude Code (done)"
+      ],
+      "step": "the agent's first words arrive"
+    },
+    {
+      "effects": [
+        "deliver m2",
+        "verifyDelivery m2"
+      ],
+      "list": [
+        "local:build-box",
+        "home-pending",
+        "pending:home-pending",
+        "local:home-fix-the-failing-tests",
+        "local:home-claude-code",
+        "local:notes"
+      ],
+      "metrics": [
+        "runtime=100000 image=410000 home=10000 agent=3000 prepare=523000 onboarding_to_ready=493000",
+        "message m1 delivered=492100 first_token=494500",
+        "message m2 delivered=100100 first_token=-"
+      ],
+      "page": [
+        "ready: Claude Code is ready",
+        "Your home Space is running",
+        "Linux runtime (done)",
+        "Agent image (done)",
+        "Home Space (done)",
+        "Claude Code (done)"
+      ],
+      "step": "a quit during delivery asks the thread first"
+    },
+    {
+      "effects": [
+        "create"
+      ],
+      "list": [
+        "local:build-box",
+        "home-pending",
+        "pending:home-pending",
+        "local:home-fix-the-failing-tests",
+        "local:home-claude-code",
+        "local:notes"
+      ],
+      "metrics": [
+        "runtime=100000 image=410000 home=- agent=- prepare=- onboarding_to_ready=-",
+        "message m1 delivered=492100 first_token=494500",
+        "message m2 delivered=100100 first_token=-"
+      ],
+      "page": [
+        "preparing: Getting your agent ready",
+        "Linux runtime (done)",
+        "Agent image (done)",
+        "Home Space (running) - Starting",
+        "Claude Code (pending)",
+        "hint: Your message sends as soon as your agent is ready"
+      ],
+      "step": "the home Space was removed and is made again"
+    },
+    {
+      "effects": [
+        "wakeAt at 1812000",
+        "create"
+      ],
+      "list": [
+        "local:build-box",
+        "home-pending",
+        "pending:home-pending",
+        "local:home-fix-the-failing-tests",
+        "local:home-claude-code",
+        "local:notes"
+      ],
+      "metrics": [
+        "runtime=100000 image=410000 home=- agent=- prepare=- onboarding_to_ready=-",
+        "message m1 delivered=492100 first_token=494500",
+        "message m2 delivered=100100 first_token=-"
+      ],
+      "page": [
+        "failed: Getting your agent ready stopped",
+        "Preparing stopped: the disk is full",
+        "Linux runtime (done)",
+        "Agent image (done)",
+        "Home Space (failed) - Stopped",
+        "Claude Code (pending)",
+        "hint: Your message sends as soon as your agent is ready",
+        "button: Try again"
+      ],
+      "step": "a failure that will not clear offers Try again"
+    },
+    {
+      "effects": [
+        "create"
+      ],
+      "list": [
+        "local:build-box",
+        "home-pending",
+        "pending:home-pending",
+        "local:home-fix-the-failing-tests",
+        "local:home-claude-code",
+        "local:notes"
+      ],
+      "metrics": [
+        "runtime=100000 image=410000 home=- agent=- prepare=- onboarding_to_ready=-",
+        "message m1 delivered=492100 first_token=494500",
+        "message m2 delivered=100100 first_token=-"
+      ],
+      "page": [
+        "preparing: Getting your agent ready",
+        "Linux runtime (done)",
+        "Agent image (done)",
+        "Home Space (running) - Starting",
+        "Claude Code (pending)",
+        "hint: Your message sends as soon as your agent is ready"
+      ],
+      "step": "Try again runs it again"
+    },
+    {
+      "effects": [
+        "create",
+        "attachAgent"
+      ],
+      "list": [
+        "local:build-box",
+        "home-pending",
+        "pending:home-pending",
+        "local:home-fix-the-failing-tests",
+        "local:notes"
+      ],
+      "metrics": [
+        "runtime=5000 image=0 home=0 agent=1000 prepare=6000 onboarding_to_ready=-"
+      ],
+      "page": [
+        "ready: Claude Code is ready",
+        "Your home Space is running",
+        "Linux runtime (skipped) - Already set up",
+        "Agent image (skipped) - Already downloaded",
+        "Home Space (done)",
+        "Claude Code (done)"
+      ],
+      "step": "a new install: the home is warm and nothing was asked"
+    },
+    {
+      "effects": [],
+      "list": [
+        "local:build-box",
+        "home-pending",
+        "pending:home-pending",
+        "local:home-fix-the-failing-tests",
+        "local:notes"
+      ],
+      "metrics": [
+        "runtime=5000 image=0 home=0 agent=1000 prepare=6000 onboarding_to_ready=-"
+      ],
+      "page": [
+        "ready: Claude Code is ready",
+        "Your home Space is running",
+        "Linux runtime (skipped) - Already set up",
+        "Agent image (skipped) - Already downloaded",
+        "Home Space (done)",
+        "Claude Code (done)"
+      ],
+      "step": "the app quits and opens again: still hidden"
+    },
+    {
+      "effects": [
+        "create",
+        "wakeAt at 3003000",
+        "create"
+      ],
+      "list": [
+        "local:build-box",
+        "home-pending",
+        "local:home-fix-the-failing-tests",
+        "local:home-claude-code",
+        "local:notes"
+      ],
+      "metrics": [
+        "runtime=- image=- home=- agent=- prepare=- onboarding_to_ready=-"
+      ],
+      "page": [
+        "failed: Getting your agent ready stopped",
+        "Preparing stopped: the disk is full",
+        "Linux runtime (failed) - Stopped",
+        "Agent image (pending)",
+        "Home Space (pending)",
+        "Claude Code (pending)",
+        "hint: Your message sends as soon as your agent is ready",
+        "button: Try again"
+      ],
+      "step": "preparing fails on another new install: the error is on Home, the list shows nothing of it"
+    },
+    {
+      "effects": [
+        "create"
+      ],
+      "list": [
+        "local:build-box",
+        "home-pending",
+        "pending:home-pending",
+        "local:home-fix-the-failing-tests",
+        "local:home-claude-code",
+        "local:notes"
+      ],
+      "metrics": [
+        "runtime=- image=- home=- agent=- prepare=- onboarding_to_ready=-",
+        "message q1 delivered=- first_token=-"
+      ],
+      "page": [
+        "preparing: Getting your agent ready",
+        "Linux runtime (running) - Setting up",
+        "Agent image (pending)",
+        "Home Space (pending)",
+        "Claude Code (pending)",
+        "queued: Run my tests (Sends when your agent is ready)",
+        "hint: Your message sends as soon as your agent is ready"
+      ],
+      "step": "a message is queued while the home is still being made: the Space shows at once"
+    },
+    {
+      "effects": [
+        "create",
+        "attachAgent"
+      ],
+      "list": [
+        "local:build-box",
+        "home-pending",
+        "pending:home-pending",
+        "local:home-fix-the-failing-tests",
+        "local:home-claude-code",
+        "local:notes"
+      ],
+      "metrics": [
+        "runtime=5000 image=0 home=0 agent=- prepare=- onboarding_to_ready=-"
+      ],
+      "page": [
+        "preparing: Getting your agent ready",
+        "Linux runtime (skipped) - Already set up",
+        "Agent image (skipped) - Already downloaded",
+        "Home Space (done)",
+        "Claude Code (running) - Getting ready",
+        "hint: Your message sends as soon as your agent is ready"
+      ],
+      "step": "a person wrote in the home's own thread: it shows"
+    }
+  ]
+}

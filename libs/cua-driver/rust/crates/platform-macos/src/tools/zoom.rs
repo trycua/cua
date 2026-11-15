@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use cua_driver_core::{
@@ -54,6 +57,18 @@ impl Tool for ZoomTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        let mut args = args;
+        super::default_window_for_pid(&mut args);
+        if ["x1", "y1", "x2", "y2"]
+            .iter()
+            .all(|key| args.get(*key).is_none())
+        {
+            return ToolResult::error(
+                "zoom needs a region of the window's screenshot: x1,y1 (top-left) and x2,y2 \
+                 (bottom-right) in screenshot pixels, or x,y,width,height. To see the whole \
+                 window, call get_window_state (it returns the screenshot).",
+            );
+        }
         let window_id = match args.require_u32("window_id") {
             Ok(v) => v,
             Err(e) => return e,

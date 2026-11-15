@@ -47,6 +47,7 @@ are exempt because their generator's check owns them. The lanes:
 | `windows`, `lume` | shell blocks on a disposable Windows or macOS machine | nightly |
 | `terraform` | `terraform init` and `validate` | PR |
 | `swift`, `kotlin` | the block compiles against `libs/cua/swift` or `libs/cua/kotlin` (statements wrapped in a function; nothing runs) | PR (`docs-compile-lanes.yml`) |
+| `rust` | the block type-checks (`cargo check`) against `libs/cua/crates/cua-sdk`; a block without `fn main` is wrapped in an async function returning `Result` | PR (`docs-compile-lanes.yml`) |
 | `excerpt` | the block is byte-identical to `source="<path>#<region>"` in a sample CI builds | every PR (`docs:check-blocks`) |
 
 Run the Python and container lanes with
@@ -95,6 +96,11 @@ Public docs live in `content/docs/` and follow the Diátaxis modes:
 - `reference/` is dry lookup: commands, APIs, contracts, limits.
 
 Place content by what the reader is trying to do, not by topic. Do not mix modes in one page; move reference tables to reference pages and link to them from how-to guides or explanations.
+
+## Maintainer runbooks
+
+- [Release components with Release Please](component-release-workflow.md)
+- [Backfill historical release metadata](release-backfill-runbook.md)
 
 ## Learn More
 

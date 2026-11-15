@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Smoke test for the Fleet per-claim token path (await-token-file mode) of
+# Smoke test for the per-claim token path (await-token-file mode) of
 # linux, container rootfs variant, under runc or runsc (gVisor).
 #
-# Simulates the pod: no CUA_ENV_TOKEN, a tmpfs mounted at /run/cua (Fleet
-# mounts the claim Secret there read-only; here it is writable so the test can
-# play the operator). While the driver runs, the test writes, rotates and
-# empties /run/cua/env-token as root (0600, atomic rename, like a Secret
-# update) and checks from the host over gRPC-Web (curl):
+# Simulates the pod: no CUA_ENV_TOKEN, a tmpfs mounted at /run/cua (an
+# orchestrator mounts the token Secret there read-only; here it is writable so
+# the test can play the orchestrator). While the driver runs, the test writes,
+# rotates and empties /run/cua/env-token as root (0600, atomic rename, like a
+# Secret update) and checks from the host over gRPC-Web (curl):
 #   awaiting   GetCapabilities/Health answer; Stat is FAILED_PRECONDITION with
 #              and without a token
 #   install    the token works, no token is UNAUTHENTICATED; the root

@@ -44,7 +44,7 @@ dependencies = [
 
 [project.optional-dependencies]
 driver = [
-    "cua-driver>=0.37.0,<0.51",
+    "cua-driver>=0.37.0,<0.52",
 ]
 auth = [
     "webbrowser-open>=0.0.1",

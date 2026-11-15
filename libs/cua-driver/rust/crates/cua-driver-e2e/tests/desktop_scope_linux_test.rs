@@ -601,10 +601,18 @@ fn desktop_scope_drag_holds_and_releases_modifier() {
                 drag.text(),
                 drag.raw
             );
+            // The refusal comes first; the driver's recovery hint follows on
+            // its own `Next:` line so text-only clients read the next step.
+            let hint = drag.structured()["hint"]
+                .as_str()
+                .expect("refusal carries a recovery hint")
+                .to_owned();
             assert_eq!(
                 drag.text(),
-                "modified drags are unavailable on native Wayland: \
-                 the pointer route cannot carry keyboard modifier state"
+                format!(
+                    "modified drags are unavailable on native Wayland: \
+                     the pointer route cannot carry keyboard modifier state\nNext: {hint}"
+                )
             );
             assert_eq!(drag.structured()["effect"], "refused");
             std::thread::sleep(Duration::from_millis(250));

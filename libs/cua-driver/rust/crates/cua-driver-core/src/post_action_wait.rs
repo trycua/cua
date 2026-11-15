@@ -84,9 +84,13 @@ pub fn schema() -> Value {
     json!({
         "type": "string",
         "enum": ["default", "none"],
-        "description": "\"none\" returns without waiting up to 300 ms for a new window, menu, \
-                        dialog or foreground change; a change seen later is reported on the next \
-                        action's result."
+        "description": "Whether the result waits for the post-action window-change report \
+                        (default \"default\": up to 300 ms for a new window, menu, dialog or \
+                        foreground change). \"none\" returns as soon as the input is delivered \
+                        and says window changes were not observed; the watch keeps running in \
+                        the background and a change it sees is reported on the next action's \
+                        result. Only paths that already observe window changes are affected; \
+                        for example a right_click that does not watch is unchanged."
     })
 }
 

@@ -56,9 +56,11 @@ pub fn delivery_mode_schema_with(description: &str) -> Value {
 /// `delivery_mode` with the generic, tool-agnostic blurb.
 pub fn delivery_mode_schema() -> Value {
     delivery_mode_schema_with(
-        "Default \"background\": no fronting or focus steal. \"foreground\": briefly \
-         front the target, act, then restore the prior app; the last resort when \
-         background did not land.",
+        "Best-effort-background ladder rung (default \"background\"). \
+         \"background\": inject without fronting or raising the target — no focus \
+         steal. \"foreground\": briefly front the target, act, then restore the \
+         prior frontmost — the explicit last resort when a background attempt \
+         didn't land. Re-call with \"foreground\" only for the action that needs it.",
     )
 }
 
@@ -98,7 +100,10 @@ pub fn element_token_schema() -> Value {
         "type": "string",
         "pattern": "^s[0-9a-f]{8}:[0-9]+$",
         "description": "Element handle `<snapshot_id>:<row>` from get_window_state: \
-            row `[11]` of snapshot s0000002a is \"s0000002a:11\"."
+            row `[11]` of a read whose snapshot_id is s0000002a is \
+            \"s0000002a:11\" (also in `structuredContent.elements[].element_token`). \
+            Returns an explicit stale error naming the current snapshots once a \
+            newer read supersedes it."
     })
 }
 

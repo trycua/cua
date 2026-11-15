@@ -2063,6 +2063,7 @@ fn fixed_cli_client_kind(command: &str, client_kind: &str) -> &'static str {
         "qwen_code" => "qwen_code",
         "factory_droid" => "factory_droid",
         "zcode" => "zcode",
+        "deepseek_harness" => "deepseek_harness",
         _ => "other",
     }
 }
@@ -3781,6 +3782,10 @@ mod tests {
         assert_eq!(
             fixed_cli_client_kind("mcp_config", "claude_code"),
             "claude_code"
+        );
+        assert_eq!(
+            fixed_cli_client_kind("mcp_config", "deepseek_harness"),
+            "deepseek_harness"
         );
         assert_eq!(
             fixed_cli_client_kind("mcp_config", "/private/client"),

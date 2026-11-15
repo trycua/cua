@@ -61,9 +61,32 @@ fn ensure_sheet_target(element: &crate::ax::snapshot::RetainedElement) -> anyhow
     Ok(())
 }
 
+#[derive(Debug)]
+struct ObservedIdentityChanged;
+impl std::fmt::Display for ObservedIdentityChanged {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(cua_driver_core::element_token::STALE_TOKEN_ERROR)
+    }
+}
+impl std::error::Error for ObservedIdentityChanged {}
+
+fn ensure_observed_identity(element: &crate::ax::snapshot::RetainedElement) -> anyhow::Result<()> {
+    if !element.observed_identity_is_current() {
+        anyhow::bail!(ObservedIdentityChanged);
+    }
+    Ok(())
+}
+
 fn sheet_refusal() -> ToolResult {
     let message = SheetBlockedTarget.to_string();
     ToolResult::error(&message).with_structured(serde_json::json!({
+        "status": "refused", "refusal": { "code": "stale_element_token", "message": message }
+    }))
+}
+
+fn identity_refusal() -> ToolResult {
+    let message = cua_driver_core::element_token::STALE_TOKEN_ERROR;
+    ToolResult::error(message).with_structured(serde_json::json!({
         "status": "refused", "refusal": { "code": "stale_element_token", "message": message }
     }))
 }
@@ -729,6 +752,19 @@ impl ClickTool {
                 None
             };
 
+            let identity_guard = element_guard.clone();
+            let identity_current =
+                tokio::task::spawn_blocking(move || identity_guard.observed_identity_is_current())
+                    .await
+                    .unwrap_or(false);
+            if !identity_current {
+                let message = cua_driver_core::element_token::STALE_TOKEN_ERROR;
+                return ToolResult::error(message).with_structured(serde_json::json!({
+                    "status": "refused",
+                    "refusal": { "code": "stale_element_token", "message": message }
+                }));
+            }
+
             // Fast path: check the cached element against what the agent saw.
             match crate::fast_path_guard::guard_element(
                 "click",
@@ -880,6 +916,7 @@ impl ClickTool {
                             pid as libc::pid_t,
                             wid,
                             || {
+                                ensure_observed_identity(&middle_guard)?;
                                 ensure_enabled()?;
                                 crate::input::mouse::click_at_xy_desktop_with_modifiers_preserving_cursor(
                                     prompt, cx, cy, 1, "middle", &m,
@@ -891,12 +928,14 @@ impl ClickTool {
                             pid as libc::pid_t,
                             wid,
                             || {
+                                ensure_observed_identity(&middle_guard)?;
                                 ensure_enabled()?;
                                 routed_middle_click()
                             },
                         )
                         .map(|_| ())
                     } else {
+                        ensure_observed_identity(&middle_guard)?;
                         ensure_enabled()?;
                         routed_middle_click()
                     }
@@ -909,6 +948,7 @@ impl ClickTool {
                     ))
                     .with_structured(serde_json::json!({ "path": "cgevent", "verified": false, "effect": "unverifiable" })),
                     Ok(Err(e)) if e.downcast_ref::<SheetBlockedTarget>().is_some() => sheet_refusal(),
+                    Ok(Err(e)) if e.downcast_ref::<ObservedIdentityChanged>().is_some() => identity_refusal(),
                     Ok(Err(e)) => crate::security_prompt::tool_result(&e)
                         .or_else(|| super::element_disabled_error(pid, wid, &e, foreground))
                         .unwrap_or_else(|| ToolResult::error(format!("Middle-click failed: {e}"))),
@@ -1025,6 +1065,7 @@ impl ClickTool {
                             let has_modifiers = !selection_modifiers.is_empty();
                             let action = || {
                                 ensure_sheet_target(&element_guard)?;
+                                ensure_observed_identity(&element_guard)?;
                                 outcome = Some(perform_ax_click(
                                     (element_ptr, idx),
                                     (pid, wid),
@@ -1061,6 +1102,7 @@ impl ClickTool {
                             Ok((outcome, fronted))
                         } else {
                             ensure_sheet_target(&element_guard)?;
+                            ensure_observed_identity(&element_guard)?;
                             perform_ax_click(
                                 (element_ptr, idx),
                                 (pid, wid),
@@ -1139,6 +1181,9 @@ impl ClickTool {
                     ToolResult::text(msg).with_structured(structured)
                 }
                 Ok(Err(e)) if e.downcast_ref::<SheetBlockedTarget>().is_some() => sheet_refusal(),
+                Ok(Err(e)) if e.downcast_ref::<ObservedIdentityChanged>().is_some() => {
+                    identity_refusal()
+                }
                 Ok(Err(e)) => match e.downcast_ref::<crate::input::ax_actions::ElementDisabled>() {
                     Some(disabled) => {
                         super::element_disabled_result(pid, wid, disabled, foreground)

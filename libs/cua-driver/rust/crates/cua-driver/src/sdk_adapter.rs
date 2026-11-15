@@ -50,8 +50,9 @@ pub struct SdkAdapter {
     tools_list: Value,
     // Runtime-adapter-local mirror used only for the legacy socket's early
     // resurrection refusal. Core owns the authoritative runtime-private
-    // tombstone; keeping this mirror on the adapter preserves the loud
-    // transport error without reintroducing process-global public session IDs.
+    // tombstone; keeping this mirror on the adapter preserves the early
+    // `session_ended` refusal without reintroducing process-global public
+    // session IDs.
     public_sessions: Arc<Mutex<PublicSessionState>>,
     runtime_prefix: String,
     runtime_scope: String,

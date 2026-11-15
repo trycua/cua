@@ -14,6 +14,7 @@ final class SnapshotPublicationFixture: NSObject {
     private var checkpoint = false
     private var sheet: NSWindow?
     private var sheetClosed = false
+    private var relabeled = false
     private var originalClicks = 0
     private var replacementClicks = 0
 
@@ -90,6 +91,13 @@ final class SnapshotPublicationFixture: NSObject {
             publish()
             return
         }
+        if command == "relabel" && !relabeled {
+            original.title = "Changed action"
+            relabeled = true
+            window.displayIfNeeded()
+            publish()
+            return
+        }
         guard generation == 0 && command == "replace" else { return }
         original.removeFromSuperview()
         let button = NSButton(title: "Replacement", target: self, action: #selector(clickReplacement))
@@ -130,6 +138,7 @@ final class SnapshotPublicationFixture: NSObject {
                 "checkpoint": checkpoint,
                 "sheet_open": sheet != nil,
                 "sheet_closed": sheetClosed,
+                "relabeled": relabeled,
                 "original_clicks": originalClicks,
                 "replacement_clicks": replacementClicks,
             ])

@@ -3349,15 +3349,28 @@ pub(crate) fn hyprland_input_result(result: anyhow::Result<Value>, foreground: b
         "background_unavailable"
     };
     match result {
-        Ok(value) if value["ok"] == true => ToolResult::text(
-            "Dispatched exact-target Hyprland input; application effect is unverifiable.",
-        )
-        .with_action_record(
-            record(ActionEffect::Unverifiable)
-                .actual_delivery(actual)
-                .build()
-                .expect("isolated input record is valid"),
-        ),
+        Ok(value) if value["ok"] == true => {
+            let outcome = record(ActionEffect::Unverifiable).actual_delivery(actual);
+            if value["admission"] == "user" {
+                let detail = "Admitted by the user's hyprland-apps.txt, not qualified by Cua.";
+                ToolResult::text(format!(
+                    "Dispatched exact-target Hyprland input; application effect is unverifiable. \
+                     {detail}"
+                ))
+                .with_structured(json!({"ok": true, "admission": "user"}))
+                .with_action_record(
+                    outcome
+                        .detail(detail)
+                        .build()
+                        .expect("isolated input record is valid"),
+                )
+            } else {
+                ToolResult::text(
+                    "Dispatched exact-target Hyprland input; application effect is unverifiable.",
+                )
+                .with_action_record(outcome.build().expect("isolated input record is valid"))
+            }
+        }
         Ok(mut value) => {
             if foreground && value["code"] == "foreground_partial_unknown" {
                 return hyprland_input_result(
@@ -3866,6 +3879,29 @@ fn failed_session_end_release_remains_retryable_and_bounded() {
         .unwrap()
         .insert(session_id.to_owned(), hold)
         .is_none());
+}
+
+#[cfg(test)]
+#[test]
+fn a_user_admitted_dispatch_says_the_user_qualified_it() {
+    let user = isolated_hyprland_result(Ok(json!({"ok": true, "admission": "user"})));
+    assert_eq!(user.is_error, None);
+    assert_eq!(
+        user.structured_content.as_ref().unwrap()["admission"],
+        "user"
+    );
+    assert!(serde_json::to_string(&user.content)
+        .unwrap()
+        .contains("not qualified by Cua"));
+    assert!(user
+        .action_record
+        .unwrap()
+        .detail
+        .unwrap()
+        .contains("hyprland-apps.txt"));
+    let driver = isolated_hyprland_result(Ok(json!({"ok": true})));
+    assert!(driver.structured_content.is_none());
+    assert!(driver.action_record.unwrap().detail.is_none());
 }
 
 #[cfg(test)]

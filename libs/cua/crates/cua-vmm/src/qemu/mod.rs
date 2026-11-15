@@ -2759,7 +2759,7 @@ const PASTA_USERNS_HINT: &str = "This host does not let pasta create the user na
      or set kernel.apparmor_restrict_unprivileged_userns=0).";
 
 /// Whether pasta's output says it could not create its user namespace.
-fn pasta_userns_denied(log: &str) -> bool {
+pub(crate) fn pasta_userns_denied(log: &str) -> bool {
     log.contains("Couldn't configure user mappings")
         || log.contains("Couldn't write to /proc/self/uid_map")
         || log.contains("Couldn't create user namespace")

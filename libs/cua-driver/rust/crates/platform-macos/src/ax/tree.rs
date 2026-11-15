@@ -45,7 +45,11 @@ pub const DEFAULT_MAX_ELEMENTS: usize = 2_000;
 /// `AXUIElementCopyAttributeValue` after `spawn_blocking` starts, so the native
 /// messaging timeout is what keeps an unresponsive app from retaining a worker
 /// indefinitely.
-const AX_MESSAGING_TIMEOUT_SECONDS: f32 = 2.0;
+pub(crate) const AX_MESSAGING_TIMEOUT_SECONDS: f32 = 2.0;
+
+/// Most windows of one app a walk brings up to date (see
+/// [`super::enablement::flush_pending_web_updates`]).
+const MAX_WEB_FLUSH_WINDOWS: usize = 4;
 
 unsafe fn set_messaging_timeout(element: AXUIElementRef) {
     let _ = AXUIElementSetMessagingTimeout(element, AX_MESSAGING_TIMEOUT_SECONDS);
@@ -75,8 +79,8 @@ pub struct AXNode {
     /// The raw AXUIElementRef pointer value, for caching.
     pub element_ptr: usize,
     /// Depth in the rendered markdown tree (matches the indent level used in
-    /// `tree_markdown`). Layout containers AXScrollArea/AXGroup collapse so
-    /// children share the parent's depth.
+    /// `tree_markdown`). Unnamed AXScrollArea/AXGroup layout wrappers collapse
+    /// so children share the parent's depth; named ones keep their own row.
     pub depth: usize,
     /// `element_index` of the nearest actionable ancestor, if any. Walks the
     /// rendered tree (so it skips collapsed layout containers).
@@ -356,10 +360,22 @@ fn walk_tree_with_web_content(
             break (top_level, walk);
         };
 
+        // A hidden or covered Chromium window holds back the page changes of
+        // the last action until it is asked something; ask first so the walk
+        // reads the page as it is now.
+        if include_web_content {
+            for &child in walk_these.iter().take(MAX_WEB_FLUSH_WINDOWS) {
+                if copy_string_attr(child, "AXRole").as_deref() == Some("AXWindow") {
+                    super::enablement::flush_pending_web_updates(pid, child);
+                }
+            }
+        }
+
         // Walk each top-level child at depth 0.
         for child in walk_these {
             walk_element(
                 child,
+                0,
                 0,
                 None,
                 false,
@@ -383,7 +399,7 @@ fn walk_tree_with_web_content(
     prune_echo_text_rows(&mut lines);
     let raw_markdown = render_lines(&lines);
     let mut tree_markdown = if let Some(q) = query {
-        filter_tree(&raw_markdown, q)
+        cua_driver_core::element_query::filter_tree(&raw_markdown, q)
     } else {
         raw_markdown
     };
@@ -512,10 +528,36 @@ unsafe fn release_all(elements: Vec<AXUIElementRef>) {
     }
 }
 
+fn is_layout_container(role: &str) -> bool {
+    matches!(role, "AXGroup" | "AXScrollArea")
+}
+
+/// Whether an AXGroup/AXScrollArea is only a layout wrapper to collapse. A
+/// named one (AXTitle or AXDescription, such as a "Profile" or "Billing"
+/// section) keeps its row, so identical controls in different sections can be
+/// told apart.
+fn collapse_layout_container(role: &str, title: Option<&str>, description: Option<&str>) -> bool {
+    is_layout_container(role)
+        && title.is_none_or(|text| text.trim().is_empty())
+        && description.is_none_or(|text| text.trim().is_empty())
+}
+
+/// `max_depth` budget a node's children are walked at. A named layout group
+/// kept as a row indents its children but spends no budget, so `max_depth`
+/// admits the same elements as when every group collapsed.
+fn child_walk_depth(role: &str, walk_depth: usize) -> usize {
+    if is_layout_container(role) {
+        walk_depth
+    } else {
+        walk_depth + 1
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 unsafe fn walk_element(
     element: AXUIElementRef,
     depth: usize,
+    walk_depth: usize,
     parent_index: Option<usize>,
     in_web_content: bool,
     nodes: &mut Vec<AXNode>,
@@ -526,7 +568,7 @@ unsafe fn walk_element(
     max_depth: usize,
     include_web_content: bool,
 ) {
-    if depth > max_depth {
+    if walk_depth > max_depth {
         *depth_truncated = true;
         return;
     }
@@ -552,8 +594,11 @@ unsafe fn walk_element(
         return;
     }
 
-    // Skip pure layout containers that have no interesting content.
-    if role == "AXScrollArea" || role == "AXGroup" {
+    // Names decide whether a group is only a layout wrapper; a kept node
+    // reuses them below.
+    let title = attrs.string(NodeAttr::Title);
+    let description = attrs.string(NodeAttr::Description);
+    if collapse_layout_container(&role, title.as_deref(), description.as_deref()) {
         // Still recurse — children may be interesting. Layout containers
         // collapse, so children inherit the parent's depth AND the same
         // parent_index (no actionable node was emitted here).
@@ -563,6 +608,7 @@ unsafe fn walk_element(
             walk_element(
                 child,
                 depth,
+                walk_depth,
                 parent_index,
                 in_web_content,
                 nodes,
@@ -583,7 +629,6 @@ unsafe fn walk_element(
     // This is critical for Calculator where AXTitle="" but AXDescription="2"
     // (digit buttons). Merging them would produce "2" (quoted) instead of (2)
     // (parens), breaking _find_calc_button which searches for "(2)".
-    let title = attrs.string(NodeAttr::Title);
     // Read AXValue once with enough type information to preserve the existing
     // string-only markdown while also exposing numeric/boolean control state.
     let copied_value = attrs.stringish(NodeAttr::Value);
@@ -591,12 +636,19 @@ unsafe fn walk_element(
         .as_ref()
         .and_then(|copied| copied.string_value.clone());
     let value = value.filter(|v| !v.trim().is_empty());
-    let description = attrs.string(NodeAttr::Description);
     let identifier = attrs.string(NodeAttr::Identifier);
     let help = attrs
         .string(NodeAttr::Help)
         .filter(|h| !h.trim().is_empty());
-    let actions = copy_action_names(element);
+    // A named group or scroll area kept above is a section label, not a
+    // target: its actions are generic scroll and menu ones (SwiftUI and
+    // Catalyst sections carry them), and indexing it would renumber every
+    // element after it. It stays a display row, as unaddressable as before.
+    let actions = if is_layout_container(&role) {
+        Vec::new()
+    } else {
+        copy_action_names(element)
+    };
 
     // Some native controls expose no AX action names but do expose a writable
     // AXValue. Finder's transient inline-rename field is the important case:
@@ -636,6 +688,7 @@ unsafe fn walk_element(
             walk_element(
                 child,
                 depth + 1,
+                walk_depth + 1,
                 parent_index,
                 in_web_content,
                 nodes,
@@ -779,6 +832,7 @@ unsafe fn walk_element(
         walk_element(
             child,
             depth + 1,
+            child_walk_depth(&role, walk_depth),
             next_parent,
             in_web_content,
             nodes,
@@ -907,7 +961,9 @@ const UNLISTED_ACTIONS: &[&str] = &["AXShowMenu", "AXScrollToVisible"];
 /// Drop static-text leaf rows that only repeat text already shown on their
 /// parent row (a web button "Save case" with a child text "Save case"). The
 /// rows keep their element indices; only the rendering omits them, and a
-/// `query` for the text still matches the parent.
+/// `query` for the text still matches the parent. Only an addressable parent
+/// (one with its own `[N]` index) stands in for the child: a named group kept
+/// as a display row has no index, so its echoing text row stays the target.
 fn prune_echo_text_rows(lines: &mut Vec<(usize, String)>) {
     let mut keep = vec![true; lines.len()];
     for i in 0..lines.len() {
@@ -920,7 +976,9 @@ fn prune_echo_text_rows(lines: &mut Vec<(usize, String)>) {
             continue;
         }
         let parent = lines[..i].iter().rev().find(|(d, _)| *d + 1 == *depth);
-        if parent.is_some_and(|(_, parent_line)| quoted_text_contains(parent_line, text)) {
+        if parent.is_some_and(|(_, parent_line)| {
+            parent_line.starts_with("- [") && quoted_text_contains(parent_line, text)
+        }) {
             keep[i] = false;
         }
     }
@@ -964,68 +1022,41 @@ fn render_lines(lines: &[(usize, String)]) -> String {
     out
 }
 
-/// Filter the tree markdown to lines matching `query` plus their ancestor chain.
-fn filter_tree(markdown: &str, query: &str) -> String {
-    let needle = query.to_lowercase();
-    let lines: Vec<&str> = markdown.lines().collect();
-
-    let mut current_ancestor: Vec<&str> = Vec::new();
-    let mut last_emitted_at: Vec<Option<&str>> = Vec::new();
-    let mut output: Vec<&str> = Vec::new();
-
-    for line in &lines {
-        let depth = leading_indent_depth(line);
-
-        while current_ancestor.len() <= depth {
-            current_ancestor.push("");
-            last_emitted_at.push(None);
-        }
-        for emitted_at in last_emitted_at.iter_mut().skip(depth + 1) {
-            *emitted_at = None;
-        }
-        current_ancestor[depth] = line;
-
-        if line.to_lowercase().contains(&needle) {
-            for ancestor_depth in 0..depth {
-                let ancestor = current_ancestor[ancestor_depth];
-                if ancestor.is_empty() {
-                    continue;
-                }
-                if last_emitted_at[ancestor_depth] == Some(ancestor) {
-                    continue;
-                }
-                last_emitted_at[ancestor_depth] = Some(ancestor);
-                output.push(ancestor);
-            }
-            last_emitted_at[depth] = Some(line);
-            output.push(line);
-        }
-    }
-
-    if output.is_empty() {
-        return String::new();
-    }
-    let mut result = output.join("\n");
-    result.push('\n');
-    result
-}
-
-fn leading_indent_depth(line: &str) -> usize {
-    let mut count = 0;
-    for ch in line.chars() {
-        if ch == ' ' {
-            count += 1;
-        } else {
-            break;
-        }
-    }
-    count / 2
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn named_layout_groups_keep_their_row_and_unnamed_wrappers_collapse() {
+        for role in ["AXGroup", "AXScrollArea"] {
+            assert!(!collapse_layout_container(role, Some("Billing"), None));
+            assert!(!collapse_layout_container(role, None, Some("Profile")));
+            assert!(!collapse_layout_container(
+                role,
+                Some("  "),
+                Some("Billing")
+            ));
+            assert!(collapse_layout_container(role, None, None));
+            assert!(collapse_layout_container(role, Some(" "), Some("\n\t")));
+        }
+        assert!(!collapse_layout_container("AXButton", None, None));
+        assert!(!collapse_layout_container("AXWebArea", None, None));
+        // A kept group is a display row: its actions are not read, so it gets
+        // no element_index and indexes after it do not shift.
+        assert!(is_layout_container("AXGroup") && is_layout_container("AXScrollArea"));
+        assert!(!is_layout_container("AXButton"));
+    }
+
+    #[test]
+    fn a_kept_named_group_spends_no_max_depth_budget() {
+        // A button at walk depth 3 under a named group stays within
+        // max_depth=3, as it did when the group collapsed.
+        assert_eq!(child_walk_depth("AXGroup", 3), 3);
+        assert_eq!(child_walk_depth("AXScrollArea", 3), 3);
+        assert_eq!(child_walk_depth("AXWindow", 2), 3);
+        assert_eq!(child_walk_depth("AXButton", 2), 3);
+    }
 
     #[test]
     fn a_disabled_control_row_says_so() {
@@ -1175,6 +1206,22 @@ mod lean_row_tests {
                 "- [12] AXStaticText = \"Inbox\"",
             ]
         );
+    }
+
+    #[test]
+    fn echo_text_under_an_unindexed_group_is_kept_as_the_target() {
+        // A named group is a display row with no element_index, so the text
+        // row repeating its name is the only addressable carrier (a web
+        // scroll region labelled by its own text).
+        let mut lines = rows(&[
+            (0, "- [0] AXWindow \"Harness\" [actions=[raise]]"),
+            (1, "- AXGroup \"scroll-tall\""),
+            (2, "- [33] AXStaticText = \"top marker\""),
+            (2, "- [34] AXStaticText = \"scroll-tall\""),
+            (2, "- [35] AXStaticText = \"line 02\""),
+        ]);
+        prune_echo_text_rows(&mut lines);
+        assert_eq!(lines.len(), 5);
     }
 
     #[test]

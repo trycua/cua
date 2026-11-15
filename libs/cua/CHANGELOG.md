@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.27.5](https://github.com/trycua/cua/compare/cua-sdk-v0.27.4...cua-sdk-v0.27.5) (2026-11-14)
+
+
+### Bug Fixes
+
+* **cua-agent-setup:** bundle the cua-driver skill from its release source ([#7774](https://github.com/trycua/cua/issues/7774)) ([6fc85a5](https://github.com/trycua/cua/commit/6fc85a57b4052f22261a5d62e494fef14798e60d))
+
+## [0.27.4](https://github.com/trycua/cua/compare/cua-sdk-v0.27.3...cua-sdk-v0.27.4) (2026-11-13)
+
+
+### Bug Fixes
+
+* **deps:** upgrade pillow to 13.0.0 and soupsieve to 4.1 (CVE-2026-128066, CVE-2026-128067, CVE-2026-126190) ([#7598](https://github.com/trycua/cua/issues/7598)) ([4d14f88](https://github.com/trycua/cua/commit/4d14f88d9482528ea0e9bdf2c7020d002bcd488d))
+
+## [0.27.3](https://github.com/trycua/cua/compare/cua-sdk-v0.27.2...cua-sdk-v0.27.3) (2026-11-13)
+
+
+### Bug Fixes
+
+* **host:** name and, where possible, fix what a headless Linux computer needs for Spaces ([#7310](https://github.com/trycua/cua/issues/7310)) ([#7399](https://github.com/trycua/cua/issues/7399)) ([9653f85](https://github.com/trycua/cua/commit/9653f85f38b76f7293c833673775d5c8b00b033d))
+
 ## [0.27.2](https://github.com/trycua/cua/compare/cua-sdk-v0.27.1...cua-sdk-v0.27.2) (2026-11-13)
 
 

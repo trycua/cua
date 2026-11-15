@@ -36,8 +36,9 @@ pub(crate) fn pin_overlay_above(key: &str, hwnd: u64) {
 /// `explicit` is the targeted element's screen centre when the action has
 /// one. Without it the cursor reuses its remembered position, then falls back
 /// to the target window's centre, so the first keyboard action of a session
-/// is visible. Anonymous calls keep their existing behavior. Geometry and
-/// overlay failures are observational and never affect the input result.
+/// is visible, and last to the hardware pointer. Anonymous calls keep their
+/// existing behavior. Geometry and overlay failures are observational and
+/// never affect the input result.
 pub(crate) async fn position_keyboard_cursor(
     state: &ToolState,
     args: &Value,
@@ -52,15 +53,15 @@ pub(crate) async fn position_keyboard_cursor(
         .cursor_registry
         .get(&cursor_key)
         .and_then(|cursor| cursor.x.zip(cursor.y));
-    let window_center = if hwnd != 0
-        && cursor_overlay::keyboard_cursor_target(explicit, remembered, None, None).is_none()
-    {
-        keyboard_window_center(hwnd)
-    } else {
-        None
-    };
+    let (window_center, pointer) =
+        if cursor_overlay::keyboard_cursor_target(explicit, remembered, None, None).is_none() {
+            let center = (hwnd != 0).then(|| keyboard_window_center(hwnd)).flatten();
+            (center, center.is_none().then(pointer_position).flatten())
+        } else {
+            (None, None)
+        };
     let Some((x, y)) =
-        cursor_overlay::keyboard_cursor_target(explicit, remembered, window_center, None)
+        cursor_overlay::keyboard_cursor_target(explicit, remembered, window_center, pointer)
     else {
         return;
     };
@@ -69,6 +70,14 @@ pub(crate) async fn position_keyboard_cursor(
     }
     overlay_glide_to(&cursor_key, x, y).await;
     state.cursor_registry.update_position(&cursor_key, x, y);
+}
+
+fn pointer_position() -> Option<(f64, f64)> {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    let mut point = POINT::default();
+    unsafe { GetCursorPos(&mut point) }.ok()?;
+    Some((f64::from(point.x), f64::from(point.y)))
 }
 
 fn keyboard_window_center(hwnd: u64) -> Option<(f64, f64)> {

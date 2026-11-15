@@ -1011,6 +1011,32 @@ impl BrowserEngine {
             .is_ok_and(|current| launched.matches(&current))
     }
 
+    /// Record `child` as the browser this engine launched for `session`, with
+    /// the platform's current fingerprint for `pid`, the way a real isolated
+    /// launch does. The child is reaped with the session like any launch.
+    #[cfg(all(test, unix))]
+    pub(crate) async fn adopt_driver_owned_browser_for_test(
+        &self,
+        session: &str,
+        pid: i64,
+        child: std::process::Child,
+    ) {
+        let fingerprint = self.platform.process_fingerprint(pid).await.ok();
+        self.managed_browsers.lock().unwrap().push(ManagedBrowser {
+            child: Box::new(child),
+            owned_pid: pid,
+            fingerprint,
+            profile: PathBuf::new(),
+            delete_profile: false,
+            marker: ProfileMarker {
+                schema: PROFILE_SCHEMA.to_owned(),
+                mode: PrepareProfileMode::IsolatedNew,
+                name: None,
+            },
+            owner_sessions: vec![session.to_owned()],
+        });
+    }
+
     pub(crate) fn cleanup_prepared_session(&self, session: &str) {
         // The store is shared with the registry, which owns the session's
         // other launch records. Drop only the browsers reaped here, so none

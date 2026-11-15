@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Parity check for `launch_app`.
 //!
 //! Launches Notepad (safe target) in background, asserts:

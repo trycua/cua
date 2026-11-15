@@ -53,7 +53,7 @@ The accessibility model may lag or disagree with rendered state: Electron text s
 
 ## Act once
 
-Use the `element_token` `<snapshot_id>:N` for row `[N]` of the latest snapshot of the intended window, for example `"s0000002a:11"`. A bare `"11"` is accepted only together with `window_id` and then means row 11 of that window's current snapshot. Do not mix a row number from one read with the `snapshot_id` of another. A later snapshot can invalidate a pending action, including when another agent observes the same window.
+Use the `element_token` `<snapshot_id>:N` for row `[N]` of the latest snapshot of the intended window, for example `"s0000002a:11"`. A bare `"11"` is accepted only together with `window_id`, and only while the current snapshot is the one your read printed: as soon as that window is read again the number no longer says which read it came from, and the call is refused with `stale_bare_row` naming the current token for that row. It is never re-pointed at whatever element now sits at row 11. Do not mix a row number from one read with the `snapshot_id` of another. A later snapshot can invalidate a pending action, including when another agent observes the same window.
 
 Example CLI window action, with IDs and token replaced from the preceding response:
 
@@ -173,7 +173,7 @@ A foreground retry is never a `next_call`. When the `hint` names `delivery_mode:
 
 The fields sit next to `code` on an error result, next to `refusal` on a browser refusal, and on the `ActionResult` itself. In `run_steps` a failed step's report carries them; in `run_script` the hint is appended to the failed call's error message. A tool that already set its own `hint` or `next_call` keeps it. `next_call` is advice, not an automatic retry: never replay a partial or unknown action without a fresh read.
 
-After three single action calls in a row in one session (not counting reads), the result of the third also carries a `hint` to chain the next ones with `run_steps`, and again after every third. It is advice with no `next_call`, and it is never sent for a step that already runs inside `run_steps` or `run_script`. Every model turn costs seconds, so chain actions whenever you already know the next few steps.
+After two single action calls in a row in one session (not counting reads), the result of the second also carries a `hint` with a ready `run_steps` call for that window (add `observe:{}` instead of a separate read), and again after every second one. It is advice with no `next_call`, and it is never sent for a step that already runs inside `run_steps` or `run_script`. Every model turn costs seconds, so chain actions whenever you already know the next few steps.
 
 When the postcondition is visibly satisfied, stop acting. For media, selection alone is not playback: check the title, playing/pause indicator, and elapsed progress after preroll/buffering. For closure, verify the requested window disappeared. State only what the evidence proves.
 

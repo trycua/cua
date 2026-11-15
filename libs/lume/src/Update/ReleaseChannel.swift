@@ -38,13 +38,11 @@ enum LumeReleaseChannel: String, Codable, CaseIterable {
         try Data("\(channel.rawValue)\n".utf8).write(to: url, options: .atomic)
     }
 
+    /// `$LUME_HOME/release-channel` for the released Lume (as it always was),
+    /// else `~/.lume/release-channel`; `<home>/release-channel` for `lume-local`,
+    /// where the home is `LUME_HOME` or `~/.lume-local`.
     static func stateFileURL() -> URL {
-        if let override = ProcessInfo.processInfo.environment["LUME_HOME"], !override.isEmpty {
-            return URL(fileURLWithPath: override).appendingPathComponent(fileName)
-        }
-        return FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".lume")
-            .appendingPathComponent(fileName)
+        LumeLayout.current.releaseChannelFile
     }
 
     static func plainVersion(_ version: String) -> [Int]? {

@@ -34,5 +34,14 @@
   "teleport.picker.preparing": "준비하는 중…",
   "teleport.picker.tabs_label": "텔레포트",
   "teleport.picker.search": "검색",
-  "teleport.drop_zone.label": "{name}(으)로 텔레포트"
+  "teleport.drop_zone.label": "{name}(으)로 텔레포트",
+  "teleport.move.app_only": "앱만",
+  "teleport.move.app_with_files": "파일이나 폴더와 함께 앱",
+  "teleport.move.app_with_state": "로그인 상태와 함께 앱",
+  "teleport.sensitive.sign_ins.label": "로그인 유지",
+  "teleport.sensitive.sign_ins.detail": "세션 쿠키를 보내요.",
+  "teleport.sensitive.passwords.label": "저장된 비밀번호",
+  "teleport.sensitive.passwords.detail": "앱에 저장된 비밀번호를 보내요.",
+  "teleport.sensitive.history.label": "방문 기록",
+  "teleport.sensitive.history.detail": "방문한 페이지 기록과, 브라우저가 함께 보관하는 경우 북마크를 보내요."
 }

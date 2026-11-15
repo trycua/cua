@@ -103,6 +103,7 @@ fn pinned() -> ImageInfo {
         os: "linux".into(),
         emulated: false,
         spacesd: None,
+        injected: false,
     }
 }
 
@@ -153,6 +154,7 @@ async fn local_state_records_the_os_the_image_resolved_to() {
         os: "macos".into(),
         emulated: false,
         spacesd: Some(true),
+        injected: false,
     };
     let sbx = Sandboxes::builder()
         .local(Runtime::new(Some(macos)))

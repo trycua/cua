@@ -34,5 +34,14 @@
   "teleport.picker.preparing": "準備しています…",
   "teleport.picker.tabs_label": "テレポート",
   "teleport.picker.search": "検索",
-  "teleport.drop_zone.label": "{name}にテレポート"
+  "teleport.drop_zone.label": "{name}にテレポート",
+  "teleport.move.app_only": "アプリのみ",
+  "teleport.move.app_with_files": "アプリとファイルまたはフォルダ",
+  "teleport.move.app_with_state": "アプリとサインイン状態",
+  "teleport.sensitive.sign_ins.label": "サインインしたままにする",
+  "teleport.sensitive.sign_ins.detail": "セッションの Cookie を送信します。",
+  "teleport.sensitive.passwords.label": "保存済みのパスワード",
+  "teleport.sensitive.passwords.detail": "アプリに保存されているパスワードを送信します。",
+  "teleport.sensitive.history.label": "閲覧履歴",
+  "teleport.sensitive.history.detail": "訪問したページの履歴と、ブラウザがまとめて保持している場合はブックマークを送信します。"
 }

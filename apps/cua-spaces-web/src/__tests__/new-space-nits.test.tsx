@@ -84,7 +84,7 @@ describe.skipIf(!wasmBuilt)("New Space nits", () => {
     await next(dialog);
     const name = await waitFor(() => dialog.querySelector<HTMLInputElement>("[data-name-input]")!);
     const generated = name.placeholder;
-    expect(generated).toMatch(/^space-[0-9a-f]{10}$/);
+    expect(generated).toMatch(/^[a-z]+-[a-z]+$/);
     await next(dialog);
     await waitFor(() => expect(dialog.textContent).toContain(`Name${generated}`));
     // The create uses it: the row while it is created carries the name.

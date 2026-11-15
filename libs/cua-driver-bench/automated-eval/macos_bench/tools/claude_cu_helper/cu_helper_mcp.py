@@ -13,8 +13,9 @@ does not provide:
 
 * **Which windows exist** (``app_list_windows``): ``winlist``, a small Swift tool built in the VM that prints
   ``CGWindowListCopyWindowInfo`` (owner, pid, window id, bounds, title). Public macOS API only.
-* **What a window shows** (``app_screenshot``): ``/usr/sbin/screencapture -l <window id>`` of that one window, the
-  stock macOS tool, downscaled with ``/usr/bin/sips`` to Claude Code's own screenshot budget. Desktop captures with
+* **What a window shows** (``app_screenshot``): ``/usr/sbin/screencapture -l <window id>`` of that one window,
+  wrapped by ``--launcher`` when supplied. Grant Apple's screencapture Screen Recording, never Terminal or our
+  adapter/launcher. The stock macOS capture is downscaled with ``/usr/bin/sips`` to Claude Code's own screenshot budget. Desktop captures with
   its in-process native module (``@ant/claude-swift``, ``appScoped.captureWindow``), not with the helper, so that path
   is not reachable here. Like Desktop, the adapter asks the helper to wake a Chromium window's compositor first.
 
@@ -185,11 +186,11 @@ def target_size(width: int, height: int) -> tuple[int, int]:
     return max(1, int(width * scale)), max(1, int(height * scale))
 
 
-def capture_window(window_id: int, screencapture: str = SCREENCAPTURE, sips: str = SIPS) -> tuple[bytes, int, int]:
+def capture_window(window_id: int, screencapture: str = SCREENCAPTURE, sips: str = SIPS, launcher: str | None = None) -> tuple[bytes, int, int]:
     """PNG of one window (no shadow), downscaled to the screenshot budget. Returns (png, width, height)."""
     with tempfile.TemporaryDirectory(prefix="cuhelper-") as tmp:
         path = os.path.join(tmp, "w.png")
-        done = subprocess.run([screencapture, "-x", "-o", "-t", "png", f"-l{int(window_id)}", path],
+        done = subprocess.run(([launcher] if launcher else []) + [screencapture, "-x", "-o", "-t", "png", f"-l{int(window_id)}", path],
                               capture_output=True, text=True, timeout=20)
         if done.returncode != 0 or not os.path.exists(path) or os.path.getsize(path) == 0:
             raise RuntimeError(f"screencapture failed (rc={done.returncode}): {done.stderr.strip()[:300]}")
@@ -232,11 +233,12 @@ class Adapter:
     indexes, menus, AX text entry) is not part of the helper and is not offered."""
 
     def __init__(self, helper: Helper, winlist: str, actions: list[str], host_pid: int | None = None,
-                 screencapture: str = SCREENCAPTURE, sips: str = SIPS, busy_wait_s: float = BUSY_WAIT_S) -> None:
+                 screencapture: str = SCREENCAPTURE, sips: str = SIPS, busy_wait_s: float = BUSY_WAIT_S, launcher: str | None = None) -> None:
         self.helper = helper
         self.winlist = winlist
         self.actions = [a for a in ALL_ACTIONS if a in actions]
         self.host_pid = host_pid if host_pid is not None else os.getpid()
+        self.launcher = launcher
         self.screencapture = screencapture
         self.sips = sips
         self.busy_wait_s = busy_wait_s
@@ -342,7 +344,7 @@ class Adapter:
                                                             "hostPid": self.host_pid, "debug": True})
             except HelperError as error:
                 log(f"wakeChromiumCompositor: {error}")
-            data, width, height = capture_window(wid, self.screencapture, self.sips)
+            data, width, height = capture_window(wid, self.screencapture, self.sips, self.launcher)
             self.frames[wid] = (float(win["width"]), float(win["height"]), width, height)
             text = (f"{win.get('app')} window {wid} ({win.get('title') or 'untitled'}): screenshot {width}x{height} px; "
                     "coordinates are pixels of this image.")
@@ -493,14 +495,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--helper", required=True)
     parser.add_argument("--winlist", required=True)
-    parser.add_argument("--launcher", help="cu-disclaim: start the helper as its own responsible process (A11)")
+    parser.add_argument("--launcher", help="cu-disclaim: start helper and screencapture as their own responsible processes (A11)")
     parser.add_argument("--actions", default=",".join(ALL_ACTIONS))
     parser.add_argument("--screencapture", default=SCREENCAPTURE)
     parser.add_argument("--sips", default=SIPS)
     args = parser.parse_args(argv)
     helper = Helper([args.launcher, args.helper] if args.launcher else [args.helper], env={"PATH": "/usr/bin:/bin", "HOME": os.environ.get("HOME", "/tmp")})
     adapter = Adapter(helper, args.winlist, [a for a in args.actions.split(",") if a],
-                      screencapture=args.screencapture, sips=args.sips)
+                      screencapture=args.screencapture, sips=args.sips, launcher=args.launcher)
     log(f"adapter {ADAPTER_VERSION} up; helper {args.helper}; actions {adapter.actions}")
     serve(adapter)
     return 0

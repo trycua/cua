@@ -96,17 +96,18 @@ only the test sentinel's animation, not its placement or the product's geometry
 guard. Restore the original configuration after the run. It is a deterministic
 fixture requirement, not an Omarchy user configuration requirement.
 
-This is fixture regression coverage. For background `TARGET` input, the production compatibility gate in
-`platform-linux/src/wayland/hyprland_compatibility.rs` admits only the qualified
-native Calc `26.2.5-3` and Inkscape `1.4.4-6` packages. Ordinary GTK, Electron,
-and Tauri fixtures do not qualify for v3 background raw input. Their declared refusals
-can prove refusal behavior, but cannot prove plugin delivery or isolation.
-Do not widen background production admission or add a test bypass to make them qualify.
+This is fixture regression coverage. For background `TARGET` input, the production compatibility check in
+`platform-linux/src/wayland/hyprland_compatibility.rs` admits any native Wayland
+window whose app bound the agent seats, so the GTK3 fixture's background pointer
+and key rows are delivered through the agent seats on Hyprland. A client that
+binds only its first `wl_seat` (Chromium and Electron through Ozone) refuses with
+`client_not_bound`; Qt 6 keys refuse with `client_drops_background_keys`. XWayland
+targets refuse. Do not add a test bypass to make a refusing client pass.
 
 The [accepted foreground extension](https://github.com/trycua/cua/issues/3550#issuecomment-5564996417)
 adds a separate production `FOREGROUND_TARGET` route for ordinary native
 top-level surfaces, advertised by `HELLO` with `foreground_target:true`.
-It does not apply the Calc/Inkscape background package gate. The existing
+The existing
 complete suite covers defined native GTK3, Electron, and Tauri foreground
 cases. Acceptance requires those cases to pass. Preserve the runner and tests.
 Foreground activation and primary-cursor movement are intentional, with no
@@ -125,11 +126,10 @@ intervals, plus an uninstrumented six-action smoke. Saved outputs confirm Calc
 cell A1 contains `a` and the Inkscape object's x-coordinate changes from 40 to
 42 while y remains 60. The plugin tree and uninstrumented module hash are
 unchanged at `1133a06e4f205cf80188a7ac9e41102f37611fea`. This is bounded
-supporting evidence, not a complete app matrix or release-byte proof. Raw
-background qualification remains native Calc from `libreoffice-fresh 26.2.5-3`,
-Inkscape `1.4.4-6`, the plain compiled `evdev`/`pc105`/`us` keymap, and two
-seats. Chromium, Electron, and XWayland raw background input remain unqualified;
-semantic AT-SPI actions are separate.
+supporting evidence, not a complete app matrix or release-byte proof; it
+predates the per-target admission above. Background input keeps the plain
+compiled `evdev`/`pc105`/`us` keymap and two seats. Chromium, Electron, and
+XWayland raw background input refuse; semantic AT-SPI actions are separate.
 See [production proof preparation](../hyprland-plugin/docs/production-proof.md)
 for the bounded plans and their limits.
 
@@ -377,7 +377,16 @@ Wayland session. Linux does not need GIF output; MP4, screenshots, accessibility
 trees, trajectories, and logs are the useful evidence.
 
 Wayland results are compositor-specific. The hosted lane uses Sway to prove
-wlroots protocols. GNOME requires the optional WinRects Shell helper for
+wlroots protocols. The niri lane (`CUA_E2E_WAYLAND_SESSION=niri` in
+`nix develop .#cua-driver-niri-e2e`) runs niri's winit backend inside a
+headless cage; its observer reads niri IPC, which reports no stacking order and
+no tiled-window positions, and cannot tell a fullscreen tile from a maximized
+one. It reports a floating harness window as occluded only behind the focused
+sentinel while the sentinel itself reports being fullscreen, and one that
+overlaps no other floating window as visible. It refuses tiled targets,
+overlapping floating windows, an open overview, and any other output-sized
+tile, including a maximized sentinel.
+GNOME requires the optional WinRects Shell helper for
 authoritative frame and buffer geometry, observation, capture, and verified
 target activation. A portal/libei grant persists until the user revokes it, so
 subsequent driver processes do not reopen the consent dialog.

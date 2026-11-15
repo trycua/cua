@@ -285,7 +285,8 @@ export function cleanSignature(sig: string): string {
 /** A long constant value (an error message, a URL list) is elided. */
 export function shortValue(sig: string): string {
   const m = sig.match(/^(pub (?:const|static) [^=]+= )(.*);$/);
-  return m && m[2].length > 48 ? `${m[1]}/* ... */;` : sig;
+  // A semver literal is a release stamp: eliding it keeps the page the same after every release.
+  return m && (m[2].length > 48 || /^"\d+\.\d+\.\d+[^"]*"$/.test(m[2])) ? `${m[1]}/* ... */;` : sig;
 }
 
 /** A trailing `// summary` comment, for members inside a code block. */
@@ -367,7 +368,6 @@ export function renderCratePage(
   krate: CrateDoc,
   items: ItemDoc[],
   dump: Dump,
-  version: string,
   uniffi: Map<string, string> = new Map()
 ): string {
   const body: string[] = [];
@@ -445,7 +445,6 @@ export function renderCratePage(
     description: spec.description,
     generator: GENERATOR,
     source: `rustdoc JSON (${dump.toolchain}, format ${dump.format_version}) of ${krate.name}`,
-    version,
     body: body.join('\n\n'),
   });
 }
@@ -466,7 +465,6 @@ function crateTable(dump: Dump): string {
 /** Every generated file, keyed by absolute path. */
 export function renderAll(
   dump: Dump,
-  version: string,
   outDir = OUTPUT_DIR,
   uniffi: Map<string, string> = uniffiAnchors()
 ): Map<string, string> {
@@ -475,7 +473,7 @@ export function renderAll(
   for (const spec of PAGES) {
     const krate = dump.crates.find((c) => c.name === spec.crate);
     if (!krate) throw new Error(`dump has no crate ${spec.crate}`);
-    files.set(path.join(outDir, `${spec.slug}.mdx`), renderCratePage(spec, krate, assigned.get(spec.slug)!, dump, version, uniffi));
+    files.set(path.join(outDir, `${spec.slug}.mdx`), renderCratePage(spec, krate, assigned.get(spec.slug)!, dump, uniffi));
   }
   files.set(
     path.join(outDir, 'index.mdx'),
@@ -484,11 +482,10 @@ export function renderAll(
       description: 'The public Rust crates of the Cua SDK, how to depend on them, and what is stable.',
       generator: GENERATOR,
       source: `rustdoc JSON (${dump.toolchain}, format ${dump.format_version})`,
-      version,
       body: [
         'Rust hosts (CLIs, Tauri apps, services) use the crates directly instead of a binding. The crates are not on crates.io, so there is no docs.rs page: each crate has one page here with every public item.',
         crateTable(dump),
-        readHeader('cua-sdk/rust/index.md', { version }),
+        readHeader('cua-sdk/rust/index.md'),
       ]
         .filter(Boolean)
         .join('\n\n'),
@@ -538,8 +535,7 @@ function main(): void {
   const dumpIndex = args.indexOf('--dump');
   const dump: Dump =
     dumpIndex >= 0 ? JSON.parse(fs.readFileSync(args[dumpIndex + 1], 'utf-8')) : buildDump();
-  const version = fs.readFileSync(path.join(REPO_ROOT, 'libs', 'cua', 'VERSION'), 'utf-8').trim();
-  const drift = syncFiles(renderAll(dump, version), checkOnly, [OUTPUT_DIR], GENERATOR);
+  const drift = syncFiles(renderAll(dump), checkOnly, [OUTPUT_DIR], GENERATOR);
   finish('Rust crate', drift, checkOnly, GENERATOR);
 }
 

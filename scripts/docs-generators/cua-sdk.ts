@@ -218,10 +218,6 @@ export const PAGES: PageSpec[] = [
       'SandboxListing',
       'SandboxPhase',
       'SandboxStatus',
-      'parse_sandbox_ref',
-      'qualify_sandbox_ref',
-      'ambiguous_sandbox_candidates',
-      'SandboxRefParts',
     ],
     modules: ['sandbox', 'overlay'],
     python: [['`cua_sandbox.Sandbox`', `${PY}/sandbox#sandbox`]],
@@ -229,24 +225,101 @@ export const PAGES: PageSpec[] = [
   {
     slug: 'sandbox/lifecycle',
     title: 'Lifecycle',
-    description: 'Wait for, keep alive, suspend, resume, restart and delete a sandbox.',
+    description: 'Wait for, keep alive, give a lifetime to, suspend, resume, restart, resize, detach and delete a sandbox.',
     intro: 'Lifecycle calls on a `Sandbox` handle. They act on the container or VM.',
     members: [
       {
         object: 'Sandbox',
         title: 'Lifecycle methods',
-        methods: ['wait_ready', 'refresh', 'keep_alive', 'suspend', 'resume', 'restart', 'delete'],
+        methods: ['wait_ready', 'refresh', 'keep_alive', 'set_lifetime', 'expires_at_unix', 'suspend', 'resume', 'restart', 'resize', 'delete'],
       },
     ],
-    items: [],
+    items: ['parse_sandbox_ref', 'qualify_sandbox_ref', 'ambiguous_sandbox_candidates', 'SandboxRefParts'],
     python: [['`Sandbox` lifecycle', `${PY}/sandbox#sandboxdestroy`]],
+  },
+  {
+    slug: 'sandbox/checkpoints',
+    title: 'Checkpoints and forks',
+    description: 'Save a local sandbox\'s state as a named checkpoint and start new sandboxes from it.',
+    intro:
+      'Checkpoints of local sandboxes, the calls behind `cua sb checkpoint`, `cua sb fork` and `cua sb checkpoints`. A microVM checkpoint holds memory and disk, so a fork resumes running processes; a container checkpoint holds its filesystem. Forks of a QEMU checkpoint share its RAM copy-on-write, and a `forkable` sandbox checkpoints in milliseconds. A pinned checkpoint is kept until it is unpinned: delete refuses it and prune leaves it.',
+    members: [
+      {
+        object: 'Sandboxes',
+        title: 'Checkpoint methods',
+        methods: ['checkpoint', 'fork', 'checkpoints', 'delete_checkpoint', 'pin_checkpoint', 'prune_checkpoints'],
+      },
+      { object: 'Space', title: 'From a Space', methods: ['checkpoint', 'fork'] },
+      { object: 'Spaces', title: 'Fork a Space', methods: ['fork'] },
+    ],
+    items: ['CheckpointSummary'],
+  },
+  {
+    slug: 'sandbox/fork-batch',
+    title: 'Batched forks',
+    catalog: true,
+    description: 'Fork checkpoints many times at once, on this machine or across your machines, each fork streamed as it is ready.',
+    intro:
+      '`fork_many` and `fork_groups` start many sandboxes from checkpoints at once and return a `ForkBatch` whose events arrive as they happen: where each group went, the copy of a checkpoint to a machine that lacked it, each fork ready (or failed, alone), and last the summary. With `on = "auto"` a group\'s forks go to one of your machines, so they share the checkpoint\'s memory there; groups of different checkpoints spread over the least-loaded machines; a checkpoint is copied (and its files verified by SHA-256) to a machine that lacks it, straight from the machine that holds it, else from the fallback that `publish_checkpoint` fills; forks of a machine that fails are placed again. The CLI is `cua sb fork-many` and `cua sb publish`.',
+    members: [
+      {
+        object: 'Sandboxes',
+        title: 'Batch methods',
+        methods: ['fork_many', 'fork_groups', 'publish_checkpoint'],
+      },
+    ],
+    catalog: true,
+    items: [
+      'ForkBatch',
+      'ForkManyOptions',
+      'ForkGroup',
+      'SnapshotFallbackOptions',
+      'ForkBatchEvent',
+      'ForkBatchItem',
+      'ForkBatchPlacement',
+      'SnapshotSyncProgress',
+      'ForkBatchSummary',
+      'ForkBatchResult',
+    ],
+  },
+  {
+    slug: 'sandbox/bake',
+    title: 'Bake a Compose stack',
+    description: 'Save a running Docker Compose stack as a checkpoint that forks start from with their containers already up.',
+    intro:
+      'The call behind `cua sb bake`: a local VM (by default the docker tier, a Linux image with Docker), the project uploaded, `docker compose up --wait`, the stack checked, then a live memory checkpoint. Fork it with `Sandboxes.fork`. See [Run Docker Compose stacks in a VM](/cua-sdk/guides/docker-vm).',
+    members: [
+      {
+        object: 'Sandboxes',
+        title: 'Bake',
+        methods: ['bake'],
+      },
+    ],
+    items: ['BakeOptions', 'BakeSummary', 'BakeForkCheck'],
+    modules: ['bake'],
+  },
+  {
+    slug: 'sandbox/pools',
+    title: 'Pools',
+    description: 'Keep sandboxes of one shape ready on this machine, so that a create takes one in about 0.1 s.',
+    intro:
+      'A pool is sandboxes of one shape the cua daemon keeps ready on its machine: `min` at all times (one starts again as soon as one is taken), up to `max` while creates come faster than sandboxes start, and none after `idle_ms` without a create. A create with `pool` set to its name gets the pool\'s image and size and takes a ready sandbox. Without pools, the daemon keeps sandboxes ready only where repeated creates of a shape pay for it (`cua daemon status` says why). Pools need a daemon (`Cua.connect`) and run on this machine only (`on = "local"`); the CLI is `cua sb pool`.',
+    members: [
+      {
+        object: 'Sandboxes',
+        title: 'Pool methods',
+        methods: ['create_pool', 'get_pool', 'list_pools', 'delete_pool'],
+      },
+    ],
+    items: ['PoolCreateOptions', 'SandboxPool'],
+    python: [['`create_pool`', `${PY}/sandbox#pools-on-this-machine`]],
   },
   {
     slug: 'sandbox/without-spacesd',
     title: 'Without cua-spacesd',
     description: 'Run commands, take screenshots and open the display of a local Lume sandbox that has no cua-spacesd.',
     intro:
-      'The macOS 15 image ships no cua-spacesd, so `sandbox.spacesd()` fails for it (macOS 26 runs cua-spacesd). A local Lume sandbox is still reachable: commands over `lume ssh`, screenshots and the display over the VM\'s VNC endpoint. `cua sb exec`, `cua sb screenshot` and `cua sb view` use the same calls. Other sandboxes fail with `Unsupported`.',
+      'Any OCI image is a full Space on the container and microVM kinds: when the image carries no cua-spacesd (`alpine:3.20`, `node:20`), Cua puts a static one into it and runs it beside the image\'s own command, so exec, files and ports work. Pass `spacesd=False` to run the image as it is. The sandboxes without cua-spacesd are those: the macOS 15 image (macOS 26 runs cua-spacesd) and a VM of an image that ships no Cua disk (use kind `container` or `microvm`, or `cua build` FROM a Cua image), so `sandbox.spacesd()` fails for them. A local Lume sandbox is still reachable: commands over `lume ssh`, screenshots and the display over the VM\'s VNC endpoint. `cua sb exec`, `cua sb screenshot` and `cua sb view` use the same calls. Other sandboxes fail with `Unsupported`.',
     members: [
       {
         object: 'Sandbox',
@@ -260,7 +333,7 @@ export const PAGES: PageSpec[] = [
   {
     slug: 'sandbox/options',
     title: 'Create options',
-    description: 'SandboxCreateOptions and what it holds: cloud options, readiness probes and sidecar containers.',
+    description: 'SandboxCreateOptions and what it holds: readiness probes and sidecar containers.',
     intro:
       '`Sandboxes.create` takes one `SandboxCreateOptions`. Every field means the same thing locally and in the cloud; `on` picks where the sandbox runs, `kind` and `runtime` what runs it.',
     items: ['SandboxCreateOptions', 'ReadinessProbe', 'Container'],
@@ -345,7 +418,7 @@ export const PAGES: PageSpec[] = [
       {
         object: 'SpacesdClient',
         title: 'File methods',
-        methods: ['upload', 'upload_file', 'download', 'download_file', 'stat', 'list_dir', 'make_dir', 'remove'],
+        methods: ['upload', 'upload_file', 'download', 'download_file', 'stat', 'list_dir', 'make_dir', 'move_path', 'remove'],
       },
     ],
     items: ['FileEntry', 'TransferResult', 'UploadOptions'],
@@ -410,20 +483,89 @@ export const PAGES: PageSpec[] = [
     python: [['`cua_sandbox` runtimes', `${PY}/runtimes`]],
   },
   {
+    slug: 'runtime-kinds',
+    title: 'Runtime per kind',
+    description: 'Which program runs containers, virtual machines and microVMs on this machine, and what a given binary is.',
+    intro:
+      'Each kind of Space has its own setting, `runtime.container`, `runtime.vm` and `runtime.microvm` (`auto`, `builtin` or `system`), and with `system` a `runtime.<kind>_path` naming the program to use. `runtime_kinds` reads them with what is installed for each kind; `runtime_check_path` tells what a binary is before it is saved. The Cua app\'s Settings, Advanced shows the same, and `cua` and the daemon use the same program.',
+    members: [{ object: 'Local', title: 'Runtime per kind methods', methods: ['runtime_kinds', 'runtime_check_path'] }],
+    items: ['RuntimeKindState', 'RuntimeDetected', 'RuntimePathProbe'],
+  },
+  {
+    slug: 'repo-cache',
+    title: 'Repo cache',
+    description: 'What the repo cache holds and what it saved, and clearing it.',
+    intro:
+      'The daemon keeps verified copies of public git repositories so a repeat `git clone` in a Space is fast. `repo_cache_status` reads what it holds and what the last week saved in plain words; `repo_cache_clear` deletes every copy. It is on by default and is turned off, or given a size, with `config_set` on `cache.repos` and `cache.repos_size_gb`.',
+    items: ['RepoCacheStatus', 'repo_cache_status', 'repo_cache_clear'],
+  },
+  {
     slug: 'spaces',
     title: 'Spaces',
     description: 'The Spaces registry: create, add, resolve, delete and remove Spaces, their create options, and agent runs in a Space.',
     intro:
-      '`cua.spaces()` returns the `Spaces` registry. Create a Space where `on` says (local or cloud), or add an existing machine by URL, then open a [`Space`](/cua-sdk/reference/spaces/space).',
-    items: ['Spaces', 'SpaceInfo', 'SpacePowerReport', 'spaces_tool_methods', 'SpacesToolMethod'],
+      '`cua.spaces()` returns the `Spaces` registry. Create a Space where `on` says (local or cloud), or add an existing machine by URL, then open a [`Space`](/cua-sdk/reference/spaces/space). See [resize](/cua-sdk/reference/spaces/resize) to change a local VM\'s shape.',
+    items: ['Spaces'],
+  },
+  {
+    slug: 'spaces/info',
+    title: 'Space records',
+    description: 'What a Space listing returns, and the Spaces tools `cua mcp` serves with the typed method that covers each.',
+    intro: '`SpaceInfo` is one row of a Spaces listing. `spaces_tool_methods` lists every Spaces tool with the method of `Spaces` or `Space` that covers it.',
+    items: ['SpaceInfo', 'spaces_tool_methods', 'SpacesToolMethod'],
+  },
+  {
+    slug: 'spaces/network',
+    title: 'Network settings',
+    description: 'What a Space can reach: its network preset, the allow and deny lists, and deleting a Space together with its children.',
+    intro:
+      '`Spaces.network` says what a Space can reach and where that is enforced, `set_network` changes it (a child Space stays within its parent\'s unless widened), and `delete_tree` deletes a Space with or without its children. See [A Space\'s network](/cua-sdk/guides/egress).',
+    items: ['NetworkSettings', 'SpaceNetworkInfo', 'SetNetworkResult'],
+    members: [{ object: 'Spaces', title: 'Network', methods: ['network', 'ack_network_notice', 'set_network', 'delete_tree'] }],
+  },
+  {
+    slug: 'spaces/children',
+    title: 'Child Spaces',
+    description: 'Let a Space make Spaces of its own, set the budget of its tree and list orphans.',
+    intro:
+      '`set_children` lets a Space make children through a channel only it can reach; `tree_budget` and `set_tree_budget` bound what a tree may hold and spend; `orphans` lists children whose parent is gone. See [Child Spaces](/spaces/guides/child-spaces).',
+    items: ['TreeBudget', 'TreeBudgetLimits', 'SpaceOrphan'],
+    members: [{ object: 'Spaces', title: 'Children', methods: ['set_children', 'tree_budget', 'set_tree_budget', 'orphans'] }],
+  },
+  {
+    slug: 'spaces/services',
+    title: 'Kept commands',
+    description: 'Keep a command running in a Space: restarts, health checks, start on boot and logs.',
+    intro:
+      'These calls keep a command running in a Space. See [Keep a command running](/spaces/guides/keep-a-command-running).',
+    items: ['SpaceServiceDef', 'SpaceServiceProbe', 'SpaceServiceInfo'],
+    members: [{ object: 'Space', title: 'Services', methods: ['put_service', 'kept_services', 'start_service', 'stop_service', 'restart_service', 'delete_service', 'service_logs'] }],
+  },
+  {
+    slug: 'spaces/resize',
+    title: 'Power and resize',
+    description: 'Stop, suspend and start a Space, and change a local VM\'s CPU, memory or disk while keeping its files.',
+    intro:
+      '`Spaces.stop`, `suspend` and `start` answer a `SpacePowerReport`. `Spaces.resize` boots a stopped local VM from its own disk after changing its shape. The disk can grow; its files stay in place.',
+    items: ['SpacePowerReport', 'SpaceResizeReport'],
+    members: [{ object: 'Spaces', title: 'Resize', methods: ['resize'] }],
+  },
+  {
+    slug: 'spaces/lifetime',
+    title: 'Lifetime and egress',
+    description: 'How long a Space lives and which destinations it may reach, set after it exists.',
+    intro:
+      '`set_lifetime` gives a Space an end (deleted or suspended then), enforced by the daemon whether or not the client still runs. `set_egress` replaces its egress policy ([`EgressPolicy`](/cua-sdk/reference/spaces#egresspolicy-record)).',
+    members: [{ object: 'Spaces', title: 'Lifetime and egress', methods: ['set_lifetime', 'set_egress'] }],
+    items: [],
   },
   {
     slug: 'spaces/create',
     title: 'Create options',
     description: 'What `Spaces.create` takes and reports: options, progress, cancel and GPU acceleration.',
     intro:
-      '`Spaces.create` takes `SpaceCreateOptions` and returns a `SpaceCreateResult`. A `SpaceCreateListener` receives `SpaceCreateProgress` while it runs; `Spaces.cancel_create` stops it. `GpuSupport` says whether a location offers GPU acceleration.',
-    items: ['SpaceCreateOptions', 'SpaceCreateResult', 'SpaceCreateProgress', 'SpaceCreateListener', 'SpaceCancelOutcome', 'GpuSupport', 'GpuOption'],
+      '`Spaces.create` takes `SpaceCreateOptions` (with an `EgressPolicy` for the destinations a Linux Space may reach) and returns a `SpaceCreateResult`. A `SpaceCreateListener` receives `SpaceCreateProgress` while it runs; `Spaces.cancel_create` stops it. `GpuSupport` says whether a location offers GPU acceleration.',
+    items: ['SpaceCreateOptions', 'EgressPolicy', 'SpaceCreateResult', 'SpaceCreateProgress', 'SpaceCreateListener', 'SpaceCancelOutcome', 'GpuSupport', 'GpuOption'],
   },
   {
     slug: 'spaces/space',
@@ -445,6 +587,79 @@ export const PAGES: PageSpec[] = [
       'SpaceHotspotStatus',
     ],
     modules: ['spaces'],
+  },
+  {
+    slug: 'spaces/sharing',
+    title: 'Sharing, leaving and bulk delete',
+    description: 'Give another person access to a Space, see who owns a Space and who else has it, leave Spaces shared with you, and delete several at once.',
+    intro:
+      '`Space.share` gives a person access to a Space, `Space.shares` lists who has it, and `Space.unshare` takes it back. A Space on the relay carries `SpaceInfo.sharing`: its owner, your role (`owner`, `editor`, `viewer`), the team you reach it through and, for your own, who else has it. `leave_many` takes you off Spaces shared with you; `delete_many` deletes several of yours, three at a time, turning running ones off first. Both answer one `BulkResult` per id, in order.',
+    members: [
+      { object: 'Space', title: 'Sharing', methods: ['share', 'shares', 'unshare'] },
+      { object: 'Spaces', title: 'Leave and bulk delete', methods: ['leave_many', 'delete_many'] },
+    ],
+    items: ['SpaceShareEntry', 'SpaceShares', 'SpaceSharing', 'SpaceTeamShare', 'BulkResult'],
+  },
+  {
+    slug: 'spaces/relay-registration',
+    title: 'Relay registration',
+    description: 'Register a Space with the relay so other devices reach it, and unregister it.',
+    intro:
+      '`Spaces.relay_register` makes a Space reachable from your other devices through the relay; `Spaces.relay_unregister` stops that. `Spaces.relay_unregister_computer` takes one of your computers off the relay: its Spaces stay on it, detached, unless `delete_spaces` deletes them first.',
+    items: ['SpaceRelayRegistration'],
+    members: [{ object: 'Spaces', title: 'Relay registration', methods: ['relay_register', 'relay_unregister', 'relay_unregister_computer'] }],
+  },
+  {
+    slug: 'spaces/elastic',
+    title: 'Elastic pool and prewarm',
+    description: 'Plan where Spaces go and what it costs, add and remove cloud hosts, set the budget, and keep Spaces ready.',
+    intro:
+      'With clouds linked, `on` `auto` (or a cloud) places Spaces by one solve over your devices, your hosts and new cloud machines, under the budget. `Spaces.cloud_plan` shows that decision without doing it; `Spaces.cloud_hosts`, `cloud_add_host` and `cloud_remove_host` manage the hosts; `cloud_budget` sets the caps; `Spaces.prewarm` keeps Spaces of one shape ready so the next creates of it start at once.',
+    members: [
+      {
+        object: 'Spaces',
+        title: 'Elastic pool methods',
+        methods: [
+          'cloud_plan',
+          'cloud_hosts',
+          'cloud_add_host',
+          'cloud_remove_host',
+          'cloud_budget',
+          'cloud_reconcile',
+          'prewarm',
+          'prewarms',
+          'remove_prewarm',
+        ],
+      },
+    ],
+    items: [],
+    modules: ['elastic'],
+  },
+  {
+    slug: 'spaces/build',
+    title: 'Build an image',
+    description: 'Build a Dockerfile or steps in a Space as pinned checkpoints that Spaces fork from, with a content-hash layer cache.',
+    intro:
+      'The call behind `cua build`: each filesystem step is a pinned checkpoint, a rebuild runs only what changed, and `Spaces.fork(tag, name)` or `SpaceCreateOptions.build` starts a Space from the result. See [Build an image from a Dockerfile](/cua-sdk/guides/build-an-image).',
+    members: [
+      {
+        object: 'Spaces',
+        title: 'Build',
+        methods: ['build', 'build_with_progress', 'builds', 'delete_build'],
+      },
+    ],
+    items: ['BuildOptions', 'BuildStep', 'BuildResult', 'BuildStepResult', 'BuildImageConfig', 'BuildInfo', 'BuildProgress', 'BuildListener'],
+    modules: ['spaces::build'],
+    catalog: true,
+  },
+  {
+    slug: 'spaces/channel',
+    title: 'Channel',
+    description: 'Which way a Space\'s calls go, and port forwards over its own connection.',
+    intro:
+      'A Space one of your machines provides is reached straight over the mesh when the two machines can reach each other (a LAN neighbour), through the relay otherwise. `route` says which way calls go now; `forward` carries a local TCP port to a guest port over that same connection. Files of 2 MiB and more between you and a Linux VM Space on the same machine skip the guest network: the VM shares a disk with its host, the file content moves through it, and each transfer is still checked against its SHA-256. There is nothing to configure (`CUA_BULK_LANE=off` turns it off).',
+    members: [{ object: 'Space', title: 'Channel methods', methods: ['route', 'transport', 'forward'] }],
+    items: ['SpaceTransport'],
   },
   {
     slug: 'spaces/volume',
@@ -473,8 +688,11 @@ export const PAGES: PageSpec[] = [
           'volume_audit',
         ],
       },
+      { object: 'Spaces', title: 'Named volumes', methods: ['volumes', 'create_volume', 'delete_volume'] },
     ],
     items: [
+      'VolumeMount',
+      'NamedVolume',
       'DriveView',
       'DriveListing',
       'DriveEntry',
@@ -530,12 +748,22 @@ export const PAGES: PageSpec[] = [
     ],
   },
   {
+    slug: 'spaces/presence',
+    title: 'Joining presence',
+    description: 'Join a Space\'s presence, or the presence of a window another Space shows, so each viewer is one avatar and one cursor.',
+    intro: '`join_presence` joins the Space\'s channel. `join_presence_for` takes the window being watched: a window another Space shows here, streamed straight from its origin, joins the origin\'s channel and this Space\'s and reads them as one. The types are on [Streams and presence](/cua-sdk/reference/spaces/streams).',
+    members: [
+      { object: 'Space', title: 'Joining presence', methods: ['join_presence', 'join_presence_for'] },
+    ],
+    items: [],
+  },
+  {
     slug: 'spaces/streams',
     title: 'Streams and presence',
     description: 'Media sessions of a Space and presence (who is connected, and their cursors).',
     intro: 'Open a media session for another client, stream frames to callbacks, and join presence. `PresenceView` and the `presence_cursor_art*` functions draw the cursors the same way in every Cua UI.',
     members: [
-      { object: 'Space', title: 'Space streams', methods: ['open_stream', 'attach_stream', 'stream_session', 'close_stream', 'websocket_headers', 'windows', 'join_presence'] },
+      { object: 'Space', title: 'Space streams', methods: ['open_stream', 'attach_stream', 'stream_session', 'close_stream', 'websocket_headers', 'windows'] },
     ],
     items: [
       'SpaceStreamSession',
@@ -594,6 +822,15 @@ export const PAGES: PageSpec[] = [
     catalog: true,
   },
   {
+    slug: 'spaces/list-watch',
+    title: 'The list and its changes',
+    description: 'The Space list `Spaces.list` reads, and hearing when it changed so it is read again then instead of on a timer.',
+    intro:
+      '`Spaces.watch_list` calls a `SpacesListListener` once at the start and again whenever the list changes: this computer\'s Spaces within a second, your other computers on the mesh within about a second of connecting or going away, the others within 10 seconds. Read the list again (`Spaces.list`) when it is called. It reopens by itself after a daemon restart; `SpacesListWatch.stop` ends it.',
+    members: [{ object: 'Spaces', title: 'List changes', methods: ['watch_list'] }],
+    items: ['SpaceList', 'SpacesListListener', 'SpacesListWatch'],
+  },
+  {
     slug: 'spaces/agents',
     title: 'Agents in a Space',
     description: 'Start, follow, message and stop coding-agent runs inside a Space.',
@@ -609,7 +846,7 @@ export const PAGES: PageSpec[] = [
     title: 'Persistent agents and your cloud',
     description: 'Named agents whose memory outlives their Space: homes in the Cua Volume, routines, notifications, pause and resume, access to your computers, and Spaces in your own AWS, Google Cloud or Modal account.',
     intro:
-      'A persistent agent keeps its harness memory in its home in the Cua Volume (`agents/<name>/`). The daemon restores the home before each run, saves it after each turn, fires routines with or without an app open, and posts notifications. See [Persistent agents](/spaces/guides/persistent-agents).',
+      'A persistent agent keeps its harness memory in its home in the Cua Volume (`agents/<name>/`). The daemon restores the home before each run, saves it after each turn, fires routines with or without an app open, and posts notifications. See [Memory and identity](/spaces/guides/agent-memory-and-identity).',
     members: [
       {
         object: 'Spaces',
@@ -628,7 +865,7 @@ export const PAGES: PageSpec[] = [
       { object: 'Spaces', title: 'Notifications', methods: ['notify_user', 'notifications', 'notifications_ack'] },
       { object: 'Spaces', title: 'Access to your computers', methods: ['computer_access_grant', 'computer_access_revoke', 'computer_access'] },
     ],
-    items: [
+    items: ['ThreadView', 'thread_view_of', 
       'PersistentAgentInfo',
       'PersistentAgentOptions',
       'AgentDelivery',
@@ -644,14 +881,14 @@ export const PAGES: PageSpec[] = [
   {
     slug: 'spaces/cloud',
     title: 'Your cloud',
-    description: 'Sandboxes and Spaces in your own AWS, Google Cloud or Modal account: connect, check, and sweep what Cua created there.',
+    description: 'Sandboxes and Spaces in your own AWS, Google Cloud, Hetzner or Modal account: connect, check, and sweep what Cua created there.',
     intro:
-      'Create a sandbox or Space with `on="aws"`, `"gcp"` or `"modal"` once the cloud is connected. Each cloud uses its own CLI sign-in; Cua stores only the profile, region, project or environment names. The guest dials out to the cua.ai relay, so nothing listens on the internet. `cloud_test` creates nothing; `cloud_sweep` deletes only what Cua tagged and recorded.',
+      'Create a sandbox or Space with `on="aws"`, `"gcp"`, `"hetzner"` or `"modal"` once the cloud is connected. AWS, Google Cloud and Modal use their own CLI sign-in and Cua stores only the profile, region, project or environment names; Hetzner uses a project API token that Cua saves in its credential store. The guest dials out to the cua.ai relay, so nothing listens on the internet. `cloud_test` creates nothing; `cloud_sweep` deletes only what Cua tagged and recorded.',
     members: [
       {
         object: 'Spaces',
         title: 'Your cloud',
-        methods: ['cloud_status', 'cloud_connect', 'cloud_test', 'cloud_disconnect', 'cloud_sweep'],
+        methods: ['cloud_status', 'cloud_connect', 'cloud_test', 'cloud_disconnect', 'cloud_sweep', 'cloud_audit', 'cloud_approve', 'cloud_cost'],
       },
     ],
     items: [
@@ -665,6 +902,7 @@ export const PAGES: PageSpec[] = [
       'CloudCheck',
       'CloudTestReport',
       'CloudDisconnected',
+      'CloudAuditEntry',
       'CloudSweepReport',
       'CloudSweepItem',
     ],
@@ -689,12 +927,45 @@ export const PAGES: PageSpec[] = [
     items: ['Devices', 'DevicesSnapshot', 'RelayDevice', 'RelayAuditEvent', 'DeviceEnrollment'],
   },
   {
+    slug: 'spaces/default-space',
+    title: 'Default Space',
+    description: "The account's default Space, the order to try when it is offline, and where a new task runs now.",
+    intro:
+      'The relay keeps one default Space per account: where a new task runs unless you pick another. `Devices.spaces_settings` reads it, `set_spaces_settings` replaces it, and `resolve_default_space` says where a task goes now: the default when it is online, else the next online computer in `fallback` (while `fallback_on`), else this computer. A new computer is never made. `cua spaces default` is the same from the CLI.',
+    members: [{ object: 'Devices', title: 'Default Space', methods: ['spaces_settings', 'set_spaces_settings', 'resolve_default_space'] }],
+    items: ['SpacesSettings', 'DefaultSpace', 'DefaultSpaceStep'],
+  },
+  {
+    slug: 'spaces/machine-health',
+    title: 'Computer health',
+    description: "A computer's health as its own cua daemon checks it: Local Network access, disk, virtualization, memory and permissions.",
+    intro:
+      '`Spaces.machine_health` asks a computer\'s cua daemon to check it (this computer with `None`, another of yours by id or name over the relay, the mesh or its direct address). The Computers page shows the warnings and failures as the computer\'s issues; `cua doctor --machine` prints them.',
+    members: [{ object: 'Spaces', title: 'Check a computer', methods: ['machine_health'] }],
+    items: ['MachineHealth', 'MachineHealthCheck'],
+  },
+  {
     slug: 'spaces/host',
     title: 'Host, relay and devices',
     description: 'Unattended host setup, the cua-relay directory client, and this device\'s enrollment on the relay.',
-    intro: 'Set this machine up for unattended access, and reach account machines through the relay.',
-    items: ['Host', 'Relay'],
+    intro: 'Set this machine up for unattended access, and reach account machines through the relay. `Spaces.hosts` lists your computers that provide Spaces (`SpacesHost`), with their limits and how busy each one is.',
+    items: ['Host', 'Relay', 'SpacesHost', 'SpacesHostLimit', 'SpacesHostLoad'],
     modules: ['host'],
+  },
+  {
+    slug: 'share',
+    title: 'Shares',
+    description: 'Links to a port, a file or a folder that open on your other signed-in devices.',
+    intro: '`Cua.share(target, access, ttl_seconds, name)` makes a link the cua daemon owns and serves, `shares` lists them, `stop_share` and `stop_all_shares` end them and `check_share` opens a link once as its owner. `share_tcp` makes a public TCP address for a port in a Space (the `tcp-shares` experiment); `approve_share`, `deny_share`, `share_settings`, `set_share_settings` and `remove_share_edge` manage it. See [Share a link to anything you run](/cua-cli/guides/share-a-link).',
+    members: [
+      {
+        object: 'Cua',
+        title: 'Share methods',
+        methods: ['share', 'shares', 'stop_share', 'stop_all_shares', 'check_share', 'share_tcp', 'approve_share', 'deny_share', 'share_settings', 'set_share_settings', 'remove_share_edge'],
+      },
+    ],
+    items: ['Share', 'ShareAccess', 'ShareCheck', 'ShareLanding', 'ShareSettings'],
+    modules: ['share'],
   },
   {
     slug: 'auth',
@@ -743,19 +1014,17 @@ export const PAGES: PageSpec[] = [
  */
 export const MERGED: Record<string, string> = {
   local: 'cua',
-  'sandbox/lifecycle': 'sandbox',
+  'sandbox/pools': 'image',
   'sandbox/options': 'image',
   'sandbox/without-spacesd': 'spacesd',
-  'spacesd/shell': 'spacesd',
   'spacesd/media': 'spacesd/computer',
   'spaces/create': 'spaces',
-  'spaces/agents': 'spaces',
   'spaces/windows': 'spaces/space',
   'spaces/teleport': 'spaces/space',
   'spaces/cloud': 'spaces/persistent-agents',
   'spaces/volume-sync': 'spaces/volume',
   'spaces/devices': 'spaces/host',
-  'agent-setup': 'agents',
+  'spaces/machine-health': 'spaces/host',
   telemetry: 'auth',
 };
 
@@ -794,10 +1063,13 @@ export const MAX_BYTES = 60_000;
 export const MAX_FENCES = 150;
 export const MAX_TABS = 30;
 
+/** Concept pages listed at the end of the reference sidebar; they live outside the generated folder, so the index page does not list them. */
+const TELEMETRY_CONCEPTS = ['../concepts/telemetry', '../concepts/telemetry-events', '../concepts/telemetry-counting', '../concepts/telemetry-error-kinds'];
+
 /** Groups of the reference sidebar; folders other generators own are listed by name. */
 const NAV: Array<[label: string, pages: string[]]> = [
-  ['Sandboxes', ['cua', 'sandbox', 'image', 'os-image-catalog', 'image-software', 'services', 'runtime-support']],
-  ['Inside a sandbox', ['spacesd', 'agents']],
+  ['Sandboxes', ['cua', 'runtime-kinds', 'repo-cache', 'sandbox', 'share', 'image', 'os-image-catalog', 'image-software', 'services', 'runtime-support']],
+  ['Inside a sandbox', ['spacesd', 'agents', 'agent-setup']],
   ['Spaces', ['spaces']],
   ['Account', ['auth']],
   ['Errors and types', [ERRORS_SLUG, TYPES_SLUG]],
@@ -1688,10 +1960,10 @@ function catalogIndex(items: Array<Item & { href: string }>, page: string, rc: R
 }
 
 /** One section's body: intro, Python pointer, header, member sections, items. */
-function renderSection(p: Placed, rc: RenderContext, version: string, heading?: string): string[] {
+function renderSection(p: Placed, rc: RenderContext, heading?: string): string[] {
   const { spec } = p;
   const body: string[] = [...(spec.spaces ? ['<Callout title="Cua Spaces app export">', SPACES_NOTE, '</Callout>', ''] : []), spec.intro, '', ...pythonLine(spec)];
-  const header = readHeader(`cua-sdk/${spec.slug}.md`, { version });
+  const header = readHeader(`cua-sdk/${spec.slug}.md`);
   if (header) body.push(header, '');
   for (const m of p.members) {
     const home = rc.links.get(m.object.name);
@@ -1715,17 +1987,16 @@ function renderSection(p: Placed, rc: RenderContext, version: string, heading?: 
  * A page: its own section, then each section `MERGED` into it, under a `##`
  * heading of that section's title.
  */
-function renderObjectPage(parts: Array<[Placed, RenderContext]>, version: string): string {
+function renderObjectPage(parts: Array<[Placed, RenderContext]>): string {
   const [[home, homeRc], ...rest] = parts;
-  const body = renderSection(home, homeRc, version);
-  for (const [p, rc] of rest) body.push(`## ${p.spec.title}`, '', ...renderSection(p, rc, version, p.spec.title));
+  const body = renderSection(home, homeRc);
+  for (const [p, rc] of rest) body.push(`## ${p.spec.title}`, '', ...renderSection(p, rc, p.spec.title));
   const needsCallout = body.some((l) => l.includes('<Callout'));
   return renderPage({
     title: home.spec.title,
     description: home.spec.description,
     generator: GENERATOR,
     source: home.spec.spaces ? SPACES_SOURCE : SOURCE,
-    version,
     components: needsCallout ? ['Callout', 'Tabs'] : ['Tabs'],
     body: body.join('\n'),
   });
@@ -1784,13 +2055,13 @@ function raisedBy(variant: string, rc: RenderContext): string {
   return out.length && out.length <= 15 ? out.join(', ') : '';
 }
 
-function renderErrorsPage(api: SdkApi, rc: RenderContext, version: string, messages: Map<string, string>): string {
+function renderErrorsPage(api: SdkApi, rc: RenderContext, messages: Map<string, string>): string {
   const errors = api.enums.filter((e) => e.error);
   const body: string[] = [
     'Every fallible call raises (throws) one error type, `CuaError`. Its variant says what went wrong; its message carries the detail; its doc URL links to the variant\'s entry on this page (`https://cua.ai/docs/cua-sdk/reference/errors#<variant in lower case>`).',
     '',
   ];
-  const header = readHeader('cua-sdk/errors.md', { version });
+  const header = readHeader('cua-sdk/errors.md');
   if (header) body.push(header, '');
   for (const e of errors) {
     const first = e.variants[0]?.name ?? 'NotFound';
@@ -1827,7 +2098,6 @@ function renderErrorsPage(api: SdkApi, rc: RenderContext, version: string, messa
     description: 'Every error the Cua SDK raises: its variant, message, cause and fix.',
     generator: GENERATOR,
     source: SOURCE,
-    version,
     components: ['Tabs'],
     body: body.join('\n'),
   });
@@ -1837,7 +2107,7 @@ function renderErrorsPage(api: SdkApi, rc: RenderContext, version: string, messa
 // Types
 // ----------------------------------------------------------------------------
 
-function renderTypesPage(api: SdkApi, rc: RenderContext, version: string, renames: Renames): string {
+function renderTypesPage(api: SdkApi, rc: RenderContext, renames: Renames): string {
   const kotlinRenames = [...(renames.Kotlin ?? new Map())]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([from, to]) => `\`${from.split('.')[0]}.${to}\``)
@@ -1890,7 +2160,7 @@ function renderTypesPage(api: SdkApi, rc: RenderContext, version: string, rename
       '). In TypeScript, reserved words get a trailing underscore (`Sandbox.delete_()`). The signature tabs show the renamed form.',
     ''
   );
-  const header = readHeader('cua-sdk/types.md', { version });
+  const header = readHeader('cua-sdk/types.md');
   if (header) body.push(header, '');
   // Items a catalog page lists stay off this page; it links there instead.
   // So does the Cua Spaces app export: its pages list it.
@@ -1915,15 +2185,21 @@ function renderTypesPage(api: SdkApi, rc: RenderContext, version: string, rename
     ...items.map((i) => [i.name, i.kind, i.href ?? '', firstSentence(i.doc)] as const),
     ...api.enums.filter((e) => e.error).map((e) => [e.name, 'error', pageRoute(ERRORS_SLUG), firstSentence(e.docstring)] as const),
   ].sort((a, b) => a[0].localeCompare(b[0], 'en', { sensitivity: 'base' }) || a[0].localeCompare(b[0]));
+  // The list is an index: a long first sentence is cut at a word boundary
+  // (the item's own page has all of it), which keeps the page under its cap.
+  const brief = (t: string) => {
+    if (t.length <= 150) return t;
+    const cut = t.slice(0, 150).replace(/\s+\S*$/, '').replace(/[`(\s,;:]+$/, '');
+    return (cut.match(/`/g) ?? []).length % 2 ? `${cut.replace(/\s+\S*$/, '')}…` : `${cut}…`;
+  };
   for (const [name, kind, href, summary] of rows) {
-    body.push(`| [\`${name}\`](${relLink(href, TYPES_SLUG)}) | ${kind} | ${escapeTableCell(summary)} |`);
+    body.push(`| [\`${name}\`](${relLink(href, TYPES_SLUG)}) | ${kind} | ${escapeTableCell(brief(summary))} |`);
   }
   return renderPage({
     title: 'Types',
     description: 'How the SDK types map to each language, and every object, record, enum and function in one list.',
     generator: GENERATOR,
     source: SOURCE,
-    version,
     body: body.join('\n'),
   });
 }
@@ -1962,7 +2238,7 @@ export function navGroups(pages: PageSpec[]): Array<[string, string[]]> {
   return NAV.map(([label, slugs]): [string, string[]] => [label, slugs.filter(known)]).filter(([, slugs]) => slugs.length);
 }
 
-function renderIndex(api: SdkApi, pages: PageSpec[], version: string, spaces?: SdkApi | null): string {
+function renderIndex(api: SdkApi, pages: PageSpec[], spaces?: SdkApi | null): string {
   const specs = new Map(pages.map((p) => [p.slug, p]));
   const body: string[] = [
     'The Cua SDK in Python, TypeScript, Swift, Kotlin and Rust, all generated from the Rust `cua-sdk` crate. Each page covers one module, with signatures in every language.',
@@ -1976,7 +2252,7 @@ function renderIndex(api: SdkApi, pages: PageSpec[], version: string, spaces?: S
   }
   const row = (p: PageSpec) =>
     `| [${p.title}](${pageRoute(p.slug)}) | ${escapeTableCell(p.description)}${p.spaces ? ' *Cua Spaces app export.*' : ''} |`;
-  const header = readHeader('cua-sdk/index.md', { version });
+  const header = readHeader('cua-sdk/index.md');
   if (header) body.push(header, '');
   for (const [label, slugs] of navGroups(pages)) {
     body.push(`## ${label}`, '', '| Page | Covers |', '| --- | --- |');
@@ -2010,7 +2286,6 @@ function renderIndex(api: SdkApi, pages: PageSpec[], version: string, spaces?: S
     description: 'The Cua SDK reference: every object with its signature in Python, TypeScript, Swift, Kotlin and Rust.',
     generator: GENERATOR,
     source: SOURCE,
-    version,
     body: body.join('\n'),
   });
 }
@@ -2021,6 +2296,7 @@ function navFiles(pages: PageSpec[], outputDir: string): Map<string, string> {
   // `index` is left out: each folder's index is the folder's own link, not a child.
   const root: string[] = [];
   for (const [label, slugs] of navGroups(pages)) root.push(`---${label}---`, ...slugs);
+  root.push('---Telemetry---', ...TELEMETRY_CONCEPTS);
   files.set(path.join(outputDir, 'meta.json'), metaJson('Reference', root));
   for (const folder of pageFolders(pages)) {
     const home = pages.find((p) => p.slug === folder);
@@ -2064,7 +2340,7 @@ export interface RenderOptions {
 }
 
 /** All generated files, keyed by absolute path. */
-export function renderAll(api: SdkApi, version: string, opts: RenderOptions = {}): Map<string, string> {
+export function renderAll(api: SdkApi, opts: RenderOptions = {}): Map<string, string> {
   const renames = opts.renames ?? loadRenames();
   const outputDir = opts.outputDir ?? REFERENCE_DIR;
   const pages = opts.pages ?? PAGES;
@@ -2095,14 +2371,14 @@ export function renderAll(api: SdkApi, version: string, opts: RenderOptions = {}
       .filter(([slugPath]) => (MERGED[slugPath] ?? slugPath) === out.slug)
       .sort(([a], [b]) => Number(a !== out.slug) - Number(b !== out.slug))
       .map(([slugPath, p]) => [p, rcFor(slugPath, p.spec.spaces)]);
-    files.set(pageFile(out.slug, outputs, outputDir), renderObjectPage(parts, version));
+    files.set(pageFile(out.slug, outputs, outputDir), renderObjectPage(parts));
   }
   for (const [from, to] of Object.entries(MERGED)) {
     if (pages.some((p) => p.slug === from) && !outputs.some((p) => p.slug === to)) throw new Error(`MERGED: ${from} joins ${to}, which is not a page`);
   }
-  files.set(path.join(outputDir, `${ERRORS_SLUG}.mdx`), renderErrorsPage(api, rcFor(ERRORS_SLUG), version, messages));
-  files.set(path.join(outputDir, `${TYPES_SLUG}.mdx`), renderTypesPage(api, rcFor(TYPES_SLUG), version, renames));
-  files.set(path.join(outputDir, 'index.mdx'), renderIndex(api, outputs, version, spaces));
+  files.set(path.join(outputDir, `${ERRORS_SLUG}.mdx`), renderErrorsPage(api, rcFor(ERRORS_SLUG), messages));
+  files.set(path.join(outputDir, `${TYPES_SLUG}.mdx`), renderTypesPage(api, rcFor(TYPES_SLUG), renames));
+  files.set(path.join(outputDir, 'index.mdx'), renderIndex(api, outputs, spaces));
   for (const [file, content] of navFiles(outputs, outputDir)) files.set(file, content);
   const unused = [...examples.keys()].filter((k) => !used.has(k));
   if (unused.length) {
@@ -2160,7 +2436,7 @@ export function loadBindingSources(root = CUA_ROOT): BindingSources {
     read('crates/cua-sdk/src/lib.rs'),
     read('crates/cua-sdk/src/types.rs'),
     ...fs
-      .readdirSync(native)
+      .readdirSync(native, { recursive: true, encoding: 'utf8' })
       .filter((f) => f.endsWith('.rs'))
       .sort()
       .map((f) => fs.readFileSync(path.join(native, f), 'utf-8')),
@@ -2322,7 +2598,7 @@ export function loadApis(): { api: SdkApi; spaces: SdkApi } {
   if (api && spaces) return { api, spaces };
   const target = process.env.CARGO_TARGET_DIR ? path.resolve(process.env.CARGO_TARGET_DIR) : path.join(CUA_ROOT, 'target');
   const packages = [
-    ...(api || process.env.CUA_SDK_LIBRARY ? [] : ['-p', 'cua-sdk']),
+    ...(api || process.env.CUA_SDK_LIBRARY ? [] : ['-p', 'cua-sdk-native']),
     ...(spaces || process.env.CUA_SPACES_FFI_LIBRARY ? [] : ['-p', 'cua-spaces-ffi']),
     ...(process.env.CUA_BINDGEN ? [] : ['-p', 'cua-bindgen']),
   ];
@@ -2348,7 +2624,7 @@ export function loadApis(): { api: SdkApi; spaces: SdkApi } {
 export function loadApi(): SdkApi {
   if (process.env.CUA_SDK_API_JSON) return JSON.parse(fs.readFileSync(process.env.CUA_SDK_API_JSON, 'utf-8')) as SdkApi;
   const target = process.env.CARGO_TARGET_DIR ? path.resolve(process.env.CARGO_TARGET_DIR) : path.join(CUA_ROOT, 'target');
-  const packages = [...(process.env.CUA_SDK_LIBRARY ? [] : ['-p', 'cua-sdk']), ...(process.env.CUA_BINDGEN ? [] : ['-p', 'cua-bindgen'])];
+  const packages = [...(process.env.CUA_SDK_LIBRARY ? [] : ['-p', 'cua-sdk-native']), ...(process.env.CUA_BINDGEN ? [] : ['-p', 'cua-bindgen'])];
   if (packages.length) {
     console.log(`Building ${packages.filter((p) => p !== '-p').join(', ')} (debug; UniFFI metadata is profile-independent)...`);
     execFileSync(cargo(), ['build', '--locked', ...packages], { cwd: CUA_ROOT, stdio: 'inherit' });
@@ -2385,8 +2661,7 @@ function main(): void {
     console.error('Regenerate the bindings (libs/cua/scripts/generate-uniffi-bindings.mjs) or fix the naming rules in cua-sdk.ts.');
     process.exit(1);
   }
-  const version = fs.readFileSync(path.join(CUA_ROOT, 'VERSION'), 'utf-8').trim();
-  const files = renderAll(api, version, { renames });
+  const files = renderAll(api, { renames });
   const pageIssues = pageProblems(files);
   if (pageIssues.length) {
     for (const p of pageIssues) console.error(`  ${p}`);

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Geometry of the motion effects at a moment of a move: comet trail,
 //! speed glow, magnet glow, click ripple and click squish. Renderers paint
 //! these shapes in their own way (tiny-skia in Cua Driver, canvas on the

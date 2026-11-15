@@ -19,6 +19,13 @@ Mechanical adaptations, all recorded in TASKS.md:
   them apart. Each app instead runs from its own copy of the pack's own `Electron.app`, with the app's window
   title as its name and its own bundle id (`com.trycua.cdbbench.<name>`). Same Electron binary, same app code,
   same arguments; only the bundle's name and id differ.
+
+The task manifest (`taskpack/v2-taskset.json`) also covers pack tasks under `tasks/v2/` that share `tasks/v2/_kit`. Their
+descriptors may declare native macOS apps (`kind: native`, exact `process_names`, started with `open -a`) and an
+optional `semantics.export` step that reads app data (Calendar, Reminders, Notes, Finder metadata) into the
+workspace after the agent and before the evaluator. A task whose selector says `"split": "heldout"` is read from the
+held-out pack (`CDB_TASKPACK_HELDOUT`, the same layout as the public pack), so the same adapter, reset, export and
+evaluator code runs both splits.
 """
 
 from __future__ import annotations
@@ -28,7 +35,6 @@ import json
 import os
 import re
 import shutil
-import signal
 import subprocess
 import sys
 import time
@@ -37,21 +43,76 @@ from pathlib import Path
 from typing import Any
 
 import claude_arms as ca
+import desktop_runtime as desktop
 
 SKIP_KINDS = {"terminal", "editor"}
 EVAL_ENTRY = "/usr/local/libexec/cdb-eval-run"
 APP_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+ELECTRON_DIST = Path("node_modules/electron/dist")
 
 
 REPO_TASKPACK = Path(__file__).resolve().parents[2] / "taskpack"
+FAIRNESS_DIR = Path(__file__).resolve().parents[2] / "fairness"
+TASKSET_FILE = REPO_TASKPACK / "v2-taskset.json"
 
 
-def pack_tasks_root() -> Path:
+def fairness():  # noqa: ANN201 - the runner-agnostic checks in ../../fairness (standard library only)
+    if str(FAIRNESS_DIR) not in sys.path:
+        sys.path.insert(0, str(FAIRNESS_DIR))
+    import cdb_fairness
+
+    return cdb_fairness
+
+
+def task_health(task_id: str) -> dict[str, Any]:
+    """The task's `health` block of the task-set manifest (automation apps, ready URLs, checker tools)."""
+    files = [TASKSET_FILE]
+    heldout = os.environ.get("CDB_TASKPACK_HELDOUT")
+    if heldout:  # held-out tasks keep their full entries in the held-out pack
+        files.insert(0, Path(heldout) / "v2-taskset.heldout.json")
+    for path in files:
+        if not path.is_file():
+            continue
+        for entry in json.loads(path.read_text("utf-8"))["tasks"]:
+            if entry["id"] == task_id and entry.get("health"):
+                return dict(entry["health"])
+    return {}
+
+
+def pack_tasks_root(spec: dict[str, Any] | None = None) -> Path:
+    if spec is not None and spec.get("split") == "heldout":
+        heldout = os.environ.get("CDB_TASKPACK_HELDOUT")
+        if not heldout:
+            raise RuntimeError(f"{spec.get('id')}: a held-out task needs CDB_TASKPACK_HELDOUT")
+        return Path(heldout) / "tasks"
     env = os.environ.get("CDB_TASKPACK")
     if env:
         return Path(env) / "tasks"
     work = ca.WORK / "taskpack"
     return (work if work.is_dir() else REPO_TASKPACK) / "tasks"
+
+
+def heldout_pins() -> dict[str, str]:
+    """Tree digests of the held-out pack's tasks (`<held-out pack>/pins.heldout.json` `tree_sha256`), else {}."""
+    heldout = os.environ.get("CDB_TASKPACK_HELDOUT")
+    path = Path(heldout) / "pins.heldout.json" if heldout else None
+    if path is None or not path.is_file():
+        return {}
+    return dict(json.loads(path.read_text("utf-8")).get("tree_sha256", {}))
+
+
+def shared_kit(spec: dict[str, Any]) -> Path | None:
+    """The shared helper tree a `v2/...` task's descriptor uses (`${bundle}/../_kit`), or None."""
+    kit = pack_tasks_root(spec) / spec["pack_task"] / ".." / "_kit"
+    return kit.resolve() if kit.is_dir() else None
+
+
+def missing_electron_apps(root: Path | None = None) -> tuple[list[str], list[str]]:
+    root = root if root is not None else pack_tasks_root()
+    apps = [p.parent for p in sorted(root.glob("*/*/apps/*/package.json"))]
+    expected = [str(app.relative_to(root)) for app in apps]
+    missing = [name for app, name in zip(apps, expected) if not (app / ELECTRON_DIST).is_dir()]
+    return expected, missing
 
 
 def tree_sha256(path: Path) -> str:
@@ -78,7 +139,11 @@ def node_facts(node: str = "/usr/local/bin/node") -> dict[str, str]:
 
 
 def _descriptor(spec: dict[str, Any]) -> dict[str, Any]:
-    path = pack_tasks_root() / spec["pack_task"] / "platform/launch.macos.json"
+    path = (
+        pack_tasks_root(spec)
+        / spec["pack_task"]
+        / f"platform/launch.{desktop.detect_platform()}.json"
+    )
     return json.loads(path.read_text("utf-8"))
 
 
@@ -101,6 +166,12 @@ def allowed_app_names(spec: dict[str, Any]) -> set[str]:
             names.update({"libreoffice", "soffice"})
         if any("gnucash" in part.lower() for part in app["command"]):
             names.add("gnucash")
+        # native apps: their exact process names, and the app `open -a` names
+        names.update(str(n).lower() for n in app.get("process_names") or [])
+        if app["command"][:2] == ["/usr/bin/open", "-a"] and len(app["command"]) > 2:
+            names.add(str(app["command"][2]).lower())
+        if app.get("kind") == "native" and app.get("role"):
+            names.add(str(app["role"]).lower())
     return names
 
 
@@ -200,7 +271,7 @@ def electron_argv(argv: list[str], cwd: str, name: str) -> list[str]:
         at = next(i for i in range(len(argv) - 1) if argv[i] == "npx" and argv[i + 1] == "electron")
     except StopIteration:
         return argv
-    source = Path(cwd) / "node_modules/electron/dist/Electron.app"
+    source = Path(cwd) / ELECTRON_DIST / "Electron.app"
     if not source.is_dir():
         raise RuntimeError(f"Electron.app missing for {name}: {source}")
     bundle = named_electron_app(source, name)
@@ -222,6 +293,13 @@ def with_force_accessibility(
     if kind == "electron":
         return [*argv, flag]
     if kind == "browser":
+        if desktop.detect_platform() == "linux" and Path(argv[0]).name in (
+            "google-chrome",
+            "google-chrome-stable",
+            "chromium",
+            "chromium-browser",
+        ):
+            return [argv[0], flag, *argv[1:]]
         for i, part in enumerate(argv):
             if part.endswith(CHROME_EXE):
                 return [*argv[: i + 1], flag, *argv[i + 1 :]]
@@ -233,13 +311,21 @@ def kill_policy(spec: dict[str, Any]) -> tuple[list[str], list[int]]:
     text = json.dumps(_descriptor(spec))
     names: list[str] = []
     if "electron" in text:
-        names.append("Electron")
+        names.append("Electron" if desktop.detect_platform() == "macos" else "electron")
     if "Google Chrome" in text:
         names.append("Google Chrome")
-    if "soffice" in text:
+    if desktop.detect_platform() == "linux" and any(
+        name in text for name in ("google-chrome", "chromium")
+    ):
+        names += ["chrome", "chromium"]
+    if "soffice" in text or "libreoffice" in text:
         names += ["soffice", "soffice.bin"]
     if "gnucash" in text.lower():
         names += ["gnucash", "Gnucash"]
+    for app in _descriptor(spec)["apps"]:  # native apps declare their exact process names
+        for name in app.get("process_names") or []:
+            if str(name) not in names:
+                names.append(str(name))
     ports = sorted({int(p) for p in re.findall(r"127\.0\.0\.1:(\d+)", text)})
     return names, ports
 
@@ -254,7 +340,9 @@ def clear_leftovers(spec: dict[str, Any]) -> None:
         subprocess.run(["pkill", "-x", name], capture_output=True)
     for port in ports:
         pids = subprocess.run(
-            ["/usr/sbin/lsof", "-ti", f"tcp:{port}", "-sTCP:LISTEN"], capture_output=True, text=True
+            [desktop.tool("lsof"), "-ti", f"tcp:{port}", "-sTCP:LISTEN"],
+            capture_output=True,
+            text=True,
         ).stdout.split()
         for pid in pids:
             subprocess.run(["kill", "-9", pid], capture_output=True)
@@ -264,12 +352,11 @@ def clear_leftovers(spec: dict[str, Any]) -> None:
 class CdbTask:
     """One task of the pack, driven by its launch descriptor."""
 
-    def __init__(self, spec: dict[str, Any], artifacts: Path) -> None:
+    def __init__(self, spec: dict[str, Any], artifacts: Path, seed: int | None = None) -> None:
         self.spec = spec
-        self.bundle = pack_tasks_root() / spec["pack_task"]
-        self.descriptor = json.loads(
-            (self.bundle / "platform/launch.macos.json").read_text("utf-8")
-        )
+        self.seed = seed
+        self.bundle = pack_tasks_root(spec) / spec["pack_task"]
+        self.descriptor = _descriptor(spec)
         self.artifacts = artifacts
         self.workspace = Path(
             self.descriptor["workspace_root"].replace("${HOME}", str(Path.home()))
@@ -282,6 +369,7 @@ class CdbTask:
     def sub(self, text: str, **extra: str) -> str:
         values = {
             "python": sys.executable,
+            "seed": str(self.seed),
             "workspace": str(self.workspace),
             "workspace_uri": self.workspace.as_uri(),
             "bundle": str(self.bundle),
@@ -298,7 +386,9 @@ class CdbTask:
         self, command: list[str], timeout: int = 300, **extra: str
     ) -> subprocess.CompletedProcess[str]:
         argv = [self.sub(part, **extra) for part in command]
-        env = {"HOME": str(Path.home()), "PATH": APP_PATH, "LANG": "en_US.UTF-8"}
+        env = desktop.desktop_env(
+            Path.home(), {"PATH": APP_PATH} if desktop.detect_platform() == "macos" else None
+        )
         return subprocess.run(
             argv, cwd=str(self.bundle), env=env, capture_output=True, text=True, timeout=timeout
         )
@@ -314,8 +404,32 @@ class CdbTask:
             if done.returncode != 0:
                 raise RuntimeError(f"reset {step} failed: {(done.stderr or done.stdout)[-400:]}")
 
+    def health_check(self) -> list[dict[str, Any]]:
+        """Fairness checks once the reset is done and the apps are up, before the agent (../../fairness/SPEC.md):
+        the checker toolchain is on the PATH the evaluator gets, loopback works for tasks with a local web app,
+        and every running app the reset or export automates accepts Apple events (macOS). A failed check raises,
+        so the trial is a harness error: re-run with the same seed, never scored."""
+        fx = fairness()
+        health = task_health(str(self.spec.get("id")))
+        resolve = {"python": sys.executable, "evaluator_node": self.node["path"]}
+        programs = list(health.get("evaluator_tools") or [])
+        programs += [
+            p for p in fx.programs_of_descriptor(self.descriptor, resolve) if p not in programs
+        ]
+        checks = fx.toolchain_health(programs, path=APP_PATH)
+        if health.get("ready_urls"):
+            checks.append(fx.loopback_health())
+        if desktop.detect_platform() == "macos" and health.get("automation_apps"):
+            checks += fx.appleevents_health(health["automation_apps"])
+        bad = [c for c in checks if not c.ok]
+        self.log.append(f"health {len(checks) - len(bad)}/{len(checks)} ok")
+        if bad:
+            raise RuntimeError("harness health: " + "; ".join(f"{c.name}: {c.reason}" for c in bad))
+        return [c.to_json() for c in checks]
+
     def brief(self) -> str:
-        text = (self.bundle / "brief.md").read_text("utf-8")
+        brief = self.sub(self.descriptor["semantics"].get("brief", "brief.md"))
+        text = (self.bundle / brief).read_text("utf-8")
         text = text.replace("configured `cua` MCP server", "configured computer-use MCP server")
         return text.strip() + f"\n\nYour workspace directory is `{self.workspace}`.\n"
 
@@ -324,11 +438,19 @@ class CdbTask:
 
     def start_apps(self, windows: Any = None, force_accessibility: bool = False) -> None:
         for app in self.apps():
-            env = {"HOME": str(Path.home()), "PATH": APP_PATH, "LANG": "en_US.UTF-8"}
+            env = desktop.desktop_env(
+                Path.home(), {"PATH": APP_PATH} if desktop.detect_platform() == "macos" else None
+            )
             env.update({k: self.sub(v) for k, v in (app.get("env") or {}).items()})
             cwd = self.sub(app["cwd"]) if app.get("cwd") else str(self.bundle)
             argv = [self.sub(p) for p in app["command"]]
-            if app.get("kind") == "electron" and os.environ.get("CDB_ELECTRON_SHARED") != "1":
+            for key in app.get("unset_env", []):
+                env.pop(key, None)
+            if (
+                desktop.detect_platform() == "macos"
+                and app.get("kind") == "electron"
+                and os.environ.get("CDB_ELECTRON_SHARED") != "1"
+            ):
                 argv = electron_argv(argv, cwd, app_display_name(app))
                 self.log.append(
                     f"electron {app['id']} as {electron_bundle_id(app_display_name(app))}"
@@ -338,17 +460,18 @@ class CdbTask:
                 if flagged != argv:
                     self.log.append(f"{app['id']}: {ca.FORCE_ACCESSIBILITY_FLAG}")
                 argv = flagged
-            out = (self.artifacts / f"app-{app['id']}.log").open("ab")
-            proc = subprocess.Popen(
-                argv,
-                cwd=cwd,
-                env=env,
-                stdin=subprocess.DEVNULL,
-                stdout=out,
-                stderr=out,
-                start_new_session=True,
-            )
+            with (self.artifacts / f"app-{app['id']}.log").open("ab") as out:
+                proc = subprocess.Popen(
+                    argv,
+                    cwd=cwd,
+                    env=env,
+                    stdin=subprocess.DEVNULL,
+                    stdout=out,
+                    stderr=out,
+                    start_new_session=True,
+                )
             self.procs.append(proc)
+            desktop.record_pid(proc.pid, app["id"])
             ready = (app.get("ready") or {}).get("http")
             if ready:
                 self._wait_http(self.sub(ready), float(app["ready"].get("timeout_seconds", 20)))
@@ -386,7 +509,32 @@ class CdbTask:
         )
         return done.stdout.strip() or None
 
+    def export_state(self) -> int | None:
+        """The descriptor's optional `semantics.export` step: read app data the evaluator needs into the
+        workspace, as the bench user, after the agent and before the evaluator. None when there is none."""
+        command = self.descriptor["semantics"].get("export")
+        if not command:
+            return None
+        done = self._run(command, timeout=240)
+        self.log.append(f"export rc={done.returncode}")
+        (self.artifacts / "cdb-export.stderr").write_text((done.stderr or "")[-4000:], "utf-8")
+        return done.returncode
+
     def evaluate(self, agent_exit_code: int) -> dict[str, Any]:
+        """Run the export step and the evaluator. A result with `harness_error` set means the harness, not the
+        agent, failed (no export, no evaluator result): the runner re-runs that trial and never scores it."""
+        try:
+            export_rc = self.export_state()
+        except subprocess.TimeoutExpired:
+            export_rc = 124
+        if export_rc not in (None, 0):
+            return {
+                "passed": False,
+                "score": None,
+                "error": f"export step failed (rc {export_rc})",
+                "harness_error": "export_failed",
+                "diagnostics": {"export_rc": export_rc},
+            }
         result = self.artifacts / "cdb-result.json"
         if os.environ.get("CDB_EVAL_SUDO") == "1":
             # The pack's evaluator, oracle and hidden tests live in a home the agent's user cannot read.
@@ -421,7 +569,13 @@ class CdbTask:
             )
         (self.artifacts / "cdb-evaluator.stderr").write_text((done.stderr or "")[-4000:], "utf-8")
         if not result.is_file():
-            return {"passed": False, "score": None, "error": "evaluator wrote no result"}
+            return {
+                "passed": False,
+                "score": None,
+                "error": "evaluator wrote no result",
+                "harness_error": "evaluator_no_result",
+                "diagnostics": {"export_rc": export_rc},
+            }
         data = json.loads(result.read_text("utf-8"))
         checks_raw = (data.get("detail") or {}).get("checks") or data.get("checks") or {}
         checks = {
@@ -429,21 +583,28 @@ class CdbTask:
             for name, c in checks_raw.items()
         }
         passed = data.get("passed")
+        if self.seed is not None and any(
+            "${seed}" in arg for arg in self.descriptor["semantics"]["reset"]["setup"]
+        ):
+            checks["seed_identity"] = type(data.get("seed")) is int and data["seed"] == self.seed
+            passed = passed and checks["seed_identity"]
         return {
+            "seed": data.get("seed"),
             "passed": bool(passed),
             "score": data.get("score"),
             "checks": checks,
-            "diagnostics": {"raw_keys": sorted(data)[:12]},
+            "diagnostics": {
+                "raw_keys": sorted(data)[:12],
+                # a task's own diagnostics (an IR task's `interruption`, for example) reach the row
+                **(data.get("diagnostics") if isinstance(data.get("diagnostics"), dict) else {}),
+                "export_rc": export_rc,
+            },
         }
 
     def stop_apps(self) -> None:
         for proc in reversed(self.procs):
-            for sig in (signal.SIGTERM, signal.SIGKILL):
-                try:
-                    os.killpg(proc.pid, sig)
-                except (ProcessLookupError, PermissionError):
-                    break
-                time.sleep(0.4)
+            desktop.stop_group(proc.pid)
+            proc.wait(timeout=5)
         self.procs.clear()
         clear_leftovers(self.spec)
 

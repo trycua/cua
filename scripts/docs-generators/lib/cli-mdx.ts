@@ -115,7 +115,8 @@ export interface CommandDoc {
 
 export interface CLIDocumentation {
   name: string;
-  version: string;
+  /** What the binary reports. Never persisted or rendered: see `cliSpecJson`. */
+  version?: string;
   abstract: string;
   usage?: string;
   global_options?: Array<OptionDoc | FlagDoc>;
@@ -323,7 +324,8 @@ function flagDescription(opt: OptionDoc | FlagDoc): string {
 
 /**
  * `Flag | Short | Type | Default | Env var | Description`; the Short and
- * Env var columns are dropped when no row uses them. `path` (the command
+ * Env var columns are dropped when no row uses them. A boolean flag with a
+ * `--no-<name>` boolean sibling has an empty Default. `path` (the command
  * path) gives every flag its own anchor; omit it for tables that are not
  * under a command (global options).
  */
@@ -347,7 +349,10 @@ export function flagsTable(options: Array<OptionDoc | FlagDoc>, path?: string[])
           : '';
     } else {
       type = 'boolean';
-      def = codeCell('false');
+      // `--x` beside `--no-x`: its default depends on something else (its help
+      // says what), so `false` would be wrong. `--no-x` is off unless given.
+      const hasInverse = visible.some((o) => o.name === `no-${opt.name}` && !takesValue(o));
+      def = hasInverse ? '' : codeCell('false');
     }
     const row = [
       flag,
@@ -674,7 +679,6 @@ function renderIndexPage(ref: CliReference, pages: Map<string, PageCommand[]>, c
     description: sentence(cli.abstract),
     generator: ref.generator,
     source: ref.source,
-    version: cli.version,
     body: body.join('\n'),
   });
 }
@@ -720,7 +724,6 @@ function renderGroup(ref: CliReference, group: CliGroup, commands: PageCommand[]
     description: sentence(group.summary),
     generator: ref.generator,
     source: ref.source,
-    version: cli.version,
     body: body.join('\n'),
   });
 }
@@ -774,7 +777,6 @@ function renderSinglePage(ref: CliReference, pages: Map<string, PageCommand[]>):
     description: sentence(cli.abstract),
     generator: ref.generator,
     source: ref.source,
-    version: cli.version,
     body: body.join('\n'),
   });
 }
@@ -833,7 +835,6 @@ export function renderReferenceIndex(page: {
   description: string;
   generator: string;
   source: string;
-  version?: string;
   sections: IndexSection[];
 }): string {
   const body: string[] = [];
@@ -851,7 +852,6 @@ export function renderReferenceIndex(page: {
     description: page.description,
     generator: page.generator,
     source: page.source,
-    version: page.version,
     body: body.join('\n'),
   });
 }

@@ -140,7 +140,7 @@ import Testing
         #expect(supervisor.yieldsTo(pid: UInt32(back.processIdentifier)) == "/bin/sleep")
         #expect(supervisor.yieldsTo(pid: UInt32(getpid())) == nil)
         let notice = DaemonSupervisor.yieldNotice(executable: "/Applications/Cua Spaces.app/Contents/MacOS/cua", version: "0.4.0")
-        #expect(notice.hasPrefix("Another Cua Spaces app (/Applications/Cua Spaces.app, cua 0.4.0) is running and keeps starting its own daemon"))
+        #expect(notice.hasPrefix("Another Cua Spaces app (/Applications/Cua Spaces.app, cua 0.4.0) is running and keeps starting its own background service"))
         #expect(notice.contains("Quit the other app, then reopen Cua Spaces"))
     }
 
@@ -165,6 +165,110 @@ import Testing
             defer { lock.unlock() }
             return (starts, reconnects)
         }
+    }
+
+    /// A fake app bundle (symlinks resolved, as a process's executable
+    /// path is) whose `cua` keeps one daemon in `home`: `daemon start`
+    /// starts its `cuad` (a copy of `/bin/sleep`) unless one runs, `daemon
+    /// stop` kills it.
+    func lifecycleBundle(home: URL) throws -> (cua: String, daemon: String) {
+        // `realpath`, not `resolvingSymlinksInPath` (which drops `/private`).
+        let tmp = try #require(realpath(FileManager.default.temporaryDirectory.path, nil))
+        defer { free(tmp) }
+        let macos = URL(fileURLWithPath: String(cString: tmp))
+            .appendingPathComponent("cua-supervisor-\(UUID().uuidString)/Cua Spaces.app/Contents/MacOS")
+        try FileManager.default.createDirectory(at: macos, withIntermediateDirectories: true)
+        let daemon = macos.appendingPathComponent("cuad").path
+        try FileManager.default.copyItem(atPath: "/bin/sleep", toPath: daemon)
+        let file = home.appendingPathComponent("daemon.json").path
+        let cua = macos.appendingPathComponent("cua").path
+        try #"""
+            #!/bin/sh
+            f='\#(file)'
+            pid=$(sed -n 's/.*"pid":\([0-9]*\).*/\1/p' "$f" 2>/dev/null)
+            case "$1 $2" in
+            "daemon stop") [ -n "$pid" ] && kill $pid; rm -f "$f" ;;
+            "daemon start")
+              if [ -n "$pid" ] && kill -0 $pid 2>/dev/null; then echo "cua daemon already running (pid $pid)"; exit 0; fi
+              '\#(daemon)' 30 >/dev/null 2>&1 &
+              echo "{\"pid\":$!}" > "$f"
+              echo "cua daemon started (pid $!)" ;;
+            esac
+            """#.write(toFile: cua, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: cua)
+        return (cua, daemon)
+    }
+
+    /// After an update relaunched the app, or a quit and reopen, this app's
+    /// daemon from the earlier launch still runs, and macOS decides Local
+    /// Network for it in the name of that launch, which is gone (blocked
+    /// whatever System Settings says): it is started again, so this launch
+    /// is responsible for it. This launch's own daemon is kept.
+    @Test func aDaemonFromAnEarlierLaunchIsStartedAgain() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("cua-home-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let bundle = try lifecycleBundle(home: home)
+        let supervisor = try #require(DaemonSupervisor(bundledCua: bundle.cua))
+        supervisor.homeOverride = home
+
+        // The app before the update (or before the quit) started it.
+        let old = Process()
+        old.executableURL = URL(fileURLWithPath: bundle.daemon)
+        old.arguments = ["30"]
+        try old.run()
+        defer { if old.isRunning { old.terminate() } }
+        try Data(#"{"pid":\#(old.processIdentifier)}"#.utf8).write(to: home.appendingPathComponent("daemon.json"))
+        #expect(supervisor.isOwn(pid: UInt32(old.processIdentifier)))
+        // macOS holds the gone launch (99999) responsible for it, this
+        // launch (4242) for this app and what it starts.
+        let oldPid = old.processIdentifier
+        supervisor.responsiblePid = { $0 == oldPid ? 99_999 : 4242 }
+        #expect(supervisor.orphaned()?.pid == oldPid)
+
+        #expect(supervisor.start() == nil)
+        old.waitUntilExit()
+        let now = try #require(DaemonSupervisor.runningPid(cuaHome: home))
+        defer { kill(now, SIGTERM) }
+        #expect(now != oldPid)
+        #expect(kill(now, 0) == 0)
+        #expect(supervisor.orphaned() == nil)
+
+        // This launch's daemon: kept, not started again.
+        #expect(supervisor.start() == nil)
+        #expect(DaemonSupervisor.runningPid(cuaHome: home) == now)
+        #expect(kill(now, 0) == 0)
+
+        // The launch that started it exited: macOS names the daemon itself.
+        supervisor.responsiblePid = { $0 == now ? now : 4242 }
+        #expect(supervisor.orphaned()?.pid == now)
+
+        // Another live process of this app answers for it (its service
+        // helper): kept.
+        let helper = Process()
+        helper.executableURL = URL(fileURLWithPath: bundle.daemon)
+        helper.arguments = ["30"]
+        try helper.run()
+        defer { helper.terminate() }
+        let helperPid = helper.processIdentifier
+        supervisor.responsiblePid = { $0 == now ? helperPid : 4242 }
+        #expect(supervisor.orphaned() == nil)
+
+        // Unknown responsibility: kept (never a restart on a guess).
+        supervisor.responsiblePid = { _ in nil }
+        #expect(supervisor.orphaned() == nil)
+    }
+
+    /// The live lookup: a process this one starts inherits who macOS holds
+    /// responsible for this one (as the daemon the app starts does).
+    @Test func aChildHasItsParentsResponsibleProcess() throws {
+        let child = Process()
+        child.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        child.arguments = ["5"]
+        try child.run()
+        defer { child.terminate() }
+        let mine = try #require(DaemonSupervisor.liveResponsiblePid(getpid()))
+        #expect(DaemonSupervisor.liveResponsiblePid(child.processIdentifier) == mine)
     }
 
     @Test func restartsBackOffToAMinute() {

@@ -8,7 +8,10 @@
 //!   it works before and after that client change lands.
 //! - **Store**: the OS credential vault on Windows and on macOS for builds
 //!   signed by Cua (service `ai.cua.session`, `ai.cua.session.staging` for
-//!   `CUA_ENV=staging`; account `cua-cli`), a 0600
+//!   `CUA_ENV=staging`; the Local channel's own, `ai.cua.session.local`
+//!   and `ai.cua.session.local.staging`, see `CuaChannel::keychain_service`,
+//!   so a locally built Cua Spaces never shares a sign-in with the released
+//!   one; account `cua-cli`), a 0600
 //!   `~/.cua/credentials.json` elsewhere (Linux, and unsigned or ad-hoc
 //!   macOS builds, which macOS treats as a new app on every rebuild so
 //!   "Always Allow" never sticks) or with `CUA_CREDENTIAL_STORE=file`.
@@ -23,14 +26,16 @@
 //!   waits on a macOS keychain prompt: see [`KEYCHAIN_NONINTERACTIVE_ENV`].
 //!   Items that older builds stored under the service `run.cua.ai`
 //!   (`staging.run.cua.ai`) move to the current service on first read, and
-//!   sign-out removes both: see `legacy_vault`.
+//!   sign-out removes both: see `legacy_vault`. The Local channel has no
+//!   legacy items and skips that move.
 //! - **Session**: a refreshing access token. Every call reads the store, so
 //!   a sign-out or a token another process rotated is seen at once instead
 //!   of being refreshed twice.
 //!
 //! Configuration: `CUA_ENV` (`prod` or `staging`: the default issuer, the
 //! vault service and the cua home, so each environment keeps its own
-//! session), `CUA_OIDC_ISSUER` (wins over `CUA_ENV`), `CUA_OIDC_CLIENT_ID`; test hooks
+//! session; `CUA_CHANNEL=local` keeps Local's apart from Stable's),
+//! `CUA_OIDC_ISSUER` (wins over `CUA_ENV`), `CUA_OIDC_CLIENT_ID`; test hooks
 //! `CUA_OIDC_POLL_UNIT_MS`, `CUA_OIDC_REDIRECT_PORT`,
 //! `CUA_OIDC_LOGIN_TIMEOUT_SECS`.
 
@@ -52,17 +57,23 @@ const DEFAULT_SCOPE: &str = "openid profile offline_access organization:*";
 const DEVICE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
 /// Refresh this long before expiry.
 const REFRESH_SKEW_SECS: i64 = 60;
-/// The OS vault service of the session: `ai.cua.session` in production,
-/// another one per `CUA_ENV`, so environments never share a session.
+/// The OS vault service of the session and the named secrets, from the
+/// channel and `CUA_ENV` (`CuaChannel::keychain_service`): `ai.cua.session`
+/// for Stable in production, `.staging` on staging, and `ai.cua.session.local`
+/// (`.staging`) for the Local channel. One per (channel, environment), so
+/// neither two environments nor a Local build and the released app share a
+/// session.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn keyring_service() -> &'static str {
-    cua_home::env::CuaEnv::current().keyring_service()
+    cua_home::channel::CuaChannel::current_keychain_service()
 }
 /// The service older builds used (`run.cua.ai`, `staging.run.cua.ai`): read
 /// once to move its items to [`keyring_service`], and cleared on sign-out.
+/// `None` for the Local channel: it has no legacy items, so it never reads,
+/// moves or deletes anything under a name the released app owns.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-fn legacy_keyring_service() -> &'static str {
-    cua_home::env::CuaEnv::current().legacy_keyring_service()
+fn legacy_keyring_service() -> Option<&'static str> {
+    cua_home::channel::CuaChannel::current_legacy_keychain_service()
 }
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 const KEYRING_ACCOUNT: &str = "cua-cli";
@@ -102,6 +113,7 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 mod callback_page;
 #[allow(dead_code)]
 mod chunked;
+pub mod http;
 #[allow(dead_code)]
 mod legacy_vault;
 #[cfg(target_os = "macos")]
@@ -123,6 +135,52 @@ fn http_err(e: impl std::fmt::Display) -> Error {
     Error::Http(e.to_string())
 }
 
+/// How an error starts when the identity provider could not be reached at
+/// all (no network, DNS, refused, timed out). The Spaces app core reads it
+/// to say "can't reach Cua" instead of showing the transport's words.
+pub const UNREACHABLE: &str = "could not reach the sign-in service";
+
+/// How an error starts when the person declined the sign-in in the browser
+/// (`access_denied`).
+pub const LOGIN_DECLINED: &str = "sign-in was declined in the browser";
+
+/// How an error starts when a started sign-in was stopped before it
+/// finished ([`LoginCanceller::cancel`]): another attempt finished first, or
+/// the caller stopped waiting. Its loopback listener is closed by then.
+pub const LOGIN_STOPPED: &str = "sign-in was stopped before it finished";
+
+fn stopped() -> Error {
+    Error::Timeout(format!("{LOGIN_STOPPED}; start it again"))
+}
+
+/// A request that failed before any answer: [`UNREACHABLE`] for transport
+/// failures, the error's own words otherwise.
+fn net_err(e: reqwest::Error) -> Error {
+    if e.is_connect() || e.is_timeout() || e.is_request() {
+        Error::Http(format!("{UNREACHABLE}: {e}"))
+    } else {
+        Error::Http(e.to_string())
+    }
+}
+
+/// Whether `e` is [`UNREACHABLE`] (worth another poll).
+fn is_unreachable(e: &Error) -> bool {
+    matches!(e, Error::Http(m) if m.starts_with(UNREACHABLE))
+}
+
+/// A non-200 answer from the token or device endpoint: the provider's own
+/// trouble (5xx) is [`Error::Http`], a refusal [`Error::Unauthenticated`].
+fn token_refusal(status: u16, v: &serde_json::Value, fallback: &str) -> Error {
+    if status >= 500 {
+        Error::Http(format!(
+            "the sign-in service answered HTTP {status}: {}",
+            describe(v, fallback)
+        ))
+    } else {
+        Error::Unauthenticated(describe(v, fallback))
+    }
+}
+
 fn store_err(e: impl std::fmt::Display) -> Error {
     Error::Store(e.to_string())
 }
@@ -131,7 +189,7 @@ fn store_err(e: impl std::fmt::Display) -> Error {
 
 /// Tokens issued to the public client. The JSON shape is shared with the
 /// former Python CLI, so an existing keychain entry keeps working.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Credentials {
     /// Access token.
     pub access_token: String,
@@ -149,6 +207,22 @@ pub struct Credentials {
     /// ID token, when issued.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id_token: Option<String>,
+}
+
+impl std::fmt::Debug for Credentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Credentials")
+            .field("access_token", &"<redacted>")
+            .field(
+                "refresh_token",
+                &self.refresh_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field("expires_at", &self.expires_at)
+            .field("token_type", &self.token_type)
+            .field("scope", &self.scope)
+            .field("id_token", &self.id_token.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 fn bearer() -> String {
@@ -345,26 +419,39 @@ pub fn signed_by_cua() -> bool {
     })
 }
 
+/// Whether the default store is the OS vault, from the `CUA_CREDENTIAL_STORE`
+/// setting, the channel and whether this build is signed by Cua. Never on the
+/// Local channel (not even when the setting asks for it): see
+/// `CuaChannel::uses_login_keychain`.
+fn wants_vault(setting: &str, channel: cua_home::channel::CuaChannel, signed: bool) -> bool {
+    if !channel.uses_login_keychain() {
+        return false;
+    }
+    match setting {
+        "file" => false,
+        "keychain" | "keyring" => cfg!(any(target_os = "macos", target_os = "windows")),
+        _ => cfg!(target_os = "windows") || (cfg!(target_os = "macos") && signed),
+    }
+}
+
 impl Store {
     /// `CUA_CREDENTIAL_STORE` (`file` | `keychain`) or the default: the OS
     /// vault on Windows and for Cua-signed macOS builds, else the file.
     pub fn from_env() -> Self {
-        let file = || Store::File(cua_home().join("credentials.json"));
         let setting = std::env::var("CUA_CREDENTIAL_STORE").unwrap_or_default();
         if let Some(dir) = setting.strip_prefix("test-keychain:") {
             return Store::TestKeychain(PathBuf::from(dir));
         }
-        match setting.as_str() {
-            "file" => file(),
+        let channel = cua_home::channel::CuaChannel::current();
+        #[cfg(target_os = "macos")]
+        let signed = signed_by_cua();
+        #[cfg(not(target_os = "macos"))]
+        let signed = false;
+        if wants_vault(&setting, channel, signed) {
             #[cfg(any(target_os = "macos", target_os = "windows"))]
-            "keychain" | "keyring" => Store::Keyring,
-            #[cfg(target_os = "macos")]
-            _ if signed_by_cua() => Store::Keyring,
-            #[cfg(target_os = "windows")]
-            _ => Store::Keyring,
-            #[cfg(not(target_os = "windows"))]
-            _ => file(),
+            return Store::Keyring;
         }
+        Store::File(cua_home().join("credentials.json"))
     }
 
     /// `keychain` (the OS credential vault, or its test stand-in) or `file`.
@@ -485,14 +572,18 @@ impl Store {
                 let wanted = is_cua_account;
                 // Items still under the legacy service name move first (a
                 // read that needs a prompt is not asked unless `prompt`).
-                let moved = macos_keychain::migrate_legacy(
-                    macos_keychain::Keychain::Default,
-                    legacy_keyring_service(),
-                    keyring_service(),
-                    &wanted,
-                    prompt,
-                    signed_by_cua(),
-                );
+                let moved = legacy_keyring_service()
+                    .map(|legacy| {
+                        macos_keychain::migrate_legacy(
+                            macos_keychain::Keychain::Default,
+                            legacy,
+                            keyring_service(),
+                            &wanted,
+                            prompt,
+                            signed_by_cua(),
+                        )
+                    })
+                    .unwrap_or_default();
                 let items = macos_keychain::check_items(
                     macos_keychain::Keychain::Default,
                     keyring_service(),
@@ -521,7 +612,7 @@ impl Store {
         self.clear()?;
         #[cfg(target_os = "macos")]
         if matches!(self, Store::Keyring) {
-            for service in [keyring_service(), legacy_keyring_service()] {
+            for service in std::iter::once(keyring_service()).chain(legacy_keyring_service()) {
                 // Not `check_keychain`: that would move a readable legacy
                 // item over, and this is a sign-out.
                 let items = macos_keychain::check_items(
@@ -679,9 +770,21 @@ impl Store {
             self.unmark();
             return Ok(None);
         };
-        let c: Credentials = serde_json::from_str(&raw).map_err(|_| {
-            Error::Unauthenticated("stored Cua credentials are invalid; log in again".into())
-        })?;
+        let c: Credentials = match serde_json::from_str(&raw) {
+            Ok(c) => c,
+            Err(_) => {
+                // Cut short or garbage: signing in again writes a good file over
+                // it, so the damaged one is kept beside it (owner-only, like the
+                // original) rather than lost. Not for the keychain: nothing of
+                // it is copied out.
+                if let Store::File(p) = self {
+                    keep_damaged(p, raw.as_bytes());
+                }
+                return Err(Error::Unauthenticated(
+                    "stored Cua credentials are invalid; log in again".into(),
+                ));
+            }
+        };
         c.expires()?;
         // Sessions stored before the marker existed get one on first read.
         if !self.marker_path().is_file() {
@@ -786,6 +889,7 @@ impl Store {
             std::env::var("CUA_CREDENTIAL_STORE").ok().as_deref(),
             cua_home::is_test_process(),
             cua_home::is_under_real_home(path),
+            cua_home::channel::CuaChannel::current(),
         ) && cfg!(target_os = "macos")
     }
 
@@ -811,9 +915,12 @@ impl Store {
     /// build (see [`Store::reads_vault_fallback`]). A refusal (the user
     /// denied the keychain prompt) reads as nothing.
     fn read_vault_fallback(&self, name: &str) -> Option<String> {
-        if !self.reads_vault_fallback() {
-            return None;
-        }
+        vault_fallback_when(self.reads_vault_fallback(), || {
+            self.read_vault_fallback_now(name)
+        })
+    }
+
+    fn read_vault_fallback_now(&self, name: &str) -> Option<String> {
         #[cfg(target_os = "macos")]
         {
             // A signed build that has not run since the service was renamed
@@ -821,7 +928,8 @@ impl Store {
             // legacy name. This build only reads it, as it always does.
             vault_get(secret_entry(name).ok()?).ok().or_else(|| {
                 let account = format!("{KEYRING_ACCOUNT}.{name}");
-                vault_get(VaultEntry::new(legacy_keyring_service(), &account).ok()?).ok()
+                let legacy = legacy_keyring_service()?;
+                vault_get(VaultEntry::new(legacy, &account).ok()?).ok()
             })
         }
         #[cfg(not(target_os = "macos"))]
@@ -1223,7 +1331,7 @@ impl std::fmt::Display for KeychainBlocked {
 impl std::error::Error for KeychainBlocked {}
 
 /// How long a non-interactive keychain call may take.
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 fn keychain_deadline() -> Duration {
     let secs = std::env::var(KEYCHAIN_TIMEOUT_ENV)
         .ok()
@@ -1520,20 +1628,15 @@ impl legacy_vault::Vault for NativeVault {
 /// stays as it is and fails with the usual hint ([`KEYCHAIN_NEEDS_ACCESS`]).
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn move_legacy_item(account: &str) -> Result<Option<String>> {
+    // The Local channel has no legacy items: nothing to move.
+    let Some(legacy) = legacy_keyring_service() else {
+        return Ok(None);
+    };
     // A legacy recreate interrupted before its rename left the item under its
     // staging name: take it back first.
     #[cfg(target_os = "macos")]
-    let _ = macos_keychain::recover_staged(
-        macos_keychain::Keychain::Default,
-        legacy_keyring_service(),
-        account,
-    );
-    match legacy_vault::move_item(
-        &NativeVault,
-        legacy_keyring_service(),
-        keyring_service(),
-        account,
-    ) {
+    let _ = macos_keychain::recover_staged(macos_keychain::Keychain::Default, legacy, account);
+    match legacy_vault::move_item(&NativeVault, legacy, keyring_service(), account) {
         Ok(text) => Ok(text),
         Err(legacy_vault::Failure::Read(e) | legacy_vault::Failure::Write(e)) => Err(e),
         Err(legacy_vault::Failure::Unverified) => Err(Error::Store(
@@ -1548,10 +1651,13 @@ fn move_legacy_item(account: &str) -> Result<Option<String>> {
 /// deleting the current item.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn drop_legacy_item(account: &str) -> bool {
+    // The Local channel has none.
+    let Some(legacy) = legacy_keyring_service() else {
+        return false;
+    };
     #[cfg(target_os = "macos")]
     let _quiet = macos_keychain::Quiet::new();
-    VaultEntry::new(legacy_keyring_service(), account)
-        .is_ok_and(|entry| vault_delete(entry).is_ok())
+    VaultEntry::new(legacy, account).is_ok_and(|entry| vault_delete(entry).is_ok())
 }
 
 /// Whether a file store at `path` reads missing secrets from the OS
@@ -1563,11 +1669,20 @@ fn vault_fallback_applies(
     setting: Option<&str>,
     test_process: bool,
     under_real_home: bool,
+    channel: cua_home::channel::CuaChannel,
 ) -> bool {
-    !test_process
+    // The Local channel never reads the login Keychain (see `wants_vault`).
+    channel.uses_login_keychain()
+        && !test_process
         && under_real_home
         && setting.is_none_or(|s| s.trim().is_empty())
         && path == default_path
+}
+
+/// `read` (the vault) only when the fallback `applies`; else nothing, and the
+/// vault is never touched.
+fn vault_fallback_when(applies: bool, read: impl FnOnce() -> Option<String>) -> Option<String> {
+    if applies { read() } else { None }
 }
 
 fn read_optional(path: &Path) -> Result<Option<String>> {
@@ -1588,6 +1703,15 @@ fn decode_secret(name: &str, text: &str) -> Result<Vec<u8>> {
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn secret_entry(name: &str) -> Result<VaultEntry> {
     VaultEntry::new(keyring_service(), &format!("{KEYRING_ACCOUNT}.{name}")).map_err(store_err)
+}
+
+/// Keeps a damaged credentials file as `<name>.damaged`, owner-only. Best
+/// effort: a copy that cannot be written is not an error (the caller is
+/// already reporting the damage).
+fn keep_damaged(p: &Path, data: &[u8]) {
+    let mut name = p.file_name().unwrap_or_default().to_os_string();
+    name.push(".damaged");
+    let _ = write_private(&p.with_file_name(name), data);
 }
 
 /// Writes a file readable only by the owner (0600 on Unix), atomically.
@@ -1639,12 +1763,14 @@ impl Oidc {
             issuer: issuer.into().trim_end_matches('/').to_string(),
             client_id: client_id.into(),
             scope: DEFAULT_SCOPE.into(),
-            http: reqwest::Client::builder()
-                .connect_timeout(Duration::from_secs(15))
-                .timeout(Duration::from_secs(60))
-                .user_agent(concat!("cua-auth/", env!("CARGO_PKG_VERSION")))
-                .build()
-                .expect("http client"),
+            // Shared: a session is read per relay call, and a client per
+            // read re-read the OS roots each time (F53).
+            http: http::shared(http::Shape {
+                connect_timeout: Duration::from_secs(15),
+                timeout: Duration::from_secs(60),
+                user_agent: Some(concat!("cua-auth/", env!("CARGO_PKG_VERSION"))),
+            })
+            .expect("http client"),
         }
     }
 
@@ -1671,7 +1797,7 @@ impl Oidc {
             .form(form)
             .send()
             .await
-            .map_err(http_err)?;
+            .map_err(net_err)?;
         let status = r.status().as_u16();
         let text = r.text().await.map_err(http_err)?;
         let v = serde_json::from_str(&text)
@@ -1682,7 +1808,7 @@ impl Oidc {
     /// Fetches the discovery document.
     pub async fn discover(&self) -> Result<Discovery> {
         let url = format!("{}/.well-known/openid-configuration", self.issuer);
-        let r = self.http.get(&url).send().await.map_err(http_err)?;
+        let r = self.http.get(&url).send().await.map_err(net_err)?;
         if !r.status().is_success() {
             return Err(Error::Http(format!(
                 "OIDC discovery failed (HTTP {})",
@@ -1838,6 +1964,49 @@ pub struct PendingLogin {
     oidc: Oidc,
     token_endpoint: String,
     pending: Pending,
+    cancel: LoginCanceller,
+}
+
+/// Stops a started sign-in from anywhere ([`PendingLogin::canceller`]): a
+/// browser sign-in closes its loopback listener at once (no stale listener
+/// keeps the port or signs in later), a device-code sign-in stops polling.
+/// The wait then ends with an error that starts with [`LOGIN_STOPPED`].
+#[derive(Clone, Debug, Default)]
+pub struct LoginCanceller(Arc<LoginCancel>);
+
+#[derive(Debug, Default)]
+struct LoginCancel {
+    stopped: std::sync::atomic::AtomicBool,
+    notify: tokio::sync::Notify,
+}
+
+impl LoginCanceller {
+    /// Stops the sign-in (once; later calls do nothing).
+    pub fn cancel(&self) {
+        self.0
+            .stopped
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.0.notify.notify_waiters();
+    }
+
+    /// Whether [`cancel`](Self::cancel) was called.
+    pub fn is_cancelled(&self) -> bool {
+        self.0.stopped.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Resolves once cancelled (at once when it already was).
+    async fn cancelled(&self) {
+        loop {
+            let notified = self.0.notify.notified();
+            tokio::pin!(notified);
+            // Registered before the check, so a cancel in between is seen.
+            let _ = notified.as_mut().enable();
+            if self.is_cancelled() {
+                return;
+            }
+            notified.await;
+        }
+    }
 }
 
 fn b64url(bytes: &[u8]) -> String {
@@ -1939,6 +2108,7 @@ async fn begin_pkce(oidc: &Oidc, d: &Discovery) -> Result<PendingLogin, String> 
             state,
             redirect,
         },
+        cancel: LoginCanceller::default(),
     })
 }
 
@@ -1953,10 +2123,12 @@ async fn begin_device(oidc: &Oidc, d: &Discovery) -> Result<PendingLogin> {
         )
         .await?;
     if status != 200 {
-        return Err(Error::Unauthenticated(describe(
-            &v,
-            "could not start device authorization",
-        )));
+        return Err(match token_refusal(status, &v, "refused") {
+            Error::Unauthenticated(why) => {
+                Error::Unauthenticated(format!("could not start the sign-in: {why}"))
+            }
+            other => other,
+        });
     }
     let device_code = v["device_code"].as_str().unwrap_or_default().to_string();
     let user_code = v["user_code"].as_str().unwrap_or_default().to_string();
@@ -1983,13 +2155,44 @@ async fn begin_device(oidc: &Oidc, d: &Discovery) -> Result<PendingLogin> {
             interval: v["interval"].as_u64().unwrap_or(5).max(1),
             expires_in: v["expires_in"].as_u64().unwrap_or(600).clamp(1, 3600),
         },
+        cancel: LoginCanceller::default(),
     })
 }
 
 impl PendingLogin {
+    /// Stops this sign-in from another task (see [`LoginCanceller`]).
+    pub fn canceller(&self) -> LoginCanceller {
+        self.cancel.clone()
+    }
+
     /// Waits for the user to finish and returns the tokens (not yet saved).
+    /// Callers that keep the session use [`Session::finish_login`], which
+    /// saves it before the browser page says "You're signed in".
     pub async fn complete(self) -> Result<Credentials> {
-        match self.pending {
+        self.complete_with(|_| Ok(())).await
+    }
+
+    /// Waits for the user to finish, then runs `save` on the tokens before
+    /// the browser's page is answered: the page says "You're signed in" only
+    /// once the session is kept, and "couldn't save" when `save` fails (a
+    /// locked keychain, a denied prompt), never success for a sign-in the
+    /// app then reports as failed. `save`'s error is returned as is.
+    pub async fn complete_with<F>(self, save: F) -> Result<Credentials>
+    where
+        F: FnOnce(&Credentials) -> Result<()>,
+    {
+        let PendingLogin {
+            oidc,
+            token_endpoint,
+            pending,
+            cancel,
+            return_to,
+            ..
+        } = self;
+        if cancel.is_cancelled() {
+            return Err(stopped());
+        }
+        match pending {
             Pending::Pkce {
                 listener,
                 verifier,
@@ -1999,28 +2202,33 @@ impl PendingLogin {
                 let secs = std::env::var("CUA_OIDC_LOGIN_TIMEOUT_SECS")
                     .ok()
                     .and_then(|s| s.parse::<u64>().ok())
-                    .unwrap_or(300);
-                let to = self.return_to.as_ref();
-                let (code, mut browser) = tokio::time::timeout(
-                    Duration::from_secs(secs),
-                    await_callback(&listener, &state, to),
-                )
-                .await
-                .map_err(|_| {
+                    .unwrap_or(600);
+                let to = return_to.as_ref();
+                // Stopped while waiting: the listener closes on return.
+                let waited = tokio::select! {
+                    biased;
+                    () = cancel.cancelled() => return Err(stopped()),
+                    w = tokio::time::timeout(
+                        Duration::from_secs(secs),
+                        await_callback(&listener, &state, to),
+                    ) => w,
+                };
+                let (code, mut browser) = waited.map_err(|_| {
                     Error::Timeout(
                         "browser sign-in was not completed in time; try `cua auth login --remote`"
                             .into(),
                     )
                 })??;
-                let exchanged = self
-                    .oidc
+                // The code is here: nothing else may answer on this port.
+                drop(listener);
+                let exchanged = oidc
                     .form(
-                        &self.token_endpoint,
+                        &token_endpoint,
                         &[
                             ("grant_type", "authorization_code"),
                             ("code", &code),
                             ("redirect_uri", &redirect),
-                            ("client_id", &self.oidc.client_id),
+                            ("client_id", &oidc.client_id),
                             ("code_verifier", &verifier),
                         ],
                     )
@@ -2030,19 +2238,23 @@ impl PendingLogin {
                     matches!(&exchanged, Ok((_, v)) if v["error"] == "invalid_grant");
                 let creds = match exchanged {
                     Ok((200, v)) => Credentials::from_token_response(&v),
-                    Ok((status, v)) => Err(Error::Unauthenticated(describe(
+                    Ok((status, v)) => Err(token_refusal(
+                        status,
                         &v,
                         &format!("token request failed (HTTP {status})"),
-                    ))),
+                    )),
                     Err(e) => Err(e),
                 };
-                let (status, outcome) = match &creds {
+                let exchanged_ok = creds.is_ok();
+                let kept = creds.and_then(|c| save(&c).map(|()| c));
+                let (status, outcome) = match &kept {
                     Ok(c) => ("200 OK", Outcome::SignedIn(c.identity().email)),
+                    Err(_) if exchanged_ok => ("500 Internal Server Error", Outcome::NotSaved),
                     Err(_) if invalid_grant => ("400 Bad Request", Outcome::Expired),
                     Err(_) => ("502 Bad Gateway", Outcome::Failed),
                 };
                 respond_page(&mut browser, status, &outcome, to).await;
-                creds
+                kept
             }
             Pending::Device {
                 device_code,
@@ -2056,39 +2268,74 @@ impl PendingLogin {
                     .unwrap_or(Duration::from_secs(1));
                 let deadline = tokio::time::Instant::now() + unit * expires_in as u32;
                 // Hard bound on iterations, independent of the clock.
+                // A network drop or the provider's own trouble (5xx) while
+                // the person confirms is retried until the code expires; it
+                // is the error then, never a silent "expired".
+                let mut last: Option<Error> = None;
                 for _ in 0..(expires_in / interval + 20) {
-                    let (status, v) = self
-                        .oidc
+                    if cancel.is_cancelled() {
+                        return Err(stopped());
+                    }
+                    let polled = oidc
                         .form(
-                            &self.token_endpoint,
+                            &token_endpoint,
                             &[
                                 ("grant_type", DEVICE_GRANT),
                                 ("device_code", &device_code),
-                                ("client_id", &self.oidc.client_id),
+                                ("client_id", &oidc.client_id),
                             ],
                         )
-                        .await?;
-                    if status == 200 {
-                        return Credentials::from_token_response(&v);
-                    }
-                    match v["error"].as_str() {
-                        Some("authorization_pending") => {}
-                        Some("slow_down") => interval += 5,
-                        _ => {
-                            return Err(Error::Unauthenticated(describe(
-                                &v,
-                                &format!("token request failed (HTTP {status})"),
-                            )));
+                        .await;
+                    match polled {
+                        Ok((200, v)) => {
+                            let c = Credentials::from_token_response(&v)?;
+                            save(&c)?;
+                            return Ok(c);
                         }
+                        Ok((status, v)) => match v["error"].as_str() {
+                            Some("authorization_pending") => last = None,
+                            Some("slow_down") => {
+                                interval += 5;
+                                last = None;
+                            }
+                            Some("expired_token") => {
+                                return Err(Error::Timeout(
+                                    "the sign-in code expired before it was confirmed (expired_token)"
+                                        .into(),
+                                ));
+                            }
+                            Some("access_denied") => {
+                                return Err(Error::Unauthenticated(format!(
+                                    "{LOGIN_DECLINED}: {}",
+                                    describe(&v, "access_denied")
+                                )));
+                            }
+                            _ if status >= 500 => {
+                                last = Some(token_refusal(status, &v, "token request failed"));
+                            }
+                            _ => {
+                                return Err(token_refusal(
+                                    status,
+                                    &v,
+                                    &format!("token request failed (HTTP {status})"),
+                                ));
+                            }
+                        },
+                        Err(e) if is_unreachable(&e) => last = Some(e),
+                        Err(e) => return Err(e),
                     }
                     if tokio::time::Instant::now() >= deadline {
                         break;
                     }
-                    tokio::time::sleep(unit * interval as u32).await;
+                    tokio::select! {
+                        biased;
+                        () = cancel.cancelled() => return Err(stopped()),
+                        () = tokio::time::sleep(unit * interval as u32) => {}
+                    }
                 }
-                Err(Error::Timeout(
-                    "device authorization expired before it was completed".into(),
-                ))
+                Err(last.unwrap_or_else(|| {
+                    Error::Timeout("device authorization expired before it was completed".into())
+                }))
             }
         }
     }
@@ -2161,6 +2408,9 @@ async fn await_callback(
                 Outcome::Failed
             };
             respond_page(&mut sock, "400 Bad Request", &outcome, to).await;
+            if e == "access_denied" {
+                return Err(Error::Unauthenticated(format!("{LOGIN_DECLINED}: {msg}")));
+            }
             return Err(Error::Unauthenticated(format!("sign-in failed: {msg}")));
         }
         let Some(code) = q.get("code").filter(|c| !c.is_empty()).cloned() else {
@@ -2289,6 +2539,17 @@ impl Session {
     /// Stores freshly issued credentials.
     pub async fn install(&self, c: Credentials) -> Result<Identity> {
         self.store.save(&c)?;
+        let id = c.identity();
+        *self.cached.lock().await = Some(c);
+        Ok(id)
+    }
+
+    /// Waits for `login`, stores the session, and returns who signed in.
+    /// The session is saved before the browser's page is answered, so a
+    /// store that refuses the write (a locked keychain, a denied prompt)
+    /// shows as "couldn't save" there too, never as "You're signed in".
+    pub async fn finish_login(&self, login: PendingLogin) -> Result<Identity> {
+        let c = login.complete_with(|c| self.store.save(c)).await?;
         let id = c.identity();
         *self.cached.lock().await = Some(c);
         Ok(id)
@@ -2532,6 +2793,29 @@ mod tests {
         }
     }
 
+    /// `{:?}` (and so any log line or error that formats the credentials)
+    /// never carries a token.
+    #[test]
+    fn credentials_debug_redacts_every_token() {
+        let mut creds = session("sekret-access-1234", 1);
+        creds.refresh_token = Some("sekret-refresh-5678".into());
+        creds.id_token = Some("sekret-id-9012".into());
+        for out in [format!("{creds:?}"), format!("{creds:#?}")] {
+            for secret in [
+                "sekret-access-1234",
+                "sekret-refresh-5678",
+                "sekret-id-9012",
+            ] {
+                assert!(!out.contains(secret), "{out}");
+            }
+            assert!(out.contains("<redacted>"), "{out}");
+            assert!(out.contains("Bearer"), "{out}");
+        }
+        creds.refresh_token = None;
+        creds.id_token = None;
+        assert!(format!("{creds:?}").contains("refresh_token: None"));
+    }
+
     fn vault_token(vault: &Store) -> Option<String> {
         vault.load_stored().unwrap().map(|c| c.access_token)
     }
@@ -2705,6 +2989,41 @@ mod tests {
     }
 
     #[test]
+    fn a_damaged_credentials_file_is_an_error_to_log_in_again_and_is_kept() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("credentials.json");
+        let store = Store::File(path.clone());
+        for garbage in [
+            "{",
+            "{\"access_token\": \"a",
+            "",
+            "null",
+            "[]",
+            "\u{0}\u{1}garbage",
+        ] {
+            std::fs::write(&path, garbage).unwrap();
+            let err = store.load().unwrap_err();
+            assert!(
+                matches!(err, Error::Unauthenticated(ref m) if m.contains("log in again")),
+                "{garbage:?}: {err:?}"
+            );
+            let kept = d.path().join("credentials.json.damaged");
+            assert_eq!(std::fs::read_to_string(&kept).unwrap(), garbage);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                assert_eq!(
+                    std::fs::metadata(&kept).unwrap().permissions().mode() & 0o777,
+                    0o600
+                );
+            }
+        }
+        // Signing in again writes a good file over it; the copy stays.
+        std::fs::remove_file(&path).unwrap();
+        assert!(store.load().unwrap().is_none());
+    }
+
+    #[test]
     fn named_secrets_live_next_to_the_session_owner_only() {
         let d = tempfile::tempdir().unwrap();
         let store = Store::File(d.path().join("credentials.json"));
@@ -2825,21 +3144,68 @@ mod tests {
     #[test]
     fn only_the_default_file_store_outside_tests_reads_the_vault() {
         let d = Path::new("/h/.cua/credentials.json");
-        assert!(vault_fallback_applies(d, d, None, false, true));
-        assert!(vault_fallback_applies(d, d, Some(" "), false, true));
-        assert!(!vault_fallback_applies(d, d, Some("file"), false, true));
-        assert!(!vault_fallback_applies(d, d, None, true, true));
+        use cua_home::channel::CuaChannel::{Local, Stable};
+        assert!(vault_fallback_applies(d, d, None, false, true, Stable));
+        assert!(vault_fallback_applies(d, d, Some(" "), false, true, Stable));
+        assert!(!vault_fallback_applies(
+            d,
+            d,
+            Some("file"),
+            false,
+            true,
+            Stable
+        ));
+        assert!(!vault_fallback_applies(d, d, None, true, true, Stable));
         // A temporary CUA_HOME (a test harness, a sandbox) never does.
-        assert!(!vault_fallback_applies(d, d, None, false, false));
+        assert!(!vault_fallback_applies(d, d, None, false, false, Stable));
         assert!(!vault_fallback_applies(
             Path::new("/elsewhere/credentials.json"),
             d,
             None,
             false,
-            true
+            true,
+            Stable
         ));
+        // The Local channel never reads the login Keychain, whatever else holds.
+        assert!(!vault_fallback_applies(d, d, None, false, true, Local));
         // This test process never does.
         assert!(!Store::File(cua_home().join("credentials.json")).reads_vault_fallback());
+    }
+
+    #[test]
+    fn local_never_touches_the_vault_and_stable_still_does() {
+        use cua_home::channel::CuaChannel::{Local, Stable};
+        // The Local store is the file whatever is asked, signed or not.
+        for setting in ["", "file", "keychain", "keyring"] {
+            for signed in [false, true] {
+                assert!(!wants_vault(setting, Local, signed), "{setting} {signed}");
+            }
+        }
+        // Stable is unchanged: an explicit vault, Cua-signed macOS, Windows.
+        assert!(!wants_vault("file", Stable, true));
+        assert_eq!(
+            wants_vault("keychain", Stable, false),
+            cfg!(any(target_os = "macos", target_os = "windows"))
+        );
+        assert_eq!(
+            wants_vault("", Stable, true),
+            cfg!(any(target_os = "macos", target_os = "windows"))
+        );
+        assert_eq!(wants_vault("", Stable, false), cfg!(target_os = "windows"));
+        // The vault's copy is not read when the fallback does not apply (Local),
+        // and is when it does (Stable's unsigned default store).
+        let d = Path::new("/h/.cua/credentials.json");
+        let touched = std::cell::Cell::new(false);
+        let read = || {
+            touched.set(true);
+            Some("secret".to_string())
+        };
+        let local = vault_fallback_applies(d, d, None, false, true, Local);
+        assert_eq!(vault_fallback_when(local, read), None);
+        assert!(!touched.get(), "the Local channel touched the vault");
+        let stable = vault_fallback_applies(d, d, None, false, true, Stable);
+        assert_eq!(vault_fallback_when(stable, read).as_deref(), Some("secret"));
+        assert!(touched.get());
     }
 
     #[test]
@@ -2885,17 +3251,56 @@ mod tests {
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     #[test]
     fn the_session_lives_under_a_neutral_service_per_environment() {
+        use cua_home::channel::CuaChannel;
         use cua_home::env::CuaEnv;
+        // Stable keeps the names it always had.
+        let stable = CuaChannel::Stable;
         assert_eq!(CuaEnv::Prod.keyring_service(), "ai.cua.session");
         assert_eq!(CuaEnv::Staging.keyring_service(), "ai.cua.session.staging");
-        // The names older builds used are only ever read to move an item.
+        for env in [CuaEnv::Prod, CuaEnv::Staging] {
+            assert_eq!(stable.keychain_service(env), env.keyring_service());
+            // The names older builds used are only ever read to move an item.
+            assert_eq!(
+                stable.legacy_keychain_service(env),
+                Some(env.legacy_keyring_service())
+            );
+            assert_ne!(env.keyring_service(), env.legacy_keyring_service());
+        }
         assert_eq!(CuaEnv::Prod.legacy_keyring_service(), "run.cua.ai");
         assert_eq!(
             CuaEnv::Staging.legacy_keyring_service(),
             "staging.run.cua.ai"
         );
+    }
+
+    /// The Local channel has its own services, and no legacy one to move
+    /// from or to delete: it never touches a name Stable owns.
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[test]
+    fn the_local_channel_has_its_own_services_and_no_legacy_one() {
+        use cua_home::channel::CuaChannel;
+        use cua_home::env::CuaEnv;
+        let local = CuaChannel::Local;
+        assert_eq!(local.keychain_service(CuaEnv::Prod), "ai.cua.session.local");
+        assert_eq!(
+            local.keychain_service(CuaEnv::Staging),
+            "ai.cua.session.local.staging"
+        );
         for env in [CuaEnv::Prod, CuaEnv::Staging] {
-            assert_ne!(env.keyring_service(), env.legacy_keyring_service());
+            assert_eq!(local.legacy_keychain_service(env), None);
+            let owned_by_stable = [
+                CuaChannel::Stable.keychain_service(env),
+                env.legacy_keyring_service(),
+            ];
+            assert!(!owned_by_stable.contains(&local.keychain_service(env)));
+        }
+        // This test process is Stable, so the glue reads Stable's names.
+        if std::env::var_os("CUA_CHANNEL").is_none() && CuaChannel::build_default().is_none() {
+            assert_eq!(keyring_service(), CuaEnv::current().keyring_service());
+            assert_eq!(
+                legacy_keyring_service(),
+                Some(CuaEnv::current().legacy_keyring_service())
+            );
         }
     }
 

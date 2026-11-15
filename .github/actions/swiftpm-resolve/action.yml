@@ -1,0 +1,33 @@
+name: "Resolve Swift packages (with retries)"
+description: >-
+  Resolve the Cua Spaces SwiftUI app's Swift packages before the build, and
+  retry. Sparkle and Sentry are binary targets that SwiftPM downloads from
+  github.com release URLs; a 504 from GitHub's release CDN failed 2 of the 3
+  red main builds of cd-cua-spaces-build.yml on 5 Nov 2026 after a 60 to 90
+  minute Rust build. `swift build` does not retry a binary target download,
+  so this step does, with a pause, and keeps the downloaded artifacts for the
+  build that follows. Run after actions/checkout, on macOS.
+
+inputs:
+  package-path:
+    description: "Directory of Package.swift."
+    default: apps/cua-spaces-macos
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve Swift packages
+      shell: bash
+      env:
+        PACKAGE_PATH: ${{ github.workspace }}/${{ inputs.package-path }}
+      run: |
+        set -euo pipefail
+        for attempt in 1 2 3 4 5 6; do
+          if swift package --package-path "$PACKAGE_PATH" resolve; then
+            exit 0
+          fi
+          echo "::warning::swift package resolve failed (attempt $attempt of 6); retrying"
+          sleep $((attempt * 30))
+        done
+        echo "::error::swift package resolve failed 6 times (GitHub release downloads)"
+        exit 1

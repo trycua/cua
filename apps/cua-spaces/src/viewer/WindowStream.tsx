@@ -21,17 +21,16 @@
 import { useEffect, useRef, useState } from "react";
 
 import type { RemoteWindow } from "../model/teleport";
-import type {
-  FleetBridge,
-  StreamOpts,
-  StreamTarget,
-  StreamTicketInfo,
-  ViewerConfig,
-} from "../native/fleet";
+import type { SpacesBridge, StreamOpts, StreamTarget, StreamTicketInfo, ViewerConfig } from "../native/spacesBridge";
 import { createTeleportBridge } from "../native/teleport";
 import { telemetryBridge, type TelemetryBridge } from "../native/telemetry";
 import { PresenceOverlay } from "./presence/PresenceOverlay";
-import { MediaSession, type MediaStatus, type MediaTicket, type SessionOpenedPayload } from "@cua/spacesd-html5/core/mediaSession";
+import {
+  MediaSession,
+  type MediaStatus,
+  type MediaTicket,
+  type SessionOpenedPayload,
+} from "@cua/spacesd-html5/core/mediaSession";
 import { useT } from "../i18n";
 
 export { applyCursorShape, cursorShapeToCss } from "./cursorShape";
@@ -167,45 +166,41 @@ export function MediaCanvas(props: MediaCanvasProps) {
 // ---------------------------------------------------------------- WindowStream
 
 interface WindowStreamProps {
-  fleet: FleetBridge;
+  bridge: SpacesBridge;
   /** The Space's window list (multi mode); defaults to the shell's. */
   listWindows?: (spaceId: string) => Promise<RemoteWindow[]>;
 }
 
-type Boot =
-  | { kind: "loading" }
-  | { kind: "error"; message: string }
-  | { kind: "ready"; config: ViewerConfig };
+type Boot = { kind: "loading" } | { kind: "error"; message: string } | { kind: "ready"; config: ViewerConfig };
 
-export function WindowStream({ fleet, listWindows }: WindowStreamProps) {
+export function WindowStream({ bridge, listWindows }: WindowStreamProps) {
   const t = useT(["spaces", "common"]);
   const [boot, setBoot] = useState<Boot>({ kind: "loading" });
 
   useEffect(() => {
     let cancelled = false;
-    fleet
+    bridge
       .viewerConfig()
       .then((config) => {
         if (!cancelled) setBoot({ kind: "ready", config });
       })
       .catch((error: unknown) => {
-        if (!cancelled)
-          setBoot({ kind: "error", message: error instanceof Error ? error.message : String(error) });
+        if (!cancelled) setBoot({ kind: "error", message: error instanceof Error ? error.message : String(error) });
       });
     return () => {
       cancelled = true;
     };
-  }, [fleet]);
+  }, [bridge]);
 
   if (boot.kind === "loading") return <div className="viewer viewer-message">{t("common.status.connecting")}</div>;
   if (boot.kind === "error") {
     return <div className="viewer viewer-message viewer-error">{boot.message}</div>;
   }
   return boot.config.targetWindow ? (
-    <SingleWindowStream fleet={fleet} config={boot.config} />
+    <SingleWindowStream bridge={bridge} config={boot.config} />
   ) : (
     <MultiWindowStream
-      fleet={fleet}
+      bridge={bridge}
       config={boot.config}
       listWindows={listWindows ?? ((id) => createTeleportBridge().listRemoteWindows(id))}
     />
@@ -217,7 +212,7 @@ async function currentWindow() {
   return getCurrentWindow();
 }
 
-function SingleWindowStream({ fleet, config }: { fleet: FleetBridge; config: ViewerConfig }) {
+function SingleWindowStream({ bridge, config }: { bridge: SpacesBridge; config: ViewerConfig }) {
   const t = useT(["spaces", "common"]);
   const target = config.targetWindow!;
   const space = config.space;
@@ -231,7 +226,7 @@ function SingleWindowStream({ fleet, config }: { fleet: FleetBridge; config: Vie
   const replica = target.replica === true;
 
   const open = useRef<() => Promise<MediaTicket>>(() =>
-    fleet
+    bridge
       .openStream(space.id, { kind: "window", windowId: target.id } satisfies StreamTarget, {
         ...(replica ? REPLICA_OPTS : PRIMARY_WINDOW_OPTS),
         geometryControl: !replica,
@@ -290,7 +285,7 @@ function SingleWindowStream({ fleet, config }: { fleet: FleetBridge; config: Vie
       applied.current.guard = false;
     }, RESIZE_DEBOUNCE_MS + 150);
     applied.current = { w, h, guard: true, timer };
-    void fleet.resizeStreamWindow(w, h).catch(() => {});
+    void bridge.resizeStreamWindow(w, h).catch(() => {});
   };
 
   return (
@@ -336,7 +331,12 @@ function SingleWindowStream({ fleet, config }: { fleet: FleetBridge; config: Vie
                 .catch(() => {});
             }}
           />
-          <PresenceOverlay spaceId={space.id} windowId={target.id} interactive={!replica} live={status === "streaming"} />
+          <PresenceOverlay
+            spaceId={space.id}
+            windowId={target.id}
+            interactive={!replica}
+            live={status === "streaming"}
+          />
         </div>
       </div>
       {status !== "streaming" && (
@@ -370,11 +370,11 @@ export function selectWindows(windows: readonly RemoteWindow[], cap = MAX_WINDOW
 }
 
 function MultiWindowStream({
-  fleet,
+  bridge,
   config,
   listWindows,
 }: {
-  fleet: FleetBridge;
+  bridge: SpacesBridge;
   config: ViewerConfig;
   listWindows: (spaceId: string) => Promise<RemoteWindow[]>;
 }) {
@@ -413,7 +413,7 @@ function MultiWindowStream({
     <div className="window-stream" data-status={status}>
       <div className="window-stream-surface">
         {windows.map((win, index) => (
-          <WindowPanel key={win.id} fleet={fleet} spaceId={space.id} win={win} index={index} />
+          <WindowPanel key={win.id} bridge={bridge} spaceId={space.id} win={win} index={index} />
         ))}
       </div>
       {status === "waiting" && (
@@ -432,12 +432,12 @@ function MultiWindowStream({
 }
 
 function WindowPanel({
-  fleet,
+  bridge,
   spaceId,
   win,
   index,
 }: {
-  fleet: FleetBridge;
+  bridge: SpacesBridge;
   spaceId: string;
   win: RemoteWindow;
   index: number;
@@ -450,7 +450,7 @@ function WindowPanel({
   const [z, setZ] = useState(1);
   const sessionRef = useRef<MediaSession | null>(null);
   const open = useRef(() =>
-    fleet.openStream(spaceId, { kind: "window", windowId: win.id }, PRIMARY_WINDOW_OPTS).then(toMediaTicket),
+    bridge.openStream(spaceId, { kind: "window", windowId: win.id }, PRIMARY_WINDOW_OPTS).then(toMediaTicket),
   ).current;
 
   if (closed) return null;
@@ -471,7 +471,12 @@ function WindowPanel({
   };
 
   return (
-    <div className="ws-frame" style={{ left: `${pos.x}px`, top: `${pos.y}px`, zIndex: z }} onMouseDown={() => setZ(2)} onBlur={() => setZ(1)}>
+    <div
+      className="ws-frame"
+      style={{ left: `${pos.x}px`, top: `${pos.y}px`, zIndex: z }}
+      onMouseDown={() => setZ(2)}
+      onBlur={() => setZ(1)}
+    >
       <div className="ws-frame-bar" onMouseDown={startDrag}>
         <span className="ws-frame-title">{`${win.appName || "Window"}${title ? ` — ${title}` : ""}`}</span>
         <span className="ws-frame-badge">{badge}</span>
@@ -481,7 +486,7 @@ function WindowPanel({
           aria-label={t("spaces.window_stream.close_window")}
           onClick={() => {
             const id = sessionRef.current?.id;
-            if (id) void fleet.closeStream(spaceId, id).catch(() => {});
+            if (id) void bridge.closeStream(spaceId, id).catch(() => {});
             setClosed(true);
           }}
         >

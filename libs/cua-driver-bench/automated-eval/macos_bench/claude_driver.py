@@ -23,17 +23,10 @@ from pathlib import Path
 from typing import Any
 
 import claude_arms as ca
+from desktop_runtime import record_or_reap
+from desktop_runtime import stop_group as kill_group
 
 ELICIT_APP = re.compile(r'Allow Computer Use to use "(.+)"\?')
-
-
-def kill_group(pid: int, grace: float = 1.0) -> None:
-    for sig in (signal.SIGTERM, signal.SIGKILL):
-        try:
-            os.killpg(pid, sig)
-        except OSError:
-            return
-        time.sleep(grace)
 
 
 def answer_elicitation(message: str, allowed_apps: set[str]) -> dict[str, Any]:
@@ -90,6 +83,7 @@ def run_claude(
         finally:
             if token_fd is not None:
                 os.close(token_fd)
+        record_or_reap(proc, "claude")
         lock = threading.Lock()
 
         def send(obj: dict[str, Any]) -> None:

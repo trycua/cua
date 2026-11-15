@@ -15,6 +15,11 @@
 //! * Other computers publish [`summary`] numbers through the relay
 //!   machine record (`meta`); reading them costs nothing extra because the
 //!   machine list is already fetched.
+//! * Your Spaces on your other computers get a [`SpaceResources`] too,
+//!   with only [`SpaceResources::disk_on_host`]: what each takes on its
+//!   computer, asked of that computer (`GetHostSpacesRequest.disk`) at most
+//!   every [`REMOTE_DISK_EVERY`] while somebody reads the numbers. An
+//!   offline computer's Spaces get none.
 //!
 //! Numbers only: counts, bytes and percentages. Never file names, paths,
 //! process names or window titles.
@@ -22,10 +27,12 @@
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+pub mod creates;
 pub mod disk;
 pub mod host;
 mod hub;
 pub mod publish;
+mod remote;
 pub mod summary;
 mod wire;
 pub mod words;
@@ -50,6 +57,10 @@ pub const MAX_AGE: Duration = Duration::from_secs(5);
 /// One Space's disk is measured at most this often (and again after it is
 /// created, deleted or changes power state).
 pub const DISK_MEASURE_EVERY: Duration = Duration::from_secs(300);
+
+/// Your other computers are asked what your Spaces take on their disks at
+/// most this often.
+pub const REMOTE_DISK_EVERY: Duration = Duration::from_secs(60);
 
 /// An update carries an entry only when a percentage moved by more than
 /// this many points ...
@@ -212,14 +223,37 @@ pub struct GuestUsage {
     pub memory_limited: bool,
     /// Disk in use, bytes.
     pub disk_used: u64,
-    /// Disk size, bytes.
-    pub disk_total: u64,
+    /// Disk size, bytes; `None` when the guest's file system has no size of
+    /// its own (gVisor's root overlay reports "unlimited") or did not say.
+    /// Never a sentinel: see [`known_size`].
+    #[serde(default, deserialize_with = "de_known_size")]
+    pub disk_total: Option<u64>,
     /// `disk_total` is the guest's own disk.
     pub disk_limited: bool,
 }
 
+/// Sizes at or above this are not sizes: "unlimited" or "unknown" sentinels
+/// (`i64::MAX`, `u64::MAX`, gVisor's `MaxInt64` rounded to a page). No
+/// volume holds an exbibyte.
+pub const SIZE_SENTINEL_FLOOR: u64 = 1 << 60;
+
+/// A size as reported, or `None` when it is no size: 0 (not said) or a
+/// sentinel ([`SIZE_SENTINEL_FLOOR`]). The one place a guest's or an older
+/// daemon's "unlimited" turns into an explicit absence, so no sentinel ever
+/// reaches a screen.
+pub fn known_size(bytes: u64) -> Option<u64> {
+    (bytes > 0 && bytes < SIZE_SENTINEL_FLOOR).then_some(bytes)
+}
+
+/// [`known_size`] for JSON: a number (any sign or size), `null` or absent.
+fn de_known_size<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u64>, D::Error> {
+    let v = Option::<serde_json::Number>::deserialize(d)?;
+    Ok(v.and_then(|n| n.as_u64()).and_then(known_size))
+}
+
 impl From<crate::stream::Usage> for GuestUsage {
     fn from(u: crate::stream::Usage) -> Self {
+        let disk_total = known_size(u.disk_total);
         GuestUsage {
             cpu_count: u.cpu_count,
             cpu_percent: u.cpu_percent,
@@ -227,9 +261,14 @@ impl From<crate::stream::Usage> for GuestUsage {
             memory_used: u.memory_used,
             memory_total: u.memory_total,
             memory_limited: u.memory_limited,
-            disk_used: u.disk_used,
-            disk_total: u.disk_total,
-            disk_limited: u.disk_limited,
+            // A used count above a size that is no size is no count either.
+            disk_used: if u.disk_used >= SIZE_SENTINEL_FLOOR {
+                0
+            } else {
+                u.disk_used
+            },
+            disk_total,
+            disk_limited: u.disk_limited && disk_total.is_some(),
         }
     }
 }
@@ -247,11 +286,15 @@ pub struct DiskOnHost {
     pub shares_space: bool,
 }
 
-/// One extra Space on this Mac.
+/// One extra Space on this Mac, or one of yours on another of your
+/// computers (then only [`SpaceResources::disk_on_host`], on that computer,
+/// and its power state are known).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SpaceResources {
-    /// `local:<name>`.
+    /// The Space's id on this device: `local:<name>`, or for one on
+    /// another computer the id it is reached by here (`relay:<machine>`,
+    /// `direct:<addr>:<port>`).
     pub id: String,
     /// `running`, `stopped`, `suspended`, or empty when unknown.
     pub power_state: String,
@@ -263,8 +306,32 @@ pub struct SpaceResources {
     pub disk_allocated: u64,
     /// The guest's own numbers; `None` while it is off or unreachable.
     pub usage: Option<GuestUsage>,
-    /// What it costs this Mac; `None` for a container.
+    /// What it costs this Mac: only its own data (a clone's or a
+    /// container's changes), never the base it shares; `None` when there
+    /// is nothing to measure.
     pub disk_on_host: Option<DiskOnHost>,
+    /// The base image it is a copy-on-write copy of, counted once for all
+    /// the Spaces on this computer that share it; `None` when it has none
+    /// or the runtime cannot tell it apart.
+    #[serde(default)]
+    pub base: Option<SharedBase>,
+}
+
+/// A base image several Spaces share copy-on-write (a container image's
+/// layers, the image a VM disk was cloned from).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SharedBase {
+    /// Which base: Spaces with the same key share the same blocks.
+    pub key: String,
+    /// The image reference it came from (`ghcr.io/trycua/linux:24.04`).
+    pub image: String,
+    /// What it takes on this computer, once for all its Spaces; `None`
+    /// when the runtime cannot tell it apart from the Spaces' own data.
+    pub bytes: Option<u64>,
+    /// Local Spaces that use it, this one included (1: deleting this Space
+    /// leaves no other user of it).
+    pub shared_with: u32,
 }
 
 /// One sample of everything.
@@ -368,7 +435,8 @@ impl SpaceResources {
                     || grew(a.memory_used, b.memory_used)
                     || grew(a.memory_total, b.memory_total)
                     || grew(a.disk_used, b.disk_used)
-                    || grew(a.disk_total, b.disk_total)
+                    || a.disk_total.is_some() != b.disk_total.is_some()
+                    || grew(a.disk_total.unwrap_or(0), b.disk_total.unwrap_or(0))
             }
             _ => true,
         };
@@ -384,6 +452,7 @@ impl SpaceResources {
         };
         usage
             || disk
+            || self.base != sent.base
             || self.id != sent.id
             || self.power_state != sent.power_state
             || self.cpu_allocated != sent.cpu_allocated

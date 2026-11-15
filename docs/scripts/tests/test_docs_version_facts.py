@@ -32,22 +32,17 @@ EXPECTED_FACTS = {
     "cua-sdk/concepts/how-sandboxes-work.mdx": (f"`cua-sandbox` {SANDBOX_VERSION}",),
     "cua-sdk/guides/agent-frameworks.mdx": (f"cua-sandbox=={SANDBOX_VERSION}",),
     "cua-sdk/guides/desktop.mdx": (f"'cua-sandbox[driver]=={SANDBOX_VERSION}'",),
-    "cua-sdk/reference/index.mdx": (
-        f"`pip install cua` ({CUA_VERSION}",
-        f"`npm install @trycua/cua` ({TYPESCRIPT_CUA_VERSION}",
-    ),
-    "cua-sdk/reference/python/index.mdx": (
-        f"`cua-sandbox` {SANDBOX_VERSION}",
-        f"`cua` {CUA_VERSION}",
-    ),
-    "cua-sdk/reference/runtime-support.mdx": (
-        f"`cua-sandbox` **{SANDBOX_VERSION}**",
-        f"`cua` **{CUA_VERSION}**",
-    ),
-    "cua-sdk/reference/typescript/index.mdx": (
-        f"`npm install @trycua/cua` ({TYPESCRIPT_CUA_VERSION})",
-    ),
 }
+
+# Generated reference pages name no release version at all (a stamp goes stale
+# when a PR regenerates a page before a release and merges after it). The
+# generator test scripts/docs-generators/docs-version-stamp.test.ts enforces it.
+GENERATED_PAGES = (
+    "cua-sdk/reference/index.mdx",
+    "cua-sdk/reference/python/index.mdx",
+    "cua-sdk/reference/runtime-support.mdx",
+    "cua-sdk/reference/typescript/index.mdx",
+)
 
 
 def test_cua_sdk_manifests_release_in_lockstep() -> None:
@@ -69,7 +64,7 @@ def test_owned_pages_drop_superseded_maintained_versions() -> None:
         re.compile(r"cua-cli(?:`|\*\*)?[ =@]+0\.1\.14\b"),
     )
 
-    for relative_path in EXPECTED_FACTS:
+    for relative_path in (*EXPECTED_FACTS, *GENERATED_PAGES):
         text = (DOCS / relative_path).read_text()
         for pattern in stale_facts:
             assert not pattern.search(text), f"{relative_path} contains {pattern.pattern!r}"

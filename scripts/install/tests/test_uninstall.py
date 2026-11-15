@@ -35,6 +35,26 @@ case "$*" in
     if [ -f "$FAKE_SPACES" ]; then cat "$FAKE_SPACES"; else echo "No sandboxes found."; fi
     ;;
 "host remove --force --uninstalling") rm -rf "${CUA_HOME:-$HOME/.cua}/host" ;;
+"agents remove --help")
+    # A cua before the agents fix has neither --include-cua-driver nor --dry-run.
+    echo "Usage: cua agents remove [OPTIONS]"
+    echo "      --agents <AGENTS>  --skills-only  --mcp-only  -y, --yes"
+    if [ -z "${FAKE_CUA_OLD_AGENTS:-}" ]; then
+        echo "      --include-cua-driver  Also remove Cua Driver's skill and MCP server"
+        echo "      --dry-run             List exactly what would be removed"
+    fi
+    ;;
+"agents remove --agents all --dry-run" | "agents remove --agents all --include-cua-driver --dry-run")
+    echo "Dry run: nothing is changed."
+    echo "  would remove MCP server cua: ~/.claude.json"
+    echo "  would remove skill cua-spaces: ~/.claude/skills/cua-spaces"
+    echo "  - MCP server cua-driver: ~/.claude.json kept (Cua Driver's; --include-cua-driver removes it)"
+    if [ -n "${FAKE_CUA_PLAN_FAILS:-}" ]; then
+        # One agent's config is unreadable: the others are still listed, and the exit status is 1.
+        echo "  FAILED MCP server cua: ~/.codex/config.toml (left unchanged)"
+        exit 1
+    fi
+    ;;
 esac
 exit 0
 """
@@ -246,14 +266,23 @@ class UninstallMacTest(unittest.TestCase):
                 self.assertIn("[dry-run] remove", result.stdout)
                 self.assertIn("cua host remove --force --uninstalling", result.stdout)
                 self.assertIn("[dry-run] bash lume-uninstall.sh --force --purge", result.stdout)
+                # The agent entries are listed one by one, by the command the real run uses with --dry-run.
+                self.assertIn("[dry-run] cua agents remove --agents all --include-cua-driver --dry-run:", result.stdout)
+                self.assertIn("[dry-run]   would remove MCP server cua: ~/.claude.json", result.stdout)
+                self.assertIn("[dry-run]   would remove skill cua-spaces: ~/.claude/skills/cua-spaces", result.stdout)
                 self.assertEqual(before, sorted(str(p) for p in box.home.rglob("*")))
                 self.assertEqual(zshrc, (box.home / ".zshrc").read_text())
                 self.assertEqual(len(box.keychain_items()), 6)
                 log = "\n".join(box.call_log())
                 # The timeout watchdog polls with one-second sleeps, so nothing is left parked.
                 self.assertEqual(sorted({l for l in log.splitlines() if l.startswith("sleep:")} - {"sleep: 1"}), [])
-                for destructive in ("delete-generic-password", "bootout", "agents remove", "daemon stop", "host remove"):
+                for destructive in ("delete-generic-password", "bootout", "daemon stop", "host remove"):
                     self.assertNotIn(destructive, log)
+                # `agents remove` runs only to read its help and to preview with --dry-run.
+                agent_calls = [l for l in log.splitlines() if "agents remove" in l]
+                self.assertTrue(agent_calls)
+                for call in agent_calls:
+                    self.assertTrue(call.endswith("--help") or call.endswith("--dry-run"), call)
 
     def test_default_removes_programs_and_settings_and_keeps_spaces_data(self):
         for shell in shells():
@@ -289,6 +318,142 @@ class UninstallMacTest(unittest.TestCase):
                 self.assertTrue(all(i >= 0 for i in indexes), box.call_log())
                 self.assertEqual(indexes, sorted(indexes))
                 self.assertGreaterEqual(box.index("launchctl: bootout"), 0)
+                # Without --all, Cua Driver's skill and MCP entries stay, and the plan says so.
+                self.assertFalse([c for c in box.call_log() if "--include-cua-driver" in c])
+                self.assertIn("Cua Driver's skill and MCP server in your agents", result.stdout)
+
+    def test_a_dry_run_still_lists_the_rows_when_one_agents_config_cannot_be_read(self):
+        box = self.box()
+        installed_mac(box)
+        result = box.run("--dry-run", env={"FAKE_CUA_PLAN_FAILS": "1"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("[dry-run]   would remove MCP server cua: ~/.claude.json", result.stdout)
+        self.assertIn("[dry-run]   would remove skill cua-spaces: ~/.claude/skills/cua-spaces", result.stdout)
+        self.assertIn("[dry-run]   FAILED MCP server cua: ~/.codex/config.toml", result.stdout)
+        self.assertIn("reported a problem (see above), so the list may be incomplete", result.stderr)
+
+    def test_a_cua_too_old_to_leave_cua_driver_alone_skips_the_agent_step_and_still_succeeds(self):
+        """An older `cua agents remove` also strips the `cua-driver` skill and MCP server and
+        has no --dry-run: the uninstaller does not run it, says what stays in the agents and how
+        to remove it, removes everything else and exits 0. The script is published on merge,
+        before the cua release that adds the flag, so this must not look like a failure."""
+        box = self.box()
+        installed_mac(box)
+        box.put(".cua/agent-setup.json", "{}\n")
+        result = box.run("--yes", env={"FAKE_CUA_OLD_AGENTS": "1"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(box.exists(".cua/agent-setup.json"))
+        self.assertIn("older than the version that removes only Cua Spaces' entries", result.stdout)
+        self.assertIn("agent step is skipped", result.stdout)
+        self.assertIn("install.sh | sh -s -- --cli-only --yes", result.stdout)
+        self.assertIn("run: cua agents remove", result.stdout)
+        # A note, not a warning, and the run says it is done.
+        self.assertNotIn("older than the version", result.stderr)
+        self.assertNotIn("need your attention", result.stdout + result.stderr)
+        self.assertIn("cua-uninstall: done", result.stdout)
+        log = box.call_log()
+        self.assertEqual([c for c in log if "agents remove" in c and not c.endswith("--help")], [])
+        # Everything else goes: hosting, sign-out, the CLI and the app; the record of what cua
+        # added to the agents stays for a later `cua agents remove` (it is not in the disposable list).
+        self.assertGreaterEqual(box.index("host remove --force --uninstalling"), 0)
+        self.assertGreaterEqual(box.index("auth logout"), 0)
+        self.assertFalse(box.exists(".local/bin/cua"))
+        self.assertFalse(box.exists("Applications/Cua Spaces.app"))
+        # --delete-spaces deletes that record too: the note says to remove the entries by hand.
+        box = Sandbox(tempfile.mkdtemp(dir=self.tmp.name), "Darwin")
+        installed_mac(box)
+        result = box.run("--yes", "--delete-spaces", env={"FAKE_CUA_OLD_AGENTS": "1"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("remove them by hand", result.stdout)
+        # A dry run says so and lists the rest of the plan.
+        box = Sandbox(tempfile.mkdtemp(dir=self.tmp.name), "Darwin")
+        installed_mac(box)
+        result = box.run("--dry-run", env={"FAKE_CUA_OLD_AGENTS": "1"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("[dry-run] cua agents remove --agents all: skipped, this cua is older than", result.stdout)
+        self.assertIn("cua host remove --force --uninstalling", result.stdout)
+
+    @staticmethod
+    def app_id_defaults(box, app_id="com.trycua.spaces.macos"):
+        """`defaults read <app>/Contents/Info CFBundleIdentifier` answers `app_id`."""
+        box.put("Applications/Cua Spaces.app/Contents/Info.plist", "plist\n")
+        write_executable(box.bin / "defaults", f"#!/bin/sh\nprintf 'defaults: %s\\n' \"$*\" >>\"$FAKE_CALLS\"\n"
+                         f"case \"$*\" in *CFBundleIdentifier*) echo {app_id} ;; esac\nexit 0\n")
+
+    def test_keep_permissions_leaves_them_alone(self):
+        box = self.box()
+        installed_mac(box)
+        self.app_id_defaults(box)
+        result = box.run("--yes", "--keep-permissions", "--prefix", str(box.home))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(box.index("tccutil"), -1)
+        self.assertFalse(box.exists("Applications/Cua Spaces.app"))
+        dry = box.run("--dry-run", "--keep-permissions")
+        self.assertNotIn("tccutil", dry.stdout)
+
+    def test_permissions_are_reset_before_the_app_is_removed(self):
+        box = self.box()
+        installed_mac(box)
+        self.app_id_defaults(box)
+        # The fake tccutil, like the real one, fails once the app is gone.
+        write_executable(box.bin / "tccutil",
+                         "#!/bin/sh\nprintf 'tccutil: %s\\n' \"$*\" >>\"$FAKE_CALLS\"\n"
+                         f"[ -d {shlex.quote(str(box.home / 'Applications/Cua Spaces.app'))} ] || exit 1\n")
+        result = box.run("--yes", "--prefix", str(box.home))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertGreaterEqual(box.index("tccutil: reset All com.trycua.spaces.macos"), 0)
+        self.assertNotIn("could not reset the permissions", result.stderr)
+        self.assertFalse(box.exists("Applications/Cua Spaces.app"))
+
+    def test_another_apps_bundle_id_is_never_reset(self):
+        box = self.box()
+        installed_mac(box)
+        self.app_id_defaults(box, "com.trycua.driver")
+        result = box.run("--yes", "--prefix", str(box.home))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(box.index("tccutil"), -1)
+
+    def test_a_login_item_that_stays_is_reported(self):
+        box = self.box()
+        installed_mac(box)
+        box.put("Applications/Cua Spaces.app/Contents/Library/LaunchAgents/com.trycua.spaces.helper.plist", "plist\n")
+        write_executable(box.home / "Applications/Cua Spaces.app/Contents/MacOS/CuaSpacesMac",
+                         "#!/bin/sh\nprintf 'app: %s\\n' \"$*\" >>\"$FAKE_CALLS\"\n"
+                         "case \"$2\" in unregister) exit 1 ;; status) echo '{\"status\":\"enabled\"}' ;; esac\n")
+        result = box.run("--yes", "--prefix", str(box.home))
+        self.assertIn("could not unregister the Cua Spaces login item", result.stderr)
+        self.assertIn("still registered", result.stdout)
+        # Tried twice before giving up.
+        self.assertEqual(len([c for c in box.call_log() if c == "app: --service-helper unregister"]), 2)
+
+    def test_the_app_helper_goes_and_its_permissions_are_reset_first(self):
+        box = self.box()
+        installed_mac(box)
+        self.app_id_defaults(box)
+        # Cua Spaces 0.10+: the host service is the app's login item.
+        box.put("Applications/Cua Spaces.app/Contents/Library/LaunchAgents/com.trycua.spaces.helper.plist", "plist\n")
+        write_executable(box.home / "Applications/Cua Spaces.app/Contents/MacOS/CuaSpacesMac",
+                         "#!/bin/sh\nprintf 'app: %s\\n' \"$*\" >>\"$FAKE_CALLS\"\n")
+        box.put(".cua/helper/service.json", "{}\n")
+        dry = box.run("--dry-run")
+        self.assertEqual(dry.returncode, 0, dry.stdout + dry.stderr)
+        self.assertIn("--service-helper unregister", dry.stdout)
+        self.assertIn("[dry-run] tccutil reset All com.trycua.spaces.macos", dry.stdout)
+        self.assertEqual(box.index("tccutil"), -1)
+        self.assertTrue(box.exists(".cua/helper/service.json"))
+        result = box.run("--yes", "--prefix", str(box.home))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # Unregistered by the app before the app goes, then stopped.
+        self.assertGreaterEqual(box.index("app: --service-helper unregister"), 0)
+        self.assertGreaterEqual(box.index("launchctl: bootout gui/1000/com.trycua.spaces.helper"), 0)
+        # Permissions of the app's own id only, reset while the app is installed.
+        self.assertGreaterEqual(box.index("tccutil: reset All com.trycua.spaces.macos"), 0)
+        self.assertEqual([c for c in box.call_log() if c.startswith("tccutil")],
+                         ["tccutil: reset All com.trycua.spaces.macos"])
+        self.assertIn("minus button", result.stdout)
+        for gone in (".cua/helper", "Applications/Cua Spaces.app",
+                     "Library/LaunchAgents/com.trycua.spacesd.host.plist", ".cua/host/bin/cua-spacesd"):
+            self.assertFalse(box.exists(gone), gone)
 
     def test_keep_data_keeps_the_cua_home_but_still_signs_out(self):
         box = self.box()
@@ -502,6 +667,19 @@ class OtherToolsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.log.read_text().splitlines(), ["driver ", "lume --force"])
 
+    def test_all_also_removes_cua_drivers_agent_entries_and_without_all_they_stay(self):
+        box = Sandbox(tempfile.mkdtemp(dir=self.tmp.name), "Darwin")
+        box.cli()
+        result = box.run("--yes", "--all", env=self.env())
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertGreaterEqual(box.index("agents remove --agents all --include-cua-driver --yes"), 0, box.call_log())
+        box = Sandbox(tempfile.mkdtemp(dir=self.tmp.name), "Darwin")
+        box.cli()
+        result = box.run("--yes", env=self.env())
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertGreaterEqual(box.index("agents remove --agents all --yes"), 0, box.call_log())
+        self.assertEqual([c for c in box.call_log() if "--include-cua-driver" in c], [])
+
     def test_all_with_delete_spaces_purges_lume(self):
         box = Sandbox(tempfile.mkdtemp(dir=self.tmp.name), "Darwin")
         box.cli()
@@ -521,8 +699,11 @@ class OtherToolsTest(unittest.TestCase):
         self.assertEqual([call for call in box.call_log() if call.startswith("tccutil")], [])
         for name in ("uninstall.sh", "uninstall.ps1"):
             script = (Path(__file__).resolve().parent.parent / name).read_text()
-            self.assertNotIn("tccutil", script, name)
             self.assertNotIn("reset-permissions", script, name)
+            # Only the Cua Spaces app's own id is ever reset, never the driver's.
+            for line in script.splitlines():
+                if "tccutil" in line and "has tccutil" not in line and not line.lstrip().startswith("#"):
+                    self.assertTrue("$app_id" in line or "spaces.macos" in line, line)
 
     def test_on_linux_lume_is_skipped_and_the_driver_runs_even_with_nothing_else_installed(self):
         box = Sandbox(tempfile.mkdtemp(dir=self.tmp.name), "Linux")

@@ -49,3 +49,31 @@ jobs:
           gh release upload cua-install-latest stamped/install.sh stamped/install.ps1 \
             stamped/uninstall.sh stamped/uninstall.ps1 --clobber --repo "$GITHUB_REPOSITORY"
           echo "Published install.sh, install.ps1, uninstall.sh and uninstall.ps1 from $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+
+  # Mirror to the downloads CDN (CUA-3941). GitHub stays the source of truth:
+  # this job never blocks or fails the release (continue-on-error) but shows a
+  # red job and a loud step summary when the CDN copy is incomplete.
+  cdn-publish:
+    name: Copy to the downloads CDN
+    needs: [publish]
+    if: >-
+      !cancelled() && github.repository == 'trycua/cua' && needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 90
+    # The publish role trusts main and this environment (OIDC).
+    environment: cua-driver-release-signing
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github/scripts
+            .github/actions
+          persist-credentials: false
+      - uses: ./.github/actions/publish-downloads-cdn
+        with:
+          tags: |
+            cua-install-latest

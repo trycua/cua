@@ -103,9 +103,12 @@ export function Timeline({
       if (followingRef.current) void listRef.current?.scrollToEnd({ animated: false });
     });
   }, []);
-  useEffect(() => () => {
-    if (pinFrame.current !== null) cancelAnimationFrame(pinFrame.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (pinFrame.current !== null) cancelAnimationFrame(pinFrame.current);
+    },
+    [],
+  );
   useEffect(pin, [items, timeline.status, timeline.phase, toggled, pin]);
 
   const jumpToEnd = () => {

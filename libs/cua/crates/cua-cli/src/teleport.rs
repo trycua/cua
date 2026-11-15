@@ -28,6 +28,22 @@ pub enum TeleportCmd {
   # The whole Slack profile, every item
   cua teleport push --app Slack --sandbox dev --all")]
     Push(PushArgs),
+    /// Check, in plain words, that a teleport can work now: the Keyvault,
+    /// permission to read the browser's files and tabs, and the profile.
+    #[command(after_help = "Examples:
+  cua teleport doctor
+  cua teleport doctor --app chrome --profile \"Profile 1\"")]
+    Doctor(DoctorArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct DoctorArgs {
+    /// Browser to check (`chrome` or `edge`).
+    #[arg(long, default_value = "chrome")]
+    pub app: String,
+    /// Profile to check: a name ("Profile 1"). Default: the one used last.
+    #[arg(long)]
+    pub profile: Option<String>,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -47,7 +63,7 @@ pub struct AppArgs {
     pub display_name: Option<String>,
 }
 
-#[derive(Args, Debug, Clone)]
+#[derive(Args, Clone)]
 pub struct PushArgs {
     #[command(flatten)]
     pub app: AppArgs,
@@ -59,9 +75,18 @@ pub struct PushArgs {
         required_unless_present = "url"
     )]
     pub sandbox: Option<String>,
-    /// Destination cua-spacesd URL instead of a sandbox.
+    /// Destination cua-spacesd URL instead of a sandbox: another daemon's
+    /// API, or any machine you can reach. The browser is read by the local
+    /// Cua daemon with the same Keyvault consent, audit record and wipe as
+    /// `--sandbox`; `--url` only names where it goes.
     #[arg(long)]
     pub url: Option<String>,
+    /// With `--url`, read the app in this command's own process instead of
+    /// the Cua daemon. Consent, the audit record and the wipe are skipped, and
+    /// macOS uses this process's permissions, not Cua's. Scheduled for
+    /// removal; use `--url` alone.
+    #[arg(long, requires = "url")]
+    pub read_as_caller: bool,
     /// Token for `--url`.
     #[arg(long, env = "CUA_ENV_TOKEN", hide_env_values = true, requires = "url")]
     pub token: Option<String>,
@@ -87,6 +112,23 @@ pub struct PushArgs {
     /// unaffected either way.
     #[arg(long)]
     pub relay_plaintext_ack: bool,
+}
+
+impl std::fmt::Debug for PushArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PushArgs")
+            .field("app", &self.app)
+            .field("sandbox", &self.sandbox)
+            .field("url", &self.url)
+            .field("read_as_caller", &self.read_as_caller)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("include", &self.include)
+            .field("all", &self.all)
+            .field("no_launch", &self.no_launch)
+            .field("progress", &self.progress)
+            .field("relay_plaintext_ack", &self.relay_plaintext_ack)
+            .finish()
+    }
 }
 
 /// `tabs` or `full` (also `tabs-only`, `full-profile` and their `_`

@@ -1,0 +1,28 @@
+{
+  "$comment": "Known flakes that may fail without blocking CI. A `test` entry is matched inside a job by .github/scripts/flaky/flaky.py run. A `job` entry is matched by ci-gate: the job is rerun once, and if it fails again with `signature` in its log it is reported and does not fail the gate. Every entry needs an owner, an issue and an expiry date (at most 90 days; 7 days for a new flake). CI fails when an entry expires (ci-flaky-quarantine). See .github/workflows/FLAKY.md.",
+  "entries": [
+    {
+      "job": "linux-kvm (concurrent)",
+      "workflow": "Nightly: VM Space ready after boot",
+      "signature": "registry: Not authorized: .*ghcr\\.io/v2/trycua/|cua-spacesd is not available in sandbox .*nothing answered at",
+      "owner": "f-trycua",
+      "issue": "CUA-3132",
+      "expires": "2026-11-18"
+    },
+    {
+      "job": "macOS * mock E2E",
+      "workflow": "CI: jev-use",
+      "signature": "database is locked",
+      "owner": "f-trycua",
+      "issue": "CUA-3133",
+      "expires": "2026-11-18"
+    },
+    {
+      "test": "handover_process::the_next_relay_waits_then_serves_what_queued",
+      "suite": "spacesd-*",
+      "owner": "f-trycua",
+      "issue": "CUA-3855",
+      "expires": "2026-11-15"
+    }
+  ]
+}

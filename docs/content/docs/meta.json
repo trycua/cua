@@ -5,10 +5,9 @@
     "index",
     "spaces",
     "cua-driver",
-    "---More tools---",
-    "cua-cli",
-    "cua-sdk",
     "lume",
+    "cua-sdk",
+    "cua-cli",
     "cua-bench"
   ]
 }

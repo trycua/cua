@@ -8,7 +8,9 @@ import WebKit
 /// Serves the bundled web UI (`Contents/Resources/WebUI`) at
 /// `cua-spaces://app/`. A path without a file behind it and without an
 /// extension is a client-side route and gets `index.html`. Nothing outside
-/// the WebUI directory is ever read.
+/// the WebUI directory is read, except the app's own files listed in
+/// `appFiles` under `/__app/` (About's Acknowledgements reads the bundled
+/// third-party notices there, never from the network).
 final class WebUISchemeHandler: NSObject, WKURLSchemeHandler {
     static let scheme = "cua-spaces"
     static let host = "app"
@@ -17,9 +19,32 @@ final class WebUISchemeHandler: NSObject, WKURLSchemeHandler {
     /// The web build's directory, or nil when this build carries none (the
     /// placeholder page says how to add it).
     let root: URL?
+    /// The app's own files the page may read, by name, at `/__app/<name>`.
+    let appFiles: [String: URL]
 
-    init(root: URL? = WebUISchemeHandler.bundledRoot()) {
+    /// Where the page reads the app's own files.
+    static let appPrefix = "/__app/"
+
+    init(root: URL? = WebUISchemeHandler.bundledRoot(), appFiles: [String: URL] = WebUISchemeHandler.bundledAppFiles()) {
         self.root = root?.standardizedFileURL
+        self.appFiles = appFiles
+    }
+
+    /// The app's third-party notices (`THIRD_PARTY_NOTICES.md`, copied into
+    /// `Contents/Resources` by `scripts/build-app.sh`; in a debug build the
+    /// checkout's copy when the bundle has none).
+    static func bundledAppFiles() -> [String: URL] {
+        let name = "THIRD_PARTY_NOTICES.md"
+        var candidates: [URL] = []
+        if let r = Bundle.main.resourceURL { candidates.append(r.appendingPathComponent(name)) }
+        #if DEBUG
+        // Sources/CuaSpacesMacKit/WebHost/<file> -> apps/cua-spaces-macos
+        let app = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        candidates.append(app.appendingPathComponent(name))
+        #endif
+        guard let file = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }) else { return [:] }
+        return [name: file]
     }
 
     /// Where the web build is: the app's `Contents/Resources/WebUI`
@@ -43,6 +68,12 @@ final class WebUISchemeHandler: NSObject, WKURLSchemeHandler {
         guard let url = task.request.url, url.scheme == Self.scheme, url.host == Self.host else {
             return fail(task, URLError(.unsupportedURL))
         }
+        if url.path.hasPrefix(Self.appPrefix) {
+            guard let file = appFile(url.path), let data = try? Data(contentsOf: file) else {
+                return respond(task, url: url, data: Data(), mime: "text/plain", status: 404)
+            }
+            return respond(task, url: url, data: data, mime: "text/markdown", status: 200)
+        }
         guard let root else {
             let isPage = url.path.isEmpty || url.path == "/" || url.pathExtension.isEmpty
             return isPage ? respond(task, url: url, data: Data(Self.placeholder.utf8), mime: "text/html", status: 200)
@@ -60,6 +91,13 @@ final class WebUISchemeHandler: NSObject, WKURLSchemeHandler {
     }
 
     func webView(_ webView: WKWebView, stop task: WKURLSchemeTask) {}
+
+    /// The app file a `/__app/<name>` path names: only the listed files, by
+    /// exact name (no other path reaches the bundle).
+    func appFile(_ path: String) -> URL? {
+        guard path.hasPrefix(Self.appPrefix) else { return nil }
+        return appFiles[String(path.dropFirst(Self.appPrefix.count))]
+    }
 
     /// The file for a request path: inside `root` only; extensionless
     /// misses fall back to `index.html` (the app's own routing).

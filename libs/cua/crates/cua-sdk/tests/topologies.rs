@@ -12,7 +12,7 @@ use cua_daemon::{
 use cua_sdk::{
     AudioPacket, AudioSink, Cua, CuaError, CuaMode, FrameSink, MediaEvent, MediaOpenOptions,
     MediaSession, ProcessEventKind, ReadinessProbe, SandboxCreateOptions, SpacesdCommand,
-    VideoFrame,
+    UploadOptions, VideoFrame,
 };
 use std::{
     collections::HashMap,
@@ -114,6 +114,8 @@ fn direct(url: &str, name: &str, token: Option<&str>) -> SandboxCreateOptions {
         wait_for: vec![],
         ready_timeout_ms: None,
         env: HashMap::new(),
+        pool: None,
+        ttl_seconds: None,
         command: None,
         sidecars: vec![],
         registry_secret: None,
@@ -122,6 +124,10 @@ fn direct(url: &str, name: &str, token: Option<&str>) -> SandboxCreateOptions {
         overlays: vec![],
         keep_on_failure: false,
         gpu: None,
+        headless: false,
+        spacesd: None,
+        profile: None,
+        forkable: None,
     }
 }
 
@@ -136,6 +142,10 @@ fn cmd(program: &str, args: &[&str]) -> SpacesdCommand {
         tag: None,
         stdin: false,
         pty: None,
+        request_id: None,
+        epoch: None,
+        scrollback_bytes: None,
+        kill_on_disconnect: false,
     }
 }
 
@@ -194,6 +204,116 @@ async fn assert_media(sink: &Arc<Collect>) {
         .map(|e| e.kind.clone())
         .collect();
     assert_eq!(&kinds[..2], ["hello", "session_opened"]);
+}
+
+/// Acting as another guest user, and extended-attribute metadata, through
+/// the mock guest (see `MOCK_USERS` in the client's testing module).
+async fn file_access(env: Arc<cua_sdk::SpacesdClient>) {
+    let as_alice = UploadOptions {
+        user: Some("alice".into()),
+        metadata: Some(HashMap::from([("origin".into(), "sdk".into())])),
+        xattr_namespace: Some("user.e2b.".into()),
+        ..Default::default()
+    };
+    env.upload(
+        "/tmp/sdk/as.bin".into(),
+        b"as alice".to_vec(),
+        Some(as_alice),
+    )
+    .await
+    .unwrap();
+    let st = env
+        .stat(
+            "/tmp/sdk/as.bin".into(),
+            Some("alice".into()),
+            Some("user.e2b.".into()),
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(st.owner.as_deref(), Some("alice"));
+    assert_eq!(st.metadata.get("origin").map(String::as_str), Some("sdk"));
+    // The default namespace does not see the e2b one; a plain write is the
+    // guest's own user's.
+    let plain = env
+        .stat("/tmp/sdk/as.bin".into(), None, None, false)
+        .await
+        .unwrap();
+    assert!(plain.metadata.is_empty());
+    let listed = env
+        .list_dir(
+            "/tmp/sdk".into(),
+            1,
+            Some("alice".into()),
+            Some("user.e2b.".into()),
+        )
+        .await
+        .unwrap();
+    let row = listed.iter().find(|e| e.name == "as.bin").unwrap();
+    assert_eq!(row.metadata.get("origin").map(String::as_str), Some("sdk"));
+    assert_eq!(
+        env.download("/tmp/sdk/as.bin".into(), Some("alice".into()))
+            .await
+            .unwrap(),
+        b"as alice"
+    );
+    let moved = env
+        .move_path(
+            "/tmp/sdk/as.bin".into(),
+            "/tmp/sdk/as2.bin".into(),
+            false,
+            true,
+            Some("alice".into()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(moved.path, "/tmp/sdk/as2.bin");
+    env.remove("/tmp/sdk/as2.bin".into(), false, Some("alice".into()))
+        .await
+        .unwrap();
+    // `user` also rides on raw requests.
+    let raw = env
+        .call_json(
+            "FilesystemService/Stat".into(),
+            r#"{"path":"/tmp/sdk/blob.bin"}"#.into(),
+            Some("bob".into()),
+        )
+        .await
+        .unwrap();
+    let raw: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert!(raw["entry"]["path"].as_str().is_some(), "{raw}");
+    // Refusals keep their kind: a user the guest lacks (an `Env` error that
+    // names it, like every rejected argument of a typed guest call), an
+    // identity the agent may not take, `user` on a request that has none.
+    assert!(matches!(
+        env.stat(
+            "/tmp/sdk/blob.bin".into(),
+            Some("no-such".into()),
+            None,
+            false
+        )
+        .await,
+        Err(CuaError::Env(m)) if m.contains("no-such")
+    ));
+    assert!(matches!(
+        env.stat(
+            "/tmp/sdk/blob.bin".into(),
+            Some("locked".into()),
+            None,
+            false
+        )
+        .await,
+        Err(CuaError::PermissionDenied(_))
+    ));
+    assert!(matches!(
+        env.call_json(
+            "SystemService/Health".into(),
+            "{}".into(),
+            Some("alice".into())
+        )
+        .await,
+        Err(CuaError::InvalidArgument(_))
+    ));
 }
 
 async fn suite(t: Topology) {
@@ -288,15 +408,22 @@ async fn suite(t: Topology) {
         .unwrap();
     assert_eq!(up.size, data.len() as u64);
     assert_eq!(
-        env.download("/tmp/sdk/blob.bin".into()).await.unwrap(),
+        env.download("/tmp/sdk/blob.bin".into(), None)
+            .await
+            .unwrap(),
         data
     );
-    let st = env.stat("/tmp/sdk/blob.bin".into()).await.unwrap();
+    let st = env
+        .stat("/tmp/sdk/blob.bin".into(), None, None, false)
+        .await
+        .unwrap();
     assert_eq!(st.size, data.len() as u64);
     assert!(matches!(
-        env.download("/nope".into()).await,
+        env.download("/nope".into(), None).await,
         Err(CuaError::NotFound(_))
     ));
+
+    file_access(env.clone()).await;
 
     // Computer.
     env.click(10.0, 20.0).await.unwrap();
@@ -312,12 +439,12 @@ async fn suite(t: Topology) {
 
     // JSON escape hatch.
     let health = env
-        .call_json("SystemService/Health".into(), "{}".into())
+        .call_json("SystemService/Health".into(), "{}".into(), None)
         .await
         .unwrap();
     assert!(health.starts_with('{'), "{health}");
     assert!(matches!(
-        env.call_json("ProcessService/StartProcess".into(), "{}".into())
+        env.call_json("ProcessService/StartProcess".into(), "{}".into(), None)
             .await,
         Err(CuaError::InvalidArgument(_))
     ));
@@ -461,6 +588,80 @@ async fn suite(t: Topology) {
     o.image = "ghcr.io/trycua/cua-desktop-linux:test".into();
     let e = sbx.create(o).await.err().expect("cloud create fails");
     assert!(e.to_string().contains("Cua Cloud has ended"), "{t:?}: {e}");
+    let spaces = cua.spaces();
+    let direct_space = spaces
+        .add(w.env.url.clone(), Some(TOKEN.into()), None)
+        .await
+        .unwrap();
+    let mut cat = cmd("cat", &[]);
+    cat.stdin = true;
+    let p = spaces
+        .space(direct_space.id.clone())
+        .await
+        .unwrap()
+        .spacesd()
+        .unwrap()
+        .spawn(cat)
+        .await
+        .unwrap();
+    p.write_stdin(b"over stdin".to_vec()).await.unwrap();
+    p.close_stdin().await.unwrap();
+    assert_eq!(p.wait().await.unwrap().stdout, b"over stdin");
+    // The channel: which way calls go (the daemon's own connection in daemon
+    // mode), and a TCP forward over the Space's connection.
+    let space = spaces.space(direct_space.id.clone()).await.unwrap();
+    let route = space.route().await.unwrap();
+    assert_eq!(route, format!("direct {}", w.env.url), "{t:?}");
+    assert_eq!(space.spacesd().unwrap().route().await.unwrap(), route);
+    let echo = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let echo_port = echo.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        while let Ok((mut s, _)) = echo.accept().await {
+            tokio::spawn(async move {
+                let (mut r, mut w) = s.split();
+                let _ = tokio::io::copy(&mut r, &mut w).await;
+            });
+        }
+    });
+    // An explicit bind (what the E2B shim uses to serve a LAN) and a bad one.
+    let bound = space
+        .forward(echo_port, Some("127.0.0.1:0".into()))
+        .await
+        .unwrap();
+    assert!(bound.local_addr().unwrap().starts_with("127.0.0.1:"));
+    bound.close().await.unwrap();
+    assert!(matches!(
+        space
+            .forward(echo_port, Some("not-an-address".into()))
+            .await,
+        Err(cua_sdk::CuaError::InvalidArgument(_))
+    ));
+    let fwd = space.forward(echo_port, None).await.unwrap();
+    assert_eq!(fwd.guest_port(), echo_port);
+    let local = fwd.local_addr().expect("a loopback forward");
+    assert!(local.starts_with("127.0.0.1:"), "{local}");
+    {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let payload: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
+        let mut c = tokio::net::TcpStream::connect(&local).await.unwrap();
+        let (mut r, mut wr) = c.split();
+        let mut got = vec![0u8; payload.len()];
+        let (sent, read) = tokio::time::timeout(
+            Duration::from_secs(10),
+            futures_util::future::join(wr.write_all(&payload), r.read_exact(&mut got)),
+        )
+        .await
+        .expect("echo within 10 s");
+        sent.unwrap();
+        read.unwrap();
+        assert!(got == payload, "{t:?}: echoed bytes differ");
+    }
+    fwd.close().await.unwrap();
+    assert!(
+        tokio::net::TcpStream::connect(&local).await.is_err(),
+        "a closed forward stops listening"
+    );
+    spaces.remove(direct_space.id).await.unwrap();
 
     // ---------------------------------------------------------- errors
     assert!(matches!(

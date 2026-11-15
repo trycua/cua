@@ -40,4 +40,6 @@ export interface SystemServices {
   /** The global shortcut (macOS), registered again if the system refused it
    * before; absent or null where the shell has none. */
   globalShortcut?: () => { label: string; registered: boolean } | null;
+  /** Settings, General, Change: the keys to use instead (an Electron accelerator); throws when another app holds them. Absent where there is no shortcut. */
+  setGlobalShortcut?: (accelerator: string) => { label: string; registered: boolean };
 }

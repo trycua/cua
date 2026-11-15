@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Linux/X11 toplevels that never publish `_NET_WM_PID` (Tk, many Java/AWT
 //! builds, Wine, legacy Xlib/Xt clients) must still be addressable by
 //! `pid` + `window_id` (#3894).

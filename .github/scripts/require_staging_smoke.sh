@@ -11,8 +11,12 @@
 # never satisfies the gate. Missing, pending, failed or older than MAX_AGE_HOURS
 # (default 336) evidence fails.
 #
-# How to satisfy it (the smoke lives in trycua/cloud and is run by hand; no
-# workflow runs it for you). After the release PR merges and the tag exists:
+# How it is satisfied: the tag run sends a cua-release-candidate dispatch to
+# trycua/cloud (request_staging_smoke.sh), which runs the staging smoke and
+# posts the status; this gate waits for it (WAIT_MINUTES: 30 in most CD jobs, 120 in cd-cua-spaces).
+# By hand, for a rerun or when the dispatch could not be sent:
+#   gh workflow run spaces-staging-smoke.yml -R trycua/cloud -f component=<c> -f sha=<tag sha>
+# or, after the release PR merges and the tag exists:
 #   GH_TOKEN=<statuses:write on trycua/cua> python3 scripts/spaces-staging/smoke.py \
 #     --post-status <component> --sha <tag commit> --digest sha256:<artifact set>
 # then re-run the failed "staging smoke is green" job on the tag run; the
@@ -44,20 +48,40 @@ fi
 
 context="staging-smoke/$component"
 max_age=$(( ${MAX_AGE_HOURS:-336} * 3600 ))
-# Newest status per context first (combined status API).
-row="$(gh api "repos/$repo/commits/$sha/status" --paginate \
-  --jq ".statuses[] | select(.context == \"$context\") | [.state, .updated_at, .description, .target_url] | @tsv" \
-  | head -n1 || true)"
-
-if [ -z "$row" ]; then
-  echo "::error title=Staging gate::no '$context' status on $sha. Run the staging smoke for this commit first."
-  exit 1
-fi
-IFS=$'\t' read -r state updated desc url <<<"$row"
-if [ "$state" != success ]; then
-  echo "::error title=Staging gate::'$context' on $sha is '$state', not success ($url)"
-  exit 1
-fi
+# The smoke is started by the tag run (request_staging_smoke.sh) and takes a
+# while, so a missing or pending status is waited for up to WAIT_MINUTES
+# (default 0 = check once). A failed or errored status, a stale one or one
+# without a digest still fails at once.
+deadline=$(( $(date -u +%s) + ${WAIT_MINUTES:-0} * 60 ))
+while :; do
+  # Newest status per context first (combined status API).
+  row="$(gh api "repos/$repo/commits/$sha/status" --paginate \
+    --jq ".statuses[] | select(.context == \"$context\") | [.state, .updated_at, .description, .target_url] | @tsv" \
+    | head -n1 || true)"
+  state=missing
+  if [ -n "$row" ]; then
+    IFS=$'\t' read -r state updated desc url <<<"$row"
+  fi
+  case "$state" in
+    success) break ;;
+    missing|pending)
+      if [ "$(date -u +%s)" -ge "$deadline" ]; then
+        if [ "$state" = missing ]; then
+          echo "::error title=Staging gate::no '$context' status on $sha. Run the staging smoke for this commit first."
+        else
+          echo "::error title=Staging gate::'$context' on $sha is still pending ($url)"
+        fi
+        exit 1
+      fi
+      echo "Waiting for '$context' on $sha ($state); next check in 60 s"
+      sleep 60
+      ;;
+    *)
+      echo "::error title=Staging gate::'$context' on $sha is '$state', not success ($url)"
+      exit 1
+      ;;
+  esac
+done
 age=$(( $(date -u +%s) - $(date -u -d "$updated" +%s) ))
 if [ "$age" -gt "$max_age" ]; then
   echo "::error title=Staging gate::'$context' on $sha is stale ($updated)"

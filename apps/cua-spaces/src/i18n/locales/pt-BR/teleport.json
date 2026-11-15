@@ -34,5 +34,14 @@
   "teleport.picker.preparing": "Preparando…",
   "teleport.picker.tabs_label": "Teleportar",
   "teleport.picker.search": "Pesquisar",
-  "teleport.drop_zone.label": "Teleportar para {name}"
+  "teleport.drop_zone.label": "Teleportar para {name}",
+  "teleport.move.app_only": "Só o app",
+  "teleport.move.app_with_files": "O app com arquivos ou pastas",
+  "teleport.move.app_with_state": "O app com o estado de login",
+  "teleport.sensitive.sign_ins.label": "Manter minha sessão iniciada",
+  "teleport.sensitive.sign_ins.detail": "Envia os cookies da sessão.",
+  "teleport.sensitive.passwords.label": "Senhas salvas",
+  "teleport.sensitive.passwords.detail": "Envia as senhas salvas no app.",
+  "teleport.sensitive.history.label": "Histórico de navegação",
+  "teleport.sensitive.history.detail": "Envia o histórico de páginas visitadas e os favoritos, quando o navegador os guarda juntos."
 }

@@ -18,7 +18,12 @@ export function SignInLink({ url, compact = false }: { url: string; compact?: bo
         size="sm"
         variant="outline"
         aria-label={copied ? "Copied" : "Copy the sign-in link"}
-        onClick={() => void navigator.clipboard?.writeText(url).then(() => setCopied(true), () => {})}
+        onClick={() =>
+          void navigator.clipboard?.writeText(url).then(
+            () => setCopied(true),
+            () => {},
+          )
+        }
       >
         {copied ? "Copied" : "Copy link"}
       </Button>

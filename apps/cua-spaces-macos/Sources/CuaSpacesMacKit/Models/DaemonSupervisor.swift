@@ -23,6 +23,27 @@ public final class DaemonSupervisor: @unchecked Sendable {
     /// daemon executables this app replaced once.
     public static let keepEnv = "CUA_DAEMON_KEEP"
 
+    /// Set while the app quits for good (`BackgroundService`): the daemon is
+    /// stopped and must not be started again by the supervision loop.
+    private let stopLock = NSLock()
+    private var stopping = false
+    var isStopping: Bool { stopLock.withLock { stopping } }
+    func stopSupervising() { stopLock.withLock { stopping = true } }
+    func resumeSupervising() { stopLock.withLock { stopping = false } }
+
+    /// Stops this app's daemon for Quit: `cua daemon stop` (bounded), then
+    /// kills what of this bundle's is still there. `nil` when none runs
+    /// afterwards, else why not.
+    public func stopForQuit(runner: CommandRunning = ProcessRunner()) -> String? {
+        stopSupervising()
+        let r = runner.run(cua, ["daemon", "stop"], timeout: 12)
+        for pid in Self.daemonPids(cuaHome: cuaHome) where isOwn(pid: UInt32(pid)) {
+            Self.stop(pid: pid)
+        }
+        if r.timedOut { return "`cua daemon stop` did not finish" }
+        return nil
+    }
+
     /// The bundled `cua`.
     public let cua: String
     private let lock = NSLock()
@@ -61,7 +82,61 @@ public final class DaemonSupervisor: @unchecked Sendable {
     ///
     /// Another app's daemon it replaced is remembered, so that daemon is kept
     /// when its app starts it again (`CUA_DAEMON_KEEP`).
+    ///
+    /// This app's daemon that an earlier launch of this app started (before
+    /// a quit and reopen, or before an update relaunched it) is started
+    /// again (`orphaned`): macOS decides Local Network for it in the name of
+    /// that launch, which is gone, so every connect to this Mac's macOS VMs
+    /// fails with "No route to host" whatever System Settings says.
     public func start(timeout: TimeInterval = 60) -> String? {
+        if isStopping { return "Cua Spaces is quitting" }
+        let error = startOnce(timeout: timeout)
+        guard error == nil, let orphan = orphaned() else { return error }
+        NSLog("Cua Spaces: the cua daemon (pid %d) belongs to an earlier launch of this app (macOS holds pid %d responsible); starting it again",
+              orphan.pid, orphan.responsible)
+        stopOwn()
+        return startOnce(timeout: timeout)
+    }
+
+    /// The process macOS holds responsible for `pid` (TCC and Local
+    /// Network decide in its name), when it can tell; tests replace it.
+    var responsiblePid: (Int32) -> Int32? = { DaemonSupervisor.liveResponsiblePid($0) }
+
+    /// `responsibility_get_pid_responsible_for_pid` (libsystem, what TCC
+    /// and nehelper use; the daemon reads its own the same way,
+    /// `cua_vmm::local_network`).
+    static func liveResponsiblePid(_ pid: Int32) -> Int32? {
+        typealias Fn = @convention(c) (pid_t) -> pid_t
+        guard let handle = dlopen(nil, RTLD_NOW),
+              let sym = dlsym(handle, "responsibility_get_pid_responsible_for_pid") else { return nil }
+        let r = unsafeBitCast(sym, to: Fn.self)(pid)
+        return r > 0 ? r : nil
+    }
+
+    /// This app's running daemon when macOS holds responsible for it a
+    /// process that is gone or is not this app's: one an earlier launch of
+    /// this app started (once that launch exits, macOS names the daemon
+    /// itself), or one started from a terminal. `nil` when it is this
+    /// launch's, or another live process of this app answers for it (its
+    /// service helper, whose `cua-spacesd` may start it), or it is another
+    /// app's, or either answer is unknown.
+    func orphaned() -> (pid: Int32, responsible: Int32)? {
+        guard let pid = Self.runningPid(cuaHome: cuaHome), kill(pid, 0) == 0, isOwn(pid: UInt32(pid)),
+              let mine = responsiblePid(getpid()), let theirs = responsiblePid(pid), theirs != mine,
+              theirs == pid || !isOwn(pid: UInt32(theirs)) else { return nil }
+        return (pid, theirs)
+    }
+
+    /// Stops this app's daemon: asks it (bounded), then kills what of this
+    /// bundle's is still starting or no longer answers.
+    private func stopOwn() {
+        _ = run(["daemon", "stop"], timeout: 15)
+        for pid in Self.daemonPids(cuaHome: cuaHome) where isOwn(pid: UInt32(pid)) {
+            Self.stop(pid: pid)
+        }
+    }
+
+    private func startOnce(timeout: TimeInterval) -> String? {
         let before = stranger()
         let error = run(["daemon", "start"], timeout: timeout)
         // Replaced: another daemon is named now, or that one is gone.
@@ -109,7 +184,7 @@ public final class DaemonSupervisor: @unchecked Sendable {
     public static func yieldNotice(executable: String, version: String?) -> String {
         let app = executable.range(of: ".app/Contents/").map { String(executable[..<$0.lowerBound]) + ".app" } ?? executable
         let which = version.map { "\(app), cua \($0)" } ?? app
-        return "Another Cua Spaces app (\(which)) is running and keeps starting its own daemon, so this app uses that one. "
+        return "Another Cua Spaces app (\(which)) is running and keeps starting its own background service, so this app uses that one. "
             + "Quit the other app, then reopen Cua Spaces to use all of this one's features."
     }
 
@@ -118,10 +193,7 @@ public final class DaemonSupervisor: @unchecked Sendable {
     /// starting or no longer answers (one stuck on a keychain read, say),
     /// then starts it. `nil` when it runs afterwards, else why not.
     public func restart(timeout: TimeInterval = 30) -> String? {
-        _ = run(["daemon", "stop"], timeout: 15)
-        for pid in Self.daemonPids(cuaHome: cuaHome) where isOwn(pid: UInt32(pid)) {
-            Self.stop(pid: pid)
-        }
+        stopOwn()
         return start(timeout: timeout)
     }
 
@@ -226,7 +298,8 @@ public final class DaemonSupervisor: @unchecked Sendable {
                           restarted: (@MainActor @Sendable () async -> Void)? = nil,
                           start: (@Sendable () -> String?)? = nil,
                           daemonPid: (@Sendable () -> Int32?)? = nil,
-                          accepted: (@Sendable () async -> UInt32?)? = nil) -> Task<Void, Never> {
+                          accepted: (@Sendable () async -> UInt32?)? = nil,
+                          watching: (@Sendable (Int32) -> Void)? = nil) -> Task<Void, Never> {
         let wake = SupervisorWake()
         let watcher = ProcessExitWatcher { wake.fire() }
         let pidNow: @Sendable () -> Int32? = daemonPid ?? { [self] in
@@ -236,11 +309,27 @@ public final class DaemonSupervisor: @unchecked Sendable {
             defer { watcher.stop() }
             var failures = 0
             var reported = false
+            // A daemon of this app's was watched or just started, so its pid
+            // should be there to watch.
+            var expectPid = false
             while !Task.isCancelled {
-                // A daemon that already exited fires at once.
-                if failures == 0, let pid = pidNow() { watcher.watch(pid) }
+                if failures == 0 {
+                    if let pid = pidNow() {
+                        // A daemon that already exited fires at once.
+                        watcher.watch(pid)
+                        expectPid = true
+                        watching?(pid)
+                    } else if expectPid {
+                        // That daemon is gone before its pid was read
+                        // again: there is nothing to watch, so probe now
+                        // instead of after a whole interval (once: a daemon
+                        // this app cannot watch is probed every interval).
+                        expectPid = false
+                        wake.fire()
+                    }
+                }
                 await wake.wait(for: failures == 0 ? interval : Self.backoff(failures))
-                if Task.isCancelled { return }
+                if Task.isCancelled || self.isStopping { return }
                 if await isUp() {
                     if reported { await report(nil) }
                     failures = 0
@@ -253,6 +342,7 @@ public final class DaemonSupervisor: @unchecked Sendable {
                     error = "the running cua daemon (pid \(running)) is another app's, which this app uses, and it does not answer"
                 }
                 if error == nil {
+                    expectPid = true
                     // Running now (started again, or it ran and only this
                     // app's connection to it stopped answering): connect
                     // again, which supervises the new connection.
@@ -271,7 +361,7 @@ public final class DaemonSupervisor: @unchecked Sendable {
                 NSLog("Cua Spaces: the cua daemon is not answering (try %d): %@", failures, error ?? "no answer")
                 if failures >= 3 && !reported {
                     reported = true
-                    await report("The Cua daemon stopped and could not be started again: \(error ?? "it does not answer"). "
+                    await report("Cua\u{2019}s background service stopped and could not be started again: \(error ?? "it does not answer"). "
                                  + "The Keyvault, agents and Cua Volume need it; Cua Spaces keeps trying.")
                 }
             }

@@ -10,7 +10,27 @@ import "google/protobuf/timestamp.proto";
 //
 // Paths are absolute, or relative to the default working directory set by
 // `SystemService.Init`. A leading "~" expands to the acting user's home.
-// Operations run as the `Init` default user.
+// Operations run as the user the service runs as, unless a request names
+// another user in `run_as` (see "Acting as another user" below).
+//
+// Acting as another user: `run_as` on a request makes the operation run
+// with that guest user's identity (uid, gid and supplementary groups), so
+// permission checks apply to that user and created files are owned by
+// that user. It needs privilege: the service must run as root, or as a
+// user that may run `sudo -n` without a password (the Linux images' `cua`
+// user). Otherwise the call fails with PERMISSION_DENIED and a message
+// naming the missing privilege. `~` expands to that user's home. A viewer
+// ticket may not use `run_as`. Unix guests only.
+//
+// Extended attributes: a write can attach string `metadata` that is stored
+// as extended attributes under a key prefix (`xattr_namespace`, default
+// `user.cua.meta.`), and `Stat`, `ListDir`, `ReadFile` and watch events
+// report them in `metadata`. Limits: at most 32 keys, a key is 1 to 128
+// bytes of ASCII letters, digits and `._:/@+-`, a value is at most 1024
+// bytes, and keys plus values total at most 3072 bytes. The namespace must
+// start with `user.`, end with `.`, be at most 64 bytes of letters, digits
+// and `._-`. A file system without extended attribute support fails a
+// write that carries metadata with FAILED_PRECONDITION and reports none.
 //
 // Large payloads: there is no total size cap. Reads stream in chunks
 // (`ReadFile`). Writes use either the native-gRPC client stream
@@ -97,6 +117,10 @@ message EntryInfo {
   google.protobuf.Timestamp modified_at = 8;
   // Target of a symbolic link, when `type` is `FILE_TYPE_SYMLINK`.
   string symlink_target = 9;
+  // Extended attributes under the request's `xattr_namespace` (default
+  // `user.cua.meta.`), with the prefix removed. Empty when the entry has
+  // none or the file system has no extended attributes.
+  map<string, string> metadata = 10;
 }
 
 // Request for `FilesystemService.Stat`.
@@ -105,6 +129,11 @@ message StatRequest {
   string path = 1;
   // Report the link itself rather than its target.
   bool no_follow_symlinks = 2;
+  // Extended-attribute key prefix to report in `EntryInfo.metadata`. Empty
+  // means `user.cua.meta.`.
+  string xattr_namespace = 3;
+  // Guest user to act as. Empty means the service's own user.
+  string run_as = 4;
 }
 
 // Response for `FilesystemService.Stat`.
@@ -128,6 +157,11 @@ message ListDirRequest {
   uint32 page_size = 4;
   // Continuation token from a previous `ListDirResponse`.
   string page_token = 5;
+  // Extended-attribute key prefix for `EntryInfo.metadata`. Empty means
+  // `user.cua.meta.`.
+  string xattr_namespace = 6;
+  // Guest user to act as. Empty means the service's own user.
+  string run_as = 7;
 }
 
 // Response for `FilesystemService.ListDir`.
@@ -146,6 +180,8 @@ message MakeDirRequest {
   bool parents = 2;
   // Permission bits. 0 means 0o755.
   uint32 mode = 3;
+  // Guest user to act as; created directories are owned by that user.
+  string run_as = 4;
 }
 
 // Response for `FilesystemService.MakeDir`.
@@ -167,6 +203,8 @@ message MoveRequest {
   bool overwrite = 3;
   // Create missing parents of `destination`.
   bool create_parents = 4;
+  // Guest user to act as.
+  string run_as = 5;
 }
 
 // Response for `FilesystemService.Move`.
@@ -183,6 +221,8 @@ message RemoveRequest {
   bool recursive = 2;
   // Succeed when the path does not exist.
   bool missing_ok = 3;
+  // Guest user to act as.
+  string run_as = 4;
 }
 
 // Response for `FilesystemService.Remove`.
@@ -214,6 +254,9 @@ message FsEvent {
   string old_path = 3;
   // When the server observed the change.
   google.protobuf.Timestamp observed_at = 4;
+  // Extended attributes of the entry (see `EntryInfo.metadata`), read when
+  // the event is delivered; empty for removals and when the entry is gone.
+  map<string, string> metadata = 5;
 }
 
 // Request for `FilesystemService.WatchDir`.
@@ -224,6 +267,11 @@ message WatchDirRequest {
   bool recursive = 2;
   // Interval between `keepalive` messages. Unset means 30 seconds.
   google.protobuf.Duration keepalive_interval = 3;
+  // Extended-attribute key prefix for `FsEvent.metadata`. Empty means
+  // `user.cua.meta.`.
+  string xattr_namespace = 4;
+  // Guest user to watch as.
+  string run_as = 5;
 }
 
 // Sent once when a watch is armed.
@@ -254,6 +302,11 @@ message CreateWatcherRequest {
   string path = 1;
   // Watch the whole subtree.
   bool recursive = 2;
+  // Extended-attribute key prefix for `FsEvent.metadata`. Empty means
+  // `user.cua.meta.`.
+  string xattr_namespace = 3;
+  // Guest user to watch as.
+  string run_as = 4;
 }
 
 // Response for `FilesystemService.CreateWatcher`. The watcher is armed when
@@ -303,6 +356,17 @@ message ReadFileRequest {
   uint32 chunk_size = 4;
   // Compute the SHA-256 of the bytes sent and report it in `ReadFileEnd`.
   bool compute_sha256 = 5;
+  // Deliver through the bulk lane instead of the stream: `n` stages the
+  // bytes (at most `BulkLane.slot_bytes`, so `length` must be set) in slot
+  // `n - 1` of the bulk disk, and the stream carries `entry` and `end`
+  // (`bytes_read`, `sha256`) but no chunks. 0 streams. Fails with
+  // `ERROR_REASON_FEATURE_UNSUPPORTED` when the guest has no bulk lane.
+  uint32 bulk_slot = 8;
+  // Extended-attribute key prefix for the first message's
+  // `EntryInfo.metadata`. Empty means `user.cua.meta.`.
+  string xattr_namespace = 6;
+  // Guest user to read as.
+  string run_as = 7;
 }
 
 // One message of the `FilesystemService.ReadFile` stream: `entry` first,
@@ -364,6 +428,16 @@ message WriteFileHeader {
   // when set; a mismatch discards the data and fails with
   // `ERROR_REASON_CHECKSUM_MISMATCH`.
   string expected_sha256 = 6;
+  // Guest user to write as. The file (and any parents created with
+  // `create_parents`) is owned by that user. Uploads keep the user they
+  // began with.
+  string run_as = 7;
+  // Extended attributes to store on the new file, published atomically
+  // with the content. Keys are stored under `xattr_namespace`.
+  map<string, string> metadata = 8;
+  // Key prefix for `metadata` and for the reported `EntryInfo.metadata`.
+  // Empty means `user.cua.meta.`.
+  string xattr_namespace = 9;
 }
 
 // One message of the `FilesystemService.WriteFile` client stream.
@@ -420,8 +494,13 @@ message UploadChunkRequest {
   // wholly below it is acknowledged as a duplicate, anything else fails with
   // `ERROR_REASON_OFFSET_MISMATCH` and `metadata["expected_offset"]`.
   uint64 offset = 2;
-  // The bytes. At most `max_chunk_bytes`.
+  // The bytes. At most `max_chunk_bytes`. Empty with `bulk_slot`.
   bytes data = 3;
+  // The bytes are in slot `n - 1` of the bulk disk (`bulk_len` of them,
+  // at most `BulkLane.slot_bytes`) instead of `data`. 0 uses `data`.
+  uint32 bulk_slot = 4;
+  // Length of the bulk slot's bytes.
+  uint64 bulk_len = 5;
 }
 
 // Response for `FilesystemService.UploadChunk`.
@@ -465,7 +544,10 @@ enum SignedUrlMethod {
   SIGNED_URL_METHOD_UNSPECIFIED = 0;
   // Download with `GET` (supports `Range`).
   SIGNED_URL_METHOD_GET = 1;
-  // Upload with `PUT` (the body replaces the file atomically).
+  // Upload with `PUT` (the body replaces the file atomically). The same URL
+  // also accepts `POST multipart/form-data`: the first file part replaces
+  // the file atomically and the response is the JSON list
+  // `[{"name","path","type"}]`.
   SIGNED_URL_METHOD_PUT = 2;
 }
 
@@ -482,6 +564,13 @@ message CreateSignedUrlRequest {
   // For GET: serve with `Content-Disposition: attachment` using this file
   // name. Empty means inline.
   string download_name = 5;
+  // Guest user the URL acts as. Part of the signature, so it cannot be
+  // changed or added by the holder of the URL. A `PUT` URL may also be used
+  // with `POST multipart/form-data` (first file part).
+  string run_as = 6;
+  // For PUT: create missing parent directories of the file (owned by
+  // `run_as` when set). Part of the signature.
+  bool create_parents = 7;
 }
 
 // Response for `FilesystemService.CreateSignedUrl`.

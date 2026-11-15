@@ -489,6 +489,7 @@ fn run_options(o: AgentRunOptions) -> Result<ca::RunOptions> {
             model: o.model.clone(),
         }),
         model: o.model,
+        effort: None,
         install: o.install,
         exit_when_idle: o.exit_when_idle,
         idle_exit_secs: None,
@@ -498,6 +499,13 @@ fn run_options(o: AgentRunOptions) -> Result<ca::RunOptions> {
         home: None,
         home_dir: None,
         bridge: false,
+        // Durable runs are started through a session (`cua agent run --durable`).
+        durable: None,
+        // The saved connections are the Cua Spaces app's; an SDK run names its own keys.
+        hermes_config: None,
+        // Continuing a chat from this computer's own agent store is the Spaces app's (CUA-3319).
+        resume_session: None,
+        resume_context: None,
     })
 }
 

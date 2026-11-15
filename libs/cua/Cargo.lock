@@ -19,6 +19,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "366ffbaa4442f4684d91e2cd7c5ea7c4ed8add41959a31447066e279e432b618"
 
 [[package]]
+name = "addr2line"
+version = "0.25.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b5d307320b3181d6d7954e663bd7c774a838b8220fe0593c86d9fb09f498b4b"
+dependencies = [
+ "gimli",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -331,6 +340,12 @@ checksum = "516b6b4f0e40d50dcda9365d53964ec74560ad4284da2e7fc97122cd83174516"
 dependencies = [
  "stable_deref_trait",
 ]
+
+[[package]]
+name = "ascii"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d92bec98840b8f03a5ff5413de5293bfcd8bf96467cf5452609f939ec6f5de16"
 
 [[package]]
 name = "ash"
@@ -1208,6 +1223,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "backhand"
+version = "0.25.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "deb8799e91f66c730e3ae50e8a260d63401e9479f236fb74f793d7656f143f0c"
+dependencies = [
+ "deku",
+ "no_std_io2",
+ "rayon",
+ "solana-nohash-hasher",
+ "thiserror 2.0.20",
+ "xxhash-rust",
+ "zstd",
+ "zstd-safe",
+]
+
+[[package]]
+name = "backtrace"
+version = "0.3.76"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb531853791a215d7c62a30daf0dde835f381ab5de4589cfe7c649d2cbe92bd6"
+dependencies = [
+ "addr2line",
+ "cfg-if",
+ "libc",
+ "miniz_oxide 0.8.9",
+ "object",
+ "rustc-demangle",
+ "windows-link 0.2.1",
+]
+
+[[package]]
 name = "base16ct"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1302,6 +1348,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7eff00be299a18769011411c9def0d827e8f2d7bf0c3dbf53633147a8867fd1f"
 dependencies = [
  "no_std_io2",
+]
+
+[[package]]
+name = "bitvec"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ddcec3d12c579d40898fe0a9a358a803c23e9c52ca3c425707f81c9436211837"
+dependencies = [
+ "funty",
+ "radium",
+ "tap",
+ "wyz",
 ]
 
 [[package]]
@@ -1732,6 +1790,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "choice"
+version = "0.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3b71fc821deaf602a933ada5c845d088156d0cdf2ebf43ede390afe93466553"
+
+[[package]]
 name = "chrono"
 version = "0.4.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1744,6 +1808,12 @@ dependencies = [
  "wasm-bindgen",
  "windows-link 0.2.1",
 ]
+
+[[package]]
+name = "chunked_transfer"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e4de3bc4ea267985becf712dc6d9eed8b04c953b3fcfb339ebc87acd9804901"
 
 [[package]]
 name = "ciborium"
@@ -2250,9 +2320,11 @@ dependencies = [
 
 [[package]]
 name = "cua-agent-setup"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
+ "cua-home",
  "hex",
  "include_dir",
  "jsonc-parser",
@@ -2262,21 +2334,38 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.20",
- "toml_edit",
+ "toml_edit 0.25.15+spec-1.1.0",
+]
+
+[[package]]
+name = "cua-agent-threads"
+version = "0.27.5"
+dependencies = [
+ "chrono",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
 name = "cua-agents"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
+ "base64 0.22.1",
  "cua-agent-setup",
+ "cua-connections",
  "cua-proto",
  "cua-spacesd-client",
+ "flate2",
+ "futures-util",
  "hex",
  "rand 0.9.5",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tar",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
@@ -2284,7 +2373,7 @@ dependencies = [
 
 [[package]]
 name = "cua-auth"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2307,7 +2396,7 @@ dependencies = [
 
 [[package]]
 name = "cua-bindgen"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "anyhow",
  "camino",
@@ -2319,10 +2408,11 @@ dependencies = [
 
 [[package]]
 name = "cua-byoc"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "async-trait",
  "aws-config",
+ "aws-credential-types",
  "aws-sdk-ec2",
  "aws-sdk-sts",
  "aws-types",
@@ -2330,10 +2420,13 @@ dependencies = [
  "base64 0.22.1",
  "cua-auth",
  "cua-byoc",
+ "cua-cluster",
  "cua-contrib",
  "cua-home",
  "cua-host",
+ "cua-proto",
  "cua-sandbox-core",
+ "cua-share",
  "cua-spaces",
  "cua-spacesd-client",
  "cua-vmm",
@@ -2343,15 +2436,29 @@ dependencies = [
  "ring",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "url",
+ "zeroize",
+]
+
+[[package]]
+name = "cua-chaos"
+version = "0.27.5"
+dependencies = [
+ "clap",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
 name = "cua-chromium-storage"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "base64 0.22.1",
  "cua-teleport-bundle",
@@ -2365,8 +2472,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-ci"
+version = "0.27.5"
+dependencies = [
+ "async-trait",
+ "axum",
+ "base64 0.22.1",
+ "cua-home",
+ "cua-vmm",
+ "hex",
+ "humantime",
+ "libc",
+ "rand 0.9.5",
+ "reqwest 0.12.28",
+ "ring",
+ "security-framework 3.7.0",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
 name = "cua-cli"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "async-trait",
  "axum",
@@ -2375,20 +2510,29 @@ dependencies = [
  "clap",
  "crc32fast",
  "cua-agent-setup",
+ "cua-agents",
  "cua-auth",
+ "cua-byoc",
+ "cua-ci",
+ "cua-cluster",
+ "cua-compat",
+ "cua-compat-cmd",
  "cua-contrib",
+ "cua-crash",
  "cua-daemon",
  "cua-disk",
  "cua-home",
  "cua-host",
  "cua-image",
  "cua-proto",
+ "cua-repo-cache",
  "cua-sandbox-core",
  "cua-sdk",
  "cua-spaces",
  "cua-spacesd-client",
  "cua-telemetry",
  "cua-vmm",
+ "embed-resource",
  "flate2",
  "futures-util",
  "humantime",
@@ -2401,17 +2545,129 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tar",
  "tempfile",
  "tokio",
  "tokio-tungstenite 0.29.0",
+ "tonic",
+ "tracing",
  "tracing-subscriber",
  "url",
  "windows-sys 0.61.2",
 ]
 
 [[package]]
+name = "cua-cluster"
+version = "0.27.5"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "bytes",
+ "cua-home",
+ "cua-host",
+ "cua-mesh",
+ "cua-proto",
+ "cua-spacesd-client",
+ "flate2",
+ "futures-util",
+ "hex",
+ "libc",
+ "microlp",
+ "rand 0.9.5",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tonic",
+ "tracing",
+ "url",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "cua-compat"
+version = "0.27.5"
+dependencies = [
+ "async-trait",
+ "axum",
+ "base64 0.22.1",
+ "bytes",
+ "cua-chaos",
+ "cua-cluster",
+ "cua-compat-cmd",
+ "cua-home",
+ "cua-image",
+ "cua-proto",
+ "cua-sandbox-core",
+ "cua-sdk",
+ "cua-spaces",
+ "cua-spacesd-client",
+ "flate2",
+ "futures-util",
+ "globset",
+ "hex",
+ "hmac 0.12.1",
+ "http",
+ "http-body",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "md-5",
+ "pbjson-types",
+ "proptest",
+ "prost",
+ "prost-build",
+ "prost-types",
+ "rand 0.9.5",
+ "rcgen",
+ "regex",
+ "reqwest 0.12.28",
+ "rustls",
+ "rustls-native-certs",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "subtle",
+ "tar",
+ "tempfile",
+ "thiserror 2.0.20",
+ "time",
+ "tokio",
+ "tokio-rustls",
+ "tokio-stream",
+ "tonic",
+ "tonic-prost",
+ "tonic-prost-build",
+ "tower",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "cua-compat-cmd"
+version = "0.27.5"
+dependencies = [
+ "clap",
+ "cua-sdk",
+]
+
+[[package]]
+name = "cua-connections"
+version = "0.27.5"
+dependencies = [
+ "serde",
+ "serde_json",
+ "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
 name = "cua-contrib"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "async-trait",
  "axum",
@@ -2432,8 +2688,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-crash"
+version = "0.27.5"
+dependencies = [
+ "cua-telemetry",
+ "regex-lite",
+ "sentry",
+ "serde_json",
+]
+
+[[package]]
 name = "cua-create-failure"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "cua-telemetry",
  "serde",
@@ -2442,13 +2708,63 @@ dependencies = [
 
 [[package]]
 name = "cua-daemon"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "async-trait",
  "axum",
  "base64 0.22.1",
  "bytes",
+ "cua-agents",
+ "cua-cluster",
+ "cua-daemon-core",
+ "cua-disk",
+ "cua-home",
+ "cua-host",
+ "cua-image",
+ "cua-proto",
+ "cua-sandbox-core",
+ "cua-share",
+ "cua-snapshot-sync",
+ "cua-spaces",
+ "cua-spacesd-client",
+ "cua-vmm",
+ "flate2",
+ "futures-util",
+ "hmac 0.12.1",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "libc",
+ "pbjson-types",
+ "prost",
+ "rand 0.9.5",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
+ "tokio-tungstenite 0.29.0",
+ "tonic",
+ "tonic-web",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
+name = "cua-daemon-core"
+version = "0.27.5"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "cua-agents",
  "cua-byoc",
+ "cua-cluster",
  "cua-contrib",
  "cua-create-failure",
  "cua-disk",
@@ -2457,39 +2773,37 @@ dependencies = [
  "cua-image",
  "cua-proto",
  "cua-sandbox-core",
+ "cua-share",
+ "cua-snapshot-sync",
  "cua-spaces",
  "cua-spacesd-client",
  "cua-vmm",
+ "flate2",
  "futures-util",
  "http",
- "http-body-util",
  "humantime",
- "hyper",
  "hyper-util",
  "libc",
  "pbjson-types",
  "prost",
- "prost-types",
  "rand 0.9.5",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
+ "tar",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
- "tokio-stream",
- "tokio-tungstenite 0.29.0",
  "tonic",
- "tonic-prost",
- "tonic-web",
  "tower",
- "tower-http",
  "tracing",
+ "tracing-subscriber",
  "url",
 ]
 
 [[package]]
 name = "cua-disk"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "async-trait",
  "bollard",
@@ -2504,7 +2818,7 @@ dependencies = [
 
 [[package]]
 name = "cua-home"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "libc",
  "tempfile",
@@ -2513,7 +2827,7 @@ dependencies = [
 
 [[package]]
 name = "cua-host"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "async-trait",
  "axum",
@@ -2522,6 +2836,7 @@ dependencies = [
  "cua-home",
  "flate2",
  "hex",
+ "httpdate",
  "libc",
  "rand 0.9.5",
  "reqwest 0.12.28",
@@ -2540,7 +2855,7 @@ dependencies = [
 
 [[package]]
 name = "cua-hotspot"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "futures-util",
  "tokio",
@@ -2548,7 +2863,7 @@ dependencies = [
 
 [[package]]
 name = "cua-icon-cache"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "cua-home",
  "hex",
@@ -2561,7 +2876,7 @@ dependencies = [
 
 [[package]]
 name = "cua-image"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2573,6 +2888,7 @@ dependencies = [
  "http",
  "jsonschema",
  "oci-client",
+ "proptest",
  "rustls",
  "schemars",
  "serde",
@@ -2584,11 +2900,12 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "zstd",
 ]
 
 [[package]]
 name = "cua-keyvault"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "argon2",
  "async-trait",
@@ -2617,7 +2934,7 @@ dependencies = [
 
 [[package]]
 name = "cua-logging"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "tracing",
  "tracing-appender",
@@ -2626,7 +2943,7 @@ dependencies = [
 
 [[package]]
 name = "cua-machine-seal"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "chacha20poly1305 0.11.0",
  "cua-home",
@@ -2642,7 +2959,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-client"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "cua-media-codec",
  "cua-media-protocol",
@@ -2652,7 +2969,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-codec"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "audiopus_sys",
  "criterion",
@@ -2673,7 +2990,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-protocol"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "serde",
  "serde_json",
@@ -2681,7 +2998,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-transport"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "cua-media-protocol",
  "quinn",
@@ -2694,7 +3011,7 @@ dependencies = [
 
 [[package]]
 name = "cua-mesh"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "base64 0.22.1",
  "boringtun",
@@ -2709,6 +3026,7 @@ dependencies = [
  "hmac 0.12.1",
  "http",
  "if-addrs",
+ "libc",
  "quinn",
  "rand 0.9.5",
  "rcgen",
@@ -2724,12 +3042,22 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
- "webpki-roots 1.0.9",
+ "webpki-roots 1.0.10",
+]
+
+[[package]]
+name = "cua-microvm-init"
+version = "0.27.5"
+dependencies = [
+ "base64 0.22.1",
+ "libc",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
 name = "cua-mock-llm"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "axum",
  "bytes",
@@ -2744,7 +3072,7 @@ dependencies = [
 
 [[package]]
 name = "cua-proto"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "pbjson",
  "pbjson-build",
@@ -2761,8 +3089,65 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-push"
+version = "0.27.5"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "bytes",
+ "hex",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "reqwest 0.12.28",
+ "ring",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "cua-replica-lab"
+version = "0.27.5"
+dependencies = [
+ "async-trait",
+ "cua-cluster",
+ "cua-volume",
+ "hex",
+ "libc",
+ "rand 0.9.5",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "cua-repo-cache"
+version = "0.27.5"
+dependencies = [
+ "cua-home",
+ "cua-telemetry",
+ "hex",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "cua-sandbox-core"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "async-trait",
  "axum",
@@ -2770,6 +3155,7 @@ dependencies = [
  "bytes",
  "cua-home",
  "cua-image",
+ "cua-repo-cache",
  "cua-sandbox-core",
  "cua-spacesd-client",
  "cua-vmm",
@@ -2788,14 +3174,14 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tokio-util",
- "toml_edit",
+ "toml_edit 0.25.15+spec-1.1.0",
  "tracing",
  "url",
 ]
 
 [[package]]
 name = "cua-sdk"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2803,8 +3189,10 @@ dependencies = [
  "cua-agent-setup",
  "cua-agents",
  "cua-auth",
+ "cua-cluster",
  "cua-create-failure",
  "cua-daemon",
+ "cua-daemon-core",
  "cua-home",
  "cua-host",
  "cua-icon-cache",
@@ -2814,13 +3202,56 @@ dependencies = [
  "cua-spaces",
  "cua-spacesd-client",
  "cua-telemetry",
+ "flate2",
  "futures-util",
  "hex",
  "http",
  "http-body-util",
+ "humantime",
+ "libc",
  "pbjson-types",
  "prost",
  "prost-types",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-stream",
+ "tokio-tungstenite 0.29.0",
+ "tonic",
+ "tonic-prost",
+ "tonic-web-wasm-client",
+ "tower",
+ "tracing",
+ "uniffi",
+]
+
+[[package]]
+name = "cua-sdk-native"
+version = "0.27.5"
+dependencies = [
+ "cua-sdk",
+]
+
+[[package]]
+name = "cua-share"
+version = "0.27.5"
+dependencies = [
+ "bytes",
+ "cua-sandbox-core",
+ "futures-util",
+ "hex",
+ "http",
+ "http-body",
+ "http-body-util",
+ "httpdate",
+ "hyper",
+ "hyper-util",
+ "percent-encoding",
+ "rand 0.9.5",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -2828,16 +3259,41 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tokio-tungstenite 0.29.0",
- "tonic",
- "tonic-prost",
- "tonic-web-wasm-client",
+ "tokio-util",
  "tracing",
- "uniffi",
+ "url",
+]
+
+[[package]]
+name = "cua-snapshot-sync"
+version = "0.27.5"
+dependencies = [
+ "async-trait",
+ "aws-config",
+ "aws-sdk-s3",
+ "axum",
+ "base64 0.22.1",
+ "cua-snapshot-sync",
+ "futures-util",
+ "hex",
+ "hmac 0.12.1",
+ "http",
+ "libc",
+ "rand 0.9.5",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]
 name = "cua-spaces"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "async-trait",
  "axum",
@@ -2846,6 +3302,7 @@ dependencies = [
  "chrono",
  "cua-agents",
  "cua-auth",
+ "cua-cluster",
  "cua-create-failure",
  "cua-disk",
  "cua-home",
@@ -2856,14 +3313,17 @@ dependencies = [
  "cua-mesh",
  "cua-proto",
  "cua-sandbox-core",
+ "cua-snapshot-sync",
  "cua-spaces-contract",
  "cua-spacesd-client",
  "cua-telemetry",
  "cua-vmm",
  "futures-util",
+ "globset",
  "hex",
  "http",
  "humantime",
+ "if-addrs",
  "ignore",
  "libc",
  "pbjson-types",
@@ -2888,43 +3348,21 @@ dependencies = [
 
 [[package]]
 name = "cua-spaces-app-core"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "async-trait",
- "cua-create-failure",
- "cua-home",
- "cua-keyvault",
- "cua-telemetry",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
-]
-
-[[package]]
-name = "cua-spaces-cli"
-version = "0.5.0"
-dependencies = [
- "async-trait",
- "axum",
  "base64 0.22.1",
- "clap",
+ "cua-agent-setup",
+ "cua-agents",
  "cua-auth",
- "cua-cli",
- "cua-daemon",
+ "cua-connections",
+ "cua-create-failure",
  "cua-home",
  "cua-host",
  "cua-keyvault",
- "cua-media-protocol",
  "cua-sandbox-core",
- "cua-sdk",
- "cua-spaces-ext",
- "cua-spaces-ffi",
- "cua-spacesd-client",
- "cua-spacesd-html5",
- "cua-teleport",
- "cua-volume",
- "libc",
+ "cua-spaces-contract",
+ "cua-telemetry",
  "serde",
  "serde_json",
  "tempfile",
@@ -2933,8 +3371,89 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-spaces-cli"
+version = "0.27.5"
+dependencies = [
+ "async-trait",
+ "axum",
+ "base64 0.22.1",
+ "clap",
+ "cua-auth",
+ "cua-byoc",
+ "cua-cli",
+ "cua-cluster",
+ "cua-compat",
+ "cua-compat-cmd",
+ "cua-contrib",
+ "cua-daemon",
+ "cua-home",
+ "cua-host",
+ "cua-keyvault",
+ "cua-media-protocol",
+ "cua-proto",
+ "cua-sandbox-core",
+ "cua-sdk",
+ "cua-spaces",
+ "cua-spaces-cluster",
+ "cua-spaces-ext",
+ "cua-spaces-ffi",
+ "cua-spacesd-client",
+ "cua-spacesd-html5",
+ "cua-teleport",
+ "cua-volume",
+ "futures-util",
+ "humantime",
+ "libc",
+ "rand 0.9.5",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "url",
+ "zeroize",
+]
+
+[[package]]
+name = "cua-spaces-cluster"
+version = "0.27.5"
+dependencies = [
+ "async-trait",
+ "axum",
+ "base64 0.22.1",
+ "chacha20poly1305 0.10.1",
+ "cua-cluster",
+ "cua-daemon",
+ "cua-host",
+ "cua-proto",
+ "cua-spaces",
+ "cua-telemetry",
+ "flate2",
+ "hex",
+ "hpke",
+ "rand 0.9.5",
+ "reqwest 0.12.28",
+ "ring",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "stateright",
+ "tar",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tonic",
+ "tracing",
+ "zeroize",
+]
+
+[[package]]
 name = "cua-spaces-contract"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "schemars",
  "serde",
@@ -2943,14 +3462,16 @@ dependencies = [
 
 [[package]]
 name = "cua-spaces-ext"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
  "chrono",
+ "cua-agent-threads",
  "cua-agents",
  "cua-auth",
  "cua-chromium-storage",
+ "cua-cluster",
  "cua-daemon",
  "cua-home",
  "cua-host",
@@ -2958,11 +3479,14 @@ dependencies = [
  "cua-media-client",
  "cua-media-protocol",
  "cua-media-transport",
+ "cua-mesh",
  "cua-proto",
+ "cua-push",
  "cua-sandbox-core",
  "cua-sdk",
  "cua-spaces",
  "cua-spaces-contract",
+ "cua-spaces-ext",
  "cua-spacesd-client",
  "cua-telemetry",
  "cua-teleport",
@@ -2984,6 +3508,7 @@ dependencies = [
  "tokio-stream",
  "tokio-tungstenite 0.29.0",
  "tonic",
+ "tonic-web",
  "tracing",
  "tracing-subscriber",
  "url",
@@ -2991,16 +3516,19 @@ dependencies = [
 
 [[package]]
 name = "cua-spaces-ffi"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "base64 0.22.1",
  "cua-chromium-storage",
+ "cua-crash",
  "cua-daemon",
  "cua-home",
  "cua-host",
+ "cua-image",
  "cua-keyvault",
  "cua-media-client",
  "cua-media-codec",
+ "cua-proto",
  "cua-sandbox-core",
  "cua-sdk",
  "cua-spaces",
@@ -3024,7 +3552,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spaces-transcript"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "serde_json",
  "thiserror 2.0.20",
@@ -3032,13 +3560,14 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-client"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "base64 0.22.1",
  "bytes",
  "cua-proto",
  "cua-spacesd-client",
  "futures-util",
+ "h2",
  "hex",
  "http",
  "http-body",
@@ -3047,11 +3576,14 @@ dependencies = [
  "hyper-rustls",
  "hyper-util",
  "pbjson-types",
+ "proptest",
  "prost",
  "rand 0.9.5",
  "rcgen",
  "rustls",
  "rustls-native-certs",
+ "rustls-pki-types",
+ "rustls-webpki",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -3067,12 +3599,13 @@ dependencies = [
  "tower",
  "tracing",
  "url",
- "webpki-roots 1.0.9",
+ "webpki-roots 0.26.11",
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]
 name = "cua-spacesd-html5"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "async-trait",
  "axum",
@@ -3093,21 +3626,22 @@ dependencies = [
 
 [[package]]
 name = "cua-telemetry"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
+ "cua-connections",
  "hex",
  "rand 0.9.5",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
- "toml_edit",
+ "toml_edit 0.25.15+spec-1.1.0",
  "ureq",
 ]
 
 [[package]]
 name = "cua-teleport"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "aes 0.8.4",
  "block2 0.6.2",
@@ -3146,7 +3680,7 @@ dependencies = [
 
 [[package]]
 name = "cua-teleport-bundle"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "aes 0.8.4",
  "aes-gcm",
@@ -3166,7 +3700,7 @@ dependencies = [
 
 [[package]]
 name = "cua-viewer"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "apple-cf",
  "axum",
@@ -3201,26 +3735,37 @@ dependencies = [
 
 [[package]]
 name = "cua-vmm"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "async-trait",
+ "backhand",
  "base64 0.22.1",
  "bollard",
  "bytes",
  "cua-create-failure",
+ "cua-home",
+ "cua-microvm-init",
  "cua-spacesd-client",
  "filetime",
+ "flate2",
  "futures",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "libc",
+ "pbjson-types",
  "png",
+ "proptest",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "serde_yaml_ng",
  "sha2 0.10.9",
+ "tar",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
- "toml_edit",
+ "toml_edit 0.25.15+spec-1.1.0",
  "tracing",
  "vnc-rs",
  "windows-sys 0.61.2",
@@ -3228,7 +3773,7 @@ dependencies = [
 
 [[package]]
 name = "cua-volume"
-version = "0.5.0"
+version = "0.27.5"
 dependencies = [
  "async-trait",
  "aws-credential-types",
@@ -3248,6 +3793,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -3303,8 +3849,18 @@ version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc7f46116c46ff9ab3eb1597a45688b6715c6e628b5c133e288e709a29bcb4ee"
 dependencies = [
- "darling_core",
- "darling_macro",
+ "darling_core 0.20.11",
+ "darling_macro 0.20.11",
+]
+
+[[package]]
+name = "darling"
+version = "0.21.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9cdf337090841a411e2a7f3deb9187445851f91b309c0c0a29e05f74a00a48c0"
+dependencies = [
+ "darling_core 0.21.3",
+ "darling_macro 0.21.3",
 ]
 
 [[package]]
@@ -3322,14 +3878,53 @@ dependencies = [
 ]
 
 [[package]]
+name = "darling_core"
+version = "0.21.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1247195ecd7e3c85f83c8d2a366e4210d588e802133e1e355180a9870b517ea4"
+dependencies = [
+ "fnv",
+ "ident_case",
+ "proc-macro2",
+ "quote",
+ "strsim",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "darling_macro"
 version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc34b93ccb385b40dc71c6fceac4b2ad23662c7eeb248cf10d529b7e055b6ead"
 dependencies = [
- "darling_core",
+ "darling_core 0.20.11",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "darling_macro"
+version = "0.21.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d38308df82d1080de0afee5d069fa14b0326a88c14f15c5ccda35b4a6c414c81"
+dependencies = [
+ "darling_core 0.21.3",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "dashmap"
+version = "6.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6361d5c062261c78a176addb82d4c821ae42bed6089de0e12603cd25de2059c"
+dependencies = [
+ "cfg-if",
+ "crossbeam-utils",
+ "hashbrown 0.14.5",
+ "lock_api",
+ "once_cell",
+ "parking_lot_core",
 ]
 
 [[package]]
@@ -3364,6 +3959,41 @@ checksum = "c3c91aea6668645415331133ed6f8ddf0e7f40160cd97a12d59e68716a58704b"
 dependencies = [
  "libc",
  "system-deps",
+]
+
+[[package]]
+name = "debugid"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bef552e6f588e446098f6ba40d89ac146c8c7b64aade83c051ee00bb5d2bc18d"
+dependencies = [
+ "serde",
+ "uuid",
+]
+
+[[package]]
+name = "deku"
+version = "0.20.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ebf55291257a2a5c90cf50ae17b6bbaabc3fd13642cf3895a71c412513c19630"
+dependencies = [
+ "bitvec",
+ "deku_derive",
+ "no_std_io2",
+ "rustversion",
+]
+
+[[package]]
+name = "deku_derive"
+version = "0.20.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bec2a42b511fc5efd9183f4f71c17885d627b17e7fd9a61a92089406caa4397e"
+dependencies = [
+ "darling 0.21.3",
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -3412,7 +4042,7 @@ version = "0.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2d5bcf7b024d6835cfb3d473887cd966994907effbe9227e8c8219824d06c4e8"
 dependencies = [
- "darling",
+ "darling 0.20.11",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -3581,6 +4211,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e079f19b08ca6239f47f8ba8509c11cf3ea30095831f7fed61441475edd8c449"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "embed-resource"
+version = "2.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d506610004cfc74a6f5ee7e8c632b355de5eca1f03ee5e5e0ec11b77d4eb3d61"
+dependencies = [
+ "cc",
+ "memchr",
+ "rustc_version",
+ "toml 0.8.23",
+ "vswhom",
+ "winreg 0.52.0",
 ]
 
 [[package]]
@@ -3775,6 +4419,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef25905e51abafe4dcea6c15fec58c57b601cdbd0ee53d22ea1d3016c587d39b"
 
 [[package]]
+name = "findshlibs"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "40b9e59cd0f7e0806cca4be089683ecb6434e602038df21fe6bf6711b2f07f64"
+dependencies = [
+ "cc",
+ "lazy_static",
+ "libc",
+ "winapi",
+]
+
+[[package]]
 name = "fixedbitset"
 version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3905,6 +4561,12 @@ name = "fs_extra"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c"
+
+[[package]]
+name = "funty"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6d5a32815ae3f33302d95fdcb2ce17862f8c65363dcfd29360480ba1001fc9c"
 
 [[package]]
 name = "fuser"
@@ -4109,6 +4771,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "gimli"
+version = "0.32.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7"
+
+[[package]]
 name = "gl_generator"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4248,6 +4916,12 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
+version = "0.14.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
+
+[[package]]
+name = "hashbrown"
 version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
@@ -4273,6 +4947,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 dependencies = [
  "foldhash 0.2.0",
+]
+
+[[package]]
+name = "hashlink"
+version = "0.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a596f1b20ed2cc5ecac41a164aaebc7258057060f06c0cf7a2ba3991ee7990fb"
+dependencies = [
+ "hashbrown 0.17.1",
 ]
 
 [[package]]
@@ -4333,6 +5016,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6303bc9732ae41b04cb554b844a762b4115a61bfaa81e3e83050991eeb56863f"
 dependencies = [
  "digest 0.11.3",
+]
+
+[[package]]
+name = "hpke"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f65d16b699dd1a1fa2d851c970b0c971b388eeeb40f744252b8de48860980c8f"
+dependencies = [
+ "aead 0.5.2",
+ "aes-gcm",
+ "chacha20poly1305 0.10.1",
+ "digest 0.10.7",
+ "generic-array",
+ "hkdf 0.12.4",
+ "hmac 0.12.1",
+ "rand_core 0.9.5",
+ "sha2 0.10.9",
+ "subtle",
+ "x25519-dalek 2.0.1",
+ "zeroize",
 ]
 
 [[package]]
@@ -4455,7 +5158,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
- "webpki-roots 1.0.9",
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]
@@ -4626,6 +5329,12 @@ dependencies = [
  "zerotrie",
  "zerovec",
 ]
+
+[[package]]
+name = "id-set"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9633fadf6346456cf8531119ba4838bc6d82ac4ce84d9852126dd2aa34d49264"
 
 [[package]]
 name = "ident_case"
@@ -5180,6 +5889,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
+name = "matrixmultiply"
+version = "0.3.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f607c237553f086e7043417a51df26b2eb899d3caff94e6a67592ff992fedc7"
+dependencies = [
+ "autocfg",
+ "rawpointer",
+]
+
+[[package]]
 name = "maybe-rayon"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5221,6 +5940,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "microlp"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a8f19803f918039a07f3c32b23716824d8f073543417bdac5b1b8619817e3674"
+dependencies = [
+ "log",
+ "sprs",
+ "web-time 1.1.0",
 ]
 
 [[package]]
@@ -5357,6 +6087,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "ndarray"
+version = "0.17.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "520080814a7a6b4a6e9070823bb24b4531daac8c4627e08ba5de8c5ef2f2752d"
+dependencies = [
+ "matrixmultiply",
+ "num-complex",
+ "num-integer",
+ "num-traits",
+ "portable-atomic",
+ "portable-atomic-util",
+ "rawpointer",
+]
+
+[[package]]
 name = "ndk"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5464,6 +6209,12 @@ checksum = "418abd1b6d34fbf6cae440dc874771b0525a604428704c76e48b29a5e67b8003"
 dependencies = [
  "memchr",
 ]
+
+[[package]]
+name = "nohash-hasher"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bf50223579dc7cdcfb3bfcacf7069ff68243f8c363f62ffa99cf000a6b9c451"
 
 [[package]]
 name = "nom"
@@ -5866,6 +6617,15 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-foundation 0.3.2",
  "objc2-metal 0.3.2",
+]
+
+[[package]]
+name = "object"
+version = "0.37.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff76201f031d8863c38aa7f905eca4f53abbfa15f609db4277d44cd8938f33fe"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]
@@ -6419,7 +7179,7 @@ dependencies = [
  "shared_library",
  "shell-words",
  "winapi",
- "winreg",
+ "winreg 0.10.1",
 ]
 
 [[package]]
@@ -6486,7 +7246,7 @@ version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e67ba7e9b2b56446f1d419b1d807906278ffa1a658a8a5d8a39dcb1f5a78614f"
 dependencies = [
- "toml_edit",
+ "toml_edit 0.25.15+spec-1.1.0",
 ]
 
 [[package]]
@@ -6757,6 +7517,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
+name = "radium"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
+
+[[package]]
 name = "rand"
 version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6909,6 +7675,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "rawpointer"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "60a357793950651c4ed0f3f52338f53b2f809f32d83a07f72909fa13e4c6c1e3"
+
+[[package]]
 name = "rayon"
 version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7054,6 +7826,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-util",
+ "h2",
  "http",
  "http-body",
  "http-body-util",
@@ -7083,7 +7856,7 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-streams 0.4.2",
  "web-sys",
- "webpki-roots 1.0.9",
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]
@@ -7094,6 +7867,7 @@ checksum = "16a1cfa75cc186dd73d5818e510e042e40927bccc9c236b061cea97e1eb08029"
 dependencies = [
  "base64 0.23.1",
  "bytes",
+ "futures-channel",
  "futures-core",
  "futures-util",
  "http",
@@ -7192,9 +7966,16 @@ dependencies = [
  "bitflags 2.13.2",
  "fallible-iterator",
  "fallible-streaming-iterator",
+ "hashlink",
  "libsqlite3-sys",
  "smallvec",
 ]
+
+[[package]]
+name = "rustc-demangle"
+version = "0.1.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b74b56ffa8bb2830709a538c2cbcae9aa062db0d2a42563bfb09bdaae44020eb"
 
 [[package]]
 name = "rustc-hash"
@@ -7333,9 +8114,9 @@ checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.15"
+version = "0.103.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
+checksum = "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281"
 dependencies = [
  "aws-lc-rs",
  "ring",
@@ -7579,6 +8360,98 @@ dependencies = [
 ]
 
 [[package]]
+name = "sentry"
+version = "0.49.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9fa951f4e644464ebfd2347a7ab03b0828c512d2448a76262cad2607b343dff4"
+dependencies = [
+ "cfg_aliases 0.2.2",
+ "httpdate",
+ "reqwest 0.13.5",
+ "rustls",
+ "sentry-backtrace",
+ "sentry-core",
+ "sentry-debug-images",
+ "sentry-panic",
+ "sentry-tracing",
+ "ureq",
+]
+
+[[package]]
+name = "sentry-backtrace"
+version = "0.49.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f4f27cf048aa63ccd5bc94c29989133eabb82e9c6bf7441b58e9d4a95837a105"
+dependencies = [
+ "backtrace",
+ "regex",
+ "sentry-core",
+]
+
+[[package]]
+name = "sentry-core"
+version = "0.49.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3ed398494bb8fc412a11a182c1883a10ae147587b8f6314abd222d1d626f31b"
+dependencies = [
+ "rand 0.10.3",
+ "sentry-types",
+ "serde",
+ "serde_json",
+ "url",
+]
+
+[[package]]
+name = "sentry-debug-images"
+version = "0.49.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "55854bb40681e84ffd2a69578ad4ef9bfaf5bf2bf1380a745578b591fa24af22"
+dependencies = [
+ "findshlibs",
+ "sentry-core",
+]
+
+[[package]]
+name = "sentry-panic"
+version = "0.49.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b7153e68642b761ed3aa62c022795c11b2facc728b2db7484084492373c944f9"
+dependencies = [
+ "sentry-backtrace",
+ "sentry-core",
+]
+
+[[package]]
+name = "sentry-tracing"
+version = "0.49.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7e7db1aefdf623f4e48e21ec9e4af535024187aeafb2a4cc7e29d035def5a13"
+dependencies = [
+ "bitflags 2.13.2",
+ "sentry-backtrace",
+ "sentry-core",
+ "tracing-core",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "sentry-types"
+version = "0.49.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c18bf7b159bdfc7c8f97816f476b4947a1937fb6bea9d38d3479e58631614ac"
+dependencies = [
+ "debugid",
+ "hex",
+ "rand 0.10.3",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "time",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "serde"
 version = "1.0.229"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7652,6 +8525,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.6",
+]
+
+[[package]]
+name = "serde_spanned"
+version = "0.6.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf41e0cfaf7226dca15e8197172c295a782857fcb97fad1808a166870dee75a3"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -7730,6 +8612,7 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
  "digest 0.10.7",
+ "sha2-asm",
 ]
 
 [[package]]
@@ -7741,6 +8624,15 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.3.1",
  "digest 0.11.3",
+]
+
+[[package]]
+name = "sha2-asm"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b845214d6175804686b2bd482bcffe96651bb2d1200742b712003504a2dac1ab"
+dependencies = [
+ "cc",
 ]
 
 [[package]]
@@ -7909,6 +8801,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-nohash-hasher"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b8a731ed60e89177c8a7ab05fe0f1511cedd3e70e773f288f9de33a9cfdc21e"
+
+[[package]]
 name = "spin"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7934,6 +8832,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "sprs"
+version = "0.11.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59468ff1d42d9e2439415c7dbb6d9d965253dac6986f29dbcda72c2e36e94fb7"
+dependencies = [
+ "ndarray",
+ "num-complex",
+ "num-traits",
+ "smallvec",
+]
+
+[[package]]
 name = "sse-stream"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7951,6 +8861,26 @@ name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
+
+[[package]]
+name = "stateright"
+version = "0.31.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd1157f21b11916f90fe1f2ac9a8d0e09a8813b28701584141060f414eedf6ba"
+dependencies = [
+ "ahash",
+ "choice",
+ "crossbeam-utils",
+ "dashmap",
+ "id-set",
+ "log",
+ "nohash-hasher",
+ "parking_lot",
+ "rand 0.9.5",
+ "serde",
+ "serde_json",
+ "tiny_http",
+]
 
 [[package]]
 name = "static_assertions"
@@ -8085,6 +9015,12 @@ dependencies = [
  "toml 1.1.6+spec-1.1.0",
  "version-compare",
 ]
+
+[[package]]
+name = "tap"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 
 [[package]]
 name = "tar"
@@ -8240,6 +9176,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tiny_http"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "389915df6413a2e74fb181895f933386023c71110878cd0825588928e64cdc82"
+dependencies = [
+ "ascii",
+ "chunked_transfer",
+ "httpdate",
+ "log",
+]
+
+[[package]]
 name = "tinystr"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8371,13 +9319,25 @@ dependencies = [
 
 [[package]]
 name = "toml"
+version = "0.8.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc1beb996b9d83529a9e75c17a1686767d148d70663143c7854d8b4a09ced362"
+dependencies = [
+ "serde",
+ "serde_spanned 0.6.9",
+ "toml_datetime 0.6.11",
+ "toml_edit 0.22.27",
+]
+
+[[package]]
+name = "toml"
 version = "0.9.12+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf92845e79fc2e2def6a5d828f0801e29a2f8acc037becc5ab08595c7d5e9863"
 dependencies = [
  "indexmap",
  "serde_core",
- "serde_spanned",
+ "serde_spanned 1.1.1",
  "toml_datetime 0.7.5+spec-1.1.0",
  "toml_parser",
  "toml_writer",
@@ -8392,11 +9352,20 @@ checksum = "920602543f0911ab71da12c50d59701da54c196d1a2bf5cb4b75667f137a406a"
 dependencies = [
  "indexmap",
  "serde_core",
- "serde_spanned",
+ "serde_spanned 1.1.1",
  "toml_datetime 1.1.1+spec-1.1.0",
  "toml_parser",
  "toml_writer",
  "winnow 1.0.4",
+]
+
+[[package]]
+name = "toml_datetime"
+version = "0.6.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22cddaf88f4fbc13c51aebbf5f8eceb5c7c5a9da2ac40a13519eb5b0a0e8f11c"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -8415,6 +9384,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3165f65f62e28e0115a00b2ebdd37eb6f3b641855f9d636d3cd4103767159ad7"
 dependencies = [
  "serde_core",
+]
+
+[[package]]
+name = "toml_edit"
+version = "0.22.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41fe8c660ae4257887cf66394862d21dbca4a6ddd26f04a3560410406a2f819a"
+dependencies = [
+ "indexmap",
+ "serde",
+ "serde_spanned 0.6.9",
+ "toml_datetime 0.6.11",
+ "toml_write",
+ "winnow 0.7.15",
 ]
 
 [[package]]
@@ -8438,6 +9421,12 @@ checksum = "1d38ac1cf9b95face32296c0a3ede1fdc270627c9d9c02a7274dd6d960dc4d56"
 dependencies = [
  "winnow 1.0.4",
 ]
+
+[[package]]
+name = "toml_write"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
 
 [[package]]
 name = "toml_writer"
@@ -8473,7 +9462,7 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
- "webpki-roots 1.0.9",
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]
@@ -8986,7 +9975,7 @@ dependencies = [
  "serde_json",
  "ureq-proto",
  "utf8-zero",
- "webpki-roots 1.0.9",
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]
@@ -9011,6 +10000,7 @@ dependencies = [
  "idna",
  "percent-encoding",
  "serde",
+ "serde_derive",
 ]
 
 [[package]]
@@ -9123,6 +10113,26 @@ name = "vsimd"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c3082ca00d5a5ef149bb8b555a72ae84c9c59f7250f013ac822ac2e49b19c64"
+
+[[package]]
+name = "vswhom"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be979b7f07507105799e854203b470ff7c78a1639e330a58f183b5fea574608b"
+dependencies = [
+ "libc",
+ "vswhom-sys",
+]
+
+[[package]]
+name = "vswhom-sys"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb067e4cbd1ff067d1df46c9194b5de0e98efd2810bbc95c5d5e5f25a3231150"
+dependencies = [
+ "cc",
+ "libc",
+]
 
 [[package]]
 name = "wait-timeout"
@@ -9402,9 +10412,9 @@ dependencies = [
 
 [[package]]
 name = "webpki-root-certs"
-version = "1.0.9"
+version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b96554aa2acc8ccdb7e1c9a58a7a68dd5d13bccc69cd124cb09406db612a1c9b"
+checksum = "58ec80e73fd8baf57bf0d9615554c75348bda990d6d5bbeab964dd068319fecb"
 dependencies = [
  "rustls-pki-types",
 ]
@@ -9415,14 +10425,14 @@ version = "0.26.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9"
 dependencies = [
- "webpki-roots 1.0.9",
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]
 name = "webpki-roots"
-version = "1.0.9"
+version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a"
+checksum = "1c1c8e20c8a38fc7d65abfe74eb7280e4aa667e8eec8bc84996d2874810748d9"
 dependencies = [
  "rustls-pki-types",
 ]
@@ -10330,6 +11340,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "winreg"
+version = "0.52.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a277a57398d4bfa075df44f501a17cfdf8542d224f0d36095a2adc7aee4ef0a5"
+dependencies = [
+ "cfg-if",
+ "windows-sys 0.48.0",
+]
+
+[[package]]
 name = "wit-bindgen"
 version = "0.57.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10340,6 +11360,15 @@ name = "writeable"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
+
+[[package]]
+name = "wyz"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05f360fc0b24296329c78fda852a1e9ae82de9cf7b27dae4b7f62f118f77b9ed"
+dependencies = [
+ "tap",
+]
 
 [[package]]
 name = "x11-dl"
@@ -10460,6 +11489,12 @@ name = "xmlparser"
 version = "0.13.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "66fee0b777b0f5ac1c69bb06d361268faafa61cd4682ae064a171c16c433e9e4"
+
+[[package]]
+name = "xxhash-rust"
+version = "0.8.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "550a2b930b62486a393c52d5c3b84bff264b28aa437ed64694d31e93b1757af7"
 
 [[package]]
 name = "y4m"
@@ -10675,6 +11710,34 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+
+[[package]]
+name = "zstd"
+version = "0.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e91ee311a569c327171651566e07972200e76fcfe2242a4fa446149a3881c08a"
+dependencies = [
+ "zstd-safe",
+]
+
+[[package]]
+name = "zstd-safe"
+version = "7.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "64d80649ab6db9d9f6f9c80a40becd948eda4714a0a5ac8c4d157a32231c7882"
+dependencies = [
+ "zstd-sys",
+]
+
+[[package]]
+name = "zstd-sys"
+version = "2.1.2+zstd.1.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "481ada9c543b2323cbb7bbdbb5249177fbf0188ed959ed2c15e4b22421c84ed3"
+dependencies = [
+ "cc",
+ "pkg-config",
+]
 
 [[package]]
 name = "zune-core"

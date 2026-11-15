@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Private supervised-worker transport for the typed SDK.
 //!
 //! The worker owns one runtime in a directly spawned child process. Its only

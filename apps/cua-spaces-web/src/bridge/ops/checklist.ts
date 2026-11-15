@@ -11,7 +11,7 @@
  * | `checklist.get` | the host method `checklist.get` | the host method `checklist.get` | unsupported |
  * | `checklist.send` | the host method `checklist.send` | the host method `checklist.send` | unsupported |
  *
- * `checklist.send` takes a step done, `shown`, `dismiss`, `reopen`, or
+ * `checklist.send` takes a step done or skipped, `shown`, `dismiss`, `reopen`, or
  * `merge` (progress this page kept itself before, merged once). The host
  * runs the core's `checklist.reduce`, saves it and records its usage
  * events; it ticks steps off from what it shows itself
@@ -28,11 +28,14 @@ export interface HostChecklistState {
   done: string[];
   dismissed: boolean;
   shown: boolean;
+  /** Steps skipped ("Skip"). */
+  skipped: string[];
 }
 
 /** What `checklist.send` takes (`checklist::ChecklistAction`, without `observe`). */
 export type HostChecklistAction =
   | { type: "done"; step: string }
+  | { type: "skip"; step: string }
   | { type: "shown" }
   | { type: "dismiss" }
   | { type: "reopen" }

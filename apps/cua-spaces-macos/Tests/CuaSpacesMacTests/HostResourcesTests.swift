@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
+import CuaSDK
 import Foundation
 import Testing
 @testable import CuaSpacesMacKit
@@ -59,5 +60,72 @@ struct HostResourcesTests {
         #expect(thisMac?["id"] as? String == "this-mac")
         #expect((snap["spaces"] as? [Any])?.isEmpty == true)
         #expect(["ok", "low", "critical"].contains((snap["warning"] as? [String: Any])?["level"] as? String ?? ""))
+    }
+
+    @Test("resources.get answers the SDK's snapshot in the page's shape: every Space, here and on other computers")
+    func sdkSnapshot() throws {
+        let g: UInt64 = 1_000_000_000
+        let warning = CuaSDK.DiskWarning(level: .low, free: 41 * g, total: 1000 * g, threshold: 100 * g)
+        func computer(_ id: String, _ name: String) -> CuaSDK.ComputerResources {
+            CuaSDK.ComputerResources(
+                id: id, name: name, online: true, sampledAtMs: 7, cpuCount: 12, cpuPercent: 30.5, loadAverage1m: 2.5,
+                memoryTotal: 64 * g, memoryUsed: 41 * g, diskTotal: 1000 * g, diskFree: 41 * g,
+                spacesCount: 1, spacesRunning: 1, spacesCpuAllocated: 4, spacesMemoryAllocated: 8 * g,
+                spacesMemoryUsed: 3 * g, spacesDiskBytes: 19 * g, spacesDiskExact: true, warning: warning)
+        }
+        let snapshot = CuaSDK.ResourcesSnapshot(
+            sequence: 9, sampledAtMs: 7, thisMac: computer("this-mac", ""),
+            spaces: [
+                CuaSDK.SpaceResources(id: "local:design-review", powerState: "running", cpuAllocated: 4,
+                                      memoryAllocated: 8 * g, diskAllocated: 80 * g, usage: nil,
+                                      diskOnHost: CuaSDK.DiskOnHost(bytes: 19 * g, allocated: 34 * g, sharesSpace: true),
+                                      base: CuaSDK.SharedBase(key: "sha256:m", image: "ghcr.io/trycua/macos:26",
+                                                              bytes: 25 * g, sharedWith: 2)),
+                // One of yours on the Mac mini: only its size there.
+                CuaSDK.SpaceResources(id: "relay:space-qa-1234", powerState: "stopped", cpuAllocated: 0,
+                                      memoryAllocated: 0, diskAllocated: 0, usage: nil,
+                                      diskOnHost: CuaSDK.DiskOnHost(bytes: 21 * g, allocated: 21 * g, sharesSpace: false),
+                                      base: nil),
+                // Only an upper bound, and a container with no disk at all.
+                CuaSDK.SpaceResources(id: "local:clone", powerState: "stopped", cpuAllocated: 2, memoryAllocated: 0,
+                                      diskAllocated: 0, usage: nil,
+                                      diskOnHost: CuaSDK.DiskOnHost(bytes: nil, allocated: 30 * g, sharesSpace: true),
+                                      base: nil),
+                // A gVisor container: its guest's root has no size of its own.
+                CuaSDK.SpaceResources(id: "local:box", powerState: "running", cpuAllocated: 2, memoryAllocated: 0,
+                                      diskAllocated: 0,
+                                      usage: CuaSDK.GuestUsage(cpuCount: 2, cpuPercent: 13, loadAverage1m: 0,
+                                                               memoryUsed: 1 * g, memoryTotal: 4 * g, memoryLimited: true,
+                                                               diskUsed: 249_856, diskTotal: nil, diskLimited: false),
+                                      diskOnHost: nil, base: nil),
+            ],
+            computers: [computer("mac-mini", "Mac mini")], warning: warning)
+        let json = resourcesJSON(snapshot)
+        // What the page reads: plain JSON numbers, null for what is missing.
+        let data = try JSONSerialization.data(withJSONObject: json)
+        let back = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(back["sequence"] as? Int == 9)
+        let thisMac = try #require(back["thisMac"] as? [String: Any])
+        #expect(thisMac["id"] as? String == "this-mac")
+        #expect(thisMac["spacesDiskBytes"] as? Int == 19_000_000_000)
+        #expect((thisMac["warning"] as? [String: Any])?["level"] as? String == "low")
+        #expect((back["warning"] as? [String: Any])?["threshold"] as? Int == 100_000_000_000)
+        let spaces = try #require(back["spaces"] as? [[String: Any]])
+        #expect(spaces.map { $0["id"] as? String } == ["local:design-review", "relay:space-qa-1234", "local:clone", "local:box"])
+        #expect((spaces[1]["diskOnHost"] as? [String: Any])?["bytes"] as? Int == 21_000_000_000)
+        #expect(spaces[1]["usage"] is NSNull)
+        #expect((spaces[2]["diskOnHost"] as? [String: Any])?["bytes"] is NSNull)
+        #expect((spaces[2]["diskOnHost"] as? [String: Any])?["sharesSpace"] as? Bool == true)
+        #expect(spaces[3]["diskOnHost"] is NSNull)
+        // No size of its own is null, never a sentinel number.
+        #expect((spaces[3]["usage"] as? [String: Any])?["diskTotal"] is NSNull)
+        let base = try #require(spaces[0]["base"] as? [String: Any])
+        #expect(base["image"] as? String == "ghcr.io/trycua/macos:26")
+        #expect(base["sharedWith"] as? Int == 2)
+        #expect(spaces[1]["base"] is NSNull)
+        #expect((back["computers"] as? [[String: Any]])?.map { $0["id"] as? String } == ["mac-mini"])
+        // Every field the page's contract names, no more.
+        #expect(Set(spaces[0].keys) == ["id", "powerState", "cpuAllocated", "memoryAllocated", "diskAllocated", "usage", "diskOnHost", "base"])
+        #expect(Set(thisMac.keys) == Set((HostResourceSampler().sample().snapshot()["thisMac"] as? [String: Any] ?? [:]).keys))
     }
 }

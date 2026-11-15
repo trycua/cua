@@ -7,7 +7,7 @@ with its own dependencies. They are used under their own licences:
 
 | Package | Version | Licence |
 | --- | --- | --- |
-| `electron` | 43.4.0 | MIT |
+| `electron` | 43.8.1 | MIT |
 | `@electron/get` | 5.1.0 | MIT |
 | `@electron-internal/extract-zip` | 1.0.5 | BSD-2-Clause |
 | `@types/node` | 24.13.3 | MIT |

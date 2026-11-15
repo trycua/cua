@@ -141,13 +141,6 @@
         item(e.src, e.x / 100 * WIN.w, e.y / 100 * WIN.h, e.size / 100 * WIN.w, e.rot, { legend: e.legend, z: Math.round(e.depth * 10), soft: e.soft })).join("") +
       guides() +
       `<div class="copy"><h1>One more key.</h1><p>Drag Cua Spaces into Applications.</p></div>`;
-  } else if (mode === "icon") {
-    Object.assign(stage.style, { width: ICON + "px", height: ICON + "px" });
-    const clip = `path('${squircle(ICON, (ICON - TILE) / 2)}')`;
-    // Slate night (variant B): a vertical slate gradient, the key on a soft drop shadow.
-    stage.innerHTML = `<div style="position:absolute;inset:0;clip-path:${clip};background:linear-gradient(#33415a, #121a27);overflow:hidden">
-        <div style="position:absolute;inset:0;filter:drop-shadow(0 26px 28px rgba(0,0,0,.35))">${iconKey((w) => sprite(TARGET, w, "spaces"))}</div>
-      </div>`;
   } else if (mode === "alias") {
     Object.assign(stage.style, { width: ICON + "px", height: ICON + "px" });
     const sp = SPR[TARGET];

@@ -196,8 +196,8 @@ def test_windows_api_resolver_avoids_the_automatic_matches_variable() -> None:
     ("scenario", "missing", "attempts", "has_error"),
     [
         ("missing", True, 1, False),
-        ("server", False, 3, True),
-        ("network", False, 3, True),
+        ("server", False, 7, True),
+        ("network", False, 7, True),
         ("auth", False, 1, True),
     ],
 )
@@ -225,11 +225,15 @@ def test_windows_download_classifies_and_retries_failures_behaviorally(
             "Start-Sleep -Seconds $delaySeconds",
             "$null = $delaySeconds",
         )
+        delays = re.search(r"^\$Script:ReleaseRetryDelays = .*$", source, re.MULTILINE)
+        assert delays, "could not locate $Script:ReleaseRetryDelays"
+        delays = delays.group(0)
         result = _run_powershell(
             tmp_path,
             f"""
 $Repo = 'trycua/cua'
 $TagPrefix = 'cua-driver-rs-v'
+{delays}
 function Write-Step {{ param([string]$Message) }}
 function Write-WarningStep {{ param([string]$Message) }}
 
@@ -251,7 +255,7 @@ $download = Get-ReleaseZip '1.2.3' 'windows-x86_64' '{tmp_path.as_posix()}'
     }
     if scenario == "network":
         # Invoke-WebRequest has its own transport retry on a dropped socket;
-        # the installer-level Attempts count must still remain bounded at three.
+        # the installer-level Attempts count must still remain bounded at seven.
         assert len(requests) >= attempts
     else:
         assert len(requests) == attempts
@@ -546,9 +550,12 @@ def test_unix_api_resolver_stops_after_ten_full_pages(tmp_path: Path) -> None:
     assert not any("&page=11" in line for line in calls)
 
 
-def _run_download(tmp_path: Path, scenario: str, token_env: str = "") -> tuple[int, list[str], str]:
+def _run_download(
+    tmp_path: Path, scenario: str, token_env: str = "", entry: str = 'download_release_tarball "1.2.3"'
+) -> tuple[int, list[str], str, list[str]]:
     """Run the real download helper with deterministic HTTP/curl behavior."""
     calls = tmp_path / "download-calls"
+    sleeps = tmp_path / "sleeps"
     script = tmp_path / "run-download.sh"
     script.write_text(
         textwrap.dedent(
@@ -562,7 +569,7 @@ def _run_download(tmp_path: Path, scenario: str, token_env: str = "") -> tuple[i
             {token_env}
             log() {{ printf '==> %s\\n' "$*"; }}
             err() {{ printf 'error: %s\\n' "$*" >&2; }}
-            sleep() {{ :; }}
+            sleep() {{ printf '%s\\n' "$1" >> "{sleeps.as_posix()}"; }}
             curl() {{
                 printf '%s\\n' "$*" >> "{calls.as_posix()}"
                 local output="" previous="" arg
@@ -584,6 +591,17 @@ def _run_download(tmp_path: Path, scenario: str, token_env: str = "") -> tuple[i
                         printf '503'
                         return 0
                         ;;
+                    outage)
+                        # A CDN outage that clears after a minute: 504 until
+                        # the fifth request.
+                        if (( $(wc -l < "{calls.as_posix()}") < 5 )); then
+                            printf '504'
+                            return 0
+                        fi
+                        printf 'archive' > "$output"
+                        printf '200'
+                        return 0
+                        ;;
                     auth)
                         printf '401'
                         return 0
@@ -595,22 +613,26 @@ def _run_download(tmp_path: Path, scenario: str, token_env: str = "") -> tuple[i
                 esac
             }}
             {_extract_shell_function(_unix_source(), "release_tarball_name")}
+            {_extract_shell_function(_unix_source(), "fetch_release_url")}
             {_extract_shell_function(_unix_source(), "download_release_tarball")}
-            download_release_tarball "1.2.3"
+            {_extract_shell_function(_unix_source(), "fetch_release_file")}
+            {entry}
             """
         ),
         encoding="utf-8",
     )
     result = subprocess.run(["bash", script.as_posix()], capture_output=True, text=True)
     call_lines = calls.read_text(encoding="utf-8").splitlines()
-    return result.returncode, call_lines, result.stderr
+    sleep_lines = sleeps.read_text(encoding="utf-8").split() if sleeps.exists() else []
+    return result.returncode, call_lines, result.stderr, sleep_lines
 
 
 @requires_posix_bash
 def test_unix_download_reports_confirmed_404_without_retry(tmp_path: Path) -> None:
-    returncode, calls, _ = _run_download(tmp_path, "missing")
+    returncode, calls, _, sleeps = _run_download(tmp_path, "missing")
     assert returncode == 44
     assert len(calls) == 1
+    assert sleeps == []
 
 
 @requires_posix_bash
@@ -618,24 +640,56 @@ def test_unix_download_reports_confirmed_404_without_retry(tmp_path: Path) -> No
 def test_unix_download_retries_transient_failure_without_fallback(
     tmp_path: Path, scenario: str
 ) -> None:
-    returncode, calls, stderr = _run_download(tmp_path, scenario)
+    returncode, calls, stderr, sleeps = _run_download(tmp_path, scenario)
     assert returncode == 1
-    assert len(calls) == 3
+    # A release CDN outage lasts minutes, so the retries wait about two
+    # minutes in all before giving up.
+    assert len(calls) == 7
+    assert sleeps == ["5", "10", "15", "30", "30", "30"]
+    assert "download failed after 7 attempt(s)" in stderr
     assert "refusing to fall back to an older release" in stderr
 
 
 @requires_posix_bash
+def test_unix_download_outlasts_a_minute_of_504s(tmp_path: Path) -> None:
+    returncode, calls, stderr, sleeps = _run_download(tmp_path, "outage")
+    assert returncode == 0, stderr
+    assert len(calls) == 5
+    assert sum(int(s) for s in sleeps) == 60
+    assert (tmp_path / "cua-driver-rs-1.2.3-linux-x86_64-binary.tar.gz").read_text() == "archive"
+    assert not list(tmp_path.glob("*.partial"))
+
+
+@requires_posix_bash
+@pytest.mark.parametrize(
+    ("scenario", "returncode", "attempts"),
+    [("missing", 44, 1), ("transient", 1, 7), ("auth", 1, 1), ("outage", 0, 5)],
+)
+def test_unix_checksum_and_bundle_fetch_share_the_download_retries(
+    tmp_path: Path, scenario: str, returncode: int, attempts: int
+) -> None:
+    dest = tmp_path / "SHA256SUMS"
+    code, calls, stderr, _ = _run_download(
+        tmp_path, scenario, entry=f'fetch_release_file SHA256SUMS "{dest.as_posix()}"'
+    )
+    assert code == returncode, stderr
+    assert len(calls) == attempts
+    assert dest.exists() == (returncode == 0)
+
+
+@requires_posix_bash
 def test_unix_download_does_not_retry_auth_failure_or_fallback(tmp_path: Path) -> None:
-    returncode, calls, stderr = _run_download(tmp_path, "auth")
+    returncode, calls, stderr, sleeps = _run_download(tmp_path, "auth")
     assert returncode == 1
     assert len(calls) == 1
+    assert sleeps == []
     assert "HTTP 401" in stderr
     assert "refusing to fall back to an older release" in stderr
 
 
 @requires_posix_bash
 def test_unix_public_asset_download_does_not_forward_api_token(tmp_path: Path) -> None:
-    returncode, calls, stderr = _run_download(tmp_path, "success", 'GITHUB_TOKEN="api-token"')
+    returncode, calls, stderr, _ = _run_download(tmp_path, "success", 'GITHUB_TOKEN="api-token"')
     assert returncode == 0
     assert len(calls) == 1
     assert "Authorization:" not in calls[0]

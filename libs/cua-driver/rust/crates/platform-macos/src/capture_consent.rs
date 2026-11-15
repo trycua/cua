@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS's one-time direct screen-capture consent (CUA-1792).
 //!
 //! From macOS 15, the first time an app captures the screen without the

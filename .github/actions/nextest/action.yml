@@ -1,0 +1,8 @@
+name: Install cargo-nextest
+description: "cargo-nextest, for the CI profile in .github/flaky/nextest.toml (one retry, JUnit output)."
+runs:
+  using: composite
+  steps:
+    - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+      with:
+        tool: cargo-nextest

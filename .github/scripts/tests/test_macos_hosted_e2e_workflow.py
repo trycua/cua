@@ -52,15 +52,11 @@ PROBE_REFUSALS = [
     ({"GITHUB_ACTIONS": ""}, "GITHUB_ACTIONS must be true"),
     ({"RUNNER_ENVIRONMENT": "self-hosted"}, "runner must be GitHub-hosted"),
     ({"CI": ""}, "CI must be true"),
-    ({"GITHUB_EVENT_NAME": "schedule", "GITHUB_REF": "refs/heads/feature"}, "probe must be manually dispatched, run by a stable cua-driver-rs tag release gate, or run by the nightly schedule on main"),
-    ({"GITHUB_EVENT_NAME": "pull_request"}, "probe must be manually dispatched, run by a stable cua-driver-rs tag release gate, or run by the nightly schedule on main"),
-    (
-        {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/heads/main"},
-        "probe must be manually dispatched, run by a stable cua-driver-rs tag release gate, or run by the nightly schedule on main",
-    ),
+    ({"GITHUB_EVENT_NAME": "schedule", "GITHUB_REF": "refs/heads/feature"}, "probe must be manually dispatched, run by a stable cua-driver-rs tag release gate, run by the nightly schedule on main, or the post-merge push to main"),
+    ({"GITHUB_EVENT_NAME": "pull_request"}, "probe must be manually dispatched, run by a stable cua-driver-rs tag release gate, run by the nightly schedule on main, or the post-merge push to main"),
     (
         {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/tags/lume-v0.3.0"},
-        "probe must be manually dispatched, run by a stable cua-driver-rs tag release gate, or run by the nightly schedule on main",
+        "probe must be manually dispatched, run by a stable cua-driver-rs tag release gate, run by the nightly schedule on main, or the post-merge push to main",
     ),
     ({"CUA_E2E_SOURCE_SHA": "main"}, "source SHA must contain 40 hexadecimal characters"),
     (
@@ -106,8 +102,9 @@ def test_hosted_macos_probe_refuses_outside_a_dispatched_hosted_run(
         {"GITHUB_EVENT_NAME": "workflow_dispatch"},
         {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/tags/cua-driver-rs-v0.29.0"},
         {"GITHUB_EVENT_NAME": "schedule", "GITHUB_REF": "refs/heads/main"},
+        {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/heads/main"},
     ],
-    ids=["workflow_dispatch", "stable-tag-push", "nightly-schedule-on-main"],
+    ids=["workflow_dispatch", "stable-tag-push", "nightly-schedule-on-main", "post-merge-push-on-main"],
 )
 def test_hosted_macos_probe_identity_gates_pass_for_a_dispatched_hosted_run(
     tmp_path: Path, event: dict[str, str]
@@ -122,15 +119,11 @@ def test_hosted_macos_probe_identity_gates_pass_for_a_dispatched_hosted_run(
 
 HOSTED_RUNNER_REFUSALS = [
     ({"GITHUB_ACTIONS": ""}, "requires GitHub Actions"),
-    ({"GITHUB_EVENT_NAME": "schedule", "GITHUB_REF": "refs/heads/feature"}, "runs only from workflow_dispatch, a stable cua-driver-rs tag release gate, or the nightly schedule on main"),
-    ({"GITHUB_EVENT_NAME": "pull_request"}, "runs only from workflow_dispatch, a stable cua-driver-rs tag release gate, or the nightly schedule on main"),
-    (
-        {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/heads/main"},
-        "runs only from workflow_dispatch, a stable cua-driver-rs tag release gate, or the nightly schedule on main",
-    ),
+    ({"GITHUB_EVENT_NAME": "schedule", "GITHUB_REF": "refs/heads/feature"}, "runs only from workflow_dispatch, a stable cua-driver-rs tag release gate, the nightly schedule on main, or the post-merge push to main"),
+    ({"GITHUB_EVENT_NAME": "pull_request"}, "runs only from workflow_dispatch, a stable cua-driver-rs tag release gate, the nightly schedule on main, or the post-merge push to main"),
     (
         {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/tags/lume-v0.3.0"},
-        "runs only from workflow_dispatch, a stable cua-driver-rs tag release gate, or the nightly schedule on main",
+        "runs only from workflow_dispatch, a stable cua-driver-rs tag release gate, the nightly schedule on main, or the post-merge push to main",
     ),
     ({"RUNNER_ENVIRONMENT": "self-hosted"}, "requires a GitHub-hosted runner"),
     ({"RUNNER_OS": "Linux"}, "requires RUNNER_OS=macOS"),
@@ -206,7 +199,10 @@ def test_hosted_macos_probe_is_manual_exact_sha_and_least_privilege() -> None:
     assert "github.run_id }}-${{ github.run_attempt" in workflow
     assert "CUA_MACOS_HOSTED_PROBE_DIR: ${{ runner.temp" not in workflow
     assert 'echo "CUA_MACOS_HOSTED_PROBE_DIR=${artifact_dir}" >> "${GITHUB_ENV}"' in workflow
-    assert "matrix:\n        lane: [shared, native, capture, browser]" in workflow
+    # Release gates and manual runs keep all four lanes; only the PR quick lane (quick=true) runs `shared`.
+    assert "matrix:\n        lane: ${{ fromJSON(inputs.quick && '[\"shared\"]' || '[\"shared\",\"native\",\"capture\",\"browser\"]') }}" in workflow
+    assert "CUA_E2E_HARNESS_FILTER: ${{ inputs.quick && 'electron' || '' }}" in workflow
+    assert "rust-macos-hosted-${{ inputs.quick && 'quick-result' || 'certification' }}" in workflow
     assert "fail-fast: false" in workflow
     assert "needs: probe" in workflow
     assert "scripts/ci/macos/run-hosted-rust-e2e.sh" in workflow

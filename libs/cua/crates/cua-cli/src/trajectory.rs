@@ -3,7 +3,7 @@
 //! TrajectoryViewer format (`turn_NNN_agent_response.json` plus an optional
 //! `screenshot.png`). `cua trajectory` lists, zips, serves and cleans them.
 
-use crate::util::{self, internal, line};
+use crate::util::{self, hint_line, internal, line};
 use cua_sdk::CuaError;
 use std::{
     io::Write,
@@ -388,7 +388,7 @@ pub fn cmd_view(target: Option<String>, port: u16, out: &mut dyn Write) -> Resul
         .unwrap_or_default();
     line(out, format!("Serving: {machine}/{ts}"));
     line(out, format!("Viewer:  {viewer}"));
-    line(out, "Stop with: cua trajectory stop");
+    hint_line(out, "Stop with: cua trajectory stop");
     util::open_browser(&viewer);
     Ok(0)
 }

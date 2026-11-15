@@ -1,6 +1,10 @@
 //! Guide scenarios in Rust: run-omarchy, connect-with-viewer, local-container
 //! and images. Definitions: ../python/test_{desktop,images}.py.
 
+// The test futures nest deeply enough that computing their layout passes
+// the default query depth of 128.
+#![recursion_limit = "256"]
+
 use std::sync::Arc;
 use std::time::Duration;
 

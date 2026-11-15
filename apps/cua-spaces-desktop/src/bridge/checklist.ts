@@ -24,6 +24,11 @@ export function checklistAction(model: AppModel, raw: unknown): AppChecklistActi
       if (step === undefined) throw Failure.badArgs("step: one of the checklist's steps");
       return new A.Done({ step });
     }
+    case "skip": {
+      const step = c.fromStored({ done: [String(a.step)] }).done[0];
+      if (step === undefined) throw Failure.badArgs("step: one of the checklist's steps");
+      return new A.Skip({ step });
+    }
     case "shown":
       return new A.Shown();
     case "dismiss":
@@ -32,11 +37,11 @@ export function checklistAction(model: AppModel, raw: unknown): AppChecklistActi
       return new A.Reopen();
     case "merge": {
       const s = a.state;
-      if (!s || typeof s !== "object" || Array.isArray(s)) throw Failure.badArgs("state: {done, dismissed, shown}");
+      if (!s || typeof s !== "object" || Array.isArray(s)) throw Failure.badArgs("state: {done, dismissed, shown, skipped}");
       return new A.Merge({ state: c.fromStored(s as Partial<StoredChecklist>) });
     }
     default:
-      throw Failure.badArgs("action: done, shown, dismiss, reopen or merge");
+      throw Failure.badArgs("action: done, skip, shown, dismiss, reopen or merge");
   }
 }
 

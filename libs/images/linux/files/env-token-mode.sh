@@ -33,8 +33,13 @@ CUA_SYNCED_TOKEN_DIR="${CUA_SYNCED_TOKEN_DIR:-/run/cua-env}"
 CUA_SYNCED_TOKEN_FILE="$CUA_SYNCED_TOKEN_DIR/env-token"
 
 cua_is_mountpoint() {
-    # mountinfo field 5 is the mount point; works under gVisor too.
-    awk -v p="$1" '$5 == p { found = 1 } END { exit !found }' /proc/self/mountinfo 2>/dev/null
+    # mountinfo field 5 is the mount point; works under gVisor too. Builtins
+    # only: the token-sync watcher calls this every 2 s for a Space's life.
+    local _id _parent _dev _root _mount _rest
+    while read -r _id _parent _dev _root _mount _rest; do
+        [ "$_mount" = "$1" ] && return 0
+    done 2>/dev/null </proc/self/mountinfo
+    return 1
 }
 
 # KubeVirt: a virtio-fs device (virtio id 0x001a) means the orchestrator

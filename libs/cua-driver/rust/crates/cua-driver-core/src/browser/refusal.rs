@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Structured refusals for the browser-tool surface.
 //!
 //! The exact-or-refused contract means most failure paths are not

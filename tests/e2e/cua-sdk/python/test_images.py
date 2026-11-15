@@ -219,7 +219,9 @@ def test_cli_build_push_boot_vm(local_cua, tmp_path):
 
         # A fresh runtime: the QEMU disk resolver reads CUA_INSECURE_REGISTRIES
         # when the runtime is created, not per pull.
-        fresh = cua.embedded(state_dir=str(tmp_path / "boot-state"))
+        fresh = cua.embedded(
+            state_dir=str(tmp_path / "boot-state"), spaces_home=str(tmp_path / "boot-spaces")
+        )
 
         async def boot():
             sb = await fresh.sandboxes().create(

@@ -63,17 +63,6 @@ describe("SettingsPanel account section", () => {
   });
 });
 
-describe("SettingsPanel default location", () => {
-  it("offers no default-location choice while the apps do not offer Cua Cloud", () => {
-    renderPanel({
-      defaultLocation: { value: "cloud", source: "env", env: "CUA_DEFAULT_ON", path: "/tmp/cua/config.toml" },
-      onDefaultLocation: vi.fn(),
-    });
-    expect(screen.queryByRole("radiogroup", { name: "New Spaces run on" })).toBeNull();
-    expect(screen.queryByText(/Cua Cloud/)).toBeNull();
-  });
-});
-
 describe("SettingsPanel device-flow sign-in", () => {
   /** A mock `AccountAuth` whose event handlers can be fired by the test. */
   function mockAuth() {
@@ -249,14 +238,7 @@ describe("SettingsPanel AI agents", () => {
   async function renderFresh() {
     const { SettingsPanel: Panel } = await import("./SettingsPanel");
     await act(async () => {
-      render(
-        <Panel
-          menuBar={false}
-          onMenuBarMode={vi.fn()}
-          onOpenExternal={vi.fn()}
-          onClose={vi.fn()}
-        />,
-      );
+      render(<Panel menuBar={false} onMenuBarMode={vi.fn()} onOpenExternal={vi.fn()} onClose={vi.fn()} />);
     });
   }
 
@@ -390,18 +372,29 @@ describe("SettingsPanel Privacy", () => {
   });
 
   it("locks the switch when the environment decides", async () => {
-    renderPanel({ telemetry: fakeTelemetry({ enabled: false, source: "env DO_NOT_TRACK", sourceKind: "do_not_track" }) });
+    renderPanel({
+      telemetry: fakeTelemetry({ enabled: false, source: "env DO_NOT_TRACK", sourceKind: "do_not_track" }),
+    });
     const on = await screen.findByRole("radio", { name: "On" });
     expect(on).toBeDisabled();
     expect(screen.getByTitle("Set by env DO_NOT_TRACK")).toBeInTheDocument();
   });
 
-  it("lists Account, Teams, General, Privacy, AI agents and Experiments in order, with Show again", async () => {
+  it("lists Account, Teams, General, Runtimes, Privacy, AI agents and Experiments in order, with Show again", async () => {
     const onShowWelcome = vi.fn();
     renderPanel({ telemetry: fakeTelemetry(), onShowWelcome });
     await screen.findByText("Share usage data to help improve Cua");
     const titles = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
-    expect(titles).toEqual(["Account", "Teams", "General", "Privacy", "AI agents", "Experiments", "Language"]);
+    expect(titles).toEqual([
+      "Account",
+      "Teams",
+      "General",
+      "Runtimes",
+      "Privacy",
+      "AI agents",
+      "Experiments",
+      "Language",
+    ]);
     await userEvent.click(screen.getByRole("button", { name: "Show again" }));
     expect(onShowWelcome).toHaveBeenCalled();
   });
@@ -433,11 +426,7 @@ describe("SettingsPanel Experiments", () => {
     renderPanel({ telemetry });
     await screen.findByText("Share usage data to help improve Cua");
     const experiments = within(screen.getByRole("region", { name: "Experiments" }));
-    for (const name of ["Cua Volume", "Your cloud"]) {
-      expect(experiments.getByRole("switch", { name })).toHaveAttribute("aria-checked", "false");
-    }
-    // Sharing is on by default (cua.ai/pricing lists it).
-    expect(experiments.getByRole("switch", { name: "Sharing" })).toHaveAttribute("aria-checked", "true");
+    expect(experiments.getByRole("switch", { name: "Cua Volume" })).toHaveAttribute("aria-checked", "false");
     expect(screen.queryByRole("region", { name: "Storage" })).toBeNull();
     await user.click(experiments.getByRole("switch", { name: "Cua Volume" }));
     expect(await screen.findByRole("region", { name: "Storage" })).toBeInTheDocument();
@@ -448,13 +437,13 @@ describe("SettingsPanel Experiments", () => {
     });
     expect(telemetry.recordSignals).toHaveBeenCalledWith([
       { type: "experiment", action: "experiment_on", experiment: "cua_volume" },
-      { type: "experiments-on", experiments: ["cua_volume", "sharing"] },
+      { type: "experiments-on", experiments: ["cua_volume"] },
     ]);
   });
 });
 
-describe("SettingsPanel billing and Teams", () => {
-  it("hides Cua Cloud billing and opens the account app for Teams", async () => {
+describe("SettingsPanel Teams", () => {
+  it("opens the account app for Teams", async () => {
     const auth = {
       beginSignIn: vi.fn(),
       signOut: vi.fn(),
@@ -465,16 +454,8 @@ describe("SettingsPanel billing and Teams", () => {
     const props = renderPanel({
       signedInIdentity: "you@example.com",
       auth,
-      billingStatus: async () => ({
-        billingEnabled: true,
-        card: null,
-        credit: { balanceUsdCents: 742 },
-        billingUrl: "https://example.com/billing",
-      }),
     });
     expect(await screen.findByRole("region", { name: "Teams" })).toBeInTheDocument();
-    expect(screen.queryByText("$7.42 credit left")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Manage billing" })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Manage team" }));
     expect(props.onOpenExternal).toHaveBeenCalledWith("https://app.cua.ai/team");
   });
@@ -517,7 +498,11 @@ describe("SettingsPanel Storage", () => {
     renderPanel({ drive: drive.bridge, os: "macos" });
     const group = storageGroup();
     const backend = await group.findByRole("radiogroup", { name: "Store files on" });
-    expect(within(backend).getAllByRole("radio").map((r) => r.textContent)).toEqual(["This Mac", "S3-compatible"]);
+    expect(
+      within(backend)
+        .getAllByRole("radio")
+        .map((r) => r.textContent),
+    ).toEqual(["This Mac", "S3-compatible"]);
     expect(within(backend).getByRole("radio", { name: "This Mac" })).toHaveAttribute("aria-checked", "true");
     // "Stored in": the path, shortened in the middle, the full path as its tooltip.
     expect(group.getByText("Stored in")).toBeInTheDocument();
@@ -535,7 +520,9 @@ describe("SettingsPanel Storage", () => {
     expect(group.getByRole("textbox", { name: "Region" })).toHaveValue("us-east-1");
     await user.type(endpoint, "http://127.0.0.1:9000");
     await user.type(group.getByRole("textbox", { name: "Bucket" }), "cua-volume");
-    await user.click(within(group.getByRole("radiogroup", { name: "Path-style URLs" })).getByRole("radio", { name: "On" }));
+    await user.click(
+      within(group.getByRole("radiogroup", { name: "Path-style URLs" })).getByRole("radio", { name: "On" }),
+    );
     await user.type(group.getByRole("textbox", { name: "Access key ID" }), "maya-drive");
     const secret = group.getByLabelText("Secret access key");
     expect(secret).toHaveAttribute("type", "password");
@@ -613,7 +600,9 @@ describe("SettingsPanel Storage", () => {
     const group = storageGroup();
     expect(await group.findByText("1.2 GB of 10 GB")).toBeInTheDocument();
     await user.click(group.getByRole("button", { name: "Clear cache" }));
-    await user.click(within(group.getByRole("radiogroup", { name: "Cache size limit" })).getByRole("radio", { name: "5 GB" }));
+    await user.click(
+      within(group.getByRole("radiogroup", { name: "Cache size limit" })).getByRole("radio", { name: "5 GB" }),
+    );
     await waitFor(() =>
       expect(drive.calls.filter((c) => c.tool.startsWith("volume_cache_") && c.tool !== "volume_cache_stats")).toEqual([
         { tool: "volume_cache_clear", args: {} },
@@ -664,7 +653,11 @@ describe("SettingsPanel Storage agent prompt", () => {
     });
     renderPanel({ drive: drive.bridge, os: "macos" });
     const group = storageGroup();
-    await user.click(within(await group.findByRole("radiogroup", { name: "Store files on" })).getByRole("radio", { name: "S3-compatible" }));
+    await user.click(
+      within(await group.findByRole("radiogroup", { name: "Store files on" })).getByRole("radio", {
+        name: "S3-compatible",
+      }),
+    );
     const prompt = group.getByRole("textbox", { name: "Ask your agent to set it up:" });
     expect(prompt).toHaveAttribute("readonly");
     const text = (prompt as HTMLTextAreaElement).value;
@@ -683,9 +676,7 @@ describe("SettingsPanel Storage agent prompt", () => {
     storage = S3;
     expect(await group.findByText("Connected, versioning on", undefined, { timeout: 3500 })).toBeInTheDocument();
     const sets = drive.calls.filter((c) => c.tool === "volume_storage_set").map((c) => c.args);
-    expect(sets).toEqual([
-      { backend: "s3", s3: S3.s3, access_key_id: null, secret_access_key: null, dry_run: false },
-    ]);
+    expect(sets).toEqual([{ backend: "s3", s3: S3.s3, access_key_id: null, secret_access_key: null, dry_run: false }]);
   });
 });
 
@@ -719,9 +710,12 @@ describe("SettingsPanel launch at login", () => {
 
   it("says what stops after a restart when it is off on a machine that serves", async () => {
     const { fakeLoginItemBridge } = await import("../native/loginItem");
-    renderPanel({ loginItem: fakeLoginItemBridge("notRegistered"), serves: { providesSpaces: true, runsAgents: false } });
+    renderPanel({
+      loginItem: fakeLoginItemBridge("notRegistered"),
+      serves: { providesSpaces: true, runsAgents: false },
+    });
     expect(
-      await screen.findByText("This computer provides Spaces, which stop after a restart until you open Cua Spaces."),
+      await screen.findByText("This machine provides Spaces, which stop after a restart until you open Cua Spaces."),
     ).toBeInTheDocument();
   });
 
@@ -749,15 +743,11 @@ describe("SettingsPanel language", () => {
     const report = vi.spyOn(telemetryModule, "telemetryBridge");
     renderPanel();
     const select = screen.getByRole("combobox", { name: "Language" });
-    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual([
-      "System default",
-      "English",
-      "简体中文",
-      "한국어",
-      "Português (Brasil)",
-      "日本語",
-      "Español",
-    ]);
+    expect(
+      within(select)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["System default", "English", "简体中文", "한국어", "Português (Brasil)", "日本語", "Español"]);
     expect(select).toHaveValue("system");
     await user.selectOptions(select, "ja");
     await waitFor(() => expect(window.localStorage.getItem("cua.settings.locale")).toBe("ja"));

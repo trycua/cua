@@ -1,0 +1,42 @@
+id = "zai"
+name = "Z.AI (GLM)"
+icon = "zai"
+tier = "more"
+rank = 110
+kind = "hosted"
+aliases = ["glm", "zhipu", "z.ai"]
+wire = "openai-chat"
+base_url = "https://api.z.ai/api/paas/v4"
+base_url_env = "GLM_BASE_URL"
+default_model = "glm-5.3"
+hermes_id = "zai"
+key_help = "Create a key at z.ai. Pick the plan the key belongs to: they bill separately."
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "GLM_API_KEY"
+aliases = ["ZAI_API_KEY", "Z_AI_API_KEY"]
+
+[[region]]
+id = "global"
+name = "Global"
+base_url = "https://api.z.ai/api/paas/v4"
+
+[[region]]
+id = "cn"
+name = "China"
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+
+[[region]]
+id = "coding-global"
+name = "Global, Coding Plan"
+base_url = "https://api.z.ai/api/coding/paas/v4"
+
+[[region]]
+id = "coding-cn"
+name = "China, Coding Plan"
+base_url = "https://open.bigmodel.cn/api/coding/paas/v4"
+
+[delivery]
+hermes = ["GLM_API_KEY"]

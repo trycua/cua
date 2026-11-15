@@ -1,0 +1,17 @@
+name: "Install wasm-bindgen"
+description: >-
+  Install wasm-bindgen-cli at the version the cua crates pin, as the project's
+  prebuilt release binaries (wasm-bindgen, wasm-bindgen-test-runner and
+  wasm2es6js) with their checksums verified. A source build (`cargo install`)
+  takes 2 to 5 minutes on a hosted runner and whenever the Actions cache lost
+  its binary; the download takes seconds and has no cache entry to evict.
+inputs:
+  version:
+    description: "wasm-bindgen-cli version (must match the wasm-bindgen crate in Cargo.lock)."
+    default: "0.2.126"
+runs:
+  using: composite
+  steps:
+    - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+      with:
+        tool: wasm-bindgen@${{ inputs.version }}

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Find the menu item a key combination stands for.
 //!
 //! Background key events reach a window's views but never its app's menu key

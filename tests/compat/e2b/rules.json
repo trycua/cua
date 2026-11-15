@@ -1,0 +1,14 @@
+{
+ "rules": [
+  {
+   "path": "sdk_version",
+   "mode": "ignore",
+   "reason": "the SDK under test, not behaviour; the fixture is chosen per version"
+  },
+  {
+   "path": "sdk.version",
+   "mode": "ignore",
+   "reason": "the SDK under test; the recording is chosen per version"
+  }
+ ]
+}

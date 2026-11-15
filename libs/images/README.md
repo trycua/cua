@@ -4,7 +4,7 @@ Reference guest images for the cua SDK, built for amd64 and arm64:
 
 | Image | Contents | Used for |
 |---|---|---|
-| `linux` | Ubuntu 24.04, XFCE on Xvfb `:1`, AT-SPI, headless PipeWire audio, Firefox, **cua-spacesd** on `:3211` (with the HTML5 viewer at `/viewer`), conformance fixtures | The default recommended "Spaces image": `ghcr.io/trycua/linux` |
+| `linux` | Ubuntu 24.04, XFCE on Xvfb `:1`, AT-SPI, headless PipeWire audio, Firefox, **cua-spacesd** on `:3211` (with the HTML5 viewer at `/viewer`), the **cua** CLI, conformance fixtures | The default recommended "Spaces image": `ghcr.io/trycua/linux` |
 | `plain/ubuntu-xfce-vnc` | Ubuntu 24.04, XFCE on Xvnc `:1` (RFB `:5901`) and nothing else | Proving that sandboxes don't need cua daemons (VNC only) |
 | `plain/ubuntu-server` | Ubuntu 24.04 and OpenSSH | Proving that sandboxes don't need cua daemons (SSH only) |
 | `macos` | The Lume macOS base plus **cua-spacesd** at login, TCC grants seeded (see [macOS](#macos-lume)) | `ghcr.io/trycua/macos`, local Lume on Apple silicon |
@@ -23,11 +23,11 @@ Each image publishes directly under `ghcr.io/trycua/<os>` (`linux`, `windows`, `
 | `ghcr.io/trycua/linux:24.04` | OCI index, rootfs for docker / gVisor, amd64 + arm64 |
 | `ghcr.io/trycua/linux:24.04-disk` | OCI index, KubeVirt containerDisk (`/disk/disk.img`, uid 107), amd64 + arm64 |
 | `ghcr.io/trycua/windows:2022`, `2022-disk` | containerDisk, amd64, built by `windows-2022/` (`cd-image-windows.yml`): the Windows workspace plus cua-spacesd, gated on `cua-spacesd doctor --strict` in the guest |
-| `ghcr.io/trycua/macos:26` | Lume image built by `macos/`, full tier (slim plus the Command Line Tools, Homebrew and dev tools); pin `26-20261003-a7b1e34` |
-| `ghcr.io/trycua/macos:26-slim` | Lume image built by `macos/`, slim tier (the base plus cua-spacesd and Google Chrome); pin `26-slim-20261003-a7b1e34` |
+| `ghcr.io/trycua/macos:26` | Lume image built by `macos/`, full tier (slim plus the Command Line Tools, Homebrew and dev tools); pin `26-20261021-fca2193` |
+| `ghcr.io/trycua/macos:26-slim` | Lume image built by `macos/`, slim tier (the base plus cua-spacesd and Google Chrome); pin `26-slim-20261021-fca2193` |
 | `ghcr.io/trycua/macos:15` | Lume image (copy of `macos-sequoia-cua`) |
 
-- Every floating tag has an immutable dated pin: `<tag>-<yyyymmdd>-<sha7>`. Pins and per-arch children are written once. In the canonical repos only the floating tags (`<version>[-slim|-xcode[-X.Y]][-disk]`: `24.04`, `24.04-disk`, `2022`, `2022-disk`, `26`, `26-slim`, `15`) ever move, and only to a pin's digest. The macOS tiers also push `<pin>-raw` (the plain `lume push`) before `annotate.sh` writes the pin; it never moves.
+- Every floating tag has an immutable dated pin: `<tag>-<yyyymmdd>-<sha7>`. Pins and per-arch children are written once. In the canonical repos only the floating tags (`<version>[-slim|-docker|-xcode[-X.Y]][-disk]`: `24.04`, `24.04-disk`, `2022`, `2022-disk`, `26`, `26-slim`, `15`) ever move, and only to a pin's digest. The macOS tiers also push `<pin>-raw` (the plain `lume push`) before `annotate.sh` writes the pin; it never moves.
 - The first cua-spacesd `macos:26` (base plus cua-spacesd, no Chrome) stays at its pins `26-20260925-56503f3` (the `lume push`) and `26-20260925-3262e04` (annotated). It is the base every slim tier builds from (`macos/versions.env`), so it needs no other tag.
 - The rootfs index carries the annotation `ai.cua.image.variants`, a JSON map of variant to pinned ref (`{"containerdisk": "ghcr.io/trycua/linux@sha256:..."}`). The disk index points back at the immutable rootfs pin. ghcr has no OCI 1.1 referrers API, so the link is annotation only.
 - Copies carry `ai.cua.image.source` (the source ref and digest).
@@ -74,7 +74,7 @@ Pass the same `--stamp` (and `--work`, when set) to every run of one release. `t
 `sandbox-images.json` is the one list of images the repo points at: the apps, the CLI (`cua images ls`), the docs tables and cua-bench read it. Benchmark entries name their `bench/<id>/lock.json` pins and the benchmarks they run.
 
 - A new or renamed tag goes in `sandbox-images.json` first. Then run `pnpm --dir docs docs:generate:sandbox` and `python3 scripts/images/gen-image-constants.py`.
-- `scripts/images/check-image-refs.py` (**CI: Check Image Refs**) fails on any image ref in code, tests, CI, Dockerfiles or docs that is not a catalog entry, a lock pin, or a reasoned entry of `scripts/images/image-refs-allowlist.json` (legacy, cloud-built, third-party and synthetic test refs). Unused allowlist entries fail too.
+- `scripts/images/check-image-refs.py` (the image-refs check in `bin/ci --quick`) fails on any image ref in code, tests, CI, Dockerfiles or docs that is not a catalog entry, a lock pin, or a reasoned entry of `scripts/images/image-refs-allowlist.json` (legacy, cloud-built, third-party and synthetic test refs). Unused allowlist entries fail too.
 - Docs pages list images through generated regions (`GENERATED:catalog-cua-images`, `GENERATED:catalog-benchmarks`), not hand-typed tables.
 
 ## One definition, two outputs
@@ -259,8 +259,8 @@ Nobody dispatches the image builds after a cua-spacesd release:
 
 | Value | Behaviour |
 |---|---|
-| `local` (default) | Copies `linux/dist/<arch>/cua-spacesd`. `linux/build-spacesd-linux.sh [arm64] [amd64]` produces it by building `libs/cua-spacesd` in `rust:1-bookworm`: natively, via a multiarch cross toolchain (`CROSS_MODE=cross`), or under emulation (`CROSS_MODE=emulate`). |
-| `release` | Downloads `CUA_SPACESD_RELEASE_URL`, a placeholder pattern with `{version}` and `{arch}`. |
+| `local` | What the publish workflow uses (`release.json` sets it). Copies `linux/dist/<arch>/cua-spacesd`. `linux/build-spacesd-linux.sh [arm64] [amd64]` produces it by building `libs/cua-spacesd` in `rust:1-bookworm`: natively, via a multiarch cross toolchain (`CROSS_MODE=cross`), or under emulation (`CROSS_MODE=emulate`). |
+| `release` (default) | Pinned to cua-sdk 0.10.1 with its sha256 in the Dockerfile unless `CUA_CLI_VERSION` says otherwise, so ad-hoc, e2e and nightly builds need no CLI built first. Downloads `CUA_SPACESD_RELEASE_URL`, a placeholder pattern with `{version}` and `{arch}`. |
 | `none` | No driver. The supervisor program idles. |
 
 The driver runs inside the desktop session, bound to `0.0.0.0:$CUA_ENV_PORT` (3211, QUIC media on 3212). A non-loopback bind needs a token, so a missing token is fatal rather than anonymous.
@@ -291,6 +291,25 @@ Requirements for the pod spec (trycua/cloud#7885):
 - Mount the Secret as a directory at `/run/cua`. Do not use `subPath`: a `subPath` file is not a mount point of `/run/cua` and never receives updates.
 - Keep the container's user root (the image default). supervisord runs the root sync helper and drops the desktop, driver and other programs to `cua`.
 - If the pod must run as non-root (`runAsUser`), set `fsGroup: 1000` and the Secret's `defaultMode: 0440`. The `cua` user can then read the file and the driver follows it directly. Keep it out of "other" (not 0444): the driver refuses world-readable token files unless it runs as root in a container.
+
+### The cua CLI (slim tier, so every tier)
+
+`ghcr.io/trycua/linux:24.04-slim[-disk]` also carries `/usr/local/bin/cua`, so an agent in a Space (the Home Space of the ask-first flow runs on it) can run `cua spaces create`, `ls` and `delete`. In a Space whose host turned child Spaces on, the CLI finds the Space's own spawn channel (`CUA_SPAWN`, or the files the spawn-capable cua-spacesd keeps) with nothing to configure, and the image holds no token. `full` and `docker` are `FROM slim`, so they have it too. The CLI is not small: the released archive is about 85 MB compressed on x64 (78 MB on arm64), so slim grows from about 0.49 GB to about 0.58 GB compressed and from 1.23 GB to 1.43 GB unpacked on amd64. Child Spaces from a Home Space need it, so the slim gate (`size/{arch}` in `release.json`) allows 1.55 GB unpacked per arch; a thinner in-Space CLI would cut it. The slim tier claims `cua --version` and the `spawn` feature, so `cua-spacesd doctor --strict` fails an image without them.
+
+`CUA_CLI_SOURCE` selects where the CLI comes from, the way `CUA_SPACESD_SOURCE` does for the driver:
+
+| Value | Behaviour |
+|---|---|
+| `local` | What the publish workflow uses (`release.json` sets it). Copies `linux/dist/<arch>/cua`. `linux/build-cua-cli-linux.sh [arm64] [amd64]` builds `libs/cua` in `rust:1-bookworm`; `CUA_CLI_BIN=<path>` stages a binary you already built (CI hands over the one it built from the same commit). |
+| `release` (default) | Pinned to cua-sdk 0.10.1 with its sha256 in the Dockerfile unless `CUA_CLI_VERSION` says otherwise, so ad-hoc, e2e and nightly builds need no CLI built first. Downloads `cua-cli-<version>-linux-<x64\|arm64>.tar.gz` of the `cua-sdk-v<version>` release. `CUA_CLI_VERSION` must be pinned (never `latest`, cua-sdk 0.10.1 or later, the first with child Spaces); the archive is checked against `CUA_CLI_SHA256` or the release's `checksums.txt`. |
+| `none` | No CLI. |
+
+```bash
+libs/images/linux/build-cua-cli-linux.sh                       # host arch CLI into dist/<arch>/
+libs/images/build.sh linux --build-arg CUA_CLI_SOURCE=release --build-arg CUA_CLI_VERSION=0.10.1
+```
+
+`libs/cua/scripts/conformance/run.py` makes its home Spaces from the slim image when the Space under test has no `cua` CLI: `--home-image` names it (default `ghcr.io/trycua/linux:24.04-slim`; a VM runtime adds `-disk`), and `--entry-home-image ID=IMAGE` points one runtime at a local build.
 
 ## Test
 
@@ -334,3 +353,9 @@ Headless PipeWire runs under supervisord in the container and as `cua-audio.serv
 - The session runtime dir is `/run/cua-desktop`, not `/run/user/1000`. logind would mount over `/run/user/1000` and remove it for each login.
 
 `desktop-env <cmd>` runs a command inside the session environment: `DISPLAY`, the fixed session bus `unix:path=/run/cua-desktop/bus`, and the a11y bridge.
+
+## Running as another guest user (`process.run_as`)
+
+The Linux images start `cua-spacesd` as `cua` (uid 1000, the default user of commands and files) holding exactly `CAP_SETUID`, `CAP_SETGID` and `CAP_KILL` (`linux/files/run-spacesd.sh` under supervisord, `AmbientCapabilities=` in `cua-spacesd.service`). A command with `user` (any SDK: `SpacesdCommand.user`, `UploadOptions.user`, E2B `user=`, Daytona) or a file call with `run_as` takes the target user's uid, gid and groups in the agent, between `fork` and `exec`: no `sudo`, so it works under gVisor, runc and VMs. `GetCapabilities` reports it as feature `process.run_as`, attribute `mode` = `root` | `capabilities` | `sudo` | `none`; clients use `sudo -n` only for `sudo` and agents that predate the feature.
+
+Trust boundary: whoever holds the agent token (or a relay-verified owner/editor) can already run any command in the Space, so being able to pick the user adds nothing; a viewer ticket and a view-only share cannot call `StartProcess` or use `run_as` at all (refused before the switch). The agent drops the inheritable and ambient sets at start and every child drops all capabilities after the switch, so a command, the `fs-as` file helper, a desktop app or a browser never holds them; the agent never becomes root and its default user does not change. The capabilities must be in the container's bounding set (Docker, runc and gVisor defaults include them); otherwise `run-spacesd.sh` logs that and starts the agent without, and callers fall back to `sudo`.

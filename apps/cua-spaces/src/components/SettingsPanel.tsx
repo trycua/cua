@@ -3,12 +3,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import {
-  configureAgents,
-  detectAgents,
-  removeAgents,
-  type AgentRow,
-} from "../native/agentConfig";
+import { configureAgents, detectAgents, removeAgents, type AgentRow } from "../native/agentConfig";
 import {
   reduceStorage,
   storageChoose,
@@ -28,12 +23,11 @@ import { hostOs } from "../model/host";
 import type { DriveMountInput } from "../model/persistent";
 import type { SpaceOs } from "../model/types";
 import { answerOrNull, createDriveBridge, type DriveBridge } from "../native/drive";
-import type { DefaultLocation, SignInStart } from "../native/fleet";
+import type { SignInStart } from "../native/spacesBridge";
 import { storageSignals } from "../model/telemetry";
 import { telemetryBridge, type TelemetryBridge, type TelemetryView } from "../native/telemetry";
 import { createLoginItemBridge, type LoginItemBridge } from "../native/loginItem";
 import { writeLaunchChoice, type LoginItemStatus } from "../model/loginItem";
-import type { Location } from "../model/types";
 import { settingsPage, type SettingsRow, type SettingsSection, type SignInPhase } from "../model/window";
 import { experimentsPage, settingsWithStorage } from "../model/experiments";
 import { chooseExperimentRow, useExperiments } from "../state/experiments";
@@ -97,15 +91,8 @@ interface SettingsPanelProps {
   auth?: AccountAuth;
   /** Open a URL in the user's default browser (native bridge / no-op). */
   onOpenExternal: (url: string) => void;
-  /** Where new Spaces go by default, and where that came from. */
-  defaultLocation?: DefaultLocation;
-  /** Store a new default location (`$CUA_HOME/config.toml`). */
-  onDefaultLocation?: (on: Location) => Promise<unknown>;
   /** "Show again": first run from the start. */
   onShowWelcome?: () => void;
-  /** Cua Cloud billing (the Billing row): the account's status. "Manage
-   * billing" opens the website's billing page with `onOpenExternal`. */
-  billingStatus?: () => Promise<import("../native/fleet").BillingStatus | null>;
   /** Usage telemetry (the shell's; a fallback outside it). */
   telemetry?: TelemetryBridge;
   /** The Cua Volume's storage, mount and cache (the daemon's `drive_*` tools). */
@@ -134,10 +121,7 @@ export function SettingsPanel({
   signedInIdentity,
   auth,
   onOpenExternal,
-  defaultLocation,
-  onDefaultLocation,
   onShowWelcome,
-  billingStatus: readBilling,
   telemetry: telemetryProp,
   drive: driveProp,
   os,
@@ -153,20 +137,6 @@ export function SettingsPanel({
   const experiments = useExperiments();
   const drive = useMemo(() => driveProp ?? createDriveBridge(), [driveProp]);
   const storage = useStorage(drive, os ?? hostOs());
-
-  const [locationError, setLocationError] = useState<string | null>(null);
-  const [locationBusy, setLocationBusy] = useState(false);
-  const chooseLocation = useCallback(
-    (on: Location) => {
-      if (!onDefaultLocation || locationBusy || defaultLocation?.value === on) return;
-      setLocationBusy(true);
-      setLocationError(null);
-      void Promise.resolve(onDefaultLocation(on))
-        .catch((error: unknown) => setLocationError(error instanceof Error ? error.message : String(error)))
-        .finally(() => setLocationBusy(false));
-    },
-    [onDefaultLocation, locationBusy, defaultLocation?.value],
-  );
 
   // Privacy: the usage-telemetry switch (the same setting as `cua telemetry
   // off`). Opening Settings also counts as seeing the first-run notice.
@@ -224,7 +194,10 @@ export function SettingsPanel({
         .then(setLoginStatus)
         .catch((e: unknown) => {
           setLoginError(e instanceof Error ? e.message : String(e));
-          void loginItem.status().then(setLoginStatus).catch(() => {});
+          void loginItem
+            .status()
+            .then(setLoginStatus)
+            .catch(() => {});
         })
         .finally(() => setLoginBusy(false));
     },
@@ -346,22 +319,6 @@ export function SettingsPanel({
     }
   }, [auth, onOpenExternal]);
 
-  // Billing (signed in): the credit left; "Manage billing" is the website.
-  const [billingStatus, setBillingStatus] = useState<import("../native/fleet").BillingStatus | null>(null);
-  useEffect(() => {
-    if (!identity || !readBilling) {
-      setBillingStatus(null);
-      return;
-    }
-    let cancelled = false;
-    void readBilling()
-      .then((s) => !cancelled && setBillingStatus(s))
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [readBilling, identity]);
-
   const signOut = useCallback(() => {
     setIdentity(undefined);
     setPhase({ kind: "idle" });
@@ -380,19 +337,18 @@ export function SettingsPanel({
     signIn: phase,
     canSignOut: Boolean(auth) && Boolean(identity),
     menuBar,
-    defaultLocation: "local",
-    locationLockedBy: defaultLocation?.source === "env" ? (defaultLocation.env ?? "CUA_DEFAULT_ON") : null,
     telemetry: telemetryView
       ? {
           enabled: telemetryView.enabled,
           lockedBy:
-            telemetryView.sourceKind !== "config" && telemetryView.sourceKind !== "default" ? telemetryView.source : null,
+            telemetryView.sourceKind !== "config" && telemetryView.sourceKind !== "default"
+              ? telemetryView.source
+              : null,
         }
       : null,
     agents: agentRows,
     agentsBusy,
     agentsPending: agentPending,
-    billing: billingStatus,
     loginItem: loginStatus
       ? {
           status: loginStatus,
@@ -420,7 +376,6 @@ export function SettingsPanel({
       case "welcome":
         onShowWelcome?.();
         return;
-      case "billing":
       case "teams":
       case "teams-manage":
       case "teams-billing":
@@ -434,7 +389,6 @@ export function SettingsPanel({
   const choose = (row: SettingsRow, id: string) => {
     if (row.id.startsWith("experiment:")) chooseExperimentRow(row.id, id, telemetry);
     else if (row.id === "notch") onMenuBarMode(id === "hide");
-    else if (row.id === "default-location") chooseLocation(id as Location);
     else if (row.id === "telemetry") setTelemetry(id === "on");
     else if (row.id === "launch-at-login") setLaunchAtLogin(id === "on");
   };
@@ -447,8 +401,7 @@ export function SettingsPanel({
     ...experimentsPage(experiments).sections,
   ];
 
-  const sectionError = (id: string) =>
-    id === "general" ? locationError : id === "privacy" ? telemetryError : id === "agents" ? agentsError : null;
+  const sectionError = (id: string) => (id === "privacy" ? telemetryError : id === "agents" ? agentsError : null);
 
   return (
     <div
@@ -658,7 +611,13 @@ export function SettingsRowItem({
     case "link":
       return (
         <div className="st-row st-link-row">
-          <button type="button" className="dw-link st-link" data-owns-enter disabled={!row.enabled} onClick={() => onPress(row)}>
+          <button
+            type="button"
+            className="dw-link st-link"
+            data-owns-enter
+            disabled={!row.enabled}
+            onClick={() => onPress(row)}
+          >
             {row.label}
           </button>
         </div>
@@ -677,12 +636,21 @@ export function SettingsRowItem({
           </span>
           {row.value && path && <MiddleText className="st-value" text={row.value} title={row.help} />}
           {row.value && !path && (
-            <span className={`st-value${row.id === "sign-in-code" ? " st-code" : ""}`} aria-live={row.id === "sign-in-code" ? "polite" : undefined}>
+            <span
+              className={`st-value${row.id === "sign-in-code" ? " st-code" : ""}`}
+              aria-live={row.id === "sign-in-code" ? "polite" : undefined}
+            >
               {row.value}
             </span>
           )}
           {row.button && (
-            <button type="button" className="dw-btn" data-owns-enter disabled={!row.enabled} onClick={() => onPress(row)}>
+            <button
+              type="button"
+              className="dw-btn"
+              data-owns-enter
+              disabled={!row.enabled}
+              onClick={() => onPress(row)}
+            >
               {row.button}
             </button>
           )}
@@ -770,10 +738,16 @@ function useStorage(drive: DriveBridge, os: SpaceOs) {
       try {
         switch (request.kind) {
           case "test":
-            settle({ type: "checked", check: (await drive.call("volume_storage_set", { ...request.update })) as DriveCheckInput });
+            settle({
+              type: "checked",
+              check: (await drive.call("volume_storage_set", { ...request.update })) as DriveCheckInput,
+            });
             break;
           case "save":
-            settle({ type: "saved", check: (await drive.call("volume_storage_set", { ...request.update })) as DriveCheckInput });
+            settle({
+              type: "saved",
+              check: (await drive.call("volume_storage_set", { ...request.update })) as DriveCheckInput,
+            });
             break;
           case "mount":
             await drive.call("volume_mount");
@@ -802,7 +776,10 @@ function useStorage(drive: DriveBridge, os: SpaceOs) {
           case "adopt":
             // The bucket the user's agent set up, with its saved keys.
             try {
-              settle({ type: "adopted", check: (await drive.call("volume_storage_set", { ...request.update })) as DriveCheckInput });
+              settle({
+                type: "adopted",
+                check: (await drive.call("volume_storage_set", { ...request.update })) as DriveCheckInput,
+              });
             } catch (e) {
               settle({ type: "adopted", check: failedCheck(e instanceof Error ? e.message : String(e)) });
             }

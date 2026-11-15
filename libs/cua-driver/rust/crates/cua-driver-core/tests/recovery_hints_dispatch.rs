@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! The dispatch seam gives every refusal and every unconfirmed action a
 //! `hint` and, where one exists, a `next_call`, whichever tool produced it.
 

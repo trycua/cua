@@ -26,8 +26,10 @@ thiserror = "2"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
 tokio-util = { version = "0.7", features = ["io"] }
 tracing = "0.1"
+zstd = "0.13"
 
 [dev-dependencies]
+proptest = "1"
 jsonschema = { version = "0.33", default-features = false }
 tempfile = "3"
 tokio = { version = "1", features = ["full"] }

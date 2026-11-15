@@ -623,12 +623,26 @@ impl MediaSession {
         frames: Arc<dyn FrameSink>,
         audio: Option<Arc<dyn AudioSink>>,
     ) -> Result<Arc<MediaSession>> {
+        Self::attach_url_as(url, headers, frames, audio, String::new(), String::new()).await
+    }
+
+    /// [`Self::attach_url`] for a session whose identity the caller knows (a
+    /// ticket's `media_session_id` and codec), so `session_id()` and
+    /// `codec()` answer instead of being empty.
+    pub async fn attach_url_as(
+        url: String,
+        headers: Vec<(String, String)>,
+        frames: Arc<dyn FrameSink>,
+        audio: Option<Arc<dyn AudioSink>>,
+        session_id: String,
+        codec: String,
+    ) -> Result<Arc<MediaSession>> {
         super::run(async move {
             let conn = connect(&url, &headers, frames, audio).await?;
             Ok(Arc::new(conn.into_session(
+                session_id,
                 String::new(),
-                String::new(),
-                String::new(),
+                codec,
                 None,
             )))
         })

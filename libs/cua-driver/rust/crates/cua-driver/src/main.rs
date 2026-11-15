@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 #![recursion_limit = "256"]
 
 //! cua-driver-rs — cross-platform background computer-use automation daemon.
@@ -22,10 +25,12 @@ mod broken_pipe;
 mod bundle;
 mod check_update_tool;
 mod cli;
+mod connect;
 mod doctor;
 mod driver_service_http;
 #[cfg(any(target_os = "macos", all(test, unix)))]
 mod duplicate_copies;
+mod env_vars;
 mod extension_manager;
 mod history_runtime;
 mod mcp_envelope;
@@ -37,6 +42,7 @@ mod release_channel;
 mod release_source;
 mod responsibility;
 mod sdk_adapter;
+mod selftest;
 mod serve;
 mod skills;
 mod stop;
@@ -246,66 +252,6 @@ fn run_cursor_theme_command(args: &[String]) -> ! {
     std::process::exit(status.code().unwrap_or(1));
 }
 
-/// Wire up the experimental picture-in-picture preview window.
-///
-/// Called from every long-running entry point (Serve and Mcp on all
-/// platforms; the `Call` arm intentionally skips PiP since the
-/// per-call binaries don't keep an AppKit/event loop alive long
-/// enough to be useful).
-///
-/// No-op when `--experimental-pip` is not on argv. On Windows / Linux
-/// startup returns "not yet implemented" — we log and continue
-/// without a window so the rest of the daemon keeps working.
-fn maybe_init_pip() {
-    let cfg = match pip_preview::default_config_path() {
-        Some(p) => pip_preview::PipConfig::from_args_and_file(&p),
-        None => pip_preview::PipConfig::from_args(),
-    };
-    if !cfg.enabled {
-        return;
-    }
-
-    #[cfg(target_os = "macos")]
-    let backend = platform_macos::pip::start(&cfg);
-    #[cfg(target_os = "windows")]
-    let backend = platform_windows::pip::start(&cfg);
-    #[cfg(target_os = "linux")]
-    let backend = platform_linux::pip::start(&cfg);
-
-    match backend {
-        Ok(backend) => {
-            // Bridge: when the tool dispatcher in cua-driver-core wants
-            // to push a frame, forward to the live backend handle.
-            // We move the Box into a static Mutex<Option<...>> so the
-            // closure can re-borrow on every call without taking
-            // ownership of the trait object.
-            use std::sync::Mutex as StdMutex;
-            static BACKEND: std::sync::OnceLock<
-                StdMutex<Option<Box<dyn pip_preview::PipBackend>>>,
-            > = std::sync::OnceLock::new();
-            let _ = BACKEND.set(StdMutex::new(Some(backend)));
-            cua_driver_core::pip_hook::set_pip_push_fn(|frame| {
-                if let Some(slot) = BACKEND.get() {
-                    if let Some(b) = slot.lock().unwrap().as_ref() {
-                        b.push_frame(pip_preview::PipFrame {
-                            png_bytes: frame.png_bytes,
-                            action_label: frame.action_label,
-                            timestamp_ms: frame.timestamp_ms,
-                        });
-                    }
-                }
-            });
-            eprintln!(
-                "⚗️  PiP preview enabled (experimental — macOS only today; \
-                 see https://github.com/trycua/cua/issues for follow-up)"
-            );
-        }
-        Err(e) => {
-            eprintln!("⚗️  PiP preview requested but unavailable: {e}");
-        }
-    }
-}
-
 // ── Public SDK runtime host ──────────────────────────────────────────────
 
 fn register_host_tools(registry: &mut cua_driver_core::tool::ToolRegistry) {
@@ -364,6 +310,61 @@ fn inspect_tools_without_runtime() -> serde_json::Value {
         authorization_host: None,
         activity_observer: None,
     })
+}
+
+/// A cua-driver host whose `get_screen_size` is a counting probe, so a test
+/// can prove whether a route reached tool execution. The name is one the
+/// typed envelope route admits.
+#[cfg(test)]
+async fn probe_sdk() -> (
+    Arc<cua_driver_sdk::CuaDriver>,
+    Arc<sdk_adapter::SdkAdapter>,
+    &'static std::sync::atomic::AtomicUsize,
+) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    struct Probe(cua_driver_core::tool::ToolDef);
+    #[async_trait::async_trait]
+    impl cua_driver_core::tool::Tool for Probe {
+        fn def(&self) -> &cua_driver_core::tool::ToolDef {
+            &self.0
+        }
+        async fn invoke(&self, _: serde_json::Value) -> cua_driver_core::protocol::ToolResult {
+            CALLS.fetch_add(1, Ordering::SeqCst);
+            cua_driver_core::protocol::ToolResult::text("probe ran")
+        }
+    }
+    fn register(registry: &mut cua_driver_core::tool::ToolRegistry) {
+        registry.register(Box::new(Probe(cua_driver_core::tool::ToolDef {
+            name: "get_screen_size".into(),
+            description: "test probe".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        })));
+    }
+    CALLS.store(0, Ordering::SeqCst);
+    let driver =
+        cua_driver_sdk::CuaDriver::try_create_service_for_host(cua_driver_sdk::DriverHostOptions {
+            cursor: cursor_overlay::CursorConfig {
+                enabled: false,
+                ..cursor_overlay::CursorConfig::default()
+            },
+            host_owns_permission_ux: false,
+            host_bundle_id: None,
+            claude_code_compatibility: false,
+            prepare_desktop_environment: false,
+            register_host_tools: Some(register),
+            authorization_host: None,
+            activity_observer: None,
+        })
+        .expect("probe host runtime");
+    let sdk = sdk_adapter::SdkAdapter::load(driver.clone())
+        .await
+        .expect("SDK adapter");
+    (driver, sdk, &CALLS)
 }
 
 #[cfg(test)]
@@ -498,6 +499,16 @@ fn main() {
     if let Some(code) = platform_macos::permissions::gate::run_permission_probe_if_requested() {
         std::process::exit(code);
     }
+    // macOS's "Quit & Reopen" after the Screen Recording switch restarts the
+    // app with no arguments. Mid-guide, come back as the same service so the
+    // guide can show that it finished.
+    if let Some(args) = platform_macos::permissions::guide::resume_serve_args() {
+        use std::os::unix::process::CommandExt as _;
+        if let Ok(exe) = std::env::current_exe() {
+            let error = std::process::Command::new(exe).args(&args).exec();
+            eprintln!("cua-driver: could not reopen after the permission guide: {error}");
+        }
+    }
     // The packaged uninstaller needs a truly offline, pre-telemetry purge
     // path while this exact signed executable still exists on disk.
     if let Some(code) = history_runtime::run_offline_purge_if_requested() {
@@ -561,6 +572,20 @@ fn main() {
         cli::Command::McpConfig { client, no_skills } => {
             cli::run_mcp_config(client.as_deref(), no_skills);
         }
+        cli::Command::Connect {
+            clients,
+            dry_run,
+            replace,
+            json,
+        } => {
+            connect::run_connect(
+                &clients,
+                &inspect_tools_without_runtime(),
+                dry_run,
+                replace,
+                json,
+            );
+        }
         cli::Command::Manifest { pretty } => {
             // Surface 8: machine-readable CLI manifest. Read-only — no
             // registry build needed, no daemon contact.
@@ -582,6 +607,7 @@ fn main() {
             capability_manifest,
             approve_capability_manifest,
             no_permissions_gate,
+            no_automation_prompts,
             claude_code_compat,
             grants,
             experimental_history,
@@ -611,9 +637,11 @@ fn main() {
                 capability_manifest.as_deref(),
                 approve_capability_manifest,
                 no_permissions_gate,
+                no_automation_prompts,
                 claude_code_compat,
                 &grants,
             );
+            platform_macos::apple_events::refuse_ungranted_automation(no_automation_prompts);
             let gate_opts =
                 platform_macos::permissions::GateOpts::from_env_and_flag(no_permissions_gate);
             if let Some((progress, context)) =
@@ -626,10 +654,6 @@ fn main() {
                     );
                 }
             }
-            // Fail closed until a fresh helper-process probe completes. This
-            // also covers a probe launch failure without letting the serving
-            // process perform and cache its own negative TCC preflight.
-            serve::set_permission_gate_pending(!gate_opts.opt_out);
             telemetry::capture_start(
                 telemetry::event::SERVE_START_LEGACY,
                 telemetry::Transport::Daemon,
@@ -638,11 +662,6 @@ fn main() {
             // before any blocking work so the banner can land on stderr
             // early in the serve lifecycle.
             version_check::maybe_announce_update();
-            let pip_cfg = match pip_preview::default_config_path() {
-                Some(p) => pip_preview::PipConfig::from_args_and_file(&p),
-                None => pip_preview::PipConfig::from_args(),
-            };
-            maybe_init_pip();
 
             // Agent-cursor overlay. The DAEMON is the process that actually
             // performs clicks / AX presses, so the overlay NSWindow + render
@@ -654,8 +673,8 @@ fn main() {
             // Honour the compat flag forwarded by the MCP proxy
             // (launch_daemon_and_wait passes `serve
             // --claude-code-computer-use-compat`). The Serve arm is the daemon
-            // the proxy talks to, so without this the proxy path always served
-            // the full screenshot tool regardless of the client's request.
+            // the proxy talks to. The flag is currently surface-neutral but
+            // remains forwarded for compatibility with existing launch configs.
             let driver = match build_driver(
                 cursor_cfg.clone(),
                 claude_code_compat,
@@ -667,6 +686,12 @@ fn main() {
                     std::process::exit(1);
                 }
             };
+            // Fail closed until a fresh helper-process probe completes. This
+            // also covers a probe launch failure without letting the serving
+            // process perform and cache its own negative TCC preflight. Set
+            // before the serve thread binds the socket.
+            serve::set_permission_gate_pending(&driver, !gate_opts.opt_out);
+            let gate_driver = driver.clone();
             let sp = socket.unwrap_or_else(serve::default_socket_path);
             let pid_path = pid_file.unwrap_or_else(serve::default_pid_file_path);
 
@@ -704,6 +729,7 @@ fn main() {
             // already active.  Honors --no-permissions-gate and
             // CUA_DRIVER_RS_PERMISSIONS_GATE=0 for CI / headless.
             //
+            let slow_opts = gate_opts.after_timeout();
             let gate_result = platform_macos::permissions::run_if_needed_with_observer(
                 gate_opts,
                 |progress, context| match progress {
@@ -722,9 +748,9 @@ fn main() {
                     }
                 },
             );
-            if gate_result.is_ok() {
-                serve::set_permission_gate_pending(false);
-            }
+            serve::settle_permission_gate(gate_driver, gate_result.is_ok(), move || {
+                platform_macos::permissions::gate::wait_for_grants(&slow_opts)
+            });
             let gate_context = platform_macos::permissions::gate::telemetry_context();
             if gate_context.engaged {
                 telemetry::capture_permissions_gate_completed(
@@ -742,25 +768,20 @@ fn main() {
             if let Err(e) = gate_result {
                 eprintln!("[cua-driver] permissions gate: {e}");
                 eprintln!(
-                    "[cua-driver] desktop tool calls remain gated; grant Accessibility and \
-                     Screen Recording permissions, then restart the daemon."
+                    "[cua-driver] desktop tool calls remain gated until Accessibility and \
+                     Screen Recording are granted; still checking in the background."
                 );
             }
 
             // Keep the main thread alive for the daemon.
             //
-            // The agent-cursor overlay and PiP both need the AppKit main run
-            // loop. The overlay's loop is NSApplication.run() plus the cursor
-            // command consumer, so it also drains the dispatch_async_f calls
-            // that create the PiP window and push its frames. Run it whenever
-            // the cursor is enabled; PiP's own loop alone would leave cursor
-            // commands unconsumed. Without either, just join the serve thread
-            // so the process stays up as long as the daemon does.
+            // The agent-cursor overlay needs the AppKit main run loop
+            // (NSApplication.run() plus the cursor command consumer). Run it
+            // whenever the cursor is enabled; otherwise just join the serve
+            // thread so the process stays up as long as the daemon does.
             if cursor_cfg.enabled {
                 platform_macos::cursor::overlay::run_on_main_thread();
                 let _ = serve_handle.join();
-            } else if pip_cfg.enabled {
-                platform_macos::pip::run_appkit_main_loop();
             } else {
                 let _ = serve_handle.join();
             }
@@ -838,11 +859,20 @@ fn main() {
         cli::Command::Diagnose => {
             cli::run_diagnose_cmd();
         }
+        cli::Command::Test { json } => {
+            std::process::exit(selftest::run_cmd(json));
+        }
         cli::Command::Permissions { subcommand, json } => {
             cli::run_permissions_cmd(&subcommand, json);
         }
         cli::Command::Autostart { subcommand } => {
             autostart::run_autostart_cmd(&subcommand);
+        }
+        cli::Command::KwinCapture {
+            subcommand,
+            override_portal_deny,
+        } => {
+            cli::run_kwin_capture_cmd(&subcommand, override_portal_deny);
         }
         cli::Command::Skills { subcommand, flags } => {
             skills::run(&subcommand, &flags);
@@ -983,6 +1013,21 @@ fn main() -> anyhow::Result<()> {
             cli::run_mcp_config(client.as_deref(), no_skills);
             Ok(())
         }
+        cli::Command::Connect {
+            clients,
+            dry_run,
+            replace,
+            json,
+        } => {
+            connect::run_connect(
+                &clients,
+                &inspect_tools_without_runtime(),
+                dry_run,
+                replace,
+                json,
+            );
+            Ok(())
+        }
         cli::Command::Manifest { pretty } => {
             // Surface 8: machine-readable CLI manifest. Read-only — no
             // registry build needed.
@@ -1006,6 +1051,7 @@ fn main() -> anyhow::Result<()> {
             capability_manifest,
             approve_capability_manifest,
             no_permissions_gate,
+            no_automation_prompts,
             claude_code_compat,
             grants,
             experimental_history,
@@ -1029,6 +1075,7 @@ fn main() -> anyhow::Result<()> {
                 capability_manifest.as_deref(),
                 approve_capability_manifest,
                 no_permissions_gate,
+                no_automation_prompts,
                 claude_code_compat,
                 &grants,
             );
@@ -1040,10 +1087,10 @@ fn main() -> anyhow::Result<()> {
             // before any blocking work so the banner can land on stderr.
             version_check::maybe_announce_update();
             // The Rust permissions gate is macOS-only (TCC concept).
-            // On Windows / Linux the flag is silently accepted for
-            // CLI uniformity and ignored. The Claude-Code compat screenshot
-            // surface is accepted on every platform for CLI uniformity.
-            let _ = no_permissions_gate;
+            // On Windows / Linux the flag is accepted for CLI uniformity and
+            // ignored. The legacy Claude Code compatibility flag is accepted on
+            // every platform and has no current tool-surface effect.
+            let _ = (no_permissions_gate, no_automation_prompts);
             // Serve mode needs the cursor overlay just like MCP mode.
             let cursor_cfg = cursor_overlay::CursorConfig::from_args();
             let driver = build_driver(
@@ -1051,7 +1098,6 @@ fn main() -> anyhow::Result<()> {
                 claude_code_compat,
                 cua_driver_core::embedded_mode(),
             )?;
-            maybe_init_pip();
             let sp = socket.unwrap_or_else(serve::default_socket_path);
             let pid_path = pid_file.unwrap_or_else(serve::default_pid_file_path);
             // run_serve_cmd builds its own runtime; must run on a fresh thread.
@@ -1146,12 +1192,22 @@ fn main() -> anyhow::Result<()> {
             cli::run_diagnose_cmd();
             Ok(())
         }
+        cli::Command::Test { json } => {
+            std::process::exit(selftest::run_cmd(json));
+        }
         cli::Command::Permissions { subcommand, json } => {
             cli::run_permissions_cmd(&subcommand, json);
             Ok(())
         }
         cli::Command::Autostart { subcommand } => {
             autostart::run_autostart_cmd(&subcommand);
+            Ok(())
+        }
+        cli::Command::KwinCapture {
+            subcommand,
+            override_portal_deny,
+        } => {
+            cli::run_kwin_capture_cmd(&subcommand, override_portal_deny);
             Ok(())
         }
         cli::Command::Skills { subcommand, flags } => {

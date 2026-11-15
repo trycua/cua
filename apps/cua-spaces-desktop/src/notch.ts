@@ -35,9 +35,7 @@ export function notchSupported(platform: NodeJS.Platform, osRelease: string): bo
  * Contents/Resources), `native/notch` (`pnpm notch`) in development.
  */
 export function helperPath(o: { packaged: boolean; resourcesPath: string; appPath: string }): string {
-  const bundle = o.packaged
-    ? path.join(o.resourcesPath, "..", "Helpers", HELPER_APP)
-    : path.join(o.appPath, "native", "notch", HELPER_APP);
+  const bundle = o.packaged ? path.join(o.resourcesPath, "..", "Helpers", HELPER_APP) : path.join(o.appPath, "native", "notch", HELPER_APP);
   return path.join(bundle, "Contents", "MacOS", HELPER_EXECUTABLE);
 }
 
@@ -47,6 +45,8 @@ export interface Notch {
   setSpaces(spaces: readonly unknown[]): void;
   /** Live Keyvault sign-ins: the core's sharing label less dismissed copies, and the Space ids that carry the key. */
   setKeyvault(label: string | null | undefined, signedIn?: string[]): void;
+  /** The Spaces and desktops pinned to the notch, in pin order (`AppSettings.notchPinned`). */
+  setPinned(ids: readonly string[]): void;
   /** The hotspot, or a transfer (bytes; both unknown while one starts). */
   setActivity(hotspot: boolean, transfer?: { sent?: number | bigint; total?: number | bigint } | null): void;
   /** The "Spaces tab in the notch" setting (`!settings.menuBar`). */
@@ -169,6 +169,7 @@ export function startNotch(host: NotchHost, options: StartNotchOptions): Notch {
   return {
     setSpaces: (spaces) => model.setSpaces(spaces),
     setKeyvault: (label, signedIn) => model.setKeyvault(label, signedIn),
+    setPinned: (ids) => model.setPinned(ids),
     setActivity: (hotspot, transfer) => model.setActivity(hotspot, transfer),
     setShown: (shown) => model.setShown(shown),
     recheckPermission: () => model.recheckPermission(),
@@ -221,13 +222,16 @@ export async function connectNotch(host: NotchHost): Promise<Notch | null> {
     teleport: forward(a.teleport.bind(a)),
     drop: forward(a.drop.bind(a)),
   };
-  const notch = startNotch({ ...host, actions }, {
-    path: executable,
-    openURL: (url) => void shell.openExternal(url),
-    highlight: process.env.CUA_SPACES_NOTCH_HIGHLIGHT || undefined,
-    // Diagnosing the notch (`CUA_SPACES_NOTCH_DEBUG=1`): the protocol both ways in the app's log.
-    trace: process.env.CUA_SPACES_NOTCH_DEBUG ? (line) => console.log(`[cua-spaces] notch ${line}`) : undefined,
-  });
+  const notch = startNotch(
+    { ...host, actions },
+    {
+      path: executable,
+      openURL: (url) => void shell.openExternal(url),
+      highlight: process.env.CUA_SPACES_NOTCH_HIGHLIGHT || undefined,
+      // Diagnosing the notch (`CUA_SPACES_NOTCH_DEBUG=1`): the protocol both ways in the app's log.
+      trace: process.env.CUA_SPACES_NOTCH_DEBUG ? (line) => console.log(`[cua-spaces] notch ${line}`) : undefined,
+    },
+  );
   app.on("did-become-active", () => notch.recheckPermission());
   app.on("will-quit", () => notch.stop());
   return notch;

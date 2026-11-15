@@ -266,3 +266,26 @@ fn a_spooled_identify_survives_a_failed_send() {
     t2.flush(Duration::from_secs(1));
     assert_eq!(named(&sink2.events(), "$identify").len(), 1);
 }
+
+#[test]
+fn a_signed_in_client_asks_again_at_most_once_per_period() {
+    let h = tempfile::tempdir().unwrap();
+    let (t, _) = client(h.path(), NoticeMode::External);
+    t.acknowledge_notice();
+    let day = Duration::from_secs(86_400);
+    assert!(t.account_check_due(day), "never asked: due");
+    t.mark_account_checked();
+    assert!(!t.account_check_due(day), "just asked: not due");
+    assert!(t.account_check_due(Duration::ZERO));
+    // Signing out (or the opt-out) forgets it: the next client asks again.
+    t.forget_account().unwrap();
+    assert!(t.account_check_due(day));
+    t.mark_account_checked();
+    t.set_enabled(false).unwrap();
+    assert!(!t.account_check_due(day), "never due while off");
+    t.mark_account_checked();
+    assert!(
+        !h.path().join("telemetry").join(link::CHECKED_FILE).exists(),
+        "nothing written while off"
+    );
+}

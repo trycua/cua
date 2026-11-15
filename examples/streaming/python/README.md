@@ -11,7 +11,7 @@ Opus audio, so the example receives BGRA frames and s16 PCM through
 From the repository root:
 
 ```sh
-examples/streaming/python/setup.sh            # cargo build --release -p cua-sdk + venv
+examples/streaming/python/setup.sh            # cargo build --release -p cua-sdk-native + venv
 examples/streaming/python/setup.sh --no-build # reuse libs/cua/target/release/libcua_sdk.*
 ```
 

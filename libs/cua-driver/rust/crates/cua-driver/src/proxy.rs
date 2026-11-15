@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Stdio MCP adapters for direct SDK-owned and service-owned runtimes.
 //!
 //! The client side always sees a normal stdio server. Depending on platform
@@ -721,6 +724,11 @@ fn fetch_tools_list_from_daemon(
                 "capabilities": capabilities,
                 "risk": risk,
             });
+            if let Some(deprecated) = t.get("deprecated") {
+                tool.as_object_mut()
+                    .expect("MCP tool entry is an object")
+                    .insert("deprecated".into(), deprecated.clone());
+            }
             // Do not derive a new schema when an older daemon omitted it:
             // mixed-version proxies must advertise only the result contract
             // that the executing daemon actually owns.
@@ -935,7 +943,7 @@ async fn forward_tool_call(
 
     // The daemon client is sync, so jump to a blocking thread to keep
     // the tokio reactor responsive while the AX-heavy call (e.g.
-    // `screenshot`, `get_window_state`) does its thing on the daemon
+    // `get_window_state`) does its thing on the daemon
     // side.
     let socket = socket_path.to_owned();
     let blocking = tokio::task::spawn_blocking(move || send_request(&socket, &req)).await;

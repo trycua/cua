@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Read-only Hyprland identity and geometry, adapted from #3052.
 //!
 //! Native IDs are full compositor addresses, never title matches or truncated
@@ -7,10 +10,12 @@ use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::io::{self, Read, Write};
-use std::os::fd::{AsRawFd, RawFd};
+use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
+
+use super::compositor_peer::{peer_pid, wayland_connection_with_timeout};
 
 const QUERY_TIMEOUT: Duration = Duration::from_secs(1);
 const QUERY_TOTAL_TIMEOUT: Duration = Duration::from_secs(3);
@@ -21,6 +26,11 @@ const MAX_LOGICAL_PIXELS: u64 = 64 * 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 struct Workspace {
+    /// Hyprland 0.57.0 omits `id` from an unused `specialWorkspace`
+    /// (`{"address":"","type":"","name":""}`), which used to fail the whole
+    /// `j/monitors` reply. An absent id reads as 0, the value the visible-set
+    /// filter already treats as "not a live workspace".
+    #[serde(default)]
     id: i64,
 }
 
@@ -38,8 +48,9 @@ struct Client {
     /// Absent on compositors that do not report it; never read as native.
     #[serde(default)]
     xwayland: Option<bool>,
-    /// 0 is the focused client; larger is longer ago. Absent on old builds.
-    #[serde(rename = "focusHistoryID", default)]
+    /// 0 is the focused client; larger is longer ago. Absent on old builds,
+    /// read as -1, Hyprland's own "not in the focus history".
+    #[serde(rename = "focusHistoryID", default = "not_in_focus_history")]
     focus_history: i64,
 }
 
@@ -76,6 +87,10 @@ struct DisplayMonitor {
 
 fn powered_by_default() -> bool {
     true
+}
+
+fn not_in_focus_history() -> i64 {
+    -1
 }
 
 impl DisplayMonitor {
@@ -177,9 +192,10 @@ impl DesktopFrame {
     }
 
     /// Move window geometry from layout coordinates into this frame, so it
-    /// shares an origin with a screenshot of the frame.
+    /// shares an origin with a screenshot of the frame. A window with no
+    /// geometry (the compositor did not report one) has nothing to move.
     pub fn rebase_windows(&self, windows: &mut [crate::x11::WindowInfo]) {
-        for window in windows {
+        for window in windows.iter_mut().filter(|w| w.width > 0 && w.height > 0) {
             (window.x, window.y) = self.from_layout(window.x, window.y);
         }
     }
@@ -207,8 +223,7 @@ pub struct Window {
 }
 
 pub fn is_session() -> bool {
-    !super::is_inject_mode()
-        && std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some_and(|s| !s.is_empty())
+    crate::desktop::desktop().compositor() == Some(crate::desktop::Compositor::Hyprland)
 }
 
 fn ipc_path() -> Result<PathBuf> {
@@ -229,30 +244,8 @@ fn ipc_path() -> Result<PathBuf> {
     Ok(runtime.join("hypr").join(signature).join(".socket.sock"))
 }
 
-pub(super) fn peer_pid(fd: RawFd) -> Result<libc::pid_t> {
-    let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
-    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
-    let result = unsafe {
-        libc::getsockopt(
-            fd,
-            libc::SOL_SOCKET,
-            libc::SO_PEERCRED,
-            (&mut cred as *mut libc::ucred).cast(),
-            &mut len,
-        )
-    };
-    if result != 0
-        || len as usize != std::mem::size_of::<libc::ucred>()
-        || cred.pid <= 0
-        || cred.uid != unsafe { libc::geteuid() }
-    {
-        bail!("could not verify same-user compositor peer");
-    }
-    Ok(cred.pid)
-}
-
 fn ipc_connection() -> Result<UnixStream> {
-    ipc_connection_with_timeout(QUERY_TIMEOUT)
+    ipc_connection_with_timeout(action_capped(QUERY_TIMEOUT)?)
 }
 
 fn ipc_connection_with_timeout(timeout: Duration) -> Result<UnixStream> {
@@ -265,31 +258,7 @@ fn ipc_connection_with_timeout(timeout: Duration) -> Result<UnixStream> {
 /// WAYLAND_SOCKET descriptors are deliberately unsupported here: this adapter
 /// opens independent, attested connections for each observation.
 pub(super) fn wayland_connection() -> Result<wayland_client::Connection> {
-    wayland_connection_with_timeout(QUERY_TIMEOUT)
-}
-
-fn wayland_connection_with_timeout(timeout: Duration) -> Result<wayland_client::Connection> {
-    if std::env::var_os("WAYLAND_SOCKET").is_some() {
-        bail!("Hyprland observation requires a named WAYLAND_DISPLAY socket");
-    }
-    let display =
-        PathBuf::from(std::env::var_os("WAYLAND_DISPLAY").context("missing WAYLAND_DISPLAY")?);
-    let path = if display.is_absolute() {
-        display
-    } else {
-        if display.components().count() != 1 {
-            bail!("invalid WAYLAND_DISPLAY socket name");
-        }
-        let runtime =
-            PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").context("missing XDG_RUNTIME_DIR")?);
-        if !runtime.is_absolute() {
-            bail!("XDG_RUNTIME_DIR must be absolute");
-        }
-        runtime.join(display)
-    };
-    let socket = socket2::Socket::new(socket2::Domain::UNIX, socket2::Type::STREAM, None)?;
-    socket.connect_timeout(&socket2::SockAddr::unix(path)?, timeout)?;
-    wayland_client::Connection::from_socket(socket.into()).context("Wayland connection failed")
+    wayland_connection_with_timeout(action_capped(QUERY_TIMEOUT)?)
 }
 
 /// Bind the Wayland connection to the IPC compositor before accepting pixels.
@@ -326,6 +295,11 @@ fn query<T: serde::de::DeserializeOwned>(command: &str) -> Result<T> {
     )
 }
 
+/// What is left of `cap` once capped by the action's deadline.
+fn action_capped(cap: Duration) -> Result<Duration> {
+    query_time_remaining(crate::interaction::operation_deadline(cap))
+}
+
 fn query_time_remaining(deadline: Instant) -> Result<Duration> {
     let remaining = deadline.saturating_duration_since(Instant::now());
     if remaining.is_zero() {
@@ -352,7 +326,7 @@ fn query_with<T: serde::de::DeserializeOwned>(
     backoff: Duration,
     mut connect: impl FnMut(Instant) -> Result<UnixStream>,
 ) -> Result<T> {
-    let deadline = Instant::now() + total;
+    let deadline = crate::interaction::operation_deadline(total);
     // Keep this a closed list: a generic "j/" prefix also admits JSON-formatted
     // dispatch commands. JSON output does not imply a read-only operation.
     let read_only = matches!(
@@ -387,7 +361,7 @@ fn query_with<T: serde::de::DeserializeOwned>(
                     attempt,
                     "Hyprland IPC observation timed out; retrying on a fresh connection"
                 );
-                std::thread::sleep(backoff);
+                crate::interaction::pause(backoff);
             }
         }
     }
@@ -591,7 +565,7 @@ fn frame_output(monitor: &DisplayMonitor) -> Result<FrameOutput> {
 }
 
 /// Bounding box of logical output rectangles, in layout coordinates.
-fn bounding_box(outputs: &[FrameOutput]) -> Result<(i32, i32, u32, u32)> {
+pub(super) fn bounding_box(outputs: &[FrameOutput]) -> Result<(i32, i32, u32, u32)> {
     let min_x = outputs
         .iter()
         .map(|o| i64::from(o.x))
@@ -615,7 +589,7 @@ fn bounding_box(outputs: &[FrameOutput]) -> Result<(i32, i32, u32, u32)> {
     let width = u32::try_from(max_x - min_x)?;
     let height = u32::try_from(max_y - min_y)?;
     if !valid_dimensions(width, height) {
-        bail!("invalid Hyprland display dimensions");
+        bail!("invalid display dimensions: {width}x{height}");
     }
     Ok((i32::try_from(min_x)?, i32::try_from(min_y)?, width, height))
 }
@@ -788,18 +762,22 @@ pub fn single_output_transform() -> Result<u32> {
 }
 
 pub fn list_windows() -> Result<Vec<Window>> {
-    let monitors: Vec<Monitor> = query("j/monitors")?;
-    // Windows on an output in DPMS standby are not visible while another
-    // output is on. With every output in standby the display is only idle,
-    // so its workspaces stay on screen.
+    let active = active_workspaces(query("j/monitors")?);
+    windows_from_clients(query("j/clients")?, &active)
+}
+
+/// Workspaces whose windows are visible. Windows on an output in DPMS standby
+/// are not visible while another output is on. With every output in standby the
+/// display is only idle, so its workspaces stay on screen. An absent workspace
+/// id (see [`Workspace::id`]) reads as 0 and is dropped here.
+fn active_workspaces(monitors: Vec<Monitor>) -> HashSet<i64> {
     let any_powered = monitors.iter().any(|m| m.dpms_status);
-    let active = monitors
+    monitors
         .into_iter()
         .filter(|m| m.dpms_status || !any_powered)
         .flat_map(|m| [m.active_workspace.id, m.special_workspace.id])
         .filter(|id| *id != 0)
-        .collect();
-    windows_from_clients(query("j/clients")?, &active)
+        .collect()
 }
 
 #[derive(Deserialize)]
@@ -823,7 +801,7 @@ pub fn move_cursor(x: f64, y: f64) -> Result<()> {
         x.round() as i64,
         y.round() as i64
     );
-    let reply = read_reply(&mut ipc, command.as_bytes(), QUERY_TIMEOUT)?;
+    let reply = read_reply(&mut ipc, command.as_bytes(), action_capped(QUERY_TIMEOUT)?)?;
     if reply.trim_ascii() != b"ok" {
         bail!(
             "Hyprland movecursor refused: {}",
@@ -874,6 +852,21 @@ fn native_attestation(windows: &[Window], address: u64, pid: u32) -> bool {
             .is_some_and(|w| w.pid == pid && w.xwayland == Some(false))
 }
 
+/// The pid's visible window it focused most recently. Hyprland reports no
+/// stacking order, so focus history is the only attested "in use" signal.
+pub fn window_in_use(pid: u32) -> Option<u64> {
+    pick_window_in_use(&list_windows().ok()?, pid)
+}
+
+fn pick_window_in_use(windows: &[Window], pid: u32) -> Option<u64> {
+    windows
+        .iter()
+        // -1: never focused, so no evidence it is the one in use.
+        .filter(|w| w.pid == pid && w.visible && w.focus_order >= 0)
+        .min_by_key(|w| w.focus_order)
+        .map(|w| w.address)
+}
+
 /// The legacy PID-only bounds caller has no window identity: allow only a
 /// single mapped client. Explicit IDs never fall back to this function.
 pub fn window_for_pid(pid: u32) -> Option<Window> {
@@ -888,10 +881,14 @@ pub fn target_is_active(address: u64, pid: Option<u32>) -> Result<bool> {
         bail!("Hyprland target belongs to a different process");
     }
     let active: serde_json::Value = query("j/activewindow")?;
-    Ok(
-        active.get("address").and_then(|v| v.as_str()) == Some(format!("0x{address:x}").as_str())
-            && active.get("pid").and_then(|v| v.as_u64()) == Some(u64::from(target.pid)),
-    )
+    let observed = active
+        .get("address")
+        .and_then(|v| v.as_str())
+        .zip(active.get("pid").and_then(|v| v.as_u64()));
+    Ok(crate::interaction::policy::focused(
+        &(format!("0x{address:x}").as_str(), u64::from(target.pid)),
+        &crate::interaction::facts::Fact::Known(observed),
+    ))
 }
 
 fn capture_target(windows: &[Window], address: u64, pid: Option<u32>) -> Result<Window> {
@@ -962,6 +959,26 @@ mod tests {
     }
 
     #[test]
+    fn window_in_use_is_the_pid_s_most_recently_focused_visible_window() {
+        let ranked = |address, pid, focus_order, visible| Window {
+            focus_order,
+            visible,
+            ..window(address, pid)
+        };
+        let windows = [
+            ranked(0x10, 42, 3, true),
+            ranked(0x20, 42, 1, true),
+            ranked(0x30, 42, 0, false),
+            ranked(0x40, 43, 0, true),
+            ranked(0x50, 42, -1, true),
+        ];
+        assert_eq!(pick_window_in_use(&windows, 42), Some(0x20));
+        assert_eq!(pick_window_in_use(&windows[..1], 42), Some(0x10));
+        assert_eq!(pick_window_in_use(&windows[4..], 42), None);
+        assert_eq!(pick_window_in_use(&windows, 44), None);
+    }
+
+    #[test]
     fn native_attestation_requires_exact_address_pid_and_native_flag() {
         let native = window(0x10, 42);
         let mut xwayland = window(0x20, 42);
@@ -975,6 +992,15 @@ mod tests {
         assert!(!native_attestation(&windows, 0x10, 43));
         assert!(!native_attestation(&windows, 0x40, 42));
         assert!(!native_attestation(&windows, 0, 42));
+    }
+
+    #[test]
+    fn a_client_without_focus_history_is_never_the_window_in_use() {
+        let windows =
+            windows_from_clients(vec![client("0x10", 42, [800, 600])], &HashSet::from([1]))
+                .unwrap();
+        assert_eq!(windows[0].focus_order, -1);
+        assert_eq!(pick_window_in_use(&windows, 42), None);
     }
 
     #[test]
@@ -1387,7 +1413,8 @@ mod tests {
     }
 
     // (output mode, scale, logical frame). 1.6666666 is the #4219 laptop.
-    const SCALED_OUTPUTS: [((u32, u32), f64, (u32, u32)); 5] = [
+    type Size = (u32, u32);
+    const SCALED_OUTPUTS: [(Size, f64, Size); 5] = [
         ((1920, 1080), 1.0, (1920, 1080)),
         ((2560, 1600), 1.25, (2048, 1280)),
         ((2880, 1800), 1.5, (1920, 1200)),
@@ -1614,6 +1641,14 @@ mod tests {
         }];
         frame.rebase_windows(&mut windows);
         assert_eq!((windows[0].x, windows[0].y), (100, 36));
+
+        // A window whose geometry the compositor did not report stays unknown.
+        windows[0].x = 0;
+        windows[0].y = 0;
+        windows[0].width = 0;
+        windows[0].height = 0;
+        frame.rebase_windows(&mut windows);
+        assert_eq!((windows[0].x, windows[0].y), (0, 0));
     }
 
     #[test]
@@ -1795,5 +1830,37 @@ mod tests {
             "width": 1920, "height": 1080, "scale": 1.0, "x": 0, "y": 0,
         });
         assert!(serde_json::from_value::<DisplayMonitor>(value).is_err());
+    }
+
+    // Only the fields `Monitor` reads are kept from the real `j/monitors` reply.
+    // Hyprland 0.57.0 omits `id` from an unused `specialWorkspace`.
+    const MONITORS_WITHOUT_SPECIAL_ID: &str = r#"[
+        {
+            "activeWorkspace": {"id": 1, "name": "1"},
+            "specialWorkspace": {"address": "", "type": "", "name": ""},
+            "dpmsStatus": true
+        }
+    ]"#;
+
+    const MONITORS_WITH_SPECIAL_ID: &str = r#"[
+        {
+            "activeWorkspace": {"id": 1, "name": "1"},
+            "specialWorkspace": {
+                "id": -99, "address": "0x1", "type": "special",
+                "name": "special:scratch"
+            },
+            "dpmsStatus": true
+        }
+    ]"#;
+
+    #[test]
+    fn monitor_reply_accepts_a_special_workspace_without_an_id() {
+        let without_id: Vec<Monitor> = serde_json::from_str(MONITORS_WITHOUT_SPECIAL_ID).unwrap();
+        assert_eq!(active_workspaces(without_id), HashSet::from([1]));
+
+        // A reported id still decides visibility, so the tolerance above does
+        // not hide windows on a special workspace.
+        let with_id: Vec<Monitor> = serde_json::from_str(MONITORS_WITH_SPECIAL_ID).unwrap();
+        assert_eq!(active_workspaces(with_id), HashSet::from([1, -99]));
     }
 }

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Shared projection for query-filtered accessibility snapshots.
 //!
 //! Platform walkers keep their complete native cache so original handles stay

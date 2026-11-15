@@ -260,3 +260,42 @@ mod tests {
         }
     }
 }
+
+/// The host-name suffix of a routed Space's address: `direct:<host
+/// machine>.via.cua:<port>` is a Space that host provides, reached through
+/// the host's own channel (a loopback forward there) instead of its own
+/// relay machine or a LAN address.
+pub const ROUTED_SUFFIX: &str = ".via.cua";
+
+/// The address of the Space host `machine` forwards on its loopback `port`.
+pub fn routed_authority(machine: &str, port: u16) -> String {
+    format!("{machine}{ROUTED_SUFFIX}:{port}")
+}
+
+/// `(host machine, port)` of a routed Space's authority.
+pub fn routed_host(authority: &str) -> Option<(&str, u16)> {
+    let (host, port) = authority.rsplit_once(':')?;
+    let machine = host.strip_suffix(ROUTED_SUFFIX)?;
+    if machine.is_empty() {
+        return None;
+    }
+    Some((machine, port.parse().ok().filter(|p: &u16| *p > 0)?))
+}
+
+#[cfg(test)]
+mod routed_tests {
+    use super::*;
+
+    #[test]
+    fn routed_spaces_round_trip_as_direct_ids() {
+        let a = routed_authority("m-4f2a9c", 40123);
+        assert_eq!(a, "m-4f2a9c.via.cua:40123");
+        assert_eq!(routed_host(&a), Some(("m-4f2a9c", 40123)));
+        let id = SpaceId::parse(&format!("direct:{a}")).unwrap();
+        assert!(matches!(&id, SpaceId::Direct { authority } if routed_host(authority).is_some()));
+        assert_eq!(id.to_string(), format!("direct:{a}"));
+        assert_eq!(routed_host("10.0.0.2:3211"), None);
+        assert_eq!(routed_host(".via.cua:1"), None);
+        assert_eq!(routed_host("m.via.cua:0"), None);
+    }
+}

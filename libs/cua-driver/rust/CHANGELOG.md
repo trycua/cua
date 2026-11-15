@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.51.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.51.0...cua-driver-rs-v0.51.1) (2026-11-15)
+
+
+### Bug Fixes
+
+* **cua-driver:** exit 64 when a command gets an option it does not take ([#7782](https://github.com/trycua/cua/issues/7782)) ([7995bc0](https://github.com/trycua/cua/commit/7995bc0c32bffacdb650d27548f02d72a175b75f))
+
 ## [0.51.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.50.0...cua-driver-rs-v0.51.0) (2026-11-15)
 
 

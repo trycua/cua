@@ -2581,6 +2581,12 @@ fn harness_appkit_counter_px_background() {
                     .expect("native screenshot width")
                     > small_width
             );
+            // Snapshots belong to the session that read them, so the driver's own
+            // frame and zoom stay valid after another client reads the window. A
+            // third client that never read it holds no frame and must be refused.
+            let mut stranger = driver
+                .spawn_peer_unrecorded()
+                .expect("start a client that has not read the window");
             for (tool, args) in [
                 (
                     "double_click",
@@ -2599,7 +2605,7 @@ fn harness_appkit_counter_px_background() {
                     serde_json::json!({"pid":pid as i64,"window_id":wid,"from_x":x,"from_y":y,"to_x":x+1.0,"to_y":y+1.0,"duration_ms":0,"steps":1,"delivery_mode":"foreground"}),
                 ),
             ] {
-                let stale = driver.call(tool, args);
+                let stale = stranger.call(tool, args);
                 assert_eq!(
                     stale.structured()["code"],
                     "screenshot_context_missing",
@@ -2616,14 +2622,14 @@ fn harness_appkit_counter_px_background() {
                     serde_json::json!({"pid":pid as i64,"window_id":wid,"from_x":1.0,"from_y":1.0,"to_x":2.0,"to_y":2.0,"from_zoom":true,"duration_ms":0,"steps":1,"delivery_mode":"foreground"}),
                 ),
             ] {
-                let stale = driver.call(tool, args);
+                let stale = stranger.call(tool, args);
                 assert_eq!(
                     stale.structured()["code"],
                     "zoom_context_missing",
                     "{tool} must refuse a zoom bound to the replaced snapshot"
                 );
             }
-            let stale = driver.call(
+            let stale = stranger.call(
                 "click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid,

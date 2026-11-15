@@ -1027,6 +1027,12 @@ fn invoke_operation(
                     .expect("native screenshot width")
                     > small_width
             );
+            // Snapshots belong to the session that read them, so the driver's own
+            // frame and zoom stay valid after another client reads the window. A
+            // third client that never read it holds no frame and must be refused.
+            let mut stranger = driver
+                .spawn_peer_unrecorded()
+                .expect("start a client that has not read the window");
             for (tool, args) in [
                 (
                     "double_click",
@@ -1049,7 +1055,7 @@ fn invoke_operation(
                     serde_json::json!({"pid":pid as i64,"window_id":window_id,"x":x,"y":y}),
                 ),
             ] {
-                let stale = driver.call(tool, args);
+                let stale = stranger.call(tool, args);
                 assert_eq!(
                     stale.structured()["code"],
                     "screenshot_context_missing",
@@ -1070,14 +1076,14 @@ fn invoke_operation(
                     serde_json::json!({"pid":pid as i64,"window_id":window_id,"x":1.0,"y":1.0,"from_zoom":true}),
                 ),
             ] {
-                let stale = driver.call(tool, args);
+                let stale = stranger.call(tool, args);
                 assert_eq!(
                     stale.structured()["code"],
                     "zoom_context_missing",
                     "{tool} must refuse a zoom bound to the replaced snapshot"
                 );
             }
-            let stale = driver.call(
+            let stale = stranger.call(
                 "click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": window_id,

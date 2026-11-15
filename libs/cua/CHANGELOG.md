@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.6](https://github.com/trycua/cua/compare/cua-sdk-v0.27.5...cua-sdk-v0.27.6) (2026-11-15)
+
+
+### Bug Fixes
+
+* **teleport:** copy browser databases data-only (macOS 27 EPERM) ([#4844](https://github.com/trycua/cua/issues/4844)) ([b1632d3](https://github.com/trycua/cua/commit/b1632d30af832a7572288007bca63a34842f4da7))
+
 ## [0.27.5](https://github.com/trycua/cua/compare/cua-sdk-v0.27.4...cua-sdk-v0.27.5) (2026-11-14)
 
 

@@ -1105,6 +1105,58 @@ mod tests {
         focus_arbiter::end_detached();
     }
 
+    /// The desktop lane is held through the action and its report window,
+    /// never through the detached supervision: once the action's call ends,
+    /// the next desktop action is admitted while the first action's watch and
+    /// focus-steal lease are still running (trycua/cua#4771).
+    #[test]
+    fn the_desktop_lane_is_free_while_the_detached_watch_runs() {
+        use cua_driver_core::tool::DesktopCall;
+        let _serial = lock(&TAIL_TEST_LOCK);
+        focus_arbiter::end_detached();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("runtime");
+        runtime.block_on(async {
+            let call = DesktopCall::acquire().await.expect("desktop lane");
+            let started = Instant::now();
+            let changes = call
+                .scope(async {
+                    // Captured inside the action, as an adapter captures it.
+                    let snap = WindowChangeDetector::capture_from(
+                        HashSet::from([1]),
+                        Some(7),
+                        false,
+                        None,
+                    );
+                    snap.detect_bounded_with(
+                        observation_bounds_from(Some("10000"), Some("10")),
+                        || (vec![win(1, 7, "App", "Main")], Some(7)),
+                    )
+                })
+                .await;
+            drop(call);
+            assert!(changes.polled && !changes.needs_restore());
+            assert!(focus_arbiter::has_detached(), "the remainder runs detached");
+            let next = tokio::time::timeout(Duration::from_secs(5), DesktopCall::acquire())
+                .await
+                .expect("the next desktop action waited for the detached watch")
+                .expect("desktop lane");
+            assert!(
+                focus_arbiter::has_detached(),
+                "the next action was admitted only after the detached watch ended"
+            );
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "admitted after {:?}",
+                started.elapsed()
+            );
+            drop(next);
+        });
+        focus_arbiter::end_detached();
+    }
+
     /// A deadline inside the report window behaves as before: no tail.
     #[test]
     fn a_short_deadline_leaves_no_detached_tail() {

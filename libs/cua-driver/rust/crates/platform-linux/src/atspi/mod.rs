@@ -113,7 +113,7 @@ pub const DEFAULT_WALK_TIMEOUT: std::time::Duration = std::time::Duration::from_
 impl AtspiTreeResult {
     fn from_walked(walked: native::WalkedTree, query: Option<&str>) -> Self {
         let md = match query {
-            Some(q) => filter_tree(&walked.markdown, q),
+            Some(q) => cua_driver_core::element_query::filter_tree(&walked.markdown, q),
             None => walked.markdown,
         };
         let (truncated, truncation_reason, nodes_visited, nodes_pending) = match &walked.truncation
@@ -875,7 +875,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
 
     let raw_md = md;
     let tree_markdown = if let Some(q) = query {
-        filter_tree(&raw_md, q)
+        cua_driver_core::element_query::filter_tree(&raw_md, q)
     } else {
         raw_md
     };
@@ -941,44 +941,6 @@ fn get_x11_wm_class(conn: &x11rb::rust_connection::RustConnection, window: u32) 
     let s = String::from_utf8_lossy(&reply.value);
     // WM_CLASS is two NUL-separated strings: instance_name\0class_name\0
     Some(s.trim_end_matches('\0').replace('\0', "."))
-}
-
-fn filter_tree(markdown: &str, query: &str) -> String {
-    let needle = query.to_lowercase();
-    let lines: Vec<&str> = markdown.lines().collect();
-    let mut ancestors: Vec<&str> = Vec::new();
-    let mut last_emitted: Vec<Option<&str>> = Vec::new();
-    let mut output: Vec<&str> = Vec::new();
-
-    for line in &lines {
-        let depth = line.chars().take_while(|c| *c == ' ').count() / 2;
-        while ancestors.len() <= depth {
-            ancestors.push("");
-            last_emitted.push(None);
-        }
-        last_emitted[depth + 1..ancestors.len()].fill(None);
-        ancestors[depth] = line;
-        if line.to_lowercase().contains(&needle) {
-            for d in 0..depth {
-                if ancestors[d].is_empty() {
-                    continue;
-                }
-                if last_emitted[d] == Some(ancestors[d]) {
-                    continue;
-                }
-                last_emitted[d] = Some(ancestors[d]);
-                output.push(ancestors[d]);
-            }
-            last_emitted[depth] = Some(line);
-            output.push(line);
-        }
-    }
-    if output.is_empty() {
-        return String::new();
-    }
-    let mut r = output.join("\n");
-    r.push('\n');
-    r
 }
 
 #[cfg(test)]

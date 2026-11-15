@@ -14,6 +14,12 @@ name: "CD: Docs Pin Dispatch"
 # every run failed with "Not Found" while minting the token.
 
 on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "docs/content/docs/**"
+      - "docs/public/**"
   push:
     branches:
       - main

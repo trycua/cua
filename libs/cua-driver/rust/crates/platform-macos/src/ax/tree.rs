@@ -14,7 +14,7 @@
 //! - AXStaticText with no title/value is omitted.
 //! - Tree is walked depth-first; element_index is assigned in DFS order.
 
-use super::batch::{NodeAttr, NodeAttributes};
+use super::batch::{copy_string_attrs, NodeAttr, NodeAttributes};
 use super::bindings::*;
 use super::launch::{is_still_launching, LaunchStep, LaunchWait};
 use super::window_scope::{decide_window_scope, ScopeDecision, TopLevelCandidate, WindowScope};
@@ -503,9 +503,9 @@ unsafe fn scope_top_level(
 
 unsafe fn top_level_candidate(child: AXUIElementRef) -> TopLevelCandidate {
     set_messaging_timeout(child);
-    let role = copy_string_attr(child, "AXRole").unwrap_or_default();
-    let subrole = copy_string_attr(child, "AXSubrole");
-    let identifier = copy_string_attr(child, "AXIdentifier");
+    let [role, subrole, identifier] =
+        copy_string_attrs(child, ["AXRole", "AXSubrole", "AXIdentifier"]);
+    let role = role.unwrap_or_default();
     // Match AX window element → CGWindowID via private SPI. Only windows and
     // sheets carry one, so skip the round-trip elsewhere.
     let ax_window_id = if matches!(role.as_str(), "AXWindow" | "AXSheet") {

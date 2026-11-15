@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
@@ -146,7 +147,11 @@ class Tracing:
 
         print(f"Saving tracing dataset to {output_dir} with images in {imgs_dir}")
 
-        imgs_dir_name = imgs_dir.name
+        try:
+            imgs_reference = Path(os.path.relpath(imgs_dir, output_path)).as_posix()
+        except ValueError:
+            # Windows cannot make relative paths between different drives.
+            imgs_reference = imgs_dir.resolve().as_posix()
 
         # Filter rows by event_name if specified
         rows_to_process = self._rows
@@ -180,7 +185,7 @@ class Tracing:
                     img.save(str(img_path), format="PNG")
 
                     # Store relative path
-                    image_paths.append(f"{imgs_dir_name}/{img_filename}")
+                    image_paths.append(f"{imgs_reference}/{img_filename}")
                 elif isinstance(img, (bytes, bytearray)):
                     # Convert bytes to PIL first
                     pil_img = Image.open(BytesIO(img)).convert("RGBA")
@@ -194,7 +199,7 @@ class Tracing:
                     pil_img.save(str(img_path), format="PNG")
 
                     # Store relative path
-                    image_paths.append(f"{imgs_dir_name}/{img_filename}")
+                    image_paths.append(f"{imgs_reference}/{img_filename}")
 
             # Replace data_images with file paths
             modified_row["data_images"] = image_paths

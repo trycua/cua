@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.27.7](https://github.com/trycua/cua/compare/cua-sdk-v0.27.6...cua-sdk-v0.27.7) (2026-11-15)
+
+
+### Bug Fixes
+
+* **cua-cli:** two fixes re-landed from [#6199](https://github.com/trycua/cua/issues/6199) and [#6230](https://github.com/trycua/cua/issues/6230) ([#7864](https://github.com/trycua/cua/issues/7864)) ([a49f60a](https://github.com/trycua/cua/commit/a49f60ae8a106735e2568f9f54594e830c2af816))
+* **cua-daemon:** name a digest-pinned Lume image's digest once and check what Lume pulled ([#7868](https://github.com/trycua/cua/issues/7868)) ([b729604](https://github.com/trycua/cua/commit/b729604b0fab2a926ea47603784e78938e8c7702))
+* **spaces:** pass saved custom endpoints to persistent agents ([#7417](https://github.com/trycua/cua/issues/7417)) ([7b3a88d](https://github.com/trycua/cua/commit/7b3a88d6752a039cd077510ce02cd98591c8e23b))
+
 ## [0.27.6](https://github.com/trycua/cua/compare/cua-sdk-v0.27.5...cua-sdk-v0.27.6) (2026-11-15)
 
 

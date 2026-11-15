@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Motion / timing configuration.
 //!
 //! Lineage:
@@ -176,7 +179,8 @@ impl MotionConfig {
             Some(Value::String(name)) => {
                 out.timing = MotionTiming::parse(name).ok_or_else(|| {
                     format!(
-                        "unknown cursor motion timing `{name}`; expected native, fitts or fixed"
+                        "unknown cursor motion timing `{name}`; expected one of {}",
+                        MotionTiming::names()
                     )
                 })?;
             }
@@ -186,13 +190,8 @@ impl MotionConfig {
             None | Some(Value::Null) => {}
             Some(Value::Object(map)) => {
                 for (key, value) in map {
-                    let flag = match value {
-                        Value::Null => None,
-                        Value::Bool(flag) => Some(*flag),
-                        other => {
-                            return Err(format!("effects.{key} must be a boolean, got {other}"))
-                        }
-                    };
+                    let flag =
+                        crate::motion_defaults::effect_flag(&format!("effects.{key}"), value)?;
                     match key.as_str() {
                         "trail" => out.effects.trail = flag,
                         "glow" => out.effects.glow = flag,

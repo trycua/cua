@@ -3,7 +3,11 @@
 This module tests:
 - Action serialization/deserialization (unit tests)
 - FastAPI server endpoints using TestClient with real simulated environments (e2e)
+- The background timeout checker that reaps inactive environments
 """
+
+import threading
+import time
 
 import pytest
 from cua_bench.types import (
@@ -20,6 +24,7 @@ from cua_bench.types import (
     TypeAction,
     WaitAction,
 )
+from cua_bench_rl.workers import worker_server
 from cua_bench_rl.workers.worker_server import (
     ResetRequest,
     ShutdownRequest,
@@ -361,3 +366,111 @@ class TestServerEndpoints:
         client = TestClient(app)
         response = client.get("/screenshot", params={"env_id": 999})
         assert response.status_code == 404
+
+
+class _SweepDone(Exception):
+    """Raised by the fake clock to end the timeout checker's loop after one sweep."""
+
+
+class _OneSweepClock:
+    """Fake ``time`` module for a single pass of ``_timeout_checker``.
+
+    Only the checker thread under test sees it: its first ``sleep`` returns at once,
+    ``time()`` reports ``now``, and its second ``sleep`` ends the loop. Every other
+    thread (request handlers, the module's own checker thread) gets the real clock.
+    """
+
+    def __init__(self, now: float):
+        self.now = now
+        self.thread: threading.Thread | None = None
+        self.sleeps = 0
+
+    def _is_checker(self) -> bool:
+        return threading.current_thread() is self.thread
+
+    def time(self) -> float:
+        return self.now if self._is_checker() else time.time()
+
+    def sleep(self, seconds: float) -> None:
+        if not self._is_checker():
+            time.sleep(seconds)
+            return
+        self.sleeps += 1
+        if self.sleeps > 1:
+            raise _SweepDone
+
+
+def _run_one_sweep(monkeypatch, now: float) -> tuple[bool, list[BaseException]]:
+    """Run one pass of the timeout checker at ``now``; return (finished, errors)."""
+    clock = _OneSweepClock(now)
+    errors: list[BaseException] = []
+
+    def checker():
+        try:
+            worker_server._timeout_checker()
+        except _SweepDone:
+            pass
+        except BaseException as e:
+            errors.append(e)
+
+    clock.thread = threading.Thread(target=checker, daemon=True)
+    monkeypatch.setattr(worker_server, "time", clock)
+    clock.thread.start()
+    clock.thread.join(timeout=2.0)
+    finished = not clock.thread.is_alive()
+    if not finished:
+        # Stuck on env_lock: release it from here so the checker and the rest of the
+        # suite can carry on (a plain Lock can be released by any thread).
+        worker_server.env_lock.release()
+        clock.thread.join(timeout=2.0)
+    return finished, errors
+
+
+class _FakeEnv:
+    """Stands in for a cua_bench Environment and records when close() is awaited."""
+
+    def __init__(self):
+        self.closed = threading.Event()
+
+    async def reset(self, task_id: int = 0):
+        return b"\x89PNG", {"description": "fake task"}
+
+    async def close(self):
+        self.closed.set()
+
+
+class TestTimeoutChecker:
+    """The timeout checker reaps environments idle for longer than their timeout."""
+
+    @pytest.fixture
+    def idle_env(self, monkeypatch):
+        """Reset one fake env through the API, with the server's event loop running."""
+        saved_available = list(worker_server.available_envs)
+        saved_active = list(worker_server.active_envs)
+        saved_map = dict(worker_server.env_map)
+        env = _FakeEnv()
+        monkeypatch.setattr(worker_server, "make", lambda env_path, split: env)
+        with TestClient(app) as client:
+            response = client.post("/reset", json={"env_path": "fake", "timeout": 60})
+            assert response.status_code == 200
+            yield client, env
+        worker_server.available_envs[:] = saved_available
+        worker_server.active_envs[:] = saved_active
+        worker_server.env_map.clear()
+        worker_server.env_map.update(saved_map)
+
+    def test_sweep_releases_idle_env(self, idle_env, monkeypatch):
+        """A sweep that finds an expired env finishes and returns its slot to the pool."""
+        client, _ = idle_env
+        finished, errors = _run_one_sweep(monkeypatch, now=time.time() + 3600)
+        assert finished, "timeout checker deadlocked on env_lock"
+        assert errors == []
+        health = client.get("/health").json()
+        assert health["active_envs"] == 0
+        assert health["available_envs"] == health["max_envs"]
+
+    def test_sweep_closes_released_env(self, idle_env, monkeypatch):
+        """The checker thread has no event loop; the env it releases is still closed."""
+        _, env = idle_env
+        _run_one_sweep(monkeypatch, now=time.time() + 3600)
+        assert env.closed.wait(timeout=2.0), "released env was never closed"

@@ -10,6 +10,8 @@ const extendedFrontmatter = frontmatterSchema.extend({
   npm: z.string().optional(),
   github: z.array(z.string()).optional(),
   keywords: z.array(z.string()).optional(),
+  // A shorter label for the sidebar when the page title is long.
+  sidebarTitle: z.string().optional(),
   // The docs.cua.ai landing: the home page's hero, path blurb and examples,
   // and each product Overview's card blurb and call to action.
   landing: z

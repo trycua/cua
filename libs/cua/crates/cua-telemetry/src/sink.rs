@@ -11,6 +11,11 @@ pub const DEFAULT_ENDPOINT: &str = "https://eu.i.posthog.com/batch/";
 /// The project's public, write-only ingest key. It is already public in
 /// every Cua client; it cannot read data.
 pub const POSTHOG_API_KEY: &str = "phc_eSkLnbLxsnYFaXksif1ksbrNzYlJShr35miFLDppF14";
+/// The staging PostHog project's public, write-only ingest key (EU project
+/// "Cua Spaces (staging)"), for `CUA_ENV=staging`: never production's. If
+/// it is ever emptied, staging sends nothing unless `CUA_POSTHOG_KEY` names
+/// a key.
+pub const STAGING_POSTHOG_API_KEY: &str = "phc_xDNLpzypNLVGmzQeBZEgZDZK7Ea6yYAmAnGZ6hMtHNKG";
 /// Per-request budget. Telemetry never waits longer.
 pub const SEND_TIMEOUT: Duration = Duration::from_secs(3);
 

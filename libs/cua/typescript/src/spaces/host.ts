@@ -60,7 +60,7 @@ export async function readControlEndpoint(controlFile?: string): Promise<Control
     throw new SpacesError(
       'host_unavailable',
       `the Cua Spaces app does not appear to be running: cannot read ${path}. ` +
-        `Host presentation (PiP, viewer, window stream) needs the desktop app on this machine.`,
+        `Host presentation (PiP, viewer, window stream) needs the desktop app on this computer.`,
       { cause },
     );
   }

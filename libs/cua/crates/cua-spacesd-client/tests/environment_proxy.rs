@@ -43,48 +43,62 @@ fn relay_rpc_uses_environment_proxy() {
             "tls-web",
             "tls-http",
         ] {
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            let address = listener.local_addr().unwrap();
-            drop(listener);
-            let mut child = Command::new(std::env::current_exe().unwrap());
-            child.args(["--exact", "relay_rpc_uses_environment_proxy", "--nocapture"]);
-            for key in [
-                "HTTP_PROXY",
-                "http_proxy",
-                "HTTPS_PROXY",
-                "https_proxy",
-                "ALL_PROXY",
-                "all_proxy",
-                "NO_PROXY",
-                "no_proxy",
-                "REQUEST_METHOD",
-            ] {
-                child.env_remove(key);
-            }
-            if mode != "direct" {
-                child.env(
-                    if mode.starts_with("tls-") {
-                        "HTTPS_PROXY"
-                    } else {
-                        "HTTP_PROXY"
-                    },
-                    format!("http://{address}"),
-                );
-                if mode.starts_with("tls-") {
-                    child.env("HTTP_PROXY", "http://invalid-http-proxy.invalid:9");
+            // The probe port is released before the child binds it again, so another
+            // process can take it in between. That is not a routing failure: retry the
+            // case on a fresh port.
+            let mut attempts_left = 5;
+            let output = loop {
+                let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                let address = listener.local_addr().unwrap();
+                drop(listener);
+                let mut child = Command::new(std::env::current_exe().unwrap());
+                child.args(["--exact", "relay_rpc_uses_environment_proxy", "--nocapture"]);
+                for key in [
+                    "HTTP_PROXY",
+                    "http_proxy",
+                    "HTTPS_PROXY",
+                    "https_proxy",
+                    "ALL_PROXY",
+                    "all_proxy",
+                    "NO_PROXY",
+                    "no_proxy",
+                    "REQUEST_METHOD",
+                ] {
+                    child.env_remove(key);
                 }
-            }
-            if mode == "config" {
-                child.env("HTTP_PROXY", "http://user:proxy-secret@proxy.invalid");
-            }
-            if mode == "bypass" {
-                child.env("NO_PROXY", "127.0.0.0/8");
-            }
-            let output = child
-                .env(MODE, mode)
-                .env(ADDRESS, address.to_string())
-                .output()
-                .unwrap();
+                if mode != "direct" {
+                    child.env(
+                        if mode.starts_with("tls-") {
+                            "HTTPS_PROXY"
+                        } else {
+                            "HTTP_PROXY"
+                        },
+                        format!("http://{address}"),
+                    );
+                    if mode.starts_with("tls-") {
+                        child.env("HTTP_PROXY", "http://invalid-http-proxy.invalid:9");
+                    }
+                }
+                if mode == "config" {
+                    child.env("HTTP_PROXY", "http://user:proxy-secret@proxy.invalid");
+                }
+                if mode == "bypass" {
+                    child.env("NO_PROXY", "127.0.0.0/8");
+                }
+                let output = child
+                    .env(MODE, mode)
+                    .env(ADDRESS, address.to_string())
+                    .output()
+                    .unwrap();
+                attempts_left -= 1;
+                if !output.status.success()
+                    && attempts_left > 0
+                    && String::from_utf8_lossy(&output.stderr).contains("AddrInUse")
+                {
+                    continue;
+                }
+                break output;
+            };
             if !output.status.success() {
                 failures.push(format!(
                     "{mode}: {}\n{}",
@@ -110,15 +124,17 @@ async fn head(socket: &mut TcpStream) -> String {
 
 async fn run_case() {
     let mode = std::env::var(MODE).unwrap();
+    // Bind the proxy address first: the mock server's own ephemeral bind must not
+    // be able to take the port the parent reserved for the proxy.
+    let proxy = TcpListener::bind(std::env::var(ADDRESS).unwrap())
+        .await
+        .unwrap();
     let mock = MockServer::start(MockAuth {
         token: Some(TOKEN.into()),
         prefix: Some("/m/proxy-machine".into()),
         ..Default::default()
     })
     .await;
-    let proxy = TcpListener::bind(std::env::var(ADDRESS).unwrap())
-        .await
-        .unwrap();
     let upstream = mock.addr;
     let attempts = Arc::new(AtomicUsize::new(0));
     let accepted = Arc::new(tokio::sync::Notify::new());
@@ -223,6 +239,11 @@ async fn run_case() {
             .expect("cancelled RPC must not leave an unbounded connection attempt");
     } else {
         let result = SpacesdClient::connect(options).await;
+        if mode == "auto" {
+            // Deterministic here: refused native CONNECT, then the gRPC-Web probe.
+            // hyper-util may open another tunnel once run() races the pool.
+            assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        }
         if matches!(
             mode.as_str(),
             "refused" | "config" | "timeout" | "tls-native" | "tls-web"
@@ -282,7 +303,6 @@ async fn run_case() {
             if mode == "auto" {
                 assert_eq!(mock.state.observed.grpc_requests.load(Ordering::SeqCst), 0);
                 assert!(mock.state.observed.grpc_web_requests.load(Ordering::SeqCst) > 0);
-                assert_eq!(attempts.load(Ordering::SeqCst), 2);
             }
             drop(client);
         }

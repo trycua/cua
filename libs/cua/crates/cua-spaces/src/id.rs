@@ -8,9 +8,9 @@
 //! relay:<machine-id>
 //! ```
 //!
-//! Legacy spellings still parse (`space://{fleet,local,direct,relay}/…`,
-//! the Python server's `fleet:<ns>:<claim>` and `local:<vm>`, a URL), so ids
-//! stored by older clients keep working; output always uses the new form.
+//! Legacy spellings still parse (`space://{cloud,local,direct,relay}/…`,
+//! `local:<vm>`, a URL), so ids stored by older clients keep working;
+//! output always uses the new form.
 //! See [`cua_sandbox_core::refs`].
 
 use crate::error::{Error, Result};
@@ -21,8 +21,7 @@ use std::fmt;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Provider {
-    /// A Cua cloud (Fleet) sandbox.
-    #[serde(alias = "fleet")]
+    /// A Cua cloud sandbox (Cua Cloud has ended: it only parses).
     Cloud,
     /// A sandbox on this machine's local runtime.
     Local,
@@ -44,7 +43,7 @@ impl Provider {
         }
     }
 
-    /// Parses a location word (`fleet` is the legacy spelling of `cloud`).
+    /// Parses a location word.
     pub fn parse(s: &str) -> Option<Self> {
         match cua_sandbox_core::Location::parse(s)? {
             cua_sandbox_core::Location::Cloud => Some(Provider::Cloud),
@@ -66,17 +65,14 @@ impl fmt::Display for Provider {
 
 /// A parsed Space id.
 ///
-/// Equality and hashing use the canonical form (a legacy cloud id's
-/// namespace is a lookup hint only).
+/// Equality and hashing use the canonical form.
 #[derive(Clone, Debug)]
 pub enum SpaceId {
-    /// `cloud:<name>`: a Fleet claim, unique within the account.
+    /// `cloud:<name>`: a Cua cloud sandbox. Cua Cloud has ended, so using
+    /// it fails with [`cua_sandbox_core::CLOUD_ENDED`].
     Cloud {
-        /// Claim name.
+        /// Sandbox name.
         name: String,
-        /// The claim's namespace when a legacy id said so (a hint; it is
-        /// looked up otherwise).
-        namespace: Option<String>,
     },
     /// `local:<name>`.
     Local {
@@ -120,7 +116,7 @@ impl SpaceId {
     /// The Space id of a qualified sandbox ref (`None` for a bare name).
     pub fn from_ref(r: SandboxRef) -> Option<Self> {
         Some(match r {
-            SandboxRef::Cloud { name, namespace } => SpaceId::Cloud { name, namespace },
+            SandboxRef::Cloud { name } => SpaceId::Cloud { name },
             SandboxRef::Local { name } => SpaceId::Local { name },
             SandboxRef::Direct { authority } => SpaceId::Direct { authority },
             SandboxRef::Relay { machine_id } => SpaceId::Relay { machine_id },
@@ -131,7 +127,7 @@ impl SpaceId {
     /// The same id as a sandbox ref.
     pub fn to_ref(&self) -> SandboxRef {
         match self.clone() {
-            SpaceId::Cloud { name, namespace } => SandboxRef::Cloud { name, namespace },
+            SpaceId::Cloud { name } => SandboxRef::Cloud { name },
             SpaceId::Local { name } => SandboxRef::Local { name },
             SpaceId::Direct { authority } => SandboxRef::Direct { authority },
             SpaceId::Relay { machine_id } => SandboxRef::Relay { machine_id },
@@ -148,11 +144,11 @@ impl SpaceId {
         }
     }
 
-    /// A short human label: the claim, the local name, `host:port` or the
+    /// A short human label: the cloud or local name, `host:port` or the
     /// machine id.
     pub fn short_name(&self) -> &str {
         match self {
-            SpaceId::Cloud { name, .. } => name,
+            SpaceId::Cloud { name } => name,
             SpaceId::Local { name } => name,
             SpaceId::Direct { authority } => authority,
             SpaceId::Relay { machine_id } => machine_id,
@@ -204,23 +200,18 @@ mod tests {
     #[test]
     fn legacy_ids_parse_to_the_new_form() {
         for (legacy, new) in [
-            ("space://fleet/cua-spaces-x/claim-1", "cloud:claim-1"),
+            ("space://cloud/claim-1", "cloud:claim-1"),
             ("space://local/space-ab12", "local:space-ab12"),
             ("space://direct/10.0.0.5:3211", "direct:10.0.0.5:3211"),
             ("space://direct/[::1]:3211", "direct:[::1]:3211"),
             ("space://relay/0123abcd4567ef89", "relay:0123abcd4567ef89"),
-            ("fleet:ns:claim-1", "cloud:claim-1"),
             ("local:cua-space-1", "local:cua-space-1"),
         ] {
             assert_eq!(SpaceId::parse(legacy).unwrap().to_string(), new, "{legacy}");
             assert_eq!(canonical_id(legacy), new);
         }
-        let SpaceId::Cloud { namespace, .. } = SpaceId::parse("fleet:ns:claim-1").unwrap() else {
-            panic!()
-        };
-        assert_eq!(namespace.as_deref(), Some("ns"), "kept as a lookup hint");
         assert_eq!(
-            SpaceId::parse("space://fleet/ns/c").unwrap(),
+            SpaceId::parse("space://cloud/c").unwrap(),
             SpaceId::parse("cloud:c").unwrap()
         );
     }
@@ -246,8 +237,8 @@ mod tests {
     #[test]
     fn providers_use_the_location_words() {
         assert_eq!(Provider::Cloud.as_str(), "cloud");
-        assert_eq!(Provider::parse("fleet"), Some(Provider::Cloud));
-        let p: Provider = serde_json::from_str("\"fleet\"").unwrap();
+        assert_eq!(Provider::parse("cloud"), Some(Provider::Cloud));
+        let p: Provider = serde_json::from_str("\"cloud\"").unwrap();
         assert_eq!(p, Provider::Cloud);
         assert_eq!(serde_json::to_string(&p).unwrap(), "\"cloud\"");
     }
@@ -257,16 +248,54 @@ mod tests {
         for bad in [
             "",
             "space://",
-            "space://fleet/ns/a/b",
+            "space://cloud/a/b",
             "space://moon/x",
             "space://relay/short",
             "space://relay/UPPERCASE1",
             "space://relay/a/b-c-d-e-f",
             "local:",
-            "fleet:ns:",
             "claim-1",
         ] {
             assert!(SpaceId::parse(bad).is_err(), "{bad:?}");
         }
+    }
+}
+
+/// The host-name suffix of a routed Space's address: `direct:<host
+/// machine>.via.cua:<port>` is a Space that host provides, reached through
+/// the host's own channel (a loopback forward there) instead of its own
+/// relay machine or a LAN address.
+pub const ROUTED_SUFFIX: &str = ".via.cua";
+
+/// The address of the Space host `machine` forwards on its loopback `port`.
+pub fn routed_authority(machine: &str, port: u16) -> String {
+    format!("{machine}{ROUTED_SUFFIX}:{port}")
+}
+
+/// `(host machine, port)` of a routed Space's authority.
+pub fn routed_host(authority: &str) -> Option<(&str, u16)> {
+    let (host, port) = authority.rsplit_once(':')?;
+    let machine = host.strip_suffix(ROUTED_SUFFIX)?;
+    if machine.is_empty() {
+        return None;
+    }
+    Some((machine, port.parse().ok().filter(|p: &u16| *p > 0)?))
+}
+
+#[cfg(test)]
+mod routed_tests {
+    use super::*;
+
+    #[test]
+    fn routed_spaces_round_trip_as_direct_ids() {
+        let a = routed_authority("m-4f2a9c", 40123);
+        assert_eq!(a, "m-4f2a9c.via.cua:40123");
+        assert_eq!(routed_host(&a), Some(("m-4f2a9c", 40123)));
+        let id = SpaceId::parse(&format!("direct:{a}")).unwrap();
+        assert!(matches!(&id, SpaceId::Direct { authority } if routed_host(authority).is_some()));
+        assert_eq!(id.to_string(), format!("direct:{a}"));
+        assert_eq!(routed_host("10.0.0.2:3211"), None);
+        assert_eq!(routed_host(".via.cua:1"), None);
+        assert_eq!(routed_host("m.via.cua:0"), None);
     }
 }

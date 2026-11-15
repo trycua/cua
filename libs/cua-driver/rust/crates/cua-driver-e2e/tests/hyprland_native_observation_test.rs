@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Focused native Hyprland regression; supplements, never replaces, the
 //! canonical desktop matrix. Run only in a disposable Hyprland desktop with
 //! the repository GTK3 fixture and exact-candidate Driver installed.

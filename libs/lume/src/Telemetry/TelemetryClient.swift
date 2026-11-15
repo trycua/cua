@@ -87,9 +87,7 @@ final class TelemetryClient: @unchecked Sendable {
     poster: Poster? = nil,
     preferenceProvider: (@Sendable () -> Bool)? = nil
   ) {
-    self.homeDirectory =
-      homeDirectory
-      ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".lume")
+    self.homeDirectory = homeDirectory ?? LumeLayout.current.homeDir
     self.poster = poster
     self.preferenceProvider =
       preferenceProvider ?? { settingsManager.getSettings().telemetryEnabled }

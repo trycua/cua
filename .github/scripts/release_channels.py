@@ -436,7 +436,7 @@ def nightly_attribution_preflight(
     exclude_companion_paths: Sequence[str],
     config_path: Path,
 ) -> list[dict[str, str]]:
-    """Find unresolved squash-generated coauthors before an expensive build."""
+    """Find unresolved squash-generated coauthors so maintainers get a warning."""
     try:
         config = read_json(config_path)
         commits = release_attribution.commits_in_range(
@@ -547,9 +547,9 @@ def plan_nightly(
             exclude_companion_paths=exclude_companion_paths,
             config_path=attribution_config_path,
         )
-        if attribution_issues:
-            should_build = False
-            reason = "held-attribution"
+        # Nightlies are not release notes: unresolved attribution is a
+        # warning for maintainers and never stops the build. Stable releases
+        # keep strict enforcement in release_attribution.build_manifest.
     return {
         "component": name,
         "channel": "nightly",
@@ -565,6 +565,7 @@ def plan_nightly(
         "shouldBuild": should_build,
         "reason": reason,
         "attributionIssues": attribution_issues,
+        "attributionWarning": bool(attribution_issues),
     }
 
 

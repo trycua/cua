@@ -105,13 +105,13 @@ def server():
 @pytest.mark.asyncio
 async def test_config_and_official_client_keep_content_lossless(server):
     pytest.importorskip("mcp")
-    svc = _NativeService(server, {"x-cua-fleet-claim": "c-1"})
+    svc = _NativeService(server, {"x-test-claim": "c-1"})
 
     async def resolve():
         return svc
 
     cfg = await mcp_mod.mcp_config(resolve, "/mcp")
-    assert cfg == {"url": server + "/mcp", "headers": {"x-cua-fleet-claim": "c-1"}}
+    assert cfg == {"url": server + "/mcp", "headers": {"x-test-claim": "c-1"}}
     async with mcp_mod.open_mcp(resolve) as client:
         tools = await client.list_tools()
         tools = getattr(tools, "tools", tools)
@@ -122,7 +122,7 @@ async def test_config_and_official_client_keep_content_lossless(server):
         assert raw["content"][1] == {"type": "image", "data": PNG, "mimeType": "image/png"}
         assert raw["content"][2]["mimeType"] == "audio/wav"
         assert raw["structuredContent"] == {"w": 1}
-    assert all(h.get("x-cua-fleet-claim") == "c-1" for h in _Handler.seen_headers)
+    assert all(h.get("x-test-claim") == "c-1" for h in _Handler.seen_headers)
 
 
 @pytest.mark.asyncio
@@ -142,26 +142,6 @@ async def test_url_sandbox_resolves_the_native_service(server):
         r = await client.call_tool("shot", {})
         assert r.content[1].data == PNG
     await transport.disconnect()
-
-
-@pytest.mark.asyncio
-async def test_fleet_transport_checks_declared_services():
-    from cua_sandbox.transport.fleet import FleetTransport
-
-    class Handle:
-        def service(self, name):
-            return name
-
-    transport = FleetTransport.__new__(FleetTransport)
-    transport._bound = SimpleNamespace(services=["mcp"], name="sb")
-
-    async def fleet_handle():
-        return Handle()
-
-    transport._fleet_handle = fleet_handle
-    assert await transport.native_service("mcp") == "mcp"
-    with pytest.raises(ValueError, match="does not expose service 'env'"):
-        await transport.native_service("env")
 
 
 @pytest.mark.asyncio

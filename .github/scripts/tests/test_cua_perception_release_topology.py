@@ -928,9 +928,8 @@ def test_release_stream_is_candidate_only_and_driver_remains_excluded() -> None:
 
 def test_workflows_are_valid_and_candidate_workflow_cannot_publish() -> None:
     candidate_path = ROOT / ".github/workflows/cd-cua-perception-candidate.yml"
-    manual_path = ROOT / ".github/workflows/cd-cua-perception-candidate-manual.yml"
     ci_path = ROOT / ".github/workflows/ci-cua-perception-release.yml"
-    for path in (candidate_path, manual_path, ci_path):
+    for path in (candidate_path, ci_path):
         assert isinstance(yaml.safe_load(path.read_text()), dict)
     candidate = candidate_path.read_text()
     assert "actions/upload-artifact" in candidate and "actions/download-artifact" in candidate
@@ -945,16 +944,10 @@ def test_workflows_are_valid_and_candidate_workflow_cannot_publish() -> None:
     assert "refs/cua-reviewed/source" in candidate
     assert "macos:aarch64-apple-darwin" in candidate
     assert "macos-15-intel" not in candidate
-    assert "refs/pull/3943/head" not in manual_path.read_text()
     parsed = yaml.safe_load(candidate)
     assert "PRIVATE_KEY_BASE64" not in json.dumps(parsed["jobs"]["package"])
     assert "PRIVATE_KEY_BASE64" in json.dumps(parsed["jobs"]["sign"])
     assert parsed["jobs"]["sign"]["environment"] == "cua-perception-candidate-signing"
-    manual = manual_path.read_text()
-    for value in ("x86_64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-pc-windows-msvc"):
-        assert value in manual
-    assert "cua-perception-input-macos-aarch64" in manual
-    assert "x86_64-apple-darwin" not in manual
 
 
 def test_trust_root_and_rfc8032_vector_match_extension_manager_contract() -> None:

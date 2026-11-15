@@ -22,9 +22,9 @@ struct WindowDropTests {
 
     @Test func onlyDropTargetRowsHitAndARowReleaseCommits() {
         let targets = SidebarDropTargets()
-        targets.isDropTarget = { $0 != "cloud:builder" }
+        targets.isDropTarget = { $0 != "direct:builder" }
         targets.setFrame("local:aurora", CGRect(x: 10, y: 60, width: 200, height: 24))
-        targets.setFrame("cloud:builder", CGRect(x: 10, y: 90, width: 200, height: 24))
+        targets.setFrame("direct:builder", CGRect(x: 10, y: 90, width: 200, height: 24))
         #expect(targets.row(atContent: CGPoint(x: 50, y: 70)) == "local:aurora")
         #expect(targets.row(atContent: CGPoint(x: 50, y: 100)) == nil, "not a drop target")
         #expect(targets.row(atContent: CGPoint(x: 400, y: 70)) == nil)
@@ -44,7 +44,7 @@ struct WindowDropTests {
         let model = ViewModelTests().makeModel()
         await model.refresh()
         #expect(model.dropTargets.isDropTarget("local:aurora"))
-        #expect(!model.dropTargets.isDropTarget("cloud:builder"), "unreachable")
+        #expect(!model.dropTargets.isDropTarget("direct:builder"), "unreachable")
         #expect(!model.dropTargets.isDropTarget("no-such-space"))
         // The same answer as the notch tiles while they show.
         model.notch.send(.click)
@@ -104,5 +104,42 @@ struct WindowDropTests {
         #expect(targets.targetedId == nil)
         controller.handle(event("end"))
         #expect(opened == nil)
+    }
+
+    /// The New UI window's tiles take a drop as the rows do. Only `start`
+    /// and `end` name the dragged window; the cover check on every `move`
+    /// still asks below it (the system hit test finds the dragged window
+    /// itself otherwise, so a tile would never highlight mid-drag).
+    @Test func aPageTileIsTargetedMidDragAndAReleaseOpensItsTeleport() {
+        let model = NotchModel()
+        let controller = NotchController(model: model)
+        let rows = SidebarDropTargets()
+        let tiles = SidebarDropTargets()
+        controller.sidebar = rows
+        controller.pageTiles = tiles
+        var opened: String?
+        controller.onTeleport = { id, _ in opened = id }
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
+                              styleMask: [.borderless], backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        tiles.window = window
+        tiles.visible = { _ in true }
+        tiles.isDropTarget = { _ in true }
+        // The system's answer: the page's window below the dragged one (7),
+        // the dragged window itself when asked for the frontmost.
+        tiles.windowUnder = { _, below in below == 7 ? window.windowNumber : 7 }
+        var named: [String?] = []
+        tiles.onTargeted = { named.append($0) }
+        tiles.setFrames(["local:aurora": CGRect(x: 10, y: 60, width: 200, height: 120)])
+        let primaryTop = NSScreen.screens.first?.frame.maxY ?? 0
+        let y = Double(primaryTop - (300 - 70))
+        let dragged = TeleportWindow(windowId: 7, pid: 1, appName: "Notes", title: "", bundlePath: nil)
+        controller.handle(TeleportWindowDragEvent(phase: "start", x: 500, y: y, window: dragged, app: nil))
+        controller.handle(TeleportWindowDragEvent(phase: "move", x: 50, y: y, window: nil, app: nil))
+        #expect(tiles.targetedId == "local:aurora")
+        #expect(rows.targetedId == nil)
+        controller.handle(TeleportWindowDragEvent(phase: "end", x: 50, y: y, window: dragged, app: nil))
+        #expect(opened == "local:aurora")
+        #expect(named == ["local:aurora", nil])
     }
 }

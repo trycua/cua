@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Packaged macOS lifecycle gate for the encrypted Computer History preview.
 //!
 //! The canonical Lume runner executes these two ignored tests around a real

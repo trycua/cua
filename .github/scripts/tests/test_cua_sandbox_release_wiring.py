@@ -44,7 +44,7 @@ class TestCuaSandboxReleaseWiring(unittest.TestCase):
         self.assertNotIn("          - pypi/sandbox\n", workflow)
         self.assertNotIn('"pypi/sandbox")', workflow)
         self.assertNotIn("id: sandbox_version", workflow)
-        self.assertIn("          - pypi/sandbox-apps\n", workflow)
+        self.assertNotIn("          - pypi/sandbox-apps\n", workflow)
         auto_release = (REPO_ROOT / ".github/workflows/release-on-merge.yml").read_text()
         self.assertNotIn('["libs/python/cua-sandbox/"]', auto_release)
 
@@ -61,7 +61,8 @@ class TestCuaSandboxReleaseWiring(unittest.TestCase):
     def test_metadata_ci_covers_sandbox_and_offline_engine_preview(self) -> None:
         metadata = (REPO_ROOT / ".github/workflows/ci-release-metadata.yml").read_text()
         self.assertIn("libs/python/cua-sandbox/*)", metadata)
-        self.assertIn("--tag-prefix sandbox-v", metadata)
+        script = (REPO_ROOT / ".github/scripts/release_queue_preflight.py").read_text()
+        self.assertIn('"sandbox-v"', script)
         ci = (REPO_ROOT / ".github/workflows/ci-test-scripts.yml").read_text()
         self.assertIn('".github/workflows/cd-py-sandbox.yml"', ci)
         self.assertIn("release_please_sandbox_preview.cjs", ci)

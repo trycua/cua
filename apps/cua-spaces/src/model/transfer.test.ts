@@ -80,16 +80,10 @@ describe("transfer progress formatting", () => {
 
   it("computes a clamped determinate fraction only when totals are known", () => {
     expect(transferProgress({ phase: "active", appName: "x" })).toBeNull();
-    expect(
-      transferProgress({ phase: "active", appName: "x", sentBytes: 0, totalBytes: 0 }),
-    ).toBeNull();
-    expect(
-      transferProgress({ phase: "active", appName: "x", sentBytes: 50, totalBytes: 200 }),
-    ).toBeCloseTo(0.25);
+    expect(transferProgress({ phase: "active", appName: "x", sentBytes: 0, totalBytes: 0 })).toBeNull();
+    expect(transferProgress({ phase: "active", appName: "x", sentBytes: 50, totalBytes: 200 })).toBeCloseTo(0.25);
     // Over-run is clamped to 1.
-    expect(
-      transferProgress({ phase: "active", appName: "x", sentBytes: 300, totalBytes: 200 }),
-    ).toBe(1);
+    expect(transferProgress({ phase: "active", appName: "x", sentBytes: 300, totalBytes: 200 })).toBe(1);
   });
 
   it("builds the '{x} MB / {y} MB' label only when totals are known", () => {

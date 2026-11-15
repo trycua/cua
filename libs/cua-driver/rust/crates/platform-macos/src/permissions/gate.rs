@@ -1,35 +1,25 @@
-//! First-launch permissions gate — CLI flow.
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+//! First-launch permissions gate.
 //!
-//! Rust port of Swift's `PermissionsGate` (SwiftUI panel + polling).  The
-//! Rust port intentionally drops the SwiftUI window and reimplements the
-//! flow as a terminal-only experience:
+//! On `serve` startup, when Accessibility or Screen Recording is off for
+//! the Cua Driver app:
 //!
-//!   1. Inspect TCC state on `serve` startup.
-//!   2. If any required grant is missing, print a clear explanation
-//!      (which grant, why cua-driver needs it, what to do next).
-//!   3. Open the relevant `System Settings` pane(s) via the
-//!      `x-apple.systempreferences:` URL scheme.
-//!   4. Poll TCC state every second.  Emit a "still waiting" line every
-//!      5 seconds so the user knows the daemon is still alive and what
-//!      it is waiting for.
-//!   5. As soon as everything flips green, print a confirmation and
-//!      return — `serve` proceeds normally.
+//!   1. Ask macOS for the first missing permission (Accessibility first,
+//!      never both at once) from a short-lived helper process. The request
+//!      also adds Cua Driver to that pane's list in System Settings.
+//!   2. Show the step-by-step guide window (`panel`, bundled app only), or
+//!      print the same steps in the terminal.
+//!   3. Check every second from a fresh helper process. When a switch turns
+//!      on, move to the next step: ask for Screen Recording, open its pane.
+//!   4. Once both are on, say "All set" and let `serve` continue.
 //!
 //! Opt-out: `--no-permissions-gate` flag or
 //! `CUA_DRIVER_RS_PERMISSIONS_GATE` set to `0` / `false` / `no` / `off`
 //! (case-insensitive) skips the entire flow.  Intended for CI / headless
 //! automation where blocking on user input would deadlock the runner.
-//!
-//! Why no GUI window: the Swift gate uses AppKit + SwiftUI which would
-//! require a full overlay + NSApplication run loop just to display a
-//! dialog.  cua-driver-rs already has a separate AppKit thread for the
-//! cursor overlay, and grafting another window onto it is a recipe for
-//! main-thread deadlocks.  A terminal-driven flow is uglier but reliable
-//! and works headless (with the opt-out flag), which is exactly the
-//! audience for the Rust port.
-//!
-//! A future enhancement could open a native `NSAlert` via objc2 for a
-//! more polished look — left as a follow-up; CLI is the MVP.
+//! `CUA_DRIVER_RS_PERMISSIONS_PANEL=0` keeps the terminal text only.
 
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -37,9 +27,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
-use crate::permissions::status::{
-    current_status, request_accessibility, request_screen_recording, PermissionsStatus,
-};
+use crate::permissions::status::{current_status, request_next_missing, PermissionsStatus};
 
 const PERMISSION_PROBE_ARG: &str = "--cua-internal-permission-probe";
 const PERMISSION_PROBE_REQUEST_ARG: &str = "--cua-internal-permission-probe-request";
@@ -61,17 +49,13 @@ impl MissingPermission {
         }
     }
 
-    /// One-line rationale shown in the missing-permission listing.  Text
-    /// adapted from the Swift gate's SwiftUI subtitle copy.
+    /// One plain sentence on why Cua Driver needs it, shown in the terminal
+    /// banner.
     pub fn rationale(self) -> &'static str {
         match self {
-            Self::Accessibility => {
-                "lets cua-driver read the accessibility tree of running apps and \
-                 send clicks / keystrokes via AX RPC."
-            }
+            Self::Accessibility => "lets Cua Driver click and type in your apps for your agents.",
             Self::ScreenRecording => {
-                "lets cua-driver capture per-window screenshots so agents can see \
-                 the current UI state alongside the tree."
+                "lets Cua Driver take screenshots, so an agent can see what it is doing."
             }
         }
     }
@@ -117,13 +101,11 @@ pub fn run_permission_probe_if_requested() -> Option<i32> {
         return None;
     };
     if request {
-        let initial = current_status();
-        if !initial.accessibility {
-            let _ = request_accessibility();
-        }
-        if !initial.screen_recording {
-            let _ = request_screen_recording();
-        }
+        // One permission per request, Accessibility first: macOS shows one
+        // prompt at a time and dropped the second when both fired together,
+        // which left Cua Driver out of the Screen Recording list. The parent
+        // asks again for Screen Recording once Accessibility is on.
+        let _ = request_next_missing(current_status());
     }
     match serde_json::to_string(&current_status()) {
         Ok(status) => {
@@ -137,7 +119,7 @@ pub fn run_permission_probe_if_requested() -> Option<i32> {
     }
 }
 
-fn fresh_status_with_request(request: bool) -> Result<PermissionsStatus> {
+pub(crate) fn fresh_status_with_request(request: bool) -> Result<PermissionsStatus> {
     let executable = std::env::current_exe()?;
     let output = std::process::Command::new(executable)
         .arg(if request {
@@ -234,6 +216,18 @@ impl Default for GateOpts {
 }
 
 impl GateOpts {
+    /// Options for the wait that continues after the interactive gate timed
+    /// out: no deadline, so a later grant still unblocks the running daemon,
+    /// at a slower cadence than the interactive poll.
+    pub fn after_timeout(&self) -> Self {
+        Self {
+            deadline: None,
+            poll_interval: Duration::from_secs(5),
+            status_interval: Duration::from_secs(5 * 60),
+            ..self.clone()
+        }
+    }
+
     /// Construct from the standard env-var
     /// (`CUA_DRIVER_RS_PERMISSIONS_GATE` set to `0` / `false` / `no` /
     /// `off`, case-insensitive, disables the gate), an explicit
@@ -388,8 +382,12 @@ where
 
     let initial = fresh_status();
     if initial.all_granted() {
-        // Fast path: everything already green.  No banner, no polling —
-        // the user sees nothing different from before this gate existed.
+        // Fast path: everything already on. The only UI is the finished
+        // state, and only when macOS's "Quit & Reopen" restarted us in the
+        // middle of the guide.
+        if super::guide::take_resume_marker() {
+            present_finished_if_available();
+        }
         return Ok(());
     }
     begin_gate_episode(initial);
@@ -401,46 +399,21 @@ where
 
     let missing = missing_from_status(initial);
 
-    // Raise the TCC system prompts BEFORE showing our panel. The
-    // `AXIsProcessTrustedWithOptions` / `CGRequestScreenCaptureAccess`
-    // calls have a side effect critical to the user flow: they
-    // register the calling process with the TCC daemon, which is what
-    // makes the app appear in
-    //   System Settings → Privacy & Security → {Accessibility,Screen Recording}
-    // with its toggle ready to flip. Without that registration, our
-    // "Open System Settings" button takes the user to a pane where
-    // CuaDriver simply isn't listed — they see nothing to grant.
-    //
-    // The Swift gate did the same registration via the matching
-    // `Permissions.requestAccessibility()` / `requestScreenRecording()`
-    // calls before its panel appeared. Moving them earlier here closes
-    // a UX regression the original Phase 1 wiring introduced: prompts
-    // used to happen after the panel, racing with the user clicking
-    // "Open Settings".
-    //
-    // These calls are no-ops when the grant is already active so the
-    // happy-path (both green) sees no UI from this block.
+    // Ask macOS for the first missing permission BEFORE the guide shows.
+    // The request also adds Cua Driver to that pane's list in System
+    // Settings, so the switch is there to turn on. Only one permission is
+    // asked at a time (Accessibility first): the guide, or the terminal
+    // wait loop, asks for Screen Recording once Accessibility is on.
+    let mut already_requested = Vec::new();
     if opts.also_raise_prompts {
-        if let Err(error) = fresh_status_with_request(true) {
-            tracing::warn!("permission request probe failed: {error}");
+        if let Some(first) = super::status::next_request(initial) {
+            request_in_helper(first, true);
+            already_requested.push(first);
         }
     }
 
-    // Try to present a native NSPanel before falling back to the
-    // terminal banner. The panel's 1 Hz poll can also auto-resolve
-    // before the user touches a button — the trailing
-    // `wait_for_grants` loop becomes optional in that case. Outcomes:
-    //
-    //   * `NotShown` — historical CLI path: print the banner, auto-
-    //     open Settings (when `open_settings` is true), wait.
-    //   * `ShownOpenSettings` — user clicked the primary button; open
-    //     Settings on their behalf, then wait.
-    //   * `ShownDismissed` — user clicked "Continue anyway" or the red
-    //     dot; skip the auto-open since the user declined the guided
-    //     flow, but still wait so a later manual grant unblocks.
-    //   * `ShownAllGranted` — the panel's poll loop saw both grants
-    //     flip green; skip the wait loop entirely.
-    let presentation = present_panel_if_available(initial);
+    // The guide window when it can show; otherwise the terminal text.
+    let presentation = present_panel_if_available(initial, already_requested, &opts);
     if presentation != PanelPresentation::NotShown {
         GATE_PANEL_SHOWN.store(true, Ordering::Relaxed);
     }
@@ -448,40 +421,52 @@ where
         GATE_PANEL_DISMISSED.store(true, Ordering::Relaxed);
         observer(GateProgress::Dismissed, telemetry_context());
     }
-    let should_auto_open_settings;
-    let skip_wait_loop;
     match presentation {
+        PanelPresentation::ShownAllGranted => return Ok(()),
+        PanelPresentation::ShownDismissed => {
+            // "Not Now": keep waiting quietly so a later grant still
+            // unblocks, without opening System Settings.
+        }
         PanelPresentation::NotShown => {
             print_banner(&missing, opts.open_settings);
-            should_auto_open_settings = opts.open_settings;
-            skip_wait_loop = false;
-        }
-        PanelPresentation::ShownOpenSettings => {
-            should_auto_open_settings = opts.open_settings;
-            skip_wait_loop = false;
-        }
-        PanelPresentation::ShownDismissed => {
-            should_auto_open_settings = false;
-            skip_wait_loop = false;
-        }
-        PanelPresentation::ShownAllGranted => {
-            should_auto_open_settings = false;
-            skip_wait_loop = true;
-        }
-    }
-
-    if should_auto_open_settings {
-        for m in &missing {
-            if let Err(e) = open_system_settings_for(*m) {
-                eprintln!("  (could not auto-open Settings for {}: {e})", m.label());
+            // One pane at a time: the wait loop opens the next one once
+            // this switch is on.
+            if opts.open_settings {
+                if let Some(first) = missing.first() {
+                    if let Err(e) = open_system_settings_for(*first) {
+                        eprintln!(
+                            "  (could not open System Settings for {}: {e})",
+                            first.label()
+                        );
+                    }
+                }
             }
         }
     }
-
-    if skip_wait_loop {
-        return Ok(());
-    }
     wait_for_grants(&opts)
+}
+
+/// Ask macOS for `permission` from a fresh helper process (attributed to
+/// the Cua Driver app, like the status checks). Screen Recording leaves a
+/// resume note first: turning it on can make macOS quit and reopen the app.
+fn request_in_helper(permission: MissingPermission, wait: bool) {
+    if permission == MissingPermission::ScreenRecording {
+        super::guide::write_resume_marker();
+    }
+    let run = || {
+        if let Err(error) = fresh_status_with_request(true) {
+            tracing::warn!("permission request helper failed: {error}");
+        }
+    };
+    if wait {
+        run();
+    } else {
+        // Keep the guide window responsive while the helper registers the
+        // app with macOS.
+        let _ = std::thread::Builder::new()
+            .name("cua-permission-request".into())
+            .spawn(run);
+    }
 }
 
 fn should_report_started(initial: PermissionsStatus, already_reported: bool) -> bool {
@@ -491,47 +476,68 @@ fn should_report_started(initial: PermissionsStatus, already_reported: bool) -> 
 fn progress_for_presentation(presentation: PanelPresentation) -> Option<GateProgress> {
     match presentation {
         PanelPresentation::ShownDismissed => Some(GateProgress::Dismissed),
-        PanelPresentation::NotShown
-        | PanelPresentation::ShownOpenSettings
-        | PanelPresentation::ShownAllGranted => None,
+        PanelPresentation::NotShown | PanelPresentation::ShownAllGranted => None,
     }
 }
 
-/// Outcome of a panel-present attempt. Drives the subsequent flow in
-/// [`run_if_needed`] — see comments at the call site.
+/// Outcome of a guide-window attempt. Drives the rest of [`run_if_needed`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PanelPresentation {
-    /// Panel could not be shown (opt-out env var, bare-binary launch,
-    /// headless, etc.). Caller should fall back to the terminal banner.
+    /// The window could not show (turned off, bare binary, no display).
+    /// The caller falls back to the terminal text.
     NotShown,
-    /// Panel shown; user clicked "Open System Settings".
-    ShownOpenSettings,
-    /// Panel shown; user clicked "Continue anyway" or closed the window.
+    /// The person clicked "Not Now" or closed the window.
     ShownDismissed,
-    /// Panel shown; its 1 Hz poll loop saw both grants flip green and
-    /// dismissed automatically. Caller can skip the trailing wait loop.
+    /// Both switches turned on; the window finished and closed itself.
     ShownAllGranted,
 }
 
-fn present_panel_if_available(initial: PermissionsStatus) -> PanelPresentation {
-    #[cfg(target_os = "macos")]
-    {
-        use crate::permissions::panel;
-        if !panel::panel_enabled() {
-            return PanelPresentation::NotShown;
-        }
-        match panel::show_modal(panel::PanelOpts {
-            initial_status: initial,
-        }) {
-            panel::PanelOutcome::OpenSettings => PanelPresentation::ShownOpenSettings,
-            panel::PanelOutcome::Dismissed => PanelPresentation::ShownDismissed,
-            panel::PanelOutcome::AllGranted => PanelPresentation::ShownAllGranted,
-        }
+fn present_panel_if_available(
+    initial: PermissionsStatus,
+    already_requested: Vec<MissingPermission>,
+    opts: &GateOpts,
+) -> PanelPresentation {
+    use crate::permissions::panel;
+    if !panel::panel_enabled() {
+        return PanelPresentation::NotShown;
     }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = initial;
-        PanelPresentation::NotShown
+    let outcome = panel::show_modal(panel::PanelOpts {
+        initial_status: initial,
+        already_requested,
+        hooks: panel_hooks(opts.also_raise_prompts),
+    });
+    match outcome {
+        None => PanelPresentation::NotShown,
+        Some(panel::PanelOutcome::Dismissed) => PanelPresentation::ShownDismissed,
+        Some(panel::PanelOutcome::AllGranted) => PanelPresentation::ShownAllGranted,
+    }
+}
+
+fn present_finished_if_available() {
+    use crate::permissions::panel;
+    if panel::panel_enabled() {
+        panel::show_finished(panel_hooks(false));
+    } else {
+        println!("[cua-driver] All set. Cua Driver can now use this Mac.");
+        let _ = std::io::stdout().flush();
+    }
+}
+
+/// The real hooks: fresh status from a helper process, requests from a
+/// helper process, panes through `open`.
+fn panel_hooks(raise_prompts: bool) -> crate::permissions::panel::PanelHooks {
+    crate::permissions::panel::PanelHooks {
+        status: Box::new(fresh_status),
+        request: Box::new(move |permission| {
+            if raise_prompts {
+                request_in_helper(permission, false);
+            }
+        }),
+        open_settings: Box::new(|permission| {
+            if let Err(error) = open_system_settings_for(permission) {
+                tracing::warn!("could not open System Settings: {error}");
+            }
+        }),
     }
 }
 
@@ -547,13 +553,63 @@ fn present_panel_if_available(initial: PermissionsStatus) -> PanelPresentation {
 /// short-lived copy of the signed executable, so the long-lived daemon never
 /// caches a negative preflight and never needs to replace its process image.
 pub fn wait_for_grants(opts: &GateOpts) -> Result<()> {
+    let mut requester = SequentialRequester::new(opts);
+    wait_for_grants_with(opts, || missing_from_status(requester.poll()))
+}
+
+/// Polls fresh status and, like the guide window, asks macOS for the next
+/// permission once the one before it is on (Screen Recording only after
+/// Accessibility, each once) and opens its pane. The gate already asked for
+/// the first missing one before waiting.
+struct SequentialRequester {
+    raise_prompts: bool,
+    open_settings: bool,
+    machine: Option<super::guide::GuideMachine>,
+}
+
+impl SequentialRequester {
+    fn new(opts: &GateOpts) -> Self {
+        Self {
+            raise_prompts: opts.also_raise_prompts,
+            open_settings: opts.open_settings,
+            machine: None,
+        }
+    }
+
+    fn poll(&mut self) -> PermissionsStatus {
+        let status = fresh_status();
+        let Some(machine) = self.machine.as_mut() else {
+            let asked: Vec<MissingPermission> =
+                super::status::next_request(status).into_iter().collect();
+            self.machine = Some(super::guide::GuideMachine::new(status, &asked));
+            return status;
+        };
+        for effect in machine.on_status(status) {
+            match effect {
+                super::guide::GuideEffect::Request(permission) if self.raise_prompts => {
+                    request_in_helper(permission, true);
+                }
+                super::guide::GuideEffect::OpenSettings(permission) if self.open_settings => {
+                    let _ = open_system_settings_for(permission);
+                }
+                _ => {}
+            }
+        }
+        status
+    }
+}
+
+fn wait_for_grants_with(
+    opts: &GateOpts,
+    mut probe: impl FnMut() -> Vec<MissingPermission>,
+) -> Result<()> {
     let start = Instant::now();
     let mut last_status_print = start;
-    let mut last_missing: Vec<MissingPermission> = check_required_permissions();
+    let mut last_missing: Vec<MissingPermission> = probe();
 
     loop {
         if last_missing.is_empty() {
-            println!("[cua-driver] permissions granted — continuing startup");
+            println!("[cua-driver] All set. Cua Driver can now use this Mac.");
             let _ = std::io::stdout().flush();
             return Ok(());
         }
@@ -570,13 +626,13 @@ pub fn wait_for_grants(opts: &GateOpts) -> Result<()> {
 
         std::thread::sleep(opts.poll_interval);
 
-        let new_missing = check_required_permissions();
+        let new_missing = probe();
         if new_missing != last_missing {
             // State changed (red→green, or order-flipped).  Re-emit so the
             // user sees progress without waiting for the next status tick.
             if !new_missing.is_empty() {
                 println!(
-                    "[cua-driver] progress — still waiting on: {}",
+                    "[cua-driver] One done. Still waiting for: {}",
                     fmt_missing(&new_missing)
                 );
                 let _ = std::io::stdout().flush();
@@ -588,8 +644,8 @@ pub fn wait_for_grants(opts: &GateOpts) -> Result<()> {
 
         if last_status_print.elapsed() >= opts.status_interval {
             println!(
-                "[cua-driver] still waiting on: {} \
-                 (open System Settings → Privacy & Security to grant)",
+                "[cua-driver] Still waiting for: {} \
+                 (System Settings → Privacy & Security, turn on Cua Driver)",
                 fmt_missing(&last_missing)
             );
             let _ = std::io::stdout().flush();
@@ -599,36 +655,51 @@ pub fn wait_for_grants(opts: &GateOpts) -> Result<()> {
 }
 
 fn print_banner(missing: &[MissingPermission], open_settings: bool) {
-    println!();
-    println!("──────────────────────────────────────────────────────────────");
-    println!(" cua-driver needs your permission before desktop tools can run");
-    println!("──────────────────────────────────────────────────────────────");
-    println!();
-    println!(" Missing TCC grant(s) for the Cua Driver app identity:");
-    for m in missing {
-        println!("   • {}", m.label());
-        println!("       {}", m.rationale());
-    }
-    println!();
-    if open_settings {
-        println!(" Opening System Settings → Privacy & Security now.");
+    print!("{}", banner_text(missing, open_settings));
+    let _ = std::io::stdout().flush();
+}
+
+fn banner_text(missing: &[MissingPermission], open_settings: bool) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    let switches = if missing.len() == 1 {
+        "one switch"
     } else {
-        // open_settings was suppressed by the caller — print the manual
-        // command(s) instead so the user still knows where to go.  Listing
-        // each pane keeps copy-paste working when only one grant is needed.
-        println!(" Open System Settings → Privacy & Security manually, e.g.:");
+        "two switches"
+    };
+    let _ = writeln!(out);
+    let _ = writeln!(
+        out,
+        " Cua Driver needs {switches} turned on in System Settings → Privacy & Security:"
+    );
+    for (index, m) in missing.iter().enumerate() {
+        let _ = writeln!(out, "   {}. {}: {}", index + 1, m.label(), m.rationale());
+    }
+    let _ = writeln!(out);
+    if open_settings {
+        let _ = writeln!(
+            out,
+            " Opening System Settings now. Turn on the switch next to Cua Driver."
+        );
+    } else {
+        let _ = writeln!(out, " Open each one with:");
         for m in missing {
-            println!("   open \"{}\"   # {}", m.settings_url(), m.label());
+            let _ = writeln!(out, "   open \"{}\"", m.settings_url());
         }
     }
-    println!(" Grant each item, then this prompt will auto-continue.");
-    println!();
-    println!(" Skip this gate (CI / headless): re-run with");
-    println!("   cua-driver serve --no-permissions-gate");
-    println!(" or set CUA_DRIVER_RS_PERMISSIONS_GATE to 0/false/no/off");
-    println!(" (case-insensitive) in the environment.");
-    println!();
-    let _ = std::io::stdout().flush();
+    let _ = writeln!(
+        out,
+        " If Cua Driver isn't in the list, click + and choose Cua Driver in Applications."
+    );
+    let _ = writeln!(out, " This continues by itself once each switch is on.");
+    let _ = writeln!(out);
+    let _ = writeln!(
+        out,
+        " For automated setups, skip this check with `cua-driver serve --no-permissions-gate`"
+    );
+    let _ = writeln!(out, " or CUA_DRIVER_RS_PERMISSIONS_GATE=0.");
+    let _ = writeln!(out);
+    out
 }
 
 fn fmt_missing(missing: &[MissingPermission]) -> String {
@@ -679,6 +750,34 @@ mod tests {
         assert!(context.panel_shown);
         assert!(context.dismissed);
         clear_telemetry_env();
+    }
+
+    #[test]
+    fn wait_after_timeout_picks_up_a_late_grant() {
+        let interactive = GateOpts {
+            deadline: Some(Duration::from_nanos(1)),
+            poll_interval: Duration::from_millis(1),
+            ..GateOpts::default()
+        };
+        let still_missing = || vec![MissingPermission::Accessibility];
+        assert!(wait_for_grants_with(&interactive, still_missing).is_err());
+
+        let slow = GateOpts {
+            poll_interval: Duration::from_millis(1),
+            ..interactive.after_timeout()
+        };
+        assert_eq!(slow.deadline, None);
+        let mut polls = 0;
+        let late_grant = || {
+            polls += 1;
+            if polls < 50 {
+                vec![MissingPermission::Accessibility]
+            } else {
+                Vec::new()
+            }
+        };
+        assert!(wait_for_grants_with(&slow, late_grant).is_ok());
+        assert_eq!(polls, 50);
     }
 
     #[test]
@@ -762,10 +861,32 @@ mod tests {
         );
         for presentation in [
             PanelPresentation::NotShown,
-            PanelPresentation::ShownOpenSettings,
             PanelPresentation::ShownAllGranted,
         ] {
             assert_eq!(progress_for_presentation(presentation), None);
+        }
+    }
+
+    #[test]
+    fn banner_is_plain_words() {
+        let both = [
+            MissingPermission::Accessibility,
+            MissingPermission::ScreenRecording,
+        ];
+        for open in [true, false] {
+            let text = banner_text(&both, open);
+            assert!(text.contains("Cua Driver needs two switches"));
+            assert!(text.contains("1. Accessibility"));
+            assert!(text.contains("2. Screen Recording"));
+            for banned in ["TCC", "AX ", "accessibility tree", "daemon", "CuaDriver"] {
+                assert!(!text.contains(banned), "banner contains {banned:?}");
+            }
+        }
+        assert!(banner_text(&[MissingPermission::ScreenRecording], true).contains("one switch"));
+        for m in both {
+            for banned in ["TCC", "AX", "tree", "daemon", "cua-driver"] {
+                assert!(!m.rationale().contains(banned));
+            }
         }
     }
 

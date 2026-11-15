@@ -62,6 +62,11 @@ concurrency:
   group: cd-image-macos
   cancel-in-progress: false
 
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
+
 jobs:
   plan:
     runs-on: ubuntu-latest
@@ -144,7 +149,7 @@ jobs:
       - name: Build the cua CLI
         working-directory: libs/cua
         run: |
-          cargo build --locked --release -p cua-cli --bin cua
+          cargo build --locked --release -p cua-cli --features byoc --bin cua
           echo "CUA=$CARGO_TARGET_DIR/release/cua" >>"$GITHUB_ENV"
       - name: Build and gate the tiers (cua images release)
         run: |

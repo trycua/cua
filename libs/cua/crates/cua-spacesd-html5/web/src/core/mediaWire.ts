@@ -384,6 +384,28 @@ export function modifiersOf(event: ModifierState): InputModifier[] {
   return out;
 }
 
+export interface ContentRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+/** The video's rect inside a canvas (letterboxed under `object-fit: contain`). */
+export function surfaceContentRect(canvas: HTMLCanvasElement): ContentRect {
+  const r = canvas.getBoundingClientRect();
+  const iw = canvas.width;
+  const ih = canvas.height;
+  const fit = typeof getComputedStyle === "function" ? getComputedStyle(canvas).objectFit : "";
+  if (fit !== "contain" || iw <= 0 || ih <= 0 || r.width <= 0 || r.height <= 0) {
+    return { left: r.left, top: r.top, width: r.width, height: r.height };
+  }
+  const scale = Math.min(r.width / iw, r.height / ih);
+  const width = iw * scale;
+  const height = ih * scale;
+  return { left: r.left + (r.width - width) / 2, top: r.top + (r.height - height) / 2, width, height };
+}
+
 /** Normalized [0,1] position of a client point over a rect. */
 export function normalizePoint(
   clientX: number,

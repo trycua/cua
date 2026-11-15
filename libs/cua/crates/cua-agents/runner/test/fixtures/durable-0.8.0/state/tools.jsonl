@@ -1,0 +1,3 @@
+{"seq":1,"ts":1792859491225,"epoch":1,"turn":1,"kind":"intent","toolCallId":"call-1","name":"run call-1","toolKind":"execute","digest":"6a38eba3cbf7bd5e5e965aa271c02d4f","input":"{\"cmd\":\"call-1\"}","decision":"approve"}
+{"seq":2,"ts":1792859491249,"epoch":1,"turn":1,"kind":"outcome","toolCallId":"call-1","name":"run call-1","status":"completed","summary":"wrote 3 files"}
+{"seq":3,"ts":1792859491257,"epoch":1,"turn":1,"kind":"intent","toolCallId":"call-2","name":"run call-2","toolKind":"execute","digest":"8aaf519359b7f93ffba11c137b53f1aa","input":"{\"cmd\":\"call-2\"}","decision":"approve"}

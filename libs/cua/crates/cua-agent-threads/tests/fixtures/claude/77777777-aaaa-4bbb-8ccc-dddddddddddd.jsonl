@@ -1,0 +1,2 @@
+{"type":"user","uuid":"u1","timestamp":"2026-11-03T18:30:00.000Z","cwd":"/Users/sam/code/garden-planner","sessionId":"77777777-aaaa-4bbb-8ccc-dddddddddddd","message":{"role":"user","content":"Add a frost date column to the planting table and sort the beds by it, newest first please"}}
+{"type":"assistant","uuid":"u2","timestamp":"2026-11-03T18:31:00.000Z","sessionId":"77777777-aaaa-4bbb-8ccc-dddddddddddd","message":{"role":"assistant","content":[{"type":"text","text":"Added it."}]}}

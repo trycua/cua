@@ -10,9 +10,10 @@ pub const MARKER: &str = "notice_shown";
 
 /// The notice, as printed.
 pub const TEXT: &str = "\
-Cua collects anonymous usage data: which commands and features are used, sandbox
-types, durations and error categories. Never file paths, names, hostnames, IPs,
-prompts, screen content or anything from your Keyvault. Nothing has been sent yet.
+Cua collects usage data to help improve it: which commands and features you use,
+how long things take and what kind of errors happen. If you sign in, it's linked
+to your Cua account through a random ID. Never your files, file paths, names,
+what you type, your screen or anything from your Keyvault. Nothing has been sent yet.
   Turn it off:  cua telemetry off   (or DO_NOT_TRACK=1, or CUA_TELEMETRY=0)
   See what is sent:  cua telemetry show-last
   Details: https://cua.ai/docs/cua-sdk/concepts/telemetry";

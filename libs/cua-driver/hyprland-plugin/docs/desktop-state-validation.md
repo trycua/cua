@@ -1,5 +1,8 @@
 # Desktop-state safety validation
 
+> Note (18 Oct 2026): Cua Cloud (Fleets) ended on 18 Oct 2026. This is a dated
+> record of validation run on it; the Fleet references below are historical.
+
 On 2026-09-05, five matched fault-only controls and five Driver MCP background
 drag episodes passed in a disposable Omarchy Cua Fleet VM. Moving, resizing,
 locking, turning the display off, or destroying the target cancelled the

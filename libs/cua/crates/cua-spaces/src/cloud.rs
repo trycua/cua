@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! Spaces in your own cloud account (`on="aws"`, `"gcp"`, `"modal"`).
+//! Spaces in your own cloud account (`on="aws"`, `"gcp"`, `"hetzner"`, `"modal"`).
 //!
 //! A cloud Space is a sandbox from that provider (the sandbox layer owns
 //! the cloud: provisioning, tags, records, stop and start, cleanup; see
@@ -19,8 +19,8 @@ use cua_sandbox_core::placement::Kind;
 use cua_sandbox_core::{CreateOptions, ProviderKind};
 
 pub use cua_sandbox_core::byoc::{
-    CloudCheck, CloudConnected, CloudCredentials, CloudDisconnected, CloudKind, CloudProvider,
-    CloudResource, CloudStatusReport, CloudSweepItem, CloudSweepReport, CloudTarget,
+    CloudAuditEntry, CloudCheck, CloudConnected, CloudCredentials, CloudDisconnected, CloudKind,
+    CloudProvider, CloudResource, CloudStatusReport, CloudSweepItem, CloudSweepReport, CloudTarget,
     CloudTestReport,
 };
 
@@ -96,6 +96,23 @@ impl Spaces {
     /// Creates a Space in your cloud `word`: a sandbox there, then its
     /// relay machine as the Space.
     pub(crate) async fn create_in_cloud(&self, word: &str, opts: SpaceCreate) -> Result<SpaceInfo> {
+        // Every way here (an explicit `on`, `auto`, overflow onto a Spaces
+        // supplier) keeps the Space's network or refuses it before anything
+        // is made: never a Space that runs more open than it asked.
+        let settings = opts.network_settings.clone().unwrap_or_else(|| {
+            crate::network::NetworkSettings::migrate(
+                &opts.egress,
+                opts.network == cua_sandbox_core::NetworkMode::None,
+            )
+        });
+        let provider = self.inner.sandboxes.contrib_provider(word).ok().cloned();
+        cloud_network(
+            word,
+            &settings,
+            provider.as_ref().is_some_and(|p| p.takes_network_rules()),
+            provider.as_ref().is_some_and(|p| p.keeps_internet_only()),
+            crate::network::Mode::from_env(),
+        )?;
         self.relay()?;
         let image = opts
             .image
@@ -109,7 +126,7 @@ impl Spaces {
                 .clone()
                 .filter(|n| !n.trim().is_empty())
                 .map(|n| crate::spaces::sanitize_label(&n))
-                .unwrap_or_else(|| format!("space-{}", crate::spaces::random_suffix())),
+                .unwrap_or_else(|| self.fresh_name()),
         );
         if opts.kind != Kind::Auto {
             create.kind = opts.kind;
@@ -125,6 +142,17 @@ impl Spaces {
             create.ready_timeout = t;
             create.ready_timeout_given = true;
         }
+        // The Space's network rules go to the cloud with it: a cloud that
+        // enforces them keeps them (Modal), any other refuses the create.
+        // They are never dropped, whether the cloud was named, picked by
+        // `auto` or reached by overflow.
+        create.egress = settings.custom.clone();
+        create.network = if settings.default_drops() {
+            cua_sandbox_core::NetworkMode::None
+        } else {
+            opts.network
+        };
+        create.network_settings = Some(settings.clone());
         create.env = opts.env.clone();
         create.command = opts.command.clone();
         create.services = opts.services.clone();
@@ -135,7 +163,7 @@ impl Spaces {
             .cloned()
             .ok_or_else(|| {
                 Error::invalid(format!(
-                    "{word} sandbox {} did not join the relay (no relay machine)",
+                    "{word} sandbox {} did not join the relay (no relay computer)",
                     sandbox.name()
                 ))
             })?;
@@ -148,11 +176,6 @@ impl Spaces {
         }
         // Provisioning has already succeeded. A directory outage must not
         // conceal a recorded target or imply that creation should be retried.
-        let listed = match self.list_all().await {
-            Ok(rows) => Ok(rows),
-            Err(Error::Relay(_)) => self.list(),
-            Err(e) => Err(e),
-        };
         let unavailable = || {
             Error::Relay(cua_host::Error::Relay(
                 concat!(
@@ -162,12 +185,7 @@ impl Spaces {
                 .into(),
             ))
         };
-        let info = listed
-            .map_err(|_| unavailable())?
-            .into_iter()
-            .find(|i| i.id == id)
-            .ok_or_else(unavailable)?;
-        Ok(info)
+        self.find(&id).await.map_err(|_| unavailable())
     }
 
     /// The name of the cloud sandbox behind a `relay:<machine>` Space, if
@@ -179,5 +197,126 @@ impl Spaces {
             }
             _ => Ok(None),
         }
+    }
+}
+
+/// Whether cloud `word` can keep a Space's network `settings`, refusing
+/// (before anything is made) what it can't:
+///
+/// - `takes`: the cloud enforces rules itself (Modal's allow-list), so
+///   internet, none and custom address lists are kept;
+/// - `floor`: the cloud machine's own firewall keeps every Space to the
+///   internet (a VM per Space), so the default is kept and nothing else;
+/// - otherwise only No protection (or the old default, with no rules).
+///
+/// A Space in a cloud never reaches this computer or the user's network, so
+/// `localhost` and `lan` are refused everywhere.
+fn cloud_network(
+    word: &str,
+    settings: &crate::network::NetworkSettings,
+    takes: bool,
+    floor: bool,
+    mode: crate::network::Mode,
+) -> Result<()> {
+    use crate::network::{Mode, NetworkPreset as P};
+    let lists = !settings.custom.is_empty();
+    let none = settings.default_drops();
+    let rules_refused = || {
+        crate::egress::refused(
+            word,
+            "a Space in your own cloud account runs on a machine with no host-side point cua \
+             controls; create it on this machine or one of yours",
+        )
+    };
+    let none_refused = || {
+        Error::invalid(format!(
+            "network=none applies to VMs on your computers and to Modal, not Spaces in this \
+             cloud ({word})"
+        ))
+    };
+    if mode == Mode::Legacy || settings.preset == P::Unprotected {
+        return match () {
+            _ if takes => Ok(()),
+            _ if none && settings.preset != P::Unprotected => Err(none_refused()),
+            _ if lists && settings.preset != P::Unprotected => Err(rules_refused()),
+            _ => Ok(()),
+        };
+    }
+    match settings.preset {
+        P::Localhost | P::Lan | P::LocalhostLan => Err(Error::invalid(format!(
+            "a Space in your cloud account ({word}) can't reach this computer or your local \
+             network; use internet (the default), none or custom"
+        ))),
+        P::Internet if !lists && (takes || floor) => Ok(()),
+        _ if takes => Ok(()),
+        _ if none => Err(none_refused()),
+        _ if lists => Err(rules_refused()),
+        _ => Err(Error::invalid(format!(
+            "Spaces in your cloud account ({word}) can't protect your network yet; choose No \
+             protection (network unprotected) to create it there"
+        ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn opts() -> SpaceCreate {
+        SpaceCreate {
+            image: Some("linux".into()),
+            ..Default::default()
+        }
+    }
+
+    /// Overflow and `auto` reach a Spaces supplier through `create_in_cloud`
+    /// with the caller's options: rules or `network=none` must be refused
+    /// there, before anything is made, not dropped.
+    #[tokio::test]
+    async fn a_supplier_refuses_network_rules_instead_of_dropping_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Spaces::builder().home(dir.path()).build();
+
+        let mut o = opts();
+        o.egress = crate::egress::EgressPolicy {
+            allow: vec![],
+            deny: vec!["all".into()],
+        };
+        let e = s.create_in_cloud("modal", o).await.unwrap_err();
+        assert_eq!(e.tag(), "wrong_provider", "{e}");
+        assert!(e.to_string().contains("egress policy"), "{e}");
+
+        let mut o = opts();
+        o.network = cua_sandbox_core::NetworkMode::None;
+        let e = s.create_in_cloud("modal", o).await.unwrap_err();
+        assert_eq!(e.tag(), "invalid_argument", "{e}");
+        assert!(e.to_string().contains("network=none"), "{e}");
+    }
+
+    #[test]
+    fn a_cloud_keeps_what_it_can_and_refuses_the_rest() {
+        use crate::network::{Mode, NetworkPreset as P, NetworkSettings as S};
+        let ok = |s: &S, takes, floor| cloud_network("c", s, takes, floor, Mode::Secure).is_ok();
+        let internet = S::internet();
+        let none = S::none();
+        let lan = S::preset(P::Lan);
+        let open = S::preset(P::Unprotected);
+        let mut custom = S::internet();
+        custom.custom.deny = vec!["1.2.3.0/24".into()];
+        // Modal (takes rules): internet, none and lists; never this computer.
+        assert!(ok(&internet, true, false));
+        assert!(ok(&none, true, false));
+        assert!(ok(&custom, true, false));
+        assert!(!ok(&lan, true, false));
+        // A VM per Space behind the computer's own firewall: the default only.
+        assert!(ok(&internet, false, true));
+        assert!(!ok(&none, false, true));
+        assert!(!ok(&custom, false, true));
+        // Nothing kept: only No protection.
+        assert!(!ok(&internet, false, false));
+        assert!(ok(&open, false, false));
+        // The old default: no rules go anywhere, rules only where kept.
+        assert!(cloud_network("c", &internet, false, false, Mode::Legacy).is_ok());
+        assert!(cloud_network("c", &custom, false, false, Mode::Legacy).is_err());
     }
 }

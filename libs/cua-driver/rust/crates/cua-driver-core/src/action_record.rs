@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Internal, non-wire representation of what an action actually did.
 //!
 //! This deliberately has no serde derives: it is the driver's source of truth,
@@ -64,6 +67,9 @@ pub enum ActionTransport {
     MacosAxWindowFrame,
     MacosCgEventPid,
     MacosCgEventHid,
+    /// An Apple Event to the target app's scripting interface (Finder
+    /// rename, a document save), which never activates the app.
+    MacosAppleEvent,
     WindowsUiaInvoke,
     WindowsUiaToggle,
     WindowsUiaSelection,
@@ -106,6 +112,7 @@ impl ActionTransport {
         Self::MacosAxWindowFrame,
         Self::MacosCgEventPid,
         Self::MacosCgEventHid,
+        Self::MacosAppleEvent,
         Self::WindowsUiaInvoke,
         Self::WindowsUiaToggle,
         Self::WindowsUiaSelection,
@@ -169,7 +176,9 @@ impl ActionTransport {
             | Self::LinuxWaylandVirtualPointer
             | Self::LinuxHyprlandForegroundInput
             | Self::LinuxCuaCompositorInject => ActionRoute::GlobalInput,
-            Self::WindowsSetWindowPos | Self::LinuxX11ConfigureWindow => ActionRoute::SystemApi,
+            Self::WindowsSetWindowPos | Self::LinuxX11ConfigureWindow | Self::MacosAppleEvent => {
+                ActionRoute::SystemApi
+            }
             Self::BrowserCdpRuntimeFunction => ActionRoute::Dom,
             Self::BrowserCdpInputMouse | Self::BrowserCdpInputKey => ActionRoute::TrustedInput,
         }
@@ -451,6 +460,10 @@ impl ActionExecutionRecord {
                 }
                 _ => None,
             },
+            // The dispatch seam adds these after the record is projected.
+            hint: None,
+            next_call: None,
+            fast_path: None,
         })
     }
 
@@ -963,7 +976,13 @@ fn actual_delivery_from_legacy(
         tool_name,
         "browser_click" | "browser_pointer" | "browser_type"
     ) {
-        return Some(ActualDelivery::Background);
+        return match structured
+            .get("delivery_mode")
+            .and_then(serde_json::Value::as_str)
+        {
+            Some("foreground") => Some(ActualDelivery::Foreground),
+            _ => Some(ActualDelivery::Background),
+        };
     }
     if transport == ActionTransport::AgentCursorOverlay
         || args.get("scope").and_then(serde_json::Value::as_str) == Some("desktop")
@@ -1104,6 +1123,7 @@ fn transport_name(transport: ActionTransport) -> &'static str {
         ActionTransport::MacosAxWindowFrame => "macos_ax_window_frame",
         ActionTransport::MacosCgEventPid => "macos_cg_event_pid",
         ActionTransport::MacosCgEventHid => "macos_cg_event_hid",
+        ActionTransport::MacosAppleEvent => "macos_apple_event",
         ActionTransport::WindowsUiaInvoke => "windows_uia_invoke",
         ActionTransport::WindowsUiaToggle => "windows_uia_toggle",
         ActionTransport::WindowsUiaSelection => "windows_uia_selection",
@@ -1814,6 +1834,7 @@ mod tests {
                 "ref": "secret-ref",
                 "destination_ref": "secret-destination",
                 "input_route": input_route,
+                "delivery_mode": "foreground",
             });
             let structured = serde_json::json!({
                 "status": "ok",

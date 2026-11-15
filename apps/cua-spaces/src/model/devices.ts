@@ -36,6 +36,26 @@ export interface MachineInput {
   confirmed: boolean;
 }
 
+/** A one-time code that adds a machine to the account (the shell's
+ * `devices_create_pairing_code` and `devices_pairing_codes`). `code`, `url`
+ * and the install commands are only there when just made. */
+export interface PairingCode {
+  id: string;
+  code: string | null;
+  url: string | null;
+  installSh: string | null;
+  installPowershell: string | null;
+  /** `active`, `used`, `revoked` or `expired`. */
+  state: string;
+  team: string | null;
+  /** Unix seconds. */
+  createdAt: number;
+  expiresAt: number;
+  usedAt: number | null;
+  /** The relay machine id it added. */
+  machine: string | null;
+}
+
 /** What the Devices page reads (the shell's `devices_snapshot`). */
 export interface DevicesInput {
   devices: DeviceInput[];

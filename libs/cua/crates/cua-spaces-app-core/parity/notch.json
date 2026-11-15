@@ -78,14 +78,14 @@
       }
     },
     {
-      "id": "cloud:builder",
+      "id": "direct:builder",
       "name": "Builder",
       "os": "macos",
       "status": "suspended",
       "detail": "Unreachable",
       "lastUsedAt": 1799990000000,
       "scene": "mac-desktop",
-      "provider": "cloud",
+      "provider": "direct",
       "sdk": {
         "features": [],
         "spacesdVersion": "0.4.0",
@@ -93,7 +93,7 @@
       }
     },
     {
-      "id": "cloud:starter",
+      "id": "direct:starter",
       "name": "Starter",
       "os": "linux",
       "status": "provisioning",
@@ -101,7 +101,7 @@
       "lastUsedAt": 1799980000000,
       "startedAt": 1799980000000,
       "scene": "linux-terminal",
-      "provider": "cloud"
+      "provider": "direct"
     },
     {
       "id": "this-mac",

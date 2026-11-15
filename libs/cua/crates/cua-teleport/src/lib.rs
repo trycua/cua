@@ -34,6 +34,7 @@ pub mod host;
 pub mod keychain;
 pub mod passwords;
 mod plain_copy;
+pub mod privacy;
 pub mod providers;
 mod registry;
 pub mod safe_storage;

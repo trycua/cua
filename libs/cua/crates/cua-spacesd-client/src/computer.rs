@@ -105,7 +105,8 @@ impl KeySpec {
         }
     }
 
-    fn to_pb(&self) -> pb::KeyInput {
+    /// The wire form of the key.
+    pub fn to_pb(&self) -> pb::KeyInput {
         pb::KeyInput {
             key: Some(match self {
                 KeySpec::Named(k) => KeyKind::Named(*k as i32),
@@ -133,7 +134,7 @@ pub struct MediaSession {
     /// Ticket for the media socket.
     pub ticket: String,
     /// Absolute `ws(s)://` URL of the media socket through the same route as
-    /// this client (direct, Fleet gateway or relay).
+    /// this client (direct or relay).
     pub ws_url: String,
     /// Full response (codec, geometry, QUIC endpoint).
     pub raw: pb::OpenMediaResponse,

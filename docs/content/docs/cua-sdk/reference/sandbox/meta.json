@@ -2,7 +2,8 @@
   "title": "Sandbox",
   "pages": [
     "lifecycle",
-    "without-spacesd",
-    "options"
+    "checkpoints",
+    "fork-batch",
+    "bake"
   ]
 }

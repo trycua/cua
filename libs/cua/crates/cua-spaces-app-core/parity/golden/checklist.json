@@ -1,0 +1,49 @@
+{
+  "flow": "checklist",
+  "frames": [
+    {
+      "case": "a spare Mac: its Space is stopped, its devices are only in the device list, no agents",
+      "events": [],
+      "merged": {
+        "events": 0,
+        "progress": "3 of 5",
+        "visible": true
+      },
+      "observe": {
+        "agentRan": false,
+        "hasSpace": true,
+        "otherMachine": true
+      },
+      "progress": "2 of 5"
+    },
+    {
+      "case": "only this machine, a Space still being created and one whose create failed",
+      "events": [],
+      "observe": {
+        "agentRan": false,
+        "hasSpace": false,
+        "otherMachine": false
+      },
+      "progress": "0 of 5"
+    },
+    {
+      "case": "a Space another machine provides, and an agent run in it",
+      "events": [
+        "checklist_add_machine",
+        "checklist_create_space",
+        "checklist_run_agent"
+      ],
+      "merged": {
+        "events": 0,
+        "progress": "4 of 5",
+        "visible": false
+      },
+      "observe": {
+        "agentRan": true,
+        "hasSpace": true,
+        "otherMachine": true
+      },
+      "progress": "3 of 5"
+    }
+  ]
+}

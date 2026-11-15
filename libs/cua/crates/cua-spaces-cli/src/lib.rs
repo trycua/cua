@@ -16,6 +16,8 @@
 //!
 //! The Spaces apps ship this binary as their `cua`.
 
+#![recursion_limit = "256"]
+
 use std::io::Write;
 use std::sync::Arc;
 
@@ -26,8 +28,11 @@ use cua_cli::teleport::TeleportCmd;
 use cua_cli::teleport_session::Broker;
 use cua_sdk::{Cua, CuaError, MediaEvent, MediaOpenOptions, MediaSession, SpacesdClient};
 
+pub mod cloud_tokens;
 pub mod drive_config;
 pub mod keyvault_cmd;
+pub mod pool_ext;
+mod pool_modal;
 pub mod teleport;
 pub mod teleport_session;
 pub mod viewer;
@@ -74,6 +79,27 @@ impl CliExtension for CuaSpacesCli {
         {
             None
         }
+    }
+
+    async fn compat(
+        &self,
+        cmd: cua_compat_cmd::CompatCmd,
+        json: bool,
+        out: &mut dyn Write,
+    ) -> Result<i32, CuaError> {
+        cua_compat::cli::run(cmd, json, out, cua_cli::util::hint).await
+    }
+
+    fn register_compat_job_services(&self) {
+        cua_compat::cli::register_job_services();
+    }
+
+    fn compat_prewarm_image(
+        &self,
+        provider: &str,
+        reference: &str,
+    ) -> Result<Option<String>, String> {
+        cua_compat::cli::resolve_prewarm_image(provider, reference)
     }
 
     async fn viewer(
@@ -127,6 +153,7 @@ impl cua_spaces_ffi::media_decode::DecodedFrameSink for Decoded {
 /// Registers the Cua Spaces extensions (the daemon's and the commands).
 pub fn register() {
     cua_spaces_ext::daemon::register();
+    pool_ext::register();
     cua_cli::extension::register(Arc::new(CuaSpacesCli));
 }
 

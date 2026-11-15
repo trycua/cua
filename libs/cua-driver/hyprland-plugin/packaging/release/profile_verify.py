@@ -17,12 +17,15 @@ SOURCE_REVISION = "4b3396d9fe4bd3cf723b0eb8db83c18a8764b520"
 DRIVER_VERSION = "0.24.0"
 STEM = f"cua-hyprland-plugin-{DRIVER_VERSION}-{SOURCE_REVISION}"
 OPTIONS = {"CUA_HYPRLAND_INPUT": "ON", "CUA_HYPRLAND_TEST_INPUT": "OFF", "CUA_HYPRLAND_INPUT_TRACE": "OFF"}
+# Header versions a reviewed profile may be measured against. 0.56.2: Omarchy stable and rc; 0.57.2: Omarchy edge.
+SUPPORTED_HYPRLAND_HEADERS = ("0.56.2", "0.57.2")
 TOOLING = ("profile_bundle.py", "profile_verify.py", "PROFILE-PKGBUILD.in", "PROFILE-USAGE.md", "lifecycle.py")
 PKGCONF = Path("/usr/bin/pkgconf")
 PKGCONF_ENV = {"PKG_CONFIG_ALLOW_SYSTEM_CFLAGS": "1", "PKG_CONFIG_ALLOW_SYSTEM_LIBS": "1"}
 HYPRLAND_PC = Path("/usr/share/pkgconfig/hyprland.pc")
 SYSTEM_INCLUDE = Path("/usr/include")
 HEADER_ROOT = SYSTEM_INCLUDE / "hyprland"
+PACKAGE_LIB_INCLUDES = {"/usr/lib/glib-2.0/include": "glib2"}
 BUILD_ROUTING_ENV = {"CPATH", "CPLUS_INCLUDE_PATH", "C_INCLUDE_PATH", "OBJC_INCLUDE_PATH",
                      "GCC_EXEC_PREFIX", "COMPILER_PATH", "LIBRARY_PATH", "SDKROOT", "SYSROOT"}
 EMPTY_CMAKE_ROUTING = ("CMAKE_PREFIX_PATH", "CMAKE_MODULE_PATH", "CMAKE_TOOLCHAIN_FILE", "CMAKE_SYSROOT",
@@ -86,8 +89,12 @@ def validate_profile(profile):
     hash_value(source["manifest_sha256"])
     hyprland = profile["hyprland"]
     keys(hyprland, "package_version header_version headers_sha256 sha256", "Hyprland")
-    require(hyprland["header_version"] == "0.56.2", "unchanged source requires Hyprland 0.56.2 headers")
-    require(re.fullmatch(r"0\.56\.2-[0-9]+(?:\.[0-9]+)?", hyprland["package_version"]), "invalid Hyprland package version")
+    # The plugin source detects the installed compositor's input internals (0.56.x and 0.57.x tiers);
+    # a profile still names exactly one measured header version and the package that ships it.
+    require(hyprland["header_version"] in SUPPORTED_HYPRLAND_HEADERS,
+            "unsupported Hyprland headers: profiles support " + ", ".join(SUPPORTED_HYPRLAND_HEADERS))
+    require(re.fullmatch(re.escape(hyprland["header_version"]) + r"-[0-9]+(?:\.[0-9]+)?", hyprland["package_version"]),
+            "invalid Hyprland package version")
     hash_value(hyprland["sha256"])
     hash_value(hyprland["headers_sha256"])
     compiler = profile["compiler"]
@@ -200,6 +207,7 @@ def render_recipe(template, profile, provenance):
     replacements = {"DRIVER_VERSION": profile["source"]["driver_version"], "PKGREL": str(profile["package_release"]),
                     "PROFILE_ID": profile["profile_id"], "STEM": stem,
                     "HYPRLAND_PACKAGE": profile["hyprland"]["package_version"],
+                    "HEADER_VERSION": profile["hyprland"]["header_version"],
                     "RUNTIME_DEPENDS": " ".join(f"'{name}={version}'" for name, version in sorted(profile["runtime"]["packages"].items())),
                     "ARCHIVE_SHA256": profile["source"]["archive_sha256"],
                     "PROFILE_SHA256": provenance["profile_sha256"],
@@ -340,7 +348,15 @@ def pkgconfig_selection(profile):
     require(all(Path(name).is_relative_to(HEADER_ROOT) for name in leading), "Hyprland headers are not first in pkg-config include selection")
     for name in include_dirs:
         path = Path(name)
-        require(path.is_dir() and path.resolve() == path and path.is_relative_to(SYSTEM_INCLUDE), "noncanonical pkg-config include path")
+        under_system = path.is_relative_to(SYSTEM_INCLUDE)
+        if name in PACKAGE_LIB_INCLUDES:
+            # Hyprland 0.57's pkg-config pulls in glib through gdk-pixbuf and librsvg, whose
+            # arch-specific glibconfig.h lives outside /usr/include. Admit exactly that
+            # directory, and only while its package-owned header is still glib2's.
+            owner = PACKAGE_LIB_INCLUDES[name]
+            under_system = run("pacman", "-Qoq", str(path / "glibconfig.h")) == owner
+        require(path.is_dir() and path.resolve() == path and under_system,
+                f"noncanonical pkg-config include path: {name} (resolves to {path.resolve()})")
     require([flag for flag in cflags if flag.startswith("-I")] == includes and
             [flag for flag in cflags if not flag.startswith("-I")] == other, "inconsistent pkg-config flags")
     verify_flags(other, "pkg-config CFLAGS_OTHER")

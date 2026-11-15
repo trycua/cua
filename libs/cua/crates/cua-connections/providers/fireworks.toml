@@ -1,0 +1,21 @@
+id = "fireworks"
+name = "Fireworks AI"
+icon = "fireworks"
+tier = "more"
+rank = 120
+kind = "hosted"
+aliases = ["fw"]
+wire = "openai-chat"
+base_url = "https://api.fireworks.ai/inference/v1"
+default_model = "accounts/fireworks/models/kimi-k2p6"
+hermes_id = "fireworks"
+key_help = "Create a key at fireworks.ai."
+placeholder = "fw_…"
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "FIREWORKS_API_KEY"
+
+[delivery]
+hermes = ["FIREWORKS_API_KEY"]

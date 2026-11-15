@@ -4,8 +4,8 @@
 //!
 //! The WebSocket goes to the same endpoint, path prefix and credentials as
 //! the gRPC channel, so it works wherever the spacesd is reachable: a
-//! direct URL, a relay, or the Fleet gateway (Fleet bearer plus
-//! `X-Cua-Fleet-Claim`, env token in `x-cua-env-authorization`). The ticket
+//! direct URL, or a relay (gateway bearer, env token in
+//! `x-cua-env-authorization`). The ticket
 //! from `Forward` is reusable until it expires; the forward renews it before
 //! then and once more when a socket is refused.
 //!

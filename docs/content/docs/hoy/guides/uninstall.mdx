@@ -15,8 +15,19 @@ removes the program, the Hoy login item, Hoy.app and the Hoy system extension,
 and keeps your VMs, images, settings and logs, so installing Hoy again later
 picks them up.
 
-macOS asks for an administrator password to remove the extension. If you cancel,
-the extension and Hoy.app stay, and the script says how to finish.
+Run it from Terminal on the Mac itself, not over ssh. macOS asks for an
+administrator password to remove the extension in a window on that Mac's screen,
+and asks once. Over ssh, or with nobody logged in at the screen, the uninstaller
+stops before it removes anything and exits with code 3:
+
+```text output
+hoy: the Hoy system extension could not be removed: macOS needs your admin password in a window on this Mac's screen. Run the uninstall from Terminal on the Mac itself, or remove it in System Settings > General > Login Items & Extensions.
+hoy-uninstall: nothing was removed.
+```
+
+`--dry-run` notes the same requirement. To remove everything except Hoy.app and
+its extension from an ssh shell, add `--keep-app`. If you cancel the password
+window, the extension and Hoy.app stay, and the script says how to finish.
 
 It refuses while a Hoy VM is running: run `hoy ps`, then `hoy stop <vm>`. It also
 refuses while the opt-in system daemon runs this install's service. Remove that
@@ -60,6 +71,10 @@ is removed, and a later install ignores it. Remove it with
 ```bash skip="destructive"
 ~/.local/hoy/hoy-uninstall.sh --purge --yes
 ```
+
+After the extension is removed, macOS keeps its entry under Full Disk Access in
+System Settings. It does no harm. Remove it there with the minus button if you
+like.
 
 The script follows `HOY_PREFIX`, `HOY_HOME` and `HOY_SHELL_RC` like the
 installer.

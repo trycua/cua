@@ -75,8 +75,9 @@ again from an administrator account. If it says it is "a different version from
 this hoy", run the installer of this release again. No new approval is needed.
 
 **A third VM will not start (exit 5).** A Mac runs two macOS VMs at a time,
-counting other tools too. The message names each VM it counted. With `--json`
-the reason is `macos_vm_limit`. Stop or remove one. See
+counting other tools too. The message names each VM it counted and ends with
+`Stop one first, for example:  hoy stop demo`. With `--json` the reason is
+`macos_vm_limit`. Stop one, then start the new one. See
 [Limits](/hoy/concepts/two-vm-limit).
 
 **`hoy` cannot reach the service.** Run `hoy health` and `hoy doctor`. The service runs

@@ -21,8 +21,22 @@ VMs with exit code 5 and the reason `limit_service_inactive`, and `hoy doctor`
 shows a failing `limit-service` check. Linux VMs and other apps are not affected,
 whether the extension is on, off or missing.
 
-When a third macOS VM is refused, the message names each VM it counted: its
-process ID, the tool and why it counts. `hoy doctor` and `hoy health` list every
+When a third macOS VM is refused, `hoy start` exits with code 5. The message
+names each VM it counted: its process ID, the tool and why it counts, and ends
+with a command to run next:
+
+```text output
+hoy: can't start demo3: 2 macOS VMs are already running on this Mac.
+Apple's macOS license allows 2 per Mac, and Hoy enforces it.
+
+  running   demo   (hoy, pid 30100)
+            demo2  (hoy, pid 30583)
+
+Stop one first, for example:  hoy stop demo
+```
+
+With `--json` the error has the reason `macos_vm_limit`, the `limit`, the
+`running` VMs and the `next` command. `hoy doctor` and `hoy health` list every
 VM and whether it counts.
 
 ## What counts

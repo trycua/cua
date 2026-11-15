@@ -125,7 +125,7 @@ impl SdkAdapter {
                 sessions.scopes.entry(public.to_owned()).or_default();
                 sessions.mark_ended(public);
             });
-        // Core also revives an idle-reclaimed unnamed session on its next
+        // Core also revives an idle-reclaimed session on its owner's next
         // call, not only through start_session, so follow every revival.
         let revive_sessions = public_sessions.clone();
         let revive_prefix = runtime_prefix.clone();
@@ -274,8 +274,8 @@ impl SdkAdapter {
 
     /// Whether the legacy socket must refuse a call on this ended session
     /// from `transport_session`. Core recreates the session on the call, so
-    /// it is not refused, when it is that transport's unnamed session
-    /// reclaimed by the idle sweep, or a label whose owner transport has
+    /// it is not refused, when it is a session of that transport reclaimed
+    /// by the idle sweep, or a label whose owner transport has
     /// closed since and that was not ended with `end_session`.
     pub fn is_session_ended(&self, session: &str, transport_session: Option<&str>) -> bool {
         if !self

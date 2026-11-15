@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.51.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.51.3...cua-driver-rs-v0.51.4) (2026-11-15)
+
+
+### Bug Fixes
+
+* **cua-driver:** drop the success glyph from unconfirmed action text ([#7806](https://github.com/trycua/cua/issues/7806)) ([0aab127](https://github.com/trycua/cua/commit/0aab1279811edba59d8ff95e41a0ebe1b4aaa107)), closes [#4723](https://github.com/trycua/cua/issues/4723)
+
 ## [0.51.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.51.2...cua-driver-rs-v0.51.3) (2026-11-15)
 
 

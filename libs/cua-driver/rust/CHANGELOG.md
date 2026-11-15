@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.52.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.52.0...cua-driver-rs-v0.52.1) (2026-11-15)
+
+
+### Bug Fixes
+
+* **cua-driver:** await Wayland cursor arrival before desktop clicks ([#5613](https://github.com/trycua/cua/issues/5613)) ([3797d53](https://github.com/trycua/cua/commit/3797d538fbd7d4bf43fe32d3843b5e2ce8ca04c6))
+* **cua-driver:** batch the macOS identity and window-scope string reads ([#7854](https://github.com/trycua/cua/issues/7854)) ([907bbaf](https://github.com/trycua/cua/commit/907bbaf79c450ab149b50823184c2c2e228b59c1))
+* **cua-driver:** cursor overlay no longer takes the front app (re-land of [#7268](https://github.com/trycua/cua/issues/7268)) ([#7645](https://github.com/trycua/cua/issues/7645)) ([55e1ae9](https://github.com/trycua/cua/commit/55e1ae9c6a1b88b9c5e2a078020e9a966c0a78d8))
+* **cua-driver:** expose snapshot identity in full window-state text ([#7844](https://github.com/trycua/cua/issues/7844)) ([9e5e151](https://github.com/trycua/cua/commit/9e5e15130c8058d9421af7baa9e2639ea59470c2))
+* **cua-driver:** pin that the desktop lane frees before the detached window watch ([#7858](https://github.com/trycua/cua/issues/7858)) ([1f9b318](https://github.com/trycua/cua/commit/1f9b3184d3978c11ca06b121aee27e4b284275f9)), closes [#4771](https://github.com/trycua/cua/issues/4771)
+* **cua-driver:** skip the glide wait for a cursor turned off at runtime ([#7860](https://github.com/trycua/cua/issues/7860)) ([9780148](https://github.com/trycua/cua/commit/9780148ff4c5413645a5e41f7bbff39d86928809))
+
 ## [0.52.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.51.6...cua-driver-rs-v0.52.0) (2026-11-15)
 
 

@@ -482,6 +482,15 @@ static RULES: &[Rule] = &[
         },
     },
     Rule {
+        codes: &["session_owned_by_other_transport"],
+        build: |_| {
+            RecoveryHint::new(
+                "That session is live on another connection, so it has not ended and start_session with \
+                 its label is refused too. Make the call from that connection, or use a new session label.",
+            )
+        },
+    },
+    Rule {
         codes: &["session_not_started", "session_required"],
         build: |c| {
             let mut arguments = Map::new();

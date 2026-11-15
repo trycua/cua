@@ -304,7 +304,7 @@ fn eviction_remove_and_clear_release_payload_but_not_acquired_guard() {
     unsafe { touch_vtable(guard.as_ptr()) };
     let removed_ptr = make_fake(hits);
     let removed = cache.publish(PID as i32, HWND, snapshot_with(vec![removed_ptr]));
-    cache.remove(PID as i32, HWND);
+    cache.remove(PID as i32, HWND, None);
     assert!(acquire(&cache, removed, 0).is_none());
     assert_eq!(
         unsafe {

@@ -3535,11 +3535,21 @@ pub async fn setup(
         components,
         dry_run,
         cua_vmm::qemu::install_qemu,
-        cua_vmm::lume::install_lume,
+        start_lume,
         install_runsc,
         kvm_step,
     )
     .await
+}
+
+/// `cua runtime setup lume`: the doctor's plan, done the way a macOS create
+/// gets its Lume. It starts `lume serve` with the Lume `runtime.lume` picks,
+/// after setting up the pinned built-in Lume (checked by SHA-256 and
+/// signature) when there is none and the setting allows it, and returns once
+/// it answers. It never runs Lume's install script, which installs the latest
+/// release unchecked, with a LaunchAgent.
+async fn start_lume() -> std::result::Result<(), VmmError> {
+    LumeRuntime::with_defaults().ensure_serving().await
 }
 
 /// `cua runtime setup runsc`: registers gVisor with the container engine
@@ -3626,7 +3636,7 @@ async fn setup_with(
     components: &[String],
     dry_run: bool,
     install_qemu: impl AsyncFn() -> cua_vmm::Result<()>,
-    install_lume: impl AsyncFn() -> cua_vmm::Result<()>,
+    start_lume: impl AsyncFn() -> cua_vmm::Result<()>,
     install_runsc: impl AsyncFn() -> cua_vmm::Result<()>,
     kvm: impl AsyncFn(bool) -> Option<cua_proto::daemon::v1::SetupStep>,
 ) -> Result<Vec<cua_proto::daemon::v1::SetupStep>> {
@@ -3705,7 +3715,7 @@ async fn setup_with(
                 install_runsc().await
             }
             BackendKind::Qemu => install_qemu().await,
-            BackendKind::Lume => install_lume().await,
+            BackendKind::Lume => start_lume().await,
             BackendKind::Firecracker => install_microvm().await,
             BackendKind::Vz => install_vz().await,
             BackendKind::Containerization => {
@@ -5348,6 +5358,89 @@ mod tests {
         let row = doctor.iter().find(|c| c.name == "container").unwrap();
         assert!(row.detail.contains("missing: runsc"), "{}", row.detail);
         assert!(row.detail.contains(RUNSC_PLAN), "{}", row.detail);
+    }
+
+    const LUME_SERVE: &str = "start `lume serve`";
+    const LUME_BUILTIN: &str =
+        "download the built-in Lume (about 6 MB, signed); start `lume serve`";
+
+    /// An Apple silicon Mac whose `lume serve` does not answer, with the
+    /// Lume row `cua_vmm::auto` writes for it: `binary` says whether a Lume
+    /// is installed, `builtin` whether `runtime.lume` allows the built-in one.
+    fn lume_report(binary: bool, builtin: bool) -> cua_vmm::auto::DoctorReport {
+        use cua_vmm::auto::BackendStatus;
+        let mut r = qemu_report(true);
+        r.host.os = cua_vmm::host::HostOs::Macos;
+        r.host.arch = cua_vmm::Arch::Aarch64;
+        r.lume.supported_host = true;
+        r.lume.binary = binary.then(|| "/opt/homebrew/bin/lume".into());
+        let (detail, provisioning) = match (binary, builtin) {
+            (true, _) => ("lume installed but not serving", vec![LUME_SERVE]),
+            (false, true) => (
+                "built-in Lume, set up on first use",
+                vec![
+                    "download the built-in Lume (about 6 MB, signed)",
+                    LUME_SERVE,
+                ],
+            ),
+            (false, false) => (
+                "Lume is not installed on this Mac (macOS VMs are set to use this Mac's own Lume)",
+                vec![],
+            ),
+        };
+        r.backends.push(BackendStatus {
+            backend: super::BackendKind::Lume,
+            ready: false,
+            provisionable: binary || builtin,
+            detail: detail.into(),
+            missing: if binary || builtin {
+                vec![]
+            } else {
+                vec!["lume".into()]
+            },
+            provisioning: provisioning.into_iter().map(String::from).collect(),
+        });
+        r
+    }
+
+    /// #5721: `setup lume` does the plan the doctor shows, through the one
+    /// Lume step (`lume serve`, after the built-in Lume when there is none),
+    /// whether or not a Lume is installed. With `runtime.lume = system` and
+    /// no Lume on this Mac there is no plan: the doctor's reason, and
+    /// nothing runs.
+    #[tokio::test]
+    async fn setup_lume_does_the_plan_the_doctor_shows() {
+        use cua_proto::daemon::v1::CheckStatus::{Error, Installable, Ok};
+        for (binary, builtin, plan) in [
+            (true, true, LUME_SERVE),
+            (true, false, LUME_SERVE),
+            (false, true, LUME_BUILTIN),
+        ] {
+            let case = format!("binary={binary} builtin={builtin}");
+            let (steps, n) = setup_full(lume_report(binary, builtin), &["lume"], true, true).await;
+            assert_eq!(steps.len(), 1, "{case}: {steps:?}");
+            assert_eq!(steps[0].status, Installable as i32, "{case}: {steps:?}");
+            assert_eq!(steps[0].detail, format!("would: {plan}"), "{case}");
+            assert_eq!(n, [0, 0, 0], "{case}: a dry run runs nothing");
+
+            let (steps, n) = setup_full(lume_report(binary, builtin), &["lume"], false, true).await;
+            assert_eq!(steps[0].status, Ok as i32, "{case}: {steps:?}");
+            assert_eq!(steps[0].detail, format!("installed ({plan})"), "{case}");
+            assert_eq!(n, [0, 1, 0], "{case}: the Lume step runs once");
+            // Bare `cua runtime setup` picks Lume up the same way.
+            let (steps, n) = setup_full(lume_report(binary, builtin), &[], false, true).await;
+            assert_eq!(steps[0].name, "lume", "{case}: {steps:?}");
+            assert_eq!(n, [0, 1, 0], "{case}");
+        }
+        for dry in [true, false] {
+            let (steps, n) = setup_full(lume_report(false, false), &["lume"], dry, true).await;
+            assert_eq!(steps[0].status, Error as i32, "{steps:?}");
+            assert!(
+                steps[0].detail.contains("use this Mac's own Lume"),
+                "{steps:?}"
+            );
+            assert_eq!(n, [0, 0, 0]);
+        }
     }
 
     fn backend_report(

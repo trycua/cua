@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.36.22](https://github.com/trycua/cua/compare/cua-spaces-v0.36.21...cua-spaces-v0.36.22) (2026-11-15)
+
+
+### Bug Fixes
+
+* **cua-daemon:** name a digest-pinned Lume image's digest once and check what Lume pulled ([#7868](https://github.com/trycua/cua/issues/7868)) ([b729604](https://github.com/trycua/cua/commit/b729604b0fab2a926ea47603784e78938e8c7702))
+
 ## [0.36.21](https://github.com/trycua/cua/compare/cua-spaces-v0.36.20...cua-spaces-v0.36.21) (2026-11-15)
 
 

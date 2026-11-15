@@ -23,8 +23,8 @@ use cua_driver_core::browser::types::{
     NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
 };
 use cua_driver_core::browser::{
-    existing_profile_setup_descriptor, fetch_json_version_ws_url, is_firefox,
-    loopback_websocket_port, parse_devtools_active_port, BrowserCursorTracker,
+    existing_profile_setup_descriptor, fetch_json_version_ws_url, is_electron_app_layout,
+    is_firefox, loopback_websocket_port, parse_devtools_active_port, BrowserCursorTracker,
 };
 
 pub struct LinuxBrowserPlatform {
@@ -590,18 +590,20 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 format!("pid {pid} is outside the Linux process-id range"),
             )
         })?;
-        let (process, executable) = tokio::task::spawn_blocking(move || {
+        let (process, executable, electron_app) = tokio::task::spawn_blocking(move || {
             let process = crate::proc_fs::list_processes()
                 .into_iter()
                 .find(|process| process.pid == pid_u32);
-            let executable = std::fs::read_link(format!("/proc/{pid}/exe"))
-                .ok()
-                .map(|path| path.to_string_lossy().into_owned());
-            (process, executable)
+            let executable = std::fs::read_link(format!("/proc/{pid}/exe")).ok();
+            let electron_app = executable.as_deref().is_some_and(is_electron_app_layout);
+            let executable = executable.map(|path| path.to_string_lossy().into_owned());
+            (process, executable, electron_app)
         })
         .await
         .ok()
-        .and_then(|(process, executable)| process.map(|process| (process, executable)))
+        .and_then(|(process, executable, electron_app)| {
+            process.map(|process| (process, executable, electron_app))
+        })
         .ok_or_else(|| {
             BrowserRefusal::new(
                 BrowserRefusalCode::BrowserBindingStale,
@@ -611,9 +613,13 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         let identity = executable
             .filter(|path| !path.is_empty())
             .unwrap_or_else(|| process.name.clone());
-        let chromium = is_chromium(&identity);
+        let chromium = electron_app || is_chromium(&identity);
         let gecko = is_firefox(&identity);
-        let product_kind = browser_product(&identity);
+        let product_kind = if electron_app {
+            BrowserProduct::Electron
+        } else {
+            browser_product(&identity)
+        };
         Ok(BrowserClassification {
             is_browser: chromium || gecko,
             engine: if chromium {

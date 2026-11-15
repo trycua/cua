@@ -9,6 +9,7 @@ A pull request is closed when all of these hold:
 - its head branch is in a fork (or the fork was deleted);
 - its author is not an owner, member or collaborator of the repository;
 - it has no `allow-workflow-change` label (only maintainers can add labels);
+- it was opened on or after CUTOFF (older pull requests are reviewed by hand);
 - it adds, edits, deletes or renames a file under .github/workflows/ or .github/actions/.
 """
 
@@ -24,6 +25,7 @@ from typing import Any, Iterable, Mapping
 PROTECTED_PREFIXES = (".github/workflows/", ".github/actions/")
 TRUSTED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 OVERRIDE_LABEL = "allow-workflow-change"
+CUTOFF = "2026-11-15T00:00:00Z"
 MARKER = "<!-- close-fork-workflow-prs -->"
 COMMENT = (
     f"{MARKER}\n"
@@ -88,6 +90,8 @@ class Client:
 def run(client: Any, repository: str, dry_run: bool) -> list[int]:
     closed = []
     for pull in client.paged(f"repos/{repository}/pulls?state=open"):
+        if pull.get("created_at", "") < CUTOFF:
+            continue
         if not is_fork(pull, repository) or is_trusted(pull):
             continue
         number = pull["number"]

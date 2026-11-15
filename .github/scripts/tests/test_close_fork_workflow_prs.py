@@ -11,9 +11,10 @@ REPO = "trycua/cua"
 WORKFLOW = ROOT / ".github/workflows/close-fork-workflow-prs.yml"
 
 
-def pull(number=5, head_repo="evil/cua", association="NONE", labels=()):
+def pull(number=5, head_repo="evil/cua", association="NONE", labels=(), created="2026-11-16T00:00:00Z"):
     return {
         "number": number,
+        "created_at": created,
         "user": {"login": "x"},
         "author_association": association,
         "labels": [{"name": n} for n in labels],
@@ -85,3 +86,8 @@ def test_workflow_never_runs_pull_request_code():
     for step in wf["jobs"]["close"]["steps"]:
         if str(step.get("uses", "")).startswith("actions/checkout"):
             assert "ref" not in step["with"] and "repository" not in step["with"]
+
+
+def test_pull_requests_opened_before_the_cutoff_are_left_alone():
+    client = FakeClient([pull(created="2026-11-14T23:59:59Z")], {5: [{"filename": ".github/workflows/ci.yml"}]})
+    assert cf.run(client, REPO, dry_run=False) == []

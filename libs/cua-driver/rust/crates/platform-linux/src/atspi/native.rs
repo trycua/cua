@@ -15,7 +15,7 @@
 //! `perform_action`, `set_value`, and `get_element_bounds` index into that same
 //! ordered set.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -1476,10 +1476,6 @@ async fn collect_visited_bounded_opts<'a>(
             return Ok(None);
         }
     };
-    let first_walk = first_application_walk(pid);
-    if first_walk {
-        let _ = call(app.get_attributes()).await;
-    }
     let zconn = conn.connection();
     // Mapped popups of this pid, read once and only when a menubar menu's
     // open state cannot be told from AT-SPI states alone (gail, focus elsewhere).
@@ -1537,16 +1533,21 @@ async fn collect_visited_bounded_opts<'a>(
     } else {
         resolve_window_frame(conn, pid, xid, &seeds).await
     };
-    if first_walk {
-        let root = match scoped_frame {
-            Some(ordinal) => seeds[ordinal].clone(),
-            None => RawObjectRef {
-                name: app.inner().destination().to_string(),
-                path: app.inner().path().to_string(),
-            },
-        };
-        settle_woken_chromium_tree(conn, &app, &root).await;
-    }
+    // Concurrent first walks of one pid share this wake: a second caller
+    // waits for it instead of walking a tree that is still empty.
+    application_wake(pid)
+        .get_or_init(|| async {
+            let _ = call(app.get_attributes()).await;
+            let root = match scoped_frame {
+                Some(ordinal) => seeds[ordinal].clone(),
+                None => RawObjectRef {
+                    name: app.inner().destination().to_string(),
+                    path: app.inner().path().to_string(),
+                },
+            };
+            settle_woken_chromium_tree(conn, &app, &root).await;
+        })
+        .await;
 
     // Walk the caller's window FIRST when it was resolved: under a short
     // budget an application-wide pre-order (main window, then dialogs) could
@@ -2574,12 +2575,17 @@ async fn web_document_populated(
     Some(false)
 }
 
-fn first_application_walk(pid: u32) -> bool {
-    static PIDS: OnceLock<Mutex<HashSet<u32>>> = OnceLock::new();
-    PIDS.get_or_init(|| Mutex::new(HashSet::new()))
+/// The once-per-pid wake of an application's accessibility tree.
+fn application_wake(pid: u32) -> std::sync::Arc<tokio::sync::OnceCell<()>> {
+    static WAKES: OnceLock<Mutex<HashMap<u32, std::sync::Arc<tokio::sync::OnceCell<()>>>>> =
+        OnceLock::new();
+    WAKES
+        .get_or_init(Default::default)
         .lock()
         .unwrap()
-        .insert(pid)
+        .entry(pid)
+        .or_default()
+        .clone()
 }
 
 pub fn walk_tree(pid: u32) -> Result<Option<(String, Vec<AtspiNode>)>> {
@@ -8636,12 +8642,29 @@ mod coord_tests {
 mod budget_tests {
     use super::*;
 
-    #[test]
-    fn application_attributes_wake_once_per_pid() {
-        assert!(first_application_walk(u32::MAX));
-        assert!(!first_application_walk(u32::MAX));
-        assert!(first_application_walk(u32::MAX - 1));
-        assert!(!first_application_walk(u32::MAX - 1));
+    #[tokio::test]
+    async fn concurrent_first_walks_of_a_pid_share_one_wake() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let wakes = AtomicUsize::new(0);
+        let settled = AtomicUsize::new(0);
+        let wake = || async {
+            wakes.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            settled.fetch_add(1, Ordering::SeqCst);
+        };
+        let (cell_a, cell_b) = (application_wake(u32::MAX), application_wake(u32::MAX));
+        let first = cell_a.get_or_init(wake);
+        let second = async {
+            cell_b.get_or_init(wake).await;
+            settled.load(Ordering::SeqCst)
+        };
+        let ((), seen_by_second) = tokio::join!(first, second);
+        assert_eq!(wakes.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            seen_by_second, 1,
+            "the second walk ran before the wake settled"
+        );
+        assert!(!application_wake(u32::MAX - 1).initialized());
     }
 
     #[test]

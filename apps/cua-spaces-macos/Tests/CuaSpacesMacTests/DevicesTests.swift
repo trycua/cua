@@ -110,7 +110,7 @@ struct DevicesTests {
         live.setCode("k7qxm2rp")
         await live.approve()
         #expect(live.approval != nil, "still open: nothing was approved")
-        #expect(live.approvalView?.error?.contains("pending") == true)
+        #expect(live.approvalView?.error?.contains("new code") == true)
         relay.state = "enrolled"
         await live.approve()
         #expect(live.approval == nil)
@@ -139,7 +139,7 @@ struct DevicesTests {
             "(ids in `cua devices ls`)"
         await m.approve()
         #expect(m.approvalView?.error == "The code expired.")
-        #expect(m.approvalView?.approveLabel == "Add machine")
+        #expect(m.approvalView?.approveLabel == "Add computer")
         #expect(m.approvalView?.canApprove == true)
         fixture.failApprove = nil
         await m.approve()

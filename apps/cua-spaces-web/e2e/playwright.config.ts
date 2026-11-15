@@ -24,24 +24,20 @@ export default defineConfig({
   // One retry in CI. A test that passes only on it is "flaky" in Playwright's
   // report; CI lists it and opens an issue (.github/scripts/flaky/flaky.py).
   retries: process.env.CI ? 1 : 0,
-  reporter: [
-    ["list"],
-    ["./summary-reporter.ts"],
-    ...(process.env.FLAKY_RESULTS_OUT ? [["json", { outputFile: process.env.FLAKY_RESULTS_OUT }] as const] : []),
-  ],
+  reporter: [["list"], ["./summary-reporter.ts"], ...(process.env.FLAKY_RESULTS_OUT ? [["json", { outputFile: process.env.FLAKY_RESULTS_OUT }] as const] : [])],
   use: {
     baseURL: `http://localhost:${PORT}`,
     viewport: { width: 1440, height: 900 },
     trace: "retain-on-failure",
   },
-  projects: ELECTRON
-    ? [{ name: "electron" }]
-    : [{ name: "chromium", use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } } }],
-  webServer: ELECTRON ? undefined : {
-    command: `npx vite --port ${PORT} --strictPort`,
-    cwd: "..",
-    url: `http://localhost:${PORT}`,
-    reuseExistingServer: !process.env.CI,
-    timeout: 60_000,
-  },
+  projects: ELECTRON ? [{ name: "electron" }] : [{ name: "chromium", use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } } }],
+  webServer: ELECTRON
+    ? undefined
+    : {
+        command: `npx vite --port ${PORT} --strictPort`,
+        cwd: "..",
+        url: `http://localhost:${PORT}`,
+        reuseExistingServer: !process.env.CI,
+        timeout: 60_000,
+      },
 });

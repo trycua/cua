@@ -989,10 +989,14 @@ public protocol AgentSetupProtocol: AnyObject, Sendable {
      * Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
      * (`server`, default this channel's cua), and with `sign_in` the
      * agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
-     * sign-in it already has, read from where Claude Code keeps it). JSON:
-     * one result per agent.
+     * sign-in it already has, read from where Claude Code keeps it). With
+     * `driver`, the `cua-driver` entry the host app wants (the Cua Driver it
+     * carries, by absolute path) is written too; `driver_permissions_granted`
+     * says whether Screen Recording and Accessibility are on for it (None:
+     * unknown). Each part asked for is reported on its own (`parts`), so
+     * one can be retried by asking for it alone. JSON: one result per agent.
      */
-    func connectJson(agents: [String], server: AgentMcpServer?, skills: Bool, mcp: Bool, signIn: Bool) async throws  -> String
+    func connectJson(agents: [String], server: AgentMcpServer?, skills: Bool, mcp: Bool, signIn: Bool, driver: AgentMcpServer?, driverPermissionsGranted: Bool?) async throws  -> String
 
     /**
      * Whether each agent is really connected (CONTRACT §4: `{agents,
@@ -1174,16 +1178,20 @@ open func configureMcp(agents: [String], server: AgentMcpServer?)async throws  -
      * Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
      * (`server`, default this channel's cua), and with `sign_in` the
      * agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
-     * sign-in it already has, read from where Claude Code keeps it). JSON:
-     * one result per agent.
+     * sign-in it already has, read from where Claude Code keeps it). With
+     * `driver`, the `cua-driver` entry the host app wants (the Cua Driver it
+     * carries, by absolute path) is written too; `driver_permissions_granted`
+     * says whether Screen Recording and Accessibility are on for it (None:
+     * unknown). Each part asked for is reported on its own (`parts`), so
+     * one can be retried by asking for it alone. JSON: one result per agent.
      */
-open func connectJson(agents: [String], server: AgentMcpServer?, skills: Bool, mcp: Bool, signIn: Bool)async throws  -> String  {
+open func connectJson(agents: [String], server: AgentMcpServer?, skills: Bool, mcp: Bool, signIn: Bool, driver: AgentMcpServer?, driverPermissionsGranted: Bool?)async throws  -> String  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_cua_sdk_fn_method_agentsetup_connect_json(
                     self.uniffiCloneHandle(),
-                    FfiConverterSequenceString.lower(agents),FfiConverterOptionTypeAgentMcpServer.lower(server),FfiConverterBool.lower(skills),FfiConverterBool.lower(mcp),FfiConverterBool.lower(signIn)
+                    FfiConverterSequenceString.lower(agents),FfiConverterOptionTypeAgentMcpServer.lower(server),FfiConverterBool.lower(skills),FfiConverterBool.lower(mcp),FfiConverterBool.lower(signIn),FfiConverterOptionTypeAgentMcpServer.lower(driver),FfiConverterOptionBool.lower(driverPermissionsGranted)
                 )
             },
             pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
@@ -9355,6 +9363,17 @@ public protocol SpaceProtocol: AnyObject, Sendable {
     func joinPresence(identity: PresenceIdentity, timeoutMs: UInt64?) async throws  -> SpacePresence
 
     /**
+     * Joins presence for the window being watched. For a window another
+     * Space shows here and the viewer streams straight from its origin
+     * (`window_id` from [`Space::windows`]), this joins the origin's channel
+     * and this Space's, publishes the cursor to both and reads them as one:
+     * one avatar and one cursor per viewer, as if the stream came through
+     * this Space. For any other window, or `None`, it is
+     * [`Space::join_presence`].
+     */
+    func joinPresenceFor(windowId: String?, identity: PresenceIdentity, timeoutMs: UInt64?) async throws  -> SpacePresence
+
+    /**
      * This Space's services.
      */
     func keptServices() async throws  -> [SpaceServiceInfo]
@@ -10129,6 +10148,32 @@ open func joinPresence(identity: PresenceIdentity, timeoutMs: UInt64?)async thro
                 uniffi_cua_sdk_fn_method_space_join_presence(
                     self.uniffiCloneHandle(),
                     FfiConverterTypePresenceIdentity_lower(identity),FfiConverterOptionUInt64.lower(timeoutMs)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_u64,
+            completeFunc: ffi_cua_sdk_rust_future_complete_u64,
+            freeFunc: ffi_cua_sdk_rust_future_free_u64,
+            liftFunc: FfiConverterTypeSpacePresence_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Joins presence for the window being watched. For a window another
+     * Space shows here and the viewer streams straight from its origin
+     * (`window_id` from [`Space::windows`]), this joins the origin's channel
+     * and this Space's, publishes the cursor to both and reads them as one:
+     * one avatar and one cursor per viewer, as if the stream came through
+     * this Space. For any other window, or `None`, it is
+     * [`Space::join_presence`].
+     */
+open func joinPresenceFor(windowId: String?, identity: PresenceIdentity, timeoutMs: UInt64?)async throws  -> SpacePresence  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_space_join_presence_for(
+                    self.uniffiCloneHandle(),
+                    FfiConverterOptionString.lower(windowId),FfiConverterTypePresenceIdentity_lower(identity),FfiConverterOptionUInt64.lower(timeoutMs)
                 )
             },
             pollFunc: ffi_cua_sdk_rust_future_poll_u64,
@@ -43612,6 +43657,13 @@ public struct SpaceWindow: Equatable, Hashable {
      * Why not.
      */
     public var limitation: String
+    /**
+     * Where the picture comes from when another Space shows this window
+     * here (`stream_space_window`); `None` for the Space's own windows.
+     * Open it like any window: [`Space::open_stream`] with its `window_id`
+     * streams it straight from the origin when you may reach it.
+     */
+    public var origin: SpaceWindowOrigin?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -43648,7 +43700,13 @@ public struct SpaceWindow: Equatable, Hashable {
          */available: Bool,
         /**
          * Why not.
-         */limitation: String) {
+         */limitation: String,
+        /**
+         * Where the picture comes from when another Space shows this window
+         * here (`stream_space_window`); `None` for the Space's own windows.
+         * Open it like any window: [`Space::open_stream`] with its `window_id`
+         * streams it straight from the origin when you may reach it.
+         */origin: SpaceWindowOrigin? = nil) {
         self.windowId = windowId
         self.epoch = epoch
         self.title = title
@@ -43660,6 +43718,7 @@ public struct SpaceWindow: Equatable, Hashable {
         self.focused = focused
         self.available = available
         self.limitation = limitation
+        self.origin = origin
     }
 
 
@@ -43688,7 +43747,8 @@ public struct FfiConverterTypeSpaceWindow: FfiConverterRustBuffer {
                 onScreen: FfiConverterBool.read(from: &buf),
                 focused: FfiConverterBool.read(from: &buf),
                 available: FfiConverterBool.read(from: &buf),
-                limitation: FfiConverterString.read(from: &buf)
+                limitation: FfiConverterString.read(from: &buf),
+                origin: FfiConverterOptionTypeSpaceWindowOrigin.read(from: &buf)
         )
     }
 
@@ -43704,6 +43764,7 @@ public struct FfiConverterTypeSpaceWindow: FfiConverterRustBuffer {
         FfiConverterBool.write(value.focused, into: &buf)
         FfiConverterBool.write(value.available, into: &buf)
         FfiConverterString.write(value.limitation, into: &buf)
+        FfiConverterOptionTypeSpaceWindowOrigin.write(value.origin, into: &buf)
     }
 }
 
@@ -43720,6 +43781,95 @@ public func FfiConverterTypeSpaceWindow_lift(_ buf: RustBuffer) throws -> SpaceW
 #endif
 public func FfiConverterTypeSpaceWindow_lower(_ value: SpaceWindow) -> RustBuffer {
     return FfiConverterTypeSpaceWindow.lower(value)
+}
+
+
+/**
+ * The Space a window row's picture comes from ([`SpaceWindow::origin`]).
+ */
+public struct SpaceWindowOrigin: Equatable, Hashable {
+    /**
+     * The origin Space (canonical id).
+     */
+    public var spaceId: String
+    /**
+     * Its name.
+     */
+    public var name: String
+    /**
+     * Its OS (`macos`, `linux`, `windows`, or empty).
+     */
+    public var os: String
+    /**
+     * The window's handle in the origin.
+     */
+    public var windowId: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The origin Space (canonical id).
+         */spaceId: String,
+        /**
+         * Its name.
+         */name: String,
+        /**
+         * Its OS (`macos`, `linux`, `windows`, or empty).
+         */os: String,
+        /**
+         * The window's handle in the origin.
+         */windowId: String) {
+        self.spaceId = spaceId
+        self.name = name
+        self.os = os
+        self.windowId = windowId
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SpaceWindowOrigin: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpaceWindowOrigin: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpaceWindowOrigin {
+        return
+            try SpaceWindowOrigin(
+                spaceId: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                os: FfiConverterString.read(from: &buf),
+                windowId: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SpaceWindowOrigin, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.spaceId, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.os, into: &buf)
+        FfiConverterString.write(value.windowId, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceWindowOrigin_lift(_ buf: RustBuffer) throws -> SpaceWindowOrigin {
+    return try FfiConverterTypeSpaceWindowOrigin.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceWindowOrigin_lower(_ value: SpaceWindowOrigin) -> RustBuffer {
+    return FfiConverterTypeSpaceWindowOrigin.lower(value)
 }
 
 
@@ -50519,6 +50669,30 @@ fileprivate struct FfiConverterOptionTypeSpaceSharing: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeSpaceWindowOrigin: FfiConverterRustBuffer {
+    typealias SwiftType = SpaceWindowOrigin?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeSpaceWindowOrigin.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeSpaceWindowOrigin.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeSpacesHostLoad: FfiConverterRustBuffer {
     typealias SwiftType = SpacesHostLoad?
 
@@ -54493,7 +54667,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp() != 53713) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_agentsetup_connect_json() != 21138) {
+    if (uniffi_cua_sdk_checksum_method_agentsetup_connect_json() != 1379) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_agentsetup_connection_status_json() != 47692) {
@@ -55214,6 +55388,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_space_join_presence() != 56636) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_space_join_presence_for() != 40031) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_space_kept_services() != 50248) {

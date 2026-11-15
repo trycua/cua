@@ -60,7 +60,10 @@ describe("links.*", () => {
 describe("Links without host support", () => {
   it("shows nothing where the host has no links", async () => {
     const demo = createDemoAdapter({ latencyMs: 0 });
-    const adapter: DataAdapter = { ...demo, call: (op, args) => (String(op).startsWith("links.") ? Promise.reject(new UnsupportedOperationError("tauri", op)) : demo.call(op, args)) };
+    const adapter: DataAdapter = {
+      ...demo,
+      call: (op, args) => (String(op).startsWith("links.") ? Promise.reject(new UnsupportedOperationError("tauri", op)) : demo.call(op, args)),
+    };
     const { container } = inApp(adapter, <SharedLinks />);
     await waitFor(() => expect(container.querySelector("section")).toBeNull());
   });

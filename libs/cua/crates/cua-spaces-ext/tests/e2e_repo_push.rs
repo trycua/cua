@@ -23,7 +23,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use cua_spaces::Spaces;
-use cua_spaces::experiments::{Gate, set_enabled};
 use cua_spaces_ext::SpacesPersistent as _;
 use cua_spaces_ext::persistent::{AgentSpec, bridge};
 use cua_spaces_ext::thread::{Answer, Author, Draft, EntryKind};
@@ -90,7 +89,6 @@ struct World {
 }
 
 async fn world(home: Option<std::path::PathBuf>) -> World {
-    set_enabled(Gate::AskFirst, Some(true));
     let bin = std::path::PathBuf::from(
         std::env::var("CUA_SPACESD_STATIC").expect("set CUA_SPACESD_STATIC"),
     );

@@ -328,7 +328,7 @@ impl Relay {
     /// account behind `account_token` (a cua.ai access token).
     #[uniffi::constructor]
     pub fn new(relay_url: Option<String>, account_token: String) -> Result<Arc<Self>> {
-        let url = cua_host::relay_url_for(relay_url.as_deref(), &cua_daemon::cua_home());
+        let url = cua_host::relay_url_for(relay_url.as_deref(), &cua_daemon_core::cua_home());
         Ok(Arc::new(Self {
             client: cua_host::RelayClient::new(&url)?,
             account_token,
@@ -811,7 +811,7 @@ impl Host {
         Arc::new(Self {
             home: cua_home
                 .map(Into::into)
-                .unwrap_or_else(cua_daemon::cua_home),
+                .unwrap_or_else(cua_daemon_core::cua_home),
         })
     }
 
@@ -1164,7 +1164,7 @@ impl Auth {
     /// `https://relay.cua.ai`) as the signed-in account, shown as `name`
     /// (default: this computer's name).
     pub fn devices(&self, relay_url: Option<String>, name: Option<String>) -> Result<Arc<Devices>> {
-        let home = cua_daemon::cua_home();
+        let home = cua_daemon_core::cua_home();
         let url = cua_host::relay_url_for(relay_url.as_deref(), &home);
         let session = self.session();
         let tokens = Arc::new(SessionTokens(session.clone()));
@@ -1400,7 +1400,7 @@ impl Devices {
             // Every copy of the name on this device (this computer's host
             // setup, the saved directory, the registry), by the machine id.
             cua_spaces::relay::adopt_machine_name(
-                &cua_daemon::cua_home(),
+                &cua_daemon_core::cua_home(),
                 auth.relay_url(),
                 &machine_id,
                 &name,
@@ -1453,7 +1453,7 @@ impl Devices {
         run(async move {
             let session = auth.session().await?;
             let token = cua_host::AccountTokens::access_token(tokens.as_ref()).await?;
-            let here = cua_host::Host::new(cua_daemon::cua_home())
+            let here = cua_host::Host::new(cua_daemon_core::cua_home())
                 .config()
                 .ok()
                 .flatten()

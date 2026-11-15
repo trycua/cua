@@ -63,7 +63,15 @@ const DAY = 86_400;
 const GIB = 1024 ** 3;
 
 /** This Mac, enrolled. */
-const thisDemoDevice = (now: number): DeviceInput => ({ id: "dev_mac", name: "MacBook Pro", state: "enrolled", current: true, platform: "macos", enrolledUntil: now + 24 * DAY, lastSeen: now - 60 });
+const thisDemoDevice = (now: number): DeviceInput => ({
+  id: "dev_mac",
+  name: "MacBook Pro",
+  state: "enrolled",
+  current: true,
+  platform: "macos",
+  enrolledUntil: now + 24 * DAY,
+  lastSeen: now - 60,
+});
 
 /** The account's devices: this Mac (unless not enrolled yet), a Linux desktop, one waiting, one due. */
 export function demoDevices(nowMs: number, unenrolled = false): DevicesInput {
@@ -95,10 +103,42 @@ export function demoDevices(nowMs: number, unenrolled = false): DevicesInput {
 /** The daemon's feed: a finished turn, a message, an approval already handled. */
 export function demoNotifications(nowMs: number): NotificationInput[] {
   return [
-    { id: "n-ada-12", atMs: nowMs - 3 * 60_000, agent: "ada", kind: "turn_ended", title: "ada", body: "Your research is ready.\nThree sources, one open question.", read: false },
-    { id: "n-hermes-4", atMs: nowMs - 41 * 60_000, agent: "hermes", kind: "message", title: "hermes", body: "The nightly build passed on all three Spaces.", read: false },
-    { id: "n-codex-9", atMs: nowMs - 3 * 3_600_000, agent: "codex", kind: "approval", title: "codex asks to sign in", body: "Approve or deny it in Cua.", read: true },
-    { id: "n-claw-2", atMs: nowMs - 26 * 3_600_000, agent: "openclaw", kind: "error", title: "openclaw ran into a problem", body: "The Space stopped while a turn was running.", read: true },
+    {
+      id: "n-ada-12",
+      atMs: nowMs - 3 * 60_000,
+      agent: "ada",
+      kind: "turn_ended",
+      title: "ada",
+      body: "Your research is ready.\nThree sources, one open question.",
+      read: false,
+    },
+    {
+      id: "n-hermes-4",
+      atMs: nowMs - 41 * 60_000,
+      agent: "hermes",
+      kind: "message",
+      title: "hermes",
+      body: "The nightly build passed on all three Spaces.",
+      read: false,
+    },
+    {
+      id: "n-codex-9",
+      atMs: nowMs - 3 * 3_600_000,
+      agent: "codex",
+      kind: "approval",
+      title: "codex asks to sign in",
+      body: "Approve or deny it in Cua.",
+      read: true,
+    },
+    {
+      id: "n-claw-2",
+      atMs: nowMs - 26 * 3_600_000,
+      agent: "openclaw",
+      kind: "error",
+      title: "openclaw ran into a problem",
+      body: "The Space stopped while a turn was running.",
+      read: true,
+    },
   ];
 }
 
@@ -135,7 +175,19 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
   const t0 = Math.floor(now() / 1000);
   let pairing: { code: PairingCode; polls: number; joins: boolean }[] = [
     {
-      code: { id: "pc_demo0", code: null, url: null, installSh: null, installPowershell: null, state: "active", team: null, createdAt: t0 - 600, expiresAt: t0 + 1200, usedAt: null, machine: null },
+      code: {
+        id: "pc_demo0",
+        code: null,
+        url: null,
+        installSh: null,
+        installPowershell: null,
+        state: "active",
+        team: null,
+        createdAt: t0 - 600,
+        expiresAt: t0 + 1200,
+        usedAt: null,
+        machine: null,
+      },
       polls: 0,
       joins: false,
     },
@@ -278,7 +330,7 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
     },
 
     "devices.get": () => {
-      if (!ctx.signedIn()) throw new HostError("Sign in to Cua to see your machines", "signed_out");
+      if (!ctx.signedIn()) throw new HostError("Sign in to Cua to see your computers", "signed_out");
       return structuredClone(devices);
     },
     // Signing in again enrolls this device at once.

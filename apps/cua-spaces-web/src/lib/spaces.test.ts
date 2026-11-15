@@ -4,7 +4,26 @@
 import { describe, expect, it } from "vitest";
 
 import type { Machine, Space } from "@/bridge";
-import { busyMacosSpaces, canDelete, canPower, countedSpaces, createError, isUnsharedDesktop, listedSpaces, machineName, macosLimitText, orderSpaces, osLabel, powerButton, powerPending, realSpaces, spacePlace, spaceState, visibleSpaces, isMachineDesktop } from "./spaces";
+import {
+  busyMacosSpaces,
+  canDelete,
+  canPower,
+  countedSpaces,
+  createError,
+  isUnsharedDesktop,
+  listedSpaces,
+  machineName,
+  macosLimitText,
+  orderSpaces,
+  osLabel,
+  powerButton,
+  powerPending,
+  realSpaces,
+  spacePlace,
+  spaceState,
+  visibleSpaces,
+  isMachineDesktop,
+} from "./spaces";
 
 const space = (id: string, status: Space["status"], lastUsedAt: number, extra: Partial<Space> = {}): Space => ({
   id,
@@ -26,9 +45,7 @@ const SPACES: Space[] = [
   space("powered-off", "running", 7, { power: { control: "stop", off: true } }),
 ];
 
-const MACHINES: Machine[] = [
-  { id: "mac-mini", name: "Mac mini", os: "macos", via: "relay", online: true, current: false, spaceIds: ["on-old"], limits: [] },
-];
+const MACHINES: Machine[] = [{ id: "mac-mini", name: "Mac mini", os: "macos", via: "relay", online: true, current: false, spaceIds: ["on-old"], limits: [] }];
 
 describe("spaceState", () => {
   it("maps the bridge's statuses onto the screen's", () => {
@@ -61,7 +78,9 @@ describe("macosLimitText", () => {
 
   it("counts this Mac's running and creating macOS Spaces, not stopped, other machines' or Linux ones", () => {
     expect(busyMacosSpaces([mac("a", "running"), mac("b", "provisioning")])).toBe(2);
-    expect(busyMacosSpaces([mac("a", "running"), mac("b", "suspended"), mac("c", "running", { provider: "relay" }), mac("d", "running", { os: "linux" })])).toBe(1);
+    expect(
+      busyMacosSpaces([mac("a", "running"), mac("b", "suspended"), mac("c", "running", { provider: "relay" }), mac("d", "running", { os: "linux" })]),
+    ).toBe(1);
     expect(busyMacosSpaces([mac("a", "running"), mac("b", "running", { power: { control: "stop", off: true } })])).toBe(1);
   });
 
@@ -118,7 +137,7 @@ describe("space actions", () => {
 describe("isMachineDesktop / realSpaces", () => {
   it("leaves this Mac and relay machines' own desktops out of the Spaces", () => {
     const rows: Space[] = [
-      space("this-mac", "suspended", 1, { provider: "local", name: "This machine" }),
+      space("this-mac", "suspended", 1, { provider: "local", name: "This computer" }),
       space("local-desktop", "local", 1, { provider: "local" }),
       space("relay:96fedb7e1be65c3d31fa18587febde2c", "running", 1, { name: "gamma-4 Mac Studio" }),
       space("relay:space-ca12d6d23907f387", "running", 1, { host: "96fedb7e1be65c3d31fa18587febde2c" }),
@@ -127,7 +146,12 @@ describe("isMachineDesktop / realSpaces", () => {
       space("pending:1", "provisioning", 1, { provider: "local" }),
     ];
     expect(rows.filter(isMachineDesktop).map((s) => s.id)).toEqual(["this-mac", "local-desktop", "relay:96fedb7e1be65c3d31fa18587febde2c"]);
-    expect(realSpaces(rows).map((s) => s.id)).toEqual(["relay:space-ca12d6d23907f387", "relay:mac-mini/release-checks", "local:qa-gui-linux-local", "pending:1"]);
+    expect(realSpaces(rows).map((s) => s.id)).toEqual([
+      "relay:space-ca12d6d23907f387",
+      "relay:mac-mini/release-checks",
+      "local:qa-gui-linux-local",
+      "pending:1",
+    ]);
   });
 });
 
@@ -146,15 +170,19 @@ describe("powerButton", () => {
   const on = space("p", "running", 1, { power: { control: "suspend", off: false } });
 
   it("follows the core when it answers", () => {
-    const core = { tryCall: <T,>() => ({ symbol: "power", help: { code: "spaces.power.suspend", vars: {} }, turnOn: false, enabled: true, busy: false }) as T };
+    const core = { tryCall: <T>() => ({ symbol: "power", help: { code: "spaces.power.suspend", vars: {} }, turnOn: false, enabled: true, busy: false }) as T };
     expect(powerButton(core, on)).toEqual({ help: "Suspend", turnOn: false, busy: false });
-    expect(powerButton({ tryCall: <T,>() => null as T }, on)).toBeNull();
+    expect(powerButton({ tryCall: <T>() => null as T }, on)).toBeNull();
   });
 
   it("without the core, has the core's rule and words", () => {
     expect(powerButton(noCore, on)).toEqual({ help: "Suspend", turnOn: false, busy: false });
     expect(powerButton(noCore, { ...on, power: { control: "stop", off: true } })).toEqual({ help: "Turn on", turnOn: true, busy: false });
-    expect(powerButton(noCore, { ...on, power: { control: "stop", off: false, turningOn: false } })).toEqual({ help: "Turning off…", turnOn: false, busy: true });
+    expect(powerButton(noCore, { ...on, power: { control: "stop", off: false, turningOn: false } })).toEqual({
+      help: "Turning off…",
+      turnOn: false,
+      busy: true,
+    });
     expect(powerButton(noCore, space("c", "running", 1))).toBeNull();
     expect(powerButton(noCore, { ...on, status: "deleting" })).toBeNull();
     expect(powerButton(noCore, { ...on, id: "this-mac" })).toBeNull();
@@ -220,7 +248,31 @@ describe("orderSpaces: running first, then the most recently used", () => {
   });
 
   it("lists a desktop after the Spaces in its state, and This Mac's unshared desktop last", () => {
-    const all = [space("this-mac", "suspended", 999, { provider: "local" }), space("relay:studio", "running", 999, { provider: "relay" }), space("a", "running", 1), space("b", "suspended", 2)];
+    const all = [
+      space("this-mac", "suspended", 999, { provider: "local" }),
+      space("relay:studio", "running", 999, { provider: "relay" }),
+      space("a", "running", 1),
+      space("b", "suspended", 2),
+    ];
     expect(orderSpaces(all).map((s) => s.id)).toEqual(["a", "relay:studio", "b", "this-mac"]);
+  });
+
+  it("keeps desktops in one order however the host stamped them on this poll", () => {
+    // The host stamps a desktop with the time it read the list, so This Mac's and another machine's
+    // move past each other from one poll to the next.
+    const poll = (mac: number, studio: number, mini: number) => [
+      space("relay:mini", "running", mini, { provider: "relay" }),
+      space("this-mac", "local", mac, { provider: "local" }),
+      space("relay:studio", "running", studio, { provider: "relay" }),
+    ];
+    const first = orderSpaces(poll(1_000, 2_000, 3_000)).map((s) => s.id);
+    expect(first).toEqual(["this-mac", "relay:mini", "relay:studio"]);
+    expect(orderSpaces(poll(3_000, 1_000, 2_000).reverse()).map((s) => s.id)).toEqual(first);
+  });
+
+  it("orders Spaces used at the same time by id, not by the host's row order", () => {
+    const rows = [space("b", "running", 5), space("a", "running", 5), space("c", "running", 5)];
+    expect(orderSpaces(rows).map((s) => s.id)).toEqual(["a", "b", "c"]);
+    expect(orderSpaces(rows.toReversed()).map((s) => s.id)).toEqual(["a", "b", "c"]);
   });
 });

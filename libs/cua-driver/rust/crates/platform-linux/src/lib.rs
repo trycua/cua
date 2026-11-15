@@ -26,7 +26,6 @@ use cua_driver_core::tool::ToolRegistry;
 pub mod health_report;
 pub mod overlay;
 pub mod overlay_capture;
-pub mod pip;
 pub mod tools;
 
 #[cfg(target_os = "linux")]
@@ -84,6 +83,8 @@ pub mod video_wayland;
 
 #[cfg(target_os = "linux")]
 pub mod wayland;
+
+pub mod desktop;
 
 // Pure AT-SPI role / X cursor name tables for presence cursor shapes; tested
 // on every host.
@@ -156,6 +157,7 @@ pub(crate) mod test_env {
         };
         std::env::set_var("DISPLAY", display);
         std::env::remove_var("WAYLAND_DISPLAY");
+        crate::desktop::reclassify();
         guard
     }
 
@@ -170,6 +172,7 @@ pub(crate) mod test_env {
                     None => std::env::remove_var(name),
                 }
             }
+            crate::desktop::reclassify();
         }
     }
 }
@@ -259,7 +262,7 @@ pub fn register_tools_with_cursor_and_provider(
 /// read-only commands such as describe/list-tools must not mutate X11 devices.
 #[cfg(target_os = "linux")]
 pub fn recover_orphaned_mpx_devices() {
-    input::reap_orphaned_master_pointers();
+    input::release_orphaned_master_pairs();
 }
 
 #[cfg(test)]

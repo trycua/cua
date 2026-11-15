@@ -7,7 +7,6 @@
 import { cleanup, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { setFlagOverride } from "@/bridge";
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { resetConnectedAppsState } from "@/hooks/use-connected-apps";
 import { resetConnectState } from "@/hooks/use-connectors";
@@ -24,18 +23,16 @@ beforeEach(() => {
   resetRepos();
   resetConnectState();
   resetConnectedAppsState();
-  setFlagOverride("spaces_ask_first_home", true);
 });
 afterEach(() => {
   cleanup();
-  setFlagOverride("spaces_ask_first_home", null);
 });
 
 const q = (s: string) => document.querySelector<HTMLElement>(s);
 
 describe.skipIf(!wasmBuilt)("Home's box, where it runs", () => {
   it("starts on This Mac once it's in the account, as a chip, with no Space made first", { timeout: 30_000 }, async () => {
-    await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { noSpaces: true } });
+    await mountApp("/home/ask", { failsCreates: false, listsGhost: false, demo: { noSpaces: true } });
     await screen.findByLabelText("What should it do?");
     await waitFor(() => expect(q("[data-ask-where-chip]")?.dataset.askWhereChip).toBe("this-mac"));
     expect(q("[data-ask-where]")!.textContent).toBe("This Mac");
@@ -46,7 +43,7 @@ describe.skipIf(!wasmBuilt)("Home's box, where it runs", () => {
     const calls: string[] = [];
     // This Mac is in the account but doesn't share its desktop yet (what signing in sets up).
     let shared = false;
-    await mountApp("/home", {
+    await mountApp("/home/ask", {
       failsCreates: false,
       listsGhost: false,
       demo: { noSpaces: true },
@@ -68,7 +65,7 @@ describe.skipIf(!wasmBuilt)("Home's box, where it runs", () => {
   });
 
   it("signed out: starts on a new computer, as before", { timeout: 30_000 }, async () => {
-    await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { signedIn: false, onboarded: true, noSpaces: true } });
+    await mountApp("/home/ask", { failsCreates: false, listsGhost: false, demo: { signedIn: false, onboarded: true, noSpaces: true } });
     await screen.findByLabelText("What should it do?");
     await waitFor(() => expect(q("[data-ask-where-chip]")?.dataset.askWhereChip).toBe("new"));
   });

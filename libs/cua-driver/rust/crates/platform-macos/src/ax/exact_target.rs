@@ -21,7 +21,7 @@ use super::bindings::{
     AXUIElementRef,
 };
 use super::snapshot::RetainedElement;
-use crate::windows::{all_windows_without_spaces, resolve_window_owner, WindowOwner};
+use crate::windows::{describe_window, resolve_window_owner, WindowOwner};
 
 /// Bounded `AXParent` ascent used when an element does not expose `AXWindow`.
 const MAX_ANCESTRY_DEPTH: usize = 40;
@@ -202,15 +202,8 @@ pub(crate) unsafe fn owning_window_id(window: AXUIElementRef) -> Option<AxWindow
     resolve_owning_window(
         RetainedElement::retain(window as usize),
         MAX_SHEET_NESTING,
-        |element| copy_string_attr(element.as_ptr() as AXUIElementRef, "AXRole"),
-        |element| {
-            copy_element_attr(element.as_ptr() as AXUIElementRef, "AXParent").map(|parent| {
-                // copy_element_attr returned +1; hand that reference over.
-                let retained = RetainedElement::retain(parent as usize);
-                CFRelease(parent as CFTypeRef);
-                retained
-            })
-        },
+        role_of,
+        parent_of,
         |element| ax_get_window_id(element.as_ptr() as AXUIElementRef),
     )
 }
@@ -277,6 +270,53 @@ unsafe fn windows_with_sheets(app: AXUIElementRef) -> Vec<(u32, Vec<u32>)> {
             row
         })
         .collect()
+}
+
+fn role_of(element: &RetainedElement) -> Option<String> {
+    // SAFETY: a RetainedElement holds a +1 reference on a live element.
+    unsafe { copy_string_attr(element.as_ptr() as AXUIElementRef, "AXRole") }
+}
+
+fn parent_of(element: &RetainedElement) -> Option<RetainedElement> {
+    // SAFETY: as above; copy_element_attr returned +1, handed over here.
+    unsafe {
+        copy_element_attr(element.as_ptr() as AXUIElementRef, "AXParent").map(|parent| {
+            let retained = RetainedElement::retain(parent as usize);
+            CFRelease(parent as CFTypeRef);
+            retained
+        })
+    }
+}
+
+/// The menu of a menu item whose `AXMenu` parent has no readable `AXParent`.
+/// A Mac Catalyst pop-up's menu has this shape: it is its own WindowServer
+/// window and names no window upward. Anything else, including an unreadable
+/// role, is `None`.
+fn parentless_menu<E>(
+    item: E,
+    role: impl Fn(&E) -> Option<String>,
+    parent: impl Fn(&E) -> Option<E>,
+) -> Option<E> {
+    if role(&item)? != "AXMenuItem" {
+        return None;
+    }
+    let menu = parent(&item)?;
+    (role(&menu)? == "AXMenu" && parent(&menu).is_none()).then_some(menu)
+}
+
+/// Whether `element` is an item of a menu that names no window (see
+/// [`parentless_menu`]).
+///
+/// # Safety
+///
+/// `element` must be a valid `AXUIElementRef` for the duration of the call.
+pub unsafe fn in_parentless_menu(element: AXUIElementRef) -> bool {
+    parentless_menu(
+        RetainedElement::retain(element as usize),
+        role_of,
+        parent_of,
+    )
+    .is_some()
 }
 
 /// Pure sheet-to-parent resolution behind [`owning_window_id`].
@@ -431,12 +471,36 @@ fn count_competing_keyboard_destinations(
         .count()
 }
 
+/// The layer-0 WindowServer rows the keyboard-ambiguity count can match: only
+/// windows `AXWindows` maps can count, so describe those few by id rather than
+/// enumerating every window in the session. Lazy, so a key target, which
+/// counts nothing, reads no row at all.
+fn ax_mapped_window_rows(
+    records: &[AxWindowRecord],
+    target_window_id: u32,
+) -> impl Iterator<Item = WindowServerRow> + '_ {
+    let mut seen = std::collections::HashSet::new();
+    records
+        .iter()
+        .map(|record| record.window_id)
+        .filter(move |id| *id != target_window_id && seen.insert(*id))
+        .filter_map(describe_window)
+        .filter(|window| window.layer == 0)
+        .map(|window| WindowServerRow {
+            pid: window.pid,
+            window_id: window.window_id,
+            visible: window.is_on_screen
+                && window.bounds.width >= 2.0
+                && window.bounds.height >= 2.0,
+        })
+}
+
 /// Gather fresh background-input facts for one `(pid, window_id)` target.
 ///
 /// `element_ptr` is an optional retained `AXUIElementRef` (as `usize`) for an
 /// explicitly addressed element; the caller must keep it retained for the
-/// duration of this call. Blocking: performs up to two Space-free CGWindowList
-/// enumerations and bounded AX reads. Call from a blocking context immediately
+/// duration of this call. Blocking: performs WindowServer lookups of the
+/// target and its AX-mapped sibling windows and bounded AX reads. Call from a blocking context immediately
 /// before deciding.
 pub fn gather_background_facts(
     pid: i32,
@@ -495,15 +559,7 @@ pub fn gather_background_facts(
     let competing_keyboard_destinations = count_competing_keyboard_destinations(
         pid,
         ax_target,
-        all_windows_without_spaces()
-            .iter()
-            .map(|window| WindowServerRow {
-                pid: window.pid,
-                window_id: window.window_id,
-                visible: window.is_on_screen
-                    && window.bounds.width >= 2.0
-                    && window.bounds.height >= 2.0,
-            }),
+        ax_mapped_window_rows(&records, ax_target),
         &records,
         target.is_some() && focused_window_id.is_some_and(|focused| focused.is(window_id)),
     );
@@ -522,8 +578,8 @@ pub fn gather_background_facts(
 #[cfg(test)]
 mod tests {
     use super::{
-        count_competing_keyboard_destinations, resolve_owning_window, AxWindowId, AxWindowRecord,
-        WindowServerRow,
+        count_competing_keyboard_destinations, parentless_menu, resolve_owning_window, AxWindowId,
+        AxWindowRecord, WindowServerRow,
     };
 
     /// A fake AX node: (role, AXParent index, CGWindowID).
@@ -651,6 +707,41 @@ mod tests {
             ("AXSheet", Some(0), Some(173)),
         ];
         assert_eq!(resolve(&tree, 0), Some(172));
+    }
+
+    /// A fake AX node for the menu checks: (role, AXParent index).
+    type MenuNode = (&'static str, Option<usize>);
+
+    fn menu_of(tree: &[MenuNode], item: usize) -> Option<usize> {
+        parentless_menu(item, |&i| Some(tree[i].0.to_owned()), |&i| tree[i].1)
+    }
+
+    #[test]
+    fn only_items_of_a_menu_with_no_parent_qualify() {
+        let tree: &[MenuNode] = &[
+            // CatalystProfile as measured: the menu has no AXParent.
+            ("AXMenu", None),
+            ("AXMenuItem", Some(0)),
+            // An AppKit pop-up: the menu's parent is the button.
+            ("AXPopUpButton", None),
+            ("AXMenu", Some(2)),
+            ("AXMenuItem", Some(3)),
+            // A menu under the application.
+            ("AXApplication", None),
+            ("AXMenu", Some(5)),
+            ("AXMenuItem", Some(6)),
+            ("AXButton", Some(0)),
+        ];
+        assert_eq!(menu_of(tree, 1), Some(0));
+        assert_eq!(menu_of(tree, 4), None, "AppKit pop-up");
+        assert_eq!(menu_of(tree, 7), None, "a menu under the application");
+        assert_eq!(menu_of(tree, 0), None, "the menu itself is not an item");
+        assert_eq!(menu_of(tree, 8), None, "not a menu item");
+        assert_eq!(
+            parentless_menu(1, |_| None, |&i| tree[i].1),
+            None,
+            "unreadable role"
+        );
     }
 
     fn ax_window(window_id: u32, minimized: Option<bool>) -> AxWindowRecord {

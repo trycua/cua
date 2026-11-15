@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   cloudConnectInitial,
@@ -10,9 +10,9 @@ import {
   type CloudConnectAction,
   type CloudConnectInput,
   type CloudConnectState,
-} from '../model/cloudConnect';
-import { connectInput, type CloudBridge, type CloudTargetWire } from '../native/cloud';
-import { SmallSheet } from './Devices';
+} from "../model/cloudConnect";
+import { connectInput, type CloudBridge, type CloudTargetWire } from "../native/cloud";
+import { SmallSheet } from "./Devices";
 import { useT } from "../i18n";
 
 function message(error: unknown): string {
@@ -40,21 +40,25 @@ export function ConnectCloudSheet({
   const [state, setState] = useState<CloudConnectState>(cloudConnectInitial);
   const v = cloudConnectView(input, state);
   // Hetzner's API token: memory only, never in the core's state; dropped when Connect finishes or the sheet closes.
-  const [token, setTokenText] = useState('');
-  const tokenRef = useRef('');
+  const [token, setTokenText] = useState("");
+  const tokenRef = useRef("");
   const setToken = (text: string) => {
-    const was = tokenRef.current !== '';
+    const was = tokenRef.current !== "";
     tokenRef.current = text;
     setTokenText(text);
-    if (was !== (text !== '')) setState((s) => reduceCloudConnect(input, s, { type: 'set-token-entered', entered: text !== '' }));
+    if (was !== (text !== ""))
+      setState((s) => reduceCloudConnect(input, s, { type: "set-token-entered", entered: text !== "" }));
   };
   const dropToken = () => {
-    tokenRef.current = '';
-    setTokenText('');
+    tokenRef.current = "";
+    setTokenText("");
   };
-  useEffect(() => () => {
-    tokenRef.current = '';
-  }, []);
+  useEffect(
+    () => () => {
+      tokenRef.current = "";
+    },
+    [],
+  );
   const withToken = (t: CloudTargetWire & { uses_token?: boolean }): CloudTargetWire => {
     const out = { ...t };
     delete out.uses_token;
@@ -65,7 +69,7 @@ export function ConnectCloudSheet({
   useEffect(() => {
     void bridge.status().then(
       (s) => setInput(connectInput(s)),
-      () => {}
+      () => {},
     );
   }, [bridge]);
 
@@ -73,7 +77,7 @@ export function ConnectCloudSheet({
     async (action: CloudConnectAction) => {
       const next = reduceCloudConnect(input, state, action);
       setState(next);
-      if (action.type !== 'test' && action.type !== 'connect') return;
+      if (action.type !== "test" && action.type !== "connect") return;
       const nextView = cloudConnectView(input, next);
       // "No cloud" (and any other no-request Connect) finishes the flow on
       // the spot, with no cloud_test / cloud_connect call at all.
@@ -84,31 +88,31 @@ export function ConnectCloudSheet({
       const request = nextView.request;
       if (!request) return;
       try {
-        if (request.kind === 'test') {
+        if (request.kind === "test") {
           const r = await bridge.test(withToken(request.target));
           setState((s) =>
             reduceCloudConnect(input, s, {
-              type: 'tested',
+              type: "tested",
               ok: r.ok,
-              account: r.account ?? '',
-              checks: r.checks.map((c) => ({ name: c.name, ok: c.ok, detail: c.detail ?? '' })),
-            })
+              account: r.account ?? "",
+              checks: r.checks.map((c) => ({ name: c.name, ok: c.ok, detail: c.detail ?? "" })),
+            }),
           );
         } else {
           const r = await bridge.connect(withToken(request.target), request.make_default);
           dropToken();
-          setState((s) => reduceCloudConnect(input, s, { type: 'connected', label: r.label ?? r.title }));
+          setState((s) => reduceCloudConnect(input, s, { type: "connected", label: r.label ?? r.title }));
           onConnected();
         }
       } catch (e) {
-        if (request.kind === 'connect') dropToken();
-        setState((s) => reduceCloudConnect(input, s, { type: 'failed', error: message(e) }));
+        if (request.kind === "connect") dropToken();
+        setState((s) => reduceCloudConnect(input, s, { type: "failed", error: message(e) }));
       }
     },
-    [bridge, input, state, onConnected, onClose]
+    [bridge, input, state, onConnected, onClose],
   );
 
-  const text = (f: NonNullable<typeof v.field>, type: 'set-value' | 'set-profile') => (
+  const text = (f: NonNullable<typeof v.field>, type: "set-value" | "set-profile") => (
     <label className="dw-field">
       <span>{f.label}</span>
       <input
@@ -129,7 +133,7 @@ export function ConnectCloudSheet({
         className="dv-sheet-body"
         onSubmit={(event) => {
           event.preventDefault();
-          void run({ type: 'connect' });
+          void run({ type: "connect" });
         }}
       >
         <h2 className="dv-sheet-title">{v.title}</h2>
@@ -141,17 +145,21 @@ export function ConnectCloudSheet({
                   type="radio"
                   name="cloud"
                   checked={r.selected}
-                  onChange={() => void run({ type: 'select', name: r.id })}
+                  onChange={() => void run({ type: "select", name: r.id })}
                 />
                 <span className="sh-who">{r.title}</span>
                 <span className="dv-sheet-text">{r.detail}</span>
-                {r.found && <span aria-label={t("settings.cloud.sign_in_found")} title={t("settings.cloud.sign_in_found")}>{'✓'}</span>}
+                {r.found && (
+                  <span aria-label={t("settings.cloud.sign_in_found")} title={t("settings.cloud.sign_in_found")}>
+                    {"✓"}
+                  </span>
+                )}
               </label>
             </li>
           ))}
         </ul>
-        {v.field && text(v.field, 'set-value')}
-        {v.profileField && text(v.profileField, 'set-profile')}
+        {v.field && text(v.field, "set-value")}
+        {v.profileField && text(v.profileField, "set-profile")}
         {v.tokenField && (
           <label className="dw-field">
             <span>{v.tokenField.label}</span>
@@ -172,7 +180,7 @@ export function ConnectCloudSheet({
             <input
               type="checkbox"
               checked={v.makeDefault}
-              onChange={(event) => void run({ type: 'set-make-default', on: event.target.checked })}
+              onChange={(event) => void run({ type: "set-make-default", on: event.target.checked })}
             />
             <span>{v.makeDefaultLabel}</span>
           </label>
@@ -190,7 +198,7 @@ export function ConnectCloudSheet({
           <ul className="sh-rows" aria-label={t("settings.cloud.checks_label")}>
             {v.checks.map((c) => (
               <li key={c.text} className="sh-row">
-                <span className={`status-dot ${c.ok ? 'status-running' : 'status-error'}`} aria-hidden="true" />
+                <span className={`status-dot ${c.ok ? "status-running" : "status-error"}`} aria-hidden="true" />
                 <span>{c.text}</span>
               </li>
             ))}
@@ -218,7 +226,7 @@ export function ConnectCloudSheet({
             className="dw-btn"
             title={v.testHelp}
             disabled={!v.canTest}
-            onClick={() => void run({ type: 'test' })}
+            onClick={() => void run({ type: "test" })}
           >
             {v.testLabel}
           </button>

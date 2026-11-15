@@ -40,15 +40,13 @@ export const spaceMenu = (core: CoreClient, input: SpaceMenuInput) => core.call<
 export const bulkConfirm = (core: CoreClient, items: BulkItem[]) => core.call<BulkConfirmView | null>("spaces.bulkConfirm", { items });
 
 /** The selection bar while it runs ("Deleting 1 of 3…"); null once all are finished. */
-export const bulkProgress = (core: CoreClient, items: BulkItem[], finished: string[]) =>
-  core.call<string | null>("spaces.bulkProgress", { items, finished });
+export const bulkProgress = (core: CoreClient, items: BulkItem[], finished: string[]) => core.call<string | null>("spaces.bulkProgress", { items, finished });
 
 /** The toast once every result is in ("Deleted 3 Spaces. 29 GB freed."). */
 export const bulkDone = (core: CoreClient, items: BulkItem[], results: BulkResult[]) => core.call<BulkDone>("spaces.bulkDone", { items, results });
 
 /** The tip for `place` now (null: none). */
-export const tipsView = (core: CoreClient, place: TipPlace, facts: TipFacts, state: TipsState) =>
-  core.call<Tip | null>("tips.view", { place, facts, state });
+export const tipsView = (core: CoreClient, place: TipPlace, facts: TipFacts, state: TipsState) => core.call<Tip | null>("tips.view", { place, facts, state });
 
 /** The tips after `event`. */
 export const tipsReduce = (core: CoreClient, state: TipsState, event: TipsEvent) => core.call<TipsState>("tips.reduce", { state, event });

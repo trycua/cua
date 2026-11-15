@@ -236,6 +236,8 @@ fn ptr(u: usize) -> *mut AnyObject {
 }
 
 unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOutcome> {
+    // AppKit uses Text Input Sources on this thread from here on.
+    crate::input::input_source::main_thread_runs_event_loop();
     let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
     let _: bool = msg_send![app, setActivationPolicy: 1i64];
     let _: () = msg_send![app, finishLaunching];

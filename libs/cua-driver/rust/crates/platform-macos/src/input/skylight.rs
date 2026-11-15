@@ -293,6 +293,26 @@ fn await_key_focus(pid: pid_t, target: u32, budget: std::time::Duration) {
     }
 }
 
+/// Name the window that holds key focus in a refused-key message, so the next
+/// call acts on it. A modal dialog or panel (LibreOffice's Tip of the Day,
+/// Confirmation after File > Reload, Delete Contents) holds focus after an
+/// earlier step; the agent otherwise only sees a bare window id and retries.
+fn with_blocker_hint(message: String, blocker: Option<(u32, &str)>) -> String {
+    let Some((id, title)) = blocker else {
+        return message;
+    };
+    let name = if title.is_empty() {
+        format!("an untitled window (window_id {id})")
+    } else {
+        format!("the window \"{title}\" (window_id {id})")
+    };
+    format!(
+        "{message}. Focus is held by {name}, most likely an open dialog or panel: \
+         get_window_state it, answer it (click its OK, Yes or Close button, or press_key \
+         escape on that window_id), then repeat this call"
+    )
+}
+
 /// Make `target_wid` the app's key window (no activation, no raise, no
 /// pointer), confirmed by re-reading the app's focus, and return a guard that
 /// hands key back. `Err` when it cannot be confirmed.
@@ -317,7 +337,20 @@ pub fn enter_exact_window_key(pid: pid_t, target_wid: u32) -> Result<WindowKeySc
             }
             ok
         },
-    )?;
+    )
+    .map_err(|message| {
+        let blocker = key_focus_of_pid(pid)
+            .window
+            .map(|window| window.own)
+            .filter(|own| *own != target_wid)
+            .map(|own| {
+                let title = crate::windows::describe_window(own)
+                    .map(|info| info.title)
+                    .unwrap_or_default();
+                (own, title)
+            });
+        with_blocker_hint(message, blocker.as_ref().map(|(id, t)| (*id, t.as_str())))
+    })?;
     Ok(WindowKeyScope {
         pid,
         target: target_wid,
@@ -685,6 +718,51 @@ pub(super) fn set_integer_field(event_ptr: *mut c_void, field: u32, value: i64) 
 /// Return the Skylight main connection ID for the current process.
 pub fn main_connection_id() -> Option<u32> {
     connection_id_fn().map(|f| unsafe { f() })
+}
+
+/// WindowServer's parent window of `window_id`, when it has one.
+///
+/// A child window (`-[NSWindow addChildWindow:]`) is recorded with its parent
+/// in WindowServer. Finder's inline rename field is such a window: a separate
+/// small window whose AX element names only the application as its parent, so
+/// WindowServer is the only place that links it back to its Finder window.
+/// `None` means no parent (a top-level window) or the query is unavailable.
+pub fn window_parent_id(window_id: u32) -> Option<u32> {
+    type QueryWindows = unsafe extern "C" fn(u32, *const c_void, u32) -> *const c_void;
+    type CopyWindows = unsafe extern "C" fn(*const c_void) -> *const c_void;
+    type Advance = unsafe extern "C" fn(*const c_void) -> bool;
+    type GetU32 = unsafe extern "C" fn(*const c_void) -> u32;
+    use core_foundation::{array::CFArray, base::TCFType, number::CFNumber};
+
+    let cid = main_connection_id()?;
+    let query_windows: QueryWindows = unsafe { as_fn(find_sym(b"SLSWindowQueryWindows\0")?) };
+    let copy_windows: CopyWindows =
+        unsafe { as_fn(find_sym(b"SLSWindowQueryResultCopyWindows\0")?) };
+    let advance: Advance = unsafe { as_fn(find_sym(b"SLSWindowIteratorAdvance\0")?) };
+    let parent_of: GetU32 = unsafe { as_fn(find_sym(b"SLSWindowIteratorGetParentID\0")?) };
+    let window_of: GetU32 = unsafe { as_fn(find_sym(b"SLSWindowIteratorGetWindowID\0")?) };
+
+    let ids = CFArray::from_CFTypes(&[CFNumber::from(window_id as i64)]);
+    unsafe {
+        let query = query_windows(cid, ids.as_concrete_TypeRef() as *const c_void, 0);
+        if query.is_null() {
+            return None;
+        }
+        let iterator = copy_windows(query);
+        core_foundation::base::CFRelease(query as _);
+        if iterator.is_null() {
+            return None;
+        }
+        let mut parent = None;
+        while advance(iterator) {
+            if window_of(iterator) == window_id {
+                parent = Some(parent_of(iterator)).filter(|id| *id != 0);
+                break;
+            }
+        }
+        core_foundation::base::CFRelease(iterator as _);
+        parent
+    }
 }
 
 fn nonzero_space_id(space_id: Option<u64>) -> Option<u64> {
@@ -1396,7 +1474,7 @@ fn await_window_focused(pid: libc::pid_t, window_id: u32) -> bool {
 /// (a closed Chrome omnibox popup) and can never be key. Empty when neither
 /// is proven.
 fn focus_failure_hint(pid: libc::pid_t, target_wid: u32) -> String {
-    let target = crate::windows::window_info_by_id(target_wid);
+    let target = crate::windows::describe_window(target_wid);
     let focused = crate::ax::bindings::focused_window_id_of_pid(pid)
         .filter(|focused| !focused.is(target_wid))
         .map(|focused| focused.own);
@@ -1405,7 +1483,7 @@ fn focus_failure_hint(pid: libc::pid_t, target_wid: u32) -> String {
             window.is_on_screen && window.bounds.width >= 2.0 && window.bounds.height >= 2.0
         }),
         focused.map(|window_id| {
-            let title = crate::windows::window_info_by_id(window_id)
+            let title = crate::windows::describe_window(window_id)
                 .map(|window| window.title)
                 .unwrap_or_default();
             (window_id, title)
@@ -1459,7 +1537,13 @@ pub fn with_foreground_hid_activation(
         anyhow::bail!("could not resolve target window for foreground HID delivery");
     }
 
-    let focused_window_id = crate::ax::bindings::focused_window_id_of_pid(target_pid);
+    // Finder reports no focused window while its inline rename field has the
+    // focus; a key sent then goes to that field, which is part of the target.
+    let focused_window_id =
+        crate::ax::bindings::focused_window_id_of_pid(target_pid).or_else(|| {
+            crate::ax::bindings::inline_editor_open(target_pid, target_wid)
+                .then(|| crate::ax::exact_target::AxWindowId::window(target_wid))
+        });
     if preserves_exact_existing_focus(prev_ok, prev_psn, target_psn, focused_window_id, target_wid)
     {
         // Re-activating an already key exact window can clear Chromium's
@@ -1686,6 +1770,23 @@ mod key_prime_tests {
     fn a_focused_parent_does_not_confirm_its_sheet() {
         let r = prime_exact_window_key(15304, || at(Some(167), Some(167)), || true, || true);
         assert!(r.unwrap_err().contains("no keys were sent"));
+    }
+
+    #[test]
+    fn a_refused_key_names_the_window_that_holds_focus() {
+        let base = "window 5 could not be confirmed".to_string();
+        let named = super::with_blocker_hint(base.clone(), Some((9, "Tip of the Day")));
+        assert!(
+            named.contains("\"Tip of the Day\" (window_id 9)"),
+            "{named}"
+        );
+        assert!(named.contains("answer it"), "{named}");
+        let untitled = super::with_blocker_hint(base.clone(), Some((9, "")));
+        assert!(
+            untitled.contains("untitled window (window_id 9)"),
+            "{untitled}"
+        );
+        assert_eq!(super::with_blocker_hint(base.clone(), None), base);
     }
 
     #[test]

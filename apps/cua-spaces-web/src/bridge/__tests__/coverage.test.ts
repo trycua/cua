@@ -28,6 +28,7 @@ import { THREAD_ARGS } from "../ops/thread";
 import { PRESENCE_ARGS } from "../ops/presence";
 import { CLOUD_APPROVE_ARGS } from "../ops/cloud-approve";
 import { AGENT_THREADS_ARGS } from "../ops/agent-threads";
+import { AGENT_SIGN_IN_ARGS } from "../ops/agent-sign-in";
 import { RUNTIME_FIX_ARGS } from "../ops/runtime-fix";
 import { DRIVER_ARGS } from "../ops/driver";
 import type { HostWindow } from "../detect";
@@ -160,11 +161,13 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "telemetry.acknowledgeLinkNotice": {},
   "crashReporting.config": {},
   "spaces.usage": { spaceId: "s1" },
+  "spaces.reach": { spaceId: "s1" },
   "spaces.windows": { spaceId: "s1" },
   "stream.pip": { spaceId: "s1", command: { type: "open", row: "desktop" } },
   "spaces.thumbnail": { spaceId: "s1" },
   "spaces.chooseFiles": {},
   "spaces.droppedFiles": { names: ["notes.txt"] },
+  "windows.chooseIso": { image: "ghcr.io/trycua/windows:11" },
   "spaces.sendFiles": { spaceId: "s1", paths: ["/tmp/notes.txt"] },
   "host.setUp": { request: { mode: "relay" } },
   "host.joinWithCode": { code: "K7QM-4XPB-2RHD" },
@@ -187,6 +190,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   ...PRESENCE_ARGS,
   ...CLOUD_APPROVE_ARGS,
   ...AGENT_THREADS_ARGS,
+  ...AGENT_SIGN_IN_ARGS,
   ...RUNTIME_FIX_ARGS,
   ...DRIVER_ARGS,
 };
@@ -231,7 +235,18 @@ function webkitResult(method: string): unknown {
     case "host.joinWithCode":
     case "host.action":
     case "host.limits":
-      return { configured: false, sharing: false, serviceInstalled: false, serviceRunning: false, serviceKind: "process", clients: [], permissions: [], shareDesktop: true, provideSpaces: false, maxSpaces: 0 };
+      return {
+        configured: false,
+        sharing: false,
+        serviceInstalled: false,
+        serviceRunning: false,
+        serviceKind: "process",
+        clients: [],
+        permissions: [],
+        shareDesktop: true,
+        provideSpaces: false,
+        maxSpaces: 0,
+      };
     case "keyvault.approve":
       return { id: "grant-1", requestId: "req-1", items: [] };
     case "keyvault.revokeGrant":
@@ -319,7 +334,10 @@ describe("bridge contract coverage", () => {
       const outcome = await createWebkitAdapter(webkitWindow(sent))
         .call(op, ARGS[op] as never)
         .then(() => null, failure);
-      expect(sent.filter((m) => !cov.methods.includes(m)), op).toEqual([]);
+      expect(
+        sent.filter((m) => !cov.methods.includes(m)),
+        op,
+      ).toEqual([]);
       if (unsupportedOn(op, "webkit")) {
         expect(outcome, op).toBe("unsupported");
         expect(sent, op).toEqual([]);
@@ -353,7 +371,10 @@ describe("bridge contract coverage", () => {
         .call(op, ARGS[op] as never)
         .then(() => null, failure);
       expect([...channels], op).toEqual(sent.length ? [ELECTRON_BRIDGE_CHANNEL] : []);
-      expect(sent.filter((m) => !methods.includes(m)), op).toEqual([]);
+      expect(
+        sent.filter((m) => !methods.includes(m)),
+        op,
+      ).toEqual([]);
       if (!cov.electron && unsupportedOn(op, "webkit")) {
         expect(outcome, op).toBe("unsupported");
         continue;
@@ -378,7 +399,10 @@ describe("bridge contract coverage", () => {
       expect(outcome, op).not.toBe("unsupported");
       // An empty list: the page answers from the shell's UI storage, with no command.
       if (HOST_COVERAGE[op].tauri.length > 0) expect(seen.length, `${op} sent nothing`).toBeGreaterThan(0);
-      expect(seen.filter((c) => !HOST_COVERAGE[op].tauri.includes(c as never)), op).toEqual([]);
+      expect(
+        seen.filter((c) => !HOST_COVERAGE[op].tauri.includes(c as never)),
+        op,
+      ).toEqual([]);
     }
   });
 });

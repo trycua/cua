@@ -53,7 +53,7 @@ use crate::host;
 /// The Ubuntu release of the pinned rootfs. Ubuntu, not Alpine: cua's engine
 /// helper (checkpoints, egress rules) runs in a privileged container that
 /// bind-mounts the engine's `/usr` and starts `/usr/bin/sleep`, and calls
-/// `/usr/sbin/chroot`, so the engine's Linux must have Ubuntu's merged-`/usr`
+/// `chroot`, so the engine's Linux must have Ubuntu's merged-`/usr`
 /// layout and GNU userland, as the Mac's runtime (Colima's Ubuntu) does.
 pub const BASE_VERSION: &str = "24.04.5";
 
@@ -92,6 +92,39 @@ pub fn rootfs_pin() -> Pin {
 /// disk (a sparse VHDX that grows with images and Spaces) and Docker's
 /// packages. The guard keeps `CUA_DISK_MIN_FREE` (5 GiB) free on top.
 pub const SETUP_DISK_BYTES: u64 = 2 << 30;
+
+/// A warning for the drive holding the runtime's disk (a sparse VHDX that
+/// grows with the images and Spaces in it): `None` while it has more than the
+/// warning threshold free (`CUA_DISK_WARN_FREE`, default 10 GiB), else how much
+/// is left and what to do. Nothing is refused here; a create that would leave
+/// less than `CUA_DISK_MIN_FREE` is refused by the setup and image-pull guards.
+pub fn low_space_note(volume: &std::path::Path) -> Option<String> {
+    let cfg = crate::disk::CacheConfig::load();
+    let avail = crate::disk::space(volume).ok()?.available;
+    low_space_message(avail, cfg.min_free, cfg.warn_free, volume)
+}
+
+fn low_space_message(
+    avail: u64,
+    min_free: u64,
+    warn_free: u64,
+    volume: &std::path::Path,
+) -> Option<String> {
+    use crate::disk::format_size;
+    if avail >= warn_free.max(min_free) {
+        return None;
+    }
+    let level = if avail < min_free {
+        "below what cua keeps free: new Linux Spaces and image pulls are refused"
+    } else {
+        "getting low"
+    };
+    Some(format!(
+        "low disk space: {} free on {} ({level}); remove Spaces you do not use or run `cua cache prune`",
+        format_size(avail),
+        volume.display()
+    ))
+}
 
 /// What the first Linux Space downloads: the rootfs and about 120 MB of packages.
 pub fn first_use_download() -> u64 {
@@ -243,6 +276,16 @@ const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
 
 fn args(a: &[&str]) -> Vec<String> {
     a.iter().map(|s| s.to_string()).collect()
+}
+
+/// Runs `program` as root in `distro` (`wsl.exe -d <distro> -u root --exec`).
+pub async fn run_in(
+    wsl: &dyn Wsl,
+    distro: &str,
+    program: &[&str],
+    secs: u64,
+) -> std::io::Result<WslOutput> {
+    wsl.run(&exec_args(distro, program), secs).await
 }
 
 /// `wsl.exe -d <distro> -u root --exec <program> <args...>`.
@@ -421,10 +464,10 @@ pub fn install_script() -> String {
 }
 
 /// What the engine helper needs of the engine's Linux (`container::snapshot`
-/// bind-mounts `/usr`, starts `/usr/bin/sleep` and runs `/usr/sbin/chroot`;
+/// bind-mounts `/usr`, starts `/usr/bin/sleep` and runs `chroot`;
 /// `container::egress` runs `ip`, `nsenter` and `nft` in it):
 /// setup fails with a clear message instead of every later create doing so.
-pub const HELPER_CHECK: &str = "test -x /usr/bin/sleep && test -x /usr/sbin/chroot && command -v nft >/dev/null && command -v nsenter >/dev/null && command -v ip >/dev/null || { echo 'the runtime image lacks /usr/bin/sleep, /usr/sbin/chroot, nft, nsenter or ip (merged /usr layout)' >&2; exit 1; }";
+pub const HELPER_CHECK: &str = "test -x /usr/bin/sleep && command -v chroot >/dev/null && command -v nft >/dev/null && command -v nsenter >/dev/null && command -v ip >/dev/null || { echo 'the runtime image lacks /usr/bin/sleep, chroot, nft, nsenter or ip (merged /usr layout)' >&2; exit 1; }";
 
 /// The program that is the engine: Docker's daemon on [`GUEST_SOCKET`].
 pub const DOCKERD_SCRIPT: &str = "mkdir -p /run/cua && exec dockerd --host=unix:///run/cua/docker.sock --pidfile=/run/cua/dockerd.pid >>/var/log/dockerd.log 2>&1";
@@ -457,6 +500,16 @@ pub async fn provision(
 ) -> Result<()> {
     std::fs::create_dir_all(dir)?;
     let disk = dir.join("disk");
+    // A distribution of this name is registered already: its disk is the one
+    // in use (a failed import must never delete it).
+    if list(wsl, false)
+        .await
+        .is_ok_and(|names| names.iter().any(|n| n == name))
+    {
+        return Err(VmmError::other(format!(
+            "the Linux runtime {name} is already registered with WSL (its disk is kept);              remove it with `wsl --unregister {name}` to set it up again"
+        )));
+    }
     let _ = std::fs::remove_dir_all(&disk);
     std::fs::create_dir_all(&disk)?;
     report("Importing the Linux runtime", 0.05);
@@ -903,6 +956,7 @@ mod tests {
         assert!(calls.iter().all(|c| c.contains(DISTRO_PREFIX)));
     }
 
+    #[cfg(feature = "lume")]
     #[tokio::test]
     async fn a_failed_import_names_the_cause_and_cleans_up() {
         let tmp = tempfile::tempdir().unwrap();
@@ -923,6 +977,7 @@ mod tests {
         assert!(!tmp.path().join("disk").exists());
     }
 
+    #[cfg(feature = "lume")]
     #[tokio::test]
     async fn a_failed_install_unregisters_only_what_it_imported() {
         let tmp = tempfile::tempdir().unwrap();
@@ -945,6 +1000,7 @@ mod tests {
         assert!(!marker_in(tmp.path()).exists());
     }
 
+    #[cfg(feature = "lume")]
     #[tokio::test]
     async fn setup_configures_before_it_installs_and_marks_the_end() {
         let tmp = tempfile::tempdir().unwrap();
@@ -975,7 +1031,7 @@ mod tests {
         assert!(s.contains(HELPER_CHECK), "{s}");
         assert!(
             HELPER_CHECK.contains("/usr/bin/sleep")
-                && HELPER_CHECK.contains("/usr/sbin/chroot")
+                && HELPER_CHECK.contains("command -v chroot ")
                 && HELPER_CHECK.contains("nft")
                 && HELPER_CHECK.contains("nsenter")
                 && HELPER_CHECK.contains("command -v ip ")
@@ -1016,6 +1072,23 @@ mod tests {
         drop(client);
         let ended = tokio::time::timeout(std::time::Duration::from_secs(5), task).await;
         assert!(ended.is_ok(), "the bridge stayed up after its client left");
+    }
+
+    #[test]
+    fn a_filling_drive_is_reported_before_it_is_refused() {
+        let v = std::path::Path::new("D:/cua");
+        let gib = 1u64 << 30;
+        assert_eq!(low_space_message(50 * gib, 5 * gib, 10 * gib, v), None);
+        let warn = low_space_message(8 * gib, 5 * gib, 10 * gib, v).unwrap();
+        assert!(
+            warn.contains("8.0 GiB free") && warn.contains("getting low"),
+            "{warn}"
+        );
+        let refuse = low_space_message(2 * gib, 5 * gib, 10 * gib, v).unwrap();
+        assert!(
+            refuse.contains("refused") && refuse.contains("cua cache prune"),
+            "{refuse}"
+        );
     }
 
     #[test]

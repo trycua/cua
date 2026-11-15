@@ -22918,6 +22918,72 @@ const FfiConverterTypeSpaceUsage = (() => {
 })();
 
 /**
+ * The Space a window row's picture comes from ([`SpaceWindow::origin`]).
+ */
+export type SpaceWindowOrigin = {
+    /**
+     * The origin Space (canonical id).
+     */
+    spaceId: string,
+    /**
+     * Its name.
+     */
+    name: string,
+    /**
+     * Its OS (`macos`, `linux`, `windows`, or empty).
+     */
+    os: string,
+    /**
+     * The window's handle in the origin.
+     */
+    windowId: string
+}
+
+/**
+ * Generated factory for {@link SpaceWindowOrigin} record objects.
+ */
+export const SpaceWindowOrigin = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<SpaceWindowOrigin, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<SpaceWindowOrigin>,
+    });
+})();
+
+const FfiConverterTypeSpaceWindowOrigin = (() => {
+    type TypeName = SpaceWindowOrigin;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                spaceId: FfiConverterString.read(from),
+                name: FfiConverterString.read(from),
+                os: FfiConverterString.read(from),
+                windowId: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.spaceId, into);
+            FfiConverterString.write(value.name, into);
+            FfiConverterString.write(value.os, into);
+            FfiConverterString.write(value.windowId, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.spaceId) +
+             FfiConverterString.allocationSize(value.name) +
+             FfiConverterString.allocationSize(value.os) +
+             FfiConverterString.allocationSize(value.windowId);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
  * A streamable window.
  */
 export type SpaceWindow = {
@@ -22964,7 +23030,14 @@ export type SpaceWindow = {
     /**
      * Why not.
      */
-    limitation: string
+    limitation: string,
+    /**
+     * Where the picture comes from when another Space shows this window
+     * here (`stream_space_window`); `None` for the Space's own windows.
+     * Open it like any window: [`Space::open_stream`] with its `window_id`
+     * streams it straight from the origin when you may reach it.
+     */
+    origin?: SpaceWindowOrigin
 }
 
 /**
@@ -22972,6 +23045,7 @@ export type SpaceWindow = {
  */
 export const SpaceWindow = (() => {
     const defaults = () => ({
+        origin: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<SpaceWindow, ReturnType<typeof defaults>>(defaults);
@@ -22998,7 +23072,8 @@ const FfiConverterTypeSpaceWindow = (() => {
                 onScreen: FfiConverterBool.read(from),
                 focused: FfiConverterBool.read(from),
                 available: FfiConverterBool.read(from),
-                limitation: FfiConverterString.read(from)
+                limitation: FfiConverterString.read(from),
+                origin: FfiConverterOptionalTypeSpaceWindowOrigin.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -23013,6 +23088,7 @@ const FfiConverterTypeSpaceWindow = (() => {
             FfiConverterBool.write(value.focused, into);
             FfiConverterBool.write(value.available, into);
             FfiConverterString.write(value.limitation, into);
+            FfiConverterOptionalTypeSpaceWindowOrigin.write(value.origin, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.windowId) +
@@ -23025,7 +23101,8 @@ const FfiConverterTypeSpaceWindow = (() => {
              FfiConverterBool.allocationSize(value.onScreen) +
              FfiConverterBool.allocationSize(value.focused) +
              FfiConverterBool.allocationSize(value.available) +
-             FfiConverterString.allocationSize(value.limitation);
+             FfiConverterString.allocationSize(value.limitation) +
+             FfiConverterOptionalTypeSpaceWindowOrigin.allocationSize(value.origin);
 
         }
     };
@@ -27436,10 +27513,14 @@ export interface AgentSetupLike {
  * Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
  * (`server`, default this channel's cua), and with `sign_in` the
  * agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
- * sign-in it already has, read from where Claude Code keeps it). JSON:
- * one result per agent.
+ * sign-in it already has, read from where Claude Code keeps it). With
+ * `driver`, the `cua-driver` entry the host app wants (the Cua Driver it
+ * carries, by absolute path) is written too; `driver_permissions_granted`
+ * says whether Screen Recording and Accessibility are on for it (None:
+ * unknown). Each part asked for is reported on its own (`parts`), so
+ * one can be retried by asking for it alone. JSON: one result per agent.
  */
-    connectJson(agents: Array<string>, server: AgentMcpServer | undefined, skills: boolean, mcp: boolean, signIn: boolean, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
+    connectJson(agents: Array<string>, server: AgentMcpServer | undefined, skills: boolean, mcp: boolean, signIn: boolean, driver: AgentMcpServer | undefined, driverPermissionsGranted: boolean | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
 /**
  * Whether each agent is really connected (CONTRACT §4: `{agents,
  * checked_at_ms}`), as JSON, the same JSON `cua connect status --json`
@@ -27587,17 +27668,21 @@ private constructor(pointer: UniffiHandle) {
  * Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
  * (`server`, default this channel's cua), and with `sign_in` the
  * agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
- * sign-in it already has, read from where Claude Code keeps it). JSON:
- * one result per agent.
+ * sign-in it already has, read from where Claude Code keeps it). With
+ * `driver`, the `cua-driver` entry the host app wants (the Cua Driver it
+ * carries, by absolute path) is written too; `driver_permissions_granted`
+ * says whether Screen Recording and Accessibility are on for it (None:
+ * unknown). Each part asked for is reported on its own (`parts`), so
+ * one can be retried by asking for it alone. JSON: one result per agent.
  */
-    async connectJson(agents: Array<string>, server: AgentMcpServer | undefined, skills: boolean, mcp: boolean, signIn: boolean, asyncOpts_?: { signal: AbortSignal }): Promise<string> /*throws*/ {
+    async connectJson(agents: Array<string>, server: AgentMcpServer | undefined, skills: boolean, mcp: boolean, signIn: boolean, driver: AgentMcpServer | undefined, driverPermissionsGranted: boolean | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<string> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
     try {
         return await uniffiRustCallAsync(
             /*rustCaller:*/ uniffiCaller,
             /*rustFutureFunc:*/ () => {
                 return nativeModule().uniffi_cua_sdk_fn_method_agentsetup_connect_json(
-                    uniffiTypeAgentSetupObjectFactory.clonePointer(this),FfiConverterSequenceString.lower(agents, nativeModule().rustbuffer_alloc),FfiConverterOptionalTypeAgentMcpServer.lower(server, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(skills, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(mcp, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(signIn, nativeModule().rustbuffer_alloc)
+                    uniffiTypeAgentSetupObjectFactory.clonePointer(this),FfiConverterSequenceString.lower(agents, nativeModule().rustbuffer_alloc),FfiConverterOptionalTypeAgentMcpServer.lower(server, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(skills, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(mcp, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(signIn, nativeModule().rustbuffer_alloc),FfiConverterOptionalTypeAgentMcpServer.lower(driver, nativeModule().rustbuffer_alloc),FfiConverterOptionalBoolean.lower(driverPermissionsGranted, nativeModule().rustbuffer_alloc)
                 );
             },
             /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
@@ -39489,6 +39574,16 @@ export interface SpaceLike {
  */
     joinPresence(identity: PresenceIdentity, timeoutMs: bigint | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpacePresenceLike>;
 /**
+ * Joins presence for the window being watched. For a window another
+ * Space shows here and the viewer streams straight from its origin
+ * (`window_id` from [`Space::windows`]), this joins the origin's channel
+ * and this Space's, publishes the cursor to both and reads them as one:
+ * one avatar and one cursor per viewer, as if the stream came through
+ * this Space. For any other window, or `None`, it is
+ * [`Space::join_presence`].
+ */
+    joinPresenceFor(windowId: string | undefined, identity: PresenceIdentity, timeoutMs: bigint | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpacePresenceLike>;
+/**
  * This Space's services.
  */
     keptServices(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<SpaceServiceInfo>>;
@@ -40533,6 +40628,47 @@ private constructor(pointer: UniffiHandle) {
             /*rustFutureFunc:*/ () => {
                 return nativeModule().uniffi_cua_sdk_fn_method_space_join_presence(
                     uniffiTypeSpaceObjectFactory.clonePointer(this),FfiConverterTypePresenceIdentity.lower(identity, nativeModule().rustbuffer_alloc),FfiConverterOptionalUInt64.lower(timeoutMs, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_u64,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_u64,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_u64,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_u64,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeSpacePresence.lift.bind(FfiConverterTypeSpacePresence),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * Joins presence for the window being watched. For a window another
+ * Space shows here and the viewer streams straight from its origin
+ * (`window_id` from [`Space::windows`]), this joins the origin's channel
+ * and this Space's, publishes the cursor to both and reads them as one:
+ * one avatar and one cursor per viewer, as if the stream came through
+ * this Space. For any other window, or `None`, it is
+ * [`Space::join_presence`].
+ */
+    async joinPresenceFor(windowId: string | undefined, identity: PresenceIdentity, timeoutMs: bigint | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<SpacePresenceLike> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_space_join_presence_for(
+                    uniffiTypeSpaceObjectFactory.clonePointer(this),FfiConverterOptionalString.lower(windowId, nativeModule().rustbuffer_alloc),FfiConverterTypePresenceIdentity.lower(identity, nativeModule().rustbuffer_alloc),FfiConverterOptionalUInt64.lower(timeoutMs, nativeModule().rustbuffer_alloc)
                 );
             },
             /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_u64,
@@ -49070,6 +49206,9 @@ const FfiConverterSequenceTypeSpaceShareEntry = new FfiConverterArray(FfiConvert
 // FfiConverter for Array<number>
 const FfiConverterSequenceFloat64 = new FfiConverterArray(FfiConverterFloat64);
 
+// FfiConverter for SpaceWindowOrigin | undefined
+const FfiConverterOptionalTypeSpaceWindowOrigin = new FfiConverterOptional(FfiConverterTypeSpaceWindowOrigin);
+
 // FfiConverter for Array<SpacesHostLimit>
 const FfiConverterSequenceTypeSpacesHostLimit = new FfiConverterArray(FfiConverterTypeSpacesHostLimit);
 
@@ -49521,7 +49660,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp() !== 53713) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_connect_json() !== 21138) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_connect_json() !== 1379) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_agentsetup_connect_json");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_connection_status_json() !== 47692) {
@@ -50234,6 +50373,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_space_join_presence() !== 56636) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_space_join_presence");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_space_join_presence_for() !== 40031) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_space_join_presence_for");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_space_kept_services() !== 50248) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_space_kept_services");
@@ -51193,6 +51335,7 @@ export default Object.freeze({
     FfiConverterTypeSpaceTransport,
     FfiConverterTypeSpaceUsage,
     FfiConverterTypeSpaceWindow,
+    FfiConverterTypeSpaceWindowOrigin,
     FfiConverterTypeSpaceWriteReport,
     FfiConverterTypeSpaces,
     FfiConverterTypeSpacesHost,

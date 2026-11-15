@@ -2,18 +2,18 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * New Space's arrow: "Add a machine by its address" opens the address form
+ * New Space's arrow: "Add a computer by its address" opens the address form
  * (it does not use the image picker), and Run on has no such entry.
  */
 
 import { expect, test } from "./host";
 
-test("New Space's arrow adds a machine by its address", async ({ page }) => {
+test("New Space's arrow adds a computer by its address", async ({ page }) => {
   await page.goto("/spaces?bridge=demo&parity");
   const more = page.locator("[data-new-space-more]");
   await more.waitFor();
   await more.click();
-  const item = page.getByRole("menuitem", { name: "Add a machine by its address…" });
+  const item = page.getByRole("menuitem", { name: "Add a computer by its address…" });
   await expect(item).toBeVisible();
   await item.click();
   const wizard = page.locator("[data-new-space]");

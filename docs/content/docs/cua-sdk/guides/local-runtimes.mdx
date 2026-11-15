@@ -36,7 +36,7 @@ and runtime from the image and starts it itself.
 ```bash test="cli-shape" id="cua-runtime-doctor"
 cua runtime doctor              # what this host can run (read-only)
 cua runtime setup --dry-run     # the install plan
-cua runtime setup               # install what is missing; or name qemu, lume, container, firecracker
+cua runtime setup               # install what is missing; or name qemu, lume, container, runsc, firecracker
 ```
 
 `cua doctor` checks the host, an image and a sandbox's guest in one report.
@@ -100,16 +100,16 @@ A Windows 11 on ARM guest (`os="windows"`, `arch="aarch64"`) runs on the QEMU
 runtime of an arm64 macOS or Linux host. Windows 11 needs 4 GB: a guest started
 with less is given 4096 MB.
 
-**TPM.** The guest gets a persistent software TPM 2.0 automatically. It needs
-`swtpm` on the host's `PATH`:
+**TPM.** The guest gets a persistent software TPM 2.0 automatically (not on a
+Mac). It needs `swtpm` on the host's `PATH`:
 
 ```bash skip="host-install"
-brew install swtpm                 # macOS
 sudo apt-get install swtpm         # Debian, Ubuntu
 ```
 
 **Secure Boot firmware.** The guest needs `AAVMF_CODE.secboot.fd` and
-`AAVMF_VARS.ms.fd`, both in one directory. cua looks, in order, at
+`AAVMF_VARS.ms.fd`, both in one directory (else QEMU's generic edk2 firmware).
+cua looks, in order, at
 `CUA_QEMU_AAVMF_DIR` (when set, nowhere else), `~/.cua/firmware/aavmf`, the
 QEMU prefix's `share/AAVMF`, then `/usr/share/AAVMF`. On Linux:
 
@@ -126,9 +126,9 @@ mkdir -p ~/.cua/firmware/aavmf
 cp -L usr/share/AAVMF/AAVMF_CODE.secboot.fd usr/share/AAVMF/AAVMF_VARS.ms.fd ~/.cua/firmware/aavmf/
 ```
 
-**Network.** Windows 11 on ARM has no inbox virtio-net driver, so the guest has
-no network during Setup. Finish OOBE offline, then install NetKVM from the
-virtio-win ISO (`NetKVM\w11\ARM64`). cua does not ship or download it.
+**Network.** Windows 11 on ARM has no inbox virtio-net driver, so a guest you
+install by hand has no network in Setup. Finish OOBE offline, then install
+NetKVM from the virtio-win ISO (`NetKVM\w11\ARM64`).
 
 **Fork and checkpoint** need the VM stopped, so its TPM state is copied
 consistently. A checkpoint with TPM state stays on the host that made it: it is
@@ -229,6 +229,18 @@ create's progress.
   other trees); Spaces of one tree can reach each other directly, and a deny of
   another Space of the same tree is refused. `cua runtime doctor` says so.
 - **Today.** Spaces run under `runc` (the Mac adds gVisor).
+
+## microVMs on Windows
+
+`--kind microvm` runs in QEMU on the Windows Hypervisor Platform: hardware
+acceleration only, never software emulation. `cua runtime doctor` and New Space
+say what is missing: the Windows feature (`cua runtime setup microvm` turns it on
+through one administrator prompt, then restart), QEMU 9 or later (installed with
+winget), or virtualization in the firmware. Checkpoints, forks and warm pools work on the VM's disk: Windows does not
+let QEMU save a running VM's memory, so a restore or fork boots the saved disk
+(about four seconds, or half a second from a ready standby of the checkpoint);
+claiming a pooled VM is as fast. QEMU's network enforces no rules, so a microVM has no
+network.
 
 ## Your own cloud
 

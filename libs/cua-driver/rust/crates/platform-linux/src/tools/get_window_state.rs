@@ -49,6 +49,16 @@ fn megapixel_long_edge_cap(w: u32, h: u32, max_pixels: u64) -> Option<u32> {
     Some(edge)
 }
 
+/// The pid's topmost window when the KWin adapter listed it. Other compositors,
+/// and a KWin that doesn't let this executable enumerate, keep the existing choice.
+fn kwin_topmost_window(pid: u32) -> Option<u64> {
+    if !crate::wayland::is_wayland() || !crate::wayland::kwin_capture::may_be_session() {
+        return None;
+    }
+    super::impl_::pid_fallback_window_resolver()(i64::from(pid))
+        .filter(|window| crate::wayland::kwin_capture::knows_window(*window))
+}
+
 /// The window a pid-only read means when the input resolver chose none.
 #[derive(Debug, PartialEq)]
 enum PidRead {
@@ -387,7 +397,7 @@ impl Tool for GetWindowStateTool {
                     "description":"Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return tree only (the cheap path for re-indexing before an element ax action)."},
                 "screenshot_out_file":{"type":"string",
                     "description":"When set, write the PNG to this file path (~ expanded) instead of embedding base64 in the response. The structured output carries screenshot_file_path instead."},
-                "query":{"type":"string","description":"Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count."},
+                "query":{"type":"string","description":"Optional case-insensitive substring; `a|b` matches either. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count. A query that matches nothing says `0 of N elements match`."},
                 "max_elements":{"type":"integer","minimum":1,"description":"Cap on total AT-SPI nodes walked. Default 250 (5 000 with full_output:true); the response states when the tree was cut. Raise it to read further into a large window."},
                 "max_depth":{"type":"integer","minimum":1,"description":"Cap on the AT-SPI tree walk depth. Omit for the default (uncapped). Lower for deeply nested apps."},
                 "timeout_ms": cua_driver_core::tool_schema::timeout_ms_schema(),
@@ -408,13 +418,17 @@ impl Tool for GetWindowStateTool {
             Ok(v) => v,
             Err(e) => return e,
         };
-        // `window_id` omitted: the open popup menu of this pid when one is
-        // mapped (a context menu the caller wants to read), else the pid's
-        // focused / dialog / active / largest window.
+        // `window_id` omitted: on KWin the pid's topmost window, else the open
+        // popup menu of this pid when one is mapped (a context menu the caller
+        // wants to read), else its focused / dialog / active / largest window.
         let xid = match args.opt_u64("window_id") {
             Some(v) => v,
             None => {
                 let chosen = tokio::task::spawn_blocking(move || {
+                    // A KWin handle first: X11's popup and focus reads can't choose among them.
+                    if let Some(window) = kwin_topmost_window(pid) {
+                        return PidRead::Window(window);
+                    }
                     if let Some(popup) = crate::input::mapped_popup_windows()
                         .into_iter()
                         .rev()
@@ -811,7 +825,11 @@ impl Tool for GetWindowStateTool {
                     // the window's scope (`snapshot_binds_window`).
                     let target_scoped = binds_window;
                     if !observation_only && !target_scoped {
-                        invalidated.extend(state.snapshots.remove(pid as i32, xid));
+                        invalidated.extend(state.snapshots.remove(
+                            pid as i32,
+                            xid,
+                            session_id.as_deref(),
+                        ));
                         crate::atspi::snapshot::forget_window(pid, xid);
                     }
                     let (snapshot_id, replaced) = (!observation_only && target_scoped)
@@ -1171,7 +1189,9 @@ mod get_window_state_actions_tests {
             checked: None,
             enabled: Some(true),
             selected: None,
+            focused: None,
             description: None,
+            document_uri: None,
             actions,
             element_key: 1,
             identity: None,

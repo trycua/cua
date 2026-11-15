@@ -189,7 +189,7 @@ fn store_err(e: impl std::fmt::Display) -> Error {
 
 /// Tokens issued to the public client. The JSON shape is shared with the
 /// former Python CLI, so an existing keychain entry keeps working.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Credentials {
     /// Access token.
     pub access_token: String,
@@ -207,6 +207,22 @@ pub struct Credentials {
     /// ID token, when issued.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id_token: Option<String>,
+}
+
+impl std::fmt::Debug for Credentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Credentials")
+            .field("access_token", &"<redacted>")
+            .field(
+                "refresh_token",
+                &self.refresh_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field("expires_at", &self.expires_at)
+            .field("token_type", &self.token_type)
+            .field("scope", &self.scope)
+            .field("id_token", &self.id_token.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 fn bearer() -> String {
@@ -2775,6 +2791,29 @@ mod tests {
             scope: None,
             id_token: None,
         }
+    }
+
+    /// `{:?}` (and so any log line or error that formats the credentials)
+    /// never carries a token.
+    #[test]
+    fn credentials_debug_redacts_every_token() {
+        let mut creds = session("sekret-access-1234", 1);
+        creds.refresh_token = Some("sekret-refresh-5678".into());
+        creds.id_token = Some("sekret-id-9012".into());
+        for out in [format!("{creds:?}"), format!("{creds:#?}")] {
+            for secret in [
+                "sekret-access-1234",
+                "sekret-refresh-5678",
+                "sekret-id-9012",
+            ] {
+                assert!(!out.contains(secret), "{out}");
+            }
+            assert!(out.contains("<redacted>"), "{out}");
+            assert!(out.contains("Bearer"), "{out}");
+        }
+        creds.refresh_token = None;
+        creds.id_token = None;
+        assert!(format!("{creds:?}").contains("refresh_token: None"));
     }
 
     fn vault_token(vault: &Store) -> Option<String> {

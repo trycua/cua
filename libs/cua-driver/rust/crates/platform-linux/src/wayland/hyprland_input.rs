@@ -58,10 +58,12 @@ fn validate_target_route(target: &Value, route: DeliveryRoute) -> Result<()> {
 /// Validate the whole string before dispatching any keys. Physical key delivery
 /// uses the compositor's keyboard layout; these codes describe US ASCII keys.
 pub(crate) fn text_actions(text: &str) -> Result<Vec<Action>> {
-    ensure!(
-        text.len() <= 4096 && text.is_ascii(),
-        "Hyprland text requires at most 4096 ASCII bytes"
-    );
+    let text = super::text_keys::typable_text(text)?;
+    if text.len() > 4096 || !text.is_ascii() {
+        return Err(super::text_keys::refused(
+            "Hyprland text takes at most 4096 ASCII bytes",
+        ));
+    }
     text.bytes()
         .map(|byte| {
             let (keycode, shift) = match byte {
@@ -105,7 +107,12 @@ pub(crate) fn text_actions(text: &str) -> Result<Vec<Action>> {
                 b'*' => (9, true),
                 b'(' => (10, true),
                 b')' => (11, true),
-                _ => bail!("unsupported Hyprland text control character"),
+                other => {
+                    return Err(super::text_keys::refused(format!(
+                        "Hyprland text has no key for {:?}",
+                        char::from(other)
+                    )))
+                }
             };
             Ok(Action::TextKey { keycode, shift })
         })
@@ -234,7 +241,7 @@ pub(crate) fn unknown_dispatch(error: anyhow::Error, acknowledged_phases: u32) -
 }
 
 pub fn enabled() -> bool {
-    super::wayland_input_enabled()
+    super::is_wayland()
         && super::hyprland::is_session()
         && (protocol() == InputProtocol::Experiment
             || (0..MAX_LANES).any(|lane| {
@@ -325,13 +332,25 @@ pub enum Action {
         to: (f64, f64),
         duration_ms: u64,
     },
+    /// Pointer enter and motion on the lane's agent seat, no button. The lane
+    /// keeps passive pointer focus there, so hover state persists. Background
+    /// only, and only when the plugin's HELLO advertises `hover`.
+    Hover {
+        x: f64,
+        y: f64,
+    },
 }
+
+/// The refusal for a hover the connected plugin cannot perform. Plugins built
+/// before `HOVER` existed omit `hover` from HELLO; nothing is sent.
+pub(crate) const HOVER_UNSUPPORTED: &str = "hover_unsupported";
 
 struct Client {
     socket: socket2::Socket,
     cancellation: ActionCancellation,
     protocol: InputProtocol,
     foreground_supported: bool,
+    hover_supported: bool,
     delivery_route: Option<DeliveryRoute>,
     // Assigned by the compositor to this connection, never by the local pool.
     lane: Option<usize>,
@@ -487,6 +506,7 @@ impl Client {
             cancellation,
             protocol: protocol(),
             foreground_supported: false,
+            hover_supported: false,
             delivery_route: None,
             lane: None,
             owner,
@@ -525,6 +545,7 @@ impl Client {
         self.epoch = hex_field(&hello, "epoch")?;
         self.foreground_supported =
             self.protocol == InputProtocol::Production && hello["foreground_target"] == true;
+        self.hover_supported = self.protocol == InputProtocol::Production && hello["hover"] == true;
         if self.protocol == InputProtocol::Experiment {
             self.challenge = hex_field(&hello, "challenge")?;
         } else {
@@ -643,6 +664,13 @@ impl Client {
             route == DeliveryRoute::Foreground || !matches!(&action, Action::Activate),
             "action requires foreground input"
         );
+        ensure!(
+            route == DeliveryRoute::Background || !matches!(&action, Action::Hover { .. }),
+            "hover is background input only"
+        );
+        if matches!(&action, Action::Hover { .. }) && !self.hover_supported {
+            return Ok(json!({"ok":false,"code":HOVER_UNSUPPORTED,"detail":HOVER_UNSUPPORTED}));
+        }
         ensure!(
             self.delivery_route.is_none_or(|bound| bound == route),
             "input route is immutable"
@@ -780,6 +808,7 @@ impl Action {
             Self::Key { .. } | Self::TextKey { .. } => 2,
             Self::Scroll { .. } => 4,
             Self::Drag { .. } => 8,
+            Self::Hover { .. } => 32,
         }
     }
 
@@ -869,6 +898,10 @@ impl Action {
                     "isolated drag duration must be 50–2000 ms"
                 );
                 format!("DRAG {prefix} {x1} {y1} {x2} {y2} {duration_ms}")
+            }
+            Self::Hover { x, y } => {
+                point(*x, *y)?;
+                format!("HOVER {prefix} {x} {y}")
             }
         })
     }
@@ -2103,10 +2136,24 @@ mod tests {
 
     #[test]
     fn hyprland_text_is_bounded_and_fully_prevalidated() {
-        for text in ["valid prefix\u{00e9}", "valid prefix\0", "\r", "\u{007f}"] {
-            assert!(text_actions(text).is_err());
+        let too_much = "foreground_unavailable: Hyprland text takes at most 4096 ASCII bytes; \
+             nothing was typed";
+        for (text, refusal) in [
+            ("valid prefix\u{00e9}".to_owned(), too_much),
+            ("a".repeat(4097), too_much),
+            (
+                "valid prefix\0".to_owned(),
+                "foreground_unavailable: control character U+0000 cannot be typed; nothing was typed",
+            ),
+            (
+                "\u{007f}".to_owned(),
+                "foreground_unavailable: control character U+007F cannot be typed; nothing was typed",
+            ),
+        ] {
+            let error = text_actions(&text).err().map(|error| error.to_string());
+            assert_eq!(error.as_deref(), Some(refusal));
         }
-        assert!(text_actions(&"a".repeat(4097)).is_err());
+        assert_eq!(text_actions("a\r\nb").unwrap().len(), 3);
         assert_eq!(text_actions(&"a".repeat(4096)).unwrap().len(), 4096);
         let actions = text_actions("Aa!? \t\n").unwrap();
         let packets: Vec<_> = actions
@@ -2545,6 +2592,108 @@ mod tests {
     }
 
     #[test]
+    fn hover_is_an_exact_bounded_background_packet() {
+        let hover = Action::Hover { x: 2.5, y: 3.0 };
+        assert_eq!(hover.capability(), 32);
+        assert_eq!(
+            hover.packet(7, TOKEN, 4, 100.0, 80.0).unwrap(),
+            format!("HOVER 7 {TOKEN} 4 2.5 3")
+        );
+        for (x, y) in [(f64::NAN, 1.0), (-1.0, 1.0), (100.0, 1.0), (1.0, 80.0)] {
+            assert!(Action::Hover { x, y }
+                .packet(1, TOKEN, 1, 100.0, 80.0)
+                .is_err());
+        }
+    }
+
+    #[test]
+    fn hover_needs_the_plugin_advertisement_and_sends_nothing_without_it() {
+        let (mut client, peer) = production_test_client();
+        client.hover_supported = false;
+        let reply = client
+            .execute_routed_with_attest(
+                Action::Hover { x: 1.0, y: 1.0 },
+                None,
+                DeliveryRoute::Background,
+                record_test_attestation,
+            )
+            .unwrap();
+        assert_eq!(reply["ok"], false);
+        assert_eq!(reply["code"], HOVER_UNSUPPORTED);
+        drop(client);
+        let mut byte = [0u8];
+        assert_eq!(
+            unsafe { libc::recv(peer.as_raw_fd(), byte.as_mut_ptr().cast(), 1, 0) },
+            0,
+            "an unadvertised hover must not bind a target"
+        );
+    }
+
+    #[test]
+    fn hover_is_never_foreground_input() {
+        let (mut client, _peer) = production_test_client();
+        client.hover_supported = true;
+        assert!(client
+            .execute_routed_with_attest(
+                Action::Hover { x: 1.0, y: 1.0 },
+                None,
+                DeliveryRoute::Foreground,
+                record_test_attestation,
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn handshake_reads_the_hover_advertisement() {
+        for (hello, expected) in [
+            (
+                json!({"ok":true,"protocol":3,"epoch":TOKEN,"foreground_target":true,"hover":true}),
+                true,
+            ),
+            (
+                json!({"ok":true,"protocol":3,"epoch":TOKEN,"foreground_target":true}),
+                false,
+            ),
+        ] {
+            let (mut client, peer) = test_connection();
+            client.protocol = InputProtocol::Production;
+            let server = std::thread::spawn(move || {
+                assert_eq!(read_packet(&peer), "HELLO");
+                peer.send(hello.to_string().as_bytes()).unwrap();
+                assert_eq!(read_packet(&peer), "CLAIM");
+                peer.send(br#"{"ok":true,"lane":0}"#).unwrap();
+                if !expected {
+                    return;
+                }
+                assert_eq!(read_packet(&peer), "TARGET 1 1 32");
+                peer.send(
+                    json!({"ok":true,"target":TOKEN,"revision":2,"width":100,"height":100})
+                        .to_string()
+                        .as_bytes(),
+                )
+                .unwrap();
+                assert_eq!(read_packet(&peer), format!("HOVER 1 {TOKEN} 2 10 20"));
+                peer.send(br#"{"ok":true,"effect":"unverifiable","route":"synthetic_events"}"#)
+                    .unwrap();
+            });
+            assert!(client.attest_and_handshake(0, |_| Ok(())).unwrap());
+            assert_eq!(client.hover_supported, expected);
+            if expected {
+                let reply = client
+                    .execute_routed_with_attest(
+                        Action::Hover { x: 10.0, y: 20.0 },
+                        None,
+                        DeliveryRoute::Background,
+                        record_test_attestation,
+                    )
+                    .unwrap();
+                assert_eq!(reply["ok"], true);
+            }
+            server.join().unwrap();
+        }
+    }
+
+    #[test]
     fn click_is_exact_and_maps_right_button() {
         assert_eq!(
             Action::Click {
@@ -2646,6 +2795,7 @@ mod tests {
                 cancellation: ActionCancellation::default(),
                 protocol: InputProtocol::Experiment,
                 foreground_supported: false,
+                hover_supported: false,
                 delivery_route: None,
                 lane: None,
                 owner: "input-unregistered-test-client".into(),

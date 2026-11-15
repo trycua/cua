@@ -1804,8 +1804,8 @@ async fn a_create_the_host_fails_leaves_no_relay_space_behind() {
 
 /// A Space's relay entry whose Space the host does not have (left by an
 /// older client, or the host was set up again) deletes as a stale entry;
-/// one whose host left the relay too. `relay-unregister` takes one off the
-/// relay instead of calling it a host.
+/// one this device still lists after its host left the relay too.
+/// `relay-unregister` takes one off the relay instead of calling it a host.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_stale_relay_space_is_removed_by_delete_or_relay_unregister() {
     let f = fixture(HostProfile::Spare).await;
@@ -1854,13 +1854,28 @@ async fn a_stale_relay_space_is_removed_by_delete_or_relay_unregister() {
         .to_string();
     assert!(e.contains("cua host remove"), "{e}");
 
-    // Its host left the relay (removed, set up again as a new machine).
+    // Its host left the relay (removed, set up again as a new machine)
+    // after this device listed the Space. The relay detaches a removed
+    // computer's Spaces and stops listing them, so only a recent listing
+    // still names the Space; its entry goes for good, not just detached.
     register("space-00000000000000a2", host.clone()).await;
+    assert!(
+        spaces
+            .relay_machines()
+            .await
+            .unwrap()
+            .iter()
+            .any(|m| m.id == "space-00000000000000a2"),
+        "listed before its host leaves"
+    );
     relay.delete("ada-token", &host).await.unwrap();
     let msg = spaces.delete("relay:space-00000000000000a2").await.unwrap();
     assert!(msg.contains("stale entry"), "{msg}");
     assert!(msg.contains("no longer on the relay"), "{msg}");
-    assert!(provided_machines(&f).await.is_empty());
+    assert!(
+        f.relay.machine("space-00000000000000a2").is_none(),
+        "the relay forgets it"
+    );
 }
 
 /// A host that stopped sharing says so (and how to resume) instead of

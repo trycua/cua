@@ -476,6 +476,14 @@ pub trait LocalRuntime: Send + Sync {
         Ok(None)
     }
 
+    /// Repairs the running instance `name` when it lost what it needs to be
+    /// reached (a macOS VM whose network gateway ended), returning it as it
+    /// is now when it had to be restarted. Default: nothing to repair.
+    async fn mend(&self, name: &str, runtime_type: &str) -> RuntimeResult<Option<LocalInstance>> {
+        let _ = (name, runtime_type);
+        Ok(None)
+    }
+
     /// Copy-on-write clone of a stopped instance or checkpoint.
     async fn fork(&self, source: &str, new_name: &str) -> RuntimeResult<()> {
         Err(RuntimeError::Unsupported {

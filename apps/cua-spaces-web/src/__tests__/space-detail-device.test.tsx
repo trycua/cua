@@ -18,14 +18,32 @@ stubBrowserApis();
 const NOTICE = {
   kind: "needs-enrollment",
   status: "Not trusted yet",
-  text: "Trust this Mac to connect to your other machines.",
+  text: "Trust this Mac to connect to your other computers.",
   actionLabel: "Trust this Mac",
 };
 
 /** One of your machines on the relay, answering with `features`. */
-const machine = (features: string[]) => ({ id: "relay:studio", name: "Studio", provider: "relay", os: "macos", spacesdVersion: "0.6.0", features, reachable: true });
+const machine = (features: string[]) => ({
+  id: "relay:studio",
+  name: "Studio",
+  provider: "relay",
+  os: "macos",
+  spacesdVersion: "0.6.0",
+  features,
+  reachable: true,
+});
 /** A Space Studio provides. */
-const hosted = { id: "relay:studio/space-1", name: "Build box", provider: "relay", os: "linux", spacesdVersion: "0.6.0", features: ["desktop_stream"], reachable: true, host: "studio", hostName: "Studio" };
+const hosted = {
+  id: "relay:studio/space-1",
+  name: "Build box",
+  provider: "relay",
+  os: "linux",
+  spacesdVersion: "0.6.0",
+  features: ["desktop_stream"],
+  reachable: true,
+  host: "studio",
+  hostName: "Studio",
+};
 
 /** `over` is read on every answer: a test may change it while the page is open. */
 function host(rows: unknown[], over: { access?: boolean } = {}): TestHost {
@@ -49,7 +67,16 @@ describe.skipIf(!wasmBuilt)("this machine's own desktop opened as a Space page (
   // with the switch right there.
   it("says whether the desktop is shared instead of loading forever, and asks it for no windows or agents", async () => {
     // As the SwiftUI app sends This Mac while it shares its desktop (`spaceToRow`).
-    const thisMac = { id: "this-mac", name: "This Mac", provider: "local", os: "macos", spacesdVersion: "", features: [], reachable: true, powerState: "running" };
+    const thisMac = {
+      id: "this-mac",
+      name: "This Mac",
+      provider: "local",
+      os: "macos",
+      spacesdVersion: "",
+      features: [],
+      reachable: true,
+      powerState: "running",
+    };
     const asked: string[] = [];
     const { router } = await mountApp("/spaces", {
       ...host([thisMac]),
@@ -88,7 +115,7 @@ describe.skipIf(!wasmBuilt)("a Space's detail as this device sees it (real route
     expect((screen.getByRole("button", { name: /Share/ }) as HTMLButtonElement).disabled).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: NOTICE.actionLabel }));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/machines"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/spaces/computer/this-mac"));
     await waitFor(() => expect(document.querySelector("[data-enroll]")).not.toBeNull());
   });
 

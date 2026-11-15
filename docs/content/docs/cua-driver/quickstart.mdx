@@ -23,7 +23,7 @@ and reports 42 from the app itself.
 
 ## Before you start
 
-- macOS 14+, Windows 10/11, or an x86_64 Linux desktop (X11 or XWayland, with AT-SPI 2)
+- macOS 14+ (macOS 26+ for Cua Spaces), Windows 10/11, or an x86_64 Linux desktop (X11 or XWayland, with AT-SPI 2)
 - An agent that supports MCP or skills, such as Claude Code or Codex
 - A desktop calculator app. On Linux, use your distribution's, such as GNOME Calculator.
 
@@ -31,8 +31,26 @@ Run every step in the desktop session you want the agent to drive.
 
 ## 1. Install and start Cua Driver
 
-No administrator access is needed. The installer picks the right path for your
-platform.
+### Get Cua Driver with Cua Spaces (recommended)
+
+On a Mac with macOS 26 or later, install Cua Spaces. It carries Cua Driver,
+keeps it up to date and connects your agent.
+
+1. Download Cua Spaces from the [download page](https://cua.ai/download) and open it.
+2. Press **Add this computer** to sign in if you want your other computers. **Skip for now** skips it.
+3. Allow Accessibility and Screen Recording when asked.
+4. Leave Claude Code or Codex ticked and press **Continue**.
+
+[How the install works](/cua-driver/guides/cua-spaces) explains what is installed,
+how it updates and how to check or repair it. With Cua Spaces, check Cua Driver on
+its **Cua Driver** page, with **Test now**, instead of the commands in step 2.
+Then go to [step 4](#4-ask-your-agent).
+
+### Install Cua Driver on its own
+
+Use this on Windows and Linux, on a Mac with an older macOS, or if you don't
+want Cua Spaces. No administrator access is needed. The installer picks the
+right path for your platform.
 
 <Tabs items={['macOS', 'Windows', 'Linux']}>
   <Tab value="macOS">

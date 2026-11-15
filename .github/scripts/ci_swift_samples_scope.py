@@ -70,6 +70,7 @@ SWIFT_PACKAGES = (
 )
 SDK_BINDING = (
     "libs/cua/crates/cua-sdk/",
+    "libs/cua/crates/cua-sdk-native/",
     "libs/cua/crates/cua-proto/",
     "libs/cua/proto/",
     "libs/cua/scripts/stage-uniffi-library.mjs",

@@ -9,6 +9,36 @@ use cua_driver_core::{
 use serde_json::{json, Value};
 
 use super::impl_::window_record_json;
+use crate::x11::WindowInfo;
+
+/// Apply the tool's filters, then rank the surviving stacked windows `0..n`
+/// in their stacking order. Backends number before these filters (KWin and
+/// the shell helper report raw stacking values), so ranking first would leave
+/// gaps.
+fn retain_listed(
+    windows: &mut Vec<WindowInfo>,
+    on_screen_only: bool,
+    app: Option<&str>,
+    is_live: impl Fn(u32) -> bool,
+) {
+    // Exited applications can remain visible in AT-SPI/X11 as zombies;
+    // never return those stale targets to callers.
+    windows.retain(|window| window.pid.is_none_or(&is_live));
+    if on_screen_only {
+        windows.retain(|window| window.is_on_screen);
+    }
+    if let Some(filter) = app {
+        windows.retain(|window| {
+            cua_driver_core::tool_args::app_filter_matches(filter, &window.app_name, None)
+        });
+    }
+    let mut stacked: Vec<usize> = windows.iter().filter_map(|w| w.z_index).collect();
+    stacked.sort_unstable();
+    stacked.dedup();
+    for window in windows {
+        window.z_index = window.z_index.and_then(|z| stacked.binary_search(&z).ok());
+    }
+}
 
 // ── list_windows ─────────────────────────────────────────────────────────────
 
@@ -44,17 +74,12 @@ impl Tool for ListWindowsTool {
                 .await
                 .unwrap_or_default();
         let none_listed = windows.is_empty();
-        // Exited applications can remain visible in AT-SPI/X11 as zombies;
-        // never return those stale targets to callers.
-        windows.retain(|window| window.pid.is_none_or(crate::proc_fs::is_process_live));
-        if on_screen_only {
-            windows.retain(|window| window.is_on_screen);
-        }
-        if let Some(filter) = args.opt_str("app") {
-            windows.retain(|window| {
-                cua_driver_core::tool_args::app_filter_matches(&filter, &window.app_name, None)
-            });
-        }
+        retain_listed(
+            &mut windows,
+            on_screen_only,
+            args.opt_str("app").as_deref(),
+            crate::proc_fs::is_process_live,
+        );
         if crate::wayland::is_wayland() {
             crate::wayland::remember_observed_window_origins(&windows);
         }
@@ -87,5 +112,71 @@ impl Tool for ListWindowsTool {
         let structured =
             json!({ "windows": windows.iter().map(window_record_json).collect::<Vec<_>>() });
         ToolResult::text(lines.join("\n")).with_structured(structured)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn window(xid: u64, pid: u32, app: &str, on_screen: bool, z: Option<usize>) -> WindowInfo {
+        WindowInfo {
+            xid,
+            pid: Some(pid),
+            app_name: app.into(),
+            title: String::new(),
+            is_on_screen: on_screen,
+            z_index: z,
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+        }
+    }
+
+    fn listed(
+        mut windows: Vec<WindowInfo>,
+        on_screen_only: bool,
+        app: Option<&str>,
+    ) -> Vec<(u64, Option<usize>)> {
+        // pid 99 has exited.
+        retain_listed(&mut windows, on_screen_only, app, |pid| pid != 99);
+        windows.iter().map(|w| (w.xid, w.z_index)).collect()
+    }
+
+    #[test]
+    fn filtered_z_indices_are_dense_and_keep_stacking_order() {
+        // Raw stacking values as a backend reports them, front window last.
+        let windows = vec![
+            window(1, 10, "Firefox", true, Some(0)),
+            window(2, 99, "Firefox", true, Some(1)),
+            window(3, 10, "Firefox", false, Some(4)),
+            window(4, 11, "gedit", true, Some(5)),
+            window(5, 10, "Firefox", true, None),
+            window(6, 10, "Firefox", true, Some(9)),
+        ];
+        assert_eq!(
+            listed(windows.clone(), true, Some("firefox")),
+            vec![(1, Some(0)), (5, None), (6, Some(1))]
+        );
+        assert_eq!(
+            listed(windows, false, None),
+            vec![
+                (1, Some(0)),
+                (3, Some(1)),
+                (4, Some(2)),
+                (5, None),
+                (6, Some(3))
+            ]
+        );
+    }
+
+    #[test]
+    fn unordered_windows_stay_null() {
+        let windows = vec![
+            window(1, 10, "a", true, None),
+            window(2, 10, "b", true, None),
+        ];
+        assert_eq!(listed(windows, false, None), vec![(1, None), (2, None)]);
     }
 }

@@ -111,18 +111,7 @@
     },
     {
       "settings": null,
-      "sidebar": {
-        "action": "copyCommand [Copy] = cua create --on auto then Copied",
-        "agent": null,
-        "buttons": [
-          null,
-          null,
-          "Close"
-        ],
-        "code": "cua create --on auto",
-        "openIn": null,
-        "tip": "on-auto (sidebar): New Spaces can go to whichever machine has room."
-      },
+      "sidebar": null,
       "state": "off=false done=try-agent,power",
       "step": "powered from a tile",
       "tip": null
@@ -147,18 +136,7 @@
     },
     {
       "settings": null,
-      "sidebar": {
-        "action": "copyCommand [Copy] = cua create --on auto then Copied",
-        "agent": null,
-        "buttons": [
-          null,
-          null,
-          "Close"
-        ],
-        "code": "cua create --on auto",
-        "openIn": null,
-        "tip": "on-auto (sidebar): New Spaces can go to whichever machine has room."
-      },
+      "sidebar": null,
       "state": "off=false done=try-agent,power,bulk-select",
       "step": "a bulk delete",
       "tip": null
@@ -183,18 +161,7 @@
     },
     {
       "settings": null,
-      "sidebar": {
-        "action": "copyCommand [Copy] = cua create --on auto then Copied",
-        "agent": null,
-        "buttons": [
-          null,
-          null,
-          "Close"
-        ],
-        "code": "cua create --on auto",
-        "openIn": null,
-        "tip": "on-auto (sidebar): New Spaces can go to whichever machine has room."
-      },
+      "sidebar": null,
       "state": "off=false done=try-agent,power,bulk-select,share",
       "step": "share closed for now",
       "tip": null
@@ -263,32 +230,10 @@
         "- tips toggle: Show tips {*On|Off}",
         "- reset-tips text: Reset tips [Reset]"
       ],
-      "sidebar": {
-        "action": "copyCommand [Copy] = cua create --on auto then Copied",
-        "agent": null,
-        "buttons": [
-          null,
-          null,
-          "Close"
-        ],
-        "code": "cua create --on auto",
-        "openIn": null,
-        "tip": "on-auto (sidebar): New Spaces can go to whichever machine has room."
-      },
+      "sidebar": null,
       "state": "off=false done=",
       "step": "back on, on a page with no tip",
-      "tip": {
-        "action": "copyCommand [Copy] = cua create --on auto then Copied",
-        "agent": null,
-        "buttons": [
-          null,
-          null,
-          "Close"
-        ],
-        "code": "cua create --on auto",
-        "openIn": null,
-        "tip": "on-auto (sidebar): New Spaces can go to whichever machine has room."
-      }
+      "tip": null
     },
     {
       "settings": null,

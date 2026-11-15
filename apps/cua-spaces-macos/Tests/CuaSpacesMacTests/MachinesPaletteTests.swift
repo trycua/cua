@@ -125,14 +125,13 @@ struct MachinesPaletteTests {
 
     @Test func navigationKeysAreTheSharedOnes() {
         #expect(SharedShortcuts.shortcut("commandPalette.toggle") == KeyboardShortcut("k", modifiers: .command))
-        #expect(SharedShortcuts.shortcut("nav.machines") == KeyboardShortcut("2", modifiers: .command))
-        #expect(SharedShortcuts.label("nav.keyvault") == "⌘4")
+        #expect(SharedShortcuts.shortcut("nav.agents") == KeyboardShortcut("2", modifiers: .command))
+        #expect(SharedShortcuts.shortcut("nav.machines") == nil)
+        #expect(SharedShortcuts.label("nav.keyvault") == "⌘3")
         #expect(SharedShortcuts.label("theme.cycle") == "⌘⇧L")
         #expect(SharedShortcuts.shortcut("no.such.command") == nil)
 
         let m = ViewModelTests().makeModel()
-        m.go("nav.machines")
-        #expect(m.selection == .machines)
         m.go("nav.agents")
         #expect(m.selection == .agents)
     }

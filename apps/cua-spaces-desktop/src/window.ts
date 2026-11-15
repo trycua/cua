@@ -22,10 +22,7 @@ const DEFAULT_SIZE = { width: 1280, height: 820 };
 
 export let readyToShowMs: number | null = null;
 
-function titleBarOptions(): Pick<
-  BrowserWindowConstructorOptions,
-  "titleBarStyle" | "trafficLightPosition" | "titleBarOverlay"
-> {
+function titleBarOptions(): Pick<BrowserWindowConstructorOptions, "titleBarStyle" | "trafficLightPosition" | "titleBarOverlay"> {
   if (process.platform === "darwin") {
     return {
       titleBarStyle: "hiddenInset",
@@ -251,13 +248,16 @@ export function createMainWindow({ demo = false, remember = true }: { demo?: boo
   const capturePath = process.env.CUA_SPACES_CAPTURE;
   if (capturePath || process.env.CUA_SPACES_QUIT_AFTER_LOAD) {
     win.webContents.once("did-finish-load", () => {
-      setTimeout(async () => {
-        if (capturePath) {
-          const image = await win.webContents.capturePage();
-          writeFileSync(capturePath, image.toPNG());
-        }
-        app.quit();
-      }, capturePath ? 1500 : 0);
+      setTimeout(
+        async () => {
+          if (capturePath) {
+            const image = await win.webContents.capturePage();
+            writeFileSync(capturePath, image.toPNG());
+          }
+          app.quit();
+        },
+        capturePath ? 1500 : 0,
+      );
     });
   }
 

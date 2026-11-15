@@ -111,18 +111,20 @@ extension WebUIBridge {
     /// keeps the Screen Recording answer it had at launch) starts again,
     /// once.
     func appPermissions() async -> [String: Any] {
-        let granted = await PermissionGuide.readGranted()
+        let states = await PermissionGuide.readStates()
+        let granted = PermissionGuide.granted(in: states)
         if granted.contains(.screenRecording), granted.contains(.accessibility), let driver = EmbeddedDriver.current() {
             await restartDriverIfStale(driver, force: false)
         }
-        return ["appName": PermissionGuide.appName(), "permissions": PermissionGuide.rows(granted: granted)]
+        return ["appName": PermissionGuide.appName(), "permissions": PermissionGuide.rows(states: states)]
     }
 
     /// `DriverStatus`.
     func driverStatus(_ driver: EmbeddedDriver) async -> [String: Any] {
         let paused = FileManager.default.fileExists(atPath: driver.pausedMarker)
         let meta = await Task.detached { driver.metadata() }.value
-        let granted = await PermissionGuide.readGranted()
+        let states = await PermissionGuide.readStates()
+        let granted = PermissionGuide.granted(in: states)
         let screen = granted.contains(.screenRecording), accessibility = granted.contains(.accessibility)
         var lastError: String?
         let state: String
@@ -151,7 +153,7 @@ extension WebUIBridge {
             "update": NSNull(),
             "lastTest": orNull(DriverPageState.shared.lastTest),
             "lastError": orNull(lastError),
-            "permissions": PermissionGuide.rows(granted: granted),
+            "permissions": PermissionGuide.rows(states: states),
             "appName": PermissionGuide.appName(),
             "activity": [Any](),
             "canPause": true,
@@ -310,6 +312,16 @@ extension WebUIBridge {
         } else if FileManager.default.fileExists(atPath: marker) {
             try FileManager.default.removeItem(atPath: marker)
         }
+    }
+
+    /// The entry Connect's driver part writes: this app's own driver, with
+    /// whether Cua Spaces has Screen Recording and Accessibility now. Nil in
+    /// a build that carries none.
+    func connectDriver() async -> (embedded: EmbeddedDriver, entry: DriverConnect)? {
+        guard let driver = EmbeddedDriver.current() else { return nil }
+        let granted = await PermissionGuide.readGranted()
+        let both = granted.contains(.screenRecording) && granted.contains(.accessibility)
+        return (driver, DriverConnect.embedded(driver, permissionsGranted: both))
     }
 
     /// Set up and Repair: each agent's MCP entry runs this driver through

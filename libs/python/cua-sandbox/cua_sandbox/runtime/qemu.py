@@ -327,6 +327,10 @@ class QEMUBaremetalRuntime(Runtime):
             self._native_names = getattr(self, "_native_names", set()) | {name}
             return info
 
+        # The SDK-backed path above takes the readiness budget; this one waits
+        # on its own timeouts.
+        opts.pop("ready_timeout", None)
+
         # Guest egress is on by default (slirp NAT, like a Docker container);
         # network="none" adds restrict=on, which keeps the loopback forwards.
         restrict = opts.pop("network", None) == "none"

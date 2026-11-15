@@ -235,6 +235,15 @@ fn all_builders(s: &str) -> Vec<Event> {
     ] {
         v.push(events::first_run_step("create_space", action, s).unwrap());
     }
+    for action in [
+        "step_viewed",
+        "step_completed",
+        "step_command_copied",
+        "step_chat_picked_up",
+    ] {
+        v.push(events::first_run_step("ready", action, "codex").unwrap());
+        v.push(events::first_run_step("ready", action, s).unwrap());
+    }
     v.push(events::space_wizard("cancelled").unwrap());
     v.push(events::persistent_agent("create", Some(s), Outcome::Error, Some(s)).unwrap());
     for phase in schema::DURABLE_PHASES {
@@ -274,7 +283,7 @@ fn all_builders(s: &str) -> Vec<Event> {
         )
         .unwrap(),
     );
-    v.push(events::experiment("experiment_off", "warm_pools").unwrap());
+    v.push(events::experiment("experiment_off", "tcp_shares").unwrap());
     v.push(events::installer_step("installer_started", s, s, s, &[s]).unwrap());
     v.push(events::installer_step("installer_failed", s, s, "ps1", &[s, "cli"]).unwrap());
     v.push(
@@ -1596,6 +1605,44 @@ fn first_run_funnel_events_carry_step_index_version_and_a_fixed_reason() {
     assert!(events::first_run_step("welcome", "shown", "none").is_none());
 }
 
+/// The Ready screen: viewed, Done, Copy and Continue in Cua each have an
+/// event that names only the agent, and nothing else gets through.
+#[test]
+fn ready_screen_events_name_only_a_known_agent() {
+    for (action, name) in [
+        ("step_viewed", "cua_onboarding_step_viewed"),
+        ("step_completed", "cua_onboarding_step_completed"),
+        ("step_command_copied", "cua_onboarding_command_copied"),
+        ("step_chat_picked_up", "cua_onboarding_chat_picked_up"),
+    ] {
+        let e = events::first_run_step("ready", action, "claude_code").unwrap();
+        assert_eq!(e.name, name);
+        assert_eq!(e.props["step"], "ready");
+        assert_eq!(e.props["step_index"], 7);
+        assert_eq!(e.props["agent"], "claude_code");
+        // Caller text (a command, a chat title, a path) becomes `other`.
+        let e = events::first_run_step("ready", action, "claude \"fix /Users/alice/app\"").unwrap();
+        assert_eq!(e.props["agent"], "other");
+        assert_eq!(e.props.len(), 4, "{:?}", e.props);
+    }
+    // Copy and chat pickup exist only on Ready; other screens carry no agent.
+    assert!(events::first_run_step("welcome", "step_command_copied", "codex").is_none());
+    assert!(events::first_run_step("sign_in", "step_chat_picked_up", "codex").is_none());
+    assert_eq!(
+        events::first_run_step("sign_in", "step_viewed", "codex")
+            .unwrap()
+            .props["agent"],
+        "none"
+    );
+    // Failed and skipped events carry no agent.
+    assert!(
+        !events::first_run_step("ready", "step_failed", "codex")
+            .unwrap()
+            .props
+            .contains_key("agent")
+    );
+}
+
 /// Retention: one `cua_app_active` per install per UTC day, none while
 /// off, and a new one the next day.
 #[test]
@@ -1633,7 +1680,7 @@ fn the_active_day_carries_the_experiments_that_are_on() {
         "none",
         "mobile",
         "cua_volume+mobile",
-        "cua_volume+mobile+warm_pools",
+        "cua_volume+tcp_shares+mobile",
     ] {
         assert!(schema::value_ok(k, &Value::from(ok)), "{ok}");
     }
@@ -1657,7 +1704,7 @@ fn the_active_day_carries_the_experiments_that_are_on() {
     let h = tempfile::tempdir().unwrap();
     let (t, sink) = ready(h.path(), &[]);
     assert_eq!(t.capture_active_on(20_000), Captured::Queued);
-    t.set_experiments_on(&["warm_pools", "alice@example.com"]);
+    t.set_experiments_on(&["tcp_shares", "alice@example.com"]);
     // The next day, another process of the same install.
     let (t2, sink2) = ready(h.path(), &[]);
     assert_eq!(t2.capture_active_on(20_001), Captured::Queued);
@@ -1676,7 +1723,7 @@ fn the_active_day_carries_the_experiments_that_are_on() {
             .collect()
     };
     assert_eq!(sets(&sink), ["none"], "the first day had none");
-    assert_eq!(sets(&sink2), ["warm_pools"]);
+    assert_eq!(sets(&sink2), ["tcp_shares"]);
     let h2 = tempfile::tempdir().unwrap();
     let (off, _) = ready(h2.path(), &[("DO_NOT_TRACK", "1")]);
     off.set_experiments_on(&["mobile"]);

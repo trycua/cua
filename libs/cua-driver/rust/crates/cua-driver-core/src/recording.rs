@@ -74,16 +74,6 @@ pub fn set_classified_screenshot_fn(
     let _ = SCREENSHOT_FN.set(Box::new(f));
 }
 
-/// Invoke the registered screenshot callback. Returns `None` when no
-/// callback was registered or when the platform capture failed. Used
-/// by the PiP push hook (and by anything else that wants to share the
-/// per-turn screenshot pipeline without duplicating the platform glue).
-pub fn screenshot_for(window_id: Option<u64>, pid: Option<i64>) -> Option<Vec<u8>> {
-    SCREENSHOT_FN
-        .get()
-        .and_then(|capture| capture(window_id, pid).png)
-}
-
 // ── Platform click-marker callback ───────────────────────────────────────────
 //
 // Takes (png_bytes, cx, cy) and returns modified PNG bytes with a red crosshair
@@ -353,6 +343,8 @@ enum StatePlan {
 /// Classification for application state that was not walked because the
 /// action was refused before any input was dispatched.
 pub const STATE_SKIPPED_REFUSED: &str = "action_refused_before_dispatch";
+/// Classification for a turn whose pid has no window to photograph or walk.
+pub const TARGET_UNAVAILABLE: &str = "target_unavailable";
 /// Classification for application state disabled by `start_recording`.
 pub const STATE_SKIPPED_DISABLED: &str = "state_capture_disabled";
 /// Classification for before-state skipped on a predicted refusal that the
@@ -1174,10 +1166,16 @@ fn capture_turn(window_id: Option<u64>, pid: Option<i64>, state: StatePlan) -> T
         .get()
         .map(|capture| capture(window_id, pid))
         .unwrap_or_else(|| ScreenshotCapture::unavailable("capture_hook_unavailable"));
+    // The platform found no window for the pid, so there is no tree to walk
+    // either. Say so instead of letting the walk fail as `capture_failed`.
+    let no_target_window = window_id.is_none()
+        && pid.is_some()
+        && screenshot.classification == Some(TARGET_UNAVAILABLE);
     TurnCapture {
         state: match state {
             // No target application: there is no state to walk.
             _ if pid.is_none() => StateCapture::default(),
+            _ if no_target_window => StateCapture::skipped(TARGET_UNAVAILABLE),
             StatePlan::Capture(budget) => capture_state(window_id, pid, budget),
             StatePlan::Skip(classification) => StateCapture::skipped(classification),
         },

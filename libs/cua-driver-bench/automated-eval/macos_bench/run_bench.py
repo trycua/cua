@@ -849,13 +849,116 @@ def _collect_linux_evidence(artifacts: Path, arm: str, failed: bool) -> None:
             pass
 
 
+def trial_identity(ctx: Ctx, entry: dict[str, Any]) -> dict[str, Any]:
+    """What a trial id measures in this run: its place in the schedule and its setup. Every row records these,
+    and a resumed run must assign the same values to every trial id it already has rows for."""
+    args, arm = ctx.args, entry["arm"]
+    task = ctx.tasks[entry["task"]]
+    spec = task_spec(task)
+    bench_v2 = bool(getattr(args, "bench_v2", False))  # Amendment 14
+    model, effort = args.model, args.effort
+    if arm in cxn.ARMS:
+        model, effort = cxn.MODEL, cxn.EFFORT
+    if arm in pia.ARMS:
+        model, effort = f"{pia.PROVIDER}/{pia.MODEL}", pia.THINKING
+    return {
+        "smoke": bool(args.smoke),
+        **{k: entry[k] for k in ("phase", "block", "run", "run_index", "arm", "task")},
+        **{
+            k: entry[k]
+            for k in ("order_index", "task_pos", "arm_slot", "first_arm", "schedule_seed")
+        },
+        "bench_version": v2.BENCH_VERSION if bench_v2 else 1,
+        "condition": getattr(args, "condition", "foreground") if bench_v2 else None,  # Amendment 15
+        "model": model,
+        "effort": effort,
+        "max_turns": int(args.max_turns or spec.get("max_turns") or 30),
+        "timeout_s": int(args.timeout_s or spec.get("timeout_s") or task.timeout_s or 240),
+    }
+
+
+# Options that change how a run is operated, not what a trial measures. Every other option must match the
+# recorded argv on resume. The schedule options (arms, tasks, phases) are checked per row instead, so a schedule
+# may grow. Driver paths may move; the driver's identity is in every row and in the preflight's pins.
+OPERATIONAL_OPTIONS = {
+    *("command", "run_id", "runs_dir", "ledger", "ledger_who", "cutoff_utc", "budget_cap_usd"),
+    *("seven_day_stop", "disk_floor_gb", "ignore_hold", "no_model_preflight", "offline"),
+    *("allow_non_terminal", "allow_codex_arms", "allow_unknown_quota", "claude_bin"),
+    *("arms", "tasks", "only_arm", "only_task", "phase1_runs", "phase2_runs"),
+    *("cua_bin", "cua_skills", "pins", "build_dir", "codex_cu_mcp"),
+}
+
+
+def option_conflicts(ctx: Ctx) -> list[str]:
+    """Measured options of this start that differ from the run's recorded argv."""
+    manifest = ctx.run_dir / "manifest.json"
+    if not manifest.exists():
+        return []
+    try:
+        recorded = vars(
+            build_parser().parse_args(json.loads(manifest.read_text("utf-8"))["argv"][1:])
+        )
+    except (SystemExit, KeyError, ValueError):
+        return ["recorded argv in manifest.json does not parse with this runner"]
+    now = vars(ctx.args)
+    return [
+        f"--{k.replace('_', '-')}: recorded {recorded.get(k)!r}, now {now.get(k)!r}"
+        for k in sorted(set(recorded) | set(now))
+        if k not in OPERATIONAL_OPTIONS and recorded.get(k) != now.get(k)
+    ]
+
+
+def resume_conflicts(ctx: Ctx) -> list[str]:
+    """Recorded rows whose trial id this start would schedule or run differently, or not at all. Empty for a
+    new run."""
+    rows = core.load_rows(ctx.results_path)
+    if not rows:
+        return []
+    schedule = {e["trial_id"]: e for e in core.flat_entries(ctx.blocks())}
+    conflicts = option_conflicts(ctx)
+    builds: dict[
+        str, dict[str, str | None]
+    ] = {}  # the Cua Driver build each arm would run now, hashed once
+
+    def build_of(arm: str, row: dict[str, Any]) -> dict[str, str | None]:
+        if arm not in builds:
+            b = ca.CUA_BUILDS[arm]
+            builds[arm] = {
+                "cua_driver_sha256": ca.sha256_file(b.bin) if b.bin.is_file() else None,
+                "skills_tree_sha256": ca.sha256_tree(b.skills) if b.skills.is_dir() else None,
+            }
+        return {k: v for k, v in builds[arm].items() if row.get(k)}  # what this row recorded
+
+    for row in rows:
+        entry = schedule.get(row.get("trial_id"))
+        if entry is None:
+            conflicts.append(f"{row.get('trial_id')}: recorded, not in this schedule")
+            continue
+        want = trial_identity(ctx, entry)
+        if row.get(
+            "bench_src_sha256"
+        ):  # the runner, probes and briefs; pack tasks are pinned by preflight
+            want["bench_src_sha256"] = ctx.versions["bench_src_sha256"]
+        source = SOURCE_ARM.get(entry["arm"], entry["arm"])
+        if row.get(
+            "cua_driver_sha256"
+        ):  # the build it ran, or the recorder's (as run_attempt records it)
+            want.update(build_of(source if source in ca.CUA_BUILDS else "cc-cua-driver", row))
+        conflicts += [  # a row without the key (older than these fields) cannot prove its slot: refused
+            f"{row['trial_id']} {k}: recorded {row.get(k)!r}, now {want[k]!r}"
+            for k in want
+            if k not in row or row[k] != want[k]
+        ]
+    return sorted(set(conflicts))
+
+
 def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]:
     args = ctx.args
     task = ctx.tasks[entry["task"]]
     arm = entry["arm"]
     spec = task_spec(task)
-    timeout_s = int(args.timeout_s or spec.get("timeout_s") or task.timeout_s or 240)
-    max_turns = int(args.max_turns or spec.get("max_turns") or 30)
+    identity = trial_identity(ctx, entry)
+    timeout_s, max_turns = identity["timeout_s"], identity["max_turns"]
     run_index = entry["run_index"]
     seed = core.probe_seed(task.id, run_index)
     system_prompt = ca.system_prompt_for(
@@ -882,31 +985,14 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         "trial_id": entry["trial_id"],
         "attempt": attempt,
         "final": False,
-        "smoke": bool(args.smoke),
+        **identity,
         "run_id": ctx.run_dir.name,
-        "phase": entry["phase"],
-        "block": entry["block"],
-        "run": entry["run"],
-        "run_index": run_index,
-        "arm": arm,
-        "task": task.id,
         "task_group": task_spec(task).get("group", "probe"),
         "ability": spec.get("ability"),
         "dimension_tags": task.tags,
-        "bench_version": v2.BENCH_VERSION if bench_v2 else 1,
         "category": spec.get("category"),
-        "condition": condition,
-        "order_index": entry.get("order_index"),
-        "task_pos": entry["task_pos"],
-        "arm_slot": entry["arm_slot"],
-        "first_arm": entry["first_arm"],
-        "schedule_seed": entry["schedule_seed"],
         "seed": seed,
         "started_utc": started_utc,
-        "model": args.model,
-        "effort": args.effort,
-        "max_turns": max_turns,
-        "timeout_s": timeout_s,
         "idle_at_start_s": round(idle_start),
         "idle_gate_relaxed": bool(args.idle_min and idle_start < args.idle_min),
         "claude_version": ctx.versions.get("claude"),
@@ -939,10 +1025,6 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         "codex_native": ctx.versions.get("codex_native") if arm in cxn.ARMS else None,
         "pi": ctx.versions.get("pi") if arm in pia.ARMS else None,
     }
-    if arm in cxn.ARMS:
-        row["model"], row["effort"] = cxn.MODEL, cxn.EFFORT
-    if arm in pia.ARMS:
-        row["model"], row["effort"] = f"{pia.PROVIDER}/{pia.MODEL}", pia.THINKING
     sentinel = pilot.Sentinel(
         Path(args.build_dir or HERE / "linux") / "BenchSentinel.app"
         if (args.build_dir or desktop.detect_platform() == "linux") and not args.no_sentinel
@@ -1834,8 +1916,7 @@ def pilot_deviation_px() -> float:
 
 
 def append_row(ctx: Ctx, row: dict[str, Any]) -> None:
-    with ctx.results_path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(row) + "\n")
+    core.append_row(ctx.results_path, row)
     cost = row.get("cost_usd") or 0.0
     ctx.ledger.append(
         ctx.args.ledger_who,
@@ -1884,8 +1965,12 @@ def check_gates(ctx: Ctx) -> None:
 
 
 def execute_trial(ctx: Ctx, entry: dict[str, Any]) -> dict[str, Any]:
-    rate_waits = overload_tries = infra_tries = 0
-    attempt = 0
+    # A resumed trial continues after its recorded attempts and keeps their retry budgets. An attempt that died
+    # before its row was written has no number yet, so its directory is reused and redone.
+    attempt, kinds = core.prior_attempts(core.load_rows(ctx.results_path), entry["trial_id"])
+    rate_waits = kinds.count("rate_limit")
+    overload_tries = kinds.count("overloaded")
+    infra_tries = len(kinds) - rate_waits - overload_tries
     while True:
         check_gates(ctx)
         attempt += 1
@@ -2912,6 +2997,14 @@ def start_recorder(ctx: Ctx) -> None:
         ca.CUA_BIN, ca.RECORDER_SOCKET, ca.cua_env(ca.RECORDER_STATE / "home")
     )
     ctx.compress = rec.CompressQueue()
+    # A recorded trial whose compression died with an earlier runner still has its raw video (CompressQueue
+    # deletes it only after video.json is on disk): compress it now.
+    for row in core.load_rows(ctx.results_path):
+        attempt = ctx.run_dir / "trials" / row["trial_id"] / f"a{row.get('attempt')}"
+        raw = attempt / "rec" / "recording.mp4"
+        if row.get("video") and raw.is_file() and not rec.compressed(attempt / "video"):
+            ctx.log(f"compressing the video of {row['trial_id']} a{row.get('attempt')} again")
+            ctx.compress.submit(raw, attempt / "video")
 
 
 def shutdown(ctx: Ctx) -> None:
@@ -2940,16 +3033,14 @@ def finalize(ctx: Ctx) -> dict[str, Any]:
     blocks = ctx.blocks()
     status = core.block_status(rows, blocks)
     rows = core.flag_incomplete(rows, blocks)
-    tmp = ctx.results_path.with_suffix(".jsonl.tmp")
-    tmp.write_text("".join(json.dumps(r) + "\n" for r in rows), "utf-8")
-    tmp.replace(ctx.results_path)
+    core.write_atomic(ctx.results_path, "".join(json.dumps(r) + "\n" for r in rows))
     summary = {
         "blocks": status,
         "blocks_complete": sum(1 for v in status.values() if v["complete"]),
         "blocks_total": len(status),
         "trials": len([r for r in rows if r.get("final", True)]),
     }
-    (ctx.run_dir / "blocks.json").write_text(json.dumps(summary, indent=2) + "\n", "utf-8")
+    core.write_atomic(ctx.run_dir / "blocks.json", json.dumps(summary, indent=2) + "\n")
     return summary
 
 
@@ -3039,13 +3130,18 @@ def write_manifest(ctx: Ctx, first_schedule: list[dict[str, Any]]) -> None:
             if a in ctx.mcp
         },
     }
-    (ctx.run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", "utf-8")
+    path = ctx.run_dir / "manifest.json"
+    if path.exists() and core.load_rows(ctx.results_path):  # a resume keeps the first start time
+        old = json.loads(path.read_text("utf-8"))
+        manifest["resumed_utc"] = [*old.get("resumed_utc", []), manifest["created_utc"]]
+        manifest["created_utc"] = old.get("created_utc")
+    core.write_atomic(path, json.dumps(manifest, indent=2) + "\n")
 
 
 def run_loop(ctx: Ctx) -> str:
     args = ctx.args
     rows = core.load_rows(ctx.results_path)
-    done = set() if args.smoke else core.completed_trial_ids(rows)
+    done = core.completed_trial_ids(rows, smoke=bool(args.smoke))
     blocks = ctx.blocks()
     ctx.set_state(blocks_total=len(blocks))
     if not ctx.block_durations:
@@ -3115,8 +3211,19 @@ def cmd_run(args: argparse.Namespace) -> int:
     if gate and args.claude_bin is None:  # only a stand-in claude binary may bypass the gates
         return gate
     ctx = make_ctx(args)
+    lock = core.lock_run(ctx.run_dir)
+    if lock is None:
+        print(f"run {ctx.run_dir.name} is already running", file=sys.stderr)
+        return 5
+    conflicts = resume_conflicts(ctx)
+    if conflicts:  # checked before setup_arms or anything else writes into the run directory
+        print(f"refusing to resume {ctx.run_dir.name}: {conflicts[:10]}", file=sys.stderr)
+        return 6
     setup_arms(ctx)
+    torn = core.drop_torn_tail(ctx.results_path)
     ctx.log(f"run {ctx.run_dir.name}: arms={ctx.arm_names} tasks={ctx.task_ids}")
+    if torn:
+        ctx.log(f"results.jsonl: dropped a {torn}-byte partial last line from an interrupted write")
     for flag in (
         "DONE",
         "STOPPED_TIME",
@@ -3126,6 +3233,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         "STOPPED_DISK",
         "STOPPED_AUTH",
         "STOPPED_INCOMPLETE_PHASE1",
+        "STOPPED_COMPRESS",
     ):
         (ctx.run_dir / flag).unlink(missing_ok=True)
     hb_stop = start_heartbeat(ctx)
@@ -3176,6 +3284,10 @@ def cmd_run(args: argparse.Namespace) -> int:
             return 2
         write_manifest(ctx, core.flat_entries(ctx.blocks())[:6])
         reason = run_loop(ctx)
+        if ctx.compress:  # DONE means every video is compressed: drain first
+            ctx.compress.join()
+            if reason == "DONE" and not all(map(rec.compressed, map(Path, ctx.compress.results))):
+                reason = "COMPRESS"  # a video has no record; a resume compresses it again
         summary = finalize(ctx)
         ctx.log(
             f"finished: {reason}; blocks complete {summary['blocks_complete']}/{summary['blocks_total']}"
@@ -3236,6 +3348,12 @@ def cmd_gate_check(args: argparse.Namespace) -> int:
 def cmd_preflight(args: argparse.Namespace) -> int:
     args.run_id = args.run_id or "preflight"
     ctx = make_ctx(args)
+    lock = core.lock_run(ctx.run_dir)
+    if lock is None or core.load_rows(
+        ctx.results_path
+    ):  # a run's manifest is what a resume is checked against
+        print(f"run {ctx.run_dir.name} is a run; preflight under another --run-id", file=sys.stderr)
+        return 2
     setup_arms(ctx)
     try:
         start_recorder(ctx)
@@ -3311,7 +3429,12 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 def cmd_finalize(args: argparse.Namespace) -> int:
     ctx = make_ctx(args)
-    print(json.dumps(finalize(ctx), indent=2))
+    lock = core.lock_run(ctx.run_dir)  # finalize rewrites results.jsonl: never under a live run
+    if lock is None:
+        print(f"run {ctx.run_dir.name} is running; finalize it after it stops", file=sys.stderr)
+        return 5
+    with lock:
+        print(json.dumps(finalize(ctx), indent=2))
     return 0
 
 

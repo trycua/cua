@@ -6,7 +6,7 @@ import CuaSpacesFFI
 import Foundation
 import Testing
 
-/// The sidebar's account area (CUA-2204): the "Run more Spaces at once with
+/// The sidebar's account area (CUA-2204): the "Use more computers at once with
 /// Pro" banner on Free only (no way to close it), and the account line's
 /// menu. The rules are the core's (`upsell::pro_banner`, `account::menu`);
 /// these check the app asks with its facts.
@@ -17,7 +17,7 @@ struct AccountAreaTests {
 
     @Test func theBannerShowsOnFreeOnly() {
         let banner = AppModel.proBanner(usage: free())
-        #expect(banner?.text == "Run more Spaces at once with Pro")
+        #expect(banner?.text == "Use more computers at once with Pro")
         #expect(banner?.button == "Upgrade")
         #expect(AppModel.proBanner(usage: FixtureDevices.usage("warn")) != nil, "also near a limit")
         var pro = free()

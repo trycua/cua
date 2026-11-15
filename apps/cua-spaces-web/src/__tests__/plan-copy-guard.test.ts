@@ -18,6 +18,7 @@ import { describe, expect, it } from "vitest";
 const SRC = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PLAN_FILES = [
   "components/settings/account-tab.tsx",
+  "i18n/locales/en/settings.json",
   "components/upgrade-card.tsx",
   "components/upsell-prompt.tsx",
   "bridge/adapters/demo/relay-usage.ts",
@@ -32,7 +33,7 @@ describe("plan and usage copy", () => {
   });
 
   it("the Settings usage row says computers in use", () => {
-    const text = readFileSync(join(SRC, "components/settings/account-tab.tsx"), "utf8");
+    const text = readFileSync(join(SRC, "i18n/locales/en/settings.json"), "utf8");
     expect(text).toContain("Computers in use right now");
     expect(text).toContain("computers in use at once");
   });

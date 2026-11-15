@@ -3,7 +3,7 @@
 
 // The in-app Pro and Teams prompts, on the real routes and the wasm core:
 // the plan card in Settings and the plan under the account name (always
-// there), the second-machine prompt on Machines, and the share prompt. The
+// there), the second-computer prompt under your computers, and the share prompt. The
 // rules (one prompt every 3 days, never during a live session, closable) are
 // the core's `upsell`.
 
@@ -142,17 +142,19 @@ describe.skipIf(!wasmBuilt)("in-app Pro and Teams prompts (real routes, wasm cor
     await waitFor(() => expect(features(tracked)).toContain("upsell_account_menu_click"));
   });
 
-  it("a second machine over the relay: one line with Get Pro, shown once, closable", async () => {
+  it("a second computer over the relay: one line with Get Pro under your computers, shown once, closable", async () => {
     const opened: string[] = [];
     const tracked: unknown[] = [];
-    const { router } = await mountApp("/machines", host(idle(), opened, tracked));
+    const { router } = await mountApp("/spaces", host(idle(), opened, tracked));
     await router.load();
     const prompt = await waitFor(() => {
       const el = document.querySelector("[data-upsell=machine]");
       expect(el).toBeTruthy();
       return el as HTMLElement;
     });
-    expect(prompt.textContent).toContain("Two computers now. Free includes 2 computers in use at once and 20 remote hours a month. Pro makes it 5 and 200, for $18 a month.");
+    expect(prompt.textContent).toContain(
+      "Two computers now. Free includes 2 computers in use at once and 20 remote hours a month. Pro makes it 5 and 200, for $18 a month.",
+    );
     await waitFor(() => expect(features(tracked)).toContain("upsell_machine_shown"));
     fireEvent.click(document.querySelector("[data-upsell=machine] [data-upsell-cta]")!);
     await waitFor(() => expect(opened).toEqual(["https://app.cua.ai/buy/pro?from=app_machine"]));
@@ -161,30 +163,30 @@ describe.skipIf(!wasmBuilt)("in-app Pro and Teams prompts (real routes, wasm cor
     await waitFor(() => expect(features(tracked)).toEqual(expect.arrayContaining(["upsell_machine_click", "upsell_machine_dismiss"])));
     cleanup();
     // Closed: it does not come back on the next visit.
-    const again = await mountApp("/machines", host(idle()));
+    const again = await mountApp("/spaces", host(idle()));
     await again.router.load();
     await act(() => new Promise((r) => setTimeout(r, 50)));
     expect(document.querySelector("[data-upsell=machine]")).toBeNull();
   });
 
   it("never during a live session", async () => {
-    const { router } = await mountApp("/machines", host(idle({ liveSessions: 1 })));
+    const { router } = await mountApp("/spaces", host(idle({ liveSessions: 1 })));
     await router.load();
-    await waitFor(() => expect(document.querySelector("[data-machine-row], [aria-label=Machines]")).toBeTruthy());
+    await waitFor(() => expect(document.querySelector("[data-spaces-tree]")).toBeTruthy());
     await act(() => new Promise((r) => setTimeout(r, 50)));
     expect(document.querySelector("[data-upsell]")).toBeNull();
   });
 
   it("never during an agent run", async () => {
-    const { router } = await mountApp("/machines", host(idle(), [], [], true));
+    const { router } = await mountApp("/spaces", host(idle(), [], [], true));
     await router.load();
-    await waitFor(() => expect(document.querySelector("[aria-label=Machines]")).toBeTruthy());
+    await waitFor(() => expect(document.querySelector("[data-spaces-tree]")).toBeTruthy());
     await act(() => new Promise((r) => setTimeout(r, 80)));
     expect(document.querySelector("[data-upsell]")).toBeNull();
   });
 
   it("not on Pro: a second machine has nothing to sell", async () => {
-    const { router } = await mountApp("/machines", host(idle({ plan: "pro" })));
+    const { router } = await mountApp("/spaces", host(idle({ plan: "pro" })));
     await router.load();
     await act(() => new Promise((r) => setTimeout(r, 50)));
     expect(document.querySelector("[data-upsell]")).toBeNull();

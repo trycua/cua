@@ -273,6 +273,13 @@ pub fn apply(
     content: &mut [Content],
     structured: &mut Value,
 ) {
+    let no_match = structured
+        .get("tree_markdown")
+        .and_then(Value::as_str)
+        .and_then(|md| no_match_line(&ctx.key, md, structured));
+    if let Some(line) = &no_match {
+        append_to_tree_block(content, line);
+    }
     if opts.full_output {
         return;
     }
@@ -416,9 +423,6 @@ pub fn apply(
     }
 
     rewrite_tree_block(content, &md, &header_extra, &body);
-    if let Some(line) = no_match_line(&ctx.key, &md, structured) {
-        append_to_tree_block(content, &line);
-    }
     drop_walk_diagnostics(opts, structured);
 }
 
@@ -1476,6 +1480,20 @@ mod tests {
         assert!(
             text.contains("PARTIAL TREE: walk stopped\n0 of 4 elements match query \"Settings\".")
         );
+    }
+
+    #[test]
+    fn a_full_output_read_still_says_its_query_matched_nothing() {
+        let (mut content, mut s) = payload("s000000i5", "");
+        let before = s.clone();
+        apply(
+            &opts(json!({"full_output": true})),
+            &query_ctx(7035, "Build|Reload"),
+            &mut content,
+            &mut s,
+        );
+        assert_eq!(s, before);
+        assert!(text_of(&content).ends_with("\n0 of 4 elements match query \"Build|Reload\". A query is a case-insensitive substring of a row's role, label, value or id; \"a|b\" matches either. Try a shorter or different word, or read without query."));
     }
 
     #[test]

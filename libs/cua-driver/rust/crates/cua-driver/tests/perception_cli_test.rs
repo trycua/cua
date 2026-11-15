@@ -46,7 +46,7 @@ fn write_fixture(temp: &TempDir) -> (String, String) {
 }
 
 fn parse_error(output: &Output) -> serde_json::Value {
-    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(1));
     assert!(
         output.stderr.is_empty(),
         "stderr was not empty: {:?}",
@@ -455,7 +455,7 @@ fn invalid_installed_extension_fails_as_artifact_invalid() {
 fn argument_failure_has_an_exact_json_envelope() {
     let temp = TempDir::new().unwrap();
     let output = run(temp.path(), &["perception", "parse", "--json"]);
-    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(64));
     assert!(output.stderr.is_empty());
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
@@ -517,4 +517,39 @@ fn rejects_symlink_and_fifo_inputs_without_blocking() {
         parse_error(&fifo_output)["error"]["code"],
         "input_not_regular_file"
     );
+}
+
+#[test]
+fn unknown_perception_arguments_are_usage_errors_before_file_access() {
+    let temp = TempDir::new().unwrap();
+    let cases: &[(&[&str], &str)] = &[
+        (&["perception", "--bogus"], "--bogus"),
+        (&["perception", "unknown"], "unknown"),
+        (&["perception", "parse", "--bogus"], "--bogus"),
+        (
+            &[
+                "perception",
+                "parse",
+                "--image",
+                "missing.png",
+                "--capture",
+                "missing.json",
+                "--json",
+                "--bogus",
+            ],
+            "--bogus",
+        ),
+    ];
+    for (args, unknown) in cases {
+        let output = run(temp.path(), args);
+        assert_eq!(output.status.code(), Some(64), "{args:?}: {output:?}");
+        assert!(output.stderr.is_empty());
+        let error: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(error["ok"], false);
+        assert_eq!(error["error"]["code"], "invalid_arguments");
+        assert!(error["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains(unknown));
+    }
 }

@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.51.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.51.1...cua-driver-rs-v0.51.2) (2026-11-15)
+
+
+### Bug Fixes
+
+* **cua-driver:** accept --socket on permissions again so the hosted macOS gate can read daemon permissions ([#7796](https://github.com/trycua/cua/issues/7796)) ([1107fe5](https://github.com/trycua/cua/commit/1107fe5cd0af2b938eab2f855e3d9e4b76a2c2c5))
+* **cua-driver:** drop the nonexistent render --output from the recording usage error ([#7795](https://github.com/trycua/cua/issues/7795)) ([971c9ee](https://github.com/trycua/cua/commit/971c9eedd87ad433262915c3a7997dd3939b6600))
+* **cua-driver:** refuse macOS clicks when the observed control has changed ([#7789](https://github.com/trycua/cua/issues/7789)) ([edd51fa](https://github.com/trycua/cua/commit/edd51fa38d29ecb5f6e19ee6765351b4ef6650d1))
+
+
+### Reverts
+
+* **cua-driver:** put each tool description's first sentence on its own line ([#7790](https://github.com/trycua/cua/issues/7790)) ([193c2df](https://github.com/trycua/cua/commit/193c2df466d6f3f643892be0f081cb3c2481a480))
+
+## [0.51.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.51.0...cua-driver-rs-v0.51.1) (2026-11-15)
+
+
+### Bug Fixes
+
+* **cua-driver:** exit 64 when a command gets an option it does not take ([#7782](https://github.com/trycua/cua/issues/7782)) ([7995bc0](https://github.com/trycua/cua/commit/7995bc0c32bffacdb650d27548f02d72a175b75f))
+
+## [0.51.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.50.0...cua-driver-rs-v0.51.0) (2026-11-15)
+
+
+### Features
+
+* **cua-driver:** put each tool description's first sentence on its own line ([#7764](https://github.com/trycua/cua/issues/7764)) ([0147fb8](https://github.com/trycua/cua/commit/0147fb8d42c332a492c2154804069134f4e25e9c))
+* **cua-driver:** shorter shared parameter descriptions ([#7765](https://github.com/trycua/cua/issues/7765)) ([efec141](https://github.com/trycua/cua/commit/efec1417472f1cfd72ad5d83fe0d57e20aeedea9))
+
+
+### Bug Fixes
+
+* **cua-driver:** keep a text row that repeats an unindexed group's name in the macOS tree ([#7780](https://github.com/trycua/cua/issues/7780)) ([f460651](https://github.com/trycua/cua/commit/f46065190ac5d0a16583f7f74ea1155762276b86))
+* **cua-driver:** refuse an ended session on the daemon socket with session_ended ([#7775](https://github.com/trycua/cua/issues/7775)) ([f7cbc7e](https://github.com/trycua/cua/commit/f7cbc7e965589e2e1dd4ab633259f7221d67f9a5))
+
 ## [0.50.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.49.12...cua-driver-rs-v0.50.0) (2026-11-14)
 
 

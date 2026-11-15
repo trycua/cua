@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.5](https://github.com/trycua/cua/compare/cua-sdk-v0.27.4...cua-sdk-v0.27.5) (2026-11-14)
+
+
+### Bug Fixes
+
+* **cua-agent-setup:** bundle the cua-driver skill from its release source ([#7774](https://github.com/trycua/cua/issues/7774)) ([6fc85a5](https://github.com/trycua/cua/commit/6fc85a57b4052f22261a5d62e494fef14798e60d))
+
 ## [0.27.4](https://github.com/trycua/cua/compare/cua-sdk-v0.27.3...cua-sdk-v0.27.4) (2026-11-13)
 
 

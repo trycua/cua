@@ -827,6 +827,11 @@ pub fn parse_command() -> Command {
         }
     }
 
+    if let Err(error) = check_options(&args, &positionals) {
+        eprintln!("{error}");
+        process::exit(64);
+    }
+
     let claude_code_compat = args
         .iter()
         .any(|a| a == "--claude-code-computer-use-compat");
@@ -1276,6 +1281,149 @@ fn cursor_motion_args(args: &[String]) -> Result<serde_json::Value, String> {
         out.insert("glide_duration_ms".into(), ms.into());
     }
     Ok(out.into())
+}
+
+/// Commands that parse their own arguments and reject unknown options there.
+const SELF_PARSING_COMMANDS: &[&str] = &["extension", "perception", "cursor-theme"];
+
+/// Options a command accepts that its `cli_docs_json` entry does not list.
+/// `(command, option, takes_value)`.
+const UNLISTED_OPTIONS: &[(&str, &str, bool)] = &[
+    // Internal embedded-host lifetime contract (`EmbeddedCuaDriverHost`).
+    ("serve", "--parent-liveness-stdio", false),
+    // Removed picture-in-picture preview, still accepted and ignored.
+    ("serve", "--experimental-pip", false),
+    ("serve", "--experimental-pip-geometry", true),
+    // Accepted before the check landed, and still passed by the hosted macOS
+    // release gate (`--socket S permissions status --json`). The status
+    // command does not read it, so it is accepted and ignored.
+    ("permissions", "--socket", true),
+    // Direct MCP owns a runtime and reads these through `CursorConfig`.
+    ("mcp", "--no-overlay", false),
+    ("mcp", "--glide-ms", true),
+    ("mcp", "--dwell-ms", true),
+    ("mcp", "--idle-hide-ms", true),
+];
+
+/// Reject any option the selected command does not take. The accepted set is
+/// the command's `cli_docs_json` entry (the table `--help` and the generated
+/// reference render), merged along the subcommand path, plus
+/// `UNLISTED_OPTIONS`. Without this, a misspelled option was skipped and the
+/// command ran as if it were absent (#4698).
+fn check_options(args: &[String], positionals: &[&str]) -> Result<(), String> {
+    // These get only the words after their own name, so nothing before it
+    // is read by anyone.
+    if let Some(command) = positionals
+        .first()
+        .filter(|command| SELF_PARSING_COMMANDS.contains(command))
+    {
+        let before = args.iter().position(|arg| arg == command).unwrap_or(0);
+        return check_against(&args[..before], &[], command, command);
+    }
+    let docs = cli_docs_json();
+    fn find<'a>(nodes: &'a serde_json::Value, name: &str) -> Option<&'a serde_json::Value> {
+        nodes.as_array()?.iter().find(|node| node["name"] == name)
+    }
+    // Bare `cua-driver` runs MCP, and an unknown first word is a tool name.
+    let first = positionals.first().copied();
+    let root = match first {
+        None => "mcp",
+        Some(word) if find(&docs["commands"], word).is_some() => word,
+        Some(_) => "call",
+    };
+    let Some(root_node) = find(&docs["commands"], root) else {
+        return Ok(());
+    };
+    let mut help_path = vec![root];
+    let mut nodes = vec![root_node];
+    for word in positionals.iter().skip(1) {
+        let current = nodes[nodes.len() - 1];
+        let Some(child) = find(&current["subcommands"], word) else {
+            break;
+        };
+        help_path.push(word);
+        nodes.push(child);
+    }
+    // `channel --json` runs `channel status`, so it takes that one's options.
+    if let [only] = nodes.as_slice() {
+        if let Some(default) = only["default_subcommand"].as_str() {
+            nodes.extend(find(&only["subcommands"], default));
+        }
+    }
+
+    let mut accepted: Vec<(String, bool)> = UNLISTED_OPTIONS
+        .iter()
+        .filter(|(command, _, _)| *command == root)
+        .map(|(_, option, takes_value)| ((*option).to_owned(), *takes_value))
+        .collect();
+    for node in &nodes {
+        for (key, takes_value) in [("options", true), ("flags", false)] {
+            for option in node[key].as_array().into_iter().flatten() {
+                if let Some(name) = option["name"].as_str() {
+                    accepted.push((format!("--{name}"), takes_value));
+                }
+                if let Some(short) = option["short_name"].as_str() {
+                    accepted.push((format!("-{short}"), takes_value));
+                }
+            }
+        }
+    }
+
+    let command = help_path.join(" ");
+    let shown = match first {
+        Some(tool) if root == "call" && tool != "call" => tool,
+        _ => &command,
+    };
+    check_against(args, &accepted, shown, &command)
+}
+
+/// Check every option in `args` against `accepted` (`(option, takes_value)`).
+/// Errors name `shown` and point at `cua-driver <help> --help`.
+fn check_against(
+    args: &[String],
+    accepted: &[(String, bool)],
+    shown: &str,
+    help: &str,
+) -> Result<(), String> {
+    // A lone `-` or a number is a value, never an option. A value that starts
+    // with `-` otherwise has to be written `--option=-value`, so a value
+    // option can never swallow the option after it.
+    let is_value = |arg: &str| !arg.starts_with('-') || arg == "-" || arg.parse::<f64>().is_ok();
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        index += 1;
+        // macOS LaunchServices may add a process serial number,
+        // `-psn_<high>_<low>`, to an app launch.
+        let serial_number = arg.strip_prefix("-psn_").is_some_and(|serial| {
+            serial.split_once('_').is_some_and(|(high, low)| {
+                [high, low]
+                    .iter()
+                    .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+            })
+        });
+        if is_value(arg) || serial_number {
+            continue;
+        }
+        let (name, inline_value) = match arg.split_once('=') {
+            Some((name, _)) if name.starts_with("--") => (name, true),
+            _ => (arg, false),
+        };
+        match accepted.iter().find(|(option, _)| option == name) {
+            Some((_, true)) if !inline_value && !args.get(index).is_some_and(|v| is_value(v)) => {
+                return Err(format!("cua-driver {shown}: option '{arg}' needs a value."));
+            }
+            Some((_, true)) if !inline_value => index += 1,
+            Some((_, true)) => {}
+            Some((_, false)) if !inline_value => {}
+            _ => {
+                return Err(format!(
+                    "cua-driver {shown}: unknown option '{arg}'. Run `cua-driver {help} --help` for the options it takes."
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn parse_expected_stop_pid(args: &[String], command: Option<&str>) -> Option<u32> {
@@ -3252,7 +3400,7 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
         }
 
         other => {
-            eprintln!("Unknown recording subcommand '{other}'. Valid: start <dir>, stop, status, render <dir> --output <out.mp4>");
+            eprintln!("Unknown recording subcommand '{other}'. Valid: start <dir>, stop, status, render <input-dir> <out.mp4> [--no-zoom] [--scale N]");
             process::exit(64);
         }
     }
@@ -6196,6 +6344,220 @@ mod tests {
         );
         assert!(!launch.contains(&"-a".to_owned()));
         assert!(!launch.contains(&"CuaDriver".to_owned()));
+    }
+
+    fn options_error(values: &[&str]) -> Option<String> {
+        let argv = args(values);
+        check_options(&argv, &positional_args(&argv)).err()
+    }
+
+    #[test]
+    fn launcher_argv_passes_the_option_check() {
+        let accepted: &[&[&str]] = &[
+            // EmbeddedCuaDriverHost::serve_args and the Spaces supervisor.
+            &[
+                "serve",
+                "--embedded",
+                "--parent-liveness-stdio",
+                "--no-permissions-gate",
+                "--socket",
+                "/s",
+                "--host-bundle-id",
+                "com.example",
+                "--permission-mode",
+                "standard",
+                "--capability-manifest",
+                "/m.yaml",
+                "--approve-capability-manifest",
+                "--dangerously-bypass-approvals",
+                "--no-overlay",
+            ],
+            // append_daemon_launch_state.
+            &[
+                "serve",
+                "--no-automation-prompts",
+                "--claude-code-computer-use-compat",
+                "--experimental-history",
+                "--grant",
+                "existing-profile",
+            ],
+            &[
+                "serve",
+                "--experimental-pip",
+                "--experimental-pip-geometry",
+                "320x200",
+            ],
+            &["serve", "-psn_0_12345"],
+            &[
+                "mcp",
+                "--embedded",
+                "--socket",
+                "/s",
+                "--host-bundle-id",
+                "com.example",
+            ],
+            &["mcp", "--direct", "--no-overlay", "--glide-ms", "200"],
+            &["--socket", "/s"],
+            &["status", "--socket", "/s", "--pid-file", "/p"],
+            &["--pid-file=/p", "status", "--socket=/s"],
+            &["stop", "--socket", "/s", "--expected-pid", "42"],
+            &["sessions", "--json"],
+            &["sessions", "list", "--socket", "/s"],
+            &["channel", "--json"],
+            &["channel", "set", "nightly", "--json"],
+            &[
+                "call",
+                "click",
+                "{}",
+                "--socket",
+                "/s",
+                "--screenshot-out-file",
+                "a.png",
+            ],
+            &["get_window_state", "{}", "--screenshot-out-file", "a.png"],
+            &[
+                "cursor",
+                "motion",
+                "--session",
+                "demo",
+                "--style",
+                "magnetic",
+                "--glide-ms",
+                "0",
+            ],
+            &["config", "set", "max_image_dimension", "-1"],
+            &["mcp", "--direct", "--glide-ms", "-1"],
+            &["status", "--socket=-odd"],
+            &[
+                "skills",
+                "install",
+                "--from",
+                "main",
+                "--force",
+                "--all-platforms",
+            ],
+            &["skills", "install", "--from=main"],
+            &["skills", "uninstall", "--all"],
+            &[
+                "recording",
+                "render",
+                "in",
+                "out.mp4",
+                "--scale",
+                "2",
+                "--no-zoom",
+            ],
+            &["history", "delete", "--yes"],
+            &["history", "show", "42", "--json"],
+            &["permissions", "--json"],
+            // The hosted macOS release gate polls the daemon this way.
+            &["--socket", "/s", "permissions", "status", "--json"],
+            &["permissions", "status", "--socket", "/s", "--json"],
+            &["kwin-capture", "on", "--override-portal-deny"],
+            &["dump-docs", "--type", "cli", "-p"],
+            &["telemetry", "inspect", "cua_driver_cli_completed", "--json"],
+            &["update", "--apply", "--json"],
+            &[
+                "connect",
+                "--client",
+                "claude",
+                "--client",
+                "codex",
+                "--dry-run",
+                "--replace",
+                "--json",
+            ],
+            &["extension", "status", "--self-test"],
+            &[
+                "perception",
+                "parse",
+                "--image",
+                "a.png",
+                "--capture",
+                "c.json",
+                "--json",
+            ],
+            &[
+                "cursor-theme",
+                "build",
+                "a.lottie",
+                "--output",
+                "t.cua-theme",
+            ],
+        ];
+        for argv in accepted {
+            assert_eq!(options_error(argv), None, "{argv:?}");
+        }
+    }
+
+    #[test]
+    fn an_option_the_command_does_not_take_is_rejected() {
+        let rejected: &[(&[&str], &str)] = &[
+            (
+                &["status", "--sokcet", "/s"],
+                "cua-driver status: unknown option '--sokcet'",
+            ),
+            (
+                &["status", "--json"],
+                "cua-driver status: unknown option '--json'",
+            ),
+            (
+                &["stop", "--expected-pidd", "1"],
+                "cua-driver stop: unknown option '--expected-pidd'",
+            ),
+            (
+                &["serve", "--permision-mode", "bounded"],
+                "cua-driver serve: unknown option '--permision-mode'",
+            ),
+            (
+                &["channel", "status", "--bogus"],
+                "cua-driver channel status: unknown option '--bogus'",
+            ),
+            (
+                &["skills", "path", "--force"],
+                "cua-driver skills path: unknown option '--force'",
+            ),
+            (
+                &["click", "{}", "--sockt", "/s"],
+                "cua-driver click: unknown option '--sockt'",
+            ),
+            (
+                &["status", "--socket"],
+                "cua-driver status: option '--socket' needs a value",
+            ),
+            (
+                &["stop", "--socket", "/s", "--socket", "--expected-pidd", "1"],
+                "cua-driver stop: option '--socket' needs a value",
+            ),
+            (
+                &["stop", "--socket", "/s", "-psn_expected-pidd", "1"],
+                "cua-driver stop: unknown option '-psn_expected-pidd'",
+            ),
+            (
+                &["--bogus", "extension", "status"],
+                "cua-driver extension: unknown option '--bogus'",
+            ),
+            (
+                &["--json", "perception", "parse"],
+                "cua-driver perception: unknown option '--json'",
+            ),
+            (
+                &["serve", "--socket", "--bogus"],
+                "cua-driver serve: option '--socket' needs a value",
+            ),
+            (
+                &["sessions", "--json=yes"],
+                "cua-driver sessions: unknown option '--json=yes'",
+            ),
+            (&["--bogus"], "cua-driver mcp: unknown option '--bogus'"),
+        ];
+        for (argv, message) in rejected {
+            let error = options_error(argv);
+            assert!(
+                error.as_deref().is_some_and(|e| e.starts_with(message)),
+                "{argv:?}: {error:?}"
+            );
+        }
     }
 
     #[test]

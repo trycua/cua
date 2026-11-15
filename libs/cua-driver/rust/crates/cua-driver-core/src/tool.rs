@@ -317,10 +317,9 @@ impl ToolDef {
         // Tools that most often need a guide point at `get_guide`, so an agent
         // that never reads the skill still learns where the guidance lives.
         let deprecation = crate::deprecation::lookup(&self.name);
-        let description = lead_on_own_line(&self.description);
         let description = match crate::guide::description_hint(&self.name) {
-            Some(hint) => format!("{description} {hint}"),
-            None => description,
+            Some(hint) => format!("{} {hint}", self.description),
+            None => self.description.clone(),
         };
         let description = match deprecation {
             Some(entry) => format!("{} {description}", entry.description_prefix()),
@@ -765,37 +764,6 @@ fn normalize_zoom_args(tool_name: &str, args: &mut Value) {
             arguments.insert(second.to_owned(), serde_json::json!(start + size));
         }
     }
-}
-
-/// `description` with its first sentence on a line of its own. Clients that
-/// show one line per tool (tool search results, `list-tools`) then show that
-/// sentence instead of the whole first paragraph. Only the space after the
-/// sentence becomes a line break; no text is added or removed.
-pub fn lead_on_own_line(description: &str) -> String {
-    let first_line = description.split('\n').next().unwrap_or_default();
-    let mut in_code = false;
-    let mut depth = 0u32;
-    let mut previous = None;
-    for (i, ch) in first_line.char_indices() {
-        match ch {
-            '`' => in_code = !in_code,
-            '(' | '[' | '{' if !in_code => depth += 1,
-            ')' | ']' | '}' if !in_code => depth = depth.saturating_sub(1),
-            ' ' if !in_code
-                && depth == 0
-                && matches!(previous, Some('.' | '?' | '!'))
-                && !first_line[..i].ends_with("e.g.")
-                && !first_line[..i].ends_with("i.e.") =>
-            {
-                let mut out = description.to_owned();
-                out.replace_range(i..i + 1, "\n");
-                return out;
-            }
-            _ => {}
-        }
-        previous = Some(ch);
-    }
-    description.to_owned()
 }
 
 pub(crate) fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -> Value {
@@ -2136,10 +2104,9 @@ impl ToolRegistry {
                 && crate::session::is_session_ended(session)
                 && !crate::session::recreates_on_next_call(session, owner)
             {
-                let message = ended_session_refusal_message(
+                let mut result = session_ended_refusal(
                     args.get("_public_session_label").and_then(Value::as_str),
                 );
-                let mut result = protected_refusal("session_ended", &message);
                 restore_public_runtime_result(&mut result, &runtime_prefix);
                 return result;
             }
@@ -7154,16 +7121,18 @@ fn protected_scope_error_refusal(error: &ProtectedResourceScopeError) -> ToolRes
     )
 }
 
-/// Recovery text for a call on an ended lifecycle episode. A named session is
-/// restarted by name from its own transport; an unnamed one has no label to
-/// pass, so naming one would only start an unrelated session.
-fn ended_session_refusal_message(public_label: Option<&str>) -> String {
-    match public_label {
+/// The `session_ended` refusal for a call on an ended lifecycle episode, with
+/// the recovery that applies to it. A named session is restarted by name from
+/// its own transport; an unnamed one has no label to pass, so naming one would
+/// only start an unrelated session.
+pub fn session_ended_refusal(public_label: Option<&str>) -> ToolResult {
+    let message = match public_label {
         Some(label) => format!(
             "session '{label}' has ended; call start_session with session '{label}' to start it again, or use a new session label"
         ),
         None => "this transport's unnamed session has ended; call start_session without a session label to start a new one".to_owned(),
-    }
+    };
+    protected_refusal("session_ended", &message)
 }
 
 fn protected_refusal(code: &str, message: &str) -> ToolResult {
@@ -7676,43 +7645,6 @@ mod capability_tests {
                 "tool {name:?} accepts element_token but is missing the \
                  accessibility.element_tokens capability claim — add it \
                  in default_capabilities_for()"
-            );
-        }
-    }
-
-    #[test]
-    fn listed_description_puts_its_first_sentence_on_its_own_line() {
-        let mut def = dummy_def("zoom");
-        def.description = "Click a target pid. Prefer `element_token` (from get_window_state). \
-             Use pixels (x, y. z) e.g. for canvases.\n\nMore detail."
-            .into();
-        let listed = def.to_list_entry()["description"]
-            .as_str()
-            .unwrap()
-            .to_owned();
-        assert_eq!(
-            listed,
-            "Click a target pid.\nPrefer `element_token` (from get_window_state). \
-             Use pixels (x, y. z) e.g. for canvases.\n\nMore detail."
-        );
-        assert_eq!(
-            listed.replace('\n', " "),
-            def.description.replace('\n', " ")
-        );
-
-        for (text, lead) in [
-            (
-                "Press a key — e.g. `[\"cmd\", \"c\"]`. Then more.",
-                "Press a key — e.g. `[\"cmd\", \"c\"]`.",
-            ),
-            ("Read `a. b` first. Then more.", "Read `a. b` first."),
-            ("One sentence only.", "One sentence only."),
-            ("Header line:\n- item. More", "Header line:"),
-        ] {
-            assert_eq!(
-                lead_on_own_line(text).split('\n').next(),
-                Some(lead),
-                "{text}"
             );
         }
     }

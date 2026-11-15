@@ -45,26 +45,17 @@ use super::ToolState;
 struct SheetBlockedTarget;
 impl std::fmt::Display for SheetBlockedTarget {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("The addressed element is blocked by an attached sheet or its modal ancestry is unreadable; call get_window_state and target the sheet instead")
+        f.write_str("An attached sheet blocks this element, or its ancestry could not be read. Call get_window_state and target the sheet.")
     }
 }
 impl std::error::Error for SheetBlockedTarget {}
 
-fn ensure_sheet_target(
-    element: &crate::ax::snapshot::RetainedElement,
-    pid: i32,
-    wid: u32,
-    foreground: bool,
-) -> anyhow::Result<()> {
-    if unsafe {
-        crate::ax::exact_target::element_blocked_by_sheet(
-            element.as_ptr() as AXUIElementRef,
-            wid,
-            pid,
-            foreground,
-        )
-    } != Some(false)
-    {
+fn ensure_sheet_target(element: &crate::ax::snapshot::RetainedElement) -> anyhow::Result<()> {
+    // SAFETY: a RetainedElement holds a +1 reference on a live element.
+    let blocked = unsafe {
+        crate::ax::exact_target::element_blocked_by_sheet(element.as_ptr() as AXUIElementRef)
+    };
+    if blocked != Some(false) {
         anyhow::bail!(SheetBlockedTarget);
     }
     Ok(())
@@ -754,12 +745,10 @@ impl ClickTool {
             }
 
             let sheet_guard = element_guard.clone();
-            let foreground = delivery_mode.is_foreground();
-            let admitted = tokio::task::spawn_blocking(move || {
-                ensure_sheet_target(&sheet_guard, pid, wid, foreground).is_ok()
-            })
-            .await
-            .unwrap_or(false);
+            let admitted =
+                tokio::task::spawn_blocking(move || ensure_sheet_target(&sheet_guard).is_ok())
+                    .await
+                    .unwrap_or(false);
             if !admitted {
                 return sheet_refusal();
             }
@@ -873,7 +862,7 @@ impl ClickTool {
                     // Re-read after any activation: the early read skips a
                     // foreground call into a background app.
                     let ensure_enabled = || {
-                        ensure_sheet_target(&middle_guard, pid, wid, foreground)?;
+                        ensure_sheet_target(&middle_guard)?;
                         if foreground {
                             crate::input::ax_actions::ensure_ax_action_enabled_after_activation(
                                 middle_guard.as_ptr(),
@@ -1035,7 +1024,7 @@ impl ClickTool {
                             let mut outcome = None;
                             let has_modifiers = !selection_modifiers.is_empty();
                             let action = || {
-                                ensure_sheet_target(&element_guard, pid, wid, true)?;
+                                ensure_sheet_target(&element_guard)?;
                                 outcome = Some(perform_ax_click(
                                     (element_ptr, idx),
                                     (pid, wid),
@@ -1071,7 +1060,7 @@ impl ClickTool {
                             })?;
                             Ok((outcome, fronted))
                         } else {
-                            ensure_sheet_target(&element_guard, pid, wid, false)?;
+                            ensure_sheet_target(&element_guard)?;
                             perform_ax_click(
                                 (element_ptr, idx),
                                 (pid, wid),

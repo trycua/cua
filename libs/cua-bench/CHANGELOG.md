@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.9](https://github.com/trycua/cua/compare/bench-v0.4.8...bench-v0.4.9) (2026-11-15)
+
+
+### Bug Fixes
+
+* **cua-bench:** four cua-bench fixes re-landed from [#4561](https://github.com/trycua/cua/issues/4561) to [#4564](https://github.com/trycua/cua/issues/4564) ([#7849](https://github.com/trycua/cua/issues/7849)) ([6d66549](https://github.com/trycua/cua/commit/6d665496c9209dbbfd2dd472ccc3f36e9a23ff01))
+
 ## [0.4.8](https://github.com/trycua/cua/compare/bench-v0.4.7...bench-v0.4.8) (2026-11-15)
 
 

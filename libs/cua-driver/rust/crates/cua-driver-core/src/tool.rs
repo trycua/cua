@@ -2486,8 +2486,11 @@ impl ToolRegistry {
                 };
                 match admitted {
                     Ok(guard) => Some(guard),
-                    Err(message) => {
-                        return protected_refusal("session_ended", message);
+                    Err(crate::session::DispatchRefusal::OwnedByOtherTransport(holder)) => {
+                        return session_owned_by_other_transport_refusal(public_label, holder);
+                    }
+                    Err(refusal) => {
+                        return protected_refusal("session_ended", refusal.message());
                     }
                 }
             } else {
@@ -7133,6 +7136,36 @@ pub fn session_ended_refusal(public_label: Option<&str>) -> ToolResult {
         None => "this transport's unnamed session has ended; call start_session without a session label to start a new one".to_owned(),
     };
     protected_refusal("session_ended", &message)
+}
+
+/// The refusal for a call on a session that is live but held by another
+/// transport, such as a label a `cua-driver mcp` process started and a
+/// `cua-driver call` then names. The session has not ended, so the
+/// `session_ended` recovery (`start_session` with the same label) would be
+/// refused too.
+fn session_owned_by_other_transport_refusal(
+    public_label: Option<&str>,
+    holder: crate::session::SessionTransport,
+) -> ToolResult {
+    let holder = holder.as_str();
+    let message = match public_label {
+        Some(label) => format!(
+            "session '{label}' is live on another connection ({holder}); make this call from that connection, or use a new session label here"
+        ),
+        None => format!(
+            "this session is live on another connection ({holder}); make this call from that connection"
+        ),
+    };
+    let mut result = protected_refusal("session_owned_by_other_transport", &message);
+    if let Some(refusal) = result
+        .structured_content
+        .as_mut()
+        .and_then(|structured| structured.get_mut("refusal"))
+        .and_then(Value::as_object_mut)
+    {
+        refusal.insert("owner_transport".to_owned(), Value::from(holder));
+    }
+    result
 }
 
 fn protected_refusal(code: &str, message: &str) -> ToolResult {

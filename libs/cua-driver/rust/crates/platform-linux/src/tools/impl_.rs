@@ -3517,7 +3517,7 @@ pub(crate) fn spawn_isolated_hyprland(
         snapshot.transport,
         snapshot.client_kind,
     )
-    .map_err(isolated_hyprland_refusal)?;
+    .map_err(|refusal| isolated_hyprland_refusal(refusal.message()))?;
     let (guard, cancellation) = crate::wayland::hyprland_input::ActionCancellation::invocation();
     let dispatch = tokio::task::spawn_blocking(move || {
         let _lifecycle = lifecycle;

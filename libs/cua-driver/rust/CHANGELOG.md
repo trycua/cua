@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.51.5](https://github.com/trycua/cua/compare/cua-driver-rs-v0.51.4...cua-driver-rs-v0.51.5) (2026-11-15)
+
+
+### Bug Fixes
+
+* **cua-driver:** refuse a live label held by another transport with session_owned_by_other_transport ([#7811](https://github.com/trycua/cua/issues/7811)) ([ac9c092](https://github.com/trycua/cua/commit/ac9c092abfc29517ec6e63513ad675a73f019b77))
+
 ## [0.51.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.51.3...cua-driver-rs-v0.51.4) (2026-11-15)
 
 

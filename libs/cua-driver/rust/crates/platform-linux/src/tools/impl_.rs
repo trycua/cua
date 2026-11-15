@@ -4276,6 +4276,145 @@ pub(crate) async fn desktop_input_space() -> anyhow::Result<crate::wayland::Desk
     .map_err(|error| anyhow::anyhow!("task error: {error}"))?
 }
 
+pub(crate) async fn prepare_desktop_click_cursor(
+    layer_shell: bool,
+    wayland_arrival: impl std::future::Future<Output = anyhow::Result<()>>,
+    best_effort_reveal: impl std::future::Future<Output = ()>,
+) -> anyhow::Result<()> {
+    if layer_shell {
+        wayland_arrival.await
+    } else {
+        best_effort_reveal.await;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod desktop_click_arrival_tests {
+    use super::prepare_desktop_click_cursor;
+    use std::cell::Cell;
+
+    #[tokio::test]
+    async fn click_tool_delivers_when_wayland_overlay_probe_cannot_connect() {
+        const CHILD: &str = "CUA_TEST_UNAVAILABLE_CLICK_OVERLAY";
+        if std::env::var_os(CHILD).is_none() {
+            // Isolate process-wide Wayland environment and the cached probe from
+            // other tests. A nonexistent socket reproduces available() == false.
+            let directory = tempfile::tempdir().unwrap();
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "tools::impl_::desktop_click_arrival_tests::click_tool_delivers_when_wayland_overlay_probe_cannot_connect",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .env(crate::wayland::ENABLE_WAYLAND_ENV, "1")
+                .env("WAYLAND_DISPLAY", directory.path().join("missing-compositor"))
+                .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
+                .env_remove("NIRI_SOCKET")
+                .env_remove("CUA_INJECT_SOCKET")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            return;
+        }
+        assert!(crate::wayland::is_wayland());
+        assert!(!crate::wayland::overlay::available());
+        crate::wayland::overlay::set_config(cursor_overlay::CursorConfig::default());
+        let reveals = Cell::new(0);
+        let clicks = Cell::new(0);
+        prepare_desktop_click_cursor(
+            crate::overlay::wayland_overlay_backend()
+                == crate::overlay::WaylandOverlayBackend::LayerShell,
+            async { panic!("unavailable layer-shell must not gate clicks") },
+            async { reveals.set(reveals.get() + 1) },
+        )
+        .await
+        .unwrap();
+        clicks.set(clicks.get() + 1);
+        assert_eq!(reveals.get(), 1);
+        assert_eq!(clicks.get(), 1);
+    }
+
+    #[tokio::test]
+    async fn layer_shell_arrival_failure_refuses_click_without_fallback() {
+        let overlay_available = false;
+        let arrival_attempts = Cell::new(0);
+        let native_clicks = Cell::new(0);
+        let x11_reveals = Cell::new(0);
+        let result: anyhow::Result<()> = async {
+            prepare_desktop_click_cursor(
+                true,
+                async {
+                    arrival_attempts.set(arrival_attempts.get() + 1);
+                    anyhow::ensure!(overlay_available, "Wayland arrival renderer unavailable");
+                    Ok(())
+                },
+                async { x11_reveals.set(x11_reveals.get() + 1) },
+            )
+            .await?;
+            native_clicks.set(native_clicks.get() + 1);
+            Ok(())
+        }
+        .await;
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Wayland arrival renderer unavailable"
+        );
+        assert_eq!(arrival_attempts.get(), 1);
+        assert_eq!(native_clicks.get(), 0);
+        assert_eq!(x11_reveals.get(), 0);
+    }
+
+    #[tokio::test]
+    async fn layer_shell_click_waits_for_arrival_before_one_delivery() {
+        let (ack, arrived) = tokio::sync::oneshot::channel();
+        let native_clicks = Cell::new(0);
+        let arrival_authorized = Cell::new(false);
+        let action = async {
+            prepare_desktop_click_cursor(
+                true,
+                async {
+                    arrived.await?;
+                    arrival_authorized.set(true);
+                    Ok(())
+                },
+                async { panic!("native Wayland must never use X11 reveal") },
+            )
+            .await?;
+            assert!(arrival_authorized.get());
+            native_clicks.set(native_clicks.get() + 1);
+            Ok::<(), anyhow::Error>(())
+        };
+        tokio::pin!(action);
+        tokio::select! {
+            result = &mut action => panic!("click completed before arrival: {result:?}"),
+            _ = tokio::task::yield_now() => {}
+        }
+        assert_eq!(native_clicks.get(), 0);
+        ack.send(()).unwrap();
+        action.await.unwrap();
+        assert_eq!(native_clicks.get(), 1);
+    }
+
+    #[tokio::test]
+    async fn x11_keeps_best_effort_reveal_without_wayland_arrival() {
+        let reveals = Cell::new(0);
+        prepare_desktop_click_cursor(
+            false,
+            async { panic!("X11 must not require a Wayland compositor") },
+            async { reveals.set(reveals.get() + 1) },
+        )
+        .await
+        .unwrap();
+        assert_eq!(reveals.get(), 1);
+    }
+}
+
 /// Keep the logical cursor position in sync with every visibly targeted
 /// pointer action. Overlay delivery is intentionally best-effort: registry
 /// state is still updated when no renderer is running or its queue is closed.

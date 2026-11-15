@@ -15,11 +15,12 @@ use super::impl_::{
     apply_foreground_report, attach_focus_guard, capture_admission_error,
     checked_element_local_coords, coordinate_frame_schema, desktop_frame_requested,
     desktop_frame_unmapped, desktop_input_space, desktop_to_window_local, element_is_menu_role,
-    element_needs_real_click, element_screen_center, foreground_budget, foreground_hyprland_action,
-    foreground_hyprland_refusal, foreground_structured, hyprland_foreground, input_error_result,
-    isolated_hyprland_action, isolated_hyprland_background, isolated_hyprland_refusal,
-    isolated_hyprland_result, isolated_hyprland_task_error, named_session_cursor_key,
-    non_ax_escalation, parse_mouse_button, prove_token_element, push_evidence, refuse_if_disabled,
+    element_needs_real_click, element_screen_center, emit_cursor_hook, foreground_budget,
+    foreground_hyprland_action, foreground_hyprland_refusal, foreground_structured,
+    hyprland_foreground, input_error_result, isolated_hyprland_action,
+    isolated_hyprland_background, isolated_hyprland_refusal, isolated_hyprland_result,
+    isolated_hyprland_task_error, named_session_cursor_key, non_ax_escalation, parse_mouse_button,
+    prepare_desktop_click_cursor, prove_token_element, push_evidence, refuse_if_disabled,
     require_point_args, resolve_cursor_key, resolve_element_local_coords,
     reveal_pointer_action_for, reveal_pointer_action_target_for, screenshot_scale,
     spawn_blocking_bounded, spawn_isolated_hyprland, synthetic_pointer_is_dropped,
@@ -947,14 +948,42 @@ impl Tool for ClickTool {
             // sees the cursor "click somewhere else."
             // The overlay draws in layout coordinates, like the input below.
             let (overlay_x, overlay_y) = space.to_layout(sx, sy);
-            reveal_pointer_action_for(
-                &self.state,
-                &cursor_id,
-                f64::from(overlay_x),
-                f64::from(overlay_y),
-                true,
+            let arrival = prepare_desktop_click_cursor(
+                crate::wayland::is_wayland()
+                    && crate::overlay::wayland_overlay_backend()
+                        == crate::overlay::WaylandOverlayBackend::LayerShell,
+                async {
+                    self.state.cursor_registry.set_enabled(&cursor_id, true);
+                    self.state.cursor_registry.update_position(
+                        &cursor_id,
+                        f64::from(overlay_x),
+                        f64::from(overlay_y),
+                    );
+                    emit_cursor_hook(
+                        &cursor_id,
+                        f64::from(overlay_x),
+                        f64::from(overlay_y),
+                        false,
+                    );
+                    crate::wayland::overlay::animate_and_wait(
+                        cursor_id.clone(),
+                        f64::from(overlay_x),
+                        f64::from(overlay_y),
+                    )
+                    .await
+                },
+                reveal_pointer_action_for(
+                    &self.state,
+                    &cursor_id,
+                    f64::from(overlay_x),
+                    f64::from(overlay_y),
+                    false,
+                ),
             )
             .await;
+            if let Err(error) = arrival {
+                return ToolResult::error(error.to_string());
+            }
             let r = spawn_blocking_bounded("desktop click", foreground_budget(0), move || {
                 if crate::wayland::is_wayland() {
                     if !modifiers.is_empty() {
@@ -976,6 +1005,16 @@ impl Tool for ClickTool {
                 }
             })
             .await;
+            if matches!(&r, Ok(Ok(()))) {
+                emit_cursor_hook(&cursor_id, f64::from(overlay_x), f64::from(overlay_y), true);
+                crate::overlay::send_command_for(
+                    cursor_id,
+                    cursor_overlay::OverlayCommand::ClickPulse {
+                        x: f64::from(overlay_x),
+                        y: f64::from(overlay_y),
+                    },
+                );
+            }
             return match r {
                 // Screen-absolute click — never driver-verifiable (no
                 // read-back); the caller confirms via screenshot.

@@ -66,8 +66,11 @@ Every `hoy` command uses the same codes.
 **`hoy start` says macOS VMs need the Hoy system extension (exit 5).** With
 `--json` the reason is `limit_service_inactive`. Turn on the two switches in
 [Install](/hoy/guides/install#approve-the-hoy-system-extension) (Endpoint
-Security Extensions: **Hoy**; Full Disk Access:
-**com.trycua.hoy.es.systemextension**), then run `hoy doctor` and start again.
+Security Extensions: **Hoy**, at the bottom of the page under By Category and
+the **(i)** button; Full Disk Access: **Hoy** on macOS 27,
+**com.trycua.hoy.es.systemextension** on macOS 26). On a cloud Mac with no
+desktop login, see
+[Installing on a headless or cloud Mac](/hoy/guides/install#installing-on-a-headless-or-cloud-mac). Then run `hoy doctor` and start again.
 If the `full-disk-access` line fails, the Full Disk Access
 switch is still off (`limit-service` is ok then, the extension is approved): once you turn it on, the extension activates on its own
 within a few seconds. If it says the extension is "not installed", run the installer

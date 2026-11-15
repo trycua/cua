@@ -98,14 +98,19 @@ and two one-time switches finish the job:
 
    ![macOS asks to allow Hoy's new endpoint security extension, with an Open System Settings button](/img/hoy/install-extension-prompt.png)
 
-2. In System Settings > General > Login Items & Extensions > Endpoint Security
-   Extensions, turn on **Hoy**.
+2. In System Settings > General > Login Items & Extensions, scroll to the bottom.
+   The page opens at the top, and the Endpoint Security switch is at the very
+   end: under **By Category**, click the **(i)** next to **Endpoint Security
+   Extensions**, then turn on **Hoy** (administrator password).
+   `Hoy --open-settings extensions` opens the top of this page only.
 
    ![System Settings, Endpoint Security Extensions: Hoy, with its switch off, ready to turn on](/img/hoy/install-endpoint-security-switch.png)
 
-3. In System Settings > Privacy & Security > Full Disk Access, turn on
-   **com.trycua.hoy.es.systemextension**. That entry is the Hoy system extension: this one page lists it by its
-   file name, not as "Hoy". macOS requires Full
+3. In System Settings > Privacy & Security > Full Disk Access, turn on the Hoy
+   entry (administrator password). On macOS 27 the list shows it as **Hoy**.
+   On macOS 26 this page lists it by its file name,
+   **com.trycua.hoy.es.systemextension**. Either way it is the Hoy system
+   extension. macOS requires Full
    Disk Access of every Endpoint Security extension. It applies to the extension
    only: the `hoy` command and the background service do not get Full Disk Access.
 
@@ -160,7 +165,63 @@ To see what macOS has registered, or to open the page again:
 
 The login item runs in your desktop login session, so install while you are
 logged in at the desktop (or over Screen Sharing). The program itself stays in
-`~/.local/hoy`.
+`~/.local/hoy`. On a cloud Mac with no desktop login, see
+[Installing on a headless or cloud Mac](#installing-on-a-headless-or-cloud-mac).
+
+### Installing on a headless or cloud Mac
+
+Approving the extension and Full Disk Access needs a desktop (GUI) login session: both switches live in System
+Settings and each asks an administrator for a password. A cloud Mac (for example an AWS EC2 Mac) that nobody has ever
+logged in to at the desktop has no such session, so the install cannot finish by itself over ssh. The installer
+still succeeds and copies Hoy.app; the two approvals are the part that needs a screen. Do them once per Mac:
+
+1. **Install as usual over ssh** (the install command above). The install itself takes seconds. Until the approvals are
+   done, `hoy doctor` fails `limit-service` and macOS VMs do not start.
+2. **Give the operator account a temporary password** (a cloud Mac often has none), and keep it out of shell history
+   and logs:
+
+   ```sh
+   sudo dscl . -passwd /Users/operator
+   ```
+
+   Type a long random password at the prompts. (If the account already has a password, dscl asks for the old one
+   first.) The account must be an administrator, because both approvals ask for an administrator password.
+3. **Turn on Screen Sharing and reach it through an ssh tunnel**, so port 5900 is never exposed to the network:
+
+   ```sh
+   sudo launchctl enable system/com.apple.screensharing
+   sudo launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.screensharing.plist
+   ```
+
+   Then, from your own computer, `ssh -N -L 5900:127.0.0.1:5900 <host>` and open `vnc://localhost:5900` (Screen
+   Sharing on a Mac, or any VNC client). Sign in as the operator account.
+4. **Log in once.** The first login runs macOS's Setup Assistant (Accessibility, Apple Account, Analytics, Screen
+   Time and so on; about 3 minutes on macOS 27). That is macOS, not Hoy. Skip what you can. If a disk-unlock dialog
+   for a local instance-store volume appears, cancel it.
+5. **Approve.** The Hoy extension prompt may already be waiting at the login window. Follow the two switches in
+   "Approve the Hoy system extension" above (about 2.5 minutes, two administrator password prompts). Then run
+   `hoy doctor` in a terminal inside that session or over ssh: `limit-service` and `full-disk-access` are ok within
+   seconds.
+6. **Start the background service** if you installed over ssh: `sh ~/.local/hoy/current/hoy-install.sh --launchagent` (the login item), and `hoy health`.
+7. **Close the door again.** Turn Screen Sharing off, stop the tunnel and rotate the password to a new random value
+   (or lock it, if you will only use ssh keys):
+
+   ```sh
+   sudo launchctl bootout system/com.apple.screensharing
+   sudo launchctl disable system/com.apple.screensharing
+   sudo dscl . -passwd /Users/operator
+   ```
+
+   Check that port 5900 no longer answers.
+
+After a reboot Hoy's background service needs a GUI session again: it is the login item of the operator's desktop session, so with nobody
+logged in it does not start. Either log in again over Screen Sharing, set "Automatically log in as" to the operator
+account (FileVault off; see "Macs where nobody logs in" below), or run the opt-in `--system-daemon`. The
+approvals from step 5 are kept across reboots and updates; you do not repeat them.
+
+For many Macs, push the approvals ahead of time with an MDM profile (see [Managed Macs](#managed-macs)) so nobody has to log in
+at a desktop. The profile is the only unattended way to approve the two switches: macOS does not let a script turn
+them on.
 
 ### Macs where nobody logs in
 
@@ -188,8 +249,8 @@ validated. Two setups exist:
 
 | Doctor line | What you do | When | Why |
 |---|---|---|---|
-| `limit-service` | Turn on **Hoy** under Endpoint Security Extensions | Right after the install | Approves the Hoy system extension, which keeps the Mac within Apple's limit of two macOS VMs |
-| `full-disk-access` | Turn on **com.trycua.hoy.es.systemextension** under Full Disk Access | Right after the line above | macOS requires it of every Endpoint Security extension. The extension turns on by itself a few seconds later |
+| `limit-service` | Scroll to the bottom of Login Items & Extensions, click the **(i)** next to Endpoint Security Extensions (under By Category), and turn on **Hoy** | Right after the install | Approves the Hoy system extension, which keeps the Mac within Apple's limit of two macOS VMs |
+| `full-disk-access` | Turn on **Hoy** (macOS 27) or **com.trycua.hoy.es.systemextension** (macOS 26) under Full Disk Access | Right after the line above | macOS requires it of every Endpoint Security extension. The extension turns on by itself a few seconds later |
 | `daemon` | Nothing, unless doctor says Hoy's login item is off: then turn on **Hoy** under Allow in the Background | At install | Hoy's background service owns your VMs. It starts at login |
 | `local-network` | Click **Allow** if macOS asks to let Hoy's background service find devices on local networks. If you chose Don't Allow, turn on Hoy's background service under Privacy & Security > Local Network | The first time you start a VM made from an **older** image (made by a Hoy before this release). Never for new images | Older images are reached at the VM's private network address, which macOS counts as the local network. macOS asks once and never again, so Don't Allow looks like a VM that never answers. Making a new image with `hoy image create` avoids it for good |
 | `guest:<vm>` | Nothing | Each running VM | Shows how Hoy reaches that VM: over its internal channel, or at its network address (the case that needs Local Network) |
@@ -218,7 +279,7 @@ the Hoy version; include it in any [bug report](/hoy/guides/getting-help).
 
 - The "System Extension Blocked" prompt and the two switches above.
 - The "Background Items Added" notification for **Hoy**.
-- An administrator password when the installer copies Hoy.app, and again when
+- An administrator password when the installer copies Hoy.app, once for each of the two switches above, and again when
   you [uninstall](/hoy/guides/uninstall).
 - Screen Sharing asks for a password when `hoy vnc` or `hoy start --window`
   opens a VM's desktop. Hoy has copied it to the clipboard: paste it with

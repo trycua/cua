@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.36.21](https://github.com/trycua/cua/compare/cua-spaces-v0.36.20...cua-spaces-v0.36.21) (2026-11-15)
+
+
+### Bug Fixes
+
+* **cua-cli:** two fixes re-landed from [#6199](https://github.com/trycua/cua/issues/6199) and [#6230](https://github.com/trycua/cua/issues/6230) ([#7864](https://github.com/trycua/cua/issues/7864)) ([a49f60a](https://github.com/trycua/cua/commit/a49f60ae8a106735e2568f9f54594e830c2af816))
+* **spaces:** pass saved custom endpoints to persistent agents ([#7417](https://github.com/trycua/cua/issues/7417)) ([7b3a88d](https://github.com/trycua/cua/commit/7b3a88d6752a039cd077510ce02cd98591c8e23b))
+
 ## [0.36.20](https://github.com/trycua/cua/compare/cua-spaces-v0.36.19...cua-spaces-v0.36.20) (2026-11-15)
 
 

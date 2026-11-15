@@ -3527,6 +3527,15 @@ mod tests {
                     process_role: crate::browser::types::BrowserProcessRole::StandaloneConsumer,
                     supports_cdp: false,
                 },
+                5 => BrowserClassification {
+                    is_browser: true,
+                    engine: BrowserEngineFamily::Chromium,
+                    product_kind: BrowserProduct::Electron,
+                    product: Some("Obsidian".into()),
+                    channel: None,
+                    process_role: crate::browser::types::BrowserProcessRole::EmbeddedApplication,
+                    supports_cdp: true,
+                },
                 _ => BrowserClassification {
                     is_browser: false,
                     engine: BrowserEngineFamily::Unknown,
@@ -3972,6 +3981,36 @@ mod tests {
         assert_eq!(
             refusal["detail"]["limitation"],
             "remote_agent_requires_launch_time_enablement"
+        );
+    }
+
+    #[tokio::test]
+    async fn electron_app_without_endpoint_names_the_isolated_launch() {
+        let tool = GetBrowserStateTool::new(engine());
+        let result = tool
+            .invoke(json!({ "pid": 5, "window_id": 7, "_session_id": "run-1" }))
+            .await;
+        let refusal = &structured(&result)["refusal"];
+        assert_eq!(refusal["code"], "browser_requires_setup");
+        assert_eq!(
+            refusal["detail"]["reason"],
+            "embedded_application_endpoint_closed"
+        );
+        assert!(refusal["message"]
+            .as_str()
+            .unwrap()
+            .contains("--remote-debugging-port"));
+        assert_eq!(
+            refusal["detail"]["next_call"],
+            json!({
+                "tool": "browser_prepare",
+                "arguments": {
+                    "pid": 5,
+                    "session": "run-1",
+                    "allow_launch": true,
+                    "profile": { "mode": "isolated_new" },
+                },
+            })
         );
     }
 

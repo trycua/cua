@@ -485,6 +485,32 @@ cleanup_deprecated_auto_updater() {
   fi
 }
 
+# Load the Lume daemon LaunchAgent into this user's GUI session, and fail
+# unless launchd has it. `launchctl load` targets the caller's own session,
+# which over SSH is not the GUI one: launchd refuses it, yet `load` exits 0.
+load_lume_daemon() {
+  local domain target error
+  domain="gui/$(id -u)"
+  target="$domain/$SERVICE_NAME"
+  launchctl bootout "$target" 2>/dev/null || true
+  # bootout returns before launchd has let go of the service.
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    launchctl print "$target" >/dev/null 2>&1 || break
+    sleep 0.5
+  done
+  launchctl enable "$target" 2>/dev/null || true
+  error=$(launchctl bootstrap "$domain" "$PLIST_PATH" 2>&1) || true
+  if ! launchctl print "$target" >/dev/null 2>&1; then
+    echo "${RED}Error: launchd did not load the Lume daemon LaunchAgent into $domain.${NORMAL}"
+    [ -z "$error" ] || echo "launchctl: $error"
+    echo "It runs in your GUI login session, so it loads when you next log in to this Mac's"
+    echo "desktop (at its screen, or with automatic login). To load it from a logged-in session:"
+    echo "  launchctl bootstrap $domain \"$PLIST_PATH\""
+    echo "Or rerun this installer with --no-background-service and start Lume with: lume serve"
+    exit 1
+  fi
+}
+
 # Record consent-aware installation and per-version release events through
 # the installed binary so identity, preference precedence, request timeouts,
 # and 2xx-only marker semantics stay in one implementation. This happens
@@ -539,7 +565,7 @@ main() {
     # Unload existing service if present
     if [ -f "$PLIST_PATH" ]; then
       echo "Existing LaunchAgent found. Unloading..."
-      launchctl unload "$PLIST_PATH" 2>/dev/null || true
+      launchctl bootout "gui/$(id -u)/$SERVICE_NAME" 2>/dev/null || true
     fi
 
     # Clean up old wrapper script if it exists (no longer needed)
@@ -595,22 +621,21 @@ EOF
 
     # Load the LaunchAgent
     echo "Loading LaunchAgent..."
-    launchctl unload "$PLIST_PATH" 2>/dev/null || true
-    launchctl load "$PLIST_PATH"
+    load_lume_daemon
 
     echo "${GREEN}Lume daemon LaunchAgent installed and loaded. It will start automatically on login!${NORMAL}"
-    echo "To check status: launchctl list | grep $SERVICE_NAME"
+    echo "To check status: launchctl print gui/$(id -u)/$SERVICE_NAME"
     echo "To view logs: tail -f /tmp/lume_daemon.log"
     echo ""
     echo "To remove the lume daemon service, run:"
-    echo "  launchctl unload \"$PLIST_PATH\""
+    echo "  launchctl bootout gui/$(id -u)/$SERVICE_NAME"
     echo "  rm \"$PLIST_PATH\""
   else
     SERVICE_NAME="com.trycua.lume_daemon"
     PLIST_PATH="$HOME/Library/LaunchAgents/$SERVICE_NAME.plist"
     if [ -f "$PLIST_PATH" ]; then
       echo "Removing existing Lume background service (LaunchAgent)..."
-      launchctl unload "$PLIST_PATH" 2>/dev/null || true
+      launchctl bootout "gui/$(id -u)/$SERVICE_NAME" 2>/dev/null || true
       rm "$PLIST_PATH"
       echo "Lume background service (LaunchAgent) removed."
     else

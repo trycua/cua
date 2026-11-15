@@ -1294,6 +1294,10 @@ const UNLISTED_OPTIONS: &[(&str, &str, bool)] = &[
     // Removed picture-in-picture preview, still accepted and ignored.
     ("serve", "--experimental-pip", false),
     ("serve", "--experimental-pip-geometry", true),
+    // Accepted before the check landed, and still passed by the hosted macOS
+    // release gate (`--socket S permissions status --json`). The status
+    // command does not read it, so it is accepted and ignored.
+    ("permissions", "--socket", true),
     // Direct MCP owns a runtime and reads these through `CursorConfig`.
     ("mcp", "--no-overlay", false),
     ("mcp", "--glide-ms", true),
@@ -6446,6 +6450,9 @@ mod tests {
             &["history", "delete", "--yes"],
             &["history", "show", "42", "--json"],
             &["permissions", "--json"],
+            // The hosted macOS release gate polls the daemon this way.
+            &["--socket", "/s", "permissions", "status", "--json"],
+            &["permissions", "status", "--socket", "/s", "--json"],
             &["kwin-capture", "on", "--override-portal-deny"],
             &["dump-docs", "--type", "cli", "-p"],
             &["telemetry", "inspect", "cua_driver_cli_completed", "--json"],

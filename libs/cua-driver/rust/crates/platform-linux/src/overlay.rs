@@ -821,12 +821,10 @@ pub async fn animate_cursor_to_target_for(
     seed_start_if_unplaced(&key, x, y);
     let should_animate = {
         let guard = RENDER.lock().unwrap();
-        matches!(
-            guard.as_ref().and_then(|m| m.cursors.get(&key)),
-            Some(rs) if rs.core.cfg.enabled
-                && rs.core.visible
-                && rs.core.placed
-        )
+        guard
+            .as_ref()
+            .and_then(|m| m.cursors.get(&key))
+            .is_some_and(|rs| rs.core.animates())
     };
     if !should_animate {
         return;

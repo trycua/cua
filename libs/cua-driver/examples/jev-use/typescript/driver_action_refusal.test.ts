@@ -53,7 +53,7 @@ async function errorFor(data: unknown, flag = false): Promise<DriverToolError> {
   return caught;
 }
 function recoveryCandidate(tool = 'click', delivery = 'background') {
-  return { tool, arguments: { delivery_mode: delivery } } as Parameters<typeof backgroundRefusalCode>[0];
+  return { tool, arguments: { delivery_mode: delivery } } as unknown as Parameters<typeof backgroundRefusalCode>[0];
 }
 
 test('status refusal preserves top-level code and escalation', async () => {

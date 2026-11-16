@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.52.9](https://github.com/trycua/cua/compare/cua-driver-rs-v0.52.8...cua-driver-rs-v0.52.9) (2026-11-16)
+
+
+### Bug Fixes
+
+* **cua-driver:** list Windows windows without UI Automation ([#7963](https://github.com/trycua/cua/issues/7963)) ([fb14e14](https://github.com/trycua/cua/commit/fb14e147baed6921f6a83b6791fb3864af0d6146))
+
 ## [0.52.8](https://github.com/trycua/cua/compare/cua-driver-rs-v0.52.7...cua-driver-rs-v0.52.8) (2026-11-16)
 
 

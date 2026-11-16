@@ -1512,8 +1512,10 @@ fn menu_bar_route(args: &Value, result: &ToolResult) -> Option<(Value, String)> 
         .and_then(Value::as_u64)
         .unwrap_or(stored.window_id);
     let mut menu_args = json!({ "pid": pid, "window_id": window_id, "path": path });
-    if let Some(session) = args.get("session") {
-        menu_args["session"] = session.clone();
+    for carried in ["session", crate::require_verified::REQUIRE_VERIFIED_ARG] {
+        if let Some(value) = args.get(carried) {
+            menu_args[carried] = value.clone();
+        }
     }
     let note = format!(
         "{token} is a menu-bar item, so it ran as invoke_menu {}",

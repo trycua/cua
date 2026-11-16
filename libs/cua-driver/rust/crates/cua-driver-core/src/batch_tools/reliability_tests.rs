@@ -385,8 +385,6 @@ async fn a_menu_bar_item_token_runs_as_invoke_menu() {
     let result = harness
         .run(json!({"steps": [{"tool": "click", "args": {"pid": 80, "window_id": 90, "element_token": "s0000a0e1:771", "fail_message": refused}}]}))
         .await;
-    // The probe invoke_menu carries no action record, so only the routing
-    // is checked here; the real tool reports its own outcome.
     let menu = harness.last("invoke_menu");
     assert_eq!(menu["path"], json!(["Sheet", "Navigate", "To Next Sheet"]));
     assert_eq!(
@@ -398,6 +396,36 @@ async fn a_menu_bar_item_token_runs_as_invoke_menu() {
         "{}",
         text(&result)
     );
+}
+
+/// A strict click rerouted to invoke_menu stays strict: the menu route
+/// cannot confirm itself, so the batch stops with action_unverified instead
+/// of carrying on.
+#[tokio::test]
+async fn a_strict_menu_bar_click_stays_strict_as_invoke_menu() {
+    let harness = Harness::new();
+    crate::window_state_view::remember_for_test(
+        "s0000a0e2",
+        80,
+        90,
+        "- [0] AXWindow \"Doc\"\n- [27] AXMenuBar\n  - [700] AXMenuBarItem \"Sheet\"\n    - [701] AXMenu\n      - [771] AXMenuItem \"To Next Sheet\"\n",
+    );
+    let refused = "Background input refused (element_outside_target_window): the addressed element could not be proven to belong to window 90";
+    let result = harness
+        .run(json!({"steps": [
+            {"tool": "click", "args": {"pid": 80, "window_id": 90, "element_token": "s0000a0e2:771",
+                "fail_message": refused, "require_verified": true}},
+            {"tool": "press_key", "args": {"pid": 80, "key": "a"}},
+        ]}))
+        .await;
+    assert_eq!(harness.hits("invoke_menu"), 1);
+    assert_eq!(result.is_error, Some(true), "{}", text(&result));
+    let structured = result.structured_content.unwrap();
+    assert_eq!(
+        structured["steps"][0]["code"], "action_unverified",
+        "{structured:#}"
+    );
+    assert_eq!(harness.hits("press_key"), 0, "the batch stops at the step");
 }
 
 // ── stale element targets ────────────────────────────────────────────────

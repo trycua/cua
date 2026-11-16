@@ -44,6 +44,9 @@ impl Tool for Probe {
             ToolResult::error(format!("{} refused: probe asked to fail", self.def.name))
         } else if let Some(summary) = args["summary"].as_str() {
             ToolResult::text(summary.to_owned())
+        } else if self.def.name == "invoke_menu" {
+            // As the macOS tool does: delivered through AX, not read back.
+            ToolResult::text("invoke_menu done").with_structured(json!({"path": "ax"}))
         } else {
             ToolResult::text(format!("{} done", self.def.name))
         }

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.8](https://github.com/trycua/cua/compare/sandbox-v0.11.7...sandbox-v0.11.8) (2026-11-16)
+
+
+### Bug Fixes
+
+* **sandbox:** honor shell timeout on Android ADB transport ([#7981](https://github.com/trycua/cua/issues/7981)) ([bf75fc9](https://github.com/trycua/cua/commit/bf75fc924950f760cdab877ae99e9bb01a865575))
+
 ## [0.11.7](https://github.com/trycua/cua/compare/sandbox-v0.11.6...sandbox-v0.11.7) (2026-11-15)
 
 

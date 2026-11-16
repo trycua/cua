@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.38.0](https://github.com/trycua/cua/compare/cua-spaces-v0.37.2...cua-spaces-v0.38.0) (2026-11-16)
+
+
+### Features
+
+* **cua-spaces:** eject the installer disk image after a drag install ([#4567](https://github.com/trycua/cua/issues/4567)) ([baf720c](https://github.com/trycua/cua/commit/baf720c2bf06da59bc938a4c331c00d496d7db93))
+
+
+### Bug Fixes
+
+* **spaces:** the Space's viewer waits for its first picture only while the window can be seen ([#6973](https://github.com/trycua/cua/issues/6973)) ([05fece5](https://github.com/trycua/cua/commit/05fece5da50377802b840621e1b782cbf433b22e))
+
+## [0.37.2](https://github.com/trycua/cua/compare/cua-spaces-v0.37.1...cua-spaces-v0.37.2) (2026-11-16)
+
+
+### Bug Fixes
+
+* **cua-cli:** say containers accept --network none under the Secure default ([#7990](https://github.com/trycua/cua/issues/7990)) ([3a0b44f](https://github.com/trycua/cua/commit/3a0b44fc40504ed146ff98dc06ced0d767d936b0))
+* **cua-sdk:** check image-pull free space on the engine's data root ([#7989](https://github.com/trycua/cua/issues/7989)) ([0efaeeb](https://github.com/trycua/cua/commit/0efaeeb15e4e0324c417c45ed9a31f0d9b802414))
+
+## [0.37.1](https://github.com/trycua/cua/compare/cua-spaces-v0.37.0...cua-spaces-v0.37.1) (2026-11-16)
+
+
+### Bug Fixes
+
+* **cua-sdk:** keep HTTP MCP reply waits cancellable ([#7980](https://github.com/trycua/cua/issues/7980)) ([d735f38](https://github.com/trycua/cua/commit/d735f383d43a2abecc100c08be23c4540f4cba95))
+
+## [0.37.0](https://github.com/trycua/cua/compare/cua-spaces-v0.36.27...cua-spaces-v0.37.0) (2026-11-16)
+
+
+### Features
+
+* **spaces:** delete one or all notifications, and prune old read ones ([#7396](https://github.com/trycua/cua/issues/7396)) ([5fe2ca9](https://github.com/trycua/cua/commit/5fe2ca9a4715469a467c65e04ce7ca0a7b44a64d))
+
+
+### Bug Fixes
+
+* **agents:** install Hermes dependencies in macOS spaces ([#7978](https://github.com/trycua/cua/issues/7978)) ([a090ad5](https://github.com/trycua/cua/commit/a090ad5f5e7f3333b0c5649ff96ea1e34c607ac5))
+* **cua-spaces:** compile with reduced feature sets ([#4846](https://github.com/trycua/cua/issues/4846)) ([c871171](https://github.com/trycua/cua/commit/c8711718ebc2f4aad364caf3daed74631deab5fa))
+
 ## [0.36.27](https://github.com/trycua/cua/compare/cua-spaces-v0.36.26...cua-spaces-v0.36.27) (2026-11-16)
 
 

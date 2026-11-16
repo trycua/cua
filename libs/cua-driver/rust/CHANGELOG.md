@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.52.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.52.3...cua-driver-rs-v0.52.4) (2026-11-16)
+
+
+### Bug Fixes
+
+* **cua-driver:** bound private-worker shutdown from admission through exit ([#7646](https://github.com/trycua/cua/issues/7646)) ([5bc00e5](https://github.com/trycua/cua/commit/5bc00e554e3e8a2f4feaba92524547492a6e4161))
+* **cua-driver:** keep a native sheet's buttons in a budget-limited macOS read ([#7614](https://github.com/trycua/cua/issues/7614)) ([bc6e85d](https://github.com/trycua/cua/commit/bc6e85dae4fc94740b85c890a707d90399721482))
+
+## [0.52.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.52.2...cua-driver-rs-v0.52.3) (2026-11-16)
+
+
+### Bug Fixes
+
+* **cua-driver:** bind window screenshots on the nested cua-compositor ([#7890](https://github.com/trycua/cua/issues/7890)) ([5fa8992](https://github.com/trycua/cua/commit/5fa899214e263835c90bd1b1850b590639e57345))
+
 ## [0.52.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.52.1...cua-driver-rs-v0.52.2) (2026-11-15)
 
 

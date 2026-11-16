@@ -1770,6 +1770,24 @@ mod tests {
     }
 
     #[test]
+    fn a_display_only_row_is_never_an_action_target() {
+        let mut caption = element(4, "AXStaticText", "Total");
+        caption["display_only"] = json!(true);
+        let total = ElementSpec {
+            name: Some("Total".into()),
+            action: Some("click"),
+            ..Default::default()
+        };
+        let alone = read(vec![caption.clone()], "");
+        assert_eq!(pick(&alone, &total).unwrap_err().code, "not_found");
+        let with_control = read(vec![caption, element(5, "AXButton", "Total")], "");
+        assert_eq!(
+            pick(&with_control, &total).unwrap().element["element_index"],
+            5
+        );
+    }
+
+    #[test]
     fn a_miss_lists_labels_sharing_a_word_first_across_roles() {
         // v036: "Create event" had become "Update event"; the miss listed
         // the first five buttons instead.

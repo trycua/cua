@@ -4,7 +4,7 @@ Next steps:
   1. Connect your agents (Claude Code, Codex and Cursor, if installed):
        {{BINARY}} connect
      Other agents (hermes, antigravity, openclaw, opencode, pi, prime-agent,
-     qwen, droid, zcode): {{BINARY}} mcp-config --client <name>
+     qwen, droid, zcode, deepseek-harness): {{BINARY}} mcp-config --client <name>
      Muse Code and GitHub Copilot CLI: see the docs link below.
 
   2. Grant permissions (macOS: Accessibility + Screen Recording):

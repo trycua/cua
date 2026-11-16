@@ -141,6 +141,20 @@ fn bundle_root_of_executable(path: &str) -> Option<&str> {
     Some(&path[..at + ".app".len()])
 }
 
+/// Whether `pid` runs from an app bundle that carries
+/// `Electron Framework.framework`.
+pub fn bundles_electron(pid: i32) -> bool {
+    path_of_pid(pid).is_some_and(|path| executable_bundles_electron(&path))
+}
+
+fn executable_bundles_electron(path: &str) -> bool {
+    bundle_root_of_executable(path).is_some_and(|root| {
+        std::path::Path::new(root)
+            .join("Contents/Frameworks/Electron Framework.framework")
+            .exists()
+    })
+}
+
 /// Does this bundle declare itself a background/agent process — the
 /// `NSApplicationActivationPolicyRegular` filter, read from the bundle instead
 /// of from AppKit's cache.
@@ -1378,8 +1392,8 @@ mod tests {
         assert_eq!(super::get_app_name_for_pid(pid), Some(expected));
     }
     use super::{
-        all_pids, bundle_root_of_executable, finder_folder_handoff, merge_app_lists, path_of_pid,
-        running_apps_from_processes, AppInfo,
+        all_pids, bundle_root_of_executable, bundles_electron, executable_bundles_electron,
+        finder_folder_handoff, merge_app_lists, path_of_pid, running_apps_from_processes, AppInfo,
     };
     use std::collections::HashSet;
 
@@ -1432,6 +1446,21 @@ mod tests {
             .to_string_lossy()
             .into_owned();
         assert!(super::locate_by_name(&missing).is_err());
+    }
+
+    #[test]
+    fn electron_is_recognised_by_the_framework_in_its_bundle() {
+        assert!(!bundles_electron(std::process::id() as i32));
+        let root = std::env::temp_dir().join(format!("cua-electron-shape-{}", std::process::id()));
+        let exe = root.join("Fake.app/Contents/MacOS/Fake");
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        assert!(!executable_bundles_electron(exe.to_str().unwrap()));
+        std::fs::create_dir_all(
+            root.join("Fake.app/Contents/Frameworks/Electron Framework.framework"),
+        )
+        .unwrap();
+        assert!(executable_bundles_electron(exe.to_str().unwrap()));
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

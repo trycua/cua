@@ -8,7 +8,7 @@
     "additionalProperties": false,
     "properties": {
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -37,7 +37,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -47,7 +47,7 @@
    "read_only": true
   },
   {
-   "description": "Snapshot a window: the accessibility tree plus a screenshot. By default the tree is ONE compact Markdown rendering (`tree_format:\"markdown\"`): a row `[N]` is addressed with `element_token` `<snapshot_id>:N`, where `snapshot_id` is in the response header and in structuredContent. `tree_format:\"elements\"` returns the structured `elements` array instead (`element_index`, `element_token`, `role`, `label`, `value`, `actions`, `frame`, `parent_index`, `depth`); `\"both\"` returns both (about twice the size). Pass the token to click, type_text, press_key, etc.\n\nSTART NARROW: a read walks at most 250 nodes by default and says `Tree truncated at max_elements=…` (`truncated:true`) when it stops; raise `max_elements`, or use `query` (case-insensitive substring; matching rows plus ancestors) and `max_depth`. Indices and tokens stay valid for the whole snapshot. `verbose:true` adds `_note` and the full `background_input` report; `full_output:true` restores the previous full response (both representations, all metadata, ≤2 000 nodes).\n\nDIFF READS (use them for every re-read after acting): `since:\"latest\"`, or `since:<snapshot_id>` from an earlier read of the same window, returns only what changed: `+` added, `~` changed, `-` removed rows (removed ids are the old snapshot's), a `reindexed:` line if indices shifted, or `no change since …; focused element is …`. The response carries a NEW snapshot_id: use it in tokens. An unknown, expired, other-window or differently-scoped (query/max_elements/max_depth) `since` falls back to a full read; `since_status` says why.\n\nA new snapshot of the same (pid, window_id) replaces the previous one and stales its tokens (`invalidated_snapshot_ids`). `include_screenshot:false` returns the tree only and keeps the last screenshot's pixel frame while the window keeps its size; `include_accessibility_tree:false` returns only the screenshot and keeps the current snapshot's rows and tokens valid (use it, not `max_elements:1`, when you just need to look); adding `display_only:true` (live previews) also leaves the pixel frame alone. The tree can lie on some surfaces (Electron, Catalyst, virtualized rows with `h:1` frames): cross-check the screenshot, and use pixel x,y at action time only for elements missing from the tree.\n\nRefusals: `window_id_not_found`; `window_owner_pid_mismatch` names the real `owner_pid` (sandboxed Open/Save panels belong to a panel service). `degraded_reason` `ax_window_unresolved` or `ax_app_launching` (the latter with `truncation_reason: app_lookup_timeout`) means an empty tree: re-snapshot, or act with `delivery_mode:\"foreground\"`. `degraded_reason` `screen_locked` means the screen saver, display sleep or a lock hid every window from accessibility: wake and unlock the Mac, then re-snapshot; foreground input would reach the lock screen. `px_frame_mismatch` / `px_capture_unavailable` omit the unprovable screenshot; the AX payload stays valid.",
+   "description": "Snapshot a window: the accessibility tree plus a screenshot. By default the tree is ONE compact Markdown rendering (`tree_format:\"markdown\"`): a row `[N]` is addressed with `element_token` `<snapshot_id>:N`, where `snapshot_id` is in the response header and in structuredContent. `tree_format:\"elements\"` returns the structured `elements` array instead (`element_index`, `element_token`, `role`, `label`, `value`, `actions`, `frame`, `parent_index`, `depth`); `\"both\"` returns both (about twice the size). Pass the token to click, type_text, press_key, etc.\n\nSTART NARROW: a read walks at most 250 nodes by default and says `Tree truncated at max_elements=…` (`truncated:true`) when it stops; raise `max_elements`, or use `query` (case-insensitive substring, `a|b` for either; matching rows plus ancestors, or a `0 of N elements match` line) and `max_depth`. Indices and tokens stay valid for the whole snapshot. `verbose:true` adds `_note` and the full `background_input` report; `full_output:true` restores the previous full response (both representations, all metadata, ≤2 000 nodes).\n\nDIFF READS (use them for every re-read after acting): `since:\"latest\"`, or `since:<snapshot_id>` from an earlier read of the same window, returns only what changed: `+` added, `~` changed, `-` removed rows (removed ids are the old snapshot's), a `reindexed:` line if indices shifted, or `no change since …; focused element is …`. The response carries a NEW snapshot_id: use it in tokens. An unknown, expired, other-window or differently-scoped (query/max_elements/max_depth) `since` falls back to a full read; `since_status` says why.\n\nA new snapshot of the same (pid, window_id) replaces this session's previous one and stales its tokens (`invalidated_snapshot_ids`); another session's read leaves them valid. `include_screenshot:false` returns the tree only and keeps the last screenshot's pixel frame while the window keeps its size; `include_accessibility_tree:false` returns only the screenshot and keeps the current snapshot's rows and tokens valid (use it, not `max_elements:1`, when you just need to look); adding `display_only:true` (live previews) also leaves the pixel frame alone. The tree can lie on some surfaces (Electron, Catalyst, virtualized rows with `h:1` frames): cross-check the screenshot, and use pixel x,y at action time only for elements missing from the tree.\n\nRefusals: `window_id_not_found`; `window_owner_pid_mismatch` names the real `owner_pid` (sandboxed Open/Save panels belong to a panel service). `degraded_reason` `ax_window_unresolved` or `ax_app_launching` (the latter with `truncation_reason: app_lookup_timeout`) means an empty tree: re-snapshot, or act with `delivery_mode:\"foreground\"`. `degraded_reason` `screen_locked` means the screen saver, display sleep or a lock hid every window from accessibility: wake and unlock the Mac, then re-snapshot; foreground input would reach the lock screen. `px_frame_mismatch` / `px_capture_unavailable` omit the unprovable screenshot; the AX payload stays valid.",
    "destructive": false,
    "idempotent": false,
    "input_schema": {
@@ -102,7 +102,7 @@
       "type": "integer"
      },
      "query": {
-      "description": "Case-insensitive substring filter: returns matching rows plus ancestors; element_index values are not renumbered. Try this before a full read.",
+      "description": "Case-insensitive substring filter; `a|b` matches rows containing either. Returns matching rows plus ancestors, or says `0 of N elements match` when none does; element_index values are not renumbered. Try this before a full read.",
       "type": "string"
      },
      "screenshot_format": {
@@ -271,7 +271,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session. This\nfield never selects capture modality or authorization.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. This field never selects capture modality or authorization.",
       "type": "string"
      },
      "stable_samples": {
@@ -330,7 +330,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "urls": {
@@ -362,7 +362,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -386,7 +386,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "window_id": {
@@ -420,7 +420,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it.",
       "type": "string"
      },
      "width": {
@@ -488,7 +488,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it.",
       "type": "string"
      },
      "window_id": {
@@ -548,7 +548,7 @@
       "type": "string"
      },
      "element_token": {
-      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is \"s0000002a:11\" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of snapshot s0000002a is \"s0000002a:11\".",
       "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
@@ -568,7 +568,7 @@
       "type": "integer"
      },
      "post_action_wait": {
-      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "description": "\"none\" returns without waiting up to 300 ms for a new window, menu, dialog or foreground change; a change seen later is reported on the next action's result.",
       "enum": [
        "default",
        "none"
@@ -592,11 +592,9 @@
       "description": "Exact window (kind \"window\", with pid and window_id) or desktop (kind \"desktop\", with display_id). \"primary\" is the portable desktop target.",
       "properties": {
        "display_id": {
-        "description": "Display id. Required when kind is desktop; use \"primary\".",
         "type": "string"
        },
        "kind": {
-        "description": "window requires pid and window_id; desktop requires display_id.",
         "enum": [
          "window",
          "desktop"
@@ -604,12 +602,10 @@
         "type": "string"
        },
        "pid": {
-        "description": "Process id. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        },
        "window_id": {
-        "description": "Window id from list_windows. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        }
@@ -646,7 +642,7 @@
     "additionalProperties": false,
     "properties": {
      "delivery_mode": {
-      "description": "Best-effort-background ladder rung (default \"background\"). \"background\": inject without fronting or raising the target — no focus steal. \"foreground\": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with \"foreground\" only for the action that needs it.",
+      "description": "Default \"background\": no fronting or focus steal. \"foreground\": briefly front the target, act, then restore the prior app; the last resort when background did not land.",
       "enum": [
        "background",
        "foreground"
@@ -654,7 +650,7 @@
       "type": "string"
      },
      "element_token": {
-      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is \"s0000002a:11\" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of snapshot s0000002a is \"s0000002a:11\".",
       "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
@@ -663,7 +659,7 @@
       "type": "integer"
      },
      "post_action_wait": {
-      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "description": "\"none\" returns without waiting up to 300 ms for a new window, menu, dialog or foreground change; a change seen later is reported on the next action's result.",
       "enum": [
        "default",
        "none"
@@ -671,7 +667,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "window_id": {
@@ -701,7 +697,7 @@
     "additionalProperties": false,
     "properties": {
      "delivery_mode": {
-      "description": "Best-effort-background ladder rung (default \"background\"). \"background\": inject without fronting or raising the target — no focus steal. \"foreground\": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with \"foreground\" only for the action that needs it.",
+      "description": "Default \"background\": no fronting or focus steal. \"foreground\": briefly front the target, act, then restore the prior app; the last resort when background did not land.",
       "enum": [
        "background",
        "foreground"
@@ -709,7 +705,7 @@
       "type": "string"
      },
      "element_token": {
-      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is \"s0000002a:11\" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of snapshot s0000002a is \"s0000002a:11\".",
       "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
@@ -725,7 +721,7 @@
       "type": "integer"
      },
      "post_action_wait": {
-      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "description": "\"none\" returns without waiting up to 300 ms for a new window, menu, dialog or foreground change; a change seen later is reported on the next action's result.",
       "enum": [
        "default",
        "none"
@@ -733,7 +729,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "window_id": {
@@ -756,7 +752,7 @@
    "read_only": false
   },
   {
-   "description": "Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local screenshot pixels — the same space get_window_state returns. Top-left origin of the target's window.\n\nUse for: marquee/lasso selection, drag-and-drop, resizing via a handle, scrubbing a slider, repositioning a panel.\n\n`duration_ms` (default 500) is the wall-clock budget for the path between mouse-down and mouse-up; `steps` (default 20) is the number of intermediate mouseDragged events linearly interpolated along the path. Increase both for slower, more human drags; decrease for snap gestures.\n\n`modifier` keys (cmd/shift/option/ctrl) are held across the entire gesture.\n\nWhen `from_zoom` is true, coordinates are in the last zoom image for this pid; the driver maps them back to window coordinates before dispatching.\n\nA window-scoped drag (pid + window_id) runs in the background by default: the gesture is posted to that window, the real pointer does not move, and the user's frontmost window keeps focus. It works for controls that follow the drag events: sliders, canvases, and pointer-event widgets on web pages in Chrome. In an Electron window the driver sends the gesture from the app's main process, so pointer-capture widgets and HTML5 drag and drop also drop there. Elsewhere, a drag that starts a macOS drag-and-drop session (reordering a list by drag and drop, moving a file, HTML5 draggable content) cannot drop in the background, because macOS tracks those with the real pointer; the driver detects it, releases at once and returns background_unavailable with reason drag_and_drop_session. For a page in a browser tab already bound with get_browser_state, browser_pointer action:\"drag\" drives the same gesture through CDP with page refs. The result is not driver-verified: confirm with a screenshot or the accessibility tree, and only if nothing changed retry with delivery_mode:\"foreground\", which briefly fronts the window and moves the physical pointer. Limits and fallbacks: `get_guide({topic:\"drag\"})`.",
+   "description": "Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local screenshot pixels — the same space get_window_state returns. Top-left origin of the target's window.\n\nUse for: marquee/lasso selection, drag-and-drop, resizing via a handle, scrubbing a slider, repositioning a panel.\n\n`duration_ms` (default 500) is the wall-clock budget for the path between mouse-down and mouse-up; `steps` (default 20) is the number of intermediate mouseDragged events linearly interpolated along the path. Increase both for slower, more human drags; decrease for snap gestures.\n\n`modifier` keys (cmd/shift/option/ctrl) are held across the entire gesture.\n\nWhen `from_zoom` is true, coordinates are in the last zoom image for this pid; the driver maps them back to window coordinates before dispatching.\n\nA window-scoped drag (pid + window_id) runs in the background by default: the gesture is posted to that window, the real pointer does not move, and the user's frontmost window keeps focus. It works for controls that follow the drag events: sliders, canvases, and pointer-event widgets on web pages in Chrome. In an Electron window the driver sends the gesture from the app's main process, so pointer-capture widgets and HTML5 drag and drop also drop there. Elsewhere, a drag that starts a macOS drag-and-drop session (reordering a list by drag and drop, moving a file) holds the drop point until the session ends there. If the session is still open after that, the drop did not land and the result is background_unavailable with reason drag_and_drop_session. For a page in a browser tab already bound with get_browser_state, browser_pointer action:\"drag\" drives the same gesture through CDP with page refs. The result is not driver-verified: confirm with a screenshot or the accessibility tree, and only if nothing changed retry with delivery_mode:\"foreground\", which briefly fronts the window and moves the physical pointer. Limits and fallbacks: `get_guide({topic:\"drag\"})`.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
@@ -809,7 +805,7 @@
       "type": "integer"
      },
      "post_action_wait": {
-      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "description": "\"none\" returns without waiting up to 300 ms for a new window, menu, dialog or foreground change; a change seen later is reported on the next action's result.",
       "enum": [
        "default",
        "none"
@@ -826,7 +822,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "steps": {
@@ -840,11 +836,9 @@
       "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`).",
       "properties": {
        "display_id": {
-        "description": "Display id. Required when kind is desktop; use \"primary\".",
         "type": "string"
        },
        "kind": {
-        "description": "window requires pid and window_id; desktop requires display_id.",
         "enum": [
          "window",
          "desktop"
@@ -852,12 +846,10 @@
         "type": "string"
        },
        "pid": {
-        "description": "Process id. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        },
        "window_id": {
-        "description": "Window id from list_windows. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        }
@@ -913,7 +905,7 @@
       "type": "string"
      },
      "element_token": {
-      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is \"s0000002a:11\" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of snapshot s0000002a is \"s0000002a:11\".",
       "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
@@ -922,7 +914,7 @@
       "type": "integer"
      },
      "post_action_wait": {
-      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "description": "\"none\" returns without waiting up to 300 ms for a new window, menu, dialog or foreground change; a change seen later is reported on the next action's result.",
       "enum": [
        "default",
        "none"
@@ -947,11 +939,9 @@
       "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`).",
       "properties": {
        "display_id": {
-        "description": "Display id. Required when kind is desktop; use \"primary\".",
         "type": "string"
        },
        "kind": {
-        "description": "window requires pid and window_id; desktop requires display_id.",
         "enum": [
          "window",
          "desktop"
@@ -959,12 +949,10 @@
         "type": "string"
        },
        "pid": {
-        "description": "Process id. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        },
        "window_id": {
-        "description": "Window id from list_windows. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        }
@@ -1015,7 +1003,7 @@
       "type": "string"
      },
      "element_token": {
-      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is \"s0000002a:11\" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of snapshot s0000002a is \"s0000002a:11\".",
       "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
@@ -1035,7 +1023,7 @@
       "type": "integer"
      },
      "post_action_wait": {
-      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "description": "\"none\" returns without waiting up to 300 ms for a new window, menu, dialog or foreground change; a change seen later is reported on the next action's result.",
       "enum": [
        "default",
        "none"
@@ -1060,11 +1048,9 @@
       "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`).",
       "properties": {
        "display_id": {
-        "description": "Display id. Required when kind is desktop; use \"primary\".",
         "type": "string"
        },
        "kind": {
-        "description": "window requires pid and window_id; desktop requires display_id.",
         "enum": [
          "window",
          "desktop"
@@ -1072,12 +1058,10 @@
         "type": "string"
        },
        "pid": {
-        "description": "Process id. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        },
        "window_id": {
-        "description": "Window id from list_windows. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        }
@@ -1116,7 +1100,7 @@
     "additionalProperties": false,
     "properties": {
      "delivery_mode": {
-      "description": "Best-effort-background ladder rung (default \"background\"). \"background\": inject without fronting or raising the target — no focus steal. \"foreground\": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with \"foreground\" only for the action that needs it.",
+      "description": "Default \"background\": no fronting or focus steal. \"foreground\": briefly front the target, act, then restore the prior app; the last resort when background did not land.",
       "enum": [
        "background",
        "foreground"
@@ -1124,7 +1108,7 @@
       "type": "string"
      },
      "element_token": {
-      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is \"s0000002a:11\" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of snapshot s0000002a is \"s0000002a:11\".",
       "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
@@ -1141,7 +1125,7 @@
       "type": "integer"
      },
      "post_action_wait": {
-      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "description": "\"none\" returns without waiting up to 300 ms for a new window, menu, dialog or foreground change; a change seen later is reported on the next action's result.",
       "enum": [
        "default",
        "none"
@@ -1158,7 +1142,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "target": {
@@ -1166,11 +1150,9 @@
       "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`).",
       "properties": {
        "display_id": {
-        "description": "Display id. Required when kind is desktop; use \"primary\".",
         "type": "string"
        },
        "kind": {
-        "description": "window requires pid and window_id; desktop requires display_id.",
         "enum": [
          "window",
          "desktop"
@@ -1178,12 +1160,10 @@
         "type": "string"
        },
        "pid": {
-        "description": "Process id. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        },
        "window_id": {
-        "description": "Window id from list_windows. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        }
@@ -1215,14 +1195,14 @@
    "read_only": false
   },
   {
-   "description": "Set an element's value by `element_token`. A popup button / select dropdown: selects the menu item whose title or value matches `value` (case-insensitive). Safari `<select>` is set through the DOM; AppKit and Chromium popups list items only while open, so the menu is opened, the item pressed and the menu closed again (in the background the user's front window keeps key focus). An unknown value lists the options. Any other element: writes AXValue (sliders, steppers, date pickers, native text fields).\n\nA Finder file name cell (list or icon view, not being edited) is renamed through Finder's scripting interface with Finder left in the background, and the new name is read back from disk; the value is the full new name with its extension. macOS may prompt for Automation consent; with serve --no-automation-prompts, ungranted consent refuses with automation_consent_required. Finder's Get Info `Name` field is refused with `file_name_needs_rename`. For free-form text in web inputs use `type_text_chars`: WebKit ignores AXValue writes.",
+   "description": "Set an element's value by `element_token`. A popup button / select dropdown: selects the menu item whose title or value matches `value` (case-insensitive). Safari `<select>` is set through the DOM; AppKit and Chromium popups list items only while open, so the menu is opened, the item pressed and the menu closed again (in the background the user's front window keeps key focus). An unknown value lists the options. Any other element: writes AXValue (sliders, steppers, date pickers, native text fields).\n\nA LibreOffice Calc cell ignores AXValue writes, so set_value on a cell goes to it through the Name Box with keys posted to its window (Cmd+Shift+F5, the address, Return), types the value and Return (an empty value clears the cell), and reads the cell back into cell_value; the app stays in the background. On the Name Box itself the value is a cell address to go to. A value with Tab or Return is refused: one cell takes one entry.\n\nA Finder file name cell (list or icon view, not being edited) is renamed through Finder's scripting interface with Finder left in the background, and the new name is read back from disk; the value is the full new name with its extension. macOS may prompt for Automation consent; with serve --no-automation-prompts, ungranted consent refuses with automation_consent_required. Finder's Get Info `Name` field is refused with `file_name_needs_rename`. For free-form text in web inputs use `type_text_chars`: WebKit ignores AXValue writes.",
    "destructive": true,
    "idempotent": true,
    "input_schema": {
     "additionalProperties": false,
     "properties": {
      "element_token": {
-      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is \"s0000002a:11\" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of snapshot s0000002a is \"s0000002a:11\".",
       "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
@@ -1231,7 +1211,7 @@
       "type": "integer"
      },
      "post_action_wait": {
-      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "description": "\"none\" returns without waiting up to 300 ms for a new window, menu, dialog or foreground change; a change seen later is reported on the next action's result.",
       "enum": [
        "default",
        "none"
@@ -1299,7 +1279,7 @@
       "type": "string"
      },
      "element_token": {
-      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is \"s0000002a:11\" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of snapshot s0000002a is \"s0000002a:11\".",
       "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
@@ -1308,7 +1288,7 @@
       "type": "integer"
      },
      "post_action_wait": {
-      "description": "Whether the result waits for the post-action window-change report (default \"default\": up to 300 ms for a new window, menu, dialog or foreground change). \"none\" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "description": "\"none\" returns without waiting up to 300 ms for a new window, menu, dialog or foreground change; a change seen later is reported on the next action's result.",
       "enum": [
        "default",
        "none"
@@ -1333,11 +1313,9 @@
       "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`).",
       "properties": {
        "display_id": {
-        "description": "Display id. Required when kind is desktop; use \"primary\".",
         "type": "string"
        },
        "kind": {
-        "description": "window requires pid and window_id; desktop requires display_id.",
         "enum": [
          "window",
          "desktop"
@@ -1345,12 +1323,10 @@
         "type": "string"
        },
        "pid": {
-        "description": "Process id. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        },
        "window_id": {
-        "description": "Window id from list_windows. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        }
@@ -1394,7 +1370,7 @@
       "type": "boolean"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it.",
       "type": "string"
      }
     },
@@ -1420,7 +1396,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it.",
       "type": "string"
      },
      "text": {
@@ -1442,7 +1418,7 @@
     "additionalProperties": false,
     "properties": {
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -1468,7 +1444,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -1485,7 +1461,7 @@
     "additionalProperties": false,
     "properties": {
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -1523,7 +1499,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "target": {
@@ -1531,11 +1507,9 @@
       "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`).",
       "properties": {
        "display_id": {
-        "description": "Display id. Required when kind is desktop; use \"primary\".",
         "type": "string"
        },
        "kind": {
-        "description": "window requires pid and window_id; desktop requires display_id.",
         "enum": [
          "window",
          "desktop"
@@ -1543,12 +1517,10 @@
         "type": "string"
        },
        "pid": {
-        "description": "Process id. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        },
        "window_id": {
-        "description": "Window id from list_windows. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        }
@@ -1809,7 +1781,7 @@
       "type": "boolean"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -1833,7 +1805,7 @@
       "type": "array"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "skip": {
@@ -1857,7 +1829,7 @@
     "additionalProperties": false,
     "properties": {
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -1867,7 +1839,7 @@
    "read_only": true
   },
   {
-   "description": "Update cua-driver-rs configuration. Changes to max_image_dimension take effect immediately. The experimental_pip keys are persisted to ~/.cua-driver/config.json and take effect on the next daemon restart (the PiP backend is initialised once at startup).\n\nNote: capture_mode is a per-call param (on get_window_state / click), not a stored setting. Capture modality is selected by each action's target; the old capture_scope config key is retired.\n\nCursor motion defaults: cursor.motion.style, cursor.motion.timing and cursor.motion.effects.<trail|glow|magnet|ripple|squish> are saved to ~/.cua-driver/config.json and seed sessions started afterwards. start_session cursor_motion and set_agent_cursor_motion override them; reduced motion always wins.\n\nAgent cursor badge: cursor.badges is minimal (default), verbose or off, saved to ~/.cua-driver/config.json and applied to every cursor at once.\n\nAgent cursor extras: cursor.float (float at rest and while moving) and cursor.halo (soft glow) are on (default), off or default; cursor.rotate is heading (default), lean, off or default. The cursor never draws action marks (cursor.marks is retired and ignored). All are saved to ~/.cua-driver/config.json and applied to every cursor at once.",
+   "description": "Update cua-driver-rs configuration. Changes to max_image_dimension take effect immediately.\n\nNote: capture_mode is a per-call param (on get_window_state / click), not a stored setting. Capture modality is selected by each action's target; the old capture_scope config key is retired.\n\nCursor motion defaults: cursor.motion.style, cursor.motion.timing and cursor.motion.effects.<trail|glow|magnet|ripple|squish> are saved to ~/.cua-driver/config.json and seed sessions started afterwards. start_session cursor_motion and set_agent_cursor_motion override them; reduced motion always wins.\n\nAgent cursor badge: cursor.badges is minimal (default), verbose or off, saved to ~/.cua-driver/config.json and applied to every cursor at once.\n\nAgent cursor extras: cursor.float (float at rest and while moving) and cursor.halo (soft glow) are on (default), off or default; cursor.rotate is heading (default), lean, off or default. The cursor never draws action marks (cursor.marks is retired and ignored). All are saved to ~/.cua-driver/config.json and applied to every cursor at once.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -1998,14 +1970,6 @@
       ],
       "type": "string"
      },
-     "experimental_pip": {
-      "description": "Enable the experimental picture-in-picture preview window. Applies on next daemon restart.",
-      "type": "boolean"
-     },
-     "experimental_pip_geometry": {
-      "description": "PiP window size + optional position in `WxH` or `WxH+X+Y` form (e.g. `320x200+24+24`). Applies on next daemon restart.",
-      "type": "string"
-     },
      "fast_path": {
       "description": "Experimental fast path (default off). shadow: check cached targets at act time and report would-refuse verdicts; guard: refuse an action whose target changed since it was read (target_changed); on: guard, plus a small delta in each action result and tree-only re-reads. Runtime only, not saved; env CUA_DRIVER_FAST_PATH seeds it at start.",
       "enum": [
@@ -2021,7 +1985,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -2038,7 +2002,7 @@
     "additionalProperties": false,
     "properties": {
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -2059,7 +2023,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "window_id": {
@@ -2126,7 +2090,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "window_id": {
@@ -2171,7 +2135,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
       "type": "string"
      },
      "snapshot_format": {
@@ -2246,7 +2210,7 @@
       "type": "object"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
       "type": "string"
      },
      "strategy": {
@@ -2284,7 +2248,7 @@
     "additionalProperties": true,
     "properties": {
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
       "type": "string"
      },
      "tab_id": {
@@ -2308,6 +2272,44 @@
     "type": "object"
    },
    "name": "browser_navigate",
+   "read_only": false
+  },
+  {
+   "description": "Apply or clear the standard prefers-reduced-motion media emulation for one exactly-bound driver-owned browser tab. This is an explicit experimental performance/accessibility policy: it does not inject CSS, freeze timers, video, canvas, or WebGL, and refuses existing user profiles in v0.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "mode": {
+      "description": "reduce emulates prefers-reduced-motion: reduce; default clears the emulated media-feature override.",
+      "enum": [
+       "reduce",
+       "default"
+      ],
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "type": "string"
+     },
+     "tab_id": {
+      "description": "Opaque tab id from get_browser_state (session-scoped).",
+      "type": "string"
+     },
+     "target_id": {
+      "description": "Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id).",
+      "type": "string"
+     }
+    },
+    "required": [
+     "target_id",
+     "tab_id",
+     "mode"
+    ],
+    "type": "object"
+   },
+   "name": "browser_motion_policy",
    "read_only": false
   },
   {
@@ -2339,7 +2341,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
       "type": "string"
      },
      "tab_id": {
@@ -2392,7 +2394,7 @@
       "type": "boolean"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
       "type": "string"
      },
      "tab_id": {
@@ -2435,7 +2437,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
       "type": "string"
      },
      "tab_id": {
@@ -2495,7 +2497,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
       "type": "string"
      },
      "tab_id": {
@@ -2539,7 +2541,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
       "type": "string"
      },
      "tab_id": {
@@ -2725,7 +2727,7 @@
       "type": "array"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "state_timeout_ms": {
@@ -2752,7 +2754,7 @@
     "additionalProperties": false,
     "properties": {
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -2769,7 +2771,7 @@
     "additionalProperties": false,
     "properties": {
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -2796,7 +2798,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "stop_on_error": {
@@ -2824,7 +2826,7 @@
       "type": "boolean"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -3005,43 +3007,6 @@
    "read_only": false
   },
   {
-   "description": "Deprecated compatibility tool for legacy capture-scope sessions. New callers select window or desktop modality on each action. No deescalate_session tool exists.",
-   "destructive": false,
-   "idempotent": false,
-   "input_schema": {
-    "additionalProperties": true,
-    "properties": {
-     "detail": {
-      "description": "Optional bounded diagnostic detail. Never use secrets or page content.",
-      "maxLength": 200,
-      "type": "string"
-     },
-     "reason": {
-      "description": "Why the window-scoped attempt failed and desktop capture is needed.",
-      "enum": [
-       "ax_tree_pixel_mismatch",
-       "background_delivery_failed",
-       "foreground_ineffective",
-       "no_window_target",
-       "other"
-      ],
-      "type": "string"
-     },
-     "session": {
-      "description": "Public label of the legacy capture-scope session to escalate.",
-      "type": "string"
-     }
-    },
-    "required": [
-     "session",
-     "reason"
-    ],
-    "type": "object"
-   },
-   "name": "escalate_session",
-   "read_only": false
-  },
-  {
    "description": "Read content-free lifecycle, cursor, recording, and idle status for one session visible to this authenticated transport. Omit `session` to inspect its implicit session.",
    "destructive": false,
    "idempotent": true,
@@ -3083,24 +3048,6 @@
    "read_only": true
   },
   {
-   "description": "Deprecated compatibility alias that reads a live legacy session's capture policy. Use get_session for lifecycle state.",
-   "destructive": false,
-   "idempotent": true,
-   "input_schema": {
-    "additionalProperties": true,
-    "properties": {
-     "session": {
-      "description": "Optional public label. When omitted, inspect the caller's attached\nimplicit session.",
-      "type": "string"
-     }
-    },
-    "required": [],
-    "type": "object"
-   },
-   "name": "get_session_state",
-   "read_only": true
-  },
-  {
    "description": "End one visible lifecycle session and run its cursor, recording, configuration, and other cleanup hooks exactly once. Omit `session` to end the authenticated transport's implicit session. Idempotent.",
    "destructive": true,
    "idempotent": true,
@@ -3126,7 +3073,7 @@
     "additionalProperties": false,
     "properties": {
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "topic": {
@@ -3177,11 +3124,11 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "steps": {
-      "description": "Ordered actions. Execution stops at the first failing step. Each step is {tool, args} or {<tool>: args}, plus optional wait_for / expect / timeout_ms; a step may also be only a wait_for or expect check.",
+      "description": "Ordered actions. Execution stops at the first failing step. Each step is {tool, args}, {tool, <argument fields beside tool>} or {<tool>: args}, plus optional wait_for / expect / timeout_ms; a step may also be only a wait_for or expect check.",
       "items": {
        "additionalProperties": true,
        "properties": {
@@ -3267,7 +3214,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "timeout_ms": {
@@ -3293,7 +3240,7 @@
     "additionalProperties": false,
     "properties": {
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -3321,7 +3268,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -3380,7 +3327,7 @@
       "type": "object"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },

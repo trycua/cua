@@ -230,7 +230,7 @@ fn def() -> &'static ToolDef {
             "type": "object",
             "required": ["key"],
             "properties": {
-                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it." },
+                "session": cua_driver_core::tool_schema::session_schema(),
                 "pid": { "type": "integer", "description": "Target process ID." },
                 "key": { "type": "string", "description": "Key name." },
                 "modifiers": {
@@ -273,6 +273,7 @@ impl Tool for PressKeyTool {
             let key = input.key;
             let modifiers = input.modifiers.unwrap_or_default();
             let key_for_input = key.clone();
+            super::cursor_tools::position_desktop_keyboard_cursor(&self.state, &args).await;
             let prompt = PromptInput::from_args(&args);
             let result = tokio::task::spawn_blocking(move || {
                 let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();

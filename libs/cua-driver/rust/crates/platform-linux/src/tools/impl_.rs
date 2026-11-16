@@ -361,12 +361,13 @@ impl Default for DriverConfig {
 /// invocations — matching the macOS daemon's startup load. See #2008.
 pub fn load_driver_config() -> DriverConfig {
     let mut cfg = DriverConfig::default();
-    if let Some(v) =
-        pip_preview::read_config_value("capture_mode").and_then(|v| v.as_str().map(str::to_owned))
+    if let Some(v) = cua_driver_core::config_file::read_config_value("capture_mode")
+        .and_then(|v| v.as_str().map(str::to_owned))
     {
         cfg.capture_mode = v;
     }
-    if let Some(v) = pip_preview::read_config_value("max_image_dimension").and_then(|v| v.as_u64())
+    if let Some(v) = cua_driver_core::config_file::read_config_value("max_image_dimension")
+        .and_then(|v| v.as_u64())
     {
         if let Ok(v32) = u32::try_from(v) {
             cfg.max_image_dimension = v32;
@@ -3348,15 +3349,28 @@ pub(crate) fn hyprland_input_result(result: anyhow::Result<Value>, foreground: b
         "background_unavailable"
     };
     match result {
-        Ok(value) if value["ok"] == true => ToolResult::text(
-            "Dispatched exact-target Hyprland input; application effect is unverifiable.",
-        )
-        .with_action_record(
-            record(ActionEffect::Unverifiable)
-                .actual_delivery(actual)
-                .build()
-                .expect("isolated input record is valid"),
-        ),
+        Ok(value) if value["ok"] == true => {
+            let outcome = record(ActionEffect::Unverifiable).actual_delivery(actual);
+            if value["admission"] == "user" {
+                let detail = "Admitted by the user's hyprland-apps.txt, not qualified by Cua.";
+                ToolResult::text(format!(
+                    "Dispatched exact-target Hyprland input; application effect is unverifiable. \
+                     {detail}"
+                ))
+                .with_structured(json!({"ok": true, "admission": "user"}))
+                .with_action_record(
+                    outcome
+                        .detail(detail)
+                        .build()
+                        .expect("isolated input record is valid"),
+                )
+            } else {
+                ToolResult::text(
+                    "Dispatched exact-target Hyprland input; application effect is unverifiable.",
+                )
+                .with_action_record(outcome.build().expect("isolated input record is valid"))
+            }
+        }
         Ok(mut value) => {
             if foreground && value["code"] == "foreground_partial_unknown" {
                 return hyprland_input_result(
@@ -3516,7 +3530,7 @@ pub(crate) fn spawn_isolated_hyprland(
         snapshot.transport,
         snapshot.client_kind,
     )
-    .map_err(isolated_hyprland_refusal)?;
+    .map_err(|refusal| isolated_hyprland_refusal(refusal.message()))?;
     let (guard, cancellation) = crate::wayland::hyprland_input::ActionCancellation::invocation();
     let dispatch = tokio::task::spawn_blocking(move || {
         let _lifecycle = lifecycle;
@@ -3865,6 +3879,29 @@ fn failed_session_end_release_remains_retryable_and_bounded() {
         .unwrap()
         .insert(session_id.to_owned(), hold)
         .is_none());
+}
+
+#[cfg(test)]
+#[test]
+fn a_user_admitted_dispatch_says_the_user_qualified_it() {
+    let user = isolated_hyprland_result(Ok(json!({"ok": true, "admission": "user"})));
+    assert_eq!(user.is_error, None);
+    assert_eq!(
+        user.structured_content.as_ref().unwrap()["admission"],
+        "user"
+    );
+    assert!(serde_json::to_string(&user.content)
+        .unwrap()
+        .contains("not qualified by Cua"));
+    assert!(user
+        .action_record
+        .unwrap()
+        .detail
+        .unwrap()
+        .contains("hyprland-apps.txt"));
+    let driver = isolated_hyprland_result(Ok(json!({"ok": true})));
+    assert!(driver.structured_content.is_none());
+    assert!(driver.action_record.unwrap().detail.is_none());
 }
 
 #[cfg(test)]
@@ -4273,6 +4310,145 @@ pub(crate) async fn desktop_input_space() -> anyhow::Result<crate::wayland::Desk
     })
     .await
     .map_err(|error| anyhow::anyhow!("task error: {error}"))?
+}
+
+pub(crate) async fn prepare_desktop_click_cursor(
+    layer_shell: bool,
+    wayland_arrival: impl std::future::Future<Output = anyhow::Result<()>>,
+    best_effort_reveal: impl std::future::Future<Output = ()>,
+) -> anyhow::Result<()> {
+    if layer_shell {
+        wayland_arrival.await
+    } else {
+        best_effort_reveal.await;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod desktop_click_arrival_tests {
+    use super::prepare_desktop_click_cursor;
+    use std::cell::Cell;
+
+    #[tokio::test]
+    async fn click_tool_delivers_when_wayland_overlay_probe_cannot_connect() {
+        const CHILD: &str = "CUA_TEST_UNAVAILABLE_CLICK_OVERLAY";
+        if std::env::var_os(CHILD).is_none() {
+            // Isolate process-wide Wayland environment and the cached probe from
+            // other tests. A nonexistent socket reproduces available() == false.
+            let directory = tempfile::tempdir().unwrap();
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "tools::impl_::desktop_click_arrival_tests::click_tool_delivers_when_wayland_overlay_probe_cannot_connect",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .env(crate::wayland::ENABLE_WAYLAND_ENV, "1")
+                .env("WAYLAND_DISPLAY", directory.path().join("missing-compositor"))
+                .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
+                .env_remove("NIRI_SOCKET")
+                .env_remove("CUA_INJECT_SOCKET")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            return;
+        }
+        assert!(crate::wayland::is_wayland());
+        assert!(!crate::wayland::overlay::available());
+        crate::wayland::overlay::set_config(cursor_overlay::CursorConfig::default());
+        let reveals = Cell::new(0);
+        let clicks = Cell::new(0);
+        prepare_desktop_click_cursor(
+            crate::overlay::wayland_overlay_backend()
+                == crate::overlay::WaylandOverlayBackend::LayerShell,
+            async { panic!("unavailable layer-shell must not gate clicks") },
+            async { reveals.set(reveals.get() + 1) },
+        )
+        .await
+        .unwrap();
+        clicks.set(clicks.get() + 1);
+        assert_eq!(reveals.get(), 1);
+        assert_eq!(clicks.get(), 1);
+    }
+
+    #[tokio::test]
+    async fn layer_shell_arrival_failure_refuses_click_without_fallback() {
+        let overlay_available = false;
+        let arrival_attempts = Cell::new(0);
+        let native_clicks = Cell::new(0);
+        let x11_reveals = Cell::new(0);
+        let result: anyhow::Result<()> = async {
+            prepare_desktop_click_cursor(
+                true,
+                async {
+                    arrival_attempts.set(arrival_attempts.get() + 1);
+                    anyhow::ensure!(overlay_available, "Wayland arrival renderer unavailable");
+                    Ok(())
+                },
+                async { x11_reveals.set(x11_reveals.get() + 1) },
+            )
+            .await?;
+            native_clicks.set(native_clicks.get() + 1);
+            Ok(())
+        }
+        .await;
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Wayland arrival renderer unavailable"
+        );
+        assert_eq!(arrival_attempts.get(), 1);
+        assert_eq!(native_clicks.get(), 0);
+        assert_eq!(x11_reveals.get(), 0);
+    }
+
+    #[tokio::test]
+    async fn layer_shell_click_waits_for_arrival_before_one_delivery() {
+        let (ack, arrived) = tokio::sync::oneshot::channel();
+        let native_clicks = Cell::new(0);
+        let arrival_authorized = Cell::new(false);
+        let action = async {
+            prepare_desktop_click_cursor(
+                true,
+                async {
+                    arrived.await?;
+                    arrival_authorized.set(true);
+                    Ok(())
+                },
+                async { panic!("native Wayland must never use X11 reveal") },
+            )
+            .await?;
+            assert!(arrival_authorized.get());
+            native_clicks.set(native_clicks.get() + 1);
+            Ok::<(), anyhow::Error>(())
+        };
+        tokio::pin!(action);
+        tokio::select! {
+            result = &mut action => panic!("click completed before arrival: {result:?}"),
+            _ = tokio::task::yield_now() => {}
+        }
+        assert_eq!(native_clicks.get(), 0);
+        ack.send(()).unwrap();
+        action.await.unwrap();
+        assert_eq!(native_clicks.get(), 1);
+    }
+
+    #[tokio::test]
+    async fn x11_keeps_best_effort_reveal_without_wayland_arrival() {
+        let reveals = Cell::new(0);
+        prepare_desktop_click_cursor(
+            false,
+            async { panic!("X11 must not require a Wayland compositor") },
+            async { reveals.set(reveals.get() + 1) },
+        )
+        .await
+        .unwrap();
+        assert_eq!(reveals.get(), 1);
+    }
 }
 
 /// Keep the logical cursor position in sync with every visibly targeted
@@ -4813,6 +4989,10 @@ pub fn build_registry_with_provider(
 ) -> ToolRegistry {
     let mut r = ToolRegistry::new_with_protected_consent_provider(provider);
     let state = ToolState::new_with_capture_service(r.capture_service());
+    {
+        let state = state.clone();
+        r.set_token_window_resolver(Arc::new(move |args| state.snapshots.window_for_token(args)));
+    }
     crate::recording_hooks::install();
     if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
         let recording_state = Arc::downgrade(&state);

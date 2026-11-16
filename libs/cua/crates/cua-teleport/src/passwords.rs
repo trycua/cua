@@ -398,9 +398,8 @@ fn tempfile_copy(src: &Path) -> Result<TempCopy, TeleportError> {
         let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
     }
     let dst = dir.join("Login Data");
-    std::fs::copy(src, &dst).map_err(|e| {
+    crate::plain_copy::copy_named("Login Data", src, &dst).inspect_err(|_| {
         let _ = std::fs::remove_dir(&dir);
-        TeleportError::Provider(format!("copying Login Data failed: {e}"))
     })?;
     Ok(TempCopy(dst))
 }

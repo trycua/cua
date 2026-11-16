@@ -183,7 +183,8 @@ fn replace(path: &Path, text: &str) -> anyhow::Result<()> {
 }
 
 fn setting_path() -> Option<PathBuf> {
-    pip_preview::default_config_path().map(|config| config.with_file_name(SETTING_FILE))
+    cua_driver_core::config_file::default_config_path()
+        .map(|config| config.with_file_name(SETTING_FILE))
 }
 
 /// The switch, whether a saved portal Deny keeps it off, and what the desktop

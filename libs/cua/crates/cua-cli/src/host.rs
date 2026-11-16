@@ -2610,6 +2610,9 @@ fn render(s: &HostStatus, out: &mut dyn Write) {
     if s.service.kind == "process" {
         hint_line(out, cua_host::service::PROCESS_RUNNER_NOTE);
     }
+    if let Some(w) = &s.service_warning {
+        hint_line(out, format!("  warning: {w}"));
+    }
     if s.service.kind == "app-helper" && s.legacy_service {
         hint_line(
             out,
@@ -4619,6 +4622,27 @@ mod tests {
         );
         assert!(desktop_line(true).starts_with("  desktop: shared"));
         assert!(desktop_line(false).starts_with("  desktop: not shared"));
+    }
+
+    /// A headless computer whose service stops at logout is told so, with the
+    /// one command that fixes it, in `cua host setup` and `cua host status`.
+    #[test]
+    fn status_warns_when_the_service_stops_at_logout() {
+        let text = |warning: Option<String>| {
+            let s = HostStatus {
+                configured: true,
+                mode: Some("relay".into()),
+                service_warning: warning,
+                ..Default::default()
+            };
+            let mut out = Vec::new();
+            render(&s, &mut out);
+            String::from_utf8(out).unwrap()
+        };
+        assert!(!text(None).contains("warning:"), "{}", text(None));
+        let shown = text(Some(cua_host::service::linger_warning("ana")));
+        assert!(shown.contains("warning: systemd stops"), "{shown}");
+        assert!(shown.contains("sudo loginctl enable-linger ana"), "{shown}");
     }
 
     #[test]

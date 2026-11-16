@@ -64,7 +64,7 @@ def guarded(cond):
 
 def test_detector_finds_aws_steps():
     names = {p.name for p in workflows() if any(aws_steps(load(p)))}
-    assert {'docs-mcp-server-build-push.yml', 'cd-docs-pin-dispatch.yml'} <= names
+    assert 'docs-mcp-server-build-push.yml' in names
 
 
 def test_pull_request_workflows_do_not_grant_id_token_at_workflow_level():

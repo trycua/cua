@@ -110,6 +110,7 @@
   "settings.general.everyday": "Everyday",
   "settings.general.open_failed": "Couldn't open the page",
   "settings.general.show_in_failed": "Couldn't change where Cua shows",
+  "settings.general.close_failed": "Couldn't change what closing the window does",
   "settings.general.tips_failed": "Couldn't change tips",
   "settings.general.tips_reset_failed": "Couldn't reset tips",
   "settings.general.appearance": "Appearance",

@@ -840,6 +840,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: apps/cua-spaces/pnpm-lock.yaml
       - name: Install Rust (toolchain from rust-toolchain.toml), wasm32 and wasm-bindgen
+        working-directory: apps/cua-spaces
         shell: bash
         run: |
           rustup show active-toolchain || rustup toolchain install

@@ -260,7 +260,7 @@
         "libs/cua/crates/cua-spaces-ffi/uniffi.toml",
         "libs/spaces-app-swift/Sources/CuaSpacesFFI/CuaSpacesFFI.swift"
       ],
-      "buildCommand": "cargo build --locked -p cua-sdk -p cua-spaces-ffi -p cua-bindgen",
+      "buildCommand": "cargo build --locked -p cua-sdk-native -p cua-spaces-ffi -p cua-bindgen",
       "buildDirectory": "libs/cua",
       "extractionMethod": "uniffi-metadata",
       "outputs": [

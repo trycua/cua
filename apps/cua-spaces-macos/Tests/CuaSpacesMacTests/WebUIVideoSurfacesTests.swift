@@ -903,11 +903,18 @@ struct WebUIVideoSurfacesTests {
 
     @Test func anUnclaimedPrewarmedStreamIsLetGoAfterItsGrace() async {
         let host = Host()
-        let s = surfaces(host) { _, _ in OfflineStreamSourceProvider() }
+        // A stream that really streams. The offline provider refuses to open
+        // a session, and a warm stream whose session failed is let go at
+        // once, so the stream could vanish before the first expectation
+        // below (the flake this replaces).
+        let units = AccessUnit.split(Self.tinyH264)
+        let s = surfaces(host) { _, _ in SyntheticStreamProvider(units: units, size: CGSize(width: 64, height: 48), fps: 30) }
         s.prewarmGrace = .milliseconds(800)
         s.handle(["type": "prewarm", "spaceId": "a"])
-        await settle { host.opened.count == 1 }
+        // The stream is registered by `handle` itself, before any suspension,
+        // so this holds however slow the runner is.
         #expect(s.stats().count == 1)
+        await settle { host.opened.count == 1 }
         await settle { s.stats().isEmpty }
         #expect(s.stats().isEmpty)
         s.removeAll()

@@ -13,6 +13,9 @@ import {
   defaultWhere,
   HOST_NOT_SHARED,
   hostSpaceId,
+  isUnreachableError,
+  onAnotherComputer,
+  unreachableError,
   setThisMacConfirmed,
   thisMacConfirmed,
   thisMacConfirmText,
@@ -180,6 +183,10 @@ describe("a start that failed", () => {
     expect(startErrorView("Cua Cloud has ended; use a local sandbox or your own computer.", "Codex").action).toBe("change-computer");
     expect(startErrorView("OPENAI_API_KEY is not set", "Codex")).toMatchObject({ title: "Codex needs your key", action: "add-key", retry: true });
     expect(startErrorView("aurora is not running", "Codex")).toMatchObject({ title: "Couldn't reach that computer", action: "retry" });
+    // This Mac is plainly on: no "Check it's on" (CUA-3974).
+    const onHost = startErrorView("transport error: http2 error (operation timed out)", "Codex", true);
+    expect(onHost).toMatchObject({ title: "This Mac didn't answer in time", action: "retry", retry: true });
+    expect(onHost.body).not.toMatch(/check it's on/i);
     expect(startErrorView("Not enough disk space left", "Codex").action).toBe("retry");
     expect(startErrorView("boom", "Codex")).toMatchObject({ title: "Codex couldn't start", action: "retry", retry: true });
   });
@@ -203,5 +210,27 @@ describe("stale tasks", () => {
       { runId: "run-1", createdMs: old, ending: null },
     ] as never[];
     expect(withoutStaleTasks(rows, now)).toEqual([rows[1], rows[2]]);
+  });
+});
+
+describe("asking a Space before a job is handed to it", () => {
+  it("asks the Spaces on your other computers, not this computer's own", () => {
+    const spaces = [
+      { id: "local:dev", provider: "local" },
+      { id: "direct:studio.local:7400", provider: "direct", host: "studio01" },
+    ] as Space[];
+    expect(onAnotherComputer("relay:mac-mini", spaces)).toBe(true);
+    expect(onAnotherComputer("direct:studio.local:7400", spaces)).toBe(true);
+    expect(onAnotherComputer("local:dev", spaces)).toBe(false);
+    expect(onAnotherComputer("local:unknown", null)).toBe(false);
+  });
+
+  it("says why in words that move the job to another computer", () => {
+    const quiet = unreachableError("relay:mac-mini", { listedOffline: false, reason: null });
+    expect(quiet).toBe("relay:mac-mini is unreachable: it did not answer");
+    expect(isUnreachableError(quiet)).toBe(true);
+    const offline = unreachableError("relay:mac-mini", { listedOffline: true, reason: null });
+    expect(offline).toContain("offline");
+    expect(isUnreachableError(unreachableError("relay:x", { listedOffline: false, reason: "HTTP 502" }))).toBe(true);
   });
 });

@@ -355,6 +355,8 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
       runtimes: s.runtimes ?? null,
       autoConnect: on("auto-connect"),
       overflow: on("placement-overflow"),
+      closeWindowKeepsRunning: rows.has("close-window") ? active(rows.get("close-window")) === "keep" : null,
+      closeNotice: on("close-notice"),
       keyvaultAutoWipe: on("keyvault-auto-wipe"),
       keyvaultUnlockPrompt: on("keyvault-unlock-prompt"),
       keyvaultSiteIcons: on("keyvault-site-icons"),
@@ -773,9 +775,11 @@ export function createWebkitAdapter(win: HostWindow = globalThis.window as HostW
     "agents.configure": async ({ agents }) => list(await request("agents.configure", { agents: agents ?? null })) as AgentSetupRow[],
     "agents.signIn": async ({ agent }) => list(await request("agents.signIn", { agent })) as AgentSetupRow[],
     "agents.status": ({ refresh }) => request<ConnectionReport>("agents.status", { refresh: refresh ?? false }),
-    "agents.connect": async ({ agents, signIn, skills, mcp }) =>
+    "agents.connect": async ({ agents, signIn, skills, mcp, driver }) =>
       // No timeout: Claude Code's sign-in waits for its one browser approval.
-      list(await request("agents.connect", { agents, signIn, skills: skills ?? true, mcp: mcp ?? true }, null)) as ConnectResult[],
+      list(
+        await request("agents.connect", { agents, signIn, skills: skills ?? true, mcp: mcp ?? true, ...(driver ? { driver } : {}) }, null),
+      ) as ConnectResult[],
     "agents.disconnect": ({ agents, signIn, skills, mcp }) =>
       request<{ removed_sign_ins: string[] }>("agents.disconnect", {
         agents,

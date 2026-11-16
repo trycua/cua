@@ -3307,6 +3307,13 @@ impl Host {
                         .unwrap_or_else(|| {
                             cua_spaces::mcp::ToolOutcome::error_message("not_found", name)
                         }),
+                    false if cua_spaces::reach::is_app_method(name) => {
+                        cua_spaces::reach::app_call(spaces, name, arguments)
+                            .await
+                            .unwrap_or_else(|| {
+                                cua_spaces::mcp::ToolOutcome::error_message("not_found", name)
+                            })
+                    }
                     false => {
                         cua_spaces::mcp::McpServer::new(spaces.clone())
                             .call(name, arguments)
@@ -5594,6 +5601,9 @@ impl Spaces {
 
     /// Calls any Spaces MCP tool with JSON arguments (the implementation
     /// `cua daemon mcp` serves). Tool errors are returned, not raised.
+    // It also serves the app's own methods (`agent_keys.*`, `spaces.reach`).
+    // A plain comment, not a doc comment: UniFFI's API checksum covers doc
+    // comments, so editing one makes the checked-in bindings stale.
     pub async fn call_tool_json(
         &self,
         tool: String,
@@ -5605,6 +5615,7 @@ impl Spaces {
             // (`agent_keys.*`), which no MCP server serves.
             if cua_spaces::contract::tool(&tool).is_none()
                 && !cua_spaces::agents::keys::is_app_method(&tool)
+                && !cua_spaces::reach::is_app_method(&tool)
             {
                 return Err(CuaError::NotFound(format!("Spaces tool {tool}")));
             }

@@ -15,17 +15,18 @@ use super::impl_::{
     apply_foreground_report, attach_focus_guard, capture_admission_error,
     checked_element_local_coords, coordinate_frame_schema, desktop_frame_requested,
     desktop_frame_unmapped, desktop_input_space, desktop_to_window_local, element_is_menu_role,
-    element_needs_real_click, element_screen_center, foreground_budget, foreground_hyprland_action,
-    foreground_hyprland_refusal, foreground_structured, hyprland_foreground, input_error_result,
-    isolated_hyprland_action, isolated_hyprland_background, isolated_hyprland_refusal,
-    isolated_hyprland_result, isolated_hyprland_task_error, named_session_cursor_key,
-    non_ax_escalation, parse_mouse_button, prove_token_element, push_evidence, require_point_args,
-    resolve_cursor_key, resolve_element_local_coords, reveal_pointer_action_for,
-    reveal_pointer_action_target_for, screenshot_scale, spawn_blocking_bounded,
-    spawn_isolated_hyprland, synthetic_pointer_is_dropped, unavailable_chromium_background,
-    unavailable_wayland_focused_input_background, window_local_to_screen,
-    window_scope_unproven_refusal, with_pixel_points, x11_pixel_click_no_focus_steal, AimedPoint,
-    CoordinateContext, PointerRoute, ToolState,
+    element_needs_real_click, element_screen_center, emit_cursor_hook, foreground_budget,
+    foreground_hyprland_action, foreground_hyprland_refusal, foreground_structured,
+    hyprland_foreground, input_error_result, isolated_hyprland_action,
+    isolated_hyprland_background, isolated_hyprland_refusal, isolated_hyprland_result,
+    isolated_hyprland_task_error, named_session_cursor_key, non_ax_escalation, parse_mouse_button,
+    prepare_desktop_click_cursor, prove_token_element, push_evidence, refuse_if_disabled,
+    require_point_args, resolve_cursor_key, resolve_element_local_coords,
+    reveal_pointer_action_for, reveal_pointer_action_target_for, screenshot_scale,
+    spawn_blocking_bounded, spawn_isolated_hyprland, synthetic_pointer_is_dropped,
+    unavailable_chromium_background, unavailable_wayland_focused_input_background,
+    window_local_to_screen, window_scope_unproven_refusal, with_pixel_points,
+    x11_pixel_click_no_focus_steal, AimedPoint, CoordinateContext, PointerRoute, ToolState,
 };
 
 #[cfg(test)]
@@ -102,6 +103,7 @@ mod token_window_scope_tests {
             identity: identity(path),
             object_ref: object_ref(path),
             role: "text".into(),
+            disabled: false,
             in_web_content: false,
             bounds: None,
         }
@@ -116,7 +118,9 @@ mod token_window_scope_tests {
             checked: None,
             enabled: Some(true),
             selected: None,
+            focused: None,
             description: None,
+            document_uri: None,
             actions: Vec::new(),
             element_key: 0,
             identity: Some(identity(path)),
@@ -944,14 +948,42 @@ impl Tool for ClickTool {
             // sees the cursor "click somewhere else."
             // The overlay draws in layout coordinates, like the input below.
             let (overlay_x, overlay_y) = space.to_layout(sx, sy);
-            reveal_pointer_action_for(
-                &self.state,
-                &cursor_id,
-                f64::from(overlay_x),
-                f64::from(overlay_y),
-                true,
+            let arrival = prepare_desktop_click_cursor(
+                crate::wayland::is_wayland()
+                    && crate::overlay::wayland_overlay_backend()
+                        == crate::overlay::WaylandOverlayBackend::LayerShell,
+                async {
+                    self.state.cursor_registry.set_enabled(&cursor_id, true);
+                    self.state.cursor_registry.update_position(
+                        &cursor_id,
+                        f64::from(overlay_x),
+                        f64::from(overlay_y),
+                    );
+                    emit_cursor_hook(
+                        &cursor_id,
+                        f64::from(overlay_x),
+                        f64::from(overlay_y),
+                        false,
+                    );
+                    crate::wayland::overlay::animate_and_wait(
+                        cursor_id.clone(),
+                        f64::from(overlay_x),
+                        f64::from(overlay_y),
+                    )
+                    .await
+                },
+                reveal_pointer_action_for(
+                    &self.state,
+                    &cursor_id,
+                    f64::from(overlay_x),
+                    f64::from(overlay_y),
+                    false,
+                ),
             )
             .await;
+            if let Err(error) = arrival {
+                return ToolResult::error(error.to_string());
+            }
             let r = spawn_blocking_bounded("desktop click", foreground_budget(0), move || {
                 if crate::wayland::is_wayland() {
                     if !modifiers.is_empty() {
@@ -973,6 +1005,16 @@ impl Tool for ClickTool {
                 }
             })
             .await;
+            if matches!(&r, Ok(Ok(()))) {
+                emit_cursor_hook(&cursor_id, f64::from(overlay_x), f64::from(overlay_y), true);
+                crate::overlay::send_command_for(
+                    cursor_id,
+                    cursor_overlay::OverlayCommand::ClickPulse {
+                        x: f64::from(overlay_x),
+                        y: f64::from(overlay_y),
+                    },
+                );
+            }
             return match r {
                 // Screen-absolute click — never driver-verifiable (no
                 // read-back); the caller confirms via screenshot.
@@ -1025,6 +1067,9 @@ impl Tool for ClickTool {
             Ok(token) => token,
             Err(refusal) => return refusal,
         };
+        if let Some(refusal) = refuse_if_disabled(pid, &resolved, "click").await {
+            return refusal;
+        }
         let elem_idx_resolved: Option<usize> = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } => {
                 Some(*element_index)
@@ -1474,24 +1519,43 @@ impl Tool for ClickTool {
         let native_refusal = (!isolated_background)
             .then(|| unavailable_wayland_focused_input_background(delivery, true))
             .flatten();
+        // The screenshot point the capture was bound to, before it is mapped.
+        let capture_point = (x, y);
         if desktop_frame {
             // Desktop pixels: no zoom/screenshot scaling; translated once below.
             if let Some(refusal) = native_refusal {
                 return refusal;
             }
-        } else if let Some(capture_id) = capture_id_arg {
+        } else if let Some(capture_id) = capture_id_arg.clone() {
             if let Some(refusal) = native_refusal {
                 return refusal;
             }
-            match crate::capture_action_frame::admit_window_click(
-                &self.state.capture_service,
-                &args,
-                &capture_id,
-                pid,
-                xid,
-                x,
-                y,
-            ) {
+            // A click that may still be refused after its point is mapped (a
+            // Chromium background click that finds no accessible control)
+            // must not spend the one-shot capture: the foreground retry
+            // reuses it. Spend it once the click is dispatched.
+            let admitted = if chromium_atspi_only {
+                crate::capture_action_frame::preview_window_click(
+                    &self.state.capture_service,
+                    &args,
+                    &capture_id,
+                    pid,
+                    xid,
+                    x,
+                    y,
+                )
+            } else {
+                crate::capture_action_frame::admit_window_click(
+                    &self.state.capture_service,
+                    &args,
+                    &capture_id,
+                    pid,
+                    xid,
+                    x,
+                    y,
+                )
+            };
+            match admitted {
                 Ok(point) => (x, y) = point,
                 Err(error) => return capture_admission_error(error),
             }
@@ -1770,6 +1834,26 @@ impl Tool for ClickTool {
         } else {
             "background"
         };
+        if chromium_atspi_only
+            && !matches!(
+                &result,
+                Ok(Ok(("background_unavailable_chromium", _, _, _)))
+            )
+        {
+            if let Some(capture_id) = capture_id_arg.as_deref() {
+                // Dispatched (or failed after dispatch): the capture is spent
+                // exactly as a plain admission would have spent it.
+                let _ = crate::capture_action_frame::admit_window_click(
+                    &self.state.capture_service,
+                    &args,
+                    capture_id,
+                    pid,
+                    xid,
+                    capture_point.0,
+                    capture_point.1,
+                );
+            }
+        }
         let outcome = match result {
             Ok(Ok(("background_unavailable", _, _, _))) => {
                 crate::input::delivery::background_unavailable_error(

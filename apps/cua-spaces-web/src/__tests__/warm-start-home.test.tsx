@@ -84,7 +84,7 @@ describe.skipIf(!wasmBuilt)("with Warm start, the warming home is on no list unt
   it("shows up once the first message is sent, even while that message is only queued", { timeout: 60_000 }, async () => {
     let release!: () => void;
     const hold = new Promise<void>((r) => (release = r));
-    const { router } = await mountApp("/home", { failsCreates: false, listsGhost: false, hold, demo });
+    const { router } = await mountApp("/home/ask", { failsCreates: false, listsGhost: false, hold, demo });
     await screen.findByLabelText("What should it do?");
     await waitFor(() => expect(getDriver()?.state?.pendingId).toBeTruthy());
     expect(getDriver()?.state?.askedMs).toBeNull();
@@ -101,7 +101,7 @@ describe.skipIf(!wasmBuilt)("with Warm start, the warming home is on no list unt
   });
 
   it("a home that cannot be made yet is on no list and Home stays silent", { timeout: 60_000 }, async () => {
-    await mountApp("/home", { failsCreates: true, listsGhost: false, demo });
+    await mountApp("/home/ask", { failsCreates: true, listsGhost: false, demo });
     await screen.findByLabelText("What should it do?");
     // A dropped connection is retried by itself: Home stays silent and the home stays off every list.
     await waitFor(() => expect(getDriver()?.view()?.phase).toBe("waiting"), { timeout: 30_000 });
@@ -142,7 +142,7 @@ describe.skipIf(!wasmBuilt)("with Warm start, the warming home is on no list unt
         const rows = out as Array<Record<string, unknown>>;
         return [...rows, { ...rows[0], id: HOME, name: "home-claude-code", hidden: true }];
       };
-      await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { onboarded: true, keys: "several" }, answer: withHidden });
+      await mountApp("/home/ask", { failsCreates: false, listsGhost: false, demo: { onboarded: true, keys: "several" }, answer: withHidden });
       await screen.findByLabelText("What should it do?");
       await waitFor(() => expect(document.querySelector("[data-home-spaces]")).toBeTruthy(), { timeout: 20_000 });
       expect(getDriver()?.state?.wanted ?? false).toBe(false);

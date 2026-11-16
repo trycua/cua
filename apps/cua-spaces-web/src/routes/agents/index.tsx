@@ -4,15 +4,14 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
-import { useAgentChats, useFeatureRecorded, useKeysRecheck, useSession } from "@/bridge";
-import { AgentDmView, AgentList, AgentPage, AgentsEmpty, NewAgentSheet } from "@/components/agents/agent-chat";
-import type { AddAgentStage } from "@/components/add-agent/add-agent-sheet";
-import { useAgentAttempts, useAttemptAction } from "@/hooks/use-agent-attempts";
+import { chatKey, useAgentChats, useFeatureRecorded, type AgentChat, useKeysRecheck, useSession } from "@/bridge";
+import { AgentDmView, AgentList, AgentPage, AgentsUnset } from "@/components/agents/agent-chat";
+import { useAgentAttempts, useAttemptAction, useAttemptRemoval } from "@/hooks/use-agent-attempts";
 
-/** Which agent's DM is open, and in which of its Spaces (none: all of them). */
+/** Which agent's DM is open (each agent in each Space is its own entry), or `new`: none, the box to start one. */
 interface ChatSearch {
   agent?: string;
-  space?: string;
+  new?: boolean;
   run?: string;
 }
 
@@ -20,7 +19,7 @@ export const Route = createFileRoute("/agents/")({
   component: AgentsChatPage,
   validateSearch: (s: Record<string, unknown>): ChatSearch => ({
     agent: typeof s.agent === "string" ? s.agent : undefined,
-    space: typeof s.space === "string" ? s.space : undefined,
+    new: s.new === true || s.new === "1" || s.new === "true" ? true : undefined,
     // The older Agents page opened a run with `?run=`.
     run: typeof s.run === "string" ? s.run : undefined,
   }),
@@ -52,19 +51,17 @@ function AgentsChatPage() {
   // The one list (agents in your Spaces and this device's runs that haven't started): Home shows it too.
   const attempts = useAgentAttempts();
   const act = useAttemptAction();
-  const { chats, spaces, me, loading, refresh } = useAgentChats(attempts);
+  const removal = useAttemptRemoval();
+  const { chats, me, loading } = useAgentChats(attempts);
   const now = useNow();
-  const [sheet, setSheet] = useState<AddAgentStage | null>(null);
   const [info, setInfo] = useState(false);
   // A run that hasn't started opens its Space's thread; only agents have a DM here.
-  const chat = chats?.find((c) => c.key === search.agent && c.kind === "agent") ?? (search.agent ? null : (chats?.find((c) => c.kind === "agent") ?? null));
-  const space = chat && search.space && chat.spaces.some((s) => s.spaceId === search.space) ? search.space : null;
-  const select = (agent: string, sp?: string) => void navigate({ search: { agent, space: sp }, replace: true });
-  const taken = (spaceId: string) =>
-    (chats ?? [])
-      .flatMap((c) => c.spaces)
-      .filter((s) => s.spaceId === spaceId)
-      .map((s) => s.handle);
+  // New agent clears the selection: nothing is open and the box to start one shows.
+  // `agent` is an entry's key; a link by who the agent is (owner, kind and name) opens its first entry.
+  const byKey = (c: AgentChat) =>
+    c.kind === "agent" && (c.key === search.agent || (c.spaces[0] && chatKey(c.spaces[0].spaceId, c.spaces[0].member) === search.agent));
+  const chat = search.new ? null : (chats?.find(byKey) ?? (search.agent ? null : (chats?.find((c) => c.kind === "agent") ?? null)));
+  const select = (agent: string) => void navigate({ search: { agent }, replace: true });
   return (
     <div data-agents-chat="" className="flex h-full min-h-0">
       <AgentList
@@ -74,42 +71,24 @@ function AgentsChatPage() {
         onSelect={select}
         onOpenRun={(c) => c.places[0] && void navigate({ to: "/spaces/$spaceId", params: { spaceId: c.places[0].spaceId } })}
         onAction={act}
-        onNew={() => setSheet("pick")}
+        onNew={() => void navigate({ search: { new: true }, replace: true })}
+        onRemove={removal.remove}
+        onClearRuns={() => removal.clear((chats ?? []).filter((c) => c.kind === "attempt"))}
         now={now}
         loading={loading}
       />
-      {chats === null || (loading > 0 && chats.every((c) => c.kind !== "agent")) ? (
+      {chats === null || (!search.new && loading > 0 && chats.every((c) => c.kind !== "agent")) ? (
         <div className="flex-1" />
       ) : chat ? (
         <>
-          <AgentDmView
-            key={chat.key}
-            chat={chat}
-            space={space}
-            onSpace={(sp) => select(chat.key, sp ?? undefined)}
-            identity={identity}
-            onInfo={() => setInfo(true)}
-            me={me}
-          />
+          <AgentDmView key={chat.key} chat={chat} identity={identity} onInfo={() => setInfo(true)} me={me} />
           <AgentPage chat={chat} open={info} onOpenChange={setInfo} me={me} identity={identity} />
         </>
-      ) : chats.every((c) => c.kind !== "agent") ? (
-        <AgentsEmpty onStart={() => setSheet("start")} onConnect={() => setSheet("connect")} />
+      ) : search.new || chats.every((c) => c.kind !== "agent") ? (
+        <AgentsUnset />
       ) : (
         <div className="flex flex-1 items-center justify-center text-[13px] text-muted-foreground">That agent isn't in any of your Spaces now.</div>
       )}
-      <NewAgentSheet
-        open={sheet !== null}
-        stage={sheet ?? undefined}
-        onOpenChange={(o) => {
-          if (!o) {
-            setSheet(null);
-            refresh();
-          }
-        }}
-        spaces={spaces}
-        taken={taken}
-      />
     </div>
   );
 }

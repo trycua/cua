@@ -360,6 +360,9 @@ pub const METHODS: &[&str] = &[
     "resources.space",
     "resources.computer",
     "resources.warning",
+    // Home's pool: the total, each computer's free room and where a job goes.
+    "pool.summary",
+    "pool.place",
     "upsell.prompt",
     "upsell.allows",
     "upsell.card",
@@ -656,6 +659,12 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             a.get("nowMs")?,
         )),
         "resources.warning" => out(resources::warning_view(&a.get("warning")?)),
+        // Your computers as one pool (`pool`): Home's total, and the
+        // computer with the most free room for a new job.
+        "pool.summary" => out(crate::pool::summary(
+            &a.get::<Vec<crate::pool::PoolComputer>>("computers")?,
+        )),
+        "pool.place" => out(crate::pool::place(&a.get("input")?)),
         // The Pro and Teams prompts: the rules and words are `upsell`'s.
         "upsell.prompt" => {
             let usage = a.get("usage")?;

@@ -322,3 +322,35 @@ describe("a removed computer", () => {
     expect(t.roots.map((r) => r.name)).toContain("Sam's QA");
   });
 });
+
+describe("what a computer's row opens", () => {
+  const opens = (over: Partial<Parameters<typeof buildSpacesTree>[0]>, key: string) =>
+    buildSpacesTree({ defaultSpace: null, now: NOW, ...over, spaces: over.spaces ?? SPACES, machines: over.machines ?? [THIS_MAC, STUDIO, DILLON] }).roots.find(
+      (r) => r.machine?.id === key,
+    )!.opens;
+
+  it("opens the desktop's Space page while the computer shares its desktop", () => {
+    expect(opens({}, "studio")).toBe("relay:studio");
+    expect(opens({}, "this-mac")).toBe("this-mac");
+  });
+
+  it("opens This Mac's page too while it can share and does not (the page has the one button)", () => {
+    const off = space({ id: "this-mac", name: "This Mac", status: "suspended", provider: "local", os: "macos" });
+    expect(opens({ spaces: [off, ...SPACES.slice(1)] }, "this-mac")).toBe("this-mac");
+  });
+
+  it("opens the computer's own page when it cannot share", () => {
+    // set up to provide Spaces only, offline, not reachable, or a computer added by address
+    expect(opens({ shares: (s) => s.id !== "relay:studio" }, "studio")).toBeNull();
+    expect(opens({ machines: [THIS_MAC, { ...STUDIO, online: false }, DILLON] }, "studio")).toBeNull();
+    expect(
+      opens(
+        { spaces: SPACES.map((s) => (s.id === "relay:studio" ? { ...s, sdk: { reachable: false, features: [], spacesdVersion: "" } as Space["sdk"] } : s)) },
+        "studio",
+      ),
+    ).toBeNull();
+    expect(opens({ spaces: SPACES.filter((s) => s.id !== "relay:dillon") }, "dillon")).toBeNull();
+    // This Mac before it is set up
+    expect(opens({ machines: [{ ...THIS_MAC, connection: null }, STUDIO] }, "this-mac")).toBeNull();
+  });
+});

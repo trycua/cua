@@ -4,7 +4,7 @@ Depend on them from git, pinned to a release tag or a commit:
 
 ```toml test="config" id="cargo-dependency"
 [dependencies]
-cua-sdk = { git = "https://github.com/trycua/cua", tag = "cua-sdk-v{{version}}" }
+cua-sdk = { git = "https://github.com/trycua/cua", tag = "cua-sdk-v<version>" }
 tokio = { version = "1", features = ["full"] }
 ```
 

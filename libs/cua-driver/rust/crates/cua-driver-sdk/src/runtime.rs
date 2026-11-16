@@ -773,10 +773,8 @@ mod tests {
             "browser_download",
             "browser_pointer",
             "start_session",
-            "escalate_session",
             "get_session",
             "list_sessions",
-            "get_session_state",
             "end_session",
         ];
         let violations = registry.input_conformance_violations(&open);

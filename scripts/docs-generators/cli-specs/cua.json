@@ -3873,7 +3873,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Guest network: `default` (outbound network, like a Docker container) or `none` (no egress; published ports still work). `none` needs a local QEMU VM; containers and Lume reject it",
+       "help": "Guest network: `default` (outbound network, like a Docker container) or `none` (no egress; published ports still work). `none` runs on a local QEMU VM, and on a container under the default Secure network mode; containers reject it in legacy mode, and Lume rejects it",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,

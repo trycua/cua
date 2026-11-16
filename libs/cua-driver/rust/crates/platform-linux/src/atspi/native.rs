@@ -206,7 +206,7 @@ static SHARED_CONNECTION: tokio::sync::OnceCell<AccessibilityConnection> =
 async fn shared_connection() -> Result<&'static AccessibilityConnection> {
     SHARED_CONNECTION
         .get_or_try_init(|| async {
-            let conn = AccessibilityConnection::new()
+            let conn = connect_accessibility_bus()
                 .await
                 .map_err(|error| anyhow!("AT-SPI connect failed: {error}"))?;
             if let Err(error) = conn.add_registry_event::<atspi::ObjectEvents>().await {
@@ -235,6 +235,54 @@ async fn shared_connection() -> Result<&'static AccessibilityConnection> {
             static TRACKER: OnceLock<()> = OnceLock::new();
             TRACKER.get_or_init(|| spawn_focus_tracker(conn));
         })
+}
+
+/// Join the accessibility bus the session's applications registered on.
+/// libatspi, and with it every toolkit bridge and pyatspi, takes
+/// `AT_SPI_BUS_ADDRESS` before it asks `org.a11y.Bus.GetAddress`. Asking only
+/// `GetAddress` joined a bus without the applications' registry whenever the
+/// two disagreed, so listener startup stalled and every walk timed out
+/// (#4874).
+async fn connect_accessibility_bus(
+) -> std::result::Result<AccessibilityConnection, atspi::AtspiError> {
+    if let Some(address) = session_accessibility_bus(std::env::var("AT_SPI_BUS_ADDRESS").ok()) {
+        match address.parse() {
+            Ok(parsed) => match AccessibilityConnection::from_address(parsed).await {
+                Ok(conn) => return Ok(conn),
+                Err(error) => {
+                    dlog!("AT_SPI_BUS_ADDRESS {address} unreachable ({error}); asking org.a11y.Bus")
+                }
+            },
+            Err(error) => {
+                dlog!("AT_SPI_BUS_ADDRESS {address:?} invalid ({error}); asking org.a11y.Bus")
+            }
+        }
+    }
+    AccessibilityConnection::new().await
+}
+
+/// `AT_SPI_BUS_ADDRESS` as libatspi reads it: an empty value is unset.
+fn session_accessibility_bus(environment: Option<String>) -> Option<String> {
+    environment.filter(|address| !address.is_empty())
+}
+
+#[cfg(test)]
+mod session_accessibility_bus_tests {
+    use super::session_accessibility_bus;
+
+    #[test]
+    fn a_set_address_names_the_bus() {
+        assert_eq!(
+            session_accessibility_bus(Some("unix:path=/run/a11y".into())).as_deref(),
+            Some("unix:path=/run/a11y")
+        );
+    }
+
+    #[test]
+    fn unset_or_empty_leaves_org_a11y_bus_to_answer() {
+        assert_eq!(session_accessibility_bus(None), None);
+        assert_eq!(session_accessibility_bus(Some(String::new())), None);
+    }
 }
 
 /// Object path of the accessible that most recently reported `focused=true`,

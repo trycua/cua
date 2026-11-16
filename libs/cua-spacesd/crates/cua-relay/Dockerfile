@@ -63,6 +63,11 @@ COPY --from=certs /usr/share/ca-certificates /usr/share/ca-certificates
 COPY --from=certs /etc/ca-certificates.conf /etc/ca-certificates.conf
 COPY --from=certs /etc/ssl/certs /etc/ssl/certs
 COPY --from=build /usr/local/bin/cua-relay /usr/local/bin/cua-relay
+# The TLS library the websocket client's error type links (tungstenite's native-tls
+# feature): the slim runtime image has none, taken from the pinned Rust image so
+# nothing is fetched at build time.
+COPY --from=certs /usr/lib/*-linux-gnu/libssl.so.3 /usr/lib/*-linux-gnu/libcrypto.so.3 /usr/local/lib/
+ENV LD_LIBRARY_PATH=/usr/local/lib
 # The state directory (CUA_RELAY_STATE_FILE=/var/lib/cua-relay/machines.json):
 # owned by the unprivileged user, so a new named volume mounted here is
 # writable. A bind mount keeps the host directory's owner: chown it to 65532.

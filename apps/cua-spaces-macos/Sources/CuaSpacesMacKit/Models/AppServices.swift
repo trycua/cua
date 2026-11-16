@@ -31,8 +31,10 @@ public protocol AgentSetupRunning: AnyObject, Sendable {
     /// few-second cache (window focus).
     func connectionStatusJson(refresh: Bool) async -> String
     /// Connect and Reconnect: Cua's tools and, with `signIn`, the agent's
-    /// sign-in copied to Keyvault on This Mac. JSON: one result per agent.
-    func connectJson(agents: [String], signIn: Bool, skills: Bool, mcp: Bool) async throws -> String
+    /// sign-in copied to Keyvault on This Mac; with `driver`, the Cua Driver
+    /// this app carries too. JSON: one result per agent, with one result per
+    /// part (`parts`), so setup shows and retries each on its own.
+    func connectJson(agents: [String], signIn: Bool, skills: Bool, mcp: Bool, driver: DriverConnect?) async throws -> String
     /// Disconnect: both undone. JSON `{outcomes, removed_sign_ins}`.
     func disconnectJson(agents: [String], signIn: Bool) async throws -> String
     /// Disconnect of some parts only (an app's page's switches).
@@ -41,6 +43,31 @@ public protocol AgentSetupRunning: AnyObject, Sendable {
     func deviceSignInStartJson(agent: String) async throws -> String
     /// Waits for it to be approved and saves it in Keyvault: JSON as Connect's `sign_in`.
     func deviceSignInWaitJson(id: String) async throws -> String
+}
+
+/// The Cua Driver entry Connect writes into each agent's config: the
+/// driver this app carries ([`EmbeddedDriver`], `Contents/Helpers/cua-driver`
+/// run through its embedded proxy), never a separately installed
+/// `CuaDriver.app`, and whether Screen Recording and Accessibility are on for
+/// Cua Spaces (the grants it uses).
+public struct DriverConnect: Equatable, Sendable {
+    public let serverName: String
+    public let command: String
+    public let args: [String]
+    public let permissionsGranted: Bool?
+
+    public init(serverName: String, command: String, args: [String], permissionsGranted: Bool?) {
+        self.serverName = serverName
+        self.command = command
+        self.args = args
+        self.permissionsGranted = permissionsGranted
+    }
+
+    /// The entry for `driver`, the bundled one.
+    public static func embedded(_ driver: EmbeddedDriver, permissionsGranted: Bool?) -> DriverConnect {
+        DriverConnect(serverName: driver.serverName, command: driver.binary, args: driver.mcpArguments,
+                      permissionsGranted: permissionsGranted)
+    }
 }
 
 /// The SDK's `AgentSetup`, registering the app's own `cua` as the MCP
@@ -67,8 +94,18 @@ public final class LiveAgentSetup: AgentSetupRunning, @unchecked Sendable {
         return out.map { appAgentSetupOutcome(outcome: $0) }
     }
 
+    /// With the Cua Driver this app carries ([`EmbeddedDriver`]), the
+    /// agents' `cua-driver` entry runs its embedded proxy, so the driver
+    /// uses Cua Spaces' permissions and no separate Cua Driver app is
+    /// installed. A bare build sets up the installed Cua Driver instead.
     public func setUpCuaDriver(agents: [String]) async throws -> [AppAgentSetupOutcomeInput] {
-        try await inner.setupCuaDriver(agents: agents, command: nil, skills: true, mcp: true)
+        if let driver = EmbeddedDriver.current() {
+            var out = try await inner.installSkills(agents: agents, skills: ["cua-driver"], force: false)
+            let server = AgentMcpServer(name: driver.serverName, command: driver.binary, args: driver.mcpArguments, env: [:])
+            out += try await inner.configureMcp(agents: agents, server: server)
+            return out.map { appAgentSetupOutcome(outcome: $0) }
+        }
+        return try await inner.setupCuaDriver(agents: agents, command: nil, skills: true, mcp: true)
             .map { appAgentSetupOutcome(outcome: $0) }
     }
 
@@ -83,8 +120,10 @@ public final class LiveAgentSetup: AgentSetupRunning, @unchecked Sendable {
         return await Task.detached { inner.connectionStatusJson(expected: server, refresh: refresh) }.value
     }
 
-    public func connectJson(agents: [String], signIn: Bool, skills: Bool, mcp: Bool) async throws -> String {
-        try await inner.connectJson(agents: agents, server: server, skills: skills, mcp: mcp, signIn: signIn)
+    public func connectJson(agents: [String], signIn: Bool, skills: Bool, mcp: Bool, driver: DriverConnect?) async throws -> String {
+        let driverServer = driver.map { AgentMcpServer(name: $0.serverName, command: $0.command, args: $0.args, env: [:]) }
+        return try await inner.connectJson(agents: agents, server: server, skills: skills, mcp: mcp, signIn: signIn,
+                                           driver: driverServer, driverPermissionsGranted: driver?.permissionsGranted)
     }
 
     public func disconnectJson(agents: [String], signIn: Bool) async throws -> String {
@@ -108,6 +147,8 @@ public final class LiveAgentSetup: AgentSetupRunning, @unchecked Sendable {
 public final class FixtureAgentSetup: AgentSetupRunning, @unchecked Sendable {
     public private(set) var current: [AppAgentSetupStatus]
     public private(set) var calls: [String] = []
+    /// The Cua Driver entry the last Connect was asked to write.
+    public private(set) var lastDriver: DriverConnect?
 
     public init(statuses: [AppAgentSetupStatus]? = nil) {
         current = statuses ?? [
@@ -194,10 +235,24 @@ public final class FixtureAgentSetup: AgentSetupRunning, @unchecked Sendable {
         return String(decoding: data, as: UTF8.self)
     }
 
-    public func connectJson(agents: [String], signIn: Bool, skills: Bool, mcp: Bool) async throws -> String {
+    public func connectJson(agents: [String], signIn: Bool, skills: Bool, mcp: Bool, driver: DriverConnect?) async throws -> String {
         _ = try await setUp(agents: agents, skills: skills, mcp: mcp)
-        calls.append("connect:\(agents.joined(separator: ",")):\(signIn)")
-        let rows = agents.map { ["agent": $0, "tools_ok": true, "tools_line": NSNull(), "sign_in": NSNull()] as [String: Any] }
+        calls.append("connect:\(agents.joined(separator: ",")):\(signIn)" + (driver.map { ":driver=\($0.command)" } ?? ""))
+        lastDriver = driver
+        let rows = agents.map { id -> [String: Any] in
+            let a = current.first { $0.id == id }
+            let skillsDir: Any = a?.skillsDir ?? NSNull(), mcpConfig: Any = a?.mcpConfig ?? NSNull()
+            var parts: [[String: Any]] = []
+            if skills { parts.append(["part": "skills", "status": a?.skillsDir == nil ? "skipped" : "done", "where": skillsDir, "line": NSNull()]) }
+            if mcp { parts.append(["part": "mcp", "status": a?.mcpConfig == nil ? "skipped" : "done", "where": mcpConfig, "line": NSNull()]) }
+            if let driver, a?.mcpConfig != nil {
+                let needs = driver.permissionsGranted == false
+                parts.append(["part": "driver", "status": needs ? "needs_permission" : "done", "where": mcpConfig,
+                              "line": needs ? "Allow Screen Recording and Accessibility so agents can see and use apps." as Any : NSNull()])
+            }
+            if signIn { parts.append(["part": "sign_in", "status": "skipped", "where": NSNull(), "line": "\(a?.name ?? id) has no sign-in to save"]) }
+            return ["agent": id, "tools_ok": true, "tools_line": NSNull(), "sign_in": NSNull(), "parts": parts]
+        }
         return String(decoding: try JSONSerialization.data(withJSONObject: rows), as: UTF8.self)
     }
 
@@ -219,7 +274,7 @@ public final class FixtureAgentSetup: AgentSetupRunning, @unchecked Sendable {
 
     public func deviceSignInWaitJson(id: String) async throws -> String {
         calls.append("device-wait:\(id)")
-        return #"{"imported":{"source":"codex","env":"CODEX_AUTH_JSON","label":"Codex · ChatGPT sign-in","expires_ms":null,"added_ms":1},"refused":null,"line":null}"#
+        return #"{"imported":{"source":"codex","env":"CODEX_AUTH_JSON","label":"ChatGPT sign-in for Codex","expires_ms":null,"added_ms":1},"refused":null,"line":null}"#
     }
 
     public func remove(agents: [String]) async throws -> [AppAgentSetupOutcomeInput] {
@@ -434,8 +489,9 @@ public final class LiveAccount: AccountRunning, @unchecked Sendable {
     public func beginSignIn() async throws -> SignInAttempt { try await beginSignIn(code: false) }
 
     public func beginSignIn(code: Bool) async throws -> SignInAttempt {
-        // The browser's sign-in page says where to go back to (the SDK reads it).
-        setenv("CUA_AUTH_RETURN_TO", "Cua Spaces", 0)
+        // The browser's sign-in page says where to go back to: the SDK reads
+        // CUA_AUTH_RETURN_TO, which `TargetEnvironment.pin()` sets once at launch
+        // (changing the environment from here races other threads reading it).
         var attempt = try await auth.beginLogin(flow: code ? "device" : nil)
         var opened = await Self.open(attempt.url())
         // No browser opened: the loopback redirect would never come back,

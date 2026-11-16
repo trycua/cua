@@ -102,8 +102,9 @@ class NativeQEMURuntime(NativeRuntime):
         ref = registry_image(image)
         if disk and not has_build_work(image):
             return f"disk:{disk}"
-        if ref is not None and not disk and not has_build_work(image):
+        if ref is not None and not disk:
             # The SDK pulls the pinned containerDisk.
+            # NativeRuntime checks spacesd and applies VM layers after boot.
             return f"vm:{ref}"
         session = await create_session_disk(image, name, base_disk=Path(disk) if disk else None)
         if "sessions" in str(session):
@@ -326,6 +327,10 @@ class QEMUBaremetalRuntime(Runtime):
             info = await native.start(image, name, ephemeral=ephemeral, **opts)
             self._native_names = getattr(self, "_native_names", set()) | {name}
             return info
+
+        # The SDK-backed path above takes the readiness budget; this one waits
+        # on its own timeouts.
+        opts.pop("ready_timeout", None)
 
         # Guest egress is on by default (slirp NAT, like a Docker container);
         # network="none" adds restrict=on, which keeps the loopback forwards.

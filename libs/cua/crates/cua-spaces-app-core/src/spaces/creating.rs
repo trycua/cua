@@ -99,6 +99,9 @@ pub struct PendingCreate {
     /// That machine's name, for the row and for a failure that names it.
     #[serde(default)]
     pub host_name: Option<String>,
+    /// The Space it is a child of (an agent made it): the row nests under it.
+    #[serde(default)]
+    pub parent: Option<String>,
     /// How many times the app ran this create again by itself: 0, or 1
     /// after a failure that usually passes ([`fail_decision`]).
     #[serde(default)]
@@ -230,6 +233,9 @@ pub enum CreateAction {
         /// That machine's name.
         #[serde(default)]
         host_name: Option<String>,
+        /// The Space it is a child of (an agent made it): its id.
+        #[serde(default)]
+        parent: Option<String>,
     },
     /// The SDK reported progress.
     Progress {
@@ -351,6 +357,116 @@ pub enum CreateAction {
 /// Whether a power action runs for the Space `id`: its button waits.
 pub fn is_powering(state: &CreatesState, id: &str) -> bool {
     state.powering.iter().any(|p| p.id == id && p.in_flight())
+}
+
+/// The pending id an agent's create has: the same for every poll of it.
+pub fn agent_pending_id(key: &str, started_ms: u64) -> String {
+    format!("{PENDING_PREFIX}agent-{key}-{started_ms}")
+}
+
+/// Whether `id` is the pending row of a create an agent asked of this computer.
+pub fn is_agent_pending(id: &str) -> bool {
+    id.starts_with(&format!("{PENDING_PREFIX}agent-"))
+}
+
+/// One create an agent asked of this computer, as the host recorded it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AgentCreate {
+    /// The name the Space is made under (with `started_ms`, the create's identity).
+    pub key: String,
+    pub name: String,
+    /// `macOS`, `Windows`, `Linux` or empty.
+    pub os: String,
+    /// `creating`, `ready` or `failed`.
+    pub state: String,
+    /// The SDK's phase word, while creating.
+    pub phase: String,
+    /// 0 to 100 through the phase, when known.
+    pub percent: Option<u8>,
+    /// The Space's id once it exists.
+    pub space: String,
+    /// Why it failed, in plain words.
+    pub error: String,
+    pub started_ms: u64,
+    /// The Space that asked for it (its id; empty when unknown).
+    pub parent: String,
+}
+
+/// What the pending rows must do to show the creates agents asked for: a
+/// row starts with the create (the same row, page, progress, Cancel and
+/// Remove as a New Space made from the dialog), follows its phase, hands
+/// over to the registry's row when ready and keeps its reason when failed.
+/// Shells run the actions through [`reduce`] on each poll; running them
+/// again changes nothing.
+pub fn agent_actions(state: &CreatesState, creates: &[AgentCreate], now: i64) -> Vec<CreateAction> {
+    let mut out = vec![];
+    for c in creates {
+        let id = agent_pending_id(&c.key, c.started_ms);
+        let known = state.pending.iter().find(|p| p.id == id);
+        let os = match c.os.as_str() {
+            "macOS" => SpaceOs::Macos,
+            "Windows" => SpaceOs::Windows,
+            _ => SpaceOs::Linux,
+        };
+        let start = || CreateAction::Start {
+            parent: (!c.parent.is_empty()).then(|| c.parent.clone()),
+            id: id.clone(),
+            name: c.name.clone(),
+            os,
+            provider: SpaceProvider::Local,
+            now: c.started_ms as i64,
+            image: None,
+            kind: None,
+            host_arch: None,
+            gpu: false,
+            host: None,
+            host_name: None,
+        };
+        match c.state.as_str() {
+            "creating" => {
+                if known.is_none() {
+                    out.push(start());
+                }
+                if !c.phase.is_empty()
+                    && known.is_none_or(|p| p.error.is_none() && p.space_id.is_none())
+                {
+                    out.push(CreateAction::Progress {
+                        id: id.clone(),
+                        phase: c.phase.clone(),
+                        fraction: c.percent.map(|p| f64::from(p) / 100.0),
+                        now: Some(now),
+                        bytes_done: None,
+                        bytes_total: None,
+                        bytes_per_second: None,
+                    });
+                }
+            }
+            "ready" => {
+                if let Some(p) = known
+                    && p.space_id.is_none()
+                    && !c.space.is_empty()
+                {
+                    out.push(CreateAction::Finish {
+                        id: id.clone(),
+                        space_id: c.space.clone(),
+                    });
+                }
+            }
+            "failed" if known.is_none_or(|p| p.error.is_none()) => {
+                if known.is_none() {
+                    out.push(start());
+                }
+                out.push(CreateAction::Fail {
+                    id: id.clone(),
+                    error: c.error.clone(),
+                    error_variant: "AgentCreate".into(),
+                    now: Some(now),
+                });
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 /// Whether `id` is a Space still being created (or one that failed).
@@ -644,6 +760,21 @@ pub fn time_left(secs: f64) -> String {
     }
 }
 
+/// Where the downloads of a first-time Windows build end in its progress
+/// (0 to 1) and the install begins: `cua_image::windows::build::DOWNLOADS_END`
+/// (a test holds the two to one value).
+pub const WINDOWS_INSTALL_FROM: f64 = 0.45;
+
+/// Whether this create builds its Windows image on this Mac (the catalog's
+/// `local_build` images, `windows:11`): the first one takes a download and an
+/// install, not a pull.
+fn builds_windows_here(p: &PendingCreate) -> bool {
+    p.os == SpaceOs::Windows
+        && p.image
+            .as_deref()
+            .is_some_and(crate::wizard::image_builds_locally)
+}
+
 /// The words for a phase: "Starting…", "Downloading image…", ...
 pub fn phase_label(phase: &str) -> &'static str {
     match phase {
@@ -674,6 +805,16 @@ pub fn stage_label(p: &PendingCreate) -> String {
         SpaceOs::Unknown => "",
     };
     match p.phase.as_str() {
+        // A Windows image built on this Mac (Windows 11): the first Space
+        // downloads the ISO, installs Windows unattended and seals the disk;
+        // every later one clones it.
+        "pulling" if builds_windows_here(p) => {
+            if p.fraction.is_some_and(|f| f >= WINDOWS_INSTALL_FROM) {
+                "Installing Windows (first time only)\u{2026}".into()
+            } else {
+                "Downloading Windows (first time only)\u{2026}".into()
+            }
+        }
         // Lume keeps the base image: later macOS Spaces clone it.
         "pulling" if p.os == SpaceOs::Macos => "Downloading macOS (first time only)\u{2026}".into(),
         "creating" if vm => "Preparing the disk\u{2026}".into(),
@@ -876,6 +1017,14 @@ pub enum FailureCause {
     /// The image download stopped partway: Lume's pull failed or was
     /// cancelled, or Lume stopped. Another try resumes it.
     PullStopped,
+    /// Microsoft is limiting Windows downloads from this network (the first
+    /// Windows 11 build downloads its ISO): another request now only extends
+    /// the wait, so the app does not retry by itself.
+    WindowsDownloadLimited,
+    /// The Windows ISO could not be downloaded or checked for another reason
+    /// (Microsoft's service did not answer, the page changed, a bad
+    /// checksum): a disc image downloaded by hand gets past it.
+    WindowsDownloadFailed,
     /// The VM's runtime is not on this machine (QEMU for a Windows or Linux
     /// VM on a PC without it): trying again does not help.
     RuntimeMissing,
@@ -894,9 +1043,40 @@ impl FailureCause {
             Self::Gpu => "Unsupported",
             Self::Unauthenticated => "Unauthenticated",
             Self::ServiceTimeout | Self::PullTimeout => "Timeout",
-            Self::PullStopped => "ImagePull",
+            Self::PullStopped | Self::WindowsDownloadLimited | Self::WindowsDownloadFailed => {
+                "ImagePull"
+            }
             Self::RuntimeMissing => "RuntimeMissing",
         }
+    }
+}
+
+/// Microsoft's per-network limit on Windows downloads, as the build says it
+/// (`cua_image::windows::msdl::LIMITED`), lowercased.
+const WINDOWS_LIMITED: &str = "microsoft is limiting windows downloads";
+
+/// The build step that gets the Windows ISO (`ImageError::Build`'s step),
+/// as the SDK words it, lowercased.
+const WINDOWS_ISO_STEP: &str = "build failed at windows iso";
+
+/// The page the Windows 11 ARM64 disc image is downloaded from by hand.
+pub const WINDOWS_ARM64_PAGE: &str = "https://www.microsoft.com/software-download/windows11arm64";
+
+/// The way out when Windows can't be downloaded (Microsoft's limit, or the
+/// download failing): choose a disc image downloaded by hand, with Microsoft's
+/// page beside it and Try again after.
+fn windows_download_fix() -> CreateFix {
+    CreateFix {
+        text: "Download the Windows 11 ARM64 disc image from Microsoft, then choose Choose \
+               Windows ISO\u{2026} and pick the file: Cua carries on with it. Or save it in your \
+               Downloads folder and choose Try again."
+            .into(),
+        label: "Choose Windows ISO\u{2026}".into(),
+        action: CreateFixAction::ChooseWindowsIso,
+        value: None,
+        keep_retry: true,
+        link_label: Some("Open Microsoft's download page".into()),
+        link_url: Some(WINDOWS_ARM64_PAGE.into()),
     }
 }
 
@@ -908,6 +1088,12 @@ const PULL_STOPPED: &str = "the image download stopped before it finished";
 /// failed and `gpu` whether GPU acceleration was asked for, when known.
 pub fn failure_cause(raw: &str, phase: Option<&str>, gpu: bool) -> Option<FailureCause> {
     let l = crate::errors::plain_error(raw).to_ascii_lowercase();
+    if l.contains(WINDOWS_LIMITED) {
+        return Some(FailureCause::WindowsDownloadLimited);
+    }
+    if l.contains(WINDOWS_ISO_STEP) || l.contains("iso (against the checksum") {
+        return Some(FailureCause::WindowsDownloadFailed);
+    }
     if l.contains("not enough disk space")
         || l.contains("insufficient disk")
         || l.contains("insufficient_disk")
@@ -938,8 +1124,11 @@ pub fn failure_cause(raw: &str, phase: Option<&str>, gpu: bool) -> Option<Failur
         return Some(FailureCause::LocalNetwork);
     }
     // Virtualization.framework's `virtualMachineLimitExceeded` ("The number
-    // of virtual machines exceeds the limit"): Apple's two macOS VMs per Mac.
+    // of virtual machines exceeds the limit"), or Lume's own refusal ("VM
+    // start rejected: host limit of 2 running macOS guests reached"):
+    // Apple's two macOS VMs per Mac.
     if l.contains("virtualmachinelimitexceeded")
+        || l.contains("running macos guests reached")
         || ((l.contains("virtual machine") || l.contains("vms"))
             && l.contains("limit")
             && (l.contains("exceed") || l.contains("maximum") || l.contains("reached")))
@@ -1012,12 +1201,21 @@ pub fn fail_decision(p: &PendingCreate, error: &str, error_variant: &str) -> Fai
     let kind = retry::snake(failure_variant(error, Some(&p.phase), p.gpu, error_variant));
     let plain = crate::errors::plain_error(error);
     let subclass = retry::subclass(&kind, &plain);
-    let retry =
-        if p.attempt == 0 && !p.cancelling && p.space_id.is_none() && !error.trim().is_empty() {
-            retry::decide(&kind, subclass)
-        } else {
-            Retry::Never
-        };
+    // Another request to Microsoft inside its limit only extends it.
+    let limited = matches!(
+        failure_cause(error, Some(&p.phase), p.gpu),
+        Some(FailureCause::WindowsDownloadLimited | FailureCause::WindowsDownloadFailed)
+    );
+    let retry = if !limited
+        && p.attempt == 0
+        && !p.cancelling
+        && p.space_id.is_none()
+        && !error.trim().is_empty()
+    {
+        retry::decide(&kind, subclass)
+    } else {
+        Retry::Never
+    };
     FailDecision {
         kind,
         subclass,
@@ -1091,18 +1289,27 @@ pub fn fix_for(kind: &str, p: &PendingCreate) -> Option<CreateFix> {
         label: format!("Copy {command}"),
         action: CreateFixAction::CopyCommand,
         value: Some(command.into()),
+        keep_retry: false,
+        link_label: None,
+        link_url: None,
     };
     let help = |text: String| CreateFix {
         text,
         label: "How to fix it".into(),
         action: CreateFixAction::OpenUrl,
         value: Some(TROUBLESHOOT_URL.into()),
+        keep_retry: false,
+        link_label: None,
+        link_url: None,
     };
     let details = |text: String| CreateFix {
         text,
         label: "See details".into(),
         action: CreateFixAction::Details,
         value: None,
+        keep_retry: false,
+        link_label: None,
+        link_url: None,
     };
     let on = if elsewhere { " on that computer" } else { "" };
     Some(match kind {
@@ -1124,7 +1331,7 @@ pub fn fix_for(kind: &str, p: &PendingCreate) -> Option<CreateFix> {
             ),
             "cua runtime doctor",
         ),
-        "runtime_missing" | "runtime_permission" => copy(
+        "runtime_missing" | "vm_runtime_missing" | "runtime_permission" => copy(
             format!(
                 "It failed twice for the same reason: Cua can't use a container engine or VM \
                  runtime{on}. Run `cua runtime doctor` in Terminal to see what to install or \
@@ -1140,6 +1347,12 @@ pub fn fix_for(kind: &str, p: &PendingCreate) -> Option<CreateFix> {
         "vm_limit" => help(format!(
             "It failed twice for the same reason: {} already runs the two macOS VMs Apple \
              allows. Stop or delete one, then create it again.",
+            machine
+        )),
+        "host_capacity" => help(format!(
+            "It failed twice for the same reason: {} has no room for another VM right now. \
+             Stop or delete a Space you are not using (the message names what is running), or \
+             close other programs, then create it again.",
             machine
         )),
         "local_network" | "local_network_denied" | "local_network_vpn" => help(format!(
@@ -1263,6 +1476,30 @@ pub fn failure_text_on(
                  picks up where it stopped."
             )
         }
+        Some(FailureCause::WindowsDownloadLimited) => {
+            // "... Try again in about 42 minutes, or download ..." names the
+            // time left of the wait.
+            let wait = l
+                .find("try again in ")
+                .map(|at| {
+                    let rest = &plain[at + "try again in ".len()..];
+                    rest.split([',', '.'])
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .to_string()
+                })
+                .filter(|w| !w.is_empty() && w.len() < 30)
+                .unwrap_or_else(|| "about an hour".into());
+            format!(
+                "Microsoft is limiting Windows downloads from your network right now. Try again in \
+                 {wait}, or download the Windows 11 ARM64 disc image yourself and choose it \
+                 here."
+            )
+        }
+        Some(FailureCause::WindowsDownloadFailed) => "Cua couldn't download Windows from \
+             Microsoft. Choose a Windows disc image you downloaded yourself, or try again."
+            .into(),
         Some(FailureCause::PullTimeout) => "The image download did not finish in the time \
              allowed. Check your internet connection, then try again."
             .into(),
@@ -1282,6 +1519,7 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
     let mut next = state.clone();
     match action {
         CreateAction::Start {
+            parent,
             id,
             name,
             os,
@@ -1327,6 +1565,7 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
                 gpu: *gpu,
                 host: machine.clone().filter(|h| !h.trim().is_empty()),
                 host_name: machine_name.clone().filter(|h| !h.trim().is_empty()),
+                parent: parent.clone().filter(|h| !h.trim().is_empty()),
                 attempt: 0,
                 retry_pending: false,
                 retried_subclass: None,
@@ -1385,6 +1624,17 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
                 // Setting up a runtime: its download done, its boot reports
                 // a fraction only (no bytes left to show).
                 if phase == "preparing" && bytes_done.is_none() && fraction.is_some() {
+                    p.bytes_done = None;
+                    p.bytes_total = None;
+                    p.bytes_per_second = None;
+                }
+                // A Windows image built here: past the downloads the bar is the
+                // install's, and the ISO's byte count no longer applies.
+                if phase == "pulling"
+                    && bytes_done.is_none()
+                    && fraction.is_some_and(|f| f >= WINDOWS_INSTALL_FROM)
+                    && builds_windows_here(p)
+                {
                     p.bytes_done = None;
                     p.bytes_total = None;
                     p.bytes_per_second = None;
@@ -1495,7 +1745,16 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
                     return next;
                 }
                 // The same failure again: its fix, not a plain Try again.
-                p.fix = (repeats >= 2).then(|| fix_for(&decision.kind, p)).flatten();
+                p.fix = if matches!(
+                    failure_cause(error, Some(&p.phase), p.gpu),
+                    Some(
+                        FailureCause::WindowsDownloadLimited | FailureCause::WindowsDownloadFailed
+                    )
+                ) {
+                    Some(windows_download_fix())
+                } else {
+                    (repeats >= 2).then(|| fix_for(&decision.kind, p)).flatten()
+                };
                 p.error = Some(if error.trim().is_empty() {
                     "Could not create the Space".into()
                 } else {
@@ -1577,7 +1836,9 @@ pub fn power_failed_text(on: bool, error: &str) -> String {
             )
         }
         Some(FailureCause::LocalNetworkVpn) => "a VPN or firewall on the Mac running it is \
-             blocking that Mac's own network. Turn off the VPN there and try again."
+             blocking that Mac's own network. Turn off the VPN there and try again. If it can't be \
+             turned off, ask whoever manages it to let 192.168.64.0/24 (that Mac's VM network) \
+             skip the VPN."
             .into(),
         Some(FailureCause::Disk) => "there isn't enough disk space on the Mac running it. Free \
              up space there (or run `cua cache prune` in Terminal), then try again."
@@ -1619,7 +1880,8 @@ fn vpn_text(provider: Option<SpaceProvider>, host_name: Option<&str>) -> String 
     }
     format!(
         "A VPN or firewall on {subject} is blocking that Mac's own network, so it can't connect \
-         to its new macOS Space. Turn off the VPN there and try again."
+         to its new macOS Space. Turn off the VPN there and try again. If it can't be turned off, ask \
+         whoever manages it to let 192.168.64.0/24 (that Mac's VM network) skip the VPN."
     )
 }
 
@@ -1742,6 +2004,7 @@ pub fn pending_space(p: &PendingCreate) -> Space {
     // The catalog's distribution: the right icon and System from the start.
     let distro = p.image.as_deref().and_then(crate::wizard::image_distro);
     Space {
+        hidden: false,
         id: p.id.clone(),
         name: p.name.clone(),
         os: p.os,
@@ -1789,6 +2052,7 @@ pub fn pending_space(p: &PendingCreate) -> Space {
         arch: p.arch.clone(),
         host: None,
         host_name: p.host_name.clone(),
+        parent: p.parent.clone(),
         power: None,
         cloud: None,
         cloud_place: None,
@@ -1970,6 +2234,7 @@ mod tests {
 
     fn start(id: &str, name: &str, os: SpaceOs) -> CreateAction {
         CreateAction::Start {
+            parent: None,
             id: id.into(),
             name: name.into(),
             os,
@@ -2171,9 +2436,11 @@ mod tests {
             "insufficient_disk",
             "runtime_not_running",
             "runtime_missing",
+            "vm_runtime_missing",
             "runtime_permission",
             "virtualization_unavailable",
             "vm_limit",
+            "host_capacity",
             "local_network",
             "local_network_denied",
             "local_network_vpn",
@@ -2196,7 +2463,9 @@ mod tests {
                 CreateFixAction::CopyCommand | CreateFixAction::OpenUrl => {
                     assert!(fix.value.is_some(), "{kind}")
                 }
-                CreateFixAction::Details => assert!(fix.value.is_none(), "{kind}"),
+                CreateFixAction::Details | CreateFixAction::ChooseWindowsIso => {
+                    assert!(fix.value.is_none(), "{kind}")
+                }
             }
         }
         assert!(fix_for("cancelled", p).is_none() && fix_for("quota_exceeded", p).is_none());
@@ -2216,6 +2485,7 @@ mod tests {
 
     fn start_image(id: &str, image: &str, kind: Option<SpaceKind>) -> CreateAction {
         CreateAction::Start {
+            parent: None,
             id: id.into(),
             name: String::new(),
             os: SpaceOs::Linux,
@@ -2254,6 +2524,196 @@ mod tests {
         }
     }
 
+    /// A Windows image built on this Mac says "Downloading Windows" while the
+    /// ISO comes down (with its bytes), then "Installing Windows" with no
+    /// stale byte count, then the ordinary clone and boot words.
+    #[test]
+    fn a_windows_image_built_here_downloads_then_installs() {
+        let image = "ghcr.io/trycua/windows:11";
+        let mut s = reduce(
+            &CreatesState::default(),
+            &CreateAction::Start {
+                id: "pending:w".into(),
+                name: String::new(),
+                os: SpaceOs::Windows,
+                provider: SpaceProvider::Local,
+                now: 1_000,
+                image: Some(image.into()),
+                kind: Some(SpaceKind::Vm),
+                host_arch: Some("aarch64".into()),
+                gpu: false,
+                host: None,
+                host_name: None,
+                parent: None,
+            },
+        );
+        let row = |s: &CreatesState| pending_space(&s.pending[0]).progress.unwrap();
+        s = reduce(&s, &bytes_at("pending:w", 2 << 30, 8 << 30, 1e7, 2_000));
+        assert_eq!(
+            row(&s).label,
+            "Downloading Windows (first time only)\u{2026}"
+        );
+        assert!(row(&s).transfer.is_some());
+        // The install: a fraction past the downloads, no bytes.
+        s = reduce(&s, &at("pending:w", "pulling", Some(0.5), 3_000));
+        let r = row(&s);
+        assert_eq!(r.label, "Installing Windows (first time only)\u{2026}");
+        assert_eq!(r.transfer, None, "the ISO's bytes are not the install's");
+        // Then the Space's own steps.
+        s = reduce(&s, &at("pending:w", "creating", None, 4_000));
+        assert_eq!(row(&s).label, "Preparing the disk\u{2026}");
+        s = reduce(&s, &at("pending:w", "booting", None, 5_000));
+        assert_eq!(row(&s).label, "Booting Windows\u{2026}");
+        // A pulled Windows image (Server 2022) is just a download.
+        let mut pulled = reduce(
+            &CreatesState::default(),
+            &start_image(
+                "pending:p",
+                "ghcr.io/trycua/windows:2022",
+                Some(SpaceKind::Vm),
+            ),
+        );
+        pulled.pending[0].os = SpaceOs::Windows;
+        pulled = reduce(&pulled, &at("pending:p", "pulling", Some(0.9), 2_000));
+        assert_eq!(
+            pending_space(&pulled.pending[0]).progress.unwrap().label,
+            "Downloading image\u{2026}"
+        );
+    }
+
+    #[test]
+    fn microsofts_limit_is_said_in_plain_words_with_its_way_out_and_never_retried() {
+        let raw = "local runtime: build failed at windows iso: Microsoft is limiting Windows downloads from this network (Sentinel marked this request as rejected.) right now. Try again in about 42 minutes, or download the Windows ISO yourself (https://www.microsoft.com/software-download/windows11arm64) and save it in your Downloads folder: Cua finds it. With the command line: cua sb create windows:11 --iso ~/Downloads/<the file>.iso";
+        let text = failure_text(raw, Some("pulling"), Some(SpaceProvider::Local), false);
+        assert_eq!(
+            text,
+            "Microsoft is limiting Windows downloads from your network right now. Try again in about 42 minutes, or download the Windows 11 ARM64 disc image yourself and choose it here."
+        );
+        assert!(!text.contains("Sentinel") && !text.contains("--iso"));
+        let s = reduce(
+            &CreatesState::default(),
+            &start_image(
+                "pending:w",
+                "ghcr.io/trycua/windows:11",
+                Some(SpaceKind::Vm),
+            ),
+        );
+        let failed = reduce(
+            &s,
+            &CreateAction::Fail {
+                id: "pending:w".into(),
+                error: raw.into(),
+                error_variant: "Runtime".into(),
+                now: Some(5_000),
+            },
+        );
+        let p = &failed.pending[0];
+        assert!(!p.retry_pending && p.attempt == 0, "no automatic retry");
+        let fix = p.fix.as_ref().expect("the way out is on the first failure");
+        assert_eq!(fix.label, "Choose Windows ISO\u{2026}");
+        assert_eq!(fix.action, CreateFixAction::ChooseWindowsIso);
+        assert_eq!(
+            fix.link_label.as_deref(),
+            Some("Open Microsoft's download page")
+        );
+        assert_eq!(fix.link_url.as_deref(), Some(WINDOWS_ARM64_PAGE));
+        assert!(fix.keep_retry, "Try again stays beside it");
+    }
+
+    /// Any other failure to get the ISO offers the same way out, at once.
+    #[test]
+    fn a_failed_windows_download_offers_the_iso_picker_on_the_first_failure() {
+        let raw = "local runtime: build failed at windows iso: Microsoft's download service did not answer (timed out)";
+        assert_eq!(
+            failure_cause(raw, Some("pulling"), false),
+            Some(FailureCause::WindowsDownloadFailed)
+        );
+        let text = failure_text(raw, Some("pulling"), Some(SpaceProvider::Local), false);
+        assert!(text.contains("Choose a Windows disc image") && !text.contains("windows iso"));
+        let s = reduce(
+            &CreatesState::default(),
+            &start_image(
+                "pending:w",
+                "ghcr.io/trycua/windows:11",
+                Some(SpaceKind::Vm),
+            ),
+        );
+        let failed = reduce(
+            &s,
+            &CreateAction::Fail {
+                id: "pending:w".into(),
+                error: raw.into(),
+                error_variant: "Runtime".into(),
+                now: Some(5_000),
+            },
+        );
+        let fix = failed.pending[0]
+            .fix
+            .as_ref()
+            .expect("the picker on the first failure");
+        assert_eq!(fix.action, CreateFixAction::ChooseWindowsIso);
+        assert!(fix.keep_retry);
+    }
+
+    /// The bar of a first-time Windows build only moves forward through the
+    /// download and the install, and every report moves it (so the stall watch
+    /// never fails a healthy build).
+    #[test]
+    fn the_windows_build_bar_moves_with_every_report() {
+        let mut s = reduce(
+            &CreatesState::default(),
+            &CreateAction::Start {
+                id: "pending:w".into(),
+                name: String::new(),
+                os: SpaceOs::Windows,
+                provider: SpaceProvider::Local,
+                now: 1_000,
+                image: Some("ghcr.io/trycua/windows:11".into()),
+                kind: Some(SpaceKind::Vm),
+                host_arch: Some("aarch64".into()),
+                gpu: false,
+                host: None,
+                host_name: None,
+                parent: None,
+            },
+        );
+        let mut last = 0;
+        let mut now = 2_000;
+        // ISO bytes from 0.01 to 0.40, drivers to 0.45, then the install to 0.96.
+        let fractions = [
+            0.01, 0.1, 0.25, 0.40, 0.45, 0.46, 0.47, 0.55, 0.7, 0.9, 0.96,
+        ];
+        let mut seen = Vec::new();
+        for f in fractions {
+            now += 20_000;
+            s = reduce(&s, &at("pending:w", "pulling", Some(f), now));
+            let p = &s.pending[0];
+            assert!(p.permille >= last, "{f}: {} < {last}", p.permille);
+            last = p.permille;
+            seen.push((f, p.permille));
+        }
+        // The install's fractions span a visible part of the bar.
+        let at_install = seen.iter().find(|(f, _)| *f == 0.47).unwrap().1;
+        let at_end = seen.last().unwrap().1;
+        assert!(at_end > at_install + 100, "{seen:?}");
+        // The create's own phases follow and never go back.
+        s = reduce(&s, &at("pending:w", "creating", None, now + 1_000));
+        assert!(s.pending[0].permille >= at_end, "{seen:?}");
+    }
+
+    /// The fraction the app tells "downloading" from "installing" by is the
+    /// one the build reports (`cua-image`'s `DOWNLOADS_END`).
+    #[test]
+    fn the_install_fraction_is_the_one_the_build_reports() {
+        let build = include_str!("../../../cua-image/src/windows/build.rs");
+        assert!(
+            build.contains(&format!(
+                "pub const DOWNLOADS_END: f64 = {WINDOWS_INSTALL_FROM};"
+            )),
+            "cua-image's DOWNLOADS_END must equal WINDOWS_INSTALL_FROM ({WINDOWS_INSTALL_FROM})"
+        );
+    }
+
     /// A create says which step it is on, in the words of its kind of
     /// Space, with the download's bytes and time left under the bar: the
     /// same on this Mac and on another of your machines.
@@ -2263,6 +2723,7 @@ mod tests {
             let mut s = reduce(
                 &CreatesState::default(),
                 &CreateAction::Start {
+                    parent: None,
                     id: "pending:s".into(),
                     name: String::new(),
                     os,
@@ -2339,6 +2800,7 @@ mod tests {
         let s = reduce(
             &CreatesState::default(),
             &CreateAction::Start {
+                parent: None,
                 id: "pending:r".into(),
                 name: String::new(),
                 os: SpaceOs::Macos,
@@ -3182,9 +3644,11 @@ mod tests {
                 Some(FailureCause::RuntimeMissing),
                 "{raw}"
             );
+            // QEMU is a VM runtime: its own word in telemetry, while the
+            // person still reads the same "runtime missing" message.
             assert_eq!(
                 failure_variant(raw, Some("pulling"), false, "Other"),
-                "runtime_missing"
+                "vm_runtime_missing"
             );
         }
         // Local Network privacy on the Mac that runs the VM.
@@ -3215,6 +3679,7 @@ mod tests {
             "lume API 500: The number of virtual machines exceeds the limit.",
             "Error Domain=VZErrorDomain Code=6 virtualMachineLimitExceeded",
             "booting: the maximum number of VMs has been reached (limit 2)",
+            "lume API 409: VM start rejected: host limit of 2 running macOS guests reached",
         ] {
             assert!(
                 failure_text(raw, Some("booting"), Some(SpaceProvider::Local), false)
@@ -3294,6 +3759,7 @@ mod tests {
     #[test]
     fn a_create_on_another_machine_waits_for_its_download_and_says_where() {
         let relay = |os| CreateAction::Start {
+            parent: None,
             id: "pending:r".into(),
             name: String::new(),
             os,
@@ -3350,6 +3816,7 @@ mod tests {
         host: Option<&str>,
     ) -> CreateAction {
         CreateAction::Start {
+            parent: None,
             id: id.into(),
             name: name.into(),
             os,
@@ -3374,6 +3841,8 @@ mod tests {
     fn hosts_record(id: &str, name: &str, host: &str, added_at_ms: Option<i64>) -> Space {
         let mut s = crate::spaces::row_to_space(
             &crate::model::SpaceRow {
+                hidden: false,
+                parent: None,
                 id: id.into(),
                 name: name.into(),
                 display_name: None,
@@ -3652,6 +4121,87 @@ mod tests {
                 false
             )
             .starts_with("This Mac is already running two macOS VMs")
+        );
+    }
+
+    #[test]
+    fn an_agents_create_gets_the_same_pending_row_then_ready_or_failed_and_polling_again_changes_nothing()
+     {
+        let mk = |state: &str, phase: &str, percent: Option<u8>, error: &str| AgentCreate {
+            key: "mac".into(),
+            name: "mac".into(),
+            os: "macOS".into(),
+            state: state.into(),
+            phase: phase.into(),
+            percent,
+            space: if state == "ready" {
+                "local:mac".into()
+            } else {
+                String::new()
+            },
+            error: error.into(),
+            started_ms: 500,
+            parent: "local:home".into(),
+        };
+        let run = |mut st: CreatesState, cs: &[AgentCreate]| {
+            for a in agent_actions(&st.clone(), cs, 900) {
+                st = reduce(&st, &a);
+            }
+            st
+        };
+        let st = run(
+            CreatesState::default(),
+            &[mk("creating", "pulling", Some(40), "")],
+        );
+        assert_eq!(st.pending.len(), 1);
+        assert_eq!(st.pending[0].id, agent_pending_id("mac", 500));
+        assert_eq!(st.pending[0].phase, "pulling");
+        assert!(is_agent_pending(&st.pending[0].id) && is_pending(&st.pending[0].id));
+        // The page of the Space opens mid-create: its row is there, being made, with its progress.
+        let rows = compose(&[], &st);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, agent_pending_id("mac", 500));
+        assert_eq!(rows[0].status, SpaceStatus::Provisioning);
+        // It nests under the Space that asked for it, from the first moment.
+        assert_eq!(rows[0].parent.as_deref(), Some("local:home"));
+        assert!(
+            rows[0]
+                .progress
+                .as_ref()
+                .is_some_and(|p| p.error.is_none() && p.phase == "pulling")
+        );
+        // The same poll again: no second row, no new actions that change it.
+        let again = run(st.clone(), &[mk("creating", "pulling", Some(40), "")]);
+        assert_eq!(again.pending.len(), 1);
+        // It fails: the row stays with the reason.
+        let failed = run(
+            again,
+            &[mk("failed", "", None, "Its network setup did not come up")],
+        );
+        assert_eq!(failed.pending.len(), 1);
+        assert_eq!(
+            failed.pending[0].error.as_deref(),
+            Some("Its network setup did not come up")
+        );
+        assert!(agent_actions(&failed, &[mk("failed", "", None, "x")], 1000).is_empty());
+        // A create that failed before the app looked still shows its row once.
+        let late = run(
+            CreatesState::default(),
+            &[mk("failed", "", None, "No disk space")],
+        );
+        assert_eq!(late.pending[0].error.as_deref(), Some("No disk space"));
+        // Ready hands over to the registry's Space.
+        let st = run(
+            CreatesState::default(),
+            &[mk("creating", "booting", None, "")],
+        );
+        let done = run(st, &[mk("ready", "", None, "")]);
+        assert_eq!(done.pending[0].space_id.as_deref(), Some("local:mac"));
+        // A ready create the app never showed adds no row.
+        assert!(
+            run(CreatesState::default(), &[mk("ready", "", None, "")])
+                .pending
+                .is_empty()
         );
     }
 }

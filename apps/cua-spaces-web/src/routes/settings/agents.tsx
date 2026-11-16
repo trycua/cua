@@ -6,6 +6,6 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 /** Settings, Agents became Connectors. */
 export const Route = createFileRoute("/settings/agents")({
   beforeLoad: () => {
-    throw redirect({ to: "/settings/connectors", replace: true });
+    throw redirect({ to: "/settings/connections", replace: true });
   },
 });

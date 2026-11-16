@@ -115,7 +115,8 @@ export interface CommandDoc {
 
 export interface CLIDocumentation {
   name: string;
-  version: string;
+  /** What the binary reports. Never persisted or rendered: see `cliSpecJson`. */
+  version?: string;
   abstract: string;
   usage?: string;
   global_options?: Array<OptionDoc | FlagDoc>;
@@ -678,7 +679,6 @@ function renderIndexPage(ref: CliReference, pages: Map<string, PageCommand[]>, c
     description: sentence(cli.abstract),
     generator: ref.generator,
     source: ref.source,
-    version: cli.version,
     body: body.join('\n'),
   });
 }
@@ -724,7 +724,6 @@ function renderGroup(ref: CliReference, group: CliGroup, commands: PageCommand[]
     description: sentence(group.summary),
     generator: ref.generator,
     source: ref.source,
-    version: cli.version,
     body: body.join('\n'),
   });
 }
@@ -778,7 +777,6 @@ function renderSinglePage(ref: CliReference, pages: Map<string, PageCommand[]>):
     description: sentence(cli.abstract),
     generator: ref.generator,
     source: ref.source,
-    version: cli.version,
     body: body.join('\n'),
   });
 }
@@ -837,7 +835,6 @@ export function renderReferenceIndex(page: {
   description: string;
   generator: string;
   source: string;
-  version?: string;
   sections: IndexSection[];
 }): string {
   const body: string[] = [];
@@ -855,7 +852,6 @@ export function renderReferenceIndex(page: {
     description: page.description,
     generator: page.generator,
     source: page.source,
-    version: page.version,
     body: body.join('\n'),
   });
 }

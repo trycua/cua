@@ -42,6 +42,21 @@ pub enum Memory {
     File { path: PathBuf, shared: bool },
 }
 
+/// Where QEMU's `-netdev stream` connects to the network gateway.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NetStream {
+    /// A Unix socket (macOS).
+    Unix(PathBuf),
+    /// A loopback TCP port (Windows).
+    Tcp(u16),
+}
+
+/// The guest's MAC address (QEMU's default, given explicitly: the gateway
+/// leases [`GUEST_IP`] to it).
+pub const GUEST_MAC: &str = "52:54:00:12:34:56";
+/// The guest's address on QEMU's user network, and on the gateway's.
+pub const GUEST_IP: &str = "10.0.2.15";
+
 /// Everything needed to build a `qemu-system-*` argv.
 #[derive(Clone, Debug)]
 pub struct LaunchConfig {
@@ -59,12 +74,23 @@ pub struct LaunchConfig {
     pub seed_iso: Option<PathBuf>,
     /// Installer ISO attached as CD-ROM and booted first.
     pub install_iso: Option<PathBuf>,
+    /// Optional swtpm control socket.
+    pub tpm_socket: Option<PathBuf>,
     pub firmware: Firmware,
     /// `(host_port, guest_port)` TCP forwards on 127.0.0.1.
     pub forwards: Vec<(u16, u16)>,
     pub restrict_network: bool,
+    /// The guest's network through the Cua network gateway
+    /// ([`crate::netgw`]) instead of QEMU's own user network: the gateway
+    /// then publishes `forwards` itself.
+    pub gateway: Option<NetStream>,
     pub vnc_display: Option<u16>,
     pub qmp_port: u16,
+    /// QMP on this chardev instead of `qmp_port`: `unix:<path>` or
+    /// `pipe:<name>` (Windows).
+    pub qmp_listen: Option<String>,
+    /// The display asks for a password (set over QMP once QEMU runs).
+    pub vnc_password: bool,
     pub serial_log: Option<PathBuf>,
     pub pidfile: Option<PathBuf>,
     pub daemonize: bool,
@@ -134,6 +160,7 @@ impl LaunchConfig {
 
 /// Build the argv (excluding the binary itself).
 pub fn build(cfg: &LaunchConfig) -> Vec<String> {
+    let windows_arm = cfg.os == GuestOs::Windows && cfg.arch == Arch::Aarch64;
     let mut a: Vec<String> = Vec::new();
     let mut push = |xs: &[&str]| a.extend(xs.iter().map(|s| s.to_string()));
 
@@ -235,7 +262,10 @@ pub fn build(cfg: &LaunchConfig) -> Vec<String> {
     // virtio storage driver is not a boot driver there, so over virtio-blk
     // it cannot find its system volume and lands in WinRE. Everything else
     // boots virtio.
-    if cfg.os == GuestOs::Windows {
+    if windows_arm {
+        push(&["-device", "nvme,drive=disk0,serial=cua-disk0,bootindex=1"]);
+        push(&["-device", "qemu-xhci,id=xhci"]);
+    } else if cfg.os == GuestOs::Windows {
         push(&[
             "-device",
             "ahci,id=ahci",
@@ -266,26 +296,43 @@ pub fn build(cfg: &LaunchConfig) -> Vec<String> {
                         iso.display()
                     ),
                 ]);
-                push(&[
-                    "-device",
-                    "virtio-scsi-pci,id=scsi0",
-                    "-device",
-                    "scsi-cd,drive=cd0,bootindex=0",
-                ]);
+                if windows_arm {
+                    push(&["-device", "usb-storage,drive=cd0,bus=xhci.0,bootindex=0"]);
+                } else {
+                    push(&["-device", "virtio-scsi-pci,id=scsi0"]);
+                    push(&["-device", "scsi-cd,drive=cd0,bootindex=0"]);
+                }
             }
         }
     }
 
-    // Network: user-mode NAT with loopback-only forwards.
-    let mut net = String::from("user,id=net0");
-    if cfg.restrict_network {
-        net.push_str(",restrict=on");
-    }
-    for (host, guest) in &cfg.forwards {
-        net.push_str(&format!(",hostfwd=tcp:127.0.0.1:{host}-:{guest}"));
-    }
+    // Network: user-mode NAT with loopback-only forwards, or the network
+    // gateway (which publishes the forwards itself). No network keeps the
+    // user network, restricted.
+    let net = match (&cfg.gateway, cfg.restrict_network) {
+        (Some(NetStream::Unix(p)), false) => format!(
+            "stream,id=net0,server=off,addr.type=unix,addr.path={}",
+            p.display()
+        ),
+        (Some(NetStream::Tcp(port)), false) => {
+            format!("stream,id=net0,server=off,addr.type=inet,addr.host=127.0.0.1,addr.port={port}")
+        }
+        _ => {
+            let mut net = String::from("user,id=net0");
+            if cfg.restrict_network {
+                net.push_str(",restrict=on");
+            }
+            for (host, guest) in &cfg.forwards {
+                net.push_str(&format!(",hostfwd=tcp:127.0.0.1:{host}-:{guest}"));
+            }
+            net
+        }
+    };
     push(&["-netdev", &net]);
-    push(&["-device", "virtio-net-pci,netdev=net0"]);
+    push(&[
+        "-device",
+        &format!("virtio-net-pci,netdev=net0,mac={GUEST_MAC}"),
+    ]);
     if cfg.free_page_reporting {
         push(&[
             "-device",
@@ -328,12 +375,30 @@ pub fn build(cfg: &LaunchConfig) -> Vec<String> {
         display(&mut a, cfg);
     }
 
+    // The TPM is independent of the display: a headless restart keeps it.
+    if let Some(socket) = &cfg.tpm_socket {
+        a.extend([
+            "-chardev".to_string(),
+            format!("socket,id=chrtpm,path={}", socket.display()),
+            "-tpmdev".into(),
+            "emulator,id=tpm0,chardev=chrtpm".into(),
+            "-device".into(),
+            match cfg.arch {
+                Arch::Aarch64 => "tpm-tis-device,tpmdev=tpm0",
+                Arch::X86_64 => "tpm-tis,tpmdev=tpm0",
+            }
+            .into(),
+        ]);
+    }
+
     // Management.
     let mut push = |xs: &[&str]| a.extend(xs.iter().map(|s| s.to_string()));
-    push(&[
-        "-qmp",
-        &format!("tcp:127.0.0.1:{},server=on,wait=off", cfg.qmp_port),
-    ]);
+    let qmp = match cfg.qmp_listen.as_deref() {
+        Some(a) if a.starts_with("pipe:") => a.to_string(),
+        Some(a) => format!("{a},server=on,wait=off"),
+        None => format!("tcp:127.0.0.1:{},server=on,wait=off", cfg.qmp_port),
+    };
+    push(&["-qmp", &qmp]);
     match &cfg.serial_log {
         Some(p) => push(&["-serial", &format!("file:{}", p.display())]),
         None => push(&["-serial", "none"]),
@@ -357,22 +422,20 @@ pub fn build(cfg: &LaunchConfig) -> Vec<String> {
 
 /// The display and input devices, VNC and the display backend.
 fn display(a: &mut Vec<String>, cfg: &LaunchConfig) {
+    let windows_arm = cfg.os == GuestOs::Windows && cfg.arch == Arch::Aarch64;
     let mut push = |xs: &[&str]| a.extend(xs.iter().map(|s| s.to_string()));
     match (&cfg.virgl_render_node, cfg.arch) {
+        _ if windows_arm => push(&["-device", "ramfb"]),
         // virgl: the guest's 3D goes to the host GPU; the headless EGL
         // display still feeds VNC and screendump.
         (Some(_), _) => push(&["-device", "virtio-gpu-gl-pci"]),
         (None, Arch::Aarch64) => push(&["-device", "virtio-gpu-pci"]),
         (None, Arch::X86_64) => push(&["-vga", "std"]),
     }
-    push(&[
-        "-device",
-        "qemu-xhci,id=xhci",
-        "-device",
-        "usb-kbd",
-        "-device",
-        "usb-tablet",
-    ]);
+    if !windows_arm {
+        push(&["-device", "qemu-xhci,id=xhci"]);
+    }
+    push(&["-device", "usb-kbd", "-device", "usb-tablet"]);
     match &cfg.virgl_render_node {
         Some(node) => push(&[
             "-display",
@@ -381,6 +444,7 @@ fn display(a: &mut Vec<String>, cfg: &LaunchConfig) {
         None => push(&["-display", "none"]),
     }
     match cfg.vnc_display {
+        Some(d) if cfg.vnc_password => push(&["-vnc", &format!("127.0.0.1:{d},password=on")]),
         Some(d) => push(&["-vnc", &format!("127.0.0.1:{d}")]),
         None => push(&["-vnc", "none"]),
     }
@@ -419,11 +483,15 @@ mod tests {
             disk_format: "qcow2".into(),
             seed_iso: Some(PathBuf::from("/s/vm1/seed.iso")),
             install_iso: None,
+            tpm_socket: None,
             firmware: Firmware::Bios,
             forwards: vec![(40022, 22), (40080, 8080)],
             restrict_network: false,
+            gateway: None,
             vnc_display: Some(3),
             qmp_port: 4444,
+            qmp_listen: None,
+            vnc_password: false,
             serial_log: Some(PathBuf::from("/s/vm1/serial.log")),
             pidfile: Some(PathBuf::from("/s/vm1/qemu.pid")),
             daemonize: true,
@@ -435,6 +503,40 @@ mod tests {
             headless: false,
             bulk: None,
             extra: vec![],
+        }
+    }
+
+    /// Nothing the guest's user-mode network can reach through its host
+    /// alias (`10.0.2.2` is the host's loopback) controls QEMU: QMP is a
+    /// unix socket or named pipe, the display asks for a password, and no
+    /// monitor, chardev or debug stub listens on TCP. Only the guest's own
+    /// forwards do.
+    #[test]
+    fn no_control_channel_listens_on_tcp() {
+        for listen in ["unix:/s/vm1/qmp.sock", "pipe:cua-qmp-0123456789abcdef"] {
+            let mut c = cfg(Arch::X86_64, "kvm");
+            c.qmp_listen = Some(listen.into());
+            c.vnc_password = true;
+            let a = build(&c);
+            let qmp = a
+                .windows(2)
+                .find(|w| w[0] == "-qmp")
+                .map(|w| w[1].clone())
+                .unwrap();
+            assert!(qmp.starts_with(listen), "{qmp}");
+            assert!(has(&a, ["-vnc", "127.0.0.1:3,password=on"]), "{a:?}");
+            for (i, x) in a.iter().enumerate() {
+                let flag = i.checked_sub(1).map(|p| a[p].as_str()).unwrap_or_default();
+                if flag == "-netdev" {
+                    continue; // the guest's own forwards
+                }
+                assert!(!x.contains("tcp:"), "{flag} {x}");
+                assert!(!x.contains("telnet:"), "{flag} {x}");
+            }
+            for flag in ["-gdb", "-s", "-spice"] {
+                assert!(!a.iter().any(|x| x == flag), "{flag} in {a:?}");
+            }
+            assert!(has(&a, ["-monitor", "none"]), "{a:?}");
         }
     }
 
@@ -548,6 +650,98 @@ mod tests {
         assert!(has(&build(&cfg(Arch::X86_64, "kvm")), ["-display", "none"]));
     }
 
+    #[test]
+    fn windows_arm_devices_and_tpm() {
+        let mut c = cfg(Arch::Aarch64, "hvf");
+        c.os = GuestOs::Windows;
+        c.seed_iso = None;
+        c.install_iso = Some("/install.iso".into());
+        let a = build(&c);
+        assert_eq!(
+            a,
+            serde_json::from_str::<Vec<String>>(include_str!("../../tests/argv/windows-arm.json"))
+                .unwrap()
+        );
+        for device in [
+            "ramfb",
+            "nvme,drive=disk0,serial=cua-disk0,bootindex=1",
+            "virtio-net-pci,netdev=net0,mac=52:54:00:12:34:56",
+            "usb-storage,drive=cd0,bus=xhci.0,bootindex=0",
+        ] {
+            assert!(has(&a, ["-device", device]));
+        }
+        let controller = a.iter().position(|s| s == "qemu-xhci,id=xhci").unwrap();
+        for (i, arg) in a.iter().enumerate() {
+            if arg.contains("bus=xhci.0") {
+                assert!(controller < i);
+            }
+            assert!(
+                !arg.contains("virtio-gpu")
+                    && !arg.contains("virtio-scsi")
+                    && !arg.contains("ahci")
+            );
+            assert!(!arg.contains("tpm") && arg != "-chardev");
+        }
+        c.seed_iso = Some("/seed.iso".into());
+        let seeded = build(&c);
+        assert!(has(&seeded, ["-device", "virtio-blk-pci,drive=cidata"]));
+        assert_eq!(
+            seeded.iter().filter(|s| *s == "qemu-xhci,id=xhci").count(),
+            1
+        );
+        for arch in [Arch::Aarch64, Arch::X86_64] {
+            c.arch = arch;
+            c.tpm_socket = Some("/vm/tpm/swtpm.sock".into());
+            let a = build(&c);
+            assert!(has(
+                &a,
+                ["-chardev", "socket,id=chrtpm,path=/vm/tpm/swtpm.sock"]
+            ));
+            assert!(has(&a, ["-tpmdev", "emulator,id=tpm0,chardev=chrtpm"]));
+            let mut h = c.clone();
+            h.headless = true;
+            assert!(has(
+                &build(&h),
+                ["-tpmdev", "emulator,id=tpm0,chardev=chrtpm"]
+            ));
+            assert!(has(
+                &a,
+                [
+                    "-device",
+                    if arch == Arch::Aarch64 {
+                        "tpm-tis-device,tpmdev=tpm0"
+                    } else {
+                        "tpm-tis,tpmdev=tpm0"
+                    }
+                ]
+            ));
+        }
+    }
+
+    #[test]
+    fn unchanged_vectors() {
+        for (name, arch, os, iso, virgl) in [
+            ("windows-x86", Arch::X86_64, GuestOs::Windows, true, false),
+            ("linux-arm", Arch::Aarch64, GuestOs::Linux, true, false),
+            ("linux-x86", Arch::X86_64, GuestOs::Linux, false, false),
+            ("virgl-arm", Arch::Aarch64, GuestOs::Linux, false, true),
+            ("virgl-x86", Arch::X86_64, GuestOs::Linux, false, true),
+        ] {
+            let mut c = cfg(arch, "kvm");
+            c.os = os;
+            c.install_iso = iso.then(|| "/install.iso".into());
+            c.virgl_render_node = virgl.then(|| "/dev/dri/renderD128".into());
+            let actual = serde_json::to_string_pretty(&build(&c)).unwrap();
+            let path =
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("tests/argv/{name}.json"));
+            // UPDATE_ARGV=1 rewrites the fixtures (review the diff: an argv change is a behaviour change).
+            if std::env::var_os("UPDATE_ARGV").is_some() {
+                std::fs::write(&path, &actual).unwrap();
+            }
+            assert_eq!(actual, std::fs::read_to_string(path).unwrap(), "{name}");
+        }
+    }
+
     fn has(args: &[String], pair: [&str; 2]) -> bool {
         args.windows(2).any(|w| w[0] == pair[0] && w[1] == pair[1])
     }
@@ -656,6 +850,38 @@ mod tests {
                  hostfwd=tcp:127.0.0.1:40080-:8080"
             ]
         ));
+        // Through the network gateway: a stream to it, no hostfwd (the
+        // gateway publishes the ports); no network still wins.
+        c.restrict_network = false;
+        c.gateway = Some(NetStream::Unix("/t/cuagw/q.sock".into()));
+        let a = build(&c);
+        assert!(has(
+            &a,
+            [
+                "-netdev",
+                "stream,id=net0,server=off,addr.type=unix,addr.path=/t/cuagw/q.sock"
+            ]
+        ));
+        assert!(has(
+            &a,
+            [
+                "-device",
+                "virtio-net-pci,netdev=net0,mac=52:54:00:12:34:56"
+            ]
+        ));
+        assert!(!a.iter().any(|x| x.contains("hostfwd")));
+        c.gateway = Some(NetStream::Tcp(40100));
+        let a = build(&c);
+        assert!(has(
+            &a,
+            [
+                "-netdev",
+                "stream,id=net0,server=off,addr.type=inet,addr.host=127.0.0.1,addr.port=40100"
+            ]
+        ));
+        c.restrict_network = true;
+        let a = build(&c);
+        assert!(a.iter().any(|x| x.starts_with("user,id=net0,restrict=on")));
     }
 
     #[test]

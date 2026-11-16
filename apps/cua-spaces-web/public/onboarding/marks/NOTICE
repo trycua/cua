@@ -101,3 +101,13 @@ mark-t3code.png
   Source: https://github.com/pingdotgg/t3code
   Terms: the repository is MIT (Copyright (c) 2026 T3 Tools Inc.); no trademark or logo policy is published.
   The MIT License grants rights to the copyrighted file, not to the mark, which names the harness only.
+
+providers/*.svg (alibabacloud.svg, alibabacloud-dark.svg, arcee.svg, arcee-dark.svg, azureai.svg, azureai-dark.svg, bedrock.svg, bedrock-dark.svg, commandcode.svg, commandcode-dark.svg, deepinfra.svg, deepinfra-dark.svg, deepseek.svg, deepseek-dark.svg, fireworks.svg, fireworks-dark.svg, gmicloud.svg, gmicloud-dark.svg, huggingface.svg, huggingface-dark.svg, kilocode.svg, kilocode-dark.svg, kimi.svg, kimi-dark.svg, metaai.svg, metaai-dark.svg, minimax.svg, minimax-dark.svg, nebius.svg, nebius-dark.svg, nousresearch.svg, nousresearch-dark.svg, novita.svg, novita-dark.svg, nvidia.svg, nvidia-dark.svg, ollama.svg, ollama-dark.svg, opencode.svg, opencode-dark.svg, openrouter.svg, openrouter-dark.svg, qwen.svg, qwen-dark.svg, stepfun.svg, stepfun-dark.svg, tencent.svg, tencent-dark.svg, upstage.svg, upstage-dark.svg, vercel.svg, vercel-dark.svg, vertexai.svg, vertexai-dark.svg, xai.svg, xai-dark.svg, xiaomimimo.svg, xiaomimimo-dark.svg, zai.svg, zai-dark.svg)
+  Provider marks (OpenRouter, xAI, DeepSeek, Kimi, Qwen Cloud, Vercel AI Gateway, Arcee, Azure AI Foundry, Amazon Bedrock,
+  CommandCode, DeepInfra, Fireworks, GMI Cloud, Hugging Face, Kilo Code, Meta, MiniMax, Nebius, Nous Research, Novita, NVIDIA,
+  Ollama, OpenCode, StepFun, Tencent, Upstage, Vertex AI, Xiaomi MiMo, Z.ai): the one-colour (monochrome) artwork from
+  Lobe Icons (lobehub/lobe-icons, @lobehub/icons-static-svg 1.101.0, MIT License, Copyright (c) LobeHub), fetched 29 Oct 2026.
+  Only the fill colour was set (near-black for light themes, near-white for files ending in -dark); the paths are unchanged.
+  The marks are trademarks of their owners and are used only to identify each provider next to its name.
+  Providers with no mark here (Actual Computer, Ramp Router, Custom endpoint) show a letter or a neutral glyph.
+  T3 Code (MIT) was checked first and ships no provider marks to reuse.

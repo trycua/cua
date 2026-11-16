@@ -710,7 +710,7 @@ pub(crate) mod tokio_util_cancel {
     use std::sync::Arc;
     use tokio::sync::watch;
 
-    #[derive(Clone)]
+    #[derive(Clone, Debug)]
     pub(crate) struct Token(Arc<watch::Sender<bool>>);
 
     impl Token {

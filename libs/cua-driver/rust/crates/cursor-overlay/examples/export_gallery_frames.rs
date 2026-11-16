@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use cursor_overlay::{
     render_frame, CursorAction, CursorConfig, DeliveryModifier, OverlayCommand, RenderStateCore,
     TargetModifier,

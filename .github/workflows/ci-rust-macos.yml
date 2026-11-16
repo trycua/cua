@@ -13,11 +13,11 @@ on:
       - "libs/cua-driver/rust/crates/cua-driver-core/**"
       - "libs/cua-driver/rust/crates/cua-cursor-motion/**"
       - "libs/cua-driver/rust/crates/cursor-overlay/**"
-      - "libs/cua-driver/rust/crates/pip-preview/**"
       - "libs/cua-driver/rust/crates/platform-macos/**"
       - "libs/cua-driver/rust/crates/cua-driver-testkit/**"
       - "libs/cua-driver/rust/crates/cua-driver-e2e/**"
       - ".github/workflows/ci-rust-macos.yml"
+  merge_group:
   push:
     branches: [main]
     paths:
@@ -31,7 +31,6 @@ on:
       - "libs/cua-driver/rust/crates/cua-driver-core/**"
       - "libs/cua-driver/rust/crates/cua-cursor-motion/**"
       - "libs/cua-driver/rust/crates/cursor-overlay/**"
-      - "libs/cua-driver/rust/crates/pip-preview/**"
       - "libs/cua-driver/rust/crates/platform-macos/**"
       - "libs/cua-driver/rust/crates/cua-driver-testkit/**"
       - "libs/cua-driver/rust/crates/cua-driver-e2e/**"
@@ -51,19 +50,30 @@ env:
   CARGO_HTTP_MULTIPLEXING: "false"
 
 jobs:
+  quick:
+    name: quick
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    uses: ./.github/workflows/ci-quick.yml
+
   unit:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) && needs.quick.outputs.skip != 'true' }}
     name: Rust macOS unit
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
+        with:
+          components: clippy
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-driver/rust -> target"
           shared-key: macos-unit
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Clippy driver workspace (all targets)
+        working-directory: libs/cua-driver/rust
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
       # Run each crate's whole inline suite so new test modules cannot be
       # silently left out by a hand-maintained filter list. Tests that need a
       # logged-in, TCC-authorized desktop are #[ignore] and belong to the Lume
@@ -78,6 +88,9 @@ jobs:
       - name: Run cua-driver-core unit tests on macOS
         working-directory: libs/cua-driver/rust
         run: cargo test --locked -p cua-driver-core --lib
+      - name: Run cua-driver-testkit unit tests on macOS
+        working-directory: libs/cua-driver/rust
+        run: cargo test --locked -p cua-driver-testkit --lib
       - name: Run macOS protocol schema and status pid-file contracts
         working-directory: libs/cua-driver/rust
         env:

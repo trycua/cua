@@ -4,7 +4,7 @@
 import { lazy, Suspense } from "react";
 
 import { useShareSheet, useTeleport } from "@/bridge";
-import { ProviderSheetHost } from "@/components/settings/connectors/provider-sheet";
+import { ProviderSheetHost } from "@/components/settings/connections/provider-sheet";
 
 const TeleportDialog = lazy(() => import("./teleport/teleport-dialog"));
 const ShareSheet = lazy(() => import("./share-sheet"));

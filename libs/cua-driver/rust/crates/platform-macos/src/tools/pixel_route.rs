@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Transport selection for window-addressed pixel clicks (`click`,
 //! `double_click`, `right_click`) on macOS.
 //!

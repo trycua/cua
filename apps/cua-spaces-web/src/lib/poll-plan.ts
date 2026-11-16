@@ -33,6 +33,29 @@ export async function mapLimit<T, R>(items: readonly T[], limit: number, f: (ite
   return out;
 }
 
+/**
+ * `f` over `items`, at most `limit` at a time, where a slot is free again
+ * when its job ends or after `slotMs`, whichever comes first (a job that
+ * outlasts it keeps running; nothing waits for it). Resolves when every job
+ * has started and held its slot. One slow or hung item holds up one slot for
+ * `slotMs`, never the rest of the list. `f` handles its own results and
+ * errors.
+ */
+export async function forEachLimit<T>(items: readonly T[], limit: number, slotMs: number, f: (item: T, index: number) => Promise<void>): Promise<void> {
+  let next = 0;
+  const worker = async () => {
+    for (let i = next++; i < items.length; i = next++) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const slow = new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, slotMs);
+      });
+      await Promise.race([f(items[i]!, i).catch(() => undefined), slow]);
+      clearTimeout(timer);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(Math.max(1, limit), items.length) }, worker));
+}
+
 /** Ids that failed in a way that will not change soon (a Space with no
  * thread: a stopped machine, an old daemon), not asked again for `ttlMs`. */
 export class MissCache {

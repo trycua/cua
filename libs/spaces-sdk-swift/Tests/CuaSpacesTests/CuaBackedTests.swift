@@ -106,6 +106,14 @@ struct Fixtures {
         XCTAssertEqual(listed.map(\.id), [space.id])
         XCTAssertTrue(listed[0].isReady)
 
+        // Opening a stream resolves just this Space (no list of every Space,
+        // no guest round trip), and it is the same Space.
+        let forStream = try await connection.attachForStream(to: space.id)
+        XCTAssertEqual(forStream.id, space.id)
+        XCTAssertEqual(forStream.provider, .direct)
+        XCTAssertTrue(forStream.isReady)
+        XCTAssertEqual(forStream.info.operatingSystem, listed[0].operatingSystem)
+
         // §1, live: many calls in a row, each answered with its own shape.
         for i in 0..<12 {
             let out = try await space.bash("echo step-\(i)")
@@ -220,7 +228,10 @@ struct Fixtures {
             spacesHome: work.appendingPathComponent("cua").path,
             teleportHome: fx.fields["teleport_host_home"])
         let tools = try await connection.availableTools()
-        XCTAssertEqual(Set(tools), Set(SpacesConnection.contractTools))
+        // Person-only tools (`PERSON_ONLY_TOOLS`) are in the contract but
+        // never served as tools.
+        let personOnly: Set<String> = ["cloud_approve", "agent_threads", "agent_thread_read", "agent_sign_in"]
+        XCTAssertEqual(Set(tools), Set(SpacesConnection.contractTools).subtracting(personOnly))
         try await exercise(connection, fx, work: work, keyvault: false)
     }
 

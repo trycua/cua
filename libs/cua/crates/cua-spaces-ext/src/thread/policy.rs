@@ -307,12 +307,14 @@ pub fn may_write(role: Role) -> Result<()> {
     Ok(())
 }
 
-/// Changing an agent member's rights: the owner and admins.
-pub fn may_set_rights(role: Role, agent: &str) -> Result<()> {
+/// Changing an agent member's rights: the Space's owner and admins, and
+/// the agent's own owner (`owns`: the member that added it or connected it).
+pub fn may_set_rights(role: Role, agent: &str, owns: bool) -> Result<()> {
     match role {
         Role::Owner | Role::Admin => Ok(()),
+        Role::Member if owns => Ok(()),
         _ => Err(denied(format!(
-            "only the owner and admins change who can task, stop and approve {agent}"
+            "only the owner, admins and {agent}'s owner change who can task, stop and approve {agent}"
         ))),
     }
 }
@@ -349,8 +351,9 @@ pub fn need(tool: &str) -> Need {
         | "thread_join_code_create"
         | "thread_join_code_cancel"
         | "thread_join_redeem"
+        // The agent's own owner may change its rights too: checked there.
+        | "agent_set_rights"
         | "agent_remove" => Need::Write,
-        "agent_set_rights" => Need::Admin,
         _ => Need::Owner,
     }
 }
@@ -496,7 +499,16 @@ mod tests {
         assert_eq!(g(&guest, "thread_claim").unwrap_err(), DENIED);
         let member = relay("shared", "m");
         assert!(g(&member, "thread_post").is_ok());
-        assert_eq!(g(&member, "agent_set_rights").unwrap_err(), DENIED);
+        // Past the gate: the agent's owner may; `set_rights` refuses the rest.
+        assert!(g(&member, "agent_set_rights").is_ok());
+        assert_eq!(g(&guest, "agent_set_rights").unwrap_err(), DENIED);
+        assert!(may_set_rights(Role::Member, "ada", true).is_ok());
+        assert_eq!(
+            may_set_rights(Role::Member, "ada", false)
+                .unwrap_err()
+                .tag(),
+            DENIED
+        );
         assert_eq!(g(&member, "notifications_list").unwrap_err(), DENIED);
         assert_eq!(g(&member, "agent_add").unwrap_err(), DENIED);
         assert!(g(&relay("admin", "a"), "agent_set_rights").is_ok());

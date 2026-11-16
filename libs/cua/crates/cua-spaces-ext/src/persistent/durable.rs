@@ -49,10 +49,14 @@ fn new_session(name: &str) -> String {
 impl Persistent {
     /// The Space folder a member's journal and hooks live under on the
     /// Volume: its durable Space's stable name, else its Space id.
-    pub(crate) fn journal_space(rec: &AgentRecord) -> String {
-        rec.durable_space
-            .clone()
-            .unwrap_or_else(|| rec.space.clone())
+    pub(crate) fn journal_space(&self, rec: &AgentRecord) -> String {
+        rec.durable_space.clone().unwrap_or_else(|| {
+            // The Volume names a Space after its id and uid, so a Space made
+            // later under the same name does not find this journal.
+            self.spaces
+                .volume_space_id(&rec.space)
+                .unwrap_or_else(|_| rec.space.clone())
+        })
     }
 
     /// Who drives a member's runs here (the Volume fence's holder).
@@ -93,10 +97,10 @@ impl Persistent {
     }
 
     /// Where a member's hooks are looked up in its Space.
-    fn hook_lookup(rec: &AgentRecord, agents: &Agents) -> Lookup {
+    fn hook_lookup(&self, rec: &AgentRecord, agents: &Agents) -> Lookup {
         Lookup {
             workdirs: vec![format!("{}/work", agents.agent_home_dir(&rec.name))],
-            volume_space: Some(Self::journal_space(rec)),
+            volume_space: Some(self.journal_space(rec)),
             stage_dir: Some(format!(
                 "{}/.cua/hooks",
                 agents.home().trim_end_matches('/')
@@ -126,7 +130,7 @@ impl Persistent {
             agents.guest(),
             Some(backend.as_ref()),
             kind,
-            &Self::hook_lookup(rec, &agents),
+            &self.hook_lookup(rec, &agents),
             None,
         )
         .await?;
@@ -163,7 +167,7 @@ impl Persistent {
                         agents.guest(),
                         Some(backend.as_ref()),
                         HookKind::Setup,
-                        &Self::hook_lookup(&rec, &agents),
+                        &self.hook_lookup(&rec, &agents),
                     )
                     .await
                 }
@@ -226,7 +230,7 @@ impl Persistent {
     /// a driver left on a machine that comes back is cut off.
     pub(crate) async fn relaunch_from_volume(&self, name: &str) -> Result<()> {
         let rec = self.get(name)?;
-        let space = Self::journal_space(&rec);
+        let space = self.journal_space(&rec);
         let session = rec
             .redrive
             .session
@@ -283,7 +287,7 @@ impl Persistent {
         let run = rec.run_id.clone().expect("a run");
         let session = rec.redrive.session.clone().unwrap_or_else(|| run.clone());
         let epoch = rec.redrive.epoch.max(1);
-        let space = Self::journal_space(rec);
+        let space = self.journal_space(rec);
         // Ship (never fatal for the pass: the Volume may be down).
         {
             let key = format!("{run}#{epoch}");
@@ -314,7 +318,7 @@ impl Persistent {
             volume_space: space,
             session,
             holder: Self::holder(rec),
-            hooks: Self::hook_lookup(rec, agents),
+            hooks: self.hook_lookup(rec, agents),
         };
         let mut st = rec.redrive.clone();
         let step = durable_member::step(&engine, &run, &mut st, cua_volume::now_ms()).await?;

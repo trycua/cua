@@ -43,8 +43,7 @@ export function createFallbackFileSendBridge(): FileSendBridge {
 
 export function createTauriFileSendBridge(): FileSendBridge {
   const core = import("@tauri-apps/api/core");
-  const invoke = async <T>(command: string, args?: Record<string, unknown>) =>
-    (await core).invoke<T>(command, args);
+  const invoke = async <T>(command: string, args?: Record<string, unknown>) => (await core).invoke<T>(command, args);
   return {
     isNative: true,
     pickFiles: async () => {
@@ -56,8 +55,7 @@ export function createTauriFileSendBridge(): FileSendBridge {
       if (!chosen) return [];
       return Array.isArray(chosen) ? chosen : [chosen];
     },
-    sendFiles: (spaceId, paths) =>
-      invoke<SentFile[]>("send_files_to_space", { spaceId, paths }),
+    sendFiles: (spaceId, paths) => invoke<SentFile[]>("send_files_to_space", { spaceId, paths }),
   };
 }
 

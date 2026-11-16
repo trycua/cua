@@ -5,7 +5,7 @@
  * Who an agent in the thread is (CUA-2262): the quiet AI tag after its
  * name, its owner after the tag when another agent uses the same name, and
  * the card that hovering or clicking the name opens. The agent sets its
- * name, icon and the harness it reports; the owner, the computer it posts
+ * name, icon and the harness it reports; the owner, the machine it posts
  * from and how it joined come from its member record, so the card marks
  * those two as checked by Cua.
  */
@@ -24,15 +24,24 @@ import { ProfileTrigger } from "./profile-card";
 import { RIGHT_ROWS } from "./rights";
 import type { Roster, RosterAgent, RosterAuthor } from "./roster";
 
+/** The look of the quiet tags after a name (AI, JOB): a 15 px fill, no outline, the one 4 px radius. */
+const QUIET_TAG =
+  "inline-flex h-[15px] shrink-0 items-center rounded-[4px] bg-foreground/[0.08] px-1 text-[9.5px] font-bold tracking-[0.04em] text-foreground/60";
+
 /** After an agent's name: says it is an AI. Quiet: a 15 px fill, no outline, the one 4 px radius. */
 export function AiTag({ className }: { className?: string }) {
   return (
-    <span
-      data-ai-tag=""
-      aria-label="AI agent"
-      className={cn("inline-flex h-[15px] shrink-0 items-center rounded-[4px] bg-foreground/[0.08] px-1 text-[9.5px] font-bold tracking-[0.04em] text-foreground/60", className)}
-    >
+    <span data-ai-tag="" aria-label="AI agent" className={cn(QUIET_TAG, className)}>
       AI
+    </span>
+  );
+}
+
+/** After a job's name in the child Spaces list: says it is a job. Exactly the AI tag's look. */
+export function JobTag({ className }: { className?: string }) {
+  return (
+    <span data-job-tag="" aria-label="Job" className={cn(QUIET_TAG, className)}>
+      JOB
     </span>
   );
 }
@@ -106,7 +115,7 @@ function Fact({ label, children, title }: { label: string; children: ReactNode; 
 }
 
 /**
- * The agent's card: the owner and the computer (checked by Cua), how and
+ * The agent's card: the owner and the machine (checked by Cua), how and
  * when it joined, its harness as it reported it, who can task, stop and
  * approve it, and Remove from Space for whoever may.
  */
@@ -170,7 +179,10 @@ export function ProvenanceCard({
             {joinedWhen(i.joined.atMs)}
           </Fact>
         ) : null}
-        <Fact label="Harness" title={!harness ? `${i.displayName} didn't say which harness it runs` : i.origin === "external" ? `As ${i.displayName} reported it` : "Cua started it"}>
+        <Fact
+          label="Runs in"
+          title={!harness ? `${i.displayName} didn't say which app it runs in` : i.origin === "external" ? `As ${i.displayName} reported it` : "Cua started it"}
+        >
           {harness ? <span className="truncate">{harness}</span> : <span className="text-muted-foreground">Not reported</span>}
         </Fact>
       </div>
@@ -183,9 +195,7 @@ export function ProvenanceCard({
           ))}
         </div>
       ) : null}
-      <p className="mt-2.5 text-[11.5px] leading-snug text-muted-foreground">
-        {harness && i.origin === "external" ? "Name, icon and harness are set by the agent." : "The name and icon are set by the agent."} Owner and computer are checked by Cua.
-      </p>
+      <p className="mt-2.5 text-[11.5px] leading-snug text-muted-foreground">The agent sets its own name and icon. Owner and computer are checked by Cua.</p>
       {onRemove || onActivity ? (
         <div className="mt-3 flex items-center">
           {onActivity ? (
@@ -195,7 +205,14 @@ export function ProvenanceCard({
           ) : null}
           <span className="flex-1" />
           {onRemove ? (
-            <Button size="sm" variant="ghost" className="-mr-2 text-destructive hover:text-destructive" disabled={busy} data-remove-agent={i.handle} onClick={remove}>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="-mr-2 text-destructive hover:text-destructive"
+              disabled={busy}
+              data-remove-agent={i.handle}
+              onClick={remove}
+            >
               {busy ? "Removing…" : "Remove from Space"}
             </Button>
           ) : null}
@@ -210,13 +227,30 @@ export function ProvenanceCard({
  * owner when another agent shares the name. Hover or click the name for
  * its card. Without an identity (an older daemon) it is the name and tag.
  */
-export function AgentName({ who, roster, onRemove, size = "md" }: { who: RosterAuthor; roster: Roster; onRemove?: (handle: string) => Promise<void>; size?: "md" | "sm" }) {
+export function AgentName({
+  who,
+  roster,
+  onRemove,
+  size = "md",
+}: {
+  who: RosterAuthor;
+  roster: Roster;
+  onRemove?: (handle: string) => Promise<void>;
+  size?: "md" | "sm";
+}) {
   const i = who.identity;
   const text = cn("min-w-0 truncate font-semibold", size === "md" ? "text-[13px]" : "text-[12.5px]");
   return (
     <span className="flex min-w-0 items-center gap-1.5">
       {i ? (
-        <ProfileTrigger identity={i} agent={who.agent} roster={roster} onRemove={onRemove} className={cn(text, "hover:underline")} data={{ "data-author-name": who.handle ?? i.handle }}>
+        <ProfileTrigger
+          identity={i}
+          agent={who.agent}
+          roster={roster}
+          onRemove={onRemove}
+          className={cn(text, "hover:underline")}
+          data={{ "data-author-name": who.handle ?? i.handle }}
+        >
           {who.label}
         </ProfileTrigger>
       ) : (
@@ -240,7 +274,8 @@ export function MemberEventNote({ event, text, tsMs, surface = "background" }: {
       <div data-member-note="joined" data-member-handle={i.handle} className="my-1 flex items-center justify-center gap-2 text-xs text-muted-foreground">
         <AgentTile harness={i.harness.id} icon={i.icon} name={i.handle} px={16} surface={surface} />
         <span className="min-w-0 truncate">
-          <span className="font-medium text-foreground">{i.displayName}</span> joined. {by.name} {i.joined.method === "started" ? "started it here" : `connected it${from}`}.
+          <span className="font-medium text-foreground">{i.displayName}</span> joined. {by.name}{" "}
+          {i.joined.method === "started" ? "started it here" : `connected it${from}`}.
         </span>
         {time}
       </div>

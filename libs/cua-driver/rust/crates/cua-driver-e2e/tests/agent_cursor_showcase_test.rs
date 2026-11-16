@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Cross-platform semantic cursor showcase for release evidence.
 
 use std::time::Duration;
@@ -151,8 +154,7 @@ fn semantic_cursor_showcase_records_session_and_action_states() {
         );
         settle(900);
 
-        call_ok(
-            &mut driver,
+        let typed = driver.call(
             "type_text",
             serde_json::json!({
                 "session": SESSION,
@@ -161,6 +163,21 @@ fn semantic_cursor_showcase_records_session_and_action_states() {
                 "delivery_mode": "foreground"
             }),
         );
+        if niri_session() {
+            // The click landed on the empty desktop, so no window has
+            // keyboard focus. niri reports that and types nothing, where
+            // other compositors accept text that reaches no one.
+            assert!(
+                typed.is_error()
+                    && typed
+                        .text()
+                        .starts_with("foreground_unavailable: no niri window has keyboard focus"),
+                "type_text on the empty niri desktop did not refuse exactly: {}",
+                typed.text()
+            );
+        } else {
+            assert!(!typed.is_error(), "type_text failed: {}", typed.text());
+        }
         settle(900);
 
         call_ok(
@@ -281,6 +298,91 @@ fn keyboard_first_session_places_its_cursor_on_the_target_window() {
                 && (y - centre_y).abs() <= WINDOW_CENTRE_TOLERANCE,
             "keyboard-first cursor landed at ({x:.1}, {y:.1}), expected the target window \
              centre ({centre_x:.1}, {centre_y:.1}) within {WINDOW_CENTRE_TOLERANCE}: {after}"
+        );
+
+        call_ok(
+            &mut driver,
+            "end_session",
+            serde_json::json!({"session": session}),
+        );
+        Observation::delivered(vec![OracleKind::Protocol], Evidence::default())
+    });
+}
+
+#[cfg(not(target_os = "linux"))]
+const DESKTOP_KEYBOARD_FIRST_CELL_ID: &str = "desktop-agent-cursor-keyboard-first-placement";
+
+/// A named session whose first action is a desktop-scope `press_key` (no pid,
+/// no window_id) shows its agent cursor. On macOS and Windows the key goes to
+/// the frontmost window, so the cursor lands on that window's centre.
+///
+/// Its name sorts after `keyboard_first_session_places_its_cursor_on_the_target_window`
+/// on purpose: on the Windows lane, running this row first made that row's
+/// foreground `press_key` refuse with `input_delivery_stalled`.
+#[cfg(not(target_os = "linux"))]
+#[test]
+#[ignore]
+fn session_cursor_follows_a_desktop_scope_keyboard_first_action() {
+    let fixture = native_fixture();
+    let case = CaseSpec::delivered(
+        DESKTOP_KEYBOARD_FIRST_CELL_ID,
+        fixture.toolkit,
+        fixture.toolkit,
+        "press_key_cursor_placement",
+        Targeting::NotApplicable,
+        Delivery::Foreground,
+        Scope::Desktop,
+        platform_route(),
+        vec![OracleKind::Protocol],
+    );
+    execute_case(case, |evidence| {
+        let mut driver = spawn_driver_named(DESKTOP_KEYBOARD_FIRST_CELL_ID);
+        *evidence = recording_evidence(driver.recording_dir());
+        let (pid, window_id) = launch_native_fixture(&mut driver, &fixture);
+        call_ok(
+            &mut driver,
+            "bring_to_front",
+            serde_json::json!({"pid": pid, "window_id": window_id}),
+        );
+        settle(300);
+
+        let session = format!("Desktop keyboard-first cursor {}", std::process::id());
+        call_ok(
+            &mut driver,
+            "start_session",
+            serde_json::json!({"session": session}),
+        );
+        call_ok(
+            &mut driver,
+            "set_agent_cursor_enabled",
+            serde_json::json!({"session": session, "enabled": true}),
+        );
+        let before = agent_cursor_state(&mut driver, &session);
+        assert!(
+            before["position"].is_null(),
+            "the session cursor must start unplaced so press_key is its first placement: {before}"
+        );
+
+        driver.start_behavior_recording();
+        call_ok(
+            &mut driver,
+            "press_key",
+            serde_json::json!({"session": session, "scope": "desktop", "key": "escape"}),
+        );
+
+        let after = agent_cursor_state(&mut driver, &session);
+        let (Some(x), Some(y)) = (
+            after["position"]["x"].as_f64(),
+            after["position"]["y"].as_f64(),
+        ) else {
+            panic!("a desktop-scope keyboard-first press_key left the cursor unplaced: {after}");
+        };
+        let (centre_x, centre_y) = window_centre(&mut driver, pid, window_id);
+        assert!(
+            (x - centre_x).abs() <= WINDOW_CENTRE_TOLERANCE
+                && (y - centre_y).abs() <= WINDOW_CENTRE_TOLERANCE,
+            "desktop keyboard-first cursor landed at ({x:.1}, {y:.1}), expected the \
+             frontmost window centre ({centre_x:.1}, {centre_y:.1}): {after}"
         );
 
         call_ok(
@@ -885,6 +987,17 @@ fn recorded_turn_screenshot(driver: &McpDriver, tool: &str) -> Vec<u8> {
 fn call_ok(driver: &mut McpDriver, tool: &str, arguments: serde_json::Value) {
     let response = driver.call(tool, arguments);
     assert!(!response.is_error(), "{tool} failed: {}", response.text());
+}
+
+fn niri_session() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        platform_linux::wayland::is_wayland() && platform_linux::wayland::niri::is_session()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
 }
 
 fn settle(milliseconds: u64) {

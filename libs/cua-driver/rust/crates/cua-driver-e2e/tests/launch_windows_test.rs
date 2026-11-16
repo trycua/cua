@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Windows launch behavior against the repo-local Electron harness.
 
 #![cfg(target_os = "windows")]

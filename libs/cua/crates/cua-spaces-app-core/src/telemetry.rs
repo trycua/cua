@@ -176,7 +176,7 @@ pub enum TelemetrySignal {
     Experiment {
         /// `experiment_on` or `experiment_off`.
         action: String,
-        /// `cua_volume`, `your_cloud` or `sharing`.
+        /// `cua_volume`, `mobile`, ...
         experiment: String,
     },
     /// Which experiments are on now (no event of its own: the daily
@@ -1762,6 +1762,7 @@ mod tests {
                 gpu: false,
                 host: None,
                 host_name: None,
+                parent: None,
             },
         );
         let p = &mut st.pending[0];
@@ -1796,6 +1797,7 @@ mod tests {
                     gpu: false,
                     host: None,
                     host_name: None,
+                    parent: None,
                 },
                 1_000,
             );
@@ -1807,6 +1809,137 @@ mod tests {
                 (finished["guestOs"].as_str(), event),
                 (Some(expected), (os != SpaceOs::Unknown).then_some(expected))
             );
+        }
+    }
+
+    /// A sign-in that failed sends the step it stopped at, from its reason
+    /// only (CUA-3144): a session this computer couldn't save is
+    /// `save_session`, a browser that never came back `confirm_in_browser`.
+    /// Through the usage-data switch: nothing while it is off.
+    #[cfg(feature = "telemetry")]
+    #[test]
+    fn a_failed_sign_in_sends_the_step_it_stopped_at() {
+        use crate::sign_in::SignInFailure;
+        let build = |on: bool| {
+            let home = tempfile::tempdir().unwrap();
+            let sink = std::sync::Arc::new(cua_telemetry::sink::MemorySink::new());
+            let t = cua_telemetry::Telemetry::builder()
+                .env(move |k| match k {
+                    "CUA_TELEMETRY_FORBID_NETWORK" => Some("1".into()),
+                    "CUA_TELEMETRY" if !on => Some("0".into()),
+                    _ => None,
+                })
+                .home(home.path())
+                .sink(sink.clone())
+                .product("spaces_app", "0.2.0")
+                .foreground()
+                .build();
+            t.acknowledge_notice();
+            (home, sink, t)
+        };
+        let (_home, sink, t) = build(true);
+        for (reason, step) in [
+            (Some(SignInFailure::CouldNotSave), "save_session"),
+            (Some(SignInFailure::NotConfirmed), "confirm_in_browser"),
+            (Some(SignInFailure::Offline), "reach_service"),
+            (Some(SignInFailure::CodeRejected), "exchange_code"),
+            (Some(SignInFailure::Unknown), "unknown"),
+            (None, "cancelled"),
+        ] {
+            assert_eq!(record(&t, &sign_in_failure(reason)), 1, "{reason:?}");
+            t.flush(std::time::Duration::from_secs(2));
+            let events = sink.events();
+            let last = events
+                .iter()
+                .rev()
+                .find(|e| e["event"] == "cua_onboarding_step")
+                .expect("cua_onboarding_step was sent");
+            assert_eq!(last["properties"]["step"], "signed_in");
+            assert_eq!(last["properties"]["outcome"], "error");
+            assert_eq!(last["properties"]["failed_step"], step, "{reason:?}");
+        }
+        // Usage data off: nothing leaves.
+        let (_home, sink, t) = build(false);
+        record(&t, &sign_in_failure(Some(SignInFailure::CouldNotSave)));
+        t.flush(std::time::Duration::from_secs(1));
+        assert!(sink.events().is_empty());
+    }
+
+    /// A Mac that can't run virtual machines is refused by the daemon's
+    /// preflight with a plain sentence (`MAC_UNSUPPORTED`, or the built-in
+    /// runtime's identical one). That ends a create like any failure, so it
+    /// counts: `cua_space_create` with outcome `error`, `error_kind`
+    /// `virtualization_unavailable`, failed_step `check_host`, sent at once
+    /// (a lasting cause is never retried), and through the usage-data switch.
+    #[cfg(feature = "telemetry")]
+    #[test]
+    fn a_mac_that_cannot_run_vms_sends_virtualization_unavailable() {
+        use crate::spaces::creating::reduce;
+        for (os, kind) in [
+            (SpaceOs::Macos, SpaceKind::Vm),
+            (SpaceOs::Linux, SpaceKind::Container),
+        ] {
+            let mut st = reduce(
+                &CreatesState::default(),
+                &CreateAction::Start {
+                    id: "pending:a".into(),
+                    name: "my-private-space".into(),
+                    os,
+                    provider: SpaceProvider::Local,
+                    now: 1_000,
+                    image: None,
+                    kind: Some(kind),
+                    host_arch: None,
+                    gpu: false,
+                    host: None,
+                    host_name: None,
+                    parent: None,
+                },
+            );
+            st.pending[0].phase = "preparing".into();
+            let signals = creates(
+                &st,
+                &CreateAction::Fail {
+                    id: "pending:a".into(),
+                    error: format!(
+                        "local runtime: {}",
+                        cua_create_failure::preflight::MAC_UNSUPPORTED
+                    ),
+                    error_variant: "Runtime".into(),
+                    now: Some(2_000),
+                },
+                2_000,
+            );
+            assert_eq!(signals.len(), 1, "sent at once, not retried");
+            let home = tempfile::tempdir().unwrap();
+            let sink = std::sync::Arc::new(cua_telemetry::sink::MemorySink::new());
+            let t = cua_telemetry::Telemetry::builder()
+                .env(|k| match k {
+                    "CUA_TELEMETRY_FORBID_NETWORK" => Some("1".into()),
+                    _ => None,
+                })
+                .home(home.path())
+                .sink(sink.clone())
+                .product("spaces_app", "0.2.0")
+                .foreground()
+                .build();
+            t.acknowledge_notice();
+            assert_eq!(record(&t, &signals), 1);
+            t.flush(std::time::Duration::from_secs(2));
+            let events = sink.events();
+            let create = events
+                .iter()
+                .find(|e| e["event"] == "cua_space_create")
+                .expect("cua_space_create was sent");
+            let props = &create["properties"];
+            assert_eq!(props["outcome"], "error");
+            assert_eq!(props["error_kind"], "virtualization_unavailable");
+            assert_eq!(props["failed_phase"], "preparing");
+            assert_eq!(props["failed_step"], "check_host");
+            assert_eq!(props["error_subclass"], "none");
+            // Fixed words only.
+            let text = serde_json::to_string(&events).unwrap().to_lowercase();
+            assert!(!text.contains("private") && !text.contains("virtual machine"));
         }
     }
 
@@ -2071,29 +2204,29 @@ mod tests {
     #[test]
     fn an_experiment_toggle_is_one_event_and_the_set_that_is_on() {
         use crate::experiments::Experiments;
-        let off = Experiments {
-            sharing: false,
+        let off = Experiments::default();
+        let on = Experiments {
+            mobile: true,
             ..Default::default()
         };
-        let on = Experiments::default();
         let signals = experiments_changed(&off, &on);
         assert_eq!(
             signals,
             vec![
                 TelemetrySignal::Experiment {
                     action: "experiment_on".into(),
-                    experiment: "sharing".into(),
+                    experiment: "mobile".into(),
                 },
                 TelemetrySignal::ExperimentsOn {
-                    experiments: vec!["your_cloud".into(), "sharing".into()],
+                    experiments: vec!["mobile".into()],
                 },
             ]
         );
         assert_eq!(
             serde_json::to_value(&signals).unwrap(),
             serde_json::json!([
-                {"type": "experiment", "action": "experiment_on", "experiment": "sharing"},
-                {"type": "experiments-on", "experiments": ["your_cloud", "sharing"]},
+                {"type": "experiment", "action": "experiment_on", "experiment": "mobile"},
+                {"type": "experiments-on", "experiments": ["mobile"]},
             ])
         );
         assert_eq!(
@@ -2101,10 +2234,10 @@ mod tests {
             vec![
                 TelemetrySignal::Experiment {
                     action: "experiment_off".into(),
-                    experiment: "sharing".into(),
+                    experiment: "mobile".into(),
                 },
                 TelemetrySignal::ExperimentsOn {
-                    experiments: vec!["your_cloud".into()]
+                    experiments: vec![]
                 },
             ]
         );
@@ -2114,9 +2247,9 @@ mod tests {
             vec![TelemetrySignal::ExperimentsOn {
                 experiments: vec![
                     "cua_volume".into(),
-                    "your_cloud".into(),
-                    "sharing".into(),
-                    "web_ui".into()
+                    "ci_runners".into(),
+                    "tcp_shares".into(),
+                    "mobile".into()
                 ]
             }]
         );
@@ -2150,13 +2283,10 @@ mod tests {
             .foreground()
             .build();
         t.acknowledge_notice();
-        let off = Experiments {
-            sharing: false,
-            ..Default::default()
-        };
+        let off = Experiments::default();
         let on = Experiments {
             cua_volume: true,
-            sharing: true,
+            mobile: true,
             ..Default::default()
         };
         let signals = experiments_changed(&off, &on);
@@ -2181,18 +2311,14 @@ mod tests {
             toggles,
             [
                 ("experiment_on".to_string(), "cua_volume".to_string()),
-                ("experiment_on".to_string(), "sharing".to_string())
+                ("experiment_on".to_string(), "mobile".to_string())
             ]
         );
         let active = events
             .iter()
             .find(|e| e["event"] == "cua_app_active")
             .expect("the day is active");
-        // `your_cloud` is on by default, so the active day carries it too.
-        assert_eq!(
-            active["properties"]["experiments_on"],
-            "cua_volume+your_cloud+sharing"
-        );
+        assert_eq!(active["properties"]["experiments_on"], "cua_volume+mobile");
     }
 
     /// A `step_*` onboarding-page signal sends the first-run funnel events
@@ -2333,6 +2459,75 @@ mod tests {
         ] {
             assert!(names.contains(e), "no {e}");
         }
+    }
+
+    /// The Ready screen's four events are recorded with the agent only, and
+    /// nothing at all while the usage-data switch is off.
+    #[cfg(feature = "telemetry")]
+    #[test]
+    fn ready_screen_signals_are_recorded_and_respect_the_switch() {
+        use std::sync::Arc;
+        let sig = |action: &str, agent: &str| TelemetrySignal::OnboardingPage {
+            page: "ready".into(),
+            action: action.into(),
+            choice: agent.into(),
+        };
+        let signals = [
+            sig("step_viewed", "codex"),
+            sig("step_command_copied", "codex"),
+            sig("step_chat_picked_up", "codex"),
+            sig("step_completed", "codex"),
+        ];
+        let client = |home: &std::path::Path, off: bool| {
+            let sink = Arc::new(cua_telemetry::sink::MemorySink::new());
+            let t = cua_telemetry::Telemetry::builder()
+                .env(move |k| match k {
+                    "CUA_TELEMETRY_FORBID_NETWORK" => Some("1".into()),
+                    "DO_NOT_TRACK" if off => Some("1".into()),
+                    _ => None,
+                })
+                .home(home)
+                .sink(sink.clone())
+                .product("spaces_app", "0.12.0")
+                .foreground()
+                .build();
+            t.acknowledge_notice();
+            (t, sink)
+        };
+        let on = tempfile::tempdir().unwrap();
+        let (t, sink) = client(on.path(), false);
+        assert_eq!(record(&t, &signals), 4);
+        t.flush(std::time::Duration::from_secs(2));
+        let events = sink.events();
+        let names: Vec<&str> = events
+            .iter()
+            .filter_map(|e| e["event"].as_str())
+            .filter(|n| n.starts_with("cua_onboarding"))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "cua_onboarding_step_viewed",
+                "cua_onboarding_command_copied",
+                "cua_onboarding_chat_picked_up",
+                "cua_onboarding_step_completed"
+            ]
+        );
+        for e in events.iter().filter(|e| {
+            e["event"]
+                .as_str()
+                .is_some_and(|n| n.starts_with("cua_onboarding"))
+        }) {
+            assert_eq!(e["properties"]["agent"], "codex");
+            assert_eq!(e["properties"]["step_index"], 7);
+        }
+
+        // Usage data off: nothing is queued or sent.
+        let off = tempfile::tempdir().unwrap();
+        let (t, sink) = client(off.path(), true);
+        assert_eq!(record(&t, &signals), 0);
+        t.flush(std::time::Duration::from_secs(2));
+        assert!(sink.events().is_empty(), "{:?}", sink.events());
     }
 
     /// Welcome's usage-data switch: off sends nothing across a whole first

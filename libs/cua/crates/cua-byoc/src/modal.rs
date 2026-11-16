@@ -595,6 +595,25 @@ struct Request<'a> {
     #[serde(skip_serializing_if = "str::is_empty")]
     id: &'a str,
     deadline_secs: u64,
+    /// The sandbox's outbound allow-list (absent: open).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    outbound: Option<OutboundWire>,
+}
+
+/// Modal's outbound network access: only these CIDRs and domains.
+#[derive(Serialize, Debug, PartialEq, Eq)]
+struct OutboundWire {
+    cidrs: Vec<String>,
+    domains: Vec<String>,
+}
+
+fn outbound_wire(n: Option<&crate::modal_net::NetworkRequest>) -> Result<Option<OutboundWire>> {
+    Ok(match n.map(crate::modal_net::outbound).transpose()? {
+        Some(crate::modal_net::Outbound::Allowlist { cidrs, domains }) => {
+            Some(OutboundWire { cidrs, domains })
+        }
+        Some(crate::modal_net::Outbound::Open) | None => None,
+    })
 }
 
 fn is_zero_f(v: &f64) -> bool {
@@ -653,6 +672,10 @@ fn ours(tags: &BTreeMap<String, String>, owner: &str, what: &str, id: &str) -> R
 
 #[async_trait]
 impl CloudApi for ModalApi {
+    fn takes_network_rules(&self) -> bool {
+        true
+    }
+
     fn name(&self) -> &'static str {
         "modal"
     }
@@ -911,6 +934,7 @@ impl CloudApi for ModalApi {
             // before they detect that report as a bare host.
             env.insert("CUA_ENV_RUNTIME".into(), "container".into());
         }
+        let outbound = outbound_wire(spec.network.as_ref())?;
         let r = self
             .call(
                 conn,
@@ -926,6 +950,7 @@ impl CloudApi for ModalApi {
                     runtime,
                     name: &spec.name,
                     deadline_secs: 15 * 60,
+                    outbound,
                     ..Default::default()
                 },
             )

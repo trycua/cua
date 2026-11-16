@@ -78,6 +78,10 @@ pub enum KeepReason {
     /// failed or was interrupted, and no later create from a newer base has
     /// succeeded.
     NoNewerBaseInUse,
+    /// One of the two newest filesystems the warm pool saved with the apps
+    /// installed: evicting it makes the next start prepare a member for
+    /// minutes.
+    LatestPrepared,
 }
 
 impl std::fmt::Display for KeepReason {
@@ -88,6 +92,7 @@ impl std::fmt::Display for KeepReason {
             KeepReason::NoNewerBaseInUse => {
                 f.write_str("kept for a retry: no newer base is in use")
             }
+            KeepReason::LatestPrepared => f.write_str("a recent prepared warm-pool filesystem"),
         }
     }
 }
@@ -206,6 +211,19 @@ pub fn kept_bases(report: &Report, pins: &[Pin]) -> HashMap<usize, KeepReason> {
         if i.kind == "lume-base" && !i.orphan && newer {
             out.entry(n).or_insert(KeepReason::NoNewerBaseInUse);
         }
+    }
+    // The warm pool's saved filesystems are rebuilt in minutes and are
+    // bigger than a small budget leaves room for: the newest two stay.
+    let mut prepared: Vec<(usize, u64)> = report
+        .items
+        .iter()
+        .enumerate()
+        .filter(|(_, i)| !i.orphan && i.category.is_cache() && i.kind == "prepared")
+        .map(|(n, i)| (n, i.created.unwrap_or(0)))
+        .collect();
+    prepared.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
+    for (n, _) in prepared.into_iter().take(2) {
+        out.entry(n).or_insert(KeepReason::LatestPrepared);
     }
     out
 }
@@ -685,6 +703,34 @@ mod tests {
             hit("ghcr.io/trycua/linux:24.04@sha256:ab"),
             Some("ghcr.io/trycua/linux:24.04")
         );
+    }
+
+    #[test]
+    fn the_newest_prepared_warm_pool_filesystems_survive_a_small_budget() {
+        use super::{KeepReason, kept_bases};
+        use crate::scan::{Category, Item, Report};
+        let item = |name: &str, created: u64| Item {
+            category: Category::DockerImages,
+            kind: "prepared".into(),
+            name: name.into(),
+            bytes: 6 << 30,
+            created: Some(created),
+            evictable: true,
+            ..Default::default()
+        };
+        let report = Report {
+            home: Default::default(),
+            space: None,
+            budget: "auto".into(),
+            budget_bytes: Some(8 << 30),
+            cache_bytes: 18 << 30,
+            items: vec![item("old", 1), item("mid", 2), item("new", 3)],
+            notes: vec![],
+        };
+        let kept = kept_bases(&report, &[]);
+        assert_eq!(kept.get(&2), Some(&KeepReason::LatestPrepared));
+        assert_eq!(kept.get(&1), Some(&KeepReason::LatestPrepared));
+        assert!(!kept.contains_key(&0), "the oldest is still evictable");
     }
 
     #[test]

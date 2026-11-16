@@ -35,10 +35,15 @@ pub mod audit;
 pub mod autosweep;
 #[cfg(feature = "aws")]
 pub mod aws;
+#[cfg(feature = "aws")]
+pub mod aws_shares;
+#[cfg(feature = "aws")]
+pub mod awsnet;
 #[cfg(feature = "azure")]
 pub mod azure;
 pub mod bootlog;
 pub mod bootstrap;
+pub mod cloud_shares;
 #[cfg(any(test, feature = "testing"))]
 pub mod conformance;
 pub mod connect;
@@ -48,17 +53,21 @@ pub mod federation;
 pub mod gcp;
 #[cfg(feature = "hetzner")]
 pub mod hetzner;
+pub mod hostnet;
 pub mod hosts;
 pub mod limits;
 pub mod manager;
 #[cfg(feature = "modal")]
 pub mod modal;
+pub mod modal_net;
 pub mod model;
 pub mod policy;
 pub mod provider;
 pub mod relay;
 #[cfg(feature = "federation")]
 pub mod sealed;
+pub mod share_edge;
+pub mod share_net;
 #[cfg(feature = "federation")]
 pub mod spend;
 pub mod state;
@@ -69,6 +78,9 @@ pub mod trust;
 pub mod usage;
 
 pub use api::{CloudApi, Result, Secret, SecretSource, Target, Tested};
+/// Routes of public TCP shares (they live in `cua-share`; this path stays
+/// for the cloud modules).
+pub use cua_share::route as share_route;
 pub use manager::Clouds;
 pub use model::{
     Auth, Billing, Capabilities, Connection, HostType, MaxSize, ProvisionSpec, Resource, Supplies,

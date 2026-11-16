@@ -677,6 +677,30 @@ mod tests {
             kind("local", CuaError::Runtime("boom".into())),
             Some("runtime")
         );
+        // The rest of `runtime`, by cause (each a schema word, not `other`).
+        for (message, want) in [
+            (
+                "lume API 409: VM start rejected: host limit of 2 running macOS guests reached",
+                "vm_limit",
+            ),
+            (
+                "Local Network access is not available: allow it",
+                "local_network",
+            ),
+            (
+                "QEMU is not available: download QEMU for Windows",
+                "vm_runtime_missing",
+            ),
+            (
+                "container 'a' exited right after start (status Stopped)",
+                "container_exited",
+            ),
+            ("lume API 500: boom", "vm_error"),
+            ("container engine: create: conflict", "engine_error"),
+        ] {
+            let m = format!("local runtime: [local] {message}");
+            assert_eq!(kind("local", CuaError::Runtime(m)), Some(want), "{message}");
+        }
         // A cloud without an account stays provider_not_configured.
         assert_eq!(
             kind(

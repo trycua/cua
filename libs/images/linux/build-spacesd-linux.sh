@@ -42,6 +42,11 @@ host_arch() { case "$(uname -m)" in arm64|aarch64) echo arm64 ;; *) echo amd64 ;
 DEV_LIBS="libx11-dev libxi-dev libxtst-dev libxext-dev libxkbcommon-dev libdbus-1-dev libwayland-dev libxcb1-dev"
 TOOLS="clang pkg-config cmake nasm protobuf-compiler libprotobuf-dev perl make"
 
+# The job's sccache, when the rust-cache action restored one (CI).
+# shellcheck source=/dev/null
+. "$REPO_ROOT/scripts/ci/lib/docker-sccache.sh"
+docker_sccache_args
+
 for arch in "$@"; do
     case "$arch" in
         arm64) triple=aarch64-unknown-linux-gnu; gnu=aarch64-linux-gnu ;;
@@ -75,7 +80,11 @@ for arch in "$@"; do
     git_sha="${CUA_SPACESD_GIT_SHA:-${CUA_GUESTD_GIT_SHA:-$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || true)}}"
     vol_suffix="$(echo "$platform" | tr / -)"
     t0=$SECONDS
+    # Emulated foreign-arch builds cannot run the host's sccache binary.
+    sccache_args=()
+    [ "$mode" = emulate ] || sccache_args=("${DOCKER_SCCACHE[@]}")
     docker run --rm --platform "$platform" --memory=6g --memory-swap=6g \
+        ${sccache_args[@]+"${sccache_args[@]}"} \
         -v "$REPO_ROOT:/src:ro" \
         -v "cua-e2e-spacesd-cargo-registry-$vol_suffix:/usr/local/cargo/registry" \
         -v "${CUA_SPACESD_TARGET_VOLUME:-${CUA_GUESTD_TARGET_VOLUME:-${CUA_ENV_DRIVER_TARGET_VOLUME:-cua-e2e-spacesd-target}}}-$vol_suffix-$arch:/target" \
@@ -83,6 +92,8 @@ for arch in "$@"; do
         -e CUA_SPACESD_GIT_SHA="$git_sha" \
         -e CARGO_TARGET_DIR=/target -e CARGO_TERM_COLOR=never -e CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}" \
         "$RUST_IMAGE" bash -euo pipefail -c "
+            $(declare -f docker_sccache_stop)
+            trap docker_sccache_stop EXIT
             { $setup; } || { echo 'toolchain setup failed' >&2; exit 1; }
             $cargo_env
             cd /src/libs/cua-spacesd

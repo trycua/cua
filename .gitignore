@@ -99,6 +99,9 @@ venv.bak/
 # The cua.env.v1 protobuf TypeScript the HTML5 viewer imports is generated
 # and committed (its drift gate is `pnpm check`).
 !/libs/cua/crates/cua-spacesd-html5/web/src/gen/cua/env/
+# The phone app's copy of those files (apps/cua-spaces-mobile `pnpm proto`;
+# the drift gate is `pnpm proto:check`) sits under an `env` folder too.
+!/apps/cua-spaces-mobile/src/data/live/gen/cua/env/
 # Git worktrees
 .worktrees/
 .pi/
@@ -233,3 +236,4 @@ libs/cua-driver-bench/**/results/
 !libs/cua/crates/cua-spaces/src/build/
 # Agent worktrees: never commit them (git add -A would add them as gitlinks)
 .claude/worktrees/
+.bin-ci-target*/

@@ -22,7 +22,7 @@ pub fn add_computer_prompt(code: &str, url: Option<&str>) -> String {
     let link = url
         .map(str::to_string)
         .unwrap_or_else(|| format!("https://cua.ai/add/{code}"));
-    format!("Add this computer to my Cua Spaces: {link}")
+    format!("Add this machine to my Cua Spaces: {link}")
 }
 
 /// "Connect a cloud". With a cloud (`AWS`) it names the cloud, and the
@@ -91,14 +91,14 @@ mod tests {
     fn the_words_are_the_approved_ones() {
         assert_eq!(
             add_computer_prompt("K7QM-4XPB-2RHD", None),
-            "Add this computer to my Cua Spaces: https://cua.ai/add/K7QM-4XPB-2RHD"
+            "Add this machine to my Cua Spaces: https://cua.ai/add/K7QM-4XPB-2RHD"
         );
         assert_eq!(
             add_computer_prompt(
                 "K7QM-4XPB-2RHD",
                 Some("https://cua.ai/add/K7QM-4XPB-2RHD?relay=https%3A%2F%2Fr.example")
             ),
-            "Add this computer to my Cua Spaces: https://cua.ai/add/K7QM-4XPB-2RHD?relay=https%3A%2F%2Fr.example"
+            "Add this machine to my Cua Spaces: https://cua.ai/add/K7QM-4XPB-2RHD?relay=https%3A%2F%2Fr.example"
         );
         assert_eq!(
             connect_cloud_prompt(None, None, None),

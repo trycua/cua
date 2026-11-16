@@ -16,7 +16,7 @@ Commands:
   schedule         A named agent's schedules: turns the daemon starts with or without the app open
   sessions         Durable sessions: agents your machines keep alive (`run --durable`)
   harnesses        The harnesses: readiness, installs, key variables, limits
-  keys             The provider keys agents get, kept in the Keychain by the Cua daemon (Cua Spaces → Settings → Connectors). Values are read from stdin and never printed
+  keys             The provider keys agents get, kept in the Keychain by the Cua daemon (Cua Spaces → Settings → Connections). Values are read from stdin and never printed
   create           Deprecated alias of `add`. Creates a named agent whose memory lives in the Cua Volume (agents/NAME/) and outlives its Space
   persistent       Deprecated alias of `ls` (without a sandbox). Lists named agents
   tell             Deprecated alias of `send NAME TEXT`. Gives a named agent a turn (starts a run with its home restored, or follows up on its idle run)

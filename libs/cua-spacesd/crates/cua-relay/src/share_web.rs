@@ -224,6 +224,7 @@ pub struct ShareState {
     logins: Mutex<HashMap<String, PendingLogin>>,
     used_codes: Mutex<HashMap<String, u64>>,
     buckets: Mutex<Buckets>,
+    viewer: crate::viewer::ViewerLimits,
     discovery: tokio::sync::OnceCell<(String, String)>,
     http: reqwest::Client,
 }
@@ -234,6 +235,7 @@ impl Default for ShareState {
             logins: Mutex::default(),
             used_codes: Mutex::default(),
             buckets: Mutex::default(),
+            viewer: crate::viewer::ViewerLimits::default(),
             discovery: tokio::sync::OnceCell::new(),
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(10))
@@ -303,6 +305,7 @@ impl SessionClaims {
             name: self.name.clone(),
             auth_time: self.auth_time,
             mfa: self.mfa,
+            azp: None,
             orgs: self
                 .orgs
                 .iter()
@@ -540,6 +543,11 @@ impl Relay {
             Some(c) => Cookie::Valid(c.identity()),
             None => Cookie::Invalid,
         }
+    }
+
+    /// The limits of the unauthenticated viewer path and of refused tickets.
+    pub(crate) fn viewer_limits(&self) -> &crate::viewer::ViewerLimits {
+        &self.share.viewer
     }
 
     /// Takes one anonymous request from `client` and `machine`'s buckets.
@@ -1016,6 +1024,7 @@ mod tests {
             name: None,
             auth_time: None,
             mfa: false,
+            azp: None,
             orgs: vec![OrgClaim {
                 alias: "acme".into(),
                 id: Some("o1".into()),

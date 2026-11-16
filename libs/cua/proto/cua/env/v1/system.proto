@@ -466,7 +466,8 @@ message CreateViewerTicketRequest {
   // root token revokes every viewer ticket.
   google.protobuf.Duration ttl = 1;
   // Highest session policy the viewer may open media with. Unset means
-  // `SESSION_POLICY_ALLOW_ACTIVATION` (a full interactive viewer).
+  // `SESSION_POLICY_VIEW_ONLY`: a viewer that can look and cannot touch.
+  // Input is asked for by name.
   SessionPolicy policy = 2;
   // Allow `ComputerService.GetClipboard` and `SetClipboard`.
   bool clipboard = 3;

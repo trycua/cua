@@ -1,20 +1,20 @@
 ---
-title: Add a machine
+title: Add a computer
 description: 'For an AI agent: run a Cua Spaces image by hand on a cloud or computer your user owns, then add it to Cua Spaces with cua spaces add.'
 ---
 
 Cua Spaces can't start this image on that cloud itself, so your user wants it run
 by hand and added as a Space. Ask your user which image, which cloud and region,
-and the most they will spend, then wait for a yes. Machines you start in their
+and the most they will spend, then wait for a yes. Computers you start in their
 cloud are billed to them. Tell them what you started and how to stop it.
 
 ## You run on your user's computer
 
-1. Start a machine in the cloud your user named, with the cloud's own CLI, big
+1. Start a computer in the cloud your user named, with the cloud's own CLI, big
    enough for the image (a Linux desktop wants 2 CPUs and 4 GB of memory). Use a
    firewall that lets in only your user's address or their tailnet on port 3211,
    never the whole internet. Tag it so you can find it later.
-2. On the machine, run the image with a new token. This is the Linux desktop; use
+2. On the computer, run the image with a new token. This is the Linux desktop; use
    the image your user named if it is another Cua Spaces image.
 
    ```bash skip="no-runner"
@@ -49,17 +49,17 @@ firewall and the token, and try again. Don't open the port wider to make it pass
 ## Don't
 
 - Print the token or put it in a file, the chat or a shell history you can avoid.
-- Open port 3211 to everyone, or run the machine without a token.
-- Leave machines running that you started: tell your user, or stop them when done.
-- Touch machines, networks or users in the account that you did not create.
+- Open port 3211 to everyone, or run the computer without a token.
+- Leave computers running that you started: tell your user, or stop them when done.
+- Touch computers, networks or users in the account that you did not create.
 
 ## What you get
 
-- Nothing new for yourself. The machine is one more Space in your user's Cua
+- Nothing new for yourself. The computer is one more Space in your user's Cua
   Spaces, and they or their agents can create work in it.
 - The token is kept apart from the Space list, readable only by your user.
 - Your user can forget it with `cua spaces rm <name>`. That does not stop the
-  machine: stop it with the cloud's own CLI.
+  computer: stop it with the cloud's own CLI.
 - It is a Space reached by its address (`direct:<address>:3211`), not one of
-  your user's computers or devices. How they differ:
-  [Computers, devices and Spaces](/spaces/concepts/computers-devices-and-spaces).
+  your user's computers. How they differ:
+  [Computers and Spaces](/spaces/concepts/machines-and-spaces).

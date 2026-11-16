@@ -1,13 +1,19 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `cua-driver mcp-config --client <agent>` installs the skill pack for that
 //! agent by default, prints one line about it on stderr, and leaves the agent
 //! alone with `--no-skills`. Every run uses a throwaway home.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::path::Path;
+use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 
 use tempfile::TempDir;
 
+#[cfg(unix)]
 const SKILL: &str = include_str!("../../../Skills/cua-driver/SKILL.md");
 
 struct Sandbox {
@@ -50,6 +56,7 @@ impl Sandbox {
             .expect("run cua-driver mcp-config")
     }
 
+    #[cfg(unix)]
     fn stage(&self) -> PathBuf {
         self.driver_home.join("skills").join("cua-driver")
     }
@@ -188,6 +195,9 @@ mod placement {
             ".gemini/antigravity-cli",
             &[".gemini/antigravity-cli/skills/cua-driver"],
         ),
+        // DSH's default skill provider scans ~/.agents/skills next to
+        // ~/.dsh/skills.
+        ("deepseek-harness", ".dsh", &[".agents/skills/cua-driver"]),
     ];
 
     fn assert_linked_to_the_pack(sandbox: &Sandbox, link: &Path) {
@@ -334,4 +344,33 @@ mod placement {
                 .is_symlink()
         );
     }
+}
+
+/// DeepSeek Harness reads a user patch layer (`cordis.patch.yml`): a YAML
+/// list of Loader patches. The printed entry must parse as that list and
+/// insert one stdio `@deepseek-ai/dsh-mcp-client` row that runs `<this
+/// driver> mcp`.
+#[test]
+fn deepseek_harness_gets_a_cordis_patch_that_starts_this_driver() {
+    let sandbox = Sandbox::new();
+    let output = sandbox.run(&["--client", "deepseek-harness", "--no-skills"]);
+    assert!(output.status.success(), "{output:?}");
+    let patch: serde_yaml::Value = serde_yaml::from_str(&stdout(&output)).expect("stdout is YAML");
+    let patches = patch.as_sequence().expect("a top-level list of patches");
+    assert_eq!(patches.len(), 1, "{patch:?}");
+    let rows = patches[0]["insert"].as_sequence().expect("an insert patch");
+    assert_eq!(rows.len(), 1, "{patch:?}");
+    let row = &rows[0];
+    assert_eq!(row["id"], "cua-driver");
+    assert_eq!(row["name"], "@deepseek-ai/dsh-mcp-client");
+    let config = &row["config"];
+    assert_eq!(config["serverName"], "cua-driver");
+    assert_eq!(config["transport"], "stdio");
+    let driver = fs::canonicalize(env!("CARGO_BIN_EXE_cua-driver")).unwrap();
+    let command = config["command"].as_str().expect("command is a string");
+    assert_eq!(fs::canonicalize(command).unwrap(), driver);
+    assert_eq!(
+        config["args"],
+        serde_yaml::from_str::<serde_yaml::Value>("[mcp]").unwrap()
+    );
 }

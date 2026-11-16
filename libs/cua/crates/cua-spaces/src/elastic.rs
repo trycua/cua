@@ -879,14 +879,7 @@ impl Spaces {
             if ch.is_some_and(|c| c.state == "cordoned") {
                 host.ready = false;
             }
-            // At its own Space limit (`cua host config --max-spaces`): it
-            // takes none now, whatever its CPU and memory say.
-            if h.limits
-                .iter()
-                .any(|l| l.resource == "spaces" && l.limit > 0 && l.used >= l.limit)
-            {
-                host.ready = false;
-            }
+            apply_host_limits(&mut host, &h.limits);
             view.ids.insert(host.name.clone(), h.id.clone());
             view.hosts.push(host);
         }
@@ -1004,6 +997,12 @@ impl Spaces {
             .cloud_inflight
             .load(std::sync::atomic::Ordering::SeqCst);
         SessionRoom::of(&usage, here, inflight)
+    }
+
+    /// Whether any linked cloud could supply a Space (the callers that must not
+    /// spend one unasked, such as a task started from a phone, check this first).
+    pub async fn has_linked_clouds(&self) -> bool {
+        self.elastic_has_clouds().await
     }
 
     /// Whether any linked cloud supplies the elastic pool (machines to add,
@@ -1472,7 +1471,7 @@ impl Spaces {
             // places its first solve reserved without solving again.
             let (target, label, _in_cloud) = {
                 let _g = self.inner.elastic.placing.lock().await;
-                // What the plan leaves of live sessions: read under the turn,
+                // What the plan leaves of computers in use: read under the turn,
                 // so the creates of a burst count each other.
                 let room = self.cloud_session_room().await;
                 let (target, label) = if let Some(t) = self.take_reservation(&key, &excluded) {
@@ -2261,7 +2260,7 @@ pub struct SessionRoom {
     /// Counted as used: the relay's live sessions, or this home's cloud
     /// Spaces when more, plus cloud creates under way.
     pub used: u32,
-    /// The plan's live-session limit.
+    /// The plan's computers-in-use limit.
     pub limit: u32,
     /// `free`, `pro`, `team`, ...
     pub plan: String,
@@ -2308,7 +2307,7 @@ impl SessionRoom {
             _ => format!("Upgrade to Pro or Teams ({upgrade})"),
         };
         Error::LimitExceeded(format!(
-            "Your plan allows {} live sessions ({} in use); {what} needs {asked}. A Space in \
+            "Your plan allows {} computers in use at once ({} in use now); {what} needs {asked}. A Space in \
              your own cloud uses one, so no cloud machine was started. {next}, or lower --count.",
             self.limit, self.used
         ))
@@ -2440,6 +2439,35 @@ fn paid_left(c: &CloudHost, t: u64) -> u64 {
     h.paid_until(t).saturating_sub(t)
 }
 
+/// What the owner's limits on a machine (`cua host config --max-spaces`,
+/// `--max-memory`, `--max-disk`) leave it for new Spaces: at its Space limit
+/// it takes none, whatever its CPU and memory say; below its memory or disk
+/// limit it takes only what is left under it. The machine's own daemon
+/// refuses a create past a limit for any requester, so a plan that placed
+/// one there would only be refused: the pool leaves the machine out instead
+/// and the Space goes to another machine or the linked cloud.
+pub(crate) fn apply_host_limits(host: &mut Host, limits: &[crate::host_spaces::HostLimit]) {
+    for l in limits.iter().filter(|l| l.limit > 0) {
+        let left = u64::from(l.limit.saturating_sub(l.used));
+        match l.resource.as_str() {
+            "spaces" if l.used >= l.limit => host.ready = false,
+            "memory_gb" => {
+                host.free.memory_mb = host.free.memory_mb.min(left * 1024);
+                if left == 0 {
+                    host.ready = false;
+                }
+            }
+            "disk_gb" => {
+                host.free.disk_gb = host.free.disk_gb.min(left);
+                if left == 0 {
+                    host.ready = false;
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 fn host_of(
     name: &str,
     os: &str,
@@ -2545,6 +2573,69 @@ fn resolve_target(
 mod tests {
     use super::*;
 
+    /// A machine at one of its limits for Spaces other machines create
+    /// (`cua host config --max-spaces`, `--max-memory`, `--max-disk`) is
+    /// skipped by `on="auto"`: the Space goes to the other machine, and
+    /// below a memory limit a machine takes only what is left under it.
+    #[test]
+    fn auto_placement_skips_a_machine_at_its_limit() {
+        let status = cua_proto::env::v1::HostNodeStatus {
+            millicpus_free: 8000,
+            millicpus_total: 8000,
+            memory_free_mb: 32 * 1024,
+            memory_total_mb: 32 * 1024,
+            kinds: vec!["container".into()],
+            ..Default::default()
+        };
+        let limit = |resource: &str, used: u32, limit: u32| crate::host_spaces::HostLimit {
+            resource: resource.into(),
+            used,
+            limit,
+            reason: String::new(),
+        };
+        let place = |a_limits: &[crate::host_spaces::HostLimit]| {
+            let mut a = host_of("mini", "macos", &status, None, 0);
+            apply_host_limits(&mut a, a_limits);
+            let b = host_of("studio", "macos", &status, None, 0);
+            let r = ElasticRequest {
+                cpus: Some(1),
+                memory_mb: Some(4096),
+                count: 1,
+                caller: Caller::Batch,
+                ..Default::default()
+            };
+            let g = detect(&r, &UsageBook::default(), "run".into());
+            let plan = el::solve(&[g], &[a, b], &[], &Default::default());
+            plan.assignments
+                .iter()
+                .map(|x| match &x.target {
+                    Target::Host { name } => name.clone(),
+                    Target::New { .. } => "new".into(),
+                })
+                .collect::<Vec<_>>()
+        };
+        // No limits, or room under them: either machine may take it.
+        let open = place(&[limit("spaces", 1, 4), limit("memory_gb", 8, 32)]);
+        assert_eq!(open.len(), 1, "{open:?}");
+        // At its Space limit, memory limit or disk limit: the other one.
+        for full in [
+            limit("spaces", 4, 4),
+            limit("memory_gb", 32, 32),
+            limit("disk_gb", 100, 100),
+        ] {
+            assert_eq!(place(std::slice::from_ref(&full)), ["studio"], "{full:?}");
+        }
+        // Over a limit (it was lowered below what runs) is full too.
+        assert_eq!(place(&[limit("spaces", 3, 2)]), ["studio"]);
+        // Below the memory limit it takes only what is left under it: 2 GB
+        // left cannot take a 4 GB Space.
+        assert_eq!(place(&[limit("memory_gb", 30, 32)]), ["studio"]);
+        // No limit (0) never skips.
+        let mut a = host_of("mini", "macos", &status, None, 0);
+        apply_host_limits(&mut a, &[limit("spaces", 99, 0), limit("memory_gb", 99, 0)]);
+        assert!(a.ready && a.free.memory_mb == 32 * 1024);
+    }
+
     /// Live sessions left for Spaces in your cloud: the relay's count, or
     /// this home's cloud Spaces when more, plus creates under way; the
     /// refusal says the plan's numbers and how to get more.
@@ -2568,7 +2659,9 @@ mod tests {
             .refusal(16)
             .to_string();
         assert!(
-            m.contains("Your plan allows 2 live sessions (2 in use); this burst needs 16."),
+            m.contains(
+                "Your plan allows 2 computers in use at once (2 in use now); this burst needs 16."
+            ),
             "{m}"
         );
         assert!(

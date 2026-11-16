@@ -451,8 +451,12 @@ mod qemu {
             let dns = g
                 .sh("getent hosts one.one.one.one >/dev/null && echo resolved || echo no-dns")
                 .await;
-            eprintln!("  DNS through the VM's resolver (10.0.2.3, not allowed): {dns}");
-            assert_eq!(dns, "no-dns");
+            // Under the secure default the runtime's resolver stays open on
+            // 53 whatever the lists say; under the old default it follows
+            // them (10.0.2.3 is not allowed here).
+            let secure = cua_vmm::network::Mode::from_env() == cua_vmm::network::Mode::Secure;
+            eprintln!("  DNS through the VM's resolver (10.0.2.3): {dns}");
+            assert_eq!(dns, if secure { "resolved" } else { "no-dns" });
 
             eprintln!("qemu: set_egress in the namespace (allow 10.0.2.3 and {DENIED})");
             rt.set_egress(&name, &policy(&[ALLOWED, DENIED, "10.0.2.3"], &["all"]))

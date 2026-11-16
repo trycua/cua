@@ -53,6 +53,10 @@ pub enum TicketScope {
     Hotspot,
     /// The Cua Volume mount's client socket (`/volume`).
     Volume,
+    /// The host's end of the spawn channel (`/spawn`).
+    Spawn,
+    /// The host's end of the published host ports (`/hostports`).
+    HostPorts,
     /// File transfer side channels.
     Files,
     /// The web viewer's scoped bearer (`SystemService.CreateViewerTicket`).
@@ -67,6 +71,8 @@ impl TicketScope {
             Self::Tunnel => "tunnel",
             Self::Hotspot => "hotspot",
             Self::Volume => "volume",
+            Self::Spawn => "spawn",
+            Self::HostPorts => "hostports",
             Self::Files => "files",
             Self::Viewer => "viewer",
         }
@@ -78,6 +84,8 @@ impl TicketScope {
             "tunnel" => Self::Tunnel,
             "hotspot" => Self::Hotspot,
             "volume" => Self::Volume,
+            "spawn" => Self::Spawn,
+            "hostports" => Self::HostPorts,
             "files" => Self::Files,
             "viewer" => Self::Viewer,
             _ => return None,
@@ -120,6 +128,14 @@ pub struct ViewerGrant {
     /// Principal display name.
     #[serde(rename = "n", default)]
     pub display_name: String,
+    /// Minted by a phone's call: it goes on only while this computer still
+    /// answers phones and shares its desktop (see `PhoneGuardBody`).
+    #[serde(rename = "m", default, skip_serializing_if = "std::ops::Not::not")]
+    pub phone: bool,
+    /// When the ticket this grant came from ends (set when it is read, never
+    /// part of the ticket): a media session a phone opens with it ends then too.
+    #[serde(skip)]
+    pub expires_at: Option<SystemTime>,
 }
 
 impl ViewerGrant {
@@ -178,6 +194,10 @@ struct TicketPayload {
     /// refuses a ticket from before a revoke of `p`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     a: Option<u64>,
+    /// The enrolled device whose call minted it (the relay refuses the ticket
+    /// once that device is revoked or no longer enrolled).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    d: Option<String>,
 }
 
 /// What an external credential authorized.
@@ -221,6 +241,54 @@ pub struct RelayCaller {
     /// is shared with it; `role` is its role on that Space. Such a caller
     /// reaches [`THREAD_GRANT_GRPC_METHODS`] only.
     pub space: Option<String>,
+    /// The caller is a phone (the relay says so, from its enrolled device):
+    /// it reaches what a Space is ([`cua_relay::phone::PHONE_GRPC_METHODS`],
+    /// and the pointer and keyboard of a desktop this computer shares, when
+    /// the account's role may touch it) and nothing of the computer
+    /// underneath. Never a plain HTTP route.
+    pub phone: Option<PhoneCaller>,
+    /// The enrolled device the relay verified behind the call (a computer's or
+    /// a phone's). Audit lines name it and tickets minted by the call are
+    /// bound to it.
+    pub device: Option<String>,
+}
+
+/// A phone behind a relayed call.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PhoneCaller {
+    /// Its enrolled device id (the relay verified the device session).
+    pub device: String,
+}
+
+/// What a machine does with a call from a phone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PhoneVerdict {
+    /// On the phone's list: looking at a Space or its screen.
+    Look,
+    /// The pointer or the keyboard. Whether the desktop is shared, and
+    /// whether the role may touch it, is decided before this is asked (the
+    /// same rule as for every app).
+    Touch,
+    /// Not for a phone at all.
+    Refuse,
+}
+
+/// The one rule for phones, applied to every gRPC `path`.
+pub fn phone_verdict(path: &str) -> PhoneVerdict {
+    if cua_relay::phone::PHONE_GRPC_METHODS.contains(&path) {
+        PhoneVerdict::Look
+    } else if cua_relay::phone::PHONE_CONTROL_GRPC_METHODS.contains(&path) {
+        PhoneVerdict::Touch
+    } else {
+        PhoneVerdict::Refuse
+    }
+}
+
+/// Whether `path` is about a desktop (its picture or its input), which only
+/// a computer that shares its desktop answers.
+pub fn desktop_path(path: &str) -> bool {
+    path.starts_with("/cua.env.v1.StreamService/")
+        || path.starts_with("/cua.env.v1.ComputerService/")
 }
 
 /// The only calls a relayed caller may make on a machine that does not
@@ -280,6 +348,8 @@ impl ExternalGrant {
             audio_uplink: false,
             principal_id: self.principal.id.clone(),
             display_name: self.principal.display_name.clone(),
+            phone: false,
+            expires_at: None,
         }
     }
 }
@@ -335,6 +405,20 @@ pub trait ExternalAuthenticator: Send + Sync {
     /// read or the machine stopped sharing (fail closed).
     fn share_gateway(&self) -> Result<Option<std::path::PathBuf>, String> {
         Ok(None)
+    }
+
+    /// A phone made a call it may never make (logged, rate limited).
+    fn phone_refused(&self, _caller: &RelayCaller, _path: &str) {}
+
+    /// A phone made a call on its list (logged, rate limited): it looked
+    /// (`Scope::View`) or touched a desktop shared as a Space (`Scope::Control`).
+    fn phone_used(&self, _caller: &RelayCaller, _scope: crate::phone_control::Scope) {}
+
+    /// Whether a phone's call that is still running (a picture of the screen
+    /// that streams) may go on. Asked about once a second; `Err(why)` ends it.
+    /// The default lets it go on.
+    fn phone_still_allowed(&self, _caller: &RelayCaller, _path: &str) -> Result<(), String> {
+        Ok(())
     }
 }
 
@@ -525,7 +609,11 @@ impl Auth {
             // sockets): it watches through tickets its gRPC calls mint. A
             // machine that does not share its desktop serves none to any
             // relayed caller.
-            Some(Ok(grant)) => return !grant.view_only && !grant.host_only,
+            Some(Ok(grant)) => {
+                return !grant.view_only
+                    && !grant.host_only
+                    && grant.account.as_ref().is_none_or(|a| a.phone.is_none())
+            }
             Some(Err(_)) => return false,
             None => {}
         }
@@ -580,6 +668,20 @@ impl Auth {
         issued: Option<u64>,
         ttl: Duration,
     ) -> (String, SystemTime) {
+        self.mint_ticket_for(scope, resource, principal_id, issued, None, ttl)
+    }
+
+    /// [`Self::mint_ticket_issued`] bound to the enrolled `device` whose call
+    /// minted it.
+    pub fn mint_ticket_for(
+        &self,
+        scope: TicketScope,
+        resource: &str,
+        principal_id: &str,
+        issued: Option<u64>,
+        device: Option<&str>,
+        ttl: Duration,
+    ) -> (String, SystemTime) {
         let expires_at = SystemTime::now() + ttl.min(MAX_TICKET_TTL);
         let exp_ms = expires_at
             .duration_since(UNIX_EPOCH)
@@ -592,6 +694,7 @@ impl Auth {
             e: exp_ms,
             n: random_id(9),
             a: issued,
+            d: device.map(str::to_owned),
         };
         let payload = serde_json::to_vec(&payload).expect("ticket payload serializes");
         let engine = base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -669,7 +772,10 @@ pub fn viewer_ticket_from_headers(
         }
         match auth.validate_ticket(bearer, TicketScope::Viewer) {
             Ok(claims) => match serde_json::from_str::<ViewerGrant>(&claims.resource) {
-                Ok(grant) => return Some(Ok(grant)),
+                Ok(mut grant) => {
+                    grant.expires_at = Some(claims.expires_at);
+                    return Some(Ok(grant));
+                }
                 Err(_) => refused = Some(TicketError::Malformed),
             },
             // A ticket for another scope in a bearer header is a mistake,
@@ -1015,7 +1121,8 @@ where
     S: Service<Request<B>, Response = Response<R>> + Clone + Send + 'static,
     S::Future: Send + 'static,
     B: Send + 'static,
-    R: Default + Send + 'static,
+    R: Default + Send + 'static + http_body::Body<Data = bytes::Bytes> + From<axum::body::Body>,
+    <R as http_body::Body>::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
     type Response = Response<R>;
     type Error = S::Error;
@@ -1135,6 +1242,43 @@ where
                         .into_http::<R>();
                         return Box::pin(async move { Ok(response) });
                     }
+                    let mut phone_guard = None;
+                    if let Some(caller) = grant.account.as_ref().filter(|a| a.phone.is_some()) {
+                        let external = self.auth.external.read().expect("external lock").clone();
+                        match phone_verdict(&path) {
+                            PhoneVerdict::Look | PhoneVerdict::Touch => {
+                                if let Some(external) = external {
+                                    let scope = if phone_verdict(&path) == PhoneVerdict::Touch {
+                                        crate::phone_control::Scope::Control
+                                    } else {
+                                        crate::phone_control::Scope::View
+                                    };
+                                    external.phone_used(caller, scope);
+                                    // A call that streams is looked at again
+                                    // while it runs (see `PhoneGuardBody`).
+                                    phone_guard = Some((external, caller.clone(), path.clone()));
+                                }
+                            }
+                            PhoneVerdict::Refuse => {
+                                let who = principal_label(&grant.principal);
+                                self.auth.record_access(
+                                    via_of(&grant.principal),
+                                    &who,
+                                    &format!("refused {} (phone)", grpc_service(&path)),
+                                );
+                                if let Some(external) = external {
+                                    external.phone_refused(caller, &path);
+                                }
+                                let response = crate::error::status(
+                                    tonic::Code::PermissionDenied,
+                                    cua_proto::env::v1::ErrorReason::PermissionDenied,
+                                    "a phone cannot make this call: it reaches Spaces, not this computer's own services",
+                                )
+                                .into_http::<R>();
+                                return Box::pin(async move { Ok(response) });
+                            }
+                        }
+                    }
                     let owner = grant.account.as_ref().is_some_and(|a| a.role == "owner");
                     // Only an owner keeps the agent kind (`principal_for`):
                     // name which of its agent sessions this is.
@@ -1145,10 +1289,33 @@ where
                     } else {
                         String::new()
                     };
+                    // The device behind the call, and for a phone its scope
+                    // (`view` or `control`), are part of who is recorded: the
+                    // owner reads which device did what.
+                    let device_tag = grant
+                        .account
+                        .as_ref()
+                        .and_then(|c| {
+                            let dev = c.device.as_deref()?;
+                            Some(match &c.phone {
+                                Some(_) => format!(
+                                    " [{dev} mobile {}]",
+                                    if cua_relay::phone::PHONE_CONTROL_GRPC_METHODS
+                                        .contains(&path.as_str())
+                                    {
+                                        "control"
+                                    } else {
+                                        "view"
+                                    }
+                                ),
+                                None => format!(" [{dev}]"),
+                            })
+                        })
+                        .unwrap_or_default();
                     self.auth.record_call(
                         req.extensions_mut(),
                         via_of(&grant.principal),
-                        &format!("{}{session}", principal_label(&grant.principal)),
+                        &format!("{}{session}{device_tag}", principal_label(&grant.principal)),
                         &path,
                         owner,
                     );
@@ -1162,7 +1329,14 @@ where
                     });
                     let mut inner = self.inner.clone();
                     std::mem::swap(&mut self.inner, &mut inner);
-                    return Box::pin(inner.call(req));
+                    let call = inner.call(req);
+                    return match phone_guard {
+                        None => Box::pin(call),
+                        Some((external, caller, path)) => Box::pin(async move {
+                            let response = call.await?;
+                            Ok(guard_phone_response(response, external, caller, path))
+                        }),
+                    };
                 }
                 Err(reason) => {
                     self.auth.record_access(
@@ -1189,6 +1363,27 @@ where
             let path = req.uri().path().to_owned();
             let refusal = match viewer {
                 Ok(grant) if cua_proto::metadata::VIEWER_GRPC_METHODS.contains(&path.as_str()) => {
+                    // A ticket a phone's call minted is a phone's: while this
+                    // computer does not answer phones, or does not share the
+                    // desktop it shows, it opens nothing, and a call that
+                    // runs is ended.
+                    let mut phone_guard = None;
+                    if grant.phone {
+                        let external = self.auth.external.read().expect("external lock").clone();
+                        let caller = RelayCaller::default();
+                        if let Some(external) = external {
+                            if let Err(why) = external.phone_still_allowed(&caller, &path) {
+                                let response = crate::error::status(
+                                    tonic::Code::PermissionDenied,
+                                    cua_proto::env::v1::ErrorReason::PermissionDenied,
+                                    why,
+                                )
+                                .into_http::<R>();
+                                return Box::pin(async move { Ok(response) });
+                            }
+                            phone_guard = Some((external, caller, path.clone()));
+                        }
+                    }
                     self.auth.record_call(
                         req.extensions_mut(),
                         "viewer",
@@ -1206,7 +1401,14 @@ where
                     });
                     let mut inner = self.inner.clone();
                     std::mem::swap(&mut self.inner, &mut inner);
-                    return Box::pin(inner.call(req));
+                    let call = inner.call(req);
+                    return match phone_guard {
+                        None => Box::pin(call),
+                        Some((external, caller, path)) => Box::pin(async move {
+                            let response = call.await?;
+                            Ok(guard_phone_response(response, external, caller, path))
+                        }),
+                    };
                 }
                 Ok(_) => crate::error::status(
                     tonic::Code::PermissionDenied,
@@ -1294,6 +1496,116 @@ where
     }
 }
 
+impl Auth {
+    /// Watches a long-lived thing a phone's call opened (a media socket
+    /// opened by `OpenMedia`, which the response guard cannot reach): once a
+    /// second, until `done` says it ended, ask whether this computer still
+    /// allows the phone; when it does not, call `stop` with the reason. Does
+    /// nothing for a caller that is not a phone.
+    pub fn watch_phone(
+        self: &Arc<Self>,
+        caller: RelayCaller,
+        path: &str,
+        until: Option<SystemTime>,
+        done: impl Fn() -> bool + Send + 'static,
+        stop: impl FnOnce(String) + Send + 'static,
+    ) {
+        let Some(external) = self.external.read().expect("external lock").clone() else {
+            return;
+        };
+        let path = path.to_owned();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(PHONE_RECHECK).await;
+                if done() {
+                    return;
+                }
+                if until.is_some_and(|t| SystemTime::now() >= t) {
+                    stop("the phone's viewer ticket ended: ask for a new one".into());
+                    return;
+                }
+                if let Err(why) = external.phone_still_allowed(&caller, &path) {
+                    stop(why);
+                    return;
+                }
+            }
+        });
+    }
+}
+
+/// How often a phone's running call is looked at again.
+const PHONE_RECHECK: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// The response of a phone's call, ended with `PermissionDenied` the moment
+/// the computer stops allowing it (it stopped sharing its desktop, the phones
+/// switch was turned off, the experiment was turned off). Looked at once a
+/// second, and again whenever a frame goes by.
+fn guard_phone_response<R>(
+    response: Response<R>,
+    external: Arc<dyn ExternalAuthenticator>,
+    caller: RelayCaller,
+    path: String,
+) -> Response<R>
+where
+    R: http_body::Body<Data = bytes::Bytes> + From<axum::body::Body> + Send + 'static,
+    R::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let (parts, body) = response.into_parts();
+    let guarded = PhoneGuardBody {
+        inner: Box::pin(body),
+        check: Box::new(move || external.phone_still_allowed(&caller, &path).err()),
+        sleep: Box::pin(tokio::time::sleep(PHONE_RECHECK)),
+        done: false,
+    };
+    Response::from_parts(parts, R::from(axum::body::Body::new(guarded)))
+}
+
+struct PhoneGuardBody<B> {
+    inner: Pin<Box<B>>,
+    check: Box<dyn Fn() -> Option<String> + Send + Sync>,
+    sleep: Pin<Box<tokio::time::Sleep>>,
+    done: bool,
+}
+
+impl<B> http_body::Body for PhoneGuardBody<B>
+where
+    B: http_body::Body<Data = bytes::Bytes>,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    type Data = bytes::Bytes;
+    type Error = Box<dyn std::error::Error + Send + Sync>;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+    ) -> Poll<Option<Result<http_body::Frame<bytes::Bytes>, Self::Error>>> {
+        let this = &mut *self;
+        if this.done {
+            return Poll::Ready(None);
+        }
+        if this.sleep.as_mut().poll(cx).is_ready() {
+            this.sleep
+                .as_mut()
+                .reset(tokio::time::Instant::now() + PHONE_RECHECK);
+            // Arms the waker for the next second.
+            let _ = this.sleep.as_mut().poll(cx);
+            if let Some(why) = (this.check)() {
+                this.done = true;
+                let mut trailers = http::HeaderMap::new();
+                trailers.insert("grpc-status", http::HeaderValue::from_static("7"));
+                if let Ok(v) = http::HeaderValue::from_str(&why.replace(['\r', '\n'], " ")) {
+                    trailers.insert("grpc-message", v);
+                }
+                return Poll::Ready(Some(Ok(http_body::Frame::trailers(trailers))));
+            }
+        }
+        this.inner
+            .as_mut()
+            .poll_frame(cx)
+            .map(|o| o.map(|r| r.map_err(Into::into)))
+    }
+}
+
 /// Reads the [`CallerIdentity`] a request was authorized with.
 pub fn caller<T>(request: &tonic::Request<T>) -> CallerIdentity {
     request
@@ -1305,6 +1617,175 @@ pub fn caller<T>(request: &tonic::Request<T>) -> CallerIdentity {
 
 #[cfg(test)]
 mod tests {
+
+    /// A phone's call that streams is ended with `PermissionDenied` within a
+    /// second of the computer no longer allowing it, even when no frame flows.
+    #[tokio::test]
+    async fn a_phones_running_call_ends_when_the_computer_stops_allowing_it() {
+        use http_body_util::BodyExt as _;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        struct Gate(AtomicBool);
+        impl ExternalAuthenticator for Gate {
+            fn authenticate(&self, _: &http::HeaderMap) -> Option<Result<ExternalGrant, String>> {
+                None
+            }
+            fn phone_still_allowed(&self, _: &RelayCaller, _: &str) -> Result<(), String> {
+                if self.0.load(Ordering::Relaxed) {
+                    Ok(())
+                } else {
+                    Err("this computer stopped sharing its desktop".into())
+                }
+            }
+        }
+        let gate = Arc::new(Gate(AtomicBool::new(true)));
+        // A stream that never sends anything.
+        let silent = axum::body::Body::from_stream(futures_util::stream::pending::<
+            Result<bytes::Bytes, std::io::Error>,
+        >());
+        let response = guard_phone_response(
+            Response::new(silent),
+            gate.clone(),
+            RelayCaller::default(),
+            "/cua.env.v1.StreamService/OpenMedia".into(),
+        );
+        let mut body = response.into_body();
+        // Allowed: nothing arrives (the stream is silent), and nothing ends.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(1500), body.frame())
+                .await
+                .is_err()
+        );
+        gate.0.store(false, Ordering::Relaxed);
+        let frame = tokio::time::timeout(Duration::from_secs(3), body.frame())
+            .await
+            .expect("ended within a few seconds")
+            .expect("a frame")
+            .expect("not an error");
+        let trailers = frame.into_trailers().expect("trailers");
+        assert_eq!(trailers.get("grpc-status").unwrap(), "7");
+        assert_eq!(
+            trailers.get("grpc-message").unwrap(),
+            "this computer stopped sharing its desktop"
+        );
+        assert!(body.frame().await.is_none(), "and nothing after");
+    }
+
+    /// What a phone opened and left running (a media socket) is watched: it is
+    /// stopped, with the reason, when the computer stops allowing the phone,
+    /// and left alone once it has ended by itself.
+    #[tokio::test]
+    async fn a_watched_phone_session_is_stopped_with_the_reason() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        struct Gate(AtomicBool);
+        impl ExternalAuthenticator for Gate {
+            fn authenticate(&self, _: &http::HeaderMap) -> Option<Result<ExternalGrant, String>> {
+                None
+            }
+            fn phone_still_allowed(&self, _: &RelayCaller, _: &str) -> Result<(), String> {
+                if self.0.load(Ordering::Relaxed) {
+                    Ok(())
+                } else {
+                    Err("phones are turned off on this computer".into())
+                }
+            }
+        }
+        let gate = Arc::new(Gate(AtomicBool::new(true)));
+        let auth = Arc::new(Auth::new(Some("t".into())));
+        auth.set_external(gate.clone());
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let ended = Arc::new(AtomicBool::new(false));
+        let done = ended.clone();
+        auth.watch_phone(
+            RelayCaller::default(),
+            "/cua.env.v1.StreamService/OpenMedia",
+            None,
+            move || done.load(Ordering::Relaxed),
+            move |why| {
+                let _ = tx.send(why);
+            },
+        );
+        assert!(tokio::time::timeout(Duration::from_millis(1500), rx.recv())
+            .await
+            .is_err());
+        gate.0.store(false, Ordering::Relaxed);
+        let why = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("stopped within a few seconds")
+            .expect("a reason");
+        assert_eq!(why, "phones are turned off on this computer");
+        // A phone's ticket ends: the session it opened ends with it.
+        let (tx3, mut rx3) = tokio::sync::mpsc::unbounded_channel();
+        auth.watch_phone(
+            RelayCaller::default(),
+            "/cua.env.v1.StreamService/OpenMedia",
+            Some(SystemTime::now() + Duration::from_millis(500)),
+            || false,
+            move |why| {
+                let _ = tx3.send(why);
+            },
+        );
+        let why = tokio::time::timeout(Duration::from_secs(4), rx3.recv())
+            .await
+            .expect("stopped when the ticket ended")
+            .expect("a reason");
+        assert_eq!(why, "the phone's viewer ticket ended: ask for a new one");
+        // A session that ended by itself is not stopped again.
+        let (tx2, mut rx2) = tokio::sync::mpsc::unbounded_channel();
+        auth.watch_phone(
+            RelayCaller::default(),
+            "/cua.env.v1.StreamService/OpenMedia",
+            None,
+            || true,
+            move |why| {
+                let _ = tx2.send(why);
+            },
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(1600), rx2.recv())
+                .await
+                .map(|m| m.is_none())
+                .unwrap_or(true)
+        );
+    }
+
+    #[test]
+    fn a_phone_reaches_spaces_and_a_shared_desktop_and_never_the_computers_own_services() {
+        let path = |m: &str| format!("/cua.env.v1.{m}");
+        for look in [
+            "HostThreadService/CallThreadTool",
+            "SystemService/CreateViewerTicket",
+            "SystemService/GetCapabilities",
+            "ComputerService/Screenshot",
+        ] {
+            assert_eq!(phone_verdict(&path(look)), PhoneVerdict::Look, "{look}");
+        }
+        for touch in ["ComputerService/Pointer", "ComputerService/Keyboard"] {
+            assert_eq!(phone_verdict(&path(touch)), PhoneVerdict::Touch, "{touch}");
+        }
+        // These are the computer's own, whatever the role: never a phone's.
+        for never in [
+            "ProcessService/StartProcess",
+            "ProcessService/Run",
+            "FilesystemService/WriteFile",
+            "FilesystemService/ReadFile",
+            "FilesystemService/WatchDir",
+            "TunnelService/Forward",
+            "ComputerService/SetClipboard",
+            "ComputerService/GetClipboard",
+            "DriverService/CallTool",
+            "HostSpacesService/CreateHostSpace",
+            "HostJobsService/RunHostJobs",
+            "SystemService/AttachRelay",
+            "SystemService/Shutdown",
+        ] {
+            assert_eq!(phone_verdict(&path(never)), PhoneVerdict::Refuse, "{never}");
+        }
+        assert_eq!(phone_verdict("/mcp"), PhoneVerdict::Refuse);
+        assert_eq!(phone_verdict("/files"), PhoneVerdict::Refuse);
+        assert!(desktop_path(&path("StreamService/OpenMedia")));
+        assert!(desktop_path(&path("ComputerService/Pointer")));
+        assert!(!desktop_path(&path("HostThreadService/CallThreadTool")));
+    }
     use super::*;
 
     #[test]

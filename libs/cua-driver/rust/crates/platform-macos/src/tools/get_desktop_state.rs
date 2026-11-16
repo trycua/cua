@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `get_desktop_state` — full-display vision screenshot (macOS).
 //!
 //! Vision-only desktop capture: grabs the ENTIRE main display at native
@@ -46,7 +49,7 @@ fn def() -> &'static ToolDef {
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
-                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
+                "session": cua_driver_core::tool_schema::session_schema(),
                 "screenshot_out_file": { "type": "string", "description": "Write PNG here instead of base64." },
                 "max_image_dimension": cua_driver_core::tool_schema::desktop_max_image_dimension_schema()
             },

@@ -19,15 +19,18 @@ on:
       - "libs/cua-driver/rust/crates/platform-linux/**"
       - "libs/cua/crates/cua-cli/**"
       - "libs/cua/crates/cua-sdk/**"
+      - "libs/cua/crates/cua-sdk-native/**"
       - "libs/cua/crates/cua-spacesd-client/**"
       - ".github/actions/cua-sandbox/**"
       - ".github/actions/build-cua-under-test/**"
+      - ".github/actions/fetch-under-test/**"
       - ".github/actions/linux-rust-prep/**"
       - ".github/workflows/ci-cua-sandbox-doctor.yml"
       # Docs and the docs linter run in ci-cua-sandbox-action.yml only.
       - "!.github/actions/cua-sandbox/lint-docs-yaml.py"
       - "!**/*.md"
       - "!**/*.mdx"
+  merge_group:
   push:
     branches: [main]
     paths:
@@ -38,9 +41,11 @@ on:
       - "libs/cua-driver/rust/crates/platform-linux/**"
       - "libs/cua/crates/cua-cli/**"
       - "libs/cua/crates/cua-sdk/**"
+      - "libs/cua/crates/cua-sdk-native/**"
       - "libs/cua/crates/cua-spacesd-client/**"
       - ".github/actions/cua-sandbox/**"
       - ".github/actions/build-cua-under-test/**"
+      - ".github/actions/fetch-under-test/**"
       - ".github/actions/linux-rust-prep/**"
       - ".github/workflows/ci-cua-sandbox-doctor.yml"
       # Docs and the docs linter run in ci-cua-sandbox-action.yml only.
@@ -63,15 +68,55 @@ env:
   IMAGE: ghcr.io/trycua/linux:24.04
 
 jobs:
+  # The three builds are independent and the slowest ones dominate, so they
+  # run in parallel jobs and the doctor jobs below pick up the binaries.
+  quick:
+    name: quick
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    uses: ./.github/workflows/ci-quick.yml
+
+  build:
+    needs: quick
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) && needs.quick.outputs.skip != 'true' }}
+    name: build ${{ matrix.component }}
+    # Built on the release of the image the binaries run in
+    # (ghcr.io/trycua/linux:24.04, glibc 2.39): an ubuntu-26.04 build needs
+    # glibc 2.43 and its injected cua-spacesd never starts.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - component: cua
+            binary: libs/cua/target/debug/cua
+          - component: cua-spacesd
+            binary: libs/cua-spacesd/target/release/cua-spacesd
+          - component: cua-driver
+            binary: libs/cua-driver/rust/target/release/cua-driver
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/build-cua-under-test
+        with:
+          components: ${{ matrix.component }}
+          cache-key: cua-under-test-${{ matrix.component }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: under-test-${{ matrix.component }}
+          path: ${{ matrix.binary }}
+          if-no-files-found: error
+          retention-days: 1
+
   doctor:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && (!startsWith(github.head_ref, 'release-please--branches--')) && needs.quick.outputs.skip != 'true' }}
     name: Image doctor (overlaid cua-spacesd and cua-driver)
+    needs: [quick, build]
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - id: build
-        uses: ./.github/actions/build-cua-under-test
+        uses: ./.github/actions/fetch-under-test
       - id: sandbox
         uses: ./.github/actions/cua-sandbox
         with:
@@ -109,14 +154,15 @@ jobs:
             PY
 
   stale:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && (!startsWith(github.head_ref, 'release-please--branches--')) && needs.quick.outputs.skip != 'true' }}
     name: The bundled builds are reported stale
+    needs: [quick, build]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - id: build
-        uses: ./.github/actions/build-cua-under-test
+        uses: ./.github/actions/fetch-under-test
         with:
           components: cua
       - uses: ./.github/actions/cua-sandbox

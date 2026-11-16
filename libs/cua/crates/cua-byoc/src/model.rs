@@ -475,6 +475,11 @@ impl Resource {
 /// or `user`. Records made before it was kept have none.
 pub const STARTED_BY: &str = "started_by";
 
+/// The [`Resource::extra`] key that marks one of our machines still in the
+/// account's default VPC (placed before Cua had a VPC of its own): the
+/// sweep says so, and it leaves on its next replacement.
+pub const DEFAULT_VPC: &str = "default_vpc";
+
 /// What one Space asks a provider for.
 #[derive(Clone, Debug, Default)]
 pub struct ProvisionSpec {
@@ -523,11 +528,16 @@ pub struct ProvisionSpec {
     /// group, whose ingress rules name the group itself; nothing is opened
     /// to any address. `None`: the outbound-only group.
     pub peer_ports: Option<(u16, u16)>,
+    /// Expose hardware virtualization extensions when the host type supports it.
+    pub nested_virtualization: bool,
     /// [`ROLE_HOST`] (an elastic pool host: exactly `machine_type` in
     /// `region`, user data passed through) or [`ROLE_SANDBOX`] / empty.
     pub role: String,
     /// The region for this machine (empty: the connection's).
     pub region: String,
+    /// Network rules the Space asked for, for a cloud that enforces them
+    /// on its own side (Modal; [`crate::CloudApi::takes_network_rules`]).
+    pub network: Option<crate::modal_net::NetworkRequest>,
 }
 
 impl ProvisionSpec {

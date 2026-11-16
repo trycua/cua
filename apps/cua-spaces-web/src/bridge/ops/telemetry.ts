@@ -121,8 +121,7 @@ export function linkNoticeFromHost(raw: unknown): TelemetryLinkNotice | null {
   };
 }
 
-
-const OFF: CrashReportingConfig = { allowed: false, dsn: "", release: "", environment: "", shell: "", };
+const OFF: CrashReportingConfig = { allowed: false, dsn: "", release: "", environment: "", shell: "" };
 
 /** A host's answer as crash settings; anything malformed, or without a DSN, reads as off. */
 export function crashConfigFromHost(raw: unknown): CrashReportingConfig {

@@ -26,6 +26,7 @@ use cua_spaces::{Error, Result, SpacesBuilder};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
+mod agent_threads_tools;
 pub mod daemon;
 pub mod drive_runtime;
 pub mod drive_tools;
@@ -35,6 +36,8 @@ pub mod named_volumes;
 pub mod persistent;
 mod persistent_tools;
 pub mod presence_datagrams;
+pub mod push_client;
+pub mod replica_runtime;
 pub mod session_journal;
 pub mod stream;
 pub mod teleport;
@@ -85,6 +88,7 @@ pub fn register(
     stream::register();
     presence_datagrams::register();
     register_budget_alerts();
+    push_client::register();
     builder
         .extension(Arc::new(DriveExtension::new(drive)))
         .extension(Arc::new(TeleportExtension::new(sessions)))
@@ -118,6 +122,8 @@ pub const BUDGET_KIND: &str = "budget";
 pub struct DriveExtension {
     drive: cua_volume::Drive,
     live: Arc<tokio::sync::Mutex<persistent::Live>>,
+    /// What working sessions have said so far this turn (the thread's streaming rows).
+    partials: persistent::Partials,
     owner: Arc<std::sync::RwLock<thread::Author>>,
     team_admins: Arc<std::sync::RwLock<std::collections::HashSet<String>>>,
     pub(crate) runtime: drive_runtime::DriveRuntime,
@@ -129,6 +135,7 @@ impl DriveExtension {
         DriveExtension {
             drive,
             live: Default::default(),
+            partials: Default::default(),
             owner: Arc::new(std::sync::RwLock::new(thread::Author::owner())),
             team_admins: Default::default(),
             runtime: Default::default(),
@@ -175,6 +182,10 @@ impl DriveExtension {
     pub(crate) fn live(&self) -> Arc<tokio::sync::Mutex<persistent::Live>> {
         self.live.clone()
     }
+
+    pub(crate) fn partials(&self) -> persistent::Partials {
+        self.partials.clone()
+    }
 }
 
 impl SpacesExtension for DriveExtension {
@@ -187,10 +198,13 @@ impl SpacesExtension for DriveExtension {
             || drive_tools::SERVICE_TOOLS.contains(&tool)
             || persistent_tools::TOOLS.contains(&tool)
             || thread_tools::TOOLS.contains(&tool)
+            || agent_threads_tools::TOOLS.contains(&tool)
+            || persistent::phone::TOOLS.contains(&tool)
             || tool == cua_spaces::agents::MEMBER_OP
             || named_volumes::OPS.contains(&tool)
             || tool == "agent_start.home"
             || tool == cua_spaces::agents::WATCH_OP
+            || tool == cua_spaces::space_jobs::WATCH_OP
             || tool == cua_spaces::extension::MEMBER_AUTH_OP
     }
 
@@ -205,11 +219,13 @@ impl SpacesExtension for DriveExtension {
                 ..
             } = call;
             if drive_tools::SERVICE_TOOLS.contains(&tool) {
-                let ctx = drive_tools::host_context(&args)?;
+                let ctx = drive_tools::host_context_for(spaces, &args)?;
                 return Box::pin(drive_tools::service_tool(spaces, ctx, tool, args)).await;
             }
             if drive_tools::DRIVE_TOOLS.contains(&tool) {
-                let ctx = drive_tools::host_context(&args)?;
+                let ctx = drive_tools::host_context_for(spaces, &args)?;
+                let mut args = args;
+                drive_tools::name_principal(spaces, &mut args);
                 let feed = spaces.drive_feed();
                 return drive_tools::drive_tool_synced(
                     &self.drive,
@@ -243,6 +259,21 @@ impl SpacesExtension for DriveExtension {
                 )?;
                 return Ok(ToolOutcome::json(&json!({"watched": true})));
             }
+            if tool == cua_spaces::space_jobs::WATCH_OP {
+                let field = |k: &str| {
+                    args.get(k)
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| Error::invalid(format!("{tool}: `{k}` is required")))
+                };
+                let out = spaces.persistent().watch_job(
+                    &caller,
+                    field("space")?,
+                    field("job")?,
+                    args.get("name").and_then(Value::as_str).unwrap_or_default(),
+                    args.get("wake").and_then(Value::as_str),
+                )?;
+                return Ok(ToolOutcome::json(&out));
+            }
             if named_volumes::OPS.contains(&tool) {
                 return named_volumes::call(spaces, tool, args).await;
             }
@@ -259,8 +290,14 @@ impl SpacesExtension for DriveExtension {
                 };
                 return persistent_tools::start_with_home(spaces, &space, args).await;
             }
+            if agent_threads_tools::TOOLS.contains(&tool) {
+                return agent_threads_tools::call(&caller, tool, args).await;
+            }
             if thread_tools::TOOLS.contains(&tool) || tool == cua_spaces::agents::MEMBER_OP {
                 return thread_tools::call(spaces, &caller, tool, args).await;
+            }
+            if persistent::phone::TOOLS.contains(&tool) {
+                return persistent::phone::call(spaces, &caller, tool, args).await;
             }
             persistent_tools::call(spaces, &caller, tool, args).await
         })
@@ -279,6 +316,16 @@ impl SpacesExtension for DriveExtension {
     ) -> BoxFuture<'a, ()> {
         Box::pin(async move {
             self.runtime.detach(space).await;
+        })
+    }
+
+    fn space_deleted<'a>(
+        &'a self,
+        spaces: &'a cua_spaces::Spaces,
+        space: &'a str,
+    ) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            spaces.persistent().space_deleted(space).await;
         })
     }
 

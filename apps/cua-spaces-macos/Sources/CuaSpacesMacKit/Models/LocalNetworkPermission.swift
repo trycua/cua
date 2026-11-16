@@ -75,10 +75,24 @@ public final class LocalNetworkGate {
         set { defaults.set(newValue, forKey: Self.askedKey) }
     }
 
+    /// The last check started: the next one waits for it, then checks
+    /// again, so one explanation shows at a time.
+    private var last: Task<Void, Error>?
+
     /// Returns when the create may go ahead; throws `LocalNetworkRefusal`
     /// (the create fails at once with it) or `CuaError.Cancelled` (Cancel
     /// on the explanation).
     public func check() async throws {
+        let before = last
+        let task = Task { @MainActor in
+            _ = try? await before?.value
+            try await self.checkOnce()
+        }
+        last = task
+        try await task.value
+    }
+
+    private func checkOnce() async throws {
         let routes = await probe.routes()
         // Not explained yet: no connect before the explanation (one would
         // make macOS ask first).
@@ -236,7 +250,9 @@ public enum LiveLocalNetworkPermission {
         for cursor in sequence(first: first, next: { $0.pointee.ifa_next }) {
             let ifa = cursor.pointee
             let flags = Int32(ifa.ifa_flags)
-            let name = String(cString: ifa.ifa_name)
+            // An interface with no name cannot be one of ours: skip it.
+            guard let cname = ifa.ifa_name else { continue }
+            let name = String(cString: cname)
             guard flags & IFF_UP != 0, flags & IFF_RUNNING != 0, flags & IFF_LOOPBACK == 0,
                   !isTunnelOrBridge(name),
                   let addr = ifa.ifa_addr, addr.pointee.sa_family == sa_family_t(AF_INET),

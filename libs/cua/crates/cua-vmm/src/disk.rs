@@ -236,7 +236,7 @@ pub fn ensure_space_with(
 }
 
 /// The process-wide source [`space`] reads.
-struct GlobalProbe;
+pub struct GlobalProbe;
 
 impl SpaceProbe for GlobalProbe {
     fn space(&self, path: &Path) -> std::io::Result<Space> {

@@ -118,7 +118,9 @@ pub fn loopback_dialer(ports: BTreeSet<u16>) -> crate::hotspot::Dialer {
                     format!("{host}:{port} is not a service of this job"),
                 ));
             }
-            tokio::net::TcpStream::connect(("127.0.0.1", port)).await
+            tokio::net::TcpStream::connect(("127.0.0.1", port))
+                .await
+                .map(crate::hotspot::boxed)
         })
     })
 }
@@ -151,9 +153,10 @@ mod tests {
         assert!(d("127.0.0.1".into(), port).await.is_ok());
         let e = d("127.0.0.1".into(), port.wrapping_add(1))
             .await
-            .unwrap_err();
+            .err()
+            .unwrap();
         assert_eq!(e.kind(), std::io::ErrorKind::PermissionDenied);
-        let e = d("example.com".into(), port).await.unwrap_err();
+        let e = d("example.com".into(), port).await.err().unwrap();
         assert_eq!(e.kind(), std::io::ErrorKind::PermissionDenied);
     }
 

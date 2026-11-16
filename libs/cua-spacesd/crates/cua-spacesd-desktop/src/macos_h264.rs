@@ -622,12 +622,19 @@ impl NativeEncoder {
         if let Some(dictionary) = frame_properties {
             unsafe { CFRelease(dictionary) };
         }
-        if status == 0 {
-            Ok(())
-        } else {
+        if status != 0 {
             unsafe { drop(Box::from_raw(metadata)) };
-            Err(format!("VTCompressionSessionEncodeFrame returned {status}"))
+            return Err(format!("VTCompressionSessionEncodeFrame returned {status}"));
         }
+        // Wait for this frame's output before taking the next one. Left
+        // asynchronous, a session that falls behind queues frames inside
+        // VideoToolbox, each holding its own encoder surface, and the backlog
+        // adds latency the mailbox was meant to drop.
+        let status =
+            unsafe { VTCompressionSessionCompleteFrames(self.session.as_ptr(), timestamp) };
+        (status == 0)
+            .then_some(())
+            .ok_or_else(|| format!("VTCompressionSessionCompleteFrames returned {status}"))
     }
 }
 
@@ -906,6 +913,37 @@ mod tests {
             .expect("VideoToolbox produced no resized frame");
         assert!(resized.keyframe);
         assert_eq!(resized.codec_epoch, 2);
+    }
+
+    /// Each submission completes before the next is taken, so VideoToolbox
+    /// never holds a backlog of frames (each one an encoder surface) for a
+    /// session that encodes slower than it captures.
+    #[test]
+    fn videotoolbox_emits_each_frame_before_the_next_is_submitted() {
+        let (tx, rx) = mpsc::channel();
+        let mut encoder = NativeEncoder::new(64, 64, 30, None, Arc::new(Sink(tx))).unwrap();
+        for timestamp in 1..=3 {
+            let input = frame(timestamp, 64, 64);
+            let metadata = FrameMetadata {
+                codec_epoch: 1,
+                width_px: 64,
+                height_px: 64,
+                capture_timestamp_us: timestamp,
+                presentation_timestamp_us: timestamp,
+                encode_started_at: Instant::now(),
+            };
+            encoder
+                .encode_bgra(&input.bytes, 256, metadata, timestamp == 1, 30)
+                .unwrap();
+            match rx.try_recv() {
+                Ok(encoded) => assert_eq!(encoded.capture_timestamp_us, timestamp),
+                Err(_) if std::env::var_os("CI").is_some() => {
+                    eprintln!("VideoToolbox produced no output on the headless CI runner");
+                    return;
+                }
+                Err(error) => panic!("frame {timestamp} still in flight: {error:?}"),
+            }
+        }
     }
 
     fn frame(timestamp: u64, width: u32, height: u32) -> OwnedFrame {

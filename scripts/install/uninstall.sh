@@ -356,10 +356,12 @@ host_service_files() {
     case "$os" in
     darwin)
         printf '%s\n' "$HOME/Library/LaunchAgents/com.trycua.spacesd.host.plist" \
+            "$HOME/Library/LaunchAgents/com.trycua.spacesd.host-staging.plist" \
             "$HOME/Library/LaunchAgents/com.trycua.env-driver.host.plist" "$HOME/.cua/helper/service.json"
         ;;
     linux)
         printf '%s\n' "$config_home/systemd/user/cua-spacesd-host.service" \
+            "$config_home/systemd/user/cua-spacesd-host-staging.service" \
             "$config_home/systemd/user/cua-env-driver-host.service" \
             "$sysroot/etc/systemd/system/cua-spacesd-host.service" "$sysroot/etc/systemd/system/cua-env-driver-host.service"
         ;;
@@ -595,7 +597,7 @@ EOF
     darwin)
         old_agent=0
         [ -f "$HOME/Library/LaunchAgents/com.trycua.spacesd.host.plist" ] && old_agent=1
-        for label in com.trycua.spacesd.host com.trycua.env-driver.host; do
+        for label in com.trycua.spacesd.host com.trycua.spacesd.host-staging com.trycua.env-driver.host; do
             plist="$HOME/Library/LaunchAgents/$label.plist"
             [ -f "$plist" ] || continue
             if [ "$dry_run" = 1 ]; then
@@ -642,7 +644,8 @@ EOF
         fi
         ;;
     linux)
-        for unit in cua-spacesd-host cua-env-driver-host; do
+        # Production's unit, staging's (CUA-3512) and the pre-rename one.
+        for unit in cua-spacesd-host cua-spacesd-host-staging cua-env-driver-host; do
             user_unit="$config_home/systemd/user/$unit.service"
             system_unit="$sysroot/etc/systemd/system/$unit.service"
             if [ -f "$user_unit" ]; then

@@ -41,7 +41,7 @@ Run these from the repository root:
 
 ```sh
 cd libs/cua
-CARGO_BUILD_JOBS=4 cargo build --release -p cua-sdk     # features default to media + media-decode
+CARGO_BUILD_JOBS=4 cargo build --release -p cua-sdk-native     # features default to media + media-decode
 (cd typescript && npm ci && npm run build)
 # Stage libcua_sdk + the N-API runtime as the local @trycua/cua-<triple>
 # package. Do not set CARGO_TARGET_DIR for this step (see "Known issues").

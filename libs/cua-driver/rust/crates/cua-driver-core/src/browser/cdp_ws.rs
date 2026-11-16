@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Pooled CDP browser-endpoint WebSocket client.
 //!
 //! v2 demultiplexer: a dedicated reader task owns the receive half of
@@ -67,6 +70,7 @@ const EXISTING_PROFILE_METHODS: &[&str] = &[
     "Target.activateTarget",
     "Target.attachToTarget",
     "Target.detachFromTarget",
+    "Target.getTargetInfo",
     "Target.getTargets",
     "Target.setAutoAttach",
 ];
@@ -118,6 +122,10 @@ pub struct CdpDialogState {
     pub generation: u64,
     pub kind: String,
     pub session_id: String,
+    /// The session that saw the dialog open detached while it was showing.
+    /// Chromium answers every other session `No dialog is showing`, so the
+    /// driver cannot resolve it, yet the page stays blocked until it closes.
+    pub detached: bool,
 }
 
 /// What the reader routed back for one in-flight call.
@@ -132,6 +140,10 @@ struct Demux {
     subscribers: StdMutex<Vec<mpsc::UnboundedSender<CdpEvent>>>,
     session_targets: StdMutex<HashMap<String, String>>,
     dialogs: StdMutex<HashMap<String, CdpDialogState>>,
+    /// Target id -> the session holding its emulated media override. Chromium
+    /// keeps an `Emulation.*` override only while the session that set it
+    /// stays attached, so clearing it must reuse that session.
+    media_override_sessions: StdMutex<HashMap<String, String>>,
     next_dialog_generation: AtomicU64,
     closed: AtomicBool,
 }
@@ -145,6 +157,7 @@ impl Demux {
         self.subscribers.lock().unwrap().clear();
         self.session_targets.lock().unwrap().clear();
         self.dialogs.lock().unwrap().clear();
+        self.media_override_sessions.lock().unwrap().clear();
     }
 }
 
@@ -215,6 +228,7 @@ async fn read_loop(mut read: SplitStream<WsStream>, demux: Arc<Demux>) {
                                     generation,
                                     kind: kind.to_owned(),
                                     session_id: session_id.to_owned(),
+                                    detached: false,
                                 },
                             );
                         }
@@ -225,6 +239,24 @@ async fn read_loop(mut read: SplitStream<WsStream>, demux: Arc<Demux>) {
                         }
                     }
                     _ => {}
+                }
+            } else if event.method == "Target.detachedFromTarget" {
+                // A detached session reports nothing more and cannot resolve
+                // its dialog, but the page stays blocked. Keep the record,
+                // marked unresolvable, so callers fail fast; the next attach
+                // subscribes a new session whose close event clears it.
+                if let Some(session_id) = event.params.get("sessionId").and_then(Value::as_str) {
+                    demux.session_targets.lock().unwrap().remove(session_id);
+                    demux
+                        .media_override_sessions
+                        .lock()
+                        .unwrap()
+                        .retain(|_, owner| owner != session_id);
+                    for dialog in demux.dialogs.lock().unwrap().values_mut() {
+                        if dialog.session_id == session_id {
+                            dialog.detached = true;
+                        }
+                    }
                 }
             }
             demux
@@ -266,6 +298,7 @@ impl CdpConnection {
             subscribers: StdMutex::new(Vec::new()),
             session_targets: StdMutex::new(HashMap::new()),
             dialogs: StdMutex::new(HashMap::new()),
+            media_override_sessions: StdMutex::new(HashMap::new()),
             next_dialog_generation: AtomicU64::new(1),
             closed: AtomicBool::new(false),
         });
@@ -326,6 +359,36 @@ impl CdpConnection {
         }
     }
 
+    /// The session holding `target_id`'s emulated media override, if any.
+    pub fn media_override_session(&self, target_id: &str) -> Option<String> {
+        self.demux
+            .media_override_sessions
+            .lock()
+            .unwrap()
+            .get(target_id)
+            .cloned()
+    }
+
+    /// Record `session_id` as the holder of `target_id`'s media override.
+    /// Record it before sending the override, so a detach that lands while
+    /// the command is in flight removes it again.
+    pub fn set_media_override_session(&self, target_id: &str, session_id: &str) {
+        self.demux
+            .media_override_sessions
+            .lock()
+            .unwrap()
+            .insert(target_id.to_owned(), session_id.to_owned());
+    }
+
+    /// Forget `session_id` as `target_id`'s holder, unless another session
+    /// took over.
+    pub fn clear_media_override_session(&self, target_id: &str, session_id: &str) {
+        let mut sessions = self.demux.media_override_sessions.lock().unwrap();
+        if sessions.get(target_id).map(String::as_str) == Some(session_id) {
+            sessions.remove(target_id);
+        }
+    }
+
     pub fn has_dialog_session(&self, target_id: &str) -> bool {
         self.demux
             .session_targets
@@ -355,6 +418,19 @@ impl CdpConnection {
         session_id: Option<&str>,
         method: &str,
         params: Value,
+    ) -> anyhow::Result<Value> {
+        self.call_with_timeout(session_id, method, params, CALL_TIMEOUT)
+            .await
+    }
+
+    /// [`Self::call`] with a caller-chosen reply deadline, for best-effort
+    /// commands that must not hold up the caller when the renderer is blocked.
+    pub async fn call_with_timeout(
+        &self,
+        session_id: Option<&str>,
+        method: &str,
+        params: Value,
+        timeout: Duration,
     ) -> anyhow::Result<Value> {
         let policy = self.method_policy();
         if !policy.allows(method) {
@@ -389,10 +465,10 @@ impl CdpConnection {
             anyhow::bail!("CDP send failed during {method}: {e}");
         }
 
-        match tokio::time::timeout(CALL_TIMEOUT, rx).await {
+        match tokio::time::timeout(timeout, rx).await {
             Err(_) => {
                 self.demux.pending.lock().unwrap().remove(&id);
-                anyhow::bail!("CDP {method} timed out after {CALL_TIMEOUT:?}")
+                anyhow::bail!("CDP {method} timed out after {timeout:?}")
             }
             Ok(Err(_)) => anyhow::bail!("CDP socket closed during {method}"),
             Ok(Ok(CallOutcome::Result(v))) => Ok(v),
@@ -1341,6 +1417,87 @@ mod tests {
         assert_eq!(dialog.session_id, "tab-session-a");
         assert!(!format!("{dialog:?}").contains("private"));
         conn.call(Some("tab-session-a"), "Dialog.close", json!({}))
+            .await
+            .unwrap();
+        assert!(conn.dialog_state("page-target").is_none());
+    }
+
+    #[tokio::test]
+    async fn a_detached_session_stops_holding_its_media_override() {
+        let server = MockCdpServer::start(StdArc::new(|call| match call.method.as_str() {
+            "Target.detachFromTarget" => MockReply::ok(json!({})).with_events(vec![MockEvent {
+                method: "Target.detachedFromTarget".into(),
+                session_id: None,
+                params: json!({ "sessionId": call.params["sessionId"], "targetId": "page-target" }),
+            }]),
+            _ => MockReply::ok(json!({})),
+        }))
+        .await;
+        let conn = CdpConnection::connect(&server.ws_url()).await.unwrap();
+        conn.set_media_override_session("page-target", "tab-session-a");
+        conn.set_media_override_session("other-target", "tab-session-b");
+        conn.call(
+            None,
+            "Target.detachFromTarget",
+            json!({ "sessionId": "tab-session-a" }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(conn.media_override_session("page-target"), None);
+        assert_eq!(
+            conn.media_override_session("other-target").as_deref(),
+            Some("tab-session-b")
+        );
+        // A stale clear leaves a newer holder in place.
+        conn.set_media_override_session("page-target", "tab-session-c");
+        conn.clear_media_override_session("page-target", "tab-session-a");
+        assert_eq!(
+            conn.media_override_session("page-target").as_deref(),
+            Some("tab-session-c")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_detached_dialog_session_marks_its_dialog_unresolvable() {
+        let server = MockCdpServer::start(StdArc::new(|call| match call.method.as_str() {
+            "Dialog.open" => MockReply::ok(json!({})).with_events(vec![MockEvent {
+                method: "Page.javascriptDialogOpening".into(),
+                session_id: call.session_id.clone(),
+                params: json!({ "type": "alert" }),
+            }]),
+            "Target.detachFromTarget" => MockReply::ok(json!({})).with_events(vec![MockEvent {
+                method: "Target.detachedFromTarget".into(),
+                session_id: None,
+                params: json!({ "sessionId": call.params["sessionId"], "targetId": "page-target" }),
+            }]),
+            "Dialog.close" => MockReply::ok(json!({})).with_events(vec![MockEvent {
+                method: "Page.javascriptDialogClosed".into(),
+                session_id: call.session_id.clone(),
+                params: json!({}),
+            }]),
+            _ => MockReply::ok(json!({})),
+        }))
+        .await;
+        let conn = CdpConnection::connect(&server.ws_url()).await.unwrap();
+        conn.register_dialog_session("tab-session-a", "page-target");
+        conn.call(Some("tab-session-a"), "Dialog.open", json!({}))
+            .await
+            .unwrap();
+        assert!(conn.dialog_state("page-target").is_some());
+        conn.call(
+            None,
+            "Target.detachFromTarget",
+            json!({ "sessionId": "tab-session-a" }),
+        )
+        .await
+        .unwrap();
+        // The page is still blocked, so the record stays, marked unresolvable.
+        let dialog = conn.dialog_state("page-target").expect("dialog kept");
+        assert!(dialog.detached);
+        assert!(!conn.has_dialog_session("page-target"));
+        // A new subscriber's close event clears it.
+        conn.register_dialog_session("tab-session-b", "page-target");
+        conn.call(Some("tab-session-b"), "Dialog.close", json!({}))
             .await
             .unwrap();
         assert!(conn.dialog_state("page-target").is_none());

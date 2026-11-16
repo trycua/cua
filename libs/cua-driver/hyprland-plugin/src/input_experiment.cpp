@@ -71,6 +71,41 @@ constexpr bool kProduction = true;
 constexpr bool kProduction = false;
 #endif
 
+#ifndef CUA_HYPRLAND_WINDOW_BACKEND_API
+#error CUA_HYPRLAND_WINDOW_BACKEND_API must name the detected Hyprland window API
+#endif
+// Hyprland 0.57 moved window identity onto the window backend and renamed the
+// exclusive layer list when pointer focus stopped following it (#15899). The
+// input guard still refuses while any exclusive layer surface is present.
+bool window_mapped(const PHLWINDOW& window) {
+#if CUA_HYPRLAND_WINDOW_BACKEND_API
+    return window->mapped();
+#else
+    return window->m_isMapped;
+#endif
+}
+bool window_is_x11(const PHLWINDOW& window) {
+#if CUA_HYPRLAND_WINDOW_BACKEND_API
+    return window->backend().isX11();
+#else
+    return window->m_isX11;
+#endif
+}
+pid_t window_pid(const PHLWINDOW& window) {
+#if CUA_HYPRLAND_WINDOW_BACKEND_API
+    return window->backend().pid();
+#else
+    return window->getPID();
+#endif
+}
+const std::vector<PHLLSREF>& exclusive_layer_surfaces() {
+#if CUA_HYPRLAND_WINDOW_BACKEND_API
+    return g_pInputManager->m_exclusiveKeyboardLSes;
+#else
+    return g_pInputManager->m_exclusiveLSes;
+#endif
+}
+
 #ifdef CUA_HYPRLAND_TEST_INPUT
 std::uint64_t unix_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -369,9 +404,10 @@ struct InputExperiment::Impl {
         if (physical_keymap) xkb_keymap_unref(physical_keymap);
         if (physical_xkb_context) xkb_context_unref(physical_xkb_context);
         physical_keyboard_state = state; physical_keymap = map; physical_xkb_context = context;
-        // Keyboard qualification: every key the KEY command can press must type the
-        // same keysym as the canonical agent keymap. Checked once per keymap, so a
-        // different layout refuses before activation rather than mid-string.
+        // Keyboard qualification: every chord Driver types text with must mean the
+        // same under this keymap as under the canonical agent keymap. Checked once
+        // per keymap, so a different layout refuses before activation rather than
+        // mid-string.
         typing_keymap = !kProduction || typing_keymap_equivalent(map, keymap);
         physical_keymap_text = keyboard->m_xkbKeymapV1String;
     }
@@ -524,8 +560,8 @@ struct InputExperiment::Impl {
     }
     static std::optional<std::array<double, 6>> target_geometry(
         const PHLWINDOW& window, const SP<CWLSurfaceResource>& surface) {
-        if (!window || !surface || !window->m_isMapped || window->isHidden() ||
-            window->m_isX11 || window->resource() != surface || !surface->m_mapped || !surface->good()) return std::nullopt;
+        if (!window || !surface || !window_mapped(window) || window->isHidden() ||
+            window_is_x11(window) || window->resource() != surface || !surface->m_mapped || !surface->good()) return std::nullopt;
         // Match Driver's captured client surface, not the decorated window box
         // (which includes compositor borders and shifts clicks by their width).
         const auto box = window->surfaceLogicalBox(); const auto surface_box = box;
@@ -845,7 +881,7 @@ struct InputExperiment::Impl {
             .physical_keys = pressed,
             .physical_buttons = g_pInputManager->hasHeldButtons(),
             .grab = bool(g_pSeatManager->m_seatGrab) || bool(g_layoutManager->dragController()->target()) ||
-                !g_pInputManager->m_exclusiveLSes.empty(),
+                !exclusive_layer_surfaces().empty(),
             .dnd = PROTO::data && PROTO::data->dndActive(),
             .constraint = g_pInputManager->isConstrained(),
             .exact_keyboard_focus = root && g_pSeatManager->m_state.keyboardFocus == root &&
@@ -1092,7 +1128,7 @@ struct InputExperiment::Impl {
             if (f.size() != 1 || c.hello) { send(c, refusal("invalid_request")); return; }
             c.hello = true;
             if (kProduction)
-                send(c, std::format(R"({{"ok":true,"protocol":3,"epoch":"{}","foreground_target":true}})", epoch));
+                send(c, std::format(R"({{"ok":true,"protocol":3,"epoch":"{}","foreground_target":true,"hover":true}})", epoch));
             else
                 send(c, std::format(R"({{"ok":true,"protocol":0,"epoch":"{}","challenge":"{}"}})", epoch, c.challenge));
             return;
@@ -1140,15 +1176,18 @@ struct InputExperiment::Impl {
             // Do not leave an unchanged surface merely to refresh authority.
             if (kProduction) retire_grant();
             const auto requested_cap = kProduction ? number(f[3]) : 0;
+            // ACTIVATE (16) exists only on the user's seat; HOVER (32) only on an
+            // agent seat, since a foreground hover would move the user's pointer.
             if (kProduction && (!InputGrant::single_operation(requested_cap) ||
-                (requested_cap == 16 && route != InputRoute::primary_foreground))) { invalidate(c); send(c, refusal("unsupported")); return; }
+                (requested_cap == 16 && route != InputRoute::primary_foreground) ||
+                (requested_cap == 32 && route != InputRoute::independent))) { invalidate(c); send(c, refusal("unsupported")); return; }
             if (kProduction && !available()) { invalidate(c, false); send(c, refusal("session_unavailable")); return; }
             if (!input_layout_qualified(route, requested_cap == 2, layout_qualified())) { invalidate(c, false); send(c, refusal("unsupported_layout")); return; }
             const auto pid = number(f[1]); const auto address = number(f[2], 16);
             PHLWINDOW window;
             for (const auto& w : Desktop::windowState()->windows())
-                if (reinterpret_cast<std::uintptr_t>(w.get()) == address && static_cast<std::uint64_t>(w->getPID()) == pid) window = w;
-            if (!window || window->m_isX11 || !window->m_isMapped || window->isHidden() || !window->resource()) {
+                if (reinterpret_cast<std::uintptr_t>(w.get()) == address && static_cast<std::uint64_t>(window_pid(w)) == pid) window = w;
+            if (!window || window_is_x11(window) || !window_mapped(window) || window->isHidden() || !window->resource()) {
                 invalidate(c); send(c, refusal("stale_target")); return;
             }
             // Retire the old target before rebinding: even if the new target's
@@ -1193,8 +1232,10 @@ struct InputExperiment::Impl {
             send(c, std::format(R"({{"ok":true,"target":"{}","revision":{},"width":{},"height":{}}})", c.token, c.revision, c.geometry[2], c.geometry[3])); return;
         }
         const std::uint64_t cap = command == "CLICK" ? 1 : command == "KEY" ? 2 : command == "SCROLL" ? 4 : command == "DRAG" ? 8 :
-            command == "ACTIVATE" && kProduction && c.route == InputRoute::primary_foreground ? 16 : 0;
-        const std::size_t count = command == "CLICK" ? 8 : command == "KEY" ? 6 : command == "SCROLL" ? 8 : command == "ACTIVATE" ? 4 : 9;
+            command == "ACTIVATE" && kProduction && c.route == InputRoute::primary_foreground ? 16 :
+            command == "HOVER" && kProduction && c.route == InputRoute::independent ? 32 : 0;
+        const std::size_t count = command == "CLICK" ? 8 : command == "KEY" ? 6 : command == "SCROLL" ? 8 : command == "ACTIVATE" ? 4 :
+            command == "HOVER" ? 6 : 9;
         if (!cap) { send(c, refusal("unsupported")); return; }
         if (f.size() != count) { send(c, refusal("invalid_request")); return; }
         const auto sequence = number(f[1]);
@@ -1240,7 +1281,13 @@ struct InputExperiment::Impl {
         } else {
             const auto x = real(f[4]), y = real(f[5]);
             if (!point(c, x, y)) { send(c, refusal("invalid_request")); return; }
-            if (command == "CLICK") {
+            if (command == "HOVER") {
+                // Enter and move only. The lane keeps passive pointer focus at this
+                // point afterwards, so hover state and tooltips stay until the
+                // target changes or another lane action moves it.
+                if (!consume_grant(c, cap)) return;
+                if (!pointer_enter(c, x, y)) { send(c, refusal("client_not_bound")); return; }
+            } else if (command == "CLICK") {
                 const auto btn = number(f[6]), clicks = number(f[7]);
                 if (btn < 272 || btn > 274 || clicks < 1 || clicks > 2) { send(c, refusal("invalid_request")); return; }
                 if (!consume_grant(c, cap)) return;

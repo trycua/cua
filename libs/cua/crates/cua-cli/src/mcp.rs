@@ -356,7 +356,7 @@ const TOOLS: &[Tool] = &[
     Tool {
         name: "sandbox_list",
         permission: "sandbox:list",
-        description: "List sandboxes: local and direct ones by default, each row with location (local or direct). Pass location to list only one kind.",
+        description: "List sandboxes: local and direct ones by default, each row with location (local or direct). Pass location to list only one kind. When the user is signed in and has other machines, a note after the rows names them and the route to use: a machine's own desktop is the Space relay:<id> (computer tools and space_bash take it as `space`), and new Spaces go to one with create_space on=\"host:<name>\".",
         params: &[(
             "location",
             "string",
@@ -1014,6 +1014,60 @@ fn text(s: impl Into<String>) -> ToolResult {
     Ok(vec![json!({"type": "text", "text": s.into()})])
 }
 
+/// The user's other machines, from the Spaces list (`list_spaces` rows `relay:<machine>`,
+/// a Space on a machine is `relay:<machine>/<name>`), and the route that reaches each. `None`
+/// when the user is not signed in or has no other machine: nothing to say then.
+async fn other_machines_note(cua: &Cua) -> Option<String> {
+    let text = cua
+        .spaces()
+        .call_tool_json("list_spaces".into(), None)
+        .await
+        .ok()?
+        .text;
+    machines_note(&serde_json::from_str::<Vec<Value>>(&text).ok()?)
+}
+
+/// See [`other_machines_note`].
+fn machines_note(rows: &[Value]) -> Option<String> {
+    let machines: Vec<(String, String, bool)> = rows
+        .iter()
+        .filter_map(|r| {
+            let id = r["id"].as_str()?;
+            let rest = id.strip_prefix("relay:")?;
+            if rest.is_empty() || rest.contains('/') {
+                return None;
+            }
+            let name = r["name"].as_str().filter(|n| !n.is_empty()).unwrap_or(rest);
+            Some((
+                id.to_string(),
+                name.to_string(),
+                r["phase"].as_str() == Some("ready"),
+            ))
+        })
+        .collect();
+    if machines.is_empty() {
+        return None;
+    }
+    let list = machines
+        .iter()
+        .map(|(id, name, ready)| {
+            format!(
+                "{name} ({id}, {})",
+                if *ready { "online" } else { "offline" }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    let (first_id, first_name, _) = &machines[0];
+    Some(format!(
+        "note: the sandboxes above are on this machine. The user's other machines: {list}. \
+         To use one machine's own desktop, pass its id as `space` (for example \
+         space=\"{first_id}\") to computer_screenshot, computer_click, computer_type or space_bash; \
+         it must be online and sharing its desktop. To create a Space on one, call create_space \
+         with on=\"host:{first_name}\". list_spaces shows their Spaces."
+    ))
+}
+
 fn jtext(v: Value) -> ToolResult {
     text(serde_json::to_string_pretty(&v).unwrap_or_default())
 }
@@ -1369,12 +1423,18 @@ impl Server {
                             )));
                         }
                     };
+                    let all_locations = location.is_none();
                     let l = sbx.list_with_warnings(location).await?;
                     let mut content = jtext(Value::Array(
                         l.sandboxes.iter().map(sandbox::info_json).collect(),
                     ))?;
                     for w in l.warnings {
                         content.push(json!({"type": "text", "text": format!("warning: {w}")}));
+                    }
+                    // These are this machine's sandboxes. The user's other machines are
+                    // somewhere else: say so, and which route reaches them.
+                    if all_locations && let Some(note) = other_machines_note(&self.cua).await {
+                        content.push(json!({"type": "text", "text": note}));
                     }
                     Ok(content)
                 }
@@ -2155,6 +2215,37 @@ async fn runs_tool(name: &str, a: &Value) -> ToolResult {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_sandbox_list_names_the_users_other_machines_and_the_route_to_use() {
+        use super::machines_note;
+        use serde_json::json;
+        // Nothing to say without another machine (a Space on a machine is not one).
+        assert_eq!(machines_note(&[]), None);
+        assert_eq!(
+            machines_note(&[
+                json!({"id": "local:build", "name": "build"}),
+                json!({"id": "relay:abc/dev", "name": "dev"})
+            ]),
+            None
+        );
+        let note = machines_note(&[
+            json!({"id": "relay:0123abcd", "name": "Dillon's MacBook", "phase": "ready"}),
+            json!({"id": "relay:0123abcd/dev", "name": "dev", "phase": "ready"}),
+            json!({"id": "relay:ffff", "name": "mac-mini", "phase": "offline"}),
+        ])
+        .unwrap();
+        assert!(
+            note.contains("Dillon's MacBook (relay:0123abcd, online)"),
+            "{note}"
+        );
+        assert!(note.contains("mac-mini (relay:ffff, offline)"), "{note}");
+        // The route: its desktop is `space`, new Spaces go with `on`.
+        assert!(note.contains("space=\"relay:0123abcd\""), "{note}");
+        assert!(note.contains("on=\"host:Dillon's MacBook\""), "{note}");
+        // The Space on the machine is not listed as a machine.
+        assert!(!note.contains("relay:0123abcd/dev"), "{note}");
+    }
+
     use super::*;
 
     #[test]

@@ -16,6 +16,7 @@ testing = ["rmcp/server", "rmcp/transport-streamable-http-server", "dep:axum"]
 
 [dependencies]
 cua-home.workspace = true
+cua-repo-cache.workspace = true
 rmcp = { workspace = true, features = ["client", "transport-streamable-http-client-reqwest", "reqwest-tls-no-provider", "base64"] }
 axum = { workspace = true, optional = true }
 # External runtime providers send guest output and screenshots as base64.

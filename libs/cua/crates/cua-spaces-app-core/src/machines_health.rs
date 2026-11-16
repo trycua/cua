@@ -149,7 +149,7 @@ pub fn issues(
             out.push(issue(
                 "service",
                 "fail",
-                "The Cua service isn\u{2019}t running, so your other machines can\u{2019}t reach \
+                "The Cua service isn\u{2019}t running, so your other computers can\u{2019}t reach \
                  this Mac."
                     .into(),
                 Some(MachinesViewIssueAction {
@@ -163,7 +163,7 @@ pub fn issues(
             out.push(issue(
                 "relay",
                 "warn",
-                "This Mac can\u{2019}t reach the Cua relay, so your other machines can\u{2019}t \
+                "This Mac can\u{2019}t reach the Cua relay, so your other computers can\u{2019}t \
                  reach it. Check its internet connection."
                     .into(),
                 None,
@@ -334,6 +334,25 @@ pub fn health_level(issues: &[MachinesViewIssue]) -> String {
     }
 }
 
+/// The page's status line with its issues counted: a computer that is
+/// online but has something to fix says so ("Online, 1 thing to fix"), so
+/// the words agree with the tinted dot beside them. Notes do not count;
+/// any other status (offline, not sharing) stays as it is.
+pub fn status_with_issues(status: String, issues: &[MachinesViewIssue]) -> String {
+    let n = issues
+        .iter()
+        .filter(|i| i.level == "warn" || i.level == "fail")
+        .count();
+    if n == 0 || status != crate::machines::ONLINE {
+        return status;
+    }
+    if n == 1 {
+        format!("{status}, 1 thing to fix")
+    } else {
+        format!("{status}, {n} things to fix")
+    }
+}
+
 fn issue(
     id: &str,
     level: &str,
@@ -408,6 +427,27 @@ mod tests {
         local_version: Some("0.4.1"),
         app_update: None,
     };
+
+    #[test]
+    fn online_with_issues_says_so() {
+        let fail = issue("machine.local_network", "fail", "x".into(), None);
+        let warn = issue("machine.disk", "warn", "y".into(), None);
+        let note = issue("version", "info", "z".into(), None);
+        assert_eq!(status_with_issues("Online".into(), &[]), "Online");
+        assert_eq!(
+            status_with_issues("Online".into(), std::slice::from_ref(&note)),
+            "Online"
+        );
+        assert_eq!(
+            status_with_issues("Online".into(), &[fail.clone(), note.clone()]),
+            "Online, 1 thing to fix"
+        );
+        assert_eq!(
+            status_with_issues("Online".into(), &[fail.clone(), warn]),
+            "Online, 2 things to fix"
+        );
+        assert_eq!(status_with_issues("Offline".into(), &[fail]), "Offline");
+    }
 
     #[test]
     fn a_healthy_machine_has_no_issues() {

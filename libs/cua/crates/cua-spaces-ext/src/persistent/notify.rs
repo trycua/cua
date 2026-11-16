@@ -103,6 +103,18 @@ pub fn reason(error: &str) -> String {
     }
 }
 
+/// Called with each notification as it is added to a feed. One per
+/// process; the daemon uses it to push to the person's phone
+/// ([`crate::push_client`]). It must return at once.
+pub type Sink = Box<dyn Fn(&Notification) + Send + Sync>;
+
+static SINK: std::sync::OnceLock<Sink> = std::sync::OnceLock::new();
+
+/// Sets the process's sink. Only the first call counts.
+pub fn set_sink(sink: Sink) -> bool {
+    SINK.set(sink).is_ok()
+}
+
 /// The feed file (`<home>/persistent/notifications.json`).
 #[derive(Clone, Debug)]
 pub struct Feed {
@@ -181,6 +193,9 @@ impl Feed {
             let extra = all.len().saturating_sub(MAX_ENTRIES);
             all.drain(..extra);
         })?;
+        if let Some(sink) = SINK.get() {
+            sink(&out);
+        }
         Ok(out)
     }
 

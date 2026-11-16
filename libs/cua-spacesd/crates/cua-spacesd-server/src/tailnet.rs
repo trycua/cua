@@ -263,6 +263,8 @@ impl ExternalAuthenticator for TailnetAuth {
                     .unwrap_or(0),
                 teams: Vec::new(),
                 space: None,
+                phone: None,
+                device: None,
             }),
         }))
     }

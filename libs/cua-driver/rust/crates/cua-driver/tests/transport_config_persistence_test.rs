@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Transport axis: CLI `set_config` visibility across daemon-backed shell
 //! processes.
 //!

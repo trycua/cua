@@ -55,6 +55,12 @@ Options:
       --on <MACHINE>
           With --durable: the machine the driver runs on (`auto`, or a machine's name; default: this machine)
 
+      --max-attempts <N>
+          With --durable: drives allowed in total before the session fails (default 5)
+
+      --stall-secs <SECS>
+          With --durable: seconds the driver may write no output before it counts as wedged, is cancelled and started again (default 120; 0: never). Drivers print a heartbeat every quarter of it
+
       --every <MINUTES>
           Schedule PROMPT every N minutes
 

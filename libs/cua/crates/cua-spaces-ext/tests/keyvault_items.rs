@@ -31,6 +31,9 @@ use cua_teleport::{
 /// and a consent-gated `Web Data`.
 struct Browser {
     host: Arc<dyn HostEffects>,
+    /// The browser profile it reads (`None`: Default), written into the
+    /// bytes of each file so a test can tell which profile was captured.
+    profile: Option<String>,
 }
 
 const PATHS: [&str; 4] = [
@@ -100,7 +103,15 @@ impl ExportProvider for Browser {
             "Default/Web Data",
         ] {
             if wants(p) {
-                w.add_bytes(p, 0o600, format!("bytes of {p}").as_bytes())?;
+                w.add_bytes(
+                    p,
+                    0o600,
+                    match &self.profile {
+                        Some(profile) => format!("bytes of {p} from {profile}"),
+                        None => format!("bytes of {p}"),
+                    }
+                    .as_bytes(),
+                )?;
             }
         }
         if wants("Default/Cookies") {
@@ -136,6 +147,7 @@ fn backend() -> (DaemonBackend, tempfile::TempDir) {
     let mut registry = ExportRegistry::new();
     registry.register(Box::new(Browser {
         host: Arc::new(FakeHost::new()),
+        profile: None,
     }));
     let sessions = Arc::new(AppSessions::from_registry(registry));
     (DaemonBackend::new(spaces, sessions), reg)
@@ -288,7 +300,10 @@ fn the_inventory_counts_cookies_per_site_without_decrypting_anything() {
         .build();
     let host: Arc<dyn HostEffects> = Arc::new(FakeHost::new().with_home(home.path()));
     let mut registry = ExportRegistry::new();
-    registry.register(Box::new(Browser { host: host.clone() }));
+    registry.register(Box::new(Browser {
+        host: host.clone(),
+        profile: None,
+    }));
     let b = DaemonBackend::new(spaces, Arc::new(AppSessions::from_registry(registry)))
         .with_host(host)
         .with_platform(Platform::MacOS);
@@ -375,4 +390,205 @@ fn a_teleport_reads_only_the_passwords_of_the_sites_picked_for_them() {
         ..picked
     };
     assert!(logins(&none).is_empty(), "not ticked: no password at all");
+}
+
+/// `--profile "Profile 1"` reaches the capture: the whole-app export reads
+/// the named profile, not Default, and without a profile it reads Default.
+#[test]
+fn a_named_browser_profile_is_the_one_captured() {
+    let (b, _reg) = backend();
+    let b = b.with_profiled_sessions(Arc::new(|host, profile| {
+        let mut registry = ExportRegistry::new();
+        registry.register(Box::new(Browser {
+            host,
+            profile: Some(profile.to_string()),
+        }));
+        AppSessions::from_registry(registry)
+    }));
+    let files = |profile: Option<&str>| -> Vec<String> {
+        let spec = ImportSpec {
+            profile: profile.map(str::to_string),
+            ..spec(&["Default/Bookmarks"])
+        };
+        b.capture(&spec)
+            .unwrap()
+            .iter()
+            .filter(|c| c.meta.kind == ItemKind::File)
+            .map(|c| {
+                use base64::Engine as _;
+                let rec: serde_json::Value = serde_json::from_str(&c.payload.record).unwrap();
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(rec["content"].as_str().unwrap())
+                    .unwrap();
+                String::from_utf8(bytes).unwrap()
+            })
+            .collect()
+    };
+    let default = files(None);
+    let named = files(Some("Profile 1"));
+    assert_eq!(default.len(), 1);
+    assert_eq!(named.len(), 1);
+    assert_ne!(default, named, "the named profile is not Default");
+    assert!(!default[0].contains("Profile 1"), "{default:?}");
+    assert!(named[0].contains("Profile 1"), "{named:?}");
+}
+
+/// The readiness check names the profiles (with the account of each and the
+/// last used one), checks the profile a teleport would read without reading
+/// any value, and says so when a profile has no sign-in data.
+#[test]
+fn readiness_lists_profiles_and_checks_the_chosen_one_without_reading_values() {
+    use cua_keyvault::broker::Access;
+    use cua_teleport::browser_cookies::{TestCookieRow, write_cookies_db_for_tests};
+    let home = tempfile::tempdir().unwrap();
+    let root = home
+        .path()
+        .join(cua_teleport::layout::chrome::user_data_dir_for(
+            Platform::current(),
+        ));
+    for p in ["Default", "Profile 1"] {
+        std::fs::create_dir_all(root.join(p)).unwrap();
+        std::fs::write(root.join(p).join("Preferences"), "{}").unwrap();
+    }
+    write_cookies_db_for_tests(
+        &root.join("Profile 1"),
+        &[TestCookieRow {
+            host_key: ".github.com",
+            name: "user_session",
+            encrypted_value: b"v10-not-decryptable".to_vec(),
+            path: "/",
+            expires_utc: 0,
+            is_secure: true,
+            is_httponly: true,
+            samesite: 1,
+        }],
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("Local State"),
+        r#"{"profile":{"last_used":"Profile 1","info_cache":{
+            "Default":{"name":"Personal"},
+            "Profile 1":{"name":"Work","user_name":"me@work.example"}}}}"#,
+    )
+    .unwrap();
+    let reg = tempfile::tempdir().unwrap();
+    let spaces = Spaces::builder()
+        .home(reg.path())
+        .operator_display(Arc::new(cua_spaces::operator::NoDisplay))
+        .build();
+    let host: Arc<dyn HostEffects> = Arc::new(FakeHost::new().with_home(home.path()));
+    let mut registry = ExportRegistry::new();
+    registry.register(Box::new(Browser {
+        host: host.clone(),
+        profile: None,
+    }));
+    let b = DaemonBackend::new(spaces, Arc::new(AppSessions::from_registry(registry)))
+        .with_host(host)
+        .with_platform(Platform::current());
+    // No profile named: the last used one is checked; Default is what a
+    // push reads without one.
+    let r = b.readiness("chrome", None).unwrap();
+    assert_eq!(r.profile.as_deref(), Some("Profile 1"));
+    assert_eq!(r.default_profile.as_deref(), Some("Default"));
+    assert_eq!(r.files.state, Access::Granted);
+    assert!(!r.profile_empty);
+    let names: Vec<(&str, &str, bool)> = r
+        .profiles
+        .iter()
+        .map(|p| (p.dir.as_str(), p.name.as_str(), p.last_used))
+        .collect();
+    assert_eq!(
+        names,
+        [("Default", "Personal", false), ("Profile 1", "Work", true)]
+    );
+    assert_eq!(r.profiles[1].account.as_deref(), Some("me@work.example"));
+    // A profile with no cookie store says so and lists the real ones.
+    let r = b.readiness("chrome", Some("Default")).unwrap();
+    assert!(r.profile_empty, "{r:?}");
+    assert!(
+        r.files.say.contains("Default") && r.files.say.contains("Profile 1"),
+        "{r:?}"
+    );
+    // An app that has no profiles has nothing to report.
+    let r = b.readiness("firefox", None).unwrap();
+    assert_eq!(r.files.state, Access::Granted);
+    assert!(r.profiles.is_empty());
+}
+
+/// A refused read reaches the person as the plain sentence, not as
+/// "export session: ... Operation not permitted (os error 1)".
+#[test]
+fn a_privacy_refusal_in_a_capture_is_said_in_plain_words() {
+    struct Refusing(Arc<dyn HostEffects>);
+    impl ExportProvider for Refusing {
+        fn id(&self) -> &str {
+            "chrome"
+        }
+        fn display_name(&self) -> &str {
+            "Google Chrome"
+        }
+        fn host(&self) -> &dyn HostEffects {
+            self.0.as_ref()
+        }
+        fn platform_supported(&self, _: Platform) -> bool {
+            true
+        }
+        fn matches(&self, app: &AppRef) -> bool {
+            app.app_id == "chrome"
+        }
+        fn app_ids(&self) -> &[&str] {
+            &["chrome"]
+        }
+        fn manifest(
+            &self,
+            _: &AppRef,
+            _: Option<&WindowRef>,
+            scope: TransferScope,
+        ) -> cua_teleport::Result<TransferManifest> {
+            Ok(TransferManifest {
+                provider_id: "chrome".into(),
+                app_display_name: "Google Chrome".into(),
+                scope,
+                items: vec![ManifestItem {
+                    label: "Cookies".into(),
+                    rel_path: "Default/Cookies".into(),
+                    est_bytes: 1,
+                    count: None,
+                    count_noun: None,
+                    sensitive: false,
+                    default_checked: true,
+                }],
+                total_est_bytes: 1,
+                notes: vec![],
+            })
+        }
+        fn capture_selected(
+            &self,
+            _: &AppRef,
+            _: TransferScope,
+            _: Option<&HashSet<String>>,
+            _: &mut dyn Write,
+        ) -> cua_teleport::Result<()> {
+            Err(cua_teleport::TeleportError::Provider(
+                "copying Cookies failed: Operation not permitted (os error 1)".into(),
+            ))
+        }
+    }
+    let reg = tempfile::tempdir().unwrap();
+    let spaces = Spaces::builder()
+        .home(reg.path())
+        .operator_display(Arc::new(cua_spaces::operator::NoDisplay))
+        .build();
+    let mut registry = ExportRegistry::new();
+    registry.register(Box::new(Refusing(Arc::new(FakeHost::new()))));
+    let b = DaemonBackend::new(spaces, Arc::new(AppSessions::from_registry(registry)));
+    let err = b
+        .capture(&spec(&["Default/Cookies"]))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("Full Disk Access"), "{err}");
+    assert!(
+        !err.contains("os error") && !err.contains("export session"),
+        "{err}"
+    );
 }

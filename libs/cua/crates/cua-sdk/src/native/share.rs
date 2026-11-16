@@ -17,7 +17,7 @@ pub enum ShareAccess {
     Public,
 }
 
-impl From<ShareAccess> for cua_daemon::ShareAccess {
+impl From<ShareAccess> for cua_daemon_core::ShareAccess {
     fn from(a: ShareAccess) -> Self {
         match a {
             ShareAccess::Private => Self::Private,
@@ -27,12 +27,12 @@ impl From<ShareAccess> for cua_daemon::ShareAccess {
     }
 }
 
-impl From<cua_daemon::ShareAccess> for ShareAccess {
-    fn from(a: cua_daemon::ShareAccess) -> Self {
+impl From<cua_daemon_core::ShareAccess> for ShareAccess {
+    fn from(a: cua_daemon_core::ShareAccess) -> Self {
         match a {
-            cua_daemon::ShareAccess::Private => Self::Private,
-            cua_daemon::ShareAccess::Team => Self::Team,
-            cua_daemon::ShareAccess::Public => Self::Public,
+            cua_daemon_core::ShareAccess::Private => Self::Private,
+            cua_daemon_core::ShareAccess::Team => Self::Team,
+            cua_daemon_core::ShareAccess::Public => Self::Public,
         }
     }
 }
@@ -118,9 +118,9 @@ pub struct ShareSettings {
     pub edge_monthly_usd: Option<f64>,
 }
 
-impl From<cua_daemon::ShareSettingsInfo> for ShareSettings {
-    fn from(i: cua_daemon::ShareSettingsInfo) -> Self {
-        use cua_daemon::share_route::Landing;
+impl From<cua_daemon_core::ShareSettingsInfo> for ShareSettings {
+    fn from(i: cua_daemon_core::ShareSettingsInfo) -> Self {
+        use cua_daemon_core::share_route::Landing;
         let s = i.settings;
         ShareSettings {
             landing: match s.landing {
@@ -142,10 +142,10 @@ impl From<cua_daemon::ShareSettingsInfo> for ShareSettings {
     }
 }
 
-impl From<&ShareSettings> for cua_daemon::share_route::ShareSettings {
+impl From<&ShareSettings> for cua_daemon_core::share_route::ShareSettings {
     fn from(s: &ShareSettings) -> Self {
-        use cua_daemon::share_route::Landing;
-        cua_daemon::share_route::ShareSettings {
+        use cua_daemon_core::share_route::Landing;
+        cua_daemon_core::share_route::ShareSettings {
             landing: match s.landing {
                 ShareLanding::Auto => Landing::Auto,
                 ShareLanding::OnlyMyCloud => Landing::OnlyMyCloud,
@@ -167,9 +167,9 @@ fn unix(t: SystemTime) -> i64 {
         .unwrap_or(0)
 }
 
-impl From<cua_daemon::ShareInfo> for Share {
-    fn from(s: cua_daemon::ShareInfo) -> Self {
-        use cua_daemon::ShareTarget as T;
+impl From<cua_daemon_core::ShareInfo> for Share {
+    fn from(s: cua_daemon_core::ShareInfo) -> Self {
+        use cua_daemon_core::ShareTarget as T;
         let kind = match &s.target {
             T::Port(_) => "port",
             T::SpacePort { .. } => "space_port",
@@ -215,8 +215,8 @@ pub struct ShareCheck {
     pub detail: String,
 }
 
-impl From<cua_daemon::ShareCheck> for ShareCheck {
-    fn from(c: cua_daemon::ShareCheck) -> Self {
+impl From<cua_daemon_core::ShareCheck> for ShareCheck {
+    fn from(c: cua_daemon_core::ShareCheck) -> Self {
         ShareCheck {
             ok: c.ok,
             status: c.status as u32,
@@ -226,10 +226,10 @@ impl From<cua_daemon::ShareCheck> for ShareCheck {
     }
 }
 
-async fn daemon(backend: &Backend) -> Result<cua_daemon::client::DaemonClient> {
+async fn daemon(backend: &Backend) -> Result<cua_daemon_core::client::DaemonClient> {
     match backend {
         Backend::Daemon(d) => Ok(d.clone()),
-        Backend::Embedded(_) => Ok(cua_daemon::client::ensure_daemon().await?),
+        Backend::Embedded(_) => Ok(cua_daemon_core::client::ensure_daemon().await?),
     }
 }
 
@@ -253,7 +253,7 @@ impl Cua {
         let backend = self.backend.clone();
         let cwd =
             std::env::current_dir().map_err(|e| crate::CuaError::InvalidArgument(e.to_string()))?;
-        let parsed = cua_daemon::ShareTarget::parse(&target, &cwd)?;
+        let parsed = cua_daemon_core::ShareTarget::parse(&target, &cwd)?;
         let ttl = ttl_seconds.map(super::secs);
         run(async move {
             let d = daemon(&backend).await?;
@@ -311,10 +311,10 @@ impl Cua {
         let backend = self.backend.clone();
         let cwd =
             std::env::current_dir().map_err(|e| crate::CuaError::InvalidArgument(e.to_string()))?;
-        let parsed = cua_daemon::ShareTarget::parse(&target, &cwd)?;
+        let parsed = cua_daemon_core::ShareTarget::parse(&target, &cwd)?;
         if matches!(
             parsed,
-            cua_daemon::ShareTarget::File(_) | cua_daemon::ShareTarget::Dir(_)
+            cua_daemon_core::ShareTarget::File(_) | cua_daemon_core::ShareTarget::Dir(_)
         ) {
             return Err(crate::CuaError::InvalidArgument(
                 "share_tcp shares a port in a Space (space:NAME:PORT)".into(),
@@ -323,7 +323,7 @@ impl Cua {
         let ttl = ttl_seconds.map(super::secs);
         run(async move {
             let d = daemon(&backend).await?;
-            let opts = cua_daemon::TcpShareOptions {
+            let opts = cua_daemon_core::TcpShareOptions {
                 service,
                 route: route.filter(|r| !r.is_empty() && r != "auto"),
                 allow: allow.unwrap_or_default(),

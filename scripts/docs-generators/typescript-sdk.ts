@@ -305,7 +305,7 @@ export function dropTableColumn(markdown: string, header: string): string {
   return lines.join('\n');
 }
 
-export function buildPages(typedocDir: string, version: string): Map<string, string> {
+export function buildPages(typedocDir: string): Map<string, string> {
   const homes = MODULES.filter((m) => !TS_MERGED[m.page]);
   const intro = (m: (typeof MODULES)[number]) =>
     `Import from \`${m.importPath}\`.`;
@@ -316,7 +316,7 @@ export function buildPages(typedocDir: string, version: string): Map<string, str
       const source = path.join(typedocDir, ...m.typedocFile.split('/'));
       if (!fs.existsSync(source)) throw new Error(`typedoc produced no ${m.typedocFile}`);
       const body = postProcess(fs.readFileSync(source, 'utf-8'), m.typedocFile);
-      const header = readHeader(`cua-sdk/typescript/${m.page}.md`, { version });
+      const header = readHeader(`cua-sdk/typescript/${m.page}.md`);
       // The page's own module first; each merged module under a heading of its import path.
       const lead = i === 0 ? [] : [`## ${m.importPath}`, '', `${intro(m)} ${m.description}`];
       return [...lead, header, body].filter(Boolean).join('\n\n');
@@ -338,7 +338,6 @@ export function buildPages(typedocDir: string, version: string): Map<string, str
         description: m.description,
         generator: 'pnpm --dir docs docs:generate:cua-sdk-ts',
         source: `typedoc + typedoc-plugin-markdown over ${[m, ...merged].map((x) => `libs/cua/typescript/src/${x.entry}`).join(', ')}`,
-        version: `@trycua/cua ${version}`,
         body: [lead, fixed.get(routeFor(m.typedocFile)!)].filter(Boolean).join('\n\n'),
       })
     );
@@ -355,12 +354,10 @@ export function buildPages(typedocDir: string, version: string): Map<string, str
 
 async function main(): Promise<void> {
   const checkOnly = isCheckMode();
-  const version = JSON.parse(fs.readFileSync(path.join(PACKAGE_DIR, 'package.json'), 'utf-8'))
-    .version as string;
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cua-typedoc-'));
   try {
     await runTypedoc(tmp);
-    const drift = syncFiles(buildPages(tmp, version), checkOnly, [OUTPUT_DIR], 'pnpm --dir docs docs:generate:cua-sdk-ts');
+    const drift = syncFiles(buildPages(tmp), checkOnly, [OUTPUT_DIR], 'pnpm --dir docs docs:generate:cua-sdk-ts');
     finish('TypeScript', drift, checkOnly, 'pnpm --dir docs docs:generate:cua-sdk-ts');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });

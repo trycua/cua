@@ -84,9 +84,11 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
     /// The window is fully hidden: sessions are stopped until it shows.
     private(set) var paused = false
 
+    /// One stream per Space, tier and target: the desktop (`windowId` nil) or one window.
     struct StreamKey: Hashable {
         let spaceId: String
         let tier: VideoTier
+        var windowId: String? = nil
     }
 
     /// One session per Space and tier, shared by its surfaces.
@@ -138,7 +140,7 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
         var painted = false
         init(_ update: VideoSurfaceUpdate) {
             id = update.surfaceId
-            key = StreamKey(spaceId: update.spaceId, tier: update.tier)
+            key = StreamKey(spaceId: update.spaceId, tier: update.tier, windowId: update.windowId)
             self.update = update
         }
     }
@@ -222,7 +224,7 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
 
     private func place(_ u: VideoSurfaceUpdate) {
         guard let webView else { return }
-        if let existing = surfaces[u.surfaceId], existing.key != StreamKey(spaceId: u.spaceId, tier: u.tier) {
+        if let existing = surfaces[u.surfaceId], existing.key != StreamKey(spaceId: u.spaceId, tier: u.tier, windowId: u.windowId) {
             remove(u.surfaceId)
         }
         let surface = surfaces[u.surfaceId] ?? attach(u, in: webView)
@@ -282,7 +284,15 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
                 let provider = try await self.open(key.spaceId, key.tier)
                 guard self.streams[key] === stream, stream.users > 0, !Task.isCancelled else { return }
                 stream.resolvedAt = ProcessInfo.processInfo.systemUptime
-                let session = LiveStreamSession(provider: provider)
+                // A slot for one window (an app an agent opened here or in a Space under this one)
+                // streams that window, not the Space's desktop.
+                var window: StreamWindow?
+                if let id = key.windowId {
+                    window = try await provider.availableWindows().first(where: { $0.id == id })
+                    guard window != nil else { throw StreamError.noStream("That window is no longer open.") }
+                    guard self.streams[key] === stream, stream.users > 0, !Task.isCancelled else { return }
+                }
+                let session = LiveStreamSession(provider: provider, source: window.map { .window($0) } ?? .desktop)
                 session.stampOpen(.slot, at: stream.requestedAt)
                 if let t = stream.resolvedAt { session.stampOpen(.resolved, at: t) }
                 stream.session = session
@@ -448,7 +458,8 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
     /// Keeps a Space's last picture, so its next viewer shows it while it
     /// connects instead of black.
     private func rememberPoster(of session: LiveStreamSession, key: StreamKey) {
-        guard key.tier == .full, let buffer = session.frame else { return }
+        // The poster is the Space's desktop: a window's picture is not what the next viewer of the Space sees first.
+        guard key.tier == .full, key.windowId == nil, let buffer = session.frame else { return }
         posters[key.spaceId] = Poster(buffer: buffer, at: now())
         posterOrder.removeAll { $0 == key.spaceId }
         posterOrder.append(key.spaceId)
@@ -467,9 +478,10 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
         return true
     }
 
-    /// The Space's last picture, if a recent one is kept.
+    /// The Space's last picture, if a recent one is kept. A window slot has none: the desktop under
+    /// "Connecting…" would be a picture of something else.
     func poster(for key: StreamKey) -> CVPixelBuffer? {
-        guard key.tier == .full, let p = posters[key.spaceId], now() - p.at < Self.posterMaxAge else { return nil }
+        guard key.tier == .full, key.windowId == nil, let p = posters[key.spaceId], now() - p.at < Self.posterMaxAge else { return nil }
         return p.buffer
     }
 

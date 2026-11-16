@@ -78,7 +78,7 @@ describe.skipIf(!wasmBuilt)("Settings and Notifications through the core", () =>
     await hooks.about.setAbout({ channel: "nightly" });
     await waitFor(() => expect(hooks.about.data?.view?.updates?.channels.find((c) => c.active)?.id).toBe("nightly"));
     expect(hooks.about.data?.view?.updates?.channels.map((c) => c.id)).toEqual(["stable", "nightly"]);
-    expect(hooks.about.data?.view?.updates?.channelHelp).toBe("Nightly builds: get the newest changes from main every day. They may break.");
+    expect(hooks.about.data?.view?.updates?.channelHelp).toBe("Daily builds. May break.");
   });
 
   it("turns an experiment on, and Cua Volume changes the launch-at-login line", async () => {
@@ -146,6 +146,22 @@ describe.skipIf(!wasmBuilt)("Settings and Notifications through the core", () =>
     expect(hooks.notifications.data?.view?.markAllLabel).toBeNull();
   });
 
+  it("deletes one notification or all of them, and the unread count follows", async () => {
+    const { hooks } = mount(await testCore());
+    await waitFor(() => expect(hooks.notifications.data?.unread).toBe(2));
+    const total = hooks.notifications.data!.feed.length;
+    const first = hooks.notifications.data!.feed.find((n) => !n.read)!;
+    await hooks.notifications.deleteOne(first.id);
+    await waitFor(() => expect(hooks.notifications.data?.unread).toBe(1));
+    expect(hooks.notifications.data?.feed.length).toBe(total - 1);
+    expect(hooks.notifications.data?.feed.some((n) => n.id === first.id)).toBe(false);
+    await hooks.notifications.deleteAll();
+    await waitFor(() => expect(hooks.notifications.data?.feed.length).toBe(0));
+    expect(hooks.notifications.data?.unread).toBe(0);
+    expect(hooks.notifications.data?.view?.rows).toEqual([]);
+    expect(hooks.notifications.data?.view?.emptyText).toBe("No notifications.");
+  });
+
   it("lists a Space that became ready and a create that failed, with why", async () => {
     const { hooks, adapter } = mount(await testCore());
     const call = adapter.call.bind(adapter);
@@ -159,7 +175,7 @@ describe.skipIf(!wasmBuilt)("Settings and Notifications through the core", () =>
     await waitFor(() => expect(hooks.notifications.data?.unread).toBe(4));
     const texts = hooks.notifications.data!.view!.rows.map((r) => r.text);
     // With what it is, in plain words (never "VM" or "container").
-    expect(texts.find((t) => t.startsWith("qa-gui-linux-local is ready"))).toMatch(/A fresh Linux computer inside this (Mac|PC|computer)\. Your agent can use it now\./);
+    expect(texts.find((t) => t.startsWith("qa-gui-linux-local is ready"))).toContain("Ready for your agent.");
     // The reason in the failed row's words (the core names the macOS limit).
     expect(texts.find((t) => t.startsWith("Couldn't create boom: "))).toMatch(/This Mac is already running/);
     await hooks.notifications.markAllRead();

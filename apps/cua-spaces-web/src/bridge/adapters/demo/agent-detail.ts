@@ -91,7 +91,15 @@ function demoRoutines(): Map<string, AgentRoutine[]> {
   ]);
 }
 
-export function demoAgentDetailHandlers({ wait, stepMs, now }: { wait(ms: number): Promise<void>; stepMs: number; now: () => number }): DemoHandlers<AgentDetailOp> {
+export function demoAgentDetailHandlers({
+  wait,
+  stepMs,
+  now,
+}: {
+  wait(ms: number): Promise<void>;
+  stepMs: number;
+  now: () => number;
+}): DemoHandlers<AgentDetailOp> {
   const homes = demoHomes(now());
   const routines = demoRoutines();
   let grants: AgentComputerGrant[] = [
@@ -160,17 +168,28 @@ export function demoAgentDetailHandlers({ wait, stepMs, now }: { wait(ms: number
       if (!title.trim() || !prompt.trim()) throw new HostError("a routine needs a title and a prompt", "bad_args");
       await wait(stepMs / 2);
       const list = routines.get(agent) ?? [];
-      routines.set(agent, [...list, { id: `rt-${agent}-new-${nextRoutine++}`, title, label: routineLabel(everyMinutes ?? null, dailyAt ?? null, weeklyOn ?? null), enabled: true }]);
+      routines.set(agent, [
+        ...list,
+        { id: `rt-${agent}-new-${nextRoutine++}`, title, label: routineLabel(everyMinutes ?? null, dailyAt ?? null, weeklyOn ?? null), enabled: true },
+      ]);
       return null;
     },
     "agents.setRoutine": async ({ id, enabled }) => {
       await wait(stepMs / 4);
-      for (const [agent, list] of routines) routines.set(agent, list.map((r) => (r.id === id ? { ...r, enabled } : r)));
+      for (const [agent, list] of routines)
+        routines.set(
+          agent,
+          list.map((r) => (r.id === id ? { ...r, enabled } : r)),
+        );
       return null;
     },
     "agents.removeRoutine": async ({ id }) => {
       await wait(stepMs / 4);
-      for (const [agent, list] of routines) routines.set(agent, list.filter((r) => r.id !== id));
+      for (const [agent, list] of routines)
+        routines.set(
+          agent,
+          list.filter((r) => r.id !== id),
+        );
       return null;
     },
     // The daemon asks for Touch ID first; the demo takes a moment instead.

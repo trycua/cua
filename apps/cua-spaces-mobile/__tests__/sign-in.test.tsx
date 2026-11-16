@@ -13,7 +13,11 @@ jest.mock("../src/state/app", () => ({ useApp: () => ({ signIn: mockSignIn, sign
 describe("sign-in", () => {
   it("starts the cua.ai sign-in sheet from one button and says why it failed", async () => {
     mockError = "Sign-in didn't finish. It was declined in the browser.";
-    await render(<ThemeProvider force="light"><SignInScreen /></ThemeProvider>);
+    await render(
+      <ThemeProvider force="light">
+        <SignInScreen />
+      </ThemeProvider>,
+    );
     await fireEvent.press(screen.getByLabelText("Sign in with your cua.ai account"));
     expect(mockSignIn).toHaveBeenCalled();
     expect(screen.getByText(/declined in the browser/)).toBeTruthy();

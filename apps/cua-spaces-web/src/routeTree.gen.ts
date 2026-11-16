@@ -20,6 +20,7 @@ import { Route as CiIndexRouteImport } from './routes/ci/index'
 import { Route as DriverIndexRouteImport } from './routes/driver/index'
 import { Route as HomeIndexRouteImport } from './routes/home/index'
 import { Route as HomeTaskIdRouteImport } from './routes/home/$taskId'
+import { Route as HomeAskRouteImport } from './routes/home/ask'
 import { Route as KeyvaultIndexRouteImport } from './routes/keyvault/index'
 import { Route as MachinesIndexRouteImport } from './routes/machines/index'
 import { Route as NotificationsIndexRouteImport } from './routes/notifications/index'
@@ -81,6 +82,11 @@ const HomeIndexRoute = HomeIndexRouteImport.update({
 const HomeTaskIdRoute = HomeTaskIdRouteImport.update({
   id: '/home/$taskId',
   path: '/home/$taskId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HomeAskRoute = HomeAskRouteImport.update({
+  id: '/home/ask',
+  path: '/home/ask',
   getParentRoute: () => rootRouteImport,
 } as any)
 const KeyvaultIndexRoute = KeyvaultIndexRouteImport.update({
@@ -201,6 +207,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRouteRouteWithChildren
   '/agents/all': typeof AgentsAllRoute
   '/home/$taskId': typeof HomeTaskIdRoute
+  '/home/ask': typeof HomeAskRoute
   '/settings/about': typeof SettingsAboutRoute
   '/settings/advanced': typeof SettingsAdvancedRoute
   '/settings/agents': typeof SettingsAgentsRoute
@@ -232,6 +239,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/agents/all': typeof AgentsAllRoute
   '/home/$taskId': typeof HomeTaskIdRoute
+  '/home/ask': typeof HomeAskRoute
   '/settings/about': typeof SettingsAboutRoute
   '/settings/advanced': typeof SettingsAdvancedRoute
   '/settings/agents': typeof SettingsAgentsRoute
@@ -265,6 +273,7 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRouteRouteWithChildren
   '/agents/all': typeof AgentsAllRoute
   '/home/$taskId': typeof HomeTaskIdRoute
+  '/home/ask': typeof HomeAskRoute
   '/settings/about': typeof SettingsAboutRoute
   '/settings/advanced': typeof SettingsAdvancedRoute
   '/settings/agents': typeof SettingsAgentsRoute
@@ -299,6 +308,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/agents/all'
     | '/home/$taskId'
+    | '/home/ask'
     | '/settings/about'
     | '/settings/advanced'
     | '/settings/agents'
@@ -330,6 +340,7 @@ export interface FileRouteTypes {
     | '/'
     | '/agents/all'
     | '/home/$taskId'
+    | '/home/ask'
     | '/settings/about'
     | '/settings/advanced'
     | '/settings/agents'
@@ -362,6 +373,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/agents/all'
     | '/home/$taskId'
+    | '/home/ask'
     | '/settings/about'
     | '/settings/advanced'
     | '/settings/agents'
@@ -395,6 +407,7 @@ export interface RootRouteChildren {
   SettingsRouteRoute: typeof SettingsRouteRouteWithChildren
   AgentsAllRoute: typeof AgentsAllRoute
   HomeTaskIdRoute: typeof HomeTaskIdRoute
+  HomeAskRoute: typeof HomeAskRoute
   SpacesSpaceIdRoute: typeof SpacesSpaceIdRoute
   AgentsIndexRoute: typeof AgentsIndexRoute
   CiIndexRoute: typeof CiIndexRoute
@@ -467,6 +480,13 @@ declare module '@tanstack/react-router' {
       path: '/home/$taskId'
       fullPath: '/home/$taskId'
       preLoaderRoute: typeof HomeTaskIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/home/ask': {
+      id: '/home/ask'
+      path: '/home/ask'
+      fullPath: '/home/ask'
+      preLoaderRoute: typeof HomeAskRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/keyvault/': {
@@ -683,6 +703,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRouteRoute: SettingsRouteRouteWithChildren,
   AgentsAllRoute: AgentsAllRoute,
   HomeTaskIdRoute: HomeTaskIdRoute,
+  HomeAskRoute: HomeAskRoute,
   SpacesSpaceIdRoute: SpacesSpaceIdRoute,
   AgentsIndexRoute: AgentsIndexRoute,
   CiIndexRoute: CiIndexRoute,

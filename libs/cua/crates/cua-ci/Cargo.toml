@@ -19,9 +19,6 @@ testing = []
 async-trait.workspace = true
 base64.workspace = true
 cua-home.workspace = true
-# The Spaces implementation of the `Spaces` seam (the cua daemon or an
-# embedded runtime).
-cua-sdk = { workspace = true, features = ["local", "spaces", "media"] }
 hex.workspace = true
 # The macOS VMs Lume runs on this Mac (Spaces or not), for the two-VM budget.
 cua-vmm = { workspace = true, features = ["lume"] }
@@ -47,7 +44,7 @@ libc = "0.2"
 security-framework = { version = "3", features = ["OSX_10_15"] }
 
 [dev-dependencies]
-axum.workspace = true
+axum = { workspace = true, features = ["json"] }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 tracing-subscriber.workspace = true

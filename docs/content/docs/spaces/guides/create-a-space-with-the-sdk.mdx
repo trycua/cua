@@ -170,7 +170,7 @@ From a clone of [trycua/cua](https://github.com/trycua/cua). The samples build t
 <Tabs items={['TypeScript', 'Rust + Tauri', 'Swift']}>
   <Tab value="TypeScript">
     ```bash skip="no-runner"
-    (cd libs/cua && cargo build --release -p cua-sdk)
+    (cd libs/cua && cargo build --release -p cua-sdk-native)
     (cd libs/cua/typescript && npm ci && npm run stage:uniffi && npm run build && npm run build:browser)
     cd examples/openkoalabot-example-ts
     npm ci && npm run build && npm run build:web
@@ -187,7 +187,7 @@ From a clone of [trycua/cua](https://github.com/trycua/cua). The samples build t
   </Tab>
   <Tab value="Swift">
     ```bash skip="no-runner"
-    (cd libs/cua && cargo build --release -p cua-sdk && node scripts/stage-uniffi-library.mjs --only=swift)
+    (cd libs/cua && cargo build --release -p cua-sdk-native && node scripts/stage-uniffi-library.mjs --only=swift)
     cd examples/openkoalabot-example-swift
     swift build && .build/debug/OpenKoalaBotExample
     ```

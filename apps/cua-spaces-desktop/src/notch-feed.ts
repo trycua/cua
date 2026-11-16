@@ -17,7 +17,6 @@
 //   that window's app in that Space, the same way as its bundle dropped there.
 import { basename } from "node:path";
 import { fileOffers, sendOffered } from "./bridge/files";
-import { refreshDaemonExperiments } from "./bridge/settings";
 import type { AppModel } from "./model/app-model";
 import { words } from "./model/errors";
 import type { TeleportLike } from "./native/generated/index";
@@ -49,7 +48,12 @@ export async function dropOnSpace(model: AppModel, ui: NotchFeedUi, spaceId: str
   if (paths.some(isAppBundle)) {
     // An app: its Teleport review, the files beside it going with it (the Swift tile's drop). The page asks for these paths by name, as for a drop on the well.
     fileOffers(model).setNotchDrop(paths);
-    openSpaceFromNotch(model, ui, spaceId, paths.map((p) => basename(p)));
+    openSpaceFromNotch(
+      model,
+      ui,
+      spaceId,
+      paths.map((p) => basename(p)),
+    );
     return;
   }
   openSpaceFromNotch(model, ui, spaceId);
@@ -137,13 +141,8 @@ export function feedNotch(notch: Pick<Notch, "setSpaces" | "setShown" | "setActi
     }),
     model.activity.subscribe(activity),
   ];
-  // Spaces exiting through this machine light the hotspot indicator too (Labs: Secure Spaces; off, nothing is read).
+  // Spaces exiting through this machine light the hotspot indicator too.
   const exits = async () => {
-    refreshDaemonExperiments(model);
-    if (!model.settings.experiments.secureSpaces) {
-      model.activity.setExits([]);
-      return;
-    }
     const ids = await model.backend.exitsThroughThisMachine?.().catch(() => null);
     if (ids) model.activity.setExits(ids);
   };

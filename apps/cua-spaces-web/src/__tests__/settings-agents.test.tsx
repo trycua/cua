@@ -30,15 +30,41 @@ describe("configured agents without binary evidence", () => {
     const adapter: typeof demo = {
       ...demo,
       call: (async (op, args) => {
-        if (op === "agents.setup") return [{ agent: "claude-code", name: "Claude Code", installed: false, configured: true, detail: "skills and MCP configured", skillsInstalled: 1, skillsTotal: 1, mcpConfig: "C:/Users/test/.claude.json", skillsDir: "C:/Users/test/.claude/skills" }];
+        if (op === "agents.setup")
+          return [
+            {
+              agent: "claude-code",
+              name: "Claude Code",
+              installed: false,
+              configured: true,
+              detail: "skills and MCP configured",
+              skillsInstalled: 1,
+              skillsTotal: 1,
+              mcpConfig: "C:/Users/test/.claude.json",
+              skillsDir: "C:/Users/test/.claude/skills",
+            },
+          ];
         return demo.call(op, args);
       }) as typeof demo.call,
     };
-    const routeTree = createRootRoute({ component: () => dialog === "connect"
-      ? <ConnectAgentDialog open onOpenChange={() => {}} />
-      : <RunAgentDialog open onOpenChange={() => {}} space={{ id: "local:test", name: "Test Space", os: "windows", status: "running", detail: "", lastUsedAt: 0, scene: "blank" }} /> });
+    const routeTree = createRootRoute({
+      component: () =>
+        dialog === "connect" ? (
+          <ConnectAgentDialog open onOpenChange={() => {}} />
+        ) : (
+          <RunAgentDialog
+            open
+            onOpenChange={() => {}}
+            space={{ id: "local:test", name: "Test Space", os: "windows", status: "running", detail: "", lastUsedAt: 0, scene: "blank" }}
+          />
+        ),
+    });
     const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: ["/"] }) });
-    const mounted = render(<BridgeProvider adapter={adapter} core={noCore}><RouterProvider router={router} /></BridgeProvider>);
+    const mounted = render(
+      <BridgeProvider adapter={adapter} core={noCore}>
+        <RouterProvider router={router} />
+      </BridgeProvider>,
+    );
     if (dialog === "connect") {
       await waitFor(() => expect(document.querySelector("li")?.textContent).toContain("Set up"));
       // The file path stays out of the row; it is only in the closed Advanced section.
@@ -80,7 +106,10 @@ describe.skipIf(!wasmBuilt)("a newly installed coding app", () => {
   });
 
   it("is left alone without a yes, and when it was turned off", { timeout: 20_000 }, async () => {
-    for (const state of [{ known: seen, off: [], auto: null }, { known: seen, off: ["hermes"], auto: true }]) {
+    for (const state of [
+      { known: seen, off: [], auto: null },
+      { known: seen, off: ["hermes"], auto: true },
+    ]) {
       cleanup();
       setConnectedAppsState(state);
       const { router } = await mountApp("/settings/connections", { failsCreates: false, listsGhost: false });

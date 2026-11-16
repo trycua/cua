@@ -40,7 +40,12 @@ const click = (el: Element) =>
     fireEvent.click(el);
   });
 const type = (el: Element, value: string) => fireEvent.change(el, { target: { value } });
-const host = (calls: Call[], demo: object = {}) => ({ failsCreates: false, listsGhost: false, demo, intercept: (op: string, args: unknown) => (calls.push({ op, args }), undefined) });
+const host = (calls: Call[], demo: object = {}) => ({
+  failsCreates: false,
+  listsGhost: false,
+  demo,
+  intercept: (op: string, args: unknown) => (calls.push({ op, args }), undefined),
+});
 /** The sheet a provider's row opens. */
 const openRow = async (id: string) => {
   await click(await found(`[data-connector-provider=${id}]`));
@@ -148,7 +153,9 @@ describe.skipIf(!wasmBuilt)("the Connections list", () => {
     await waitFor(() => expect(save().disabled).toBe(false));
     await click(save());
     await waitFor(() => expect(q("[data-connector-provider=custom]")!.dataset.state).toBe("connected"));
-    expect(sets(calls)).toEqual([{ provider: "custom", value: "", env: null, fields: { base_url: "http://127.0.0.1:1234/v1", model: "qwen3-coder", wire: "openai-chat" } }]);
+    expect(sets(calls)).toEqual([
+      { provider: "custom", value: "", env: null, fields: { base_url: "http://127.0.0.1:1234/v1", model: "qwen3-coder", wire: "openai-chat" } },
+    ]);
     expect(q("[data-connector-provider=custom] [data-connector-credential]")!.textContent).toBe("http://127.0.0.1:1234/v1");
     // Hermes and the apps that can be pointed at an endpoint are connected by it.
     for (const app of ["opencode", "goose"]) expect(q(`[data-connector-app=${app}]`)!.dataset.state).toBe("connected");

@@ -18,7 +18,10 @@ import {
 } from "./windows-runtime";
 
 const CLEAN: WindowsRuntimeFacts = {
-  dockerInstalled: false, dockerRunning: false, virtualization: "on", restartPending: false,
+  dockerInstalled: false,
+  dockerRunning: false,
+  virtualization: "on",
+  restartPending: false,
   features: { editionId: null, virtualMachinePlatform: "unknown", hypervisorPlatform: "unknown", subsystemLinux: "unknown" },
 };
 const IDLE = { kind: "idle" } as const;
@@ -61,7 +64,11 @@ describe("windowsRuntimeAdvice", () => {
   });
 
   it("shows the download's progress and the install as busy", () => {
-    expect(windowsRuntimeAdvice(CLEAN, { kind: "downloading", percent: 42 }, 0).fix).toMatchObject({ label: "Downloading Docker Desktop… 42%", busy: true, action: null });
+    expect(windowsRuntimeAdvice(CLEAN, { kind: "downloading", percent: 42 }, 0).fix).toMatchObject({
+      label: "Downloading Docker Desktop… 42%",
+      busy: true,
+      action: null,
+    });
     expect(windowsRuntimeAdvice(CLEAN, { kind: "installing" }, 0).fix).toMatchObject({ busy: true, action: null });
   });
 
@@ -74,9 +81,20 @@ describe("windowsRuntimeAdvice", () => {
 
 describe("probe parsing", () => {
   it("reads edition and feature states independently, without treating absent features as disabled", () => {
-    for (const [input, expected] of [[1, "enabled"], [2, "disabled"], [3, "unknown"], [4, "unknown"], [null, "unknown"], ["2", "unknown"], [0, "unknown"]] as const) {
+    for (const [input, expected] of [
+      [1, "enabled"],
+      [2, "disabled"],
+      [3, "unknown"],
+      [4, "unknown"],
+      [null, "unknown"],
+      ["2", "unknown"],
+      [0, "unknown"],
+    ] as const) {
       expect(parseFeatures(JSON.stringify({ editionId: "Core", virtualMachinePlatform: input, hypervisorPlatform: input, subsystemLinux: input }))).toEqual({
-        editionId: "Core", virtualMachinePlatform: expected, hypervisorPlatform: expected, subsystemLinux: expected,
+        editionId: "Core",
+        virtualMachinePlatform: expected,
+        hypervisorPlatform: expected,
+        subsystemLinux: expected,
       });
     }
     expect(parseFeatures('{"editionId":"Core"}')).toEqual({ ...CLEAN.features, editionId: "Core" });
@@ -233,9 +251,17 @@ describe("WindowsRuntime", () => {
     const f = fakeSystem({ features: '{"virtualMachinePlatform":2}' });
     let finishDownload!: () => void;
     let finishInstall!: () => void;
-    f.sys.download = () => new Promise<void>((resolve) => { finishDownload = resolve; });
+    f.sys.download = () =>
+      new Promise<void>((resolve) => {
+        finishDownload = resolve;
+      });
     const powershell = f.sys.powershell;
-    f.sys.powershell = (script, ms) => script.includes("-Verb RunAs") ? new Promise((resolve) => { finishInstall = () => resolve({ code: 0, stdout: "", stderr: "" }); }) : powershell(script, ms);
+    f.sys.powershell = (script, ms) =>
+      script.includes("-Verb RunAs")
+        ? new Promise((resolve) => {
+            finishInstall = () => resolve({ code: 0, stdout: "", stderr: "" });
+          })
+        : powershell(script, ms);
     const w = new WindowsRuntime(f.sys, "C:\\tmp");
     expect((await w.facts()).features.virtualMachinePlatform).toBe("disabled");
     f.ran.length = 0;

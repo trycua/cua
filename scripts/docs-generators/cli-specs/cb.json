@@ -2601,6 +2601,5 @@
  ],
  "global_options": [],
  "name": "cb",
- "usage": "cb <COMMAND> [OPTIONS]",
- "version": "0.3.1"
+ "usage": "cb <COMMAND> [OPTIONS]"
 }

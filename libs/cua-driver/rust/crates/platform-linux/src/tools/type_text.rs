@@ -12,19 +12,110 @@ use serde_json::{json, Value};
 use std::{fs, sync::Arc};
 
 use super::impl_::{
-    announce_keyboard_target, atspi_up, background_keyboard_refusal, background_virtual_text,
-    coordinate_frame_is_desktop, coordinate_frame_schema, focus_by_pixel,
+    announce_keyboard_target, atspi_text_outcome_unknown, atspi_up, background_keyboard_refusal,
+    background_virtual_text, coordinate_frame_is_desktop, coordinate_frame_schema, focus_by_pixel,
     focus_hyprland_foreground, focus_nested_inject_target, foreground_hyprland_refusal,
     foreground_structured, hyprland_foreground, hyprland_input_result, inject_terminal_input,
     input_error_result, invalid_pointer_arguments, is_chromium_embedder, is_popup_keyboard_grab,
     is_terminal_process, is_webkitgtk_embedder, isolated_hyprland_background,
     isolated_hyprland_refusal, isolated_hyprland_result, isolated_hyprland_task_error,
     named_session_cursor_key, position_named_session_keyboard_cursor, prove_token_element,
-    resolve_cursor_key, spawn_blocking_bounded, spawn_isolated_hyprland, stale_observed_element,
-    text_typing_budget, unavailable_chromium_background,
+    refuse_if_disabled, resolve_cursor_key, spawn_blocking_bounded, spawn_isolated_hyprland,
+    stale_observed_element, text_typing_budget, unavailable_chromium_background,
     unavailable_wayland_focused_input_background, unavailable_webkit_keyboard_background,
-    values_agree, KeyRoute, ToolState,
+    values_agree, with_cleanup_warning, KeyRoute, ToolState,
 };
+
+/// What the Qt5 synthetic-focus workaround did: the AT-SPI write's own
+/// outcome, and the error of the FocusOut sent after it, if any.
+struct SyntheticFocusWrite {
+    write: anyhow::Result<()>,
+    focus_out: Option<anyhow::Error>,
+}
+
+/// Send FocusIn (Qt5 exposes its widget tree only to a focused window),
+/// write, then FocusOut. A failed FocusOut is kept beside the write's
+/// outcome instead of replacing it: the write may already have landed.
+fn write_with_synthetic_focus(
+    focus_in: impl FnOnce() -> anyhow::Result<()>,
+    write: impl FnOnce() -> anyhow::Result<()>,
+    focus_out: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<SyntheticFocusWrite> {
+    focus_in()?;
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let write = write();
+    let focus_out = focus_out().err();
+    Ok(SyntheticFocusWrite { write, focus_out })
+}
+
+/// The result of a synthetic-focus write, or `None` when nothing was written
+/// and the caller may try its next route. A write that landed or may have
+/// landed ends the call; a failed FocusOut is a warning on that result.
+fn synthetic_focus_write_result(
+    written: SyntheticFocusWrite,
+    delivery: crate::input::delivery::DeliveryMode,
+    delivered: impl FnOnce() -> ToolResult,
+) -> Option<ToolResult> {
+    let result = match &written.write {
+        Ok(()) => delivered(),
+        Err(error) if crate::atspi::input_may_have_landed(error) => {
+            atspi_text_outcome_unknown(delivery, error)
+        }
+        Err(_) => return None,
+    };
+    let warning = written.focus_out.map(|error| {
+        format!("the synthetic FocusOut sent after the write failed ({error:#}), so the window may still act as focused")
+    });
+    Some(with_cleanup_warning(result, warning))
+}
+
+#[cfg(test)]
+#[test]
+fn a_failed_focus_out_never_hides_a_write_that_was_sent() {
+    use crate::input::delivery::DeliveryMode;
+    let failing_focus_out = || Err(anyhow::anyhow!("X11 connection lost"));
+    let attempt = |write: anyhow::Result<()>| {
+        let written = write_with_synthetic_focus(|| Ok(()), || write, failing_focus_out)
+            .expect("the FocusOut error is kept beside the write, not returned");
+        assert!(written.focus_out.is_some());
+        synthetic_focus_write_result(written, DeliveryMode::Background, || {
+            ToolResult::text("Typed 5 character(s) (via AT-SPI with focus workaround).")
+                .with_structured(type_text_structured("ax", 5, false))
+        })
+    };
+    let warned = |wire: &Value| {
+        let text = wire["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("Warning: the synthetic FocusOut"), "{text}");
+        assert!(wire["structuredContent"]["warning"]
+            .as_str()
+            .is_some_and(|warning| warning.contains("X11 connection lost")));
+    };
+
+    // Delivered: still a success, so the caller never writes again.
+    let delivered = attempt(Ok(())).expect("a delivered write ends the call");
+    assert_ne!(delivered.is_error, Some(true));
+    let wire = serde_json::to_value(&delivered).unwrap();
+    assert_eq!(wire["structuredContent"]["path"], "ax");
+    warned(&wire);
+
+    // Sent and failed: still the unknown outcome, never a plain X11 error.
+    let sent = anyhow::Error::new(crate::atspi::InputMayHaveLanded(
+        "EditableText.InsertText did not answer in time".into(),
+    ));
+    let unknown = attempt(Err(sent)).expect("input that may have landed ends the call");
+    assert_eq!(unknown.is_error, Some(true));
+    let wire = serde_json::to_value(&unknown).unwrap();
+    assert_eq!(wire["structuredContent"]["effect"], "unverifiable");
+    assert_eq!(
+        wire["structuredContent"]["delivery"],
+        json!({"mode": "unknown"})
+    );
+    assert!(wire["structuredContent"].get("escalation").is_none());
+    warned(&wire);
+
+    // Nothing written: the next route may run.
+    assert!(attempt(Err(anyhow::anyhow!("no editable exposed"))).is_none());
+}
 
 /// `wayland::type_text_focused`, one call per character when `pacing` is
 /// positive. Wayland backends send a whole string in one request, so the
@@ -281,7 +372,7 @@ impl Tool for TypeTextTool {
                     .into_owned();
             position_named_session_keyboard_cursor(&self.state, &args, 0, 0, None, None, false)
                 .await;
-            let wayland = crate::wayland::wayland_input_enabled();
+            let wayland = crate::wayland::is_wayland();
             let path = if wayland { "wayland_focused" } else { "xtest" };
             let result = spawn_blocking_bounded(
                 "desktop type_text",
@@ -321,6 +412,9 @@ impl Tool for TypeTextTool {
             Ok(token) => token,
             Err(refusal) => return refusal,
         };
+        if let Some(refusal) = refuse_if_disabled(pid, &resolved, "type_text").await {
+            return refusal;
+        }
         let (resolved_elem_idx, resolved_window_id) = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element {
                 element_index,
@@ -448,13 +542,17 @@ impl Tool for TypeTextTool {
             if !is_chromium_embedder(pid) && !is_webkitgtk_embedder(pid) {
                 if let Some(element) = token.clone() {
                     let text_ax = text.clone();
-                    if matches!(
-                        tokio::task::spawn_blocking(move || crate::atspi::type_into_token(
-                            pid, &element, &text_ax
-                        ))
-                        .await,
-                        Ok(Ok(()))
-                    ) {
+                    let written = tokio::task::spawn_blocking(move || {
+                        crate::atspi::type_into_token(pid, &element, &text_ax)
+                    })
+                    .await;
+                    // Sent and failed: typing keys on top would type twice.
+                    if let Ok(Err(error)) = &written {
+                        if crate::atspi::input_may_have_landed(error) {
+                            return atspi_text_outcome_unknown(delivery, error);
+                        }
+                    }
+                    if matches!(written, Ok(Ok(()))) {
                         position_named_session_keyboard_cursor(
                             &self.state,
                             &args,
@@ -557,6 +655,12 @@ impl Tool for TypeTextTool {
                 crate::atspi::type_into_token(pid, &target, &text_at)
             })
             .await;
+            // Sent and failed: injected keys on top would type twice.
+            if let Ok(Err(error)) = &targeted {
+                if crate::atspi::input_may_have_landed(error) {
+                    return atspi_text_outcome_unknown(delivery, error);
+                }
+            }
             if let Ok(Ok(())) = targeted {
                 return type_text_ax_result_verified(pid, element, &text, "via targeted AT-SPI")
                     .await;
@@ -567,7 +671,8 @@ impl Tool for TypeTextTool {
         // compositor's focused toplevel, so keys reach the addressed control.
         if crate::wayland::is_inject_mode() {
             if let Err(error) =
-                focus_nested_inject_target(pid, xid, token.clone(), px.zip(py)).await
+                focus_nested_inject_target(&self.state, &args, pid, xid, token.clone(), px.zip(py))
+                    .await
             {
                 return error;
             }
@@ -629,7 +734,7 @@ impl Tool for TypeTextTool {
         // native Wayland, focus the named field and send real keyboard input so
         // Chromium/WebKit observe the same event sequence as a user.
         if delivery.is_foreground()
-            && crate::wayland::wayland_input_enabled()
+            && crate::wayland::is_wayland()
             && (is_chromium_embedder(pid) || is_webkitgtk_embedder(pid))
         {
             if let Some(element) = token.clone() {
@@ -642,7 +747,7 @@ impl Tool for TypeTextTool {
                         crate::interaction::with_target_foreground(
                             pid,
                             xid,
-                            crate::interaction::RestoreMode::RestorePrevious,
+                            crate::interaction::session_policy().typing,
                             || {
                                 if !crate::atspi::focus_token(pid, &element)? {
                                     anyhow::bail!(
@@ -697,8 +802,14 @@ impl Tool for TypeTextTool {
                     )
                     .await;
                 }
+                // Sent and failed: the text may be in the field. Report that
+                // instead of a refusal whose foreground retry, or a later key
+                // route, would type it twice.
+                Ok(Err(error)) if crate::atspi::input_may_have_landed(&error) => {
+                    return atspi_text_outcome_unknown(delivery, &error);
+                }
                 Ok(Err(_)) | Err(_)
-                    if !delivery.is_foreground() && crate::wayland::wayland_input_enabled() =>
+                    if !delivery.is_foreground() && crate::wayland::is_wayland() =>
                 {
                     return crate::input::delivery::background_unavailable_error(
                         crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
@@ -711,7 +822,7 @@ impl Tool for TypeTextTool {
         // Native Wayland: keys go to the *focused* surface (no pid/window
         // targeting in the protocol). Type via the virtual-keyboard tool; pair
         // with a prior `click`/`activate` to focus the intended window.
-        if crate::wayland::wayland_input_enabled() {
+        if crate::wayland::is_wayland() {
             if !delivery.is_foreground() {
                 return crate::input::delivery::background_unavailable_error(
                     crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
@@ -726,7 +837,7 @@ impl Tool for TypeTextTool {
                     crate::interaction::with_target_foreground(
                         pid,
                         xid,
-                        crate::interaction::RestoreMode::RestorePrevious,
+                        crate::interaction::session_policy().typing,
                         || {
                             if let Some(element) = &element {
                                 if !crate::atspi::focus_token(pid, element)? {
@@ -790,7 +901,7 @@ impl Tool for TypeTextTool {
                     crate::interaction::with_x11_foreground(
                         xid,
                         crate::input::ForegroundOptions::pointer(),
-                        crate::interaction::RestoreMode::RestorePrevious,
+                        crate::interaction::session_policy().typing,
                         || crate::input::send_type_text_xtest_paced(&text_t, pacing),
                     )
                     .map(|(value, _report)| value)?;
@@ -833,7 +944,7 @@ impl Tool for TypeTextTool {
                     crate::interaction::with_x11_foreground(
                         xid,
                         crate::input::ForegroundOptions::keyboard(),
-                        crate::interaction::RestoreMode::RestorePrevious,
+                        crate::interaction::session_policy().typing,
                         || {
                             if let Some(element) = &element {
                                 if !crate::atspi::focus_token(pid, element)? {
@@ -856,8 +967,9 @@ impl Tool for TypeTextTool {
                     ToolResult::text(format!(
                         "Typed {text_len} character(s) as real key events \
                          (delivery_mode=foreground, focus_after={}); not verified — \
-                         confirm with a screenshot.",
-                        report.focus_after.as_str()
+                         confirm with a screenshot.{}",
+                        report.focus_after.as_str(),
+                        report.focus_note()
                     ))
                     .with_structured(foreground_structured(
                         "key_events_fg",
@@ -957,7 +1069,7 @@ impl Tool for TypeTextTool {
                     crate::interaction::with_x11_foreground(
                         xid,
                         crate::input::ForegroundOptions::pointer(),
-                        crate::interaction::RestoreMode::RestorePrevious,
+                        crate::interaction::session_policy().typing,
                         || crate::input::send_type_text_xtest_paced(&text_f, pacing),
                     )
                     .map(|(value, _report)| value)
@@ -991,6 +1103,9 @@ impl Tool for TypeTextTool {
                 // observing it, so the confirm is suppressed there (mirrors macOS).
                 return type_text_ax_result(pid, text_len, "via AT-SPI");
             }
+            Ok(Err(error)) if crate::atspi::input_may_have_landed(&error) => {
+                return atspi_text_outcome_unknown(delivery, &error);
+            }
             _ => {
                 // AT-SPI failed (no editable exposed). Qt5 doesn't expose widgets
                 // when unfocused, so try the synthetic-focus workaround.
@@ -1008,28 +1123,23 @@ impl Tool for TypeTextTool {
                 if !is_qt5_process(pid) {
                     anyhow::bail!("not a Qt5 process; synthetic-FocusIn bridge workaround skipped");
                 }
-                // Send FocusIn to trigger Qt5's bridge
-                crate::input::send_focus_in(xid)?;
-                std::thread::sleep(std::time::Duration::from_millis(100));
-
-                // Try AT-SPI again now that widgets should be exposed
-                let result = crate::atspi::type_into_editable(pid, &text_clone2);
-
-                // Restore state with FocusOut
-                crate::input::send_focus_out(xid)?;
-
-                result
+                write_with_synthetic_focus(
+                    || crate::input::send_focus_in(xid),
+                    // Try AT-SPI again now that widgets should be exposed
+                    || crate::atspi::type_into_editable(pid, &text_clone2),
+                    || crate::input::send_focus_out(xid),
+                )
             },
         )
         .await;
 
-        match qt5_result {
-            Ok(Ok(())) => {
-                return type_text_ax_result(pid, text_len, "via AT-SPI with focus workaround");
+        if let Ok(Ok(written)) = qt5_result {
+            if let Some(result) = synthetic_focus_write_result(written, delivery, || {
+                type_text_ax_result(pid, text_len, "via AT-SPI with focus workaround")
+            }) {
+                return result;
             }
-            _ => {
-                // AT-SPI still didn't work. Fall back to X11 XSendEvent.
-            }
+            // AT-SPI still didn't work. Fall back to X11 XSendEvent.
         }
 
         // Track which path the final fallback chain took, so the
@@ -1053,8 +1163,11 @@ impl Tool for TypeTextTool {
             // focused widget, so background XSendEvent typing doesn't land. Fill
             // the editable field via AT-SPI instead — focus-free and toolkit-
             // agnostic. Fall back to Tk send or XSendEvent when no a11y field is exposed.
-            if crate::atspi::insert_text(pid, &text).unwrap_or(false) {
-                return Ok(("ax", None));
+            match crate::atspi::insert_text(pid, &text) {
+                Ok(true) => return Ok(("ax", None)),
+                // Sent and failed: Tk send or key events would type it twice.
+                Err(error) if crate::atspi::input_may_have_landed(&error) => return Err(error),
+                _ => {}
             }
             // Tk apps: use Tk's `send` command (no AT-SPI bridge, so AT-SPI above
             // returned false). This is the Tk-specific override, like CDP for Chromium.
@@ -1065,7 +1178,7 @@ impl Tool for TypeTextTool {
                 crate::interaction::with_x11_foreground(
                     xid,
                     crate::input::ForegroundOptions::pointer(),
-                    crate::interaction::RestoreMode::RestorePrevious,
+                    crate::interaction::session_policy().typing,
                     || crate::input::send_type_text_xtest_paced(&text, pacing),
                 )
                 .map(|(value, _report)| value)?;
@@ -1099,6 +1212,9 @@ impl Tool for TypeTextTool {
                 "Typed {text_len} character(s) (via X11, delivery_mode={mode_label})."
             ))
             .with_structured(type_text_structured(path, text_len, false)),
+            Ok(Err(e)) if crate::atspi::input_may_have_landed(&e) => {
+                atspi_text_outcome_unknown(delivery, &e)
+            }
             Ok(Err(e)) => input_error_result(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }

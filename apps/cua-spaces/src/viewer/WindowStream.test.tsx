@@ -28,8 +28,19 @@ describe("avcCodecFromAnnexB", () => {
 
   it("finds the SPS after a leading 3-byte-start NAL", () => {
     const data = new Uint8Array([
-      0, 0, 1, 0x09, 0x10, // access unit delimiter (type 9)
-      0, 0, 0, 1, 0x67, 0x42, 0xe0, 0x1f, // SPS (type 7)
+      0,
+      0,
+      1,
+      0x09,
+      0x10, // access unit delimiter (type 9)
+      0,
+      0,
+      0,
+      1,
+      0x67,
+      0x42,
+      0xe0,
+      0x1f, // SPS (type 7)
     ]);
     expect(avcCodecFromAnnexB(data)).toBe("avc1.42E01F");
   });
@@ -47,9 +58,7 @@ describe("cursorShapeToCss", () => {
     expect(cursorShapeToCss({ kind: "grabbing" })).toBe("grabbing");
     expect(cursorShapeToCss({ kind: "not_allowed" })).toBe("not-allowed");
     expect(cursorShapeToCss({ kind: "resize", axis: "north_south" })).toBe("ns-resize");
-    expect(cursorShapeToCss({ kind: "resize", axis: "north_west_south_east" })).toBe(
-      "nwse-resize",
-    );
+    expect(cursorShapeToCss({ kind: "resize", axis: "north_west_south_east" })).toBe("nwse-resize");
     expect(cursorShapeToCss({ kind: "resize", axis: "column" })).toBe("col-resize");
   });
 
@@ -59,9 +68,7 @@ describe("cursorShapeToCss", () => {
   it("treats unknown as 'hold the previous shape', NOT as an arrow", () => {
     expect(cursorShapeToCss({ kind: "unknown" })).toBeNull();
     expect(cursorShapeToCss({ kind: "default" })).toBe("default");
-    expect(cursorShapeToCss({ kind: "unknown" })).not.toBe(
-      cursorShapeToCss({ kind: "default" }),
-    );
+    expect(cursorShapeToCss({ kind: "unknown" })).not.toBe(cursorShapeToCss({ kind: "default" }));
   });
 
   it("holds the previous shape for a shape introduced after this build", () => {
@@ -133,9 +140,7 @@ describe("WindowStream", () => {
     RecordingSocket.urls = [];
     originalWebSocket = (globalThis as { WebSocket?: unknown }).WebSocket;
     (globalThis as { WebSocket: unknown }).WebSocket = RecordingSocket;
-    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
-      null as unknown as CanvasRenderingContext2D,
-    );
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null as unknown as CanvasRenderingContext2D);
   });
   afterEach(() => {
     (globalThis as { WebSocket?: unknown }).WebSocket = originalWebSocket;

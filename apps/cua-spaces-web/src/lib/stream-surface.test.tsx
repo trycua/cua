@@ -118,7 +118,10 @@ describe("stream surface helpers", () => {
     expect(isOccluded(slot, clip)).toBe(true);
     expect(videoHoles(slot, clip)).toEqual([]);
     // A menu (or a toast, marked `data-video-occluder`) over it: a hole, clipped to the slot; the video stays.
-    for (const mark of [["role", "menu"], ["data-video-occluder", ""]] as const) {
+    for (const mark of [
+      ["role", "menu"],
+      ["data-video-occluder", ""],
+    ] as const) {
       dialog.removeAttribute("role");
       dialog.removeAttribute("data-video-occluder");
       dialog.setAttribute(mark[0], mark[1]);
@@ -187,7 +190,10 @@ describe("stream surface helpers", () => {
       reporter.register(tile, { spaceId: "a", tier: "tile", interactive: false, radius: 8 }, () => {}),
     ];
     const last = (space: string) => {
-      const m = [...posted].reverse().find((x) => x.type === "surfaces" && x.update.some((u) => u.spaceId === space)) as Extract<StreamSurfaceMessage, { type: "surfaces" }>;
+      const m = [...posted].reverse().find((x) => x.type === "surfaces" && x.update.some((u) => u.spaceId === space)) as Extract<
+        StreamSurfaceMessage,
+        { type: "surfaces" }
+      >;
       return m.update.find((u) => u.spaceId === space)!;
     };
     const focusPosts = () => posted.filter((m) => m.type === "focus");
@@ -481,9 +487,7 @@ describe("VideoSlotReporter", () => {
     const tileStatus: SlotStatus[] = [];
     const viewerStatus: SlotStatus[] = [];
     const stopTile = reporter.register(tile, { spaceId: "a", tier: "tile", interactive: false, radius: 8 }, (s) => tileStatus.push(s));
-    const stopViewer = reporter.register(viewer, { spaceId: "b", tier: "full", interactive: true, radius: 12, inset: 1 }, (s) =>
-      viewerStatus.push(s),
-    );
+    const stopViewer = reporter.register(viewer, { spaceId: "b", tier: "full", interactive: true, radius: 12, inset: 1 }, (s) => viewerStatus.push(s));
     const viewerId = reporter.idOf(viewer)!;
     expect(posted).toHaveLength(2);
     const second = posted[1];
@@ -682,6 +686,28 @@ describe("<StreamSurface> native video", () => {
     act(() => hostEvent("video.surface", { surfaceId: first.surfaceId, state: "live" }));
     expect(container.querySelector('[data-stream-state="live"]')).toBeTruthy();
     expect(container.querySelector("[data-desktop-cover]")).toBeNull();
+  });
+
+  // Regression (first run, a browser over the app after sign-in): the host
+  // stops streams while its window is covered, and the page still said "No
+  // picture arrived ... within 20 seconds". Hidden time doesn't count; the
+  // wait starts over when the window shows.
+  it("does not time out while the page is hidden, and waits in full once it shows", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let state: DocumentVisibilityState = "hidden";
+    vi.spyOn(document, "visibilityState", "get").mockImplementation(() => state);
+    hostDrawsVideo();
+    const { container, queryByText } = mount();
+    await waitFor(() => expect(updates()).not.toHaveLength(0));
+    act(() => void vi.advanceTimersByTime(CONNECT_TIMEOUT_MS * 3));
+    expect(container.querySelector('[data-stream-state="connecting"]')).toBeTruthy();
+    expect(queryByText("Could not connect to the desktop")).toBeNull();
+    state = "visible";
+    act(() => void document.dispatchEvent(new Event("visibilitychange")));
+    act(() => void vi.advanceTimersByTime(CONNECT_TIMEOUT_MS - 1_000));
+    expect(container.querySelector('[data-stream-state="connecting"]')).toBeTruthy();
+    act(() => void vi.advanceTimersByTime(1_000));
+    expect(container.querySelector('[data-stream-state="failed"]')).toBeTruthy();
   });
 
   // "Connecting…" alone for many seconds reads as hung: after SLOW_CONNECT_MS

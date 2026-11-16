@@ -431,7 +431,17 @@ export interface CloudSheetView {
   footnote: string;
   error: string | null;
   done: boolean;
-  request: { provider: string; auth?: string; region?: string; environment?: string; budget_usd_month: number; max_size?: string; account_id?: string; check?: boolean; uses_token?: boolean } | null;
+  request: {
+    provider: string;
+    auth?: string;
+    region?: string;
+    environment?: string;
+    budget_usd_month: number;
+    max_size?: string;
+    account_id?: string;
+    check?: boolean;
+    uses_token?: boolean;
+  } | null;
 }
 
 /* ---- The SDK's cloud tools (snake_case wire records) --------------------- */

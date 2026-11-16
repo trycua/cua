@@ -41,7 +41,13 @@ export function activeMention(text: string, caret: number): { start: number; que
  * label starts with it, agents first, in the order given. */
 export function matchMentions(query: string, candidates: readonly MentionCandidate[]): MentionCandidate[] {
   const q = query.toLowerCase();
-  const hit = (c: MentionCandidate) => !q || c.handle.toLowerCase().startsWith(q) || c.label.toLowerCase().split(/\s+/).some((w) => w.startsWith(q));
+  const hit = (c: MentionCandidate) =>
+    !q ||
+    c.handle.toLowerCase().startsWith(q) ||
+    c.label
+      .toLowerCase()
+      .split(/\s+/)
+      .some((w) => w.startsWith(q));
   const found = candidates.filter(hit);
   return [...found.filter((c) => c.kind === "agent"), ...found.filter((c) => c.kind !== "agent")];
 }

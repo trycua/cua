@@ -36,6 +36,7 @@ use crate::error::{Result, VmmError};
 use crate::exec::{ExecOutput, ExecRequest, GuestExec};
 use crate::host;
 use crate::runtime::Runtime;
+use crate::stack::boxed;
 use crate::types::*;
 
 pub use engine::{EngineEndpoint, EngineKind};
@@ -535,12 +536,33 @@ impl ContainerRuntime {
             ledger::PullLedger::default().touch(reference);
             return Ok(());
         }
-        // The engine stores images in its own VM or data root; on this host
-        // that grows the engine's disk image, so the host volume is checked.
-        crate::disk::ensure_space(
-            &crate::host::cua_home(),
+        // The engine writes images under its own data root. For dockerd
+        // directly on this Linux host that root is a host path, so its
+        // filesystem is the one checked. An engine in a VM (Colima, Lima,
+        // Docker Desktop, OrbStack) reports a root inside the VM that is no
+        // host path; the image then grows the VM's disk image on the host
+        // volume holding CUA_HOME, so that volume stays the one checked.
+        let root = self
+            .docker
+            .info()
+            .await
+            .ok()
+            .and_then(|i| i.docker_root_dir);
+        let target = pull_space_path(
+            &self.endpoint.kind,
+            std::env::consts::OS,
+            root.as_deref(),
+            &crate::disk::SystemProbe,
+            crate::host::cua_home(),
+        );
+        let cfg = crate::disk::CacheConfig::load();
+        crate::disk::ensure_space_in(
+            &crate::disk::GlobalProbe,
+            &target,
             crate::disk::CONTAINER_PULL_ESTIMATE,
             &format!("pull {reference}"),
+            cfg.min_free,
+            cfg.warn_free,
         )?;
         let creds = creds
             .filter(|c| c.applies_to(registry_of(reference)))
@@ -873,7 +895,7 @@ impl ContainerRuntime {
         }
         // Its own MAC, so egress rules can be keyed by it before it starts
         // ([`egress`]); no raw sockets under a policy that blocks anything.
-        if let Some((net, mac)) = self.mac_config(name).await? {
+        if let Some((net, mac)) = boxed(|| self.mac_config(name)).await? {
             body.networking_config = Some(net);
             body.labels
                 .get_or_insert_with(Default::default)
@@ -886,7 +908,7 @@ impl ContainerRuntime {
         }
         // Its own resolv.conf: a user-defined network's embedded resolver
         // (127.0.0.11) is out of reach under gVisor ([`egress`]).
-        if let Some((bind, servers)) = self.prepare_resolv(name).await?
+        if let Some((bind, servers)) = boxed(|| self.prepare_resolv(name)).await?
             && let Some(hc) = body.host_config.as_mut()
         {
             hc.binds.get_or_insert_with(Vec::new).push(bind);
@@ -1320,7 +1342,7 @@ impl Runtime for ContainerRuntime {
                     }
                     let have = Self::published(&i);
                     if merged != env || spec.ports.iter().any(|p| !have.contains(p)) {
-                        self.recreate(&spec.name, &i, merged, &spec.ports).await?;
+                        boxed(|| self.recreate(&spec.name, &i, merged, &spec.ports)).await?;
                         i = self
                             .inspect(&spec.name)
                             .await?
@@ -1365,8 +1387,7 @@ impl Runtime for ContainerRuntime {
                             .as_ref()
                             .and_then(|c| c.labels.clone())
                             .unwrap_or_default();
-                        self.create(&spec.name, &img, spec, labels, None, None)
-                            .await?;
+                        boxed(|| self.create(&spec.name, &img, spec, labels, None, None)).await?;
                     }
                     self.start_policed(&spec.name).await?;
                 }
@@ -1412,11 +1433,12 @@ impl Runtime for ContainerRuntime {
                 let (spec, secret) = pool_member_spec(spec)?;
                 let spec = spec.as_ref();
                 // Warm: restore this configuration's golden checkpoint.
-                let plan = self.golden_plan(original, reference).await;
+                let plan = boxed(|| self.golden_plan(original, reference)).await;
                 if let Some(rec) = plan.as_ref().and_then(|p| p.record.as_ref()) {
-                    match self
-                        .start_warm(spec, reference, platform.clone(), rec, secret.as_deref())
-                        .await
+                    match boxed(|| {
+                        self.start_warm(spec, reference, platform.clone(), rec, secret.as_deref())
+                    })
+                    .await
                     {
                         Ok(inst) => return Ok(inst),
                         Err(e) => {
@@ -1447,14 +1469,16 @@ impl Runtime for ContainerRuntime {
                 let mut attempt = 0;
                 loop {
                     attempt += 1;
-                    self.create(
-                        &spec.name,
-                        reference,
-                        spec,
-                        HashMap::new(),
-                        platform.clone(),
-                        None,
-                    )
+                    boxed(|| {
+                        self.create(
+                            &spec.name,
+                            reference,
+                            spec,
+                            HashMap::new(),
+                            platform.clone(),
+                            None,
+                        )
+                    })
                     .await?;
                     if let Some(secret) = &secret
                         && let Err(e) = self.write_token_file(&spec.name, secret).await
@@ -1465,10 +1489,12 @@ impl Runtime for ContainerRuntime {
                     crate::progress::report(crate::progress::Progress::phase(
                         crate::progress::Phase::Booting,
                     ));
-                    match self.start_policed(&spec.name).await {
+                    match boxed(|| self.start_policed(&spec.name)).await {
                         Ok(()) => break,
                         Err(e) => {
-                            self.unpolice(&spec.name).await;
+                            // Created just now: it has a resolv.conf exactly
+                            // under the secure default (`prepare_resolv`).
+                            self.unpolice(&spec.name, egress::secure()).await;
                             self.remove_force(&spec.name).await;
                             let msg = e.to_string();
                             if attempt < PORT_CONFLICT_ATTEMPTS && is_port_conflict(&msg) {
@@ -1497,7 +1523,8 @@ impl Runtime for ContainerRuntime {
                 .host_port(snapshot::SPACESD_PORT)
                 .map(|p| format!("http://{}:{p}", inst.endpoints.host));
             if let Err(e) =
-                snapshot::give_identity(&self.docker, &spec.name, spacesd, auth, token).await
+                boxed(|| snapshot::give_identity(&self.docker, &spec.name, spacesd, auth, token))
+                    .await
             {
                 // A clone must never run on with its source's identity.
                 let _ = self
@@ -1519,8 +1546,8 @@ impl Runtime for ContainerRuntime {
         }
         // Sidecars join the sandbox's network namespace and start before
         // readiness is checked (a probe may target a sidecar's port).
-        if let Err(e) = self.ensure_sidecars(spec).await {
-            let _ = self.delete(&spec.name).await;
+        if let Err(e) = boxed(|| self.ensure_sidecars(spec)).await {
+            let _ = boxed(|| self.delete(&spec.name)).await;
             return Err(e);
         }
         if !spec.probes.is_empty() {
@@ -1528,15 +1555,17 @@ impl Runtime for ContainerRuntime {
                 crate::progress::Phase::WaitingForServices,
             ));
         }
-        self.wait_probes(
-            &spec.name,
-            &inst.endpoints,
-            &spec.probes,
-            spec.ready_timeout,
-        )
+        boxed(|| {
+            self.wait_probes(
+                &spec.name,
+                &inst.endpoints,
+                &spec.probes,
+                spec.ready_timeout,
+            )
+        })
         .await?;
         if let Some((plan, reference)) = record_golden {
-            self.spawn_golden(spec, &reference, plan).await;
+            boxed(|| self.spawn_golden(spec, &reference, plan)).await;
         }
         Ok(inst)
     }
@@ -1968,13 +1997,16 @@ impl Runtime for ContainerRuntime {
             ..Default::default()
         };
         // A restored container: the engine forgets it, and a fork that never
-        // started still owns its private checkpoint.
-        let (restored, image_id) = match self.inspect(name).await {
+        // started still owns its private checkpoint. Its resolv.conf is
+        // removed only when it mounts one (when it can't be told, as before).
+        let (restored, image_id, resolv) = match self.inspect(name).await {
             Ok(Some(i)) => (
                 restore_dir(&i).map(|d| (i.id.clone().unwrap_or_default(), d)),
                 i.image.clone(),
+                egress::has_resolv_bind(i.host_config.as_ref().and_then(|h| h.binds.as_ref())),
             ),
-            _ => (None, None),
+            Ok(None) => (None, None, false),
+            Err(_) => (None, None, true),
         };
         // Sidecars first: they hold the sandbox's network namespace.
         for sc in self.sidecar_names(name).await.unwrap_or_default() {
@@ -1988,7 +2020,7 @@ impl Runtime for ContainerRuntime {
             }
             Err(e) => return Err(engine_err(e)),
         }
-        self.unpolice(name).await;
+        self.unpolice(name, resolv).await;
         if let Some((id, dir)) = restored {
             let helper = self.helper();
             let _ = helper.forget(&[&id]).await;
@@ -2116,6 +2148,11 @@ impl Runtime for ContainerRuntime {
         renamed?;
         if egress::kept(member).is_some() {
             egress::copy(member, new_name)?;
+            // The member sits on the network of ITS tree (its own name). Renamed, the Space is still on that
+            // network, so it keeps that tree: with `None` (its own, by its new name) the Space looked as if it were
+            // on the wrong network at its next start, and a warm-claimed Space could never be started again
+            // ("was made before its network settings ... recreate it and its files would be lost").
+            egress::keep_tree_of_claimed(member, new_name)?;
             egress::forget(member);
         }
         if let Err(e) = persisted {
@@ -2190,6 +2227,27 @@ fn token_tar(token: &str) -> Result<Vec<u8>> {
     h.set_mtime(host::now_secs());
     b.append_data(&mut h, TOKEN_FILE, body.as_bytes())?;
     Ok(b.into_inner()?)
+}
+
+/// The path whose filesystem receives a pulled image: the engine's data
+/// root when dockerd runs directly on this Linux host and the root is
+/// measurable here, otherwise `home` (an engine in a VM reports a root that
+/// is not a host path, and its disk image lives under the host's home).
+fn pull_space_path(
+    kind: &EngineKind,
+    os: &str,
+    root: Option<&str>,
+    probe: &dyn crate::disk::SpaceProbe,
+    home: std::path::PathBuf,
+) -> std::path::PathBuf {
+    if *kind == EngineKind::NativeLinux
+        && os == "linux"
+        && let Some(root) = root.filter(|r| std::path::Path::new(r).is_absolute())
+        && probe.space(std::path::Path::new(root)).is_ok()
+    {
+        return std::path::PathBuf::from(root);
+    }
+    home
 }
 
 impl ContainerRuntime {
@@ -3048,9 +3106,10 @@ fn apply_wsl_gpu(body: &mut ContainerCreateBody) {
                 path_in_container: Some("/dev/dxg".into()),
                 cgroup_permissions: Some("rwm".into()),
             });
-        hc.binds
-            .get_or_insert_with(Vec::new)
-            .push("/usr/lib/wsl:/usr/lib/wsl:ro".into());
+        let binds = hc.binds.get_or_insert_with(Vec::new);
+        binds.push("/usr/lib/wsl:/usr/lib/wsl:ro".into());
+        // A job's member runs with its own PATH: `nvidia-smi` is on it.
+        binds.push("/usr/lib/wsl/lib/nvidia-smi:/usr/local/bin/nvidia-smi:ro".into());
     }
 }
 
@@ -3287,6 +3346,65 @@ mod tests {
         assert!(!require_gvisor_from(Some("0")));
         assert!(!require_gvisor_from(Some("")));
         assert!(!require_gvisor_from(None));
+    }
+
+    struct NoSpace;
+    impl crate::disk::SpaceProbe for NoSpace {
+        fn space(&self, _: &std::path::Path) -> std::io::Result<crate::disk::Space> {
+            Err(std::io::Error::other("unreadable"))
+        }
+    }
+    struct Roomy;
+    impl crate::disk::SpaceProbe for Roomy {
+        fn space(&self, _: &std::path::Path) -> std::io::Result<crate::disk::Space> {
+            Ok(crate::disk::Space {
+                available: 1 << 40,
+                total: 1 << 41,
+            })
+        }
+    }
+
+    #[test]
+    fn pull_space_follows_the_engine_data_root_only_on_a_native_host() {
+        let home = std::path::PathBuf::from("/home/u/.cua");
+        let root = Some("/var/lib/docker");
+        let pick = |k: &EngineKind, os, r, p: &dyn crate::disk::SpaceProbe| {
+            pull_space_path(k, os, r, p, home.clone())
+        };
+        assert_eq!(
+            pick(&EngineKind::NativeLinux, "linux", root, &Roomy),
+            std::path::PathBuf::from("/var/lib/docker")
+        );
+        // Unknown root, unreadable root, or an engine in a VM: the host check.
+        assert_eq!(pick(&EngineKind::NativeLinux, "linux", None, &Roomy), home);
+        assert_eq!(
+            pick(&EngineKind::NativeLinux, "linux", root, &NoSpace),
+            home
+        );
+        assert_eq!(pick(&EngineKind::NativeLinux, "macos", root, &Roomy), home);
+        let colima = EngineKind::Colima {
+            profile: "default".into(),
+        };
+        assert_eq!(pick(&colima, "linux", root, &Roomy), home);
+        assert_eq!(
+            pick(&EngineKind::DockerDesktop, "macos", root, &Roomy),
+            home
+        );
+    }
+
+    #[test]
+    fn pull_space_path_rejects_a_relative_root() {
+        let home = std::path::PathBuf::from("/h");
+        assert_eq!(
+            pull_space_path(
+                &EngineKind::NativeLinux,
+                "linux",
+                Some("docker"),
+                &Roomy,
+                home.clone()
+            ),
+            home
+        );
     }
 
     #[tokio::test]
@@ -3635,10 +3753,13 @@ mod tests {
             hc.devices.unwrap()[0].path_on_host.as_deref(),
             Some("/dev/dxg")
         );
+        let binds = hc.binds.unwrap();
+        assert!(binds.contains(&"/usr/lib/wsl:/usr/lib/wsl:ro".to_string()));
         assert!(
-            hc.binds
-                .unwrap()
-                .contains(&"/usr/lib/wsl:/usr/lib/wsl:ro".to_string())
+            binds
+                .iter()
+                .any(|b| b.ends_with(":/usr/local/bin/nvidia-smi:ro")),
+            "a member's own PATH still finds nvidia-smi"
         );
         assert!(
             body.env

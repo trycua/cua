@@ -515,11 +515,11 @@ AX/PX ladder for browser chrome.
 The legacy `page` tool remains a compatibility surface for older clients. Do
 not start new browser workflows with it: its backend and trust semantics are
 less precise than the typed browser tools, and it does not replace exact
-window binding. Its mutations are disabled by default. Only a trusted daemon
-operator can enable the temporary compatibility path with
-`CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1` before daemon startup. Restart Cua
-Driver after changing the flag. It does not add typed endpoint ownership,
-capabilities, or existing-profile consent.
+window binding. It is read-only: only `get_text` and `query_dom` remain, and
+they are the way to read Safari and Firefox pages. Its page actions (run
+JavaScript, click, type) were removed, along with the
+`CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS` switch; act on a page with the typed
+`browser_*` tools.
 
 On macOS, legacy `page.get_text` and `page.query_dom` keep their original text
 payload but also report read provenance in `structuredContent.source`:
@@ -544,10 +544,35 @@ JavaScript or CDP route was attempted.
 Product classification alone is not a capability claim. Trust the structured
 result from the current host, process, window, session, and tab.
 
+### Electron apps
+
+An Electron app binds like a browser whatever its product name (Slack,
+Obsidian, VS Code): the driver recognizes the bundled Electron runtime, not the
+name. Its page is reachable only through a DevTools endpoint the app opened at
+launch, and an Electron app has no remote-debugging page to turn one on later,
+so `strategy: {"kind":"existing_profile"}` does not apply.
+
+- Started with `--remote-debugging-port=0` (for example through
+  `launch_app` with `additional_arguments`): `get_browser_state` binds the
+  user's instance directly.
+- Started without it: `get_browser_state` refuses with
+  `browser_requires_setup`, reason `embedded_application_endpoint_closed`, and
+  `detail.next_call` names `browser_prepare` with `allow_launch: true` and
+  `profile: {"mode":"isolated_new"}`. That launches a separate driver-owned
+  copy of the app on a fresh profile; bind that copy's window (its pid is
+  `prepared_pid`). The copy does not see the user's open documents or signed-in
+  state. Attaching the user's own instance needs the user to restart it with
+  the flag.
+
+The typed tools read the page's semantic outline and act on refs; they do not
+return arbitrary DOM attributes.
+
 ## Recovery rules
 
 - `browser_requires_setup`: obtain explicit approval and call
-  `browser_prepare`; never make setup a hidden read side effect.
+  `browser_prepare`; never make setup a hidden read side effect. When the
+  refusal carries `detail.next_call`, make that exact call (an Electron app
+  names an isolated launch, see [Electron apps](#electron-apps)).
 - `browser_consent_required`: restart standard mode with the trusted launch
   grant, use a capability manifest that admits the exact resource while the
   selected profile remains independently binding, or let the embedding host

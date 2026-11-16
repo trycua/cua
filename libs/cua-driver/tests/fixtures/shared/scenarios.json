@@ -432,6 +432,16 @@
     }
    },
    {
+    "id": "save_sheet",
+    "kind": "native_sheet",
+    "description": "Opt-in (CUA_APPKIT_SAVE_SHEET=1): an NSButton that opens an NSSavePanel as a sheet on the main window. The panel's name field and Save button appear in the main window's accessibility tree; tests set the name and press Save through the main window, and send foreground Return and Escape aimed at the main window and at the sheet's own window id (#3351, #4392). save_sheet= label records open, cancelled, or saved name=.",
+    "controls": {
+     "open_button_aid": "btn-save-sheet",
+     "state_label_aid": "lbl-save-sheet",
+     "default_name": "harness-untitled"
+    }
+   },
+   {
     "id": "exit",
     "kind": "exit_button",
     "controls": {
@@ -616,6 +626,15 @@
     "controls": {
      "checkbox_aid": "chk-agree",
      "status_label_text": "agreed="
+    }
+   },
+   {
+    "id": "disabled_control",
+    "kind": "toggle",
+    "description": "Opt-in (CUA_GTK3_DISABLED_CONTROL=1): an insensitive GtkCheckButton. Tests that get_window_state publishes it with enabled: false and that its token writers are refused as element_disabled without changing it. disabled_checked= label.",
+    "controls": {
+     "checkbox_aid": "chk-disabled",
+     "status_label_text": "disabled_checked="
     }
    },
    {

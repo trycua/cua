@@ -181,7 +181,10 @@ fn probe_d3d11_device() -> Result<(), String> {
 fn ver_string() -> Option<String> {
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt as _;
+        use windows::Win32::System::Threading::CREATE_NO_WINDOW;
         let output = std::process::Command::new("cmd")
+            .creation_flags(CREATE_NO_WINDOW.0)
             .args(["/c", "ver"])
             .output()
             .ok()?;

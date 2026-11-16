@@ -1460,29 +1460,8 @@ mod tests {
         assert!(r.is_err());
     }
 
-    /// Ask first on (or off) for one test, and back to the environment's say
-    /// afterwards. The experiment is a process-wide switch, so the tests that
-    /// flip it take turns.
-    pub(crate) struct AskFirst(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
-
-    impl AskFirst {
-        pub(crate) fn set(on: bool) -> Self {
-            static TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
-            let g = TURN.lock().unwrap_or_else(|e| e.into_inner());
-            cua_spaces::experiments::set_enabled(cua_spaces::experiments::Gate::AskFirst, Some(on));
-            AskFirst(g)
-        }
-    }
-
-    impl Drop for AskFirst {
-        fn drop(&mut self) {
-            cua_spaces::experiments::set_enabled(cua_spaces::experiments::Gate::AskFirst, None);
-        }
-    }
-
     #[test]
     fn the_github_key_never_goes_into_a_space() {
-        let _on = AskFirst::set(true);
         // It is the host's own: a run cannot ask for it by name.
         assert!(cua_spaces::agents::HOST_ONLY_KEYS.contains(&GITHUB_KEY));
         let keys = cua_spaces::agents::keys::AgentKeys::unavailable("test");

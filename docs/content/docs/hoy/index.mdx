@@ -1,0 +1,85 @@
+---
+title: Hoy
+description: 'A faster virtualization stack for macOS VMs on Apple silicon: quick boot and snapshots that restore in about 1.2 seconds.'
+landing:
+  summary: 'A faster way to run macOS VMs on Apple silicon.'
+---
+
+Hoy runs macOS VMs on an Apple silicon Mac, with a virtualization stack built
+for speed. A VM boots to ssh in about 5 seconds. You can snapshot a running VM
+and go back to the snapshot in about 1.2 seconds.
+
+Hoy runs VMs on its own engine. It uses Apple's Virtualization framework only to
+install macOS from Apple's restore images, when you make an image.
+
+Hoy is for people who start and reset macOS VMs often: developers who test on
+a clean macOS, teams that run CI or agent workloads on Macs, and anyone who
+wants to try something risky and roll it back.
+
+The Hoy End User License Agreement allows commercial use on as many Macs as you
+like. Apple's macOS license still applies to every macOS VM you run.
+
+## How Hoy works
+
+Hoy turns one Apple-made macOS install into as many VMs as you need. The order
+is always the same:
+
+1. **Prepare macOS once: make an image.** `hoy image create` downloads Apple's
+   macOS from Apple, installs it, sets it up (a user, ssh, Hoy's guest agent)
+   and stores the result as an image. You do it once per macOS version.
+2. **Create a VM from the image.** `hoy create demo --image macos-27.2.1`
+   takes seconds and almost no disk, because the VM is a clone of the image.
+   `create` does not start the VM. It is listed as stopped.
+3. **Start it.** `hoy start demo --wait ready` boots the VM and waits until it
+   answers.
+4. **Open its desktop, or run commands in it.** `hoy vnc demo` opens the desktop.
+   `hoy exec demo -- sw_vers` and `hoy ssh demo` use the shell.
+
+A plain image name means the newest image with that name that passed its smoke
+test. At the end of `hoy image create`, Hoy boots a test VM from the new image,
+checks the desktop, ssh and sudo, and only then counts it as tested.
+
+## How fast
+
+Hoy and Apple's Virtualization framework, on the same Mac with the same macOS
+image. Lower is better.
+
+| Measure | Hoy | Apple's Virtualization framework |
+|---|---|---|
+| Boot to ssh | 5.3 s | 6.6 s |
+| Pause while saving a snapshot | 0.77 s | 2.8 s |
+| Restore a snapshot | 1.2 s | 3.0 s |
+
+Measured on an M4 Pro MacBook Pro on macOS 27.2 with a release candidate of Hoy,
+as the median of 5 runs, on 12 Nov 2026. Yours will differ with the Mac and the
+guest.
+
+Taking a snapshot pauses a VM for 0.77 seconds with Hoy and 2.8 seconds with
+Apple's framework. With Hoy the VM keeps running afterwards, and you can fork
+new VMs from it.
+
+## What you need
+
+| Requirement | Detail |
+|---|---|
+| Mac | Apple silicon, M1 or later. Intel Macs are not supported. |
+| macOS on the Mac | 26.x or 27.x |
+| Disk | 64 GiB free for your first image, then about 27 GiB per further image |
+| Admin account | To install Hoy.app and approve the Hoy system extension (Endpoint Security) |
+| Concurrency | Up to two macOS VMs at a time across all tools (Apple's limit) |
+
+## Next
+
+- [Install](/hoy/guides/install): register for a token, install Hoy, approve the extension and check your Mac.
+- [Quickstart](/hoy/quickstart): make an image, create a VM, ssh in and remove it.
+- [CLI reference](/hoy/guides/cli-reference): every command and flag.
+- [Snapshots and restore](/hoy/guides/snapshots-restore-fork): save a running VM and go back to it.
+- [Import VMs from Tart, UTM and Lume](/hoy/guides/import)
+- [Clipboard sharing](/hoy/guides/clipboard-sharing): copy and paste between your Mac and a VM.
+- [Limits](/hoy/concepts/two-vm-limit): the two-VM limit, how it is enforced and what counts.
+- [Update and rollback](/hoy/guides/update-and-rollback)
+- [Uninstall](/hoy/guides/uninstall)
+- [Troubleshooting](/hoy/guides/troubleshooting): `hoy doctor`, `hoy health`, logs and common errors.
+- [License and data](/hoy/guides/license-and-data): the license agreement and a summary of what Hoy sends to Cua.
+- [Data collection](/hoy/guides/data-collection): the exact payloads and switches.
+- [Getting help](/hoy/guides/getting-help): bug reports on GitHub, security reports by email.

@@ -89,7 +89,12 @@ export function startVideoBench(b: VideoBenchEnv, o: { main: BrowserWindow; open
     void (async () => {
       for (;;) {
         await sleep(1000);
-        const out: StatsSnapshot & { load: ReturnType<typeof load>; videoDecode: string } = { t: t(), streams: await streams(), load: load(), videoDecode: videoDecode() };
+        const out: StatsSnapshot & { load: ReturnType<typeof load>; videoDecode: string } = {
+          t: t(),
+          streams: await streams(),
+          load: load(),
+          videoDecode: videoDecode(),
+        };
         try {
           writeFileSync(file, JSON.stringify(out));
         } catch (error) {
@@ -113,7 +118,13 @@ export function startVideoBench(b: VideoBenchEnv, o: { main: BrowserWindow; open
         memoryMB.push(l.memoryMB);
       }
       const after: StatsSnapshot = { t: t(), streams: await streams() };
-      const report = { ...videoReport("electron", before, after, { cpu, memoryMB }), videoDecode: videoDecode(), platform: process.platform, arch: process.arch, bench: b.bench };
+      const report = {
+        ...videoReport("electron", before, after, { cpu, memoryMB }),
+        videoDecode: videoDecode(),
+        platform: process.platform,
+        arch: process.arch,
+        bench: b.bench,
+      };
       writeFileSync(file, `${JSON.stringify(report, null, 2)}\n`);
       app.quit();
     })();

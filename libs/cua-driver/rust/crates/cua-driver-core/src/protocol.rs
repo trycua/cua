@@ -405,14 +405,14 @@ fn agent_instructions() -> String {
 1. `list_windows({{app:"Name"}})` or `launch_app` for `pid` and `window_id`.
 2. Read narrowly: `get_window_state` with `query:"Save"`. Re-read with `since:"latest"`.
 3. Act by `element_token` ({tree_kind}): row `[N]` is `<snapshot_id>:N`. Pixels only for surfaces missing from the tree.
-4. Act through `run_steps({{steps:[{{tool,args}}],observe:{{}}}})`, even for one step: stops at the first failure, returns what changed.{script_line}
+4. Act through `run_steps({{steps:[{{tool,args}}],observe:{{}}}})`, even for one step, batching actions: stops at the first failure, returns what changed.{script_line}
 5. Verify at checkpoints, not after every action: `verify_state(pid, window_id, expect)`. `unknown` and `effect:"unverifiable"` are not success.
 
-Use the narrowest semantic route first: `set_window_frame` plus `list_windows` for geometry, typed browser tools for pages. Stay in the background; `delivery_mode:"foreground"` only if refused or unverifiable.
+Use the narrowest semantic route first: `set_window_frame` plus `list_windows` for geometry, typed browser tools for pages. Stay in the background; `delivery_mode:"foreground"` only if refused/unverifiable.
 
 Chrome/Edge/Brave page: `get_browser_state({{pid, window_id}})`, its `detail.next_call` (`browser_prepare`) if refused, then `browser_click`/`browser_type`/`browser_pointer` (hover, drag); never desktop pointer tools.
 
-`start_session` is optional; repeat a short `session` label on every call that accepts it. On continuation/recent-work, call `history_status`; if ready, make one bounded initial `history_query` before broad discovery.{permission_line}
+`start_session` is optional; repeat a short `session` label on every call that accepts it.{permission_line}
 
 Guides: `get_guide({{topic}})` (drag, browser, permissions, batching, menus), `skill://cua-driver/SKILL.md`{platform_skill_pointer}."#
     )
@@ -593,21 +593,14 @@ mod agent_instruction_tests {
     }
 
     #[test]
-    fn initialize_instructions_conditionally_consult_history_before_discovery() {
+    fn initialize_instructions_do_not_send_agents_to_deprecated_history() {
         let instructions = initialize_result()["instructions"]
             .as_str()
             .expect("initialize result should carry agent instructions")
             .to_owned();
 
-        assert!(instructions.contains("continuation/recent-work"));
-        let status = instructions.find("call `history_status`").unwrap();
-        let bounded_query = instructions
-            .find("one bounded initial `history_query`")
-            .unwrap();
-        let discovery = instructions.find("broad discovery").unwrap();
-        assert!(status < bounded_query);
-        assert!(bounded_query < discovery);
-        assert!(instructions.contains("if ready"));
+        assert!(!instructions.contains("history_status"));
+        assert!(!instructions.contains("history_query"));
         assert!(instructions.split_whitespace().count() <= 200);
     }
 }

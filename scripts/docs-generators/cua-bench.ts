@@ -44,7 +44,7 @@ import {
   isCheckMode,
   metaJson,
   renderPage,
-  stableJson,
+  cliSpecJson,
   syncFiles,
 } from './lib/mdx';
 
@@ -176,7 +176,7 @@ function checkKeys(where: string, documented: string[], golden: Record<string, u
 
 // ---------------------------------------------------------------- task definition
 
-export function taskDefinitionPage(docs: CbDocs, example: string, version: string): string {
+export function taskDefinitionPage(docs: CbDocs, example: string): string {
   const { task } = docs;
   const body: string[] = [];
   const header = readHeader('cua-bench', 'task-definition');
@@ -222,7 +222,6 @@ export function taskDefinitionPage(docs: CbDocs, example: string, version: strin
     description: 'The task module contract (cb.Task, setup_config, the lifecycle decorators, the session API and actions) and the result.json and summary.json a run writes.',
     generator: REGENERATE,
     source: SOURCE,
-    version,
     body: body.join('\n'),
   });
 }
@@ -273,13 +272,12 @@ export function resultsBody(docs: CbDocs, level = 2): string[] {
 }
 
 /** The result files on a page of their own. */
-export function resultsPage(docs: CbDocs, version: string): string {
+export function resultsPage(docs: CbDocs): string {
   return renderPage({
     title: 'Results',
     description: 'The result.json and summary.json a run writes: every key, its type and meaning.',
     generator: REGENERATE,
     source: SOURCE,
-    version,
     body: resultsBody(docs).join('\n'),
   });
 }
@@ -288,9 +286,8 @@ export function resultsPage(docs: CbDocs, version: string): string {
 
 export function renderAll(docs: CbDocs, example: string): Map<string, string> {
   const cli = cliReference(docs.cli);
-  const version = docs.cli.version;
   const rel = new Map<string, string>(renderCliReference(cli));
-  rel.set('task-definition.mdx', taskDefinitionPage(docs, example, version));
+  rel.set('task-definition.mdx', taskDefinitionPage(docs, example));
   rel.set(
     'index.mdx',
     renderReferenceIndex({
@@ -298,7 +295,6 @@ export function renderAll(docs: CbDocs, example: string): Map<string, string> {
       description: 'Every cb command, the task module contract and the result files, generated from cua-bench.',
       generator: REGENERATE,
       source: SOURCE,
-      version,
       sections: [
         { title: 'Commands', column: 'Command group', rows: cliIndexRows(cli) },
         {
@@ -315,7 +311,7 @@ export function renderAll(docs: CbDocs, example: string): Map<string, string> {
   rel.set('meta.json', metaJson('Reference', ['index', 'cli', 'task-definition']));
   const files = new Map<string, string>();
   for (const [p, content] of rel) files.set(path.join(OUT_DIR, p), content);
-  files.set(CB_CLI_SPEC, stableJson(docs.cli));
+  files.set(CB_CLI_SPEC, cliSpecJson(docs.cli));
   return files;
 }
 

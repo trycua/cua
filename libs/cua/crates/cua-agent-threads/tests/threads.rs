@@ -418,3 +418,113 @@ impl SeekEnd for std::fs::File {
         self.write_all(bytes).unwrap();
     }
 }
+
+/// The Ready screen asks for the chosen agents only (the Codex chats of a
+/// person who picked Claude Code stay out), and every host asks the same way.
+#[test]
+fn only_the_chosen_agents_are_listed() {
+    let h = home();
+    let roots = Roots::under_home(h.path());
+    let list = |agents: Vec<Agent>| recent(&roots, &ListOptions { agents, limit: 10 });
+    let claude = list(vec![Agent::ClaudeCode]);
+    assert!(!claude.is_empty());
+    assert!(claude.iter().all(|t| t.agent == Agent::ClaudeCode));
+    let codex = list(vec![Agent::Codex]);
+    assert!(!codex.is_empty());
+    assert!(codex.iter().all(|t| t.agent == Agent::Codex));
+    let both = list(vec![Agent::Codex, Agent::ClaudeCode, Agent::Codex]);
+    assert_eq!(both.len(), claude.len() + codex.len());
+    assert!(
+        both.windows(2)
+            .all(|w| w[0].last_active_ms >= w[1].last_active_ms)
+    );
+    assert!(list(vec![]).is_empty());
+}
+
+/// A store of years of Codex chats is read from its newest day folders only,
+/// and a chat taken up again within the week before still shows.
+#[test]
+fn codex_reads_its_newest_days_only() {
+    use std::time::{Duration, SystemTime};
+    let d = tempfile::tempdir().unwrap();
+    let sessions = d.path().join(".codex/sessions");
+    let rollout = |day: &str, n: u32| {
+        let id = format!("01a00000-0000-7000-8000-{n:012}");
+        let p = sessions.join(day).join(format!(
+            "rollout-{}T10-00-00-{id}.jsonl",
+            day.replace('/', "-")
+        ));
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(
+            &p,
+            format!(
+                "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"source\":\"cli\"}}}}\n{{\"type\":\"response_item\",\"payload\":{{\"type\":\"message\",\"role\":\"user\",\"content\":[{{\"type\":\"input_text\",\"text\":\"task {n}\"}}]}}}}\n"
+            ),
+        )
+        .unwrap();
+        (p, id)
+    };
+    let mut n = 0;
+    let mut days = vec![];
+    for m in 1..=12 {
+        for day in 1..=28 {
+            days.push(format!("2025/{m:02}/{day:02}"));
+        }
+    }
+    for day in &days {
+        for _ in 0..3 {
+            n += 1;
+            rollout(day, n);
+        }
+    }
+    // An old chat (start of the year) taken up again now: outside the week back, it is not read.
+    let (old, _) = rollout("2025/01/01", 9_000);
+    // One started 3 day folders back and taken up again now: it leads.
+    let (resumed, resumed_id) = rollout("2025/12/25", 9_001);
+    let now = SystemTime::now();
+    for p in [&old, &resumed] {
+        std::fs::File::options()
+            .write(true)
+            .open(p)
+            .unwrap()
+            .set_modified(now + Duration::from_secs(60))
+            .unwrap();
+    }
+    let roots = Roots::under_home(d.path());
+    let got = recent(
+        &roots,
+        &ListOptions {
+            agents: vec![Agent::Codex],
+            limit: 4,
+        },
+    );
+    assert_eq!(got.len(), 4);
+    assert_eq!(got[0].id, resumed_id);
+    assert!(
+        got.iter()
+            .all(|t| t.id != "01a00000-0000-7000-8000-000000009000")
+    );
+}
+
+#[test]
+fn a_cached_listing_answers_again_without_reading() {
+    let h = home();
+    let roots = Roots::under_home(h.path());
+    let opts = ListOptions {
+        agents: vec![Agent::ClaudeCode],
+        limit: 4,
+    };
+    let first = cua_agent_threads::recent_cached(&roots, &opts);
+    assert!(!first.is_empty());
+    std::fs::remove_dir_all(h.path().join(".claude")).unwrap();
+    assert_eq!(cua_agent_threads::recent_cached(&roots, &opts), first);
+    // Another set of agents is its own listing.
+    let codex = cua_agent_threads::recent_cached(
+        &roots,
+        &ListOptions {
+            agents: vec![Agent::Codex],
+            limit: 4,
+        },
+    );
+    assert!(codex.iter().all(|t| t.agent == Agent::Codex));
+}

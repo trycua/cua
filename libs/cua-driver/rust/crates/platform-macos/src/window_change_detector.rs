@@ -453,10 +453,28 @@ impl Snapshot {
     /// report window: how long the result waits for a change before the rest
     /// of the deadline runs detached.
     fn detect_bounded_reporting(
+        self,
+        bounds: WindowObservationBounds,
+        report_window: Duration,
+        observe: impl FnMut() -> (Vec<WindowInfo>, Option<i32>) + Send + 'static,
+    ) -> Changes {
+        self.detect_bounded_until(bounds, report_window, observe, || false)
+    }
+
+    /// [`detect_bounded_reporting`](Self::detect_bounded_reporting) that also
+    /// ends the report window when the action's own effect has settled.
+    ///
+    /// `settled` lets the action end the report window early: once it returns
+    /// true with no window or foreground change seen, the result returns and
+    /// the rest of the deadline runs detached exactly as after a quiet report
+    /// window. It never extends the wait, and it is not consulted by the
+    /// detached tail, so the focus-steal lease's lifetime is unchanged.
+    fn detect_bounded_until(
         mut self,
         bounds: WindowObservationBounds,
         report_window: Duration,
         observe: impl FnMut() -> (Vec<WindowInfo>, Option<i32>) + Send + 'static,
+        mut settled: impl FnMut() -> bool,
     ) -> Changes {
         let earlier = self.earlier.take();
         if bounds.skips_observation() {
@@ -472,13 +490,14 @@ impl Snapshot {
         }
         let report = report_window.min(bounds.timeout);
         let mut observe = observe;
-        let changes = match self.poll_until(started + report, bounds.poll, &mut observe) {
-            Ok(changes) => changes,
-            Err(quiet) => {
-                quiet.continue_detached(started + bounds.timeout, bounds.poll, observe);
-                Changes::no_change()
-            }
-        };
+        let changes =
+            match self.poll_until(started + report, bounds.poll, &mut observe, &mut settled) {
+                Ok(changes) => changes,
+                Err(quiet) => {
+                    quiet.continue_detached(started + bounds.timeout, bounds.poll, observe);
+                    Changes::no_change()
+                }
+            };
         changes.with_earlier(earlier)
     }
 
@@ -487,6 +506,18 @@ impl Snapshot {
     /// tokio runtime. Most action-tool call sites should prefer this
     /// over the blocking `detect()`.
     pub async fn detect_async(self) -> Changes {
+        self.detect_async_until(|| false).await
+    }
+
+    /// [`detect_async`](Self::detect_async) whose result returns as soon as
+    /// `settled` reports the action's own effect complete, instead of waiting
+    /// out the report window. A window or foreground change seen first is
+    /// still reported, and the detached remainder (and its lease) runs to the
+    /// same deadline. `settled` runs on the blocking poll thread.
+    pub async fn detect_async_until(
+        self,
+        settled: impl FnMut() -> bool + Send + 'static,
+    ) -> Changes {
         // A step of a batch returns after a shorter report window, because
         // the next step follows at once. The pacing is read here: a blocking
         // thread does not inherit the task's batch marker.
@@ -500,7 +531,12 @@ impl Snapshot {
         // Move the Snapshot (and its embedded lease) onto the blocking
         // thread; the lease's Drop runs there when detect_with returns.
         tokio::task::spawn_blocking(move || {
-            self.detect_bounded_reporting(host_observation_bounds(), report_window, observe_host)
+            self.detect_bounded_until(
+                host_observation_bounds(),
+                report_window,
+                observe_host,
+                settled,
+            )
         })
         .await
         .unwrap_or_else(|_| Changes::not_polled())
@@ -527,19 +563,21 @@ impl Snapshot {
     }
 
     /// Poll until a change shows (`Ok`, the lease is dropped) or `deadline`
-    /// passes with none (`Err`, the snapshot and its lease handed back).
+    /// passes, or `settled` holds, with none (`Err`, the snapshot and its
+    /// lease handed back).
     fn poll_until(
         self,
         deadline: Instant,
         poll_interval: Duration,
         observe: &mut impl FnMut() -> (Vec<WindowInfo>, Option<i32>),
+        settled: &mut impl FnMut() -> bool,
     ) -> Result<Changes, Self> {
         loop {
             std::thread::sleep(poll_interval);
             if let Some(changes) = self.observe_once(observe) {
                 return Ok(changes);
             }
-            if Instant::now() >= deadline {
+            if Instant::now() >= deadline || settled() {
                 return Err(self);
             }
         }
@@ -1033,6 +1071,52 @@ mod tests {
         );
     }
 
+    /// An action whose own effect has settled returns before the report
+    /// window ends, and the remainder still runs detached with its lease, so
+    /// focus protection lasts as long as before (trycua/cua#4792).
+    #[test]
+    fn a_settled_action_returns_early_and_keeps_the_detached_watch() {
+        let _serial = lock(&TAIL_TEST_LOCK);
+        focus_arbiter::end_detached();
+        let snap = WindowChangeDetector::capture_from(HashSet::from([1]), Some(7), false, None);
+        let started = Instant::now();
+        let changes = snap.detect_bounded_until(
+            observation_bounds_from(Some("3000"), Some("10")),
+            REPORT_WINDOW,
+            || (vec![win(1, 7, "App", "Main")], Some(7)),
+            move || started.elapsed() >= Duration::from_millis(30),
+        );
+        let elapsed = started.elapsed();
+        assert!(changes.polled && !changes.needs_restore());
+        assert!(
+            elapsed < REPORT_WINDOW,
+            "a settled action waited out the report window: {elapsed:?}"
+        );
+        assert!(focus_arbiter::has_detached(), "the remainder runs detached");
+        focus_arbiter::end_detached();
+    }
+
+    /// A window that opens before the action settles is still reported.
+    #[test]
+    fn a_window_seen_before_settling_is_still_reported() {
+        let _serial = lock(&TAIL_TEST_LOCK);
+        focus_arbiter::end_detached();
+        let snap = WindowChangeDetector::capture_from(HashSet::from([1]), Some(7), false, None);
+        let changes = snap.detect_bounded_until(
+            observation_bounds_from(Some("3000"), Some("10")),
+            REPORT_WINDOW,
+            || {
+                (
+                    vec![win(1, 7, "App", "Main"), win(2, 7, "App", "Sheet")],
+                    Some(7),
+                )
+            },
+            || true,
+        );
+        assert_eq!(changes.new_windows.len(), 1);
+        assert!(!focus_arbiter::has_detached());
+    }
+
     /// The shorter window still reports a window that opens inside it.
     #[test]
     fn a_batched_poll_still_reports_a_window_that_opens_quickly() {
@@ -1102,6 +1186,58 @@ mod tests {
             take_late().is_some_and(|late| late.new_windows.len() == 1),
             "the detached watch records the late window"
         );
+        focus_arbiter::end_detached();
+    }
+
+    /// The desktop lane is held through the action and its report window,
+    /// never through the detached supervision: once the action's call ends,
+    /// the next desktop action is admitted while the first action's watch and
+    /// focus-steal lease are still running (trycua/cua#4771).
+    #[test]
+    fn the_desktop_lane_is_free_while_the_detached_watch_runs() {
+        use cua_driver_core::tool::DesktopCall;
+        let _serial = lock(&TAIL_TEST_LOCK);
+        focus_arbiter::end_detached();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("runtime");
+        runtime.block_on(async {
+            let call = DesktopCall::acquire().await.expect("desktop lane");
+            let started = Instant::now();
+            let changes = call
+                .scope(async {
+                    // Captured inside the action, as an adapter captures it.
+                    let snap = WindowChangeDetector::capture_from(
+                        HashSet::from([1]),
+                        Some(7),
+                        false,
+                        None,
+                    );
+                    snap.detect_bounded_with(
+                        observation_bounds_from(Some("10000"), Some("10")),
+                        || (vec![win(1, 7, "App", "Main")], Some(7)),
+                    )
+                })
+                .await;
+            drop(call);
+            assert!(changes.polled && !changes.needs_restore());
+            assert!(focus_arbiter::has_detached(), "the remainder runs detached");
+            let next = tokio::time::timeout(Duration::from_secs(5), DesktopCall::acquire())
+                .await
+                .expect("the next desktop action waited for the detached watch")
+                .expect("desktop lane");
+            assert!(
+                focus_arbiter::has_detached(),
+                "the next action was admitted only after the detached watch ended"
+            );
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "admitted after {:?}",
+                started.elapsed()
+            );
+            drop(next);
+        });
         focus_arbiter::end_detached();
     }
 

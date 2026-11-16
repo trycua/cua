@@ -17,13 +17,41 @@ const refused = (i: number) => ({ atMs: now - i * 1000, via: "relay", who: WHO, 
 const spaces = (i: number) => ({ atMs: now - 100_000 - i * 1000, via: "relay", who: WHO, what: "HostSpacesService/List" });
 // Twelve refusals in a row (collapsed to one "×12" row), then a run of others.
 const recentAccess = [...Array.from({ length: 12 }, (_, i) => refused(i)), ...Array.from({ length: 6 }, (_, i) => [spaces(i), refused(20 + i)]).flat()];
-const spacesAudit = Array.from({ length: 7 }, (_, i) => ({ atMs: now - i * 60_000, action: "delete", who: WHO, space: `space-e0${i}a1b2c3d4e5f6`, detail: "" }));
+const spacesAudit = Array.from({ length: 7 }, (_, i) => ({
+  atMs: now - i * 60_000,
+  action: "delete",
+  who: WHO,
+  space: `space-e0${i}a1b2c3d4e5f6`,
+  detail: "",
+}));
 
 const state = {
-  configured: true, mode: "relay", relayUrl: "https://relay.cua.ai", directUrl: null, name: "Studio", sharing: true,
-  serviceInstalled: true, serviceRunning: true, serviceKind: "launchd", online: true, clients: [], permissions: [], error: null,
-  recentAccess, accessLogError: null, shareDesktop: false, provideSpaces: true, maxSpaces: 4, maxMacosVms: 2,
-  providedSpaces: [], spacesAudit, spacesAuditError: null, pausedSignedOut: false, owner: null, ownerEmail: null, account: null,
+  configured: true,
+  mode: "relay",
+  relayUrl: "https://relay.cua.ai",
+  directUrl: null,
+  name: "Studio",
+  sharing: true,
+  serviceInstalled: true,
+  serviceRunning: true,
+  serviceKind: "launchd",
+  online: true,
+  clients: [],
+  permissions: [],
+  error: null,
+  recentAccess,
+  accessLogError: null,
+  shareDesktop: false,
+  provideSpaces: true,
+  maxSpaces: 4,
+  maxMacosVms: 2,
+  providedSpaces: [],
+  spacesAudit,
+  spacesAuditError: null,
+  pausedSignedOut: false,
+  owner: null,
+  ownerEmail: null,
+  account: null,
 };
 
 /** The part of a row that must stay whole is not cut, and fits in its row. */

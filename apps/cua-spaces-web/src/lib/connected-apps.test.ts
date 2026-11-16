@@ -7,8 +7,7 @@ import type { AgentSetupRow } from "@/bridge";
 import { demoAgentSetup } from "@/bridge/adapters/demo-agents";
 import { EMPTY_STATE, failureText, getItUrl, missingApps, planSync, readState, shownApps, STATE_KEY, withSwitch, writeState } from "./connected-apps";
 
-const rows = (...over: Partial<AgentSetupRow>[]): AgentSetupRow[] =>
-  over.map((o) => ({ ...demoAgentSetup()[0]!, ...o }) as AgentSetupRow);
+const rows = (...over: Partial<AgentSetupRow>[]): AgentSetupRow[] => over.map((o) => ({ ...demoAgentSetup()[0]!, ...o }) as AgentSetupRow);
 
 describe("planSync", () => {
   it("only records what is installed on the first read, even with consent", () => {
@@ -85,7 +84,9 @@ describe("what is listed", () => {
 
 describe("failureText", () => {
   it("says a read-only file plainly and never shows an os error", () => {
-    expect(failureText("Hermes", "Permission denied (os error 13)")).toBe("Couldn't set up Hermes. Cua can't change this file because it is read-only or belongs to another user.");
+    expect(failureText("Hermes", "Permission denied (os error 13)")).toBe(
+      "Couldn't set up Hermes. Cua can't change this file because it is read-only or belongs to another user.",
+    );
     expect(failureText("Hermes", "boom")).toBe("Couldn't set up Hermes. Cua said: boom.");
     expect(failureText("Hermes", "Not set up")).toBe("Couldn't set up Hermes.");
     expect(failureText("Hermes", "")).toBe("Couldn't set up Hermes.");

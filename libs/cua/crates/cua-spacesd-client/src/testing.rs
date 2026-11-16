@@ -59,7 +59,7 @@ use tonic::{Status, body::Body};
 type Stream<T> = Pin<Box<dyn futures_util::Stream<Item = Result<T, Status>> + Send>>;
 
 /// How the mock authenticates callers.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct MockAuth {
     /// Required env token (direct mode: `authorization`).
     pub token: Option<String>,
@@ -71,13 +71,32 @@ pub struct MockAuth {
     pub prefix: Option<String>,
 }
 
+impl std::fmt::Debug for MockAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MockAuth")
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("gateway", &self.gateway)
+            .field("prefix", &self.prefix)
+            .finish()
+    }
+}
+
 /// Gateway emulation settings.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct MockGateway {
     /// Path prefix, e.g. `/m/<machine-id>`.
     pub prefix: String,
     /// Expected gateway bearer.
     pub bearer: String,
+}
+
+impl std::fmt::Debug for MockGateway {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MockGateway")
+            .field("prefix", &self.prefix)
+            .field("bearer", &"<redacted>")
+            .finish()
+    }
 }
 
 /// Observations the tests assert on.
@@ -1350,6 +1369,8 @@ enum Script {
     Cp(String, String),
     Rm(Vec<String>, bool),
     Test(String),
+    /// `mkdir -p DIR...` (after an optional `umask NNN;`): the folders.
+    Mkdir(Vec<String>),
     Unknown(String),
 }
 
@@ -1391,6 +1412,11 @@ fn parse_script(cfg: &pb::ProcessConfig, user: &str) -> Script {
             .chain(cfg.args.iter().cloned())
             .collect()
     };
+    // `umask 077; CMD ...`: the mode is not modelled, the command runs.
+    if words.first().is_some_and(|w| w == "umask") && words.get(1).is_some_and(|w| w.ends_with(';'))
+    {
+        words.drain(..2);
+    }
     if words.is_empty() {
         return Script::Unknown(String::new());
     }
@@ -1421,6 +1447,17 @@ fn parse_script(cfg: &pb::ProcessConfig, user: &str) -> Script {
         ),
         "test" if words.len() == 2 && (words[0] == "-f" || words[0] == "-e") => {
             Script::Test(words[1].clone())
+        }
+        "mkdir"
+            if words.first().is_some_and(|w| w == "-p")
+                && !words.iter().any(|w| w.contains("&&") || w.contains(';')) =>
+        {
+            Script::Mkdir(
+                words[1..]
+                    .iter()
+                    .map(|w| w.trim_matches('\'').to_string())
+                    .collect(),
+            )
         }
         other => Script::Unknown(other.into()),
     }
@@ -1708,6 +1745,13 @@ impl ProcessService for Svc {
                     Script::Test(path) => {
                         let exists = svc.0.files.lock().unwrap().contains_key(&path);
                         (Some(i32::from(!exists)), String::new())
+                    }
+                    Script::Mkdir(paths) => {
+                        let mut dirs = svc.0.dirs.lock().unwrap();
+                        for p in paths {
+                            dirs.insert(p.trim_end_matches('/').to_string());
+                        }
+                        (Some(0), String::new())
                     }
                     Script::Unknown(p) => (None, format!("executable not found: {p}")),
                 }

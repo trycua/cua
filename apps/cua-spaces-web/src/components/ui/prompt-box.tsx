@@ -5,6 +5,7 @@ import { CheckIcon, CopyIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ComponentProps } from "react";
 
 import { Button } from "@/components/ui/button";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 /**
@@ -29,6 +30,7 @@ export function PromptBox({
   disabled?: boolean;
   className?: string;
 } & Omit<ComponentProps<"textarea">, "value" | "onCopy" | "readOnly" | "className">) {
+  const t = useT();
   const [flash, setFlash] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => void (timer.current && clearTimeout(timer.current)), []);
@@ -64,7 +66,7 @@ export function PromptBox({
         className="absolute top-1.5 right-1.5"
       >
         {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
-        {copied ? "Copied" : "Copy"}
+        {copied ? t("shell.toast.copied") : t("shell.toast.copy")}
       </Button>
     </div>
   );

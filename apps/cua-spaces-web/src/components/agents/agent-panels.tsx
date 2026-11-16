@@ -21,7 +21,13 @@ export function AgentPanel({ tab, detail }: { tab: AgentTab; detail: AgentDetail
   if (!view) return <div className="flex-1" />;
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4" data-agent-panel={tab}>
-      {tab === "memory" ? <Memory view={view} detail={detail} /> : tab === "routines" ? <Routines view={view} detail={detail} /> : <Access view={view} detail={detail} />}
+      {tab === "memory" ? (
+        <Memory view={view} detail={detail} />
+      ) : tab === "routines" ? (
+        <Routines view={view} detail={detail} />
+      ) : (
+        <Access view={view} detail={detail} />
+      )}
       {detail.error ? (
         <p className="mt-3 px-1 text-[13px] text-destructive" role="alert" data-agent-detail-error="">
           {detail.error}
@@ -110,7 +116,12 @@ function Routines({ view, detail }: { view: AgentDetailView; detail: AgentDetail
         )}
         {form.schedule === "weekly" ? (
           <Field label="Day">
-            <Select aria-label="Day" value={form.weekday} options={WEEKDAYS.map((d) => ({ value: d, label: d }))} onValueChange={(weekday) => act({ type: "set-weekday", weekday })} />
+            <Select
+              aria-label="Day"
+              value={form.weekday}
+              options={WEEKDAYS.map((d) => ({ value: d, label: d }))}
+              onValueChange={(weekday) => act({ type: "set-weekday", weekday })}
+            />
           </Field>
         ) : null}
         <div className="flex justify-end px-4 py-2.5">
@@ -174,7 +185,19 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 }
 
 /** A `LineView`: its text (a link when it opens), a muted trailing part, a switch and a button. */
-function Line({ line, busy, onOpen, onToggle, onAction }: { line: AgentLineView; busy: boolean; onOpen?: () => void; onToggle?: () => void; onAction?: () => void }) {
+function Line({
+  line,
+  busy,
+  onOpen,
+  onToggle,
+  onAction,
+}: {
+  line: AgentLineView;
+  busy: boolean;
+  onOpen?: () => void;
+  onToggle?: () => void;
+  onAction?: () => void;
+}) {
   return (
     <div className="flex min-h-11 items-center gap-4 px-4 py-2" data-agent-line={line.id}>
       {onOpen ? (

@@ -8,8 +8,7 @@ import { sanitizeSignals } from "../ops/telemetry";
 import { telemetryLaunched, telemetryOnboarding, type TelemetrySignal } from "../telemetry";
 import { testCore, wasmBuilt } from "./testCore";
 
-const words = (s: TelemetrySignal[]) =>
-  s.map((x) => (x.type === "step" ? x.step : x.type === "onboarding-page" ? `${x.page} ${x.action}` : x.type));
+const words = (s: TelemetrySignal[]) => s.map((x) => (x.type === "step" ? x.step : x.type === "onboarding-page" ? `${x.page} ${x.action}` : x.type));
 
 async function run(actions: OnboardingAction[]): Promise<string[][]> {
   const core = await testCore();

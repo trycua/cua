@@ -149,7 +149,12 @@ export function CloudDetail({ page: p, onGone }: { page: CloudPage; onGone: () =
           <div className="mt-7 mb-2 flex items-center justify-between">
             <h3 className="text-xs font-semibold text-muted-foreground">{p.settingsTitle}</h3>
             {p.limits ? (
-              <button type="button" onClick={() => run(p.limits!)} className="cursor-default text-xs text-brand-strong hover:underline" data-cloud-change-limits="">
+              <button
+                type="button"
+                onClick={() => run(p.limits!)}
+                className="cursor-default text-xs text-brand-strong hover:underline"
+                data-cloud-change-limits=""
+              >
                 {p.limits.label}
               </button>
             ) : null}

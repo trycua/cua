@@ -43,7 +43,10 @@ const mounted = async () => {
 
 /** The listener the app registered for taps and alert buttons. */
 const listener = () => (Notifications.addNotificationResponseReceivedListener as jest.Mock).mock.calls.at(-1)![0] as (r: unknown) => void;
-const response = (data: unknown, actionIdentifier = "expo.modules.notifications.actions.DEFAULT") => ({ actionIdentifier, notification: { request: { identifier: "n1", content: { data } } } });
+const response = (data: unknown, actionIdentifier = "expo.modules.notifications.actions.DEFAULT") => ({
+  actionIdentifier,
+  notification: { request: { identifier: "n1", content: { data } } },
+});
 
 describe("notifications: tap routing and the alert's buttons", () => {
   beforeEach(() => mockPush.mockClear());
@@ -78,7 +81,10 @@ describe("notifications: tap routing and the alert's buttons", () => {
 
   it("registers this phone with the relay when permission is granted and a token exists, and not otherwise", async () => {
     (Notifications.getPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true, canAskAgain: true });
-    (Notifications as unknown as { getDevicePushTokenAsync: jest.Mock }).getDevicePushTokenAsync = jest.fn(async () => ({ type: "ios", data: "cd".repeat(32) }));
+    (Notifications as unknown as { getDevicePushTokenAsync: jest.Mock }).getDevicePushTokenAsync = jest.fn(async () => ({
+      type: "ios",
+      data: "cd".repeat(32),
+    }));
     const { provider } = await mounted();
     await waitFor(() => expect(provider.registrations).toHaveLength(1));
     expect(provider.registrations[0]).toMatchObject({ token: "cd".repeat(32), categories: ["needs_you"] });

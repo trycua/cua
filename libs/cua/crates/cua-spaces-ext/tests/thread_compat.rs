@@ -192,10 +192,15 @@ async fn member_with_idle_run(fx: &Fx) -> (Persistent, cua_spacesd_client::Proce
         ],
     );
     let proc = alive(fx).await;
-    // The supervisor has seen turn 1 already.
+    // The supervisor has seen turn 1 already: its bookmark is past those events, as a real one is.
+    let seen = fx
+        .srv
+        .state
+        .file(&format!("{RUNS}/{RUN}/events.jsonl"))
+        .map_or(0, |b| b.len());
     edit_record(fx, "ada", |r| {
         r["saved_turn"] = json!(1);
-        r["cursor"] = json!(3);
+        r["cursor"] = json!(seen);
     });
     (p, proc)
 }
@@ -592,10 +597,12 @@ async fn an_agent_cannot_write_its_spaces_thread_through_the_volume() {
         .unwrap()
         .drive()
         .clone();
-    let folder = cua_volume::path::space_folder(&fx.space);
+    // The Volume names a Space `<id>--<uid>` (Secure Spaces is the default).
+    let vid = fx.spaces.volume_space_id(&fx.space).unwrap();
+    let folder = cua_volume::path::space_folder(&vid);
     for ctx in [
-        cua_volume::Context::agent("ada", Some(&fx.space)),
-        cua_volume::Context::space(&fx.space),
+        cua_volume::Context::agent("ada", Some(&vid)),
+        cua_volume::Context::space(&vid),
     ] {
         let e = drive
             .session(ctx)
@@ -611,7 +618,7 @@ async fn an_agent_cannot_write_its_spaces_thread_through_the_volume() {
     }
     // The rest of its folder is still its own.
     drive
-        .session(cua_volume::Context::agent("ada", Some(&fx.space)))
+        .session(cua_volume::Context::agent("ada", Some(&vid)))
         .write(
             &format!("{folder}notes.md"),
             b"ok".to_vec(),
@@ -1012,8 +1019,13 @@ async fn an_agent_that_replies_itself_is_not_answered_twice() {
         .into_iter()
         .filter(|e| e["reply_to"] == task && e["kind"] == "message")
         .collect();
-    assert_eq!(replies.len(), 1);
-    assert_eq!(replies[0]["text"], "summary: fine");
+    // What the agent posted itself and what it said in its turn are both messages of the thread,
+    // in order; neither replaces the other, and nothing is posted twice.
+    let said: Vec<&str> = replies
+        .iter()
+        .map(|r| r["text"].as_str().unwrap())
+        .collect();
+    assert_eq!(said, ["summary: fine", "ignored"]);
     assert!(p.get("ada").unwrap().task.is_none());
 }
 
@@ -1189,7 +1201,7 @@ async fn the_mirror_is_create_only_and_rebuilds_a_lost_thread() {
         .drive()
         .clone();
     let user = drive.session(cua_volume::Context::user());
-    let folder = cua_volume::path::space_folder(&fx.space);
+    let folder = cua_volume::path::space_folder(&fx.spaces.volume_space_id(&fx.space).unwrap());
     // An object already at entry 1's key is never overwritten.
     let first = format!("{folder}thread/entries/000000000001.json");
     for t in ["one", "two", "three"] {

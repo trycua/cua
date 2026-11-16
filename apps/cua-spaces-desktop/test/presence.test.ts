@@ -13,9 +13,14 @@ describe("the owner check", () => {
   it("asks the system's prompt, and nothing else when it answers", async () => {
     const asked: string[] = [];
     for (const p of ["darwin", "win32", "linux"] as const) {
-      await confirmOwner(p, reason, async (r) => void asked.push(r), async () => {
-        throw new Error("no dialog");
-      });
+      await confirmOwner(
+        p,
+        reason,
+        async (r) => void asked.push(r),
+        async () => {
+          throw new Error("no dialog");
+        },
+      );
     }
     expect(asked).toEqual([reason, reason, reason]);
   });
@@ -23,7 +28,12 @@ describe("the owner check", () => {
   it("refuses a prompt the person cancelled or failed, without a dialog", async () => {
     for (const p of ["darwin", "win32", "linux"] as const) {
       await expect(
-        confirmOwner(p, reason, async () => Promise.reject(sdkError("PermissionDenied", "Approval was cancelled")), async () => true),
+        confirmOwner(
+          p,
+          reason,
+          async () => Promise.reject(sdkError("PermissionDenied", "Approval was cancelled")),
+          async () => true,
+        ),
       ).rejects.toThrow("Approval was cancelled");
     }
   });

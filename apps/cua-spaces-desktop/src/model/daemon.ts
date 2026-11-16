@@ -92,7 +92,7 @@ const alive = (pid: number) => {
 };
 
 /** The executable a process runs, when the system says. */
-export function executablePath(pid: number, platform: NodeJS.Platform = process.platform): Promise<string | null> {
+export function executablePath(pid: number, platform: NodeJS.Platform = process.platform, run: typeof execFile = execFile): Promise<string | null> {
   if (pid <= 0) return Promise.resolve(null);
   if (platform === "linux") {
     try {
@@ -106,10 +106,17 @@ export function executablePath(pid: number, platform: NodeJS.Platform = process.
       ? ["powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `(Get-Process -Id ${pid}).Path`]]
       : ["ps", ["-o", "comm=", "-p", String(pid)]];
   return new Promise((resolve) => {
-    execFile(cmd as string, args as string[], { timeout: 5000, windowsHide: true }, (error, stdout) => {
-      const out = String(stdout ?? "").trim();
-      resolve(error || !out ? null : out);
-    });
+    // `execFile` can throw while spawning (Windows, when a process cannot be
+    // created: CUA-SPACES-DESKTOP-5), which rejected this promise and then the
+    // supervisor's loop. A process that cannot be inspected has no known path.
+    try {
+      run(cmd as string, args as string[], { timeout: 5000, windowsHide: true }, (error, stdout) => {
+        const out = String(stdout ?? "").trim();
+        resolve(error || !out ? null : out);
+      });
+    } catch {
+      resolve(null);
+    }
   });
 }
 

@@ -13,12 +13,30 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+/// A port that was free a moment ago. Another test process can take it
+/// before the relay binds it, so never trust it: [`start_ready`] retries on
+/// fresh ports when the relay exits because its bind lost that race.
 fn free_port() -> u16 {
     TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
         .unwrap()
         .port()
+}
+
+/// Starts a relay on fresh ports until one is up on `ready` (`true`: the
+/// main port, `false`: the health port), up to 5 tries. A relay that exits
+/// while starting lost the pick-then-bind race (`AddrInUse`); the next try
+/// picks new ports. Returns the child with its main and health ports.
+fn start_ready(state: &Path, name: &str, main_ready: bool) -> (Child, u16, u16) {
+    for _ in 0..5 {
+        let (port, health) = (free_port(), free_port());
+        let mut child = start(state, name, port, health);
+        if wait_for(&mut child, if main_ready { port } else { health }) {
+            return (child, port, health);
+        }
+    }
+    panic!("relay {name} did not start on any of 5 port picks");
 }
 
 /// Starts a relay whose stdout and stderr go to `<state>/<name>.log`
@@ -52,11 +70,17 @@ fn get(port: u16, path: &str, wait: Duration) -> Option<String> {
     out.lines().next().map(str::to_owned)
 }
 
-fn wait_for(port: u16) {
+/// True once `port` answers with `child` still running; false if the child
+/// exited first. Panics when nothing answers in time.
+fn wait_for(child: &mut Child, port: u16) -> bool {
     let deadline = Instant::now() + Duration::from_secs(20);
     while Instant::now() < deadline {
+        if child.try_wait().expect("try_wait").is_some() {
+            return false;
+        }
         if get(port, "/healthz", Duration::from_secs(1)).is_some() {
-            return;
+            // An answer from a stranger that took the port is not ours.
+            return child.try_wait().expect("try_wait").is_none();
         }
         std::thread::sleep(Duration::from_millis(50));
     }
@@ -91,13 +115,9 @@ impl Drop for Logs<'_> {
 fn the_next_relay_waits_then_serves_what_queued() {
     let state = tempfile::tempdir().unwrap();
     let _logs = Logs(state.path());
-    let (a_port, a_health) = (free_port(), free_port());
-    let mut a = start(state.path(), "a", a_port, a_health);
-    wait_for(a_port);
+    let (mut a, _a_port, _a_health) = start_ready(state.path(), "a", true);
 
-    let (b_port, b_health) = (free_port(), free_port());
-    let mut b = start(state.path(), "b", b_port, b_health);
-    wait_for(b_health);
+    let (mut b, b_port, b_health) = start_ready(state.path(), "b", false);
     // Standby: the probe port answers, the main port holds requests.
     assert!(
         get(b_port, "/healthz", Duration::from_millis(500)).is_none(),

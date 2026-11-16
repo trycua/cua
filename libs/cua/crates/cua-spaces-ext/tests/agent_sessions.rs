@@ -332,10 +332,11 @@ async fn a_second_session_gets_task_claimed_with_the_holder() {
         let lost = bridge_call(&fx, &p, k, "thread_claim", json!({"task": seq})).await;
         let msg = bridge_error(&lost);
         assert!(
-            msg.contains("task_claimed") || msg.contains("claimed by ada/2@1"),
+            msg.contains("Another ada run is already working on this task."),
             "{msg}"
         );
-        assert!(msg.contains("ada/2@1"), "{msg}");
+        // People may read it: no holder id, task id or time in it.
+        assert!(!msg.contains("ada/2@1") && !msg.contains('#'), "{msg}");
         // ... and may not answer it either.
         let r = bridge_call(
             &fx,
@@ -345,7 +346,7 @@ async fn a_second_session_gets_task_claimed_with_the_holder() {
             json!({"task": seq, "text": "mine"}),
         )
         .await;
-        assert!(bridge_error(&r).contains("ada/2@1"));
+        assert!(bridge_error(&r).contains("already working on this task"));
     }
     // A person claiming for the agent gets the exact error code.
     let e = call(
@@ -356,7 +357,7 @@ async fn a_second_session_gets_task_claimed_with_the_holder() {
     .await
     .unwrap_err();
     assert_eq!(e.0, "task_claimed");
-    assert!(e.1.contains("ada/2@1"));
+    assert!(e.1.contains("already working on this task") && !e.1.contains("ada/2@1"));
     let e = call(
         &fx.mcp,
         "thread_claim",
@@ -415,8 +416,20 @@ async fn an_expired_claim_requeues_its_task_with_a_note() {
         .cloned()
         .expect("a note about the task");
     assert!(
-        note["text"].as_str().unwrap().contains("Session 2's claim"),
+        note["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("ada stopped working on ")
+            && note["text"]
+                .as_str()
+                .unwrap()
+                .ends_with("It will pick it up again."),
         "{note}"
+    );
+    let text = note["text"].as_str().unwrap();
+    assert!(
+        !text.contains('#') && !text.contains('/') && !text.chars().any(|c| c.is_ascii_digit()),
+        "{text}"
     );
     // The same pass gave it to the lowest free session (1 is mid turn).
     let now = task(&fx, seq).await;

@@ -28,7 +28,7 @@ export interface AddressState {
   last: string | null;
   /** The default was dismissed with the chip's X: plain messages until you address someone again. */
   off: boolean;
-  /** The "will be mentioned automatically" note was shown once already. */
+  /** The "Sending to {names}" note was shown once already. */
   told: boolean;
 }
 
@@ -135,7 +135,8 @@ export function pinAgent(spaceId: string, handle: string): void {
 /** The chip's X: `handle` leaves the pin; when nothing was pinned (a default), the default is off. */
 export function unpinAgent(spaceId: string, handle: string, source: AddressSource): void {
   const cur = useAddressing.getState().bySpace[spaceId] ?? EMPTY_ADDRESS;
-  if (source === "pinned") setAddress(spaceId, { ...cur, pinned: cur.pinned.filter((h) => h !== handle), off: cur.pinned.filter((h) => h !== handle).length === 0 });
+  if (source === "pinned")
+    setAddress(spaceId, { ...cur, pinned: cur.pinned.filter((h) => h !== handle), off: cur.pinned.filter((h) => h !== handle).length === 0 });
   else setAddress(spaceId, { ...cur, pinned: [], off: true });
 }
 

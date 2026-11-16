@@ -16,6 +16,7 @@
 //!   - click_target   : right_click / double_click recognised by NSView
 //!   - scroll_target  : scroll updates VerticalOffset label
 //!   - ns_menubar     : main menubar item enumerable (Mac-specific)
+//!   - save_sheet     : NSSavePanel sheet acts through its window
 //!
 //! Run locally (after `libs/cua-driver/tests/fixtures/build/macos.sh`):
 //!   cargo test --test harness_appkit_test -- --ignored --nocapture
@@ -37,7 +38,7 @@ use cua_driver_testkit::e2e::{
     recording_evidence, DriverRoute, Evidence, Observation, OracleKind, Targeting,
 };
 use cua_driver_testkit::observer::{NativeObserver, ObserverBackend, TargetWindow};
-use cua_driver_testkit::sentinel::run_with_background_oracles;
+use cua_driver_testkit::sentinel::{run_with_background_oracles, ForegroundSentinel};
 use cua_driver_testkit::{Driver, McpDriver, ToolResponse};
 
 #[path = "support/appkit_snapshot_publication.rs"]
@@ -116,6 +117,11 @@ impl Harness {
             &[("CUA_APPKIT_DISABLED_CONTROL", "1")],
         )
         .presented()
+    }
+
+    /// Launch with the opt-in Save sheet button (`save_sheet` scenario).
+    fn launch_with_save_sheet() -> Self {
+        Self::spawn(None, None, false, None, &[("CUA_APPKIT_SAVE_SHEET", "1")]).presented()
     }
 
     fn presented(self) -> Self {
@@ -279,6 +285,17 @@ fn element_token_by_id(snapshot: &ToolResponse, identifier: &str) -> String {
         .to_owned()
 }
 
+/// The AppKit harness's `activations=` count (`disabled_control` scenario).
+fn activations(snapshot: &ToolResponse) -> u64 {
+    snapshot
+        .tree_text()
+        .split("activations=")
+        .nth(1)
+        .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
+        .and_then(|count| count.parse().ok())
+        .unwrap_or_else(|| panic!("no activations= label:\n{}", snapshot.tree_text()))
+}
+
 fn element_pixel_frame(snapshot: &ToolResponse, identifier: &str) -> (f64, f64, f64, f64) {
     let index = element_index_by_id(snapshot.tree_text(), identifier)
         .unwrap_or_else(|| panic!("{identifier} element_index not found"));
@@ -313,13 +330,21 @@ fn run_case(
     case: cua_driver_testkit::e2e::CaseSpec,
     test: impl FnOnce(u32, u64, &mut McpDriver) -> Observation,
 ) {
+    run_case_with(case, Harness::launch, test);
+}
+
+fn run_case_with(
+    case: cua_driver_testkit::e2e::CaseSpec,
+    launch: impl FnOnce() -> Harness,
+    test: impl FnOnce(u32, u64, &mut McpDriver) -> Observation,
+) {
     let cell_id = case.cell_id.clone();
     let delivery = case.delivery;
     execute_case(case, |evidence| {
         let mut driver = McpDriver::spawn_macos_daemon_proxy_named(&cell_id)
             .expect("start installed macOS daemon proxy");
         *evidence = recording_evidence(driver.recording_dir());
-        let harness = Harness::launch();
+        let harness = launch();
         let (wid, _) = driver
             .find_window(harness.pid as i64, "CuaTestHarness AppKit")
             .expect("AppKit main window not found");
@@ -731,6 +756,133 @@ fn harness_appkit_middle_click_px_background_reaches_exact_window() {
     });
 }
 
+/// Issue #4242: a background pixel click on the receiver at a point its own
+/// untitled popup covers (Chrome's omnibox dropdown shape) is refused, and
+/// neither window gets a press. A point outside the popup still lands on the
+/// receiver, so the check covers only the popup. That control click is a
+/// middle click, which skips the background AX press and reaches the routed
+/// path the check guards.
+#[test]
+#[ignore]
+fn harness_appkit_left_click_px_background_refuses_point_under_own_popup() {
+    let case = native_background_case(
+        "appkit",
+        "left_click_under_own_popup",
+        Targeting::Px,
+        DriverRoute::MacosCgEventPid,
+    );
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named("appkit-click-under-popup")
+            .expect("start macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+        let directory = tempfile::tempdir().expect("create popup journal directory");
+        let journal = directory.path().join("pointer.jsonl");
+        std::fs::write(&journal, "").expect("initialize native pointer journal");
+        let harness = Harness::spawn(
+            None,
+            Some(&journal),
+            false,
+            None,
+            &[("CUA_APPKIT_POPUP_OVER_RECEIVER", "1")],
+        )
+        .presented();
+        let (wid, _) = driver
+            .find_window(harness.pid as i64, "CuaTestHarness AppKit")
+            .expect("find receiver window");
+        let read_events = || -> Vec<serde_json::Value> {
+            std::fs::read_to_string(&journal)
+                .expect("read native pointer journal")
+                .lines()
+                .map(|line| serde_json::from_str(line).expect("parse native pointer event"))
+                .collect()
+        };
+        let initial = read_events();
+        assert_eq!(
+            initial.len(),
+            2,
+            "receiver and popup must be idle: {initial:?}"
+        );
+        assert_eq!(initial[0]["kind"], "ready");
+        assert_eq!(initial[1]["kind"], "popup_ready");
+        let popup = initial[1]["window_id"].as_u64().expect("popup window id");
+        let snapshot = snapshot_elements(&mut driver, harness.pid, wid);
+        assert!(
+            !snapshot.is_error(),
+            "capture receiver: {}",
+            snapshot.text()
+        );
+        let width = snapshot.structured()["screenshot_width"]
+            .as_f64()
+            .expect("screenshot width");
+        let height = snapshot.structured()["screenshot_height"]
+            .as_f64()
+            .expect("screenshot height");
+        let (_, passed) = run_with_background_oracles(
+            &mut driver,
+            TargetWindow {
+                pid: harness.pid,
+                native_id: wid,
+            },
+            |driver| {
+                // The popup covers the receiver's top-left quarter, under
+                // the title bar.
+                let covered = driver.call(
+                    "click",
+                    serde_json::json!({
+                        "pid": harness.pid, "window_id": wid,
+                        "x": width / 4.0, "y": height / 3.0,
+                        "delivery_mode": "background"
+                    }),
+                );
+                assert!(
+                    covered.is_error(),
+                    "click under the popup was sent: {}",
+                    covered.raw
+                );
+                assert_eq!(
+                    covered.structured()["code"],
+                    "target_occluded",
+                    "{}",
+                    covered.raw
+                );
+                assert_eq!(
+                    covered.structured()["covering_window"].as_u64(),
+                    Some(popup)
+                );
+                std::thread::sleep(Duration::from_millis(500));
+                assert_eq!(read_events().len(), 2, "a refused click reached a window");
+
+                let open = driver.call(
+                    "click",
+                    serde_json::json!({
+                        "pid": harness.pid, "window_id": wid,
+                        "x": width * 3.0 / 4.0, "y": height * 3.0 / 4.0,
+                        "button": "middle", "delivery_mode": "background"
+                    }),
+                );
+                assert!(!open.is_error(), "click outside the popup: {}", open.text());
+                let deadline = Instant::now() + Duration::from_secs(3);
+                loop {
+                    let events = read_events();
+                    if events.iter().any(|event| event["kind"] == "middle_up") {
+                        for event in &events[2..] {
+                            assert_eq!(event["window_id"].as_u64(), Some(wid), "{events:?}");
+                        }
+                        break;
+                    }
+                    assert!(
+                        Instant::now() < deadline,
+                        "click outside the popup did not arrive: {events:?}"
+                    );
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            },
+        )
+        .expect("refusal must preserve background desktop state");
+        Observation::delivered_with_fixture_state(passed)
+    });
+}
+
 #[test]
 #[ignore]
 fn harness_appkit_smoke() {
@@ -928,6 +1080,38 @@ fn harness_appkit_query_projects_structured_elements() {
             );
             assert!(has_id(response.tree_text(), "btn-increment"));
             let _ = element_token_by_id(&response, "btn-increment");
+            assert!(!response.text().contains("elements match query"));
+
+            let mut query = |query: &str| {
+                driver.call(
+                    "get_window_state",
+                    serde_json::json!({
+                        "pid": pid as i64,
+                        "window_id": wid,
+                        "query": query,
+                        "include_screenshot": false
+                    }),
+                )
+            };
+            // `|` separates alternatives: each one's row is kept.
+            let either = query("btn-increment|btn-reset");
+            assert!(!either.is_error(), "alternation read: {}", either.text());
+            assert!(
+                has_id(either.tree_text(), "btn-increment"),
+                "{}",
+                either.text()
+            );
+            assert!(has_id(either.tree_text(), "btn-reset"), "{}", either.text());
+
+            // A query that matches nothing says so in the text.
+            let none = query("no-such-control|nor-this-one");
+            assert!(!none.is_error(), "empty query read: {}", none.text());
+            assert!(
+                none.text()
+                    .contains("elements match query \"no-such-control|nor-this-one\""),
+                "{}",
+                none.text()
+            );
             Observation::delivered(vec![OracleKind::AxState], Evidence::default())
         },
     );
@@ -1063,6 +1247,26 @@ fn harness_appkit_invoke_menu_live_path() {
             // and key-window status. The target menu item validates against
             // both, so an AXFocused-only implementation cannot pass this cell.
             let _distractor = Harness::launch();
+            // The target revalidates the item only once it has processed
+            // losing activation, and until then AppKit still reports it
+            // enabled. Wait for that, so the call below runs in the background
+            // state it is meant to test.
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                let state = snapshot_elements(driver, pid, wid);
+                if state
+                    .tree_text()
+                    .contains("[id=menu-window-arrange-left enabled=false")
+                {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "Window > Arrange > Left stayed enabled with the distractor in front: {}",
+                    state.tree_text()
+                );
+                std::thread::sleep(Duration::from_millis(100));
+            }
 
             // invoke_menu does not activate a background app (#4955): with
             // the distractor in front, the item stays disabled and the call
@@ -1934,12 +2138,46 @@ fn harness_appkit_disabled_control_is_published_and_its_press_refused() {
                     "{}",
                     refused.raw
                 );
+                assert_eq!(
+                    refused.structured()["code"],
+                    "element_disabled",
+                    "{}",
+                    refused.raw
+                );
+
+                // Every other token writer refuses the same control the same way.
+                let token = &element["element_token"];
+                let writers = [
+                    ("set_value", serde_json::json!({ "value": "1" })),
+                    ("right_click", serde_json::json!({})),
+                    ("double_click", serde_json::json!({})),
+                    ("click", serde_json::json!({ "button": "middle" })),
+                    ("type_text", serde_json::json!({ "text": "x" })),
+                ];
+                for (tool, mut args) in writers {
+                    args["pid"] = serde_json::json!(pid as i64);
+                    args["window_id"] = serde_json::json!(wid);
+                    args["element_token"] = token.clone();
+                    let refused = driver.call(tool, args);
+                    assert!(
+                        refused.is_error() && refused.structured()["code"] == "element_disabled",
+                        "{tool} on a disabled control was not refused as element_disabled: {}",
+                        refused.raw
+                    );
+                    assert!(
+                        refused.text().contains("\nNext: ")
+                            && refused.structured()["hint"].is_string()
+                            && refused.structured()["next_call"]["tool"] == "get_window_state",
+                        "{tool} refusal gave no next step: {}",
+                        refused.raw
+                    );
+                }
 
                 std::thread::sleep(Duration::from_millis(200));
                 let after = snapshot_elements(driver, pid, wid);
                 assert!(
                     after.tree_text().contains("disabled_checked=false"),
-                    "the refused press changed the disabled checkbox:\n{}",
+                    "a refused action changed the disabled checkbox:\n{}",
                     after.tree_text()
                 );
             },
@@ -1948,6 +2186,378 @@ fn harness_appkit_disabled_control_is_published_and_its_press_refused() {
 
         Observation::delivered_with_fixture_state(passed)
     });
+}
+
+/// A foreground call into a background app skips the early `AXEnabled` read so
+/// activation can enable the control, and reads it again before input. A
+/// control enabled only while its app is active reads `enabled: false` from
+/// behind another app and is acted on; one that stays disabled is refused as
+/// `element_disabled`, not clicked, double-clicked, middle-clicked or typed
+/// into.
+#[test]
+#[ignore]
+fn harness_appkit_foreground_from_the_background_rereads_enablement_after_activation() {
+    let case = native_foreground_case(
+        "appkit",
+        "activation_enablement",
+        Targeting::Ax,
+        DriverRoute::MacosAxAction,
+    );
+    let cell_id = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named(&cell_id)
+            .expect("start installed macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+        let harness = Harness::launch_with_disabled_control();
+        let pid = harness.pid;
+        let (wid, _) = driver
+            .find_window(pid as i64, "CuaTestHarness AppKit")
+            .expect("AppKit main window not found");
+        let target = TargetWindow {
+            pid,
+            native_id: wid,
+        };
+        let sentinel = ForegroundSentinel::launch(&mut driver);
+        driver.start_behavior_recording();
+
+        // (tool, target id, extra args, fixture label after delivery, or None
+        // when the target stays disabled and the call must be refused)
+        let calls = [
+            (
+                "click",
+                "btn-active-only",
+                serde_json::json!({}),
+                Some("active_only=click"),
+            ),
+            (
+                "double_click",
+                "btn-active-only",
+                serde_json::json!({}),
+                Some("active_only=double_click"),
+            ),
+            (
+                "click",
+                "btn-active-only",
+                serde_json::json!({ "button": "middle" }),
+                Some("active_only=middle_click"),
+            ),
+            (
+                "type_text",
+                "txt-active-only",
+                serde_json::json!({ "text": "ok" }),
+                Some("active_only=text:ok"),
+            ),
+            ("double_click", "chk-disabled", serde_json::json!({}), None),
+            (
+                "click",
+                "chk-disabled",
+                serde_json::json!({ "button": "middle" }),
+                None,
+            ),
+            (
+                "type_text",
+                "chk-disabled",
+                serde_json::json!({ "text": "x" }),
+                None,
+            ),
+        ];
+        for (tool, id, mut args, delivered) in calls {
+            // Each call starts with the harness behind another app, the case
+            // in which the early read is skipped.
+            sentinel
+                .prepare_background_observation(&mut driver, target)
+                .unwrap_or_else(|error| panic!("put the harness in the background: {error}"));
+            let snapshot = snapshot_elements(&mut driver, pid, wid);
+            let index = element_index_by_id(snapshot.tree_text(), id)
+                .unwrap_or_else(|| panic!("{id} has no element_index:\n{}", snapshot.tree_text()));
+            let element = snapshot.structured()["elements"]
+                .as_array()
+                .and_then(|elements| {
+                    elements
+                        .iter()
+                        .find(|element| element["element_index"].as_u64() == Some(index))
+                })
+                .cloned()
+                .unwrap_or_else(|| panic!("{id} is missing from elements"));
+            assert_eq!(
+                element["enabled"], false,
+                "{id} is not disabled while its app is in the background: {element}"
+            );
+            let activations_before = activations(&snapshot);
+            args["pid"] = serde_json::json!(pid as i64);
+            args["window_id"] = serde_json::json!(wid);
+            args["element_token"] = element["element_token"].clone();
+            args["delivery_mode"] = serde_json::json!("foreground");
+            let response = driver.call(tool, args);
+            let Some(expected) = delivered else {
+                assert!(
+                    response.is_error() && response.structured()["code"] == "element_disabled",
+                    "foreground {tool} on {id}, which stays disabled, was not refused as \
+                     element_disabled: {}",
+                    response.raw
+                );
+                // An early refusal returns the same code; the activation count
+                // shows this one came from the read after activation.
+                let deadline = Instant::now() + Duration::from_secs(3);
+                loop {
+                    let after = snapshot_elements(&mut driver, pid, wid);
+                    if activations(&after) > activations_before {
+                        break;
+                    }
+                    assert!(
+                        Instant::now() < deadline,
+                        "foreground {tool} on {id} was refused without activating the app:\n{}",
+                        after.tree_text()
+                    );
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                continue;
+            };
+            assert!(
+                !response.is_error(),
+                "foreground {tool} on {id}, which activation enables, failed: {}",
+                response.raw
+            );
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                let after = snapshot_elements(&mut driver, pid, wid);
+                if after.tree_text().contains(expected) {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "foreground {tool} on {id} did not record {expected}:\n{}",
+                    after.tree_text()
+                );
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+
+        std::thread::sleep(Duration::from_millis(200));
+        let after = snapshot_elements(&mut driver, pid, wid);
+        assert!(
+            after.tree_text().contains("disabled_checked=false"),
+            "a refused foreground action changed the disabled checkbox:\n{}",
+            after.tree_text()
+        );
+        Observation::delivered_with_fixture_state(Vec::new())
+    });
+}
+
+/// The token of the first element in `snapshot` with `role` whose label or
+/// value is exactly `text`.
+fn element_token_by_role_text(snapshot: &ToolResponse, role: &str, text: &str) -> Option<String> {
+    snapshot.structured()["elements"]
+        .as_array()?
+        .iter()
+        .find(|element| {
+            element["role"] == role && (element["label"] == text || element["value"] == text)
+        })
+        .and_then(|element| element["element_token"].as_str())
+        .map(str::to_owned)
+}
+
+/// Press the fixture's Save… button and wait until the sheet's name field,
+/// holding `harness-untitled`, is in the window's tree. Returns that snapshot
+/// and the field's token.
+fn open_save_sheet(driver: &mut McpDriver, pid: u32, wid: u64) -> (ToolResponse, String) {
+    let snapshot = snapshot_elements(driver, pid, wid);
+    // AppKit often answers this press with -25204 or -25205 while the panel
+    // loads, after opening it; the sheet appearing below is the evidence.
+    driver.call(
+        "click",
+        serde_json::json!({
+            "pid": pid as i64,
+            "window_id": wid,
+            "element_token": element_token_by_id(&snapshot, "btn-save-sheet"),
+            "action": "press",
+            "delivery_mode": "background"
+        }),
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let snapshot = snapshot_elements(driver, pid, wid);
+        let field = (!snapshot.is_error() && snapshot.structured()["degraded"] != true)
+            .then(|| element_token_by_role_text(&snapshot, "AXTextField", "harness-untitled"))
+            .flatten();
+        if let Some(field) = field {
+            assert!(
+                snapshot.tree_text().contains("AXSheet"),
+                "{}",
+                snapshot.tree_text()
+            );
+            return (snapshot, field);
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the Save sheet's name field did not appear in its window's tree: {}",
+            snapshot.raw
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// The sheet's own CGWindowID: the pid's other on-screen window.
+fn save_sheet_window_id(driver: &mut McpDriver, pid: u32, wid: u64) -> u64 {
+    let windows = driver.call("list_windows", serde_json::json!({"pid": pid as i64}));
+    windows.structured()["windows"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|window| window["is_on_screen"] == true)
+        .filter_map(|window| window["window_id"].as_u64())
+        .find(|id| *id != wid)
+        .unwrap_or_else(|| panic!("the sheet has no window of its own: {}", windows.raw))
+}
+
+/// Wait until the fixture records `state` and the sheet is gone.
+fn await_save_sheet_closed(driver: &mut McpDriver, pid: u32, wid: u64, state: &str) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let after = snapshot_elements(driver, pid, wid);
+        if after.tree_text().contains(state) && !after.tree_text().contains("AXSheet") {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the panel did not end with {state}:\n{}",
+            after.tree_text()
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// An NSSavePanel shown as a sheet has its own CGWindowID, but its controls
+/// are in the accessibility tree of the window it is attached to (#3351,
+/// #4392). Its name field and Save button act by element token through that
+/// window in the background, and a read of the sheet's own id walks the
+/// sheet: its name field is there and the parent's controls are not.
+#[test]
+#[ignore]
+fn harness_appkit_save_sheet_controls_act_through_their_window() {
+    run_case_with(
+        native_background_case(
+            "appkit",
+            "save_sheet",
+            Targeting::Ax,
+            DriverRoute::MacosAxAction,
+        ),
+        Harness::launch_with_save_sheet,
+        |pid, wid, driver| {
+            let (_, passed) = run_with_background_oracles(
+                driver,
+                TargetWindow {
+                    pid,
+                    native_id: wid,
+                },
+                |driver| {
+                    let (_, name_field) = open_save_sheet(driver, pid, wid);
+                    let named = driver.call(
+                        "set_value",
+                        serde_json::json!({
+                            "pid": pid as i64,
+                            "window_id": wid,
+                            "element_token": name_field,
+                            "value": "harness-sheet"
+                        }),
+                    );
+                    assert!(
+                        !named.is_error(),
+                        "set the sheet's name field: {}",
+                        named.raw
+                    );
+                    let snapshot = snapshot_elements(driver, pid, wid);
+                    assert!(
+                        element_token_by_role_text(&snapshot, "AXTextField", "harness-sheet")
+                            .is_some(),
+                        "the name field does not read back the new name:\n{}",
+                        snapshot.tree_text()
+                    );
+
+                    let sheet_id = save_sheet_window_id(driver, pid, wid);
+                    let own = snapshot_elements(driver, pid, sheet_id);
+                    assert!(
+                        !own.is_error()
+                            && element_token_by_role_text(&own, "AXTextField", "harness-sheet")
+                                .is_some()
+                            && !own.tree_text().contains("btn-save-sheet"),
+                        "a read of the sheet's own id does not hold only the sheet: {}",
+                        own.raw
+                    );
+
+                    let save = element_token_by_role_text(&snapshot, "AXButton", "Save")
+                        .unwrap_or_else(|| panic!("no Save button:\n{}", snapshot.tree_text()));
+                    let saved = driver.call(
+                        "click",
+                        serde_json::json!({
+                            "pid": pid as i64,
+                            "window_id": wid,
+                            "element_token": save,
+                            "action": "press",
+                            "delivery_mode": "background"
+                        }),
+                    );
+                    assert!(
+                        !saved.is_error(),
+                        "press the sheet's Save button: {}",
+                        saved.raw
+                    );
+                    await_save_sheet_closed(
+                        driver,
+                        pid,
+                        wid,
+                        "save_sheet=saved name=harness-sheet",
+                    );
+                },
+            )
+            .unwrap_or_else(|error| panic!("background desktop contract failed: {error}"));
+            Observation::delivered_with_fixture_state(passed)
+        },
+    );
+}
+
+/// While a sheet attached to the window holds focus, a foreground key aimed
+/// at the window reaches the sheet (#4392): Return saves under the default
+/// name. A key aimed at the sheet's own id still works: Escape cancels.
+#[test]
+#[ignore]
+fn harness_appkit_foreground_key_reaches_an_attached_sheet() {
+    run_case_with(
+        native_foreground_case(
+            "appkit",
+            "save_sheet_press_key",
+            Targeting::Ax,
+            DriverRoute::MacosCgEventHid,
+        ),
+        Harness::launch_with_save_sheet,
+        |pid, wid, driver| {
+            let press = |driver: &mut McpDriver, window_id: u64, key: &str| {
+                let pressed = driver.call(
+                    "press_key",
+                    serde_json::json!({
+                        "pid": pid as i64,
+                        "window_id": window_id,
+                        "key": key,
+                        "delivery_mode": "foreground"
+                    }),
+                );
+                assert!(
+                    !pressed.is_error(),
+                    "foreground {key} aimed at window {window_id} failed: {}",
+                    pressed.raw
+                );
+            };
+            open_save_sheet(driver, pid, wid);
+            press(driver, wid, "return");
+            await_save_sheet_closed(driver, pid, wid, "save_sheet=saved name=harness-untitled");
+
+            open_save_sheet(driver, pid, wid);
+            let sheet_id = save_sheet_window_id(driver, pid, wid);
+            press(driver, sheet_id, "escape");
+            await_save_sheet_closed(driver, pid, wid, "save_sheet=cancelled");
+            Observation::delivered_with_fixture_state(Vec::new())
+        },
+    );
 }
 
 /// Resolve the native AppKit button from a screenshot-space PX target, then
@@ -2003,6 +2613,12 @@ fn harness_appkit_counter_px_background() {
                     .expect("native screenshot width")
                     > small_width
             );
+            // Snapshots belong to the session that read them, so the driver's own
+            // frame and zoom stay valid after another client reads the window. A
+            // third client that never read it holds no frame and must be refused.
+            let mut stranger = driver
+                .spawn_peer_unrecorded()
+                .expect("start a client that has not read the window");
             for (tool, args) in [
                 (
                     "double_click",
@@ -2021,7 +2637,7 @@ fn harness_appkit_counter_px_background() {
                     serde_json::json!({"pid":pid as i64,"window_id":wid,"from_x":x,"from_y":y,"to_x":x+1.0,"to_y":y+1.0,"duration_ms":0,"steps":1,"delivery_mode":"foreground"}),
                 ),
             ] {
-                let stale = driver.call(tool, args);
+                let stale = stranger.call(tool, args);
                 assert_eq!(
                     stale.structured()["code"],
                     "screenshot_context_missing",
@@ -2038,14 +2654,14 @@ fn harness_appkit_counter_px_background() {
                     serde_json::json!({"pid":pid as i64,"window_id":wid,"from_x":1.0,"from_y":1.0,"to_x":2.0,"to_y":2.0,"from_zoom":true,"duration_ms":0,"steps":1,"delivery_mode":"foreground"}),
                 ),
             ] {
-                let stale = driver.call(tool, args);
+                let stale = stranger.call(tool, args);
                 assert_eq!(
                     stale.structured()["code"],
                     "zoom_context_missing",
                     "{tool} must refuse a zoom bound to the replaced snapshot"
                 );
             }
-            let stale = driver.call(
+            let stale = stranger.call(
                 "click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid,

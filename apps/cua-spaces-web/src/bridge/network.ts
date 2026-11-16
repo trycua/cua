@@ -14,7 +14,16 @@
  */
 
 import { isUnsupported, type DataAdapter } from "./adapter";
-import type { BlockedConnection, ClipboardMode, NetworkPreset, NetworkPreview, SpaceNetwork, SpaceSecurity, SpaceTopology, VolumeScope } from "./contracts/network";
+import type {
+  BlockedConnection,
+  ClipboardMode,
+  NetworkPreset,
+  NetworkPreview,
+  SpaceNetwork,
+  SpaceSecurity,
+  SpaceTopology,
+  VolumeScope,
+} from "./contracts/network";
 import type { NetworkEventWire, SpaceNetworkWire } from "./protocol";
 
 /** How long a read stays fresh. */
@@ -46,13 +55,22 @@ export function reasonWords(reason: string): string {
     case "dns_stripped":
       return "A name that pointed to a private address";
     default:
-      return "Not allowed by this Space's settings";
+      return "a destination its settings don't allow";
   }
+}
+
+/**
+ * A block the person can do nothing about: the guest's own name-service broadcast (NetBIOS, UDP 137 and 138
+ * to the local network's `.255`) that macOS sends a few seconds after it boots. The log keeps it; the
+ * notice under the header does not, or every new macOS Space opens with a warning nobody asked for.
+ */
+export function isBackgroundNoise(address: string): boolean {
+  return /\.255:13[78]$/.test(address);
 }
 
 /** The page's network settings from the host's answer. */
 export function networkFromWire(w: SpaceNetworkWire, parentName?: string): SpaceNetwork {
-  const preset = (["internet", "none", "localhost", "lan", "custom"] as const).includes(w.preset as NetworkPreset)
+  const preset = (["internet", "none", "localhost", "lan", "localhost+lan", "custom"] as const).includes(w.preset as NetworkPreset)
     ? (w.preset as NetworkPreset)
     : "internet";
   return {
@@ -117,7 +135,8 @@ export function topologyFromJson(text: string | undefined): SpaceTopology | unde
 export function networkWord(n: SpaceNetwork): string {
   switch (n.preset) {
     case "localhost":
-      return n.localhostPorts && n.localhostPorts.length > 0 ? `localhost:${n.localhostPorts.join(",")}` : "localhost:all";
+    case "localhost+lan":
+      return n.localhostPorts && n.localhostPorts.length > 0 ? `${n.preset}:${n.localhostPorts.join(",")}` : `${n.preset}:all`;
     case "custom":
       return n.base === "none" ? "custom:none" : "custom";
     default:
@@ -134,7 +153,11 @@ export function blockedFromWire(e: NetworkEventWire): BlockedConnection {
   };
 }
 
-const nameOf = (id: string) => id.slice(id.lastIndexOf(":") + 1).split("/").pop() ?? id;
+const nameOf = (id: string) =>
+  id
+    .slice(id.lastIndexOf(":") + 1)
+    .split("/")
+    .pop() ?? id;
 
 interface Entry {
   security: SpaceSecurity | null;
@@ -238,7 +261,7 @@ export function createNetworkStore(adapter: DataAdapter, now: () => number = Dat
     error: (spaceId) => errors.get(spaceId) ?? null,
     blocked: (spaceId) => fresh(spaceId).blocked,
     notice(spaceId) {
-      const newest = fresh(spaceId).blocked.find((b) => b.at > Math.max(openedAt - 60_000, dismissed.get(spaceId) ?? 0));
+      const newest = fresh(spaceId).blocked.find((b) => b.at > Math.max(openedAt - 60_000, dismissed.get(spaceId) ?? 0) && !isBackgroundNoise(b.address));
       return newest ?? null;
     },
     dismissNotice(spaceId) {

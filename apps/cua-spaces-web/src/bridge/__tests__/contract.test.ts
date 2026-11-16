@@ -65,7 +65,10 @@ describe("bridge shapes", () => {
   it("has a shape, or a reason, for every SwiftUI method and no other", () => {
     const shaped = Object.keys(WEBKIT_SHAPES);
     const unshaped = Object.keys(WEBKIT_UNSHAPED);
-    expect(shaped.filter((m) => unshaped.includes(m)), "both shaped and unshaped").toEqual([]);
+    expect(
+      shaped.filter((m) => unshaped.includes(m)),
+      "both shaped and unshaped",
+    ).toEqual([]);
     expect([...shaped, ...unshaped].sort()).toEqual([...WEBKIT_METHODS].sort());
   });
 

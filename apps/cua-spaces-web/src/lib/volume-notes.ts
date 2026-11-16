@@ -24,7 +24,7 @@ export function volumeUnavailableNote(error: string): string {
   const why = PREFIXES.reduce((s, p) => s.replace(p, ""), error.trim());
   if (/predates/i.test(why)) return `Cua Volume isn't available in this Space (its image predates it). ${STAYS}`;
   if (/\/dev\/fuse|\bfuse\b/i.test(why)) {
-    return `Cua Volume isn't available in this Space: it can't mount it (no FUSE here). ${STAYS}`;
+    return `Cua Volume can't open in this Space. ${STAYS}`;
   }
   const reason = why.replace(/\.$/, "");
   return reason ? `Cua Volume isn't available in this Space: ${reason}. ${STAYS}` : `Cua Volume isn't available in this Space. ${STAYS}`;

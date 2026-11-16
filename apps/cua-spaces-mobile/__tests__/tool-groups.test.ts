@@ -12,7 +12,9 @@ import { installFixtureCore, uninstallCore } from "./helpers/core";
  * now lives in the core; `cargo test -p cua-spaces-app-core` holds it equal to the crate for every category and to this
  * shared fixture). Here the phone reads the same cases through its entry point.
  */
-const shared = JSON.parse(readFileSync(join(__dirname, "../../../libs/cua/crates/cua-agents/tests/fixtures/tool-rows.json"), "utf8")) as { groups: { cats: string[]; label: string | null }[] };
+const shared = JSON.parse(readFileSync(join(__dirname, "../../../libs/cua/crates/cua-agents/tests/fixtures/tool-rows.json"), "utf8")) as {
+  groups: { cats: string[]; label: string | null }[];
+};
 
 beforeAll(installFixtureCore);
 afterAll(uninstallCore);

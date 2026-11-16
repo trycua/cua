@@ -2,14 +2,15 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * The agent home is a Space like any other (CUA-2630): made on the first
- * request, reused by the next ones, listed with the person's Spaces. This
- * remembers, per agent on this device, which Space is its home so a later
- * request goes to the same one (`localStorage`, like the grants), and lets
- * the Spaces list tag it "Home".
- *
- * One home per person and agent unless they ask for a fresh one: a fresh one
- * replaces the remembered id; the old Space stays in the list as any Space.
+ * The agent home is a Space like any other (CUA-2630), listed with the person's
+ * Spaces. A message typed on Home makes a NEW home every time (cheap: it claims
+ * a warm Space); the earlier homes and their agents stay in the list. This
+ * remembers, per agent on this device, the newest home (`localStorage`, like the
+ * grants), which is the one continued when the person explicitly picks "Let the
+ * agent decide, in your existing Home", and lets the Spaces list tag it "Home".
+ * Opening a Space (from Your agents or Spaces) and writing in its thread never
+ * goes through here: it posts to that Space. Many homes can accumulate (1 CPU and
+ * 1 GB each), so idle ones are worth stopping.
  */
 
 import { useSyncExternalStore } from "react";
@@ -89,6 +90,20 @@ export function reusableHome(agent: string, spaces: readonly HomeCandidate[] | u
   return found ? found.id : null;
 }
 
+/**
+ * The home a Home-composer request goes to: none (a new home is made) unless the person picked "Let the
+ * agent decide, in your existing Home" (`where.reuse`). Naming a Space or a computer, or any other place, never reuses.
+ */
+export function homeForRequest(
+  where: { kind: string; reuse?: boolean },
+  agent: string,
+  spaces: readonly HomeCandidate[] | undefined,
+  labelled: readonly string[] = [],
+): string | null {
+  const continuing = where.kind === "agent" && Boolean(where.reuse);
+  return reusableHome(agent, spaces, !continuing, labelled);
+}
+
 const subscribe = (l: () => void) => {
   listeners.add(l);
   const onStorage = (e: StorageEvent) => {
@@ -106,5 +121,9 @@ const subscribe = (l: () => void) => {
 
 /** Whether this Space is an agent's home (the Spaces list tags it "Home"). */
 export function useIsHomeSpace(spaceId: string): boolean {
-  return useSyncExternalStore(subscribe, () => isHomeSpaceId(spaceId), () => false);
+  return useSyncExternalStore(
+    subscribe,
+    () => isHomeSpaceId(spaceId),
+    () => false,
+  );
 }

@@ -94,7 +94,9 @@ icons="$here/../cua-spaces/src-tauri/icons"
 # fetches them from the pinned cua-spacesd release).
 # CUA_CLI_BIN: the `cua` to bundle (default: the Cua Spaces build of `cua`,
 # `cargo build --release -p cua-spaces-cli`, when present).
-cli="${CUA_CLI_BIN:-${CARGO_TARGET_DIR:-$here/../../libs/cua/target}/release/cua-spaces-cli}"
+cli="${CUA_CLI_BIN:-${CARGO_TARGET_DIR:-$here/../../libs/cua/target}/${CUA_CARGO_PROFILE_DIR:-release}/cua-spaces-cli}"
+# CUA_CARGO_PROFILE_DIR: the Cargo profile directory of that build (default
+# release; dev-fast for install-local.sh --development).
 # CUA_SDK_DYLIB: another build of the library (a debug build for the
 # development Keyvault path, which a release library refuses).
 dylib="${CUA_SDK_DYLIB:-$here/../../libs/cua/swift/lib/libcua_sdk.dylib}"
@@ -248,6 +250,18 @@ if [ "$channel" = local ]; then
   /usr/libexec/PlistBuddy -c "Set :Label $helper_label" "$helper_plist"
   /usr/libexec/PlistBuddy -c "Set :AssociatedBundleIdentifiers:0 $bundle_id" "$helper_plist"
   plutil -lint "$helper_plist" >/dev/null
+fi
+# Cua Driver's own login item (CUA-3638): `CuaSpacesMac --driver-helper run`
+# keeps Contents/Helpers/cua-driver running for this Mac's coding agents,
+# whether or not this Mac is set up or shared. Named after the helper's label
+# (com.trycua.spaces.driver, com.trycua.spaces.local.driver).
+driver_label="${helper_label%.helper}.driver"
+driver_plist="$app/Contents/Library/LaunchAgents/$driver_label.plist"
+cp "$here/Support/Helper/com.trycua.spaces.driver.plist" "$driver_plist"
+if [ "$channel" = local ]; then
+  /usr/libexec/PlistBuddy -c "Set :Label $driver_label" "$driver_plist"
+  /usr/libexec/PlistBuddy -c "Set :AssociatedBundleIdentifiers:0 $bundle_id" "$driver_plist"
+  plutil -lint "$driver_plist" >/dev/null
 fi
 [ -x "$cli" ] && cp "$cli" "$app/Contents/MacOS/cua"
 

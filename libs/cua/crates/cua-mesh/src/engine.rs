@@ -340,12 +340,18 @@ impl Engine {
     /// (Re)binds the UDP sockets: `port` 0 picks a fresh one.
     pub(crate) async fn bind(self: &Arc<Self>, port: u16) -> io::Result<()> {
         let v4 = bind_udp(SocketAddr::from(([0, 0, 0, 0], port)))?;
-        let v6 = bind_udp(SocketAddr::from((
-            Ipv6Addr::UNSPECIFIED,
-            v4.local_addr()?.port(),
-        )))
-        .or_else(|_| bind_udp(SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0))))
-        .ok();
+        // IPv6 asks for the same `port`, so an ephemeral request stays
+        // ephemeral: never the explicit port number IPv4 was given. Binding
+        // every address to an explicit UDP port is what makes Windows
+        // Firewall stop and ask the user to allow the app ("Do you want to
+        // allow public and private networks to access this app?"), which it
+        // did for `cua` and `cua-spacesd` (CUA-3515); an ephemeral bind never
+        // asks. Direct paths need no inbound rule: both peers send first, and
+        // the firewall lets each one's answers in. The two sockets need not
+        // share a port: each one's is advertised (`local_ports`, STUN).
+        let v6 = bind_udp(SocketAddr::from((Ipv6Addr::UNSPECIFIED, port)))
+            .or_else(|_| bind_udp(SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0))))
+            .ok();
         let mut tasks = Vec::new();
         for sock in std::iter::once(v4.clone()).chain(v6.clone()) {
             let weak = Arc::downgrade(self);
@@ -1115,7 +1121,7 @@ fn bind_udp(addr: SocketAddr) -> io::Result<Arc<UdpSocket>> {
     };
     let s = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
     if addr.is_ipv6() {
-        // Native IPv6 only; IPv4 has its own socket on the same port.
+        // Native IPv6 only; IPv4 has its own socket.
         s.set_only_v6(true)?;
     }
     // Best effort: the kernel caps these (net.core.*mem_max on Linux).

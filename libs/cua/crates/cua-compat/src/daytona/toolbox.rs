@@ -1881,8 +1881,10 @@ async fn create_folder(
             Err(e) => e,
         };
     }
-    let from = if crate::guest::without_sudo(&driver) && user != "root" {
-        crate::guestfs::first_missing(&c, &path).await
+    // An agent that switches users makes them as `user`; one that cannot
+    // makes them as itself, and they are given to `user` after.
+    let from = if driver == crate::guest::UNNAMED && user != "root" {
+        crate::guestfs::first_missing(&c, &driver, &path).await
     } else {
         None
     };
@@ -1892,7 +1894,7 @@ async fn create_folder(
             path: path.clone(),
             parents: true,
             mode,
-            ..Default::default()
+            run_as: crate::guest::file_run_as(&driver, &user),
         })
         .await
     {
@@ -1942,7 +1944,7 @@ async fn delete_file(
             path,
             recursive: q.recursive.unwrap_or(false),
             missing_ok: false,
-            ..Default::default()
+            run_as: crate::guest::file_run_as(&driver, &user),
         })
         .await
     {
@@ -1975,6 +1977,7 @@ async fn move_file(
         .stat(pb::StatRequest {
             path: target.clone(),
             no_follow_symlinks: true,
+            run_as: crate::guest::file_run_as(&driver, &user),
             ..Default::default()
         })
         .await
@@ -1999,7 +2002,7 @@ async fn move_file(
             destination: resolve_path(dst, &home),
             overwrite: true,
             create_parents: false,
-            ..Default::default()
+            run_as: crate::guest::file_run_as(&driver, &user),
         })
         .await
     {

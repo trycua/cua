@@ -214,6 +214,13 @@ pub trait SpacesExtension: Send + Sync + 'static {
         Box::pin(async {})
     }
 
+    /// A Space was deleted for good (its sandbox is gone): what lived in it
+    /// ends here. Not called when a Space is only forgotten or released.
+    fn space_deleted<'a>(&'a self, spaces: &'a Spaces, space: &'a str) -> BoxFuture<'a, ()> {
+        let _ = (spaces, space);
+        Box::pin(async {})
+    }
+
     /// For [`Spaces::extension`] (downcasting to the concrete type).
     fn as_any(&self) -> &dyn Any;
 }
@@ -238,6 +245,11 @@ impl Spaces {
         for e in &self.inner.extensions {
             e.space_connected(self, &key);
         }
+    }
+
+    /// Whether an extension named `name` is installed.
+    pub(crate) fn has_extension(&self, name: &str) -> bool {
+        self.inner.extensions.iter().any(|e| e.name() == name)
     }
 
     /// The extension that serves `tool`, if any.

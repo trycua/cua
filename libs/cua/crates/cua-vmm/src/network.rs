@@ -4,7 +4,9 @@
 //! **Presets.** [`NetworkPreset::Internet`] is the default: the public
 //! internet and the Space's own tree. [`NetworkPreset::None`] reaches
 //! nothing. [`NetworkPreset::Localhost`] and [`NetworkPreset::Lan`] add the
-//! host's loopback (on listed ports) or the local network.
+//! host's loopback (on listed ports) or the local network, each on top of
+//! `internet` and independent of the other; [`NetworkPreset::LocalhostLan`]
+//! (`localhost+lan`) adds both.
 //! [`NetworkPreset::Custom`] starts from `internet` or `none` and adds the
 //! user's allow and deny lists. [`NetworkPreset::Unprotected`] opens
 //! everything but the platform denies.
@@ -42,10 +44,10 @@
 //! answer into what a start does; nothing but `unprotected` ever starts
 //! less strict than asked.
 //!
-//! **Experiment.** All of this is the Secure Spaces experiment, off until
-//! it is turned on (`cua experiments enable secure-spaces`). Off, Spaces
-//! keep the old open default ([`Mode::Legacy`]). `CUA_SECURE_DEFAULT=1` or
-//! `=0` forces one or the other for a process.
+//! **Always on.** The secure default applies to every Space. The only way
+//! out is an operator's emergency override, not a setting: `CUA_SECURE_DEFAULT=0`
+//! makes a process keep the old open default ([`Mode::Legacy`]); `=1` forces the
+//! secure one.
 
 use std::net::IpAddr;
 
@@ -67,6 +69,11 @@ pub enum NetworkPreset {
     Localhost,
     /// `internet`, plus the local network.
     Lan,
+    /// `internet`, plus the host's loopback on listed ports and the local
+    /// network: `localhost` and `lan` together. The two extras are
+    /// independent; this is the one preset that has both.
+    #[serde(rename = "localhost+lan")]
+    LocalhostLan,
     /// `internet` or `none`, plus the user's allow and deny lists.
     Custom,
     /// Everything but the platform denies.
@@ -75,11 +82,12 @@ pub enum NetworkPreset {
 
 impl NetworkPreset {
     /// Every preset.
-    pub const ALL: [NetworkPreset; 6] = [
+    pub const ALL: [NetworkPreset; 7] = [
         NetworkPreset::Internet,
         NetworkPreset::None,
         NetworkPreset::Localhost,
         NetworkPreset::Lan,
+        NetworkPreset::LocalhostLan,
         NetworkPreset::Custom,
         NetworkPreset::Unprotected,
     ];
@@ -91,6 +99,7 @@ impl NetworkPreset {
             NetworkPreset::None => "none",
             NetworkPreset::Localhost => "localhost",
             NetworkPreset::Lan => "lan",
+            NetworkPreset::LocalhostLan => "localhost+lan",
             NetworkPreset::Custom => "custom",
             NetworkPreset::Unprotected => "unprotected",
         }
@@ -103,25 +112,53 @@ impl NetworkPreset {
             NetworkPreset::None => "No network",
             NetworkPreset::Localhost => "Allow this computer's localhost",
             NetworkPreset::Lan => "Allow my local network",
+            NetworkPreset::LocalhostLan => "Allow this computer's localhost and my local network",
             NetworkPreset::Custom => "Custom",
             NetworkPreset::Unprotected => "No protection",
         }
     }
 
+    /// Whether the preset opens the host's loopback (on listed ports):
+    /// `localhost`, alone or with `lan`.
+    pub fn opens_localhost(self) -> bool {
+        matches!(self, NetworkPreset::Localhost | NetworkPreset::LocalhostLan)
+    }
+
+    /// Whether the preset opens the local network: `lan`, alone or with
+    /// `localhost`.
+    pub fn opens_lan(self) -> bool {
+        matches!(self, NetworkPreset::Lan | NetworkPreset::LocalhostLan)
+    }
+
+    /// The `internet` preset plus the extras asked for: `internet`,
+    /// `localhost`, `lan` or `localhost+lan`.
+    pub fn with_extras(localhost: bool, lan: bool) -> NetworkPreset {
+        match (localhost, lan) {
+            (false, false) => NetworkPreset::Internet,
+            (true, false) => NetworkPreset::Localhost,
+            (false, true) => NetworkPreset::Lan,
+            (true, true) => NetworkPreset::LocalhostLan,
+        }
+    }
+
     /// Parses a preset word (case-insensitive). `default` is `internet`,
-    /// as the old `network="default"` was.
+    /// as the old `network="default"` was; `lan+localhost` is
+    /// `localhost+lan`.
     pub fn parse(text: &str) -> Result<NetworkPreset, PolicyError> {
         let t = text.trim().to_ascii_lowercase();
         if t == "default" {
             return Ok(NetworkPreset::Internet);
+        }
+        if t == "lan+localhost" {
+            return Ok(NetworkPreset::LocalhostLan);
         }
         NetworkPreset::ALL
             .into_iter()
             .find(|p| p.as_str() == t)
             .ok_or_else(|| {
                 PolicyError(format!(
-                    "network {text:?}: expected internet, none, localhost, lan, custom or \
-                     unprotected"
+                    "network {text:?}: expected internet, none, localhost, lan, localhost+lan, \
+                     custom or unprotected"
                 ))
             })
     }
@@ -359,7 +396,7 @@ impl NetworkSettings {
                     .into(),
             ));
         }
-        let localhost = self.preset == NetworkPreset::Localhost;
+        let localhost = self.preset.opens_localhost();
         if !localhost && (!self.localhost_ports.is_empty() || self.all_localhost_ports) {
             return Err(PolicyError(
                 "localhost ports go with the localhost preset".into(),
@@ -470,19 +507,21 @@ impl NetworkSettings {
     /// and anything stricter.
     pub fn widenings(&self) -> Vec<String> {
         let mut out = Vec::new();
-        match self.preset {
-            NetworkPreset::Lan => out.push("Allows your local network".to_string()),
-            NetworkPreset::Localhost if self.all_localhost_ports => {
-                out.push("Allows this computer's localhost (all ports)".to_string())
-            }
-            NetworkPreset::Localhost => out.push(format!(
-                "Allows this computer's localhost (ports {})",
-                join_ports(&self.localhost_ports)
-            )),
-            NetworkPreset::Unprotected => {
-                out.push("No protection: allows everything but cloud metadata".to_string())
-            }
-            NetworkPreset::Internet | NetworkPreset::None | NetworkPreset::Custom => {}
+        if self.preset.opens_localhost() {
+            out.push(if self.all_localhost_ports {
+                "Allows this computer's localhost (all ports)".to_string()
+            } else {
+                format!(
+                    "Allows this computer's localhost (ports {})",
+                    join_ports(&self.localhost_ports)
+                )
+            });
+        }
+        if self.preset.opens_lan() {
+            out.push("Allows your local network".to_string());
+        }
+        if self.preset == NetworkPreset::Unprotected {
+            out.push("No protection: allows everything but cloud metadata".to_string());
         }
         if let Ok(rules) = self.custom.split_domains().0.parse() {
             for r in rules.rules.iter().filter(|r| r.accept) {
@@ -511,10 +550,10 @@ impl NetworkSettings {
 
     fn preset_summary(&self) -> String {
         match self.preset {
-            NetworkPreset::Localhost if self.all_localhost_ports => {
+            p if p.opens_localhost() && self.all_localhost_ports => {
                 format!("{} (all ports)", self.preset.label())
             }
-            NetworkPreset::Localhost => format!(
+            p if p.opens_localhost() => format!(
                 "{} (ports {})",
                 self.preset.label(),
                 join_ports(&self.localhost_ports)
@@ -546,7 +585,7 @@ impl NetworkSettings {
             },
             ..Default::default()
         };
-        if preset == P::Localhost {
+        if preset.opens_localhost() {
             let both_all = self.all_localhost_ports && parent.all_localhost_ports;
             out.all_localhost_ports = both_all;
             if !both_all {
@@ -558,7 +597,9 @@ impl NetworkSettings {
                     _ => mine.into_iter().filter(|p| theirs.contains(p)).collect(),
                 };
                 if out.localhost_ports.is_empty() {
-                    out.preset = P::Internet;
+                    // No port both list: the localhost extra goes, a shared
+                    // `lan` extra stays.
+                    out.preset = NetworkPreset::with_extras(false, preset.opens_lan());
                 }
             }
         }
@@ -620,7 +661,7 @@ impl NetworkSettings {
 }
 
 fn ports_of(s: &NetworkSettings) -> Vec<u16> {
-    if s.preset == NetworkPreset::Localhost {
+    if s.preset.opens_localhost() {
         s.localhost_ports.clone()
     } else {
         Vec::new()
@@ -641,9 +682,14 @@ fn meet(a: &NetworkSettings, b: &NetworkSettings) -> (NetworkPreset, NetworkPres
     match (pa, pb) {
         (P::Unprotected, other) | (other, P::Unprotected) => (other, P::Internet),
         (P::Custom, _) | (_, P::Custom) => (P::Custom, P::Internet),
-        (P::Lan, P::Lan) => (P::Lan, P::Internet),
-        (P::Localhost, P::Localhost) => (P::Localhost, P::Internet),
-        (P::Internet | P::Lan | P::Localhost, _) => (P::Internet, P::Internet),
+        // The two extras are independent: the meet keeps those both open.
+        (P::Internet | P::Lan | P::Localhost | P::LocalhostLan, _) => (
+            P::with_extras(
+                pa.opens_localhost() && pb.opens_localhost(),
+                pa.opens_lan() && pb.opens_lan(),
+            ),
+            P::Internet,
+        ),
         (P::None, _) => (P::None, P::Internet),
     }
 }
@@ -844,7 +890,7 @@ pub fn vm_rules(
 /// daemon's. Every port is refused for VMs: a namespace forwards listed
 /// ports only. Empty for any other preset or under the old default.
 pub fn vm_localhost_ports(settings: Option<&NetworkSettings>) -> Result<Vec<u16>, PolicyError> {
-    let Some(s) = settings.filter(|s| s.preset == NetworkPreset::Localhost) else {
+    let Some(s) = settings.filter(|s| s.preset.opens_localhost()) else {
         return Ok(Vec::new());
     };
     if Mode::from_env() == Mode::Legacy {
@@ -883,46 +929,74 @@ pub fn pasta_out_spec(ports: &[u16]) -> String {
 }
 
 /// Whether the secure default applies, or the old open one. The secure
-/// default is the Secure Spaces experiment ([`crate::experiments::Gate`]):
-/// off, Spaces keep the open network they always had.
+/// default always applies unless an operator forces [`SECURE_DEFAULT_ENV`] to `0`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
-    /// Secure Spaces on: presets, platform and default denies.
+    /// The secure default: presets, platform and default denies.
     Secure,
     /// The old open default: only the user's own lists, and `none`.
     Legacy,
 }
 
-/// The environment variable that forces the mode over the experiment:
+/// The environment variable that forces the mode, an operator's emergency override:
 /// `0` (or `false`, `off`, `no`) the old open default, `1` (or `true`, `on`,
 /// `yes`) the secure one.
 pub const SECURE_DEFAULT_ENV: &str = "CUA_SECURE_DEFAULT";
 
+/// What a call says when the operator override [`SECURE_DEFAULT_ENV`]`=0` has turned the secure
+/// default off for this process and the call needs it.
+pub fn secure_default_off_message() -> String {
+    format!(
+        "This needs the secure network default, which {SECURE_DEFAULT_ENV}=0 has turned off for this process. Unset it and restart."
+    )
+}
+
 impl Mode {
-    /// The mode of this process: [`SECURE_DEFAULT_ENV`] when it is set,
-    /// else [`crate::experiments::Gate::SecureSpaces`] (off unless
-    /// turned on).
+    /// The mode of this process: [`SECURE_DEFAULT_ENV`] when it is set, else the secure
+    /// default. It decides the network of Spaces made from now on only.
     pub fn from_env() -> Mode {
-        Mode::from_value(
-            std::env::var(SECURE_DEFAULT_ENV).ok().as_deref(),
-            crate::experiments::enabled(crate::experiments::Gate::SecureSpaces),
-        )
+        if let Some(m) = *MODE_HELD.lock().unwrap_or_else(|e| e.into_inner()) {
+            return m;
+        }
+        Mode::from_value(std::env::var(SECURE_DEFAULT_ENV).ok().as_deref())
     }
 
-    /// [`Mode::from_env`] for a value of the variable and the experiment's
-    /// state.
-    pub fn from_value(v: Option<&str>, experiment_on: bool) -> Mode {
+    /// [`Mode::from_env`] for a value of the variable.
+    pub fn from_value(v: Option<&str>) -> Mode {
         match v.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
             Some("0" | "false" | "off" | "no") => Mode::Legacy,
-            Some("1" | "true" | "on" | "yes") => Mode::Secure,
-            _ if experiment_on => Mode::Secure,
-            _ => Mode::Legacy,
+            _ => Mode::Secure,
         }
     }
 }
 
+/// A process-wide mode a test holds (see [`hold_mode`]).
+static MODE_HELD: std::sync::Mutex<Option<Mode>> = std::sync::Mutex::new(None);
+/// Tests that hold a mode take turns.
+static MODE_TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Holds this process's mode at `mode` until dropped. Real-VM tests that need an open network
+/// hold [`Mode::Legacy`] instead of setting the environment. Holders take turns.
+#[must_use = "the mode is held until this is dropped"]
+pub struct ModeHold {
+    _turn: std::sync::MutexGuard<'static, ()>,
+}
+
+/// Waits for its turn, then holds [`Mode::from_env`] at `mode` (see [`ModeHold`]).
+pub fn hold_mode(mode: Mode) -> ModeHold {
+    let turn = MODE_TURN.lock().unwrap_or_else(|e| e.into_inner());
+    *MODE_HELD.lock().unwrap_or_else(|e| e.into_inner()) = Some(mode);
+    ModeHold { _turn: turn }
+}
+
+impl Drop for ModeHold {
+    fn drop(&mut self) {
+        *MODE_HELD.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+}
+
 /// Whether a Space with `settings` (`None`: none recorded) is held to the
-/// secure default: it is while Secure Spaces is on ([`Mode::from_env`]),
+/// secure default: it is by default ([`Mode::from_env`]),
 /// unless the user chose No protection.
 pub fn protects(settings: Option<&NetworkSettings>) -> bool {
     Mode::from_env() == Mode::Secure
@@ -1020,6 +1094,20 @@ pub fn compile_mode(
         return Ok(rules);
     }
     let mut r: Vec<Rule> = Vec::new();
+    // 1a. A cloud platform's own resolver (Azure's wireserver, GCP's
+    //     metadata server) is also a metadata endpoint. It is opened on
+    //     port 53 only, ahead of the metadata deny, so private DNS zones
+    //     resolve while its HTTP stays closed.
+    if settings.preset != NetworkPreset::None {
+        for ip in dedup(ctx.resolvers.iter().copied()) {
+            if crate::resolver::is_platform_resolver(ip) {
+                r.push(Rule {
+                    ports: Some(vec![53]),
+                    ..Rule::net(Net::host(ip), true, Reason::Resolver)
+                });
+            }
+        }
+    }
     // 1. Platform denies.
     for n in nets(&METADATA) {
         r.push(Rule::net(n, false, Reason::PlatformMetadata));
@@ -1056,7 +1144,7 @@ pub fn compile_mode(
     }
     // 3. The host: only `localhost` opens its aliases, on its ports.
     if !unprotected {
-        if settings.preset == NetworkPreset::Localhost {
+        if settings.preset.opens_localhost() {
             for ip in dedup(ctx.host_aliases.iter().copied()) {
                 r.push(Rule {
                     ports: (!settings.all_localhost_ports)
@@ -1090,7 +1178,7 @@ pub fn compile_mode(
         for n in default_reserved() {
             r.push(Rule::net(n, false, Reason::DefaultReserved));
         }
-        if settings.preset != NetworkPreset::Lan {
+        if !settings.preset.opens_lan() {
             for n in default_lan() {
                 r.push(Rule::net(n, false, Reason::DefaultLan));
             }
@@ -1193,6 +1281,8 @@ pub const WHY_CONTAINERIZATION: &str = "Apple's Containerization can't protect y
      or choose No protection.";
 const WHY_QEMU_DOCKER: &str = "QEMU in a container isn't supported by this build";
 const WHY_FIRECRACKER_OS: &str = "Firecracker microVMs run on Linux only";
+/// A Windows microVM runs in QEMU's user-mode network, which has no rules.
+const WHY_MICROVM_WINDOWS: &str = "microVMs on this PC can't protect your network yet (QEMU's      user-mode network has no rules). Choose No protection to start one with a network, or no      network.";
 const WHY_VZ_OS: &str = "Apple microVMs run on a Mac only";
 const WHY_MAC_OS: &str = "this runtime runs on a Mac only";
 const WHY_PROVIDER: &str = "Spaces in your cloud account can't protect your network yet. \
@@ -1228,6 +1318,9 @@ pub fn network_support(kind: BackendKind, os: &str, placement: Placement) -> Net
             point: ENGINE_POINT,
         },
         BackendKind::Firecracker if linux => Enforced { point: NS_POINT },
+        BackendKind::Firecracker if os == "windows" => NoNetworkOnly {
+            why: WHY_MICROVM_WINDOWS,
+        },
         BackendKind::Firecracker => Refuse {
             why: WHY_FIRECRACKER_OS,
         },

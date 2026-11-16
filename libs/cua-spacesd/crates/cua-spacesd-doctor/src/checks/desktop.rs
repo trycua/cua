@@ -867,7 +867,15 @@ pub async fn run(ctx: &Ctx, rec: &mut Recorder<'_>) {
                 }
             }
         }
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        // The click above and the activation are asynchronous: the entry takes
+        // keyboard focus when the form's own thread gets to them, and keys sent
+        // before that land on another control or nowhere (CI runs on the
+        // Windows image lost the first keystrokes or all six, with the driver
+        // reporting a clean delivery). Type only once the form itself says the
+        // entry holds the focus and has read a probe key.
+        if let Err(error) = entry_ready(ctx, &form).await {
+            return Check::new("input.type", Status::Fail, error);
+        }
         let since = events(ctx, &form).await.len();
         let report = match ctx.client.type_text("doctor").await {
             Ok(response) => response.report,
@@ -888,12 +896,9 @@ pub async fn run(ctx: &Ctx, rec: &mut Recorder<'_>) {
         )
         .await;
         if typed.is_none() {
-            let last = events(ctx, &form)
-                .await
-                .into_iter()
-                .rev()
-                .find(|e| e["type"] == "entry_changed");
-            let after: Vec<Value> = events(ctx, &form).await.into_iter().skip(since).collect();
+            let all = events(ctx, &form).await;
+            let last = all.iter().rev().find(|e| e["type"] == "entry_changed");
+            let after: Vec<Value> = all.iter().skip(since).cloned().collect();
             return Check::new(
                 "input.type",
                 Status::Fail,
@@ -1230,6 +1235,77 @@ async fn form_focused(ctx: &Ctx, title: &str, timeout: Duration) -> bool {
     false
 }
 
+/// The form's `ready` record says it logs `widget_focus` records.
+fn reports_focus_events(log: &[Value]) -> bool {
+    log.iter()
+        .find(|e| e["type"] == "ready")
+        .is_some_and(|e| e["focus_events"] == true)
+}
+
+/// The latest `widget_focus` record says the Name entry holds keyboard focus.
+fn entry_has_focus(log: &[Value]) -> bool {
+    log.iter()
+        .rev()
+        .find(|e| e["type"] == "widget_focus" && e["widget"] == "Name")
+        .is_some_and(|e| e["focused"] == true)
+}
+
+/// A Backspace key press the form saw with the Name entry focused.
+fn is_entry_probe(e: &Value) -> bool {
+    e["type"] == "key_press"
+        && e["focus"] == "Name"
+        && e["key"]
+            .as_str()
+            .is_some_and(|k| k.to_ascii_lowercase().contains("back"))
+}
+
+/// Waits until the form's Name entry really takes keyboard input: the form
+/// logs that the entry holds the focus, then a Backspace (harmless on the
+/// empty entry) comes back as a key press with the entry focused, which
+/// proves the form's thread is draining input and the focus is in place. A
+/// form that does not log focus (an image built before the marker) is
+/// trusted on the window focus the caller already confirmed.
+async fn entry_ready(ctx: &Ctx, form: &Fixture) -> Result<(), String> {
+    if !reports_focus_events(&events(ctx, form).await) {
+        return Ok(());
+    }
+    let deadline = Instant::now() + crate::scaled(Duration::from_secs(15));
+    loop {
+        let log = events(ctx, form).await;
+        if entry_has_focus(&log) {
+            let since = log.len();
+            ctx.client
+                .press("backspace")
+                .await
+                .map_err(|error| format!("Keyboard press (readiness probe): {error}"))?;
+            if wait_event_after(ctx, form, since, is_entry_probe, Duration::from_secs(2))
+                .await
+                .is_some()
+                && entry_has_focus(&events(ctx, form).await)
+            {
+                return Ok(());
+            }
+        }
+        if Instant::now() >= deadline {
+            let log = events(ctx, form).await;
+            return Err(format!(
+                "the form's Name entry never took keyboard focus within 15 s (entry focused: {}, \
+                 focus records: {:?})",
+                entry_has_focus(&log),
+                log.iter()
+                    .filter(|e| e["type"] == "widget_focus"
+                        || e["type"] == "focus_in"
+                        || e["type"] == "focus_out")
+                    .rev()
+                    .take(6)
+                    .map(|e| (e["type"].as_str().unwrap_or(""), e["focused"].clone()))
+                    .collect::<Vec<_>>()
+            ));
+        }
+        tokio::time::sleep(Duration::from_millis(150)).await;
+    }
+}
+
 /// What the form saw after a failed type, and what the server reported, so a
 /// CI failure says whether keys reached the window at all and where focus was.
 fn type_diagnosis(report: Option<&pb::DeliveryReport>, after: &[Value]) -> String {
@@ -1366,5 +1442,54 @@ mod type_diagnosis_tests {
         assert!(text.contains("focus_out"), "{text}");
         assert!(text.contains("no delivery report"), "{text}");
         assert!(type_diagnosis(None, &[]).contains("form key presses 0"));
+    }
+}
+
+#[cfg(test)]
+mod entry_ready_tests {
+    use super::{entry_has_focus, is_entry_probe, reports_focus_events};
+    use serde_json::json;
+
+    #[test]
+    fn entry_focus_follows_the_latest_record() {
+        let mut log = vec![json!({"type": "ready", "focus_events": true})];
+        assert!(!entry_has_focus(&log));
+        log.push(json!({"type": "widget_focus", "widget": "Name", "focused": true}));
+        assert!(entry_has_focus(&log));
+        // Another process took the foreground: the form lost the entry's focus.
+        log.push(json!({"type": "widget_focus", "widget": "Name", "focused": false}));
+        assert!(!entry_has_focus(&log));
+        log.push(json!({"type": "widget_focus", "widget": "Name", "focused": true}));
+        log.push(json!({"type": "widget_focus", "widget": "Notes", "focused": false}));
+        assert!(entry_has_focus(&log));
+    }
+
+    #[test]
+    fn old_fixtures_without_focus_records_are_detected() {
+        assert!(reports_focus_events(&[
+            json!({"type": "ready", "focus_events": true})
+        ]));
+        assert!(!reports_focus_events(&[json!({"type": "ready"})]));
+        assert!(!reports_focus_events(&[]));
+    }
+
+    #[test]
+    fn probe_is_a_backspace_seen_by_the_entry() {
+        assert!(is_entry_probe(
+            &json!({"type": "key_press", "key": "Back", "focus": "Name"})
+        ));
+        assert!(is_entry_probe(
+            &json!({"type": "key_press", "key": "BackSpace", "focus": "Name"})
+        ));
+        // The sentinel key, other keys and a Backspace seen elsewhere do not count.
+        assert!(!is_entry_probe(
+            &json!({"type": "key_press", "key": "OemClear", "focus": "Name"})
+        ));
+        assert!(!is_entry_probe(
+            &json!({"type": "key_press", "key": "Back", "focus": "Notes"})
+        ));
+        assert!(!is_entry_probe(
+            &json!({"type": "key_release", "key": "Back", "focus": "Name"})
+        ));
     }
 }

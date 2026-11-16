@@ -1,4 +1,4 @@
-# Opt-out list for scripts/ci/check-no-larger-runners.py (CI: Block larger runners).
+# Opt-out list for scripts/ci/check-no-larger-runners.py (bin/ci --quick, check larger-runners).
 #
 # GitHub bills larger runners (macOS xlarge/large, Linux or Windows N-core,
 # custom larger-runner groups) even on public repositories. Standard runners on

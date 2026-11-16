@@ -100,7 +100,12 @@ export function moveWakeNotes(from: string, to: string): void {
  * Connect for a note from anywhere (Home, the Agents page), then the message
  * again in its Space: the same as the note's own Connect in the thread.
  */
-export async function connectNote(spaceId: string, note: WakeNote, c: { connectApp(agent: string): Promise<"connected" | "sheet" | "failed"> }, data: DataAdapter): Promise<void> {
+export async function connectNote(
+  spaceId: string,
+  note: WakeNote,
+  c: { connectApp(agent: string): Promise<"connected" | "sheet" | "failed"> },
+  data: DataAdapter,
+): Promise<void> {
   patch(spaceId, note.id, { state: "connecting" });
   const outcome = await c.connectApp(note.cant.app);
   if (outcome === "failed") return patch(spaceId, note.id, { state: "failed" });
@@ -113,7 +118,13 @@ export async function connectNote(spaceId: string, note: WakeNote, c: { connectA
  * message is posted. When the agent can't be added, the note says why and
  * nothing is posted (a message no agent reads would look sent).
  */
-async function sendAgain(spaceId: string, note: WakeNote, data: DataAdapter, post: (text: string) => Promise<void>, why?: (error: string) => CantWake | null): Promise<void> {
+async function sendAgain(
+  spaceId: string,
+  note: WakeNote,
+  data: DataAdapter,
+  post: (text: string) => Promise<void>,
+  why?: (error: string) => CantWake | null,
+): Promise<void> {
   try {
     await data.call("thread.agentAdd", { spaceId, name: note.cant.handle, harness: note.cant.harness });
   } catch (e) {
@@ -175,7 +186,12 @@ export function useSummon({ spaceId, thread, roster, canAdd }: { spaceId: string
   const connectors = useConnectors();
   const input: SummonInput = useMemo(
     () => ({
-      members: thread.members.map((m) => ({ handle: m.handle ?? m.name, key: m.name, harness: m.harness, label: roster.agents.find((a) => a.name === m.name)?.label ?? m.name })),
+      members: thread.members.map((m) => ({
+        handle: m.handle ?? m.name,
+        key: m.name,
+        harness: m.harness,
+        label: roster.agents.find((a) => a.name === m.name)?.label ?? m.name,
+      })),
       people: roster.people.map((p) => p.label.toLowerCase().replace(/\s+/g, "")),
       canAdd: canAdd && !!data && threadOpAvailable(data.mode, "thread.agentAdd"),
       reportUnknown: true,
@@ -275,7 +291,13 @@ export function WakeNoteView({
             </Button>
           ) : null}
           {c.openLabel ? (
-            <Button size="sm" variant="ghost" className="text-muted-foreground" render={<Link to="/settings/connections/$app" params={{ app: c.app }} />} data-wake-open="">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-muted-foreground"
+              render={<Link to="/settings/connections/$app" params={{ app: c.app }} />}
+              data-wake-open=""
+            >
               {c.openLabel}
             </Button>
           ) : null}
@@ -284,7 +306,13 @@ export function WakeNoteView({
     );
   }
   return (
-    <div role="status" data-wake-note={c.handle} data-state={note.state} data-only-you={c.onlyYou ? "" : undefined} className="my-1.5 ml-11 rounded-lg bg-brand-surface px-3.5 py-2.5">
+    <div
+      role="status"
+      data-wake-note={c.handle}
+      data-state={note.state}
+      data-only-you={c.onlyYou ? "" : undefined}
+      className="my-1.5 ml-11 rounded-lg bg-brand-surface px-3.5 py-2.5"
+    >
       <OnlyYou label={c.onlyYouLabel} dismiss={note.state === "connecting" ? null : c.dismissLabel} onDismiss={onDismiss} />
       {body}
     </div>
@@ -298,7 +326,12 @@ export function OnlyYou({ label, dismiss, onDismiss }: { label: string; dismiss?
       <EyeIcon aria-hidden className="size-3" />
       <span className="flex-1">{label}</span>
       {dismiss && onDismiss ? (
-        <button type="button" data-wake-dismiss="" onClick={onDismiss} className="cursor-default rounded-lg px-1 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60">
+        <button
+          type="button"
+          data-wake-dismiss=""
+          onClick={onDismiss}
+          className="cursor-default rounded-lg px-1 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+        >
           {dismiss}
         </button>
       ) : null}

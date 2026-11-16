@@ -108,8 +108,11 @@ class ScopeTests(unittest.TestCase):
 
     def test_full_build_everywhere_else(self):
         for lane in LANES:
-            for event in ("push", "schedule", "workflow_dispatch"):
+            for event in ("schedule", "workflow_dispatch"):
                 self.assertTrue(run(lane, ["docs/a.md"], event=event), (lane, event))
+            # A push to main is scoped like a pull request; no listing fails closed.
+            self.assertFalse(run(lane, ["docs/a.md"], event="push"), lane)
+            self.assertTrue(run(lane, [], event="push"), lane)
             self.assertTrue(run(lane, ["docs/a.md"], labels=["ci:full"]), lane)
             self.assertFalse(run(lane, ["docs/a.md"], labels=["agent", "bug"]), lane)
 
@@ -156,7 +159,8 @@ class ScopeTests(unittest.TestCase):
             self.assertTrue(run_typescript([f]), f)
         for f in ("docs/content/docs/other.mdx", "apps/cua-spaces/src/a.ts", "examples/infinite-canvas-swift/Package.swift"):
             self.assertFalse(run_typescript([f]), f)
-        self.assertTrue(run_typescript(["docs/a.md"], event="push"))
+        self.assertFalse(run_typescript(["docs/a.md"], event="push"))
+        self.assertTrue(run_typescript([], event="push"))
         self.assertTrue(run_typescript(["docs/a.md"], labels=["ci:full"]))
         self.assertTrue(run_typescript([]))
 
@@ -197,6 +201,8 @@ class CommandTests(unittest.TestCase):
         out = self.scope("openkoalabot", ["docs/other.md"], EVENT="pull_request")
         self.assertEqual((out["run"], out["typescript"]), ("false", "false"))
         out = self.scope("openkoalabot", ["docs/other.md"], EVENT="push")
+        self.assertEqual((out["run"], out["typescript"]), ("false", "false"))
+        out = self.scope("openkoalabot", ["docs/other.md"], EVENT="schedule")
         self.assertEqual((out["run"], out["typescript"]), ("true", "true"))
         out = self.scope("infinite-canvas", ["docs/other.md"], EVENT="pull_request", LABELS='["ci:full"]')
         self.assertEqual(out, {"run": "true", "reason": "ci:full label"})
@@ -270,7 +276,7 @@ class WorkflowWiringTests(unittest.TestCase):
             self.assertIn("./.github/actions/setup-protoc", uses)
             self.assertIn("./.github/actions/rust-cache", uses)
 
-    def test_full_run_on_main_and_nightly(self):
+    def test_scoped_on_main_full_nightly(self):
         for lane in LANES:
             on = self.load(lane)[True]
             self.assertEqual(on["push"], {"branches": ["main"]})
@@ -283,11 +289,16 @@ class WorkflowWiringTests(unittest.TestCase):
         """Evaluate the small subset of the expression language the job conditions use."""
         expression = re.fullmatch(r"\$\{\{\s*(.*?)\s*\}\}", condition.strip()).group(1)
         expression = re.sub(r"startsWith\(([\w.]+), ('[^']*')\)", r"\1.startswith(\2)", expression)
-        expression = expression.replace("&&", " and ").replace("||", " or ").replace("!", " not ")
+        # No earlier job failed or was cancelled in these scenarios; skipped needs are fine.
+        expression = expression.replace("!failure()", "True").replace("!cancelled()", "True")
+        expression = expression.replace("!=", "\0")
+        expression = expression.replace("&&", " and ").replace("||", " or ").replace("!", " not ").replace("\0", "!=")
         for name, key in (("needs.changes.outputs.run", "run"), ("needs.changes.outputs.typescript", "typescript"),
+                          ("needs.quick.outputs.skip", "skip"),
                           ("github.head_ref", "head_ref"), ("github.event_name", "event_name")):
             expression = expression.replace(name, key)
-        return eval(expression, {"__builtins__": {}}, context)
+        # `skip` is the shared scope decision (ci-quick.yml); these scenarios are all in scope.
+        return eval(expression, {"__builtins__": {}}, {"event_name": "pull_request", "skip": "false", **context})
 
     def test_macos_job_waits_for_the_scope_job(self):
         for lane in LANES:
@@ -300,9 +311,9 @@ class WorkflowWiringTests(unittest.TestCase):
             self.assertIn(f"scope {lane}", script)
             # Only the quick stage (ci-quick.yml) comes before the scope job.
             self.assertEqual(changes["needs"], "quick")
-            self.assertEqual(changes["if"], "${{ !failure() && !cancelled() }}")
+            self.assertEqual(changes["if"], "${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}")
             swift = jobs["swift"]
-            self.assertEqual(swift["needs"], "changes")
+            self.assertEqual(swift["needs"], ["quick", "changes"])
             # The arm64 larger runner of the same macOS image (macos-26 is 3-core).
             self.assertEqual(swift["runs-on"], "macos-26")
 
@@ -320,10 +331,18 @@ class WorkflowWiringTests(unittest.TestCase):
                         context = {"run": "", "typescript": "", "head_ref": head_ref, output: decision}
                         expected = decision == "true" and not head_ref.startswith("release-please--branches--")
                         self.assertEqual(self.evaluate(jobs[job]["if"], **context), expected, (lane, job, head_ref, decision))
-        self.assertEqual(self.load("openkoalabot")["jobs"]["typescript"]["needs"], "changes")
+        self.assertEqual(self.load("openkoalabot")["jobs"]["typescript"]["needs"], ["quick", "changes"])
 
     def test_no_other_job_in_the_infinite_canvas_workflow(self):
-        self.assertEqual(set(self.load("infinite-canvas")["jobs"]), {"quick", "changes", "swift"})
+        self.assertEqual(set(self.load("infinite-canvas")["jobs"]), {"quick", "changes", "swift", "bench"})
+
+    def test_benchmark_never_runs_on_pull_requests(self):
+        bench = self.load("infinite-canvas")["jobs"]["bench"]
+        self.assertEqual(bench["needs"], ["quick", "changes"])
+        for event in ("pull_request",):
+            self.assertFalse(self.evaluate(bench["if"], run="true", head_ref="feature/x", event_name=event))
+        for event in ("push", "schedule", "workflow_dispatch"):
+            self.assertTrue(self.evaluate(bench["if"], run="true", head_ref="feature/x", event_name=event))
 
 
 if __name__ == "__main__":

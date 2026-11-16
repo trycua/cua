@@ -3,32 +3,34 @@
 
 //! Enumerate top-level windows on Windows.
 //!
-//! Two enumeration sources, then union + dedupe by HWND:
+//! Window listing uses Win32 calls only. None of them sends a message to a
+//! window in another process, so a hung or slow app cannot stall it. UI
+//! Automation's desktop `FindAll` does: it asks every top-level window's
+//! provider, so each call waited on the slowest app (up to its 2 s deadline
+//! when one was hung, #4906).
 //!
-//! 1. **`EnumWindows`** (canonical z-order) — the Win32 enumerator walks the
-//!    window manager's z-order list top-to-bottom, so iteration order IS the
-//!    actual z-order. We list these first so the merged array's index reflects
-//!    the true Win32 stacking for any HWND the Win32 path can see.
+//! 1. **`EnumWindows`**, whose iteration order is the window manager's
+//!    z-order (top-to-bottom), so the list index doubles as a z_index.
+//! 2. **`FindWindowExW` walk**, appended after, for the immersive shell
+//!    windows `EnumWindows` skips (an open Start menu or Search flyout).
+//!    Only uncloaked, non-minimized ones are kept, since a closed flyout
+//!    stays visible and titled but cloaked.
 //!
-//! 2. **UI Automation** (extra coverage) — appended after `EnumWindows`,
-//!    contributing only HWNDs Win32 didn't surface. UIA exposes modern
-//!    containers (WebView2 hosts, packaged-UWP frames, Electron container
-//!    HWNDs) that `EnumWindows` may miss or return as wrapper HWNDs. UIA's
-//!    `FindAll(TreeScope::Children, ...)` makes no z-order guarantee, so we
-//!    deliberately do NOT let it reorder anything Win32 already reported.
-//!
-//! Both sources apply the same filters (visible, non-empty title). Minimized
-//! windows remain addressable and are reported as off-screen so callers can
-//! restore them explicitly. The `filter_pid` argument is applied to the merged
-//! list so the union/dedupe pipeline runs unconditionally.
+//! Both sources require a visible window with a non-empty title. Minimized
+//! `EnumWindows` windows remain addressable and are reported as off-screen
+//! so callers can restore them explicitly.
 
 use std::collections::HashSet;
 use std::sync::Mutex;
+use windows::core::PCWSTR;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT, TRUE};
-use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
+use windows::Win32::Graphics::Dwm::{
+    DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumChildWindows, EnumWindows, GetClassNameW, GetWindow, GetWindowRect, GetWindowTextLengthW,
-    GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, GW_OWNER,
+    EnumChildWindows, EnumWindows, FindWindowExW, GetClassNameW, GetWindow, GetWindowRect,
+    GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow,
+    IsWindowVisible, GW_OWNER,
 };
 
 #[derive(Debug, Clone)]
@@ -50,47 +52,80 @@ struct EnumState {
     windows: Vec<WindowInfo>,
 }
 
-/// List top-level visible windows. If `filter_pid` is Some, only that process.
-///
-/// `EnumWindows` first — its iteration order is the Win32 window manager's
-/// z-order (top-to-bottom), so the merged array's index doubles as a z_index
-/// for any HWND the Win32 path saw. Then UIA-only entries are appended (UIA
-/// makes no z-order guarantee, so it must not be allowed to reorder anything
-/// EnumWindows already reported). The pid filter is applied to the merged
-/// list.
+/// List top-level visible windows in z-order, front first. If `filter_pid`
+/// is Some, only that process's windows.
 pub fn list_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
-    let win32_windows = list_windows_via_win32(None);
-    let uia_windows = crate::uia::enumerate_top_level_windows();
-
-    let mut seen: HashSet<u64> = HashSet::with_capacity(uia_windows.len() + win32_windows.len());
-    let mut merged: Vec<WindowInfo> = Vec::with_capacity(uia_windows.len() + win32_windows.len());
-
-    // EnumWindows first — canonical Win32 z-order.
-    for w in win32_windows {
-        if seen.insert(w.hwnd) {
-            merged.push(w);
-        }
+    let mut windows = merge_top_level_windows(
+        enumerate_via_enum_windows(),
+        top_level_handles(),
+        immersive_window_info,
+    );
+    if let Some(pid) = filter_pid {
+        windows.retain(|w| w.pid == pid);
     }
-    // Then any UIA-only HWND that EnumWindows didn't surface (modern
-    // containers, WebView2 hosts, etc.). These get appended (no claim on
-    // z-order priority relative to the Win32 list).
-    for w in uia_windows {
-        if seen.insert(w.hwnd) {
-            merged.push(w);
-        }
-    }
+    windows
+}
 
-    if let Some(fp) = filter_pid {
-        merged.retain(|w| w.pid == fp);
-    }
+/// Append the `handles` that `enum_windows` skipped and `probe` accepts,
+/// keeping the `EnumWindows` order first.
+fn merge_top_level_windows(
+    enum_windows: Vec<WindowInfo>,
+    handles: Vec<u64>,
+    probe: impl Fn(u64) -> Option<WindowInfo>,
+) -> Vec<WindowInfo> {
+    let seen: HashSet<u64> = enum_windows.iter().map(|w| w.hwnd).collect();
+    let mut merged = enum_windows;
+    merged.extend(
+        handles
+            .into_iter()
+            .filter(|hwnd| !seen.contains(hwnd))
+            .filter_map(probe),
+    );
     merged
 }
 
-/// Resolve one exact Win32 window without entering the global UIA tree.
-///
-/// Exact `(pid, HWND)` callers already have a native identity anchor. Avoiding
-/// the UIA union keeps an unrelated unresponsive provider from blocking that
-/// ownership check.
+/// Every top-level HWND on this desktop, including the immersive windows
+/// `EnumWindows` leaves out.
+fn top_level_handles() -> Vec<u64> {
+    let mut handles = Vec::new();
+    let mut after = HWND::default();
+    while let Ok(next) =
+        unsafe { FindWindowExW(HWND::default(), after, PCWSTR::null(), PCWSTR::null()) }
+    {
+        if next.0.is_null() {
+            break;
+        }
+        handles.push(next.0 as u64);
+        after = next;
+    }
+    handles
+}
+
+/// A window `EnumWindows` skipped, kept only while it is actually shown:
+/// visible, titled, not minimized and not cloaked.
+fn immersive_window_info(hwnd: u64) -> Option<WindowInfo> {
+    let native = HWND(hwnd as *mut _);
+    if unsafe { IsIconic(native) }.as_bool() || window_is_cloaked(native) {
+        return None;
+    }
+    window_info_by_handle(hwnd)
+}
+
+fn window_is_cloaked(hwnd: HWND) -> bool {
+    let mut cloaked = 0u32;
+    unsafe {
+        DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_CLOAKED,
+            &mut cloaked as *mut u32 as *mut _,
+            std::mem::size_of::<u32>() as u32,
+        )
+        .is_err()
+            || cloaked != 0
+    }
+}
+
+/// Resolve one exact Win32 window without enumerating the desktop.
 pub(crate) fn find_window_by_pid_and_handle(pid: u32, hwnd: u64) -> Option<WindowInfo> {
     exact_window_from_probe(pid, hwnd, window_info_by_handle)
 }
@@ -108,10 +143,9 @@ pub(crate) enum PidWindowLookup {
 
 /// Validate that `hwnd` is a listed top-level window of `pid`.
 ///
-/// Probes the exact HWND through Win32 first, so the common case never waits
-/// on the desktop-wide UIA enumeration (and its 2 s deadline, #4416). Only a
-/// miss falls back to the full Win32 + UIA union, which still resolves
-/// UIA-only windows and names the owning pid of a mismatched HWND.
+/// Probes the exact HWND first. Only a miss falls back to the full listing,
+/// which resolves immersive windows and names the owning pid of a
+/// mismatched HWND.
 pub(crate) fn lookup_window_for_pid(pid: u32, hwnd: u64) -> PidWindowLookup {
     lookup_window_for_pid_with(pid, hwnd, find_window_by_pid_and_handle, || {
         list_windows(None)
@@ -131,30 +165,6 @@ fn lookup_window_for_pid_with(
         Some(window) if window.pid == pid => PidWindowLookup::Found(window),
         Some(window) => PidWindowLookup::OtherPid(window.pid),
         None => PidWindowLookup::Missing,
-    }
-}
-
-/// List `pid`'s top-level windows, consulting UIA only when Win32 finds none.
-///
-/// Polling callers (e.g. `launch_app` waiting for a first window) otherwise
-/// pay the UIA desktop-enumeration deadline on every attempt even when
-/// `EnumWindows` already sees the window (#4416).
-pub(crate) fn list_windows_win32_first(pid: u32) -> Vec<WindowInfo> {
-    win32_first_with(
-        || list_windows_via_win32(Some(pid)),
-        || list_windows(Some(pid)),
-    )
-}
-
-fn win32_first_with(
-    win32: impl FnOnce() -> Vec<WindowInfo>,
-    full: impl FnOnce() -> Vec<WindowInfo>,
-) -> Vec<WindowInfo> {
-    let windows = win32();
-    if windows.is_empty() {
-        full()
-    } else {
-        windows
     }
 }
 
@@ -401,178 +411,6 @@ fn get_window_bounds(hwnd: HWND) -> (i32, i32, i32, i32) {
     }
 }
 
-#[cfg(test)]
-mod exact_window_tests {
-    use super::{
-        exact_window_from_probe, lookup_window_for_pid_with, owner_chain_reaches_target,
-        post_action_foreground_allowed, win32_first_with, PidWindowLookup,
-        PostActionForegroundRelation, WindowInfo,
-    };
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    fn window(pid: u32, hwnd: u64) -> WindowInfo {
-        WindowInfo {
-            hwnd,
-            pid,
-            title: "Exact target".into(),
-            x: 0,
-            y: 0,
-            width: 100,
-            height: 100,
-            is_on_screen: true,
-            minimized: false,
-        }
-    }
-
-    #[test]
-    fn pid_window_lookup_skips_full_enumeration_on_exact_hit() {
-        let found = lookup_window_for_pid_with(
-            42,
-            0x1234,
-            |pid, hwnd| Some(window(pid, hwnd)),
-            || panic!("exact hit must not enumerate the desktop"),
-        );
-        assert!(matches!(found, PidWindowLookup::Found(w) if w.hwnd == 0x1234 && w.pid == 42));
-    }
-
-    #[test]
-    fn pid_window_lookup_falls_back_for_uia_only_window() {
-        let calls = AtomicUsize::new(0);
-        let found = lookup_window_for_pid_with(
-            42,
-            0x1234,
-            |_, _| None,
-            || {
-                calls.fetch_add(1, Ordering::SeqCst);
-                vec![window(7, 0x9999), window(42, 0x1234)]
-            },
-        );
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert!(matches!(found, PidWindowLookup::Found(w) if w.hwnd == 0x1234));
-    }
-
-    #[test]
-    fn pid_window_lookup_reports_other_pid_and_missing() {
-        let other = lookup_window_for_pid_with(42, 0x1234, |_, _| None, || vec![window(7, 0x1234)]);
-        assert!(matches!(other, PidWindowLookup::OtherPid(7)));
-
-        let missing = lookup_window_for_pid_with(42, 0x1234, |_, _| None, Vec::new);
-        assert!(matches!(missing, PidWindowLookup::Missing));
-    }
-
-    #[test]
-    fn win32_first_listing_consults_uia_only_when_win32_is_empty() {
-        let listed = win32_first_with(
-            || vec![window(42, 0x1)],
-            || panic!("Win32 hit must not enumerate UIA"),
-        );
-        assert_eq!(listed.len(), 1);
-
-        let calls = AtomicUsize::new(0);
-        let listed = win32_first_with(Vec::new, || {
-            calls.fetch_add(1, Ordering::SeqCst);
-            vec![window(42, 0x2)]
-        });
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert_eq!(listed[0].hwnd, 0x2);
-    }
-
-    #[test]
-    fn exact_lookup_probes_only_the_requested_native_handle() {
-        let calls = AtomicUsize::new(0);
-        let found = exact_window_from_probe(42, 0x1234, |hwnd| {
-            calls.fetch_add(1, Ordering::SeqCst);
-            assert_eq!(hwnd, 0x1234);
-            Some(window(42, hwnd))
-        });
-
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert_eq!(found.map(|window| window.hwnd), Some(0x1234));
-    }
-
-    #[test]
-    fn exact_lookup_rejects_wrong_pid_or_handle() {
-        assert!(exact_window_from_probe(42, 7, |_| Some(window(43, 7))).is_none());
-        assert!(exact_window_from_probe(42, 7, |_| Some(window(42, 8))).is_none());
-    }
-
-    fn relation(
-        exact_match: bool,
-        same_pid: bool,
-        ownership_reaches_target: bool,
-    ) -> PostActionForegroundRelation {
-        PostActionForegroundRelation {
-            exact_match,
-            target_identity_live: true,
-            target_gone: false,
-            actual_live: true,
-            actual_visible: true,
-            same_pid,
-            ownership_reaches_target,
-            actual_is_prior_owner: false,
-        }
-    }
-
-    #[test]
-    fn exact_or_owned_modal_foreground_is_allowed() {
-        assert!(post_action_foreground_allowed(relation(true, true, false)));
-        assert!(post_action_foreground_allowed(relation(false, true, true)));
-    }
-
-    #[test]
-    fn nested_owned_popup_chain_reaches_exact_target() {
-        let owners = [(30, 20), (20, 10)];
-        assert!(owner_chain_reaches_target(10, 30, |hwnd| {
-            owners
-                .iter()
-                .find_map(|(child, owner)| (*child == hwnd).then_some(*owner))
-        }));
-    }
-
-    #[test]
-    fn unrelated_same_pid_sibling_and_foreign_foreground_are_denied() {
-        assert!(!post_action_foreground_allowed(relation(
-            false, true, false
-        )));
-        assert!(!post_action_foreground_allowed(relation(
-            false, false, true
-        )));
-        assert!(!owner_chain_reaches_target(10, 30, |hwnd| {
-            (hwnd == 30).then_some(40)
-        }));
-    }
-
-    #[test]
-    fn dismissed_owned_modal_may_return_to_its_snapshotted_owner_only() {
-        let mut dismissed = relation(false, true, false);
-        dismissed.target_identity_live = false;
-        dismissed.target_gone = true;
-        dismissed.actual_is_prior_owner = true;
-        assert!(post_action_foreground_allowed(dismissed));
-
-        dismissed.actual_is_prior_owner = false;
-        assert!(!post_action_foreground_allowed(dismissed));
-
-        dismissed.actual_is_prior_owner = true;
-        dismissed.same_pid = false;
-        assert!(!post_action_foreground_allowed(dismissed));
-    }
-
-    #[test]
-    fn stale_reused_invisible_or_cyclic_foreground_is_denied() {
-        let mut stale = relation(false, true, true);
-        stale.target_identity_live = false;
-        assert!(!post_action_foreground_allowed(stale));
-        stale.target_identity_live = true;
-        stale.actual_live = false;
-        assert!(!post_action_foreground_allowed(stale));
-        stale.actual_live = true;
-        stale.actual_visible = false;
-        assert!(!post_action_foreground_allowed(stale));
-        assert!(!owner_chain_reaches_target(10, 30, |_| Some(30)));
-    }
-}
-
 fn window_class_name(hwnd: HWND) -> String {
     let mut buf = [0u16; 256];
     let n = unsafe { GetClassNameW(hwnd, &mut buf) };
@@ -775,4 +613,297 @@ pub fn resolve_uwp_app_pid(host_pid: u32, frame_hwnd: u64) -> Option<u32> {
         );
     }
     scan.app_pid
+}
+
+#[cfg(test)]
+mod exact_window_tests {
+    use super::{
+        exact_window_from_probe, lookup_window_for_pid_with, merge_top_level_windows,
+        owner_chain_reaches_target, post_action_foreground_allowed, PidWindowLookup,
+        PostActionForegroundRelation, WindowInfo,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn window(pid: u32, hwnd: u64) -> WindowInfo {
+        WindowInfo {
+            hwnd,
+            pid,
+            title: "Exact target".into(),
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 100,
+            is_on_screen: true,
+            minimized: false,
+        }
+    }
+
+    #[test]
+    fn pid_window_lookup_skips_full_enumeration_on_exact_hit() {
+        let found = lookup_window_for_pid_with(
+            42,
+            0x1234,
+            |pid, hwnd| Some(window(pid, hwnd)),
+            || panic!("exact hit must not enumerate the desktop"),
+        );
+        assert!(matches!(found, PidWindowLookup::Found(w) if w.hwnd == 0x1234 && w.pid == 42));
+    }
+
+    #[test]
+    fn pid_window_lookup_falls_back_for_a_window_only_the_full_listing_finds() {
+        let calls = AtomicUsize::new(0);
+        let found = lookup_window_for_pid_with(
+            42,
+            0x1234,
+            |_, _| None,
+            || {
+                calls.fetch_add(1, Ordering::SeqCst);
+                vec![window(7, 0x9999), window(42, 0x1234)]
+            },
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(matches!(found, PidWindowLookup::Found(w) if w.hwnd == 0x1234));
+    }
+
+    #[test]
+    fn pid_window_lookup_reports_other_pid_and_missing() {
+        let other = lookup_window_for_pid_with(42, 0x1234, |_, _| None, || vec![window(7, 0x1234)]);
+        assert!(matches!(other, PidWindowLookup::OtherPid(7)));
+
+        let missing = lookup_window_for_pid_with(42, 0x1234, |_, _| None, Vec::new);
+        assert!(matches!(missing, PidWindowLookup::Missing));
+    }
+
+    #[test]
+    fn skipped_top_level_windows_are_appended_after_enum_windows_order() {
+        let merged = merge_top_level_windows(
+            vec![window(1, 0x30), window(2, 0x10)],
+            vec![0x10, 0x20, 0x30, 0x40, 0x50],
+            |hwnd| (hwnd != 0x40).then(|| window(3, hwnd)),
+        );
+        let order: Vec<_> = merged.iter().map(|w| (w.hwnd, w.pid)).collect();
+        assert_eq!(order, [(0x30, 1), (0x10, 2), (0x20, 3), (0x50, 3)]);
+    }
+
+    #[test]
+    fn exact_lookup_probes_only_the_requested_native_handle() {
+        let calls = AtomicUsize::new(0);
+        let found = exact_window_from_probe(42, 0x1234, |hwnd| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            assert_eq!(hwnd, 0x1234);
+            Some(window(42, hwnd))
+        });
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(found.map(|window| window.hwnd), Some(0x1234));
+    }
+
+    #[test]
+    fn exact_lookup_rejects_wrong_pid_or_handle() {
+        assert!(exact_window_from_probe(42, 7, |_| Some(window(43, 7))).is_none());
+        assert!(exact_window_from_probe(42, 7, |_| Some(window(42, 8))).is_none());
+    }
+
+    fn relation(
+        exact_match: bool,
+        same_pid: bool,
+        ownership_reaches_target: bool,
+    ) -> PostActionForegroundRelation {
+        PostActionForegroundRelation {
+            exact_match,
+            target_identity_live: true,
+            target_gone: false,
+            actual_live: true,
+            actual_visible: true,
+            same_pid,
+            ownership_reaches_target,
+            actual_is_prior_owner: false,
+        }
+    }
+
+    #[test]
+    fn exact_or_owned_modal_foreground_is_allowed() {
+        assert!(post_action_foreground_allowed(relation(true, true, false)));
+        assert!(post_action_foreground_allowed(relation(false, true, true)));
+    }
+
+    #[test]
+    fn nested_owned_popup_chain_reaches_exact_target() {
+        let owners = [(30, 20), (20, 10)];
+        assert!(owner_chain_reaches_target(10, 30, |hwnd| {
+            owners
+                .iter()
+                .find_map(|(child, owner)| (*child == hwnd).then_some(*owner))
+        }));
+    }
+
+    #[test]
+    fn unrelated_same_pid_sibling_and_foreign_foreground_are_denied() {
+        assert!(!post_action_foreground_allowed(relation(
+            false, true, false
+        )));
+        assert!(!post_action_foreground_allowed(relation(
+            false, false, true
+        )));
+        assert!(!owner_chain_reaches_target(10, 30, |hwnd| {
+            (hwnd == 30).then_some(40)
+        }));
+    }
+
+    #[test]
+    fn dismissed_owned_modal_may_return_to_its_snapshotted_owner_only() {
+        let mut dismissed = relation(false, true, false);
+        dismissed.target_identity_live = false;
+        dismissed.target_gone = true;
+        dismissed.actual_is_prior_owner = true;
+        assert!(post_action_foreground_allowed(dismissed));
+
+        dismissed.actual_is_prior_owner = false;
+        assert!(!post_action_foreground_allowed(dismissed));
+
+        dismissed.actual_is_prior_owner = true;
+        dismissed.same_pid = false;
+        assert!(!post_action_foreground_allowed(dismissed));
+    }
+
+    #[test]
+    fn stale_reused_invisible_or_cyclic_foreground_is_denied() {
+        let mut stale = relation(false, true, true);
+        stale.target_identity_live = false;
+        assert!(!post_action_foreground_allowed(stale));
+        stale.target_identity_live = true;
+        stale.actual_live = false;
+        assert!(!post_action_foreground_allowed(stale));
+        stale.actual_live = true;
+        stale.actual_visible = false;
+        assert!(!post_action_foreground_allowed(stale));
+        assert!(!owner_chain_reaches_target(10, 30, |_| Some(30)));
+    }
+}
+
+#[cfg(test)]
+mod hung_window_tests {
+    use super::list_windows;
+    use std::io::{BufRead, BufReader};
+    use std::process::{Child, Command, Stdio};
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+    use windows::core::w;
+    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DefWindowProcW, DispatchMessageW, PeekMessageW, RegisterClassW, MSG,
+        PM_REMOVE, WINDOW_EX_STYLE, WNDCLASSW, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+    };
+
+    const HOST_ENV: &str = "CUA_TEST_HUNG_WINDOW_HOST";
+    const TITLE: &str = "cua list_windows hung window";
+
+    unsafe extern "system" fn window_proc(
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        DefWindowProcW(hwnd, msg, wparam, lparam)
+    }
+
+    /// Child-process half of the test below: shows a titled window, then
+    /// stops pumping messages so it stays hung until the parent kills it.
+    #[test]
+    #[ignore = "spawned by list_windows_does_not_wait_on_a_hung_window"]
+    fn hung_window_host() {
+        if std::env::var_os(HOST_ENV).is_none() {
+            return;
+        }
+        unsafe {
+            let instance = GetModuleHandleW(None).expect("module handle");
+            let class = WNDCLASSW {
+                lpfnWndProc: Some(window_proc),
+                hInstance: instance.into(),
+                lpszClassName: w!("CuaListWindowsHungHost"),
+                ..Default::default()
+            };
+            assert_ne!(RegisterClassW(&class), 0, "register window class");
+            let hwnd = CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                class.lpszClassName,
+                &windows::core::HSTRING::from(TITLE),
+                WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                100,
+                100,
+                400,
+                300,
+                None,
+                None,
+                instance,
+                None,
+            )
+            .expect("create hung window");
+            let pumped = Instant::now();
+            let mut msg = MSG::default();
+            while pumped.elapsed() < Duration::from_millis(500) {
+                while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                    DispatchMessageW(&msg);
+                }
+            }
+            println!("hwnd={}", hwnd.0 as u64);
+        }
+        std::thread::sleep(Duration::from_secs(120));
+    }
+
+    struct KillOnDrop(Child);
+
+    impl Drop for KillOnDrop {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    /// #4906: listing windows must not wait on another process's window
+    /// that has stopped answering messages, and must still list it.
+    #[test]
+    #[ignore = "shows a window on the interactive desktop; ci-rust-windows.yml selects it"]
+    fn list_windows_does_not_wait_on_a_hung_window() {
+        let host_test = module_path!()
+            .split_once("::")
+            .map(|(_, path)| format!("{path}::hung_window_host"))
+            .expect("crate-qualified module path");
+        let mut child = Command::new(std::env::current_exe().expect("test binary"))
+            .args([host_test.as_str(), "--exact", "--ignored", "--nocapture"])
+            .env(HOST_ENV, "1")
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("spawn hung window host");
+        let stdout = child.stdout.take().expect("host stdout");
+        let _host = KillOnDrop(child);
+
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                if let Some(hwnd) = line.strip_prefix("hwnd=") {
+                    let _ = tx.send(hwnd.trim().parse::<u64>().expect("hwnd"));
+                    return;
+                }
+            }
+        });
+        let hung = rx
+            .recv_timeout(Duration::from_secs(30))
+            .expect("host window created");
+
+        let started = Instant::now();
+        let windows = list_windows(None);
+        let elapsed = started.elapsed();
+
+        let listed = windows
+            .iter()
+            .find(|w| w.hwnd == hung)
+            .expect("the hung window is listed");
+        assert_eq!(listed.title, TITLE);
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "list_windows took {elapsed:?} with a hung window on the desktop"
+        );
+    }
 }

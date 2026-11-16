@@ -2,25 +2,26 @@
 # SPDX-License-Identifier: FSL-1.1-MIT
 # Copyright (c) 2026 Cua AI, Inc.
 #
-# Live check of the Cua Driver that Cua Spaces runs for coding agents
-# (cua-spacesd's embedded child). Run it INSIDE a disposable macOS VM, never
-# on a person's Mac: it turns the embedded driver on and drives the agent
-# cursor. Before running it, in the VM: install the Cua Spaces build under
-# test in /Applications, finish Set up, and allow Accessibility and Screen
-# Recording for Cua Spaces when macOS asks (inside the VM only).
+# Live check of the Cua Driver that Cua Spaces runs for coding agents (the
+# embedded child of its Cua Driver login item, `CuaSpacesMac --driver-helper
+# run`). Run it INSIDE a disposable macOS VM, never on a person's Mac: it
+# drives the agent cursor. Before running it, in the VM: install the Cua
+# Spaces build under test in /Applications, open it once, and allow
+# Accessibility and Screen Recording for Cua Spaces when macOS asks (inside
+# the VM only). The Mac need not be set up, shared or signed in (CUA-3638).
 #
 #   scripts/tests/embedded-driver-vm-check.sh [/Applications/Cua Spaces.app]
 #
 # Checks (each prints ok/FAIL; exit 1 on any FAIL):
 #   1. Contents/Helpers has cua-driver and cua-cursor-theme, signed by the
 #      Cua team; Contents/MacOS has no cua-driver.
-#   2. cua-spacesd starts `cua-driver serve --embedded` (on by default) and
-#      is its parent process, also after the service restarts.
+#   2. The driver login item starts `cua-driver serve --embedded` (on by
+#      default) and is its parent process, also after the item restarts.
 #   3. The coding-agent route (`cua-driver mcp --embedded --socket ...`)
 #      answers initialize, check_permissions reports both permissions on,
 #      and move_cursor moves the agent cursor without moving the real
 #      pointer.
-#   4. Killing the driver: cua-spacesd starts a new one within 10 s.
+#   4. Killing the driver: the login item starts a new one within 10 s.
 #   5. Only Cua Spaces (no CuaDriver) is in the permission lists, when the
 #      TCC databases are readable (needs sudo with Full Disk Access).
 #
@@ -42,7 +43,6 @@ case "$bundle_id" in
   *) home="$HOME/.cua" ;;
 esac
 socket="$home/run/cua-driver.sock"
-spec="$home/helper/service.json"
 fails=0
 ok() { echo "ok: $*"; }
 fail() { echo "FAIL: $*"; fails=$((fails + 1)); }
@@ -57,9 +57,12 @@ for f in cua-driver cua-cursor-theme; do
 done
 [ ! -e "$app/Contents/MacOS/cua-driver" ] && ok "no cua-driver in Contents/MacOS" || fail "cua-driver is in Contents/MacOS"
 
-# 2. Restart the host service: the driver comes back as its child.
-[ -f "$spec" ] || { fail "no $spec (finish Set up in Cua Spaces first)"; exit 1; }
-pkill -x cua-spacesd || true # the app's login item starts it again
+# 2. Restart the driver login item: the driver comes back as its child.
+case "$bundle_id" in
+  com.trycua.spaces.macos.local) label=com.trycua.spaces.local.driver ;;
+  *) label=com.trycua.spaces.driver ;;
+esac
+launchctl kickstart -k "gui/$(id -u)/$label" || fail "launchctl kickstart $label (open Cua Spaces once to register it)"
 driver_pid=""
 for _ in $(seq 1 30); do
   driver_pid="$(pgrep -f "^$helpers/cua-driver serve --embedded" | head -1)"
@@ -72,8 +75,8 @@ else
   parent="$(ps -o ppid= -p "$driver_pid" | tr -d ' ')"
   parent_cmd="$(ps -o command= -p "$parent")"
   case "$parent_cmd" in
-    "$helpers/cua-spacesd"*) ok "cua-driver (pid $driver_pid) is cua-spacesd's child (pid $parent)" ;;
-    *) fail "cua-driver's parent is not cua-spacesd: $parent_cmd" ;;
+    *"CuaSpacesMac --driver-helper run"*) ok "cua-driver (pid $driver_pid) is the driver login item's child (pid $parent)" ;;
+    *) fail "cua-driver's parent is not the driver login item: $parent_cmd" ;;
   esac
   ps -o command= -p "$driver_pid" | grep -q -- "--host-bundle-id $bundle_id" &&
     ok "it runs for $bundle_id" || fail "it doesn't name $bundle_id as its host"

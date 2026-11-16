@@ -117,20 +117,84 @@
 }
 
 /* The first run's headline type (Outfit) and its one accent word (Instrument Serif). */
-@font-face { font-family: "Outfit"; font-weight: 500; font-display: swap; src: url(/onboarding/fonts/outfit-latin-500-normal.woff2) format("woff2"); }
-@font-face { font-family: "Outfit"; font-weight: 600; font-display: swap; src: url(/onboarding/fonts/outfit-latin-600-normal.woff2) format("woff2"); }
-@font-face { font-family: "Instrument Serif"; font-style: italic; font-weight: 400; font-display: swap; src: url(/onboarding/fonts/instrument-serif-latin-400-italic.woff2) format("woff2"); }
+@font-face {
+  font-family: "Outfit";
+  font-weight: 500;
+  font-display: swap;
+  src: url(/onboarding/fonts/outfit-latin-500-normal.woff2) format("woff2");
+}
+@font-face {
+  font-family: "Outfit";
+  font-weight: 600;
+  font-display: swap;
+  src: url(/onboarding/fonts/outfit-latin-600-normal.woff2) format("woff2");
+}
+@font-face {
+  font-family: "Instrument Serif";
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url(/onboarding/fonts/instrument-serif-latin-400-italic.woff2) format("woff2");
+}
 
 /* The new first run's floating keys and twinkling stars (the spaces.cua.ai hero's loops); still with reduced motion. */
-.first-run-key { transform: rotate(var(--r)); animation: first-run-drift var(--dur) ease-in-out var(--delay) infinite alternate; will-change: transform; }
-@keyframes first-run-drift {
-  from { transform: translate3d(calc(var(--dx) * -1), calc(var(--dy) * -1), 0) rotate(calc(var(--r) - var(--dr))); }
-  to { transform: translate3d(var(--dx), var(--dy), 0) rotate(calc(var(--r) + var(--dr))); }
+.first-run-key {
+  transform: rotate(var(--r));
+  animation: first-run-drift var(--dur) ease-in-out var(--delay) infinite alternate;
+  will-change: transform;
 }
-.first-run-star { position: absolute; border-radius: 9999px; background: rgb(240 243 250); box-shadow: 0 0 3px rgb(240 243 250 / 0.7); opacity: var(--o); animation: first-run-twinkle var(--t) ease-in-out var(--d) infinite alternate; }
-@keyframes first-run-twinkle { from { opacity: calc(var(--o) * 0.3); } }
+@keyframes first-run-drift {
+  from {
+    transform: translate3d(calc(var(--dx) * -1), calc(var(--dy) * -1), 0) rotate(calc(var(--r) - var(--dr)));
+  }
+  to {
+    transform: translate3d(var(--dx), var(--dy), 0) rotate(calc(var(--r) + var(--dr)));
+  }
+}
+.first-run-star {
+  position: absolute;
+  border-radius: 9999px;
+  background: rgb(240 243 250);
+  box-shadow: 0 0 3px rgb(240 243 250 / 0.7);
+  opacity: var(--o);
+  animation: first-run-twinkle var(--t) ease-in-out var(--d) infinite alternate;
+}
+@keyframes first-run-twinkle {
+  from {
+    opacity: calc(var(--o) * 0.3);
+  }
+}
+/* The entrance, as on cua.ai (FloatEarly.astro): near keys first, rising further and growing more,
+   far keys after, all in by about 1.4 s. It only eases the wrapper back to no transform, so the drift
+   inside carries on without a snap. Timing per key comes from float-keys.tsx (--ed, --edl, --fy, --fs). */
+.first-run-key-in {
+  animation: first-run-enter var(--ed, 1s) cubic-bezier(0.16, 1, 0.3, 1) var(--edl, 0s) backwards;
+}
+@keyframes first-run-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, var(--fy, 40px), 0) scale(var(--fs, 0.8));
+  }
+}
+.first-run-star {
+  position: absolute;
+  border-radius: 9999px;
+  background: rgb(240 243 250);
+  box-shadow: 0 0 3px rgb(240 243 250 / 0.7);
+  opacity: var(--o);
+  animation: first-run-twinkle var(--t) ease-in-out var(--d) infinite alternate;
+}
+@keyframes first-run-twinkle {
+  from {
+    opacity: calc(var(--o) * 0.3);
+  }
+}
 @media (prefers-reduced-motion: reduce) {
-  .first-run-key, .first-run-star { animation: none; }
+  .first-run-key,
+  .first-run-key-in,
+  .first-run-star {
+    animation: none;
+  }
 }
 
 @theme {
@@ -211,6 +275,19 @@
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
   }
+  /* Chinese and Japanese (src/i18n): the system's CJK faces, so the right
+     glyphs are chosen, and line breaks between phrases, not mid-word. */
+  html:lang(ja) {
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Meiryo UI", system-ui, sans-serif;
+  }
+  html:lang(zh-Hans) {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  :lang(ja),
+  :lang(zh) {
+    word-break: auto-phrase;
+    line-break: strict;
+  }
   body {
     font-size: 13px;
     line-height: 1.45;
@@ -245,6 +322,19 @@
   ::-webkit-scrollbar-track {
     background: transparent;
   }
+}
+
+/*
+ * A vertical scroller whose content keeps its place whether or not it scrolls (Settings' tabs, Home, All agents).
+ * `scrollbar-gutter: stable` alone is not enough: the app styles its scrollbars (`::-webkit-scrollbar` above), and
+ * WebKit (the Mac app's web view) reserves no gutter for a styled scrollbar, so the bar took 10 px from the column
+ * only on the pages that scroll and the centred column moved 5 px sideways between them. `overflow-y: scroll`
+ * keeps the bar's room on every page in every engine; its track is transparent, so a page that doesn't scroll
+ * shows nothing there.
+ */
+@utility scroll-y-stable {
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
 }
 
 @utility glass {

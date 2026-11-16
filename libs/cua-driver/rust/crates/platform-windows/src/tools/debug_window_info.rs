@@ -111,7 +111,7 @@ impl Tool for DebugWindowInfoTool {
                         if ok.is_ok() && len > 0 {
                             let path = String::from_utf16_lossy(&buf[..len as usize]);
                             let base = path
-                                .rsplit(|c: char| c == '\\' || c == '/')
+                                .rsplit(['\\', '/'])
                                 .next()
                                 .unwrap_or(&path)
                                 .to_ascii_lowercase();

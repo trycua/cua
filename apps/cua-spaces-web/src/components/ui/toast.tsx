@@ -6,6 +6,7 @@ import { CheckIcon, CircleAlertIcon, CircleCheckIcon, CopyIcon, InfoIcon, XIcon 
 import { useState, type ReactNode } from "react";
 
 import { CuaKey } from "@/components/cua-key";
+import { useT } from "@/i18n";
 
 export const toastManager = Toast.createToastManager();
 
@@ -53,12 +54,21 @@ export function toast(title: string, options: { description?: string; type?: Toa
   // Base UI's own timer pauses while the window is unfocused and resumes on
   // focus, which a webview in a native window may never report (an
   // "Opening…" toast stayed 10+ min). A plain timer closes it either way.
-  const id = toastManager.add({ title, description: options.description, type, timeout: 0, data: { fromCua: options.fromCua === true, action: options.action } });
+  const id = toastManager.add({
+    title,
+    description: options.description,
+    type,
+    timeout: 0,
+    data: { fromCua: options.fromCua === true, action: options.action },
+  });
   if (group) groups.set(group, new Set([id]));
-  setTimeout(() => {
-    toastManager.close(id);
-    if (group) groups.get(group)?.delete(id);
-  }, type === "error" ? ERROR_TOAST_MS : TOAST_MS);
+  setTimeout(
+    () => {
+      toastManager.close(id);
+      if (group) groups.get(group)?.delete(id);
+    },
+    type === "error" ? ERROR_TOAST_MS : TOAST_MS,
+  );
   return id;
 }
 
@@ -85,6 +95,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
 /** Copies an error toast's complete text. */
 function CopyError({ text }: { text: string }) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
   return (
     <button
@@ -97,44 +108,49 @@ function CopyError({ text }: { text: string }) {
         setTimeout(() => setCopied(false), 1200);
       }}
     >
-      {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />} {copied ? "Copied" : "Copy"}
+      {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />} {copied ? t("shell.toast.copied") : t("shell.toast.copy")}
     </button>
   );
 }
 
 function ToastList() {
+  const t = useT();
   const { toasts } = Toast.useToastManager();
-  return toasts.map((t) => {
-    const Icon = ICONS[(t.type as ToastType | undefined) ?? "info"] ?? InfoIcon;
+  return toasts.map((item) => {
+    const Icon = ICONS[(item.type as ToastType | undefined) ?? "info"] ?? InfoIcon;
     return (
       <Toast.Root
-        key={t.id}
-        toast={t}
+        key={item.id}
+        toast={item}
         data-video-occluder=""
         className="glass flex items-start gap-2.5 rounded-lg border p-3 pr-2 shadow-float transition-[opacity,translate] duration-200 ease-out-soft data-ending-style:translate-y-2 data-ending-style:opacity-0 data-starting-style:translate-y-2 data-starting-style:opacity-0"
       >
-        {(t.data as { fromCua?: boolean } | undefined)?.fromCua && t.type !== "error" ? (
+        {(item.data as { fromCua?: boolean } | undefined)?.fromCua && item.type !== "error" ? (
           <CuaKey size={20} className="-my-0.5" />
         ) : (
-          <Icon className={t.type === "error" ? "mt-px size-4 text-destructive" : t.type === "success" ? "mt-px size-4 text-success" : "mt-px size-4 text-brand-strong"} />
+          <Icon
+            className={
+              item.type === "error" ? "mt-px size-4 text-destructive" : item.type === "success" ? "mt-px size-4 text-success" : "mt-px size-4 text-brand-strong"
+            }
+          />
         )}
         <Toast.Content className="min-w-0 flex-1">
           <Toast.Title className="text-[13px] font-medium" />
           {/* An error is never cut: the whole text wraps (scrolls when very long), selects and copies. */}
           <Toast.Description className="max-h-40 overflow-y-auto text-xs break-words whitespace-pre-wrap text-muted-foreground select-text" />
-          {t.type === "error" && typeof t.description === "string" && t.description ? <CopyError text={t.description} /> : null}
-          {(t.data as { action?: ToastAction } | undefined)?.action ? (
+          {item.type === "error" && typeof item.description === "string" && item.description ? <CopyError text={item.description} /> : null}
+          {(item.data as { action?: ToastAction } | undefined)?.action ? (
             <button
               type="button"
               data-toast-action=""
               className="mt-2 rounded-lg border px-2 py-1 text-xs font-medium hover:bg-accent"
-              onClick={() => (t.data as { action: ToastAction }).action.onClick()}
+              onClick={() => (item.data as { action: ToastAction }).action.onClick()}
             >
-              {(t.data as { action: ToastAction }).action.label}
+              {(item.data as { action: ToastAction }).action.label}
             </button>
           ) : null}
         </Toast.Content>
-        <Toast.Close aria-label="Dismiss" className="rounded-lg p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground">
+        <Toast.Close aria-label={t("shell.toast.dismiss")} className="rounded-lg p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground">
           <XIcon className="size-3.5" />
         </Toast.Close>
       </Toast.Root>

@@ -21,17 +21,24 @@ on:
     workflows:
       - "Nightly: Cua Driver"
       - "Nightly: Lume"
+      - "e2b-bindings"
+      - "CI: Cua Driver desktop readiness (non-certifying)"
+      - "CI: Nix Linux Rust source"
       - "E2E: Cua Driver release gate"
       - "CI: Cua Driver installer compatibility"
       - "Monitor branded installer endpoints"
+      - "CI: Cua Spaces"
+      - "CI: Cua Spaces for macOS (SwiftUI)"
       - "Release: Pipeline guard"
       - "Security: push watch"
       - "CD: Cua Driver (cross-platform)"
       - "CD: Cua Driver SDK packages"
       - "CD: Cua Spaces"
+      - "CD: Cua Spaces build (shadow)"
       - "CD: cua-spacesd"
       - "CD: Lume (macOS)"
       - "Release: Prepare component releases"
+      - "Release: Auto-merge release PRs"
       - "Release: installer scripts feed"
     types: [completed]
   schedule:
@@ -56,17 +63,24 @@ jobs:
       WATCH: |
         Nightly: Cua Driver=ci
         Nightly: Lume=ci
+        e2b-bindings=ci
+        CI: Cua Driver desktop readiness (non-certifying)=ci
+        CI: Nix Linux Rust source=ci
         E2E: Cua Driver release gate=release
         CI: Cua Driver installer compatibility=release
         Monitor branded installer endpoints=release
+        CI: Cua Spaces=ci
+        CI: Cua Spaces for macOS (SwiftUI)=ci
         Release: Pipeline guard=release
         Security: push watch=ci
         CD: Cua Driver (cross-platform)=release
         CD: Cua Driver SDK packages=release
         CD: Cua Spaces=release
+        CD: Cua Spaces build (shadow)=ci
         CD: cua-spacesd=release
         CD: Lume (macOS)=release
         Release: Prepare component releases=release
+        Release: Auto-merge release PRs=release
         Release: installer scripts feed=release
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       GH_TOKEN: ${{ github.token }}

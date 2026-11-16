@@ -102,7 +102,11 @@ private final class GatedProvider: SpaceStreamSourceProviding, @unchecked Sendab
         return media
     }
 
+    /// How long a presence join takes before it fails (nil: at once).
+    var presenceDelay: Duration?
+
     func joinPresence(name: String, color: String?) async throws -> SpacePresence {
+        if let presenceDelay { try await Task.sleep(for: presenceDelay) }
         throw StreamError.noStream("no presence in this test")
     }
 }
@@ -124,6 +128,27 @@ private func eventually(_ what: String, _ cond: @MainActor () async -> Bool) asy
 /// late one leaked and its frames and status won. These run under
 /// `swift test --sanitize=thread` too.
 @Suite(.serialized) @MainActor struct StreamLifecycleTests {
+
+    /// Regression: a presence join waiting out its whole timeout (10 s: the
+    /// datagram channel of a Space behind a port forward never answers) held
+    /// the stream's open, so every Desktop sat on "Connecting…" for that
+    /// long. The open waits `presenceWait` at most and goes on without it.
+    @Test func aSlowPresenceJoinNeverHoldsTheStreamBack() async {
+        let provider = GatedProvider(gated: false)
+        provider.presenceDelay = .seconds(60)
+        let session = LiveStreamSession(provider: provider)
+        await session.joinPresence(as: "Me")
+        let began = ContinuousClock.now
+        await session.start()
+        let took = ContinuousClock.now - began
+        #expect(session.status == .streaming)
+        // The join would take 60 s. The open must not wait for it, so the
+        // limit is far under that and far over `presenceWait` plus what a
+        // loaded CI runner adds (it measured 2.4 s once).
+        #expect(took < .seconds(10), "opened after \(took)")
+        #expect(provider.opened.count == 1)
+        await session.stop()
+    }
 
     @Test func concurrentStartsOpenOneTransport() async {
         let provider = GatedProvider()

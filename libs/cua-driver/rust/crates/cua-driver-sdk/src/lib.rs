@@ -10,12 +10,11 @@
 
 use cua_driver_contract::{
     ActionResult, ClickInput, ClipboardReadInput, ClipboardWriteInput, DragInput, EndSessionInput,
-    EndSessionOutput, EscalateSessionInput, GetAgentCursorStateInput, GetCursorPositionInput,
-    GetDesktopStateInput, GetScreenSizeInput, GetSessionInput, GetSessionStateInput,
-    GetWindowStateInput, HotkeyInput, InvokeMenuInput, ListAppsInput, ListAppsOutput,
-    ListSessionsInput, ListSessionsOutput, ListWindowsInput, ListWindowsOutput, MoveCursorInput,
-    ParseVisualRegionsInput, PressKeyInput, ScrollInput, SessionOutput, SessionStateOutput,
-    SetAgentCursorEnabledInput, SetAgentCursorMotionInput, SetAgentCursorThemeInput,
+    EndSessionOutput, GetAgentCursorStateInput, GetCursorPositionInput, GetDesktopStateInput,
+    GetScreenSizeInput, GetSessionInput, GetWindowStateInput, HotkeyInput, InvokeMenuInput,
+    ListAppsInput, ListAppsOutput, ListSessionsInput, ListSessionsOutput, ListWindowsInput,
+    ListWindowsOutput, MoveCursorInput, ParseVisualRegionsInput, PressKeyInput, ScrollInput,
+    SessionOutput, SetAgentCursorEnabledInput, SetAgentCursorMotionInput, SetAgentCursorThemeInput,
     SetWindowFrameInput, SnapshotImage, StartSessionInput, StartSessionOutput, ToolInput,
     ToolOutput, TypeTextInput, VerifyStateInput, VerifyStateOutput, WindowStateOutput,
 };
@@ -325,6 +324,26 @@ impl CuaDriver {
             DriverBackend::Daemon(_)
             | DriverBackend::PrivateWorker(_)
             | DriverBackend::Remote(_) => None,
+        }
+    }
+
+    /// Daemon-host seam for its permission gate: while awaiting, every tool
+    /// route refuses with `permissions_pending` before dispatch. Only an
+    /// embedded runtime has a gate; other backends ignore it.
+    #[doc(hidden)]
+    pub fn set_awaiting_permissions(&self, awaiting: bool) {
+        if let DriverBackend::Embedded(runtime) = &self.backend {
+            runtime.set_awaiting_permissions(awaiting);
+        }
+    }
+
+    /// The raw `permissions_pending` tool result while the permission gate is
+    /// pending, so a host transport can answer it before its own refusals.
+    #[doc(hidden)]
+    pub fn permissions_pending_result(&self) -> Option<Value> {
+        match &self.backend {
+            DriverBackend::Embedded(runtime) => runtime.permissions_pending_result(),
+            _ => None,
         }
     }
 
@@ -732,10 +751,8 @@ macro_rules! define_exported_tool_names {
         #[cfg(test)]
         const EXPORTED_TOOL_NAMES: &[&str] = &[
             <StartSessionInput as ToolInput>::TOOL_NAME,
-            <EscalateSessionInput as ToolInput>::TOOL_NAME,
             <GetSessionInput as ToolInput>::TOOL_NAME,
             <ListSessionsInput as ToolInput>::TOOL_NAME,
-            <GetSessionStateInput as ToolInput>::TOOL_NAME,
             <EndSessionInput as ToolInput>::TOOL_NAME,
             <ListAppsInput as ToolInput>::TOOL_NAME,
             <ListWindowsInput as ToolInput>::TOOL_NAME,
@@ -1530,24 +1547,6 @@ impl CuaDriver {
             .typed_success(StartSessionInput::TOOL_NAME)
     }
 
-    pub async fn escalate_session(
-        &self,
-        input: EscalateSessionInput,
-    ) -> Result<SessionStateOutput, DriverError> {
-        self.invoke_typed(EscalateSessionInput::TOOL_NAME, input)
-            .await?
-            .typed_success(EscalateSessionInput::TOOL_NAME)
-    }
-
-    pub async fn get_session_state(
-        &self,
-        input: GetSessionStateInput,
-    ) -> Result<SessionStateOutput, DriverError> {
-        self.invoke_typed(GetSessionStateInput::TOOL_NAME, input)
-            .await?
-            .typed_success(GetSessionStateInput::TOOL_NAME)
-    }
-
     pub async fn get_session(&self, input: GetSessionInput) -> Result<SessionOutput, DriverError> {
         self.invoke_typed(GetSessionInput::TOOL_NAME, input)
             .await?
@@ -1606,24 +1605,6 @@ impl CuaDriverSession {
         self.invoke_typed(StartSessionInput::TOOL_NAME, input)
             .await?
             .typed_success(StartSessionInput::TOOL_NAME)
-    }
-
-    pub async fn escalate_session(
-        &self,
-        input: EscalateSessionInput,
-    ) -> Result<SessionStateOutput, DriverError> {
-        self.invoke_typed(EscalateSessionInput::TOOL_NAME, input)
-            .await?
-            .typed_success(EscalateSessionInput::TOOL_NAME)
-    }
-
-    pub async fn get_session_state(
-        &self,
-        input: GetSessionStateInput,
-    ) -> Result<SessionStateOutput, DriverError> {
-        self.invoke_typed(GetSessionStateInput::TOOL_NAME, input)
-            .await?
-            .typed_success(GetSessionStateInput::TOOL_NAME)
     }
 
     pub async fn get_session(&self, input: GetSessionInput) -> Result<SessionOutput, DriverError> {
@@ -2084,6 +2065,7 @@ mod tests {
 
     mod native_windows;
     use super::*;
+    #[cfg(unix)]
     use cua_driver_contract::{ParseVisualRegionsOutput, VisualParseError};
     #[cfg(unix)]
     use std::io::{BufRead, BufReader, Write};
@@ -2561,7 +2543,7 @@ mod tests {
 
         let second_state = second_session
             .call_tool(
-                "get_session_state".into(),
+                "get_session".into(),
                 serde_json::json!({"session": "same-public-label"}).to_string(),
             )
             .await
@@ -2570,7 +2552,7 @@ mod tests {
         let structured: Value =
             serde_json::from_str(second_state.structured_json.as_deref().unwrap()).unwrap();
         assert_eq!(structured["session"], "same-public-label");
-        assert_eq!(structured["capture_scope"], "window");
+        assert_eq!(structured["state"], "active");
         let recording_state = second_session
             .call_tool(
                 "get_recording_state".into(),
@@ -3146,8 +3128,6 @@ mod tests {
                     "effective_scope": "window",
                     "desktop_capture_authorized": false,
                     "desktop_unlocked": false,
-                    "escalation_reason": null,
-                    "escalation_detail": null,
                     "active": true,
                     "revived": false
                 },

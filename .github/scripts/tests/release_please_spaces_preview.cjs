@@ -2,8 +2,10 @@
 // Cua Spaces releases are driven by the macOS SwiftUI app: a commit under
 // apps/cua-spaces-macos must produce a `cua-spaces` release PR that also bumps
 // the Tauri app (apps/cua-spaces) and the Electron app
-// (apps/cua-spaces-desktop) as extra files, and a Tauri-only or
-// Electron-only commit must not.
+// (apps/cua-spaces-desktop) as extra files. So must a commit under one of its
+// additional paths (libs/cua, the web UI, the Electron app), through
+// release_please_additional_paths.cjs. A Tauri-only commit must not.
+require('../release_please_additional_paths.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -101,8 +103,15 @@ async function main() {
   await preview('docs(spaces-macos): clarify setup', swift, null);
   // The Tauri app (not shipped) shares the version but never drives a release.
   await preview('fix(spaces): tauri-only change', [`${tauriPath}/src/main.ts`], null);
-  // Nor does the Electron app (its prereleases are tagged by hand).
-  await preview('fix(spaces-desktop): electron-only change', [`${electronPath}/src/main.ts`], null);
+  // The shipped Electron app, web UI and app core each cut a patch (#7038, #7062).
+  const nextPatch = `${major}.${minor}.${patch + 1}`;
+  await preview('fix(spaces): electron-only change', [`${electronPath}/src/main.ts`], nextPatch);
+  await preview('fix(spaces): web-only change', ['apps/cua-spaces-web/src/lib/spaces.ts'], nextPatch);
+  const core = ['libs/cua/crates/cua-agents/src/runs.rs'];
+  await preview('fix(cua-agents): core change', core, nextPatch);
+  // The core commit still counts for cua-sdk too, and nothing else moves.
+  assert.deepEqual(split(core).sort(), ['apps/cua-spaces-macos', 'libs/cua']);
+  assert.deepEqual(split(['libs/cua-spacesd/src/main.rs']), ['libs/cua-spacesd']);
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; });

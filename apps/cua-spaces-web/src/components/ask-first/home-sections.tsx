@@ -24,7 +24,8 @@ import { toastError } from "@/components/ui/toast";
 import { useAttemptAction } from "@/hooks/use-agent-attempts";
 import { accessOf, isMine } from "@/lib/space-access";
 import { useListedSpaces } from "@/components/spaces/listed";
-import { hideDesktop } from "@/lib/hidden-desktops";
+import { useT, t as tr } from "@/i18n";
+import { useHiddenDesktops } from "@/lib/hidden-desktops";
 import { machineName, orderSpaces, spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 
@@ -47,10 +48,10 @@ const TONE: Record<AgentChat["tone"], string> = {
 function ago(ms: number, now: number): string {
   if (!ms) return "";
   const m = Math.max(0, Math.round((now - ms) / 60_000));
-  if (m < 1) return "Now";
-  if (m < 60) return `${m}m`;
+  if (m < 1) return tr("home.sections.ago_now");
+  if (m < 60) return tr("home.sections.ago_minutes", { count: m });
   const h = Math.round(m / 60);
-  return h < 24 ? `${h}h` : `${Math.round(h / 24)}d`;
+  return h < 24 ? tr("home.sections.ago_hours", { count: h }) : tr("home.sections.ago_days", { count: Math.round(h / 24) });
 }
 
 function SectionHead({ title, note, to, all }: { title: string; note?: string | null; to: "/agents" | "/spaces"; all: string }) {
@@ -68,12 +69,18 @@ function SectionHead({ title, note, to, all }: { title: string; note?: string | 
 
 /** "Your agents": the first rows of the one agent list; a row opens its Space's thread. */
 export function YourAgents({ chats }: { chats: AgentChat[] | null | undefined }) {
+  const t = useT();
   const act = useAttemptAction();
   if (!chats || chats.length === 0) return null;
   const working = chats.filter((c) => c.tone === "working").length;
   return (
     <section data-home-agents="">
-      <SectionHead title="Your agents" note={working ? `${working} working` : null} to="/agents" all={`See all ${chats.length}`} />
+      <SectionHead
+        title={t("home.sections.your_agents")}
+        note={working ? t("home.sections.working", { count: working }) : null}
+        to="/agents"
+        all={t("home.sections.see_all", { count: chats.length })}
+      />
       <GroupedSection>
         {chats.slice(0, HOME_AGENTS).map((c) => (
           <AgentRunRow key={c.key} chat={c} onAction={() => act(c)} />
@@ -118,47 +125,88 @@ function AgentRunRow({ chat: c, onAction }: { chat: AgentChat; onAction: () => v
       ) : null}
       <span className="hidden w-36 truncate text-right text-xs text-muted-foreground md:block">{place?.spaceName}</span>
       <span className="w-10 text-right text-xs text-muted-foreground tabular-nums">{ago(c.lastMs, Date.now())}</span>
-      <span className="hidden w-20 lg:block">{thumb ? <img src={thumb} alt="" className="aspect-[16/10] w-20 rounded-lg object-cover" /> : <span className="block aspect-[16/10] w-20 rounded-lg bg-muted" />}</span>
+      <span className="hidden w-20 lg:block">
+        {thumb ? (
+          <img src={thumb} alt="" className="aspect-[16/10] w-20 rounded-lg object-cover" />
+        ) : (
+          <span className="block aspect-[16/10] w-20 rounded-lg bg-muted" />
+        )}
+      </span>
     </div>
   );
 }
 
 /** "Your Spaces": the Spaces page's tiles, one row, with power and ⋯ on hover. */
 export function YourSpaces() {
+  const t = useT();
   const { data, startSpace, stopSpace } = useSpaces();
   const { data: machines = [] } = useMachines();
   const resources = useResources();
   // Running Spaces first, then the most recently used; This Mac's unshared desktop never counts.
-  const { listed, counted } = useListedSpaces(data);
+  const { listed, counted, hiddenCount } = useListedSpaces(data);
+  const desktops = useHiddenDesktops();
   const spaces = useMemo(() => orderSpaces(listed), [listed]);
   const items = useMemo(
     () =>
       spaces.map((space): SpaceItem => {
         const machine = machineName(machines, space);
         const mine = isMine(space);
-        return { space, state: spaceState(space), access: accessOf(space, machine), mine, bytes: mine ? spaceDiskBytes(resources, space.id) : null, machine, desktop: desktopOf(space) };
+        return {
+          space,
+          state: spaceState(space),
+          access: accessOf(space, machine),
+          mine,
+          bytes: mine ? spaceDiskBytes(resources, space.id) : null,
+          machine,
+          desktop: desktopOf(space),
+        };
       }),
     [spaces, machines, resources],
   );
   const present = useMemo(() => new Set(spaces.map((s) => s.id)), [spaces]);
   const bulk = useBulkRemove(present, () => {});
-  if (counted.length === 0) return null;
+  // With everything hidden, the way back still shows.
+  if (counted.length === 0 && hiddenCount === 0) return null;
   const running = items.filter((it) => it.state === "running" && it.desktop !== "off").length;
   const actions: MenuActions = {
-    hide: (it) => hideDesktop(it.space.id),
-    power: (it, on) => void (on ? startSpace : stopSpace)(it.space.id).catch(toastError(`Couldn't turn ${on ? "on" : "off"} ${it.space.name}`)),
+    hide: (it) => desktops.hide(it.space.id),
+    power: (it, on) =>
+      void (on ? startSpace : stopSpace)(it.space.id).catch(toastError(t("home.sections.turn_failed", { state: on ? "on" : "off", name: it.space.name }))),
     remove: (it) => bulk.ask([it]),
   };
   return (
     <section data-home-spaces="">
-      <SectionHead title="Your Spaces" note={running ? `${running} running` : null} to="/spaces" all={`See all ${counted.length}`} />
+      <SectionHead
+        title={t("home.sections.your_spaces")}
+        note={running ? t("home.sections.running", { count: running }) : null}
+        to="/spaces"
+        all={t("home.sections.see_all", { count: counted.length })}
+      />
       <ul className="grid grid-cols-2 gap-5 md:grid-cols-4">
         {items.slice(0, HOME_SPACES).map((it) => (
           <li key={it.space.id}>
-            <SpaceTile item={it} hide={it.desktop ? () => actions.hide?.(it) : undefined} more={it.desktop ? undefined : <SpaceMoreMenu item={it} actions={actions} />} />
+            <SpaceTile
+              item={it}
+              hide={it.desktop ? () => actions.hide?.(it) : undefined}
+              more={it.desktop ? undefined : <SpaceMoreMenu item={it} actions={actions} />}
+            />
           </li>
         ))}
       </ul>
+      {hiddenCount > 0 ? (
+        <p className="mt-3 flex items-center gap-1.5 text-[13px] text-muted-foreground" data-home-hidden={hiddenCount}>
+          {t("home.sections.hidden", { count: hiddenCount })}
+          <span aria-hidden>·</span>
+          <button
+            type="button"
+            onClick={desktops.showAll}
+            className="text-foreground underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/60"
+            data-home-show-hidden=""
+          >
+            {t("home.sections.show")}
+          </button>
+        </p>
+      ) : null}
       {bulk.view ? <BulkConfirmDialog view={bulk.view} items={bulk.asked} onCancel={bulk.cancel} onConfirm={() => void bulk.confirm()} /> : null}
     </section>
   );

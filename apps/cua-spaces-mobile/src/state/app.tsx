@@ -3,7 +3,6 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
-
 import { config } from "../auth/config";
 import { claimsOf, session } from "../auth/session";
 import { createDemoBackend } from "../data/demo/backend";
@@ -63,10 +62,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // The id the relay knows this phone by; a sample build has a made up one (it never reaches a relay).
   const deviceId = useCallback(() => (sample ? "dev_sample0000000000000000" : device.id()), [sample, device]);
   const me = useCallback(() => (typeof claimsOf(accessCache.current).sub === "string" ? (claimsOf(accessCache.current).sub as string) : null), []);
-  const live = useMemo(() => createLiveBackend({ relay, token: () => session.accessToken(), deviceSession: () => device.session(), me, deviceId }), [relay, device, me, deviceId]);
+  const live = useMemo(
+    () => createLiveBackend({ relay, token: () => session.accessToken(), deviceSession: () => device.session(), me, deviceId }),
+    [relay, device, me, deviceId],
+  );
   // What stays on this phone between launches (the outbox, cached threads and Spaces) is sealed with a key in the
   // Keychain. A sample build keeps nothing unless asked to, so made up data is never mistaken for saved data.
-  const store = useMemo(() => createSealedStore({ namespace: sample ? "sample" : "live", sealer: sample && !config.samplePersist ? null : undefined }), [sample]);
+  const store = useMemo(
+    () => createSealedStore({ namespace: sample ? "sample" : "live", sealer: sample && !config.samplePersist ? null : undefined }),
+    [sample],
+  );
 
   // The sample build's "pretend offline" switch (Settings) is kept across launches, so the restart checks can use it.
   useEffect(() => {
@@ -121,7 +126,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
       backend = live;
     } else stage = "enrolling";
   }
-  const value: AppState = { stage, backend, enroll, account: signedIn ? session.account() : null, deviceId, signIn, signOut, recheckEnrollment, signInError, signingIn };
+  const value: AppState = {
+    stage,
+    backend,
+    enroll,
+    account: signedIn ? session.account() : null,
+    deviceId,
+    signIn,
+    signOut,
+    recheckEnrollment,
+    signInError,
+    signingIn,
+  };
   return (
     <Ctx.Provider value={value}>
       {backend ? (

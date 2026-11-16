@@ -95,6 +95,12 @@ export interface PresentedFailure {
   title?: string;
   details?: string;
   actionLabel?: string;
+  /** Which failure it is (`HostSetupFailure.Kind`): `needsProof` is a new
+   * computer the account wants proof for, answered with a code from
+   * another computer. */
+  kind?: string;
+  /** The relay's code for a refusal (`new_computer_needs_proof`, ...), when it gave one. */
+  refusalCode?: string;
 }
 
 /** A host answered with an error. `code` is the host's, when it gave one. */

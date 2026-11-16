@@ -6,6 +6,8 @@
 //! `~/.cua-local`, and leave everything Stable wrote byte for byte as it was.
 //! Always in a temporary HOME, never the real one.
 
+mod common;
+
 use cua_agent_setup::{
     AgentSetup, Change, CuaChannel, HostEnv, McpServer, Outcome, Parts, Target, hash_dir,
 };
@@ -114,12 +116,10 @@ fn json(text: &str) -> Value {
 /// executable, in `~/.local/bin`.
 fn install_cua_local(home: &Path) -> PathBuf {
     let p = home.join(".local/bin/cua-local");
-    write(home, ".local/bin/cua-local", "#!/bin/sh\n");
     #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    common::write_executable(&p, "#!/bin/sh\n");
+    #[cfg(not(unix))]
+    write(home, ".local/bin/cua-local", "#!/bin/sh\n");
     p
 }
 

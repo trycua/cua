@@ -5,8 +5,8 @@ import Darwin
 import Foundation
 
 /// Cua Driver inside Cua Spaces (CUA-2706): the `cua-driver` this app
-/// carries in `Contents/Helpers`, which cua-spacesd runs as its own child
-/// (`serve --embedded`, `libs/cua-spacesd/.../embedded_driver.rs`). macOS
+/// carries in `Contents/Helpers`, run as `serve --embedded` by the app's
+/// own Cua Driver login item (`DriverService`, `DriverSupervisor`). macOS
 /// holds Cua Spaces responsible for it, so Accessibility and Screen
 /// Recording are Cua Spaces' and no second app shows in System Settings.
 ///
@@ -26,9 +26,43 @@ public struct EmbeddedDriver: Sendable {
     /// writes over the released app's entry.
     public let serverName: String
 
-    /// While this file exists the person has paused agents and cua-spacesd
-    /// runs no driver (`embedded_driver::paused_marker`).
+    /// While this file exists the person has paused agents and the login item
+    /// runs no driver (`DriverSupervisor`).
     public var pausedMarker: String { ((socket as NSString).deletingLastPathComponent as NSString).appendingPathComponent("cua-driver.off") }
+
+    /// Written to have the login item start a driver that isn't running now,
+    /// instead of after its restart backoff (`DriverSupervisor`).
+    public var startRequest: String { ((socket as NSString).deletingLastPathComponent as NSString).appendingPathComponent("cua-driver.start") }
+
+    /// What its login item reports (`DriverSupervisorReport`): beside the
+    /// socket.
+    public var statusFile: String { ((socket as NSString).deletingLastPathComponent as NSString).appendingPathComponent("cua-driver.status.json") }
+
+    /// `<CuaHome>`: the folder above `run/`.
+    public var cuaHome: String { ((socket as NSString).deletingLastPathComponent as NSString).deletingLastPathComponent }
+
+    /// Where the driver's own output goes: `<CuaHome>/logs/cua-driver.log`.
+    public var logFile: String { ((cuaHome as NSString).appendingPathComponent("logs") as NSString).appendingPathComponent("cua-driver.log") }
+
+    /// What Set up, Repair and turning "Let agents use apps on this Mac" on
+    /// do next to get a driver that isn't answering running. Cua Driver
+    /// runs from its own login item (`DriverService`), so this never
+    /// depends on whether this Mac is set up, shared, paused or signed in:
+    /// only the person's switch turns it off (CUA-3638).
+    public enum StartStep: Equatable, Sendable {
+        /// Running, or paused by the person: nothing to do.
+        case none
+        /// Register the login item if needed, start it and ask it for a
+        /// driver now ([`startRequest`]).
+        case startLoginItem
+        /// That didn't bring a driver up: restart the login item.
+        case restartLoginItem
+    }
+
+    public static func startStep(paused: Bool, answering: Bool, askedLoginItem: Bool) -> StartStep {
+        if paused || answering { return .none }
+        return askedLoginItem ? .restartLoginItem : .startLoginItem
+    }
 
     /// This app's embedded driver, or nil when the bundle carries none (a
     /// bare build) or names a channel without a home.

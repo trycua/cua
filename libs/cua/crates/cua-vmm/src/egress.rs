@@ -920,16 +920,50 @@ pub struct EngineTarget {
     /// shared with other sandboxes (the engine's default). A bridge of its
     /// own tree leaves it off: the tree's members may talk directly.
     pub isolate_l2: bool,
+    /// The engine host's kernel has the nftables `bridge` family
+    /// (`CONFIG_NF_TABLES_BRIDGE`). WSL 2's kernel does not: the layer-2
+    /// parts below (MAC anti-spoofing, the frame filter that keeps a sandbox
+    /// off its siblings, a tree's own denies) are then left out, and the
+    /// `inet` policy alone is enforced ([`NO_BRIDGE_FAMILY`]).
+    pub bridge_family: bool,
+    /// The kernel has the nftables `fib` expression (`CONFIG_NFT_FIB`).
+    /// WSL 2's has not: a rule for "this computer's own addresses" is then
+    /// written against [`EngineTarget::host_addrs`] instead of
+    /// `fib daddr type local`.
+    pub fib: bool,
+    /// The engine host's own interface addresses (used when `fib` is off).
+    pub host_addrs: Vec<IpAddr>,
 }
 
 /// The nft input that removes one sandbox's tables in one transaction
-/// (whether or not they exist).
+/// (whether or not they exist), on an engine host with the `bridge` family.
 pub fn engine_remove(table: &str) -> String {
-    format!(
-        "add table bridge {table}\ndelete table bridge {table}\n\
-         add table inet {table}\ndelete table inet {table}\n"
-    )
+    engine_remove_for(table, true)
 }
+
+/// [`engine_remove`] for an engine host with or without the `bridge`
+/// family (a kernel without it refuses even a delete of such a table).
+pub fn engine_remove_for(table: &str, bridge_family: bool) -> String {
+    let bridge = if bridge_family {
+        format!("add table bridge {table}\ndelete table bridge {table}\n")
+    } else {
+        String::new()
+    };
+    format!("{bridge}add table inet {table}\ndelete table inet {table}\n")
+}
+
+/// What the engine host's kernel lacks when it has no nftables `bridge`
+/// family (the built-in Linux runtime on Windows: WSL 2's kernel).
+pub const NO_BRIDGE_FAMILY: &str = "the container engine's kernel has no nftables bridge family \
+(CONFIG_NF_TABLES_BRIDGE; WSL 2's kernel has none): a deny of another Space of the same tree \
+cannot be enforced there. The Space does not start with rules it can't enforce; remove that deny";
+
+/// What is not enforced on such a host, for the logs and `doctor`: routed
+/// traffic (internet, LAN, the engine host, cloud metadata, other trees)
+/// is still policed by the `inet` rules.
+pub const BRIDGE_FAMILY_LIMITS: &str = "network policy is enforced on routed traffic only (the \
+kernel has no nftables bridge family): Spaces of one tree can reach each other on layer 2 and a \
+Space's source MAC is not pinned (Spaces run without CAP_NET_RAW)";
 
 /// The nft input that replaces one container sandbox's rules on its
 /// engine host in one transaction (empty rules: [`engine_remove`]):
@@ -949,13 +983,17 @@ pub fn engine_remove(table: &str) -> String {
 ///   the kernel's `nf_conntrack_bridge`; without it the engine's host
 ///   refuses the rules, and the Space does not start with them).
 pub fn engine_ruleset(t: &EngineTarget, rules: &Rules) -> String {
-    let mut out = engine_remove(&t.table);
+    let mut out = engine_remove_for(&t.table, t.bridge_family);
     if !rules.blocks_anything() {
         return out;
     }
     let table = &t.table;
     let mac = &t.mac;
     let mut pre = String::new();
+    if !t.bridge_family {
+        // No bridge-family table: only the `inet` policy below.
+        return inet_table(&mut out, t, rules);
+    }
     if let Some(port) = &t.port {
         pre.push_str(&format!(
             "    iifname \"{}\" ether saddr != {mac} drop\n",
@@ -1001,6 +1039,14 @@ pub fn engine_ruleset(t: &EngineTarget, rules: &Rules) -> String {
          }}\n",
         gw = t.gateway_mac,
     ));
+    inet_table(&mut out, t, rules)
+}
+
+/// The `inet` table of [`engine_ruleset`] appended to `out`: packets from
+/// the sandbox's MAC on its bridge go through the policy.
+fn inet_table(out: &mut String, t: &EngineTarget, rules: &Rules) -> String {
+    let table = &t.table;
+    let mac = &t.mac;
     out.push_str(&format!(
         "table inet {table} {{\n\
          \x20 chain pre {{\n\
@@ -1013,9 +1059,36 @@ pub fn engine_ruleset(t: &EngineTarget, rules: &Rules) -> String {
         bridge = t.bridge,
     ));
     for rule in &rules.rules {
-        out.push_str(&nft_rule(rule));
+        out.push_str(&nft_rule_for(rule, t));
     }
     out.push_str("  }\n}\n");
+    std::mem::take(out)
+}
+
+/// [`nft_rule`] for the engine host `t`: on a kernel without `fib`, the
+/// rule for the host's own addresses names them.
+pub fn nft_rule_for(rule: &Rule, t: &EngineTarget) -> String {
+    if !rule.host_local || t.fib {
+        return nft_rule(rule);
+    }
+    let verdict = if rule.accept { "accept" } else { "drop" };
+    let counter = if rule.accept { "" } else { " counter" };
+    let l4 = nft_l4(rule);
+    let list = |v6: bool| {
+        t.host_addrs
+            .iter()
+            .filter(|a| a.is_ipv6() == v6)
+            .map(IpAddr::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let mut out = String::new();
+    for (v6, kw) in [(false, "ip daddr"), (true, "ip6 daddr")] {
+        let addrs = list(v6);
+        if !addrs.is_empty() {
+            out.push_str(&format!("    {kw} {{ {addrs} }}{l4}{counter} {verdict}\n"));
+        }
+    }
     out
 }
 
@@ -1611,7 +1684,73 @@ mod tests {
                 ipv4: Some(Ipv4Addr::new(172, 17, 0, 2)),
             }),
             isolate_l2: true,
+            bridge_family: true,
+            fib: true,
+            host_addrs: vec![],
         }
+    }
+
+    /// WSL 2's kernel has no nftables `fib` expression: the rules for the
+    /// engine host's own addresses name them (a rule that cannot load stops
+    /// the Space from starting).
+    #[test]
+    fn a_kernel_without_fib_names_the_hosts_addresses() {
+        let t = EngineTarget {
+            fib: false,
+            host_addrs: vec![
+                "172.24.60.153".parse().unwrap(),
+                "fe80::1".parse().unwrap(),
+                "10.230.0.1".parse().unwrap(),
+            ],
+            ..target(true)
+        };
+        let rule = Rule::host_local(false, Reason::DefaultHost);
+        let text = nft_rule_for(&rule, &t);
+        assert!(!text.contains("fib"), "{text}");
+        assert!(
+            text.contains("ip daddr { 172.24.60.153, 10.230.0.1 } counter drop"),
+            "{text}"
+        );
+        assert!(
+            text.contains("ip6 daddr { fe80::1 } counter drop"),
+            "{text}"
+        );
+        // With fib the rule is the same as before.
+        assert_eq!(nft_rule_for(&rule, &target(true)), nft_rule(&rule));
+        // Other rules are untouched.
+        let net = rules(&[], &["10.0.0.0/8"]);
+        assert_eq!(nft_rule_for(&net.rules[0], &t), nft_rule(&net.rules[0]));
+    }
+
+    /// WSL 2's kernel has no nftables bridge family: its engine host gets the
+    /// `inet` policy only, and nothing in the input names that family (the
+    /// kernel refuses even a delete of such a table).
+    #[test]
+    fn a_kernel_without_the_bridge_family_gets_only_the_inet_policy() {
+        let t = EngineTarget {
+            bridge_family: false,
+            ..target(true)
+        };
+        let r = rules(&["1.1.1.1"], &["10.0.0.0/8"]);
+        let text = engine_ruleset(&t, &r);
+        assert!(!text.contains("bridge"), "{text}");
+        assert!(text.contains("table inet cua_egress_"), "{text}");
+        assert!(text.contains("iifname \"docker0\" ether saddr"), "{text}");
+        assert!(text.contains("10.0.0.0/8"), "{text}");
+        assert_eq!(
+            engine_remove_for(&t.table, false),
+            format!(
+                "add table inet {t0}\ndelete table inet {t0}\n",
+                t0 = t.table
+            )
+        );
+        // No rules: just the removal, again without the family.
+        assert_eq!(
+            engine_ruleset(&t, &Rules::default()),
+            engine_remove_for(&t.table, false)
+        );
+        assert!(BRIDGE_FAMILY_LIMITS.contains("routed traffic"));
+        assert!(NO_BRIDGE_FAMILY.contains("WSL 2"));
     }
 
     #[test]
@@ -1749,6 +1888,9 @@ mod tests {
             mac: "02:42:ac:1e:00:05".into(),
             port: None,
             isolate_l2: false,
+            bridge_family: true,
+            fib: true,
+            host_addrs: vec![],
         };
         let text = engine_ruleset(&t, &r);
         assert!(

@@ -490,6 +490,41 @@ function Get-CosignIdentity($Entry) {
     }
 }
 
+# The app's identity for a release rebuilt from an existing tag (rebuild_tag):
+# cd-cua-spaces.yml at refs/heads/main. That ref says nothing about which tag
+# was built, so it is only accepted with a signed claim for this tag and file
+# (Test-RebuildClaim) and the workflow_dispatch trigger.
+function Get-RebuiltIdentity { return "https://github.com/$Repo/.github/workflows/cd-cua-spaces.yml@refs/heads/main" }
+
+function Test-CosignBundle([string]$Cosign, [string]$File, [string]$Bundle, [string]$Identity, [bool]$Rebuilt) {
+    $cosignArgs = @('verify-blob', '--bundle', $Bundle, '--certificate-identity', $Identity,
+        '--certificate-oidc-issuer', 'https://token.actions.githubusercontent.com')
+    if ($Rebuilt) {
+        # A push, schedule or pull_request run of the same workflow never passes.
+        $cosignArgs += @('--certificate-github-workflow-repository', $Repo,
+            '--certificate-github-workflow-ref', 'refs/heads/main',
+            '--certificate-github-workflow-trigger', 'workflow_dispatch')
+    }
+    & $Cosign @cosignArgs $File *> $null
+    return ($LASTEXITCODE -eq 0)
+}
+
+# rebuild-claim.txt, next to the artifact and signed by the same run, ties a
+# main-branch signature to a tag: a "tag cua-spaces-v<version>" line and
+# "<sha256>  <name>" for every asset. It must verify under the rebuilt
+# identity, name this tag and list this file's sha256 under its name.
+function Test-RebuildClaim([string]$Cosign, [string]$File, [string]$BundleUrl, [string]$Version, [string]$ManifestUrl) {
+    $claim = "$File.rebuild-claim.txt"
+    $dir = $BundleUrl.Substring(0, $BundleUrl.LastIndexOf('/'))
+    Get-Remote "$dir/rebuild-claim.txt" $claim $ManifestUrl
+    Get-Remote "$dir/rebuild-claim.txt.sigstore.json" "$claim.sigstore.json" $ManifestUrl
+    if (-not (Test-CosignBundle $Cosign $claim "$claim.sigstore.json" (Get-RebuiltIdentity) $true)) { return $false }
+    $lines = @(Get-Content -LiteralPath $claim)
+    if ($lines -cnotcontains "tag cua-spaces-v$Version") { return $false }
+    $sha = (Get-FileHash -LiteralPath $File -Algorithm SHA256).Hash.ToLowerInvariant()
+    return ($lines -ccontains "$sha  $(Split-Path -Leaf $File)")
+}
+
 function Test-Signature([string]$File, $Entry, [string]$ManifestUrl) {
     $ok = $false
     $minisign = Get-Command minisign -ErrorAction SilentlyContinue
@@ -504,10 +539,14 @@ function Test-Signature([string]$File, $Entry, [string]$ManifestUrl) {
         Get-Remote (Resolve-ArtifactUrl $Entry.cosign_bundle $ManifestUrl) "$File.sigstore.json" $ManifestUrl
         $identity = Get-CosignIdentity $Entry
         if (-not $identity) { Stop-Install "no release identity for $(Split-Path -Leaf $File) in the manifest" }
-        & $cosign.Source verify-blob --bundle "$File.sigstore.json" `
-            --certificate-identity $identity `
-            --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' $File *> $null
-        if ($LASTEXITCODE -ne 0) { Stop-Install "cosign signature check failed for $(Split-Path -Leaf $File)" }
+        $bundlePath = "$File.sigstore.json"
+        $verified = Test-CosignBundle $cosign.Source $File $bundlePath $identity $false
+        if (-not $verified -and [string]$Entry.component -eq 'app' -and
+            (Test-CosignBundle $cosign.Source $File $bundlePath (Get-RebuiltIdentity) $true)) {
+            $bundleUrl = Resolve-ArtifactUrl $Entry.cosign_bundle $ManifestUrl
+            $verified = Test-RebuildClaim $cosign.Source $File $bundleUrl ([string]$Entry.version) $ManifestUrl
+        }
+        if (-not $verified) { Stop-Install "cosign signature check failed for $(Split-Path -Leaf $File)" }
         $ok = $true
     }
     if (-not $ok -and $RequireSignature) {

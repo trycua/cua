@@ -16,9 +16,9 @@ use super::{
         checked_element_local_coords, coordinate_frame_schema, desktop_frame_requested,
         desktop_frame_unmapped, desktop_to_window_local, element_screen_center_and_rect,
         foreground_budget, hyprland_foreground, input_error_result, prove_token_element,
-        require_point_args, resolve_cursor_key, reveal_pointer_action_for,
+        refuse_if_disabled, require_point_args, resolve_cursor_key, reveal_pointer_action_for,
         reveal_pointer_action_target_for, screenshot_scale, spawn_blocking_bounded,
-        unavailable_chromium_background, unavailable_gtk_pointer_background,
+        unavailable_chromium_background, unavailable_synthetic_pointer_background,
         unavailable_wayland_focused_input_background, unavailable_webkit_background,
         window_local_to_screen, with_pixel_points, x11_pixel_click_no_focus_steal, AimedPoint,
         PointerRoute, ToolState,
@@ -76,7 +76,7 @@ impl Tool for RightClickTool {
         if let Some(refusal) = unavailable_webkit_background(pid, delivery) {
             return refusal;
         }
-        if let Some(refusal) = unavailable_gtk_pointer_background(pid, delivery) {
+        if let Some(refusal) = unavailable_synthetic_pointer_background(pid, delivery) {
             return refusal;
         }
         if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, true) {
@@ -101,6 +101,9 @@ impl Tool for RightClickTool {
             Ok(token) => token,
             Err(refusal) => return refusal,
         };
+        if let Some(refusal) = refuse_if_disabled(pid, &resolved, "right_click").await {
+            return refusal;
+        }
         let window_id_resolved: Option<u64> = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => {
                 Some(*window_id)
@@ -138,7 +141,7 @@ impl Tool for RightClickTool {
                     }
                     let lxi = lx as i32;
                     let lyi = ly as i32;
-                    let wayland_point = match crate::wayland::wayland_input_enabled()
+                    let wayland_point = match crate::wayland::is_wayland()
                         .then(|| crate::wayland::window_local_to_output(xid, lxi, lyi))
                         .transpose()
                     {
@@ -154,7 +157,7 @@ impl Tool for RightClickTool {
                                 return crate::wayland::inject_click(pid, xid, lx, ly, 1, 3)
                                     .map(|()| PointerRoute::Wayland);
                             }
-                            if crate::wayland::wayland_input_enabled() {
+                            if crate::wayland::is_wayland() {
                                 let aimed = wayland_point.unwrap_or_else(|| (lxi, lyi).into());
                                 return crate::wayland::click(xid, aimed, 1, 3)
                                     .map(|()| PointerRoute::Wayland);
@@ -163,6 +166,7 @@ impl Tool for RightClickTool {
                                 return crate::interaction::with_x11_foreground(
                                     xid,
                                     crate::input::ForegroundOptions::pointer(),
+                                    crate::interaction::session_policy().menu,
                                     || {
                                         let (sx, sy) =
                                             window_local_to_screen(xid, lxi as f64, lyi as f64)?;
@@ -174,8 +178,11 @@ impl Tool for RightClickTool {
                                         )
                                     },
                                 )
-                                .map(|(value, _report)| value)
-                                .map(|()| PointerRoute::Foreground);
+                                .map(|((), report)| {
+                                    PointerRoute::Foreground {
+                                        menu_open: report.menu_open,
+                                    }
+                                });
                             }
                             x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, lxi, lyi, 3, 1)
                         },
@@ -244,7 +251,7 @@ impl Tool for RightClickTool {
             cursor_id.clone(),
             cursor_overlay::OverlayCommand::PinAbove(xid),
         );
-        let wayland_output_point = if crate::wayland::wayland_input_enabled() {
+        let wayland_output_point = if crate::wayland::is_wayland() {
             match crate::wayland::window_local_to_output(xid, x.round() as i32, y.round() as i32) {
                 Ok(point) => Some(point),
                 Err(error) => return input_error_result(error),
@@ -276,7 +283,7 @@ impl Tool for RightClickTool {
                     return crate::wayland::inject_click(pid, xid, x, y, 1, 3)
                         .map(|()| PointerRoute::Wayland);
                 }
-                if crate::wayland::wayland_input_enabled() {
+                if crate::wayland::is_wayland() {
                     let aimed = wayland_output_point.unwrap_or_else(|| (xi, yi).into());
                     return crate::wayland::click(xid, aimed, 1, 3).map(|()| PointerRoute::Wayland);
                 }
@@ -284,6 +291,7 @@ impl Tool for RightClickTool {
                     return crate::interaction::with_x11_foreground(
                         xid,
                         crate::input::ForegroundOptions::pointer(),
+                        crate::interaction::session_policy().menu,
                         || {
                             // Real XTest right-click at the screen point (synthetic
                             // XSendEvent is dropped by GTK/Qt; MPX needs /dev/uinput).
@@ -302,8 +310,9 @@ impl Tool for RightClickTool {
                                 .map(|_| ())
                         },
                     )
-                    .map(|(value, _report)| value)
-                    .map(|()| PointerRoute::Foreground);
+                    .map(|((), report)| PointerRoute::Foreground {
+                        menu_open: report.menu_open,
+                    });
                 }
                 x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 3, 1)
             },

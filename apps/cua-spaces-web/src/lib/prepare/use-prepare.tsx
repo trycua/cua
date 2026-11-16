@@ -4,17 +4,15 @@
 import { useEffect, useRef } from "react";
 
 import { firstMessage, newPendingId, useBridge, useFirstSpaceOffers, useSavedOnboarding, useSession, useSpaces } from "@/bridge";
-import { useNewOnboarding } from "@/bridge/flags";
+import { useInstalledAgents } from "@/components/ask-first/use-installed-agents";
 import { useSummonIn } from "@/components/ask-first/use-summon-in";
 import { setPrepareSink } from "@/components/space-thread/queued";
 import { updateAskTask } from "@/lib/ask-first";
 import { spaceState } from "@/lib/spaces";
 
-import { useInstalledAgents } from "@/components/ask-first/use-installed-agents";
-
 import { localPrepareStorage, PrepareDriver, type PrepareEnv } from "./driver";
 import { homeCreateRequest } from "./home-request";
-import { getDriver, markResumed, resumedThisLoad, setDriver, usePrepare } from "./store";
+import { getDriver, homeNameOf, markResumed, resumedThisLoad, setDriver, usePrepare, warmStartHeld } from "./store";
 
 /** The coding app the first Space is for when it is on this computer: the first installed one otherwise. */
 export const DEFAULT_HARNESS = "claude-code";
@@ -24,17 +22,21 @@ const SESSION_TIMEOUT_MS = 4 * 60_000;
 /** How long a create the host started before this page loaded may take (a slow first run). */
 const CREATE_FOLLOW_MS = 40 * 60_000;
 /** The name of the Space this prepares: fixed, so a second page load finds the first one's create. */
-export const homeNameOf = (harness: string) => `home-${harness}`;
+export { homeNameOf } from "./store";
 const POLL_MS = 800;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /**
- * Mounted once at the root: starts preparing at launch (while the person is in
- * onboarding), carries on after a quit, and keeps the driver's view of the host
- * current. It runs only with the new setup on (Settings, Advanced, Labs), which
- * also turns on the "Ask first" Home. The Space it prepares is a fresh Linux
- * Space, the one Home's first Linux job goes to, with the coding agent in it.
+ * Mounted once at the root: keeps the driver's view of the host current, and warms the home
+ * Home's prompt box writes into (Warm start, always on).
+ *
+ * The home is the Space the daemon keeps ready: once the first run is over (done or skipped)
+ * the app claims it with a create under the fixed name, resumes a saved record once per page
+ * load, rebuilds a removed home and follows the connection. It never shows: no list, count,
+ * the tree or the Machines page lists it until a person writes into it (`useHiddenSpaceIds`).
+ * Nothing starts while the first run shows, and nothing starts for a computer with no coding
+ * app installed.
  */
 export function PrepareRoot(): null {
   const { core, data: host } = useBridge();
@@ -43,9 +45,8 @@ export function PrepareRoot(): null {
   const { offers, known } = useFirstSpaceOffers();
   const latestOffers = useRef(offers);
   latestOffers.current = offers;
-  const on = useNewOnboarding();
-  // The new first run (CUA-3318) makes nothing the person didn't ask for: the home starts warming only once
-  // the first run is done or skipped, not while it shows. A separate computer is the first run's own choice.
+  // The new first run makes nothing the person didn't ask for: the home starts warming only once the first
+  // run is done or skipped, not while it shows.
   const session = useSession();
   const savedOnboarding = useSavedOnboarding();
   const firstRunOver = Boolean(session.data?.onboarding.completed || savedOnboarding.skipped);
@@ -120,7 +121,10 @@ export function PrepareRoot(): null {
     agentReplied: async ({ spaceId, sinceMs }) => {
       if (!host) return false;
       const page = await host.call("thread.read", { spaceId, limit: 20 });
-      return page.live.agents.some((a) => (a.text ?? "").length > 0) || page.entries.some((e) => e.author.kind === "agent" && e.kind === "message" && e.tsMs >= sinceMs);
+      return (
+        page.live.agents.some((a) => (a.text ?? "").length > 0) ||
+        page.entries.some((e) => e.author.kind === "agent" && e.kind === "message" && e.tsMs >= sinceMs)
+      );
     },
     homeExists: (id) => (spaces ? spaces.some((s) => s.id === id && s.status !== "deleting") : null),
     delivered: (m, spaceId) => updateAskTask(m.id, { spaceId, pendingId: null, inSpace: true }),
@@ -134,13 +138,13 @@ export function PrepareRoot(): null {
   }, [core]);
 
   // The offers must be read first: before that there is no image to make the home from.
-  const ready = Boolean(core && host && spaces && on && known);
+  const ready = Boolean(core && host && spaces && known);
 
   // Start at launch; a saved record resumes once.
   const driverNow = usePrepare().driver;
   useEffect(() => {
     const d = driverNow;
-    if (!ready || !d) return;
+    if (!ready || !d || warmStartHeld()) return;
     if (d.state?.wanted) {
       // A saved record resumes once per page load, however often the layout mounts.
       if (!resumedThisLoad()) {
@@ -175,11 +179,17 @@ export function PrepareRoot(): null {
       const d = getDriver();
       // This page's own create, or the one the host kept running for the home when the app was quit.
       if (!d?.state?.wanted || (d.state.pendingId !== e.progress.pendingId && e.progress.space !== `local:${homeNameOf(d.state.harness)}`)) return;
-      d.progress({ phase: e.progress.phase, detail: e.progress.detail, bytesDone: e.progress.bytesDone, bytesTotal: e.progress.bytesTotal, bytesPerSecond: e.progress.bytesPerSecond });
+      d.progress({
+        phase: e.progress.phase,
+        detail: e.progress.detail,
+        bytesDone: e.progress.bytesDone,
+        bytesTotal: e.progress.bytesTotal,
+        bytesPerSecond: e.progress.bytesPerSecond,
+      });
     });
   }, [ready, host]);
 
-  // The connection: the browser says when it goes and comes back.
+  // The connection (the browser says when it goes and comes back).
   useEffect(() => {
     if (!ready) return;
     const on = () => getDriver()?.online(true);
@@ -192,7 +202,7 @@ export function PrepareRoot(): null {
     };
   }, [ready]);
 
-  // The list changed: a home that was removed is made again. A second a tick while it is waiting.
+  // The list changed, so a home that was removed is made again; a second a tick while it waits.
   useEffect(() => {
     if (ready) getDriver()?.checkHome();
   }, [ready, spaces]);

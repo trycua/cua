@@ -13,8 +13,10 @@ def test_canonical_certification_is_fail_closed_and_complete() -> None:
     certification = workflow.split("\n  certify:\n", 1)[1]
 
     # Manual dispatches and stable-tag release-gate calls both certify.
-    assert "if: success() && inputs.lane == 'all'" in certification
-    assert "needs: [source, shared, native, capture, installer]" in certification
+    assert "!failure() && !cancelled() && inputs.lane == 'all'" in certification
+    for job in ("source", "shared", "native", "capture", "installer"):
+        assert f"needs.{job}.result == 'success'" in certification
+    assert "needs: [quick, source, shared, native, capture, installer]" in certification
     assert 'schema "cua-driver/e2e-certification/v1"' in certification
     assert 'platform "linux"' in certification
     for job in ("shared", "native", "capture", "installer"):
@@ -45,7 +47,7 @@ class VerifySkillTests(unittest.TestCase):
         self.assertIn("          - verify", workflow)
         job = workflow.split("\n  verify-skill:\n")[1].split("\n  shared:\n")[0]
         for setting in (
-            "if: inputs.lane == '' || inputs.lane == 'verify'",
+            "if: ${{ !failure() && !cancelled() && (inputs.lane == '' || inputs.lane == 'verify') && needs.quick.outputs.skip != 'true' }}",
             "timeout-minutes: 25",
             'CUA_E2E_RETRY_ONCE: "0"',
             "key: e2e-shared",
@@ -61,7 +63,7 @@ class VerifySkillTests(unittest.TestCase):
         self.assertNotIn("name: rust-linux-", job)
         for name in ("summary", "certify"):
             section = workflow.split(f"\n  {name}:\n")[1].split("    steps:")[0]
-            self.assertIn("needs: [source, shared, native, capture, installer]", section)
+            self.assertIn("needs: [quick, source, shared, native, capture, installer]", section)
             self.assertNotIn("verify-skill", section)
         summary = workflow.split("\n  summary:\n")[1].split("    needs:")[0]
         self.assertIn("always() && inputs.lane != '' && inputs.lane != 'verify'", summary)
@@ -70,6 +72,13 @@ class VerifySkillTests(unittest.TestCase):
         checker = ROOT / ".cursor/skills/verify-cua-driver/scripts/check-evidence.sh"
         self.assertTrue(checker.is_file(), "standalone evidence checker is required")
         cell = "linux-electron-left-click-ax-background"
+        fg_cell = "linux-electron-left-click-px-foreground"
+        refused_cell = "linux-electron-type-text-ax-background"
+        # Native GTK3 cells as the nested-Sway capture lane declares them:
+        # their fixture state is read from the accessibility tree, so the
+        # recording has no fixture or sentinel journal.
+        native_readonly_cell = "linux-gtk3-tree-only-not-applicable-not-applicable"
+        native_fg_cell = "linux-gtk3-desktop-left-click-px-foreground"
         sleeper = subprocess.Popen(["sleep", "60"])
         dead = subprocess.Popen(["true"])
         dead.wait(timeout=5)
@@ -101,12 +110,45 @@ class VerifySkillTests(unittest.TestCase):
                 "health_report.json",
                 "check_permissions.json",
                 "summary.md",
+                "cases.jsonl",
+                "empty-cases",
+                "malformed-cases",
+                "malformed-oracles",
+                "undeclared-recording-missing",
+                "foreground",
+                "foreground-wrong-marker",
+                "foreground-no-click",
+                "refused-background",
+                "refused-background-no-heartbeat",
+                "native-readonly",
+                "native-readonly-tool-calls.jsonl",
+                "native-readonly-status-failed",
+                "native-foreground",
+                "native-foreground-tool-calls.jsonl",
+                "native-foreground-no-click",
+                "native-foreground-incomplete-pair",
             ]
             for scenario in scenarios:
                 with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as tmp:
                     root = Path(tmp)
                     rows = []
-                    for label in (cell, cell + "-typed-sdk", "environment-preflight"):
+                    declarations = []
+                    foreground = scenario.startswith("foreground")
+                    refused = scenario.startswith("refused-background")
+                    native_readonly = scenario.startswith("native-readonly")
+                    native_fg = scenario.startswith("native-foreground")
+                    native = native_readonly or native_fg
+                    if native_readonly:
+                        labels = (native_readonly_cell, "environment-preflight")
+                    elif native_fg:
+                        labels = (native_fg_cell, "environment-preflight")
+                    elif foreground:
+                        labels = (fg_cell, "environment-preflight")
+                    elif refused:
+                        labels = (refused_cell, "environment-preflight")
+                    else:
+                        labels = (cell, cell + "-typed-sdk", "environment-preflight")
+                    for label in labels:
                         directory = root / "recordings" / label
                         directory.mkdir(parents=True)
                         (directory / "trajectory.json").write_text(
@@ -125,21 +167,63 @@ class VerifySkillTests(unittest.TestCase):
                             ):
                                 (directory / name).write_text("{}")
                             continue
+                        action = (
+                            "tree_only"
+                            if native_readonly
+                            else "type_text"
+                            if refused
+                            else "left_click"
+                        )
+                        delivery = (
+                            "not_applicable"
+                            if native_readonly
+                            else "foreground"
+                            if foreground or native_fg
+                            else "background"
+                        )
+                        harness = "gtk3" if native else "electron"
+                        oracles = (
+                            ["ax_state"]
+                            if native_readonly
+                            else ["fixture_state"]
+                            if foreground or native_fg
+                            else ["fixture_state", "focus", "z_order", "no_leaked_input"]
+                        )
+                        declarations.append(
+                            json.dumps(
+                                {
+                                    "cell_id": label,
+                                    "harness": harness,
+                                    "oracles": oracles,
+                                    "action": action,
+                                    "delivery": delivery,
+                                    "expected_behavior": (
+                                        {
+                                            "kind": "refuse",
+                                            "allowed_codes": ["background_unavailable"],
+                                        }
+                                        if refused
+                                        else {"kind": "deliver"}
+                                    ),
+                                }
+                            )
+                            + "\n"
+                        )
                         rows.append(
                             "| "
                             + " | ".join(
                                 [
                                     label,
                                     "Linux/X11",
-                                    "electron",
-                                    "left_click",
+                                    harness,
+                                    action,
                                     "Ax",
-                                    "Background",
+                                    delivery.title(),
                                     "Window",
                                     "Mcp",
                                     "State",
-                                    "Delivered",
-                                    "Delivered",
+                                    "Refuse" if refused else "Deliver",
+                                    "Refused" if refused else "Delivered",
                                     "Pass",
                                     "1 ms",
                                     "-",
@@ -165,15 +249,25 @@ class VerifySkillTests(unittest.TestCase):
                             )
                             + "\n"
                         )
-                        (directory / "fixture-state.json").write_text(
-                            json.dumps(
-                                {
-                                    "text": "journal last_action=left_click",
-                                }
+                        if native_readonly:
+                            continue
+                        if not native:
+                            (directory / "fixture-state.json").write_text(
+                                json.dumps(
+                                    {
+                                        "text": (
+                                            "journal mirror="
+                                            if refused
+                                            else "journal last_action=left_click"
+                                        ),
+                                    }
+                                )
                             )
-                        )
-                        (directory / "sentinel-events.jsonl").write_text('{"kind":"heartbeat"}\n')
-                        (directory / "desktop-observation.txt").write_text("stable")
+                        if not foreground and not native:
+                            (directory / "sentinel-events.jsonl").write_text(
+                                '{"kind":"heartbeat"}\n'
+                            )
+                            (directory / "desktop-observation.txt").write_text("stable")
                         turn = directory / "turn-00001"
                         turn.mkdir()
                         for name in ("before.png", "after.png"):
@@ -182,14 +276,19 @@ class VerifySkillTests(unittest.TestCase):
                             json.dumps(
                                 {
                                     "tool": (
-                                        "press_key" if label.endswith("-typed-sdk") else "click"
+                                        "press_key"
+                                        if label.endswith("-typed-sdk")
+                                        else "type_text"
+                                        if refused
+                                        else "click"
                                     ),
                                 }
                             )
                         )
                         (directory / "turn-00002").mkdir()
                     (root / "summary.md").write_text("".join(rows))
-                    target = root / "recordings" / cell
+                    (root / "cases.jsonl").write_text("".join(declarations))
+                    target = root / "recordings" / labels[0]
                     if scenario == "zero-pids":
                         for path in root.glob("recordings/*/trajectory.json"):
                             data = json.loads(path.read_text())
@@ -262,6 +361,39 @@ class VerifySkillTests(unittest.TestCase):
                         (target / "fixture-state.json").write_text(
                             '{"text":"last_action=left_click_extra"}'
                         )
+                    elif scenario == "empty-cases":
+                        (root / "cases.jsonl").write_text("\n")
+                    elif scenario == "malformed-cases":
+                        (root / "cases.jsonl").write_text('{"cell_id":"' + cell + '"}\n')
+                    elif scenario == "malformed-oracles":
+                        (root / "cases.jsonl").write_text(
+                            declarations[0].replace('"oracles": [', '"oracles": "').replace(
+                                '"no_leaked_input"]', '"no_leaked_input"'
+                            )
+                        )
+                    elif scenario == "undeclared-recording-missing":
+                        with (root / "cases.jsonl").open("a") as stream:
+                            stream.write(
+                                declarations[0].replace(cell, cell.replace("-ax-", "-px-"))
+                            )
+                    elif scenario == "foreground-wrong-marker":
+                        (target / "fixture-state.json").write_text(
+                            '{"text":"last_action=right_click"}'
+                        )
+                    elif scenario == "native-readonly-status-failed":
+                        (root / "summary.md").write_text(
+                            "".join(rows).replace("Delivered | Pass", "Delivered | Fail")
+                        )
+                    elif scenario.startswith("native-") and scenario.endswith(".jsonl"):
+                        (target / scenario.split("-", 2)[2]).unlink()
+                    elif scenario == "native-foreground-no-click":
+                        (target / "turn-00001/action.json").write_text('{"tool":"press_key"}')
+                    elif scenario == "native-foreground-incomplete-pair":
+                        (target / "turn-00001/after.png").unlink()
+                    elif scenario == "foreground-no-click":
+                        (target / "turn-00001/action.json").write_text('{"tool":"press_key"}')
+                    elif scenario == "refused-background-no-heartbeat":
+                        (target / "sentinel-events.jsonl").write_text('{"kind":"focus"}\n')
                     elif scenario == "no-heartbeat":
                         (target / "sentinel-events.jsonl").write_text('{"kind":"focus"}\n')
                     elif scenario == "no-click":
@@ -276,14 +408,21 @@ class VerifySkillTests(unittest.TestCase):
                         (root / "recordings/environment-preflight" / scenario).unlink()
                     elif scenario in ("before.png", "after.png"):
                         (target / "turn-00001" / scenario).unlink()
-                    elif scenario == "summary.md":
+                    elif scenario in ("summary.md", "cases.jsonl"):
                         (root / scenario).unlink()
                     elif scenario.endswith((".json", ".jsonl", ".txt")):
                         (target / scenario).unlink()
                     result = subprocess.run(
                         [str(checker), str(root)], capture_output=True, text=True, timeout=10
                     )
-                    if scenario in ("complete", "null-window-title"):
+                    if scenario in (
+                        "complete",
+                        "null-window-title",
+                        "foreground",
+                        "refused-background",
+                        "native-readonly",
+                        "native-foreground",
+                    ):
                         self.assertEqual(result.returncode, 0, result.stderr)
                     else:
                         self.assertNotEqual(result.returncode, 0, scenario)

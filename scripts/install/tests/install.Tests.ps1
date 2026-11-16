@@ -64,6 +64,39 @@ Describe 'functions' {
         { Assert-DownloadUrl 'file:///tmp/a.zip' 'file:///tmp/r.json' } | Should -Not -Throw
     }
 
+    It 'accepts a main-branch app signature only with the tag identity or a signed claim for the tag' {
+        Get-CosignIdentity ([pscustomobject]@{ component = 'app'; version = '1.2.3' }) |
+            Should -Be 'https://github.com/trycua/cua/.github/workflows/cd-cua-spaces.yml@refs/tags/cua-spaces-v1.2.3'
+        Get-RebuiltIdentity | Should -Be 'https://github.com/trycua/cua/.github/workflows/cd-cua-spaces.yml@refs/heads/main'
+    }
+
+    # A POSIX shell script stands in for cosign: it passes only the main
+    # identity pinned to the repository, the main ref and workflow_dispatch.
+    It 'a rebuild claim must name this tag and list the artifact sha256' -Skip:($IsWindows) {
+        $dir = Join-Path $env:CUA_TEST_ROOT 'claim'
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        $cosign = Join-Path $dir 'cosign'
+        $main = Get-RebuiltIdentity
+        Set-Content -LiteralPath $cosign -Value "#!/bin/sh`nid=; repo=; ref=; trig=; prev=`nfor a in `"`$@`"; do case `"`$prev`" in --certificate-identity) id=`$a;; --certificate-github-workflow-repository) repo=`$a;; --certificate-github-workflow-ref) ref=`$a;; --certificate-github-workflow-trigger) trig=`$a;; esac; prev=`$a; done`n[ `"`$id`" = '$main' ] && [ `"`$repo`" = trycua/cua ] && [ `"`$ref`" = refs/heads/main ] && [ `"`$trig`" = workflow_dispatch ] && exit 0`nexit 1"
+        chmod +x $cosign
+        $file = Join-Path $dir 'cua-spaces-1.2.3-windows-x64-setup.exe'
+        Set-Content -LiteralPath $file -Value 'nsis'
+        $sha = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+        Set-Content -LiteralPath (Join-Path $dir 'rebuild-claim.txt.sigstore.json') -Value '{}'
+        $bundleUrl = (ConvertTo-FileUrl $dir) + '/cua-spaces-1.2.3-windows-x64-setup.exe.sigstore.json'
+        $manifestUrl = (ConvertTo-FileUrl $dir) + '/release-artifacts.json'
+        $name = Split-Path -Leaf $file
+
+        Set-Content -LiteralPath (Join-Path $dir 'rebuild-claim.txt') -Value @('tag cua-spaces-v1.2.3', "$sha  $name")
+        Test-RebuildClaim $cosign $file $bundleUrl '1.2.3' $manifestUrl | Should -BeTrue
+
+        Set-Content -LiteralPath (Join-Path $dir 'rebuild-claim.txt') -Value @('tag cua-spaces-v0.0.1', "$sha  $name")
+        Test-RebuildClaim $cosign $file $bundleUrl '1.2.3' $manifestUrl | Should -BeFalse
+
+        Set-Content -LiteralPath (Join-Path $dir 'rebuild-claim.txt') -Value @('tag cua-spaces-v1.2.3', ('0' * 64) + "  $name")
+        Test-RebuildClaim $cosign $file $bundleUrl '1.2.3' $manifestUrl | Should -BeFalse
+    }
+
     It 'orders cua versions as semver, a dev build older than its release' {
         Test-CuaVersionNewer '0.7.99' '0.7.0' | Should -BeTrue
         Test-CuaVersionNewer '0.10.0' '0.9.9' | Should -BeTrue

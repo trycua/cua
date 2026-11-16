@@ -25,5 +25,7 @@ export function driverMethods(_ctx: BridgeContext): Handlers {
     "driver.pause": no,
     "driver.setup": no,
     "driver.setApp": no,
+    // Cua Spaces asks for no screen or input permission here.
+    "driver.permissions": () => null,
   };
 }

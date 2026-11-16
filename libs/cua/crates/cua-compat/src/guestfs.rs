@@ -41,17 +41,29 @@ pub fn status_of(s: &tonic::Status) -> StatusCode {
 
 /// The top-most ancestor of `path` (or `path` itself) that does not exist
 /// yet, i.e. what a write with parents will create. `None`: it exists.
-pub async fn first_missing(c: &cua_spacesd_client::SpacesdClient, path: &str) -> Option<String> {
-    let exists = |p: String| async move {
-        !matches!(
-            c.filesystem()
-                .stat(pb::StatRequest {
-                    path: p,
-                    no_follow_symlinks: true, ..Default::default()
-                })
-                .await,
-            Err(ref s) if s.code() == tonic::Code::NotFound
-        )
+/// Looked up with root's rights, so a directory the agent may not enter
+/// does not hide what is missing below it.
+pub async fn first_missing(
+    c: &cua_spacesd_client::SpacesdClient,
+    driver: &str,
+    path: &str,
+) -> Option<String> {
+    let run_as = crate::guest::file_run_as(driver, "root");
+    let exists = |p: String| {
+        let run_as = run_as.clone();
+        async move {
+            !matches!(
+                c.filesystem()
+                    .stat(pb::StatRequest {
+                        path: p,
+                        no_follow_symlinks: true,
+                        run_as,
+                        ..Default::default()
+                    })
+                    .await,
+                Err(ref s) if s.code() == tonic::Code::NotFound
+            )
+        }
     };
     if exists(path.to_string()).await {
         return None;
@@ -142,7 +154,7 @@ impl<'a> Writer<'a> {
     ) -> Result<Writer<'a>, FsError> {
         let staged = !crate::guest::without_sudo(driver);
         let created_from = if !staged && !user.is_empty() && user != "root" {
-            first_missing(c, path).await
+            first_missing(c, driver, path).await
         } else {
             None
         };
@@ -159,11 +171,7 @@ impl<'a> Writer<'a> {
             expected_size: 0,
             expected_sha256: String::new(),
             // An agent that switches users itself may not be root: name it.
-            run_as: if driver == "root" {
-                "root".into()
-            } else {
-                String::new()
-            },
+            run_as: crate::guest::file_run_as(driver, "root"),
             ..Default::default()
         };
         let sink = if c.transport() == Transport::Native {

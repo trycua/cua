@@ -8,7 +8,7 @@
 //! `~/.claude/skills/` (etc.) directories — too invasive for an
 //! `irm | iex` / `curl | sh` one-liner that the user might be running
 //! just to try the binary. Wiring up an agent is the explicit step:
-//! `cua-driver mcp-config --client <agent>` installs the skill pack for
+//! `cua-driver connect` and `cua-driver mcp-config --client <agent>` install the skill pack for
 //! that agent by default (`--no-skills` opts out; see
 //! [`install_for_client`]), and this verb installs it for every detected
 //! agent: fetch the versioned skill pack from a matching GitHub release and
@@ -50,6 +50,8 @@
 //! - Codex:       `~/.agents/skills/`
 //! - Cursor:      `~/.agents/skills/` (shared with Codex and Pi; Cursor also reads `~/.claude/skills/`)
 //! - Pi:          `~/.agents/skills/` (shared global location; Pi also reads `~/.pi/agent/skills/`)
+//! - DeepSeek Harness: `~/.agents/skills/` (shared with Codex, Pi and Cursor;
+//!   DSH's built-in filesystem skill provider scans it next to `~/.dsh/skills/`)
 //! - Prime Agent: `~/.prime/agent/skills/`
 //! - OpenClaw:    `~/.openclaw/skills/`
 //! - OpenCode: `~/.config/opencode/skills/` (macOS / Linux),
@@ -66,7 +68,7 @@
 //!   vocabulary; the cua-driver pack provides the platform deep dives.
 //!
 //! Acts on a given agent when its parent skills dir already exists. For
-//! Claude Code, Codex, and Pi, whose fresh installs may not create that directory,
+//! Claude Code, Codex, Pi, Cursor and DeepSeek Harness, whose fresh installs may not create that directory,
 //! the explicit `skills install` verb also creates it when the client's own
 //! home directory proves that client is installed. Never clobbers an existing
 //! `<agent_skills>/cua-driver` link — preserves dev users' hand-rolled symlinks.
@@ -156,7 +158,7 @@ fn home_dir() -> Result<PathBuf> {
     {
         let userprofile =
             std::env::var("USERPROFILE").map_err(|_| anyhow!("USERPROFILE not set"))?;
-        return Ok(PathBuf::from(userprofile).join(crate::bundle::user_home_subdirectory()));
+        Ok(PathBuf::from(userprofile).join(crate::bundle::user_home_subdirectory()))
     }
     #[cfg(not(windows))]
     {
@@ -239,6 +241,14 @@ const AGENTS: &[Agent] = &[
         // converge on one managed cua-driver link.
         parent: AgentParent::Home(".agents/skills"),
         install_marker: Some(".cursor"),
+    },
+    Agent {
+        label: "DeepSeek Harness",
+        // The skill provider DSH mounts by default scans ~/.agents/skills as
+        // well as ~/.dsh/skills, and warns when both hold the same skill name.
+        // Sharing the Codex/Pi/Cursor link avoids that duplicate.
+        parent: AgentParent::Home(".agents/skills"),
+        install_marker: Some(".dsh"),
     },
     Agent {
         label: "Prime Agent",
@@ -710,6 +720,7 @@ fn client_agents(client: &str) -> Vec<Agent> {
         "antigravity" | "gemini" => &["Antigravity IDE", "Antigravity CLI"],
         "pi" => &["Pi"],
         "prime-agent" => &["Prime Agent"],
+        "deepseek-harness" => &["DeepSeek Harness"],
         _ => &[],
     };
     AGENTS
@@ -1306,6 +1317,7 @@ mod tests {
         assert_eq!(labels("hermes"), ["Hermes"]);
         assert_eq!(labels("pi"), ["Pi"]);
         assert_eq!(labels("prime-agent"), ["Prime Agent"]);
+        assert_eq!(labels("deepseek-harness"), ["DeepSeek Harness"]);
         assert_eq!(
             labels("antigravity"),
             ["Antigravity IDE", "Antigravity CLI"]
@@ -1714,50 +1726,20 @@ mod tests {
         }
     }
 
-    const HISTORY_CONSULTATION_POLICY: &[&str] = &[
-        "continue, resume, or recall prior Cua work",
-        "call `history_status` first",
-        "one bounded initial",
-        "before broad application or window discovery",
-        "metadata only as a lead",
-        "verify current state",
-        "Content, geometry, arguments, results, and user intent",
-        "remain unknown",
-        "session or sequence boundary",
-        "never broaden a query to reconstruct excluded fields",
-        "either tool is absent",
-        "access is denied",
-        "query is empty",
-        "history is unhealthy",
-        "unrelated tasks merely because the tools are advertised",
-        "never mutate history",
-        "lifecycle or settings",
-    ];
-
-    fn assert_history_consultation_policy(skill: &str, source: &str) {
-        let normalized = skill.split_whitespace().collect::<Vec<_>>().join(" ");
-        for required in HISTORY_CONSULTATION_POLICY {
-            assert!(
-                normalized.contains(required),
-                "{source} lost required history consultation guidance: {required}"
-            );
-        }
-    }
-
     #[test]
-    fn bundled_skill_keeps_conditional_history_consultation_policy() {
+    fn bundled_skill_does_not_send_agents_to_deprecated_history() {
         let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let skill = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/SKILL.md"))
             .expect("canonical skill must be readable");
 
         assert!(
-            skill.lines().any(|line| {
-                line.starts_with("description:")
-                    && line.contains("continue, resume, or recall recent Cua activity")
-            }),
-            "skill frontmatter must trigger for recent Cua activity continuation"
+            !skill.contains("history_status") && !skill.contains("history_query"),
+            "Computer History is deprecated; the skill must not tell agents to call it"
         );
-        assert_history_consultation_policy(&skill, "canonical skill");
+        assert!(
+            !skill.contains("recall recent Cua activity"),
+            "skill frontmatter must not trigger on history recall"
+        );
     }
 
     #[test]
@@ -1822,7 +1804,7 @@ mod tests {
             "pass the same label on every call that accepts it",
             "Passing it once is not sticky",
             "revive a name after",
-            "There is no `deescalate_session`",
+            "tools were removed, so choose window or desktop on each action",
             "--capability-manifest",
             "--approve-capability-manifest",
             "It can remove tools or typed resources",

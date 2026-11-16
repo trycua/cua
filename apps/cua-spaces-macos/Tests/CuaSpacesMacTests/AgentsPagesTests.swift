@@ -69,6 +69,12 @@ final class FakeAgentsTools: AgentsToolRunning, @unchecked Sendable {
                 return n.merging(["read": true]) { _, new in new }
             }
             return ["marked": marked]
+        case "notifications_delete":
+            // As the daemon's feed: ids, or all; an empty list deletes nothing.
+            let ids = args["ids"] as? [String] ?? []
+            let before = notifications.count
+            notifications = args["all"] as? Bool == true ? [] : notifications.filter { !ids.contains($0["id"] as? String ?? "") }
+            return ["deleted": before - notifications.count]
         default: throw AgentsToolError(message: "unknown tool \(tool)")
         }
     }
@@ -91,7 +97,7 @@ struct AgentsPagesTests {
         await m.send(.select(name: "ada"))
         #expect(m.agentsView().detail?.memory.map(\.text) == ["hermes/MEMORY.md"])
         await m.send(.allowComputer(machine: "relay:0123"))
-        #expect(m.agentsView().detail?.access.map(\.text) == ["This machine"])
+        #expect(m.agentsView().detail?.access.map(\.text) == ["This computer"])
 
         var posted: [AppSystemNote] = []
         var seen: UInt64 = 0

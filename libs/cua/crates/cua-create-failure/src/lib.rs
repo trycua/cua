@@ -284,6 +284,7 @@ fn from_text(message: &str, phase: &str, local: bool) -> Option<&'static str> {
     // The Space booted but its service (cua-spacesd, the computer server)
     // did not answer.
     if l.contains("cua-spacesd did not answer within ")
+        || l.contains("could not reach its agent through its network")
         || (phase == "waiting_for_services"
             && has(
                 &l,
@@ -851,6 +852,15 @@ mod tests {
                 "probe http://10.0.0.2:8000/health: connection refused",
                 "waiting_for_services",
                 ""
+            ),
+            "services_unreachable"
+        );
+        assert_eq!(
+            kind(
+                "The computer started, but Cua could not reach its agent through its network: \
+                 nothing forwards the agent's port 3211 from this Mac into it.",
+                "",
+                "Other"
             ),
             "services_unreachable"
         );

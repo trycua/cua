@@ -12,7 +12,13 @@ import { PresenceOverlay } from "./PresenceOverlay";
 
 const ME = { participantId: "me", principalId: "user:me", displayName: "Me", color: "#3cb44b", kind: "human" };
 const DANA = { participantId: "dana", principalId: "user:dana", displayName: "Dana", color: "#e6194b", kind: "human" };
-const AGENT = { participantId: "agent-1", principalId: "agent:run", displayName: "Claude", color: "#4363d8", kind: "agent" };
+const AGENT = {
+  participantId: "agent-1",
+  principalId: "agent:run",
+  displayName: "Claude",
+  color: "#4363d8",
+  kind: "agent",
+};
 
 /** A pointer event with coordinates (jsdom has no PointerEvent constructor). */
 function pointer(el: Element, type: string, clientX: number, clientY: number) {
@@ -44,11 +50,27 @@ function fakeBridge() {
     },
     leave: async () => {},
   };
-  return { bridge, published, emit: (e: PresenceEvent) => act(() => handler?.(e)), networkAnswered: () => publishResolved };
+  return {
+    bridge,
+    published,
+    emit: (e: PresenceEvent) => act(() => handler?.(e)),
+    networkAnswered: () => publishResolved,
+  };
 }
 
 function cursor(x: number, y: number, extra: Partial<NonNullable<PresenceEvent["cursor"]>> = {}) {
-  return { displayId: "", x, y, visible: true, pressed: false, shape: "arrow", shapeSource: "unspecified", atMs: 0, receivedMs: 0, ...extra };
+  return {
+    displayId: "",
+    x,
+    y,
+    visible: true,
+    pressed: false,
+    shape: "arrow",
+    shapeSource: "unspecified",
+    atMs: 0,
+    receivedMs: 0,
+    ...extra,
+  };
 }
 
 /** Mounts a stream surface (800x500 at 100,50) with the overlay. */
@@ -72,7 +94,17 @@ async function mount(spaceId: string, opts: { interactive?: boolean; windowId?: 
     </div>,
   );
   const surface = utils.getByTestId("surface") as HTMLCanvasElement;
-  surface.getBoundingClientRect = () => ({ left: 100, top: 50, width: 800, height: 500, right: 900, bottom: 550, x: 100, y: 50, toJSON: () => ({}) });
+  surface.getBoundingClientRect = () => ({
+    left: 100,
+    top: 50,
+    width: 800,
+    height: 500,
+    right: 900,
+    bottom: 550,
+    x: 100,
+    y: 50,
+    toJSON: () => ({}),
+  });
   await waitFor(() => expect(layer).not.toBeNull());
   return {
     ...fake,
@@ -84,7 +116,8 @@ async function mount(spaceId: string, opts: { interactive?: boolean; windowId?: 
       clock = t;
     },
     clock: () => clock,
-    cursorOf: (id: string) => utils.container.querySelector(`.presence-cursor[data-participant="${id}"]`) as HTMLElement | null,
+    cursorOf: (id: string) =>
+      utils.container.querySelector(`.presence-cursor[data-participant="${id}"]`) as HTMLElement | null,
   };
 }
 
@@ -134,7 +167,11 @@ describe("PresenceOverlay", () => {
     const m = await mount("s-others");
     const t0 = m.clock();
     m.emit({ kind: "joined", participant: AGENT });
-    m.emit({ kind: "cursor_moved", participantId: "agent-1", cursor: cursor(0.5, 0.5, { shape: "pointer", shapeSource: "hit_test", receivedMs: t0 }) });
+    m.emit({
+      kind: "cursor_moved",
+      participantId: "agent-1",
+      cursor: cursor(0.5, 0.5, { shape: "pointer", shapeSource: "hit_test", receivedMs: t0 }),
+    });
     m.layer().render(t0 + 200);
     const el = m.cursorOf("agent-1") as HTMLElement;
     expect(el).not.toBeNull();
@@ -186,7 +223,11 @@ describe("PresenceOverlay", () => {
     const t0 = m.clock();
     m.emit({ kind: "joined", participant: DANA });
     m.emit({ kind: "joined", participant: AGENT });
-    m.emit({ kind: "cursor_moved", participantId: "dana", cursor: cursor(0.1, 0.1, { windowId: "w7", receivedMs: t0 }) });
+    m.emit({
+      kind: "cursor_moved",
+      participantId: "dana",
+      cursor: cursor(0.1, 0.1, { windowId: "w7", receivedMs: t0 }),
+    });
     m.emit({ kind: "cursor_moved", participantId: "agent-1", cursor: cursor(0.1, 0.1, { receivedMs: t0 }) });
     m.layer().render(t0 + 200);
     expect(m.cursorOf("dana")).not.toBeNull();

@@ -74,7 +74,7 @@ Pass the same `--stamp` (and `--work`, when set) to every run of one release. `t
 `sandbox-images.json` is the one list of images the repo points at: the apps, the CLI (`cua images ls`), the docs tables and cua-bench read it. Benchmark entries name their `bench/<id>/lock.json` pins and the benchmarks they run.
 
 - A new or renamed tag goes in `sandbox-images.json` first. Then run `pnpm --dir docs docs:generate:sandbox` and `python3 scripts/images/gen-image-constants.py`.
-- `scripts/images/check-image-refs.py` (**CI: Check Image Refs**) fails on any image ref in code, tests, CI, Dockerfiles or docs that is not a catalog entry, a lock pin, or a reasoned entry of `scripts/images/image-refs-allowlist.json` (legacy, cloud-built, third-party and synthetic test refs). Unused allowlist entries fail too.
+- `scripts/images/check-image-refs.py` (the image-refs check in `bin/ci --quick`) fails on any image ref in code, tests, CI, Dockerfiles or docs that is not a catalog entry, a lock pin, or a reasoned entry of `scripts/images/image-refs-allowlist.json` (legacy, cloud-built, third-party and synthetic test refs). Unused allowlist entries fail too.
 - Docs pages list images through generated regions (`GENERATED:catalog-cua-images`, `GENERATED:catalog-benchmarks`), not hand-typed tables.
 
 ## One definition, two outputs

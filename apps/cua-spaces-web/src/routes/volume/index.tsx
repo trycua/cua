@@ -61,7 +61,11 @@ function VolumeBody() {
         {view.openLabel ? (
           <Section>
             <div className="flex items-center gap-4 px-4 py-3">
-              <p className="min-w-0 flex-1 truncate text-[13px] text-muted-foreground" title={view.mountPath ?? view.mountLine ?? undefined} data-drive-mount-line="">
+              <p
+                className="min-w-0 flex-1 truncate text-[13px] text-muted-foreground"
+                title={view.mountPath ?? view.mountLine ?? undefined}
+                data-drive-mount-line=""
+              >
                 {view.mountLine}
               </p>
               <Button
@@ -168,7 +172,19 @@ function Section({ title, kind, children }: { title?: string; kind?: string; chi
 }
 
 /** A `LineView`: its text, a muted trailing part, and up to two buttons. */
-function Line({ line, busy, onAction, onSecondary, primary }: { line: LineView; busy: boolean; onAction?: () => void; onSecondary?: () => void; primary?: boolean }) {
+function Line({
+  line,
+  busy,
+  onAction,
+  onSecondary,
+  primary,
+}: {
+  line: LineView;
+  busy: boolean;
+  onAction?: () => void;
+  onSecondary?: () => void;
+  primary?: boolean;
+}) {
   return (
     <div className="flex min-h-11 items-center gap-4 px-4 py-2" data-drive-line={line.id}>
       <span className="min-w-0 flex-1 truncate text-[13px]" title={line.text} data-line-text="">

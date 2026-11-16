@@ -15,7 +15,9 @@ export interface DemoTelemetryState {
 
 export const demoTelemetryState = (): DemoTelemetryState => ({ telemetry: [] });
 
-export function demoTelemetryHandlers({ state }: DemoContext): DemoHandlers<"telemetry.track" | "telemetry.linkNotice" | "telemetry.acknowledgeLinkNotice" | "crashReporting.config"> {
+export function demoTelemetryHandlers({
+  state,
+}: DemoContext): DemoHandlers<"telemetry.track" | "telemetry.linkNotice" | "telemetry.acknowledgeLinkNotice" | "crashReporting.config"> {
   return {
     "telemetry.track": ({ signals }) => {
       if (state.settings.telemetry) state.telemetry.push(...signals);

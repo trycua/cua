@@ -81,7 +81,10 @@ async function sampleLoad(pids, n) {
   const cpu = [];
   const memoryMB = [];
   if (process.platform === "darwin") {
-    const top = execFileSync("top", ["-l", String(n + 1), "-s", "1", "-stats", "pid,cpu,mem", ...pids.flatMap((p) => ["-pid", String(p)])], { encoding: "utf8", maxBuffer: 1 << 26 });
+    const top = execFileSync("top", ["-l", String(n + 1), "-s", "1", "-stats", "pid,cpu,mem", ...pids.flatMap((p) => ["-pid", String(p)])], {
+      encoding: "utf8",
+      maxBuffer: 1 << 26,
+    });
     const toMB = (s) => (/G/.test(s) ? parseFloat(s) * 1024 : /K/.test(s) ? parseFloat(s) / 1024 : parseFloat(s));
     // One block per sample; the first one's CPU counts since launch.
     for (const block of top.split(/^Processes:/m).slice(2)) {
@@ -118,7 +121,15 @@ try {
   const load = await sampleLoad(appProcesses(), seconds);
   const after = read();
   if (!after.streams.length) throw new Error(`no streams in ${statsFile}: did ${kind} open ${space}? (the Swift hooks need a debug build)`);
-  const report = { ...videoReport(kind, before, after, load), videoDecode: after.videoDecode ?? null, platform: process.platform, arch: process.arch, space, cores: os.cpus().length, loadavg: os.loadavg() };
+  const report = {
+    ...videoReport(kind, before, after, load),
+    videoDecode: after.videoDecode ?? null,
+    platform: process.platform,
+    arch: process.arch,
+    space,
+    cores: os.cpus().length,
+    loadavg: os.loadavg(),
+  };
   writeFileSync(out, `${JSON.stringify(report, null, 2)}\n`);
   console.log(JSON.stringify(report, null, 2));
 } finally {

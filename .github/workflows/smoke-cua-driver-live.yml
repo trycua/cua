@@ -53,13 +53,10 @@ jobs:
           workspaces: "libs/cua-driver/rust -> target"
           key: live-smoke
       - name: Install GUI and Rust build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            xvfb dbus-x11 at-spi2-core openbox python3-gi gir1.2-gtk-3.0 \
-            clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
-            libei-dev libwayland-dev libxkbcommon-dev libx11-dev libxi-dev \
-            libxtst-dev libxext-dev libxdo-dev libssl-dev
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            xvfb dbus-x11 at-spi2-core openbox python3-gi gir1.2-gtk-3.0 clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libei-dev libwayland-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev libxdo-dev libssl-dev
       - name: Build cua-driver
         run: cargo build --release --locked -p cua-driver --manifest-path libs/cua-driver/rust/Cargo.toml
       - name: Run live smoke

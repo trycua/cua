@@ -20,6 +20,7 @@ import { Route as CiIndexRouteImport } from './routes/ci/index'
 import { Route as DriverIndexRouteImport } from './routes/driver/index'
 import { Route as HomeIndexRouteImport } from './routes/home/index'
 import { Route as HomeTaskIdRouteImport } from './routes/home/$taskId'
+import { Route as HomeAskRouteImport } from './routes/home/ask'
 import { Route as KeyvaultIndexRouteImport } from './routes/keyvault/index'
 import { Route as MachinesIndexRouteImport } from './routes/machines/index'
 import { Route as NotificationsIndexRouteImport } from './routes/notifications/index'
@@ -39,6 +40,9 @@ import { Route as SpacesSpaceIdRouteImport } from './routes/spaces/$spaceId'
 import { Route as VolumeIndexRouteImport } from './routes/volume/index'
 import { Route as SettingsConnectionsAppRouteImport } from './routes/settings/connections.$app'
 import { Route as SettingsConnectorsAppRouteImport } from './routes/settings/connectors.$app'
+import { Route as SpacesCloudCloudIdRouteImport } from './routes/spaces/cloud/$cloudId'
+import { Route as SpacesComputerComputerIdIndexRouteImport } from './routes/spaces/computer/$computerId/index'
+import { Route as SpacesComputerComputerIdDriverRouteImport } from './routes/spaces/computer/$computerId/driver'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -78,6 +82,11 @@ const HomeIndexRoute = HomeIndexRouteImport.update({
 const HomeTaskIdRoute = HomeTaskIdRouteImport.update({
   id: '/home/$taskId',
   path: '/home/$taskId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HomeAskRoute = HomeAskRouteImport.update({
+  id: '/home/ask',
+  path: '/home/ask',
   getParentRoute: () => rootRouteImport,
 } as any)
 const KeyvaultIndexRoute = KeyvaultIndexRouteImport.update({
@@ -175,12 +184,30 @@ const SettingsConnectorsAppRoute = SettingsConnectorsAppRouteImport.update({
   path: '/$app',
   getParentRoute: () => SettingsConnectorsRoute,
 } as any)
+const SpacesCloudCloudIdRoute = SpacesCloudCloudIdRouteImport.update({
+  id: '/spaces/cloud/$cloudId',
+  path: '/spaces/cloud/$cloudId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SpacesComputerComputerIdIndexRoute =
+  SpacesComputerComputerIdIndexRouteImport.update({
+    id: '/spaces/computer/$computerId/',
+    path: '/spaces/computer/$computerId/',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const SpacesComputerComputerIdDriverRoute =
+  SpacesComputerComputerIdDriverRouteImport.update({
+    id: '/spaces/computer/$computerId/driver',
+    path: '/spaces/computer/$computerId/driver',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/settings': typeof SettingsRouteRouteWithChildren
   '/agents/all': typeof AgentsAllRoute
   '/home/$taskId': typeof HomeTaskIdRoute
+  '/home/ask': typeof HomeAskRoute
   '/settings/about': typeof SettingsAboutRoute
   '/settings/advanced': typeof SettingsAdvancedRoute
   '/settings/agents': typeof SettingsAgentsRoute
@@ -204,11 +231,15 @@ export interface FileRoutesByFullPath {
   '/volume/': typeof VolumeIndexRoute
   '/settings/connections/$app': typeof SettingsConnectionsAppRoute
   '/settings/connectors/$app': typeof SettingsConnectorsAppRoute
+  '/spaces/cloud/$cloudId': typeof SpacesCloudCloudIdRoute
+  '/spaces/computer/$computerId/driver': typeof SpacesComputerComputerIdDriverRoute
+  '/spaces/computer/$computerId/': typeof SpacesComputerComputerIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/agents/all': typeof AgentsAllRoute
   '/home/$taskId': typeof HomeTaskIdRoute
+  '/home/ask': typeof HomeAskRoute
   '/settings/about': typeof SettingsAboutRoute
   '/settings/advanced': typeof SettingsAdvancedRoute
   '/settings/agents': typeof SettingsAgentsRoute
@@ -232,6 +263,9 @@ export interface FileRoutesByTo {
   '/volume': typeof VolumeIndexRoute
   '/settings/connections/$app': typeof SettingsConnectionsAppRoute
   '/settings/connectors/$app': typeof SettingsConnectorsAppRoute
+  '/spaces/cloud/$cloudId': typeof SpacesCloudCloudIdRoute
+  '/spaces/computer/$computerId/driver': typeof SpacesComputerComputerIdDriverRoute
+  '/spaces/computer/$computerId': typeof SpacesComputerComputerIdIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -239,6 +273,7 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRouteRouteWithChildren
   '/agents/all': typeof AgentsAllRoute
   '/home/$taskId': typeof HomeTaskIdRoute
+  '/home/ask': typeof HomeAskRoute
   '/settings/about': typeof SettingsAboutRoute
   '/settings/advanced': typeof SettingsAdvancedRoute
   '/settings/agents': typeof SettingsAgentsRoute
@@ -262,6 +297,9 @@ export interface FileRoutesById {
   '/volume/': typeof VolumeIndexRoute
   '/settings/connections/$app': typeof SettingsConnectionsAppRoute
   '/settings/connectors/$app': typeof SettingsConnectorsAppRoute
+  '/spaces/cloud/$cloudId': typeof SpacesCloudCloudIdRoute
+  '/spaces/computer/$computerId/driver': typeof SpacesComputerComputerIdDriverRoute
+  '/spaces/computer/$computerId/': typeof SpacesComputerComputerIdIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -270,6 +308,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/agents/all'
     | '/home/$taskId'
+    | '/home/ask'
     | '/settings/about'
     | '/settings/advanced'
     | '/settings/agents'
@@ -293,11 +332,15 @@ export interface FileRouteTypes {
     | '/volume/'
     | '/settings/connections/$app'
     | '/settings/connectors/$app'
+    | '/spaces/cloud/$cloudId'
+    | '/spaces/computer/$computerId/driver'
+    | '/spaces/computer/$computerId/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/agents/all'
     | '/home/$taskId'
+    | '/home/ask'
     | '/settings/about'
     | '/settings/advanced'
     | '/settings/agents'
@@ -321,12 +364,16 @@ export interface FileRouteTypes {
     | '/volume'
     | '/settings/connections/$app'
     | '/settings/connectors/$app'
+    | '/spaces/cloud/$cloudId'
+    | '/spaces/computer/$computerId/driver'
+    | '/spaces/computer/$computerId'
   id:
     | '__root__'
     | '/'
     | '/settings'
     | '/agents/all'
     | '/home/$taskId'
+    | '/home/ask'
     | '/settings/about'
     | '/settings/advanced'
     | '/settings/agents'
@@ -350,6 +397,9 @@ export interface FileRouteTypes {
     | '/volume/'
     | '/settings/connections/$app'
     | '/settings/connectors/$app'
+    | '/spaces/cloud/$cloudId'
+    | '/spaces/computer/$computerId/driver'
+    | '/spaces/computer/$computerId/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -357,6 +407,7 @@ export interface RootRouteChildren {
   SettingsRouteRoute: typeof SettingsRouteRouteWithChildren
   AgentsAllRoute: typeof AgentsAllRoute
   HomeTaskIdRoute: typeof HomeTaskIdRoute
+  HomeAskRoute: typeof HomeAskRoute
   SpacesSpaceIdRoute: typeof SpacesSpaceIdRoute
   AgentsIndexRoute: typeof AgentsIndexRoute
   CiIndexRoute: typeof CiIndexRoute
@@ -368,6 +419,9 @@ export interface RootRouteChildren {
   OnboardingIndexRoute: typeof OnboardingIndexRoute
   SpacesIndexRoute: typeof SpacesIndexRoute
   VolumeIndexRoute: typeof VolumeIndexRoute
+  SpacesCloudCloudIdRoute: typeof SpacesCloudCloudIdRoute
+  SpacesComputerComputerIdDriverRoute: typeof SpacesComputerComputerIdDriverRoute
+  SpacesComputerComputerIdIndexRoute: typeof SpacesComputerComputerIdIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -426,6 +480,13 @@ declare module '@tanstack/react-router' {
       path: '/home/$taskId'
       fullPath: '/home/$taskId'
       preLoaderRoute: typeof HomeTaskIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/home/ask': {
+      id: '/home/ask'
+      path: '/home/ask'
+      fullPath: '/home/ask'
+      preLoaderRoute: typeof HomeAskRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/keyvault/': {
@@ -561,6 +622,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsConnectorsAppRouteImport
       parentRoute: typeof SettingsConnectorsRoute
     }
+    '/spaces/cloud/$cloudId': {
+      id: '/spaces/cloud/$cloudId'
+      path: '/spaces/cloud/$cloudId'
+      fullPath: '/spaces/cloud/$cloudId'
+      preLoaderRoute: typeof SpacesCloudCloudIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/spaces/computer/$computerId/': {
+      id: '/spaces/computer/$computerId/'
+      path: '/spaces/computer/$computerId'
+      fullPath: '/spaces/computer/$computerId/'
+      preLoaderRoute: typeof SpacesComputerComputerIdIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/spaces/computer/$computerId/driver': {
+      id: '/spaces/computer/$computerId/driver'
+      path: '/spaces/computer/$computerId/driver'
+      fullPath: '/spaces/computer/$computerId/driver'
+      preLoaderRoute: typeof SpacesComputerComputerIdDriverRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -621,6 +703,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRouteRoute: SettingsRouteRouteWithChildren,
   AgentsAllRoute: AgentsAllRoute,
   HomeTaskIdRoute: HomeTaskIdRoute,
+  HomeAskRoute: HomeAskRoute,
   SpacesSpaceIdRoute: SpacesSpaceIdRoute,
   AgentsIndexRoute: AgentsIndexRoute,
   CiIndexRoute: CiIndexRoute,
@@ -632,6 +715,9 @@ const rootRouteChildren: RootRouteChildren = {
   OnboardingIndexRoute: OnboardingIndexRoute,
   SpacesIndexRoute: SpacesIndexRoute,
   VolumeIndexRoute: VolumeIndexRoute,
+  SpacesCloudCloudIdRoute: SpacesCloudCloudIdRoute,
+  SpacesComputerComputerIdDriverRoute: SpacesComputerComputerIdDriverRoute,
+  SpacesComputerComputerIdIndexRoute: SpacesComputerComputerIdIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

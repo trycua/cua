@@ -58,6 +58,28 @@ inputs:
       2G cap truncated on every run.
     default: "4G"
 
+  save-always:
+    description: >-
+      "true" leaves the save to the caller: a later `./.github/actions/rust-cache-save`
+      step with `if: always()`. actions/cache saves only when the whole job
+      succeeds, so a test that fails after a 40 minute compile (the macOS swift
+      jobs) threw the warm cache away and the next run paid the compile again.
+    default: "false"
+
+outputs:
+  save:
+    description: "Whether this run saves the cache."
+    value: ${{ steps.plan.outputs.save }}
+  key:
+    description: "Cache key for rust-cache-save."
+    value: ${{ steps.plan.outputs.key }}
+  dir:
+    description: "sccache directory for rust-cache-save."
+    value: ${{ steps.plan.outputs.dir }}
+  exact-hit:
+    description: "Whether the exact key was already cached."
+    value: ${{ steps.restore.outputs.cache-hit }}
+
 runs:
   using: composite
   steps:
@@ -111,11 +133,15 @@ runs:
           echo "key=$prefix$bucket"
         } >> "$GITHUB_OUTPUT"
         echo "sccache plan: family=$fam key=$prefix$bucket save=$save"
+    # The download is a GitHub release asset. When it fails (a 504 from the
+    # release CDN), the next step finds no sccache and cargo compiles without
+    # it. This also covers the action's post step, which then has no binary.
     - name: Install sccache
+      continue-on-error: true
       uses: mozilla-actions/sccache-action@fd02668681acd5f960e1372061bee5e3e987195c # v0.0.11
     - name: Restore the sccache directory
       id: restore
-      if: steps.plan.outputs.save != 'true'
+      if: steps.plan.outputs.save != 'true' || inputs.save-always == 'true'
       uses: actions/cache/restore@v4
       with:
         path: ${{ steps.plan.outputs.dir }}
@@ -123,7 +149,7 @@ runs:
         restore-keys: ${{ steps.plan.outputs.prefix }}
     - name: Restore and later save the sccache directory
       id: restore-save
-      if: steps.plan.outputs.save == 'true'
+      if: steps.plan.outputs.save == 'true' && inputs.save-always != 'true'
       uses: actions/cache@v4
       with:
         path: ${{ steps.plan.outputs.dir }}

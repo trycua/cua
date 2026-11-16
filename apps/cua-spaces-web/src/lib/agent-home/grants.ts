@@ -80,7 +80,11 @@ const subscribe = (l: () => void) => {
 
 export function useGrants(agent: string): AgentGrants {
   // The snapshot is the stored object itself, so it only changes when a grant does.
-  const stored = useSyncExternalStore(subscribe, () => load()[agent], () => undefined);
+  const stored = useSyncExternalStore(
+    subscribe,
+    () => load()[agent],
+    () => undefined,
+  );
   return stored ? { listAll: Boolean(stored.listAll), machines: stored.machines ?? [] } : NO_GRANTS;
 }
 

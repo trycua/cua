@@ -51,13 +51,22 @@ test("a working folder that cannot be made is named, not the program", async (t)
   assert.match(st.error, /^The working folder .*work is not available in this Space/);
 });
 
+// A persistent agent's home on the Cua Volume is not there until the Volume
+// shows it. The installed harness must still start, in that folder, instead
+// of failing with `spawn <harness> ENOENT` (#4624).
 test("a missing working folder is made again before the agent starts", async (t) => {
+  let work;
   const st = await startFailure(t, {
-    cwd: (root) => path.join(root, "again", "work"),
-    command: () => process.execPath,
-    args: ["-e", "0"],
+    cwd: (root) => (work = path.join(root, "volume", "agents", "combo", "work")),
+    command: (root) => path.join(root, "tools", "pi-acp", "dist", "index.js"),
+    setup: (root) => {
+      const agent = path.join(root, "tools", "pi-acp", "dist", "index.js");
+      fs.mkdirSync(path.dirname(agent), { recursive: true });
+      fs.writeFileSync(agent, `#!${process.execPath}\nrequire("node:fs").writeFileSync("started", process.cwd());\n`, { mode: 0o755 });
+    },
   });
-  assert.doesNotMatch(st.error ?? "", /working folder/);
+  assert.doesNotMatch(st.error ?? "", /ENOENT|working folder|not installed/);
+  assert.equal(fs.realpathSync(fs.readFileSync(path.join(work, "started"), "utf8")), fs.realpathSync(work));
 });
 
 test("a script whose node is not installed says Node is not installed", async (t) => {

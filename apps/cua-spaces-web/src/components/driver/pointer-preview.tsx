@@ -144,7 +144,14 @@ export function PointerPreview({
               <path d={trail(style)} fill="none" className="stroke-foreground/35" strokeWidth="1.2" strokeDasharray="3 4" />
               <g transform={`translate(${pos.x} ${pos.y + bob}) rotate(${heading}) scale(${clicking ? 0.88 : 1})`} data-agent-pointer="">
                 {/* Upright like the system arrow (trycua/cua#6142); the tip is the click point. */}
-                <path d="M0,0 L0,20 L5,15.5 L8.6,23.5 L12,22 L8.5,14.2 L14.5,14.2 Z" fill={FILL} stroke="white" strokeWidth="1.5" strokeLinejoin="round" style={{ filter: `drop-shadow(0 0 3px ${FILL})` }} />
+                <path
+                  d="M0,0 L0,20 L5,15.5 L8.6,23.5 L12,22 L8.5,14.2 L14.5,14.2 Z"
+                  fill={FILL}
+                  stroke="white"
+                  strokeWidth="1.5"
+                  strokeLinejoin="round"
+                  style={{ filter: `drop-shadow(0 0 3px ${FILL})` }}
+                />
               </g>
               {mark ? (
                 <text x={pos.x + 18} y={pos.y + bob + 30} className="fill-muted-foreground" fontSize="10">

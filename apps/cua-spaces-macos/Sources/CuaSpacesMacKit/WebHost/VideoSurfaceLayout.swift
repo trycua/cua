@@ -35,6 +35,9 @@ struct VideoSurfaceUpdate: Equatable {
     var spaceId: String
     var tier: VideoTier
     var interactive: Bool
+    /// One window of the Space instead of its desktop: the handle from its window list
+    /// (a window another Space shows here is `xs:…`). nil is the desktop.
+    var windowId: String? = nil
     var rect: CGRect
     /// The visible part of `rect`; nil when none of it is.
     var clip: CGRect?
@@ -54,6 +57,7 @@ struct VideoSurfaceUpdate: Equatable {
         self.spaceId = spaceId
         tier = (json["tier"] as? String).flatMap(VideoTier.init(rawValue:)) ?? .full
         interactive = json["interactive"] as? Bool ?? false
+        windowId = (json["windowId"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         self.rect = rect
         clip = Self.rect(json["clip"])
         radius = Self.number(json["radius"])
@@ -62,8 +66,9 @@ struct VideoSurfaceUpdate: Equatable {
         visible = json["visible"] as? Bool ?? true
     }
 
-    init(surfaceId: String, spaceId: String, tier: VideoTier, interactive: Bool, rect: CGRect,
+    init(surfaceId: String, spaceId: String, tier: VideoTier, interactive: Bool, windowId: String? = nil, rect: CGRect,
          clip: CGRect?, radius: CGFloat = 0, occluded: Bool = false, holes: [CGRect] = [], visible: Bool = true) {
+        self.windowId = windowId
         self.surfaceId = surfaceId
         self.spaceId = spaceId
         self.tier = tier
@@ -92,6 +97,9 @@ struct VideoSurfaceUpdate: Equatable {
 enum VideoSurfaceMessage: Equatable {
     case surfaces(update: [VideoSurfaceUpdate], remove: [String])
     case focus(String?)
+    /// The pointer or focus is heading for a Space (its tile, row or link):
+    /// open its viewer stream now, so the click finds it connected.
+    case prewarm(spaceId: String)
 
     init?(body: Any) {
         guard let body = body as? [String: Any], let type = body["type"] as? String else { return nil }
@@ -102,6 +110,9 @@ enum VideoSurfaceMessage: Equatable {
             self = .surfaces(update: update, remove: remove)
         case "focus":
             self = .focus(body["surfaceId"] as? String)
+        case "prewarm":
+            guard let id = body["spaceId"] as? String, !id.isEmpty else { return nil }
+            self = .prewarm(spaceId: id)
         default:
             return nil
         }

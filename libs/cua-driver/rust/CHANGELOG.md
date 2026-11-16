@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.52.6](https://github.com/trycua/cua/compare/cua-driver-rs-v0.52.5...cua-driver-rs-v0.52.6) (2026-11-16)
+
+
+### Bug Fixes
+
+* **cua-driver:** deliver desktop click and scroll on the nested cua-compositor ([#7926](https://github.com/trycua/cua/issues/7926)) ([d88757e](https://github.com/trycua/cua/commit/d88757e613c6a5f60508533bd3bb71fb383140cf))
+
 ## [0.52.5](https://github.com/trycua/cua/compare/cua-driver-rs-v0.52.4...cua-driver-rs-v0.52.5) (2026-11-16)
 
 

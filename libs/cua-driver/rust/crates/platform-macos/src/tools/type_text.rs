@@ -64,7 +64,8 @@ fn def() -> &'static ToolDef {
         name: "type_text".into(),
         description: "Insert text via `AXSetAttribute(kAXSelectedText)` into the element given by `element_token`, or the pid's focused element. Does not press keys: use `press_key` / `hotkey` for Return, Escape, arrows. If AX insertion is unsupported (Chromium/Electron), it falls back to CGEvent typing when the route fits the transport budget; longer routes are refused with a safe chunk size.\n\
             \n\
-            Web content (browser tabs, Slack, VS Code): AXValue is not proof the DOM saw the text, so the result is `effect:\"unverifiable\"` and Electron web content refuses background delivery. For a browser tab use the `page` tool. For an embedded web view pass `x, y` (no element_token) to pixel-click the field then type in one call; a pixel click will not reliably open a closed control, so AX-press it open first. Confirm from the screenshot, and use `delivery_mode:\"foreground\"` only if background still drops the text.".into(),
+            Web content (browser tabs, Slack, VS Code): AXValue is not proof the DOM saw the text, so the result is `effect:\"unverifiable\"` and Electron web content refuses background delivery. For a browser tab use the `page` tool. For an embedded web view pass `x, y` (no element_token) to pixel-click the field then type in one call; a pixel click will not reliably open a closed control, so AX-press it open first. Confirm from the screenshot, and use `delivery_mode:\"foreground\"` only if background still drops the text.\n\
+            When key events are needed, an `element_token` target whose keyboard focus cannot be confirmed is refused with `target_focus_unconfirmed`, effect \"refused\", and no key sent.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "required": ["text"],
@@ -878,11 +879,6 @@ const UNCHANGED_GIVE_UP: std::time::Duration = std::time::Duration::from_millis(
 const DELIVERY_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 const DELIVERY_DRAIN_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(5);
 
-/// Pause before the single `AXFocused` re-apply in the foreground rung. Covers
-/// an app that installs its own first responder just after activation is
-/// observable, which would otherwise clobber the first write.
-const FOCUS_REAPPLY_DELAY: std::time::Duration = std::time::Duration::from_millis(30);
-
 /// Keyboard-rung policy for one window-addressed background insert, decided
 /// once by the pure exact-target core before any input is posted.
 #[derive(Clone, Debug)]
@@ -1311,20 +1307,29 @@ fn cgevent_type_verified(
     // Focus the target element so the keystrokes land in IT. Critical in
     // foreground mode: a freshly-fronted window's keyboard focus may be on the
     // search box or nowhere, so without this the text goes into the void (or the
-    // wrong field). AXFocused is best-effort — harmless when unsupported.
+    // wrong field).
     //
     // Ordering matters as much as the write itself. `with_foreground_assist` has
     // already waited for the activation to land, so AppKit has installed the
     // window's remembered first responder by now and this write lands *after*
-    // it rather than being clobbered by it. Re-applying once on a failed
-    // read-back covers apps that install their responder slightly late.
-    if let Some((ptr, _)) = element_ptr_and_idx {
-        let _ = crate::input::ax_actions::focus_element(ptr);
-        if settle_ms > 0 && !crate::input::ax_actions::is_element_focused(pid, ptr) {
-            std::thread::sleep(FOCUS_REAPPLY_DELAY);
+    // it rather than being clobbered by it. The focus write is re-applied for up
+    // to 200ms, which covers apps that install their responder slightly late.
+    //
+    // Keystrokes go to whatever holds the app's keyboard focus, not to the
+    // target. A target that cannot take focus (a toolbar button) is refused
+    // before any key is posted, exactly as press_key refuses it: typing anyway
+    // put the text into the field that did hold focus (Chrome's address bar),
+    // and the target's unchanged read-back then asked for a retype or a
+    // foreground retry that typed it there a second time.
+    crate::input::ax_actions::with_confirmed_key_focus(
+        element_ptr_and_idx.map(|(ptr, _)| ptr),
+        |ptr| {
             let _ = crate::input::ax_actions::focus_element(ptr);
-        }
-    }
+            Ok(())
+        },
+        |ptr| crate::input::ax_actions::element_has_keyboard_focus(pid, ptr),
+        || Ok(()),
+    )?;
     // First-keystroke settle (foreground rung only — caller passes `settle_ms > 0`).
     // Even once the window is front and the element focused, the surface isn't
     // ready to accept input for a few tens of ms, so the FIRST synthesized
@@ -1335,11 +1340,6 @@ fn cgevent_type_verified(
         std::thread::sleep(std::time::Duration::from_millis(settle_ms));
     }
     crate::input::keyboard::type_text_with_delay(pid, text, delay_ms)?;
-    if !readback_sees_keystrokes(element_ptr_and_idx, |ptr| {
-        crate::input::ax_actions::element_has_keyboard_focus(pid, ptr)
-    }) {
-        return Ok((false, None));
-    }
     let batched = delay_ms == 0;
 
     // CGEvent posting is asynchronous with respect to the renderer. In
@@ -1410,22 +1410,6 @@ fn appends_prefix(before: Option<&str>, after: Option<&str>, text: &str, done: u
     after
         .strip_prefix(before)
         .is_some_and(|added| added.chars().eq(text.chars().take(done)))
-}
-
-/// Whether the target's read-back can measure keystrokes just posted to the app.
-///
-/// Keystrokes go to whatever holds the app's keyboard focus, not to the target.
-/// A target that did not take focus (a button, a control that ignores
-/// `AXFocused`) never saw them, so its unchanged value is not "0 delivered".
-/// Reporting it as such asks for a retry, and retyping the "missing" tail types
-/// the whole text a second time into the field that does hold focus (Chrome's
-/// address bar next to a targeted toolbar button). Without an explicit target
-/// the read-back is the focused element itself.
-fn readback_sees_keystrokes(
-    element_ptr_and_idx: Option<(usize, Option<usize>)>,
-    has_keyboard_focus: impl FnOnce(usize) -> bool,
-) -> bool {
-    element_ptr_and_idx.is_none_or(|(ptr, _)| has_keyboard_focus(ptr))
 }
 
 fn await_typed_delivery(
@@ -2681,13 +2665,6 @@ mod tests {
                 "before={before:?} after={after:?} text={text:?}"
             );
         }
-    }
-
-    #[test]
-    fn readback_measures_keystrokes_only_from_the_element_holding_focus() {
-        assert!(readback_sees_keystrokes(None, |_| unreachable!()));
-        assert!(readback_sees_keystrokes(Some((7, None)), |ptr| ptr == 7));
-        assert!(!readback_sees_keystrokes(Some((7, Some(5))), |_| false));
     }
 
     #[test]

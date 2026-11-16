@@ -1,26 +1,25 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { Link } from "@tanstack/react-router";
-import { ChevronRightIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import { useAgentChats, useAgents, useFlag, useSpaces, useSpaceThumbnail, type AgentRunSummary, type Space } from "@/bridge";
-import { CuaKey } from "@/components/cua-key";
+import { useAgentChats, useSpaces, type AgentRunSummary } from "@/bridge";
 import { useAgentAttempts } from "@/hooks/use-agent-attempts";
 import { OsIcon } from "@/components/os-icon";
-import { SpaceCanvas } from "@/components/space-canvas";
-import { Button } from "@/components/ui/button";
-import { currentWhere, mostUsedAgent, orderTasks, startErrorView, SUGGESTIONS, taskState, TASK_STATE_TEXT, taskTitle, useAskTasks, type AskTask, type TaskState } from "@/lib/ask-first";
+import { SUGGESTIONS, useAskTasks, withoutStaleTasks, type AskTask, type TaskState } from "@/lib/ask-first";
 import { useListedSpaces } from "@/components/spaces/listed";
-import { orderSpaces, realSpaces, spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 
-import { agentName, AppMark, AskBox, TASK_AGENTS, type TaskWhere } from "./ask-box";
+import { AskBox } from "./ask-box";
+import { useAskComposer } from "./use-ask-composer";
+import { BringTheRest } from "./bring-the-rest";
+import { AgentStatus } from "./agent-status";
+import { useAgentReadiness } from "./use-agent-readiness";
+import { useKeepHomeWarm } from "./use-keep-home-warm";
 import { YourAgents, YourSpaces as YourSpacesRow } from "./home-sections";
-import { useWherePick } from "./this-mac-confirm";
-import { useStartTask } from "./use-start-task";
-import { useWhereOptions } from "./where-options";
+import { PrepareLine } from "@/components/prepare/prepare-line";
+import { usePrepareAction } from "@/components/prepare/use-prepare-action";
+import { usePrepare } from "@/lib/prepare/store";
 
 /** The run a task follows, from the runs in your running Spaces. */
 export function taskRun(runs: readonly AgentRunSummary[] | undefined, task: AskTask): AgentRunSummary | undefined {
@@ -29,7 +28,15 @@ export function taskRun(runs: readonly AgentRunSummary[] | undefined, task: AskT
 
 export function StateDot({ state }: { state: TaskState }) {
   const tone =
-    state === "working" ? "bg-success" : state === "needs-you" || state === "stuck" ? "bg-warning" : state === "failed" || state === "didnt-start" ? "bg-destructive" : state === "done" ? "bg-success" : "bg-muted-foreground/40";
+    state === "working"
+      ? "bg-success"
+      : state === "needs-you" || state === "stuck"
+        ? "bg-warning"
+        : state === "failed" || state === "didnt-start"
+          ? "bg-destructive"
+          : state === "done"
+            ? "bg-success"
+            : "bg-muted-foreground/40";
   return (
     <span className={cn("relative inline-flex size-2 shrink-0 rounded-full", tone)}>
       {state === "working" ? <span className="absolute inset-0 animate-ping rounded-full bg-success/60" /> : null}
@@ -43,213 +50,81 @@ export function StateDot({ state }: { state: TaskState }) {
  * conversations (the one that needs you first), and your Spaces underneath.
  */
 export function AskFirstHome() {
-  const tasks = useAskTasks();
+  const allTasks = useAskTasks();
+  const tasks = useMemo(() => withoutStaleTasks(allTasks), [allTasks]);
   const { data: spaces } = useSpaces();
   const listed = useListedSpaces(spaces);
-  const { data: agents, agentSetup } = useAgents();
-  const { kinds, spaces: pickable } = useWhereOptions();
-  const { start } = useStartTask();
-  const [installed, setInstalled] = useState<ReadonlySet<string>>(new Set());
-  useEffect(() => {
-    let live = true;
-    agentSetup()
-      .then((rows) => {
-        if (!live) return;
-        const found = new Set(rows.filter((r) => r.installed).map((r) => r.agent));
-        setInstalled(new Set(TASK_AGENTS.filter((a) => found.has(a.setupId)).map((a) => a.id)));
-      })
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  const mostUsed = mostUsedAgent(tasks);
-  const [text, setText] = useState("");
-  const [agent, setAgent] = useState<string | null>(null);
-  const chosenAgent = agent ?? mostUsed ?? TASK_AGENTS.find((a) => installed.has(a.id))?.id ?? "claude-code";
-  // A new Linux computer unless you pick; a pick that's no longer offered falls back to it.
-  const [picked, setWhere] = useState<TaskWhere | null>(null);
-  const [whereOpen, setWhereOpen] = useState(false);
-  const pick = useWherePick(agentName(chosenAgent));
-  const where = currentWhere(picked, kinds, pickable);
-  const submit = (prompt = text, w = where) => {
-    if (!prompt.trim()) return;
-    start({ prompt, agent: chosenAgent, where: w });
-    setText("");
-  };
+  const composer = useAskComposer();
+  const { agents, selected, chosenAgent, agentHome, kinds, signInTo, setText, setWhere } = composer;
+  useKeepHomeWarm(chosenAgent, agentHome);
+  const readiness = useAgentReadiness(chosenAgent, agentHome, agents, selected);
+  // The first Space being prepared after the first run: silent unless it fails.
+  const prep = usePrepare();
+  const onPrepareAction = usePrepareAction();
 
-  const rows = orderTasks(
-    tasks.map((task) => {
-      const run = taskRun(agents?.runs, task);
-      return { task, run, state: taskState(task, run ? { status: run.status, needsYou: Boolean(run.needsYou), lastEventMs: null } : null) };
-    }),
-  );
-  const redesign = useFlag("spaces_redesign");
-  // The redesign lists agents and Spaces, not tasks: with neither (a first run,
+  // Home lists agents and Spaces, not tasks: with neither (a first run,
   // or tasks whose Spaces are gone), Home is the welcome again.
   const attempts = useAgentAttempts();
-  const { chats } = useAgentChats(attempts);
-  const first = redesign ? !chats?.length && listed.counted.length === 0 : tasks.length === 0;
+  const { chats, loading: chatsLoading } = useAgentChats(attempts);
+  // The home being prepared since launch, and the agent waiting in it, are not "yours" yet: until a job
+  // is asked for, the welcome and its suggestions stay.
+  const prepared = (id: string) => Boolean(prep.state?.wanted && (id === prep.state.homeSpaceId || id === prep.state.pendingId));
+  const first = prep.state?.wanted ? tasks.length === 0 && listed.counted.every((c) => prepared(c.id)) : !chats?.length && listed.counted.length === 0;
+  // Nothing is drawn until the Spaces have loaded and, when there are some, their agents have answered (at most
+  // 0.8 s): otherwise the welcome turns into the lists, or the agents push the Spaces down, as the page loads.
+  // Once drawn, it stays drawn: a later read of the agents never blanks the page again.
+  const waited = useElapsed(800);
+  const shown = useRef(false);
+  shown.current ||= spaces !== undefined && (waited || listed.counted.length === 0 || (chats !== null && chatsLoading === 0));
+  if (!shown.current) return <div className="h-full" data-ask-first-home="" aria-busy="true" />;
 
   return (
-    <div className="h-full overflow-y-auto [scrollbar-gutter:stable]" data-ask-first-home="">
+    <div className="h-full scroll-y-stable" data-ask-first-home="">
       <div className={cn("mx-auto flex w-full flex-col gap-8 px-8 pb-16", first ? "max-w-[880px] pt-24" : "max-w-[1040px] pt-10")}>
-        {first ? <h1 className="font-heading text-[40px] font-semibold tracking-tight">What do you want to do?</h1> : null}
-        <AskBox
-          text={text}
-          onText={setText}
-          agent={chosenAgent}
-          onAgent={setAgent}
-          installed={installed}
-          mostUsed={mostUsed}
-          where={where}
-          onWhere={(w) => pick.choose(w, setWhere, () => setWhereOpen(true))}
-          whereOpen={whereOpen}
-          onWhereOpen={setWhereOpen}
-          kinds={kinds}
-          spaces={pickable}
-          busy={false}
-          onSubmit={() => submit()}
-          compact={!first}
-          autoFocus
-        />
+        <AskBox {...composer.box} compact={!first} autoFocus />
+        <AgentStatus state={agentHome ? readiness : "none"} onReconnect={() => selected && void signInTo(selected.group.app, selected.group.label)} />
+        {/* Preparing is silent: only a failed prepare says so, with Try again. */}
+        <PrepareLine view={prep.view} onRetry={onPrepareAction} />
+        {/* After the first job: the rest of setup, once (CUA-3150, idea C). On a Mac with a permission missing, the apps row at every launch (CUA-3551). */}
+        <BringTheRest />
         {first ? (
           <>
             <div className="grid gap-4 sm:grid-cols-3">
-              {SUGGESTIONS.filter((s) => kinds.some((k) => k.os === s.os) || s.os === "linux").map((s) => (
+              {SUGGESTIONS.filter((s) => agentHome || kinds.some((k) => k.os === s.os) || s.os === "linux").map((s) => (
                 <button
                   type="button"
                   key={s.title}
+                  data-home-card=""
                   onClick={() => {
                     setText(s.prompt);
-                    setWhere({ kind: "new", os: kinds.some((k) => k.os === s.os) ? s.os : "linux" });
+                    // Without an agent home the suggestion's kind of computer is made for it.
+                    if (!agentHome) setWhere({ kind: "new", os: kinds.some((k) => k.os === s.os) ? s.os : "linux" });
                   }}
                   className="flex flex-col gap-2 rounded-xl border bg-card/60 px-5 py-4 text-left transition-colors hover:bg-accent dark:bg-white/[0.02]"
                 >
                   <OsIcon os={s.os} className="size-4 text-muted-foreground" />
                   <span className="text-[14px] leading-snug font-medium">{s.title}</span>
-                  <span className="text-[13px] leading-snug text-muted-foreground">{s.detail}</span>
+                  {s.detail ? <span className="text-[13px] leading-snug text-muted-foreground">{s.detail}</span> : null}
                 </button>
               ))}
             </div>
-            <p className="flex items-center gap-3 text-[13px] text-muted-foreground">
-              <CuaKey size={24} />A fresh computer does the work, so yours stays untouched. Watch it live, step in any time, and throw it away when you're done.
-            </p>
           </>
-        ) : redesign ? null : (
-          <TaskList rows={rows} spaces={spaces ?? []} />
-        )}
-        {redesign ? (
-          // The redesign: the Agents page's own list, then the Spaces page's tiles.
-          <>
-            <YourAgents chats={chats} />
-            <YourSpacesRow />
-          </>
-        ) : !first && realSpaces(spaces ?? []).length > 0 ? (
-          <YourSpaces spaces={orderSpaces(realSpaces(spaces ?? []))} />
         ) : null}
+        {/* The Agents page's own list, then the Spaces page's tiles. */}
+        <YourAgents chats={chats} />
+        <YourSpacesRow />
       </div>
-      {pick.dialog}
+      {composer.dialog}
     </div>
   );
 }
 
-function TaskList({ rows, spaces }: { rows: { task: AskTask; run: AgentRunSummary | undefined; state: TaskState }[]; spaces: Space[] }) {
-  const live = rows.filter((r) => r.state === "working" || r.state === "starting").length;
-  return (
-    <section>
-      <h2 className="mb-3 flex items-baseline gap-2 text-[17px] font-semibold">
-        Tasks {live ? <span className="text-[14px] font-normal text-muted-foreground">{live} running</span> : null}
-      </h2>
-      <div className="divide-y overflow-hidden rounded-xl border bg-card shadow-xs">
-        {rows.map((r) => (
-          <TaskRow key={r.task.id} {...r} space={spaces.find((s) => s.id === r.task.spaceId)} />
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function ago(ms: number, now = Date.now()): string {
-  const m = Math.round((now - ms) / 60_000);
-  if (m < 2) return "Now";
-  if (m < 60) return `${m} min ago`;
-  const h = Math.round(m / 60);
-  if (h < 24) return `${h} h ago`;
-  return h < 48 ? "Yesterday" : `${Math.round(h / 24)} days ago`;
-}
-
-function TaskRow({ task, run, state, space }: { task: AskTask; run: AgentRunSummary | undefined; state: TaskState; space: Space | undefined }) {
-  const thumb = useSpaceThumbnail(task.spaceId ?? "", Boolean(space) && task.ending !== "thrown");
-  const line =
-    state === "needs-you" && run?.needsYou
-      ? run.needsYou.title
-      : state === "didnt-start" && task.error
-        ? `Didn't start: ${startErrorView(task.error, agentName(task.agent)).title}`
-        : TASK_STATE_TEXT[state];
-  const where = task.ending === "thrown" ? "Thrown away" : task.onHost ? "This Mac" : (space?.name ?? "");
-  return (
-    <Link
-      to="/home/$taskId"
-      params={{ taskId: task.id }}
-      data-task-row={task.id}
-      className="flex min-h-[72px] items-center gap-4 px-5 py-3 hover:bg-accent/60"
-    >
-      <AppMark agent={task.agent} size={36} />
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-[14px] font-medium">{taskTitle(task.prompt)}</div>
-        <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
-          <StateDot state={state} />
-          <span className="truncate">{line}</span>
-        </div>
-      </div>
-      <span className="hidden w-40 truncate text-right text-[13px] text-muted-foreground md:block">{where}</span>
-      <span className="w-24 text-right text-[13px] text-muted-foreground">{ago(task.createdMs)}</span>
-      <span className="hidden w-24 lg:block">
-        {thumb ? <img src={thumb} alt="" className="aspect-[16/10] w-24 rounded-md border object-cover" /> : null}
-      </span>
-      {state === "needs-you" ? (
-        <Button variant="secondary" className="h-10 px-4" render={<span />}>
-          Answer
-        </Button>
-      ) : null}
-    </Link>
-  );
-}
-
-function YourSpaces({ spaces }: { spaces: Space[] }) {
-  const on = spaces.filter((s) => spaceState(s) === "running").length;
-  return (
-    <section>
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="flex items-baseline gap-2 text-[17px] font-semibold">
-          Your Spaces <span className="text-[14px] font-normal text-muted-foreground">{on} on</span>
-        </h2>
-        <Link to="/spaces" className="flex items-center gap-1 text-[13px] text-muted-foreground hover:text-foreground">
-          See all {spaces.length} <ChevronRightIcon className="size-4" />
-        </Link>
-      </div>
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        {spaces.slice(0, 4).map((s) => (
-          <SpaceCard key={s.id} space={s} />
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function SpaceCard({ space }: { space: Space }) {
-  const thumb = useSpaceThumbnail(space.id, spaceState(space) === "running");
-  return (
-    <Link to="/spaces/$spaceId" params={{ spaceId: space.id }} className="overflow-hidden rounded-xl border bg-card shadow-xs hover:bg-accent/60">
-      <SpaceCanvas className="rounded-none">
-        {thumb ? <img src={thumb} alt="" className="absolute inset-0 size-full object-cover" /> : <OsIcon os={space.os} className="size-6 text-muted-foreground" />}
-      </SpaceCanvas>
-      <div className="px-4 py-3">
-        <div className="truncate text-[14px] font-medium">{space.name}</div>
-        <div className="text-[12px] text-muted-foreground">{spaceState(space) === "running" ? "On" : "Off"}</div>
-      </div>
-    </Link>
-  );
+/** True once `ms` have passed since the first render. */
+function useElapsed(ms: number): boolean {
+  const [done, setDone] = useState(false);
+  useEffect(() => {
+    const timer = setTimeout(() => setDone(true), ms);
+    return () => clearTimeout(timer);
+  }, [ms]);
+  return done;
 }

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Linux process-level behavior of the AT-SPI listener against private buses:
 //! readiness when the bus accepts a connection but stalls, and liveness of the
 //! process-lifetime accessibility connection while applications come and go.

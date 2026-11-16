@@ -82,7 +82,8 @@ describe("changing the global shortcut (Settings, General)", () => {
 
   it("takes only shortcuts with Command, Control or Option and one key", () => {
     for (const ok of ["Command+Shift+Space", "Control+Alt+K", "Alt+1", "Command+F12", "Shift+Command+Up"]) expect(isAccelerator(ok), ok).toBe(true);
-    for (const bad of ["K", "Shift+K", "Command", "Command+Shift", "Command+kk", "Command+F25", "", "Command+Shift+Space+K"]) expect(isAccelerator(bad), bad).toBe(false);
+    for (const bad of ["K", "Shift+K", "Command", "Command+Shift", "Command+kk", "Command+F25", "", "Command+Shift+Space+K"])
+      expect(isAccelerator(bad), bad).toBe(false);
     expect(() => make({}).shortcut.change("Shift+K")).toThrow("Not a shortcut");
     expect(shortcutLabel("Command+Shift+Space")).toBe("\u2318\u21e7Space");
   });

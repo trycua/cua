@@ -36,7 +36,15 @@ def _published(ref: str) -> bool:
     catalog = json.loads(
         (Path(__file__).resolve().parents[3] / "images/sandbox-images.json").read_text()
     )
-    return next((i["published"] for i in catalog["images"] if i["ref"] == ref), True)
+    # An entry built on the user's own machine (derived_from) resolves while unpublished.
+    return next(
+        (
+            i["published"] or bool(i.get("derived_from"))
+            for i in catalog["images"]
+            if i["ref"] == ref
+        ),
+        True,
+    )
 
 
 @pytest.mark.parametrize(

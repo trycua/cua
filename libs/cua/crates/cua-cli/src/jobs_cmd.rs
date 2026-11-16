@@ -7,7 +7,7 @@
 //! - The function's spec comes from the decorator: the local `python3`
 //!   imports FILE with the embedded pure-Python `cua` shim first on its path
 //!   (`python3 -m _cua_entry --spec FILE FN`); nothing is installed.
-//! - FILE's directory (`*.py`, `*.json`, `*.jsonl`, `*.txt`, minus
+//! - FILE's directory (source, config, small data and image files: `*.py`, `*.json`, `*.csv`, `*.png`, `*.npz`, ... minus
 //!   `.cuaignore`) and the shim (as `_cua_runtime/`) go with the run as a
 //!   gzip tar of at most 1 MiB.
 //! - Every member runs in a Space: the decorator's `kind`, or the one its
@@ -172,6 +172,10 @@ pub enum JobsCmd {
     },
 }
 
+/// What a run that returned nothing says: files the function wrote stay on
+/// the computer that ran it, only its return value comes back.
+pub const NO_RESULT: &str = "no result: the function returned nothing. Files it wrote stay on the computer that ran it; return a file or directory path to bring it back (here: ./cua-runs/<run>/)";
+
 /// `FILE::FN`.
 pub fn split_target(t: &str) -> Result<(PathBuf, String), CuaError> {
     let (file, func) = t.rsplit_once("::").ok_or_else(|| {
@@ -195,11 +199,40 @@ pub fn write_shim(dir: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// The Python that reads the decorator: `python3` where it is the name, else
+/// the first of `python3`, `python` and `py` (Windows launchers) that runs
+/// and says it is Python 3 (the Microsoft Store stub does not).
+pub fn default_python() -> String {
+    if !cfg!(windows) {
+        return "python3".into();
+    }
+    for name in ["python3", "python", "py"] {
+        let ok = std::process::Command::new(name)
+            .args(if name == "py" {
+                vec!["-3", "--version"]
+            } else {
+                vec!["--version"]
+            })
+            .stdin(std::process::Stdio::null())
+            .output()
+            .is_ok_and(|o| {
+                o.status.success()
+                    && String::from_utf8_lossy(&o.stdout)
+                        .trim_start()
+                        .starts_with("Python 3")
+            });
+        if ok {
+            return name.into();
+        }
+    }
+    "python3".into()
+}
+
 /// The decorator's spec of `func` in `file`, from the local Python.
 pub fn read_spec(file: &Path, func: &str) -> Result<Value, CuaError> {
     let tmp = tempfile::tempdir().map_err(|e| CuaError::Internal(e.to_string()))?;
     write_shim(tmp.path()).map_err(|e| CuaError::Internal(e.to_string()))?;
-    let python = std::env::var("CUA_PYTHON").unwrap_or_else(|_| "python3".into());
+    let python = std::env::var("CUA_PYTHON").unwrap_or_else(|_| default_python());
     let dir = file
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -261,7 +294,25 @@ fn glob(p: &str, s: &str) -> bool {
 /// Whether `name` goes in a bundle.
 fn bundled(name: &str) -> bool {
     let ext = name.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
-    matches!(ext, "py" | "json" | "jsonl" | "txt") || name.starts_with("requirements")
+    matches!(
+        ext,
+        "py" | "json"
+            | "jsonl"
+            | "txt"
+            | "csv"
+            | "tsv"
+            | "yaml"
+            | "yml"
+            | "toml"
+            | "png"
+            | "jpg"
+            | "jpeg"
+            | "gif"
+            | "webp"
+            | "svg"
+            | "npy"
+            | "npz"
+    ) || name.starts_with("requirements")
 }
 
 /// The files of `dir` that go with a run (relative paths, sorted).
@@ -425,6 +476,10 @@ impl Submit {
         for (k, v) in &self.secrets {
             env.insert(k.clone(), json!(v));
         }
+        // What the job is called where it is listed: the app's name (`cua.App("nca-logo")`).
+        if let Some(app) = self.spec["app"].as_str().filter(|a| !a.is_empty()) {
+            env.entry("CUA_JOB_NAME".to_string()).or_insert(json!(app));
+        }
         env.insert("PYTHONPATH".into(), json!("_cua_runtime"));
         env.insert("PYTHONUNBUFFERED".into(), json!("1"));
         env.insert("CUA_JOB_PYTHON".into(), json!(python));
@@ -473,22 +528,41 @@ fn transient(e: &CuaError) -> bool {
     matches!(e, CuaError::Timeout(_) | CuaError::Internal(_))
 }
 
+/// The waits between the tries of a submit: the pool's link (a tunnel, a flapping network) is
+/// given up to about a minute to come back, in growing steps.
+fn submit_waits() -> Vec<Duration> {
+    [1, 2, 4, 8, 8, 8, 8, 8, 8]
+        .map(Duration::from_secs)
+        .to_vec()
+}
+
+/// What is said, once, when the pool does not answer: plainly, with how long it keeps trying.
+fn unreachable_notice(total: Duration) -> String {
+    format!(
+        "Your computers did not answer (a network or tunnel hiccup is the usual cause). Trying again for up to {} s; nothing was started yet.",
+        total.as_secs()
+    )
+}
+
 /// Sends `params` until the coordinator of its run (this machine's for an
 /// `l-` run, the pool's for a `p-` one) acknowledges it (the same run id
-/// makes a repeat a no-op), at most 4 times.
+/// makes a repeat a no-op), for about a minute of transient failures.
 async fn submit_acknowledged(params: &Value) -> Result<Value, CuaError> {
     let target = target_of_run(params["run"].as_str().unwrap_or_default());
-    let mut delay = Duration::from_secs(1);
-    for i in 0.. {
+    let waits = submit_waits();
+    let total: Duration = waits.iter().sum();
+    for (i, wait) in waits.iter().enumerate() {
         match request(target, "submit", params.clone()).await {
-            Err(e) if transient(&e) && i < 3 => {
-                tokio::time::sleep(delay).await;
-                delay *= 2;
+            Err(e) if transient(&e) => {
+                if i == 0 {
+                    eprintln!("{}", unreachable_notice(total));
+                }
+                tokio::time::sleep(*wait).await;
             }
             r => return r,
         }
     }
-    unreachable!()
+    request(target, "submit", params.clone()).await
 }
 
 /// The key of a submission (hex): file, function, bundle, spec and flags.
@@ -734,7 +808,9 @@ pub async fn run(a: RunArgs, json: bool, out: &mut dyn Write) -> Result<i32, Cua
         line(out, what);
     }
     let started = Instant::now();
-    let summary = follow(&run_id, None, json, out).await?;
+    let Some(summary) = follow_or_leave(&run_id, json, out).await? else {
+        return Ok(0);
+    };
     finish(&run_id, &summary, started.elapsed(), None, json, out).await
 }
 
@@ -1121,8 +1197,56 @@ async fn run_command(a: RunArgs, json: bool, out: &mut dyn Write) -> Result<i32,
         line(out, what);
     }
     let started = Instant::now();
-    let summary = follow(&run_id, None, json, out).await?;
+    let Some(summary) = follow_or_leave(&run_id, json, out).await? else {
+        return Ok(0);
+    };
     finish(&run_id, &summary, started.elapsed(), None, json, out).await
+}
+
+/// How long `cua run` follows a run before it lets go of it: only when nothing is watching a
+/// terminal (an agent's captured shell, a pipe), whose tool call is cut off after a couple of
+/// minutes and would otherwise take the follower, and the person's view of the run, with it.
+/// `None` follows to the end (a terminal, `--json`, or `CUA_RUN_FOLLOW_SECS=0`).
+fn follow_window(json: bool, tty: bool, secs: Option<&str>) -> Option<Duration> {
+    if json || tty {
+        return None;
+    }
+    match secs.and_then(|s| s.trim().parse::<u64>().ok()) {
+        Some(0) => None,
+        Some(n) => Some(Duration::from_secs(n)),
+        None => Some(Duration::from_secs(100)),
+    }
+}
+
+/// Follows the run to its end, or, when nothing watches a terminal and it takes longer than
+/// [`follow_window`], says plainly that the run keeps going and how to follow it, and returns
+/// `None` (the same ending as `--detach`).
+async fn follow_or_leave(
+    run_id: &str,
+    json: bool,
+    out: &mut dyn Write,
+) -> Result<Option<Value>, CuaError> {
+    use std::io::IsTerminal as _;
+    let secs = std::env::var("CUA_RUN_FOLLOW_SECS").ok();
+    let window = follow_window(json, std::io::stdout().is_terminal(), secs.as_deref());
+    let Some(window) = window else {
+        return follow(run_id, None, json, out).await.map(Some);
+    };
+    match tokio::time::timeout(window, follow(run_id, None, json, out)).await {
+        Ok(done) => done.map(Some),
+        Err(_) => {
+            line(
+                out,
+                format!(
+                    "{run_id}: still running after {} s. Not following it any longer here (this output is not a terminal); the run keeps going.",
+                    window.as_secs()
+                ),
+            );
+            hint_line(out, format!("Follow it: cua jobs logs -f {run_id}"));
+            hint_line(out, format!("Cancel it: cua jobs cancel {run_id}"));
+            Ok(None)
+        }
+    }
 }
 
 /// What `cua run` prints before it follows a run: short lines, so a
@@ -1165,6 +1289,9 @@ async fn finish(
         for p in &saved {
             let size = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
             line(out, format!("result: {} ({} KB)", p.display(), size / 1024));
+        }
+        if state == "succeeded" && saved.is_empty() {
+            line(out, NO_RESULT);
         }
         line(
             out,
@@ -1419,15 +1546,23 @@ pub async fn follow(
     let mut shown_attempt = 0u64;
     let mut placed_attempt = 0u64;
     let mut waiting_said = String::new();
+    let mut unreachable_said = false;
     loop {
         let r = match request(target_of_run(run_id), "run", json!({"run": run_id})).await {
             Ok(r) => r,
             Err(CuaError::Timeout(_)) => {
+                if !unreachable_said {
+                    unreachable_said = true;
+                    eprintln!(
+                        "Your computers did not answer; still trying. The run is not lost: it keeps going where it is."
+                    );
+                }
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 continue;
             }
             Err(e) => return Err(e),
         };
+        unreachable_said = false;
         let attempt = r["gang"]["attempt"].as_u64().unwrap_or(1).max(1);
         let members: Vec<Value> = r["members"].as_array().cloned().unwrap_or_default();
         let of = |a: u64| -> Vec<Value> {
@@ -1582,7 +1717,7 @@ pub async fn jobs(a: JobsArgs, json: bool, out: &mut dyn Write) -> Result<i32, C
                         .to_string(),
                 );
             } else if saved.is_empty() {
-                line(out, format!("{run} returned no result"));
+                line(out, format!("{run}: {NO_RESULT}"));
             } else {
                 for p in saved {
                     line(out, format!("{}", p.display()));
@@ -1695,6 +1830,42 @@ pub fn run_table(r: &Value) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn a_pool_that_does_not_answer_gets_a_minute_and_a_plain_sentence() {
+        let total: Duration = submit_waits().iter().sum();
+        assert!(
+            total >= Duration::from_secs(45) && total <= Duration::from_secs(75),
+            "{total:?}"
+        );
+        let m = unreachable_notice(total);
+        assert!(
+            m.contains("did not answer") && m.contains("nothing was started yet"),
+            "{m}"
+        );
+        assert!(!m.contains("tonic") && !m.contains("transport"), "{m}");
+    }
+
+    #[test]
+    fn a_run_is_followed_to_the_end_only_where_someone_is_watching() {
+        // A terminal, or machine-readable output: to the end.
+        assert_eq!(follow_window(false, true, None), None);
+        assert_eq!(follow_window(true, false, None), None);
+        // A captured shell: a bounded follow, then the run is left going.
+        assert_eq!(
+            follow_window(false, false, None),
+            Some(Duration::from_secs(100))
+        );
+        assert_eq!(
+            follow_window(false, false, Some("30")),
+            Some(Duration::from_secs(30))
+        );
+        // The variable can turn the bound off, and nonsense is ignored.
+        assert_eq!(follow_window(false, false, Some("0")), None);
+        assert_eq!(
+            follow_window(false, false, Some("soon")),
+            Some(Duration::from_secs(100))
+        );
+    }
+    #[test]
     fn the_follow_hint_fits_a_narrow_terminal() {
         let h = follow_hint("p-finetune-55704e0f");
         assert_eq!(h[0], "Ctrl-C stops following; the run keeps going.");
@@ -1777,6 +1948,12 @@ mod tests {
         w("requirements.txt", "mlx\n");
         w("lib/util.py", "x = 1\n");
         w("weights.bin", "binary");
+        w("target.png", "png");
+        w(
+            "cfg/params.csv",
+            "a,b
+",
+        );
         w(".env", "SECRET=1");
         w("__pycache__/train.cpython-312.pyc", "x");
         w("cua-runs/p-1/adapters.safetensors", "x");
@@ -1785,7 +1962,14 @@ mod tests {
         let files = bundle_files(d.path()).unwrap();
         assert_eq!(
             files,
-            vec!["data.jsonl", "lib/util.py", "requirements.txt", "train.py"]
+            vec![
+                "cfg/params.csv",
+                "data.jsonl",
+                "lib/util.py",
+                "requirements.txt",
+                "target.png",
+                "train.py"
+            ]
         );
         let b = bundle(d.path(), &files).unwrap();
         let mut names: Vec<String> = tar::Archive::new(flate2::read::GzDecoder::new(&b[..]))
@@ -1802,9 +1986,11 @@ mod tests {
                 "_cua_runtime/cua/_store.py",
                 "_cua_runtime/cua/checkpoint.py",
                 "_cua_runtime/cua/progress.py",
+                "cfg/params.csv",
                 "data.jsonl",
                 "lib/util.py",
                 "requirements.txt",
+                "target.png",
                 "train.py"
             ]
         );

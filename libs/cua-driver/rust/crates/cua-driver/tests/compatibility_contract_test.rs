@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Compatibility lock for selected stable CLI and MCP fields from 0.12.6.
 
 use std::collections::HashSet;

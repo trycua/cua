@@ -14,6 +14,8 @@
 # bus, and PulseAudio with a null sink as the default output, then runs
 # `tests/linux_desktop.rs` single-threaded under a timeout.
 set -eu
+# macOS shells default to 256 open files, too few for the cua-spaces test binaries (see scripts/ci/tests/test_nofile_limit.py).
+[ "$(ulimit -Sn)" = unlimited ] || [ "$(ulimit -Sn)" -ge 10240 ] || ulimit -Sn 10240 2>/dev/null || ulimit -Sn "$(ulimit -Hn)" 2>/dev/null || true # nofile-limit
 FILTER="${1:-}"
 # Big debug test binaries OOM GNU ld at 4 GiB: line-tables-only debug info,
 # and rust-lld on aarch64 (scripts/ci/linux/cc-rust-lld.sh; x86_64 already

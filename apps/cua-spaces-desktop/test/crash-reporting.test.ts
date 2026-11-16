@@ -107,14 +107,21 @@ describe("consent", () => {
   it("reads $CUA_HOME, and an unreadable file is not consent to turn off", () => {
     const m = machine({ "/tmp/cua/telemetry/notice_shown": "", "/tmp/cua/config.toml": '[telemetry]\nenabled = "off"' }, { CUA_HOME: "/tmp/cua" });
     expect(crashConsent(m).allowed).toBe(false);
-    const broken: ConsentSource = { ...machine(NOTICE), read: () => { throw new Error("EACCES"); } };
+    const broken: ConsentSource = {
+      ...machine(NOTICE),
+      read: () => {
+        throw new Error("EACCES");
+      },
+    };
     expect(crashConsent(broken).allowed).toBe(true);
   });
 });
 
 describe("the runtime switch", () => {
   it("tells the listeners, and one that throws does not stop the rest", () => {
-    const a = vi.fn(() => { throw new Error("x"); });
+    const a = vi.fn(() => {
+      throw new Error("x");
+    });
     const b = vi.fn();
     const offA = onConsentMayHaveChanged(a);
     const offB = onConsentMayHaveChanged(b);
@@ -154,6 +161,18 @@ describe("what the page is told", () => {
 });
 
 describe("scrubbing", () => {
+  it("redacts JWTs, Bearer credentials, AWS key ids and keyed secrets", () => {
+    const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyLTEyMyJ9.c2lnbmF0dXJlX2J5dGVz";
+    const b64 = "dGhpcyBpcyBhIHNlY3JldCB2YWx1ZQ==";
+    expect(scrubString(`auth ${jwt} failed`)).toBe("auth [redacted] failed");
+    expect(scrubString("Authorization: Bearer abc123DEF456ghi789")).toBe("Authorization: Bearer [redacted]");
+    expect(scrubString("id AKIAIOSFODNN7EXAMPLE.")).toBe("id [redacted].");
+    expect(scrubString(`?api_key=${b64}&x=1`)).toBe("?api_key=[redacted]&x=1");
+    expect(scrubString(`{"access_token":"${b64}"}`)).toBe('{"access_token":"[redacted]"}');
+    expect(scrubString("client_secret: 0123456789abcdef0123456789abcdef")).toBe("client_secret: [redacted]");
+    expect(scrubString("password=hunter2hunter2")).toBe("password=[redacted]");
+    expect(scrubString("key=abc and keyboard=layout and v1.2.3")).toBe("key=abc and keyboard=layout and v1.2.3");
+  });
   it("shortens home folders and hides emails", () => {
     expect(scrubString("/Users/jane/Library/Cua/app.asar/main.cjs")).toBe("~/Library/Cua/app.asar/main.cjs");
     expect(scrubString("at /home/bob/.cua/x.js:1")).toBe("at ~/.cua/x.js:1");
@@ -179,7 +198,13 @@ describe("scrubbing", () => {
           module: "main",
           stacktrace: {
             frames: [
-              { filename: "/Users/jane/Cua Spaces.app/Contents/Resources/app.asar/dist-electron/main.cjs", function: "open", lineno: 3, vars: { secret: "x" }, context_line: "const secret = 1" },
+              {
+                filename: "/Users/jane/Cua Spaces.app/Contents/Resources/app.asar/dist-electron/main.cjs",
+                function: "open",
+                lineno: 3,
+                vars: { secret: "x" },
+                context_line: "const secret = 1",
+              },
               { abs_path: "file:///C:/Users/Jane/app/main.cjs?x=1#y", function: "Foo#bar" },
             ],
           },

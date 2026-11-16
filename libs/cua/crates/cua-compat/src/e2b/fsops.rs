@@ -280,7 +280,7 @@ impl Fs<'_> {
                 ))
             }),
             Err(Some(e)) => Err(e),
-            Err(None) => native::stat(self.c, path).await,
+            Err(None) => native::stat(self.c, self.driver, path).await,
         }
     }
 
@@ -298,7 +298,7 @@ impl Fs<'_> {
                 })
                 .collect()),
             Err(Some(e)) => Err(e),
-            Err(None) => native::list(self.c, path, depth.max(1)).await,
+            Err(None) => native::list(self.c, self.driver, path, depth.max(1)).await,
         }
     }
 
@@ -318,7 +318,7 @@ impl Fs<'_> {
         {
             Ok(o) => o,
             Err(Some(e)) => return Err(e),
-            Err(None) => return native::make_dir(self.c, path).await,
+            Err(None) => return native::make_dir(self.c, self.driver, path, user).await,
         };
         match out.status.code {
             Some(0) => {}
@@ -350,7 +350,7 @@ impl Fs<'_> {
     /// `Remove`: recursive; a missing path is fine. cua-spacesd removes
     /// what it may; the rest goes through root.
     pub async fn remove(&self, path: &str) -> Result<(), RpcError> {
-        match native::remove(self.c, path).await {
+        match native::remove(self.c, self.driver, path).await {
             Ok(()) => {}
             Err(e) if e.code == Code::PermissionDenied => {}
             Err(e) => return Err(e),
@@ -386,7 +386,7 @@ impl Fs<'_> {
         {
             Ok(o) => o,
             Err(Some(e)) => return Err(e),
-            Err(None) => return native::rename(self.c, src, dst).await,
+            Err(None) => return native::rename(self.c, self.driver, src, dst, user).await,
         };
         match out.status.code {
             Some(0) => {}
@@ -413,7 +413,8 @@ impl Fs<'_> {
 
 /// cua-spacesd's own filesystem calls: what a guest without GNU tools
 /// (Windows, macOS, bare containers) gets. Same messages, less detail
-/// (cua-spacesd hides the special mode bits and device kinds).
+/// (cua-spacesd hides the special mode bits and device kinds). Like envd
+/// they act with root's rights where the agent can switch users itself.
 mod native {
     use super::*;
     use cua_spacesd_client::pb;
@@ -451,8 +452,13 @@ mod native {
         ))
     }
 
+    fn root(driver: &str) -> String {
+        crate::guest::file_run_as(driver, "root")
+    }
+
     async fn lstat(
         c: &SpacesdClient,
+        driver: &str,
         path: &str,
         follow: bool,
     ) -> Result<pb::EntryInfo, tonic::Status> {
@@ -460,6 +466,7 @@ mod native {
             .stat(pb::StatRequest {
                 path: path.to_string(),
                 no_follow_symlinks: !follow,
+                run_as: root(driver),
                 ..Default::default()
             })
             .await?
@@ -468,8 +475,8 @@ mod native {
             .unwrap_or_default())
     }
 
-    pub async fn stat(c: &SpacesdClient, path: &str) -> Result<Ent, RpcError> {
-        let raw = lstat(c, path, false).await.map_err(|s| {
+    pub async fn stat(c: &SpacesdClient, driver: &str, path: &str) -> Result<Ent, RpcError> {
+        let raw = lstat(c, driver, path, false).await.map_err(|s| {
             if s.code() == tonic::Code::NotFound {
                 missing(path, "file")
             } else {
@@ -478,7 +485,7 @@ mod native {
         })?;
         let mut e = ent(&raw);
         if e.kind == 'l' {
-            let followed = lstat(c, path, true).await;
+            let followed = lstat(c, driver, path, true).await;
             e.target_kind = match &followed {
                 Ok(t) => match t.r#type {
                     2 => 'd',
@@ -502,7 +509,12 @@ mod native {
         Ok(e)
     }
 
-    pub async fn list(c: &SpacesdClient, path: &str, depth: u32) -> Result<Vec<Ent>, RpcError> {
+    pub async fn list(
+        c: &SpacesdClient,
+        driver: &str,
+        path: &str,
+        depth: u32,
+    ) -> Result<Vec<Ent>, RpcError> {
         let mut out = Vec::new();
         let mut token = String::new();
         loop {
@@ -514,6 +526,7 @@ mod native {
                     include_hidden: true,
                     page_size: 0,
                     page_token: token,
+                    run_as: root(driver),
                     ..Default::default()
                 })
                 .await
@@ -535,14 +548,33 @@ mod native {
         Ok(out)
     }
 
-    pub async fn make_dir(c: &SpacesdClient, path: &str) -> Result<Ent, RpcError> {
+    /// What a call making `path`'s parents created, for `user`.
+    async fn created_for(
+        c: &SpacesdClient,
+        driver: &str,
+        user: &str,
+        path: &str,
+    ) -> Option<String> {
+        if user == "root" || driver != "root" {
+            return None;
+        }
+        crate::guestfs::first_missing(c, driver, path).await
+    }
+
+    pub async fn make_dir(
+        c: &SpacesdClient,
+        driver: &str,
+        path: &str,
+        user: &str,
+    ) -> Result<Ent, RpcError> {
+        let from = created_for(c, driver, user, path).await;
         let resp = c
             .filesystem()
             .make_dir(pb::MakeDirRequest {
                 path: path.to_string(),
                 parents: true,
                 mode: 0,
-                ..Default::default()
+                run_as: root(driver),
             })
             .await?
             .into_inner();
@@ -552,28 +584,53 @@ mod native {
                 format!("directory '{path}' already exists"),
             ));
         }
-        stat(c, path).await
+        if let Some(from) = from {
+            crate::guestfs::chown_created(c, user, &from).await;
+        }
+        stat(c, driver, path).await
     }
 
-    pub async fn remove(c: &SpacesdClient, path: &str) -> Result<(), RpcError> {
+    pub async fn remove(c: &SpacesdClient, driver: &str, path: &str) -> Result<(), RpcError> {
         c.filesystem()
             .remove(pb::RemoveRequest {
                 path: path.to_string(),
                 recursive: true,
                 missing_ok: true,
-                ..Default::default()
+                run_as: root(driver),
             })
             .await?;
         Ok(())
     }
 
-    pub async fn rename(c: &SpacesdClient, src: &str, dst: &str) -> Result<Ent, RpcError> {
-        if let Ok(d) = lstat(c, dst, false).await
+    pub async fn rename(
+        c: &SpacesdClient,
+        driver: &str,
+        src: &str,
+        dst: &str,
+        user: &str,
+    ) -> Result<Ent, RpcError> {
+        if let Ok(d) = lstat(c, driver, dst, false).await
             && d.r#type == 2
         {
             return Err(RpcError::internal(format!(
                 "error renaming: rename {src} {dst}: file exists"
             )));
+        }
+        // The destination's new parents go to `user` before the move, so
+        // what is moved keeps its owner.
+        let parent = dst.rsplit_once('/').map_or("", |(p, _)| p);
+        if !parent.is_empty()
+            && let Some(from) = created_for(c, driver, user, parent).await
+        {
+            c.filesystem()
+                .make_dir(pb::MakeDirRequest {
+                    path: parent.to_string(),
+                    parents: true,
+                    mode: 0,
+                    run_as: root(driver),
+                })
+                .await?;
+            crate::guestfs::chown_created(c, user, &from).await;
         }
         c.filesystem()
             .r#move(pb::MoveRequest {
@@ -581,7 +638,7 @@ mod native {
                 destination: dst.to_string(),
                 overwrite: true,
                 create_parents: true,
-                ..Default::default()
+                run_as: root(driver),
             })
             .await
             .map_err(|s| {
@@ -593,7 +650,7 @@ mod native {
                     s.into()
                 }
             })?;
-        stat(c, dst).await
+        stat(c, driver, dst).await
     }
 }
 

@@ -59,9 +59,23 @@ pub struct Transfer {
     /// nothing was copied, and writes land as the agent makes them.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub mounted: bool,
+    /// Cua Volume was not ready (sync stalled, the mount not answering):
+    /// the run works in a folder of its own on this computer, starts
+    /// without the home's files, and is never saved over the home.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub offline: bool,
 }
 
 impl Transfer {
+    /// A run that started without Cua Volume.
+    pub fn offline(millis: u64) -> Transfer {
+        Transfer {
+            offline: true,
+            millis,
+            ..Default::default()
+        }
+    }
+
     /// A home that lives on the mounted volume.
     pub fn mounted(millis: u64) -> Transfer {
         Transfer {
@@ -78,13 +92,34 @@ async fn sh(guest: &SpacesdClient, script: &str, timeout: Duration) -> Result<Ve
         .await
         .map_err(Error::Env)?;
     if !out.status.success() {
-        return Err(Error::Agent(format!(
-            "guest command failed ({:?}): {}",
-            out.status.code,
-            String::from_utf8_lossy(&out.stderr).trim()
-        )));
+        return Err(Error::Agent(
+            cua_spaces::agents::runs::guest_command_failed(
+                &out.status,
+                &String::from_utf8_lossy(&out.stderr),
+                timeout,
+            ),
+        ));
     }
     Ok(out.stdout.to_vec())
+}
+
+/// Checks that the agent's folder `dir` on the guest's mounted Cua Volume
+/// answers: creates it and its `work` folder within `timeout`. A volume
+/// whose sync has stalled fails here in seconds, before the start waits on
+/// it.
+pub async fn probe_mounted(guest: &SpacesdClient, dir: &str, timeout: Duration) -> Result<()> {
+    let script = format!(
+        "umask 077; mkdir -p {d}/work && test -w {d}",
+        d = quote(dir)
+    );
+    let probe = sh(guest, &script, timeout);
+    match tokio::time::timeout(timeout + Duration::from_secs(2), probe).await {
+        Ok(r) => r.map(|_| ()),
+        Err(_) => Err(Error::Agent(format!(
+            "the folder did not answer within {} s",
+            timeout.as_secs()
+        ))),
+    }
 }
 
 /// Every file under `dir` in the guest with its SHA-256 and size (relative
@@ -317,6 +352,6 @@ pub async fn save(
         removed: pushed.deleted.len(),
         blocked: pushed.blocked,
         millis: t0.elapsed().as_millis() as u64,
-        mounted: false,
+        ..Default::default()
     })
 }

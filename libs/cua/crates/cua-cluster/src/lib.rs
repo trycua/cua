@@ -42,6 +42,8 @@ pub mod model;
 pub mod node;
 pub mod peers;
 pub mod placement;
+pub mod power;
+pub mod reliability;
 pub mod sysinfo;
 
 pub use model::{HostJobState, JobSpec};

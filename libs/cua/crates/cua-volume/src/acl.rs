@@ -9,6 +9,13 @@
 //! | agent A in Space S | r | rw | none | rw | r | none |
 //! | Space S, no agent | r | none | none | rw | r | none |
 //!
+//! Under Secure Spaces ([`Context::isolated`]) `public/` is not readable by
+//! default: a Space (or its agent) reads it only through a grant, for the
+//! Space itself (`space:<id>`) or for every Space of its tree
+//! (`tree:<root>`), and the `public/` cells above are `none`. A Space's
+//! folder is then `spaces/<name>--<id>/`, so a Space created later under
+//! the same name starts empty.
+//!
 //! Everything past this table is a [`Grant`]: `{principal, prefix, mode,
 //! expires}`, made only by the user and only with presence, revocable, and
 //! audited. A Space's `thread/` and `sessions/` stay read-only for everyone
@@ -62,6 +69,9 @@ pub enum Principal {
     Agent(String),
     /// A Space with no agent (a shell in it), by Space id.
     Space(String),
+    /// Every Space of one tree, by the tree's root Space id. Only grants
+    /// name it: a session is never "a tree".
+    Tree(String),
 }
 
 impl Principal {
@@ -71,6 +81,7 @@ impl Principal {
             Principal::User => "user".into(),
             Principal::Agent(a) => format!("agent:{a}"),
             Principal::Space(s) => format!("space:{}", path::space_folder_name(s)),
+            Principal::Tree(r) => format!("tree:{}", path::space_folder_name(r)),
         }
     }
 
@@ -91,8 +102,13 @@ impl Principal {
         {
             return Ok(Principal::Space(sp.into()));
         }
+        if let Some(r) = s.strip_prefix("tree:")
+            && !r.is_empty()
+        {
+            return Ok(Principal::Tree(r.into()));
+        }
         Err(Error::Invalid(format!(
-            "principal {s:?}: use user, agent:<name> or space:<id>"
+            "principal {s:?}: use user, agent:<name>, space:<id> or tree:<root>"
         )))
     }
 }
@@ -121,6 +137,16 @@ pub struct Context {
     /// What the Space mounted besides its own folder. Never widens the
     /// user, and never outlives the Space's record.
     pub mounts: Vec<MountAccess>,
+    /// The root of the Space's tree (a Space id). A `tree:<root>` grant
+    /// applies to sessions in Spaces with this root.
+    pub tree: Option<String>,
+    /// Whether the Space has its own folder (the Space's Volume setting is
+    /// "Own folder", the default). Off: the folder is out of reach, and so
+    /// is everything else but the mounted volumes and grants.
+    pub own_folder: bool,
+    /// Secure Spaces: `public/` is not readable without a grant. Without it
+    /// every Space reads `public/`, as it always could.
+    pub isolated: bool,
 }
 
 impl Context {
@@ -129,6 +155,9 @@ impl Context {
             principal: Principal::User,
             space: None,
             mounts: vec![],
+            tree: None,
+            own_folder: true,
+            isolated: false,
         }
     }
 
@@ -137,6 +166,9 @@ impl Context {
             principal: Principal::Agent(name.into()),
             space: space.map(str::to_string),
             mounts: vec![],
+            tree: None,
+            own_folder: true,
+            isolated: false,
         }
     }
 
@@ -145,7 +177,20 @@ impl Context {
             principal: Principal::Space(id.into()),
             space: Some(id.into()),
             mounts: vec![],
+            tree: None,
+            own_folder: true,
+            isolated: false,
         }
+    }
+
+    /// This session in the tree rooted at Space `root` (a Space is its own
+    /// tree until it has a parent). Applies to a Space or an agent acting
+    /// in one.
+    pub fn with_tree(mut self, root: &str) -> Context {
+        if self.principal != Principal::User && self.space.is_some() {
+            self.tree = Some(root.to_string());
+        }
+        self
     }
 
     /// This session with the folders its Space mounted. Applies to a Space
@@ -157,8 +202,26 @@ impl Context {
         self
     }
 
+    /// This session under Secure Spaces: `public/` needs a grant.
+    pub fn isolated(mut self) -> Context {
+        self.isolated = true;
+        self
+    }
+
+    /// This session in a Space whose Volume is off: no folder of its own.
+    pub fn without_own_folder(mut self) -> Context {
+        self.own_folder = false;
+        self
+    }
+
     fn space_folder(&self) -> Option<String> {
         self.space.as_deref().map(path::space_folder_name)
+    }
+
+    /// The Space folder the defaults give this session (`None` when the
+    /// Space's Volume is off).
+    fn own_space_folder(&self) -> Option<String> {
+        self.own_folder.then(|| self.space_folder()).flatten()
     }
 }
 
@@ -198,13 +261,15 @@ fn default_mode_inner(ctx: &Context, key: &str) -> Option<Mode> {
         return Some(Mode::ReadWrite);
     }
     match path::area(key) {
-        Area::Public => Some(Mode::Read),
+        // Under Secure Spaces only a grant opens `public/` to a Space or an
+        // agent.
+        Area::Public => (!ctx.isolated).then_some(Mode::Read),
         Area::Agent(a) => match &ctx.principal {
             Principal::Agent(me) if *me == a => Some(Mode::ReadWrite),
             _ => None,
         },
         Area::Space(s) => {
-            (ctx.space_folder().as_deref() == Some(s.as_str())).then_some(Mode::ReadWrite)
+            (ctx.own_space_folder().as_deref() == Some(s.as_str())).then_some(Mode::ReadWrite)
         }
         Area::Root => None,
         Area::Other => mounted_mode(ctx, key),
@@ -225,7 +290,7 @@ fn mounted_mode(ctx: &Context, key: &str) -> Option<Mode> {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Grant {
     pub id: String,
-    /// `agent:<name>` or `space:<folder>`.
+    /// `agent:<name>`, `space:<folder>` or `tree:<root folder>`.
     pub principal: String,
     /// A folder (`agents/writer/outputs/`) or one key.
     pub prefix: String,
@@ -246,13 +311,33 @@ impl Grant {
         !self.revoked && self.expires_ms.is_none_or(|e| now_ms < e)
     }
 
+    /// Whether this grant is for the session `ctx`: the same agent or
+    /// Space, a Space the session acts in (an agent in Space S has what a
+    /// grant to S gives, since it shares S's guest), or the tree the
+    /// session's Space is in.
+    pub fn applies_to(&self, ctx: &Context) -> bool {
+        let Ok(who) = Principal::parse(&self.principal) else {
+            return false;
+        };
+        if ctx.principal == Principal::User {
+            return false;
+        }
+        match who {
+            Principal::User => false,
+            Principal::Agent(_) => who.id() == ctx.principal.id(),
+            Principal::Space(_) => ctx
+                .space_folder()
+                .is_some_and(|f| format!("space:{f}") == who.id()),
+            Principal::Tree(_) => ctx
+                .tree
+                .as_deref()
+                .is_some_and(|r| format!("tree:{}", path::space_folder_name(r)) == who.id()),
+        }
+    }
+
     /// Whether this grant covers `key` for `ctx`.
     pub fn covers(&self, ctx: &Context, key: &str) -> bool {
-        let who = match Principal::parse(&self.principal) {
-            Ok(p) => p,
-            Err(_) => return false,
-        };
-        if who.id() != ctx.principal.id() {
+        if !self.applies_to(ctx) {
             return false;
         }
         if self.prefix.ends_with('/') || self.prefix.is_empty() {
@@ -285,17 +370,15 @@ pub fn can_traverse(ctx: &Context, prefix: &str, grants: &[Grant], now_ms: u64) 
     if let Principal::Agent(a) = &ctx.principal {
         reachable.push(format!("agents/{a}/"));
     }
-    if let Some(s) = ctx.space_folder() {
+    if let Some(s) = ctx.own_space_folder() {
         reachable.push(format!("spaces/{s}/"));
     }
-    if ctx.principal != Principal::User {
+    if ctx.principal != Principal::User && !ctx.isolated {
         reachable.push(path::PUBLIC.into());
     }
     reachable.extend(ctx.mounts.iter().map(|m| m.prefix.clone()));
     for g in grants {
-        if g.is_live(now_ms)
-            && Principal::parse(&g.principal).is_ok_and(|p| p.id() == ctx.principal.id())
-        {
+        if g.is_live(now_ms) && g.applies_to(ctx) {
             reachable.push(g.prefix.clone());
         }
     }
@@ -315,11 +398,15 @@ pub fn validate_grant(principal: &str, prefix: &str, mode: Mode) -> Result<(Prin
             "{key}: a Space's thread/ and sessions/ are written only by the Cua daemon"
         )));
     }
+    // Judged as under Secure Spaces, where `public/` needs a grant: a read
+    // grant on it widens there (and changes nothing without the experiment).
     let ctx = match &who {
         Principal::Agent(a) => Context::agent(a, None),
         Principal::Space(s) => Context::space(s),
+        Principal::Tree(r) => Context::space(r).with_tree(r),
         Principal::User => unreachable!(),
-    };
+    }
+    .isolated();
     if default_mode(&ctx, &key).is_some_and(|m| m.allows(mode)) {
         return Err(Error::Invalid(format!(
             "{} already has {} on {key} by default",
@@ -458,6 +545,15 @@ mod tests {
             effective_mode(&rs, "public/b.csv", &pubw, 0),
             Some(Mode::Read)
         );
+        // Under Secure Spaces public/ is not readable without a grant, and a
+        // grant covers only its prefix.
+        let iso = Context::agent("researcher", Some("local:w")).isolated();
+        assert_eq!(effective_mode(&iso, "public/b.csv", &[], 0), None);
+        let pubr = vec![g("agent:researcher", "public/", Mode::Read)];
+        assert_eq!(
+            effective_mode(&iso, "public/b.csv", &pubr, 0),
+            Some(Mode::Read)
+        );
     }
 
     #[test]
@@ -474,8 +570,10 @@ mod tests {
     #[test]
     fn grants_must_widen() {
         assert!(validate_grant("agent:ada", "agents/ada/x", Mode::ReadWrite).is_err());
-        assert!(validate_grant("agent:ada", "public/", Mode::Read).is_err());
+        assert!(validate_grant("agent:ada", "public/", Mode::Read).is_ok());
         assert!(validate_grant("agent:ada", "public/", Mode::ReadWrite).is_ok());
+        assert!(validate_grant("tree:local:work--0a1b2c3d", "public/", Mode::Read).is_ok());
+        assert!(validate_grant("tree:", "public/", Mode::Read).is_err());
         assert!(validate_grant("agent:ada", "agents/bob/", Mode::Read).is_ok());
         assert!(validate_grant("user", "agents/bob/", Mode::Read).is_err());
         assert!(validate_grant("agent:ada", "agents/../x", Mode::Read).is_err());
@@ -483,5 +581,117 @@ mod tests {
             Principal::parse("space:local:work").unwrap().id(),
             "space:local-work"
         );
+    }
+
+    #[test]
+    fn public_is_refused_without_a_grant_and_a_grant_opens_it_read_only() {
+        let work = "local:work--0a1b2c3d";
+        let shell = Context::space(work).isolated();
+        let ada = Context::agent("ada", Some(work)).isolated();
+        for ctx in [&shell, &ada] {
+            assert_eq!(effective_mode(ctx, "public/a.md", &[], 0), None);
+            assert!(!can_traverse(ctx, "public/", &[], 0));
+        }
+        let grants = vec![g(
+            &Principal::Space(work.into()).id(),
+            "public/",
+            Mode::Read,
+        )];
+        // The Space's grant reaches the Space and the agent acting in it.
+        for ctx in [&shell, &ada] {
+            assert_eq!(
+                effective_mode(ctx, "public/a.md", &grants, 0),
+                Some(Mode::Read)
+            );
+            assert!(can_traverse(ctx, "public/", &grants, 0));
+        }
+        // Not another Space, and not a write.
+        let other = Context::space("local:other--11111111").isolated();
+        assert_eq!(effective_mode(&other, "public/a.md", &grants, 0), None);
+        assert_eq!(
+            effective_mode(&shell, "public/a.md", &grants, 0).map(|m| m.allows(Mode::ReadWrite)),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn a_tree_grant_reaches_every_space_of_the_tree_only() {
+        let root = "local:lead--0a1b2c3d";
+        let child = "local:kid--0000beef";
+        let a = Context::space(root).with_tree(root).isolated();
+        let b = Context::agent("ada", Some(child))
+            .with_tree(root)
+            .isolated();
+        let stranger = Context::space("local:x--99999999")
+            .with_tree("local:x--99999999")
+            .isolated();
+        let untreed = Context::space(child).isolated();
+        let grants = vec![g(&Principal::Tree(root.into()).id(), "public/", Mode::Read)];
+        assert_eq!(effective_mode(&a, "public/x", &grants, 0), Some(Mode::Read));
+        assert_eq!(effective_mode(&b, "public/x", &grants, 0), Some(Mode::Read));
+        assert_eq!(effective_mode(&stranger, "public/x", &grants, 0), None);
+        assert_eq!(effective_mode(&untreed, "public/x", &grants, 0), None);
+        // The user's own session is not narrowed or widened by it.
+        assert_eq!(
+            effective_mode(&Context::user(), "public/x", &grants, 0),
+            Some(Mode::ReadWrite)
+        );
+        // Revoked and expired tree grants stop at once.
+        let mut revoked = grants.clone();
+        revoked[0].revoked = true;
+        assert_eq!(effective_mode(&a, "public/x", &revoked, 0), None);
+        assert_eq!(
+            Principal::parse("tree:local:lead--0a1b2c3d").unwrap().id(),
+            "tree:local-lead--0a1b2c3d"
+        );
+    }
+
+    #[test]
+    fn one_space_cannot_reach_anothers_folder() {
+        let a = Context::space("local:a--00000001");
+        let b = Context::agent("bob", Some("local:b--00000002"));
+        for key in [
+            "spaces/local-a--00000001/out.txt",
+            "spaces/local-a--00000001/",
+        ] {
+            assert_eq!(default_mode(&a, key), Some(Mode::ReadWrite), "{key}");
+            assert_eq!(default_mode(&b, key), None, "{key}");
+        }
+        // The same name under another id is another folder.
+        let reborn = Context::space("local:a--00000003");
+        assert_eq!(
+            default_mode(&reborn, "spaces/local-a--00000001/out.txt"),
+            None
+        );
+        // A grant naming the old folder does not carry over to the new one.
+        let grants = vec![g(
+            "space:local-a--00000001",
+            "spaces/local-a--00000001/",
+            Mode::ReadWrite,
+        )];
+        assert_eq!(
+            effective_mode(&reborn, "spaces/local-a--00000001/x", &grants, 0),
+            None
+        );
+    }
+
+    #[test]
+    fn volume_off_takes_the_own_folder_away_but_not_mounts() {
+        let work = "local:work--0a1b2c3d";
+        let own = "spaces/local-work--0a1b2c3d/out.txt";
+        let on = Context::space(work);
+        assert_eq!(default_mode(&on, own), Some(Mode::ReadWrite));
+        let off = Context::space(work)
+            .without_own_folder()
+            .with_mounts(vec![MountAccess {
+                prefix: "volumes/data/".into(),
+                mode: Mode::Read,
+            }]);
+        assert_eq!(default_mode(&off, own), None);
+        assert!(!can_traverse(&off, "spaces/local-work--0a1b2c3d/", &[], 0));
+        assert_eq!(default_mode(&off, "volumes/data/a"), Some(Mode::Read));
+        let ada = Context::agent("ada", Some(work)).without_own_folder();
+        assert_eq!(default_mode(&ada, own), None);
+        assert_eq!(default_mode(&ada, "agents/ada/x"), Some(Mode::ReadWrite));
     }
 }

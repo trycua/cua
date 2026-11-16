@@ -19,6 +19,7 @@ import { Segmented } from "@/components/ui/segmented";
 import { markExplained, needsExplainer, TeleportExplainer } from "./explainer";
 import { TeleportGrid } from "./grid";
 import { TeleportReview } from "./review";
+import { TeleportSetupSheet } from "./setup-sheet";
 
 /** What each move is called (the SwiftUI app's `AppTeleportMove.label`, the core's `Move::label`). */
 export const MOVE_LABEL: Record<TeleportMove, string> = {
@@ -53,7 +54,7 @@ export default function TeleportDialog() {
       <DialogPopup
         data-teleport
         data-step={session.state.step}
-        className="top-[8vh] flex h-[min(600px,84vh)] w-[min(700px,calc(100vw-2rem))] flex-col"
+        className={`top-[6vh] flex w-[min(700px,calc(100vw-2rem))] flex-col ${session.setup?.open ? "h-[min(740px,88vh)]" : "h-[min(600px,84vh)]"}`}
       >
         <DialogTitle className="shrink-0 px-5 pt-4 pb-3 text-[15px] font-semibold" data-teleport-title>
           {title(session)}
@@ -68,6 +69,7 @@ export default function TeleportDialog() {
 }
 
 function title(s: TeleportSession): string {
+  if (s.setup?.open) return `Set up ${s.setup.readiness?.app_display ?? s.state.entry?.name ?? "teleport"}`;
   if (s.frame.review) return s.frame.review.title;
   if (s.state.entry) return s.state.entry.name;
   return `Teleport an app to ${s.spaceName}`;
@@ -106,6 +108,7 @@ function Body({ session: s, teleport, images }: { session: TeleportSession; tele
     case "options":
       return <Options state={s.state} session={s} teleport={teleport} />;
     case "consent":
+      if (s.setup?.open || s.setup?.checking) return <TeleportSetupSheet setup={s.setup} teleport={teleport} />;
       return s.frame.review ? <TeleportReview review={s.frame.review} readingSites={s.readingSites} vault={s.vault} teleport={teleport} /> : null;
     case "running":
       return <Running session={s} />;
@@ -234,7 +237,8 @@ function Footer({
   onConfirm: () => void;
 }) {
   const step = s.state.step;
-  const leaves = step === "consent" && !explaining ? leavesLine(s.frame.review?.leavesText ?? "") : null;
+  const setup = step === "consent" && (s.setup?.open || s.setup?.checking) ? s.setup : null;
+  const leaves = step === "consent" && !explaining && !setup ? leavesLine(s.frame.review?.leavesText ?? "") : null;
   return (
     <div /* design-ok: full-width dialog footer */ className="flex shrink-0 items-center gap-2 border-t bg-muted/60 px-5 py-3">
       {leaves ? (
@@ -260,6 +264,21 @@ function Footer({
           <Button data-teleport-plan disabled={!s.frame.canPlan} onClick={() => void teleport.plan()}>
             Review
           </Button>
+        </>
+      ) : setup ? (
+        <>
+          <Button variant="secondary" onClick={() => teleport.send({ type: "back" })}>
+            Back
+          </Button>
+          {setup.blocked ? (
+            <Button data-setup-recheck disabled={setup.checking} onClick={() => void teleport.recheckSetup()}>
+              Check again
+            </Button>
+          ) : (
+            <Button data-setup-continue disabled={setup.checking || !setup.readiness} onClick={() => void teleport.finishSetup()}>
+              Continue
+            </Button>
+          )}
         </>
       ) : step === "consent" ? (
         <>

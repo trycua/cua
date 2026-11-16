@@ -91,6 +91,7 @@ impl Seen {
             name: self.name.clone(),
             auth_time: None,
             mfa: false,
+            azp: None,
             orgs: Vec::new(),
         }
     }
@@ -113,6 +114,8 @@ pub struct TicketInfo {
     /// The minting call's relay assertion `iat` (seconds), when the
     /// machine records it.
     pub issued: Option<u64>,
+    /// The enrolled device whose call minted it, when the machine records it.
+    pub device: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -121,6 +124,43 @@ struct TicketPayload {
     p: String,
     #[serde(default)]
     a: Option<u64>,
+    /// The enrolled device that minted it.
+    #[serde(default)]
+    d: Option<String>,
+    /// The ticket's scope (`viewer`, `media`, ...), as the machine minted it.
+    #[serde(default)]
+    s: String,
+    /// Expiry, Unix milliseconds.
+    #[serde(default)]
+    e: u64,
+}
+
+/// The longest header ticket the relay forwards (a viewer ticket is a few
+/// hundred bytes).
+pub const HEADER_TICKET_MAX: usize = 2048;
+
+/// Whether `ticket` is a viewer ticket that has not expired, by its own
+/// claims (the relay cannot check the signature: the machine does). A
+/// machine's viewer ticket names no machine, so it is not matched to the
+/// request's; a ticket of another machine fails its signature there.
+pub fn viewer_ticket_live(ticket: &str, now_ms: u64) -> bool {
+    use base64::Engine as _;
+    if ticket.len() > HEADER_TICKET_MAX {
+        return false;
+    }
+    let mut parts = ticket.split('.');
+    let (Some("v1"), Some(body), Some(_), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return false;
+    };
+    let Ok(raw) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(body) else {
+        return false;
+    };
+    let Ok(p) = serde_json::from_slice::<TicketPayload>(&raw) else {
+        return false;
+    };
+    p.s == "viewer" && p.e > now_ms
 }
 
 /// Reads a spacesd ticket (`v1.<base64url JSON>.<sig>`). `None` when it is
@@ -145,13 +185,56 @@ pub fn parse_ticket(ticket: &str) -> Option<TicketInfo> {
     Some(TicketInfo {
         user,
         issued: payload.a,
+        device: payload.d.filter(|d| !d.is_empty() && d.len() <= 64),
     })
 }
 
-/// Every ticket a request carries: the `ticket` query parameter and
-/// `cua.ticket.` / legacy `rcdp.v2.ticket.` WebSocket subprotocols.
+/// The header the web viewer sends its ticket in (the machine's
+/// `cua_proto::metadata::ENV_AUTHORIZATION`).
+pub const VIEWER_TICKET_HEADER: &str = "x-cua-env-authorization";
+
+/// The viewer ticket in `x-cua-env-authorization: Bearer v1.<claims>.<sig>`,
+/// if that header holds a ticket (a machine's static token never looks
+/// like one). The machine checks its signature, scope and expiry.
+pub fn header_ticket_any(headers: &axum::http::HeaderMap) -> Option<String> {
+    headers
+        .get_all(VIEWER_TICKET_HEADER)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .filter_map(|v| {
+            let (scheme, rest) = v.split_once(' ')?;
+            scheme.eq_ignore_ascii_case("bearer").then(|| rest.trim())
+        })
+        .find(|t| t.starts_with("v1.") && parse_ticket(t).is_some())
+        .map(str::to_owned)
+}
+
+/// [`header_ticket_any`] for a relay with phone support on: only a viewer
+/// ticket that has not expired and is of a sane size (a machine's static
+/// token never looks like one). The machine checks its signature.
+pub fn header_ticket(headers: &axum::http::HeaderMap) -> Option<String> {
+    headers
+        .get_all(VIEWER_TICKET_HEADER)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .filter_map(|v| {
+            let (scheme, rest) = v.split_once(' ')?;
+            scheme.eq_ignore_ascii_case("bearer").then(|| rest.trim())
+        })
+        .find(|t| {
+            t.starts_with("v1.") && parse_ticket(t).is_some() && viewer_ticket_live(t, now_ms())
+        })
+        .map(str::to_owned)
+}
+
+/// Every ticket a request carries: the `ticket` query parameter,
+/// `cua.ticket.` / legacy `rcdp.v2.ticket.` WebSocket subprotocols and the
+/// viewer's `x-cua-env-authorization` bearer.
 pub fn tickets_in(uri: &axum::http::Uri, headers: &axum::http::HeaderMap) -> Vec<String> {
     let mut found = Vec::new();
+    if let Some(t) = header_ticket_any(headers) {
+        found.push(t);
+    }
     for pair in uri.query().unwrap_or("").split('&') {
         if let Some(v) = pair.strip_prefix("ticket=") {
             found.push(percent_decode(v));
@@ -531,6 +614,7 @@ mod tests {
             name: None,
             auth_time: None,
             mfa: false,
+            azp: None,
             orgs: Vec::new(),
         }
     }
@@ -574,6 +658,7 @@ mod tests {
         let legacy = TicketInfo {
             user: "bob".into(),
             issued: None,
+            device: None,
         };
         assert!(ticket_allowed(&legacy, seen.as_ref(), mark, Some(2)));
         g.revoke("m", "bob", 2, None, t + 2_000);
@@ -584,10 +669,12 @@ mod tests {
         let old = TicketInfo {
             user: "bob".into(),
             issued: Some(t / 1000),
+            device: None,
         };
         let new = TicketInfo {
             user: "bob".into(),
             issued: Some(t / 1000 + 3),
+            device: None,
         };
         assert!(!ticket_allowed(&old, None, mark, Some(2)));
         assert!(ticket_allowed(&new, None, mark, Some(2)));
@@ -603,6 +690,7 @@ mod tests {
         let legacy = TicketInfo {
             user: "bob".into(),
             issued: None,
+            device: None,
         };
         g.record("m", &who("bob"), Role::Viewer, t + 3_000);
         let (seen, mark) = g.lookup("m", "bob");

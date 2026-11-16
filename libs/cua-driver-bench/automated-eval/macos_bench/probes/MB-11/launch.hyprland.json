@@ -1,0 +1,47 @@
+{
+  "platform": "linux-hyprland",
+  "descriptor_version": "1",
+  "task_id": "MB-11",
+  "app": "linux/benchlab.py",
+  "app_args": [
+    "--mode",
+    "tooltip"
+  ],
+  "app_executable": "python3 linux/benchlab.py (GTK3, native Wayland; process name and app id BenchLab)",
+  "sentinel": "hyprland/sentinel.py",
+  "launcher": [
+    "${python}",
+    "launch/hyprland_session.py",
+    "--task",
+    "MB-11",
+    "--run-index",
+    "${run_index}",
+    "--condition",
+    "${condition}",
+    "--out",
+    "${artifacts}",
+    "--",
+    "${agent_command}"
+  ],
+  "conditions": [
+    "foreground"
+  ],
+  "evaluate": [
+    "${python}",
+    "probes/MB-11/evaluate.py",
+    "--seed",
+    "${seed}",
+    "--state",
+    "${artifacts}/state.json",
+    "--events",
+    "${artifacts}/events.jsonl",
+    "--result",
+    "${result}"
+  ],
+  "requires": [
+    "Python 3.11 or later with PyGObject, GTK 3 and AT-SPI",
+    "Hyprland 0.55 or later with a Lua config, hyprland/bench.lua loaded (1920x1080)",
+    "wl-clipboard",
+    "the desktop user's Hyprland session environment"
+  ]
+}

@@ -103,6 +103,21 @@ anonymous session per launch, so we can tell what share of launches end in a
 crash. What is in a report, how it is cleaned, and what we use it for:
 [Crash and error reports](/cua-sdk/concepts/telemetry-events#crash-and-error-reports).
 
+## Durable agents
+
+When you run an agent with `--durable`, or make a durable Space, the machine
+that keeps the account's sessions sends a few events about how it went: that
+it started, that it was restarted and why (the process exited, it printed
+nothing for too long, its machine stopped answering), that it moved to
+another machine, how long recovery took, that it ran out of attempts, and how
+it ended (done, failed or stopped). They hold fixed words and counts, and a
+random-looking hash of the session so the events of one session can be put
+together. They never hold the task, prompts, tool inputs or outputs, file
+paths, repository names, keys, your email, or the names of your machines,
+sessions or Spaces. They follow the same switch as everything above:
+`cua telemetry off`, `CUA_TELEMETRY=0` or `DO_NOT_TRACK=1` stops them. See
+`cua_durable_agent` in [the event list](/cua-sdk/concepts/telemetry-events).
+
 ## What we use it for
 
 To answer how many people install Cua Spaces, finish the first run, sign in,

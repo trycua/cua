@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-// The Spaces page while the list is not complete: right after an app update
+// Your computers while the list is not complete: right after an app update
 // restarts the daemon, before the first read, or while the account's other
-// computers are still answering. It shows what is known and one quiet line,
-// never "Create your first Space"; that only comes for a complete list with
-// no Space, in the grid's place under the warnings and the filters.
+// computers are still answering. The page shows what is known and one quiet
+// line, never the empty list; that only comes for a complete list.
 
-import { act, cleanup, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { listView } from "@/bridge";
@@ -31,50 +30,40 @@ async function mount(status: { current: ListStatus }, noSpaces: boolean) {
   });
 }
 
-/** The empty state: the first-run home (with the core) or its plain stand-in. */
-const emptyHome = () => document.querySelector("[data-empty-home]") ?? screen.queryByText("No Spaces yet")?.closest("div") ?? null;
+const empty = () => document.querySelector("[data-tree-empty]");
 const reaching = () => document.querySelector("[data-spaces-reaching]")?.textContent ?? null;
 const spacesCount = () => document.querySelector('a[href="/spaces"]')?.textContent ?? "";
 
-describe("the Spaces page while the list is incomplete", { timeout: 30_000 }, () => {
-  it("never shows the empty home before the first read or while computers answer", async () => {
+describe("your computers while the list is incomplete", { timeout: 30_000 }, () => {
+  it("never shows the empty list before the first read or while computers answer", async () => {
     const status = { current: { loaded: false, incomplete: false, reaching: 0, stale: false } };
     const { emit } = await mount(status, true);
     await waitFor(() => expect(reaching()).toBe("Loading Spaces…"), WAIT);
-    expect(emptyHome()).toBeNull();
-    expect(screen.getByText("Loading Spaces…", { selector: "p:not([data-spaces-reaching])" })).toBeTruthy();
+    expect(empty()).toBeNull();
     // No count in the sidebar before the list was read (not "0").
     expect(spacesCount()).not.toMatch(/0/);
 
-    // This machine answered, 6 computers have not yet.
+    // This computer answered, 6 computers have not yet.
     status.current = { loaded: true, incomplete: true, reaching: 6, stale: false };
     act(() => emit({ type: "spaces.changed" }));
-    await waitFor(() => expect(reaching()).toBe("Reaching 6 machines…"), WAIT);
-    expect(emptyHome()).toBeNull();
+    await waitFor(() => expect(reaching()).toBe("Reaching 6 computers…"), WAIT);
+    expect(empty()).toBeNull();
 
-    // Every computer answered and there is no Space: now it is empty.
+    // Every computer answered: the line goes.
     status.current = { loaded: true, incomplete: false, reaching: 0, stale: false };
     act(() => emit({ type: "spaces.changed" }));
-    await waitFor(() => expect(emptyHome()).not.toBeNull(), WAIT);
-    expect(reaching()).toBeNull();
+    await waitFor(() => expect(reaching()).toBeNull(), WAIT);
   });
 
-  it("shows the Spaces known so far with the line under them", async () => {
+  it("shows the computers and Spaces known so far with the line under them", async () => {
     const status = { current: { loaded: true, incomplete: true, reaching: 1, stale: false } };
     await mount(status, false);
-    await waitFor(() => expect(reaching()).toBe("Reaching 1 machine…"), WAIT);
-    const grid = document.querySelector("ul.grid");
-    expect(grid?.children.length).toBeGreaterThan(0);
-    // The line follows the tiles, so they do not move when it goes.
-    expect(grid!.compareDocumentPosition(document.querySelector("[data-spaces-reaching]")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(emptyHome()).toBeNull();
-  });
-
-  it("puts the empty home in the grid's place, with no filters while there is nothing to filter", async () => {
-    await mount({ current: { loaded: true, incomplete: false, reaching: 0, stale: false } }, true);
-    await waitFor(() => expect(emptyHome()).not.toBeNull(), WAIT);
-    expect(document.querySelector('[aria-label="Filter by state"]')).toBeNull();
-    expect(document.querySelector("[data-spaces-toolbar]")).toBeNull();
+    await waitFor(() => expect(reaching()).toBe("Reaching 1 computer…"), WAIT);
+    const list = document.querySelector("[data-spaces-tree]");
+    expect(list?.querySelectorAll("[data-tree-row]").length).toBeGreaterThan(0);
+    // The line follows the list, so the rows do not move when it goes.
+    expect(list!.compareDocumentPosition(document.querySelector("[data-spaces-reaching]")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(empty()).toBeNull();
   });
 });
 
@@ -82,9 +71,9 @@ describe("listView", () => {
   // The core's decision, and the TypeScript stand-in without it, agree.
   const cases: [ListStatus, number, { empty: boolean; reachingLine: string | null }][] = [
     [{ loaded: false, incomplete: false, reaching: 0, stale: false }, 0, { empty: false, reachingLine: "Loading Spaces…" }],
-    [{ loaded: true, incomplete: true, reaching: 6, stale: false }, 0, { empty: false, reachingLine: "Reaching 6 machines…" }],
-    [{ loaded: true, incomplete: true, reaching: 1, stale: false }, 2, { empty: false, reachingLine: "Reaching 1 machine…" }],
-    [{ loaded: true, incomplete: true, reaching: 0, stale: false }, 0, { empty: false, reachingLine: "Reaching your machines…" }],
+    [{ loaded: true, incomplete: true, reaching: 6, stale: false }, 0, { empty: false, reachingLine: "Reaching 6 computers…" }],
+    [{ loaded: true, incomplete: true, reaching: 1, stale: false }, 2, { empty: false, reachingLine: "Reaching 1 computer…" }],
+    [{ loaded: true, incomplete: true, reaching: 0, stale: false }, 0, { empty: false, reachingLine: "Reaching your computers…" }],
     [{ loaded: true, incomplete: false, reaching: 0, stale: false }, 0, { empty: true, reachingLine: null }],
     [{ loaded: true, incomplete: false, reaching: 0, stale: false }, 3, { empty: false, reachingLine: null }],
   ];

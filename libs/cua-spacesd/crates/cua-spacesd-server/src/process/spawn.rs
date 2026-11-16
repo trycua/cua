@@ -119,7 +119,12 @@ pub fn current_user_name() -> String {
 }
 
 /// Environment variables never inherited by child processes.
-pub const SCRUBBED_ENV: &[&str] = &["CUA_ENV_TOKEN", "CUA_SPACESD_TOKEN", "CUA_RELAY_TOKEN"];
+pub const SCRUBBED_ENV: &[&str] = &[
+    "CUA_ENV_TOKEN",
+    "CUA_SPACESD_TOKEN",
+    "CUA_GUESTD_TOKEN",
+    "CUA_RELAY_TOKEN",
+];
 
 /// Everything needed to spawn.
 #[derive(Debug, Clone)]

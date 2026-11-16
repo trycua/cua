@@ -19,7 +19,12 @@
 //!   the new VM's own memory (only the pages the guest had touched are in
 //!   the file; the rest stay untouched), so each fork costs what its guest
 //!   uses, and restoring takes time in proportion to it.
-//! * **Network**: a user-mode stack per VM (gvproxy, Apache-2.0, pinned
+//! * **Network**: a user-mode stack per VM. Under the secure default it is
+//!   the Cua network gateway ([`crate::netgw`], shipped next to `cua-vz`):
+//!   it checks every connection the guest opens against the Space's egress
+//!   rules, never dials the host's loopback (its host address opens only
+//!   for a rule naming it) and drops DNS answers the rules refuse. Without
+//!   the experiment it is gvproxy as before (Apache-2.0, pinned
 //!   and downloaded on first use) on a file-handle network device, with the
 //!   same guest address in every VM (as each Firecracker VM has its own
 //!   namespace); its host address leads nowhere, so a guest cannot reach the
@@ -59,7 +64,9 @@ pub const MIN_MACOS: u32 = 14;
 const SUBNET: &str = "172.16.0.0/29";
 /// gvproxy's host address, mapped to [`BLACKHOLE`] instead of the host's
 /// loopback (gvproxy's default).
-const HOST_IP: &str = "172.16.0.6";
+pub const HOST_IP: &str = "172.16.0.6";
+/// The gateway's MAC address.
+const GATEWAY_MAC: &str = "5a:94:ef:e4:0c:dd";
 /// TEST-NET-1 (RFC 5737): never routed.
 const BLACKHOLE: &str = "192.0.2.1";
 
@@ -182,6 +189,27 @@ pub fn gvproxy_config(sockets: &Path, pid_file: &Path) -> String {
     )
 }
 
+/// The network gateway's configuration for one VM
+/// ([`crate::netgw::CONFIG_FILE`]): the guest's subnet, DNS on the
+/// gateway, the host address, and the vfkit socket `cua-vz` connects to.
+/// Published ports go over vsock, not through the gateway.
+pub fn gateway_config(sockets: &Path) -> Value {
+    use cua_microvm_init::GATEWAY_IP;
+    crate::netgw::config(&crate::netgw::Network {
+        subnet: SUBNET,
+        gateway_ip: GATEWAY_IP,
+        gateway_mac: GATEWAY_MAC,
+        host_ip: Some(HOST_IP),
+        dhcp: false,
+        static_leases: Default::default(),
+        vfkit: Some(format!("unixgram://{}", sockets.join("gv.sock").display())),
+        qemu: None,
+        dns_ips: vec![],
+        forwards: vec![],
+        control: None,
+    })
+}
+
 /// What [`vz_config`] needs.
 pub struct VzLaunch<'a> {
     pub kernel: &'a Path,
@@ -191,7 +219,10 @@ pub struct VzLaunch<'a> {
     /// The image (`base.sqfs`) and the scratch disk, in the VM's directory.
     pub base: &'a str,
     pub sockets: &'a Path,
+    /// gvproxy, the network without the experiment (`None`: none).
     pub gvproxy: Option<&'a Path>,
+    /// The network gateway, under the secure default (`None`: none).
+    pub gateway: Option<&'a Path>,
     pub forwards: &'a [(u16, u16)],
     pub restore: Option<&'a Path>,
 }
@@ -214,7 +245,9 @@ pub fn vz_config(l: &VzLaunch<'_>) -> Value {
         "console": "console.log",
         "forwards": l.forwards.iter().map(|(h, g)| json!({"host": h, "guest": g})).collect::<Vec<_>>(),
     });
-    if let Some(gv) = l.gvproxy {
+    if let Some(gw) = l.gateway {
+        v["network"] = json!({"gateway": gw, "config": crate::netgw::CONFIG_FILE});
+    } else if let Some(gv) = l.gvproxy {
         v["network"] = json!({"gvproxy": gv, "config": "gvproxy.yaml"});
     }
     if let Some(r) = l.restore {
@@ -395,6 +428,25 @@ mod tests {
     }
 
     #[test]
+    fn the_gateway_config_names_the_host_address_and_the_rules() {
+        let c = gateway_config(Path::new("/r/run/ab12"));
+        assert_eq!(c["subnet"], "172.16.0.0/29");
+        assert_eq!(c["gateway_ip"], "172.16.0.1");
+        // The host address stands for the host's loopback, which only a
+        // rule naming it opens (the gateway's own guarantee).
+        assert_eq!(c["host_ip"], HOST_IP);
+        assert!(
+            c.get("dhcp").is_none(),
+            "the kernel command line sets the address"
+        );
+        assert_eq!(
+            c["listen"],
+            json!({"vfkit": "unixgram:///r/run/ab12/gv.sock"})
+        );
+        assert_eq!(c["rules"], crate::netgw::RULES_FILE);
+    }
+
+    #[test]
     fn vz_json_is_what_cua_vz_reads() {
         let v = vz_config(&VzLaunch {
             kernel: Path::new("/k/vmlinux"),
@@ -404,6 +456,7 @@ mod tests {
             base: "base.sqfs",
             sockets: Path::new("/r/run/ab12"),
             gvproxy: Some(Path::new("/b/gvproxy")),
+            gateway: None,
             forwards: &[(50001, 3211)],
             restore: Some(Path::new("/c/snap/vzstate")),
         });
@@ -425,8 +478,9 @@ mod tests {
         );
         assert_eq!(v["forwards"], json!([{"host": 50001, "guest": 3211}]));
         assert_eq!(v["restore"], "/c/snap/vzstate");
-        let none = vz_config(&VzLaunch {
+        let gw = vz_config(&VzLaunch {
             gvproxy: None,
+            gateway: Some(Path::new("/b/cua-netgw")),
             restore: None,
             ..VzLaunch {
                 kernel: Path::new("/k"),
@@ -436,6 +490,28 @@ mod tests {
                 base: "base.sqfs",
                 sockets: Path::new("/s"),
                 gvproxy: None,
+                gateway: None,
+                forwards: &[],
+                restore: None,
+            }
+        });
+        assert_eq!(
+            gw["network"],
+            json!({"gateway": "/b/cua-netgw", "config": "netgw.json"})
+        );
+        let none = vz_config(&VzLaunch {
+            gvproxy: None,
+            gateway: None,
+            restore: None,
+            ..VzLaunch {
+                kernel: Path::new("/k"),
+                initrd: Path::new("/i"),
+                cpus: 2,
+                memory_mb: 1024,
+                base: "base.sqfs",
+                sockets: Path::new("/s"),
+                gvproxy: None,
+                gateway: None,
                 forwards: &[],
                 restore: None,
             }

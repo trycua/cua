@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Foreground-steal bypass for UWP / XAML / WinUI UIA activation calls.
 //!
 //! UWP/XAML/WinUI apps self-foreground during UIA `InvokePattern.Invoke`

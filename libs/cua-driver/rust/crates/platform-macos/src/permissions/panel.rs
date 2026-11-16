@@ -1,170 +1,133 @@
-//! Native NSPanel onboarding UI — live status rows, dynamic heading,
-//! auto-dismiss on all-green.
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+//! The permission guide window: one step at a time, in plain words.
 //!
-//! Replaces the terminal banner when the daemon is launched from the
-//! bundled `/Applications/CuaDriver.app`. Mirrors the Swift gate at
-//! `libs/cua-driver/Sources/CuaDriverCore/Permissions/PermissionsGate.swift`.
-//!
-//! ## UX
-//!
-//! On first launch with missing grants the panel shows:
+//! Shown by the startup gate when the bundled app is missing a permission.
+//! It follows the guide window in Cua Spaces (a step, a reason, a button to
+//! the right System Settings pane, and an app tile to drag into the list),
+//! drawn natively with AppKit through raw `objc2::msg_send!`, like
+//! `cursor/overlay.rs`.
 //!
 //! ```text
-//! ┌─ CuaDriver Permissions ─────────────────────┐
-//! │  CuaDriver needs your permission            │
-//! │  Grant both so CuaDriver can …              │
-//! │                                             │
-//! │  ✗ Accessibility                            │
-//! │      lets cua-driver read the accessibility │
-//! │      tree of running apps …                 │
-//! │                                             │
-//! │  ✗ Screen Recording                         │
-//! │      lets cua-driver capture per-window …   │
-//! │                                             │
-//! │  ✅ All set. CuaDriver is ready to use.      │
-//! │     (hidden until both grants flip green)   │
-//! │                                             │
-//! │  [ Continue anyway ]  [ Open Settings ]     │
-//! └─────────────────────────────────────────────┘
+//! ┌─ Set up Cua Driver ─────────────────────────────┐
+//! │ Step 1 of 2                                     │
+//! │ Let Cua Driver use your mouse and keyboard      │
+//! │ This lets Cua Driver click and type in your     │
+//! │ apps when an agent asks it to.                  │
+//! │ In System Settings, turn on the switch next to  │
+//! │ Cua Driver.                                     │
+//! │ ◌ Waiting for the switch to turn on…            │
+//! │ [ Open System Settings ]                        │
+//! │                                                 │
+//! │ If Cua Driver isn't in the list, drag this in:  │
+//! │ ┌─────────────────────────────────────────────┐ │
+//! │ │ [icon]  Cua Driver                    ✋ Drag │ │
+//! │ └─────────────────────────────────────────────┘ │
+//! │                                     [ Not Now ] │
+//! └─────────────────────────────────────────────────┘
 //! ```
 //!
-//! A 1 Hz `NSTimer` reads a fresh helper-process status on every tick and updates
-//! the row icons / heading / subheading / "All set" strip in place.
-//! When both grants flip green and `suppress_auto_close == false` the
-//! poll callback calls `[NSApp stopModal]` and `show_modal` returns
-//! [`PanelOutcome::AllGranted`] so the caller can skip the trailing
-//! `wait_for_grants` loop.
+//! A 1 Hz timer reads a fresh status (from a short-lived helper process,
+//! see `gate::fresh_status`) and feeds it to [`GuideMachine`], which moves
+//! to the next step by itself, asks macOS for Screen Recording only once
+//! Accessibility is on, and opens the next pane. When both are on it shows
+//! "All set. Cua Driver can now use this Mac." and closes itself.
 //!
 //! ## Threading
 //!
-//! `show_modal` MUST be called on the main thread. The Serve arm in
-//! `cua-driver/src/main.rs` invokes the gate synchronously before any
-//! threads spawn or NSApp.run() is called by the cursor overlay, so
-//! the gate already runs on the main thread. `panel_enabled()`
-//! double-checks and falls back to the terminal banner if anything
-//! is off (not main thread, headless, opt-out env var, non-`.app`
-//! invocation).
-//!
-//! All UI updates run on the main thread because `NSTimer` callbacks
-//! dispatch through the main run loop. We do not touch UI from any
-//! other thread.
-//!
-//! ## Library choice
-//!
-//! Raw `objc2::msg_send!` macros against AppKit classes — same style
-//! as `cursor/overlay.rs`. Avoids pulling additional `objc2-app-kit`
-//! feature flags or adding new crate dependencies.
+//! Everything here runs on the main thread: `show_modal` is called by the
+//! gate before the cursor overlay starts `NSApp.run()`, and `NSTimer`
+//! callbacks fire on the main run loop.
 
 use std::cell::RefCell;
 use std::ffi::c_void;
 
-use objc2::runtime::AnyObject;
+use objc2::runtime::{AnyObject, Bool, Sel};
 use objc2::{class, msg_send};
 use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize};
 
 use crate::permissions::gate::MissingPermission;
+use crate::permissions::guide::{self, GuideEffect, GuideMachine, GuideStep};
 use crate::permissions::status::PermissionsStatus;
 
 // ── Public API ──────────────────────────────────────────────────────────
 
-/// What the user did with the panel.
+/// How the guide ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PanelOutcome {
-    /// User asked us to open System Settings — caller should invoke
-    /// `open_system_settings_for(...)` for each missing permission and
-    /// then enter the polling phase.
-    OpenSettings,
-    /// User dismissed (Continue anyway button or red-dot close) — the
-    /// caller should enter the polling phase without opening Settings.
+    /// The person clicked "Not Now" or closed the window. The caller keeps
+    /// waiting in the background so a later grant still unblocks.
     Dismissed,
-    /// Both grants flipped green while the panel was up; the poll
-    /// callback auto-dismissed. Caller can skip the polling phase.
+    /// Both switches are on; the window showed "All set" and closed.
     AllGranted,
 }
 
-/// Inputs for [`show_modal`].
-#[derive(Debug, Clone)]
-pub struct PanelOpts {
-    /// Used for the initial render only — the poll loop re-derives the
-    /// full live status on every tick and re-renders icons / heading
-    /// accordingly. Caller passes the snapshot it already has so we
-    /// don't double-probe TCC at startup.
-    pub initial_status: PermissionsStatus,
+/// What the window does when it needs a fresh status, a permission
+/// request, or a System Settings pane. The gate passes the real ones; the
+/// preview example passes fixed ones.
+pub struct PanelHooks {
+    pub status: Box<dyn FnMut() -> PermissionsStatus>,
+    pub request: Box<dyn FnMut(MissingPermission)>,
+    pub open_settings: Box<dyn FnMut(MissingPermission)>,
 }
 
-/// Decide whether the panel can be shown right now. The panel is
-/// **opt-in**: the default behaviour is the terminal banner, and the
-/// panel only appears when:
-///
-///   * `CUA_DRIVER_RS_PERMISSIONS_PANEL` env var is set to an on
-///     sentinel (`1` / `true` / `yes` / `on`, case-insensitive); AND
-///   * the process is running on the main thread (a hard requirement
-///     for AppKit calls); AND
-///   * the binary lives inside an `.app` bundle (bare-binary
-///     invocations have no Info.plist / bundle id for TCC to attribute
-///     the window to, so they always use the terminal flow).
-///
-/// Rationale for opt-in: the panel relies on a chain of macOS
-/// behaviours that are easy to break in practice — TCC responsible-
-/// process attribution, session-level TCC caches that survive
-/// `tccutil reset`, ad-hoc codesign identity mismatches between dev
-/// builds and the bundle id, and AppKit modal-run-loop modes. When
-/// any link is off, the panel can present a confusing UX (e.g. shows
-/// "missing" rows because TCC returns stale cache, or auto-dismisses
-/// against the user's intent). The terminal flow has none of those
-/// failure modes, so it's the safer default until we have signals
-/// that the UI is consistently helpful across users.
+/// Inputs for [`show_modal`].
+pub struct PanelOpts {
+    /// The status the gate already read, for the first render.
+    pub initial_status: PermissionsStatus,
+    /// Permissions the gate already asked macOS for before the window
+    /// opened (so they aren't asked twice).
+    pub already_requested: Vec<MissingPermission>,
+    pub hooks: PanelHooks,
+}
+
+/// Whether the guide window can be shown: on by default for the bundled
+/// app on the main thread. `CUA_DRIVER_RS_PERMISSIONS_PANEL=0` (or
+/// `false` / `no` / `off`) turns it off and keeps the terminal text only.
+/// Bare binaries outside an `.app` always use the terminal text: macOS has
+/// no app identity to list for them.
 pub fn panel_enabled() -> bool {
-    if !env_on("CUA_DRIVER_RS_PERMISSIONS_PANEL") {
+    if env_off("CUA_DRIVER_RS_PERMISSIONS_PANEL") {
         return false;
     }
     if MainThreadMarker::new().is_none() {
         return false;
     }
-    if !running_inside_app_bundle() {
-        return false;
-    }
-    true
+    running_inside_app_bundle()
 }
 
-/// Show the panel modally. Blocks the calling (main) thread until the
-/// user clicks one of the buttons, closes the window, or all grants
-/// flip green. Returns the outcome so the caller can decide how to
-/// proceed.
-///
-/// Safety / threading: panics if invoked off the main thread. Callers
-/// should check [`panel_enabled`] first to avoid the panic.
-pub fn show_modal(opts: PanelOpts) -> PanelOutcome {
+/// Show the guide modally. Blocks the main thread until both switches are
+/// on, or the person clicks "Not Now" / closes the window. `None` when no
+/// window could be shown (no display), so the caller falls back to the
+/// terminal text.
+pub fn show_modal(opts: PanelOpts) -> Option<PanelOutcome> {
     let _mtm = MainThreadMarker::new().expect("show_modal must be called from the main thread");
-    unsafe { show_modal_unsafe(&opts) }
+    let machine = GuideMachine::new(opts.initial_status, &opts.already_requested);
+    unsafe { run_window(machine, opts.hooks) }
+}
+
+/// Show only the finished state ("All set…") for a moment, then close.
+/// Used when macOS's "Quit & Reopen" restarted the app mid-guide.
+pub fn show_finished(hooks: PanelHooks) {
+    if MainThreadMarker::new().is_none() {
+        return;
+    }
+    let done = PermissionsStatus {
+        accessibility: true,
+        screen_recording: true,
+    };
+    let machine = GuideMachine::new(done, &[]);
+    unsafe {
+        let _ = run_window(machine, hooks);
+    }
 }
 
 /// Block the current (main) thread for `seconds` while letting the
-/// AppKit run loop process events.
-///
-/// The terminal-flow gate (`gate::wait_for_grants`) used to use
-/// `std::thread::sleep` between TCC probes. That works on every other
-/// platform but on macOS it starves the AppKit run loop, which is
-/// where `AXIsProcessTrusted()`'s per-process trust cache gets
-/// invalidated when tccd posts notifications about grant changes.
-/// Net effect: a daemon that called `AXIsProcessTrusted()` once at
-/// startup and got `false` would keep getting `false` forever even
-/// after the user granted accessibility in System Settings — the
-/// poll loop never saw the grant flip.
-///
-/// Pumping the run loop here (instead of `nanosleep`) gives AppKit a
-/// chance to handle the TCC change-notification XPC message, which
-/// invalidates the trust cache. The next iteration's
-/// `AXIsProcessTrusted()` call then sees the fresh truth.
-///
-/// Falls back to `thread::sleep` if anything in the AppKit setup
-/// looks off (not main thread, NSRunLoop class unavailable) so this
-/// function is safe to call from any context — it just degrades to
-/// the old behaviour in those cases.
+/// AppKit run loop process events. Falls back to `thread::sleep` off the
+/// main thread.
 pub fn pump_run_loop_briefly(seconds: f64) {
     if MainThreadMarker::new().is_none() {
-        // Not the main thread — pumping someone else's run loop is
-        // wrong. Just sleep.
         std::thread::sleep(std::time::Duration::from_secs_f64(seconds.max(0.0)));
         return;
     }
@@ -174,10 +137,6 @@ pub fn pump_run_loop_briefly(seconds: f64) {
             std::thread::sleep(std::time::Duration::from_secs_f64(seconds.max(0.0)));
             return;
         }
-        // `[NSDate dateWithTimeIntervalSinceNow:seconds]` builds the
-        // deadline. `[NSRunLoop runMode:beforeDate:]` blocks up to
-        // that deadline while dispatching pending input sources +
-        // timers — including TCC notification taps.
         let date: *mut AnyObject = msg_send![class!(NSDate), dateWithTimeIntervalSinceNow: seconds];
         if date.is_null() {
             std::thread::sleep(std::time::Duration::from_secs_f64(seconds.max(0.0)));
@@ -188,56 +147,106 @@ pub fn pump_run_loop_briefly(seconds: f64) {
     }
 }
 
-// ── Implementation ──────────────────────────────────────────────────────
+// ── Environment ─────────────────────────────────────────────────────────
 
-fn env_on(key: &str) -> bool {
+fn env_off(key: &str) -> bool {
     std::env::var(key)
         .ok()
         .map(|v| {
             let lower = v.to_ascii_lowercase();
-            matches!(lower.as_str(), "1" | "true" | "yes" | "on")
+            matches!(lower.as_str(), "0" | "false" | "no" | "off")
         })
         .unwrap_or(false)
 }
 
-/// Detect whether the current executable lives under a `.app` bundle.
-fn running_inside_app_bundle() -> bool {
-    let Ok(exe) = std::env::current_exe() else {
-        return false;
-    };
-    exe.components().any(|c| {
-        c.as_os_str()
-            .to_str()
-            .map(|s| s.ends_with(".app"))
-            .unwrap_or(false)
-    })
+/// The `.app` bundle this executable lives in, if any.
+fn app_bundle_path() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
+    exe.ancestors()
+        .find(|p| p.extension().and_then(|e| e.to_str()) == Some("app"))
+        .map(std::path::Path::to_path_buf)
 }
 
-// ── Layout constants ────────────────────────────────────────────────────
+fn running_inside_app_bundle() -> bool {
+    app_bundle_path().is_some()
+}
+
+// ── Layout ──────────────────────────────────────────────────────────────
 //
-// Window geometry mirrors Swift's `.frame(width: 460)` plus heights
-// chosen to fit: heading (24) + subheading (40) + 2 rows (76 each) +
-// "All set" strip (32) + button row (48) + paddings (20·5). Keeping
-// the numbers as a block here so the math is auditable.
+// Fixed layout, measured from the top of the content view (AppKit's origin
+// is bottom-left, so `top()` converts).
 
-const WIN_W: f64 = 460.0;
-const WIN_H: f64 = 360.0;
-const PAD: f64 = 20.0;
-const ROW_H: f64 = 76.0;
-const READY_STRIP_H: f64 = 36.0;
+const WIN_W: f64 = 480.0;
+const WIN_H: f64 = 420.0;
+const PAD: f64 = 24.0;
+const CONTENT_W: f64 = WIN_W - 2.0 * PAD;
+const TILE_H: f64 = 60.0;
+const ICON: f64 = 36.0;
+/// Ticks (1 s each) the finished state stays up before the window closes.
+const DONE_TICKS: u32 = 2;
 
-unsafe fn show_modal_unsafe(opts: &PanelOpts) -> PanelOutcome {
-    // ---- NSApplication setup ----
+fn top(y_from_top: f64, height: f64) -> f64 {
+    WIN_H - y_from_top - height
+}
+
+fn rect(x: f64, y_from_top: f64, w: f64, h: f64) -> NSRect {
+    NSRect {
+        origin: NSPoint {
+            x,
+            y: top(y_from_top, h),
+        },
+        size: NSSize {
+            width: w,
+            height: h,
+        },
+    }
+}
+
+// ── Window ──────────────────────────────────────────────────────────────
+
+/// Raw view pointers, kept as `usize` (AppKit views are `!Send`; they are
+/// only touched on the main thread).
+struct Views {
+    window: usize,
+    step_view: usize,
+    done_view: usize,
+    counter: usize,
+    title: usize,
+    why: usize,
+    how: usize,
+    note: usize,
+}
+
+struct Session {
+    machine: GuideMachine,
+    hooks: PanelHooks,
+    views: Views,
+    done_ticks: u32,
+}
+
+thread_local! {
+    static OUTCOME: RefCell<Option<PanelOutcome>> = const { RefCell::new(None) };
+    static SESSION: RefCell<Option<Session>> = const { RefCell::new(None) };
+    static TILE_BUNDLE: RefCell<Option<std::path::PathBuf>> = const { RefCell::new(None) };
+}
+
+fn ptr(u: usize) -> *mut AnyObject {
+    u as *mut AnyObject
+}
+
+unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOutcome> {
+    // AppKit uses Text Input Sources on this thread from here on.
+    crate::input::input_source::main_thread_runs_event_loop();
     let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
     let _: bool = msg_send![app, setActivationPolicy: 1i64];
     let _: () = msg_send![app, finishLaunching];
 
     let main_screen: *mut AnyObject = msg_send![class!(NSScreen), mainScreen];
     if main_screen.is_null() {
-        return PanelOutcome::Dismissed;
+        return None;
     }
 
-    // ---- Window ----
     let content_rect = NSRect {
         origin: NSPoint { x: 0.0, y: 0.0 },
         size: NSSize {
@@ -245,379 +254,625 @@ unsafe fn show_modal_unsafe(opts: &PanelOpts) -> PanelOutcome {
             height: WIN_H,
         },
     };
-    // NSWindowStyleMaskTitled (1) | NSWindowStyleMaskClosable (2) — matches
-    // PermissionsGate.swift line 97: `[.titled, .closable]`.
+    // Titled | Closable.
     let style_mask: u64 = 1 | 2;
-    // NSBackingStoreBuffered = 2.
-    let backing: u64 = 2;
-
     let window: *mut AnyObject = {
         let allocated: *mut AnyObject = msg_send![class!(NSPanel), alloc];
         msg_send![allocated,
             initWithContentRect: content_rect
             styleMask: style_mask
-            backing: backing
+            backing: 2u64
             defer: false
         ]
     };
     if window.is_null() {
-        return PanelOutcome::Dismissed;
+        return None;
     }
     let _: () = msg_send![window, setReleasedWhenClosed: false];
     let _: () = msg_send![window, setHidesOnDeactivate: false];
-    // NSFloatingWindowLevel (3) so it stays on top of System Settings
-    // when the user navigates over to grant permissions.
+    // Floating, so it stays above System Settings while the person works
+    // there.
     let _: () = msg_send![window, setLevel: 3i64];
-    let title = ns_string("CuaDriver Permissions");
-    let _: () = msg_send![window, setTitle: title];
+    let _: () = msg_send![window, setTitle: ns_string(guide::WINDOW_TITLE)];
+    let target = target_instance();
+    let _: () = msg_send![window, setDelegate: target];
 
-    let content_view: *mut AnyObject = msg_send![window, contentView];
+    let content: *mut AnyObject = msg_send![window, contentView];
 
-    // ---- Heading + subheading ----
-    //
-    // Y coordinates use AppKit's bottom-left origin. We lay out top-
-    // down: subtract row heights from `WIN_H - PAD` as we go.
-    let mut y = WIN_H - PAD - 24.0;
+    // ---- Step view ----
+    let step_view = new_view(rect(0.0, 0.0, WIN_W, WIN_H));
+    let _: () = msg_send![content, addSubview: step_view];
 
-    let heading = build_label(
-        heading_for(opts.initial_status),
-        17.0,
-        /*bold=*/ true,
-        NSPoint { x: PAD, y },
-        NSSize {
-            width: WIN_W - 2.0 * PAD,
-            height: 24.0,
-        },
+    let counter = label("", 12.0, false, rect(PAD, 20.0, CONTENT_W, 16.0));
+    set_secondary(counter);
+    let _: () = msg_send![step_view, addSubview: counter];
+
+    let title = label("", 18.0, true, rect(PAD, 40.0, CONTENT_W, 26.0));
+    let _: () = msg_send![step_view, addSubview: title];
+
+    let why = label("", 13.0, false, rect(PAD, 72.0, CONTENT_W, 36.0));
+    set_secondary(why);
+    let _: () = msg_send![step_view, addSubview: why];
+
+    let how = label("", 13.0, false, rect(PAD, 114.0, CONTENT_W, 18.0));
+    let _: () = msg_send![step_view, addSubview: how];
+
+    // Live status: a small spinner while waiting for the switch.
+    let spinner: *mut AnyObject = msg_send![class!(NSProgressIndicator), alloc];
+    let spinner: *mut AnyObject = msg_send![spinner, initWithFrame: rect(PAD, 144.0, 16.0, 16.0)];
+    let _: () = msg_send![spinner, setStyle: 1u64]; // spinning
+    let _: () = msg_send![spinner, setControlSize: 1u64]; // small
+    let _: () = msg_send![spinner, setIndeterminate: true];
+    let _: () = msg_send![spinner, startAnimation: std::ptr::null::<AnyObject>()];
+    let _: () = msg_send![step_view, addSubview: spinner];
+    let waiting = label(
+        guide::WAITING_LINE,
+        13.0,
+        false,
+        rect(PAD + 24.0, 142.0, CONTENT_W - 24.0, 18.0),
     );
-    let _: () = msg_send![content_view, addSubview: heading];
+    set_secondary(waiting);
+    let _: () = msg_send![step_view, addSubview: waiting];
 
-    y -= 8.0 + 40.0; // gap + subheading height
+    let open_btn = button(
+        guide::OPEN_SETTINGS_BUTTON,
+        rect(PAD, 172.0, 200.0, 32.0),
+        objc2::sel!(openSettings:),
+        target,
+    );
+    let _: () = msg_send![open_btn, setKeyEquivalent: ns_string("\r")];
+    let _: () = msg_send![step_view, addSubview: open_btn];
 
-    let subheading = build_label(
-        subheading_for(opts.initial_status),
+    let hint = label(
+        guide::DRAG_HINT,
         12.0,
-        /*bold=*/ false,
-        NSPoint { x: PAD, y },
-        NSSize {
-            width: WIN_W - 2.0 * PAD,
-            height: 40.0,
-        },
+        false,
+        rect(PAD, 228.0, CONTENT_W, 18.0),
     );
-    let _: () = msg_send![content_view, addSubview: subheading];
-    // Subheading is secondary text — apply secondaryLabelColor.
-    let secondary_color: *mut AnyObject = msg_send![class!(NSColor), secondaryLabelColor];
-    let _: () = msg_send![subheading, setTextColor: secondary_color];
+    set_secondary(hint);
+    let _: () = msg_send![step_view, addSubview: hint];
 
-    y -= 16.0; // gap before first row
+    let bundle = app_bundle_path();
+    TILE_BUNDLE.with(|cell| *cell.borrow_mut() = bundle.clone());
+    let tile = drag_tile(rect(PAD, 250.0, CONTENT_W, TILE_H), bundle.as_deref());
+    let _: () = msg_send![step_view, addSubview: tile];
 
-    // ---- Permission rows ----
-    let ax_row = build_row(
-        MissingPermission::Accessibility,
-        opts.initial_status.accessibility,
-        NSPoint {
-            x: PAD,
-            y: y - ROW_H,
-        },
-        NSSize {
-            width: WIN_W - 2.0 * PAD,
-            height: ROW_H,
-        },
+    let note = label("", 11.0, false, rect(PAD, 320.0, CONTENT_W, 32.0));
+    set_secondary(note);
+    let _: () = msg_send![step_view, addSubview: note];
+
+    let not_now = button(
+        guide::NOT_NOW_BUTTON,
+        rect(WIN_W - PAD - 110.0, WIN_H - 16.0 - 32.0, 110.0, 32.0),
+        objc2::sel!(notNow:),
+        target,
     );
-    let _: () = msg_send![content_view, addSubview: ax_row.container];
-    y -= ROW_H + 8.0;
+    let _: () = msg_send![not_now, setKeyEquivalent: ns_string("\u{1b}")];
+    let _: () = msg_send![step_view, addSubview: not_now];
 
-    let sr_row = build_row(
-        MissingPermission::ScreenRecording,
-        opts.initial_status.screen_recording,
-        NSPoint {
-            x: PAD,
-            y: y - ROW_H,
-        },
-        NSSize {
-            width: WIN_W - 2.0 * PAD,
-            height: ROW_H,
-        },
+    // ---- Finished view ----
+    let done_view = new_view(rect(0.0, 0.0, WIN_W, WIN_H));
+    let check: *mut AnyObject = msg_send![class!(NSImageView), alloc];
+    let check: *mut AnyObject =
+        msg_send![check, initWithFrame: rect((WIN_W - 56.0) / 2.0, 110.0, 56.0, 56.0)];
+    let check_img = symbol("checkmark.circle.fill");
+    if !check_img.is_null() {
+        let config: *mut AnyObject = msg_send![
+            class!(NSImageSymbolConfiguration),
+            configurationWithPointSize: 48.0_f64
+            weight: 0.0_f64
+        ];
+        let sized: *mut AnyObject = if config.is_null() {
+            check_img
+        } else {
+            msg_send![check_img, imageWithSymbolConfiguration: config]
+        };
+        let _: () = msg_send![check, setImage: sized];
+    }
+    let green: *mut AnyObject = msg_send![class!(NSColor), systemGreenColor];
+    let _: () = msg_send![check, setContentTintColor: green];
+    let _: () = msg_send![done_view, addSubview: check];
+    let done_title = label(
+        guide::DONE_TITLE,
+        17.0,
+        true,
+        rect(PAD, 184.0, CONTENT_W, 24.0),
     );
-    let _: () = msg_send![content_view, addSubview: sr_row.container];
-    y -= ROW_H + 8.0;
-
-    // ---- Ready strip (initially hidden; shown by poll on all-green) ----
-    let ready_strip = build_ready_strip(
-        NSPoint {
-            x: PAD,
-            y: y - READY_STRIP_H,
-        },
-        WIN_W - 2.0 * PAD,
+    center_text(done_title);
+    let _: () = msg_send![done_view, addSubview: done_title];
+    let done_why = label(
+        GuideStep::Done.copy().why,
+        13.0,
+        false,
+        rect(PAD, 214.0, CONTENT_W, 18.0),
     );
-    let _: () = msg_send![content_view, addSubview: ready_strip];
-    let initially_all_green =
-        opts.initial_status.accessibility && opts.initial_status.screen_recording;
-    let _: () = msg_send![ready_strip, setHidden: !initially_all_green];
+    center_text(done_why);
+    set_secondary(done_why);
+    let _: () = msg_send![done_view, addSubview: done_why];
+    let _: () = msg_send![content, addSubview: done_view];
 
-    // ---- Buttons across the bottom ----
+    let views = Views {
+        window: window as usize,
+        step_view: step_view as usize,
+        done_view: done_view as usize,
+        counter: counter as usize,
+        title: title as usize,
+        why: why as usize,
+        how: how as usize,
+        note: note as usize,
+    };
+    render(&views, machine.step());
     OUTCOME.with(|cell| *cell.borrow_mut() = None);
-
-    let continue_btn = build_button(
-        "Continue anyway",
-        NSPoint { x: PAD, y: 16.0 },
-        NSSize {
-            width: 160.0,
-            height: 32.0,
-        },
-        ButtonAction::Dismiss,
-    );
-    let _: () = msg_send![content_view, addSubview: continue_btn];
-
-    let open_settings_btn = build_button(
-        "Open System Settings",
-        NSPoint {
-            x: WIN_W - PAD - 180.0,
-            y: 16.0,
-        },
-        NSSize {
-            width: 180.0,
-            height: 32.0,
-        },
-        ButtonAction::OpenSettings,
-    );
-    let _: () = msg_send![content_view, addSubview: open_settings_btn];
-    let _: () = msg_send![open_settings_btn, setKeyEquivalent: ns_string("\r")];
-
-    // ---- Stash handles for the timer callback ----
-    HANDLES.with(|cell| {
-        *cell.borrow_mut() = Some(PanelHandles {
-            heading: ptr_to_usize(heading),
-            subheading: ptr_to_usize(subheading),
-            ready_strip: ptr_to_usize(ready_strip),
-            ax_row,
-            sr_row,
-            last_status: opts.initial_status,
-        });
+    SESSION.with(|cell| {
+        *cell.borrow_mut() = Some(Session {
+            machine,
+            hooks,
+            views,
+            done_ticks: 0,
+        })
     });
 
-    // ---- Show window + start poll timer + run modal ----
-    let _: () = msg_send![window, center];
+    // Top right of the screen, clear of System Settings, which opens in the
+    // middle.
+    let visible: NSRect = msg_send![main_screen, visibleFrame];
+    let origin = NSPoint {
+        x: visible.origin.x + visible.size.width - WIN_W - 24.0,
+        y: visible.origin.y + visible.size.height - WIN_H - 48.0,
+    };
+    let _: () = msg_send![window, setFrameOrigin: origin];
     let _: () = msg_send![window, makeKeyAndOrderFront: std::ptr::null::<AnyObject>()];
+    let _: () = msg_send![window, orderFrontRegardless];
     let _: () = msg_send![app, activateIgnoringOtherApps: true];
 
-    let timer = schedule_poll_timer();
-    let _: i64 = msg_send![app, runModalForWindow: window];
-    // Stop timer first so any in-flight tick can't race with teardown.
+    let timer = schedule_tick(target);
+    // Run one tick now so a pending request goes out without a 1 s delay.
+    tick();
+    if OUTCOME.with(|cell| cell.borrow().is_none()) {
+        let _: i64 = msg_send![app, runModalForWindow: window];
+    }
     let _: () = msg_send![timer, invalidate];
+    let _: () = msg_send![window, setDelegate: std::ptr::null::<AnyObject>()];
 
-    // Resolve final outcome. The OUTCOME thread-local has the value
-    // most actions set; if neither button nor the poll fired, treat
-    // it as Dismissed (red-dot close).
     let outcome = OUTCOME
         .with(|cell| *cell.borrow())
         .unwrap_or(PanelOutcome::Dismissed);
-
-    // Tear down the handles before any later panel invocation can
-    // observe stale pointers. We can't rely on Drop because everything
-    // here is raw pointer Objective-C.
-    HANDLES.with(|cell| *cell.borrow_mut() = None);
-
+    SESSION.with(|cell| *cell.borrow_mut() = None);
+    TILE_BUNDLE.with(|cell| *cell.borrow_mut() = None);
     let _: () = msg_send![window, orderOut: std::ptr::null::<AnyObject>()];
-    outcome
+    Some(outcome)
 }
 
-// ── Live-update plumbing ────────────────────────────────────────────────
-//
-// AppKit timers fire on the main run loop's thread, so the callback
-// runs on the same thread that built the panel — pointers we stashed
-// in a thread-local are safe to dereference. We use raw `usize` to
-// sidestep Send/Sync requirements (NSWindow / NSView are !Send).
-
-#[derive(Debug, Clone, Copy)]
-struct RowHandles {
-    container: *mut AnyObject,
-    icon: *mut AnyObject,
-    title: *mut AnyObject,
+/// Draw `step`: the step's words, or the finished view.
+unsafe fn render(views: &Views, step: GuideStep) {
+    let done = step == GuideStep::Done;
+    let _: () = msg_send![ptr(views.step_view), setHidden: done];
+    let _: () = msg_send![ptr(views.done_view), setHidden: !done];
+    if done {
+        return;
+    }
+    let copy = step.copy();
+    let _: () = msg_send![ptr(views.counter), setStringValue: ns_string(copy.counter)];
+    let _: () = msg_send![ptr(views.title), setStringValue: ns_string(copy.title)];
+    let _: () = msg_send![ptr(views.why), setStringValue: ns_string(copy.why)];
+    let _: () = msg_send![ptr(views.how), setStringValue: ns_string(copy.how)];
+    let _: () = msg_send![ptr(views.note), setStringValue: ns_string(copy.note)];
+    let _: () = msg_send![ptr(views.window), setTitle: ns_string(guide::WINDOW_TITLE)];
 }
 
-struct PanelHandles {
-    heading: usize,
-    subheading: usize,
-    ready_strip: usize,
-    ax_row: RowHandles,
-    sr_row: RowHandles,
-    last_status: PermissionsStatus,
-}
+// ── Timer, buttons, window close ─────────────────────────────────────────
 
-thread_local! {
-    static OUTCOME: RefCell<Option<PanelOutcome>> = const { RefCell::new(None) };
-    static HANDLES: RefCell<Option<PanelHandles>> = const { RefCell::new(None) };
-}
-
-fn ptr_to_usize(p: *mut AnyObject) -> usize {
-    p as usize
-}
-
-fn usize_to_ptr(u: usize) -> *mut AnyObject {
-    u as *mut AnyObject
-}
-
-unsafe fn schedule_poll_timer() -> *mut AnyObject {
-    // 1 second cadence — matches Swift's
-    // `Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true)`.
-    //
-    // Critical: `[NSApp runModalForWindow:]` runs the main run loop in
-    // `NSModalPanelRunLoopMode`, which is NOT one of the standard
-    // "common" modes by default. A timer added only to
-    // `NSRunLoopCommonModes` (or unmodified, which lands it in
-    // `NSDefaultRunLoopMode`) won't fire while the modal is up — the
-    // panel renders fine but its icons never update.
-    //
-    // We construct a non-scheduled timer with `+timerWithTimeInterval:…`
-    // and then explicitly add it to the modal-panel mode. We do not
-    // also add it to NSDefaultRunLoopMode because the timer's lifetime
-    // is bounded by the modal session: as soon as the modal stops
-    // (button click or auto-dismiss) we `invalidate` it.
-    let target = panel_target_instance();
-    let sel = objc2::sel!(pollTick:);
+unsafe fn schedule_tick(target: *mut AnyObject) -> *mut AnyObject {
+    // `runModalForWindow:` runs the loop in NSModalPanelRunLoopMode, which a
+    // default-scheduled timer never fires in, so add it to that mode.
     let timer: *mut AnyObject = msg_send![class!(NSTimer),
         timerWithTimeInterval: 1.0_f64
         target: target
-        selector: sel
+        selector: objc2::sel!(pollTick:)
         userInfo: std::ptr::null::<AnyObject>()
         repeats: true
     ];
     let run_loop: *mut AnyObject = msg_send![class!(NSRunLoop), currentRunLoop];
-    let modal_mode = ns_string("NSModalPanelRunLoopMode");
-    let _: () = msg_send![run_loop, addTimer: timer forMode: modal_mode];
+    let _: () = msg_send![run_loop, addTimer: timer forMode: ns_string("NSModalPanelRunLoopMode")];
     timer
 }
 
-extern "C" fn on_poll_tick(
-    _self: *mut AnyObject,
-    _cmd: objc2::runtime::Sel,
-    _timer: *mut AnyObject,
-) {
-    // Wrap the whole thing in a panic guard — if anything goes wrong
-    // we want to stop modal rather than have the panel hang forever.
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
-        poll_tick_inner();
-    }));
-    if let Err(e) = result {
-        eprintln!("[cua-driver] permissions panel poll tick panicked: {e:?}");
-        OUTCOME.with(|cell| *cell.borrow_mut() = Some(PanelOutcome::Dismissed));
-        stop_modal();
-    }
-}
-
-unsafe fn poll_tick_inner() {
-    let status = super::gate::fresh_status();
-    let mut should_stop = false;
-    HANDLES.with(|cell| {
+/// One status check: feed the machine, apply its effects, and close a
+/// moment after the finished state shows.
+fn tick() {
+    let mut finish = false;
+    SESSION.with(|cell| {
         let mut guard = cell.borrow_mut();
-        let Some(handles) = guard.as_mut() else {
+        let Some(session) = guard.as_mut() else {
             return;
         };
-        if status == handles.last_status {
-            // No change — skip the redraw. Avoids needlessly thrashing
-            // the layout engine every second on a steady-state panel.
+        if session.machine.step() == GuideStep::Done {
+            session.done_ticks += 1;
+            finish = session.done_ticks >= DONE_TICKS;
             return;
         }
-        // Update row icons + label color tints.
-        update_row(handles.ax_row, status.accessibility);
-        update_row(handles.sr_row, status.screen_recording);
-        // Update heading + subheading copy.
-        let new_heading = ns_string(heading_for(status));
-        let _: () = msg_send![usize_to_ptr(handles.heading), setStringValue: new_heading];
-        let new_subheading = ns_string(subheading_for(status));
-        let _: () = msg_send![usize_to_ptr(handles.subheading), setStringValue: new_subheading];
-        // Toggle the ready strip.
-        let all_green = status.accessibility && status.screen_recording;
-        let _: () = msg_send![usize_to_ptr(handles.ready_strip), setHidden: !all_green];
-        handles.last_status = status;
-        if all_green {
-            should_stop = true;
+        let status = (session.hooks.status)();
+        for effect in session.machine.on_status(status) {
+            match effect {
+                GuideEffect::Show(step) => unsafe {
+                    if step == GuideStep::ScreenRecording {
+                        guide::write_resume_marker();
+                    }
+                    render(&session.views, step);
+                },
+                GuideEffect::Request(permission) => {
+                    if permission == MissingPermission::ScreenRecording {
+                        guide::write_resume_marker();
+                    }
+                    (session.hooks.request)(permission);
+                }
+                GuideEffect::OpenSettings(permission) => {
+                    (session.hooks.open_settings)(permission);
+                }
+            }
         }
     });
-    if should_stop {
+    if finish {
         OUTCOME.with(|cell| *cell.borrow_mut() = Some(PanelOutcome::AllGranted));
         stop_modal();
     }
 }
 
-unsafe fn update_row(row: RowHandles, granted: bool) {
-    // Swap icon symbol and tint.
-    let symbol = if granted {
-        "checkmark.circle.fill"
-    } else {
-        "xmark.circle.fill"
-    };
-    let img = ns_image_for_symbol(symbol);
-    let _: () = msg_send![row.icon, setImage: img];
-    let tint: *mut AnyObject = if granted {
-        msg_send![class!(NSColor), systemGreenColor]
-    } else {
-        msg_send![class!(NSColor), systemRedColor]
-    };
-    let _: () = msg_send![row.icon, setContentTintColor: tint];
-    // Title bold turns from default → secondary on grant (subtle visual
-    // de-emphasis once granted).
-    let title_color: *mut AnyObject = if granted {
-        msg_send![class!(NSColor), secondaryLabelColor]
-    } else {
-        msg_send![class!(NSColor), labelColor]
-    };
-    let _: () = msg_send![row.title, setTextColor: title_color];
-}
-
-// ── Heading / subheading copy (parity with Swift) ────────────────────────
-
-fn heading_for(s: PermissionsStatus) -> &'static str {
-    match (s.accessibility, s.screen_recording) {
-        (true, true) => "CuaDriver is ready",
-        (true, false) | (false, true) => "One more permission",
-        (false, false) => "CuaDriver needs your permission",
+extern "C" fn on_poll_tick(_this: *mut AnyObject, _cmd: Sel, _timer: *mut AnyObject) {
+    // Never let a panic hang the window: close it instead.
+    if std::panic::catch_unwind(tick).is_err() {
+        eprintln!("[cua-driver] permission guide check failed; closing the guide");
+        OUTCOME.with(|cell| *cell.borrow_mut() = Some(PanelOutcome::Dismissed));
+        stop_modal();
     }
 }
 
-fn subheading_for(s: PermissionsStatus) -> &'static str {
-    match (s.accessibility, s.screen_recording) {
-        (true, true) =>
-            "Both permissions are granted. You can close this window whenever you're ready.",
-        (true, false) =>
-            "Accessibility is granted. Now grant Screen Recording in the System Settings window that just opened.",
-        (false, true) =>
-            "Screen Recording is granted. Now grant Accessibility in the System Settings window that just opened.",
-        (false, false) =>
-            "Grant both so CuaDriver can inspect and drive native apps on your behalf. This window closes on its own once each item turns green.",
+extern "C" fn on_open_settings(_this: *mut AnyObject, _cmd: Sel, _sender: *mut AnyObject) {
+    SESSION.with(|cell| {
+        if let Some(session) = cell.borrow_mut().as_mut() {
+            if let Some(permission) = session.machine.step().permission() {
+                (session.hooks.open_settings)(permission);
+            }
+        }
+    });
+}
+
+extern "C" fn on_not_now(_this: *mut AnyObject, _cmd: Sel, _sender: *mut AnyObject) {
+    OUTCOME.with(|cell| *cell.borrow_mut() = Some(PanelOutcome::Dismissed));
+    stop_modal();
+}
+
+extern "C" fn on_window_will_close(
+    _this: *mut AnyObject,
+    _cmd: Sel,
+    _notification: *mut AnyObject,
+) {
+    OUTCOME.with(|cell| {
+        let mut outcome = cell.borrow_mut();
+        if outcome.is_none() {
+            *outcome = Some(PanelOutcome::Dismissed);
+        }
+    });
+    stop_modal();
+}
+
+/// End the modal loop. `stopModal` from a timer only takes effect on the
+/// next event, so post an empty one to wake the loop.
+fn stop_modal() {
+    unsafe {
+        let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+        let _: () = msg_send![app, stopModal];
+        // NSEventTypeApplicationDefined = 15.
+        let event: *mut AnyObject = msg_send![class!(NSEvent),
+            otherEventWithType: 15u64
+            location: NSPoint { x: 0.0, y: 0.0 }
+            modifierFlags: 0u64
+            timestamp: 0.0_f64
+            windowNumber: 0i64
+            context: std::ptr::null::<AnyObject>()
+            subtype: 0i16
+            data1: 0i64
+            data2: 0i64
+        ];
+        if !event.is_null() {
+            let _: () = msg_send![app, postEvent: event atStart: true];
+        }
     }
 }
 
-// ── Helpers: NSString, labels, buttons, icons, rows ──────────────────────
+unsafe fn target_instance() -> *mut AnyObject {
+    let cls = target_class();
+    let inst: *mut AnyObject = msg_send![cls, alloc];
+    msg_send![inst, init]
+}
 
-/// Bridge `&str` → autoreleased `NSString` via `stringWithUTF8String:`.
+/// `CuaDriverPermissionGuideTarget`: button actions, the timer, and the
+/// window delegate. Registered once per process.
+fn target_class() -> &'static objc2::runtime::AnyClass {
+    use objc2::declare::ClassBuilder;
+    use std::sync::OnceLock;
+
+    static CLASS: OnceLock<&'static objc2::runtime::AnyClass> = OnceLock::new();
+    CLASS.get_or_init(|| {
+        let mut builder = ClassBuilder::new("CuaDriverPermissionGuideTarget", class!(NSObject))
+            .expect("CuaDriverPermissionGuideTarget already registered");
+        unsafe {
+            builder.add_method(
+                objc2::sel!(openSettings:),
+                on_open_settings as extern "C" fn(_, _, _),
+            );
+            builder.add_method(objc2::sel!(notNow:), on_not_now as extern "C" fn(_, _, _));
+            builder.add_method(
+                objc2::sel!(pollTick:),
+                on_poll_tick as extern "C" fn(_, _, _),
+            );
+            builder.add_method(
+                objc2::sel!(windowWillClose:),
+                on_window_will_close as extern "C" fn(_, _, _),
+            );
+        }
+        builder.register()
+    })
+}
+
+// ── The draggable app tile ───────────────────────────────────────────────
+//
+// A plain card (same border all round) with the app's icon and name. A
+// drag puts the app bundle's file URL on the pasteboard, which System
+// Settings' privacy lists accept, the same as dragging the app from Finder.
+
+unsafe fn drag_tile(frame: NSRect, bundle: Option<&std::path::Path>) -> *mut AnyObject {
+    let cls = tile_class();
+    let tile: *mut AnyObject = msg_send![cls, alloc];
+    let tile: *mut AnyObject = msg_send![tile, initWithFrame: frame];
+    let _: () = msg_send![tile, setWantsLayer: true];
+    let layer: *mut AnyObject = msg_send![tile, layer];
+    if !layer.is_null() {
+        let _: () = msg_send![layer, setCornerRadius: 10.0_f64];
+        let _: () = msg_send![layer, setBorderWidth: 1.0_f64];
+        let border: *mut AnyObject = msg_send![class!(NSColor), separatorColor];
+        let border_cg: CGColorRef = msg_send![border, CGColor];
+        let _: () = msg_send![layer, setBorderColor: border_cg];
+        let fill: *mut AnyObject = msg_send![class!(NSColor), controlBackgroundColor];
+        let fill_cg: CGColorRef = msg_send![fill, CGColor];
+        let _: () = msg_send![layer, setBackgroundColor: fill_cg];
+    }
+    let height = frame.size.height;
+    let width = frame.size.width;
+
+    let icon_view: *mut AnyObject = msg_send![class!(NSImageView), alloc];
+    let icon_frame = NSRect {
+        origin: NSPoint {
+            x: 12.0,
+            y: (height - ICON) / 2.0,
+        },
+        size: NSSize {
+            width: ICON,
+            height: ICON,
+        },
+    };
+    let icon_view: *mut AnyObject = msg_send![icon_view, initWithFrame: icon_frame];
+    let icon = app_icon(bundle);
+    if !icon.is_null() {
+        let _: () = msg_send![icon_view, setImage: icon];
+    }
+    let _: () = msg_send![tile, addSubview: icon_view];
+
+    let name = label(
+        guide::TILE_NAME,
+        15.0,
+        false,
+        NSRect {
+            origin: NSPoint {
+                x: 12.0 + ICON + 12.0,
+                y: (height - 20.0) / 2.0,
+            },
+            size: NSSize {
+                width: width - ICON - 120.0,
+                height: 20.0,
+            },
+        },
+    );
+    let _: () = msg_send![tile, addSubview: name];
+
+    let hand: *mut AnyObject = msg_send![class!(NSImageView), alloc];
+    let hand: *mut AnyObject = msg_send![hand, initWithFrame: NSRect {
+        origin: NSPoint { x: width - 46.0, y: height / 2.0 - 2.0 },
+        size: NSSize { width: 20.0, height: 20.0 },
+    }];
+    let hand_img = symbol("hand.draw");
+    if !hand_img.is_null() {
+        let _: () = msg_send![hand, setImage: hand_img];
+    }
+    let secondary: *mut AnyObject = msg_send![class!(NSColor), secondaryLabelColor];
+    let _: () = msg_send![hand, setContentTintColor: secondary];
+    let _: () = msg_send![tile, addSubview: hand];
+    let drag = label(
+        guide::TILE_DRAG_LABEL,
+        10.0,
+        false,
+        NSRect {
+            origin: NSPoint {
+                x: width - 60.0,
+                y: height / 2.0 - 18.0,
+            },
+            size: NSSize {
+                width: 48.0,
+                height: 14.0,
+            },
+        },
+    );
+    set_secondary(drag);
+    center_text(drag);
+    let _: () = msg_send![tile, addSubview: drag];
+
+    // Tooltip, and the role VoiceOver reads.
+    let _: () = msg_send![tile, setToolTip: ns_string(guide::DRAG_HINT)];
+    tile
+}
+
+unsafe fn app_icon(bundle: Option<&std::path::Path>) -> *mut AnyObject {
+    let Some(path) = bundle.and_then(|p| p.to_str()) else {
+        return std::ptr::null_mut();
+    };
+    let workspace: *mut AnyObject = msg_send![class!(NSWorkspace), sharedWorkspace];
+    let icon: *mut AnyObject = msg_send![workspace, iconForFile: ns_string(path)];
+    if !icon.is_null() {
+        let _: () = msg_send![icon, setSize: NSSize { width: ICON, height: ICON }];
+    }
+    icon
+}
+
+/// `CuaDriverDragTile`: an NSView that starts a file drag of the app
+/// bundle on mouse down. It takes every click inside it (including on its
+/// icon and labels) and accepts the first click even while System Settings
+/// is the active app.
+fn tile_class() -> &'static objc2::runtime::AnyClass {
+    use objc2::declare::ClassBuilder;
+    use std::sync::OnceLock;
+
+    static CLASS: OnceLock<&'static objc2::runtime::AnyClass> = OnceLock::new();
+    CLASS.get_or_init(|| {
+        let mut builder = ClassBuilder::new("CuaDriverDragTile", class!(NSView))
+            .expect("CuaDriverDragTile already registered");
+        if let Some(protocol) = objc2::runtime::AnyProtocol::get("NSDraggingSource") {
+            builder.add_protocol(protocol);
+        }
+        unsafe {
+            builder.add_method(
+                objc2::sel!(mouseDown:),
+                tile_mouse_down as extern "C" fn(_, _, _),
+            );
+            builder.add_method(
+                objc2::sel!(hitTest:),
+                tile_hit_test as extern "C" fn(_, _, _) -> _,
+            );
+            builder.add_method(
+                objc2::sel!(acceptsFirstMouse:),
+                tile_accepts_first_mouse as extern "C" fn(_, _, _) -> _,
+            );
+            builder.add_method(
+                objc2::sel!(mouseDownCanMoveWindow),
+                tile_cannot_move_window as extern "C" fn(_, _) -> _,
+            );
+            builder.add_method(
+                objc2::sel!(draggingSession:sourceOperationMaskForDraggingContext:),
+                tile_drag_operations as extern "C" fn(_, _, _, _) -> _,
+            );
+        }
+        builder.register()
+    })
+}
+
+extern "C" fn tile_hit_test(this: *mut AnyObject, _cmd: Sel, point: NSPoint) -> *mut AnyObject {
+    // `point` is in the superview's coordinates, like `frame`.
+    let frame: NSRect = unsafe { msg_send![this, frame] };
+    let inside = point.x >= frame.origin.x
+        && point.x < frame.origin.x + frame.size.width
+        && point.y >= frame.origin.y
+        && point.y < frame.origin.y + frame.size.height;
+    if inside {
+        this
+    } else {
+        std::ptr::null_mut()
+    }
+}
+
+extern "C" fn tile_accepts_first_mouse(
+    _this: *mut AnyObject,
+    _cmd: Sel,
+    _event: *mut AnyObject,
+) -> Bool {
+    Bool::YES
+}
+
+extern "C" fn tile_cannot_move_window(_this: *mut AnyObject, _cmd: Sel) -> Bool {
+    Bool::NO
+}
+
+extern "C" fn tile_drag_operations(
+    _this: *mut AnyObject,
+    _cmd: Sel,
+    _session: *mut AnyObject,
+    _context: isize,
+) -> usize {
+    // NSDragOperationCopy | Link | Generic.
+    1 | 2 | 4
+}
+
+extern "C" fn tile_mouse_down(this: *mut AnyObject, _cmd: Sel, event: *mut AnyObject) {
+    let Some(bundle) = TILE_BUNDLE.with(|cell| cell.borrow().clone()) else {
+        return;
+    };
+    let Some(path) = bundle.to_str() else {
+        return;
+    };
+    unsafe {
+        let url: *mut AnyObject = msg_send![class!(NSURL), fileURLWithPath: ns_string(path)];
+        if url.is_null() {
+            return;
+        }
+        let item: *mut AnyObject = msg_send![class!(NSDraggingItem), alloc];
+        let item: *mut AnyObject = msg_send![item, initWithPasteboardWriter: url];
+        if item.is_null() {
+            return;
+        }
+        let bounds: NSRect = msg_send![this, bounds];
+        let drag_frame = NSRect {
+            origin: NSPoint {
+                x: 12.0,
+                y: (bounds.size.height - ICON) / 2.0,
+            },
+            size: NSSize {
+                width: ICON,
+                height: ICON,
+            },
+        };
+        let icon = app_icon(Some(&bundle));
+        let _: () = msg_send![item, setDraggingFrame: drag_frame contents: icon];
+        let items: *mut AnyObject = msg_send![class!(NSArray), arrayWithObject: item];
+        let _: *mut AnyObject = msg_send![this,
+            beginDraggingSessionWithItems: items
+            event: event
+            source: this
+        ];
+    }
+}
+
+// ── Small AppKit helpers ─────────────────────────────────────────────────
+
+/// A `CGColorRef`, typed so the Objective-C runtime check sees
+/// `^{CGColor=}` rather than `void *`.
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+struct CGColorRef(*mut c_void);
+
+unsafe impl objc2::Encode for CGColorRef {
+    const ENCODING: objc2::Encoding =
+        objc2::Encoding::Pointer(&objc2::Encoding::Struct("CGColor", &[]));
+}
+
+/// `&str` → autoreleased `NSString`.
 unsafe fn ns_string(text: &str) -> *mut AnyObject {
     let owned = std::ffi::CString::new(text).unwrap_or_default();
-    msg_send![class!(NSString), stringWithUTF8String: owned.as_ptr() as *const c_void]
+    msg_send![class!(NSString), stringWithUTF8String: owned.as_ptr()]
 }
 
-unsafe fn ns_image_for_symbol(symbol: &str) -> *mut AnyObject {
-    let name = ns_string(symbol);
-    let desc = ns_string("permission status");
-    let img: *mut AnyObject = msg_send![class!(NSImage),
-        imageWithSystemSymbolName: name
-        accessibilityDescription: desc
-    ];
-    img
+unsafe fn symbol(name: &str) -> *mut AnyObject {
+    msg_send![class!(NSImage),
+        imageWithSystemSymbolName: ns_string(name)
+        accessibilityDescription: std::ptr::null::<AnyObject>()
+    ]
 }
 
-unsafe fn build_label(
-    text: &str,
-    font_size: f64,
-    bold: bool,
-    origin: NSPoint,
-    size: NSSize,
-) -> *mut AnyObject {
-    let frame = NSRect { origin, size };
+unsafe fn new_view(frame: NSRect) -> *mut AnyObject {
+    let view: *mut AnyObject = msg_send![class!(NSView), alloc];
+    msg_send![view, initWithFrame: frame]
+}
+
+unsafe fn label(text: &str, size: f64, bold: bool, frame: NSRect) -> *mut AnyObject {
     let label: *mut AnyObject = msg_send![class!(NSTextField), alloc];
     let label: *mut AnyObject = msg_send![label, initWithFrame: frame];
-    let ns_text = ns_string(text);
-    let _: () = msg_send![label, setStringValue: ns_text];
+    let _: () = msg_send![label, setStringValue: ns_string(text)];
     let _: () = msg_send![label, setEditable: false];
     let _: () = msg_send![label, setBordered: false];
     let _: () = msg_send![label, setDrawsBackground: false];
@@ -626,212 +881,41 @@ unsafe fn build_label(
     let cell: *mut AnyObject = msg_send![label, cell];
     if !cell.is_null() {
         // NSLineBreakByWordWrapping = 0.
-        let _: () = msg_send![cell, setLineBreakMode: 0i64];
+        let _: () = msg_send![cell, setLineBreakMode: 0u64];
         let _: () = msg_send![cell, setWraps: true];
     }
     let font: *mut AnyObject = if bold {
-        msg_send![class!(NSFont), boldSystemFontOfSize: font_size]
+        msg_send![class!(NSFont), boldSystemFontOfSize: size]
     } else {
-        msg_send![class!(NSFont), systemFontOfSize: font_size]
+        msg_send![class!(NSFont), systemFontOfSize: size]
     };
     let _: () = msg_send![label, setFont: font];
     label
 }
 
-#[derive(Debug, Clone, Copy)]
-enum ButtonAction {
-    OpenSettings,
-    Dismiss,
+unsafe fn set_secondary(label: *mut AnyObject) {
+    let color: *mut AnyObject = msg_send![class!(NSColor), secondaryLabelColor];
+    let _: () = msg_send![label, setTextColor: color];
 }
 
-unsafe fn build_button(
+unsafe fn center_text(label: *mut AnyObject) {
+    // NSTextAlignmentCenter = 1.
+    let _: () = msg_send![label, setAlignment: 1i64];
+}
+
+unsafe fn button(
     title: &str,
-    origin: NSPoint,
-    size: NSSize,
-    action: ButtonAction,
+    frame: NSRect,
+    action: Sel,
+    target: *mut AnyObject,
 ) -> *mut AnyObject {
-    let frame = NSRect { origin, size };
     let button: *mut AnyObject = msg_send![class!(NSButton), alloc];
     let button: *mut AnyObject = msg_send![button, initWithFrame: frame];
-    let ns_title = ns_string(title);
-    let _: () = msg_send![button, setTitle: ns_title];
-    let _: () = msg_send![button, setBezelStyle: 1i64];
-    let _: () = msg_send![button, setButtonType: 7i64];
-    install_target(button, action);
-    button
-}
-
-/// Build one permission row: container NSView with three subviews
-/// (icon, title, subtitle). Returns handles so the poll timer can
-/// update the icon + title tint live.
-unsafe fn build_row(
-    permission: MissingPermission,
-    granted: bool,
-    origin: NSPoint,
-    size: NSSize,
-) -> RowHandles {
-    let container: *mut AnyObject = msg_send![class!(NSView), alloc];
-    let container: *mut AnyObject = msg_send![container, initWithFrame: NSRect {
-        origin,
-        size,
-    }];
-
-    // Icon
-    let icon_frame = NSRect {
-        origin: NSPoint {
-            x: 8.0,
-            y: size.height - 32.0,
-        },
-        size: NSSize {
-            width: 24.0,
-            height: 24.0,
-        },
-    };
-    let icon: *mut AnyObject = msg_send![class!(NSImageView), alloc];
-    let icon: *mut AnyObject = msg_send![icon, initWithFrame: icon_frame];
-    let symbol = if granted {
-        "checkmark.circle.fill"
-    } else {
-        "xmark.circle.fill"
-    };
-    let img = ns_image_for_symbol(symbol);
-    let _: () = msg_send![icon, setImage: img];
-    let tint: *mut AnyObject = if granted {
-        msg_send![class!(NSColor), systemGreenColor]
-    } else {
-        msg_send![class!(NSColor), systemRedColor]
-    };
-    let _: () = msg_send![icon, setContentTintColor: tint];
-    let _: () = msg_send![container, addSubview: icon];
-
-    // Title
-    let title = build_label(
-        permission.label(),
-        13.0,
-        /*bold=*/ true,
-        NSPoint {
-            x: 44.0,
-            y: size.height - 28.0,
-        },
-        NSSize {
-            width: size.width - 60.0,
-            height: 20.0,
-        },
-    );
-    if granted {
-        let c: *mut AnyObject = msg_send![class!(NSColor), secondaryLabelColor];
-        let _: () = msg_send![title, setTextColor: c];
-    }
-    let _: () = msg_send![container, addSubview: title];
-
-    // Subtitle (rationale)
-    let subtitle = build_label(
-        permission.rationale(),
-        11.0,
-        /*bold=*/ false,
-        NSPoint { x: 44.0, y: 8.0 },
-        NSSize {
-            width: size.width - 60.0,
-            height: 40.0,
-        },
-    );
-    let secondary: *mut AnyObject = msg_send![class!(NSColor), secondaryLabelColor];
-    let _: () = msg_send![subtitle, setTextColor: secondary];
-    let _: () = msg_send![container, addSubview: subtitle];
-
-    RowHandles {
-        container,
-        icon,
-        title,
-    }
-}
-
-unsafe fn build_ready_strip(origin: NSPoint, width: f64) -> *mut AnyObject {
-    let strip = build_label(
-        "✅  All set. CuaDriver is ready to use.",
-        12.0,
-        /*bold=*/ false,
-        origin,
-        NSSize {
-            width,
-            height: READY_STRIP_H,
-        },
-    );
-    let green: *mut AnyObject = msg_send![class!(NSColor), systemGreenColor];
-    let _: () = msg_send![strip, setTextColor: green];
-    strip
-}
-
-// ── Button target/action plumbing + poll timer target ────────────────────
-
-unsafe fn install_target(button: *mut AnyObject, action: ButtonAction) {
-    let target = panel_target_instance();
+    let _: () = msg_send![button, setTitle: ns_string(title)];
+    let _: () = msg_send![button, setBezelStyle: 1u64]; // rounded push button
     let _: () = msg_send![button, setTarget: target];
-    let sel = match action {
-        ButtonAction::OpenSettings => objc2::sel!(openSettings:),
-        ButtonAction::Dismiss => objc2::sel!(dismiss:),
-    };
-    let _: () = msg_send![button, setAction: sel];
-}
-
-unsafe fn panel_target_instance() -> *mut AnyObject {
-    let cls = panel_target_class();
-    let inst: *mut AnyObject = msg_send![cls, alloc];
-    let inst: *mut AnyObject = msg_send![inst, init];
-    inst
-}
-
-/// Returns the runtime-registered `CuaDriverPermissionsPanelTarget`
-/// class. Registration happens lazily on the first call and is then
-/// memoised — Objective-C requires that any given runtime class name
-/// is registered exactly once per process.
-fn panel_target_class() -> &'static objc2::runtime::AnyClass {
-    use objc2::declare::ClassBuilder;
-    use std::sync::OnceLock;
-
-    static CLASS: OnceLock<&'static objc2::runtime::AnyClass> = OnceLock::new();
-    CLASS.get_or_init(|| {
-        let superclass = class!(NSObject);
-        let mut builder = ClassBuilder::new("CuaDriverPermissionsPanelTarget", superclass)
-            .expect("CuaDriverPermissionsPanelTarget already registered");
-        unsafe {
-            builder.add_method(
-                objc2::sel!(openSettings:),
-                on_open_settings as extern "C" fn(_, _, _),
-            );
-            builder.add_method(objc2::sel!(dismiss:), on_dismiss as extern "C" fn(_, _, _));
-            builder.add_method(
-                objc2::sel!(pollTick:),
-                on_poll_tick as extern "C" fn(_, _, _),
-            );
-        }
-        builder.register()
-    })
-}
-
-extern "C" fn on_open_settings(
-    _self: *mut AnyObject,
-    _cmd: objc2::runtime::Sel,
-    _sender: *mut AnyObject,
-) {
-    OUTCOME.with(|cell| *cell.borrow_mut() = Some(PanelOutcome::OpenSettings));
-    stop_modal();
-}
-
-extern "C" fn on_dismiss(
-    _self: *mut AnyObject,
-    _cmd: objc2::runtime::Sel,
-    _sender: *mut AnyObject,
-) {
-    OUTCOME.with(|cell| *cell.borrow_mut() = Some(PanelOutcome::Dismissed));
-    stop_modal();
-}
-
-fn stop_modal() {
-    unsafe {
-        let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
-        let _: () = msg_send![app, stopModal];
-    }
+    let _: () = msg_send![button, setAction: action];
+    button
 }
 
 #[cfg(test)]
@@ -849,65 +933,50 @@ mod tests {
     }
 
     #[test]
-    fn env_on_recognises_documented_sentinels() {
+    fn env_off_recognises_documented_sentinels() {
         let _guard = env_lock();
-        for v in &["1", "true", "TRUE", "True", "yes", "YES", "on", "ON"] {
+        for v in &["0", "false", "FALSE", "no", "NO", "off", "Off"] {
             std::env::set_var("CUA_DRIVER_RS_PERMISSIONS_PANEL", v);
             assert!(
-                env_on("CUA_DRIVER_RS_PERMISSIONS_PANEL"),
-                "value {v:?} must be treated as on",
+                env_off("CUA_DRIVER_RS_PERMISSIONS_PANEL"),
+                "value {v:?} must turn the guide window off",
             );
         }
         std::env::remove_var("CUA_DRIVER_RS_PERMISSIONS_PANEL");
     }
 
     #[test]
-    fn env_on_ignores_falsy_and_unknown() {
+    fn guide_window_is_on_unless_turned_off() {
         let _guard = env_lock();
-        for v in &["0", "false", "no", "off", "garbage", ""] {
+        std::env::remove_var("CUA_DRIVER_RS_PERMISSIONS_PANEL");
+        assert!(!env_off("CUA_DRIVER_RS_PERMISSIONS_PANEL"));
+        for v in &["1", "true", "yes", "on", "garbage", ""] {
             std::env::set_var("CUA_DRIVER_RS_PERMISSIONS_PANEL", v);
             assert!(
-                !env_on("CUA_DRIVER_RS_PERMISSIONS_PANEL"),
-                "value {v:?} must not be treated as on",
+                !env_off("CUA_DRIVER_RS_PERMISSIONS_PANEL"),
+                "value {v:?} must keep the guide window on",
             );
         }
         std::env::remove_var("CUA_DRIVER_RS_PERMISSIONS_PANEL");
     }
 
     #[test]
-    fn unset_env_keeps_panel_disabled_by_default() {
-        // Opt-in default: with no env var set, the panel does not show
-        // and the gate falls back to the terminal banner.
-        let _guard = env_lock();
-        std::env::remove_var("CUA_DRIVER_RS_PERMISSIONS_PANEL");
-        assert!(!env_on("CUA_DRIVER_RS_PERMISSIONS_PANEL"));
-    }
-
-    #[test]
-    fn heading_parity_with_swift() {
-        // Verbatim parity with PermissionsGate.swift lines 239-244.
-        let st = |a: bool, sr: bool| PermissionsStatus {
-            accessibility: a,
-            screen_recording: sr,
-        };
-        assert_eq!(heading_for(st(true, true)), "CuaDriver is ready");
-        assert_eq!(heading_for(st(true, false)), "One more permission");
-        assert_eq!(heading_for(st(false, true)), "One more permission");
-        assert_eq!(
-            heading_for(st(false, false)),
-            "CuaDriver needs your permission"
-        );
-    }
-
-    #[test]
-    fn subheading_mentions_remaining_permission() {
-        let st = |a: bool, sr: bool| PermissionsStatus {
-            accessibility: a,
-            screen_recording: sr,
-        };
-        // Only Accessibility granted → mentions Screen Recording next.
-        assert!(subheading_for(st(true, false)).contains("Screen Recording"));
-        // Only Screen Recording granted → mentions Accessibility next.
-        assert!(subheading_for(st(false, true)).contains("Accessibility"));
+    fn layout_fits_the_window() {
+        // Every row from the top stays inside the window.
+        for (y, h) in [
+            (20.0, 16.0),
+            (40.0, 26.0),
+            (72.0, 36.0),
+            (114.0, 18.0),
+            (142.0, 18.0),
+            (172.0, 32.0),
+            (228.0, 18.0),
+            (250.0, TILE_H),
+            (320.0, 32.0),
+        ] {
+            let r = rect(PAD, y, CONTENT_W, h);
+            assert!(r.origin.y >= 48.0, "row at {y} overlaps the bottom buttons");
+            assert!(r.origin.y + r.size.height <= WIN_H);
+        }
     }
 }

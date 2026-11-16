@@ -297,6 +297,48 @@ fn audit_notice(json: bool, out: &mut dyn Write) -> i32 {
     0
 }
 
+/// A line of what `team create` prints.
+enum Created {
+    Plain(String),
+    Hint(String),
+}
+
+/// What `cua team create` tells the person (CUA-2791). The API makes the
+/// team waiting for payment (`status: pending`): it stays hidden, and
+/// `team ls`, `team show` and `team invite` do not know it, until Teams is
+/// started at app.cua.ai. So it never prints those as next steps for it.
+fn created_text(t: &cua_host::spaces_api::ApiOrg) -> Vec<Created> {
+    use Created::{Hint, Plain};
+    if t.status == "pending" {
+        return vec![
+            Plain(format!(
+                "Reserved the team {}. It is not active yet: a team starts when you start Teams.",
+                t.label()
+            )),
+            Plain("Next:".into()),
+            Hint(format!(
+                "  start Teams at {} (from 1 seat; the team appears once it is bought)",
+                cua_host::spaces_api::BUY_TEAMS_URL
+            )),
+            Hint("  cua auth login   (your session lists the team after a new sign-in)".into()),
+            Hint("  cua team invite <team> <email>".into()),
+        ];
+    }
+    vec![
+        Plain(format!("Created team {} ({}).", t.label(), t.id)),
+        Plain("Next:".into()),
+        Hint(
+            "  cua auth login                 (your session lists the team after a new sign-in)"
+                .into(),
+        ),
+        Plain(
+            "  buy Teams for it at app.cua.ai (team computers and device approval need it)".into(),
+        ),
+        Hint(format!("  cua team invite {} <email>", t.id)),
+        Hint(format!("  cua team add-machine {} <space>", t.id)),
+    ]
+}
+
 /// Runs `cmd` (all but `add-machine`, which goes through Spaces).
 /// `confirm` answers the delete prompt.
 pub async fn run_with(
@@ -324,18 +366,12 @@ pub async fn run_with(
             if json {
                 emit_json(out, &t);
             } else {
-                line(out, format!("Created team {} ({}).", t.label(), t.id));
-                line(out, "Next:");
-                hint_line(
-                    out,
-                    "  cua auth login                 (your session lists the team after a new sign-in)",
-                );
-                line(
-                    out,
-                    "  buy Teams for it at app.cua.ai (team computers and device approval need it)",
-                );
-                hint_line(out, format!("  cua team invite {} <email>", t.id));
-                hint_line(out, format!("  cua team add-machine {} <space>", t.id));
+                for l in created_text(&t) {
+                    match l {
+                        Created::Plain(l) => line(out, l),
+                        Created::Hint(l) => hint_line(out, l),
+                    }
+                }
             }
         }
         TeamCmd::Ls => {
@@ -682,6 +718,38 @@ mod tests {
         let mut out = Vec::new();
         run_with(cmd, ctx, &|_| true, false, &mut out).await?;
         Ok(String::from_utf8(out).unwrap())
+    }
+
+    #[test]
+    fn a_team_waiting_for_payment_does_not_suggest_steps_that_fail() {
+        let pending = cua_host::spaces_api::ApiOrg {
+            id: "0f1e2d3c".into(),
+            name: "Acme".into(),
+            status: "pending".into(),
+            ..Default::default()
+        };
+        let text: String = created_text(&pending)
+            .into_iter()
+            .map(|l| match l {
+                Created::Plain(l) | Created::Hint(l) => l,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("not active yet"), "{text}");
+        assert!(text.contains("https://app.cua.ai/buy/teams"), "{text}");
+        assert!(!text.contains("add-machine"), "{text}");
+        assert!(!text.contains("0f1e2d3c"), "{text}");
+        let active = cua_host::spaces_api::ApiOrg {
+            status: "active".into(),
+            ..pending
+        };
+        let text: String = created_text(&active)
+            .into_iter()
+            .map(|l| match l {
+                Created::Plain(l) | Created::Hint(l) => l,
+            })
+            .collect();
+        assert!(text.contains("Created team Acme"), "{text}");
     }
 
     #[tokio::test]

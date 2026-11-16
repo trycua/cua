@@ -37,6 +37,6 @@ describe("NoticesDialog (About, Acknowledgements)", () => {
 
   it("draws a notices table as a list (the Markdown view has no tables)", () => {
     const md = "Intro\n\n| Project | Used in |\n|---|---|\n| A @ 1 | x.swift |\n| B | y.swift |\n\nAfter";
-    expect(tablesAsLists(md)).toBe("Intro\n\n- A @ 1 · x.swift\n- B · y.swift\n\nAfter");
+    expect(tablesAsLists(md)).toBe("Intro\n\n- A @ 1, x.swift\n- B, y.swift\n\nAfter");
   });
 });

@@ -183,6 +183,15 @@ pub struct ProviderCreate {
     pub runtime: crate::placement::Runtime,
     /// A GPU type from [`ProviderCapabilities::gpus`]; `None`: no GPU.
     pub gpu: Option<String>,
+    /// Egress rules the sandbox must keep. Only sent to a provider whose
+    /// [`Provider::takes_network_rules`] is true.
+    pub egress: cua_vmm::egress::EgressPolicy,
+    /// The sandbox has no outbound network beyond its own channel.
+    pub no_network: bool,
+    /// The secure default applies (the Space did not choose No protection):
+    /// a provider that takes network rules keeps "internet only" even when
+    /// `egress` is empty.
+    pub protect: bool,
 }
 
 /// A sandbox on a provider.
@@ -284,6 +293,23 @@ pub trait Provider: Send + Sync + 'static {
     /// signed-in account (your own cloud, [`crate::byoc`]): Spaces shows
     /// such a sandbox as `relay:<machine>`.
     fn joins_relay(&self) -> bool {
+        false
+    }
+
+    /// Whether the platform enforces a sandbox's network rules
+    /// ([`ProviderCreate::egress`], [`ProviderCreate::no_network`]) itself,
+    /// outside the guest. When false (the default) the core refuses a
+    /// create that asks for rules instead of starting it without them.
+    fn takes_network_rules(&self) -> bool {
+        false
+    }
+
+    /// Whether every sandbox of this provider is held to "internet only" by
+    /// the platform itself, whatever it asks (a cloud machine whose own
+    /// firewall cua installs before the sandbox starts). Such a provider
+    /// takes a Space with the default network, but no other rules unless
+    /// [`Provider::takes_network_rules`].
+    fn keeps_internet_only(&self) -> bool {
         false
     }
 

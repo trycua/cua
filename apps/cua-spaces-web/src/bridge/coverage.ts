@@ -28,6 +28,7 @@ import { NEW_SPACE_COVERAGE } from "./ops/new-space";
 import { SHARE_COVERAGE } from "./ops/share";
 import { AGENT_DETAIL_COVERAGE } from "./ops/agent-detail";
 import { AGENT_KEYS_COVERAGE } from "./ops/agent-keys";
+import { GITHUB_COVERAGE } from "./ops/github";
 import { KEYVAULT_MANAGE_COVERAGE } from "./ops/keyvault-manage";
 import { KEYVAULT_SETUP_COVERAGE } from "./ops/keyvault-setup";
 import { TELEPORT_COVERAGE } from "./ops/teleport";
@@ -43,15 +44,20 @@ import { RELAY_USAGE_COVERAGE } from "./ops/relay-usage";
 import { NUDGES_COVERAGE } from "./ops/nudges";
 import { RESOURCES_COVERAGE } from "./ops/resources";
 import { MACHINES_COVERAGE } from "./ops/machines";
+import { SPACES_SETTINGS_COVERAGE } from "./ops/spaces-settings";
 import { CHECKLIST_COVERAGE } from "./ops/checklist";
+import { CI_COVERAGE } from "./ops/ci";
 import { LINKS_COVERAGE } from "./ops/links";
 import { CLI_COVERAGE } from "./ops/cli";
 import { THREAD_COVERAGE } from "./ops/thread";
 import { PRESENCE_COVERAGE } from "./ops/presence";
 import { CLOUD_APPROVE_COVERAGE } from "./ops/cloud-approve";
+import { AGENT_THREADS_COVERAGE } from "./ops/agent-threads";
+import { AGENT_SIGN_IN_COVERAGE } from "./ops/agent-sign-in";
 import { RUNTIME_FIX_COVERAGE } from "./ops/runtime-fix";
 import { TELEMETRY_COVERAGE } from "./ops/telemetry";
 import { STARTUP_COVERAGE } from "./ops/startup";
+import { DRIVER_COVERAGE } from "./ops/driver";
 
 export interface OpCoverage {
   webkit: { methods: readonly WebkitMethod[]; byDesign?: string };
@@ -85,6 +91,61 @@ export const HOST_COVERAGE = {
     tauri: [],
     unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no rename" },
   },
+  "network.get": {
+    webkit: { methods: ["network.get"] },
+    tauri: [],
+    unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no network settings" },
+  },
+  "network.set": {
+    webkit: { methods: ["network.set"] },
+    tauri: [],
+    unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no network settings" },
+  },
+  "network.log": {
+    webkit: { methods: ["network.log"] },
+    tauri: [],
+    unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no network settings" },
+  },
+  "network.ackNotice": {
+    webkit: { methods: ["network.ackNotice"] },
+    tauri: [],
+    unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no network settings" },
+  },
+  "spaces.setAccess": {
+    webkit: { methods: ["spaces.setAccess"] },
+    tauri: [],
+    unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no network settings" },
+  },
+  "spaces.tree": {
+    webkit: { methods: ["spaces.tree"] },
+    tauri: [],
+    unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no child Spaces" },
+  },
+  "children.set": {
+    webkit: { methods: ["children.set"] },
+    tauri: [],
+    unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no child Spaces" },
+  },
+  "budget.get": {
+    webkit: { methods: ["budget.get"] },
+    tauri: [],
+    unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no child Spaces" },
+  },
+  "budget.set": {
+    webkit: { methods: ["budget.set"] },
+    tauri: [],
+    unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no child Spaces" },
+  },
+  "services.list": {
+    webkit: { methods: ["services.list"] },
+    tauri: [],
+    unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no child Spaces" },
+  },
+  "services.control": {
+    webkit: { methods: ["services.control"] },
+    tauri: [],
+    unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no child Spaces" },
+  },
   "machines.list": {
     webkit: { methods: ["spaces.list", "machines.list"] },
     tauri: ["host_status", "list_hosts", "get_environment"],
@@ -96,7 +157,15 @@ export const HOST_COVERAGE = {
       methods: ["settings.choose", "settings.get", "settings.update", "window.setBackgroundColor"],
       byDesign: "theme and hotkey are page-side; New Spaces start on This Mac, or in a linked cloud when This Mac is full",
     },
-    tauri: ["ui_storage_set", "telemetry_set_enabled", "set_default_location", "login_item_set", "telemetry_status", "get_default_location", "login_item_status"],
+    tauri: [
+      "ui_storage_set",
+      "telemetry_set_enabled",
+      "set_default_location",
+      "login_item_set",
+      "telemetry_status",
+      "get_default_location",
+      "login_item_status",
+    ],
   },
   "settings.choose": {
     webkit: { methods: ["settings.choose", "settings.get"] },
@@ -126,6 +195,10 @@ export const HOST_COVERAGE = {
     webkit: { methods: ["onboarding.complete"] },
     tauri: ["complete_onboarding"],
   },
+  "session.resetOnboarding": {
+    webkit: { methods: ["onboarding.reset"] },
+    tauri: ["reset_onboarding"],
+  },
   "session.openExternal": {
     webkit: { methods: [], byDesign: "the page opens the link itself (window.open, which WebKit hands to the browser)" },
     tauri: ["open_external"],
@@ -154,7 +227,11 @@ export const HOST_COVERAGE = {
   "agents.setup": { webkit: { methods: ["agents.setup"] }, tauri: ["agent_setup_detect"] },
   "agents.configure": { webkit: { methods: ["agents.configure"] }, tauri: ["agent_setup_configure"] },
   "agents.signIn": { webkit: { methods: ["agents.signIn"] }, tauri: [], unsupported: { tauri: "no command starts an agent's own sign-in" } },
-  "agents.status": { webkit: { methods: ["agents.status"] }, tauri: [], unsupported: { tauri: "the Tauri shell has no connection status command (cua connect status --json)" } },
+  "agents.status": {
+    webkit: { methods: ["agents.status"] },
+    tauri: [],
+    unsupported: { tauri: "the Tauri shell has no connection status command (cua connect status --json)" },
+  },
   "agents.connect": { webkit: { methods: ["agents.connect"] }, tauri: [], unsupported: { tauri: "the Tauri shell can't copy an agent's sign-in to Keyvault" } },
   "agents.disconnect": { webkit: { methods: ["agents.disconnect"] }, tauri: [], unsupported: { tauri: "the Tauri shell can't delete a copied sign-in" } },
   "agents.signInStart": { webkit: { methods: ["agents.signInStart"] }, tauri: [], unsupported: { tauri: "the Tauri shell can't start a device sign-in" } },
@@ -164,6 +241,7 @@ export const HOST_COVERAGE = {
   ...TELEPORT_COVERAGE,
   ...SHARE_COVERAGE,
   ...AGENT_KEYS_COVERAGE,
+  ...GITHUB_COVERAGE,
   ...KEYVAULT_SETUP_COVERAGE,
   ...KEYVAULT_MANAGE_COVERAGE,
   ...VOLUME_COVERAGE,
@@ -171,16 +249,35 @@ export const HOST_COVERAGE = {
   // Settings: About, Experiments, launch at login, Devices, Storage (ops/settings.ts; README, "Settings").
   "about.get": { webkit: { methods: ["about.get"] }, tauri: ST["about.get"] },
   "about.set": { webkit: { methods: ["about.set"] }, tauri: ST["about.set"], unsupported: { tauri: "the Tauri updater has one feed and no controls" } },
-  "about.checkNow": { webkit: { methods: ["about.checkNow"] }, tauri: ST["about.checkNow"], unsupported: { tauri: "the Tauri updater has one feed and no controls" } },
+  "about.checkNow": {
+    webkit: { methods: ["about.checkNow"] },
+    tauri: ST["about.checkNow"],
+    unsupported: { tauri: "the Tauri updater has one feed and no controls" },
+  },
   "update.get": { webkit: { methods: ["update.get"] }, tauri: ST["update.get"], unsupported: { tauri: "the Tauri updater has no in-app indicator" } },
-  "update.install": { webkit: { methods: ["update.install"] }, tauri: ST["update.install"], unsupported: { tauri: "the Tauri updater has no in-app indicator" } },
+  "update.install": {
+    webkit: { methods: ["update.install"] },
+    tauri: ST["update.install"],
+    unsupported: { tauri: "the Tauri updater has no in-app indicator" },
+  },
   "experiments.get": { webkit: { methods: ["app.info"] }, tauri: ST["experiments.get"] },
   "experiments.set": { webkit: { methods: ["app.info", "settings.choose"] }, tauri: ST["experiments.set"] },
   "loginItem.get": { webkit: { methods: ["loginItem.get"] }, tauri: ST["loginItem.get"] },
   "loginItem.set": { webkit: { methods: ["loginItem.set"] }, tauri: ST["loginItem.set"] },
   "loginItem.openSettings": { webkit: { methods: ["loginItem.openSettings"] }, tauri: ST["loginItem.openSettings"] },
-  "runtimes.check": { webkit: { methods: ["runtimes.check"] }, tauri: ST["runtimes.check"], unsupported: { tauri: "the Tauri app has no per-kind runtime settings" } },
-  "runtimes.browse": { webkit: { methods: ["runtimes.browse"] }, tauri: ST["runtimes.browse"], unsupported: { tauri: "the Tauri app has no per-kind runtime settings" } },
+  "runtimes.check": {
+    webkit: { methods: ["runtimes.check"] },
+    tauri: ST["runtimes.check"],
+    unsupported: { tauri: "the Tauri app has no per-kind runtime settings" },
+  },
+  "runtimes.browse": {
+    webkit: { methods: ["runtimes.browse"] },
+    tauri: ST["runtimes.browse"],
+    unsupported: { tauri: "the Tauri app has no per-kind runtime settings" },
+  },
+  "repoCache.get": { webkit: { methods: ["repoCache.get"] }, tauri: ST["repoCache.get"], unsupported: { tauri: "the Tauri app has no repo cache" } },
+  "repoCache.set": { webkit: { methods: ["repoCache.set"] }, tauri: ST["repoCache.set"], unsupported: { tauri: "the Tauri app has no repo cache" } },
+  "repoCache.clear": { webkit: { methods: ["repoCache.clear"] }, tauri: ST["repoCache.clear"], unsupported: { tauri: "the Tauri app has no repo cache" } },
   "devices.get": { webkit: { methods: ["devices.get"] }, tauri: ST["devices.get"] },
   "devices.enroll": { webkit: { methods: ["devices.enroll"] }, tauri: ST["devices.enroll"] },
   "devices.checkEnrolled": { webkit: { methods: ["devices.checkEnrolled"] }, tauri: ST["devices.checkEnrolled"] },
@@ -207,13 +304,18 @@ export const HOST_COVERAGE = {
   ...NUDGES_COVERAGE,
   ...RESOURCES_COVERAGE,
   ...MACHINES_COVERAGE,
+  ...SPACES_SETTINGS_COVERAGE,
   ...CHECKLIST_COVERAGE,
+  ...CI_COVERAGE,
   ...LINKS_COVERAGE,
   ...CLI_COVERAGE,
   ...THREAD_COVERAGE,
   ...PRESENCE_COVERAGE,
   ...CLOUD_APPROVE_COVERAGE,
+  ...AGENT_THREADS_COVERAGE,
+  ...AGENT_SIGN_IN_COVERAGE,
   ...RUNTIME_FIX_COVERAGE,
+  ...DRIVER_COVERAGE,
 } as const satisfies Record<OpName, OpCoverage>;
 
 /**
@@ -222,5 +324,6 @@ export const HOST_COVERAGE = {
  */
 export const WEBKIT_HOST_ONLY: Partial<Record<WebkitMethod, string>> = {
   "window.setDragRegions": "the webkit adapter sends the page's drag regions itself whenever the layout changes (drag-regions.ts)",
-  "window.setDropTargets": "the webkit adapter sends the Space tiles' boxes itself whenever the layout changes, for a real window dragged onto one (window-drop.ts)",
+  "window.setDropTargets":
+    "the webkit adapter sends the Space tiles' boxes itself whenever the layout changes, for a real window dragged onto one (window-drop.ts)",
 };

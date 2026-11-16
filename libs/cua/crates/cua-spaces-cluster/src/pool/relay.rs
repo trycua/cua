@@ -259,7 +259,14 @@ impl RelayPool {
             .await?;
         let code = v["code"].as_str().unwrap_or_default();
         match (status, code) {
-            (404, "not_found") | (404, "") if v.get("error").is_none() || code == "not_found" => {
+            // The relay itself has no pool API. A coordinator's own answer is
+            // sealed whatever its status: its 404 ("no session NAME") is the
+            // answer, not a relay without the API (taking it for that made the
+            // daemon coordinate its pool runs alone from then on).
+            (404, "not_found") | (404, "")
+                if v.get("sealed").is_none()
+                    && (v.get("error").is_none() || code == "not_found") =>
+            {
                 Err(PoolError::Unsupported(
                     v["error"].as_str().unwrap_or("no pool API").to_string(),
                 ))

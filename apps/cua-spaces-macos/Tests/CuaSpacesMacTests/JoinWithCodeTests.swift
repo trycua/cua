@@ -41,10 +41,10 @@ struct JoinWithCodeTests {
 
     @Test func parsesLinks() {
         func route(_ s: String) -> String? { URL(string: s).flatMap(JoinWithCode.route(for:)) }
-        #expect(route("cua://add/abcd-efgh-jkmn") == "/machines?join=ABCD-EFGH-JKMN")
+        #expect(route("cua://add/abcd-efgh-jkmn") == "/spaces?join=ABCD-EFGH-JKMN")
         #expect(route("cua://add/ABCDEFGHJKMN?relay=https%3A%2F%2Fr.example.com%2Fx")
-                == "/machines?join=ABCD-EFGH-JKMN&relay=https%3A%2F%2Fr.example.com%2Fx")
-        #expect(route("cua://add?code=abcdefghjkmn") == "/machines?join=ABCD-EFGH-JKMN")
+                == "/spaces?join=ABCD-EFGH-JKMN&relay=https%3A%2F%2Fr.example.com%2Fx")
+        #expect(route("cua://add?code=abcdefghjkmn") == "/spaces?join=ABCD-EFGH-JKMN")
         #expect(route("cua://add/ABCDEFGHJKMN/extra") == nil)
         #expect(route("cua://add/ABCD-EFGH-JKM") == nil)
         #expect(route("cua://add/ABCD-EFGH-JKMI") == nil)
@@ -60,11 +60,11 @@ struct JoinWithCodeTests {
             URL(string: s).flatMap { JoinWithCode.route(for: $0, scheme: scheme) }
         }
         // Local takes every form of its own link.
-        #expect(route("cua-local://add/abcd-efgh-jkmn", scheme: "cua-local") == "/machines?join=ABCD-EFGH-JKMN")
+        #expect(route("cua-local://add/abcd-efgh-jkmn", scheme: "cua-local") == "/spaces?join=ABCD-EFGH-JKMN")
         #expect(route("cua-local://add/ABCDEFGHJKMN?relay=https%3A%2F%2Fr.example.com%2Fx", scheme: "cua-local")
-                == "/machines?join=ABCD-EFGH-JKMN&relay=https%3A%2F%2Fr.example.com%2Fx")
-        #expect(route("cua-local://add?code=abcdefghjkmn", scheme: "cua-local") == "/machines?join=ABCD-EFGH-JKMN")
-        #expect(route("CUA-LOCAL://add/ABCDEFGHJKMN", scheme: "cua-local") == "/machines?join=ABCD-EFGH-JKMN")
+                == "/spaces?join=ABCD-EFGH-JKMN&relay=https%3A%2F%2Fr.example.com%2Fx")
+        #expect(route("cua-local://add?code=abcdefghjkmn", scheme: "cua-local") == "/spaces?join=ABCD-EFGH-JKMN")
+        #expect(route("CUA-LOCAL://add/ABCDEFGHJKMN", scheme: "cua-local") == "/spaces?join=ABCD-EFGH-JKMN")
         // ... and judges it as strictly as Stable judges `cua://`.
         #expect(route("cua-local://add/ABCDEFGHJKMN/extra", scheme: "cua-local") == nil)
         #expect(route("cua-local://add/ABCD-EFGH-JKMI", scheme: "cua-local") == nil)
@@ -73,10 +73,10 @@ struct JoinWithCodeTests {
         #expect(route("cua://add/ABCDEFGHJKMN", scheme: "cua-local") == nil)
         // A Stable build still rejects `cua-local://`.
         #expect(route("cua-local://add/ABCDEFGHJKMN", scheme: "cua") == nil)
-        #expect(route("cua://add/ABCDEFGHJKMN", scheme: "cua") == "/machines?join=ABCD-EFGH-JKMN")
+        #expect(route("cua://add/ABCDEFGHJKMN", scheme: "cua") == "/spaces?join=ABCD-EFGH-JKMN")
         // This test process is Stable (no `CuaUrlScheme` in its bundle).
         #expect(JoinWithCode.route(for: URL(string: "cua-local://add/ABCDEFGHJKMN")!) == nil)
-        #expect(JoinWithCode.route(for: URL(string: "cua://add/ABCDEFGHJKMN")!) == "/machines?join=ABCD-EFGH-JKMN")
+        #expect(JoinWithCode.route(for: URL(string: "cua://add/ABCDEFGHJKMN")!) == "/spaces?join=ABCD-EFGH-JKMN")
     }
 
     @Test func theSchemeComesFromTheBundle() {
@@ -91,7 +91,7 @@ struct JoinWithCodeTests {
     }
 
     @Test func linkRouteIsThePath() {
-        #expect(MainUIRoute.path("/machines?join=ABCD-EFGH-JKMN").webPath == "/machines?join=ABCD-EFGH-JKMN")
+        #expect(MainUIRoute.path("/spaces?join=ABCD-EFGH-JKMN").webPath == "/spaces?join=ABCD-EFGH-JKMN")
     }
 
     @Test @MainActor func emptyCodeIsBadArgs() async throws {

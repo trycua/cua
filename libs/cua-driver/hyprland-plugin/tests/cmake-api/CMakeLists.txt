@@ -21,6 +21,21 @@ foreach(tier IN ITEMS socket1 legacy unsupported socket1)
     endif()
 endforeach()
 
+foreach(tier IN ITEMS window_backend window_legacy window_unsupported window_backend)
+    cua_detect_hyprland_window_api(actual "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        "-DCUA_PROBE_${tier}=1;-DCUA_PROBE_FLAG=1")
+    if(tier STREQUAL "window_backend")
+        set(expected 1)
+    elseif(tier STREQUAL "window_legacy")
+        set(expected 0)
+    else()
+        set(expected unsupported)
+    endif()
+    if(NOT actual STREQUAL expected)
+        message(FATAL_ERROR "Expected ${tier} (${expected}), found ${actual}")
+    endif()
+endforeach()
+
 if(NOT CMAKE_CXX_STANDARD STREQUAL "17" OR
    NOT CMAKE_REQUIRED_FLAGS STREQUAL "-DCUA_CALLER_SETTING=1" OR
    DEFINED CMAKE_TRY_COMPILE_TARGET_TYPE)

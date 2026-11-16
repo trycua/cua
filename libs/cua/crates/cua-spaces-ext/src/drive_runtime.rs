@@ -5,8 +5,9 @@
 //! services (change feed, block cache, this machine's mount, storage
 //! switching) and the volume mounted in each Space's guest.
 //!
-//! A Space's guest mounts its own view (`public/` read-only, its
-//! `spaces/<this>/` read-write), served from this host by
+//! A Space's guest mounts its own view (its `spaces/<name>--<id>/`
+//! read-write and the named volumes it asked for; `public/` only once it is
+//! granted), served from this host by
 //! [`cua_volume::guest::GuestServers`] over the Space's `/volume` socket
 //! ([`cua_spaces::volume`]); the access rules, versioning, audit and secret
 //! scan stay here, and the guest never holds storage keys. The view is
@@ -22,6 +23,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use cua_spaces::registry::VolumeSetting;
 use cua_spaces::volume::{VOLUME_FEATURE, VolumeAttachment};
 use cua_spaces::{Error, Result, Spaces};
 use cua_volume::guest::GuestServers;
@@ -32,6 +34,26 @@ use crate::DriveResult as _;
 
 /// How long a guest gets to mount.
 const MOUNT_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long the writes still pending get to land when the volume changes
+/// hands (an agent takes it or gives it back) or is flushed for a save.
+/// They land through the store, which waits on the other computer while
+/// sync has stalled; past this the change is refused and the caller works
+/// without the volume, rather than waiting as long as sync does (CUA-4002).
+pub(crate) const VIEW_SWITCH_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long unmounting gets: the guest's unmount, then the pending writes.
+/// Writes that could not land stay in the volume's spool on this machine.
+const DETACH_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// What the volume says when a change of hands ran out of time.
+fn view_switch_timed_out(what: &str) -> Error {
+    Error::extension(
+        "volume_backend",
+        format!(
+            "Cua Volume isn't answering ({what} took longer than {} s): sync with your other computers is stalled or slow",
+            VIEW_SWITCH_TIMEOUT.as_secs()
+        ),
+    )
+}
 
 /// A Space's mounted volume.
 pub(crate) struct Mounted {
@@ -41,6 +63,9 @@ pub(crate) struct Mounted {
     holder: Option<String>,
     /// The named volumes the Space mounted (its view grants them).
     access: Vec<cua_volume::MountAccess>,
+    /// Whether the view has the Space's own folder (the Space's Volume
+    /// setting is not "off").
+    own: bool,
     /// The mounts they came from.
     named: Vec<cua_spaces::named_volumes::VolumeMount>,
 }
@@ -59,15 +84,27 @@ impl Mounted {
         }
     }
 
+    /// Unmounts in the guest, then lands what is pending, within
+    /// [`DETACH_TIMEOUT`] each: a stalled sync never holds up an unmount.
     async fn detach(self) {
-        let _ = self.attachment.detach().await;
-        match Arc::try_unwrap(self.servers) {
-            Ok(s) => {
-                let _ = s.stop().await;
-            }
-            Err(s) => {
-                let _ = s.vfs().flush_all().await;
-            }
+        let pending = self.vfs().pending().len();
+        if tokio::time::timeout(DETACH_TIMEOUT, self.attachment.detach())
+            .await
+            .is_err()
+        {
+            tracing::warn!("Cua Volume: the guest did not unmount in time");
+        }
+        let landed = match Arc::try_unwrap(self.servers) {
+            Ok(s) => tokio::time::timeout(DETACH_TIMEOUT, s.stop()).await.is_ok(),
+            Err(s) => tokio::time::timeout(DETACH_TIMEOUT, s.vfs().flush_all())
+                .await
+                .is_ok(),
+        };
+        if !landed {
+            tracing::warn!(
+                pending,
+                "Cua Volume: unmounted with writes still pending (sync is stalled); they stay in the volume's spool on this machine"
+            );
         }
     }
 }
@@ -96,6 +133,9 @@ pub(crate) struct DriveRuntime {
     /// restarts (see [`spawn_attach`]).
     watchers: std::sync::Mutex<BTreeMap<String, tokio::task::JoinHandle<()>>>,
     pub(crate) volume_auto: bool,
+    /// The Volume across this account's machines, once the daemon started
+    /// it (it runs only with another machine signed in).
+    pub(crate) replica: tokio::sync::OnceCell<Arc<crate::replica_runtime::ReplicaRuntime>>,
 }
 
 impl Default for DriveRuntime {
@@ -107,6 +147,7 @@ impl Default for DriveRuntime {
             unavailable: std::sync::Mutex::new(BTreeMap::new()),
             watchers: std::sync::Mutex::new(BTreeMap::new()),
             volume_auto: true,
+            replica: tokio::sync::OnceCell::new(),
         }
     }
 }
@@ -132,6 +173,58 @@ impl DriveRuntime {
 
     pub(crate) fn set_keys(&mut self, keys: Arc<dyn cua_volume::service::KeyStore>) {
         self.keys = keys;
+    }
+}
+
+/// `ctx` under Secure Spaces: a Space reads `public/` only through a grant.
+/// Without the experiment a Space reads it as it always could.
+fn isolated_if_secure(ctx: cua_volume::Context) -> cua_volume::Context {
+    if cua_spaces::network::Mode::from_env() == cua_spaces::network::Mode::Secure {
+        ctx.isolated()
+    } else {
+        ctx
+    }
+}
+
+/// The root of the tree `id` is in, as the Volume names Spaces. Every Space
+/// is its own tree until Spaces have parents.
+fn tree_root(spaces: &Spaces, id: &str) -> String {
+    spaces
+        .volume_space_id(id)
+        .unwrap_or_else(|_| id.to_string())
+}
+
+/// The access context of the Space `id` (a shell in it): its own folder
+/// (unless its Volume is off), its tree, and no agent.
+pub fn space_context(spaces: &Spaces, id: &str) -> cua_volume::Context {
+    let vid = spaces
+        .volume_space_id(id)
+        .unwrap_or_else(|_| id.to_string());
+    let ctx =
+        isolated_if_secure(cua_volume::Context::space(&vid).with_tree(&tree_root(spaces, id)));
+    if spaces.volume_setting(id) == cua_spaces::registry::VolumeSetting::Off {
+        ctx.without_own_folder()
+    } else {
+        ctx
+    }
+}
+
+/// The access context of persistent agent `agent`, acting in `space` when
+/// it is in one: its home, and what `space_context` gives the Space.
+pub fn agent_context(spaces: &Spaces, agent: &str, space: Option<&str>) -> cua_volume::Context {
+    let Some(space) = space else {
+        return cua_volume::Context::agent(agent, None);
+    };
+    let vid = spaces
+        .volume_space_id(space)
+        .unwrap_or_else(|_| space.to_string());
+    let ctx = isolated_if_secure(
+        cua_volume::Context::agent(agent, Some(&vid)).with_tree(&tree_root(spaces, space)),
+    );
+    if spaces.volume_setting(space) == cua_spaces::registry::VolumeSetting::Off {
+        ctx.without_own_folder()
+    } else {
+        ctx
     }
 }
 
@@ -254,6 +347,9 @@ impl SpacesDrive for Spaces {
             return;
         };
         ext.runtime.stop_watchers();
+        if let Some(r) = ext.runtime.replica.get() {
+            Box::pin(r.shutdown()).await;
+        }
         // This machine's mount first: it is quick, and a daemon that is
         // ended before the Spaces' volumes are done (a stop that waits
         // 30 s, then signals) must not leave it behind with no server, the
@@ -279,16 +375,35 @@ impl SpacesDrive for Spaces {
         if let Some(m) = volumes.get(&id) {
             // Live, and with the mounts the Space has now (a Space that
             // connected first and got its mounts after is mounted again).
-            if m.attachment.is_live() && m.named == self.volume_mounts(&id)? {
+            let own = self.volume_setting(&id) != VolumeSetting::Off;
+            if m.attachment.is_live() && m.named == self.volume_mounts(&id)? && m.own == own {
                 return Ok(Some(m.info(&id)));
             }
+            // Off the lock: an unmount waits on the store, and every other
+            // Space's volume must not wait with it.
             if let Some(stale) = volumes.remove(&id) {
-                stale.detach().await;
+                tokio::spawn(stale.detach());
             }
         }
-        let s = self.space(&id).await?;
         let named = self.volume_mounts(&id)?;
+        let own = self.volume_setting(&id) != VolumeSetting::Off;
+        if !own && named.is_empty() {
+            // "Volume: Off" and no named volumes: nothing to mount.
+            ext.runtime
+                .note_unavailable(&id, Some("the Volume is off for this Space".into()));
+            return Ok(None);
+        }
+        let s = self.space(&id).await?;
         let access = mount_access(&named);
+        for m in named.iter().filter(|m| !m.read_only) {
+            tracing::warn!(
+                space = %id,
+                volume = %m.name,
+                "volume {} is mounted read-write; mounts are read-only unless asked for :rw \
+                 (a mount saved before that keeps the mode it was saved with)",
+                m.name
+            );
+        }
         let Some(backend) = s.volume_backend() else {
             let answered_before = self
                 .registry()
@@ -332,14 +447,19 @@ impl SpacesDrive for Spaces {
             return Ok(None);
         };
         let drive = ext.drive();
+        // A Space from before its folder carried its id: move the folder,
+        // once, and keep what it could read (`public/`).
+        migrate_legacy_folder(self, drive, &id).await?;
         let svc = self.drive_service().await.ok();
         let state = drive
             .state_dir()
             .join("volumes")
-            .join(cua_volume::path::space_folder_name(&id));
+            .join(cua_volume::path::space_folder_name(
+                &self.volume_space_id(&id).unwrap_or_else(|_| id.clone()),
+            ));
         let vfs = Vfs::new(
             drive,
-            cua_volume::Context::space(&id).with_mounts(access.clone()),
+            space_context(self, &id).with_mounts(access.clone()),
             svc.as_ref().map(|s| s.cache().clone()),
             svc.as_ref().map(|s| s.feed().clone()),
             &state,
@@ -372,6 +492,7 @@ impl SpacesDrive for Spaces {
             servers,
             holder: None,
             access,
+            own,
             named,
         };
         let info = m.info(&id);
@@ -416,19 +537,40 @@ impl SpacesDrive for Spaces {
         }
         let ext = self.drive_extension()?;
         let id = self.resolve(space)?.to_string();
-        let mut volumes = ext.runtime.volumes.lock().await;
-        let Some(m) = volumes.get_mut(&id) else {
-            return Ok(None);
+        // The agent holds the volume from here (no other agent takes it
+        // meanwhile); the view switches off the lock, since it lands the
+        // pending writes through the store first.
+        let (vfs, ctx, info) = {
+            let mut volumes = ext.runtime.volumes.lock().await;
+            let Some(m) = volumes.get_mut(&id) else {
+                return Ok(None);
+            };
+            if m.holder.as_deref().is_some_and(|h| h != agent) {
+                return Ok(None);
+            }
+            m.holder = Some(agent.to_string());
+            let ctx = cua_volume::Context::agent(agent, Some(&id)).with_mounts(m.access.clone());
+            (m.vfs().clone(), ctx, m.info(&id))
         };
-        if m.holder.as_deref().is_some_and(|h| h != agent) {
-            return Ok(None);
+        let switched = match tokio::time::timeout(VIEW_SWITCH_TIMEOUT, vfs.set_context(ctx)).await {
+            Ok(r) => r.drive(),
+            Err(_) => Err(view_switch_timed_out("showing the agent's folder")),
+        };
+        if let Err(e) = switched {
+            // Not switched: give the hold back, so the next try starts over.
+            let mut volumes = ext.runtime.volumes.lock().await;
+            if let Some(m) = volumes.get_mut(&id)
+                && m.holder.as_deref() == Some(agent)
+                && Arc::ptr_eq(m.vfs(), &vfs)
+            {
+                m.holder = None;
+            }
+            return Err(e);
         }
-        m.vfs()
-            .set_context(cua_volume::Context::agent(agent, Some(&id)).with_mounts(m.access.clone()))
-            .await
-            .drive()?;
-        m.holder = Some(agent.to_string());
-        Ok(Some(m.info(&id)))
+        Ok(Some(VolumeInfo {
+            principal: vfs.context().principal.id(),
+            ..info
+        }))
     }
 
     async fn volume_flush_agent(&self, space: &str, agent: &str) -> Result<bool> {
@@ -441,21 +583,37 @@ impl SpacesDrive for Spaces {
                 _ => return Ok(false),
             }
         };
-        vfs.flush_all().await.drive()?;
+        match tokio::time::timeout(VIEW_SWITCH_TIMEOUT, vfs.flush_all()).await {
+            Ok(r) => r.drive()?,
+            Err(_) => return Err(view_switch_timed_out("saving the agent's files")),
+        }
         Ok(true)
     }
 
     async fn volume_release_agent(&self, space: &str, agent: &str) -> Result<()> {
         let ext = self.drive_extension()?;
         let id = self.resolve(space)?.to_string();
+        let (vfs, ctx) = {
+            let volumes = ext.runtime.volumes.lock().await;
+            match volumes.get(&id) {
+                Some(m) if m.holder.as_deref() == Some(agent) => (
+                    m.vfs().clone(),
+                    cua_volume::Context::space(&id).with_mounts(m.access.clone()),
+                ),
+                _ => return Ok(()),
+            }
+        };
+        // Off the lock, like taking it. Until it switches, the agent keeps
+        // the hold (the view is still the agent's).
+        match tokio::time::timeout(VIEW_SWITCH_TIMEOUT, vfs.set_context(ctx)).await {
+            Ok(r) => r.drive()?,
+            Err(_) => return Err(view_switch_timed_out("giving the volume back to the Space")),
+        }
         let mut volumes = ext.runtime.volumes.lock().await;
         if let Some(m) = volumes.get_mut(&id)
             && m.holder.as_deref() == Some(agent)
+            && Arc::ptr_eq(m.vfs(), &vfs)
         {
-            m.vfs()
-                .set_context(cua_volume::Context::space(&id).with_mounts(m.access.clone()))
-                .await
-                .drive()?;
             m.holder = None;
         }
         Ok(())
@@ -491,6 +649,51 @@ impl DriveRuntime {
     }
 }
 
+/// Moves the folder of a Space that got its id after it was created (its
+/// folder is still `spaces/<name>/`) to `spaces/<name>--<id>/`, and gives the
+/// Space a read-only grant on `public/`, which it could read before that
+/// became a grant. Done once: the Space's record says so.
+async fn migrate_legacy_folder(spaces: &Spaces, drive: &cua_volume::Drive, id: &str) -> Result<()> {
+    let Some(meta) = spaces.registry().meta(id).filter(|m| m.volume_legacy) else {
+        return Ok(());
+    };
+    let vid = meta.volume_id(id);
+    let moved = drive.migrate_space_folder(id, &vid).await.drive()?;
+    drive
+        .grant_migrated(
+            &cua_volume::Principal::Space(vid).id(),
+            cua_volume::path::PUBLIC,
+            cua_volume::Mode::Read,
+            "kept from before public/ became a grant; revoke it to close public/ to this Space",
+        )
+        .drive()?;
+    spaces
+        .registry()
+        .update_meta(id, |m| m.volume_legacy = false)?;
+    tracing::info!(space = %id, moved, "Space folder renamed to carry the Space's id");
+    Ok(())
+}
+
+/// Applies the Space's Volume setting (own folder / off) now: a mounted
+/// volume is shown again with the new view, or unmounted when nothing is
+/// left to show; an unmounted one of a running Space mounts in the
+/// background. Returns whether the Space has a volume afterwards (a mount
+/// that is still coming up counts as not yet).
+pub(crate) async fn apply_setting(spaces: &Spaces, space: &str) -> Result<bool> {
+    let id = spaces.resolve(space)?.to_string();
+    if spaces.volume(&id).await.is_some() {
+        if spaces.volume_attach(&id).await?.is_none() {
+            spaces.volume_detach(&id).await?;
+            return Ok(false);
+        }
+        return Ok(true);
+    }
+    if !stopped_on_its_own(spaces, &id).await {
+        spawn_attach(spaces, &id);
+    }
+    Ok(false)
+}
+
 /// Mounts the volume of a Space that just connected, in the background (a
 /// guest without the backend is left alone). Local and cloud Spaces only:
 /// a machine added by address, or a host Space, is someone's own computer.
@@ -509,6 +712,12 @@ pub(crate) fn spawn_attach(spaces: &Spaces, id: &str) {
     // named volumes: then this machine, which holds the Cua Volume, serves
     // them over the Space's own connection (a Space on a pool host).
     if !attaches_on_connect(id, spaces.volume_mounts(id).is_ok_and(|m| !m.is_empty())) {
+        return;
+    }
+    // "Volume: Off" and no named volumes: nothing to mount.
+    if spaces.volume_setting(id) == VolumeSetting::Off
+        && spaces.volume_mounts(id).is_ok_and(|m| m.is_empty())
+    {
         return;
     }
     // A cluster job's Space runs one command for someone else's queue: it
@@ -567,6 +776,13 @@ async fn keep_attached(spaces: Spaces, key: String) {
                 let why = match r {
                     Ok(Ok(Some(_))) => return Ok(Attempt::Attached),
                     Ok(Ok(None)) => return Ok(Attempt::Unsupported),
+                    // The Space was deleted: nothing will ever mount, and retrying every minute for hours (as a deleted
+                    // Space's watcher did) only fills the log and holds a task. Stop supervising it.
+                    Ok(Err(cua_spaces::Error::NotFound(_)))
+                        if space_is_unregistered(&spaces, &key) =>
+                    {
+                        return Ok(Attempt::Unsupported);
+                    }
                     Ok(Err(e)) => format!("Cua Volume not mounted: {e}"),
                     Err(_) => format!(
                         "Cua Volume not mounted: no answer within {} s",
@@ -581,6 +797,14 @@ async fn keep_attached(spaces: Spaces, key: String) {
         }
     };
     supervise(Policy::default(), health, reattach).await;
+}
+
+/// Whether `key` is no longer in this machine's registry (deleted), as opposed to a Space still starting.
+fn space_is_unregistered(spaces: &Spaces, key: &str) -> bool {
+    spaces
+        .list()
+        .map(|rows| !rows.iter().any(|s| s.id == key))
+        .unwrap_or(false)
 }
 
 /// Whether the Space's volume is mounted and served: this side's socket is
@@ -716,5 +940,18 @@ mod volume_gone_tests {
         assert!(!is_down(&Status::Suspended));
         assert!(!is_down(&Status::Provisioning));
         assert!(!is_down(&Status::Unknown("restarting".into())));
+    }
+}
+
+#[cfg(test)]
+mod unregistered_tests {
+    use super::space_is_unregistered;
+    use cua_spaces::Spaces;
+
+    #[test]
+    fn a_deleted_space_ends_its_volume_watch() {
+        let home = tempfile::tempdir().unwrap();
+        let spaces = Spaces::builder().home(home.path()).build();
+        assert!(space_is_unregistered(&spaces, "local:gone"));
     }
 }

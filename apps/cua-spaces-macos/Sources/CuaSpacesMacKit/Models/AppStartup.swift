@@ -626,6 +626,25 @@ public final class PendingSpacesBackend: SpacesBackend, AgentsToolRunning, Cloud
     public func deleteMany(ids: [String]) async -> [SpaceBulkResult] { await b().deleteMany(ids: ids) }
     public func leave(ids: [String]) async -> [SpaceBulkResult] { await b().leave(ids: ids) }
     public func rename(id: String, name: String) async throws { try await b().rename(id: id, name: name) }
+    public func network(id: String) async throws -> [String: Any] { try await b().network(id: id) }
+    public func setNetwork(id: String, word: String, allow: [String], deny: [String], widen: Bool, tree: Bool, via: String?) async throws -> String {
+        try await b().setNetwork(id: id, word: word, allow: allow, deny: deny, widen: widen, tree: tree, via: via)
+    }
+    public func networkLog(id: String) async throws -> [[String: Any]] { try await b().networkLog(id: id) }
+    public func ackNetworkNotice(id: String) async throws { try await b().ackNetworkNotice(id: id) }
+    public func setAccess(id: String, clipboard: String?, volume: String?) async throws {
+        try await b().setAccess(id: id, clipboard: clipboard, volume: volume)
+    }
+    public func spaceTree() async throws -> [[String: Any]] { try await b().spaceTree() }
+    public func setChildren(id: String, enabled: Bool) async throws { try await b().setChildren(id: id, enabled: enabled) }
+    public func treeBudget(id: String) async throws -> [String: Any] { try await b().treeBudget(id: id) }
+    public func setTreeBudget(id: String, limits: [String: Any]) async throws -> [String: Any] {
+        try await b().setTreeBudget(id: id, limits: limits)
+    }
+    public func services(id: String) async throws -> [[String: Any]] { try await b().services(id: id) }
+    public func controlService(id: String, name: String, action: String) async throws {
+        try await b().controlService(id: id, name: name, action: action)
+    }
     public func setPower(id: String, on: Bool) async throws { try await b().setPower(id: id, on: on) }
     public func streamProvider(id: String) async throws -> SpaceStreamSourceProviding {
         try await b().streamProvider(id: id)
@@ -642,6 +661,11 @@ public final class PendingSpacesBackend: SpacesBackend, AgentsToolRunning, Cloud
     public func runtimeCheckPath(kind: String, path: String) async throws -> AppRuntimePathCheck {
         try await b().runtimeCheckPath(kind: kind, path: path)
     }
+    public func repoCacheStatus() async -> RepoCacheState? { await b().repoCacheStatus() }
+    public func setRepoCache(enabled: Bool?, size: String?) async throws -> RepoCacheState? {
+        try await b().setRepoCache(enabled: enabled, size: size)
+    }
+    public func clearRepoCache() async throws -> RepoCacheState? { try await b().clearRepoCache() }
     public func setRuntimeSetting(key: String, value: String?) async throws {
         try await b().setRuntimeSetting(key: key, value: value)
     }
@@ -650,6 +674,9 @@ public final class PendingSpacesBackend: SpacesBackend, AgentsToolRunning, Cloud
     // The Machines page: Remove from account and each computer's health
     // checks (the protocol's defaults would refuse them).
     public func relayUnregister(id: String) async throws { try await b().relayUnregister(id: id) }
+    public func relayUnregisterComputer(id: String, deleteSpaces: Bool) async throws {
+        try await b().relayUnregisterComputer(id: id, deleteSpaces: deleteSpaces)
+    }
     public func machineHealth(machine: String?) async throws -> AppMachinesViewHealth {
         try await b().machineHealth(machine: machine)
     }
@@ -672,6 +699,7 @@ public final class PendingSpacesBackend: SpacesBackend, AgentsToolRunning, Cloud
     }
     public func primaryDisplay(id: String) async -> AppStreamDisplay? { await b().primaryDisplay(id: id) }
     public func usage(id: String) async -> AppSpaceUsage? { await b().usage(id: id) }
+    public func reach(id: String) async throws -> [String: Any] { try await b().reach(id: id) }
     /// Never waits for the SDK: until it is in, the page shows This Mac's
     /// own numbers.
     public func resources(visible: Bool) async -> CuaSDK.ResourcesSnapshot? {
@@ -683,6 +711,14 @@ public final class PendingSpacesBackend: SpacesBackend, AgentsToolRunning, Cloud
         try await b().createLink(target: target, access: access, ttlSeconds: ttlSeconds, name: name)
     }
     public func stopLink(id: String) async throws -> [String] { try await b().stopLink(id: id) }
+    public func createTcpLink(target: String, service: String?, ttlSeconds: UInt32?, name: String?, options: TcpShareOptions) async throws -> ShareLink {
+        try await b().createTcpLink(target: target, service: service, ttlSeconds: ttlSeconds, name: name, options: options)
+    }
+    public func approveLink(id: String, always: Bool) async throws -> ShareLink { try await b().approveLink(id: id, always: always) }
+    public func denyLink(id: String) async throws { try await b().denyLink(id: id) }
+    public func shareSettings() async throws -> ShareSettingsRow { try await b().shareSettings() }
+    public func setShareSettings(_ settings: ShareSettingsRow) async throws -> ShareSettingsRow { try await b().setShareSettings(settings) }
+    public func removeShareEdge() async throws -> [String] { try await b().removeShareEdge() }
     public func share(id: String, who: String, role: String) async throws -> [AppShareEntryInput] {
         try await b().share(id: id, who: who, role: role)
     }
@@ -743,8 +779,8 @@ public final class PendingAgentSetup: AgentSetupRunning, @unchecked Sendable {
     public func connectionStatusJson(refresh: Bool) async -> String {
         await gate.wait().agentSetup?.connectionStatusJson(refresh: refresh) ?? #"{"agents":[],"checked_at_ms":0}"#
     }
-    public func connectJson(agents: [String], signIn: Bool, skills: Bool, mcp: Bool) async throws -> String {
-        try await s().connectJson(agents: agents, signIn: signIn, skills: skills, mcp: mcp)
+    public func connectJson(agents: [String], signIn: Bool, skills: Bool, mcp: Bool, driver: DriverConnect?) async throws -> String {
+        try await s().connectJson(agents: agents, signIn: signIn, skills: skills, mcp: mcp, driver: driver)
     }
     public func disconnectJson(agents: [String], signIn: Bool) async throws -> String {
         try await s().disconnectJson(agents: agents, signIn: signIn)
@@ -788,6 +824,11 @@ public final class PendingDevices: DevicesRunning, @unchecked Sendable {
     public func pairingCodes() async throws -> [PairingCode] { try await d().pairingCodes() }
     public func revokePairingCode(id: String) async throws { try await d().revokePairingCode(id: id) }
     public func relayUsage() async throws -> AppRelayUsage? { try await d().relayUsage() }
+    public func spacesSettings() async throws -> SpacesSettings { try await d().spacesSettings() }
+    public func setSpacesSettings(_ settings: SpacesSettings) async throws -> SpacesSettings {
+        try await d().setSpacesSettings(settings)
+    }
+    public func resolveDefaultSpace() async throws -> DefaultSpace { try await d().resolveDefaultSpace() }
 }
 
 /// This machine's host service until the SDK is in.

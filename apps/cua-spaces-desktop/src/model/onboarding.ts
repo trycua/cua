@@ -7,7 +7,7 @@
 // the Swift app writes (taken over on macOS, `migrate-swift.ts`). The pages
 // themselves are the web UI's (`routes/onboarding`, on the app core's
 // flow); this host says whether they are due and records the end.
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
 
 import { keepDamaged } from "../damaged";
@@ -60,6 +60,18 @@ export class OnboardingStore {
     const tmp = `${this.file}.tmp`;
     writeFileSync(tmp, JSON.stringify({ completed: true, mode }));
     renameSync(tmp, this.file);
+    this.changed();
+  }
+
+  /**
+   * Settings, About, "Reset & Show": the saved first run is forgotten (the
+   * file removed, as the core's reset plan says: `onboarding_reset.rs`), so
+   * it is due from its first step. Safe to run twice. A `.damaged` copy
+   * kept earlier is left alone.
+   */
+  reset(): void {
+    this.shownAgain = false;
+    rmSync(this.file, { force: true });
     this.changed();
   }
 

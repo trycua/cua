@@ -136,6 +136,13 @@ pub trait CloudApi: Send + Sync + 'static {
         vec![]
     }
 
+    /// Whether the cloud enforces a Space's network rules itself, outside
+    /// the guest ([`crate::modal_net`]). Otherwise a Space that asks for
+    /// rules is refused here, never created without them.
+    fn takes_network_rules(&self) -> bool {
+        false
+    }
+
     /// Whether this machine has the cloud's CLI sign-in or config, and
     /// where (never reading a secret into Cua).
     fn detect(&self) -> CloudCredentials;

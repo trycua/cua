@@ -63,7 +63,7 @@
   "spaces.create.creating": "Space を作成中…",
   "spaces.sidebar.section.this_mac": "この Mac",
   "spaces.sidebar.section.connected": "接続済み",
-  "spaces.sidebar.section.my_computers": "自分のコンピュータ",
+  "spaces.sidebar.section.my_computers": "自分のマシン",
   "spaces.sidebar.empty": "まだ Spaces がありません",
   "spaces.sidebar.no_matches": "一致する項目はありません",
   "spaces.status.failed": "失敗",

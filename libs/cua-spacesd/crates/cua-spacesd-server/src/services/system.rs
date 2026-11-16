@@ -1069,15 +1069,25 @@ impl SystemService for SystemServiceImpl {
                 "a viewer ticket cannot mint viewer tickets",
             ));
         }
-        let body = request.into_inner();
-        let ttl = crate::util::duration(body.ttl.as_ref())
+        // A phone's ticket is for looking: view only, no clipboard, no files,
+        // no microphone, and short. Touching the desktop from a phone is the
+        // control calls under the owner's approval, which a revoke ends at
+        // once; a ticket could not be taken back.
+        let from_phone = caller.account.as_ref().is_some_and(|a| a.phone.is_some());
+        let mut body = request.into_inner();
+        let mut ttl = crate::util::duration(body.ttl.as_ref())
             .filter(|ttl| !ttl.is_zero())
             .unwrap_or(DEFAULT_VIEWER_TTL)
             .min(crate::auth::MAX_TICKET_TTL);
+        // Unset is view only (as the contract says): control is asked for by
+        // name, never defaulted into.
         let policy = match SessionPolicy::try_from(body.policy) {
-            Ok(SessionPolicy::Unspecified) | Err(_) => SessionPolicy::AllowActivation,
+            Ok(SessionPolicy::Unspecified) | Err(_) => SessionPolicy::ViewOnly,
             Ok(policy) => policy,
         };
+        if from_phone {
+            limit_phone_ticket(&mut ttl, &mut body);
+        }
         let files_root = if body.files_root.is_empty() {
             None
         } else {
@@ -1091,7 +1101,14 @@ impl SystemService for SystemServiceImpl {
                 .map_err(|e| crate::error::io_status(&e, &path))?;
             Some(canonical.display().to_string())
         };
-        let base = body.principal.or(caller.principal).unwrap_or_default();
+        // A relayed or ticketed caller is the principal of its ticket: the
+        // body cannot name another (a ticket under a chosen id would dodge
+        // the relay's revocation of the caller). Only the root token names one.
+        let base = if caller.asserted {
+            caller.principal.clone().unwrap_or_default()
+        } else {
+            body.principal.or(caller.principal).unwrap_or_default()
+        };
         let id = if base.id.is_empty() {
             crate::util::random_id(6)
         } else {
@@ -1112,6 +1129,8 @@ impl SystemService for SystemServiceImpl {
             } else {
                 base.display_name
             },
+            phone: from_phone,
+            expires_at: None,
         };
         let resource = serde_json::to_string(&grant).map_err(|e| {
             status(
@@ -1121,11 +1140,12 @@ impl SystemService for SystemServiceImpl {
             )
         })?;
         let principal = grant.principal();
-        let (ticket, expires_at) = self.ctx.mint_ticket_issued(
+        let (ticket, expires_at) = self.ctx.mint_ticket_for(
             crate::auth::TicketScope::Viewer,
             &resource,
             Some(&principal),
             caller.account.as_ref().map(|a| a.issued_at),
+            caller.account.as_ref().and_then(|a| a.device.as_deref()),
             ttl,
         );
         // Hints for the page (the server enforces the grant either way).
@@ -1151,6 +1171,45 @@ impl SystemService for SystemServiceImpl {
 
 /// Lifetime of a viewer ticket when the request leaves it unset.
 pub const DEFAULT_VIEWER_TTL: Duration = Duration::from_secs(3600);
+
+/// The longest a viewer ticket for a phone lives (the phone asks again).
+pub const PHONE_VIEWER_TTL: Duration = Duration::from_secs(5 * 60);
+
+/// What a phone's viewer ticket may be: short, with no clipboard, no files of
+/// this computer and no microphone. How much the picture may do (view only, or
+/// more) is what the phone asked for and its role allows.
+fn limit_phone_ticket(ttl: &mut Duration, body: &mut CreateViewerTicketRequest) {
+    *ttl = (*ttl).min(PHONE_VIEWER_TTL);
+    body.clipboard = false;
+    body.audio_uplink = false;
+    body.files_root = String::new();
+}
+
+#[cfg(test)]
+mod phone_ticket_tests {
+    use super::*;
+
+    #[test]
+    fn a_phones_viewer_ticket_is_short_and_carries_nothing_of_the_computer() {
+        let mut ttl = Duration::from_secs(24 * 3600);
+        let mut body = CreateViewerTicketRequest {
+            clipboard: true,
+            audio_uplink: true,
+            files_root: "/Users/ada".into(),
+            policy: SessionPolicy::AllowActivation as i32,
+            ..Default::default()
+        };
+        limit_phone_ticket(&mut ttl, &mut body);
+        assert_eq!(ttl, PHONE_VIEWER_TTL);
+        assert!(!body.clipboard && !body.audio_uplink && body.files_root.is_empty());
+        // What it asked for in the picture stays: the role decided already.
+        assert_eq!(body.policy, SessionPolicy::AllowActivation as i32);
+        // A shorter wish stays shorter.
+        let mut short = Duration::from_secs(30);
+        limit_phone_ticket(&mut short, &mut body);
+        assert_eq!(short, Duration::from_secs(30));
+    }
+}
 
 /// Writes the bootstrap token to `path` with mode 0600 (atomic rename).
 fn persist_token(path: &std::path::Path, token: &str) -> std::io::Result<()> {

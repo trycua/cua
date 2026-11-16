@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file cua/env/v1/process.proto.
  */
 export const file_cua_env_v1_process: GenFile = /*@__PURE__*/
-  fileDesc("ChhjdWEvZW52L3YxL3Byb2Nlc3MucHJvdG8SCmN1YS5lbnYudjEi0gEKDVByb2Nlc3NDb25maWcSDwoHY29tbWFuZBgBIAEoCRIMCgRhcmdzGAIgAygJEi8KA2VudhgDIAMoCzIiLmN1YS5lbnYudjEuUHJvY2Vzc0NvbmZpZy5FbnZFbnRyeRILCgNjd2QYBCABKAkSDAoEdXNlchgFIAEoCRIqCgd0aW1lb3V0GAYgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uGioKCEVudkVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEiPAoJUHR5Q29uZmlnEiEKBHNpemUYASABKAsyEy5jdWEuZW52LnYxLlB0eVNpemUSDAoEdGVybRgCIAEoCSJQCgdQdHlTaXplEgwKBGNvbHMYASABKA0SDAoEcm93cxgCIAEoDRITCgtwaXhlbF93aWR0aBgDIAEoDRIUCgxwaXhlbF9oZWlnaHQYBCABKA0iOwoPUHJvY2Vzc1NlbGVjdG9yEg0KA3BpZBgBIAEoDUgAEg0KA3RhZxgCIAEoCUgAQgoKCHNlbGVjdG9yIpACChNTdGFydFByb2Nlc3NSZXF1ZXN0EikKBmNvbmZpZxgBIAEoCzIZLmN1YS5lbnYudjEuUHJvY2Vzc0NvbmZpZxIiCgNwdHkYAiABKAsyFS5jdWEuZW52LnYxLlB0eUNvbmZpZxILCgN0YWcYAyABKAkSDQoFc3RkaW4YBCABKAgSNQoSa2VlcGFsaXZlX2ludGVydmFsGAUgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEhgKEHNjcm9sbGJhY2tfYnl0ZXMYBiABKAQSGgoSa2lsbF9vbl9kaXNjb25uZWN0GAcgASgIEhIKCnJlcXVlc3RfaWQYCCABKAkSDQoFZXBvY2gYCSABKAQiPwoUU3RhcnRQcm9jZXNzUmVzcG9uc2USJwoFZXZlbnQYASABKAsyGC5jdWEuZW52LnYxLlByb2Nlc3NFdmVudCLKAQoVQ29ubmVjdFByb2Nlc3NSZXF1ZXN0EiwKB3Byb2Nlc3MYASABKAsyGy5jdWEuZW52LnYxLlByb2Nlc3NTZWxlY3RvchIUCgxyZXBsYXlfYnl0ZXMYAiABKAQSHwoScmVwbGF5X2Zyb21fb2Zmc2V0GAMgASgESACIAQESNQoSa2VlcGFsaXZlX2ludGVydmFsGAQgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uQhUKE19yZXBsYXlfZnJvbV9vZmZzZXQiQQoWQ29ubmVjdFByb2Nlc3NSZXNwb25zZRInCgVldmVudBgBIAEoCzIYLmN1YS5lbnYudjEuUHJvY2Vzc0V2ZW50Ir4BCgxQcm9jZXNzRXZlbnQSKQoFc3RhcnQYASABKAsyGC5jdWEuZW52LnYxLlByb2Nlc3NTdGFydEgAEicKBGRhdGEYAiABKAsyFy5jdWEuZW52LnYxLlByb2Nlc3NEYXRhSAASJQoDZW5kGAMgASgLMhYuY3VhLmVudi52MS5Qcm9jZXNzRW5kSAASKgoJa2VlcGFsaXZlGAQgASgLMhUuY3VhLmVudi52MS5LZWVwQWxpdmVIAEIHCgVldmVudCK+AQoMUHJvY2Vzc1N0YXJ0EgsKA3BpZBgBIAEoDRILCgN0YWcYAiABKAkSLgoKc3RhcnRlZF9hdBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASHwoXc2Nyb2xsYmFja19zdGFydF9vZmZzZXQYBCABKAQSGQoRb3V0cHV0X2VuZF9vZmZzZXQYBSABKAQSFAoMZGVkdXBsaWNhdGVkGAYgASgIEhIKCnJlcXVlc3RfaWQYByABKAkiWgoLUHJvY2Vzc0RhdGESDgoGb2Zmc2V0GAEgASgEEhAKBnN0ZG91dBgCIAEoDEgAEhAKBnN0ZGVychgDIAEoDEgAEg0KA3B0eRgEIAEoDEgAQggKBm91dHB1dCLgAQoKUHJvY2Vzc0VuZBIWCglleGl0X2NvZGUYASABKAVIAIgBARIiCgZzaWduYWwYAiABKA4yEi5jdWEuZW52LnYxLlNpZ25hbBIRCgl0aW1lZF9vdXQYAyABKAgSDQoFZXJyb3IYBCABKAkSLAoIZW5kZWRfYXQYBSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEgwKBGxvc3QYBiABKAgSFQoNc2lnbmFsX251bWJlchgHIAEoBRITCgtzaWduYWxfbmFtZRgIIAEoCUIMCgpfZXhpdF9jb2RlIkIKFExpc3RQcm9jZXNzZXNSZXF1ZXN0EhYKDmluY2x1ZGVfZXhpdGVkGAEgASgIEhIKCnRhZ19wcmVmaXgYAiABKAkiQwoVTGlzdFByb2Nlc3Nlc1Jlc3BvbnNlEioKCXByb2Nlc3NlcxgBIAMoCzIXLmN1YS5lbnYudjEuUHJvY2Vzc0luZm8iswIKC1Byb2Nlc3NJbmZvEgsKA3BpZBgBIAEoDRILCgN0YWcYAiABKAkSKQoGY29uZmlnGAMgASgLMhkuY3VhLmVudi52MS5Qcm9jZXNzQ29uZmlnEgsKA3B0eRgEIAEoCBInCgVzdGF0ZRgFIAEoDjIYLmN1YS5lbnYudjEuUHJvY2Vzc1N0YXRlEiMKA2VuZBgGIAEoCzIWLmN1YS5lbnYudjEuUHJvY2Vzc0VuZBIuCgpzdGFydGVkX2F0GAcgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIfChdzY3JvbGxiYWNrX3N0YXJ0X29mZnNldBgIIAEoBBIZChFvdXRwdXRfZW5kX29mZnNldBgJIAEoBBIYChBhdHRhY2hlZF9jbGllbnRzGAogASgNIjcKDFByb2Nlc3NJbnB1dBIPCgVzdGRpbhgBIAEoDEgAEg0KA3B0eRgCIAEoDEgAQgcKBWlucHV0Io4BChBTZW5kSW5wdXRSZXF1ZXN0EiwKB3Byb2Nlc3MYASABKAsyGy5jdWEuZW52LnYxLlByb2Nlc3NTZWxlY3RvchInCgVpbnB1dBgCIAEoCzIYLmN1YS5lbnYudjEuUHJvY2Vzc0lucHV0EhAKCHNlcXVlbmNlGAMgASgEEhEKCXdyaXRlcl9pZBgEIAEoCSJAChFTZW5kSW5wdXRSZXNwb25zZRIYChBhcHBsaWVkX3NlcXVlbmNlGAEgASgEEhEKCWR1cGxpY2F0ZRgCIAEoCCKmAQoSU3RyZWFtSW5wdXRSZXF1ZXN0Ei4KB3Byb2Nlc3MYASABKAsyGy5jdWEuZW52LnYxLlByb2Nlc3NTZWxlY3RvckgAEikKBWlucHV0GAIgASgLMhguY3VhLmVudi52MS5Qcm9jZXNzSW5wdXRIABIqCglrZWVwYWxpdmUYAyABKAsyFS5jdWEuZW52LnYxLktlZXBBbGl2ZUgAQgkKB21lc3NhZ2UiLAoTU3RyZWFtSW5wdXRSZXNwb25zZRIVCg1ieXRlc193cml0dGVuGAEgASgEIn8KFFNpZ25hbFByb2Nlc3NSZXF1ZXN0EiwKB3Byb2Nlc3MYASABKAsyGy5jdWEuZW52LnYxLlByb2Nlc3NTZWxlY3RvchIiCgZzaWduYWwYAiABKA4yEi5jdWEuZW52LnYxLlNpZ25hbBIVCg1wcm9jZXNzX2dyb3VwGAMgASgIIhcKFVNpZ25hbFByb2Nlc3NSZXNwb25zZSJBChFDbG9zZVN0ZGluUmVxdWVzdBIsCgdwcm9jZXNzGAEgASgLMhsuY3VhLmVudi52MS5Qcm9jZXNzU2VsZWN0b3IiFAoSQ2xvc2VTdGRpblJlc3BvbnNlImMKEFJlc2l6ZVB0eVJlcXVlc3QSLAoHcHJvY2VzcxgBIAEoCzIbLmN1YS5lbnYudjEuUHJvY2Vzc1NlbGVjdG9yEiEKBHNpemUYAiABKAsyEy5jdWEuZW52LnYxLlB0eVNpemUiEwoRUmVzaXplUHR5UmVzcG9uc2UiKgoUR2V0RXhlY1JlY29yZFJlcXVlc3QSEgoKcmVxdWVzdF9pZBgBIAEoCSJOChVHZXRFeGVjUmVjb3JkUmVzcG9uc2USJgoGcmVjb3JkGAEgASgLMhYuY3VhLmVudi52MS5FeGVjUmVjb3JkEg0KBWVwb2NoGAIgASgEIosCCgpFeGVjUmVjb3JkEhIKCnJlcXVlc3RfaWQYASABKAkSJAoFc3RhdGUYAiABKA4yFS5jdWEuZW52LnYxLkV4ZWNTdGF0ZRINCgVlcG9jaBgDIAEoBBILCgNwaWQYBCABKA0SLgoKc3RhcnRlZF9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASIwoDZW5kGAYgASgLMhYuY3VhLmVudi52MS5Qcm9jZXNzRW5kEhQKDG91dHB1dF9ieXRlcxgHIAEoBBIVCg1vdXRwdXRfc2hhMjU2GAggASgJEiUKBHRhaWwYCSADKAsyFy5jdWEuZW52LnYxLlByb2Nlc3NEYXRhIiQKE0FkdmFuY2VFcG9jaFJlcXVlc3QSDQoFZXBvY2gYASABKAQiNQoUQWR2YW5jZUVwb2NoUmVzcG9uc2USDQoFZXBvY2gYASABKAQSDgoGa2lsbGVkGAIgASgNKmIKDFByb2Nlc3NTdGF0ZRIdChlQUk9DRVNTX1NUQVRFX1VOU1BFQ0lGSUVEEAASGQoVUFJPQ0VTU19TVEFURV9SVU5OSU5HEAESGAoUUFJPQ0VTU19TVEFURV9FWElURUQQAiraAQoGU2lnbmFsEhYKElNJR05BTF9VTlNQRUNJRklFRBAAEg4KClNJR05BTF9IVVAQARIOCgpTSUdOQUxfSU5UEAISDwoLU0lHTkFMX1FVSVQQAxIPCgtTSUdOQUxfS0lMTBAJEg8KC1NJR05BTF9VU1IxEAoSDwoLU0lHTkFMX1VTUjIQDBIPCgtTSUdOQUxfVEVSTRAPEg8KC1NJR05BTF9DT05UEBISDwoLU0lHTkFMX1NUT1AQExIPCgtTSUdOQUxfVFNUUBAUEhAKDFNJR05BTF9XSU5DSBAcKmsKCUV4ZWNTdGF0ZRIaChZFWEVDX1NUQVRFX1VOU1BFQ0lGSUVEEAASFgoSRVhFQ19TVEFURV9SVU5OSU5HEAESFQoRRVhFQ19TVEFURV9FWElURUQQAhITCg9FWEVDX1NUQVRFX0xPU1QQAzLIBgoOUHJvY2Vzc1NlcnZpY2USUwoMU3RhcnRQcm9jZXNzEh8uY3VhLmVudi52MS5TdGFydFByb2Nlc3NSZXF1ZXN0GiAuY3VhLmVudi52MS5TdGFydFByb2Nlc3NSZXNwb25zZTABElkKDkNvbm5lY3RQcm9jZXNzEiEuY3VhLmVudi52MS5Db25uZWN0UHJvY2Vzc1JlcXVlc3QaIi5jdWEuZW52LnYxLkNvbm5lY3RQcm9jZXNzUmVzcG9uc2UwARJUCg1MaXN0UHJvY2Vzc2VzEiAuY3VhLmVudi52MS5MaXN0UHJvY2Vzc2VzUmVxdWVzdBohLmN1YS5lbnYudjEuTGlzdFByb2Nlc3Nlc1Jlc3BvbnNlEkgKCVNlbmRJbnB1dBIcLmN1YS5lbnYudjEuU2VuZElucHV0UmVxdWVzdBodLmN1YS5lbnYudjEuU2VuZElucHV0UmVzcG9uc2USUAoLU3RyZWFtSW5wdXQSHi5jdWEuZW52LnYxLlN0cmVhbUlucHV0UmVxdWVzdBofLmN1YS5lbnYudjEuU3RyZWFtSW5wdXRSZXNwb25zZSgBElQKDVNpZ25hbFByb2Nlc3MSIC5jdWEuZW52LnYxLlNpZ25hbFByb2Nlc3NSZXF1ZXN0GiEuY3VhLmVudi52MS5TaWduYWxQcm9jZXNzUmVzcG9uc2USSwoKQ2xvc2VTdGRpbhIdLmN1YS5lbnYudjEuQ2xvc2VTdGRpblJlcXVlc3QaHi5jdWEuZW52LnYxLkNsb3NlU3RkaW5SZXNwb25zZRJICglSZXNpemVQdHkSHC5jdWEuZW52LnYxLlJlc2l6ZVB0eVJlcXVlc3QaHS5jdWEuZW52LnYxLlJlc2l6ZVB0eVJlc3BvbnNlElQKDUdldEV4ZWNSZWNvcmQSIC5jdWEuZW52LnYxLkdldEV4ZWNSZWNvcmRSZXF1ZXN0GiEuY3VhLmVudi52MS5HZXRFeGVjUmVjb3JkUmVzcG9uc2USUQoMQWR2YW5jZUVwb2NoEh8uY3VhLmVudi52MS5BZHZhbmNlRXBvY2hSZXF1ZXN0GiAuY3VhLmVudi52MS5BZHZhbmNlRXBvY2hSZXNwb25zZWIGcHJvdG8z", [file_cua_env_v1_common, file_google_protobuf_duration, file_google_protobuf_timestamp]);
+  fileDesc("ChhjdWEvZW52L3YxL3Byb2Nlc3MucHJvdG8SCmN1YS5lbnYudjEi0gEKDVByb2Nlc3NDb25maWcSDwoHY29tbWFuZBgBIAEoCRIMCgRhcmdzGAIgAygJEi8KA2VudhgDIAMoCzIiLmN1YS5lbnYudjEuUHJvY2Vzc0NvbmZpZy5FbnZFbnRyeRILCgNjd2QYBCABKAkSDAoEdXNlchgFIAEoCRIqCgd0aW1lb3V0GAYgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uGioKCEVudkVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEiPAoJUHR5Q29uZmlnEiEKBHNpemUYASABKAsyEy5jdWEuZW52LnYxLlB0eVNpemUSDAoEdGVybRgCIAEoCSJQCgdQdHlTaXplEgwKBGNvbHMYASABKA0SDAoEcm93cxgCIAEoDRITCgtwaXhlbF93aWR0aBgDIAEoDRIUCgxwaXhlbF9oZWlnaHQYBCABKA0iOwoPUHJvY2Vzc1NlbGVjdG9yEg0KA3BpZBgBIAEoDUgAEg0KA3RhZxgCIAEoCUgAQgoKCHNlbGVjdG9yIpACChNTdGFydFByb2Nlc3NSZXF1ZXN0EikKBmNvbmZpZxgBIAEoCzIZLmN1YS5lbnYudjEuUHJvY2Vzc0NvbmZpZxIiCgNwdHkYAiABKAsyFS5jdWEuZW52LnYxLlB0eUNvbmZpZxILCgN0YWcYAyABKAkSDQoFc3RkaW4YBCABKAgSNQoSa2VlcGFsaXZlX2ludGVydmFsGAUgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEhgKEHNjcm9sbGJhY2tfYnl0ZXMYBiABKAQSGgoSa2lsbF9vbl9kaXNjb25uZWN0GAcgASgIEhIKCnJlcXVlc3RfaWQYCCABKAkSDQoFZXBvY2gYCSABKAQiPwoUU3RhcnRQcm9jZXNzUmVzcG9uc2USJwoFZXZlbnQYASABKAsyGC5jdWEuZW52LnYxLlByb2Nlc3NFdmVudCLKAQoVQ29ubmVjdFByb2Nlc3NSZXF1ZXN0EiwKB3Byb2Nlc3MYASABKAsyGy5jdWEuZW52LnYxLlByb2Nlc3NTZWxlY3RvchIUCgxyZXBsYXlfYnl0ZXMYAiABKAQSHwoScmVwbGF5X2Zyb21fb2Zmc2V0GAMgASgESACIAQESNQoSa2VlcGFsaXZlX2ludGVydmFsGAQgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uQhUKE19yZXBsYXlfZnJvbV9vZmZzZXQiQQoWQ29ubmVjdFByb2Nlc3NSZXNwb25zZRInCgVldmVudBgBIAEoCzIYLmN1YS5lbnYudjEuUHJvY2Vzc0V2ZW50Ir4BCgxQcm9jZXNzRXZlbnQSKQoFc3RhcnQYASABKAsyGC5jdWEuZW52LnYxLlByb2Nlc3NTdGFydEgAEicKBGRhdGEYAiABKAsyFy5jdWEuZW52LnYxLlByb2Nlc3NEYXRhSAASJQoDZW5kGAMgASgLMhYuY3VhLmVudi52MS5Qcm9jZXNzRW5kSAASKgoJa2VlcGFsaXZlGAQgASgLMhUuY3VhLmVudi52MS5LZWVwQWxpdmVIAEIHCgVldmVudCK+AQoMUHJvY2Vzc1N0YXJ0EgsKA3BpZBgBIAEoDRILCgN0YWcYAiABKAkSLgoKc3RhcnRlZF9hdBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASHwoXc2Nyb2xsYmFja19zdGFydF9vZmZzZXQYBCABKAQSGQoRb3V0cHV0X2VuZF9vZmZzZXQYBSABKAQSFAoMZGVkdXBsaWNhdGVkGAYgASgIEhIKCnJlcXVlc3RfaWQYByABKAkiWgoLUHJvY2Vzc0RhdGESDgoGb2Zmc2V0GAEgASgEEhAKBnN0ZG91dBgCIAEoDEgAEhAKBnN0ZGVychgDIAEoDEgAEg0KA3B0eRgEIAEoDEgAQggKBm91dHB1dCLgAQoKUHJvY2Vzc0VuZBIWCglleGl0X2NvZGUYASABKAVIAIgBARIiCgZzaWduYWwYAiABKA4yEi5jdWEuZW52LnYxLlNpZ25hbBIRCgl0aW1lZF9vdXQYAyABKAgSDQoFZXJyb3IYBCABKAkSLAoIZW5kZWRfYXQYBSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEgwKBGxvc3QYBiABKAgSFQoNc2lnbmFsX251bWJlchgHIAEoBRITCgtzaWduYWxfbmFtZRgIIAEoCUIMCgpfZXhpdF9jb2RlIkIKFExpc3RQcm9jZXNzZXNSZXF1ZXN0EhYKDmluY2x1ZGVfZXhpdGVkGAEgASgIEhIKCnRhZ19wcmVmaXgYAiABKAkiQwoVTGlzdFByb2Nlc3Nlc1Jlc3BvbnNlEioKCXByb2Nlc3NlcxgBIAMoCzIXLmN1YS5lbnYudjEuUHJvY2Vzc0luZm8iswIKC1Byb2Nlc3NJbmZvEgsKA3BpZBgBIAEoDRILCgN0YWcYAiABKAkSKQoGY29uZmlnGAMgASgLMhkuY3VhLmVudi52MS5Qcm9jZXNzQ29uZmlnEgsKA3B0eRgEIAEoCBInCgVzdGF0ZRgFIAEoDjIYLmN1YS5lbnYudjEuUHJvY2Vzc1N0YXRlEiMKA2VuZBgGIAEoCzIWLmN1YS5lbnYudjEuUHJvY2Vzc0VuZBIuCgpzdGFydGVkX2F0GAcgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIfChdzY3JvbGxiYWNrX3N0YXJ0X29mZnNldBgIIAEoBBIZChFvdXRwdXRfZW5kX29mZnNldBgJIAEoBBIYChBhdHRhY2hlZF9jbGllbnRzGAogASgNIjcKDFByb2Nlc3NJbnB1dBIPCgVzdGRpbhgBIAEoDEgAEg0KA3B0eRgCIAEoDEgAQgcKBWlucHV0Io4BChBTZW5kSW5wdXRSZXF1ZXN0EiwKB3Byb2Nlc3MYASABKAsyGy5jdWEuZW52LnYxLlByb2Nlc3NTZWxlY3RvchInCgVpbnB1dBgCIAEoCzIYLmN1YS5lbnYudjEuUHJvY2Vzc0lucHV0EhAKCHNlcXVlbmNlGAMgASgEEhEKCXdyaXRlcl9pZBgEIAEoCSJAChFTZW5kSW5wdXRSZXNwb25zZRIYChBhcHBsaWVkX3NlcXVlbmNlGAEgASgEEhEKCWR1cGxpY2F0ZRgCIAEoCCKmAQoSU3RyZWFtSW5wdXRSZXF1ZXN0Ei4KB3Byb2Nlc3MYASABKAsyGy5jdWEuZW52LnYxLlByb2Nlc3NTZWxlY3RvckgAEikKBWlucHV0GAIgASgLMhguY3VhLmVudi52MS5Qcm9jZXNzSW5wdXRIABIqCglrZWVwYWxpdmUYAyABKAsyFS5jdWEuZW52LnYxLktlZXBBbGl2ZUgAQgkKB21lc3NhZ2UiLAoTU3RyZWFtSW5wdXRSZXNwb25zZRIVCg1ieXRlc193cml0dGVuGAEgASgEIn8KFFNpZ25hbFByb2Nlc3NSZXF1ZXN0EiwKB3Byb2Nlc3MYASABKAsyGy5jdWEuZW52LnYxLlByb2Nlc3NTZWxlY3RvchIiCgZzaWduYWwYAiABKA4yEi5jdWEuZW52LnYxLlNpZ25hbBIVCg1wcm9jZXNzX2dyb3VwGAMgASgIIhcKFVNpZ25hbFByb2Nlc3NSZXNwb25zZSJBChFDbG9zZVN0ZGluUmVxdWVzdBIsCgdwcm9jZXNzGAEgASgLMhsuY3VhLmVudi52MS5Qcm9jZXNzU2VsZWN0b3IiFAoSQ2xvc2VTdGRpblJlc3BvbnNlImMKEFJlc2l6ZVB0eVJlcXVlc3QSLAoHcHJvY2VzcxgBIAEoCzIbLmN1YS5lbnYudjEuUHJvY2Vzc1NlbGVjdG9yEiEKBHNpemUYAiABKAsyEy5jdWEuZW52LnYxLlB0eVNpemUiEwoRUmVzaXplUHR5UmVzcG9uc2UiKgoUR2V0RXhlY1JlY29yZFJlcXVlc3QSEgoKcmVxdWVzdF9pZBgBIAEoCSJOChVHZXRFeGVjUmVjb3JkUmVzcG9uc2USJgoGcmVjb3JkGAEgASgLMhYuY3VhLmVudi52MS5FeGVjUmVjb3JkEg0KBWVwb2NoGAIgASgEIosCCgpFeGVjUmVjb3JkEhIKCnJlcXVlc3RfaWQYASABKAkSJAoFc3RhdGUYAiABKA4yFS5jdWEuZW52LnYxLkV4ZWNTdGF0ZRINCgVlcG9jaBgDIAEoBBILCgNwaWQYBCABKA0SLgoKc3RhcnRlZF9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASIwoDZW5kGAYgASgLMhYuY3VhLmVudi52MS5Qcm9jZXNzRW5kEhQKDG91dHB1dF9ieXRlcxgHIAEoBBIVCg1vdXRwdXRfc2hhMjU2GAggASgJEiUKBHRhaWwYCSADKAsyFy5jdWEuZW52LnYxLlByb2Nlc3NEYXRhIiQKE0FkdmFuY2VFcG9jaFJlcXVlc3QSDQoFZXBvY2gYASABKAQiNQoUQWR2YW5jZUVwb2NoUmVzcG9uc2USDQoFZXBvY2gYASABKAQSDgoGa2lsbGVkGAIgASgNIvYBCgtIZWFsdGhQcm9iZRInCgRleGVjGAEgASgLMhkuY3VhLmVudi52MS5Qcm9jZXNzQ29uZmlnEgwKBGh0dHAYAiABKAkSCwoDdGNwGAMgASgJEisKCGludGVydmFsGAQgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEioKB3RpbWVvdXQYBSABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SGQoRZmFpbHVyZV90aHJlc2hvbGQYBiABKA0SLwoMc3RhcnRfcGVyaW9kGAcgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uIr8CCgtTZXJ2aWNlU3BlYxIMCgRuYW1lGAEgASgJEikKBmNvbmZpZxgCIAEoCzIZLmN1YS5lbnYudjEuUHJvY2Vzc0NvbmZpZxIqCgdyZXN0YXJ0GAMgASgOMhkuY3VhLmVudi52MS5SZXN0YXJ0UG9saWN5Ei4KC2JhY2tvZmZfbWluGAQgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEi4KC2JhY2tvZmZfbWF4GAUgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEiYKBXByb2JlGAYgASgLMhcuY3VhLmVudi52MS5IZWFsdGhQcm9iZRIaCg1zdGFydF9vbl9ib290GAcgASgISACIAQESFQoNbG9nX21heF9ieXRlcxgIIAEoBEIQCg5fc3RhcnRfb25fYm9vdCKyAgoNU2VydmljZVN0YXR1cxIlCgRzcGVjGAEgASgLMhcuY3VhLmVudi52MS5TZXJ2aWNlU3BlYxInCgVzdGF0ZRgCIAEoDjIYLmN1YS5lbnYudjEuU2VydmljZVN0YXRlEgsKA3BpZBgDIAEoDRIQCghyZXN0YXJ0cxgEIAEoDRIuCgpzdGFydGVkX2F0GAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIoCghsYXN0X2VuZBgGIAEoCzIWLmN1YS5lbnYudjEuUHJvY2Vzc0VuZBITCgtwcm9iZV9lcnJvchgHIAEoCRIxCg1uZXh0X3N0YXJ0X2F0GAggASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIQCghsb2dfcGF0aBgJIAEoCSI6ChFQdXRTZXJ2aWNlUmVxdWVzdBIlCgRzcGVjGAEgASgLMhcuY3VhLmVudi52MS5TZXJ2aWNlU3BlYyJAChJQdXRTZXJ2aWNlUmVzcG9uc2USKgoHc2VydmljZRgBIAEoCzIZLmN1YS5lbnYudjEuU2VydmljZVN0YXR1cyIkChREZWxldGVTZXJ2aWNlUmVxdWVzdBIMCgRuYW1lGAEgASgJIhcKFURlbGV0ZVNlcnZpY2VSZXNwb25zZSIVChNMaXN0U2VydmljZXNSZXF1ZXN0IkMKFExpc3RTZXJ2aWNlc1Jlc3BvbnNlEisKCHNlcnZpY2VzGAEgAygLMhkuY3VhLmVudi52MS5TZXJ2aWNlU3RhdHVzIlAKFUNvbnRyb2xTZXJ2aWNlUmVxdWVzdBIMCgRuYW1lGAEgASgJEikKBmFjdGlvbhgCIAEoDjIZLmN1YS5lbnYudjEuU2VydmljZUFjdGlvbiJEChZDb250cm9sU2VydmljZVJlc3BvbnNlEioKB3NlcnZpY2UYASABKAsyGS5jdWEuZW52LnYxLlNlcnZpY2VTdGF0dXMiOQoVR2V0U2VydmljZUxvZ3NSZXF1ZXN0EgwKBG5hbWUYASABKAkSEgoKdGFpbF9ieXRlcxgCIAEoBCI5ChZHZXRTZXJ2aWNlTG9nc1Jlc3BvbnNlEgwKBGRhdGEYASABKAwSEQoJdHJ1bmNhdGVkGAIgASgIKmIKDFByb2Nlc3NTdGF0ZRIdChlQUk9DRVNTX1NUQVRFX1VOU1BFQ0lGSUVEEAASGQoVUFJPQ0VTU19TVEFURV9SVU5OSU5HEAESGAoUUFJPQ0VTU19TVEFURV9FWElURUQQAiraAQoGU2lnbmFsEhYKElNJR05BTF9VTlNQRUNJRklFRBAAEg4KClNJR05BTF9IVVAQARIOCgpTSUdOQUxfSU5UEAISDwoLU0lHTkFMX1FVSVQQAxIPCgtTSUdOQUxfS0lMTBAJEg8KC1NJR05BTF9VU1IxEAoSDwoLU0lHTkFMX1VTUjIQDBIPCgtTSUdOQUxfVEVSTRAPEg8KC1NJR05BTF9DT05UEBISDwoLU0lHTkFMX1NUT1AQExIPCgtTSUdOQUxfVFNUUBAUEhAKDFNJR05BTF9XSU5DSBAcKmsKCUV4ZWNTdGF0ZRIaChZFWEVDX1NUQVRFX1VOU1BFQ0lGSUVEEAASFgoSRVhFQ19TVEFURV9SVU5OSU5HEAESFQoRRVhFQ19TVEFURV9FWElURUQQAhITCg9FWEVDX1NUQVRFX0xPU1QQAyqDAQoNUmVzdGFydFBvbGljeRIeChpSRVNUQVJUX1BPTElDWV9VTlNQRUNJRklFRBAAEhkKFVJFU1RBUlRfUE9MSUNZX0FMV0FZUxABEh0KGVJFU1RBUlRfUE9MSUNZX09OX0ZBSUxVUkUQAhIYChRSRVNUQVJUX1BPTElDWV9ORVZFUhADKusBCgxTZXJ2aWNlU3RhdGUSHQoZU0VSVklDRV9TVEFURV9VTlNQRUNJRklFRBAAEhoKFlNFUlZJQ0VfU1RBVEVfU1RBUlRJTkcQARIZChVTRVJWSUNFX1NUQVRFX1JVTk5JTkcQAhIbChdTRVJWSUNFX1NUQVRFX1VOSEVBTFRIWRADEhkKFVNFUlZJQ0VfU1RBVEVfQkFDS09GRhAEEhkKFVNFUlZJQ0VfU1RBVEVfU1RPUFBFRBAFEhgKFFNFUlZJQ0VfU1RBVEVfRVhJVEVEEAYSGAoUU0VSVklDRV9TVEFURV9GQUlMRUQQByp+Cg1TZXJ2aWNlQWN0aW9uEh4KGlNFUlZJQ0VfQUNUSU9OX1VOU1BFQ0lGSUVEEAASGAoUU0VSVklDRV9BQ1RJT05fU1RBUlQQARIXChNTRVJWSUNFX0FDVElPTl9TVE9QEAISGgoWU0VSVklDRV9BQ1RJT05fUkVTVEFSVBADMvAJCg5Qcm9jZXNzU2VydmljZRJTCgxTdGFydFByb2Nlc3MSHy5jdWEuZW52LnYxLlN0YXJ0UHJvY2Vzc1JlcXVlc3QaIC5jdWEuZW52LnYxLlN0YXJ0UHJvY2Vzc1Jlc3BvbnNlMAESWQoOQ29ubmVjdFByb2Nlc3MSIS5jdWEuZW52LnYxLkNvbm5lY3RQcm9jZXNzUmVxdWVzdBoiLmN1YS5lbnYudjEuQ29ubmVjdFByb2Nlc3NSZXNwb25zZTABElQKDUxpc3RQcm9jZXNzZXMSIC5jdWEuZW52LnYxLkxpc3RQcm9jZXNzZXNSZXF1ZXN0GiEuY3VhLmVudi52MS5MaXN0UHJvY2Vzc2VzUmVzcG9uc2USSAoJU2VuZElucHV0EhwuY3VhLmVudi52MS5TZW5kSW5wdXRSZXF1ZXN0Gh0uY3VhLmVudi52MS5TZW5kSW5wdXRSZXNwb25zZRJQCgtTdHJlYW1JbnB1dBIeLmN1YS5lbnYudjEuU3RyZWFtSW5wdXRSZXF1ZXN0Gh8uY3VhLmVudi52MS5TdHJlYW1JbnB1dFJlc3BvbnNlKAESVAoNU2lnbmFsUHJvY2VzcxIgLmN1YS5lbnYudjEuU2lnbmFsUHJvY2Vzc1JlcXVlc3QaIS5jdWEuZW52LnYxLlNpZ25hbFByb2Nlc3NSZXNwb25zZRJLCgpDbG9zZVN0ZGluEh0uY3VhLmVudi52MS5DbG9zZVN0ZGluUmVxdWVzdBoeLmN1YS5lbnYudjEuQ2xvc2VTdGRpblJlc3BvbnNlEkgKCVJlc2l6ZVB0eRIcLmN1YS5lbnYudjEuUmVzaXplUHR5UmVxdWVzdBodLmN1YS5lbnYudjEuUmVzaXplUHR5UmVzcG9uc2USVAoNR2V0RXhlY1JlY29yZBIgLmN1YS5lbnYudjEuR2V0RXhlY1JlY29yZFJlcXVlc3QaIS5jdWEuZW52LnYxLkdldEV4ZWNSZWNvcmRSZXNwb25zZRJRCgxBZHZhbmNlRXBvY2gSHy5jdWEuZW52LnYxLkFkdmFuY2VFcG9jaFJlcXVlc3QaIC5jdWEuZW52LnYxLkFkdmFuY2VFcG9jaFJlc3BvbnNlEksKClB1dFNlcnZpY2USHS5jdWEuZW52LnYxLlB1dFNlcnZpY2VSZXF1ZXN0Gh4uY3VhLmVudi52MS5QdXRTZXJ2aWNlUmVzcG9uc2USVAoNRGVsZXRlU2VydmljZRIgLmN1YS5lbnYudjEuRGVsZXRlU2VydmljZVJlcXVlc3QaIS5jdWEuZW52LnYxLkRlbGV0ZVNlcnZpY2VSZXNwb25zZRJRCgxMaXN0U2VydmljZXMSHy5jdWEuZW52LnYxLkxpc3RTZXJ2aWNlc1JlcXVlc3QaIC5jdWEuZW52LnYxLkxpc3RTZXJ2aWNlc1Jlc3BvbnNlElcKDkNvbnRyb2xTZXJ2aWNlEiEuY3VhLmVudi52MS5Db250cm9sU2VydmljZVJlcXVlc3QaIi5jdWEuZW52LnYxLkNvbnRyb2xTZXJ2aWNlUmVzcG9uc2USVwoOR2V0U2VydmljZUxvZ3MSIS5jdWEuZW52LnYxLkdldFNlcnZpY2VMb2dzUmVxdWVzdBoiLmN1YS5lbnYudjEuR2V0U2VydmljZUxvZ3NSZXNwb25zZWIGcHJvdG8z", [file_cua_env_v1_common, file_google_protobuf_duration, file_google_protobuf_timestamp]);
 
 /**
  * What to run.
@@ -1244,6 +1244,439 @@ export const AdvanceEpochResponseSchema: GenMessage<AdvanceEpochResponse> = /*@_
   messageDesc(file_cua_env_v1_process, 30);
 
 /**
+ * How a service's health is checked. Set exactly one of `exec`, `http`,
+ * `tcp`.
+ *
+ * @generated from message cua.env.v1.HealthProbe
+ */
+export type HealthProbe = Message<"cua.env.v1.HealthProbe"> & {
+  /**
+   * A command that exits 0 when the service is healthy.
+   *
+   * @generated from field: cua.env.v1.ProcessConfig exec = 1;
+   */
+  exec?: ProcessConfig | undefined;
+
+  /**
+   * A URL that answers 2xx or 3xx (`http://127.0.0.1:8080/health`).
+   *
+   * @generated from field: string http = 2;
+   */
+  http: string;
+
+  /**
+   * A port that accepts a TCP connection (`127.0.0.1:5432`).
+   *
+   * @generated from field: string tcp = 3;
+   */
+  tcp: string;
+
+  /**
+   * Between checks. Unset: 10 seconds.
+   *
+   * @generated from field: google.protobuf.Duration interval = 4;
+   */
+  interval?: Duration | undefined;
+
+  /**
+   * For one check. Unset: 5 seconds.
+   *
+   * @generated from field: google.protobuf.Duration timeout = 5;
+   */
+  timeout?: Duration | undefined;
+
+  /**
+   * Failed checks in a row that mark it unhealthy and restart it. 0: 3.
+   *
+   * @generated from field: uint32 failure_threshold = 6;
+   */
+  failureThreshold: number;
+
+  /**
+   * Grace after a start before the first check counts. Unset: 10 seconds.
+   *
+   * @generated from field: google.protobuf.Duration start_period = 7;
+   */
+  startPeriod?: Duration | undefined;
+};
+
+/**
+ * Describes the message cua.env.v1.HealthProbe.
+ * Use `create(HealthProbeSchema)` to create a new message.
+ */
+export const HealthProbeSchema: GenMessage<HealthProbe> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_process, 31);
+
+/**
+ * A service: a named command kept running.
+ *
+ * @generated from message cua.env.v1.ServiceSpec
+ */
+export type ServiceSpec = Message<"cua.env.v1.ServiceSpec"> & {
+  /**
+   * Name: lowercase letters, digits, `-`, `_` and `.`, 1 to 63 of them,
+   * starting with a letter or digit.
+   *
+   * @generated from field: string name = 1;
+   */
+  name: string;
+
+  /**
+   * What to run (`timeout` is ignored).
+   *
+   * @generated from field: cua.env.v1.ProcessConfig config = 2;
+   */
+  config?: ProcessConfig | undefined;
+
+  /**
+   * When it is started again. Unset: always.
+   *
+   * @generated from field: cua.env.v1.RestartPolicy restart = 3;
+   */
+  restart: RestartPolicy;
+
+  /**
+   * First wait before a restart; it doubles on each quick failure. Unset:
+   * 1 second.
+   *
+   * @generated from field: google.protobuf.Duration backoff_min = 4;
+   */
+  backoffMin?: Duration | undefined;
+
+  /**
+   * Longest wait before a restart. Unset: 60 seconds.
+   *
+   * @generated from field: google.protobuf.Duration backoff_max = 5;
+   */
+  backoffMax?: Duration | undefined;
+
+  /**
+   * Health check. Unset: the service is healthy while it runs.
+   *
+   * @generated from field: cua.env.v1.HealthProbe probe = 6;
+   */
+  probe?: HealthProbe | undefined;
+
+  /**
+   * Start it when cua-spacesd starts. Unset: true.
+   *
+   * @generated from field: optional bool start_on_boot = 7;
+   */
+  startOnBoot?: boolean | undefined;
+
+  /**
+   * Size at which the log file is rotated (one older file is kept). 0:
+   * 10 MiB.
+   *
+   * @generated from field: uint64 log_max_bytes = 8;
+   */
+  logMaxBytes: bigint;
+};
+
+/**
+ * Describes the message cua.env.v1.ServiceSpec.
+ * Use `create(ServiceSpecSchema)` to create a new message.
+ */
+export const ServiceSpecSchema: GenMessage<ServiceSpec> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_process, 32);
+
+/**
+ * A service and how it is doing.
+ *
+ * @generated from message cua.env.v1.ServiceStatus
+ */
+export type ServiceStatus = Message<"cua.env.v1.ServiceStatus"> & {
+  /**
+   * What it runs.
+   *
+   * @generated from field: cua.env.v1.ServiceSpec spec = 1;
+   */
+  spec?: ServiceSpec | undefined;
+
+  /**
+   * Where it is.
+   *
+   * @generated from field: cua.env.v1.ServiceState state = 2;
+   */
+  state: ServiceState;
+
+  /**
+   * Its current process, while it runs.
+   *
+   * @generated from field: uint32 pid = 3;
+   */
+  pid: number;
+
+  /**
+   * Starts after the first one.
+   *
+   * @generated from field: uint32 restarts = 4;
+   */
+  restarts: number;
+
+  /**
+   * When the current (or last) process started.
+   *
+   * @generated from field: google.protobuf.Timestamp started_at = 5;
+   */
+  startedAt?: Timestamp | undefined;
+
+  /**
+   * How the last process ended.
+   *
+   * @generated from field: cua.env.v1.ProcessEnd last_end = 6;
+   */
+  lastEnd?: ProcessEnd | undefined;
+
+  /**
+   * The last failed health check, empty when the last one passed.
+   *
+   * @generated from field: string probe_error = 7;
+   */
+  probeError: string;
+
+  /**
+   * When it starts again (state `SERVICE_STATE_BACKOFF`).
+   *
+   * @generated from field: google.protobuf.Timestamp next_start_at = 8;
+   */
+  nextStartAt?: Timestamp | undefined;
+
+  /**
+   * Its log file in the guest.
+   *
+   * @generated from field: string log_path = 9;
+   */
+  logPath: string;
+};
+
+/**
+ * Describes the message cua.env.v1.ServiceStatus.
+ * Use `create(ServiceStatusSchema)` to create a new message.
+ */
+export const ServiceStatusSchema: GenMessage<ServiceStatus> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_process, 33);
+
+/**
+ * Request for `ProcessService.PutService`.
+ *
+ * @generated from message cua.env.v1.PutServiceRequest
+ */
+export type PutServiceRequest = Message<"cua.env.v1.PutServiceRequest"> & {
+  /**
+   * The service.
+   *
+   * @generated from field: cua.env.v1.ServiceSpec spec = 1;
+   */
+  spec?: ServiceSpec | undefined;
+};
+
+/**
+ * Describes the message cua.env.v1.PutServiceRequest.
+ * Use `create(PutServiceRequestSchema)` to create a new message.
+ */
+export const PutServiceRequestSchema: GenMessage<PutServiceRequest> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_process, 34);
+
+/**
+ * Response for `ProcessService.PutService`.
+ *
+ * @generated from message cua.env.v1.PutServiceResponse
+ */
+export type PutServiceResponse = Message<"cua.env.v1.PutServiceResponse"> & {
+  /**
+   * Its state right after it was put.
+   *
+   * @generated from field: cua.env.v1.ServiceStatus service = 1;
+   */
+  service?: ServiceStatus | undefined;
+};
+
+/**
+ * Describes the message cua.env.v1.PutServiceResponse.
+ * Use `create(PutServiceResponseSchema)` to create a new message.
+ */
+export const PutServiceResponseSchema: GenMessage<PutServiceResponse> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_process, 35);
+
+/**
+ * Request for `ProcessService.DeleteService`.
+ *
+ * @generated from message cua.env.v1.DeleteServiceRequest
+ */
+export type DeleteServiceRequest = Message<"cua.env.v1.DeleteServiceRequest"> & {
+  /**
+   * Name.
+   *
+   * @generated from field: string name = 1;
+   */
+  name: string;
+};
+
+/**
+ * Describes the message cua.env.v1.DeleteServiceRequest.
+ * Use `create(DeleteServiceRequestSchema)` to create a new message.
+ */
+export const DeleteServiceRequestSchema: GenMessage<DeleteServiceRequest> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_process, 36);
+
+/**
+ * Response for `ProcessService.DeleteService`.
+ *
+ * @generated from message cua.env.v1.DeleteServiceResponse
+ */
+export type DeleteServiceResponse = Message<"cua.env.v1.DeleteServiceResponse"> & {
+};
+
+/**
+ * Describes the message cua.env.v1.DeleteServiceResponse.
+ * Use `create(DeleteServiceResponseSchema)` to create a new message.
+ */
+export const DeleteServiceResponseSchema: GenMessage<DeleteServiceResponse> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_process, 37);
+
+/**
+ * Request for `ProcessService.ListServices`.
+ *
+ * @generated from message cua.env.v1.ListServicesRequest
+ */
+export type ListServicesRequest = Message<"cua.env.v1.ListServicesRequest"> & {
+};
+
+/**
+ * Describes the message cua.env.v1.ListServicesRequest.
+ * Use `create(ListServicesRequestSchema)` to create a new message.
+ */
+export const ListServicesRequestSchema: GenMessage<ListServicesRequest> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_process, 38);
+
+/**
+ * Response for `ProcessService.ListServices`.
+ *
+ * @generated from message cua.env.v1.ListServicesResponse
+ */
+export type ListServicesResponse = Message<"cua.env.v1.ListServicesResponse"> & {
+  /**
+   * By name.
+   *
+   * @generated from field: repeated cua.env.v1.ServiceStatus services = 1;
+   */
+  services: ServiceStatus[];
+};
+
+/**
+ * Describes the message cua.env.v1.ListServicesResponse.
+ * Use `create(ListServicesResponseSchema)` to create a new message.
+ */
+export const ListServicesResponseSchema: GenMessage<ListServicesResponse> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_process, 39);
+
+/**
+ * Request for `ProcessService.ControlService`.
+ *
+ * @generated from message cua.env.v1.ControlServiceRequest
+ */
+export type ControlServiceRequest = Message<"cua.env.v1.ControlServiceRequest"> & {
+  /**
+   * Name.
+   *
+   * @generated from field: string name = 1;
+   */
+  name: string;
+
+  /**
+   * What to do.
+   *
+   * @generated from field: cua.env.v1.ServiceAction action = 2;
+   */
+  action: ServiceAction;
+};
+
+/**
+ * Describes the message cua.env.v1.ControlServiceRequest.
+ * Use `create(ControlServiceRequestSchema)` to create a new message.
+ */
+export const ControlServiceRequestSchema: GenMessage<ControlServiceRequest> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_process, 40);
+
+/**
+ * Response for `ProcessService.ControlService`.
+ *
+ * @generated from message cua.env.v1.ControlServiceResponse
+ */
+export type ControlServiceResponse = Message<"cua.env.v1.ControlServiceResponse"> & {
+  /**
+   * Its state after the action.
+   *
+   * @generated from field: cua.env.v1.ServiceStatus service = 1;
+   */
+  service?: ServiceStatus | undefined;
+};
+
+/**
+ * Describes the message cua.env.v1.ControlServiceResponse.
+ * Use `create(ControlServiceResponseSchema)` to create a new message.
+ */
+export const ControlServiceResponseSchema: GenMessage<ControlServiceResponse> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_process, 41);
+
+/**
+ * Request for `ProcessService.GetServiceLogs`.
+ *
+ * @generated from message cua.env.v1.GetServiceLogsRequest
+ */
+export type GetServiceLogsRequest = Message<"cua.env.v1.GetServiceLogsRequest"> & {
+  /**
+   * Name.
+   *
+   * @generated from field: string name = 1;
+   */
+  name: string;
+
+  /**
+   * How many bytes from the end. 0: 64 KiB; at most 4 MiB.
+   *
+   * @generated from field: uint64 tail_bytes = 2;
+   */
+  tailBytes: bigint;
+};
+
+/**
+ * Describes the message cua.env.v1.GetServiceLogsRequest.
+ * Use `create(GetServiceLogsRequestSchema)` to create a new message.
+ */
+export const GetServiceLogsRequestSchema: GenMessage<GetServiceLogsRequest> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_process, 42);
+
+/**
+ * Response for `ProcessService.GetServiceLogs`.
+ *
+ * @generated from message cua.env.v1.GetServiceLogsResponse
+ */
+export type GetServiceLogsResponse = Message<"cua.env.v1.GetServiceLogsResponse"> & {
+  /**
+   * The end of its output (stdout and stderr interleaved as written).
+   *
+   * @generated from field: bytes data = 1;
+   */
+  data: Uint8Array;
+
+  /**
+   * True when older output was left out.
+   *
+   * @generated from field: bool truncated = 2;
+   */
+  truncated: boolean;
+};
+
+/**
+ * Describes the message cua.env.v1.GetServiceLogsResponse.
+ * Use `create(GetServiceLogsResponseSchema)` to create a new message.
+ */
+export const GetServiceLogsResponseSchema: GenMessage<GetServiceLogsResponse> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_process, 43);
+
+/**
  * Lifecycle state of a managed process.
  *
  * @generated from enum cua.env.v1.ProcessState
@@ -1420,6 +1853,157 @@ export const ExecStateSchema: GenEnum<ExecState> = /*@__PURE__*/
   enumDesc(file_cua_env_v1_process, 2);
 
 /**
+ * When a service is started again.
+ *
+ * @generated from enum cua.env.v1.RestartPolicy
+ */
+export enum RestartPolicy {
+  /**
+   * Unset: `RESTART_POLICY_ALWAYS`.
+   *
+   * @generated from enum value: RESTART_POLICY_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * Whenever it ends, however it ends.
+   *
+   * @generated from enum value: RESTART_POLICY_ALWAYS = 1;
+   */
+  ALWAYS = 1,
+
+  /**
+   * When it ends with a non-zero code, a signal, or a failed health check.
+   *
+   * @generated from enum value: RESTART_POLICY_ON_FAILURE = 2;
+   */
+  ON_FAILURE = 2,
+
+  /**
+   * Never: it runs once.
+   *
+   * @generated from enum value: RESTART_POLICY_NEVER = 3;
+   */
+  NEVER = 3,
+}
+
+/**
+ * Describes the enum cua.env.v1.RestartPolicy.
+ */
+export const RestartPolicySchema: GenEnum<RestartPolicy> = /*@__PURE__*/
+  enumDesc(file_cua_env_v1_process, 3);
+
+/**
+ * Where a service is.
+ *
+ * @generated from enum cua.env.v1.ServiceState
+ */
+export enum ServiceState {
+  /**
+   * Not reported.
+   *
+   * @generated from enum value: SERVICE_STATE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * Starting (or waiting for its first health check).
+   *
+   * @generated from enum value: SERVICE_STATE_STARTING = 1;
+   */
+  STARTING = 1,
+
+  /**
+   * Running, and healthy when it has a check.
+   *
+   * @generated from enum value: SERVICE_STATE_RUNNING = 2;
+   */
+  RUNNING = 2,
+
+  /**
+   * Running, but its last checks failed.
+   *
+   * @generated from enum value: SERVICE_STATE_UNHEALTHY = 3;
+   */
+  UNHEALTHY = 3,
+
+  /**
+   * Ended; waiting `next_start_at` to start again.
+   *
+   * @generated from enum value: SERVICE_STATE_BACKOFF = 4;
+   */
+  BACKOFF = 4,
+
+  /**
+   * Stopped by a caller.
+   *
+   * @generated from enum value: SERVICE_STATE_STOPPED = 5;
+   */
+  STOPPED = 5,
+
+  /**
+   * Ended and its policy does not start it again.
+   *
+   * @generated from enum value: SERVICE_STATE_EXITED = 6;
+   */
+  EXITED = 6,
+
+  /**
+   * Could not be started (the command does not exist, ...).
+   *
+   * @generated from enum value: SERVICE_STATE_FAILED = 7;
+   */
+  FAILED = 7,
+}
+
+/**
+ * Describes the enum cua.env.v1.ServiceState.
+ */
+export const ServiceStateSchema: GenEnum<ServiceState> = /*@__PURE__*/
+  enumDesc(file_cua_env_v1_process, 4);
+
+/**
+ * What `ControlService` does.
+ *
+ * @generated from enum cua.env.v1.ServiceAction
+ */
+export enum ServiceAction {
+  /**
+   * Not set (refused).
+   *
+   * @generated from enum value: SERVICE_ACTION_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * Start it (no-op when it runs).
+   *
+   * @generated from enum value: SERVICE_ACTION_START = 1;
+   */
+  START = 1,
+
+  /**
+   * Stop it and keep it stopped.
+   *
+   * @generated from enum value: SERVICE_ACTION_STOP = 2;
+   */
+  STOP = 2,
+
+  /**
+   * Stop it, then start it.
+   *
+   * @generated from enum value: SERVICE_ACTION_RESTART = 3;
+   */
+  RESTART = 3,
+}
+
+/**
+ * Describes the enum cua.env.v1.ServiceAction.
+ */
+export const ServiceActionSchema: GenEnum<ServiceAction> = /*@__PURE__*/
+  enumDesc(file_cua_env_v1_process, 5);
+
+/**
  * Runs and supervises guest processes.
  *
  * Processes are detached from the RPC that started them: a client disconnect
@@ -1551,6 +2135,61 @@ export const ProcessService: GenService<{
     methodKind: "unary";
     input: typeof AdvanceEpochRequestSchema;
     output: typeof AdvanceEpochResponseSchema;
+  },
+  /**
+   * Keeps a command running as a named service: started at once, started
+   * again by its restart policy when it exits or fails its health check,
+   * started when cua-spacesd starts (after the guest boots) unless
+   * `start_on_boot` is false, and its output kept in log files. Putting a
+   * name that exists replaces it (the old process is stopped first).
+   *
+   * @generated from rpc cua.env.v1.ProcessService.PutService
+   */
+  putService: {
+    methodKind: "unary";
+    input: typeof PutServiceRequestSchema;
+    output: typeof PutServiceResponseSchema;
+  },
+  /**
+   * Stops a service and forgets it (its log files go too).
+   *
+   * @generated from rpc cua.env.v1.ProcessService.DeleteService
+   */
+  deleteService: {
+    methodKind: "unary";
+    input: typeof DeleteServiceRequestSchema;
+    output: typeof DeleteServiceResponseSchema;
+  },
+  /**
+   * Lists services with their state.
+   *
+   * @generated from rpc cua.env.v1.ProcessService.ListServices
+   */
+  listServices: {
+    methodKind: "unary";
+    input: typeof ListServicesRequestSchema;
+    output: typeof ListServicesResponseSchema;
+  },
+  /**
+   * Starts, stops or restarts a service. A stopped service stays stopped
+   * until started (also across a restart of cua-spacesd).
+   *
+   * @generated from rpc cua.env.v1.ProcessService.ControlService
+   */
+  controlService: {
+    methodKind: "unary";
+    input: typeof ControlServiceRequestSchema;
+    output: typeof ControlServiceResponseSchema;
+  },
+  /**
+   * The end of a service's log.
+   *
+   * @generated from rpc cua.env.v1.ProcessService.GetServiceLogs
+   */
+  getServiceLogs: {
+    methodKind: "unary";
+    input: typeof GetServiceLogsRequestSchema;
+    output: typeof GetServiceLogsResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_cua_env_v1_process, 0);

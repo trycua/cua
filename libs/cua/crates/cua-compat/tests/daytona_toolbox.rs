@@ -12,6 +12,7 @@ struct Gw {
     http: reqwest::Client,
     api: String,
     id: String,
+    mock: Arc<MockBackend>,
     _dir: tempfile::TempDir,
 }
 
@@ -22,9 +23,10 @@ async fn start() -> Gw {
     o.host_port = 0;
     o.dir = Some(dir.path().to_path_buf());
     o.create_default_user = false;
-    let gw = Gateway::start(o, Some(Arc::new(MockBackend::new())))
-        .await
-        .unwrap();
+    // A user the mock guest has: file calls name it to the agent.
+    o.default_user = "alice".into();
+    let mock = Arc::new(MockBackend::new());
+    let gw = Gateway::start(o, Some(mock.clone())).await.unwrap();
     let api = format!("http://{}/api", gw.api_addr);
     let http = reqwest::Client::new();
     let sb: Value = http
@@ -43,6 +45,7 @@ async fn start() -> Gw {
         http,
         api,
         id,
+        mock,
         _dir: dir,
     }
 }
@@ -222,4 +225,44 @@ async fn sandbox_level_errors_come_from_the_api_not_the_daemon() {
         .unwrap();
     assert_eq!(r.status(), 404);
     assert_eq!(r.json::<Value>().await.unwrap()["source"], "DAYTONA_API");
+}
+
+#[tokio::test]
+async fn file_calls_name_the_sandbox_user_to_an_agent_that_switches_users() {
+    // The mock agent switches users by capability and is not root itself:
+    // a file call without `run_as` would run as the agent, not as the
+    // sandbox's user (`alice` here).
+    let g = start().await;
+    let r = g
+        .tb(
+            reqwest::Method::POST,
+            "/files/folder?path=/tmp/new/d&mode=755",
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 201, "{}", r.text().await.unwrap());
+    g.upload("/tmp/m1", b"1").await;
+    let r = g
+        .tb(
+            reqwest::Method::POST,
+            "/files/move?source=/tmp/m1&destination=/tmp/m2",
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+    let r = g
+        .tb(reqwest::Method::DELETE, "/files?path=/tmp/m2")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    let name = g.mock.created.lock().await[0].name.clone();
+    let st = g.mock.state(&name).await.unwrap();
+    let o = &st.observed;
+    assert_eq!(o.run_as_of("MakeDir", "/tmp/new/d"), ["alice"]);
+    assert_eq!(o.run_as_of("Stat", "/tmp/m2"), ["alice"]);
+    assert_eq!(o.run_as_of("Move", "/tmp/m1"), ["alice"]);
+    assert_eq!(o.run_as_of("Remove", "/tmp/m2"), ["alice"]);
 }

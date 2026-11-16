@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS accessibility role -> cursor shape, for the presence hit-test.
 //!
 //! Pure and platform-neutral (compiled on every host) so the table is unit

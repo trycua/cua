@@ -10,6 +10,7 @@ import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { DEMO_THREAD_SPACE } from "@/bridge/adapters/demo/thread";
+import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { mountApp, stubBrowserApis } from "./app-harness";
 
 afterEach(cleanup);
@@ -18,10 +19,15 @@ stubBrowserApis();
 const q = (s: string) => document.querySelector<HTMLElement>(s);
 const qa = (s: string) => [...document.querySelectorAll<HTMLElement>(s)];
 const path = `/spaces/${encodeURIComponent(DEMO_THREAD_SPACE)}`;
+/** The failed agent's reply (its own row: the one with Connect, or Sign in on another computer), named by what it says. */
+const failureReply = (who: string) =>
+  qa("[data-entry]").find(
+    (e) => e.querySelector("[data-failure-connect], [data-signin-start]") && e.querySelector("[data-failure]") && e.textContent?.includes(who),
+  );
 const host = { failsCreates: false, listsGhost: false, demo: { threadAuthFailed: true } };
 
 describe("an agent that is not connected", () => {
-  it("answers in plain words with Connect and Retry, never as the raw error, and the person's message is not marked Failed", async () => {
+  it.skipIf(!wasmBuilt)("answers in plain words with Connect and Retry, never as the raw error, and the person's message is not marked Failed", async () => {
     await mountApp(path, host);
     const failed = await waitFor(
       () => {
@@ -36,24 +42,47 @@ describe("an agent that is not connected", () => {
     expect(claude.querySelector("[data-task-chip]")).toBeNull();
     const own = claude.querySelector(":scope > [data-entry]")!;
     expect(own.querySelector("[data-task-chip]")).toBeNull();
-    const reply = claude.querySelector("[data-task-replies] [data-entry]")!;
-    expect(reply.querySelector("[data-failure-connect]")).not.toBeNull();
+    // Flat: the reply is its own row after the task, not inside it.
+    expect(claude.querySelector("[data-task-replies]")).toBeNull();
+    const reply = failureReply("Claude")!;
     expect(reply.textContent).toContain("I can't reach Claude yet. Connect Claude, then try again.");
     expect(reply.textContent).not.toMatch(/401|authentication_error|OAuth/);
-    // Connect opens Settings, Connectors on the app; Retry is there too.
-    const connect = reply.querySelector<HTMLAnchorElement>("[data-failure-connect]")!;
-    expect(connect.getAttribute("href")).toBe("/settings/connectors/claude-code");
+    // Claude Code runs on another computer (a Space, not This Mac): it signs in there itself, with
+    // an API key as the other way (CUA-3907). Cua never copies the sign-in there.
+    expect(reply.querySelector("[data-failure-connect]")).toBeNull();
+    const signIn = await waitFor(() => {
+      const b = reply.querySelector<HTMLButtonElement>("[data-signin-start]")!;
+      expect(b.disabled).toBe(false);
+      return b;
+    });
+    expect(signIn.textContent).toMatch(/^ ?Sign in to Claude Code on /);
+    await act(async () => {
+      fireEvent.click(signIn);
+    });
+    // The agent's own sign-in shows its link, and asks for the code that page shows.
+    const going = await waitFor(() => {
+      const g = reply.querySelector<HTMLElement>('[data-signin-state="signing_in"] [data-signin-open]')!;
+      expect(g).not.toBeNull();
+      return g;
+    });
+    expect(going.dataset.signinOpen).toMatch(/^https:\/\//);
+    expect(reply.querySelector("[data-signin-paste]")).not.toBeNull();
+    // "or use an API key" opens the same sheet as Settings, Connections; Retry is there too.
+    await act(async () => {
+      fireEvent.click(reply.querySelector("[data-signin-use-key]")!);
+    });
+    await waitFor(() => expect(q("[data-import-sheet], [data-provider-sheet]")).not.toBeNull());
     expect(reply.querySelector("[data-failure-retry]")).not.toBeNull();
-    // No middle dot anywhere in what the failure draws.
+    // No middle dot anywhere in what the failure draws, and no jargon.
     expect(claude.textContent).not.toContain("·");
+    expect(reply.textContent).not.toMatch(/token|OAuth/i);
   });
 
   it("keeps the complete error under Show details, selectable, with Copy", async () => {
     await mountApp(path, host);
     const reply = await waitFor(
       () => {
-        const t = qa('[data-task-state="failed"]').find((x) => x.textContent?.includes("@claude hi"));
-        const r = t?.querySelector("[data-task-replies] [data-entry]");
+        const r = failureReply("Claude");
         expect(r).toBeTruthy();
         return r as HTMLElement;
       },
@@ -71,7 +100,7 @@ describe("an agent that is not connected", () => {
     expect(reply.querySelector("[data-failure-copy]")).not.toBeNull();
   });
 
-  it("shows a failed member's reason whole in the member list", async () => {
+  it("says one word for a failed member in the member list, and keeps the whole error under Show details", async () => {
     await mountApp(path, host);
     const row = await waitFor(
       () => {
@@ -82,7 +111,16 @@ describe("an agent that is not connected", () => {
       { timeout: 5000 },
     );
     const caption = row.querySelector<HTMLElement>("[data-member-caption]")!;
+    // A short word, never the raw error.
     expect(caption.textContent).toBe("Not connected");
-    expect(caption.className).not.toContain("truncate");
+    expect(row.textContent).not.toMatch(/401|OAuth|authentication/i);
+    const details = q("[data-member-details] [data-failure-details]");
+    expect(details).not.toBeNull();
+    await act(async () => {
+      fireEvent.click(details!);
+    });
+    const message = q("[data-member-details] [data-failure-message]")!;
+    expect(message.className).toContain("select-text");
+    expect(message.textContent!.length).toBeGreaterThan(20);
   });
 });

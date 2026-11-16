@@ -59,6 +59,10 @@ export interface SpaceCreateConfig {
   spacesd?: boolean;
   reuse?: boolean;
   gpu?: string;
+  /** Lets the Space make child Spaces of its own (the SDK's `children`). */
+  children?: boolean;
+  /** Labels kept with the Space (the SDK's `labels`). The agent home's grants ride on `cua.home.*`. */
+  labels?: Record<string, string>;
 }
 
 /** Where new Spaces go by default (`default.on`), and where that came from. */
@@ -486,6 +490,18 @@ export interface HostStatus {
   provideSpaces?: boolean;
   maxSpaces?: number;
   maxMacosVms?: number;
+  /** Memory the Spaces other machines create here may use in total, in GB (0: no limit). */
+  maxMemoryGb?: number;
+  /** Disk they may use in total, in GB (0: no limit). */
+  maxDiskGb?: number;
+  /** How long such a Space may run, in minutes (0: no limit). */
+  maxRunMinutes?: number;
+  /** What those Spaces were given now, in GB. */
+  usedMemoryGb?: number;
+  usedDiskGb?: number;
+  /** This machine's own memory and disk, in GB (0: not known). */
+  totalMemoryGb?: number;
+  totalDiskGb?: number;
   recentAccess?: HostAccess[];
   accessLogError?: string | null;
   providedSpaces?: HostProvidedSpace[];
@@ -502,8 +518,8 @@ export interface HostStatus {
   account?: HostAccount | null;
   /** What a running setup (or Sign In) waits for, such as finishing the
    * sign-in in the browser (the SwiftUI app's `HostModel.progress`). */
-  progress?: string | null;  /** The name System Settings lists the app under ("Cua Spaces", "Cua
-   * Spaces Local"): the Mac app's own name, for the permissions screen. */
+  progress?: string | null /** The name System Settings lists the app under ("Cua Spaces", "Cua
+   * Spaces Local"): the Mac app's own name, for the permissions screen. */;
   appName?: string | null;
 }
 
@@ -538,6 +554,34 @@ export type HostActionId =
   | "provide-spaces"
   | "stop-providing-spaces"
   | "sign-in";
+
+/** One limit on the Spaces other machines create here (`host::HostLimitRow`). */
+export interface HostLimitRow {
+  /** `max-spaces`, `max-memory`, `max-disk` or `max-run`. */
+  id: "max-spaces" | "max-memory" | "max-disk" | "max-run" | string;
+  label: string;
+  help: string;
+  /** The limit; 0 is no limit. */
+  value: number;
+  /** `Spaces`, `GB` or `minutes`. */
+  unit: string;
+  /** "2 of 4 Spaces", "12 of 32 GB"; absent for a limit about time. */
+  useText?: string | null;
+  /** This machine's own total in `unit` (memory, disk); 0 when not known. */
+  total?: number;
+  /** In use above the limit: nothing stops, new Spaces are refused. */
+  over?: boolean;
+  /** "Over limit" while `over`. */
+  overText?: string | null;
+}
+
+/** A change to the limits (`host.limits`); a missing field keeps its value, 0 is no limit. */
+export interface HostLimits {
+  maxSpaces?: number;
+  maxMemoryGb?: number;
+  maxDiskGb?: number;
+  maxRunMinutes?: number;
+}
 
 /** One of the two sharing settings (`host::HostToggle`). */
 export interface HostToggle {
@@ -602,6 +646,8 @@ export interface HostPanelView {
   accessWarning?: string | null;
   toggles?: HostToggle[];
   limits?: string | null;
+  /** The limits as number rows (Settings, Sharing), while this machine lets others create Spaces. */
+  limitRows?: HostLimitRow[];
   providedTitle?: string | null;
   provided?: HostAccessRow[];
   providedEmpty?: string | null;
@@ -742,6 +788,10 @@ export interface SettingsInput {
   autoConnect?: boolean | null;
   /** Overflow into your clouds when this machine is full (`placement.overflow`; none: no row). */
   overflow?: boolean | null;
+  /** Settings, General's "When I close the window" (none: no rows). */
+  closeWindowKeepsRunning?: boolean | null;
+  /** The notice that Cua Spaces keeps running is on (shown with the row above). */
+  closeNotice?: boolean;
   /** Settings, Advanced's runtimes: each kind's setting, what is installed
    * for it and whether it runs here (`runtimes::RuntimesInput`). None: not
    * read yet (the rows still show, "Checking…"). */
@@ -756,16 +806,7 @@ export interface SettingsInput {
   showTips?: boolean;
 }
 
-export type SettingsRowKind =
-  | "text"
-  | "choice"
-  | "note"
-  | "error"
-  | "field"
-  | "secret"
-  | "prompt"
-  | "link"
-  | "toggle";
+export type SettingsRowKind = "text" | "choice" | "note" | "error" | "field" | "secret" | "prompt" | "link" | "toggle";
 
 export interface SettingsOption {
   id: string;

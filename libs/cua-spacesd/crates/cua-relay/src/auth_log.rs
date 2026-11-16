@@ -22,6 +22,8 @@
 //! Tokens, token fragments, emails, account and user ids, IP addresses,
 //! machine ids and device names are never logged.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use axum::http::{header, HeaderMap};
 
 /// The `tracing` target of the 401 log lines.
@@ -47,6 +49,8 @@ pub enum Reason {
     WrongIssuer,
     /// `aud` holds none of the configured audiences.
     WrongAudience,
+    /// `azp` is not one of the configured authorized parties.
+    UnauthorizedParty,
     /// `exp` has passed (beyond the leeway).
     Expired,
     /// `nbf` is in the future.
@@ -77,6 +81,34 @@ pub enum Reason {
 }
 
 impl Reason {
+    /// Every reason, in [`Self::index`] order.
+    pub const ALL: [Reason; 20] = [
+        Self::MissingToken,
+        Self::Malformed,
+        Self::UnsupportedAlgorithm,
+        Self::UnknownSigningKey,
+        Self::JwksUnavailable,
+        Self::BadSignature,
+        Self::WrongIssuer,
+        Self::WrongAudience,
+        Self::Expired,
+        Self::NotYetValid,
+        Self::MissingClaim,
+        Self::UnknownMachineToken,
+        Self::InvalidRelayToken,
+        Self::InvalidAdminToken,
+        Self::DeviceProofStale,
+        Self::DeviceProofBadSignature,
+        Self::DeviceProofReplayed,
+        Self::SpacesdCredentialMissing,
+        Self::InvalidPairingCode,
+        Self::TicketRevoked,
+    ];
+
+    fn index(self) -> usize {
+        Self::ALL.iter().position(|r| *r == self).unwrap_or(0)
+    }
+
     /// The category as logged.
     pub fn as_str(self) -> &'static str {
         match self {
@@ -88,6 +120,7 @@ impl Reason {
             Self::BadSignature => "bad_signature",
             Self::WrongIssuer => "wrong_issuer",
             Self::WrongAudience => "wrong_audience",
+            Self::UnauthorizedParty => "unauthorized_party",
             Self::Expired => "expired",
             Self::NotYetValid => "not_yet_valid",
             Self::MissingClaim => "missing_claim",
@@ -120,6 +153,19 @@ pub enum Route {
 }
 
 impl Route {
+    /// Every route, in [`Self::index`] order.
+    pub const ALL: [Route; 5] = [
+        Self::Connect,
+        Self::Admin,
+        Self::Machines,
+        Self::Devices,
+        Self::Proxy,
+    ];
+
+    fn index(self) -> usize {
+        Self::ALL.iter().position(|r| *r == self).unwrap_or(0)
+    }
+
     /// The class as logged.
     pub fn as_str(self) -> &'static str {
         match self {
@@ -270,6 +316,7 @@ pub fn client_kind(headers: &HeaderMap) -> &'static str {
 
 /// Logs one 401.
 pub fn rejected(headers: &HeaderMap, route: Route, reason: Reason, facts: Option<&TokenFacts>) {
+    REJECTIONS[route.index()][reason.index()].fetch_add(1, Ordering::Relaxed);
     let facts = facts.cloned().unwrap_or_default();
     tracing::info!(
         target: TARGET,
@@ -281,6 +328,35 @@ pub fn rejected(headers: &HeaderMap, route: Route, reason: Reason, facts: Option
         clock_skew_secs = facts.clock_skew_secs,
         "401 unauthenticated"
     );
+}
+
+/// 401s answered, by route and reason (process lifetime).
+static REJECTIONS: [[AtomicU64; Reason::ALL.len()]; Route::ALL.len()] =
+    [const { [const { AtomicU64::new(0) }; Reason::ALL.len()] }; Route::ALL.len()];
+
+/// `cua_relay_auth_rejections_total{route,reason}` in Prometheus text
+/// format, one line per pair seen at least once.
+///
+/// These are the relay refusing its own callers, kept apart from
+/// `cua_relay_org_api_errors_total` (the relay's calls to the Spaces API).
+/// Most are expected: `unknown_machine_token` and `ticket_revoked` are a
+/// deleted, rotated or revoked machine or device still reconnecting,
+/// `expired` a client that has not refreshed yet.
+pub fn metrics() -> String {
+    let mut out = String::from("# TYPE cua_relay_auth_rejections_total counter\n");
+    for route in Route::ALL {
+        for reason in Reason::ALL {
+            let n = REJECTIONS[route.index()][reason.index()].load(Ordering::Relaxed);
+            if n > 0 {
+                out.push_str(&format!(
+                    "cua_relay_auth_rejections_total{{route=\"{}\",reason=\"{}\"}} {n}\n",
+                    route.as_str(),
+                    reason.as_str()
+                ));
+            }
+        }
+    }
+    out
 }
 
 /// Logs one `cua share` web event (`web_login_ok`, `web_login_failed`,
@@ -304,6 +380,44 @@ mod tests {
             b64.encode(br#"{"alg":"ES256"}"#),
             b64.encode(claims.to_string())
         )
+    }
+
+    #[test]
+    fn every_reason_and_route_has_its_own_slot() {
+        let reasons: std::collections::HashSet<_> =
+            Reason::ALL.iter().map(|r| r.as_str()).collect();
+        assert_eq!(reasons.len(), Reason::ALL.len());
+        for (i, r) in Reason::ALL.iter().enumerate() {
+            assert_eq!(r.index(), i);
+        }
+        for (i, r) in Route::ALL.iter().enumerate() {
+            assert_eq!(r.index(), i);
+        }
+    }
+
+    #[test]
+    fn revoked_machines_are_counted_apart_by_reason() {
+        let before = REJECTIONS[Route::Connect.index()][Reason::UnknownMachineToken.index()]
+            .load(Ordering::Relaxed);
+        rejected(
+            &HeaderMap::new(),
+            Route::Connect,
+            Reason::UnknownMachineToken,
+            None,
+        );
+        rejected(
+            &HeaderMap::new(),
+            Route::Connect,
+            Reason::UnknownMachineToken,
+            None,
+        );
+        let m = metrics();
+        let want = format!(
+            "cua_relay_auth_rejections_total{{route=\"connect\",reason=\"unknown_machine_token\"}} {}\n",
+            before + 2
+        );
+        assert!(m.contains(&want), "{m}");
+        assert!(!m.contains("org_api_errors"), "{m}");
     }
 
     #[test]

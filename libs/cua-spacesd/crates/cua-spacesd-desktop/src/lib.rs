@@ -304,8 +304,8 @@ impl TargetCatalog {
 }
 
 /// A background session reaches a Hyprland window only through the
-/// cua-hyprland-plugin's isolated seats, which admit qualified clients only.
-/// Any other window is refused when the session opens, as X11 refuses a
+/// cua-hyprland-plugin's isolated seats, which reach native Wayland windows
+/// only. Any other window (XWayland) is refused when the session opens, as X11 refuses a
 /// toolkit that drops synthetic events, instead of acknowledging every
 /// batch as undelivered.
 #[cfg(target_os = "linux")]
@@ -315,7 +315,7 @@ fn hyprland_background_admission(native: NativeTarget) -> Result<(), ProviderErr
         return Ok(());
     }
     let pid = u32::try_from(native.pid).unwrap_or(0);
-    hyprland_input::background_admission(pid).map_err(|reason| {
+    hyprland_input::background_admission(pid, native.window_id).map_err(|reason| {
         ProviderError::new(
             ProviderErrorCode::WouldRequireActivation,
             format!(

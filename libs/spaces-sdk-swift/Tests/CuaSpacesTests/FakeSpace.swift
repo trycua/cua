@@ -316,6 +316,24 @@ actor FakeSpacesBackend: SpacesTransport {
             // own desktop, not a structured result. Nothing to render.
             return .string("Pinned \(arguments["space"]?.stringValue ?? "") on your desktop.")
 
+        case "space_service":
+            return .object(["services": .array([])])
+
+        case "space_job":
+            if arguments["action"]?.stringValue == "list" { return .object(["jobs": .array([])]) }
+            return .object(["job": "j-1", "state": "running"])
+
+        case "network_show":
+            return .object(["settings": .object(["preset": "internet"]), "enforcement": "enforced"])
+
+        case "network_log":
+            return .array([.object(["reason": "platform:metadata", "dst": "169.254.169.254:80",
+                                    "proto": "tcp", "count": 2, "last_unix": 1])])
+
+        case "network_set":
+            return .object(["applied": "now",
+                            "network": .object(["settings": .object(["preset": arguments["network"] ?? "internet"])])])
+
         case "space_write":
             let path = arguments["path"]?.stringValue ?? ""
             files.insert(Self.expand(path))

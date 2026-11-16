@@ -81,7 +81,9 @@ async fn resume_boots_a_stopped_macos_vm_with_its_setup_share() {
             "noDisplay": true,
             "sharedDirectories": [
                 { "hostPath": setup.display().to_string(), "readOnly": true }
-            ]
+            ],
+            // The ports the first start published, over vsock too.
+            "forwards": [3211]
         })
     );
     assert_eq!(st.vms[name]["status"], "running");

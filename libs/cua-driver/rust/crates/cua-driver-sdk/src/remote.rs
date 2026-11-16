@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Transport-free remote Driver connection backend.
 //!
 //! A carrier (gRPC, HTTP/2, or another authenticated channel) implements

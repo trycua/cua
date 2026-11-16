@@ -37,6 +37,8 @@ public final class HelperNotch: NotchSurface {
     /// Search texts sent and not yet echoed by a state, oldest first: a
     /// state carrying an older one never undoes newer typing.
     @ObservationIgnored private var sentQueries: [String] = []
+    /// The last text from the core: another state with it is not a new echo.
+    @ObservationIgnored private var hostQuery = ""
     @ObservationIgnored private let emit: (HelperMessage) -> Void
     @ObservationIgnored private var panel: NotchPanel?
     @ObservationIgnored private var outsideClick: Any?
@@ -186,10 +188,16 @@ public final class HelperNotch: NotchSurface {
         emit(.event(.search(query: query)))
     }
 
-    /// A state's search text: an echo of typing still in flight is skipped;
-    /// anything else (the core cleared it) wins.
+    /// Repeated text is not a new acknowledgement. A closed panel always
+    /// forgets its search; otherwise a new text echoes typing or clears it.
     private func acceptQuery(_ q: String) {
-        if let i = sentQueries.firstIndex(of: q) {
+        let repeated = q == hostQuery
+        hostQuery = q
+        if q.isEmpty && view.phase == .closed {
+            sentQueries.removeAll()
+        } else if repeated {
+            return
+        } else if let i = sentQueries.firstIndex(of: q) {
             sentQueries.removeFirst(i + 1)
             if !sentQueries.isEmpty { return }
         } else {

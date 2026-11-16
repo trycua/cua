@@ -22,7 +22,7 @@
 import { HostError } from "../adapter";
 import type { HostStatus } from "../contracts/host";
 import type { SpaceRow } from "../contracts/spaces";
-import type { CatalogEntry, KvInventory, RunEvent, TeleportPlan } from "../contracts/teleport";
+import type { CatalogEntry, KvInventory, KvReadiness, RunEvent, TeleportPlan } from "../contracts/teleport";
 import type { HostEvent, OpArgs, OpName, OpResult } from "../protocol";
 import type { WebkitMethod, WkHostState, WkSpace } from "../webkit-protocol";
 import { isSettingsPane } from "./host-setup";
@@ -49,6 +49,7 @@ export const WEBKIT_PAGE_OPS = [
   "teleport.plan",
   "teleport.run",
   "teleport.sites",
+  "teleport.readiness",
   "teleport.remembered",
   "teleport.streamWindow",
   "sharing.list",
@@ -77,6 +78,9 @@ export const WEBKIT_PAGE_OPS = [
   "loginItem.openSettings",
   "runtimes.check",
   "runtimes.browse",
+  "repoCache.get",
+  "repoCache.set",
+  "repoCache.clear",
   "devices.get",
   "devices.enroll",
   "devices.checkEnrolled",
@@ -95,15 +99,18 @@ export const WEBKIT_PAGE_OPS = [
   "notifications.markRead",
   "telemetry.track",
   "spaces.usage",
+  "spaces.reach",
   "spaces.windows",
   "stream.pip",
   "spaces.thumbnail",
   "spaces.chooseFiles",
   "spaces.droppedFiles",
   "spaces.sendFiles",
+  "windows.chooseIso",
   "host.setUp",
   "host.joinWithCode",
   "host.action",
+  "host.limits",
   "host.openSettings",
 ] as const satisfies readonly OpName[];
 
@@ -227,7 +234,9 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
     // As long as the run takes (an install downloads the app); it reports
     // progress as it goes (teleport.progress) and answers when it is done.
     "teleport.run": ({ spaceId, plan, consent, runId }) => request("teleport.run", { spaceId, plan: { json: plan?.json }, consent, runId }, null),
-    "teleport.sites": async ({ providerId }) => snake(await request("teleport.sites", { providerId })) as KvInventory,
+    "teleport.sites": async ({ providerId, profile }) => snake(await request("teleport.sites", { providerId, profile: profile ?? null })) as KvInventory,
+    "teleport.readiness": async ({ providerId, profile }) =>
+      snake(await request("teleport.readiness", { providerId, profile: profile ?? null })) as KvReadiness,
     "teleport.remembered": async ({ providerId, spaceId }) => (await request<string[] | null>("teleport.remembered", { providerId, spaceId })) ?? null,
     "teleport.streamWindow": none("teleport.streamWindow"),
 
@@ -260,6 +269,9 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
     "runtimes.check": call("runtimes.check"),
     // The file panel waits for the person: no timeout.
     "runtimes.browse": async (args) => (await request("runtimes.browse", { ...args }, null)) as { path: string | null },
+    "repoCache.get": call("repoCache.get"),
+    "repoCache.set": call("repoCache.set"),
+    "repoCache.clear": call("repoCache.clear"),
     "devices.get": call("devices.get"),
     "devices.enroll": call("devices.enroll"),
     "devices.checkEnrolled": async () => Boolean(await request("devices.checkEnrolled")),
@@ -291,16 +303,19 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
       return null;
     },
     "spaces.usage": call("spaces.usage"),
+    "spaces.reach": call("spaces.reach"),
     "spaces.windows": call("spaces.windows"),
     "stream.pip": list("stream.pip"),
     "spaces.thumbnail": call("spaces.thumbnail"),
     "spaces.chooseFiles": list("spaces.chooseFiles"),
     "spaces.droppedFiles": list("spaces.droppedFiles"),
     "spaces.sendFiles": list("spaces.sendFiles"),
+    "windows.chooseIso": call("windows.chooseIso"),
 
     "host.setUp": host("host.setUp"),
     "host.joinWithCode": ({ code, relay }) => request("host.joinWithCode", { code, relay: relay ?? null }),
     "host.action": host("host.action"),
+    "host.limits": host("host.limits"),
     "host.openSettings": async ({ url }) => {
       if (!isSettingsPane(url)) throw new HostError("Only System Settings panes open here", "bad_args");
       await request("host.openSettings", { url });

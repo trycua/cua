@@ -13,7 +13,7 @@ import WebKit
 /// `CUA_SPACES_OFFSCREEN=1` too, nothing shows on screen (`OffscreenRun`).
 extension WebUIWindowController {
     static let captureRoutes = ["onboarding", "spaces", "machines", "agents", "keyvault", "notifications", "settings",
-                                 "settings/about", "settings/devices"]
+                                 "settings/about"]
 
     /// The base page routes resolve under: the window may have opened at
     /// another route (the first run, at `/onboarding`).

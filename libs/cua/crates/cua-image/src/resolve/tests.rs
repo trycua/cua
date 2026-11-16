@@ -534,3 +534,38 @@ async fn live_canonical_images_resolve() {
     }
     eprintln!("{root:#?}\n{disk:#?}\n{win:#?}");
 }
+
+/// The macOS Space with developer tools is published like the other macOS
+/// images; until it is (or where it is not), it resolves as its parent's Lume
+/// build, under its own name, and only for Lume.
+#[tokio::test]
+async fn the_developer_tools_image_resolves_as_its_parent() {
+    let mut r = FakeRegistry::default();
+    let lume = r.lume("ghcr.io/trycua/macos:26");
+    let x = format!("{}:26-xcode", crate::canonical::MACOS_REPO);
+    for b in [Backend::Auto, Backend::Local, Backend::Lume] {
+        let got = go(&r, &x, b, "arm64").await.unwrap();
+        assert_eq!(got.variant, Variant::Lume, "{b:?}");
+        assert_eq!(got.reference, x);
+        assert_eq!(got.variant_ref, x);
+        assert_eq!(got.digest, lume, "the parent's digest names the build");
+        assert_eq!(got.os, "macos");
+        assert_eq!(got.spacesd, Some(true));
+    }
+    // A container backend has no Lume and no tag to read: not found, as before.
+    assert!(go(&r, &x, Backend::Container, "arm64").await.is_err());
+    // An unlisted tier is still read from the registry (and is not there).
+    let other = format!("{}:26-xcode-beta", crate::canonical::MACOS_REPO);
+    assert!(go(&r, &other, Backend::Lume, "arm64").await.is_err());
+}
+
+#[tokio::test]
+async fn once_published_the_developer_tools_image_resolves_as_itself() {
+    // Only its own tag exists (no parent to fall back to).
+    let mut r = FakeRegistry::default();
+    let x = format!("{}:26-xcode", crate::canonical::MACOS_REPO);
+    let own = r.lume(&x);
+    let got = go(&r, &x, Backend::Local, "arm64").await.unwrap();
+    assert_eq!(got.digest, own);
+    assert_eq!(got.variant_ref, x);
+}

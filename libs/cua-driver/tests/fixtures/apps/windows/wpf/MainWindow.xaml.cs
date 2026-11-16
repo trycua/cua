@@ -273,7 +273,9 @@ public partial class MainWindow : Window
 
     private void OnSliderChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
-        LblSliderValue.Text = $"slider_value={(int)e.NewValue}";
+        // Keyboard.Modifiers reads live GetKeyState, so a thumb drag with held
+        // keys reports them for each move.
+        LblSliderValue.Text = $"slider_value={(int)e.NewValue} modifiers={Keyboard.Modifiers}";
     }
 
     private void UpdateChkState()

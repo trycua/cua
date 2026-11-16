@@ -16,6 +16,7 @@ pub mod limiter;
 pub mod model;
 pub mod notices;
 pub mod probe;
+pub mod route;
 pub mod store;
 
 mod error;
@@ -24,8 +25,8 @@ pub use access::{CALLER_HEADER, Caller, Verdict, decide};
 pub use error::{Error, Result};
 pub use gateway::{AuditSink, Gateway, GatewayConfig, GatewayHandle, UpstreamResolver};
 pub use model::{
-    Access, DEFAULT_PUBLIC_TTL, ID_LEN, MAX_TTL, MIN_TTL, Owner, Share, TOKEN_LEN, Target,
-    check_ttl, now_ms, random_hex,
+    Access, DEFAULT_PUBLIC_TTL, ID_LEN, MAX_TTL, MIN_TTL, Owner, REFUSED_TCP_PORTS, Share, TCP_TTL,
+    TOKEN_LEN, Target, TcpEndpoint, Waiting, check_ttl, now_ms, random_hex,
 };
 pub use probe::Probe;
 #[cfg(unix)]

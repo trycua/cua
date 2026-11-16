@@ -2,7 +2,7 @@
 //!
 //! One [`Cua`] object, in one of two topologies (RFC 2549):
 //!
-//! - [`Cua::embedded`] runs the SDK runtime ([`cua_daemon::Runtime`]) in
+//! - [`Cua::embedded`] runs the SDK runtime ([`cua_daemon_core::Runtime`]) in
 //!   this process;
 //! - [`Cua::connect`] talks to a running `cua daemon` over its Unix socket
 //!   (`~/.cua/cua.sock`) or loopback + token. Sandbox handles, spacesd

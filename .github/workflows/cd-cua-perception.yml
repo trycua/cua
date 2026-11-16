@@ -691,7 +691,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         if: always() && github.repository == 'trycua/cua'
         with:
-          sparse-checkout: .github/scripts/pin_latest_release.py
+          sparse-checkout: .github/scripts
       - name: Keep Latest on Cua Spaces
         if: always() && github.repository == 'trycua/cua'
         env:

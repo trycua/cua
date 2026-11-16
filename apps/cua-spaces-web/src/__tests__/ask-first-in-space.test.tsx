@@ -46,7 +46,7 @@ const found = (s: string, timeout = 8000) =>
 
 /** A Space the person's own job made (no agent in it yet): Home, a job, then its page. */
 async function inAFreshSpace(host: Parameters<typeof mountApp>[1]) {
-  const { router } = await mountApp("/home", host);
+  const { router } = await mountApp("/home/ask", host);
   await screen.findByLabelText("What should it do?");
   await pickNewLinux();
   fireEvent.change(screen.getByLabelText("What should it do?"), { target: { value: "look around" } });
@@ -75,7 +75,7 @@ async function compose(text: string) {
 describe.skipIf(!wasmBuilt)("Ask first in the Space (both flags)", () => {
   it("lands on the Space being made and posts the job to the agent the model runs on", { timeout: 40000 }, async () => {
     const calls: { op: string; args: Record<string, unknown> }[] = [];
-    const { router } = await mountApp("/home", {
+    const { router } = await mountApp("/home/ask", {
       failsCreates: false,
       listsGhost: false,
       intercept: (op, args) => (calls.push({ op, args: args as Record<string, unknown> }), undefined),
@@ -100,7 +100,7 @@ describe.skipIf(!wasmBuilt)("Ask first in the Space (both flags)", () => {
 
 describe.skipIf(!wasmBuilt)("Ask first: nothing connected", () => {
   it("has no agent to start with: the box says to sign in and Start waits", { timeout: 40000 }, async () => {
-    await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { keys: "none" } });
+    await mountApp("/home/ask", { failsCreates: false, listsGhost: false, demo: { keys: "none" } });
     fireEvent.change(await screen.findByLabelText("What should it do?"), { target: { value: "fix the build" } });
     expect(q("[data-ask-agent]")!.textContent).toBe("Choose an agent");
     expect((screen.getByRole("button", { name: "Start" }) as HTMLButtonElement).disabled).toBe(true);
@@ -147,7 +147,9 @@ describe.skipIf(!wasmBuilt)("Send again when the agent can't join", () => {
     });
     calls.length = 0;
     await compose("@ghost are you there");
-    await waitFor(() => expect(calls.some((c) => c.op === "thread.post" && String(c.args.text).includes("@ghost are you there"))).toBe(true), { timeout: 15000 });
+    await waitFor(() => expect(calls.some((c) => c.op === "thread.post" && String(c.args.text).includes("@ghost are you there"))).toBe(true), {
+      timeout: 15000,
+    });
     const note = await found("[data-wake-note=ghost]", 15000);
     expect(note.textContent).toContain("Nobody called @ghost is in this Space");
     expect(note.textContent).toContain("Only visible to you");
@@ -191,7 +193,7 @@ describe.skipIf(!wasmBuilt)("notes only you see", () => {
     // The create waits until the queued line has been looked at.
     let release!: () => void;
     const hold = new Promise<void>((r) => (release = r));
-    await mountApp("/home", { failsCreates: false, listsGhost: false, hold, intercept: (op, args) => (calls.push({ op, args }), undefined) });
+    await mountApp("/home/ask", { failsCreates: false, listsGhost: false, hold, intercept: (op, args) => (calls.push({ op, args }), undefined) });
     await screen.findByLabelText("What should it do?");
     await pickNewLinux();
     fireEvent.change(screen.getByLabelText("What should it do?"), { target: { value: "fix the build" } });
@@ -204,7 +206,9 @@ describe.skipIf(!wasmBuilt)("notes only you see", () => {
     expect(queued.textContent).toContain("Only visible to you");
     expect(queued.textContent).toContain("Sends when the Space is ready");
     release();
-    await waitFor(() => expect(calls.some((c) => c.op === "thread.post" && (c.args as { text: string }).text === "@codex fix the build")).toBe(true), { timeout: 15000 });
+    await waitFor(() => expect(calls.some((c) => c.op === "thread.post" && (c.args as { text: string }).text === "@codex fix the build")).toBe(true), {
+      timeout: 15000,
+    });
     const sent = JSON.stringify(calls.map((c) => c.args));
     for (const words of ["Only visible to you", "isn't connected yet", "Sends when the Space is ready", "Sent again"]) expect(sent).not.toContain(words);
     expect(calls.filter((c) => c.op === "thread.post").map((c) => (c.args as { text: string }).text)).toEqual(["@codex fix the build"]);

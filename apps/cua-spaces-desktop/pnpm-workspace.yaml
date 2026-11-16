@@ -7,7 +7,7 @@ allowBuilds:
   electron: true
   electron-winstaller: false
   # @sentry/electron's optional ANR add-on; crash reporting does not use it.
-  '@sentry/node-native-stacktrace': false
+  "@sentry/node-native-stacktrace": false
 # Security fix (CUA-1948): Electron 44.9.1 distrusts the compromised eMudhra
 # intermediates and is newer than the release-age cooldown.
 minimumReleaseAgeExclude:
@@ -16,7 +16,7 @@ minimumReleaseAgeExclude:
 # Teleport's run listener) inside an optional, a sequence or a record as it
 # lowers a bare argument (test/teleport-native.test.ts).
 patchedDependencies:
-  '@ubjs/core@0.31.0-3': patches/@ubjs__core@0.31.0-3.patch
+  "@ubjs/core@0.31.0-3": patches/@ubjs__core@0.31.0-3.patch
 # Short .pnpm/ directory names. makensis aborts (SIGABRT) on an !include path
 # near 280 characters, which app-builder-lib's NSIS templates reach under a
 # deep checkout with the default limit.

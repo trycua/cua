@@ -59,7 +59,16 @@ interface ConnectState {
   importing: { app: string; phase: "consent" | "reading" | "not-found"; line: string | null } | null;
 }
 
-const useConnectState = create<ConnectState>(() => ({ busy: [], failures: [], sheet: null, query: "", moreOpen: false, shellKeys: [], device: null, importing: null }));
+const useConnectState = create<ConnectState>(() => ({
+  busy: [],
+  failures: [],
+  sheet: null,
+  query: "",
+  moreOpen: false,
+  shellKeys: [],
+  device: null,
+  importing: null,
+}));
 const set = useConnectState.setState;
 
 const start = (id: string, step: Step) =>

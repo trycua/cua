@@ -22,9 +22,8 @@ let reporter: Slots | null = null;
 let loading: Promise<Slots | null> | null = null;
 
 function loadReporter(): Promise<Slots | null> {
-  loading ??= (nativeVideoHandler() !== null
-    ? import("@/lib/video-slots").then((m) => m.videoSlots())
-    : import("./webcodecs-slots").then((m) => m.webCodecsSlots())
+  loading ??= (
+    nativeVideoHandler() !== null ? import("@/lib/video-slots").then((m) => m.videoSlots()) : import("./webcodecs-slots").then((m) => m.webCodecsSlots())
   ).then((r) => (reporter = r));
   return loading;
 }
@@ -64,7 +63,18 @@ export function videoHostPresent(): boolean {
  */
 export function useVideoSlot(
   ref: RefObject<HTMLElement | null>,
-  { active, spaceId, tier, interactive, radius, inset = 0, os, windowId, epoch, attempt = 0 }: SlotOptions & {
+  {
+    active,
+    spaceId,
+    tier,
+    interactive,
+    radius,
+    inset = 0,
+    os,
+    windowId,
+    epoch,
+    attempt = 0,
+  }: SlotOptions & {
     active: boolean;
     /** A new value opens the slot again (Try again after a failure). */
     attempt?: number;

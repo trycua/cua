@@ -4,6 +4,7 @@
 //! MCP tool implementations for macOS.
 
 mod bring_to_front;
+mod calc_cell;
 mod capture_binding;
 mod click;
 mod clipboard;
@@ -482,28 +483,74 @@ async fn decide_background_window_action(
     action: cua_driver_core::background_input::BackgroundAction,
 ) -> Result<(), cua_driver_core::protocol::ToolResult> {
     use cua_driver_core::background_input::{
-        decide_background_input, BackgroundInputDecision, ExactWindowTarget,
+        BackgroundInputDecision, ElementAncestry, ExactWindowTarget,
     };
     let element_guard =
         element_ptr.map(|ptr| unsafe { crate::ax::snapshot::RetainedElement::retain(ptr) });
-    let facts = match tokio::task::spawn_blocking(move || {
+    let (facts, menu_open) = match tokio::task::spawn_blocking(move || {
         let element_ptr = element_guard.as_ref().map(|guard| guard.as_ptr());
-        crate::ax::exact_target::gather_background_facts(pid, window_id, element_ptr)
+        let facts = crate::ax::exact_target::gather_background_facts(pid, window_id, element_ptr);
+        // An unproven item of a Catalyst-style menu: is a menu of the app
+        // still on screen (so a refusal does not leave it open silently)?
+        let menu_open = facts.element == ElementAncestry::Unproven
+            && element_ptr.is_some_and(|ptr| unsafe {
+                crate::ax::exact_target::in_parentless_menu(
+                    ptr as crate::ax::bindings::AXUIElementRef,
+                )
+            })
+            && crate::windows::menu_window_ids(pid).is_some_and(|ids| !ids.is_empty());
+        (facts, menu_open)
     })
     .await
     {
-        Ok(facts) => facts,
+        Ok(gathered) => gathered,
         Err(error) => {
             return Err(cua_driver_core::protocol::ToolResult::error(format!(
                 "Could not gather exact-target facts for pid {pid} window {window_id}: {error}"
             )));
         }
     };
-    match decide_background_input(ExactWindowTarget { pid, window_id }, &facts, action) {
+    match decide_with_open_menu(
+        ExactWindowTarget { pid, window_id },
+        &facts,
+        action,
+        menu_open,
+    ) {
         BackgroundInputDecision::Execute { .. } => Ok(()),
         BackgroundInputDecision::Refuse(refusal) => {
             Err(background_refusal_result(pid, window_id, &refusal))
         }
+    }
+}
+
+/// [`decide_background_input`], plus a note when `menu_open` (the addressed
+/// item belongs to a menu that names no window, and a menu of the app is on
+/// screen): an `element_outside_target_window` refusal then says the menu is
+/// still open and recommends the foreground route that picks the item.
+/// Admission is unchanged.
+///
+/// [`decide_background_input`]: cua_driver_core::background_input::decide_background_input
+fn decide_with_open_menu(
+    target: cua_driver_core::background_input::ExactWindowTarget,
+    facts: &cua_driver_core::background_input::BackgroundTargetFacts,
+    action: cua_driver_core::background_input::BackgroundAction,
+    menu_open: bool,
+) -> cua_driver_core::background_input::BackgroundInputDecision {
+    use cua_driver_core::background_input::{
+        decide_background_input, refusal_codes, BackgroundInputDecision,
+    };
+    match decide_background_input(target, facts, action) {
+        BackgroundInputDecision::Refuse(mut refusal)
+            if menu_open && refusal.code == refusal_codes::ELEMENT_OUTSIDE_TARGET_WINDOW =>
+        {
+            refusal.reason.push_str(
+                ". It is an item of a menu that names no window, and a menu of this app is \
+                 still on screen; click this item with delivery_mode \"foreground\" to pick it",
+            );
+            refusal.advice = Some("foreground");
+            BackgroundInputDecision::Refuse(refusal)
+        }
+        decision => decision,
     }
 }
 
@@ -567,6 +614,66 @@ pub(crate) async fn acquire_key_scope(
             "Could not prepare the key window for pid {pid}: {error}"
         ))),
     }
+}
+
+/// Refuse a background pointer press at screen point `(x, y)` of `window_id`
+/// when a popup or menu of the same app covers that point (issue #4242). The
+/// press is routed to `window_id` by number, so it would land on the window
+/// under the popup the caller sees. Foreground delivery is not checked: it
+/// goes through the HID tap and hits the surface on top.
+pub(crate) async fn refuse_point_under_own_popup(
+    pid: i32,
+    window_id: u32,
+    x: f64,
+    y: f64,
+) -> Result<(), cua_driver_core::protocol::ToolResult> {
+    let cover = tokio::task::spawn_blocking(move || {
+        crate::windows::same_app_surface_over(pid, window_id, x, y)
+    })
+    .await
+    .ok()
+    .flatten();
+    match cover {
+        Some(cover) => Err(own_popup_refusal(pid, window_id, x, y, &cover)),
+        None => Ok(()),
+    }
+}
+
+fn own_popup_refusal(
+    pid: i32,
+    window_id: u32,
+    x: f64,
+    y: f64,
+    cover: &crate::windows::WindowDescription,
+) -> cua_driver_core::protocol::ToolResult {
+    let hint = format!(
+        "A popup or menu of this app (window {}) covers that point, so a background click \
+         would land on window {window_id} under it. Click its item by element_token from \
+         get_window_state, dismiss it, or use delivery_mode:\"foreground\".",
+        cover.window_id
+    );
+    cua_driver_core::protocol::ToolResult::error(format!(
+        "Background pointer press refused at screen ({x:.1}, {y:.1}): window {} of pid {pid} \
+         is drawn over window {window_id} there. {hint}",
+        cover.window_id
+    ))
+    .with_structured(serde_json::json!({
+        "code": "target_occluded",
+        "effect": "refused",
+        "pid": pid,
+        "target_window": window_id,
+        "covering_window": cover.window_id,
+        "covering_pid": cover.pid,
+        "covering_layer": cover.layer,
+        "covering_bounds": {
+            "x": cover.bounds.x,
+            "y": cover.bounds.y,
+            "width": cover.bounds.width,
+            "height": cover.bounds.height,
+        },
+        "screen_point": [x, y],
+        "hint": hint,
+    }))
 }
 
 /// Refusal code when the addressed window cannot be confirmed as the app's
@@ -671,14 +778,13 @@ pub(crate) async fn focus_by_pixel(
     if focus.is_error != Some(true) {
         // AXFocused is non-destructive: unlike a second real click, it keeps a
         // Cmd+A selection intact before a follow-up type_text or Cmd+V.
-        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
         // A background focus-click is `effect:"unverifiable"` by construction:
         // it cannot prove the renderer moved its first responder. Returning on
         // "it didn't error" therefore skipped the real-click fallback below
         // whenever the click was a silent no-op — advancing on transport
         // success alone, which is exactly what the ladder forbids. Confirm the
         // focus actually moved before claiming this rung worked.
-        if !foreground || pixel_focus_landed(pid, window_id, x, y).await {
+        if await_pixel_focus(pid, window_id, x, y).await || !foreground {
             return Ok(());
         }
     } else if !foreground {
@@ -714,9 +820,29 @@ pub(crate) async fn focus_by_pixel(
             "focus pixel-click at ({x:.0},{y:.0}) failed."
         )));
     }
-    // Brief settle so the renderer registers focus before the keystrokes.
-    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+    // Let the renderer register focus before the keystrokes.
+    await_pixel_focus(pid, window_id, x, y).await;
     Ok(())
+}
+
+/// Longest a pixel focus-click waits for the focused element to cover its
+/// point before the keystrokes go out.
+const PX_FOCUS_SETTLE: std::time::Duration = std::time::Duration::from_millis(120);
+const PX_FOCUS_POLL: std::time::Duration = std::time::Duration::from_millis(10);
+
+/// Wait up to [`PX_FOCUS_SETTLE`] for the focus-click to land on the point;
+/// whether it did.
+async fn await_pixel_focus(pid: i32, window_id: Option<u32>, x: f64, y: f64) -> bool {
+    let deadline = std::time::Instant::now() + PX_FOCUS_SETTLE;
+    loop {
+        tokio::time::sleep(PX_FOCUS_POLL).await;
+        if pixel_focus_landed(pid, window_id, x, y).await {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+    }
 }
 
 /// Confirm that a focus pixel-click actually moved the application's focused
@@ -1009,16 +1135,24 @@ impl ToolState {
 
 /// The target pid of an element-addressable call. An explicit `pid` wins; a
 /// call that carries only an `element_token` takes the pid the token was
-/// minted for, as the schemas promise ("the token carries it").
+/// minted for, as the schemas promise ("the token carries it"). A pid that
+/// draws a system security or consent prompt is refused: its windows are the
+/// user's to answer.
 pub(super) fn target_pid(
     state: &ToolState,
     args: &serde_json::Value,
 ) -> Result<i32, cua_driver_core::protocol::ToolResult> {
     use cua_driver_core::tool_args::ArgsExt;
-    if args.get("pid").is_some_and(|pid| !pid.is_null()) {
-        return args.require_i32("pid");
-    }
-    if let Some(pid) = state.snapshots.pid_for_token(args) {
+    let pid = if args.get("pid").is_some_and(|pid| !pid.is_null()) {
+        Some(args.require_i32("pid")?)
+    } else {
+        state.snapshots.pid_for_token(args)
+    };
+    if let Some(pid) = pid {
+        crate::security_prompt::refuse_pid(
+            cua_driver_core::security_prompt::PromptInput::from_args(args),
+            pid,
+        )?;
         return Ok(pid);
     }
     if args
@@ -1090,6 +1224,12 @@ pub fn register_all(
         host_owns_permission_ux,
         host_bundle_id,
     ));
+    {
+        let state = state.clone();
+        registry.set_token_window_resolver(Arc::new(move |args| {
+            state.snapshots.window_for_token(args)
+        }));
+    }
     let cursor_outcome_reader = {
         let cursor_registry = state.cursor_registry.clone();
         cua_driver_core::session::register_scoped_cursor_outcome_reader(std::sync::Arc::new(
@@ -1310,6 +1450,88 @@ pub fn register_all(
 }
 
 #[cfg(test)]
+mod open_menu_refusal_tests {
+    use super::{background_refusal_result, decide_with_open_menu};
+    use cua_driver_core::background_input::{
+        decide_background_input, BackgroundAction, BackgroundInputDecision, BackgroundTargetFacts,
+        ElementAncestry, ExactWindowTarget, WindowServerOwnership,
+    };
+
+    const TARGET: ExactWindowTarget = ExactWindowTarget {
+        pid: 42,
+        window_id: 7,
+    };
+    const ACTIONS: [BackgroundAction; 4] = [
+        BackgroundAction::AxSemantic,
+        BackgroundAction::WindowPointer,
+        BackgroundAction::InsertText,
+        BackgroundAction::GenericKey,
+    ];
+
+    fn facts(element: ElementAncestry, screen_locked: bool) -> BackgroundTargetFacts {
+        BackgroundTargetFacts {
+            window_server: WindowServerOwnership::SamePid,
+            ax_window_present: true,
+            target_minimized: Some(false),
+            app_hidden: Some(false),
+            competing_keyboard_destinations: 0,
+            element,
+            screen_locked,
+        }
+    }
+
+    #[test]
+    fn an_open_parentless_menu_recommends_foreground() {
+        let decision = decide_with_open_menu(
+            TARGET,
+            &facts(ElementAncestry::Unproven, false),
+            BackgroundAction::AxSemantic,
+            true,
+        );
+        let BackgroundInputDecision::Refuse(refusal) = decision else {
+            panic!("an unproven element must stay refused, got {decision:?}");
+        };
+        let result = background_refusal_result(42, 7, &refusal);
+        let structured = result.structured_content.expect("structured refusal");
+        assert_eq!(structured["code"], "element_outside_target_window");
+        assert_eq!(structured["effect"], "refused");
+        assert_eq!(structured["escalation"]["recommended"], "foreground");
+        let reason = structured["reason"].as_str().unwrap();
+        assert!(reason.contains("take a fresh get_window_state snapshot"));
+        assert!(reason.contains("a menu of this app is still on screen"));
+        assert!(reason.contains("delivery_mode \"foreground\""));
+    }
+
+    #[test]
+    fn admission_and_other_refusals_are_unchanged() {
+        for element in [
+            ElementAncestry::NotAddressed,
+            ElementAncestry::ProvenDescendant,
+            ElementAncestry::OutsideTargetWindow,
+            ElementAncestry::Unproven,
+        ] {
+            for screen_locked in [false, true] {
+                let facts = facts(element, screen_locked);
+                for action in ACTIONS {
+                    let plain = decide_background_input(TARGET, &facts, action);
+                    let closed = decide_with_open_menu(TARGET, &facts, action, false);
+                    assert_eq!(closed, plain, "{element:?} {action:?}");
+                    let open = decide_with_open_menu(TARGET, &facts, action, true);
+                    assert_eq!(
+                        open.is_execute(),
+                        plain.is_execute(),
+                        "{element:?} {action:?}"
+                    );
+                    if screen_locked {
+                        assert_eq!(open, plain, "screen_locked keeps its refusal");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 mod registry_surface_tests {
     use super::*;
 
@@ -1371,6 +1593,118 @@ mod session_config_guard_tests {
         reg.set(sid, overrides(800));
         let dim = reg.effective_max_image_dimension(Some(sid), &global);
         assert_eq!(dim, 800, "live session override must apply");
+    }
+}
+
+/// Input addressed to a process that draws a security prompt is refused
+/// before the tool does anything else, in every mode but unrestricted.
+/// Removing the pid guard from any of these routes fails here.
+#[cfg(test)]
+mod security_prompt_target_tests {
+    use super::*;
+    use crate::security_prompt::fixture::{PromptShown, PROMPT_PID};
+    use cua_driver_core::security_prompt::{ALLOW_ARG, SECURITY_PROMPT_PROTECTED};
+    use cua_driver_core::tool::Tool;
+
+    fn tools() -> Vec<(&'static str, Box<dyn Tool>, serde_json::Value)> {
+        let state = Arc::new(ToolState::new(false, false, None));
+        let pid = PROMPT_PID;
+        vec![
+            (
+                "click",
+                Box::new(click::ClickTool::new(state.clone())),
+                serde_json::json!({"pid": pid, "window_id": 1, "x": 5, "y": 5}),
+            ),
+            (
+                "double_click",
+                Box::new(double_click::DoubleClickTool::new(state.clone())),
+                serde_json::json!({"pid": pid, "window_id": 1, "x": 5, "y": 5}),
+            ),
+            (
+                "right_click",
+                Box::new(right_click::RightClickTool::new(state.clone())),
+                serde_json::json!({"pid": pid, "window_id": 1, "x": 5, "y": 5}),
+            ),
+            (
+                "scroll",
+                Box::new(scroll::ScrollTool::new(state.clone())),
+                serde_json::json!({"pid": pid, "window_id": 1, "direction": "down"}),
+            ),
+            (
+                "drag",
+                Box::new(drag::DragTool::new(state.clone())),
+                serde_json::json!({"pid": pid, "window_id": 1, "from_x": 1, "from_y": 1, "to_x": 2, "to_y": 2}),
+            ),
+            (
+                "type_text",
+                Box::new(type_text::TypeTextTool::new(state.clone())),
+                serde_json::json!({"pid": pid, "window_id": 1, "text": "x"}),
+            ),
+            (
+                "type_text_chars",
+                Box::new(type_text_chars::TypeTextCharsTool::new(state.clone())),
+                serde_json::json!({"pid": pid, "text": "x"}),
+            ),
+            (
+                "press_key",
+                Box::new(press_key::PressKeyTool::new(state.clone())),
+                serde_json::json!({"pid": pid, "window_id": 1, "key": "return"}),
+            ),
+            (
+                "hotkey",
+                Box::new(hotkey::HotkeyTool::new(state.clone())),
+                serde_json::json!({"pid": pid, "window_id": 1, "keys": ["cmd", "a"]}),
+            ),
+            (
+                "set_value",
+                Box::new(set_value::SetValueTool::new(state.clone())),
+                serde_json::json!({"pid": pid, "window_id": 1, "element_index": 0, "value": "x"}),
+            ),
+            (
+                "invoke_menu",
+                Box::new(invoke_menu::InvokeMenuTool),
+                serde_json::json!({"pid": pid, "window_id": 1, "path": ["File", "Close"]}),
+            ),
+        ]
+    }
+
+    fn code(result: &cua_driver_core::protocol::ToolResult) -> Option<String> {
+        let structured = result.structured_content.as_ref()?;
+        structured
+            .pointer("/refusal/code")
+            .or_else(|| structured.get("code"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+    }
+
+    #[tokio::test]
+    async fn input_addressed_to_a_prompt_owner_is_refused() {
+        let _prompt = PromptShown::start();
+        for (name, tool, args) in tools() {
+            let result = tool.invoke(args).await;
+            assert_eq!(result.is_error, Some(true), "{name}");
+            assert_eq!(
+                code(&result).as_deref(),
+                Some(SECURITY_PROMPT_PROTECTED),
+                "{name}: {result:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn unrestricted_mode_lets_the_call_past_the_prompt_guard() {
+        let _prompt = PromptShown::start();
+        for (name, tool, mut args) in tools() {
+            args[ALLOW_ARG] = serde_json::json!(true);
+            let result = tool.invoke(args).await;
+            // The fixture pid is not a real process, so the call fails later
+            // for that reason; it must not fail for the prompt.
+            assert_ne!(
+                code(&result).as_deref(),
+                Some(SECURITY_PROMPT_PROTECTED),
+                "{name}: {result:?}"
+            );
+        }
     }
 }
 

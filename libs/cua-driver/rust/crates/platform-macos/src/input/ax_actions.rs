@@ -226,6 +226,31 @@ pub fn ensure_ax_action_enabled(element_ptr: usize, action: &str) -> anyhow::Res
     ensure_ax_enabled(enabled, action)
 }
 
+/// How long a read made right after a foreground activation waits for a
+/// control that reports disabled to become enabled.
+const ACTIVATION_ENABLE_SETTLE: std::time::Duration = std::time::Duration::from_millis(750);
+const ACTIVATION_ENABLE_POLL: std::time::Duration = std::time::Duration::from_millis(25);
+
+/// Like [`ensure_ax_action_enabled`], for a read made right after a foreground
+/// activation. The window reports focus before the app has handled its
+/// activation, so a control that is enabled only while the app is active can
+/// still read `AXEnabled=false` for a moment. Re-read until it reports enabled
+/// or the settle window ends, then refuse. A control that stays disabled costs
+/// one settle window before the refusal.
+pub fn ensure_ax_action_enabled_after_activation(
+    element_ptr: usize,
+    action: &str,
+) -> anyhow::Result<()> {
+    let deadline = std::time::Instant::now() + ACTIVATION_ENABLE_SETTLE;
+    loop {
+        let enabled = unsafe { copy_bool_attr(element_ptr as AXUIElementRef, "AXEnabled") };
+        if enabled != Some(false) || std::time::Instant::now() >= deadline {
+            return ensure_ax_enabled(enabled, action);
+        }
+        std::thread::sleep(ACTIVATION_ENABLE_POLL);
+    }
+}
+
 /// Perform an AX action on a cached element.
 pub fn perform_ax_action(element_ptr: usize, action: &str) -> anyhow::Result<()> {
     let ax_action = map_action(action)?;

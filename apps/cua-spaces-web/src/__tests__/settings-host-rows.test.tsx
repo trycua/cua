@@ -86,13 +86,15 @@ const macHostAnswer = (name: string): WkSettings =>
   JSON.parse(readFileSync(join(__dirname, "fixtures", `mac-host-settings-${name}.json`), "utf8")) as WkSettings;
 
 /** The demo host, but `settings.get` answers what the SwiftUI host answered, through the WebKit adapter. */
-const asMacHost = (name: string) => (demo: DataAdapter): DataAdapter => ({
-  ...demo,
-  call: (async (op: string, args: unknown) => {
-    if (op === "settings.get") return toSettingsSnapshot(macHostAnswer(name), { theme: "system", hotkey: "⌘⇧Space" });
-    return demo.call(op as never, args as never);
-  }) as DataAdapter["call"],
-});
+const asMacHost =
+  (name: string) =>
+  (demo: DataAdapter): DataAdapter => ({
+    ...demo,
+    call: (async (op: string, args: unknown) => {
+      if (op === "settings.get") return toSettingsSnapshot(macHostAnswer(name), { theme: "system", hotkey: "⌘⇧Space" });
+      return demo.call(op as never, args as never);
+    }) as DataAdapter["call"],
+  });
 
 describe.skipIf(!wasmBuilt)("Settings, Advanced: which software runs Spaces (real routes, wasm core)", () => {
   it("has one row per kind, in plain words, and none of the old per-OS rows", async () => {

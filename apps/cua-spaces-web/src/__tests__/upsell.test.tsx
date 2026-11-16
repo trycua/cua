@@ -152,7 +152,9 @@ describe.skipIf(!wasmBuilt)("in-app Pro and Teams prompts (real routes, wasm cor
       expect(el).toBeTruthy();
       return el as HTMLElement;
     });
-    expect(prompt.textContent).toContain("Two computers now. Free includes 2 computers in use at once and 20 remote hours a month. Pro makes it 5 and 200, for $18 a month.");
+    expect(prompt.textContent).toContain(
+      "Two computers now. Free includes 2 computers in use at once and 20 remote hours a month. Pro makes it 5 and 200, for $18 a month.",
+    );
     await waitFor(() => expect(features(tracked)).toContain("upsell_machine_shown"));
     fireEvent.click(document.querySelector("[data-upsell=machine] [data-upsell-cta]")!);
     await waitFor(() => expect(opened).toEqual(["https://app.cua.ai/buy/pro?from=app_machine"]));

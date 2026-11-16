@@ -18,11 +18,15 @@ const ICON = { done: CircleCheckIcon, todo: CircleIcon, pending: CircleDashedIco
  */
 export function SetupChecklist({ setup, onAction }: { setup: CiSetupView; onAction(id: string): void }) {
   return (
-    <GroupedSection title={setup.title} action={
+    <GroupedSection
+      title={setup.title}
+      action={
         <span className="text-xs text-muted-foreground" data-ci-progress="">
           {setup.progress}
         </span>
-      } data-ci-setup="">
+      }
+      data-ci-setup=""
+    >
       {setup.rows.map((row) => (
         <SetupRow key={row.id} row={row} onAction={onAction} />
       ))}

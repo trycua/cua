@@ -1,0 +1,14 @@
+[package]
+name = "cua-compat-cmd"
+description = "The command line of `cua compat` (clap arguments only), shared by cua-cli and cua-compat's implementation so the CLI does not wait for the gateway to compile."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+clap.workspace = true
+cua-sdk.workspace = true

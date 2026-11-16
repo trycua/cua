@@ -28,6 +28,7 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// File name of the registry.
 pub const SPACES_FILE: &str = "spaces.json";
@@ -361,6 +362,7 @@ impl std::fmt::Debug for Credential {
 pub struct Registry {
     dir: PathBuf,
     lock: Mutex<()>,
+    spaces_reads: AtomicU64,
 }
 
 impl Registry {
@@ -369,7 +371,15 @@ impl Registry {
         Self {
             dir: dir.into(),
             lock: Mutex::new(()),
+            spaces_reads: AtomicU64::new(0),
         }
+    }
+
+    /// How many times this registry has read `spaces.json` (the scale
+    /// test's budget of reads per connect).
+    #[doc(hidden)]
+    pub fn spaces_reads(&self) -> u64 {
+        self.spaces_reads.load(Ordering::Relaxed)
     }
 
     /// The directory.
@@ -771,6 +781,7 @@ impl Registry {
                 self.spaces_path().display()
             ))
         };
+        self.spaces_reads.fetch_add(1, Ordering::Relaxed);
         let spaces: Vec<dpb::Space> = match std::fs::read(self.spaces_path()) {
             Ok(bytes) if bytes.iter().all(u8::is_ascii_whitespace) => vec![],
             Ok(bytes) => {

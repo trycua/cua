@@ -18,14 +18,13 @@ import { Link } from "@tanstack/react-router";
 import { ArrowDownCircleIcon, EyeOffIcon, KeyRoundIcon, LoaderCircleIcon, PinIcon, PowerIcon } from "lucide-react";
 import { useEffect, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from "react";
 
+import { useT } from "@/i18n";
 import { useBridge, useNotchPins, useSpaceFiles, useSpaces, useSpaceThumbnail, useTips, useWindowDropTarget, type Space, type SpaceAccess } from "@/bridge";
 import { OsIcon } from "@/components/os-icon";
 import { StateLabel } from "@/components/state-dot";
 import { toast, toastError } from "@/components/ui/toast";
 import { useTileVideo } from "@/components/video/tile-video";
 import { useInView } from "@/hooks/use-in-view";
-import { useChildren } from "@/components/children/use-children";
-import { useIsHomeSpace } from "@/lib/agent-home/home-space";
 import { creatingLine } from "@/lib/host-labels";
 import { createError, createProgress, osLabel, powerButton, powerError, type PowerButton } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
@@ -45,6 +44,8 @@ export interface SpaceTileProps {
   topLeft?: ReactNode;
   /** After the text, on hover (the "⋯" menu). */
   more?: ReactNode;
+  /** A quiet line under where it runs ("2 child Spaces", "parent removed"). */
+  note?: string;
   /** A machine's desktop: Hide, in place of the power button, on hover. */
   hide?: () => void;
   /** A click on the tile; call `preventDefault` to keep it from opening. */
@@ -60,7 +61,8 @@ export interface SpaceTileProps {
  */
 export const TILE_CELL = "-m-1 p-1 [content-visibility:auto] [contain-intrinsic-size:auto_240px]";
 
-export function SpaceTile({ item, accessKey, selected = false, busy = false, topLeft, more, hide, onClick }: SpaceTileProps) {
+export function SpaceTile({ item, accessKey, selected = false, busy = false, topLeft, more, hide, onClick, note }: SpaceTileProps) {
+  const t = useT();
   const { space, state, access } = item;
   const drop = useTileDrop(space, state === "running" && item.desktop !== "off");
   // A real window dragged over this tile (the host hit-tests the tiles' boxes and says which; macOS only).
@@ -100,7 +102,6 @@ export function SpaceTile({ item, accessKey, selected = false, busy = false, top
               </p>
               <PinnedMark id={space.id} />
               {item.desktop ? <DesktopTag /> : null}
-              <HomeTag spaceId={space.id} />
               {/* The state, in the core's words ("Running", "Suspended", "Turning off…"), flush right; the hover "⋯" takes its place. */}
               <StateLabel
                 state={item.desktop === "off" ? "stopped" : state}
@@ -111,9 +112,20 @@ export function SpaceTile({ item, accessKey, selected = false, busy = false, top
             </div>
             {/* Where it runs ("This Mac", "Sam's Mac mini", "QA team"); while being created, the core's pending line. */}
             <p className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-              <span className="truncate">{creating && space.detail ? creatingLine(space.detail) : item.desktop && (access.place || item.machine) === space.name ? osLabel(space) : access.place || item.machine}</span>
+              <span className="truncate">
+                {creating && space.detail
+                  ? creatingLine(space.detail)
+                  : item.desktop && (access.place || item.machine) === space.name
+                    ? osLabel(space)
+                    : access.place || item.machine}
+              </span>
               <PeopleStack access={access} />
             </p>
+            {note ? (
+              <p data-tile-note="" className="mt-0.5 truncate text-xs text-muted-foreground">
+                {note}
+              </p>
+            ) : null}
             {/* Downloading: how far, how fast, how long is left. */}
             {creating && space.progress?.transfer ? (
               <p data-create-transfer="" className="mt-0.5 truncate text-xs tabular-nums text-muted-foreground">
@@ -136,7 +148,10 @@ export function SpaceTile({ item, accessKey, selected = false, busy = false, top
       {drop.over ? <DropOverlay space={space} accepts={drop.over === "accept"} /> : null}
       {/* A drop on the tile still going in: the core's "Sending …" line. */}
       {drop.status?.kind === "working" && !drop.over ? (
-        <div data-video-hole="" className="pointer-events-none absolute top-2 left-2 z-20 flex max-w-[60%] items-center gap-1.5 rounded-[4px] bg-black/70 px-1.5 py-px text-[11px] font-medium text-white">
+        <div
+          data-video-hole=""
+          className="pointer-events-none absolute top-2 left-2 z-20 flex max-w-[60%] items-center gap-1.5 rounded-[4px] bg-black/70 px-1.5 py-px text-[11px] font-medium text-white"
+        >
           <LoaderCircleIcon className="size-3 shrink-0 animate-spin" aria-hidden />
           <span className="truncate">{drop.status.text}</span>
         </div>
@@ -151,18 +166,18 @@ export function SpaceTile({ item, accessKey, selected = false, busy = false, top
             search={{ view: "access", focus: accessKey ?? undefined }}
             data-signed-in={space.id}
             data-video-hole=""
-            title="A Keyvault sign-in is live in this Space. Open Access."
+            title={t("computers.tile.signed_in_help")}
             className={cn(
               "ml-auto inline-flex h-6 items-center gap-1 rounded-md bg-black/55 px-1.5 text-[11px] font-medium text-white/90 outline-none backdrop-blur-sm transition-[margin] hover:text-white focus-visible:ring-2 focus-visible:ring-ring/60",
               hasAction && "group-hover/tile:mr-7 group-focus-within/tile:mr-7",
             )}
           >
-            <KeyRoundIcon className="size-3" /> Signed in
+            <KeyRoundIcon className="size-3" /> {t("computers.tile.signed_in")}
           </Link>
         ) : null}
         {hasPower ? (
           <div className="absolute right-0 top-0">
-            <TilePower space={space} button={power} denied={access.canPower ? null : cantPower(access)} />
+            <TilePower space={space} button={power} denied={access.canPower ? null : cantPower(access, t)} />
           </div>
         ) : hide ? (
           <div className="absolute right-0 top-0">
@@ -177,42 +192,32 @@ export function SpaceTile({ item, accessKey, selected = false, busy = false, top
 
 /** A small pin after the name of a Space or desktop pinned to the notch (Pin to notch in its "⋯" menu). */
 export function PinnedMark({ id }: { id: string }) {
+  const t = useT();
   const { pinned } = useNotchPins();
   if (!pinned.has(id)) return null;
-  return <PinIcon data-pinned-mark="" role="img" aria-label="Pinned to notch" className="size-3 shrink-0 self-center text-muted-foreground" />;
+  return <PinIcon data-pinned-mark="" role="img" aria-label={t("computers.tile.pinned")} className="size-3 shrink-0 self-center text-muted-foreground" />;
 }
 
 /** The "Desktop" tag beside a machine's own desktop in the list. */
 export function DesktopTag() {
+  const t = useT();
   return (
     <span data-desktop-tag="" className="shrink-0 text-xs text-muted-foreground">
-      Desktop
+      {t("computers.tile.desktop")}
     </span>
   );
 }
 
-/** The "Home" tag beside an agent's home Space (the Space its requests from Home go to). */
-export function HomeTag({ spaceId }: { spaceId: string }) {
-  const remembered = useIsHomeSpace(spaceId);
-  // The host knows a home by its label, so the tag shows on a new device too.
-  const labelled = Boolean(useChildren()?.node(spaceId)?.home);
-  if (!remembered && !labelled) return null;
-  return (
-    <span data-home-tag="" className="shrink-0 text-xs text-muted-foreground">
-      Home
-    </span>
-  );
-}
-
-/** Hide, on a desktop's hover where a Space has its power button: the tile leaves Home until "N hidden · Show" or the computer's "Show on Home". */
+/** Hide, on a desktop's hover where a Space has its power button: the row leaves the list until "Show hidden". */
 function TileHide({ name, onHide }: { name: string; onHide: () => void }) {
+  const t = useT();
   return (
     <button
       type="button"
       data-tile-hide=""
       data-video-hole=""
-      title="Hide"
-      aria-label={`Hide ${name}`}
+      title={t("computers.menu.hide")}
+      aria-label={t("computers.tile.hide_named", { name })}
       onClick={onHide}
       className="inline-flex size-6 items-center justify-center rounded-lg bg-black/55 text-white/90 opacity-0 outline-none backdrop-blur-sm group-focus-within/tile:opacity-100 group-hover/tile:opacity-100 hover:bg-black/70 hover:text-white focus-visible:ring-2 focus-visible:ring-ring/60"
     >
@@ -244,7 +249,13 @@ function Picture({ item, ring, busy }: { item: SpaceItem; ring: boolean; busy: b
       )}
     >
       {thumbnail ? (
-        <img data-tile-thumbnail="" src={thumbnail} alt="" aria-hidden className={cn("absolute inset-0 size-full object-cover", !live && "opacity-40 saturate-50")} />
+        <img
+          data-tile-thumbnail=""
+          src={thumbnail}
+          alt=""
+          aria-hidden
+          className={cn("absolute inset-0 size-full object-cover", !live && "opacity-40 saturate-50")}
+        />
       ) : (
         <OsIcon os={space.os} className={cn("size-6", live ? "text-muted-foreground/50" : "text-muted-foreground/25")} />
       )}
@@ -272,6 +283,7 @@ function Picture({ item, ring, busy }: { item: SpaceItem; ring: boolean; busy: b
  * shows on the tile and in a toast.
  */
 function useTileDrop(space: Space, accepts: boolean) {
+  const t = useT();
   const files = useSpaceFiles(space);
   const [over, setOver] = useState<"accept" | "refuse" | null>(null);
   const status = files.status;
@@ -279,9 +291,9 @@ function useTileDrop(space: Space, accepts: boolean) {
     if (!status) return;
     const group = `tile-drop:${space.id}`;
     if (status.kind === "working") toast(status.text, { group });
-    else if (status.kind === "done") toast(`Sent to ${space.name}`, { description: status.text, type: "success", group });
-    else toast(`Couldn't send to ${space.name}`, { description: status.text, type: "error", group });
-  }, [status, space.id, space.name]);
+    else if (status.kind === "done") toast(t("computers.tile.sent_to", { name: space.name }), { description: status.text, type: "success", group });
+    else toast(t("computers.tile.send_failed", { name: space.name }), { description: status.text, type: "error", group });
+  }, [status, space.id, space.name, t]);
   const carriesFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
   const onDragOver = (e: DragEvent) => {
     if (!carriesFiles(e)) return;
@@ -308,6 +320,7 @@ function useTileDrop(space: Space, accepts: boolean) {
 
 /** Over a tile's picture while files are dragged on it: where they go, or why they can't. */
 function DropOverlay({ space, accepts }: { space: Space; accepts: boolean }) {
+  const t = useT();
   return (
     <div
       aria-hidden
@@ -318,14 +331,16 @@ function DropOverlay({ space, accepts }: { space: Space; accepts: boolean }) {
       )}
     >
       {accepts ? <ArrowDownCircleIcon className="size-6 text-brand" strokeWidth={1.5} /> : null}
-      <span className="max-w-[85%] truncate font-medium">{accepts ? `Send to ${space.name}` : `${space.name} isn't running`}</span>
+      <span className="max-w-[85%] truncate font-medium">
+        {accepts ? t("computers.tile.drop_send", { name: space.name }) : t("computers.tile.drop_not_running", { name: space.name })}
+      </span>
     </div>
   );
 }
 
 /** Why you can't turn a Space on or off that has power (shared with you to watch). */
-function cantPower(access: SpaceAccess): string {
-  return access.role === "viewer" ? "You can view this Space but not turn it on or off" : "You can't turn this Space on or off";
+function cantPower(access: SpaceAccess, t: ReturnType<typeof useT>): string {
+  return access.role === "viewer" ? t("computers.tile.power_viewer") : t("computers.tile.power_denied");
 }
 
 /**
@@ -335,13 +350,14 @@ function cantPower(access: SpaceAccess): string {
  * (a Space shared with you to watch); it shows disabled, saying why.
  */
 function TilePower({ space, button, denied }: { space: Space; button: PowerButton; denied: string | null }) {
+  const t = useT();
   const { startSpace, stopSpace } = useSpaces();
   const tips = useTips();
   const press = () => {
     if (denied) return;
-    const [act, word] = button.turnOn ? [startSpace, "start"] : [stopSpace, "stop"];
+    const [act, failed] = button.turnOn ? [startSpace, "computers.tile.start_failed"] : [stopSpace, "computers.tile.stop_failed"];
     void tips.send({ type: "powered" });
-    void act(space.id).catch(toastError(`Couldn't ${word} ${space.name}`));
+    void act(space.id).catch(toastError(t(failed, { name: space.name })));
   };
   return (
     <button
@@ -353,7 +369,7 @@ function TilePower({ space, button, denied }: { space: Space; button: PowerButto
       disabled={button.busy}
       aria-disabled={denied ? true : undefined}
       title={denied ?? button.help}
-      aria-label={`${button.help} ${space.name}`}
+      aria-label={t("computers.tile.power_label", { action: button.help, name: space.name })}
       aria-description={denied ?? undefined}
       onClick={press}
       className={cn(

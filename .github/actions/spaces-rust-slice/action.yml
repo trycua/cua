@@ -73,8 +73,11 @@ runs:
     # after the build instead.
     - name: Restore the compiled slice
       id: cache
+      continue-on-error: true
       if: inputs.build == 'true'
       uses: actions/cache/restore@v4
+      env:
+        SEGMENT_DOWNLOAD_TIMEOUT_MINS: "4"
       with:
         path: |
           libs/cua/target/${{ inputs.triple }}/release/libcua_spaces_ffi.dylib
@@ -82,8 +85,11 @@ runs:
         key: ${{ steps.key.outputs.key }}
     - name: Restore the compiled slice (restore only)
       id: restore
+      continue-on-error: true
       if: inputs.build != 'true'
       uses: actions/cache/restore@v4
+      env:
+        SEGMENT_DOWNLOAD_TIMEOUT_MINS: "4"
       with:
         path: |
           libs/cua/target/${{ inputs.triple }}/release/libcua_spaces_ffi.dylib
@@ -104,6 +110,8 @@ runs:
       uses: ./.github/actions/setup-protoc
     - if: inputs.build == 'true' && steps.cache.outputs.cache-hit != 'true'
       uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      env:
+        SEGMENT_DOWNLOAD_TIMEOUT_MINS: "4"
       with:
         workspaces: libs/cua -> target
         shared-key: swiftui-rust-${{ inputs.triple }}

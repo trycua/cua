@@ -191,7 +191,9 @@ const viaHost = (op: keyof DriverOps): OpCoverage =>
 export const DRIVER_COVERAGE = Object.fromEntries(DRIVER_OPERATIONS.map((op) => [op, viaHost(op)])) as Record<keyof DriverOps, OpCoverage>;
 
 /** The SwiftUI app's methods (`WebUIBridge+Driver.swift`). */
-export function webkitDriverOps(request: <T>(method: WebkitMethod, args?: Record<string, unknown>) => Promise<T>): { [K in keyof DriverOps]: (args: DriverOps[K]["args"]) => Promise<DriverOps[K]["result"]> } {
+export function webkitDriverOps(request: <T>(method: WebkitMethod, args?: Record<string, unknown>) => Promise<T>): {
+  [K in keyof DriverOps]: (args: DriverOps[K]["args"]) => Promise<DriverOps[K]["result"]>;
+} {
   const machine = (a: Machine) => (a.machine ? { machine: a.machine } : {});
   return {
     "driver.status": (a) => request<DriverStatus | null>("driver.status", machine(a)),

@@ -33,7 +33,10 @@ export function ShareSheet({ space, onClose }: { space: SpaceSummary | null; onC
       <View style={{ backgroundColor: c.card, borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, paddingBottom: insets.bottom + 16, gap: 12 }}>
         <Text variant="headline">Share {space?.name}</Text>
         {done ? (
-          <Text color="muted">Shared with {email.trim()}{backend.capabilities.sample ? " (sample data: nothing was sent)" : ""}.</Text>
+          <Text color="muted">
+            Shared with {email.trim()}
+            {backend.capabilities.sample ? " (sample data: nothing was sent)" : ""}.
+          </Text>
         ) : (
           <>
             <TextInput
@@ -49,12 +52,31 @@ export function ShareSheet({ space, onClose }: { space: SpaceSummary | null; onC
             />
             <View style={{ flexDirection: "row", gap: 8 }}>
               {(["editor", "viewer"] as const).map((r) => (
-                <Pressable key={r} onPress={() => setRole(r)} accessibilityRole="radio" accessibilityState={{ selected: role === r }} style={{ flex: 1, height: 40, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: role === r ? c.primary : c.tile }}>
-                  <Text weight="500" style={{ color: role === r ? c.primaryForeground : c.foreground }}>{r === "editor" ? "Can use" : "Can watch"}</Text>
+                <Pressable
+                  key={r}
+                  onPress={() => setRole(r)}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: role === r }}
+                  style={{
+                    flex: 1,
+                    height: 40,
+                    borderRadius: 10,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    backgroundColor: role === r ? c.primary : c.tile,
+                  }}
+                >
+                  <Text weight="500" style={{ color: role === r ? c.primaryForeground : c.foreground }}>
+                    {r === "editor" ? "Can use" : "Can watch"}
+                  </Text>
                 </Pressable>
               ))}
             </View>
-            {error ? <Text variant="footnote" color="destructive">{error}</Text> : null}
+            {error ? (
+              <Text variant="footnote" color="destructive">
+                {error}
+              </Text>
+            ) : null}
             <Pressable
               disabled={!valid || busy}
               onPress={async () => {
@@ -70,9 +92,18 @@ export function ShareSheet({ space, onClose }: { space: SpaceSummary | null; onC
                 }
               }}
               accessibilityRole="button"
-              style={{ height: 46, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: c.primary, opacity: valid && !busy ? 1 : 0.4 }}
+              style={{
+                height: 46,
+                borderRadius: 12,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: c.primary,
+                opacity: valid && !busy ? 1 : 0.4,
+              }}
             >
-              <Text weight="600" style={{ color: c.primaryForeground }}>Share</Text>
+              <Text weight="600" style={{ color: c.primaryForeground }}>
+                Share
+              </Text>
             </Pressable>
           </>
         )}

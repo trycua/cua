@@ -80,7 +80,13 @@ class SpacesDefaultStore {
   private start() {
     void this.read();
     const unsubscribe = this.adapter.subscribe((e) => {
-      if (e.type === "machines.changed" || e.type === "spaces.changed" || e.type === "session.signedIn" || e.type === "session.signedOut" || e.type === "session.changed") {
+      if (
+        e.type === "machines.changed" ||
+        e.type === "spaces.changed" ||
+        e.type === "session.signedIn" ||
+        e.type === "session.signedOut" ||
+        e.type === "session.changed"
+      ) {
         void this.read();
       }
     });

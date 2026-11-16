@@ -3,17 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import { replayFlow } from "../parity";
-import {
-  accountMenu,
-  bulkConfirm,
-  bulkDone,
-  bulkProgress,
-  chooseSettings,
-  proBanner,
-  spaceMenu,
-  tipsReduce,
-  tipsView,
-} from "../spaces-page";
+import { accountMenu, bulkConfirm, bulkDone, bulkProgress, chooseSettings, proBanner, spaceMenu, tipsReduce, tipsView } from "../spaces-page";
 import type { BulkItem, TipsState } from "../contracts/spaces-page";
 import { testCore, wasmBuilt } from "./testCore";
 
@@ -33,7 +23,8 @@ const mine = (name: string, gb: number | null, extra: Partial<BulkItem> = {}): B
 describe.skipIf(!wasmBuilt)("the new Spaces page's decisions (wasm core)", () => {
   it("menus show only what you may do", async () => {
     const core = await testCore();
-    const labels = (input: Parameters<typeof spaceMenu>[1]) => spaceMenu(core, input).map((i) => `${i.separatorBefore ? "--- " : ""}${i.label}${i.enabled ? "" : " (disabled)"}${i.destructive ? " (red)" : ""}`);
+    const labels = (input: Parameters<typeof spaceMenu>[1]) =>
+      spaceMenu(core, input).map((i) => `${i.separatorBefore ? "--- " : ""}${i.label}${i.enabled ? "" : " (disabled)"}${i.destructive ? " (red)" : ""}`);
     const all = { canPower: true, canTeleport: true, canShare: true, canRename: true, canDelete: true };
     expect(labels({ kind: "mine", power: "running", shared: true, ...all })).toEqual([
       "Open",
@@ -57,7 +48,14 @@ describe.skipIf(!wasmBuilt)("the new Spaces page's decisions (wasm core)", () =>
     const core = await testCore();
     const labels = (input: Parameters<typeof spaceMenu>[1]) => spaceMenu(core, input).map((i) => `${i.separatorBefore ? "--- " : ""}${i.label}`);
     const all = { canPower: true, canTeleport: true, canShare: true, canDelete: true };
-    expect(labels({ kind: "mine", power: "running", canPin: true, ...all })).toEqual(["Open", "Turn off", "Share…", "Teleport an app…", "Pin to notch", "--- Delete Space"]);
+    expect(labels({ kind: "mine", power: "running", canPin: true, ...all })).toEqual([
+      "Open",
+      "Turn off",
+      "Share…",
+      "Teleport an app…",
+      "Pin to notch",
+      "--- Delete Space",
+    ]);
     expect(labels({ kind: "mine", power: "running", canPin: true, pinned: true, ...all }).at(-2)).toBe("Unpin from notch");
     expect(labels({ kind: "withMe", role: "viewer", power: "running", canPin: true, canLeave: true })).toEqual(["Open", "Pin to notch", "--- Leave"]);
     // A machine's desktop: Open and the pin, nothing to turn on, share or delete.
@@ -93,14 +91,28 @@ describe.skipIf(!wasmBuilt)("the new Spaces page's decisions (wasm core)", () =>
 
     expect(bulkProgress(core, items, [])).toBe("Deleting 1 of 2…");
     expect(bulkProgress(core, items, ["local:cua-builder", "local:onb-new"])).toBe("Leaving 1 of 1…");
-    expect(bulkProgress(core, items, items.map((i) => i.id))).toBeNull();
+    expect(
+      bulkProgress(
+        core,
+        items,
+        items.map((i) => i.id),
+      ),
+    ).toBeNull();
 
-    const done = bulkDone(core, items, items.map((i) => ({ id: i.id, ok: true })));
+    const done = bulkDone(
+      core,
+      items,
+      items.map((i) => ({ id: i.id, ok: true })),
+    );
     expect(done).toEqual({ text: "Deleted 2 Spaces and left 1. 23 GB freed.", tone: "ok" });
-    const partial = bulkDone(core, [items[0]!, items[2]!], [
-      { id: "local:cua-builder", ok: true },
-      { id: "local:onb-new", ok: false, error: "it is busy" },
-    ]);
+    const partial = bulkDone(
+      core,
+      [items[0]!, items[2]!],
+      [
+        { id: "local:cua-builder", ok: true },
+        { id: "local:onb-new", ok: false, error: "it is busy" },
+      ],
+    );
     expect(partial).toEqual({ text: "Deleted 1 of 2 Spaces. 14 GB freed. Couldn't delete onb-new: it is busy.", tone: "partial" });
   });
 

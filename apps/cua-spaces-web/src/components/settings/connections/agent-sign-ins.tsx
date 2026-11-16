@@ -9,6 +9,7 @@ import { SettingsGroup } from "@/components/settings-group";
 import { Button } from "@/components/ui/button";
 import { GroupedRow } from "@/components/ui/grouped";
 import { Input } from "@/components/ui/input";
+import { useT } from "@/i18n";
 import type { Connectors } from "@/hooks/use-connectors";
 
 /** What the list can do with an app's sign-ins: the calls it makes against the host. */
@@ -25,15 +26,13 @@ export interface AccountActions {
 
 const same = (a: AgentAccount, b: AgentAccount) => a.env === b.env && (a.slot ?? null) === (b.slot ?? null);
 
-/** What the group says under it: why an agent signs in at all. */
-export const SIGN_INS_WHY = "Sign in once so your agents can run on your other computers without asking again.";
-
 /**
  * One coding app's sign-ins on its Settings page (Settings, Connections, the app): which one it runs with, and
  * make default, rename, remove and add. They used to sit in Home's agent menu, where nobody could tell what
  * they were for; the menu now only picks the agent for a job and links here.
  */
 export function AgentSignIns({ agent, c }: { agent: string; c: Pick<Connectors, "input" | "useCredential"> }) {
+  const t = useT();
   const { core } = useBridge();
   const keys = useAgentKeys();
   const group = useMemo(() => (core ? (agentsView(core, c.input)?.groups.find((g) => g.app === agent) ?? null) : null), [core, c.input, agent]);
@@ -43,10 +42,17 @@ export function AgentSignIns({ agent, c }: { agent: string; c: Pick<Connectors, 
     onRemove: (_g, a) => void (a.slot ? keys.remove(a.env, { slot: a.slot }) : keys.remove(a.env, { keepOthers: true })).catch(() => {}),
     onRename: (_g, a, name) => void keys.rename(a.env, a.slot, name).catch(() => {}),
     // Claude Code's takes a token, the others the key of their provider.
-    onAdd: (g, name, value) => keys.save(g.accounts[0]?.provider ?? (g.app === "claude-code" ? "anthropic" : g.app === "codex" ? "openai" : "anthropic"), value, null, {}, { add: true, ...(name ? { label: name } : {}) }),
+    onAdd: (g, name, value) =>
+      keys.save(
+        g.accounts[0]?.provider ?? (g.app === "claude-code" ? "anthropic" : g.app === "codex" ? "openai" : "anthropic"),
+        value,
+        null,
+        {},
+        { add: true, ...(name ? { label: name } : {}) },
+      ),
   };
   return (
-    <SettingsGroup title="Saved sign-ins" footer={SIGN_INS_WHY} data-agent-sign-ins={agent}>
+    <SettingsGroup title={t("settings.connections.sign_ins.title")} footer={t("settings.connections.sign_ins.why")} data-agent-sign-ins={agent}>
       <SignInList group={group} actions={actions} />
     </SettingsGroup>
   );
@@ -54,6 +60,7 @@ export function AgentSignIns({ agent, c }: { agent: string; c: Pick<Connectors, 
 
 /** The rows of `AgentSignIns`, drawn from the app's group (`connectors.agents`). */
 export function SignInList({ group, actions }: { group: AgentGroup; actions: AccountActions }) {
+  const t = useT();
   const [renaming, setRenaming] = useState<AgentAccount | null>(null);
   const [name, setName] = useState("");
   const [removing, setRemoving] = useState<AgentAccount | null>(null);
@@ -78,14 +85,14 @@ export function SignInList({ group, actions }: { group: AgentGroup; actions: Acc
   };
   return (
     <>
-      {group.accounts.length === 0 ? <GroupedRow className="text-muted-foreground">No sign-in yet.</GroupedRow> : null}
+      {group.accounts.length === 0 ? <GroupedRow className="text-muted-foreground">{t("settings.connections.sign_ins.none")}</GroupedRow> : null}
       {group.accounts.map((a) => (
         <GroupedRow key={`${a.env}/${a.slot ?? ""}`} data-manage-account={a.slot ?? a.env} className="flex-wrap">
           {renaming && same(renaming, a) ? (
             <Input
               autoFocus
               value={name}
-              aria-label="Name"
+              aria-label={t("settings.connections.sign_ins.name")}
               className="min-w-0 flex-1"
               onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) => {
@@ -103,14 +110,14 @@ export function SignInList({ group, actions }: { group: AgentGroup; actions: Acc
               {a.line}
               {a.selected ? (
                 <span data-manage-default="" className="ml-2 text-xs text-muted-foreground">
-                  In use
+                  {t("settings.connections.sign_ins.in_use")}
                 </span>
               ) : null}
             </span>
           )}
           {removing && same(removing, a) ? (
             <span className="flex items-center gap-1">
-              <span className="text-xs text-muted-foreground">Remove this sign-in?</span>
+              <span className="text-xs text-muted-foreground">{t("settings.connections.sign_ins.remove_confirm")}</span>
               <Button
                 size="sm"
                 variant="ghost"
@@ -121,17 +128,17 @@ export function SignInList({ group, actions }: { group: AgentGroup; actions: Acc
                   setRemoving(null);
                 }}
               >
-                Remove
+                {t("settings.connections.remove")}
               </Button>
               <Button size="sm" variant="ghost" onClick={() => setRemoving(null)}>
-                Cancel
+                {t("settings.connections.cancel")}
               </Button>
             </span>
           ) : renaming && same(renaming, a) ? null : (
             <span className="flex items-center gap-1">
               {a.selected ? null : (
                 <Button size="sm" variant="ghost" data-manage-use="" onClick={() => actions.onUse(group, a)}>
-                  Use this one
+                  {t("settings.connections.sign_ins.use_this")}
                 </Button>
               )}
               <Button
@@ -143,10 +150,10 @@ export function SignInList({ group, actions }: { group: AgentGroup; actions: Acc
                   setName(a.line);
                 }}
               >
-                Rename
+                {t("settings.connections.sign_ins.rename")}
               </Button>
               <Button size="sm" variant="ghost" data-manage-remove="" onClick={() => setRemoving(a)}>
-                Remove
+                {t("settings.connections.remove")}
               </Button>
             </span>
           )}
@@ -154,12 +161,19 @@ export function SignInList({ group, actions }: { group: AgentGroup; actions: Acc
       ))}
       {adding ? (
         <GroupedRow data-manage-add-form="" className="flex-col items-stretch gap-2">
-          <Input value={newName} maxLength={40} placeholder="Name (optional)" aria-label="Name" autoComplete="off" onChange={(e) => setNewName(e.target.value)} />
+          <Input
+            value={newName}
+            maxLength={40}
+            placeholder={t("settings.connections.name_optional")}
+            aria-label={t("settings.connections.sign_ins.name")}
+            autoComplete="off"
+            onChange={(e) => setNewName(e.target.value)}
+          />
           <Input
             type="password"
             value={value}
-            placeholder="Token or key"
-            aria-label="Token or key"
+            placeholder={t("settings.connections.sign_ins.token_or_key")}
+            aria-label={t("settings.connections.sign_ins.token_or_key")}
             autoComplete="off"
             spellCheck={false}
             className="font-mono"
@@ -171,18 +185,23 @@ export function SignInList({ group, actions }: { group: AgentGroup; actions: Acc
           {error ? <p className="text-xs text-destructive">{error}</p> : null}
           <span className="flex items-center justify-end gap-1">
             <Button size="sm" variant="ghost" onClick={() => setAdding(false)}>
-              Cancel
+              {t("settings.connections.cancel")}
             </Button>
             <Button size="sm" variant="outline" data-manage-add-save="" disabled={busy || !value.trim()} onClick={() => void add()}>
-              Add
+              {t("settings.connections.sign_ins.add")}
             </Button>
           </span>
         </GroupedRow>
       ) : (
         <GroupedRow interactive className="cursor-default p-0">
-          <button type="button" data-manage-add="" onClick={() => setAdding(true)} className="flex min-h-11 w-full items-center gap-2 px-4 text-left text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60">
+          <button
+            type="button"
+            data-manage-add=""
+            onClick={() => setAdding(true)}
+            className="flex min-h-11 w-full items-center gap-2 px-4 text-left text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+          >
             <PlusIcon className="size-3.5" />
-            Add a sign-in
+            {t("settings.connections.sign_ins.add_sign_in")}
           </button>
         </GroupedRow>
       )}

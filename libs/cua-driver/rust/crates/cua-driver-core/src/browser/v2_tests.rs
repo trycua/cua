@@ -31,8 +31,9 @@ use super::platform::{
 use super::pointer::BrowserPointerTool;
 use super::refusal::BrowserRefusal;
 use super::tools::{
-    browser_protected_resource_scope, BrowserClickTool, BrowserDialogTool, BrowserNavigateTool,
-    BrowserPrepareTool, BrowserSelectTool, BrowserTypeTool, GetBrowserStateTool,
+    browser_protected_resource_scope, BrowserClickTool, BrowserDialogTool, BrowserMotionPolicyTool,
+    BrowserNavigateTool, BrowserPrepareTool, BrowserSelectTool, BrowserTypeTool,
+    GetBrowserStateTool,
 };
 use super::types::{
     BrowserClassification, BrowserEngineFamily, BrowserProcessRole, BrowserProduct,
@@ -78,9 +79,17 @@ pub(super) struct FixtureState {
     /// answer `Page.enable` on the new session.
     detach_dialog_session: bool,
     dialog_blocks_page: bool,
+    /// Fail the next `Emulation.setEmulatedMedia` after applying it, as a
+    /// lost reply would.
+    fail_next_emulated_media: bool,
+    /// Tab sessions Chromium no longer knows, as after an unseen detach.
+    gone_sessions: Vec<String>,
     /// Tab sessions that enabled the Page domain. Chromium reports a dialog
     /// to each of them, not to the session whose call opened it.
     page_sessions: Vec<String>,
+    /// The typed element keeps a newline as content (textarea or
+    /// contenteditable) instead of being a single-line input.
+    multiline_field: bool,
     semantic_large_page: bool,
     semantic_html_style: String,
     semantic_full_dom_fails: bool,
@@ -109,7 +118,11 @@ pub(super) struct FixtureState {
     /// dialog it has not yet announced).
     page_enable_hangs: bool,
     dom_click_changes_readback: bool,
+    /// A trusted `mouseReleased` changes the target's semantic readback.
+    trusted_click_changes_readback: bool,
     dom_click_readback_available: bool,
+    /// `DOM.resolveNode` answers a CDP error.
+    resolve_node_fails: bool,
     dom_click_stall_after: Option<usize>,
     dom_click_generation: u64,
     dom_click_focused: bool,
@@ -148,7 +161,10 @@ impl Default for FixtureState {
             renderer_blocked: false,
             detach_dialog_session: false,
             dialog_blocks_page: false,
+            fail_next_emulated_media: false,
+            gone_sessions: Vec::new(),
             page_sessions: Vec::new(),
+            multiline_field: false,
             semantic_large_page: false,
             semantic_html_style: String::new(),
             semantic_full_dom_fails: false,
@@ -160,7 +176,9 @@ impl Default for FixtureState {
             tab_visible: true,
             select_outcome: Value::Null,
             dom_click_changes_readback: true,
+            trusted_click_changes_readback: false,
             dom_click_readback_available: true,
+            resolve_node_fails: false,
             dom_click_stall_after: None,
             dom_click_generation: 0,
             dom_click_focused: false,
@@ -806,10 +824,18 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     .collect();
                 MockReply::hang().with_events(events)
             }
-            "DOM.focus"
-            | "Emulation.setFocusEmulationEnabled"
-            | "Input.dispatchMouseEvent"
-            | "Input.insertText" => MockReply::ok(json!({})),
+            "Input.dispatchMouseEvent" => {
+                if st.trusted_click_changes_readback && call.params["type"] == "mouseReleased" {
+                    st.dom_click_generation += 1;
+                }
+                MockReply::ok(json!({}))
+            }
+            "DOM.focus" | "Emulation.setFocusEmulationEnabled" | "Input.insertText" => {
+                MockReply::ok(json!({}))
+            }
+            "DOM.resolveNode" if st.resolve_node_fails => {
+                MockReply::err(-32000, "No node with given id")
+            }
             "DOM.resolveNode" => MockReply::ok(json!({
                 "object": { "objectId": format!("obj-{}", call.params["backendNodeId"]) }
             })),
@@ -853,6 +879,15 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 reply.delay = st.dom_click_readback_delay;
                 reply
             }
+            "Runtime.callFunctionOn"
+                if call.params["functionDeclaration"]
+                    .as_str()
+                    .is_some_and(|declaration| {
+                        declaration.contains("!this.isContentEditable && this.tagName === 'INPUT'")
+                    }) =>
+            {
+                MockReply::ok(json!({ "result": { "value": !st.multiline_field } }))
+            }
             "Runtime.callFunctionOn" => {
                 st.dom_click_focused = true;
                 if st.dom_click_changes_readback {
@@ -890,6 +925,15 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     session_id: Some(sess.clone()),
                     params: json!({ "result": call.params["accept"], "userInput": "" }),
                 }])
+            }
+            "Emulation.setEmulatedMedia" if is_tab => {
+                if st.gone_sessions.contains(&sess) {
+                    MockReply::err(-32001, "Session with given id not found.")
+                } else if std::mem::take(&mut st.fail_next_emulated_media) {
+                    MockReply::err(-32000, "fixture lost reply")
+                } else {
+                    MockReply::ok(json!({}))
+                }
             }
             other => MockReply::method_not_found(other),
         }
@@ -2547,6 +2591,162 @@ async fn navigation_targets_an_inactive_tab_without_activating_it() {
     );
     assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
     assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
+}
+
+#[tokio::test]
+async fn motion_policy_leaves_an_embedded_application_tab_unemulated() {
+    // The default fixture binds an embedded application, which the reduced
+    // motion policy must leave alone (#4557).
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let result = BrowserMotionPolicyTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "mode": "reduce",
+            "session": SESSION,
+        }))
+        .await;
+
+    let refused = structured(&result);
+    assert_eq!(refused["status"], "refused", "{refused}");
+    assert_eq!(refused["refusal"]["code"], "browser_wrong_target_refused");
+    assert_eq!(
+        refused["refusal"]["detail"]["reason"],
+        "motion_policy_driver_owned_only"
+    );
+    assert!(recorded_calls(&f, "Emulation.setEmulatedMedia").is_empty());
+}
+
+/// Bind a driver-owned tab in its own session and return a caller for
+/// `browser_motion_policy` on it.
+#[cfg(unix)]
+async fn driver_owned_motion_tab(
+    f: &Fixture,
+    session: &'static str,
+) -> impl Fn(&'static str) -> std::pin::Pin<Box<dyn std::future::Future<Output = ToolResult> + Send>>
+{
+    let mut stand_in = std::process::Command::new("sleep");
+    stand_in.arg("30");
+    std::os::unix::process::CommandExt::process_group(&mut stand_in, 0);
+    f.engine
+        .adopt_driver_owned_browser_for_test(session, 1, stand_in.spawn().unwrap())
+        .await;
+    let bound = structured(
+        &GetBrowserStateTool::new(f.engine.clone())
+            .invoke(json!({ "pid": 1, "window_id": 7, "session": session }))
+            .await,
+    )
+    .clone();
+    assert_eq!(bound["status"], "ok", "{bound}");
+    let target = bound["target_id"].as_str().unwrap().to_owned();
+    let tab = bound["tabs"][0]["tab_id"].as_str().unwrap().to_owned();
+    let engine = f.engine.clone();
+    move |mode| {
+        let tool = BrowserMotionPolicyTool::new(engine.clone());
+        let args = json!({
+            "target_id": target,
+            "tab_id": tab,
+            "mode": mode,
+            "session": session,
+        });
+        Box::pin(async move { tool.invoke(args).await })
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn motion_policy_clears_the_override_on_the_session_that_set_it() {
+    // Chromium drops an emulated media override only on the session that
+    // set it, and every call attaches a fresh tab session (#4557).
+    const MOTION_SESSION: &str = "run-v2-motion-policy";
+    let f = fixture().await;
+    let policy = driver_owned_motion_tab(&f, MOTION_SESSION).await;
+
+    let reduced = structured(&policy("reduce").await).clone();
+    assert_eq!(reduced["status"], "ok", "{reduced}");
+    assert_eq!(reduced["prefer_reduced_motion"], true);
+    let cleared = structured(&policy("default").await).clone();
+    assert_eq!(cleared["status"], "ok", "{cleared}");
+    assert_eq!(cleared["prefer_reduced_motion"], false);
+    let cleared_again = structured(&policy("default").await).clone();
+    assert_eq!(cleared_again["status"], "ok", "{cleared_again}");
+
+    let calls = recorded_calls(&f, "Emulation.setEmulatedMedia");
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    assert_eq!(calls[0].1["features"][0]["value"], "reduce");
+    assert_eq!(calls[1].1["features"], json!([]));
+    assert_eq!(calls[0].0, calls[1].0, "{calls:?}");
+    crate::session::fire_session_end(MOTION_SESSION);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn motion_policy_clears_on_the_session_of_a_reduce_whose_reply_was_lost() {
+    // A failed reply does not prove the override was not applied, so a
+    // later default must still clear it on that session (#4557).
+    const MOTION_SESSION: &str = "run-v2-motion-policy-lost-reply";
+    let f = fixture().await;
+    let policy = driver_owned_motion_tab(&f, MOTION_SESSION).await;
+
+    f.state.lock().unwrap().fail_next_emulated_media = true;
+    let failed = policy("reduce").await;
+    assert_eq!(failed.is_error, Some(true));
+    let cleared = structured(&policy("default").await).clone();
+    assert_eq!(cleared["status"], "ok", "{cleared}");
+
+    let calls = recorded_calls(&f, "Emulation.setEmulatedMedia");
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    assert_eq!(calls[1].1["features"], json!([]));
+    assert_eq!(calls[0].0, calls[1].0, "{calls:?}");
+    crate::session::fire_session_end(MOTION_SESSION);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn motion_policy_moves_off_a_holder_session_chromium_no_longer_knows() {
+    // A holder whose detach went unseen must not wedge the tool: Chromium's
+    // session-not-found answer proves its override is gone (#4557).
+    const MOTION_SESSION: &str = "run-v2-motion-policy-gone-holder";
+    let f = fixture().await;
+    let policy = driver_owned_motion_tab(&f, MOTION_SESSION).await;
+
+    let first = structured(&policy("reduce").await).clone();
+    assert_eq!(first["status"], "ok", "{first}");
+    let first_session = recorded_calls(&f, "Emulation.setEmulatedMedia")[0]
+        .0
+        .clone();
+    f.state
+        .lock()
+        .unwrap()
+        .gone_sessions
+        .push(first_session.clone().unwrap());
+    let moved = structured(&policy("reduce").await).clone();
+    assert_eq!(moved["status"], "ok", "{moved}");
+    let cleared = structured(&policy("default").await).clone();
+    assert_eq!(cleared["status"], "ok", "{cleared}");
+
+    let calls = recorded_calls(&f, "Emulation.setEmulatedMedia");
+    assert_eq!(calls.len(), 4, "{calls:?}");
+    assert_eq!(calls[1].0, first_session, "{calls:?}");
+    assert_ne!(calls[2].0, first_session, "{calls:?}");
+    assert_eq!(calls[2].1["features"][0]["value"], "reduce");
+    assert_eq!(calls[3].0, calls[2].0, "{calls:?}");
+    assert_eq!(calls[3].1["features"], json!([]));
+
+    // A default whose holder is gone succeeds and forgets it.
+    let again = structured(&policy("reduce").await).clone();
+    assert_eq!(again["status"], "ok", "{again}");
+    let holder = recorded_calls(&f, "Emulation.setEmulatedMedia")[4]
+        .0
+        .clone();
+    f.state.lock().unwrap().gone_sessions.push(holder.unwrap());
+    let cleared_gone = structured(&policy("default").await).clone();
+    assert_eq!(cleared_gone["status"], "ok", "{cleared_gone}");
+    let none_left = structured(&policy("default").await).clone();
+    assert_eq!(none_left["status"], "ok", "{none_left}");
+    assert_eq!(recorded_calls(&f, "Emulation.setEmulatedMedia").len(), 6);
+    crate::session::fire_session_end(MOTION_SESSION);
 }
 
 #[tokio::test]
@@ -4318,4 +4518,303 @@ async fn a_detached_dialog_that_closed_unseen_stops_blocking_clicks() {
         .await;
     assert_ne!(clicked.is_error, Some(true), "{:?}", structured(&clicked));
     assert!(!recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
+}
+
+fn public_click_result(result: &ToolResult) -> Value {
+    let public = result
+        .action_record
+        .as_ref()
+        .expect("typed browser click action record")
+        .public_result()
+        .expect("public browser click result");
+    serde_json::to_value(public).expect("serialize public result")
+}
+
+#[tokio::test]
+async fn trusted_ref_click_confirms_a_target_state_change() {
+    let f = fixture_with(|state| state.trusted_click_changes_readback = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref, "session": SESSION
+        }))
+        .await;
+
+    assert_eq!(structured(&result)["route"], "trusted");
+    assert!(result.content.iter().any(|content| matches!(
+        content,
+        Content::Text { text, .. } if text.contains("confirmed a target-state change")
+    )));
+    let public = public_click_result(&result);
+    assert_eq!(public["effect"], "confirmed", "{public}");
+    assert_eq!(public["route"], "trusted_input", "{public}");
+    assert_eq!(public["delivery"]["mode"], "background", "{public}");
+    assert_eq!(public["evidence"][0]["kind"], "value_readback", "{public}");
+    assert!(public["escalation"].is_null(), "{public}");
+    let mouse = recorded_calls(&f, "Input.dispatchMouseEvent");
+    assert_eq!(mouse.len(), 2, "press and release: {mouse:?}");
+}
+
+#[tokio::test]
+async fn trusted_ref_click_that_changes_nothing_is_unverifiable_with_readback() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref,
+            "delivery_mode": "foreground", "session": SESSION
+        }))
+        .await;
+
+    assert!(result.content.iter().any(|content| matches!(
+        content,
+        Content::Text { text, .. }
+            if text.contains("target state remained unchanged; application effect is unverifiable")
+    )));
+    let public = public_click_result(&result);
+    assert_eq!(public["effect"], "unverifiable", "{public}");
+    assert_eq!(public["route"], "trusted_input", "{public}");
+    assert_eq!(public["delivery"]["mode"], "foreground", "{public}");
+    assert_eq!(public["evidence"][0]["kind"], "value_readback", "{public}");
+    assert_eq!(
+        public["escalation"]["reason"], "effect_unconfirmed",
+        "{public}"
+    );
+}
+
+#[tokio::test]
+async fn trusted_ref_click_without_readback_is_unverifiable_without_evidence() {
+    let f = fixture_with(|state| {
+        state.trusted_click_changes_readback = true;
+        state.dom_click_readback_available = false;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref, "session": SESSION
+        }))
+        .await;
+
+    let public = public_click_result(&result);
+    assert_eq!(public["effect"], "unverifiable", "{public}");
+    assert!(public["evidence"].is_null(), "{public}");
+    assert!(!recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
+}
+
+#[tokio::test]
+async fn trusted_coordinate_click_has_no_target_to_read_back() {
+    let f = fixture_with(|state| state.trusted_click_changes_readback = true).await;
+    let (target, tab) = bind(&f).await;
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "x": 10, "y": 20, "session": SESSION
+        }))
+        .await;
+
+    assert_eq!(structured(&result)["status"], "ok");
+    assert!(result.action_record.is_none());
+    assert!(recorded_calls(&f, "DOM.resolveNode").is_empty());
+    let public = ActionExecutionRecord::from_legacy(
+        "browser_click",
+        &json!({ "x": 10, "y": 20 }),
+        structured(&result),
+    )
+    .expect("browser click action record")
+    .public_result()
+    .expect("public browser click result");
+    let public = serde_json::to_value(public).expect("serialize public result");
+    assert_eq!(public["effect"], "unverifiable", "{public}");
+}
+
+#[tokio::test]
+async fn trusted_ref_click_whose_node_does_not_resolve_is_unverifiable_without_evidence() {
+    let f = fixture_with(|state| {
+        state.trusted_click_changes_readback = true;
+        state.resolve_node_fails = true;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref, "session": SESSION
+        }))
+        .await;
+
+    assert!(result.content.iter().any(|content| matches!(
+        content,
+        Content::Text { text, .. } if text.contains("semantic target readback was unavailable")
+    )));
+    let public = public_click_result(&result);
+    assert_eq!(public["effect"], "unverifiable", "{public}");
+    assert!(public["evidence"].is_null(), "{public}");
+    assert_eq!(recorded_calls(&f, "Input.dispatchMouseEvent").len(), 2);
+}
+
+fn enter_event(params: &Value, phase: &str) {
+    assert_eq!(params["type"], phase, "{params}");
+    assert_eq!(params["key"], "Enter", "{params}");
+    assert_eq!(params["code"], "Enter", "{params}");
+    assert_eq!(params["windowsVirtualKeyCode"], 13, "{params}");
+    assert_eq!(params["nativeVirtualKeyCode"], 13, "{params}");
+}
+
+#[tokio::test]
+async fn insert_text_trailing_newline_presses_enter_on_a_single_line_field() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let input_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let result = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": input_ref,
+            "text": "Buy milk\n", "session": SESSION
+        }))
+        .await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["enter_pressed"], true, "{s}");
+    assert_eq!(s["requested_chars"], 8, "{s}");
+    assert_eq!(s["delivered_chars"], 8, "{s}");
+    assert!(
+        result
+            .content
+            .iter()
+            .any(|c| matches!(c, Content::Text { text, .. } if text.contains("pressed Enter"))),
+        "the summary must say Enter was pressed: {result:?}"
+    );
+
+    let inserts = recorded_calls(&f, "Input.insertText");
+    assert_eq!(inserts.len(), 1);
+    assert_eq!(
+        inserts[0].1["text"], "Buy milk",
+        "the newline must not go through insertText"
+    );
+
+    let events = recorded_calls(&f, "Input.dispatchKeyEvent");
+    assert_eq!(events.len(), 3, "{events:?}");
+    enter_event(&events[0].1, "keyDown");
+    enter_event(&events[1].1, "char");
+    assert_eq!(events[1].1["text"], "\r");
+    assert_eq!(events[1].1["unmodifiedText"], "\r");
+    enter_event(&events[2].1, "keyUp");
+    assert!(events
+        .iter()
+        .all(|(sess, _)| sess.as_deref().unwrap().starts_with("tab-sess-")));
+}
+
+#[tokio::test]
+async fn insert_text_keeps_a_trailing_newline_in_a_multiline_field() {
+    let f = fixture_with(|state| state.multiline_field = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let input_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let result = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": input_ref,
+            "text": "line\n", "session": SESSION
+        }))
+        .await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["enter_pressed"], false, "{s}");
+    assert_eq!(s["requested_chars"], 5, "{s}");
+
+    let inserts = recorded_calls(&f, "Input.insertText");
+    assert_eq!(inserts.len(), 1);
+    assert_eq!(inserts[0].1["text"], "line\n");
+    assert!(recorded_calls(&f, "Input.dispatchKeyEvent").is_empty());
+}
+
+#[tokio::test]
+async fn keystrokes_trailing_newline_presses_a_real_enter() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let input_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let result = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": input_ref,
+            "text": "a\n", "mode": "keystrokes", "session": SESSION
+        }))
+        .await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["enter_pressed"], true, "{s}");
+    assert_eq!(s["requested_chars"], 1, "{s}");
+    assert_eq!(s["delivered_chars"], 1, "{s}");
+
+    let events = recorded_calls(&f, "Input.dispatchKeyEvent");
+    assert_eq!(events.len(), 6, "{events:?}");
+    assert_eq!(events[1].1["text"], "a");
+    enter_event(&events[3].1, "keyDown");
+    enter_event(&events[4].1, "char");
+    assert_eq!(events[4].1["text"], "\r");
+    enter_event(&events[5].1, "keyUp");
+}
+
+#[tokio::test]
+async fn keystrokes_newline_in_a_multiline_field_carries_the_enter_key_code() {
+    let f = fixture_with(|state| state.multiline_field = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let input_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let result = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": input_ref,
+            "text": "a\nb", "mode": "keystrokes", "session": SESSION
+        }))
+        .await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["enter_pressed"], false, "{s}");
+    assert_eq!(s["requested_chars"], 3, "{s}");
+    assert_eq!(s["delivered_chars"], 3, "{s}");
+
+    let events = recorded_calls(&f, "Input.dispatchKeyEvent");
+    assert_eq!(events.len(), 9, "{events:?}");
+    enter_event(&events[3].1, "keyDown");
+    enter_event(&events[4].1, "char");
+    enter_event(&events[5].1, "keyUp");
+    assert_eq!(events[7].1["text"], "b");
+}
+
+#[tokio::test]
+async fn a_failed_enter_after_insert_text_is_reported_not_counted() {
+    let f = fixture_with(|state| state.fail_key_down_after = Some(0)).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let input_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let result = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": input_ref,
+            "text": "hi\n", "session": SESSION
+        }))
+        .await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "refused", "{s}");
+    let refusal = &s["refusal"];
+    assert_eq!(refusal["code"], "browser_input_incomplete", "{refusal}");
+    assert_eq!(refusal["detail"]["requested_chars"], 2);
+    assert_eq!(refusal["detail"]["delivered_chars"], 2);
+    assert_eq!(refusal["detail"]["enter_pressed"], false);
+    assert_eq!(recorded_calls(&f, "Input.insertText").len(), 1);
 }

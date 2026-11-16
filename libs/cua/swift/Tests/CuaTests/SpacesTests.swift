@@ -125,7 +125,18 @@ func exerciseSpaces(_ cua: Cua, _ fx: Fixtures, tmp: URL, teleport: Bool = false
 @Suite(.serialized) struct SpacesTests {
     @Test func everyContractToolMapsToAGeneratedMethod() {
         let rows = spacesToolMethods()
-        #expect(rows.count == 121)
+        // One source of truth for the tool set: the generated contract manifest.
+        let manifestURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("spaces-contract/manifest.json")
+        let manifest = try? JSONSerialization.jsonObject(with: Data(contentsOf: manifestURL)) as? [String: Any]
+        let expectedTools = Set(((manifest?["tools"] as? [[String: Any]]) ?? []).compactMap { $0["name"] as? String })
+        let gotTools = Set(rows.map { $0.tool })
+        #expect(!expectedTools.isEmpty, "could not read \(manifestURL.path)")
+        #expect(
+            gotTools == expectedTools && rows.count == expectedTools.count,
+            "binding tools differ from spaces-contract/manifest.json: missing \(expectedTools.subtracting(gotTools).sorted()), extra \(gotTools.subtracting(expectedTools).sorted()), rows \(rows.count) vs manifest \(expectedTools.count)")
         // Swift spells `Class.method_name` as `methodName` on the generated
         // protocol; check each against the protocol's requirement list.
         let spaceMethods: Set<String> = [
@@ -137,7 +148,7 @@ func exerciseSpaces(_ cua: Cua, _ fx: Fixtures, tmp: URL, teleport: Bool = false
             "persistentAgentCreate", "persistentAgents", "persistentAgentRemove",
             "persistentAgentSend", "persistentAgentSave", "agentPause", "agentResume",
             "routineAdd", "routines", "routineRemove", "routineSetEnabled", "notifyUser",
-            "notifications", "notificationsAck", "computerAccessGrant",
+            "notifications", "notificationsAck", "notificationsDelete", "computerAccessGrant",
             "computerAccessRevoke", "computerAccess", "relayRegister", "relayUnregister",
             "volumeLs", "volumeRead", "volumeWrite", "volumeDelete", "volumeHistory",
             "volumeRestore", "volumeGrant", "volumeRevoke", "volumeGrants",
@@ -173,7 +184,7 @@ func exerciseSpaces(_ cua: Cua, _ fx: Fixtures, tmp: URL, teleport: Bool = false
             { $0.persistentAgentSend }, { $0.persistentAgentSave }, { $0.agentPause },
             { $0.agentResume }, { $0.routineAdd }, { $0.routines }, { $0.routineRemove },
             { $0.routineSetEnabled }, { $0.notifyUser }, { $0.notifications },
-            { $0.notificationsAck }, { $0.computerAccessGrant }, { $0.computerAccessRevoke },
+            { $0.notificationsAck }, { $0.notificationsDelete }, { $0.computerAccessGrant }, { $0.computerAccessRevoke },
             { $0.computerAccess }, { $0.relayRegister }, { $0.relayUnregister },
             { $0.volumeLs }, { $0.volumeRead }, { $0.volumeWrite }, { $0.volumeDelete },
             { $0.volumeHistory }, { $0.volumeRestore }, { $0.volumeGrant }, { $0.volumeRevoke },

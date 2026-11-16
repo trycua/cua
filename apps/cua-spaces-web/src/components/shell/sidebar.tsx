@@ -14,6 +14,7 @@ import { CuaKey } from "@/components/cua-key";
 import { DriverAttentionLabel } from "@/components/driver/attention";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
+import { useT } from "@/i18n";
 import { bindingFor } from "@/lib/keybindings";
 import { useHiddenSpaceIds } from "@/lib/prepare/store";
 import { spaceState } from "@/lib/spaces";
@@ -30,6 +31,7 @@ import { useSpacesTreeData } from "@/components/spaces/use-spaces-tree";
 import { THIS_COMPUTER } from "@/lib/machines";
 
 export function Sidebar() {
+  const t = useT();
   const width = useUiStore((s) => s.sidebarWidth);
   const { data: spaces, listStatus } = useSpaces();
   const { core } = useBridge();
@@ -49,7 +51,7 @@ export function Sidebar() {
     <aside
       style={{ width }}
       className="glass relative flex h-full shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground"
-      aria-label="Sidebar"
+      aria-label={t("shell.sidebar.label")}
     >
       {/* Room for the top bar and traffic lights; draggable like the title bar. */}
       <div className="app-drag h-(--titlebar-height) shrink-0" />
@@ -70,13 +72,17 @@ export function Sidebar() {
                     <span className="flex-1 truncate">{item.label}</span>
                     {item.to === "/notifications" && unread > 0 ? (
                       // The Cua key says they're Cua's; the count, in plain text, says how many are unread.
-                      <span data-unread-badge className="flex items-center gap-1" aria-label={`${unread} unread`}>
+                      <span data-unread-badge className="flex items-center gap-1" aria-label={t("shell.sidebar.unread", { count: unread })}>
                         <CuaKey size={16} />
                         <span className="text-2xs font-medium tabular-nums text-foreground">{unread}</span>
                       </span>
                     ) : null}
                     {item.to === "/spaces" && pending.length > 0 ? (
-                      <span data-pending-badge className="rounded-full bg-warning/20 px-1.5 text-2xs font-medium tabular-nums text-foreground" aria-label={`${pending.length} waiting to be added`}>
+                      <span
+                        data-pending-badge
+                        className="rounded-full bg-warning/20 px-1.5 text-2xs font-medium tabular-nums text-foreground"
+                        aria-label={t("shell.sidebar.waiting_to_add", { count: pending.length })}
+                      >
                         {pending.length}
                       </span>
                     ) : null}
@@ -112,6 +118,7 @@ export function Sidebar() {
  * a person.
  */
 export function SidebarDriverLine() {
+  const t = useT();
   const driver = useDriver();
   if (!driver.available) return null;
   return (
@@ -121,7 +128,7 @@ export function SidebarDriverLine() {
       data-sidebar-driver=""
       className="flex h-7 items-center gap-2 rounded-lg pr-2 pl-[34px] text-[13px] outline-none hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring/60 data-[status=active]:font-medium data-[status=active]:text-foreground"
     >
-      <span className="shrink-0">Cua Driver</span>
+      <span className="shrink-0">{t("common.cua_driver")}</span>
       <DriverAttentionLabel status={driver.status} className="ml-auto" />
     </Link>
   );
@@ -131,6 +138,7 @@ export function SidebarDriverLine() {
  * run keeps going after it): the name, the progress line and a bar. Opens
  * the Space's row. */
 function SidebarCreating({ spaces }: { spaces: Space[] }) {
+  const t = useT();
   const making = spaces.filter((s) => spaceState(s) === "creating");
   if (making.length === 0) return null;
   return (
@@ -145,10 +153,17 @@ function SidebarCreating({ spaces }: { spaces: Space[] }) {
             className="block rounded-lg border bg-background/70 px-3 py-2 text-left outline-none hover:bg-background focus-visible:ring-2 focus-visible:ring-ring/60"
             data-sidebar-creating-row={s.id}
           >
-            <div className="text-2xs font-medium text-muted-foreground">Making</div>
+            <div className="text-2xs font-medium text-muted-foreground">{t("shell.sidebar.making")}</div>
             <div className="truncate text-xs font-medium">{spokenName(s.name)}</div>
-            <div className="truncate text-2xs text-muted-foreground">{p?.transfer ?? p?.label ?? "Starting…"}</div>
-            <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-foreground/10" role="progressbar" aria-label={`Making ${s.name}`} aria-valuenow={Math.round(fraction * 100)} aria-valuemin={0} aria-valuemax={100}>
+            <div className="truncate text-2xs text-muted-foreground">{p?.transfer ?? p?.label ?? t("shell.sidebar.starting")}</div>
+            <div
+              className="mt-1.5 h-1 overflow-hidden rounded-full bg-foreground/10"
+              role="progressbar"
+              aria-label={t("shell.sidebar.making_name", { name: s.name })}
+              aria-valuenow={Math.round(fraction * 100)}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
               <div className="h-full rounded-full bg-brand transition-[width]" style={{ width: `${Math.round(fraction * 100)}%` }} />
             </div>
           </Link>
@@ -164,6 +179,7 @@ function SidebarCreating({ spaces }: { spaces: Space[] }) {
  * way back into a first run left halfway. `trailing` (the update button)
  * sits at the far right of its first row. */
 export function AccountFooter({ trailing }: { trailing?: ReactNode }) {
+  const t = useT();
   const { core } = useBridge();
   const { data: session, signIn, cancelSignIn, openExternal } = useSession();
   const [details, setDetails] = useState(false);
@@ -199,7 +215,7 @@ export function AccountFooter({ trailing }: { trailing?: ReactNode }) {
     setDetails(false);
     void signIn({ code: true }).catch(() => {});
   };
-  const identity = footer.identity || (session.signedIn ? "Signed in" : null);
+  const identity = footer.identity || (session.signedIn ? t("shell.sidebar.signed_in") : null);
 
   return (
     <div className={cn("mt-auto", footer.state === "signedIn" ? "px-2.5 pt-1 pb-2.5" : "border-t px-3 py-2.5")} data-signin={footer.state}>
@@ -212,7 +228,7 @@ export function AccountFooter({ trailing }: { trailing?: ReactNode }) {
           className="mb-2 flex items-center gap-2 rounded-lg bg-accent px-2.5 py-2 text-sm font-medium text-foreground hover:bg-accent/70"
         >
           <CuaKey size={18} />
-          Finish setting up
+          {t("shell.sidebar.finish_setup")}
         </Link>
       ) : null}
       {footer.state === "signedIn" && identity ? (
@@ -262,16 +278,14 @@ export function AccountFooter({ trailing }: { trailing?: ReactNode }) {
           </div>
           {stuck ? (
             <div className="mt-1.5 pl-5.5 text-2xs text-muted-foreground" data-signin-stuck="">
-              <p>Page stuck?</p>
+              <p>{t("shell.sidebar.page_stuck")}</p>
               <button type="button" className="mt-0.5 underline underline-offset-2 hover:text-foreground" onClick={startWithCode} data-signin-code="">
-                Get a code instead
+                {t("shell.sidebar.get_code")}
               </button>
             </div>
           ) : null}
           {/* No browser opened: the page, to copy to any device. */}
-          {session.signIn.kind === "waiting" && session.signIn.opened === false && session.signInUrl ? (
-            <SignInLink url={session.signInUrl} compact />
-          ) : null}
+          {session.signIn.kind === "waiting" && session.signIn.opened === false && session.signInUrl ? <SignInLink url={session.signInUrl} compact /> : null}
         </div>
       ) : footer.state === "failed" ? (
         <div role="alert">
@@ -290,7 +304,7 @@ export function AccountFooter({ trailing }: { trailing?: ReactNode }) {
                 onClick={startWithCode}
                 data-signin-code=""
               >
-                Get a code instead
+                {t("shell.sidebar.get_code")}
               </button>
             ) : null}
             {footer.detail ? (
@@ -342,8 +356,8 @@ function useAfter(active: boolean, ms: number): boolean {
       setLate(false);
       return;
     }
-    const t = setTimeout(() => setLate(true), ms);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setLate(true), ms);
+    return () => clearTimeout(timer);
   }, [active, ms]);
   return late;
 }
@@ -363,6 +377,7 @@ function useSignInFailureToast(footer: SignInFooter | null) {
 }
 
 function ResizeHandle() {
+  const t = useT();
   const setWidth = useUiStore((s) => s.setSidebarWidth);
   const start = useRef<{ x: number; width: number } | null>(null);
 
@@ -381,7 +396,7 @@ function ResizeHandle() {
     <div
       role="separator"
       aria-orientation="vertical"
-      aria-label="Resize sidebar"
+      aria-label={t("shell.sidebar.resize")}
       tabIndex={0}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}

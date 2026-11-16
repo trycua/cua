@@ -191,6 +191,10 @@ public protocol SpacesBackend: AnyObject, Sendable {
     func primaryDisplay(id: String) async -> AppStreamDisplay?
     /// Memory and storage use now (the SDK's `Space.usage`), or `nil`.
     func usage(id: String) async -> AppSpaceUsage?
+    /// Whether the Space can take work now (the SDK's app method
+    /// `spaces.reach`: the relay's word and a health check), as the SDK
+    /// answers it (`reachable`, `listed_offline`, `reason`).
+    func reach(id: String) async throws -> [String: Any]
     /// Processor, memory and disk (the SDK's `Spaces.resources`, the
     /// daemon's one sampler): this Mac, its Spaces, your other computers'
     /// summaries and what your Spaces there take on them. `visible` says a
@@ -407,6 +411,8 @@ public struct SpaceBulkResult: Equatable, Sendable {
 }
 
 public extension SpacesBackend {
+    /// A backend without the SDK can't tell: it says reachable, so no job is held back.
+    func reach(id: String) async throws -> [String: Any] { ["reachable": true, "listed_offline": false] }
     /// A backend that lists complete lists only.
     func listRead() async throws -> AppListRead { AppListRead(rows: try await rows()) }
     /// A backend that cannot push: the list poll alone keeps it fresh.
@@ -595,7 +601,8 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
                         cloudPlace: info.cloudPlace.isEmpty ? nil : info.cloudPlace,
                         cloudDelete: info.cloudDelete.isEmpty ? nil : info.cloudDelete,
                         stopReason: info.stopReason.isEmpty ? nil : info.stopReason,
-                        sharing: info.sharing.map(Self.sharingFacts))
+                        sharing: info.sharing.map(Self.sharingFacts),
+                        parent: info.parent)
                     // Turned off on purpose: no probe (it would only time out).
                     if ["suspended", "stopped"].contains(info.powerState) {
                         return (index, row)
@@ -1176,6 +1183,10 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
         return icons.map { $0?.bytes }
     }
 
+    public func reach(id: String) async throws -> [String: Any] {
+        (try await agentsTool("spaces.reach", ["space": id]) as? [String: Any]) ?? [:]
+    }
+
     public func usage(id: String) async -> AppSpaceUsage? {
         let result = await withTimeout(seconds: 5) { [cua] in
             try await cua.spaces().space(space: id).usage()
@@ -1533,17 +1544,17 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
                     image: "ghcr.io/trycua/linux:24.04",
                     imageDigest: "sha256:4f1c2a9d8e7b6c5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a",
                     kind: .container, arch: "arm64", hidden: false, reachable: true, error: nil, host: nil, hostName: nil,
-                    power: "suspend", powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil),
+                    power: "suspend", powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil, parent: nil),
         AppSpaceRow(id: "direct:builder", name: "builder", displayName: nil, provider: "direct", spacesdVersion: "0.4.0",
                     features: ["desktop_stream"], addedAt: "2026-09-24T08:00:00Z",
                     os: .linux, osName: "Arch Linux", osPrettyName: nil, image: nil, imageDigest: nil,
                     kind: nil, arch: nil, hidden: false, reachable: false, error: "timed out", host: nil, hostName: nil,
-                    power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil),
+                    power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil, parent: nil),
         AppSpaceRow(id: "direct:10.0.0.5:3211", name: "10.0.0.5:3211", displayName: nil, provider: "direct",
                     spacesdVersion: "0.4.0", features: [], addedAt: nil, os: .windows,
                     osName: "Windows", osPrettyName: "Windows Server 2022 Datacenter 10.0.20348",
                     image: nil, imageDigest: nil, kind: nil, arch: nil, hidden: false, reachable: true, error: nil, host: nil, hostName: nil,
-                    power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil),
+                    power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil, parent: nil),
     ]
 
     public func rows() async throws -> [AppSpaceRow] { await MainActor.run { fixtureRows } }
@@ -1619,7 +1630,7 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
                                            addedAt: nil, os: .linux, osName: nil, osPrettyName: nil,
                                            image: args.image, imageDigest: nil, kind: args.kind, arch: nil,
                                            hidden: false, reachable: true, error: nil, host: nil, hostName: nil,
-                                           power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil))
+                                           power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil, parent: nil))
             return id
         }
     }

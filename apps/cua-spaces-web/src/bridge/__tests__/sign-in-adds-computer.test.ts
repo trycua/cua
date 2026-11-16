@@ -67,6 +67,19 @@ describe.skipIf(!wasmBuilt)("signing in adds this machine", () => {
     store.dispose();
   });
 
+  it("signed out, adding this computer sets nothing up and asks the host for nothing: the sign-in comes first", async () => {
+    const { adapter, setups } = host({ signedIn: false, configured: false });
+    const asked: string[] = [];
+    const spy = Object.assign(Object.create(adapter) as DataAdapter, {
+      call: ((op: string, args: Record<string, unknown>) => (asked.push(op), adapter.call(op as never, args as never))) as DataAdapter["call"],
+    });
+    const store = new BridgeStore(spy, await testCore());
+    expect(await store.addThisComputer(null)).toBe(false);
+    expect(setups).toHaveLength(0);
+    expect(asked.filter((op) => op.startsWith("host."))).toEqual([]);
+    store.dispose();
+  });
+
   it("two sign-in signals set it up once", async () => {
     const { adapter, setups } = host({ signedIn: true, configured: false });
     const store = new BridgeStore(adapter, await testCore());

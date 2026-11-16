@@ -278,7 +278,7 @@ pub enum EntryKind {
 
 /// Persisted per-VM state (`instances/<name>/state.json`, 0600: it holds
 /// the Spaces token).
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct VmState {
     pub name: String,
     pub kind: EntryKind,
@@ -363,6 +363,45 @@ pub struct VmState {
     /// The standby finished booting and is paused (only then can it be taken).
     #[serde(default)]
     pub standby_ready: bool,
+}
+
+impl std::fmt::Debug for VmState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VmState")
+            .field("name", &self.name)
+            .field("kind", &self.kind)
+            .field("image", &self.image)
+            .field("base", &self.base)
+            .field("base_format", &self.base_format)
+            .field("cpus", &self.cpus)
+            .field("memory_mb", &self.memory_mb)
+            .field("disk_gb", &self.disk_gb)
+            .field("ports", &self.ports)
+            .field("host_ports", &self.host_ports)
+            .field("boot", &self.boot)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("probes", &self.probes)
+            .field("restrict_network", &self.restrict_network)
+            .field("egress", &self.egress)
+            .field("network", &self.network)
+            .field("pasta_pid", &self.pasta_pid)
+            .field("fc_pid", &self.fc_pid)
+            .field("sock_id", &self.sock_id)
+            .field("paused", &self.paused)
+            .field("agent_port", &self.agent_port)
+            .field("agent_key", &self.agent_key.as_ref().map(|_| "<redacted>"))
+            .field("qmp_sock", &self.qmp_sock)
+            .field("restore_from", &self.restore_from)
+            .field("source", &self.source)
+            .field("labels", &self.labels)
+            .field("last_start", &self.last_start)
+            .field("created_at", &self.created_at)
+            .field("pool_member", &self.pool_member)
+            .field("mem_base", &self.mem_base)
+            .field("standby_of", &self.standby_of)
+            .field("standby_ready", &self.standby_ready)
+            .finish()
+    }
 }
 
 /// A memory file, and the inode it had, so a file replaced or deleted
@@ -1719,11 +1758,17 @@ impl MicroVmRuntime {
         // DNATs them to the guest; a newer pasta would otherwise deliver
         // them to the namespace's public address ([`crate::pasta`]).
         args.extend(crate::pasta::host_lo_args(&pasta));
-        if st.host_ports.is_empty() {
+        // The host's ports cross into the namespace through cua's own
+        // forwarder, not pasta's splice (passt before 2025 adds ~40 ms per
+        // round trip; [`crate::nsfwd`]). Without one, pasta's forwards.
+        let pairs: Vec<(u16, u16)> = st.host_ports.iter().map(|(g, h)| (*h, *g)).collect();
+        let fwd = crate::nsfwd::spawn(&dir, &pairs).await;
+        if st.host_ports.is_empty() || fwd.is_some() {
             args.extend(["-t".into(), "none".into()]);
-        }
-        for (g, h) in &st.host_ports {
-            args.extend(["-t".into(), format!("127.0.0.1/{h}:{g}")]);
+        } else {
+            for (g, h) in &st.host_ports {
+                args.extend(["-t".into(), format!("127.0.0.1/{h}:{g}")]);
+            }
         }
         args.extend(["--".into(), "/bin/sh".into(), "net.sh".into()]);
         let log = std::fs::OpenOptions::new()
@@ -1782,6 +1827,25 @@ impl MicroVmRuntime {
             return Err(VmmError::other(
                 "cannot find the firecracker process under pasta",
             ));
+        }
+        if let (Some(fwd), Some(ns)) = (fwd, st.fc_pid)
+            && let Err(e) = fwd.join(ns).await
+        {
+            // The forwarder is off now: launch again with pasta's forwards.
+            tracing::warn!(sandbox = %st.name, error = %e, "port forwarder failed; launching again with pasta's forwards");
+            if let Some(p) = st.pasta_pid.take() {
+                host::signal(p, "KILL");
+            }
+            if let Some(p) = st.fc_pid.take() {
+                host::signal(p, "KILL");
+                for _ in 0..250 {
+                    if !host::pid_alive(p) {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            }
+            return Box::pin(self.launch(st, config)).await;
         }
         st.paused = false;
         self.save(st)?;
@@ -2053,6 +2117,8 @@ impl MicroVmRuntime {
         if let Some(id) = st.sock_id.take() {
             let _ = std::fs::remove_dir_all(self.run_dir(&id));
         }
+        #[cfg(unix)]
+        crate::nsfwd::stop(&self.dir(&st.name));
         st.fc_pid = None;
         st.pasta_pid = None;
         st.paused = false;

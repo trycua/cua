@@ -363,6 +363,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         control?.stop()
     }
 
+    /// Quit (the menu bar item, Cmd-Q, or the window's close button when
+    /// Settings says so) stops the background service and the daemon with
+    /// the app; closing the window does not quit. A quit for an update
+    /// leaves the service running (`BackgroundPolicy.quitPlan`).
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard BackgroundService.shared.beginQuit() == .stopEverything else { return .terminateNow }
+        BackgroundNotice.shared.dismiss()
+        DispatchQueue.global(qos: .userInitiated).async {
+            let problems = BackgroundService.shared.stopEverything()
+            if !problems.isEmpty { NSLog("Cua Spaces: quit: %@", problems.joined(separator: "; ")) }
+            DispatchQueue.main.async { NSApp.reply(toApplicationShouldTerminate: true) }
+        }
+        return .terminateLater
+    }
+
+    /// The main window was closed: the notice, or a quit (Settings, General,
+    /// "When I close the window").
+    private func mainWindowClosed(_ model: AppModel) {
+        let action = BackgroundPolicy.windowClosed(keepsRunning: model.settings.closeWindowKeepsRunning,
+                                             noticeOff: model.settings.closeNoticeOff,
+                                             terminating: BackgroundService.shared.isQuitting)
+        NSLog("Cua Spaces: main window closed: %@", String(describing: action))
+        switch action {
+        case .nothing: break
+        case .quitApp: NSApp.terminate(nil)
+        case .showNotice:
+            BackgroundNotice.shared.show(
+                turnOff: { Task { await model.choose(row: "close-notice", option: "off") } },
+                openSettings: { MainUIRouter(model: model).openSettings() })
+        }
+    }
+
     func start(_ model: AppModel) {
         guard !started else { return }
         started = true
@@ -400,6 +432,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             router.open(.space(spaceId, dropped: urls))
         }
         startControlServer(model, router: router)
+        WebUIWindowController.onClosed = { [weak self] in self?.mainWindowClosed(model) }
         // "Spaces tab in the notch": applied now and on every change (an
         // offscreen run never puts the notch up).
         if !OffscreenRun.isOn { Self.followNotchSetting(model, controller) }

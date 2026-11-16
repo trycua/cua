@@ -151,7 +151,9 @@ function NetworkSheetBody({
                             <TriangleAlertIcon className="mt-px size-3.5 shrink-0 text-warning" />
                             {x.warning}
                           </p>
-                          {x.id === "localhost" ? <Ports ports={n.localhostPorts ?? []} onChange={(localhostPorts) => setN((y) => ({ ...y, localhostPorts }))} /> : null}
+                          {x.id === "localhost" ? (
+                            <Ports ports={n.localhostPorts ?? []} onChange={(localhostPorts) => setN((y) => ({ ...y, localhostPorts }))} />
+                          ) : null}
                         </div>
                       ) : null}
                     </div>
@@ -292,7 +294,9 @@ function ExitThrough({
           {exit.label} isn't reachable, so this Space has no internet until it's back.{exit.note ? ` ${exit.note}` : ""}
         </p>
       ) : via ? (
-        <p className="mt-1.5 px-1 text-xs text-muted-foreground">If the exit stops answering, this Space's internet stops. It never falls back to its own network.</p>
+        <p className="mt-1.5 px-1 text-xs text-muted-foreground">
+          If the exit stops answering, this Space's internet stops. It never falls back to its own network.
+        </p>
       ) : null}
     </div>
   );
@@ -334,8 +338,12 @@ function Radio({ on, className }: { on: boolean; className?: string }) {
   return (
     <span
       aria-hidden
-      // design-ok: a radio's circle is a form control's outline, as Checkbox's
-      className={cn("flex size-4 shrink-0 items-center justify-center rounded-full border", on ? "border-brand bg-brand" : "border-input bg-card dark:bg-input/30", className)}
+      className={cn(
+        // design-ok: a radio's circle is a form control's outline, as Checkbox's
+        "flex size-4 shrink-0 items-center justify-center rounded-full border",
+        on ? "border-brand bg-brand" : "border-input bg-card dark:bg-input/30",
+        className,
+      )}
     >
       {on ? <span className="size-1.5 rounded-full bg-white" /> : null}
     </span>
@@ -347,7 +355,12 @@ function Chip({ children, onRemove }: { children: string; onRemove: () => void }
   return (
     <span data-network-chip-value={children} className="inline-flex h-6 items-center gap-1 rounded-lg bg-muted pr-1 pl-2 font-mono text-xs">
       {children}
-      <button type="button" aria-label={`Remove ${children}`} onClick={onRemove} className="inline-flex size-4 cursor-default items-center justify-center rounded-lg text-muted-foreground hover:text-foreground">
+      <button
+        type="button"
+        aria-label={`Remove ${children}`}
+        onClick={onRemove}
+        className="inline-flex size-4 cursor-default items-center justify-center rounded-lg text-muted-foreground hover:text-foreground"
+      >
         <XIcon className="size-3" />
       </button>
     </span>
@@ -404,7 +417,19 @@ function CustomEditor({ n, onChange }: { n: SpaceNetwork; onChange: (n: SpaceNet
   const remove = (which: "allow" | "deny", e: string) => onChange({ ...n, [which]: n[which].filter((x) => x !== e) });
   return (
     <div data-network-custom="" className="mt-5">
-      <SectionHeading action={<Segmented aria-label="Start from" value={n.base ?? "internet"} options={[{ value: "internet", label: "Internet only" }, { value: "none", label: "No network" }]} onValueChange={(base) => onChange({ ...n, base })} />}>
+      <SectionHeading
+        action={
+          <Segmented
+            aria-label="Start from"
+            value={n.base ?? "internet"}
+            options={[
+              { value: "internet", label: "Internet only" },
+              { value: "none", label: "No network" },
+            ]}
+            onValueChange={(base) => onChange({ ...n, base })}
+          />
+        }
+      >
         Start from
       </SectionHeading>
       <div className="mt-3 grid gap-x-4 sm:grid-cols-2">
@@ -418,8 +443,25 @@ function CustomEditor({ n, onChange }: { n: SpaceNetwork; onChange: (n: SpaceNet
           add();
         }}
       >
-        <Input data-network-entry="" aria-label="Domain or address range" placeholder="Domain or address range" value={entry} spellCheck={false} autoComplete="off" onChange={(e) => setEntry(e.target.value)} className="font-mono text-xs" />
-        <Segmented aria-label="List" value={list} options={[{ value: "allow", label: "Allow" }, { value: "deny", label: "Block" }]} onValueChange={setList} />
+        <Input
+          data-network-entry=""
+          aria-label="Domain or address range"
+          placeholder="Domain or address range"
+          value={entry}
+          spellCheck={false}
+          autoComplete="off"
+          onChange={(e) => setEntry(e.target.value)}
+          className="font-mono text-xs"
+        />
+        <Segmented
+          aria-label="List"
+          value={list}
+          options={[
+            { value: "allow", label: "Allow" },
+            { value: "deny", label: "Block" },
+          ]}
+          onValueChange={setList}
+        />
         <Button type="submit" variant="secondary" disabled={!canAdd} data-network-add="">
           Add
         </Button>
@@ -444,7 +486,12 @@ function EntryList({ title, rows, empty, onRemove }: { title: string; rows: stri
         rows.map((r) => (
           <GroupedRow key={r} className="min-h-9 justify-between py-1.5" data-network-entry-row={r}>
             <span className="min-w-0 truncate font-mono text-xs">{r}</span>
-            <button type="button" aria-label={`Remove ${r}`} onClick={() => onRemove(r)} className="inline-flex size-6 shrink-0 cursor-default items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground">
+            <button
+              type="button"
+              aria-label={`Remove ${r}`}
+              onClick={() => onRemove(r)}
+              className="inline-flex size-6 shrink-0 cursor-default items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
               <XIcon className="size-3.5" />
             </button>
           </GroupedRow>

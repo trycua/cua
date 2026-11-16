@@ -72,6 +72,9 @@ public enum AppEnvironment {
         // replaces another build's, or its own from before an update);
         // fixtures never touch the host.
         let supervisor = fixtures ? nil : bundledCua.flatMap { DaemonSupervisor(bundledCua: $0) }
+        // Quit stops what this app's supervisor keeps running (a fixtures
+        // run has none, so it stops nothing).
+        BackgroundService.shared.manage(supervisor)
         // The live services come later, off the main thread (`StartupModel`):
         // until then the window shows the launch, on stand-ins that wait
         // for them. Nothing here reads the keychain or waits on the daemon.
@@ -213,6 +216,12 @@ public enum AppEnvironment {
                     model.reconnect = { [weak model] in
                         guard let model else { return false }
                         return await reconnect(model, supervisor: supervisor)
+                    }
+                    model.restartDaemon = { [weak model] in
+                        let error = await Task.detached(priority: .userInitiated) { supervisor.restart() }.value
+                        if let error { NSLog("Cua Spaces: starting the cua daemon again failed: %@", error) }
+                        await model?.reconnectNow(reason: "the cua daemon was started again")
+                        return error == nil
                     }
                 } else {
                     // Last resort: Spaces run in the app; say what is missing.

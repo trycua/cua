@@ -40,7 +40,7 @@ first and pass explicit ignores: several legacy files start real VMs.
 
 ```bash
 cd libs/cua
-cargo build --locked --release -p cua-sdk
+cargo build --locked --release -p cua-sdk-native
 scripts/build-test-fixtures.sh
 node scripts/stage-uniffi-library.mjs --only=python
 cd ../python/cua-sandbox

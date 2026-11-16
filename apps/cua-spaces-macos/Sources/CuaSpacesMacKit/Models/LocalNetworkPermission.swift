@@ -75,10 +75,24 @@ public final class LocalNetworkGate {
         set { defaults.set(newValue, forKey: Self.askedKey) }
     }
 
+    /// The last check started: the next one waits for it, then checks
+    /// again, so one explanation shows at a time.
+    private var last: Task<Void, Error>?
+
     /// Returns when the create may go ahead; throws `LocalNetworkRefusal`
     /// (the create fails at once with it) or `CuaError.Cancelled` (Cancel
     /// on the explanation).
     public func check() async throws {
+        let before = last
+        let task = Task { @MainActor in
+            _ = try? await before?.value
+            try await self.checkOnce()
+        }
+        last = task
+        try await task.value
+    }
+
+    private func checkOnce() async throws {
         let routes = await probe.routes()
         // Not explained yet: no connect before the explanation (one would
         // make macOS ask first).

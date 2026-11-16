@@ -58,15 +58,19 @@ impl Spaces {
         let making = creates::encode(&self.inner.resources.creates.take(), super::now_ms() / 1000);
         let token = relay.tokens.access_token().await?;
         let client = relay.client().await?;
+        // What this computer says about itself (provides Spaces, answers the
+        // phone, OS) follows its real setting every time, so a row that went
+        // stale (a setting changed after registering, an earlier version)
+        // is repaired here.
+        let mut meta = self.host_meta_now().unwrap_or_default();
+        meta.insert(summary::META_KEY.to_string(), value.clone());
+        meta.insert(creates::META_KEY.to_string(), making);
         let reply = client
             .patch(
                 &token,
                 &machine,
                 &cua_host::MachinePatch {
-                    meta: Some(BTreeMap::from([
-                        (summary::META_KEY.to_string(), value.clone()),
-                        (creates::META_KEY.to_string(), making),
-                    ])),
+                    meta: Some(meta),
                     ..Default::default()
                 },
             )
@@ -78,6 +82,13 @@ impl Spaces {
             watchers: reply.clients.len(),
             spaces: snapshot.this_mac.spaces_count,
         })
+    }
+
+    /// The host meta this computer's setup asks for now (relay mode, not
+    /// paused), or none.
+    pub(crate) fn host_meta_now(&self) -> Option<BTreeMap<String, String>> {
+        let c = cua_host::Host::new(self.home_dir()).config().ok()??;
+        (c.mode == "relay" && !c.paused_signed_out).then(|| cua_host::host_meta(c.provide_spaces))
     }
 
     /// How many of this computer's own Spaces the registry lists now (what
@@ -104,6 +115,9 @@ impl Spaces {
             // What the last publish said, until the first one went out.
             let mut published: Option<u32> = None;
             let mut count_at = Instant::now() + COUNT_EVERY;
+            // The host meta the last publish carried: a change of the
+            // setting is published at once.
+            let mut meta_sent: Option<BTreeMap<String, String>> = None;
             loop {
                 let Some(hub) = weak.upgrade().map(|i| i.resources.clone()) else {
                     return;
@@ -126,13 +140,22 @@ impl Spaces {
                         if published.is_some_and(|n| n != spaces.own_space_count()) {
                             next = Instant::now();
                         }
+                        // The Provide Spaces switch (or any host meta) changed.
+                        if meta_sent
+                            .as_ref()
+                            .is_some_and(|m| *m != spaces.host_meta_now().unwrap_or_default())
+                        {
+                            next = Instant::now();
+                        }
                     }
                     _ = tokio::time::sleep_until(next.into()) => {
                         let Some(inner) = weak.upgrade() else { return };
                         let spaces = Spaces { inner };
+                        let meta_now = spaces.host_meta_now();
                         let wait = match spaces.publish_resources().await {
                             Ok(Published::Sent { watchers, spaces: n }) => {
                                 published = Some(n);
+                                meta_sent = Some(meta_now.unwrap_or_default());
                                 if watchers > 0 { summary::WATCHED_EVERY } else { summary::IDLE_EVERY }
                             }
                             Ok(Published::Unsupported) => UNSUPPORTED_BACKOFF,

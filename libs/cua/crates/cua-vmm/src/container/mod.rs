@@ -36,6 +36,7 @@ use crate::error::{Result, VmmError};
 use crate::exec::{ExecOutput, ExecRequest, GuestExec};
 use crate::host;
 use crate::runtime::Runtime;
+use crate::stack::boxed;
 use crate::types::*;
 
 pub use engine::{EngineEndpoint, EngineKind};
@@ -873,7 +874,7 @@ impl ContainerRuntime {
         }
         // Its own MAC, so egress rules can be keyed by it before it starts
         // ([`egress`]); no raw sockets under a policy that blocks anything.
-        if let Some((net, mac)) = self.mac_config(name).await? {
+        if let Some((net, mac)) = boxed(|| self.mac_config(name)).await? {
             body.networking_config = Some(net);
             body.labels
                 .get_or_insert_with(Default::default)
@@ -886,7 +887,7 @@ impl ContainerRuntime {
         }
         // Its own resolv.conf: a user-defined network's embedded resolver
         // (127.0.0.11) is out of reach under gVisor ([`egress`]).
-        if let Some((bind, servers)) = self.prepare_resolv(name).await?
+        if let Some((bind, servers)) = boxed(|| self.prepare_resolv(name)).await?
             && let Some(hc) = body.host_config.as_mut()
         {
             hc.binds.get_or_insert_with(Vec::new).push(bind);
@@ -1320,7 +1321,7 @@ impl Runtime for ContainerRuntime {
                     }
                     let have = Self::published(&i);
                     if merged != env || spec.ports.iter().any(|p| !have.contains(p)) {
-                        self.recreate(&spec.name, &i, merged, &spec.ports).await?;
+                        boxed(|| self.recreate(&spec.name, &i, merged, &spec.ports)).await?;
                         i = self
                             .inspect(&spec.name)
                             .await?
@@ -1365,8 +1366,7 @@ impl Runtime for ContainerRuntime {
                             .as_ref()
                             .and_then(|c| c.labels.clone())
                             .unwrap_or_default();
-                        self.create(&spec.name, &img, spec, labels, None, None)
-                            .await?;
+                        boxed(|| self.create(&spec.name, &img, spec, labels, None, None)).await?;
                     }
                     self.start_policed(&spec.name).await?;
                 }
@@ -1412,11 +1412,12 @@ impl Runtime for ContainerRuntime {
                 let (spec, secret) = pool_member_spec(spec)?;
                 let spec = spec.as_ref();
                 // Warm: restore this configuration's golden checkpoint.
-                let plan = self.golden_plan(original, reference).await;
+                let plan = boxed(|| self.golden_plan(original, reference)).await;
                 if let Some(rec) = plan.as_ref().and_then(|p| p.record.as_ref()) {
-                    match self
-                        .start_warm(spec, reference, platform.clone(), rec, secret.as_deref())
-                        .await
+                    match boxed(|| {
+                        self.start_warm(spec, reference, platform.clone(), rec, secret.as_deref())
+                    })
+                    .await
                     {
                         Ok(inst) => return Ok(inst),
                         Err(e) => {
@@ -1447,14 +1448,16 @@ impl Runtime for ContainerRuntime {
                 let mut attempt = 0;
                 loop {
                     attempt += 1;
-                    self.create(
-                        &spec.name,
-                        reference,
-                        spec,
-                        HashMap::new(),
-                        platform.clone(),
-                        None,
-                    )
+                    boxed(|| {
+                        self.create(
+                            &spec.name,
+                            reference,
+                            spec,
+                            HashMap::new(),
+                            platform.clone(),
+                            None,
+                        )
+                    })
                     .await?;
                     if let Some(secret) = &secret
                         && let Err(e) = self.write_token_file(&spec.name, secret).await
@@ -1465,10 +1468,12 @@ impl Runtime for ContainerRuntime {
                     crate::progress::report(crate::progress::Progress::phase(
                         crate::progress::Phase::Booting,
                     ));
-                    match self.start_policed(&spec.name).await {
+                    match boxed(|| self.start_policed(&spec.name)).await {
                         Ok(()) => break,
                         Err(e) => {
-                            self.unpolice(&spec.name).await;
+                            // Created just now: it has a resolv.conf exactly
+                            // under the secure default (`prepare_resolv`).
+                            self.unpolice(&spec.name, egress::secure()).await;
                             self.remove_force(&spec.name).await;
                             let msg = e.to_string();
                             if attempt < PORT_CONFLICT_ATTEMPTS && is_port_conflict(&msg) {
@@ -1497,7 +1502,8 @@ impl Runtime for ContainerRuntime {
                 .host_port(snapshot::SPACESD_PORT)
                 .map(|p| format!("http://{}:{p}", inst.endpoints.host));
             if let Err(e) =
-                snapshot::give_identity(&self.docker, &spec.name, spacesd, auth, token).await
+                boxed(|| snapshot::give_identity(&self.docker, &spec.name, spacesd, auth, token))
+                    .await
             {
                 // A clone must never run on with its source's identity.
                 let _ = self
@@ -1519,8 +1525,8 @@ impl Runtime for ContainerRuntime {
         }
         // Sidecars join the sandbox's network namespace and start before
         // readiness is checked (a probe may target a sidecar's port).
-        if let Err(e) = self.ensure_sidecars(spec).await {
-            let _ = self.delete(&spec.name).await;
+        if let Err(e) = boxed(|| self.ensure_sidecars(spec)).await {
+            let _ = boxed(|| self.delete(&spec.name)).await;
             return Err(e);
         }
         if !spec.probes.is_empty() {
@@ -1528,15 +1534,17 @@ impl Runtime for ContainerRuntime {
                 crate::progress::Phase::WaitingForServices,
             ));
         }
-        self.wait_probes(
-            &spec.name,
-            &inst.endpoints,
-            &spec.probes,
-            spec.ready_timeout,
-        )
+        boxed(|| {
+            self.wait_probes(
+                &spec.name,
+                &inst.endpoints,
+                &spec.probes,
+                spec.ready_timeout,
+            )
+        })
         .await?;
         if let Some((plan, reference)) = record_golden {
-            self.spawn_golden(spec, &reference, plan).await;
+            boxed(|| self.spawn_golden(spec, &reference, plan)).await;
         }
         Ok(inst)
     }
@@ -1968,13 +1976,16 @@ impl Runtime for ContainerRuntime {
             ..Default::default()
         };
         // A restored container: the engine forgets it, and a fork that never
-        // started still owns its private checkpoint.
-        let (restored, image_id) = match self.inspect(name).await {
+        // started still owns its private checkpoint. Its resolv.conf is
+        // removed only when it mounts one (when it can't be told, as before).
+        let (restored, image_id, resolv) = match self.inspect(name).await {
             Ok(Some(i)) => (
                 restore_dir(&i).map(|d| (i.id.clone().unwrap_or_default(), d)),
                 i.image.clone(),
+                egress::has_resolv_bind(i.host_config.as_ref().and_then(|h| h.binds.as_ref())),
             ),
-            _ => (None, None),
+            Ok(None) => (None, None, false),
+            Err(_) => (None, None, true),
         };
         // Sidecars first: they hold the sandbox's network namespace.
         for sc in self.sidecar_names(name).await.unwrap_or_default() {
@@ -1988,7 +1999,7 @@ impl Runtime for ContainerRuntime {
             }
             Err(e) => return Err(engine_err(e)),
         }
-        self.unpolice(name).await;
+        self.unpolice(name, resolv).await;
         if let Some((id, dir)) = restored {
             let helper = self.helper();
             let _ = helper.forget(&[&id]).await;
@@ -2116,6 +2127,11 @@ impl Runtime for ContainerRuntime {
         renamed?;
         if egress::kept(member).is_some() {
             egress::copy(member, new_name)?;
+            // The member sits on the network of ITS tree (its own name). Renamed, the Space is still on that
+            // network, so it keeps that tree: with `None` (its own, by its new name) the Space looked as if it were
+            // on the wrong network at its next start, and a warm-claimed Space could never be started again
+            // ("was made before its network settings ... recreate it and its files would be lost").
+            egress::keep_tree_of_claimed(member, new_name)?;
             egress::forget(member);
         }
         if let Err(e) = persisted {

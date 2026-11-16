@@ -31,6 +31,12 @@ impl Tool for Probe {
         &self.def
     }
 
+    fn has_independent_input_lane(&self, _args: &Value) -> bool {
+        // Probes never send native input. Exact-window calls need not wait
+        // behind another test's physical desktop action and its retry timer.
+        true
+    }
+
     async fn invoke(&self, args: Value) -> ToolResult {
         self.calls.lock().unwrap().push(args.clone());
         self.pacings
@@ -397,21 +403,32 @@ async fn observation_inherits_the_window_and_stays_bounded() {
     );
 }
 
-// The paused clock moves only when the batch sleeps, so a slow runner cannot
-// push the elapsed time past the upper bound.
 #[tokio::test(start_paused = true)]
 async fn pauses_between_steps_but_not_after_the_last() {
     let harness = Harness::new();
-    let started = tokio::time::Instant::now();
-    harness
-        .run(json!({"delay_ms": 120, "steps": [
-            {"tool": "click", "args": {"pid": 42}},
-            {"tool": "click", "args": {"pid": 42}},
-        ]}))
-        .await;
-    let elapsed = started.elapsed();
-    assert!(elapsed >= Duration::from_millis(120), "{elapsed:?}");
-    assert!(elapsed < Duration::from_millis(240), "{elapsed:?}");
+    let batch = harness.run(json!({"delay_ms": 120, "steps": [
+        {"tool": "click", "args": {"pid": 42, "window_id": 7}},
+        {"tool": "click", "args": {"pid": 42, "window_id": 7}},
+        {"tool": "click", "args": {"pid": 42, "window_id": 7}},
+    ]}));
+    tokio::pin!(batch);
+
+    // Poll without letting the runtime auto-advance to unrelated timers.
+    // The first action is immediate; each following action needs a full pause.
+    for completed in 1..3 {
+        assert!(futures_util::poll!(batch.as_mut()).is_pending());
+        assert_eq!(harness.hits("click"), completed);
+        tokio::time::advance(Duration::from_millis(119)).await;
+        assert!(futures_util::poll!(batch.as_mut()).is_pending());
+        assert_eq!(harness.hits("click"), completed);
+        tokio::time::advance(Duration::from_millis(1)).await;
+    }
+
+    let std::task::Poll::Ready(result) = futures_util::poll!(batch.as_mut()) else {
+        panic!("the batch must return without a pause after the last action");
+    };
+    assert_eq!(harness.hits("click"), 3);
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
 }
 
 #[tokio::test]

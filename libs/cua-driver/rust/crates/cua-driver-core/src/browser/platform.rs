@@ -307,6 +307,16 @@ pub struct BrowserVisualAction {
     pub kind: BrowserVisualActionKind,
 }
 
+/// A live watch from [`BrowserPlatform::watch_browser_foreground`] or
+/// [`BrowserPlatform::guard_background_attach`]. Dropping it stops the watch.
+pub trait BrowserForegroundWatch: Send {
+    /// Stop the watch and say whether the browser came to the front while it
+    /// ran, even if it lost the front again (the background guard put the
+    /// user's app back, or the user switched away). Nothing the watch does
+    /// after this returns can change the answer.
+    fn finish(self: Box<Self>) -> bool;
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PrepareSideEffects {
     pub launched_browser: bool,
@@ -416,7 +426,19 @@ pub trait BrowserPlatform: Send + Sync {
         &self,
         _browser_pid: i64,
         _window_id: u64,
-    ) -> Option<Box<dyn std::any::Any + Send>> {
+    ) -> Option<Box<dyn BrowserForegroundWatch>> {
+        None
+    }
+
+    /// Watch whether `browser_pid` comes to the front during a foreground or
+    /// guarded existing-profile attachment, so the result reports it even
+    /// when the browser loses the front before the call returns. `None` (the
+    /// default) leaves the guard's own report and the end-of-call
+    /// [`Self::frontmost_app_pid`] check.
+    fn watch_browser_foreground(
+        &self,
+        _browser_pid: i64,
+    ) -> Option<Box<dyn BrowserForegroundWatch>> {
         None
     }
 
@@ -632,6 +654,10 @@ mod tests {
                     "only consulted when an attach background limitation is declared",
                 ),
                 (
+                    "watch_browser_foreground",
+                    "not implemented: a foreground attachment leaves the browser in front",
+                ),
+                (
                     "frontmost_app_pid",
                     "not implemented: a foreground attachment leaves the browser in front",
                 ),
@@ -676,6 +702,10 @@ mod tests {
                 (
                     "guard_background_attach",
                     "only consulted when an attach background limitation is declared",
+                ),
+                (
+                    "watch_browser_foreground",
+                    "not implemented: a foreground attachment leaves the browser in front",
                 ),
                 (
                     "frontmost_app_pid",

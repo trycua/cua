@@ -654,6 +654,28 @@ fn linux_frame_geometry_drives_resized_screenshot_scale() {
 }
 
 #[test]
+fn linux_decorated_frame_is_not_a_screenshot_resize() {
+    // A cua-compositor window capture is the 896x736 window without its
+    // client-side shadow, while AT-SPI reports the 940x780 shadowed frame.
+    // The driver did not resize the capture, so it publishes no frame_scale.
+    let state = serde_json::json!({
+        "screenshot_width": 896,
+        "screenshot_height": 736,
+        "elements": [{
+            "element_index": 0,
+            "role": "frame",
+            "frame": {"x": 0, "y": 0, "w": 940, "h": 780}
+        }]
+    });
+
+    let scale = screenshot_scale_for_platform(&state, true);
+    assert_eq!(scale, (1.0, 1.0));
+    // The "Open child window" button centre stays on the button.
+    let point = screenshot_local_point((672.5, 363.5), (0.0, 0.0), scale);
+    assert_eq!(point, (672.5, 363.5));
+}
+
+#[test]
 fn resized_screenshot_coordinates_use_capture_scale() {
     let state = serde_json::json!({
         "screenshot_width": 1568,

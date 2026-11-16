@@ -1375,8 +1375,13 @@ fn select_popup_option(
     let result = match matching_option(&option_pairs(&options), value) {
         Some(i) => {
             let option = &options[i];
+            let open_menus = crate::windows::menu_window_ids(pid).unwrap_or_default();
             let err = unsafe { perform_action(option.element, "AXPress") };
             if err == kAXErrorSuccess {
+                // AppKit closes the menu and commits the choice after the
+                // press returns; return once the menu is gone.
+                let closed = open_menus.is_empty()
+                    || crate::windows::wait_for_menus_closed(pid, &open_menus) == Some(true);
                 let label = if option.title.is_empty() {
                     &option.value
                 } else {
@@ -1385,10 +1390,16 @@ fn select_popup_option(
                 Ok(format!(
                     "✅ Selected '{label}' in AXPopUpButton [{element_index}] \
                      \"{element_title}\" via AX menu item AXPress{}.",
-                    if opened_menu {
-                        " (the popup's menu was opened for the selection and closed again)"
-                    } else {
-                        ""
+                    match (opened_menu, closed) {
+                        (_, false) => format!(
+                            "; the menu was still open after {} ms",
+                            crate::windows::MENU_CLOSE_TIMEOUT.as_millis()
+                        ),
+                        (true, true) => {
+                            " (the popup's menu was opened for the selection and closed again)"
+                                .to_owned()
+                        }
+                        (false, true) => String::new(),
                     }
                 ))
             } else {

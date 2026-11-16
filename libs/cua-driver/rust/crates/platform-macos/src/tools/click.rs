@@ -185,6 +185,20 @@ unsafe fn owning_popup(item: AXUIElementRef) -> Option<crate::ax::snapshot::Reta
     Some(retained)
 }
 
+/// Whether a menu item opens a submenu: it has an `AXMenu` child.
+///
+/// # Safety
+///
+/// `item` must be a valid, live `AXUIElementRef`.
+unsafe fn has_submenu(item: AXUIElementRef) -> bool {
+    let mut found = false;
+    for child in copy_children(item) {
+        found |= copy_string_attr(child, "AXRole").as_deref() == Some("AXMenu");
+        CFRelease(child as CFTypeRef);
+    }
+    found
+}
+
 /// Whether `read` shows `title` before `timeout`, polling every `poll`.
 fn popup_shows(
     title: &str,
@@ -2193,9 +2207,17 @@ fn perform_ax_click(
         prime_key_window_for_background_press(pid, window_id, ax_action);
     }
     // Taken before the press, which closes the menu and drops the item.
-    let popup = (ax_action == "AXPress" && role == "AXMenuItem" && !title.is_empty())
+    let menu_item_press = ax_action == "AXPress" && role == "AXMenuItem";
+    let popup = (menu_item_press && !title.is_empty())
         .then(|| unsafe { owning_popup(element) })
         .flatten();
+    // The app's open menu windows: AppKit closes the menu and sends the
+    // item's action after the press returns. An item with a submenu keeps
+    // its menu open.
+    let open_menus = (menu_item_press && !unsafe { has_submenu(element) })
+        .then(|| crate::windows::menu_window_ids(pid))
+        .flatten()
+        .unwrap_or_default();
     let page = (watch_page && !foreground && ax_action == "AXPress")
         .then(|| unsafe { crate::ax::web_effect::PageProbe::before_press(pid, element) })
         .flatten();
@@ -2259,6 +2281,17 @@ fn perform_ax_click(
     }
 
     let mut summary = format!("✅ Performed {ax_action} on [{idx}] {role} \"{title}\".");
+
+    // Return once the menu has closed, so the next action does not land in
+    // the app's menu tracking.
+    if !open_menus.is_empty()
+        && crate::windows::wait_for_menus_closed(pid, &open_menus) != Some(true)
+    {
+        summary.push_str(&format!(
+            " The menu was still open after {} ms.",
+            crate::windows::MENU_CLOSE_TIMEOUT.as_millis()
+        ));
+    }
 
     // A pop-up commits its selection after the press returns, so a click
     // right after it (Submit) could read the old value. Wait until the

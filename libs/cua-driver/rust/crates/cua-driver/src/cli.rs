@@ -2787,21 +2787,36 @@ mod call_tests {
 fn daemon_start_hint(socket_path: &str) -> String {
     let cli_name = crate::bundle::cli_name();
     let default_socket = socket_path == crate::serve::default_socket_path();
+    let socket = shell_argument(socket_path);
     #[cfg(target_os = "macos")]
     if !cua_driver_core::embedded_mode() {
         return if default_socket {
             format!("Start it with: {cli_name} permissions grant")
         } else {
             format!(
-                "Start it with: open -n -g {} --args serve --socket {socket_path}",
-                crate::bundle::app_bundle_path()
+                "Start it with: open -n -g {} --args serve --socket {socket}",
+                shell_argument(&crate::bundle::app_bundle_path())
             )
         };
     }
     if default_socket {
         format!("Start it with: {cli_name} serve")
     } else {
-        format!("Start it with: {cli_name} serve --socket {socket_path}")
+        format!("Start it with: {cli_name} serve --socket {socket}")
+    }
+}
+
+/// Quote `value` so a hint stays one argument when pasted into a POSIX
+/// shell. Windows pipe names are printed as they are.
+fn shell_argument(value: &str) -> String {
+    let plain = !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "/._-+:,@%=".contains(c));
+    if plain || cfg!(target_os = "windows") {
+        value.to_owned()
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
     }
 }
 
@@ -7012,6 +7027,14 @@ mod tests {
     /// keeps Cua Driver's own identity on macOS.
     #[test]
     fn daemon_start_hint_names_a_launch_that_keeps_the_app_identity() {
+        #[cfg(unix)]
+        {
+            let hint = daemon_start_hint("/tmp/a b;$(x)'q.sock");
+            assert!(
+                hint.ends_with(r#"--socket '/tmp/a b;$(x)'\''q.sock'"#),
+                "{hint}"
+            );
+        }
         let cli = crate::bundle::cli_name();
         let default_hint = daemon_start_hint(&crate::serve::default_socket_path());
         let custom_hint = daemon_start_hint("/tmp/cua-test.sock");

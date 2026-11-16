@@ -58,6 +58,9 @@ enum Phase {
     /// Confirmed. `holders` actions are using it; at zero the idle timer
     /// deactivates it.
     Active,
+    /// The deactivation event is being posted. Nobody may activate any pid
+    /// until it has gone out, or the stale event would undo the new one.
+    Deactivating,
 }
 
 /// What an acquirer does next, from the table as it stands. Pure, so the
@@ -75,6 +78,7 @@ enum Decision {
 
 fn decide(table_pid: Option<i32>, phase: Phase, holders: usize, pid: i32) -> Decision {
     match (table_pid, phase) {
+        (_, Phase::Deactivating) => Decision::Wait,
         (_, Phase::Idle) | (None, _) => Decision::Activate {
             deactivate_previous: false,
         },
@@ -168,6 +172,9 @@ impl ActivationLease {
                 }
             }
         };
+        // The table is Activating, so no other acquirer posts anything until
+        // this one finishes: the old app's deactivation and this activation go
+        // out in order.
         if let Some((old_pid, old_wid)) = previous {
             post_appkit_event(old_pid, old_wid, SUBTYPE_DEACTIVATED);
         }
@@ -179,12 +186,12 @@ impl ActivationLease {
             t.phase = Phase::Active;
             return Ok(Self { pid });
         }
-        t.pid = None;
-        t.phase = Phase::Idle;
+        t.phase = Phase::Deactivating;
         t.holders = 0;
         t.generation += 1;
         drop(t);
         post_appkit_event(pid, window_id, SUBTYPE_DEACTIVATED);
+        finish_deactivation();
         Err(format!(
             "pid {pid} did not report itself active after the AppKit activation event \
              (AXFrontmost stayed false), so no input was sent: its toolkit would have raised \
@@ -219,14 +226,23 @@ impl Drop for ActivationLease {
                 {
                     return;
                 }
-                t.pid = None;
-                t.phase = Phase::Idle;
+                t.phase = Phase::Deactivating;
                 t.generation += 1;
                 t.window_id
             };
             post_appkit_event(pid, window_id, SUBTYPE_DEACTIVATED);
+            finish_deactivation();
         });
     }
+}
+
+/// The deactivation event has been posted: the table is free again.
+fn finish_deactivation() {
+    let mut t = lock();
+    t.pid = None;
+    t.phase = Phase::Idle;
+    t.holders = 0;
+    t.generation += 1;
 }
 
 /// Post the AppKit activation or deactivation event to `pid` only.
@@ -448,6 +464,13 @@ mod tests {
             Decision::Wait,
             "no input before the activation is confirmed"
         );
+    }
+
+    #[test]
+    fn nobody_activates_while_a_deactivation_is_being_posted() {
+        assert_eq!(decide(Some(7), Phase::Deactivating, 0, 7), Decision::Wait);
+        assert_eq!(decide(Some(7), Phase::Deactivating, 0, 9), Decision::Wait);
+        assert_eq!(decide(None, Phase::Deactivating, 0, 9), Decision::Wait);
     }
 
     #[test]

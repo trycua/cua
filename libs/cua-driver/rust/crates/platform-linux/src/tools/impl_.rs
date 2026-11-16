@@ -3783,6 +3783,33 @@ fn persistent_wayland_pointer_coordinates_include_window_origin() {
 
 #[cfg(test)]
 #[test]
+fn nested_inject_focus_point_maps_screenshot_pixels_or_refuses() {
+    let state = ToolState::new();
+    let args = json!({ "pid": 41, "window_id": 9, "x": 387.0, "y": 133.5 });
+    let refusal = nested_inject_focus_point(&state, &args, 41, 9, (387.0, 133.5))
+        .expect_err("a point read off no screenshot must not be clicked");
+    assert_eq!(
+        refusal.structured_content.as_ref().unwrap()["code"],
+        "screenshot_context_missing"
+    );
+
+    // A screenshot downscaled to half the window's size: its pixels are
+    // doubled into the window-local frame the compositor clicks in.
+    state.snapshots.publish_capture_for_session(
+        41,
+        9,
+        crate::atspi::snapshot::AtspiSnapshot::from_nodes(&[]),
+        None,
+        Some(2.0),
+    );
+    assert_eq!(
+        nested_inject_focus_point(&state, &args, 41, 9, (387.0, 133.5)).unwrap(),
+        (774.0, 267.0)
+    );
+}
+
+#[cfg(test)]
+#[test]
 fn session_end_releases_only_its_hold_before_discarding_state() {
     let state = ToolState::new();
     let session_id = "ending-session";
@@ -4836,10 +4863,36 @@ pub(crate) async fn focus_by_pixel(
     Ok(())
 }
 
+/// Map a keyboard tool's PX focus point into the window-local frame the
+/// nested compositor clicks in, as the pointer tools map theirs. Screenshot
+/// pixels need this session's screenshot of the window, so a point read off
+/// no screenshot is refused instead of clicking an arbitrary spot.
+pub(crate) fn nested_inject_focus_point(
+    state: &ToolState,
+    args: &Value,
+    pid: u32,
+    window_id: u64,
+    (x, y): (f64, f64),
+) -> Result<(f64, f64), ToolResult> {
+    if desktop_frame_requested(args) {
+        return desktop_to_window_local(window_id, x, y)
+            .map_err(|error| desktop_frame_unmapped(window_id, error));
+    }
+    if args.bool_or("from_zoom", false) {
+        return state
+            .zoom_context(args, pid, Some(window_id))
+            .map(|context| context.zoom_to_window(x, y));
+    }
+    screenshot_scale(state, args, pid, Some(window_id)).map(|scale| (x * scale, y * scale))
+}
+
 /// Establish widget-local focus inside a nested-compositor target without
 /// changing the compositor's focused toplevel. AX uses Component.GrabFocus;
-/// PX sends a private per-surface left click at the requested local point.
+/// PX sends a private per-surface left click at the requested point, mapped
+/// by [`nested_inject_focus_point`].
 pub(crate) async fn focus_nested_inject_target(
+    state: &ToolState,
+    args: &Value,
     pid: u32,
     window_id: u64,
     element: Option<crate::atspi::TokenElement>,
@@ -4859,7 +4912,8 @@ pub(crate) async fn focus_nested_inject_target(
             Err(error) => Err(ToolResult::error(format!("Task error: {error}"))),
         };
     }
-    if let Some((x, y)) = pixel {
+    if let Some(pixel) = pixel {
+        let (x, y) = nested_inject_focus_point(state, args, pid, window_id, pixel)?;
         return match tokio::task::spawn_blocking(move || {
             crate::wayland::inject_click(pid, window_id, x, y, 1, 1)
         })

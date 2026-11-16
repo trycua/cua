@@ -941,6 +941,7 @@ impl SessionClient {
 
 /// The compositor owns the cross-process allocation. No target or action has
 /// been sent while this bounded search is running, and errors never fall back.
+#[cfg(test)]
 fn claim_available(connect: impl FnMut(usize) -> Result<Option<Client>>) -> Result<Client> {
     claim_lane(None, connect)
 }

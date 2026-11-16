@@ -39,4 +39,6 @@ its owner drops and exits on its own after 90 seconds.
   `InsertText` error or `false` answer.
 
 It is protocol evidence against a scripted application, not a run against real
-GTK or Qt widgets.
+GTK or Qt widgets. The fixture counts caret offsets in characters for every
+toolkit. The driver hands `CaretOffset` back to `InsertText` unchanged, so this
+checks that round trip, not Qt's own offset unit.

@@ -550,17 +550,21 @@ fn collapse_layout_container(
         && !has_value_or_help
 }
 
-/// The actions a node is addressable by. A kept group or scroll area whose
+/// The actions a node is addressable by. A named group or scroll area whose
 /// only actions are the generic menu and scroll ones every section carries
 /// (SwiftUI, Catalyst and web content) is a section label, not a target, so
 /// it stays an unindexed display row and indexes after it do not shift. One
-/// with an action of its own (a press, an app's custom action) is a target.
+/// with an action of its own (a press, an app's custom action) is a target,
+/// and so is a group kept for its value or help, which only an indexed row
+/// shows.
 fn layout_group_actions(
     role: &str,
+    named: bool,
     mut advertised: super::actions::ElementActions,
 ) -> super::actions::ElementActions {
     let generic = |action: &String| action == "AXShowMenu" || action.starts_with("AXScroll");
     if is_layout_container(role)
+        && named
         && advertised.custom.is_empty()
         && advertised.standard.iter().all(generic)
     {
@@ -669,7 +673,13 @@ unsafe fn walk_element(
         }
         return;
     }
-    let advertised = layout_group_actions(&role, super::actions::split(copy_action_names(element)));
+    let named = !title.as_deref().unwrap_or("").trim().is_empty()
+        || !description.as_deref().unwrap_or("").trim().is_empty();
+    let advertised = layout_group_actions(
+        &role,
+        named,
+        super::actions::split(copy_action_names(element)),
+    );
 
     // Some native controls expose no AX action names but do expose a writable
     // AXValue. Finder's transient inline-rename field is the important case:
@@ -703,8 +713,9 @@ unsafe fn walk_element(
         !visible_title.is_empty() || !visible_description.is_empty() || !visible_value.is_empty();
 
     if !is_actionable && !has_content && role != "AXWindow" && role != "AXSheet" {
-        // A help-only group with no action of its own has nothing to show:
-        // it collapses like any layout wrapper, at its parent's depth.
+        // A group kept for its help that advertises no action at all has no
+        // row to show it on: it collapses like a layout wrapper, at its
+        // parent's depth.
         let (child_depth, child_walk_depth) = if is_layout_container(&role) {
             (depth, walk_depth)
         } else {
@@ -1117,19 +1128,24 @@ mod tests {
             &["AXScrollUpByPage", "AXScrollDownByPage"][..],
             &[][..],
         ] {
-            assert!(layout_group_actions("AXGroup", actions(generic)).is_empty());
-            assert!(layout_group_actions("AXScrollArea", actions(generic)).is_empty());
+            assert!(layout_group_actions("AXGroup", true, actions(generic)).is_empty());
+            assert!(layout_group_actions("AXScrollArea", true, actions(generic)).is_empty());
         }
-        let pressable = layout_group_actions("AXGroup", actions(&["AXPress", "AXShowMenu"]));
+        let pressable = layout_group_actions("AXGroup", true, actions(&["AXPress", "AXShowMenu"]));
         assert_eq!(pressable.standard, ["AXPress", "AXShowMenu"]);
         let custom = layout_group_actions(
             "AXGroup",
+            true,
             actions(&["AXShowMenu", "Name:Pin List\nTarget:0x0\nSelector:(null)"]),
         );
         assert_eq!(custom.standard, ["AXShowMenu"]);
         assert_eq!(custom.custom.len(), 1);
+        // A group kept for its help or value has no name to show as a
+        // display row, so it keeps its actions and its index.
+        let help_only = layout_group_actions("AXGroup", false, actions(&["AXShowMenu"]));
+        assert_eq!(help_only.standard, ["AXShowMenu"]);
         // Other roles keep every action they advertise.
-        let menu_only = layout_group_actions("AXImage", actions(&["AXShowMenu"]));
+        let menu_only = layout_group_actions("AXImage", true, actions(&["AXShowMenu"]));
         assert_eq!(menu_only.standard, ["AXShowMenu"]);
     }
 

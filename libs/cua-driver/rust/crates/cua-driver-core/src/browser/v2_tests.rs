@@ -87,6 +87,9 @@ pub(super) struct FixtureState {
     /// Tab sessions that enabled the Page domain. Chromium reports a dialog
     /// to each of them, not to the session whose call opened it.
     page_sessions: Vec<String>,
+    /// The typed element keeps a newline as content (textarea or
+    /// contenteditable) instead of being a single-line input.
+    multiline_field: bool,
     semantic_large_page: bool,
     semantic_html_style: String,
     semantic_full_dom_fails: bool,
@@ -161,6 +164,7 @@ impl Default for FixtureState {
             fail_next_emulated_media: false,
             gone_sessions: Vec::new(),
             page_sessions: Vec::new(),
+            multiline_field: false,
             semantic_large_page: false,
             semantic_html_style: String::new(),
             semantic_full_dom_fails: false,
@@ -874,6 +878,15 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 let mut reply = MockReply::ok(json!({ "result": { "value": value } }));
                 reply.delay = st.dom_click_readback_delay;
                 reply
+            }
+            "Runtime.callFunctionOn"
+                if call.params["functionDeclaration"]
+                    .as_str()
+                    .is_some_and(|declaration| {
+                        declaration.contains("!this.isContentEditable && this.tagName === 'INPUT'")
+                    }) =>
+            {
+                MockReply::ok(json!({ "result": { "value": !st.multiline_field } }))
             }
             "Runtime.callFunctionOn" => {
                 st.dom_click_focused = true;
@@ -4649,4 +4662,159 @@ async fn trusted_ref_click_whose_node_does_not_resolve_is_unverifiable_without_e
     assert_eq!(public["effect"], "unverifiable", "{public}");
     assert!(public["evidence"].is_null(), "{public}");
     assert_eq!(recorded_calls(&f, "Input.dispatchMouseEvent").len(), 2);
+}
+
+fn enter_event(params: &Value, phase: &str) {
+    assert_eq!(params["type"], phase, "{params}");
+    assert_eq!(params["key"], "Enter", "{params}");
+    assert_eq!(params["code"], "Enter", "{params}");
+    assert_eq!(params["windowsVirtualKeyCode"], 13, "{params}");
+    assert_eq!(params["nativeVirtualKeyCode"], 13, "{params}");
+}
+
+#[tokio::test]
+async fn insert_text_trailing_newline_presses_enter_on_a_single_line_field() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let input_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let result = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": input_ref,
+            "text": "Buy milk\n", "session": SESSION
+        }))
+        .await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["enter_pressed"], true, "{s}");
+    assert_eq!(s["requested_chars"], 8, "{s}");
+    assert_eq!(s["delivered_chars"], 8, "{s}");
+    assert!(
+        result
+            .content
+            .iter()
+            .any(|c| matches!(c, Content::Text { text, .. } if text.contains("pressed Enter"))),
+        "the summary must say Enter was pressed: {result:?}"
+    );
+
+    let inserts = recorded_calls(&f, "Input.insertText");
+    assert_eq!(inserts.len(), 1);
+    assert_eq!(
+        inserts[0].1["text"], "Buy milk",
+        "the newline must not go through insertText"
+    );
+
+    let events = recorded_calls(&f, "Input.dispatchKeyEvent");
+    assert_eq!(events.len(), 3, "{events:?}");
+    enter_event(&events[0].1, "keyDown");
+    enter_event(&events[1].1, "char");
+    assert_eq!(events[1].1["text"], "\r");
+    assert_eq!(events[1].1["unmodifiedText"], "\r");
+    enter_event(&events[2].1, "keyUp");
+    assert!(events
+        .iter()
+        .all(|(sess, _)| sess.as_deref().unwrap().starts_with("tab-sess-")));
+}
+
+#[tokio::test]
+async fn insert_text_keeps_a_trailing_newline_in_a_multiline_field() {
+    let f = fixture_with(|state| state.multiline_field = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let input_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let result = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": input_ref,
+            "text": "line\n", "session": SESSION
+        }))
+        .await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["enter_pressed"], false, "{s}");
+    assert_eq!(s["requested_chars"], 5, "{s}");
+
+    let inserts = recorded_calls(&f, "Input.insertText");
+    assert_eq!(inserts.len(), 1);
+    assert_eq!(inserts[0].1["text"], "line\n");
+    assert!(recorded_calls(&f, "Input.dispatchKeyEvent").is_empty());
+}
+
+#[tokio::test]
+async fn keystrokes_trailing_newline_presses_a_real_enter() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let input_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let result = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": input_ref,
+            "text": "a\n", "mode": "keystrokes", "session": SESSION
+        }))
+        .await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["enter_pressed"], true, "{s}");
+    assert_eq!(s["requested_chars"], 1, "{s}");
+    assert_eq!(s["delivered_chars"], 1, "{s}");
+
+    let events = recorded_calls(&f, "Input.dispatchKeyEvent");
+    assert_eq!(events.len(), 6, "{events:?}");
+    assert_eq!(events[1].1["text"], "a");
+    enter_event(&events[3].1, "keyDown");
+    enter_event(&events[4].1, "char");
+    assert_eq!(events[4].1["text"], "\r");
+    enter_event(&events[5].1, "keyUp");
+}
+
+#[tokio::test]
+async fn keystrokes_newline_in_a_multiline_field_carries_the_enter_key_code() {
+    let f = fixture_with(|state| state.multiline_field = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let input_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let result = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": input_ref,
+            "text": "a\nb", "mode": "keystrokes", "session": SESSION
+        }))
+        .await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["enter_pressed"], false, "{s}");
+    assert_eq!(s["requested_chars"], 3, "{s}");
+    assert_eq!(s["delivered_chars"], 3, "{s}");
+
+    let events = recorded_calls(&f, "Input.dispatchKeyEvent");
+    assert_eq!(events.len(), 9, "{events:?}");
+    enter_event(&events[3].1, "keyDown");
+    enter_event(&events[4].1, "char");
+    enter_event(&events[5].1, "keyUp");
+    assert_eq!(events[7].1["text"], "b");
+}
+
+#[tokio::test]
+async fn a_failed_enter_after_insert_text_is_reported_not_counted() {
+    let f = fixture_with(|state| state.fail_key_down_after = Some(0)).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let input_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let result = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": input_ref,
+            "text": "hi\n", "session": SESSION
+        }))
+        .await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "refused", "{s}");
+    let refusal = &s["refusal"];
+    assert_eq!(refusal["code"], "browser_input_incomplete", "{refusal}");
+    assert_eq!(refusal["detail"]["requested_chars"], 2);
+    assert_eq!(refusal["detail"]["delivered_chars"], 2);
+    assert_eq!(refusal["detail"]["enter_pressed"], false);
+    assert_eq!(recorded_calls(&f, "Input.insertText").len(), 1);
 }

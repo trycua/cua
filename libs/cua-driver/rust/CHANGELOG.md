@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.52.5](https://github.com/trycua/cua/compare/cua-driver-rs-v0.52.4...cua-driver-rs-v0.52.5) (2026-11-16)
+
+
+### Bug Fixes
+
+* **cua-driver:** capture occluded windows on the nested cua-compositor ([#7918](https://github.com/trycua/cua/issues/7918)) ([a1cd154](https://github.com/trycua/cua/commit/a1cd1542f3a42043a5e56b546045608ebbfb98f9))
+
+
+### Performance Improvements
+
+* **cua-driver:** replace fixed settles with read-backs and name shared pacing values ([#7032](https://github.com/trycua/cua/issues/7032)) ([5d7340a](https://github.com/trycua/cua/commit/5d7340a6605c851931beadb25b2273be79bbfb99))
+
 ## [0.52.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.52.3...cua-driver-rs-v0.52.4) (2026-11-16)
 
 

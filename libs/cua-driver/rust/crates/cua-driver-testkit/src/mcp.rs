@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! MCP transport: one long-lived `cua-driver` server over stdio JSON-RPC.
 
 use std::io::{BufRead, BufReader, Write};

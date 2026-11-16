@@ -5,11 +5,12 @@ import { useNavigate } from "@tanstack/react-router";
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, ChevronUpIcon, Loader2Icon, TriangleAlertIcon } from "lucide-react";
 import { lazy, Suspense, useEffect, useState, type KeyboardEvent, type MouseEvent } from "react";
 
-import { useAgentKeys, useBridge, useExperiments, useKeysRecheck, type AgentKeysHook, type ConnectorAppRow, type ConnectorProviderRow } from "@/bridge";
+import { useAgentKeys, useBridge, useKeysRecheck, type AgentKeysHook, type ConnectorAppRow, type ConnectorProviderRow } from "@/bridge";
 import { OtherMachineBlock, useThisAndOthers } from "@/components/agents/other-machine-block";
 import { HarnessMark } from "@/components/agents/harness-mark";
 import { KeySheet } from "@/components/agents/key-sheet";
 import { SettingsGroup, SettingsRow } from "@/components/settings-group";
+import { AgentMenuGroup } from "@/components/settings/connections/agent-menu-group";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogDescription, DialogPopup, DialogTitle } from "@/components/ui/dialog";
@@ -22,6 +23,7 @@ import { toastError } from "@/components/ui/toast";
 import { useConnectors, type Connectors } from "@/hooks/use-connectors";
 import { addedText } from "@/lib/agent-keys";
 import { getItUrl } from "@/lib/connected-apps";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 const DriverSettingsCard = lazy(() => import("@/components/volume/driver-card").then((m) => ({ default: m.DriverSettingsCard })));
@@ -35,13 +37,12 @@ const DriverSettingsCard = lazy(() => import("@/components/volume/driver-card").
  * core's (`connectors.view`).
  */
 export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
+  const t = useT();
   const c = useConnectors();
   const { view } = c;
   const navigate = useNavigate();
   const { data } = useBridge();
   const keys = useAgentKeys();
-  // The GitHub sign-in is part of the Ask first experiment: no row until it is on.
-  const askFirst = useExperiments().data?.experiments.askFirst === true;
   // Opening this page asks the providers whether the saved sign-ins and keys still work.
   useKeysRecheck();
   const [all, setAll] = useState(false);
@@ -54,14 +55,14 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
     if (!view || !focusApp) return;
     document.querySelector<HTMLElement>(`[data-connector-app="${focusApp}"]`)?.scrollIntoView?.({ block: "center" });
     setLit(focusApp);
-    const t = setTimeout(() => setLit(null), 2000);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setLit(null), 2000);
+    return () => clearTimeout(timer);
   }, [Boolean(view), focusApp]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!view || c.apps.rows === null) return <div className="mb-8 h-48" aria-busy="true" />;
   const open = (agent: string) => void navigate({ to: "/settings/connections/$app", params: { app: agent } });
   const moreOpen = Boolean(c.input.moreOpen || (c.input.query ?? "").trim());
-  const detailRow = detail ? [...view.providers, ...view.moreProviders].find((p) => p.id === detail) ?? null : null;
+  const detailRow = detail ? ([...view.providers, ...view.moreProviders].find((p) => p.id === detail) ?? null) : null;
   const confirm = keys.removing ? keys.removeConfirmOf(keys.removing) : null;
 
   return (
@@ -79,7 +80,9 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
         footer={
           // Connect edits the coding apps of this machine only: it says which, and what it leaves alone.
           <span data-connectors-machine="">
-            On {hereName}.{others.length > 0 ? ` Not touched: ${others.join(", ")}. An agent on one of those machines needs its own setup (see On another machine).` : ""}
+            {others.length > 0
+              ? t("settings.connections.page.on_here_others", { name: hereName, others: others.join(", ") })
+              : t("settings.connections.page.on_here", { name: hereName })}
           </span>
         }
       >
@@ -95,7 +98,7 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
         />
         {all && (view?.more.length ?? 0) > 0 ? (
           <>
-            <GroupedRow className="min-h-9 bg-muted/40 py-2 text-xs text-muted-foreground">Not installed</GroupedRow>
+            <GroupedRow className="min-h-9 bg-muted/40 py-2 text-xs text-muted-foreground">{t("settings.connections.page.not_installed")}</GroupedRow>
             {view!.more.map((row) => {
               const url = getItUrl(row.agent);
               return (
@@ -103,8 +106,12 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
                   <HarnessMark agent={row.agent} name={row.name} />
                   <span className="min-w-0 flex-1 text-[13px]">{row.name}</span>
                   {url ? (
-                    <button type="button" className="text-xs hover:text-foreground hover:underline" onClick={() => void data?.call("session.openExternal", { url }).catch(() => {})}>
-                      Get it
+                    <button
+                      type="button"
+                      className="text-xs hover:text-foreground hover:underline"
+                      onClick={() => void data?.call("session.openExternal", { url }).catch(() => {})}
+                    >
+                      {t("settings.connections.page.get_it")}
                     </button>
                   ) : null}
                 </GroupedRow>
@@ -113,28 +120,45 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
           </>
         ) : null}
         <GroupedAction data-connected-show-all="" aria-expanded={all} onClick={() => setAll(!all)}>
-          {all ? "Show fewer" : "Show all"} {all ? <ChevronUpIcon className="size-3.5" /> : <ChevronDownIcon className="size-3.5" />}
+          {all ? t("settings.connections.page.show_fewer") : t("settings.connections.page.show_all")}{" "}
+          {all ? <ChevronUpIcon className="size-3.5" /> : <ChevronDownIcon className="size-3.5" />}
         </GroupedAction>
       </SettingsGroup>
+      <AgentMenuGroup c={c} />
       {all ? (
-        <SettingsGroup title="Background computer use">
+        <SettingsGroup title={t("settings.connections.page.background_use")}>
           <Suspense fallback={<div className="h-48" />}>
             <DriverSettingsCard />
           </Suspense>
         </SettingsGroup>
       ) : null}
 
-      <SettingsGroup title="On another machine" data-connectors-other-machine-group="">
+      <SettingsGroup title={t("settings.connections.page.other_computer")} data-connectors-other-machine-group="">
         <GroupedRow>
           <div className="min-w-0 flex-1">
-            <div className="text-[13px]">An agent on another machine</div>
-            <div className="text-xs text-muted-foreground">Use {hereName} from an agent that runs somewhere else.</div>
+            <div className="text-[13px]">{t("settings.connections.page.other_agent")}</div>
+            <div className="text-xs text-muted-foreground">{t("settings.connections.page.other_help", { name: hereName })}</div>
           </div>
           <Button size="sm" variant="outline" aria-expanded={otherOpen} onClick={() => setOtherOpen(!otherOpen)} data-connectors-other-toggle="">
-            {otherOpen ? "Hide" : "Show how"}
+            {otherOpen ? t("settings.connections.page.hide") : t("settings.connections.page.show_how")}
           </Button>
         </GroupedRow>
         {otherOpen ? <OtherMachineBlock /> : null}
+        {keys.report && typeof keys.report.copySignIn === "boolean" ? (
+          <SettingsRow
+            label={t("settings.connections.page.copy_sign_in")}
+            description={t("settings.connections.page.copy_sign_in_help", { name: hereName })}
+            htmlFor="connectors-copy-sign-in"
+            control={
+              <Switch
+                id="connectors-copy-sign-in"
+                data-connectors-copy-sign-in=""
+                checked={keys.report.copySignIn}
+                onCheckedChange={(on) => void keys.setCopySignIn(on).catch(toastError(t("settings.connections.page.copy_sign_in_failed")))}
+              />
+            }
+          />
+        ) : null}
       </SettingsGroup>
 
       <SettingsGroup title={view.providersTitle} footer={view.providersFooter} data-connectors-providers="">
@@ -188,16 +212,17 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
           description={view.otherHelp}
           control={
             <Button size="sm" variant="outline" disabled={!view.canEdit} onClick={() => keys.openSheet("other")} data-agent-key-add-other="">
-              Add key
+              {t("settings.connections.page.add_key")}
             </Button>
           }
         />
         <GroupedAction data-connectors-more-toggle="" aria-expanded={moreOpen} onClick={() => c.searchMore("", !moreOpen)}>
-          {moreOpen ? "Show fewer" : `Show all ${view.moreCount}`} {moreOpen ? <ChevronUpIcon className="size-3.5" /> : <ChevronDownIcon className="size-3.5" />}
+          {moreOpen ? t("settings.connections.page.show_fewer") : t("settings.connections.page.show_all_count", { count: String(view.moreCount) })}{" "}
+          {moreOpen ? <ChevronUpIcon className="size-3.5" /> : <ChevronDownIcon className="size-3.5" />}
         </GroupedAction>
       </SettingsGroup>
 
-      {askFirst ? <GithubGroup onPaste={() => keys.openSheet("other", "GITHUB_TOKEN")} saved={keys.input.keys.some((k) => k.env === "GITHUB_TOKEN")} /> : null}
+      <GithubGroup onPaste={() => keys.openSheet("other", "GITHUB_TOKEN")} saved={keys.input.keys.some((k) => k.env === "GITHUB_TOKEN")} />
 
       {detailRow ? (
         <ProviderDetail
@@ -216,12 +241,12 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
         onOpenChange={(o) => !o && keys.askRemove(null)}
         title={confirm?.title ?? ""}
         description={confirm?.message ?? ""}
-        confirmLabel={confirm?.confirmLabel ?? "Remove"}
+        confirmLabel={confirm?.confirmLabel ?? t("settings.connections.remove")}
         cancelLabel={confirm?.cancelLabel}
         destructive
         onConfirm={() => {
           const env = keys.removing;
-          if (env) void keys.remove(env).catch(toastError("Couldn't remove the key"));
+          if (env) void keys.remove(env).catch(toastError(t("settings.connections.keys.remove_failed")));
         }}
       />
     </div>
@@ -266,7 +291,14 @@ function AppRow({ row, lit, onOpen, onConnect }: { row: ConnectorAppRow; lit: bo
         </span>
       ) : null}
       {row.button ? (
-        <Button size="sm" variant="outline" disabled={!row.button.enabled} data-connector-connect={row.button.id} onClick={(e) => (stop(e), onConnect())} onKeyDown={stop}>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!row.button.enabled}
+          data-connector-connect={row.button.id}
+          onClick={(e) => (stop(e), onConnect())}
+          onKeyDown={stop}
+        >
           {row.state === "connecting" ? <Loader2Icon className="animate-spin" /> : null}
           {row.button.label}
         </Button>
@@ -278,6 +310,7 @@ function AppRow({ row, lit, onOpen, onConnect }: { row: ConnectorAppRow; lit: bo
 
 /** A provider: the whole row opens its sheet (hover, chevron); Connect works on its own. */
 function ProviderRow({ row, c, onOpen, inMore }: { row: ConnectorProviderRow; c: Connectors; onOpen: () => void; inMore?: boolean }) {
+  const t = useT();
   const stop = (e: MouseEvent | KeyboardEvent) => e.stopPropagation();
   const connected = row.state === "connected";
   const problem = row.state === "failed" || row.status === "Needs reconnect";
@@ -287,7 +320,7 @@ function ProviderRow({ row, c, onOpen, inMore }: { row: ConnectorProviderRow; c:
     <div
       role="link"
       tabIndex={0}
-      aria-label={`${row.label} settings`}
+      aria-label={t("settings.connections.github.row_aria", { title: row.label })}
       title={row.worksWith.length ? `${row.worksWithLabel} ${row.worksWith.map((w) => w.name).join(", ")}` : undefined}
       data-connector-provider={row.id}
       data-state={row.state}
@@ -307,7 +340,11 @@ function ProviderRow({ row, c, onOpen, inMore }: { row: ConnectorProviderRow; c:
       <ProviderMark id={row.id} name={row.label} />
       <div className="min-w-0 flex-1">
         <div className="truncate">{row.label}</div>
-        <p className={cn("mt-px truncate text-xs", problem ? "text-destructive" : "text-muted-foreground")} data-connector-credential="" data-connector-status="">
+        <p
+          className={cn("mt-px truncate text-xs", problem ? "text-destructive" : "text-muted-foreground")}
+          data-connector-credential=""
+          data-connector-status=""
+        >
           {line}
         </p>
       </div>
@@ -355,6 +392,7 @@ function ProviderDetail({
   onClose: () => void;
   onOpenApp: (agent: string) => void;
 }) {
+  const t = useT();
   const connected = row.state === "connected";
   const [adding, setAdding] = useState(false);
   // The API keys saved for it: the first, then those added beside it (each named, or by its last four).
@@ -362,7 +400,9 @@ function ProviderDetail({
   const several = saved.length > 1;
   const removeKey = (k: (typeof saved)[number]) => {
     const others = saved.some((x) => x.env === k.env && x !== k);
-    void (k.slot ? keys.remove(k.env, { slot: k.slot }) : keys.remove(k.env, others ? { keepOthers: true } : {})).then(() => c.reload()).catch(toastError("Couldn't remove the key"));
+    void (k.slot ? keys.remove(k.env, { slot: k.slot }) : keys.remove(k.env, others ? { keepOthers: true } : {}))
+      .then(() => c.reload())
+      .catch(toastError(t("settings.connections.keys.remove_failed")));
   };
   if (adding) return <AddKeyDialog row={row} keys={keys} onDone={() => (setAdding(false), void c.reload())} onCancel={() => setAdding(false)} />;
   return (
@@ -373,18 +413,29 @@ function ProviderDetail({
             <ProviderMark id={row.id} name={row.label} large />
             <div className="min-w-0 flex-1">
               <DialogTitle className="truncate text-[15px] font-semibold">{row.label}</DialogTitle>
-              <DialogDescription className="truncate text-[13px] text-muted-foreground">{connected && row.credential ? row.credential : row.status}</DialogDescription>
+              <DialogDescription className="truncate text-[13px] text-muted-foreground">
+                {connected && row.credential ? row.credential : row.status}
+              </DialogDescription>
             </div>
           </div>
-          {row.addedMs !== null ? <FactRow className="mt-3" label="Added" value={addedText(addedLabel, row.addedMs).replace(/^Added /, "")} data-connector-added="" /> : null}
+          {row.addedMs !== null ? (
+            <FactRow
+              className="mt-3"
+              label={t("settings.connections.detail.added")}
+              value={addedText(addedLabel, row.addedMs).replace(/^Added /, "")}
+              data-connector-added=""
+            />
+          ) : null}
           {several ? (
             <div className="mt-3" data-connector-keys="">
-              <div className="px-1 text-xs text-muted-foreground">Keys</div>
+              <div className="px-1 text-xs text-muted-foreground">{t("settings.connections.detail.keys")}</div>
               {saved.map((k) => (
                 <div key={`${k.env}:${k.slot ?? ""}`} className="flex items-center gap-2 px-1 py-1 text-[13px]" data-connector-key={k.slot ?? "first"}>
-                  <span className="min-w-0 flex-1 truncate">{k.label?.trim() || (k.last4 ? `API key ending ${k.last4}` : "API key")}</span>
+                  <span className="min-w-0 flex-1 truncate">
+                    {k.label?.trim() || (k.last4 ? t("settings.connections.detail.key_ending", { last4: k.last4 }) : t("settings.connections.detail.key"))}
+                  </span>
                   <Button size="sm" variant="ghost" onClick={() => removeKey(k)} data-connector-key-remove="">
-                    Remove
+                    {t("settings.connections.remove")}
                   </Button>
                 </div>
               ))}
@@ -413,11 +464,11 @@ function ProviderDetail({
           <div className="mt-4 flex justify-end gap-2">
             {connected && saved.length > 0 ? (
               <Button variant="ghost" className="mr-auto" onClick={() => setAdding(true)} data-connector-add-key="">
-                Add another key
+                {t("settings.connections.detail.add_another")}
               </Button>
             ) : null}
             <Button variant="outline" onClick={onClose}>
-              Close
+              {t("settings.connections.close")}
             </Button>
             <Button
               variant={connected ? "outline" : "default"}
@@ -440,6 +491,7 @@ function ProviderDetail({
 
 /** "Add another key": a second API key for a provider, named so it can be told apart ("Work key"). It replaces nothing. */
 function AddKeyDialog({ row, keys, onDone, onCancel }: { row: ConnectorProviderRow; keys: AgentKeysHook; onDone: () => void; onCancel: () => void }) {
+  const t = useT();
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
@@ -459,15 +511,30 @@ function AddKeyDialog({ row, keys, onDone, onCancel }: { row: ConnectorProviderR
     <Dialog open onOpenChange={(o) => !o && !busy && onCancel()}>
       <DialogPopup data-connector-add-key-sheet={row.id} className="top-[12vh] w-[min(440px,calc(100vw-2rem))]">
         <div className="px-6 pt-5 pb-5">
-          <DialogTitle className="text-[15px] font-semibold">Add another {row.label} key</DialogTitle>
-          <DialogDescription className="mt-1 text-[13px] text-muted-foreground">It is saved beside the one you have. An app that can use any provider can be pointed at either.</DialogDescription>
+          <DialogTitle className="text-[15px] font-semibold">{t("settings.connections.add_key.title", { label: row.label })}</DialogTitle>
+          <DialogDescription className="mt-1 text-[13px] text-muted-foreground">{t("settings.connections.add_key.help")}</DialogDescription>
           <label className="mt-3 block">
-            <span className="mb-1 block text-xs font-medium">Name (optional)</span>
-            <Input value={name} maxLength={40} placeholder="Work key" autoComplete="off" onChange={(e) => setName(e.currentTarget.value)} data-add-key-name="" />
+            <span className="mb-1 block text-xs font-medium">{t("settings.connections.name_optional")}</span>
+            <Input
+              value={name}
+              maxLength={40}
+              placeholder={t("settings.connections.add_key.placeholder")}
+              autoComplete="off"
+              onChange={(e) => setName(e.currentTarget.value)}
+              data-add-key-name=""
+            />
           </label>
           <label className="mt-3 block">
-            <span className="mb-1 block text-xs font-medium">Key</span>
-            <Input type="password" value={value} autoComplete="off" spellCheck={false} className="font-mono" onChange={(e) => setValue(e.currentTarget.value)} data-add-key-value="" />
+            <span className="mb-1 block text-xs font-medium">{t("settings.connections.add_key.key")}</span>
+            <Input
+              type="password"
+              value={value}
+              autoComplete="off"
+              spellCheck={false}
+              className="font-mono"
+              onChange={(e) => setValue(e.currentTarget.value)}
+              data-add-key-value=""
+            />
           </label>
           {error ? (
             <p className="mt-2 text-[13px] text-destructive" data-add-key-error="">
@@ -476,11 +543,11 @@ function AddKeyDialog({ row, keys, onDone, onCancel }: { row: ConnectorProviderR
           ) : null}
           <div className="mt-4 flex justify-end gap-2">
             <Button variant="outline" disabled={busy} onClick={onCancel}>
-              Cancel
+              {t("settings.connections.cancel")}
             </Button>
             <Button disabled={busy || !value.trim()} onClick={() => void save()} data-add-key-save="">
               {busy ? <Loader2Icon className="animate-spin" /> : null}
-              Save
+              {t("settings.connections.save")}
             </Button>
           </div>
         </div>

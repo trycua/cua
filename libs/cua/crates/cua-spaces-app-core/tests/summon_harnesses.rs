@@ -13,6 +13,7 @@ fn input() -> SummonInput {
         members: vec![],
         people: vec![],
         can_add: true,
+        report_unknown: false,
         connectors: ConnectorsInput::default(),
     }
 }

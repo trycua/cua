@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # check_static_spacesd_packaged.sh DIR [VERSION]
 #
-# Drift guard for the release packages: checks that every Linux cua CLI package in DIR ships a static cua-spacesd
+# Drift guard for the release packages: checks that every Linux cua CLI package, and every `cua` wheel on any OS, in DIR ships a static cua-spacesd
 # where find_binary (libs/cua/crates/cua-vmm/src/inject.rs) looks after a
 # normal install: `cua-spacesd-linux-<arch>` in the same directory as the
 # `cua` executable (or ~/.cua/bin, or on PATH).
@@ -9,8 +9,9 @@
 # DIR holds downloaded release artifacts, flat or in per-artifact
 # subdirectories (gh run download layout):
 #   *.tgz   npm packages; trycua-cua-linux-{x64,arm64}-gnu-* are checked
-#   *.whl   wheels; manylinux x86_64/aarch64 `cua` wheels are checked: the
-#           SDK library finds cua/bin/cua-spacesd-linux-<arch> (its bin/),
+#   *.whl   wheels; every `cua` wheel is checked (Linux, macOS and Windows:
+#           the guest of a local container is Linux on any host; the
+#           `cua-cli` wheels are skipped): the SDK library finds cua/bin/cua-spacesd-linux-<arch> (its bin/),
 #           and the `cua` command hands it to the `cua-cli` wheel's CLI as
 #           $CUA_SPACESD_STATIC)
 #   *.deb   any deb; checked when it contains a `cua` ELF
@@ -109,7 +110,8 @@ while IFS= read -r f; do
       check_dir "npm $base" "$x" "$(arch_of "$base")" ;;
     cua_cli-*.whl) continue ;;
     *.whl)
-      case "$base" in *manylinux*x86_64*) a=x86_64 ;; *manylinux*aarch64*) a=aarch64 ;; *) continue ;; esac
+      a="$(arch_of "$base")"
+      [ -n "$a" ] || { fail "$base" "cannot tell the wheel's architecture from its name (universal2?)"; continue; }
       mkdir -p "$x"; python3 -m zipfile -e "$f" "$x" || { fail "$base" "cannot unpack"; continue; }
       check_wheel "wheel $base" "$x" "$a" ;;
     *.deb)

@@ -116,9 +116,7 @@ function failingHost(error: Error) {
   const base = createDemoAdapter({ latencyMs: 0, signedIn: false, onboarded: true });
   return Object.assign(Object.create(base) as DataAdapter, {
     call: ((op: string, args: Record<string, unknown>) =>
-      op === "session.signIn"
-        ? Promise.reject(error)
-        : (base.call as (o: string, a: unknown) => Promise<unknown>).call(base, op, args)) as DataAdapter["call"],
+      op === "session.signIn" ? Promise.reject(error) : (base.call as (o: string, a: unknown) => Promise<unknown>).call(base, op, args)) as DataAdapter["call"],
   });
 }
 
@@ -145,7 +143,7 @@ describe("a sign-in that fails (it never fails silently)", () => {
     expect(toasts).toHaveLength(1);
   });
 
-  it("shows who is signed in on one line, without \"Signed in as\"", async () => {
+  it('shows who is signed in on one line, without "Signed in as"', async () => {
     const base = createDemoAdapter({ latencyMs: 0, signedIn: true, onboarded: true });
     render(
       <BridgeProvider adapter={base} core={await testCore()}>
@@ -217,7 +215,7 @@ describe("a browser sign-in that never comes back", () => {
     });
     vi.useRealTimers();
     const stuck = (await waitFor(() => document.querySelector("[data-signin-stuck]") ?? Promise.reject(new Error("not yet")))) as Element;
-    expect(stuck.textContent).toContain("Still waiting?");
+    expect(stuck.textContent).toContain("Page stuck?");
     fireEvent.click(screen.getByText("Get a code instead"));
     await waitFor(() => expect(starts).toEqual([{}, { code: true }]));
     await waitFor(() => expect(document.querySelector("[data-signin=waiting]")?.textContent).toContain("Code WXYZ-1234"));

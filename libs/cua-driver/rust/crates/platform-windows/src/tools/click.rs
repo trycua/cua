@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_contract::ClickButton;
 use cua_driver_core::{
@@ -362,6 +365,9 @@ impl Tool for ClickTool {
             Err(e) => return e,
         };
         let (elem_idx, hwnd_opt, admitted) = resolved.into_parts(args.opt_u64("window_id"));
+        if let Some(refusal) = super::impl_::refuse_if_disabled(pid, &admitted, "click").await {
+            return refusal;
+        }
         let x = args.opt_f64("x");
         let y = args.opt_f64("y");
         // Surface 5: explicit rejection of unknown buttons so a typo doesn't fall
@@ -675,7 +681,6 @@ impl Tool for ClickTool {
                             crate::uia::fg_bypass::run_with_uwp_bypass(hwnd as isize, || unsafe {
                                 pattern.Expand()
                             });
-                        std::mem::forget(element);
                         result.map_err(|error| {
                             anyhow::anyhow!("ExpandCollapse.Expand failed: {error}")
                         })

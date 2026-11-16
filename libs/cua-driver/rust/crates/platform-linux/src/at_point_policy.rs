@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Pure routing facts for Linux background pixel clicks.
 //!
 //! Kept free of X11, AT-SPI, and `/proc` I/O so the decisions are unit-tested

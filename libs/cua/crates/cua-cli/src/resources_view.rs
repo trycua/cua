@@ -65,7 +65,7 @@ pub struct Cells {
     pub cpu: String,
     /// MEMORY.
     pub memory: String,
-    /// DISK ON THIS MAC.
+    /// DISK ON THIS MAC (PC).
     pub disk: String,
 }
 
@@ -102,9 +102,20 @@ pub const MEMORY_WIDTH: usize = 15;
 
 /// The header of the table the extra columns make.
 pub fn header(id_width: usize) -> String {
+    header_on(id_width, words::Host::current())
+}
+
+/// [`header`] naming the computer in the words of `host` (DISK ON THIS PC).
+pub fn header_on(id_width: usize, host: words::Host) -> String {
     format!(
-        "{:<id_width$} {:<24} {:<8} {:<9} {:<CPU_WIDTH$} {:<MEMORY_WIDTH$} DISK ON THIS MAC",
-        "ID", "NAME", "PROVIDER", "VERSION", "CPU", "MEMORY"
+        "{:<id_width$} {:<24} {:<8} {:<9} {:<CPU_WIDTH$} {:<MEMORY_WIDTH$} DISK ON {}",
+        "ID",
+        "NAME",
+        "PROVIDER",
+        "VERSION",
+        "CPU",
+        "MEMORY",
+        host.this_upper()
     )
 }
 
@@ -166,10 +177,15 @@ impl Columns<'_> {
     }
 }
 
-/// The "This Mac" block of `cua host status`.
+/// The "This Mac" ("This PC") block of `cua host status`.
 pub fn this_mac_lines(r: &Resources) -> Vec<String> {
+    this_mac_lines_on(r, words::Host::current())
+}
+
+/// [`this_mac_lines`] naming the computer in the words of `host`.
+pub fn this_mac_lines_on(r: &Resources, host: words::Host) -> Vec<String> {
     let m = &r.this_mac;
-    let mut out = vec!["This Mac".to_string()];
+    let mut out = vec![host.this().to_string()];
     if m.cpu_count > 0 {
         out.push(format!(
             "  Processor: {}",
@@ -191,7 +207,7 @@ pub fn this_mac_lines(r: &Resources) -> Vec<String> {
     if let Some(extra) = words::extra_spaces_use(m) {
         out.push(format!("  {extra}"));
     }
-    if let Some(w) = words::warning(&m.warning) {
+    if let Some(w) = words::warning_on(&m.warning, host) {
         out.push(format!("  {w}"));
     }
     out
@@ -230,6 +246,7 @@ mod tests {
 
     fn info(id: &str) -> SpaceInfo {
         SpaceInfo {
+            hidden: false,
             id: id.into(),
             name: id.into(),
             display_name: String::new(),
@@ -398,7 +415,7 @@ mod tests {
             "VERSION",
             "CPU",
             "MEMORY",
-            "DISK ON THIS MAC",
+            &format!("DISK ON {}", words::Host::current().this_upper()),
         ] {
             let at = h.find(column).unwrap();
             assert!(at > 0);
@@ -436,7 +453,7 @@ mod tests {
     fn this_mac_in_words() {
         let r = resources();
         assert_eq!(
-            this_mac_lines(&r),
+            this_mac_lines_on(&r, words::Host::Mac),
             [
                 "This Mac",
                 "  Processor: 12 cores \u{b7} 38% busy",
@@ -447,11 +464,21 @@ mod tests {
         );
         let mut low = resources();
         low.this_mac.warning = DiskWarning::assess(10 * GIB, TB, 5 * GIB, DiskLevel::Ok);
-        let lines = this_mac_lines(&low);
+        let lines = this_mac_lines_on(&low, words::Host::Mac);
         assert_eq!(
             lines.last().unwrap(),
             "  This Mac is almost out of space. Delete old Spaces or snapshots."
         );
+        // On a PC the block, the warning and the column say so.
+        let pc = this_mac_lines_on(&low, words::Host::Pc);
+        assert_eq!(pc[0], "This PC");
+        assert_eq!(
+            pc.last().unwrap(),
+            "  This PC is almost out of space. Delete old Spaces or snapshots."
+        );
+        assert!(header_on(48, words::Host::Mac).ends_with("DISK ON THIS MAC"));
+        assert!(header_on(48, words::Host::Pc).ends_with("DISK ON THIS PC"));
+        assert_eq!(this_mac_lines(&low)[0], words::Host::current().this());
         let c = Columns {
             resources: &low,
             own_machine: None,

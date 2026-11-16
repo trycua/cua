@@ -22,6 +22,8 @@ on:
       - "docs/code-block-baseline.json"
       - "tests/e2e/cua-sdk/docs/**"
       - "scripts/docs-generators/cli-specs/**"
+      # Python driver examples are checked against the generated constructors.
+      - "libs/cua-driver/python/src/cua_driver/_native_contract.py"
       # Tutorial excerpts must match their #region in these sources.
       - "examples/openkoalabot-example-ts/**"
       - "examples/openkoalabot-example-tauri/**"
@@ -74,7 +76,7 @@ jobs:
       - name: CLI-shape lane (cua, cua-driver and lume commands parse)
         run: python3 tests/e2e/cua-sdk/docs/cli_shape.py
 
-      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
 
       - name: Config lane (JSON / YAML / TOML blocks parse and match their schema)
         run: >
@@ -156,13 +158,17 @@ jobs:
       - name: Skip links to paths not released to trycua/cua yet
         run: scripts/ci/lychee-ignore-unreleased.sh >> .lycheeignore
 
+      # 500 and 502-504 are accepted: a transient upstream error (ai.google.dev
+      # returned 500 after lychee's retries) says nothing about the link. 4xx,
+      # 501, 505+ (including Cloudflare's 52x origin-down codes) and connection
+      # failures still fail the check.
       - name: Check external links
         uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2
         with:
           args: >-
             --verbose
             --no-progress
-            --accept 100..=399
+            --accept 100..=399,500,502..=504
             --scheme https
             --scheme http
             --root-dir ${{ github.workspace }}/docs/content/docs

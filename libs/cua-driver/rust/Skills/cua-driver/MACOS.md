@@ -728,12 +728,15 @@ A native `<input type="range">` in Chrome does not follow a background drag
 through CDP `Input.dispatchMouseEvent` with the button held.
 
 A drag that starts a macOS drag-and-drop session (reordering a list by drag
-and drop, moving a file, HTML5 `draggable` content) cannot drop in the
-background: macOS tracks those sessions with the real pointer. The driver
-sees the session start, releases at once, and returns
-`background_unavailable` with `reason: "drag_and_drop_session"`. Look for a
-non-drag route first (Move Up/Down, a menu or context-menu command, a
-shortcut, cut and paste), then foreground if the user allows it.
+and drop, moving a file) drops in the background too. AppKit ends a session
+that window-routed events started soon after it starts, dropping at the last
+dragged point, so the driver moves straight to the drop point once the drag
+image shows and holds it there until the session ends. The result then says
+`drag_session: true`. If the session is still open when the hold runs out,
+no drop landed and the result is `background_unavailable` with
+`reason: "drag_and_drop_session"`. Then look for a non-drag route (Move
+Up/Down, a menu or context-menu command, a shortcut, cut and paste), and
+use foreground only if the user allows it.
 
 In an Electron window, `drag` is sent from the app's main process
 (CDP `Input.dispatchMouseEvent` with the button held, or
@@ -830,13 +833,23 @@ There is no backgrounded path that reaches these apps today.
 
 ### A value write the app does not apply (LibreOffice)
 
-Some apps accept an accessibility value write and ignore it. LibreOffice
-Calc cells do: `set_value` returns success at the AX level and the cell
-keeps its old content. `set_value` re-reads the value, and when it has
-not moved it fails with `code:"write_not_applied"` and
-`effect:"not_applied"`, so a `run_script` stops there. LibreOffice also
-ignores background pointer input, so address it with `window_id` and type
-instead (see "LibreOffice, Numbers and other editors in the background").
+Some apps accept an accessibility value write and ignore it. `set_value`
+re-reads the value, and when it has not moved it fails with
+`code:"write_not_applied"` and `effect:"not_applied"`, so a `run_script`
+stops there.
+
+LibreOffice Calc cells ignore the write too, so `set_value` on a Calc cell
+does not write AXValue. It goes to the cell through the Name Box with keys
+posted to the window (Cmd+Shift+F5, the address, Return), types the value
+and Return, and reads the cell back, with LibreOffice left in the
+background. An empty value clears the cell. The result has `path:"keys"`,
+the `cell` address and `cell_value`, what the cell reads after the write.
+When Calc changes the entry (AutoCorrect capitalising a word, a number or
+date format, a formula's result) the result is `unverifiable`. `set_value` on the Name Box (the combo box named after the
+current cell) takes a cell address and goes there. One call fills one
+cell: a value with Tab or Return is refused. For rows, go to the first cell
+and `type_text` with `\t` and `\n` (see "LibreOffice, Numbers and other
+editors in the background").
 
 ### Known text-input limits (Catalyst + Electron)
 
@@ -959,8 +972,8 @@ the only browser cursor displayed in that Chrome window.
 Browser chrome, permission prompts, downloads, file pickers, Safari, Firefox,
 and unbound embedded webviews remain native surfaces. Inspect them with
 `get_window_state` and use the AX/PX ladder in this file. The legacy `page`
-tool and Apple Events JavaScript bridge remain compatibility surfaces, not the
-starting point for new browser workflows.
+tool is read-only now (`get_text` and `query_dom`) and is not the starting point
+for new browser workflows.
 
 ## macOS common error patterns
 
@@ -994,7 +1007,7 @@ above (`invoke_menu` with a path such as `["Go", "Downloads"]`).
 
 ### LibreOffice, Numbers and other editors in the background
 
-With `window_id`, `type_text`, `press_key` and `hotkey` post keys to that exact window: the driver makes it the app's key window through in-app key-window records (no raise, no activation, real pointer untouched), confirms that the app's focused window and focused element are in that window, posts, and hands key back. This also covers another window or dialog of the app holding focus, and a LibreOffice that was never activated. When the switch cannot be confirmed the call is refused with `window_not_key` and no key is sent. A second window of the same app (Find & Replace, another document) is no longer `same_pid_keyboard_ambiguity`. A command key whose menu route is refused (item disabled while the app is in the background) falls through to key events in that window. Recipe: pass `window_id` on every call; go to the cell with Name Box navigation (`type_text` `A1\n`), type with `\n` and `\t`, read the cell back; run commands (Paste Special, Format, Save) with `invoke_menu({pid, window_id, path})` rather than clicking the menu bar. A `background_unavailable` refusal here means use `get_window_state` and act by element, not stop.
+With `window_id`, `type_text`, `press_key` and `hotkey` post keys to that exact window: the driver makes it the app's key window through in-app key-window records (no raise, no activation, real pointer untouched), confirms that the app's focused window and focused element are in that window, posts, and hands key back. This also covers another window or dialog of the app holding focus, and a LibreOffice that was never activated. When the switch cannot be confirmed the call is refused with `window_not_key` and no key is sent. A second window of the same app (Find & Replace, another document) is no longer `same_pid_keyboard_ambiguity`. A command key whose menu route is refused (item disabled while the app is in the background) falls through to key events in that window. Recipe: pass `window_id` on every call; go to the cell with Name Box navigation (`type_text` `A1\n`), type with `\n` and `\t`, read the cell back; run commands (Paste Special, Format, Save) with `invoke_menu({pid, window_id, path})` rather than clicking the menu bar. A `background_unavailable` refusal here means use `get_window_state` and act by element, not stop. Calc lists only the visible cells, so an address outside the view is a `not_found`: click the Name Box (the combo box named after the current cell), type the address and `\n`, then type the value. A sheet tab is an `AXRadioButton` without actions: switch with `press_key` `ctrl+pagedown` or `invoke_menu`. A `window_not_key` refusal now names the window that holds focus (Tip of the Day, Confirmation, Delete Contents): answer that dialog with its own `window_id`, then retry.
 
 ### Preview: export before resizing
 

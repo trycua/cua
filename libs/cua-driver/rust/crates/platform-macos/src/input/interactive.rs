@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Low-latency, stateful input delivery to one macOS window or display.
 //!
 //! A window session posts to the window's process (background) or through

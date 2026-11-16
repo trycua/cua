@@ -16,29 +16,38 @@
  * `--optional`: when the toolchain is missing, print why and exit 0, so
  * `dev` still starts (demo mode, without the core's decisions).
  */
-import { spawnSync } from "node:child_process"
-import { existsSync, mkdirSync, realpathSync } from "node:fs"
-import { homedir } from "node:os"
-import { delimiter, dirname, join, resolve } from "node:path"
-import { fileURLToPath } from "node:url"
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
+import { delimiter, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const app = resolve(dirname(fileURLToPath(import.meta.url)), "..")
-const crate = resolve(app, "..", "cua-spaces", "core-wasm")
-const manifest = join(crate, "Cargo.toml")
-const target = process.env.CARGO_TARGET_DIR
-  ? join(resolve(process.env.CARGO_TARGET_DIR), "core-wasm")
-  : join(crate, "target")
-const out = join(app, "src", "bridge", "core", "wasm")
-const WASM_BINDGEN = "0.2.126"
-const optional = process.argv.includes("--optional")
+const app = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const crate = resolve(app, "..", "cua-spaces", "core-wasm");
+const manifest = join(crate, "Cargo.toml");
+const target = process.env.CARGO_TARGET_DIR ? join(resolve(process.env.CARGO_TARGET_DIR), "core-wasm") : join(crate, "target");
+const out = join(app, "src", "bridge", "core", "wasm");
+const WASM_BINDGEN = "0.2.126";
+const optional = process.argv.includes("--optional");
+
+// CI builds the core once (ci-cua-spaces-web.yml `core-wasm` job) and the other
+// jobs download it: skip the build when told it is prebuilt and present.
+if (process.env.CORE_WASM_PREBUILT === "1") {
+  if (existsSync(join(out, "core_bg.wasm")) && existsSync(join(out, "core.js"))) {
+    console.log(`app core wasm: prebuilt, using ${out}`);
+    process.exit(0);
+  }
+  console.error(`app core wasm: CORE_WASM_PREBUILT=1 but ${out} has no core.js/core_bg.wasm`);
+  process.exit(1);
+}
 
 function give_up(message) {
-  console.error(`app core wasm: ${message}`)
+  console.error(`app core wasm: ${message}`);
   if (optional) {
-    console.error("app core wasm: skipped; the bridge runs without the core (TypeScript fallbacks)")
-    process.exit(0)
+    console.error("app core wasm: skipped; the bridge runs without the core (TypeScript fallbacks)");
+    process.exit(0);
   }
-  process.exit(1)
+  process.exit(1);
 }
 
 // rustup's proxies and cargo-installed tools first, so the toolchain the
@@ -46,33 +55,33 @@ function give_up(message) {
 // crate) is used even when a Homebrew rust is earlier on PATH. On Windows
 // `sh` (Git Bash) answers with a POSIX path (`/c/Users/...`) that Node
 // cannot resolve, and rustup's proxies are in ~/.cargo/bin anyway.
-const extra = [join(homedir(), ".cargo", "bin")]
+const extra = [join(homedir(), ".cargo", "bin")];
 if (process.platform !== "win32") {
-  const rustup = spawnSync("sh", ["-c", "command -v rustup"], { encoding: "utf8" }).stdout?.trim()
-  if (rustup && existsSync(rustup)) extra.unshift(dirname(realpathSync(rustup)))
+  const rustup = spawnSync("sh", ["-c", "command -v rustup"], { encoding: "utf8" }).stdout?.trim();
+  if (rustup && existsSync(rustup)) extra.unshift(dirname(realpathSync(rustup)));
 }
 // Windows names the variable `Path`; set the one the environment has.
-const pathKey = Object.keys(process.env).find((k) => k.toUpperCase() === "PATH") ?? "PATH"
-const env = { ...process.env, CARGO_TARGET_DIR: target, [pathKey]: [...extra, process.env[pathKey]].join(delimiter) }
+const pathKey = Object.keys(process.env).find((k) => k.toUpperCase() === "PATH") ?? "PATH";
+const env = { ...process.env, CARGO_TARGET_DIR: target, [pathKey]: [...extra, process.env[pathKey]].join(delimiter) };
 
 function run(cmd, args) {
-  const r = spawnSync(cmd, args, { cwd: crate, stdio: "inherit", env })
-  if (r.error) give_up(`${cmd}: ${r.error.message}`)
-  if (r.status !== 0) give_up(`${cmd} ${args[0]} failed (${r.status})`)
+  const r = spawnSync(cmd, args, { cwd: crate, stdio: "inherit", env });
+  if (r.error) give_up(`${cmd}: ${r.error.message}`);
+  if (r.status !== 0) give_up(`${cmd} ${args[0]} failed (${r.status})`);
 }
 
-const version = spawnSync("wasm-bindgen", ["--version"], { encoding: "utf8", env })
+const version = spawnSync("wasm-bindgen", ["--version"], { encoding: "utf8", env });
 if (version.error || !version.stdout.includes(WASM_BINDGEN)) {
   give_up(
     `wasm-bindgen ${WASM_BINDGEN} is required (found: ${version.stdout?.trim() || "none"}); ` +
       `cargo install wasm-bindgen-cli --version ${WASM_BINDGEN} --locked`,
-  )
+  );
 }
 
-run("cargo", ["build", "--release", "--target", "wasm32-unknown-unknown", "--manifest-path", manifest])
+run("cargo", ["build", "--release", "--target", "wasm32-unknown-unknown", "--manifest-path", manifest]);
 
-const wasm = join(target, "wasm32-unknown-unknown", "release", "cua_spaces_core_wasm.wasm")
-if (!existsSync(wasm)) give_up(`missing ${wasm}`)
-mkdirSync(out, { recursive: true })
-run("wasm-bindgen", ["--target", "web", "--out-dir", out, "--out-name", "core", wasm])
-console.log(`app core wasm: ${out}`)
+const wasm = join(target, "wasm32-unknown-unknown", "release", "cua_spaces_core_wasm.wasm");
+if (!existsSync(wasm)) give_up(`missing ${wasm}`);
+mkdirSync(out, { recursive: true });
+run("wasm-bindgen", ["--target", "web", "--out-dir", out, "--out-name", "core", wasm]);
+console.log(`app core wasm: ${out}`);

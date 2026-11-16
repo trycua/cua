@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_core::{
     protocol::ToolResult,
@@ -71,6 +74,10 @@ impl Tool for RightClickTool {
             Err(e) => return e,
         };
         let (elem_idx, hwnd_opt, admitted) = resolved.into_parts(args.opt_u64("window_id"));
+        if let Some(refusal) = super::impl_::refuse_if_disabled(pid, &admitted, "right_click").await
+        {
+            return refusal;
+        }
         let x = args.opt_f64("x");
         let y = args.opt_f64("y");
         let delivery = DeliveryMode::from_args(&args);

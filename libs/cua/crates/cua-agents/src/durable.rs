@@ -522,7 +522,7 @@ pub fn durable_driver_spec(
         "files": [],
         "mcpServers": mcp,
         "exitWhenIdle": true,
-        "idleExitSecs": opts.idle_exit_secs.unwrap_or(1800),
+        "idleExitSecs": opts.idle_exit_secs.unwrap_or(crate::runs::DEFAULT_IDLE_EXIT_SECS),
         "authMethod": h.auth_method,
         "keyCheck": harness::key_check(h, &opts.env, endpoint.as_ref()),
         "mcpBridge": "~/.cua/bin/mcp-remote",

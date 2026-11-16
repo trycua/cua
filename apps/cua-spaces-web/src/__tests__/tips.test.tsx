@@ -70,18 +70,15 @@ describe.skipIf(!wasmBuilt)("tips", () => {
     await waitFor(() => expect(within(t).getByRole("button", { name: "Copied" })).toBeTruthy());
   });
 
-  it("Next tip skips to the next that applies, and × closes it; both are kept in the settings", async () => {
+  it("Next tip skips to the next that applies (none more on this page), and is kept in the settings", async () => {
     const { h, saved } = host();
     const app = await mountApp("/spaces", h);
     await shown("try-agent");
     fireEvent.click(button(tip()!, "Next tip"));
-    // The demo has a stopped Space: power on hover is next.
-    await shown("power");
-    expect(tip()!.textContent).toContain("Point at a Space to turn it on or off without opening it.");
-    expect(saved.at(-1)).toEqual({ off: false, done: ["try-agent"] });
-    fireEvent.click(button(tip()!, "Close"));
+    // The list of your computers has no power on hover and no picking several: nothing else applies on it.
     await waitFor(() => expect(tip()).toBeNull());
-    expect(await settingsTips(app.demo)).toEqual({ off: false, done: ["try-agent", "power"] });
+    expect(saved.at(-1)).toEqual({ off: false, done: ["try-agent"] });
+    expect(await settingsTips(app.demo)).toEqual({ off: false, done: ["try-agent"] });
   });
 
   it("Don't show tips turns them all off, the sidebar's too", async () => {
@@ -91,64 +88,24 @@ describe.skipIf(!wasmBuilt)("tips", () => {
     fireEvent.click(button(tip()!, "Don't show tips"));
     await waitFor(() => expect(tip()).toBeNull());
     expect((await settingsTips(app.demo))?.off).toBe(true);
-    await act(() => app.router.navigate({ to: "/machines" }));
-    await waitFor(() => expect(document.querySelector("[data-machines-page], main")).not.toBeNull());
+    await act(() => app.router.navigate({ to: "/keyvault" }));
+    await waitFor(() => expect(document.querySelector("main")).not.toBeNull());
     expect(sidebarTip()).toBeNull();
   });
 
-  it("shows a tip that belongs to no page in the sidebar, only while no page shows one", async () => {
+  it("shows no tip in the sidebar (its only one, a CLI flag, lives in the docs)", async () => {
     const { h } = host();
     const app = await mountApp("/spaces", h);
     await shown("try-agent");
-    // Two computers are online, but the page's tip comes first.
     expect(sidebarTip()).toBeNull();
-    await act(() => app.router.navigate({ to: "/machines" }));
-    await waitFor(() => expect(sidebarTip()?.getAttribute("data-tip")).toBe("on-auto"));
-    const s = sidebarTip()!;
-    expect(s.textContent).toContain("New Spaces can go to whichever machine has room.");
-    expect(s.querySelector("[data-tip-code]")!.textContent).toBe("cua create --on auto");
-    // Only × in the sidebar: no Next tip, no Don't show tips.
-    expect(within(s).queryByRole("button", { name: "Next tip" })).toBeNull();
-    fireEvent.click(within(s).getByRole("button", { name: "Copy" }));
-    expect(written).toEqual(["cua create --on auto"]);
-    await waitFor(() => expect(within(s).getByRole("button", { name: "Copied" })).toBeTruthy());
-    fireEvent.click(within(s).getByRole("button", { name: "Close" }));
-    await waitFor(() => expect(sidebarTip()).toBeNull());
-    expect((await settingsTips(app.demo))?.done).toContain("on-auto");
-  });
-
-  it("several stopped Spaces and a nearly full disk: Select stopped opens the list for This Mac, biggest first, the stopped ones picked", async () => {
-    const { h } = host({ demo: { disk: "low" } });
-    const app = await mountApp("/spaces", h);
-    await shown("try-agent");
-    await app.demo.call("settings.set", { key: "tips", value: { off: false, done: ["try-agent", "power"] } });
-    app.emit({ type: "settings.changed" });
-    // The demo's stopped Spaces you may delete: fewer than 3 gives no tip, so make sure of 3.
-    await shown("bulk-select");
-    expect(tip()!.textContent).toContain("Select several Spaces to delete them together.");
-    fireEvent.click(button(tip()!, "Select stopped"));
-    await waitFor(() => expect(app.router.state.location.search).toEqual({ view: "list", on: "this-mac", sort: "size", select: "stopped" }));
-  });
-
-  it("powering a Space from its tile finishes the power tip", async () => {
-    const { h } = host();
-    const app = await mountApp("/spaces", h);
-    await shown("try-agent");
-    const power = await waitFor(() => {
-      const b = document.querySelector<HTMLButtonElement>("[data-tile-power]");
-      if (!b) throw new Error("no tile power");
-      return b;
-    });
-    fireEvent.click(power);
-    await waitFor(async () => expect((await settingsTips(app.demo))?.done).toContain("power"));
+    await act(() => app.router.navigate({ to: "/keyvault" }));
+    await waitFor(() => expect(document.querySelector("main")).not.toBeNull());
+    expect(sidebarTip()).toBeNull();
   });
 
   it("on a Space's page: its request first, then Share… (sharing any Space finishes it)", async () => {
     const { h } = host({
-      answer: (op, out) =>
-        op === "spaces.list"
-          ? (out as Array<Record<string, unknown>>).map((space) => ({ ...space, sharing: undefined }))
-          : out,
+      answer: (op, out) => (op === "spaces.list" ? (out as Array<Record<string, unknown>>).map((space) => ({ ...space, sharing: undefined })) : out),
     });
     const app = await mountApp("/spaces/local:design-review", h);
     await shown("try-agent");
@@ -190,7 +147,8 @@ describe.skipIf(!wasmBuilt)("tips", () => {
     await mountApp("/spaces", h);
     await shown("try-agent");
     fireEvent.click(button(tip()!, "Next tip"));
-    await shown("power");
+    // Kept for the session: it does not come back.
+    await waitFor(() => expect(tip()).toBeNull());
   });
 });
 

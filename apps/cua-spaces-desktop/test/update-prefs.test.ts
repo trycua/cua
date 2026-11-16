@@ -3,14 +3,15 @@
 
 import { describe, expect, it } from "vitest";
 import type { Settings, SwiftMigration } from "../src/settings";
-import { autoCheckPref, autoInstallPref, channelPref, type UpdateChannel } from "../src/update-prefs";
+import { autoCheckPref, autoInstallPref, channelPref, readChannel, type UpdateChannel } from "../src/update-prefs";
 
 const moved = (m: Partial<SwiftMigration> = {}): Settings => ({
   swiftMigration: { at: "2026-10-14T18:05:04.636Z", found: true, copied: ["settings.json"], ...m },
 });
 const fresh: Settings = { swiftMigration: { at: "2026-10-14T18:05:04.636Z", found: false, copied: [] } };
-// macOS before the Sparkle cutover: only Beta is served.
-const macServed = (c: UpdateChannel) => c === "beta";
+// macOS before the Sparkle cutover: no channel is served.
+const macServed = (_: UpdateChannel) => false;
+const everywhere = () => true;
 
 describe("autoCheckPref", () => {
   it("keeps Sparkle's automatic checks on for someone who moved from the Swift app", () => {
@@ -54,19 +55,27 @@ describe("autoInstallPref", () => {
 
 describe("channelPref", () => {
   it("uses the build's channel when nothing is saved", () => {
-    expect(channelPref({}, "beta", macServed)).toBe("beta");
-    expect(channelPref({}, "stable", () => true)).toBe("stable");
+    expect(channelPref({}, "nightly", everywhere)).toBe("nightly");
+    expect(channelPref({}, "stable", everywhere)).toBe("stable");
+  });
+
+  it("moves a saved Beta to Nightly", () => {
+    expect(readChannel("beta")).toBe("nightly");
+    expect(readChannel("nightly")).toBe("nightly");
+    expect(readChannel("stable")).toBe("stable");
+    expect(readChannel("weekly")).toBeUndefined();
+    expect(channelPref({ updateChannel: "beta", updateChannelChosen: true }, "stable", everywhere)).toBe("nightly");
+    expect(channelPref({ ...moved(), updateChannel: "beta" }, "stable", everywhere)).toBe("nightly");
   });
 
   it("drops a carried-over channel this app isn't served on", () => {
-    // Swift's "stable" on a macOS Electron beta: Stable has no Electron feed yet.
-    expect(channelPref({ ...moved(), updateChannel: "stable" }, "beta", macServed)).toBe("beta");
-    // After the cutover (Stable served), the Swift choice holds.
-    expect(channelPref({ ...moved(), updateChannel: "stable" }, "beta", () => true)).toBe("stable");
-    expect(channelPref({ ...moved(), updateChannel: "beta" }, "stable", macServed)).toBe("beta");
+    // Swift's "stable" on a macOS Electron build: no Electron feed on macOS yet.
+    expect(channelPref({ ...moved(), updateChannel: "stable" }, "nightly", macServed)).toBe("nightly");
+    // Where it is served, the Swift choice holds.
+    expect(channelPref({ ...moved(), updateChannel: "stable" }, "nightly", everywhere)).toBe("stable");
   });
 
   it("keeps a channel the user picked in this app", () => {
-    expect(channelPref({ updateChannel: "stable", updateChannelChosen: true }, "beta", macServed)).toBe("stable");
+    expect(channelPref({ updateChannel: "stable", updateChannelChosen: true }, "nightly", macServed)).toBe("stable");
   });
 });

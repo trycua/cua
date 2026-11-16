@@ -10,6 +10,7 @@
  */
 
 import type { CoreClient } from "./core";
+import type { AgentMenuPrefs } from "./protocol";
 import type { AgentSetupRow } from "./contracts/agents";
 import { hostOs, type HostOs } from "./host-os";
 import type { AgentKeysInput, AgentKeyRowView } from "./agent-keys";
@@ -26,6 +27,8 @@ export interface ConnectorAppInput {
   skills: boolean;
   mcp: boolean | null;
   mcpConfig: string | null;
+  /** The app's own sign-in is on this computer: a run here uses it, nothing to sign in to. */
+  signedIn?: boolean;
 }
 
 export interface ConnectorsInput {
@@ -292,8 +295,9 @@ export function connectorsInputOf(
       skills: r.skillsTotal > 0 ? r.skillsInstalled >= r.skillsTotal : r.configured,
       mcp: r.mcpConfig ? r.configured || /MCP/i.test(r.detail) : null,
       mcpConfig: r.mcpConfig,
+      signedIn: r.signedIn,
     })),
-    keys: { keys: keys.keys, unavailable: keys.unavailable, error: keys.error },
+    keys: { keys: keys.keys, unavailable: keys.unavailable, ...(keys.warning ? { warning: keys.warning } : {}), error: keys.error },
     ...(keys.extras?.length ? { keyExtras: keys.extras } : {}),
     ...(keys.uses && Object.keys(keys.uses).length ? { uses: keys.uses } : {}),
     shellKeys: extra.shellKeys ?? [],
@@ -312,13 +316,25 @@ export const connectorsView = (core: CoreClient, input: ConnectorsInput, os: Hos
 export const connectPlan = (core: CoreClient, input: ConnectorsInput, agent: string): ConnectPlan | null =>
   core.tryCall<ConnectPlan>("connectors.connectPlan", { input: input as unknown as Json, agent }) ?? null;
 
-export const providerSheet = (core: CoreClient, input: ConnectorsInput, provider: string, os: HostOs = hostOs(), forApp: string | null = null): ProviderSheetView | null =>
+export const providerSheet = (
+  core: CoreClient,
+  input: ConnectorsInput,
+  provider: string,
+  os: HostOs = hostOs(),
+  forApp: string | null = null,
+): ProviderSheetView | null =>
   core.tryCall<ProviderSheetView | null>("connectors.providerSheet", { input: input as unknown as Json, provider, hostOs: os, forApp }) ?? null;
 
 export const importSheet = (core: CoreClient, os: HostOs = hostOs()): ImportSheetView | null =>
   core.tryCall<ImportSheetView>("connectors.importSheet", { hostOs: os }) ?? null;
 
-export const providerPicker = (core: CoreClient, input: ConnectorsInput, forApp: string | null = null, query = "", expanded = false): ProviderPickerView | null =>
+export const providerPicker = (
+  core: CoreClient,
+  input: ConnectorsInput,
+  forApp: string | null = null,
+  query = "",
+  expanded = false,
+): ProviderPickerView | null =>
   core.tryCall<ProviderPickerView>("connectors.providerPicker", { input: input as unknown as Json, forApp, query, expanded }) ?? null;
 
 /** One model row of the prompt box's model menu. */
@@ -329,6 +345,8 @@ export interface ModelChoice {
   fast: boolean;
   /** The provider's own default. */
   default: boolean;
+  /** An older id kept so a saved choice still works: accepted, but not shown in the menu. */
+  legacy?: boolean;
 }
 
 export interface ModelGroup {
@@ -353,6 +371,96 @@ export interface ModelsView {
 export const modelsView = (core: CoreClient, input: ConnectorsInput): ModelsView | null =>
   core.tryCall<ModelsView>("connectors.models", { input: input as unknown as Json }) ?? null;
 
+/* ---- The agent menu of the prompt box ------------------------------------------------ */
+
+/** One sign-in or key a coding app can run with. */
+export interface AgentAccount {
+  provider: string;
+  providerLabel: string;
+  icon: string;
+  env: string;
+  slot: string | null;
+  /** What the person sees: the sign-in's own name, "Signed in with ChatGPT", a key's name or "API key ending 4f2a". */
+  line: string;
+  via: "sign-in" | "key";
+  /** The account runs use now. */
+  selected: boolean;
+  models: ModelChoice[];
+  defaultModel: string | null;
+}
+
+/** One coding app of the menu and the accounts the person has for it. */
+export interface AgentGroup {
+  /** The harness id a run uses (`openai-codex`). */
+  harness: string;
+  /** The app's Connections id (`codex`), where its sign-ins are managed. */
+  app: string;
+  label: string;
+  state: "connected" | "needs-reconnect" | "not-connected";
+  accounts: AgentAccount[];
+  signInLabel: string;
+}
+
+/** A coding app, an account and a model picked together. */
+export interface AgentRef {
+  harness: string;
+  provider: string;
+  env: string;
+  slot: string | null;
+  model: string;
+}
+
+/** The agent menu (`connectors.agents`). */
+export interface AgentsView {
+  groups: AgentGroup[];
+  default: AgentRef | null;
+  empty: string | null;
+}
+
+export const agentsView = (core: CoreClient, input: ConnectorsInput, menu?: AgentMenuPrefs): AgentsView | null =>
+  core.tryCall<AgentsView>("connectors.agents", { input: input as unknown as Json, ...(menu ? { menu: menu as unknown as Json } : {}) }) ?? null;
+
+/** One coding app in Settings, Connections, Agent menu (`agentMenu.view`). */
+export interface AgentMenuRow {
+  app: string;
+  label: string;
+  /** The app is in the agent menu. */
+  shown: boolean;
+  /** "Signed in", "Sign in again" or "Not signed in". */
+  status: string;
+  /** The last app shown: its switch cannot be turned off. */
+  locked: boolean;
+}
+
+export interface AgentMenuSettings {
+  title: string;
+  switchLabel: string;
+  help: string;
+  rows: AgentMenuRow[];
+  /** Said while one app is left: why it stays. */
+  lastNote: string | null;
+}
+
+export interface AgentMenuChange {
+  prefs: AgentMenuPrefs;
+  /** Said when the switch was refused (the last app cannot be hidden). */
+  refused: string | null;
+}
+
+const menuArgs = (input: ConnectorsInput, menu: AgentMenuPrefs) => ({ input: input as unknown as Json, menu: menu as unknown as Json });
+
+/** The rows of the agent menu switches (`agentMenu.view`). */
+export const agentMenuView = (core: CoreClient, input: ConnectorsInput, menu: AgentMenuPrefs): AgentMenuSettings | null =>
+  core.tryCall<AgentMenuSettings>("agentMenu.view", menuArgs(input, menu)) ?? null;
+
+/** The choice after switching `app` on or off (`agentMenu.choose`). */
+export const agentMenuChoose = (core: CoreClient, input: ConnectorsInput, menu: AgentMenuPrefs, app: string, on: boolean): AgentMenuChange | null =>
+  core.tryCall<AgentMenuChange>("agentMenu.choose", { ...menuArgs(input, menu), app, on }) ?? null;
+
+/** The choice after the accounts changed: an app that gained an account is shown again (`agentMenu.sync`). */
+export const agentMenuSync = (core: CoreClient, input: ConnectorsInput, menu: AgentMenuPrefs): AgentMenuPrefs | null =>
+  core.tryCall<AgentMenuPrefs>("agentMenu.sync", menuArgs(input, menu)) ?? null;
+
 export const appDetail = (core: CoreClient, input: ConnectorsInput, agent: string): AppDetailView | null =>
   core.tryCall<AppDetailView | null>("connectors.appDetail", { input: input as unknown as Json, agent }) ?? null;
 
@@ -363,7 +471,12 @@ export const setupCard = (core: CoreClient, input: ConnectorsInput, agent: strin
 /* ---- Summoning agents in a Space ---------------------------------------------------- */
 
 export interface SummonMember {
+  /** What the Space calls it (`claude`): the handle the thread matches. */
   handle: string;
+  /** The host's name for it (`claude-8`), an alias only. */
+  key?: string;
+  /** Runs on this device's own sign-ins (a Home's agent): waking it checks them. */
+  mine?: boolean;
   harness: string;
   label: string;
 }
@@ -372,6 +485,8 @@ export interface SummonInput {
   members: SummonMember[];
   people: string[];
   canAdd: boolean;
+  /** Report an @mention of nobody in the Space (the thread's composer; not Ask first's job). */
+  reportUnknown?: boolean;
   connectors: ConnectorsInput;
 }
 
@@ -384,7 +499,7 @@ export interface SummonCandidate {
 }
 
 export interface CantWake {
-  reason: "not-connected" | "cant-add" | "failed";
+  reason: "not-connected" | "cant-add" | "failed" | "no-such-member";
   handle: string;
   harness: string;
   name: string;
@@ -415,7 +530,7 @@ export const queuedNote = (core: CoreClient, creating: boolean): LocalNote | nul
 export interface SummonStep {
   handle: string;
   harness: string;
-  action: "wake" | "add" | "blocked";
+  action: "wake" | "add" | "blocked" | "unknown";
   cantWake: CantWake | null;
 }
 

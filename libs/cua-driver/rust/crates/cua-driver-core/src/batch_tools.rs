@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `run_steps`: run an ordered list of existing action tools in one call.
 //!
 //! The tool owns no input logic. Every step is dispatched through the same
@@ -170,10 +173,7 @@ impl Tool for RunStepsTool {
                 `window`) on run_steps itself are the default window of every step that names \
                 none. Reads (get_window_state, zoom) do not run between steps: one there is \
                 skipped; a get_window_state last is the `observe`, a zoom last runs after it. \
-                Every step goes through the same session, permission and approval checks as a \
-                direct call; a batch grants nothing extra. \
-                All steps are validated before the first one runs, so a malformed step 4 \
-                changes nothing. Element tokens and element_index values come from a \
+                Steps pass the same checks as direct calls. Element tokens and element_index values come from a \
                 get_window_state read before the batch; a step that changes the UI can \
                 invalidate later element targets, so put element-targeted actions before the \
                 actions that reshuffle the window, or target later steps by role/name. A token \
@@ -187,8 +187,7 @@ impl Tool for RunStepsTool {
                 foreground once (the window is activated). That \
                 read is a `since:\"latest\"` diff by default: only the rows that changed \
                 since your last read of the window, plus a new snapshot_id. Without \
-                `observe` nothing is read. The batch uses one session: steps may \
-                omit `session` or repeat the batch's. `delay_ms` pauses between steps (max \
+                `observe` nothing is read. `delay_ms` pauses between steps (max \
                 2000). At most 64 steps; `delivery_mode` on run_steps is the default for its steps.\n\n\
                 TARGET BY NAME (no earlier read needed, so one batch can cross screens): \
                 a step can be written `{\"click\": {...args}}` as well as `{tool, args}`, and \
@@ -227,7 +226,7 @@ impl Tool for RunStepsTool {
                         "type": "array",
                         "minItems": 1,
                         "maxItems": MAX_STEPS,
-                        "description": "Ordered actions. Execution stops at the first failing step. Each step is {tool, args} or {<tool>: args}, plus optional wait_for / expect / timeout_ms; a step may also be only a wait_for or expect check.",
+                        "description": "Ordered actions. Execution stops at the first failing step. Each step is {tool, args}, {tool, <argument fields beside tool>} or {<tool>: args}, plus optional wait_for / expect / timeout_ms; a step may also be only a wait_for or expect check.",
                         "items": {
                             "type": "object",
                             "properties": {
@@ -546,15 +545,15 @@ impl Plan {
                     }
                 }
             }
-            let names_window = step
-                .action
-                .as_ref()
-                .is_some_and(|action| !action.window.is_empty())
-                || step
-                    .wait_for
-                    .iter()
-                    .chain(step.expect.iter())
-                    .any(|check| !check.window.is_empty());
+            // An `element_token` names its snapshot, and so its window; a
+            // token the runtime no longer holds names nothing (fail closed).
+            let names_window = step.action.as_ref().is_some_and(|action| {
+                !action.window.is_empty() || token_window(registry, &action.args).is_some()
+            }) || step
+                .wait_for
+                .iter()
+                .chain(step.expect.iter())
+                .any(|check| !check.window.is_empty());
             let needs_window = step
                 .action
                 .as_ref()
@@ -972,6 +971,17 @@ async fn run_step(
                 title: None,
                 on_screen: true,
             });
+        } else if let Some(window) = token_window(registry, &args) {
+            // A token-only step: its snapshot names the window later steps
+            // and the end `observe` inherit.
+            if context.is_empty() {
+                *context = WindowSpec {
+                    pid: Some(window.pid),
+                    window_id: Some(window.window_id),
+                    ..Default::default()
+                };
+            }
+            *last_window = Some(window);
         }
 
         let mut result = registry.invoke(tool, args.clone()).await;
@@ -1169,6 +1179,18 @@ fn accepts(registry: &ToolRegistry, tool: &str, field: &str) -> bool {
         .and_then(|def| def.input_schema.get("properties"))
         .and_then(|properties| properties.get(field))
         .is_some()
+}
+
+/// The window a step's live `element_token` was taken of, when it names one.
+fn token_window(registry: &ToolRegistry, args: &Value) -> Option<Window> {
+    let (pid, window_id) = registry.window_for_token(args)?;
+    Some(Window {
+        pid: i64::from(pid),
+        window_id,
+        app: None,
+        title: None,
+        on_screen: true,
+    })
 }
 
 /// Fill the observation's window from the last window the batch used.
@@ -1543,11 +1565,31 @@ fn parse_step(
         })
         .map(|(key, _)| key)
         .collect();
+    // A flat step `{"tool": "hotkey", "keys": [...]}` carries the arguments
+    // beside `tool`. With no `args`, those fields are the arguments; mixing
+    // them with `args` stays an error.
+    let args_absent = matches!(object.get("args"), None | Some(Value::Null));
+    let flat_args: Option<Value> =
+        (object.get("tool").is_some() && !shorthand.is_empty() && args_absent).then(|| {
+            Value::Object(
+                shorthand
+                    .iter()
+                    .map(|key| ((*key).clone(), object[key.as_str()].clone()))
+                    .collect(),
+            )
+        });
     let (name, raw_args) = match (object.get("tool"), shorthand.as_slice()) {
+        (Some(tool), [_, ..]) if flat_args.is_some() => (
+            Some(
+                tool.as_str()
+                    .ok_or_else(|| PlanError::step(index, "`tool` must be a string"))?,
+            ),
+            flat_args.as_ref(),
+        ),
         (Some(_), [extra, ..]) => {
             return Err(PlanError::step(
                 index,
-                format!("unknown field `{extra}`; a step has `tool` and `args`, or one `{{<tool>: args}}` key, plus optional wait_for/expect/timeout_ms"),
+                format!("unknown field `{extra}` beside `args`; put every argument inside `args` (or drop `args` and write them beside `tool`), plus optional wait_for/expect/timeout_ms"),
             ))
         }
         (Some(tool), []) => (

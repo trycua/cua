@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Trusted standalone-daemon assembly for the Computer History preview.
 
 use std::{
@@ -462,9 +465,8 @@ fn default_history_root() -> PathBuf {
         let root = std::env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("C:/Temp"));
-        return root
-            .join(crate::bundle::state_namespace())
-            .join("computer-history");
+        root.join(crate::bundle::state_namespace())
+            .join("computer-history")
     }
 }
 

@@ -15,7 +15,7 @@
 //! refused connection (RST) got through and fails the test.
 //!
 //! ```text
-//! CUA_EXPERIMENTS=secure-spaces CUA_HOME=$(mktemp -d) cargo test -p cua-daemon --test space_secure_default -- \
+//! CUA_HOME=$(mktemp -d) cargo test -p cua-daemon --test space_secure_default -- \
 //!   --ignored --nocapture --test-threads=1
 //! ```
 //!

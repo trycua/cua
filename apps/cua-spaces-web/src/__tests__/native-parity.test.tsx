@@ -52,8 +52,8 @@ const NOT_ENROLLED =
   "permission denied: relay: this device is not enrolled for your cua.ai account: sign in again (`cua auth login`) to enroll it, run `cua devices enroll`, or approve it from the Cua Spaces app on an enrolled device";
 
 describe.skipIf(!wasmBuilt)("as the SwiftUI app (real routes, wasm core)", () => {
-  it("Machines: a machine the relay has not trusted gets one Trust this machine, on its own page", async () => {
-    await mount("/machines", (op) =>
+  it("This Mac: a computer the relay has not trusted gets one Trust this computer, on its own page", async () => {
+    await mount("/spaces/computer/this-mac", (op) =>
       op === "devices.get" ? Promise.resolve({ devices: [], audit: [], readError: NOT_ENROLLED, deviceName: "cua's Mac Studio" }) : undefined,
     );
     const toggle = await waitFor(() => {
@@ -69,8 +69,8 @@ describe.skipIf(!wasmBuilt)("as the SwiftUI app (real routes, wasm core)", () =>
     });
     expect(status.getAttribute("data-machine-trust")).toBe("needs-enrollment");
     // One button; the line under it says what it is for.
-    expect(screen.getAllByRole("button", { name: /^Trust this machine/ })).toHaveLength(1);
-    expect(document.querySelector("[data-machine-trust-text]")?.textContent).toMatch(/Trust this machine/);
+    expect(screen.getAllByRole("button", { name: /^Trust this computer/ })).toHaveLength(1);
+    expect(document.querySelector("[data-machine-trust-text]")?.textContent).toMatch(/Trust this computer/);
     // The core's words are plain: no enrolling, no devices.
     expect(document.body.textContent).not.toMatch(/enroll|\bdevices?\b/i);
     // The relay's refusal is what "Not trusted yet" already says.
@@ -80,8 +80,8 @@ describe.skipIf(!wasmBuilt)("as the SwiftUI app (real routes, wasm core)", () =>
     await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
   });
 
-  it("Machines: another read failure still says why", async () => {
-    await mount("/machines", (op, _a, base) =>
+  it("This Mac: another read failure still says why", async () => {
+    await mount("/spaces/computer/this-mac", (op, _a, base) =>
       op === "devices.get" ? base(op, {}).then((d) => ({ ...(d as object), readError: "relay: timed out" })) : undefined,
     );
     await waitFor(() => expect(document.querySelector("[data-devices-read-error]")?.textContent).toBe("relay: timed out"));
@@ -99,9 +99,7 @@ describe.skipIf(!wasmBuilt)("as the SwiftUI app (real routes, wasm core)", () =>
     expect(document.body.textContent).not.toContain("waitlist");
     expect(manage.textContent).toBe("Manage account on the web");
     fireEvent.click(manage);
-    await waitFor(() =>
-      expect(calls.some(([op, a]) => op === "session.openExternal" && (a as { url: string }).url === "https://app.cua.ai/team")).toBe(true),
-    );
+    await waitFor(() => expect(calls.some(([op, a]) => op === "session.openExternal" && (a as { url: string }).url === "https://app.cua.ai/team")).toBe(true));
   });
 
   it("General keeps the privacy line with its link; Welcome's Show again is in About", async () => {

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Stable physical-key injection for wlroots virtual-keyboard compositors.
 
 use std::ffi::CString;

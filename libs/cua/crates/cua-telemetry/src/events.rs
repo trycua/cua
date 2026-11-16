@@ -225,8 +225,17 @@ pub fn teleport_app(id: &str) -> String {
     }
 }
 
-/// A cua-agents harness id, else `other`.
+/// A cua-agents harness id, else `other`. The short names a person or an
+/// agent types (`codex`, `claude`: `cua_agents::harness::harness` accepts
+/// them) and ids in another case count as the harness they name; before,
+/// they all reported `other`.
 pub fn harness(id: &str) -> &'static str {
+    let id = id.trim().to_ascii_lowercase();
+    let id = match id.as_str() {
+        "codex" => "openai-codex",
+        "claude" => "claude-code",
+        other => other,
+    };
     pick(schema::HARNESSES, id, "other")
 }
 
@@ -649,7 +658,26 @@ pub fn onboarding_step(step: &str, outcome: Outcome) -> Option<Event> {
             .s("outcome", outcome.as_str())
             .s("onboarding_eligible", "unknown")
             .s("error_kind", "none")
+            .s("failed_step", "none")
     })
+}
+
+/// The step a failed sign-in stopped at (`schema::SIGN_IN_STEPS`), from its
+/// fixed kind only (`schema::ERROR_KINDS`, as `cua-spaces-app-core`
+/// `sign_in::error_kind` gives it), never from text: reaching Cua's
+/// sign-in service, confirming in the browser (it never came back, or was
+/// declined), the code exchange the service refused, saving the session on
+/// this computer, or stopped by the person. `unknown` when the kind says
+/// nothing about the step.
+pub fn sign_in_failed_step(error_kind: &str) -> &'static str {
+    match error_kind {
+        "transport" | "http" => "reach_service",
+        "timeout" | "permission_denied" => "confirm_in_browser",
+        "unauthenticated" => "exchange_code",
+        "internal" => "save_session",
+        "cancelled" => "cancelled",
+        _ => "unknown",
+    }
 }
 
 /// `cua_onboarding_step` `signed_in` with outcome `error`: a sign-in that
@@ -661,6 +689,7 @@ pub fn sign_in_failed(error_kind: &str) -> Event {
         .s("outcome", Outcome::Error.as_str())
         .s("onboarding_eligible", "unknown")
         .s("error_kind", pick(schema::ERROR_KINDS, error_kind, "other"))
+        .s("failed_step", sign_in_failed_step(error_kind))
 }
 
 /// `cua_onboarding_step` `app_launched`: the app started, with whether its
@@ -679,6 +708,7 @@ pub fn app_launched(onboarding_eligible: Option<bool>) -> Event {
             },
         )
         .s("error_kind", "none")
+        .s("failed_step", "none")
 }
 
 /// Where an agent run was started from ([`schema::AGENT_ENTRIES`]), else
@@ -1021,7 +1051,9 @@ pub fn onboarding_page(page: &str, action: &str, choice: &str) -> Option<Event> 
 
 /// One of the first-run funnel events: `step_viewed`, `step_completed`,
 /// `step_failed` (with `reason`) or `skipped` (with `how`, from the same
-/// last argument). None for a step, action or
+/// last argument). On the `ready` step the last argument is the picked
+/// agent, and `step_command_copied` and `step_chat_picked_up` are its two
+/// extra events. None for a step, action or
 /// reason outside the vocabulary. `step_index` and `onboarding_version`
 /// come from the step, so a caller cannot send a wrong one.
 pub fn first_run_step(step: &str, action: &str, reason: &str) -> Option<Event> {
@@ -1031,13 +1063,29 @@ pub fn first_run_step(step: &str, action: &str, reason: &str) -> Option<Event> {
         "step_completed" => event::ONBOARDING_STEP_COMPLETED,
         "step_failed" => event::ONBOARDING_STEP_FAILED,
         "step_skipped" => event::ONBOARDING_SKIPPED,
+        // Only the Ready screen has a command to copy and chats to continue.
+        "step_command_copied" if step == "ready" => event::ONBOARDING_COMMAND_COPIED,
+        "step_chat_picked_up" if step == "ready" => event::ONBOARDING_CHAT_PICKED_UP,
         _ => return None,
     };
     let index = schema::FIRST_RUN_STEPS.iter().position(|s| *s == step)?;
-    let e = Event::new(name)
+    let mut e = Event::new(name)
         .s("step", step)
         .n("step_index", index as u64 + 1)
         .n("onboarding_version", schema::FIRST_RUN_VERSION);
+    // Viewed, completed, copied and picked up carry the Ready screen's agent
+    // (the last argument); every other screen sends `none`.
+    if !matches!(
+        name,
+        event::ONBOARDING_STEP_FAILED | event::ONBOARDING_SKIPPED
+    ) {
+        let agent = if step == "ready" {
+            pick(schema::FIRST_RUN_AGENTS, reason, "other")
+        } else {
+            "none"
+        };
+        e = e.s("agent", agent);
+    }
     Some(match name {
         event::ONBOARDING_STEP_FAILED => e.s(
             "reason",
@@ -1105,9 +1153,10 @@ pub fn failed_step(
         "vm_never_started" => Some("start_vm"),
         "vm_config_invalid" => Some("configure_vm"),
         _ => match kind {
-            "runtime_missing" | "runtime_not_running" | "runtime_permission" => {
-                Some("start_runtime")
-            }
+            "runtime_missing"
+            | "vm_runtime_missing"
+            | "runtime_not_running"
+            | "runtime_permission" => Some("start_runtime"),
             "virtualization_unavailable" | "host_capacity" => Some("check_host"),
             // The checks before anything starts refuse these in `preparing`.
             "local_network" | "insufficient_disk" if phase == "preparing" => Some("check_host"),

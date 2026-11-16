@@ -1,0 +1,100 @@
+---
+title: Uninstall
+description: 'Remove Hoy, Hoy.app and the Hoy system extension with the uninstaller, see what it keeps, remove everything with --purge, or finish by hand.'
+---
+
+Run the uninstaller from the copy the installer keeps:
+
+```bash skip="no-runner"
+~/.local/hoy/hoy-uninstall.sh --dry-run
+~/.local/hoy/hoy-uninstall.sh
+```
+
+`--dry-run` prints what would be removed and changes nothing. The plain command
+removes the program, the Hoy login item, Hoy.app and the Hoy system extension,
+and keeps your VMs, images, settings and logs, so installing Hoy again later
+picks them up.
+
+Run it from Terminal on the Mac itself, not over ssh. macOS asks for an
+administrator password to remove the extension in a window on that Mac's screen,
+and asks once. Over ssh, or with nobody logged in at the screen, the uninstaller
+stops before it removes anything and exits with code 3:
+
+```text output
+hoy: the Hoy system extension could not be removed: macOS needs your admin password in a window on this Mac's screen. Run the uninstall from Terminal on the Mac itself, or remove it in System Settings > General > Login Items & Extensions.
+hoy-uninstall: nothing was removed.
+```
+
+`--dry-run` notes the same requirement. To remove everything except Hoy.app and
+its extension from an ssh shell, add `--keep-app`. If you cancel the password
+window, the extension and Hoy.app stay, and the script says how to finish.
+
+It refuses while a Hoy VM is running: run `hoy ps`, then `hoy stop <vm>`. It also
+refuses while the opt-in system daemon runs this install's service. Remove that
+first:
+
+```bash skip="destructive"
+sudo sh ~/.local/hoy/current/hoy-install.sh --system-daemon --remove
+```
+
+To free the image store's space without uninstalling, use `hoy images prune --dry-run`
+and `hoy images rm <ref>`. They remove images, not VMs. See
+[Free disk space](/hoy/guides/free-disk-space).
+
+## What it removes
+
+| What | Where | Default | `--purge --yes` |
+|---|---|---|---|
+| Program | `~/.local/hoy` (releases, `current`, `previous`, helper files) | removed | removed |
+| Background service | its login item and agent file in `~/Library/Application Support/com.trycua.hoy`; an earlier release's LaunchAgent; the running service of this install | removed | removed |
+| The `hoy` command and `PATH` | `~/.local/bin/hoy` (or the `--install-dir` you used), and the one line the installer added to `~/.zshenv`, `~/.bashrc`, `~/.bash_profile` or `~/.profile` (it ends with `# added by the hoy installer`) | removed | removed |
+| Hoy.app and the extension | `/Applications/Hoy.app`. Kept with `--keep-app`, or while another user of this Mac runs Hoy | removed | removed |
+| Your VMs | `~/Library/Application Support/hoy/vms` | kept | removed |
+| State, settings, logs | `~/Library/Application Support/hoy` | kept | removed |
+| Image store | where your Hoy settings put it | kept | removed if it is inside the Hoy home; outside it, only with `--purge-images` |
+
+Nothing else in your shell startup files changes.
+
+The macOS VM slot records in `/Users/Shared/Hoy` (one small file per running
+macOS VM) are kept by default. `--purge` removes them when no running process
+holds one, and says what it kept otherwise.
+
+While it is on, the extension keeps a small record of the macOS VMs it counts in
+`/private/var/db/com.trycua.hoy.es`, owned by root. It stays after the extension
+is removed, and a later install ignores it. Remove it with
+`sudo rm -r /private/var/db/com.trycua.hoy.es` if you like.
+
+## Remove everything
+
+`--purge` also needs `--yes`, because it deletes every VM and disk:
+
+```bash skip="destructive"
+~/.local/hoy/hoy-uninstall.sh --purge --yes
+```
+
+After the extension is removed, macOS keeps its entry under Full Disk Access in
+System Settings. It does no harm. Remove it there with the minus button if you
+like.
+
+The script follows `HOY_PREFIX`, `HOY_HOME` and `HOY_SHELL_RC` like the
+installer.
+
+## By hand
+
+If the script is gone:
+
+```bash skip="destructive"
+"/Applications/Hoy.app/Contents/MacOS/Hoy" --unregister-agent
+rm "$HOME/Library/Application Support/com.trycua.hoy/agent.env"
+rm -r ~/.local/hoy
+"/Applications/Hoy.app/Contents/MacOS/Hoy" --deactivate
+```
+
+`--unregister-agent` stops the background service and removes its login item. `--deactivate` asks
+macOS to remove the extension and needs an administrator password. Then drag
+`/Applications/Hoy.app` to the Trash. To delete every VM, your settings and the
+logs as well:
+
+```bash skip="destructive"
+rm -r "$HOME/Library/Application Support/hoy"
+```

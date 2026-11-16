@@ -449,7 +449,7 @@ pub struct NodeView {
 }
 
 /// Where an interactive Space went.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Serialize)]
 pub struct PlacedSpace {
     /// The host.
     pub node: String,
@@ -465,6 +465,19 @@ pub struct PlacedSpace {
     /// Machines that were not chosen and why, in plain words ("linux-box
     /// cannot run microVM Spaces ...", "mac-studio is aarch64, not amd64").
     pub skipped: Vec<String>,
+}
+
+impl std::fmt::Debug for PlacedSpace {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PlacedSpace")
+            .field("node", &self.node)
+            .field("id", &self.id)
+            .field("token", &"<redacted>")
+            .field("local_space", &self.local_space)
+            .field("kind", &self.kind)
+            .field("skipped", &self.skipped)
+            .finish()
+    }
 }
 
 /// What `place_space` needs.

@@ -23,14 +23,19 @@ export type CommandRunner = (executable: string, args: string[], timeoutSeconds:
 
 export const runCommand: CommandRunner = (executable, args, timeoutSeconds) =>
   new Promise((resolve) => {
-    execFile(executable, args, { timeout: timeoutSeconds * 1000, killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
-      const e = error as (NodeJS.ErrnoException & { killed?: boolean; code?: unknown }) | null;
-      resolve({
-        status: e === null ? 0 : typeof e.code === "number" ? e.code : null,
-        output: `${stdout}${stderr}`,
-        timedOut: e !== null && e.killed === true,
-      });
-    });
+    execFile(
+      executable,
+      args,
+      { timeout: timeoutSeconds * 1000, killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024, windowsHide: true },
+      (error, stdout, stderr) => {
+        const e = error as (NodeJS.ErrnoException & { killed?: boolean; code?: unknown }) | null;
+        resolve({
+          status: e === null ? 0 : typeof e.code === "number" ? e.code : null,
+          output: `${stdout}${stderr}`,
+          timedOut: e !== null && e.killed === true,
+        });
+      },
+    );
   });
 
 /** The JSON object `cua --json` printed (pretty-printed, maybe after other lines). */
@@ -73,7 +78,12 @@ export async function updateAgents(cua: string, run: CommandRunner = runCommand)
 }
 
 /** The agents' refresh; the notice to show, or null when it worked. */
-export async function refreshAfterUpdate(native: Native, cua: string, daemonError: string | null = null, run: CommandRunner = runCommand): Promise<string | null> {
+export async function refreshAfterUpdate(
+  native: Native,
+  cua: string,
+  daemonError: string | null = null,
+  run: CommandRunner = runCommand,
+): Promise<string | null> {
   const agents = await updateAgents(cua, run);
   console.log(`[cua-spaces] refreshed after an update (agents: ${agents ?? "ok"}, daemon: ${daemonError ?? "ok"})`);
   return native.appAboutRefreshNotice({ agentsError: agents ?? undefined, daemonError: daemonError ?? undefined }) ?? null;

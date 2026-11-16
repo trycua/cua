@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use windows::core::BOOL;
 use windows::Win32::Foundation::{HWND, LPARAM, TRUE};
 use windows::Win32::UI::WindowsAndMessaging::{

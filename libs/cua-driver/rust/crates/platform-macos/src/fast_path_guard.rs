@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS side of the fast path (CUA-3102): record fingerprints and the
 //! window image at read time, and read the live state at act time for the
 //! shared checks in `cua_driver_core::fast_path`.

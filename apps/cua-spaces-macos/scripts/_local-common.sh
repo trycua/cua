@@ -24,6 +24,7 @@ LOCAL_URL_SCHEME="cua-local"                       # CuaChannel::url_scheme
 LOCAL_HOME_DIR_NAME=".cua-local"                   # CuaChannel::home_dir
 LOCAL_APP_SUPPORT_DIR_NAME="com.trycua.spaces.macos.local" # CuaChannel::app_support_dir_name
 LOCAL_HELPER_LABEL="com.trycua.spaces.local.helper"  # CuaChannel::helper_label
+LOCAL_DRIVER_LABEL="com.trycua.spaces.local.driver"  # DriverService.label (build-app.sh)
 LOCAL_HOST_LABEL="com.trycua.spacesd.host.local"     # CuaChannel::host_label
 LOCAL_VOLUME_NAME="Cua Volume Local"               # CuaChannel::volume_name
 LOCAL_LUME_BIN_NAME="lume-local"                   # CuaChannel::lume_bin_name
@@ -128,22 +129,37 @@ require_local_bundle_or_absent() {
     return 0
 }
 
-# Stops the running Local app, its helper included, and nothing else: only
-# processes started from inside this bundle are matched.
-quit_local_app() {
-    local app="$1" pattern pids waited=0
-    command -v pgrep >/dev/null 2>&1 || return 0
+# The pids of processes started from inside the Local bundle `app`, except its
+# network gateways (cua-netgw): a macOS Space's VM keeps running when the app
+# stops and its gateway is that VM's only network, so stopping a gateway cuts
+# the VM off for good (the new app then finds a VM it cannot reach).
+local_app_pids() {
+    local app="$1" pattern pid
     pattern="^$(printf '%s' "$app" | sed 's/[][\.*^$+?(){}|]/\\&/g')/Contents/"
-    pids="$(pgrep -f "$pattern" 2>/dev/null || true)"
+    for pid in $(pgrep -f "$pattern" 2>/dev/null || true); do
+        case "$(ps -p "$pid" -o comm= 2>/dev/null)" in
+            */cua-netgw | cua-netgw) ;;
+            *) printf '%s\n' "$pid" ;;
+        esac
+    done
+}
+
+# Stops the running Local app, its helper included, and nothing else: only
+# processes started from inside this bundle are matched (not its gateways,
+# see local_app_pids).
+quit_local_app() {
+    local app="$1" pids waited=0
+    command -v pgrep >/dev/null 2>&1 || return 0
+    pids="$(local_app_pids "$app")"
     [ -n "$pids" ] || return 0
     log "stopping the running $LOCAL_APP_DIR_NAME"
     # shellcheck disable=SC2086 # one pid per word
     kill $pids 2>/dev/null || true
-    while [ "$waited" -lt 10 ] && pgrep -f "$pattern" >/dev/null 2>&1; do
+    while [ "$waited" -lt 10 ] && [ -n "$(local_app_pids "$app")" ]; do
         sleep 0.5
         waited=$((waited + 1))
     done
-    pids="$(pgrep -f "$pattern" 2>/dev/null || true)"
+    pids="$(local_app_pids "$app")"
     if [ -n "$pids" ]; then
         # shellcheck disable=SC2086
         kill -9 $pids 2>/dev/null || true

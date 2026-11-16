@@ -42,8 +42,11 @@ message SetSpaceEgressResponse {}
 //   daemon are blocked;
 // - "none": no network;
 // - "localhost": "internet", plus the host's loopback on
-//   `localhost_ports` (every port only with `all_localhost_ports`);
+//   `localhost_ports` (every port only with `all_localhost_ports`; the ports
+//   go with "localhost+lan" too);
 // - "lan": "internet", plus the local network (not the host itself);
+// - "localhost+lan": "internet", plus both of the above (the two extras are
+//   independent; this is the one preset with both);
 // - "custom": `custom_base` ("internet" or "none") plus `allow` and `deny`;
 // - "unprotected": everything but cloud metadata, other trees and the
 //   daemon.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_contract::HotkeyInput;
 use cua_driver_core::{
@@ -12,6 +15,7 @@ use std::sync::Arc;
 use crate::apps;
 use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
+use cua_driver_core::security_prompt::PromptInput;
 
 use super::ToolState;
 
@@ -72,7 +76,7 @@ fn def() -> &'static ToolDef {
             "type": "object",
             "required": ["keys"],
             "properties": {
-                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
+                "session": cua_driver_core::tool_schema::session_schema(),
                 "pid": { "type": "integer", "description": "Target process ID. Required with x, y; optional with element_token (the token carries the pid)." },
                 "keys": {
                     "type": "array",
@@ -204,9 +208,11 @@ impl Tool for HotkeyTool {
                 );
             };
             let display = raw_keys.join("+");
+            super::cursor_tools::position_desktop_keyboard_cursor(&self.state, &args).await;
+            let prompt = PromptInput::from_args(&args);
             let result = tokio::task::spawn_blocking(move || {
                 let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-                crate::input::keyboard::press_key_global(&key, &modifier_refs)
+                crate::input::keyboard::press_key_global(prompt, &key, &modifier_refs)
             })
             .await;
             return match result {
@@ -216,7 +222,11 @@ impl Tool for HotkeyTool {
                         "path": "hid",
                         "effect": "unverifiable"
                     })),
-                Ok(Err(error)) => ToolResult::error(format!("desktop hotkey failed: {error}")),
+                Ok(Err(error)) => {
+                    crate::security_prompt::tool_result(&error).unwrap_or_else(|| {
+                        ToolResult::error(format!("desktop hotkey failed: {error}"))
+                    })
+                }
                 Err(error) => ToolResult::error(format!("desktop hotkey task failed: {error}")),
             };
         }
@@ -533,6 +543,7 @@ impl Tool for HotkeyTool {
         // and the prior frontmost is restored if the activation lingers.
         let prior_front = apps::frontmost_pid();
         let snapshot = WindowChangeDetector::snapshot(prior_front);
+        let prompt = PromptInput::from_args(&args);
 
         let result = focus_guard::with_focus_suppressed(
             Some(pid),
@@ -553,9 +564,11 @@ impl Tool for HotkeyTool {
                                 wid,
                                 || {
                                     if screen_sharing_target {
-                                        crate::input::keyboard::press_key_bare_global(&key, &m)
+                                        crate::input::keyboard::press_key_bare_global(
+                                            prompt, pid, &key, &m,
+                                        )
                                     } else {
-                                        crate::input::keyboard::press_key_global(&key, &m)
+                                        crate::input::keyboard::press_key_global(prompt, &key, &m)
                                     }
                                 },
                             )?;
@@ -571,7 +584,9 @@ impl Tool for HotkeyTool {
                                 wid,
                                 || {
                                     focus_hotkey_element(pid, ptr)?;
-                                    crate::input::keyboard::press_key_bare_global(&key, &m)
+                                    crate::input::keyboard::press_key_bare_global(
+                                        prompt, pid, &key, &m,
+                                    )
                                 },
                             )?;
                             Ok(())
@@ -580,7 +595,11 @@ impl Tool for HotkeyTool {
                             crate::input::skylight::with_foreground_hid_activation(
                                 pid as libc::pid_t,
                                 wid,
-                                || crate::input::keyboard::press_key_bare_global(&key, &m),
+                                || {
+                                    crate::input::keyboard::press_key_bare_global(
+                                        prompt, pid, &key, &m,
+                                    )
+                                },
                             )?;
                             Ok(())
                         }
@@ -614,7 +633,8 @@ impl Tool for HotkeyTool {
                 ))
                 .with_structured(delivered_structured(fg))
             }
-            Ok(Err(e)) => ToolResult::error(format!("hotkey failed: {e}")),
+            Ok(Err(e)) => crate::security_prompt::tool_result(&e)
+                .unwrap_or_else(|| ToolResult::error(format!("hotkey failed: {e}"))),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `run_steps` v2 against a fake two-screen app: steps that name their
 //! target, waits, checks and the end-of-batch summary.
 

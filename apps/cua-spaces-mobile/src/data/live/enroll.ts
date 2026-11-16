@@ -19,7 +19,11 @@ const SESSION_MARGIN = 60;
  * The name this phone is enrolled under: the phone's own ("Dillon's iPhone"), as other screens will list it. Never a
  * first-person word like "This phone": that only makes sense on the phone itself (the phone's own screens add a badge).
  */
-export function realDeviceName(raw: string | null | undefined = Constants.deviceName, os: string = Platform.OS, isPad: boolean = Platform.OS === "ios" && (Platform as { isPad?: boolean }).isPad === true): string {
+export function realDeviceName(
+  raw: string | null | undefined = Constants.deviceName,
+  os: string = Platform.OS,
+  isPad: boolean = Platform.OS === "ios" && (Platform as { isPad?: boolean }).isPad === true,
+): string {
   const name = (raw ?? "").replace(/\s+/g, " ").trim();
   if (name && !/^this (phone|device|ipad|iphone)$/i.test(name)) return name.slice(0, 64);
   return os === "ios" ? (isPad ? "iPad" : "iPhone") : "Android phone";

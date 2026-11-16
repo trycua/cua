@@ -26,6 +26,11 @@ def load():
 ci = load()
 
 
+def sh_script(path):
+    """Argv that runs a #!/bin/sh script: Windows cannot execute one, so Git for Windows' bash does."""
+    return [ci.BASH, Path(path).as_posix()] if os.name == "nt" else [str(path)]
+
+
 class FakeContext:
     """Routes without cargo or the docs runner."""
 
@@ -52,6 +57,12 @@ class Routing(unittest.TestCase):
         got = ids([".github/workflows/ci-gate.yml"])
         self.assertIn("actionlint", got)
         self.assertIn("bin-ci-tests", got)
+
+    def test_spaces_app_change_runs_prettier_on_the_changed_files(self):
+        self.assertIn("spaces-prettier", ids(["apps/cua-spaces-web/src/main.tsx"]))
+        self.assertIn("spaces-prettier", ids(["apps/cua-spaces/package.json"]))
+        self.assertNotIn("spaces-prettier", ids(["apps/cua-spaces-macos/README.md"]))
+        self.assertNotIn("spaces-prettier", ids(["apps/cua-spaces-web/gone.ts"]))
 
     def test_nested_cargo_manifest_runs_the_cargo_lockfile_check(self):
         # PR 6358: a libs/cua crate's manifest changed and nested workspaces'
@@ -195,14 +206,14 @@ class Hook(unittest.TestCase):
         (self.hooks / "pre-push").write_text("#!/bin/sh\necho guard-ran; exit 3\n")
         (self.hooks / "pre-push").chmod(0o755)
         ci.install_hook(force=False)
-        out = subprocess.run([str(self.hooks / "pre-push"), "origin", "url"], input="refs/heads/x 1 refs/heads/x 0\n",
+        out = subprocess.run(sh_script(self.hooks / "pre-push") + ["origin", "url"], input="refs/heads/x 1 refs/heads/x 0\n",
                              capture_output=True, text=True, cwd=self.repo)
         self.assertEqual(out.returncode, 3)
         self.assertIn("guard-ran", out.stdout)
 
     def test_skip_variable(self):
         ci.install_hook(force=False)
-        out = subprocess.run([str(self.hooks / "pre-push"), "origin", "url"], input="", capture_output=True, text=True,
+        out = subprocess.run(sh_script(self.hooks / "pre-push") + ["origin", "url"], input="", capture_output=True, text=True,
                              cwd=self.repo, env={**os.environ, "CUA_SKIP_LOCAL_CI": "1"})
         self.assertEqual(out.returncode, 0)
         self.assertIn("skipped", out.stderr)

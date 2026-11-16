@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! AX guard: a small fingerprint per element at read time, compared with the
 //! live element right before acting.
 

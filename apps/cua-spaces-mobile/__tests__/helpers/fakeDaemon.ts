@@ -31,10 +31,24 @@ export interface Seen {
   ticketPolicy?: number;
 }
 
-export function fakeRelay(opts: { machines: unknown[]; /** The computer refuses touch with these words (gRPC PermissionDenied). */ touchRefused?: string; /** The relay refuses the thread calls with these words (gRPC PermissionDenied). */ threadRefused?: string; tools: (name: string, args: Record<string, unknown>) => unknown; isError?: (name: string) => boolean; /** Other REST calls (push registrations): an answer, or undefined to fall through. */ rest?: (method: string, path: string, body: unknown) => { status?: number; body?: unknown } | undefined }) {
+export function fakeRelay(opts: {
+  machines: unknown[];
+  /** The computer refuses touch with these words (gRPC PermissionDenied). */ touchRefused?: string;
+  /** The relay refuses the thread calls with these words (gRPC PermissionDenied). */ threadRefused?: string;
+  tools: (name: string, args: Record<string, unknown>) => unknown;
+  isError?: (name: string) => boolean;
+  /** Other REST calls (push registrations): an answer, or undefined to fall through. */ rest?: (
+    method: string,
+    path: string,
+    body: unknown,
+  ) => { status?: number; body?: unknown } | undefined;
+}) {
   const seen: Seen[] = [];
   const grpc = <S extends DescMessage>(schema: S, msg: MessageShape<S>) =>
-    new Response(new Uint8Array([...frame(0, toBinary(schema, msg)), ...frame(0x80, new TextEncoder().encode("grpc-status: 0\r\n"))]), { status: 200, headers: { "content-type": "application/grpc-web+proto" } });
+    new Response(new Uint8Array([...frame(0, toBinary(schema, msg)), ...frame(0x80, new TextEncoder().encode("grpc-status: 0\r\n"))]), {
+      status: 200,
+      headers: { "content-type": "application/grpc-web+proto" },
+    });
 
   const fetcher = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = String(input);
@@ -54,14 +68,23 @@ export function fakeRelay(opts: { machines: unknown[]; /** The computer refuses 
     }
     const body = init?.body ? new Uint8Array(init.body as ArrayBuffer) : new Uint8Array();
     if (opts.threadRefused && path.endsWith("/cua.env.v1.HostThreadService/CallThreadTool")) {
-      return new Response(null, { status: 200, headers: { "content-type": "application/grpc-web+proto", "grpc-status": "7", "grpc-message": encodeURIComponent(opts.threadRefused) } });
+      return new Response(null, {
+        status: 200,
+        headers: { "content-type": "application/grpc-web+proto", "grpc-status": "7", "grpc-message": encodeURIComponent(opts.threadRefused) },
+      });
     }
     if (path.endsWith("/cua.env.v1.HostThreadService/CallThreadTool")) {
       const req = fromBinary(CallThreadToolRequestSchema, unframe(body));
       const args = JSON.parse(req.argumentsJson || "{}") as Record<string, unknown>;
       entry.tool = { space: req.space, name: req.name, args };
       const out = opts.tools(req.name, args);
-      return grpc(CallThreadToolResponseSchema, create(CallThreadToolResponseSchema, { contentJson: JSON.stringify([{ type: "text", text: JSON.stringify(out) }]), isError: opts.isError?.(req.name) ?? false }));
+      return grpc(
+        CallThreadToolResponseSchema,
+        create(CallThreadToolResponseSchema, {
+          contentJson: JSON.stringify([{ type: "text", text: JSON.stringify(out) }]),
+          isError: opts.isError?.(req.name) ?? false,
+        }),
+      );
     }
     if (path.endsWith("/cua.env.v1.SystemService/CreateViewerTicket")) {
       const req = fromBinary(CreateViewerTicketRequestSchema, unframe(body));
@@ -70,7 +93,10 @@ export function fakeRelay(opts: { machines: unknown[]; /** The computer refuses 
       return grpc(CreateViewerTicketResponseSchema, create(CreateViewerTicketResponseSchema, { ticket: "tkt", viewerPath: "/viewer/#ticket=tkt" }));
     }
     if (opts.touchRefused && (path.endsWith("/cua.env.v1.ComputerService/Pointer") || path.endsWith("/cua.env.v1.ComputerService/Keyboard"))) {
-      return new Response(null, { status: 200, headers: { "content-type": "application/grpc-web+proto", "grpc-status": "7", "grpc-message": encodeURIComponent(opts.touchRefused) } });
+      return new Response(null, {
+        status: 200,
+        headers: { "content-type": "application/grpc-web+proto", "grpc-status": "7", "grpc-message": encodeURIComponent(opts.touchRefused) },
+      });
     }
     if (path.endsWith("/cua.env.v1.ComputerService/Pointer")) {
       entry.pointer = fromBinary(PointerRequestSchema, unframe(body)) as never;

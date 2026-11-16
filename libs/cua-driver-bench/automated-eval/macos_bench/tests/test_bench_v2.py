@@ -568,3 +568,47 @@ class MultiplayerTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ParkPointerTests(unittest.TestCase):
+    """Amendment 24: the pointer is parked at a fixed point outside every registered window, verified, recorded."""
+
+    def test_park_point_clear_of_registered_frames(self):
+        self.assertEqual(v2.park_point_clear(v2.PARK_POINT), [])
+
+    def test_park_point_clear_of_every_task_window(self):
+        pack = Path(__file__).resolve().parents[3] / "taskpack"
+        frames = {}
+        for path in pack.rglob("launch.*.json"):
+            for node in _bounds_nodes(json.loads(path.read_text("utf-8"))):
+                frames[f"{path.name}:{len(frames)}"] = (
+                    node["x"],
+                    node["y"],
+                    node["width"],
+                    node["height"],
+                )
+        self.assertTrue(frames)
+        self.assertEqual(v2.park_point_clear(v2.PARK_POINT, frames), [])
+
+    def test_clear_detects_overlap(self):
+        self.assertIn("user", v2.park_point_clear((500, 400)))
+        self.assertIn("benchlab_macos", v2.park_point_clear((162, 158)))
+
+    def test_record_ok_within_tolerance_and_fails_outside(self):
+        near = (v2.PARK_POINT[0] + 1.0, v2.PARK_POINT[1] - 1.0)
+        self.assertTrue(v2.park_record(near, "m")["ok"])
+        self.assertFalse(v2.park_record((162.0, 158.0), "m")["ok"])
+        self.assertFalse(v2.park_record(None, "m")["ok"])
+        self.assertEqual(v2.park_record(near, "m")["target"], list(v2.PARK_POINT))
+
+
+def _bounds_nodes(node):
+    if isinstance(node, dict):
+        bounds = node.get("bounds")
+        if isinstance(bounds, dict) and {"x", "y", "width", "height"} <= set(bounds):
+            yield bounds
+        for value in node.values():
+            yield from _bounds_nodes(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _bounds_nodes(value)

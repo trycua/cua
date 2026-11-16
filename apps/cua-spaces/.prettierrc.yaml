@@ -1,0 +1,15 @@
+# The Cua Spaces style (double quotes, trailing commas, wider lines), not the root
+# config's. Prettier uses only the nearest config, so every option is set here.
+semi: true
+singleQuote: false
+trailingComma: all
+tabWidth: 2
+printWidth: 120
+arrowParens: always
+bracketSpacing: true
+
+overrides:
+  # Release Please bumps its version with JSON.stringify.
+  - files: "src-tauri/tauri.conf.json"
+    options:
+      parser: json-stringify

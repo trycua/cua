@@ -1,9 +1,9 @@
 //! The relay's plan-limit refusal, in plain words, for every client.
 //!
-//! The relay answers a NEW live session over the plan's cap with HTTP 429
+//! The relay answers a NEW computer in use over the plan's cap with HTTP 429
 //! and `x-cua-relay-error: plan_limit_sessions` (or `plan_limit_hours`),
 //! plus `x-cua-relay-plan`, `x-cua-relay-used` and `x-cua-relay-limit`.
-//! Live sessions are never cut. The host client turns those headers into
+//! Computers already in use are never cut. The host client turns those headers into
 //! one sentence ([`PlanLimit::sentence`]); the apps read the same sentence
 //! back ([`PlanLimit::parse`]) to show it with an Upgrade button. No
 //! dependencies, so the wasm build can use it.
@@ -20,7 +20,7 @@ pub const LIMIT_HEADER: &str = "x-cua-relay-limit";
 /// Which cap was hit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
-    /// Live sessions at once.
+    /// Computers in use at once.
     Sessions,
     /// Remote hours this month.
     Hours,
@@ -159,13 +159,13 @@ impl PlanLimit {
         }
     }
 
-    /// "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams."
+    /// "You have 5 of 5 computers in use at once on Pro. Close one or upgrade to Teams."
     pub fn sentence(&self) -> String {
         let plan = plan_name(&self.plan);
         let (used, limit) = (number(self.used), number(self.limit));
         match self.kind {
             Kind::Sessions => format!(
-                "You're using {used} of {limit} live sessions on {plan}. {}",
+                "You have {used} of {limit} computers in use at once on {plan}. {}",
                 self.next_step()
             ),
             Kind::Hours => format!(
@@ -178,7 +178,11 @@ impl PlanLimit {
     /// Reads [`PlanLimit::sentence`] back out of an error's text (which may
     /// wrap it). None for any other text.
     pub fn parse(text: &str) -> Option<Self> {
+        // The sessions sentence has two wordings: the current one, and the
+        // old "live sessions" one that older relays, daemons and SDKs still
+        // send. Both are read.
         for (marker, kind, tail) in [
+            ("You have ", Kind::Sessions, " computers in use at once on "),
             ("You're using ", Kind::Sessions, " live sessions on "),
             ("You've used ", Kind::Hours, " remote hours this month on "),
         ] {
@@ -257,9 +261,10 @@ mod tests {
                 "https://app.cua.ai/b"
             );
         }
-        let l =
-            PlanLimit::parse("You're using 5 of 5 live sessions on Teams. Close one or add seats.")
-                .unwrap();
+        let l = PlanLimit::parse(
+            "You have 5 of 5 computers in use at once on Teams. Close one or add seats.",
+        )
+        .unwrap();
         assert_eq!(
             l.upgrade_url_from("https://app.cua.ai", "app_connect"),
             "https://app.cua.ai/billing?from=app_connect"
@@ -276,7 +281,7 @@ mod tests {
         let l = h("plan_limit_sessions", "pro", "5", "5").unwrap();
         assert_eq!(
             l.sentence(),
-            "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams."
+            "You have 5 of 5 computers in use at once on Pro. Close one or upgrade to Teams."
         );
         assert_eq!(
             l.upgrade_url("https://app.cua.ai/"),
@@ -289,7 +294,7 @@ mod tests {
         let l = h("plan_limit_sessions", "free", "2", "2").unwrap();
         assert_eq!(
             l.sentence(),
-            "You're using 2 of 2 live sessions on the free plan. Close one or upgrade to Pro."
+            "You have 2 of 2 computers in use at once on the free plan. Close one or upgrade to Pro."
         );
         let l = h("plan_limit_hours", "free", "20.04", "20").unwrap();
         assert_eq!(
@@ -316,6 +321,36 @@ mod tests {
             assert_eq!(PlanLimit::parse(&wrapped), Some(l));
         }
         assert_eq!(PlanLimit::parse("no machine image is configured"), None);
+    }
+
+    #[test]
+    fn the_old_live_sessions_sentence_still_reads() {
+        // Older relays, daemons and SDKs send this wording; newer clients
+        // must still read it, and read it as the same limit.
+        let old = "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams.";
+        let l = PlanLimit::parse(old).unwrap();
+        assert_eq!(l, h("plan_limit_sessions", "pro", "5", "5").unwrap());
+        assert_eq!(
+            PlanLimit::parse(&format!("relay: HTTP 429: {old}")),
+            Some(l)
+        );
+        let free = PlanLimit::parse(
+            "You're using 2 of 2 live sessions on the free plan. Close one or upgrade to Pro.",
+        )
+        .unwrap();
+        assert_eq!(free.plan, "free");
+        assert_eq!((free.used, free.limit), (2.0, 2.0));
+    }
+
+    #[test]
+    fn the_new_sentence_has_none_of_the_old_words() {
+        for plan in ["free", "pro", "team"] {
+            let s = h("plan_limit_sessions", plan, "2", "2").unwrap().sentence();
+            assert!(s.contains("computers in use at once"), "{s}");
+            for old in ["live sessions", "machines at once", "connections at once"] {
+                assert!(!s.to_lowercase().contains(old), "{s}");
+            }
+        }
     }
 
     #[test]

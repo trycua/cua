@@ -56,7 +56,8 @@ pub enum NetworkCmd {
         /// Space id or name.
         space: String,
         /// `internet`, `none`, `localhost:<ports>` (or `localhost:all`),
-        /// `lan`, `custom`, `custom:none` or `unprotected` (No protection).
+        /// `lan`, `localhost+lan:<ports>` (both), `custom`, `custom:none` or
+        /// `unprotected` (No protection).
         /// Left out: the preset it has (to change only `--via`).
         #[arg(long, value_name = "PRESET")]
         network: Option<String>,

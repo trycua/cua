@@ -645,7 +645,7 @@ class EvidenceTest(unittest.TestCase):
             "screenshot": lambda r: (r / "trials/T1/a1/artifacts/failure.png").unlink(),
             "driver.log": lambda r: (r / "trials/T1/a1/artifacts/driver.log").unlink(),
             "sentinel": lambda r: (r / "trials/T1/a1/artifacts/sentinel.jsonl").write_text(""),
-            "orphan": lambda r: (r / "trials/T2/a1").mkdir(parents=True),
+            "orphan": lambda r: (r / "trials/T1/a3").mkdir(parents=True),
             "duplicate": lambda r: (r / "results.jsonl").write_text(
                 (r / "results.jsonl").read_text() * 2
             ),
@@ -656,6 +656,45 @@ class EvidenceTest(unittest.TestCase):
                 run = write_run(Path(tmp))
                 mutate(run)
                 self.assertTrue(any(word in p for p in self.check(run)), word)
+
+    def test_interrupted_attempt_is_not_an_orphan_until_the_run_is_done(self) -> None:
+        # CUA-3543: the VM died during T2 a1, before its row. A resume must pass the check and redo it.
+        with tempfile.TemporaryDirectory() as tmp:
+            run = write_run(Path(tmp))
+            (run / "trials/T2/a1").mkdir(parents=True)
+            self.assertEqual(self.check(run), [])
+            (run / "trials/T1/a2").mkdir(parents=True)  # T1 a1 is final: a2 is never in flight
+            self.assertTrue(any("orphan" in p and "T1/a2" in p for p in self.check(run)))
+            (run / "trials/T1/a2").rmdir()
+            (run / "trials/T3/a1").mkdir(
+                parents=True
+            )  # a second cut-short attempt cannot happen in one run
+            self.assertEqual(sum("orphan" in p for p in self.check(run)), 2)
+            (run / "trials/T3/a1").rmdir()
+            with (run / "results.jsonl").open("a") as handle:
+                handle.write('{"trial_id": "T2", "att')  # the row the stop cut off
+            self.assertEqual(self.check(run), [])
+            (run / "DONE").write_text("{}")
+            self.assertTrue(any("orphan" in p and "T2/a1" in p for p in self.check(run)))
+
+    def test_run_stopped_during_its_first_attempt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run = write_run(Path(tmp))
+            (run / "run.lock").touch()  # every runner start takes the lock first
+            (run / "results.jsonl").unlink()
+            (run / "trials/T1/a1/trial.json").unlink()
+            self.assertEqual(self.check(run), [])
+            (run / "manifest.json").unlink()  # or during its setup
+            self.assertEqual(self.check(run), [])
+            (run / "DONE").write_text("{}")
+            self.assertTrue(any("no rows" in p for p in self.check(run)))
+
+    def test_directory_the_runner_never_started_is_not_a_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            empty = Path(tmp) / "empty"
+            (empty / "trials").mkdir(parents=True)
+            self.assertTrue(any("not a run directory" in p for p in self.check(empty)))
+            self.assertEqual(evidence.main([str(empty)]), 1)
 
     def test_recorder_requires_started_and_video(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -674,6 +713,19 @@ class EvidenceTest(unittest.TestCase):
             self.assertTrue(any("compression failed" in p for p in self.check(run)))
             (video / "video.json").write_text("{}")
             self.assertEqual(self.check(run), [])
+            for name in (
+                "video.mp4",
+                "video-720p.mp4",
+                "video.json",
+            ):  # compression cut short by a stop
+                (video / name).unlink()
+            (run / "trials/T1/a1/rec").mkdir()
+            (run / "trials/T1/a1/rec/recording.mp4").write_bytes(b"raw")
+            self.assertEqual(self.check(run), [])
+            (video / "video.json").write_text(json.dumps({"error": "ffmpeg failed; raw kept"}))
+            self.assertEqual(self.check(run), [])  # kept raw: the resume compresses it again
+            (run / "DONE").write_text("{}")
+            self.assertTrue(any("video missing" in p for p in self.check(run)))
 
     def test_bad_json_shapes_are_reported(self) -> None:
         for row in ({"trial_id": [], "attempt": 1, "arm": "x"}, {"trial_id": "T1", "attempt": 1}):
@@ -843,6 +895,20 @@ class PinsTest(unittest.TestCase):
         self.out.write_text("old")
         refuses(lambda: None)
         self.assertEqual(self.out.read_text(), "old")
+
+    def test_rerun_with_the_same_build_is_a_no_op(self) -> None:
+        # A resumed session reruns the pins step against the same driver: it must pass and change nothing.
+        with mock.patch.object(pins_tool, "in_checkout", return_value=False):
+            self.assertEqual(self.run_tool(), 0)
+            first = self.out.read_bytes()
+            self.assertEqual(self.run_tool(), 0)
+            self.assertEqual(self.out.read_bytes(), first)
+            self.bin.write_text('#!/bin/sh\necho "cua-driver 1.2.3"\n# rebuilt\n')
+            self.report["build"]["exe_sha256"] = ca.sha256_file(self.bin)
+            self.write()
+            with self.assertRaises(SystemExit):
+                self.run_tool()
+        self.assertEqual(self.out.read_bytes(), first)
 
     def test_competing_writer_is_preserved(self) -> None:
         self.out.parent.mkdir(parents=True)

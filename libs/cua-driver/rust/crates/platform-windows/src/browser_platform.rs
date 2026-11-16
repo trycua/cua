@@ -1,9 +1,13 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Windows identity and endpoint evidence for the first-class browser tools.
 
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::os::windows::process::CommandExt as _;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
@@ -22,8 +26,8 @@ use cua_driver_core::browser::types::{
     NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
 };
 use cua_driver_core::browser::{
-    existing_profile_setup_descriptor, fetch_json_version_ws_url, is_firefox,
-    parse_devtools_active_port, BrowserCursorTracker,
+    existing_profile_setup_descriptor, fetch_json_version_ws_url, is_electron_app_layout,
+    is_firefox, parse_devtools_active_port, BrowserCursorTracker,
 };
 
 use crate::browser_installation_path::{
@@ -61,8 +65,8 @@ use windows::Win32::Storage::FileSystem::{
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::SystemInformation::GetSystemDirectoryW;
 use windows::Win32::System::Threading::{
-    GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
-    PROCESS_QUERY_LIMITED_INFORMATION,
+    GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, CREATE_NO_WINDOW,
+    PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::Shell::{
@@ -387,6 +391,7 @@ fn authenticode_output(executable: &std::path::Path) -> std::io::Result<std::pro
     };
     let powershell = system32.join(r"WindowsPowerShell\v1.0\powershell.exe");
     std::process::Command::new(powershell)
+        .creation_flags(CREATE_NO_WINDOW.0)
         .args([
             "-NoLogo",
             "-NoProfile",
@@ -410,6 +415,7 @@ enum WriteProbe {
     Failed(String),
 }
 
+#[cfg(test)]
 fn current_token_write_denial_reason(path: &std::path::Path, directory: bool) -> Option<String> {
     match current_token_write_probe(path, directory, false) {
         WriteProbe::Denied => None,
@@ -759,6 +765,7 @@ async fn browser_command_line(pid: u32) -> Result<String, BrowserRefusal> {
         "$OutputEncoding=[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); (Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}' -ErrorAction Stop).CommandLine"
     );
     let output = tokio::process::Command::new(powershell)
+        .creation_flags(CREATE_NO_WINDOW.0)
         .args([
             "-NoLogo",
             "-NoProfile",
@@ -2092,11 +2099,18 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 format!("pid {pid} is outside the Windows process-id range"),
             )
         })?;
-        let name = tokio::task::spawn_blocking(move || {
-            crate::win32::list_processes()
+        let (name, electron_app) = tokio::task::spawn_blocking(move || {
+            let name = crate::win32::list_processes()
                 .into_iter()
                 .find(|process| process.pid == pid_u32)
-                .map(|process| process.name)
+                .map(|process| process.name)?;
+            let electron_app = process_identity(pid_u32)
+                .ok()
+                .and_then(|(_, executable)| executable)
+                .is_some_and(|executable| {
+                    is_electron_app_layout(std::path::Path::new(&executable))
+                });
+            Some((name, electron_app))
         })
         .await
         .ok()
@@ -2107,9 +2121,13 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 format!("browser process {pid} is no longer available"),
             )
         })?;
-        let chromium = is_chromium(&name);
+        let chromium = electron_app || is_chromium(&name);
         let gecko = is_firefox(&name);
-        let product_kind = browser_product(&name);
+        let product_kind = if electron_app {
+            BrowserProduct::Electron
+        } else {
+            browser_product(&name)
+        };
         let command_line = if chromium {
             browser_command_line(pid_u32).await.ok()
         } else {
@@ -3185,7 +3203,6 @@ mod tests {
             eprintln!(
                 "installed browser correctly refused for this write-capable runner token: {diagnostics:?}"
             );
-            return;
         }
     }
     use std::sync::atomic::{AtomicUsize, Ordering};

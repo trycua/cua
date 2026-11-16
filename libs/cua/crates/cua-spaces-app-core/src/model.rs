@@ -67,22 +67,22 @@ impl SpaceOs {
     }
 
     /// What the app calls the computer it runs on, when that runs this
-    /// system: "This Mac", "This PC", "This machine".
+    /// system: "This Mac", "This PC", "This computer".
     pub fn this_machine(self) -> &'static str {
         match self {
             SpaceOs::Macos => "This Mac",
             SpaceOs::Windows => "This PC",
-            SpaceOs::Linux | SpaceOs::Unknown => "This machine",
+            SpaceOs::Linux | SpaceOs::Unknown => "This computer",
         }
     }
 
     /// [`Self::this_machine`] mid-sentence: "this Mac", "this PC",
-    /// "this machine".
+    /// "this computer".
     pub fn this_machine_lower(self) -> &'static str {
         match self {
             SpaceOs::Macos => "this Mac",
             SpaceOs::Windows => "this PC",
-            SpaceOs::Linux | SpaceOs::Unknown => "this machine",
+            SpaceOs::Linux | SpaceOs::Unknown => "this computer",
         }
     }
 }
@@ -277,6 +277,17 @@ pub struct Space {
     /// ([`crate::spaces::access`]). Absent reads as yours with nobody else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub access: Option<SpaceAccess>,
+    /// The home that warms in the background for Home's prompt box, until a
+    /// person writes into it: no list shows it (not the Spaces list, the
+    /// sidebar, the palette, the menu bar item or the notch; see
+    /// [`crate::spaces::openable_spaces`]). Its own page still opens. The
+    /// SDK and `cua spaces ls` still return it, marked.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hidden: bool,
+    /// The Space it is a child of (its id): the Spaces page nests it under that Space. Absent for a
+    /// top-level Space.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
 }
 
 /// Whose a Space is, as the Spaces page groups it.
@@ -489,6 +500,9 @@ pub enum CreateFixAction {
     OpenUrl,
     /// Opens the failed create's details (the diagnostic report to review).
     Details,
+    /// Asks for a Windows ISO the person downloaded (the host's file picker),
+    /// remembers it for the image, and runs the create again with it.
+    ChooseWindowsIso,
 }
 
 /// The fix for a create that keeps failing the same way: one plain
@@ -505,6 +519,16 @@ pub struct CreateFix {
     /// The command to copy or the page to open.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
+    /// Keep Try again next to the button: the fix is something to do first
+    /// (download a file), after which the same create is tried again.
+    #[serde(default)]
+    pub keep_retry: bool,
+    /// A second button beside the first: its words (with `link_url`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link_label: Option<String>,
+    /// The page that second button opens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link_url: Option<String>,
 }
 
 /// One row of the SDK's `list_spaces`.
@@ -553,6 +577,10 @@ pub struct SpaceRow {
     /// `aarch64`, `amd64`, `x86_64`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub arch: Option<String>,
+    /// The SDK's `SpaceInfo.hidden` (label `cua.hidden`): the home warming
+    /// for Home's prompt box. No list shows it ([`Space::hidden`]).
+    #[serde(default)]
+    pub hidden: bool,
     /// Answered the last connect.
     pub reachable: bool,
     /// Why not.
@@ -590,6 +618,9 @@ pub struct SpaceRow {
     /// A relay Space: who owns it and who else has it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sharing: Option<SpaceSharingFacts>,
+    /// The Space it is a child of (its id), as the daemon records the tree; absent for a top-level Space.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
 }
 
 /// `arm64` or `amd64` for any spelling of a CPU architecture (`aarch64`,

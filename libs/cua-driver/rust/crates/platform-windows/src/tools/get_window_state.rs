@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_core::{
     protocol::ToolResult,
@@ -153,9 +156,9 @@ impl Tool for GetWindowStateTool {
                 back to a full read and `since_status` says why. The focused element is not \
                 reported on Windows yet.\n\n\
                 INVARIANT: call `get_window_state` once per turn per (pid, window_id) before \
-                any element action against that window. The next snapshot of the same \
-                (pid, window_id) replaces this one, stales its element tokens, and lists the \
-                replaced ids in `invalidated_snapshot_ids`. A screenshot-only read \
+                any element action against that window. This session's next snapshot of the \
+                same (pid, window_id) replaces this one, stales its element tokens, and lists \
+                the replaced ids in `invalidated_snapshot_ids`. A screenshot-only read \
                 (`include_accessibility_tree:false`) keeps the current snapshot's rows and \
                 tokens valid, and `display_only:true` also leaves its pixel frame alone.\n\n\
                 The UIA tree walked is the window's tree (HWND-scoped); the screenshot and \
@@ -164,8 +167,9 @@ impl Tool for GetWindowStateTool {
                 picks a window implicitly.\n\n\
                 `window_id` MUST belong to `pid`; the call returns `isError: true` otherwise. \
                 The driver does not auto-fall-back to a different window.\n\n\
-                Set `query` to a case-insensitive substring to project the tree to matching \
-                rows plus their ancestor chain. \
+                Set `query` to a case-insensitive substring (`a|b` for either) to project the \
+                tree to matching rows plus their ancestor chain, or to a `0 of N elements \
+                match` line when none matches. \
                 Original element indices are preserved. `total_element_count` reports the \
                 unprojected walked snapshot; `returned_element_count` reports the projection. \
                 `elements_complete` describes the underlying walk and is unaffected by query \
@@ -194,7 +198,7 @@ impl Tool for GetWindowStateTool {
                 CHROMIUM COVERAGE: a browser-owned permission bubble can be \
                 composited outside the requested native window. Chromium-family \
                 snapshots therefore describe this limit in structuredContent.capture_coverage. \
-                After a verified ineffective window action, call escalate_session, take a \
+                After a verified ineffective window action, take a \
                 fresh get_desktop_state snapshot, act explicitly in desktop scope if needed, \
                 then verify with another fresh desktop snapshot. \
                 This is separate from page JavaScript dialogs, which remain on \
@@ -208,7 +212,7 @@ impl Tool for GetWindowStateTool {
                 "include_accessibility_tree":{"type":"boolean","description":"Default true — walk the UIA tree and return it (per `tree_format`) alongside the screenshot. Set false to SKIP the UIA walk entirely and return just the screenshot plus window metadata (window_bounds, app_name, window_title) — the capture-only path for a live window preview / picture-in-picture. Mirrors include_screenshot. Setting BOTH include_accessibility_tree:false AND include_screenshot:false is an error (nothing to return)."},
                 "include_screenshot":{"type":"boolean","description":"Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return tree only (the cheap path for re-indexing before an element ax action)."},
                 "screenshot_out_file":{"type":"string","description":"When set, write the PNG to this file path instead of embedding base64 in the response. The structured output will contain `screenshot_file_path` instead."},
-                "query":{"type":"string","description":"Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count; elements_complete continues to describe the underlying unprojected walk."},
+                "query":{"type":"string","description":"Optional case-insensitive substring; `a|b` matches either. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count; elements_complete continues to describe the underlying unprojected walk. A query that matches nothing says `0 of N elements match`."},
                 "max_elements":{"type":"integer","minimum":1,"description":"Cap on the total number of UIA nodes walked. Truncates depth-first; markdown and structured elements truncate together. Default 250 (5 000 with full_output:true); the response states when the tree was cut. Raise it to read further into a large window."},
                 "max_depth":{"type":"integer","minimum":1,"description":"Cap on the UIA-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower for deep menu / Electron trees."},
                 "timeout_ms": cua_driver_core::tool_schema::timeout_ms_schema(),

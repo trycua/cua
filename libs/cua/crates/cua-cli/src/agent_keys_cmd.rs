@@ -123,6 +123,9 @@ fn lines(report: &serde_json::Value) -> Vec<String> {
             report["unavailable"].as_str().unwrap_or("no Keychain")
         ));
     }
+    if let Some(w) = report["insecure"].as_str() {
+        v.push(format!("Warning: {w}."));
+    }
     let keys = report["keys"].as_array().cloned().unwrap_or_default();
     if keys.is_empty() {
         v.push(crate::util::hint(

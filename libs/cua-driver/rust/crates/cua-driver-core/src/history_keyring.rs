@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! OS credential-store history key provider, shared by Linux (Secret Service)
 //! and Windows (Credential Manager).
 

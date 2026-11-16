@@ -39,7 +39,7 @@ public enum ProviderRegistry {
 
     /// The model ids each visible provider lists, in the order the app core lists them.
     public static let models: [String: [String]] = [
-        "anthropic": ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5-5"],
+        "anthropic": ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-1", "claude-haiku-4-5", "claude-sonnet-5"],
         "openai": ["gpt-5.5"],
         "openrouter": ["anthropic/claude-sonnet-5"],
         "google": ["gemini-3.8-flash"],

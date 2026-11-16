@@ -31,6 +31,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import * as path from "node:path";
 import type { Settings, SwiftMigration, WindowBounds } from "./settings";
+import { readChannel } from "./update-prefs";
 
 export const SWIFT_BUNDLE_ID = "com.trycua.spaces.macos";
 export const SWIFT_FRAME_KEY = "NSWindow Frame CuaSpacesWebUI";
@@ -174,9 +175,8 @@ export function migrateFromSwiftApp(input: MigrationInput): Partial<Settings> | 
   try {
     const core = JSON.parse(readFileSync(path.join(from, "settings.json"), "utf8")) as { updateChannel?: unknown; lastSeenVersion?: unknown };
     if (typeof core.lastSeenVersion === "string") marker.from = core.lastSeenVersion;
-    if ((core.updateChannel === "beta" || core.updateChannel === "stable") && !input.settings.updateChannel) {
-      patch.updateChannel = core.updateChannel;
-    }
+    const channel = readChannel(core.updateChannel);
+    if (channel && !input.settings.updateChannel) patch.updateChannel = channel;
   } catch {
     // No Swift settings, or damaged: the app core would have used its defaults too.
   }

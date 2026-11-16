@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.37.1](https://github.com/trycua/cua/compare/cua-spaces-v0.37.0...cua-spaces-v0.37.1) (2026-11-16)
+
+
+### Bug Fixes
+
+* **cua-sdk:** keep HTTP MCP reply waits cancellable ([#7980](https://github.com/trycua/cua/issues/7980)) ([d735f38](https://github.com/trycua/cua/commit/d735f383d43a2abecc100c08be23c4540f4cba95))
+
 ## [0.37.0](https://github.com/trycua/cua/compare/cua-spaces-v0.36.27...cua-spaces-v0.37.0) (2026-11-16)
 
 

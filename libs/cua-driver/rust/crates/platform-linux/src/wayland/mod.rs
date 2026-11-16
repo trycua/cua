@@ -911,12 +911,6 @@ fn capture_via_screencopy() -> anyhow::Result<Vec<u8>> {
     screencopy_first_output().map(|(png, _)| png)
 }
 
-/// [`capture_via_screencopy`] over a connection the caller has already
-/// attested, so the pixels come from that compositor and no other.
-fn capture_via_screencopy_on(conn: Connection) -> anyhow::Result<Vec<u8>> {
-    screencopy_first_output_on(conn, None).map(|(png, _)| png)
-}
-
 /// [`capture_via_screencopy`], plus the wl_output v4 name of the copied
 /// output when the compositor reports one.
 fn screencopy_first_output() -> anyhow::Result<(Vec<u8>, Option<String>)> {
@@ -926,15 +920,7 @@ fn screencopy_first_output() -> anyhow::Result<(Vec<u8>, Option<String>)> {
     // ends the capture at the deadline instead of hanging it.
     let niri = niri::is_session();
     let bounded = niri.then_some(deadline);
-    screencopy_first_output_on(wayland_connection(niri)?, bounded)
-}
-
-fn screencopy_first_output_on(
-    conn: Connection,
-    bounded: Option<std::time::Instant>,
-) -> anyhow::Result<(Vec<u8>, Option<String>)> {
-    let deadline =
-        bounded.unwrap_or_else(|| std::time::Instant::now() + std::time::Duration::from_secs(5));
+    let conn = wayland_connection(niri)?;
     let mut queue = conn.new_event_queue::<State>();
     let qh = queue.handle();
     conn.display().get_registry(&qh, ());
@@ -1062,7 +1048,7 @@ fn screencopy_first_output_on(
         &conn,
         &mut queue,
         &mut state,
-        bounded.map(|_| std::time::Instant::now() + crate::interaction::CLEANUP_CAP),
+        niri.then(|| std::time::Instant::now() + crate::interaction::CLEANUP_CAP),
     );
     cleanup_mmap(mmap_ptr, mmap_len, fd);
 

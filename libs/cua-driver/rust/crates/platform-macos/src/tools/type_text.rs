@@ -994,6 +994,25 @@ fn typed_progress(before: Option<&str>, after: Option<&str>, text: &str) -> Type
     }
 }
 
+/// Read-back verification for the `AXSelectedText` write. An insert at an
+/// empty selection that leaves the value exactly as it was inserted nothing,
+/// even when the value already contains the text: Chromium contenteditables
+/// accept the write without applying it, and a field that already held the
+/// piece elsewhere would otherwise read as complete and skip the key rung.
+/// A non-empty selection replaced by equal text is a legitimate no-op, so it
+/// keeps the substring verdict, as does an unreadable selection.
+fn ax_insert_progress(
+    before: Option<&str>,
+    after: Option<&str>,
+    text: &str,
+    selection_was_empty: bool,
+) -> TypedProgress {
+    if selection_was_empty && !text.is_empty() && before.is_some() && before == after {
+        return TypedProgress::Unchanged;
+    }
+    typed_progress(before, after, text)
+}
+
 /// Read the focused/target field's `AXValue`, for before/after read-back.
 /// Re-fetches the focused element each call when no explicit element is given
 /// (cheap, and focus is stable across our own keystrokes).
@@ -1729,6 +1748,8 @@ fn type_text_in_key_window(
                     let (location, length) = unsafe { selected_range(element)? };
                     replace_utf16_range(value, location, length, body)
                 });
+        let selection_was_empty =
+            unsafe { selected_range(element) }.is_some_and(|(_, length)| length == 0);
         let err = unsafe { set_string_attr(element, "AXSelectedText", ax_text) };
         // Classify the atomic write before considering synthesis. Complete AX
         // delivery returns immediately. Partial delivery is surfaced as such
@@ -1737,7 +1758,12 @@ fn type_text_in_key_window(
         // safely and unreadable AX state is reported as indeterminate.
         let after = unsafe { copy_string_attr(element, "AXValue") };
         let ax_progress = if err == kAXErrorSuccess {
-            Some(typed_progress(before.as_deref(), after.as_deref(), ax_text))
+            Some(ax_insert_progress(
+                before.as_deref(),
+                after.as_deref(),
+                ax_text,
+                selection_was_empty,
+            ))
         } else {
             None
         };
@@ -2397,6 +2423,31 @@ mod tests {
                 typed_progress(before, after, text),
                 expected,
                 "before={before:?} after={after:?} text={text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ax_insert_that_leaves_the_value_unchanged_did_not_land() {
+        use TypedProgress::*;
+        for (before, after, text, selection_was_empty, expected) in [
+            // The field already held the piece elsewhere and the write applied
+            // nothing (a Chromium contenteditable): not complete.
+            (Some("lorem en"), Some("lorem en"), "en", true, Unchanged),
+            // A selection replaced by equal text is a legitimate no-op.
+            (Some("hi"), Some("hi"), "hi", false, Complete),
+            // An insert that landed is still complete.
+            (Some("ab en"), Some("ab en en"), "en", true, Complete),
+            (Some(""), Some("hi"), "hi", true, Complete),
+            // Without a readable before value the substring verdict stands.
+            (None, Some("ab en"), "en", true, Complete),
+            (Some("ab"), None, "en", true, Unverifiable),
+        ] {
+            assert_eq!(
+                ax_insert_progress(before, after, text, selection_was_empty),
+                expected,
+                "before={before:?} after={after:?} text={text:?} \
+                 selection_was_empty={selection_was_empty}"
             );
         }
     }

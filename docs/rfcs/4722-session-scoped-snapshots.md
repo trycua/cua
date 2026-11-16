@@ -3,12 +3,13 @@ title: Session-scoped element snapshots
 authors:
   - injaneity
 created: 2026-11-15
-last_updated: 2026-11-15
-status: review
+last_updated: 2026-11-16
+status: completed
 discussion: https://github.com/trycua/cua/issues/4722
 rfc_pr: https://github.com/trycua/cua/pull/7809
 implementation:
   - https://github.com/trycua/cua/pull/7809
+  - https://github.com/trycua/cua/pull/7831
 supersedes:
 superseded_by:
 ---
@@ -155,4 +156,17 @@ generated reference docs pick up the descriptions on the next docs run.
 
 ## Decision record
 
-Pending maintainer decision in #4722.
+On 2026-11-16, the maintainer accepted this RFC after the fact. The
+implementation had already shipped in #7809 on 2026-11-15, while this RFC
+still read `review`, so the usual review period did not run.
+
+- Each session keeps its own current snapshot of a window. Another session's
+  read, screenshot refresh, LRU eviction or removal no longer retires this
+  session's element tokens.
+- The cross-client screenshot refusal tests in the release gate relied on the
+  previous shared-cache behavior. #7831 changed them to probe from a client
+  that never read the window.
+- Remaining risk: a later return to shared caches would be a second contract
+  change for multi-session clients.
+
+The RFC is `completed` because its required implementation has shipped.

@@ -1,9 +1,9 @@
 {
-  "version": "0.52.1",
-  "tag": "cua-driver-rs-v0.52.1",
-  "asset": "cua-driver-rs-0.52.1-darwin-universal-binary.tar.gz",
-  "bytes": 43425057,
-  "sha256": "db3bf7e8b5b7346e3d803da128dbc53dc33f5ad5859827c893a38f0390f32257",
+  "version": "0.52.4",
+  "tag": "cua-driver-rs-v0.52.4",
+  "asset": "cua-driver-rs-0.52.4-darwin-universal-binary.tar.gz",
+  "bytes": 43491414,
+  "sha256": "c0dcf1a4ee81a520d161e8ef2de7cb3bfa87940e097b9de342a07b18472858b3",
   "teamId": "YCK386LBJ7",
   "files": ["cua-driver", "cua-cursor-theme"]
 }

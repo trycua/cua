@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.38.0](https://github.com/trycua/cua/compare/cua-spaces-v0.37.2...cua-spaces-v0.38.0) (2026-11-16)
+
+
+### Features
+
+* **cua-spaces:** eject the installer disk image after a drag install ([#4567](https://github.com/trycua/cua/issues/4567)) ([baf720c](https://github.com/trycua/cua/commit/baf720c2bf06da59bc938a4c331c00d496d7db93))
+
+
+### Bug Fixes
+
+* **spaces:** the Space's viewer waits for its first picture only while the window can be seen ([#6973](https://github.com/trycua/cua/issues/6973)) ([05fece5](https://github.com/trycua/cua/commit/05fece5da50377802b840621e1b782cbf433b22e))
+
 ## [0.37.2](https://github.com/trycua/cua/compare/cua-spaces-v0.37.1...cua-spaces-v0.37.2) (2026-11-16)
 
 

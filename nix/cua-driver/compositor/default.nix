@@ -44,6 +44,10 @@ stdenv.mkDerivation {
     wp=${wayland-protocols}/share/wayland-protocols
     wayland-scanner server-header "$wp/stable/xdg-shell/xdg-shell.xml" xdg-shell-protocol.h
     wayland-scanner private-code  "$wp/stable/xdg-shell/xdg-shell.xml" xdg-shell-protocol.c
+    # wlroots' layer-shell header includes this generated header but does not
+    # install it; generate it from the same wlroots source.
+    wayland-scanner server-header ${wlroots_0_19.src}/protocol/wlr-layer-shell-unstable-v1.xml \
+      wlr-layer-shell-unstable-v1-protocol.h
     $CC -DWLR_USE_UNSTABLE -I. cua-compositor.c xdg-shell-protocol.c -o cua-compositor \
       $(pkg-config --cflags --libs wlroots-0.19 wayland-server xkbcommon pixman-1)
     runHook postBuild

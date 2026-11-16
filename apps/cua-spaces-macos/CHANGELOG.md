@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.37.0](https://github.com/trycua/cua/compare/cua-spaces-v0.36.27...cua-spaces-v0.37.0) (2026-11-16)
+
+
+### Features
+
+* **spaces:** delete one or all notifications, and prune old read ones ([#7396](https://github.com/trycua/cua/issues/7396)) ([5fe2ca9](https://github.com/trycua/cua/commit/5fe2ca9a4715469a467c65e04ce7ca0a7b44a64d))
+
+
+### Bug Fixes
+
+* **agents:** install Hermes dependencies in macOS spaces ([#7978](https://github.com/trycua/cua/issues/7978)) ([a090ad5](https://github.com/trycua/cua/commit/a090ad5f5e7f3333b0c5649ff96ea1e34c607ac5))
+* **cua-spaces:** compile with reduced feature sets ([#4846](https://github.com/trycua/cua/issues/4846)) ([c871171](https://github.com/trycua/cua/commit/c8711718ebc2f4aad364caf3daed74631deab5fa))
+
 ## [0.36.27](https://github.com/trycua/cua/compare/cua-spaces-v0.36.26...cua-spaces-v0.36.27) (2026-11-16)
 
 

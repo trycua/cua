@@ -186,12 +186,12 @@ jobs:
       - name: Clippy the Cua Driver workspace (all targets)
         working-directory: libs/cua-driver/rust
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
-      - name: Run private AT-SPI Unicode insertion regressions
+      - name: Run the private AT-SPI set_value fallback fixture
         working-directory: libs/cua-driver/rust
         run: |
           env -u DISPLAY -u WAYLAND_DISPLAY -u XAUTHORITY -u AT_SPI_BUS_ADDRESS \
             -u DBUS_SESSION_BUS_ADDRESS -u NO_AT_BRIDGE \
-            dbus-run-session -- env CUA_NATIVE_GTK_TEST=1 \
+            dbus-run-session -- env CUA_PRIVATE_ATSPI_TEST=1 \
             cargo test --locked -p platform-linux --test set_value_fallback -- \
             --ignored --nocapture --test-threads=1
       - name: Run Linux Rust tests

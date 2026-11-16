@@ -16,8 +16,10 @@ use super::impl_::{
     position_keyboard_cursor, resolve_onscreen_point_with_scroll, ToolState,
 };
 
-/// Resolve only the admitted control's native message target. UIA SetFocus
-/// is not a background preparation step: providers can activate their frame.
+/// The admitted control's own HWND, for a background key posted without focus
+/// preparation. UIA SetFocus can activate the frame even under
+/// WS_EX_NOACTIVATE (#4843), so a control with no HWND of its own in the
+/// admitted window has no safe background target.
 fn native_background_key_target(
     element: &crate::uia::snapshot::RetainedElement,
     owner: u64,
@@ -26,9 +28,9 @@ fn native_background_key_target(
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, IsChild};
 
-    let target = element.native_window_handle().ok_or_else(|| {
-        anyhow::anyhow!("background_unavailable: exact element has no native keyboard target")
-    })?;
+    let target = element
+        .native_window_handle()
+        .ok_or_else(|| anyhow::anyhow!("the element has no native window to post keys to"))?;
     let native = HWND(target as *mut _);
     let mut target_pid = 0;
     let thread = unsafe { GetWindowThreadProcessId(native, Some(&mut target_pid)) };
@@ -36,9 +38,7 @@ fn native_background_key_target(
         || target_pid != pid
         || (target != owner && !unsafe { IsChild(HWND(owner as *mut _), native).as_bool() })
     {
-        anyhow::bail!(
-            "background_unavailable: exact element's native keyboard target is outside the admitted window"
-        );
+        anyhow::bail!("the element's native window is outside the admitted window");
     }
     Ok(target)
 }
@@ -226,6 +226,41 @@ impl Tool for PressKeyTool {
             return crate::input::delivery::background_unavailable_error(hwnd, event_kind);
         }
 
+        // Embedded WebView hosts take an element key through their focus-click
+        // route below. Every other background element key goes to the
+        // control's own HWND, resolved here so a refusal precedes any effect.
+        let background_webview_focus = elem_idx.is_some()
+            && delivery == DeliveryMode::Background
+            && crate::input::has_chromium_descendant(hwnd);
+        let native_key_target = if elem_idx.is_some()
+            && delivery == DeliveryMode::Background
+            && !background_webview_focus
+        {
+            let target = tokio::task::spawn_blocking({
+                let admitted = admitted.clone();
+                move || {
+                    admitted
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("missing admitted element"))
+                        .and_then(|element| native_background_key_target(element, hwnd, pid))
+                }
+            })
+            .await;
+            match target {
+                Ok(Ok(target)) => Some(target),
+                Ok(Err(cause)) => {
+                    return crate::input::delivery::background_unavailable_error_with_cause(
+                        hwnd,
+                        event_kind,
+                        cause.to_string(),
+                    )
+                }
+                Err(e) => return ToolResult::error(format!("key target task failed: {e}")),
+            }
+        } else {
+            None
+        };
+
         // The px form's focus click already moved the cursor. Otherwise place
         // a named session's cursor so a keyboard-first session stays visible.
         if !px_focus {
@@ -236,16 +271,10 @@ impl Tool for PressKeyTool {
         }
 
         // Embedded WebView keys need the renderer's actual focus target,
-        // not merely the owning top-level HWND. These hosts
-        // can activate their frame from UIA SetFocus even under
-        // WS_EX_NOACTIVATE. Their proven-safe pixel route establishes renderer
-        // focus with a posted click, so reuse that route at the AX element's
-        // cached center.
-        let background_webview_focus = elem_idx.is_some()
-            && delivery == DeliveryMode::Background
-            && crate::input::has_chromium_descendant(hwnd);
-        // Native controls are addressed directly below; only the existing
-        // WebView focus-click route needs an activation guard.
+        // not merely the owning top-level HWND. These hosts can activate their
+        // frame from UIA SetFocus even under WS_EX_NOACTIVATE. Their
+        // proven-safe pixel route establishes renderer focus with a posted
+        // click, so reuse that route at the AX element's cached center.
         let mut noact = if background_webview_focus {
             Some(crate::input::NoActivateGuard::arm(
                 windows::Win32::Foundation::HWND(hwnd as *mut _),
@@ -329,17 +358,9 @@ impl Tool for PressKeyTool {
             move || {
                 let _admission = &admitted;
                 let m: Vec<&str> = mods.iter().map(String::as_str).collect();
-                if elem_idx.is_some()
-                    && delivery == DeliveryMode::Background
-                    && !background_webview_focus
-                {
-                    let element = admitted.as_ref().ok_or_else(|| {
-                        anyhow::anyhow!("background_unavailable: missing admitted keyboard element")
-                    })?;
-                    let target = native_background_key_target(element, hwnd, pid)?;
-                    crate::input::keyboard::post_key_to_hwnd(target, &key, &m)
-                } else {
-                    crate::input::post_key(hwnd, &key, &m)
+                match native_key_target {
+                    Some(target) => crate::input::keyboard::post_key_to_hwnd(target, &key, &m),
+                    None => crate::input::post_key(hwnd, &key, &m),
                 }
             }
         })
@@ -361,14 +382,6 @@ impl Tool for PressKeyTool {
                                with delivery_mode:\"foreground\" if a screenshot shows the key didn't land."
                 },
             })),
-            Ok(Err(e)) if e.to_string().starts_with("background_unavailable:") => {
-                cua_driver_core::delivery::background_unavailable_result(
-                    format!("{e}; no keyboard input was sent"),
-                    "background_unavailable",
-                    "exact-control background keyboard delivery is unavailable; retry with delivery_mode:\"foreground\"",
-                    json!({"window_id": hwnd, "event_kind": event_kind.name()}),
-                )
-            }
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }

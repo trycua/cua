@@ -1961,6 +1961,5 @@
    "meaning": "Usage error: an unknown command or option, a missing argument, or an invalid value"
   }
  ],
- "name": "lume",
- "version": "0.7.0"
+ "name": "lume"
 }

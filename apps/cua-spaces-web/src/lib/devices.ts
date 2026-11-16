@@ -5,6 +5,7 @@
 // as the SwiftUI app's `DevicesModel` does).
 
 import type { DeviceBanner, DevicesInput, DevicesView } from "@/bridge";
+import { t } from "@/i18n";
 
 /** "Oct 27, 2026" (a medium date, no time). */
 export function dateText(secs: number, locale?: string): string {
@@ -14,7 +15,7 @@ export function dateText(secs: number, locale?: string): string {
 /** "just now" within a minute, else "5 minutes ago", "3 days ago". */
 export function relativeText(secs: number, nowSecs: number, locale?: string): string {
   const diff = secs - nowSecs;
-  if (diff > -60) return "just now";
+  if (diff > -60) return t("computers.account.just_now");
   const f = new Intl.RelativeTimeFormat(locale ?? "en-US", { numeric: "auto" });
   const abs = Math.abs(diff);
   if (abs < 3600) return f.format(Math.round(diff / 60), "minute");

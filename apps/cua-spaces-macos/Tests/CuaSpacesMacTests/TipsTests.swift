@@ -14,18 +14,11 @@ import Testing
 struct TipsTests {
     private func settingsOnDisk(_ m: AppModel) -> AppSettings { appSettingsLoad(path: m.settingsPath) }
 
-    @Test func theSidebarTipShowsOnceASecondComputerIsOnline() {
+    @Test func theSidebarHasNoTip() {
+        // Its only tip was a CLI flag (`cua create --on auto`): it lives in the CLI docs now.
         let none = AppTipsState(off: false, done: [])
         #expect(AppModel.sidebarTip(machinesOnline: 1, tips: none) == nil)
-        let tip = AppModel.sidebarTip(machinesOnline: 2, tips: none)
-        #expect(tip?.id == "on-auto")
-        #expect(tip?.text == "New Spaces can go to whichever computer has room.")
-        #expect(tip?.code == "cua create --on auto")
-        #expect(tip?.action.value == "cua create --on auto")
-        #expect(tip?.action.doneLabel == "Copied")
-        #expect(tip?.next == nil, "the sidebar's tip has only ×")
-        #expect(AppModel.sidebarTip(machinesOnline: 2, tips: AppTipsState(off: true, done: [])) == nil, "tips off")
-        #expect(AppModel.sidebarTip(machinesOnline: 2, tips: AppTipsState(off: false, done: ["on-auto"])) == nil, "closed")
+        #expect(AppModel.sidebarTip(machinesOnline: 2, tips: none) == nil)
     }
 
     @Test func closingTheTipKeepsItClosedAcrossLaunches() async {

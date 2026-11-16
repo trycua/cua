@@ -98,7 +98,7 @@ impl Tool for TypeTextCharsTool {
             "type_text_chars",
             paced_typing_budget(text_len, delay_ms),
             move || {
-                if crate::wayland::wayland_input_enabled() {
+                if crate::wayland::is_wayland() {
                     // Per-char `wtype` loop with the requested delay — mirrors the
                     // X11 XSendEvent per-char path. Sleeping here is fine because
                     // we're inside spawn_blocking.

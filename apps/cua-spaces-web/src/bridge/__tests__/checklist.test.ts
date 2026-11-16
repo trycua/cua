@@ -82,7 +82,9 @@ describe("the getting-started checklist", () => {
   it.skipIf(!wasmBuilt)("a skipped step counts as done and is kept, without an event of its own", async () => {
     const core = await testCore();
     const adapter = createDemoAdapter({ latencyMs: 0 });
-    const { result } = renderHook(() => useChecklist(), { wrapper: ({ children }: { children: ReactNode }) => createElement(BridgeProvider, { adapter, core }, children) });
+    const { result } = renderHook(() => useChecklist(), {
+      wrapper: ({ children }: { children: ReactNode }) => createElement(BridgeProvider, { adapter, core }, children),
+    });
     act(() => result.current.skip("teleport"));
     expect(readChecklist().skipped).toEqual({ teleport: true });
     expect(JSON.parse(localStorage.getItem(KEY)!).skipped).toEqual({ teleport: true });
@@ -121,7 +123,11 @@ function hostAdapter(initial: { done: string[]; dismissed: boolean; shown: boole
       if (a.type === "done") state = { ...state, done: order.filter((s) => s === a.step || state.done.includes(s)) };
       if (a.type === "merge") {
         const o = a.state!;
-        state = { done: order.filter((s) => state.done.includes(s) || o.done.includes(s)), dismissed: state.dismissed || o.dismissed, shown: state.shown || o.shown };
+        state = {
+          done: order.filter((s) => state.done.includes(s) || o.done.includes(s)),
+          dismissed: state.dismissed || o.dismissed,
+          shown: state.shown || o.shown,
+        };
       }
       return { state };
     },

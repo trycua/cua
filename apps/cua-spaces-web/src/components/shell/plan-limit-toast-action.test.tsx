@@ -28,9 +28,20 @@ const core: CoreClient = {
   call: () => undefined as never,
   tryCall: <T,>(method: string, args?: Record<string, unknown>) => {
     if (method === "relayUsage.planLimit")
-      return (/computers in use at once on Pro|live sessions on Pro/.test(String(args?.error))
-        ? { text: String(args?.error), upgrade: "Upgrade", upgradeUrl: "https://app.cua.ai/buy/teams?from=plan_limit", dismiss: "Dismiss", dismissKey: "refused:Sessions", level: "limit", kind: "sessions", plan: "pro" }
-        : null) as T;
+      return (
+        /computers in use at once on Pro|live sessions on Pro/.test(String(args?.error))
+          ? {
+              text: String(args?.error),
+              upgrade: "Upgrade",
+              upgradeUrl: "https://app.cua.ai/buy/teams?from=plan_limit",
+              dismiss: "Dismiss",
+              dismissKey: "refused:Sessions",
+              level: "limit",
+              kind: "sessions",
+              plan: "pro",
+            }
+          : null
+      ) as T;
     if (method === "upgrade.link") return String(args?.url).replace("from=plan_limit", `from=${String(args?.from)}`) as T;
     if (method === "telemetry.planLimit")
       return [{ type: args?.action === "shown" ? "plan-limit-shown" : "upgrade-link-opened", surface: args?.surface, kind: args?.kind, plan: args?.plan }] as T;

@@ -40,7 +40,9 @@ describe.skipIf(!wasmBuilt)("the preparing block", () => {
     expect(container.textContent).toContain("Your message sends as soon as your agent is ready");
     // No bordered cell, card or table: no element draws a border or a grouped container, and nothing nests a card.
     expect(container.querySelector("[data-grouped]")).toBeNull();
-    const boxed = [...container.querySelectorAll("*")].filter((e) => /(^|\s)(border|border-[trblxy]|divide-|rounded-(lg|xl|2xl)|bg-card|shadow)/.test(e.getAttribute("class") ?? ""));
+    const boxed = [...container.querySelectorAll("*")].filter((e) =>
+      /(^|\s)(border|border-[trblxy]|divide-|rounded-(lg|xl|2xl)|bg-card|shadow)/.test(e.getAttribute("class") ?? ""),
+    );
     expect(boxed).toEqual([]);
     expect(container.textContent).not.toContain("·");
   });
@@ -52,7 +54,12 @@ describe.skipIf(!wasmBuilt)("the preparing block", () => {
     expect(a.container.querySelector("[data-prepare-line]")!.textContent).toContain("connection dropped");
     expect(a.container.querySelector("[data-prepare-action]")).toBeNull();
     a.unmount();
-    const failed = await stateAfter({ type: "start", nowMs: 1, harness: "claude-code" }, { type: "failed", nowMs: 2, message: "disk full" }, { type: "tick", nowMs: 10_000 }, { type: "failed", nowMs: 10_001, message: "disk full" });
+    const failed = await stateAfter(
+      { type: "start", nowMs: 1, harness: "claude-code" },
+      { type: "failed", nowMs: 2, message: "disk full" },
+      { type: "tick", nowMs: 10_000 },
+      { type: "failed", nowMs: 10_001, message: "disk full" },
+    );
     const b = render(<PreparePanel view={prepareView(core, failed)!} onRetry={() => {}} />);
     expect(b.container.querySelector("[data-prepare-action]")!.textContent).toBe("Try again");
   });

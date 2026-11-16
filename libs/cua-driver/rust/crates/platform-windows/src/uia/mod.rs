@@ -38,7 +38,6 @@ pub mod scroll;
 pub mod snapshot;
 pub mod windows_enum;
 pub use snapshot::Snapshots;
-pub use windows_enum::enumerate_top_level_windows;
 
 /// Default cap; callers can override via [`walk_tree_bounded`].
 pub const DEFAULT_MAX_DEPTH: usize = 25;
@@ -505,7 +504,7 @@ unsafe fn walk_tree_unsafe(
 
     let raw_md = render_lines(&lines);
     let tree_markdown = if let Some(q) = query {
-        filter_tree(&raw_md, q)
+        cua_driver_core::element_query::filter_tree(&raw_md, q)
     } else {
         raw_md
     };
@@ -851,12 +850,12 @@ fn emit_cached_node(
     let automation_id = read_cached_bstr(element, UIA_AutomationIdPropertyId);
     let help_text = read_cached_bstr(element, UIA_HelpTextPropertyId);
     let enabled = read_cached_bool(element, UIA_IsEnabledPropertyId);
-    // Missing UIA state must remain unknown on the structured observation
-    // surface. Action discovery keeps its historical best-effort assumption.
-    let is_enabled = enabled.unwrap_or(true);
     let selected = read_cached_selected(element);
-    let actions = detect_cached_actions(element, &control_type, is_enabled);
-    let is_actionable = !actions.is_empty() && is_enabled;
+    // A disabled control is indexed and published with `enabled: false`, as on
+    // macOS: enablement is state the caller needs to read, not a reason to hide
+    // the row. The token writers refuse it (`tools::impl_::refuse_if_disabled`).
+    let actions = detect_cached_actions(element, &control_type);
+    let is_actionable = !actions.is_empty();
     let has_content = name
         .as_deref()
         .map(|s| !s.trim().is_empty())
@@ -1005,14 +1004,7 @@ fn read_cached_bounding_rect_full(
     }
 }
 
-fn detect_cached_actions(
-    element: &IUIAutomationElement,
-    control_type: &str,
-    is_enabled: bool,
-) -> Vec<String> {
-    if !is_enabled {
-        return vec![];
-    }
+fn detect_cached_actions(element: &IUIAutomationElement, control_type: &str) -> Vec<String> {
     let mut actions = Vec::new();
     unsafe {
         if element.GetCachedPattern(UIA_InvokePatternId).is_ok() {
@@ -1145,6 +1137,9 @@ pub(crate) fn format_node_line(node: &UiaNode) -> String {
         if let Some(h) = &node.help_text {
             attrs.push(format!("help=\"{}\"", h));
         }
+        if node.enabled == Some(false) {
+            attrs.push("enabled=false".to_owned());
+        }
         if !node.actions.is_empty() {
             attrs.push(format!("actions=[{}]", node.actions.join(",")));
         }
@@ -1175,55 +1170,44 @@ fn render_lines(lines: &[(usize, String)]) -> String {
     out
 }
 
-fn filter_tree(markdown: &str, query: &str) -> String {
-    let needle = query.to_lowercase();
-    let lines: Vec<&str> = markdown.lines().collect();
-    let mut ancestors: Vec<&str> = Vec::new();
-    let mut last_emitted: Vec<Option<&str>> = Vec::new();
-    let mut output: Vec<&str> = Vec::new();
-
-    for line in &lines {
-        let depth = line.chars().take_while(|c| *c == ' ').count() / 2;
-        while ancestors.len() <= depth {
-            ancestors.push("");
-            last_emitted.push(None);
-        }
-        for slot in last_emitted
-            .iter_mut()
-            .take(ancestors.len())
-            .skip(depth + 1)
-        {
-            *slot = None;
-        }
-        ancestors[depth] = line;
-
-        if line.to_lowercase().contains(&needle) {
-            for d in 0..depth {
-                if ancestors[d].is_empty() {
-                    continue;
-                }
-                if last_emitted[d] == Some(ancestors[d]) {
-                    continue;
-                }
-                last_emitted[d] = Some(ancestors[d]);
-                output.push(ancestors[d]);
-            }
-            last_emitted[depth] = Some(line);
-            output.push(line);
-        }
-    }
-
-    if output.is_empty() {
-        return String::new();
-    }
-    let mut r = output.join("\n");
-    r.push('\n');
-    r
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_disabled_control_row_says_so() {
+        let node = UiaNode {
+            element_index: Some(7),
+            control_type: "CheckBox".into(),
+            name: Some("Reset".into()),
+            value: None,
+            automation_id: Some("chk-reset".into()),
+            help_text: None,
+            actions: vec!["toggle".into()],
+            enabled: Some(false),
+            selected: Some(false),
+            element_ptr: 0,
+            center_x: 0,
+            center_y: 0,
+            rect: None,
+            msaa_role: None,
+            depth: 0,
+            parent_element_index: None,
+            in_web_content: false,
+        };
+        assert_eq!(
+            format_node_line(&node),
+            "- [7] CheckBox \"Reset\" [id=chk-reset enabled=false actions=[toggle]]"
+        );
+        let enabled = UiaNode {
+            enabled: Some(true),
+            ..node
+        };
+        assert_eq!(
+            format_node_line(&enabled),
+            "- [7] CheckBox \"Reset\" [id=chk-reset actions=[toggle]]"
+        );
+    }
 
     #[test]
     fn com_init_accepts_an_existing_apartment_of_either_mode() {

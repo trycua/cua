@@ -74,8 +74,7 @@ export function webkitStartupOps(request: WebkitRequest) {
   return {
     "startup.get": get,
     // A failed action: show what the host says now.
-    "startup.act": ({ action }: StartupOps["startup.act"]["args"]) =>
-      request<unknown>("startup.act", { action }).then(startupFromHost, get),
+    "startup.act": ({ action }: StartupOps["startup.act"]["args"]) => request<unknown>("startup.act", { action }).then(startupFromHost, get),
   };
 }
 

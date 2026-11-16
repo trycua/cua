@@ -93,33 +93,19 @@ describe.skipIf(!wasmBuilt)("tips", () => {
     expect(sidebarTip()).toBeNull();
   });
 
-  it("shows a tip that belongs to no page in the sidebar, only while no page shows one", async () => {
+  it("shows no tip in the sidebar (its only one, a CLI flag, lives in the docs)", async () => {
     const { h } = host();
     const app = await mountApp("/spaces", h);
     await shown("try-agent");
-    // Two computers are online, but the page's tip comes first.
     expect(sidebarTip()).toBeNull();
     await act(() => app.router.navigate({ to: "/keyvault" }));
-    await waitFor(() => expect(sidebarTip()?.getAttribute("data-tip")).toBe("on-auto"));
-    const s = sidebarTip()!;
-    expect(s.textContent).toContain("New Spaces can go to whichever computer has room.");
-    expect(s.querySelector("[data-tip-code]")!.textContent).toBe("cua create --on auto");
-    // Only × in the sidebar: no Next tip, no Don't show tips.
-    expect(within(s).queryByRole("button", { name: "Next tip" })).toBeNull();
-    fireEvent.click(within(s).getByRole("button", { name: "Copy" }));
-    expect(written).toEqual(["cua create --on auto"]);
-    await waitFor(() => expect(within(s).getByRole("button", { name: "Copied" })).toBeTruthy());
-    fireEvent.click(within(s).getByRole("button", { name: "Close" }));
-    await waitFor(() => expect(sidebarTip()).toBeNull());
-    expect((await settingsTips(app.demo))?.done).toContain("on-auto");
+    await waitFor(() => expect(document.querySelector("main")).not.toBeNull());
+    expect(sidebarTip()).toBeNull();
   });
 
   it("on a Space's page: its request first, then Share… (sharing any Space finishes it)", async () => {
     const { h } = host({
-      answer: (op, out) =>
-        op === "spaces.list"
-          ? (out as Array<Record<string, unknown>>).map((space) => ({ ...space, sharing: undefined }))
-          : out,
+      answer: (op, out) => (op === "spaces.list" ? (out as Array<Record<string, unknown>>).map((space) => ({ ...space, sharing: undefined })) : out),
     });
     const app = await mountApp("/spaces/local:design-review", h);
     await shown("try-agent");

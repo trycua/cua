@@ -282,7 +282,8 @@ pub const LIBRARY: &[Entry] = &[
         title: "Find a table for Friday night",
         detail: "It compares booking sites and waits for your pick before booking.",
         text: "Find a table for four on Friday evening near the place below. In a fresh Linux Space with a browser, compare availability on at least two booking sites and pick the three best-reviewed places that have a table around 7 pm, with a screenshot of each. If it needs me to sign in, ask for the login through the Keyvault, or show me the browser window so I can sign in myself, and never ask me to type a password to you. Stop before booking anything and ask me which one. The place: ",
-        card: 70,
+        // Not a Home card: restaurant booking is a cliché demo, not the dev work Spaces is for.
+        card: 0,
     },
     Entry {
         id: "price-watch",
@@ -422,9 +423,9 @@ pub const LIBRARY: &[Entry] = &[
         family: "untrusted-code",
         needs: &[L, Cap::FillIn],
         why: "See what unfamiliar code touches before it gets near your machine.",
-        title: "Try an unfamiliar change in a sandbox",
+        title: "Try an unfamiliar change in a clean Space",
         detail: "It builds it with no access to your machine and reports what it touches.",
-        text: "Try an unfamiliar change in a sandbox. Make a fresh Linux Space with no access to my machine, check out the pull request or package below, build it and run its tests, and tell me every network address it contacted and every file it wrote outside its own folder, so I can decide whether to merge or install it. The link: ",
+        text: "Try an unfamiliar change in a clean Space. Make a fresh Linux Space with no access to my machine, check out the pull request or package below, build it and run its tests, and tell me every network address it contacted and every file it wrote outside its own folder, so I can decide whether to merge or install it. The link: ",
         card: 75,
     },
     Entry {
@@ -436,7 +437,8 @@ pub const LIBRARY: &[Entry] = &[
         title: "Run a long job and hand it off if I close my laptop",
         detail: "It keeps going on another machine of yours and messages you when done.",
         text: "Run the job below in a Linux Space that keeps going if I close my laptop, and hand it over to another of my machines if this one goes to sleep. Check on it now and then and message me when it finishes or fails, with the last lines of its log. The job: ",
-        card: 60,
+        // Not a Home card: handing a job to another machine hasn't shipped, so the card would promise it.
+        card: 0,
     },
 ];
 

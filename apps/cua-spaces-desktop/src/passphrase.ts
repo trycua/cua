@@ -26,8 +26,7 @@ export interface PassphraseCheck {
   hint: string | null;
 }
 
-export const escapeHtml = (s: string) =>
-  s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+export const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
 /** The core's check as the page reads it. */
 export function checkView(c: KvPassphraseCheck): PassphraseCheck {
@@ -154,11 +153,7 @@ export function askPassphraseWindow(
   return turn;
 }
 
-async function showForm(
-  parent: unknown,
-  form: KvCredentialForm,
-  check: (passphrase: string, confirm: string) => PassphraseCheck,
-): Promise<CredentialAnswer> {
+async function showForm(parent: unknown, form: KvCredentialForm, check: (passphrase: string, confirm: string) => PassphraseCheck): Promise<CredentialAnswer> {
   const { BrowserWindow, ipcMain, nativeTheme } = await import("electron");
   const owner = parent instanceof BrowserWindow && !parent.isDestroyed() && parent.isVisible() ? parent : undefined;
   const session = new PassphraseSession(check);
@@ -186,7 +181,8 @@ async function showForm(
   });
   win.setMenuBarVisibility(false);
   const mine = (e: { sender: unknown }) => e.sender === win.webContents;
-  const onCheck = (e: Electron.IpcMainInvokeEvent, p: unknown, c: unknown) => (mine(e) ? session.checkFields(p, c) : { canSubmit: false, strength: null, hint: null });
+  const onCheck = (e: Electron.IpcMainInvokeEvent, p: unknown, c: unknown) =>
+    mine(e) ? session.checkFields(p, c) : { canSubmit: false, strength: null, hint: null };
   const onSubmit = (e: Electron.IpcMainEvent, p: unknown, c: unknown) => {
     if (mine(e)) session.submit(p, c);
   };

@@ -112,7 +112,15 @@ export function demoLinksState(now = Date.now(), preset?: DemoSharesPreset): Dem
 
 export const NOT_ON_RELAY = "this machine is not on your cua.ai relay, so a link would only open here. Run `cua host setup` once, then share again";
 
-type LinksOpNames = "links.list" | "links.create" | "links.stop" | "links.approve" | "links.deny" | "shares.settings.get" | "shares.settings.set" | "shares.edge.remove";
+type LinksOpNames =
+  | "links.list"
+  | "links.create"
+  | "links.stop"
+  | "links.approve"
+  | "links.deny"
+  | "shares.settings.get"
+  | "shares.settings.set"
+  | "shares.edge.remove";
 
 export function demoLinksHandlers({ state, now }: DemoContext): DemoHandlers<LinksOpNames> {
   const live = () => state.links.links.filter((l) => l.expiresAtUnix === null || l.expiresAtUnix * 1000 > now());

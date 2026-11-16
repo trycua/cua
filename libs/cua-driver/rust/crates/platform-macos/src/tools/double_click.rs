@@ -51,7 +51,7 @@ fn def() -> &'static ToolDef {
             "type": "object",
             "required": [],
             "properties": {
-                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
+                "session": cua_driver_core::tool_schema::session_schema(),
                 "pid":           { "type": "integer", "description": "Target process ID. Optional with element_token (the token carries the pid)." },
                 "x":             { "type": "number",  "description": "Screen X coordinate (pixel path)." },
                 "y":             { "type": "number",  "description": "Screen Y coordinate (pixel path)." },
@@ -227,6 +227,16 @@ impl Tool for DoubleClickTool {
 
 // ── Blocking AX path ─────────────────────────────────────────────────────────
 
+/// Overlay commands for a pulse on `wid`. Pinning first lets the overlay
+/// resolve the window's Space before the pulse places the cursor, so a target
+/// on another Space paints nothing over the current one (#3801).
+fn pulse_on_window(wid: u32, x: f64, y: f64) -> [cursor_overlay::OverlayCommand; 2] {
+    [
+        cursor_overlay::OverlayCommand::PinAbove(u64::from(wid)),
+        cursor_overlay::OverlayCommand::ClickPulse { x, y },
+    ]
+}
+
 fn ax_double_click(
     pid: i32,
     wid: u32,
@@ -239,13 +249,32 @@ fn ax_double_click(
     let element = element_ptr as AXUIElementRef;
     // The caller's early read skips a foreground call into a background app,
     // so this read, right before input, is the one that always runs.
-    crate::input::ax_actions::ensure_ax_action_enabled(element_ptr, "double_click")?;
+    if foreground {
+        // Activation has just run; the app may not have enabled it yet.
+        crate::input::ax_actions::ensure_ax_action_enabled_after_activation(
+            element_ptr,
+            "double_click",
+        )?;
+    } else {
+        crate::input::ax_actions::ensure_ax_action_enabled(element_ptr, "double_click")?;
+    }
 
     // Try AXOpen first (Finder items, openable list rows, document cells).
     if has_ax_open {
+        let window_before = unsafe { super::click::window_before_open(element) };
         let err = unsafe { perform_action(element, "AXOpen") };
         if err == kAXErrorSuccess {
             return Ok(format!("AXOpen performed on element [{idx}]."));
+        }
+        if let Some((now, before)) = window_before.as_ref().and_then(|(window, before)| {
+            unsafe { super::click::replaced_by_open(element, err, window, before) }
+                .map(|now| (now, before))
+        }) {
+            return Ok(format!(
+                "AXOpen performed on element [{idx}]; the element no longer exists and the \
+                 window title is now \"{now}\" (was \"{before}\"), although the app returned \
+                 AX error {err}. Take a fresh snapshot before acting again."
+            ));
         }
         if !foreground {
             anyhow::bail!(
@@ -263,10 +292,9 @@ fn ax_double_click(
         .ok_or_else(|| anyhow::anyhow!("Cannot resolve screen center for element [{idx}]"))?;
 
     // Drive THIS session's cursor (threaded in via `cursor_key`), not "default".
-    crate::cursor::overlay::send_command(
-        cursor_key.to_owned(),
-        cursor_overlay::OverlayCommand::ClickPulse { x: cx, y: cy },
-    );
+    for cmd in pulse_on_window(wid, cx, cy) {
+        crate::cursor::overlay::send_command(cursor_key.to_owned(), cmd);
+    }
     // Use the window-local primitive (not bare click_at_xy): a plain
     // click_at_xy does NOT reliably reach a backgrounded / non-key window — it
     // no-ops on AppKit controls that hit-test the window-local stamp. Mirror the
@@ -314,5 +342,29 @@ mod tests {
             background_action_for_element(false),
             cua_driver_core::background_input::BackgroundAction::WindowPointer
         );
+    }
+
+    /// The pointer fallback's pulse must leave the cursor pinned to the target
+    /// window, whether the cursor is fresh or was pinned to another window by
+    /// an earlier action; the pin is what carries the window's Space check.
+    #[test]
+    fn pointer_fallback_pulse_pins_the_target_window() {
+        use cursor_overlay::{render_state::RenderStateCore, CursorConfig, OverlayCommand};
+
+        let apply = |core: &mut RenderStateCore| {
+            for cmd in pulse_on_window(42, 300.0, 200.0) {
+                core.apply_command_base(cmd, true, true);
+            }
+        };
+
+        let mut fresh = RenderStateCore::new(CursorConfig::default());
+        apply(&mut fresh);
+        assert_eq!(fresh.pinned_wid, Some(42));
+        assert!(fresh.placed);
+
+        let mut earlier = RenderStateCore::new(CursorConfig::default());
+        earlier.apply_command_base(OverlayCommand::PinAbove(7), true, true);
+        apply(&mut earlier);
+        assert_eq!(earlier.pinned_wid, Some(42));
     }
 }

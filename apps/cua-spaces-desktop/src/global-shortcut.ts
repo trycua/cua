@@ -15,7 +15,17 @@ export interface GlobalShortcutState {
   registered: boolean;
 }
 
-const SYMBOL: Record<string, string> = { Control: "\u2303", Alt: "\u2325", Shift: "\u21e7", Command: "\u2318", Return: "\u21a9", Up: "\u2191", Down: "\u2193", Left: "\u2190", Right: "\u2192" };
+const SYMBOL: Record<string, string> = {
+  Control: "\u2303",
+  Alt: "\u2325",
+  Shift: "\u21e7",
+  Command: "\u2318",
+  Return: "\u21a9",
+  Up: "\u2191",
+  Down: "\u2193",
+  Left: "\u2190",
+  Right: "\u2192",
+};
 
 /** `Command+Shift+Space` as the Mac writes it: \u2318\u21e7Space. */
 export function shortcutLabel(accelerator: string): string {
@@ -26,7 +36,8 @@ export function shortcutLabel(accelerator: string): string {
 }
 
 /** A shortcut Settings may set: at least one of Command, Control or Option, then one key (a letter, a digit, F1 to F24, Space or an arrow). */
-const ACCELERATOR = /^(?:(?:Control|Alt|Shift|Command)\+)*(?:Control|Alt|Command)\+(?:(?:Control|Alt|Shift|Command)\+)*(?:[A-Z0-9]|F(?:[1-9]|1\d|2[0-4])|Space|Return|Tab|Backspace|Up|Down|Left|Right)$/;
+const ACCELERATOR =
+  /^(?:(?:Control|Alt|Shift|Command)\+)*(?:Control|Alt|Command)\+(?:(?:Control|Alt|Shift|Command)\+)*(?:[A-Z0-9]|F(?:[1-9]|1\d|2[0-4])|Space|Return|Tab|Backspace|Up|Down|Left|Right)$/;
 
 export const isAccelerator = (value: string): boolean => ACCELERATOR.test(value);
 

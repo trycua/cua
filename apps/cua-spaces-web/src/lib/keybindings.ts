@@ -2,16 +2,10 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import defaults from "./keybindings.json";
+import { t } from "@/i18n";
 import { isMacPlatform } from "./utils";
 
-export type KeybindingCommand =
-  | "commandPalette.toggle"
-  | "sidebar.toggle"
-  | "nav.spaces"
-  | "nav.agents"
-  | "nav.keyvault"
-  | "nav.settings"
-  | "theme.cycle";
+export type KeybindingCommand = "commandPalette.toggle" | "sidebar.toggle" | "nav.spaces" | "nav.agents" | "nav.keyvault" | "nav.settings" | "theme.cycle";
 
 export interface Keybinding {
   command: KeybindingCommand;
@@ -29,7 +23,10 @@ export interface Shortcut {
 export const DEFAULT_KEYBINDINGS = defaults as Keybinding[];
 
 export function parseShortcut(spec: string): Shortcut {
-  const parts = spec.toLowerCase().split("+").map((p) => p.trim());
+  const parts = spec
+    .toLowerCase()
+    .split("+")
+    .map((p) => p.trim());
   const key = parts.pop() ?? "";
   return { key, mod: parts.includes("mod"), shift: parts.includes("shift"), alt: parts.includes("alt") };
 }
@@ -46,20 +43,10 @@ export function matchesShortcut(event: KeyEventLike, spec: string, mac = isMacPl
   const s = parseShortcut(spec);
   const mod = mac ? event.metaKey : event.ctrlKey;
   const otherMod = mac ? event.ctrlKey : event.metaKey;
-  return (
-    event.key.toLowerCase() === s.key &&
-    mod === s.mod &&
-    !otherMod &&
-    event.shiftKey === s.shift &&
-    event.altKey === s.alt
-  );
+  return event.key.toLowerCase() === s.key && mod === s.mod && !otherMod && event.shiftKey === s.shift && event.altKey === s.alt;
 }
 
-export function resolveCommand(
-  event: KeyEventLike,
-  bindings: readonly Keybinding[] = DEFAULT_KEYBINDINGS,
-  mac = isMacPlatform(),
-): KeybindingCommand | null {
+export function resolveCommand(event: KeyEventLike, bindings: readonly Keybinding[] = DEFAULT_KEYBINDINGS, mac = isMacPlatform()): KeybindingCommand | null {
   return bindings.find((b) => matchesShortcut(event, b.key, mac))?.command ?? null;
 }
 
@@ -67,9 +54,9 @@ export function resolveCommand(
 export function shortcutLabel(spec: string, mac = isMacPlatform()): string[] {
   const s = parseShortcut(spec);
   const out: string[] = [];
-  if (s.mod) out.push(mac ? "⌘" : "Ctrl");
-  if (s.alt) out.push(mac ? "⌥" : "Alt");
-  if (s.shift) out.push(mac ? "⇧" : "Shift");
+  if (s.mod) out.push(mac ? "⌘" : t("shell.shortcut.ctrl"));
+  if (s.alt) out.push(mac ? "⌥" : t("shell.shortcut.alt"));
+  if (s.shift) out.push(mac ? "⇧" : t("shell.shortcut.shift"));
   out.push(s.key.length === 1 ? s.key.toUpperCase() : s.key);
   return out;
 }

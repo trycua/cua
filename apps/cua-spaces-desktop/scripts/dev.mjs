@@ -51,9 +51,7 @@ if (!(await reachable(devUrl)) && existsSync(path.join(webDir, "package.json")))
 }
 
 await new Promise((resolve, reject) => {
-  run("pnpm", ["exec", "tsdown"], { cwd: root }).on("exit", (code) =>
-    code === 0 ? resolve() : reject(new Error("tsdown failed")),
-  );
+  run("pnpm", ["exec", "tsdown"], { cwd: root }).on("exit", (code) => (code === 0 ? resolve() : reject(new Error("tsdown failed"))));
 });
 run("pnpm", ["exec", "tsdown", "--watch", "--no-clean", "--log-level", "warn"], { cwd: root });
 

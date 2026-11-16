@@ -7,6 +7,7 @@ on:
       - ".github/workflows/ci-driver-linux-bootstrap.yml"
       - ".github/scripts/tests/test_driver_linux_bootstrap.py"
 
+  merge_group:
 permissions:
   contents: read
 
@@ -22,12 +23,12 @@ concurrency:
 jobs:
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   bootstrap:
     needs: quick
-    if: ${{ !failure() && !cancelled() }}
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: Debian 11 bootstrap (${{ matrix.arch }})
     strategy:
       fail-fast: false

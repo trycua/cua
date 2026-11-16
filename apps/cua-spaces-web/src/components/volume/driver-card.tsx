@@ -113,11 +113,7 @@ export function DriverSettingsCard() {
       <DriverCard checked={checked} onCheckedChange={setChecked} disabled={busy} fixedMs={pinned?.tMs} />
       <div className="flex items-center justify-between gap-4">
         <p className="text-xs text-muted-foreground">
-          {agents === null
-            ? copy.agentsLooking
-            : agents.length === 0
-              ? copy.agentsNone
-              : `For ${agents.map((a) => a.name).join(", ")}.`}
+          {agents === null ? copy.agentsLooking : agents.length === 0 ? copy.agentsNone : `For ${agents.map((a) => a.name).join(", ")}.`}
         </p>
         <Button variant="outline" size="sm" disabled={!checked || busy || !agents?.length} onClick={() => void run()}>
           {busy ? copy.agentsSettingUp : copy.agentsSetUp}

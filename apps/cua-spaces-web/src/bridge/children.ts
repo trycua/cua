@@ -86,7 +86,7 @@ export function createChildrenStore(adapter: DataAdapter, now: () => number = Da
   };
 
   // Budgets by Space asked about, services by Space.
-  const cached = <T,>(load: (id: string) => Promise<T>, empty: T) => {
+  const cached = <T>(load: (id: string) => Promise<T>, empty: T) => {
     const values = new Map<string, { value: T; at: number; loading: boolean }>();
     const read = (id: string) => {
       const e = values.get(id) ?? { value: empty, at: 0, loading: false };

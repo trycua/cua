@@ -110,8 +110,12 @@ def check_store_url(url: str | None) -> str:
     u = urllib.parse.urlsplit(str(url))
     if u.scheme == "s3" and u.netloc:
         return str(url)
-    if u.scheme == "file" and u.path.startswith("/") and u.netloc in ("", "localhost"):
-        return str(url)
+    if u.scheme == "file":
+        from ._store import file_url_path
+
+        p = file_url_path(str(url))
+        if p and (p.startswith("/") or re.match(r"^[A-Za-z]:[/\\]", p)):
+            return str(url)
     raise ValueError(f"store must be 's3://bucket/prefix' or 'file:///abs/path', got {url!r}")
 
 
@@ -215,18 +219,67 @@ class Function:
         return self.fn(*args, **kwargs)
 
 
+_VENDORS = {"gpu": "gpu", "any": "gpu", "auto": "gpu", "nvidia": "nvidia", "cuda": "nvidia",
+            "apple": "apple", "metal": "apple", "mps": "apple"}
+
+
+def _gb(v: Any) -> str:
+    """"24GB", "24 gb", 24 (GB) as "24GB"."""
+    if isinstance(v, (int, float)):
+        gb = float(v)
+    else:
+        m = re.fullmatch(r"\s*([0-9.]+)\s*(tb|gb|g|mb)?\s*", str(v).lower())
+        if not m:
+            raise ValueError(f"gpu_memory must look like '24GB', got {v!r}")
+        gb = float(m.group(1)) * {"tb": 1024.0, "gb": 1.0, "g": 1.0, "mb": 1 / 1024}[m.group(2) or "gb"]
+    if gb <= 0:
+        raise ValueError(f"gpu_memory must be positive, got {v!r}")
+    return f"{int(-(-gb // 1))}GB"
+
+
+def resolve_accelerator(accelerator: str | None, gpu: str | None, gpu_memory: Any) -> str | None:
+    """The pool's accelerator word (`nvidia:L4:24GB`) from `accelerator=` and the
+    Modal-style `gpu=` / `gpu_memory=`."""
+    if gpu is not None and accelerator not in (None, ""):
+        raise ValueError("give gpu= or accelerator=, not both")
+    word = accelerator if accelerator not in (None, "") else None
+    if gpu is not None and gpu != "":
+        g = str(gpu).strip()
+        g = g.split(":")[0] if re.search(r":\d+$", g) else g  # "A100:2": one GPU per member
+        vendor = _VENDORS.get(g.lower())
+        word = vendor if vendor else f"nvidia:{g}"
+    if gpu_memory not in (None, ""):
+        if word is None:
+            word = "gpu"
+        word = f"{word}:{_gb(gpu_memory)}"
+    if word is None:
+        return None
+    head = word.split(":")[0].strip().lower()
+    if head not in _VENDORS:
+        raise ValueError(f"accelerator must start with gpu, apple or nvidia, got {word!r}")
+    return ":".join([_VENDORS[head], *[p.strip() for p in word.split(":")[1:] if p.strip()]])
+
+
 class App:
     def __init__(self, name: str):
         self.name = name
         self.functions: dict[str, Function] = {}
 
     def function(self, image: Image | None = None, nodes: Any = 1, accelerator: str | None = None,
+                 gpu: str | None = None, gpu_memory: Any = None,
                  kind: str | None = None, store: str | None = None, network: str = "mesh",
                  on: str = "auto", retries: Any = 3, timeout: Any = "2h",
                  env: dict[str, str] | None = None, secrets: Iterable[Secret] | None = None,
                  barrier_timeout: Any = "15m", stall_timeout: Any = "10m", infra_retries: int = 10):
         """Register a job function.  Every member (rank) runs in its own Space.
 
+        gpu: the GPU, as in Modal: "any", "nvidia", "apple", or a model ("L4", "A100",
+            "H100", "RTX PRO 6000"; a ":count" suffix is ignored: one GPU per member).
+        gpu_memory: video memory the job needs free on its GPU ("24GB", 24): a computer
+            whose GPU has less free is skipped, and a job is not started on a GPU the
+            jobs already placed there have filled.
+        accelerator: the same in the pool's own words: "gpu", "nvidia", "apple",
+            optionally with a model and memory ("nvidia:L4:24GB").
         nodes: 2, or (min, max): the gang size; the pool places as many as fit.
         kind: the Space each member runs in: "vm", "container", "microvm" or
             "machine" (a dedicated host's own Space).  Default: the engine picks.
@@ -249,14 +302,13 @@ class App:
             retries_spec = retries.to_spec()
         else:
             retries_spec = Retries(int(retries)).to_spec()
-        if accelerator not in (None, "", "gpu", "apple", "nvidia"):
-            raise ValueError(f"accelerator must be gpu, apple or nvidia, got {accelerator!r}")
+        accelerator = resolve_accelerator(accelerator, gpu, gpu_memory)
         if kind not in (None, "", *KINDS):
             raise ValueError(f"kind must be one of {', '.join(KINDS)} (or omitted), got {kind!r}")
         if network not in NETWORKS:
             raise ValueError(f"network must be 'mesh' or 'direct', got {network!r}")
-        if not (on in ("auto", "aws") or str(on).startswith("host:")):
-            raise ValueError(f"on must be 'auto', 'aws' or 'host:NAME', got {on!r}")
+        if not (on in ("auto", "local", "aws") or str(on).startswith("host:")):
+            raise ValueError(f"on must be 'auto', 'local', 'aws' or 'host:NAME', got {on!r}")
         secret_names: list[str] = []
         for s in secrets or []:
             secret_names.extend(s.to_spec())

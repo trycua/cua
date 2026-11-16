@@ -190,7 +190,11 @@ export function ViewerView({ params }: { params: ViewerParams }) {
           <div data-viewer-popped-out className="absolute inset-0 flex flex-col items-center justify-center gap-2">
             <PictureInPicture2Icon className="size-7 text-white/50" />
             <p className="text-xs text-white/60">Playing in a floating window</p>
-            <button type="button" onClick={togglePip} className="h-6 cursor-default rounded-lg bg-white/10 px-2.5 text-xs text-white/90 outline-none hover:bg-white/15">
+            <button
+              type="button"
+              onClick={togglePip}
+              className="h-6 cursor-default rounded-lg bg-white/10 px-2.5 text-xs text-white/90 outline-none hover:bg-white/15"
+            >
               Bring it back
             </button>
           </div>
@@ -198,7 +202,10 @@ export function ViewerView({ params }: { params: ViewerParams }) {
           <div ref={ref} data-viewer-stream className="absolute inset-0" />
         )}
         {badge ? (
-          <div data-viewer-status={badge.tone} className="absolute top-2.5 left-2.5 flex items-center gap-1.5 rounded-lg bg-black/65 px-2 py-1 text-[11px] font-medium">
+          <div
+            data-viewer-status={badge.tone}
+            className="absolute top-2.5 left-2.5 flex items-center gap-1.5 rounded-lg bg-black/65 px-2 py-1 text-[11px] font-medium"
+          >
             <span className={cn("size-[7px] rounded-full", badge.tone === "red" ? "bg-red-500" : "bg-yellow-400")} />
             {badge.text}
             {slot?.phase === "failed" ? (

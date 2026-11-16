@@ -20,7 +20,7 @@ let out = try await env.run(command: SpacesdCommand("uname", ["-a"]))
   optionally iOS), built by `scripts/build-xcframework.sh --zip`; the
   release workflow writes `releaseURL`/`releaseChecksum` in `Package.swift`.
 - **Local XCFramework**: `CUA_SWIFT_XCFRAMEWORK=build/CuaSDKFFI.xcframework`.
-- **Development**: `cargo build --release -p cua-sdk`, then
+- **Development**: `cargo build --release -p cua-sdk-native`, then
   `node ../scripts/stage-uniffi-library.mjs --only=swift` stages the host
   dylib in `lib/` (git-ignored, never committed); the system-library target
   links it. Re-stage after every SDK rebuild.

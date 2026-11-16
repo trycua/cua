@@ -1262,7 +1262,7 @@ fn header(query: &str, matched: Option<u32>) -> NotchHeader {
     NotchHeader {
         query: query.into(),
         placeholder: "Search".into(),
-        search_label: "Filter Cua Spaces by name, OS, status, or location".into(),
+        search_label: "Filter Spaces".into(),
         match_count: matched,
         buttons: vec![
             NotchButton {

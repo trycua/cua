@@ -3,7 +3,17 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { defaultAddressee, EMPTY_ADDRESS, pinAgent, resetAddressing, resolveAddressing, setAddress, unpinAgent, useAddressing, type ResolveInput } from "./addressing";
+import {
+  defaultAddressee,
+  EMPTY_ADDRESS,
+  pinAgent,
+  resetAddressing,
+  resolveAddressing,
+  setAddress,
+  unpinAgent,
+  useAddressing,
+  type ResolveInput,
+} from "./addressing";
 
 const base = (over: Partial<ResolveInput> = {}): ResolveInput => ({
   text: "run the tests",

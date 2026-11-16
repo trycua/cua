@@ -66,6 +66,9 @@ static xkb_mod_mask_t g_logo_mask = 0;
 struct cua_keyent { uint32_t keycode; int shift; int valid; };
 static struct cua_keyent g_chartab[128];
 static struct wlr_foreign_toplevel_manager_v1 *g_ftl_mgr = NULL;
+/* Bumped by every change that can move, restack or reshape a toplevel, so a
+ * capture bracketed by two equal `w` replies saw one unchanged scene. */
+static uint64_t g_capture_epoch = 1;
 struct tinywl_toplevel;
 static void cua_ftl_request_activate(struct wl_listener *listener, void *data);
 static void cua_maybe_focus_new_toplevel(struct tinywl_toplevel *toplevel);
@@ -80,6 +83,7 @@ STRUCT_FIELD = (
     "\tbool cua_initial_activation_sent;\n"
     "\tstruct wlr_foreign_toplevel_handle_v1 *ftl;\n"
     "\tstruct wl_listener ftl_request_activate;\n"
+    "\tstruct wlr_box cua_capture_geometry;\n"
 )
 
 FUNCS = r"""
@@ -271,6 +275,50 @@ static const char *cua_query_geometry(struct tinywl_server *server, pid_t target
 	struct wlr_box geo = target->xdg_toplevel->base->geometry;
 	x -= geo.x; y -= geo.y;
 	snprintf(out, out_len, "geometry %d %d %d %d", x, y, scene_x, scene_y);
+	return NULL;
+}
+static void cua_count_buffer(struct wlr_scene_buffer *buffer, int sx, int sy, void *data) {
+	(void)buffer; (void)sx; (void)sy;
+	(*(int *)data)++;
+}
+/* Read-only capture attestation for the toplevel owned by `target_pid`'s
+ * process family. It never focuses or raises. The rectangle is the scene
+ * origin plus xdg geometry, the same frame `g` and pointer injection use, in
+ * the pixels of the single output screencopy copies. Only the topmost mapped
+ * toplevel qualifies: popups live in their parent's subtree, so nothing from
+ * another client can be drawn over it. An unmapped toplevel keeps an enabled
+ * scene root with a disabled surface subtree, so a sibling counts as above the
+ * target only when it still holds an enabled buffer. */
+static const char *cua_query_capture(struct tinywl_server *server, pid_t target_pid, char *out, size_t out_len) {
+	struct tinywl_toplevel *t, *target = NULL;
+	int matches = 0;
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (cua_pid_in_family(cua_toplevel_pid(t), target_pid)) { target = t; matches++; }
+	}
+	if (!matches) return "target-not-found";
+	if (matches > 1) return "ambiguous-pid";
+	struct wlr_scene_node *node = &target->scene_tree->node, *above;
+	int visible_above = 0;
+	for (struct wl_list *link = node->link.next; link != &server->scene->tree.children; link = link->next) {
+		above = wl_container_of(link, above, link);
+		wlr_scene_node_for_each_buffer(above, cua_count_buffer, &visible_above);
+	}
+	if (visible_above) return "target-occluded";
+	if (wl_list_length(&server->outputs) != 1) return "unsupported-output-layout";
+	struct tinywl_output *output = wl_container_of(server->outputs.next, output, link);
+	struct wlr_output *wlr_output = output->wlr_output;
+	if (wlr_output->scale != 1 || wlr_output->transform != WL_OUTPUT_TRANSFORM_NORMAL)
+		return "unsupported-output-transform";
+	struct wlr_box layout;
+	wlr_output_layout_get_box(server->output_layout, wlr_output, &layout);
+	if (wlr_box_empty(&layout)) return "output-not-in-layout";
+	int x = 0, y = 0;
+	if (!wlr_scene_node_coords(node, &x, &y)) return "unmapped-target";
+	struct wlr_box geo = target->xdg_toplevel->base->geometry;
+	if (geo.width <= 0 || geo.height <= 0) return "empty-geometry";
+	snprintf(out, out_len, "capture %d %d %d %d %d %d %llu", x - layout.x, y - layout.y,
+		geo.width, geo.height, wlr_output->width, wlr_output->height,
+		(unsigned long long)g_capture_epoch);
 	return NULL;
 }
 static void cua_ptr_leave(struct wlr_seat *seat, struct wlr_surface *surf) {
@@ -674,10 +722,18 @@ static int cua_conn_readable(int fd, uint32_t mask, void *data) {
 				return cua_conn_drop(c, fd);
 			}
 		} else {
-			int query_pid, geometry_pid, activate_pid;
+			int query_pid, geometry_pid, activate_pid, capture_pid;
 			if (sscanf(p, "q %d", &query_pid) == 1) {
 				char msg[128]; cua_query_state(c->server, (pid_t)query_pid, msg, sizeof msg);
 				cua_reply(fd, msg);
+			} else if (sscanf(p, "w %d", &capture_pid) == 1) {
+				char msg[128];
+				const char *err = cua_query_capture(c->server, (pid_t)capture_pid, msg, sizeof msg);
+				if (err) {
+					char reply[128]; snprintf(reply, sizeof reply, "err %s", err); cua_reply(fd, reply);
+				} else {
+					cua_reply(fd, msg);
+				}
 			} else if (sscanf(p, "g %d", &geometry_pid) == 1) {
 				char msg[128];
 				const char *err = cua_query_geometry(c->server, (pid_t)geometry_pid, msg, sizeof msg);
@@ -799,6 +855,7 @@ src = repl(src, "int main(int argc, char *argv[]) {", FUNCS + "int main(int argc
 # 3) On map: register a foreign-toplevel handle (title/app_id) for list_windows.
 src = repl(src,
     "\twl_list_insert(&toplevel->server->toplevels, &toplevel->link);\n\n\tfocus_toplevel(toplevel);",
+    "\tg_capture_epoch++;\n"
     "\twl_list_insert(&toplevel->server->toplevels, &toplevel->link);\n"
     "\tif (g_ftl_mgr) {\n"
     "\t\ttoplevel->ftl = wlr_foreign_toplevel_handle_v1_create(g_ftl_mgr);\n"
@@ -814,6 +871,7 @@ src = repl(src,
 # 4) On unmap: drop the foreign-toplevel handle.
 src = repl(src,
     "\twl_list_remove(&toplevel->link);\n}",
+    "\tg_capture_epoch++;\n"
     "\tstruct wlr_surface *cua_surface = toplevel->xdg_toplevel->base->surface;\n"
     "\tfor (int i = 0; i < CUA_MAXDEV; i++) {\n"
     "\t\tif (cua_ptr[i].entered && wlr_surface_get_root_surface(cua_ptr[i].entered) == cua_surface) cua_ptr[i].entered = NULL;\n"
@@ -827,6 +885,11 @@ src = repl(src,
 src = repl(src,
     "\t\twlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, 0, 0);\n\t}",
     "\t\twlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, 0, 0);\n\t}\n"
+    "\tstruct wlr_box cua_geo = toplevel->xdg_toplevel->base->geometry;\n"
+    "\tif (memcmp(&cua_geo, &toplevel->cua_capture_geometry, sizeof cua_geo)) {\n"
+    "\t\ttoplevel->cua_capture_geometry = cua_geo;\n"
+    "\t\tg_capture_epoch++;\n"
+    "\t}\n"
     "\tif (toplevel->ftl) {\n"
     "\t\tif (toplevel->xdg_toplevel->title)\n"
     "\t\t\twlr_foreign_toplevel_handle_v1_set_title(toplevel->ftl, toplevel->xdg_toplevel->title);\n"
@@ -871,6 +934,16 @@ src = repl(src,
     "\twl_display_destroy(server.wl_display);\n"
     "\treturn 0;",
     "virtual-keyboard-cleanup")
+
+# 8) Restacking and placement invalidate any capture attestation in flight.
+src = repl(src,
+    "\twlr_scene_node_raise_to_top(",
+    "\tg_capture_epoch++;\n\twlr_scene_node_raise_to_top(",
+    "capture-epoch-raise")
+src = repl(src,
+    "\twlr_scene_node_set_position(&toplevel->scene_tree->node,",
+    "\tg_capture_epoch++;\n\twlr_scene_node_set_position(&toplevel->scene_tree->node,",
+    "capture-epoch-position", count=2)
 
 io.open(out, "w", encoding="utf-8").write(src)
 sys.stderr.write("cua-compositor.c written (%d bytes)\n" % len(src))

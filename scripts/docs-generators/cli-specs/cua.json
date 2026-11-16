@@ -3498,7 +3498,7 @@
     },
     {
      "abstract": "The notifications the Cua app shows (turn ends, notify_user, requests)",
-     "after_help": "Examples:\n  cua agent notifications --unread\n  cua agent notifications --mark-read",
+     "after_help": "Examples:\n  cua agent notifications --unread\n  cua agent notifications --mark-read\n  cua agent notifications --delete-all",
      "aliases": [],
      "arguments": [],
      "flags": [
@@ -3520,6 +3520,17 @@
        "help": "Mark every notification read",
        "hidden": false,
        "name": "mark-read",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Delete every notification, for good",
+       "hidden": false,
+       "name": "delete-all",
        "repeatable": false,
        "short_name": null,
        "takes_value": false

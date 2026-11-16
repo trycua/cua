@@ -307,6 +307,12 @@ pub(crate) fn all_windows_any_layer() -> Vec<WindowInfo> {
 /// panels and other app-modal dialogs.
 const MODAL_PANEL_LAYER: i32 = 8;
 
+/// Smallest edge, in points, of a layer-8 window that counts as a modal panel.
+/// The system keeps invisible helpers on that layer too (UserNotificationCenter
+/// holds an untitled 4×4 pt window at alpha 0 that WindowServer reports on
+/// screen and frontmost); a real alert or open/save panel is far larger.
+const MIN_MODAL_PANEL_EDGE_PT: f64 = 40.0;
+
 /// Which CGWindow layers an enumeration admits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LayerFilter {
@@ -314,17 +320,25 @@ enum LayerFilter {
     ZeroOnly,
     /// Normal windows and modal panels — what `list_windows` reports without
     /// a pid. A modal panel holds its app's key focus, so a caller that
-    /// cannot see it cannot answer it.
+    /// cannot see it cannot answer it. A layer-8 window counts only when it
+    /// is visible (alpha above 0) and panel-sized; titles are not required,
+    /// since alerts are often untitled.
     ZeroAndModalPanels,
     /// Every layer, accessory windows included.
     AnyLayer,
 }
 
 impl LayerFilter {
-    fn admits(self, layer: i32) -> bool {
+    fn admits(self, window: &WindowDescription) -> bool {
         match self {
-            LayerFilter::ZeroOnly => layer == 0,
-            LayerFilter::ZeroAndModalPanels => layer == 0 || layer == MODAL_PANEL_LAYER,
+            LayerFilter::ZeroOnly => window.layer == 0,
+            LayerFilter::ZeroAndModalPanels => {
+                window.layer == 0
+                    || (window.layer == MODAL_PANEL_LAYER
+                        && window.alpha > 0.0
+                        && window.bounds.width >= MIN_MODAL_PANEL_EDGE_PT
+                        && window.bounds.height >= MIN_MODAL_PANEL_EDGE_PT)
+            }
             LayerFilter::AnyLayer => true,
         }
     }
@@ -508,6 +522,9 @@ fn enumerate_windows(
         let Some(description) = parse_description(*item) else {
             continue;
         };
+        if !layers.admits(&description) {
+            continue;
+        }
         let WindowDescription {
             window_id,
             pid,
@@ -519,9 +536,6 @@ fn enumerate_windows(
             ..
         } = description;
 
-        if !layers.admits(layer) {
-            continue;
-        }
         if pid_filter.is_some_and(|wanted| wanted != pid) {
             continue;
         }
@@ -838,14 +852,59 @@ mod tests {
 
     #[test]
     fn the_window_list_admits_modal_panels_and_no_other_accessory_layer() {
+        let window =
+            |layer: i32, alpha: f64, width: f64, height: f64, title: &str| WindowDescription {
+                window_id: 1,
+                pid: 1,
+                app_name: "App".into(),
+                title: title.into(),
+                bounds: WindowBounds {
+                    x: 0.0,
+                    y: 0.0,
+                    width,
+                    height,
+                },
+                layer,
+                is_on_screen: true,
+                alpha,
+            };
+        let panel = |layer| window(layer, 1.0, 420.0, 180.0, "");
         // Floating panels, the Dock, the menu bar, status items, pop-up menus.
         for accessory in [-1, 3, 20, 24, 25, 101] {
-            assert!(!LayerFilter::ZeroAndModalPanels.admits(accessory));
+            assert!(!LayerFilter::ZeroAndModalPanels.admits(&panel(accessory)));
         }
-        assert!(LayerFilter::ZeroAndModalPanels.admits(0));
-        assert!(LayerFilter::ZeroAndModalPanels.admits(MODAL_PANEL_LAYER));
-        assert!(!LayerFilter::ZeroOnly.admits(MODAL_PANEL_LAYER));
-        assert!(LayerFilter::AnyLayer.admits(101));
+        assert!(LayerFilter::ZeroAndModalPanels.admits(&panel(0)));
+        // An untitled alert is still a modal panel.
+        assert!(LayerFilter::ZeroAndModalPanels.admits(&panel(MODAL_PANEL_LAYER)));
+        // UserNotificationCenter's invisible helper: layer 8, alpha 0, 4×4, untitled.
+        let helper = window(MODAL_PANEL_LAYER, 0.0, 4.0, 4.0, "");
+        assert!(!LayerFilter::ZeroAndModalPanels.admits(&helper));
+        // Each condition alone excludes a layer-8 window.
+        assert!(!LayerFilter::ZeroAndModalPanels.admits(&window(
+            MODAL_PANEL_LAYER,
+            0.0,
+            420.0,
+            180.0,
+            ""
+        )));
+        assert!(!LayerFilter::ZeroAndModalPanels.admits(&window(
+            MODAL_PANEL_LAYER,
+            1.0,
+            4.0,
+            180.0,
+            ""
+        )));
+        assert!(!LayerFilter::ZeroAndModalPanels.admits(&window(
+            MODAL_PANEL_LAYER,
+            1.0,
+            420.0,
+            4.0,
+            ""
+        )));
+        // Normal windows are not size- or alpha-filtered here.
+        assert!(LayerFilter::ZeroAndModalPanels.admits(&window(0, 0.0, 4.0, 4.0, "")));
+        assert!(!LayerFilter::ZeroOnly.admits(&panel(MODAL_PANEL_LAYER)));
+        assert!(LayerFilter::AnyLayer.admits(&panel(101)));
     }
 
     /// Every per-window lookup must agree with the enumeration it replaced,

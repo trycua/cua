@@ -77,8 +77,8 @@ mutation support has shipped in Cua Driver.
 Chromium and Electron (Ozone Wayland) bind only the first `wl_seat` they are
 offered, which is the user's. To let them take background input, Driver starts
 them for the agent with `launch_app` and `agent_seat: true`. That sets
-`CUA_AGENT_SEAT=<lane>` (1 or 2) in the app's environment. When a client with
-that tag binds a `wl_seat`, the plugin hands it that lane's agent seat instead
+a transient systemd user scope named `cua-agent-seat-<lane>-<token>.scope` (lane
+1 or 2). When a client in such a scope binds a `wl_seat`, the plugin hands it that lane's agent seat instead
 of the user's, so the agent seat is its only seat. Other clients are untouched:
 imv, Zed and every untagged app see exactly what they saw before, and nothing
 falls back to the user's seat. The protocol details, including the new refusal

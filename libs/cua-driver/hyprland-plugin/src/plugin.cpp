@@ -361,7 +361,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     // The agent seats also make an input method register per seat; see
     // ime_popup_guard.cpp. Best effort, reported in status like the above.
     static_cast<void>(cua::hyprland::install_ime_popup_guard(handle));
-    // A client the driver launched with CUA_AGENT_SEAT gets an agent seat as its
+    // A client the driver started in a cua-agent-seat scope gets an agent seat as its
     // only wl_seat (agent_seat_bind.cpp). Best effort too: without the hook,
     // Chromium and Electron keep refusing with client_not_bound, and status
     // reports agent_seat_binding false.

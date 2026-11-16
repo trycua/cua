@@ -15,7 +15,7 @@ focus must not move.
 
 Agent-seat smoke: a client that binds only its first wl_seat, as Chromium and
 Electron do (first_seat_client.c), is started twice. Tagged with CUA_AGENT_SEAT
-it must be handed the Cua-Agent seat and take a background click and key; untagged
+(the environment fallback: the CI container has no systemd) it must be handed the Cua-Agent seat and take a background click and key; untagged
 it must keep the user's seat and still be refused with client_not_agent_seat_bound.
 This is recorded under smoke.agent_seat and does not yet gate the smoke status.
 

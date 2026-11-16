@@ -15,25 +15,34 @@ use super::impl_::{chromium_family_program, exec_basename, window_record_json};
 pub struct LaunchAppTool;
 static LAUNCH_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
-/// Spawn a launcher command line (an executable plus arguments, e.g. an XDG
-/// `Exec=` value with field codes stripped) in the background and return the
-/// child pid.
-///
-/// With `agent_seat_lane` (1 or 2) the child starts with `CUA_AGENT_SEAT=<lane>`
-/// in its environment, which tells the Hyprland plugin to give it that lane's
-/// agent seat as its only `wl_seat` (see `wayland::hyprland_input::AGENT_SEAT_ENV`).
-fn spawn_launch_command(
-    cmd: &str,
-    additional_arguments: &[String],
+/// The command that starts `prog` with `rest`. With `agent_seat_lane` (1 or 2)
+/// it runs inside a transient systemd user scope named
+/// `cua-agent-seat-<lane>-<token>.scope`, which tells the Hyprland plugin to give
+/// the app that lane's agent seat as its only `wl_seat` (see
+/// `wayland::hyprland_input::agent_seat_unit`). `systemd-run --scope` moves
+/// itself into the scope and then execs the program, so the child pid is the
+/// program's.
+fn build_launch_command(
+    prog: &str,
+    rest: &[String],
     agent_seat_lane: Option<u8>,
-) -> std::io::Result<u32> {
-    let mut parts = cmd.split_whitespace();
-    let prog = parts.next().unwrap_or(cmd);
-    let mut rest: Vec<String> = parts.map(str::to_owned).collect();
-    rest.extend(additional_arguments.iter().cloned());
-    let mut launch = std::process::Command::new(prog);
+    token: &str,
+    scoped: bool,
+) -> std::process::Command {
+    let mut launch = match agent_seat_lane.filter(|_| scoped) {
+        Some(lane) => {
+            let mut scoped = std::process::Command::new("systemd-run");
+            scoped
+                .args(["--user", "--scope", "--quiet", "--collect", "--unit"])
+                .arg(crate::wayland::hyprland_input::agent_seat_unit(lane, token))
+                .arg("--")
+                .arg(prog);
+            scoped
+        }
+        None => std::process::Command::new(prog),
+    };
     launch
-        .args(&rest)
+        .args(rest)
         // The child must not inherit the driver's stdio: in private-worker mode
         // stdout is the JSON-RPC stream to the SDK, and a chatty app (Chromium's
         // zygote logs, GTK warnings) writing there corrupts a response and shuts
@@ -46,8 +55,8 @@ fn spawn_launch_command(
         // toolkits ignore these when they do not need them.
         .env("ACCESSIBILITY_ENABLED", "1")
         .env("NO_AT_BRIDGE", "0");
-    // Never inherit a tag from the driver's own environment: only the launch
-    // that asked for the agent seat carries one.
+    // The environment tag is the fallback where there is no systemd (apps that
+    // keep their environment); a launch that did not ask never inherits one.
     match agent_seat_lane {
         Some(lane) => launch.env(
             crate::wayland::hyprland_input::AGENT_SEAT_ENV,
@@ -55,14 +64,44 @@ fn spawn_launch_command(
         ),
         None => launch.env_remove(crate::wayland::hyprland_input::AGENT_SEAT_ENV),
     };
+    launch
+}
+
+/// A scope-name token unique to this launch: 16 hex digits.
+fn launch_token() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos() as u64);
+    format!("{:016x}", nanos ^ (u64::from(std::process::id()) << 40))
+}
+
+/// Spawn a launcher command line (an executable plus arguments, e.g. an XDG
+/// `Exec=` value with field codes stripped) in the background and return the
+/// child pid. With `agent_seat_lane`, see [`build_launch_command`].
+fn spawn_launch_command(
+    cmd: &str,
+    additional_arguments: &[String],
+    agent_seat_lane: Option<u8>,
+) -> std::io::Result<u32> {
+    let mut parts = cmd.split_whitespace();
+    let prog = parts.next().unwrap_or(cmd);
+    let mut rest: Vec<String> = parts.map(str::to_owned).collect();
+    rest.extend(additional_arguments.iter().cloned());
     if chromium_family_program(prog)
         && !rest
             .iter()
             .any(|arg| arg == "--force-renderer-accessibility")
     {
-        launch.arg("--force-renderer-accessibility");
+        rest.push("--force-renderer-accessibility".to_owned());
     }
-    let child = launch.spawn()?;
+    let child = build_launch_command(
+        prog,
+        &rest,
+        agent_seat_lane,
+        &launch_token(),
+        systemd_run_available(),
+    )
+    .spawn()?;
     let pid = child.id();
     reap_in_background(child);
     Ok(pid)
@@ -250,42 +289,51 @@ mod launch_app_tests {
     }
 
     #[test]
-    fn agent_seat_launch_tags_the_child_environment() {
-        use std::io::Read;
-        // The child prints its tag; an untagged launch must not leak one in from the caller.
-        let dir =
-            std::env::temp_dir().join(format!("cua-agent-seat-launch-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let out = dir.join("tag.txt");
-        let script = dir.join("print-tag.sh");
-        std::fs::write(
-            &script,
-            format!(
-                "#!/bin/sh\nprintf '%s' \"${{CUA_AGENT_SEAT-unset}}\" > '{}'\n",
-                out.display()
-            ),
-        )
-        .unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        for (lane, want) in [(Some(2), "2"), (None, "unset")] {
-            let _ = std::fs::remove_file(&out);
-            spawn_launch_command(script.to_str().unwrap(), &[], lane).unwrap();
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-            let mut seen = String::new();
-            while std::time::Instant::now() < deadline {
-                if let Ok(mut file) = std::fs::File::open(&out) {
-                    seen.clear();
-                    file.read_to_string(&mut seen).unwrap();
-                    if !seen.is_empty() {
-                        break;
-                    }
-                }
-                std::thread::sleep(std::time::Duration::from_millis(25));
-            }
-            assert_eq!(seen, want);
-        }
-        let _ = std::fs::remove_dir_all(&dir);
+    fn agent_seat_launch_runs_in_a_lane_scope_and_a_plain_launch_does_not() {
+        let args = |c: &std::process::Command| -> Vec<String> {
+            c.get_args()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect()
+        };
+        let rest = vec!["--flag".to_owned(), "x".to_owned()];
+        let plain = build_launch_command("chromium", &rest, None, "tok", true);
+        assert_eq!(plain.get_program(), "chromium");
+        assert_eq!(args(&plain), ["--flag", "x"]);
+        let tagged = build_launch_command("chromium", &rest, Some(2), "tok123", true);
+        assert_eq!(tagged.get_program(), "systemd-run");
+        assert_eq!(
+            args(&tagged),
+            [
+                "--user",
+                "--scope",
+                "--quiet",
+                "--collect",
+                "--unit",
+                "cua-agent-seat-2-tok123.scope",
+                "--",
+                "chromium",
+                "--flag",
+                "x"
+            ]
+        );
+        // Without systemd the app is tagged by its environment only.
+        let unscoped = build_launch_command("chromium", &rest, Some(2), "tok", false);
+        assert_eq!(unscoped.get_program(), "chromium");
+        assert!(unscoped
+            .get_envs()
+            .any(|(k, v)| k == "CUA_AGENT_SEAT" && v.is_some_and(|v| v == "2")));
+        assert!(plain
+            .get_envs()
+            .any(|(k, v)| k == "CUA_AGENT_SEAT" && v.is_none()));
+        // The unit name is what the plugin and the driver read back from the cgroup.
+        let listing = "0::/user.slice/app.slice/cua-agent-seat-2-tok123.scope\n";
+        assert_eq!(
+            crate::wayland::hyprland_input::agent_seat_lane_from_cgroup(listing),
+            Some(1)
+        );
+        let token = launch_token();
+        assert_eq!(token.len(), 16);
+        assert!(token.bytes().all(|b| b.is_ascii_hexdigit()));
     }
 
     #[test]
@@ -542,7 +590,7 @@ impl Tool for LaunchAppTool {
                         } else {
                             text.push_str(&format!(
                                 " Warning: the process that owns the window does not carry the \
-                                 agent seat tag (CUA_AGENT_SEAT={lane}); it probably joined an \
+                                 agent seat tag (cua-agent-seat scope); it probably joined an \
                                  instance that was already running, which is on the user's seat. \
                                  Quit that instance, or start the app with a separate profile, and \
                                  launch it again."
@@ -623,6 +671,13 @@ fn agent_seat_request(args: &Value) -> Result<Option<u8>, String> {
         );
     }
     Ok(Some(lane))
+}
+
+/// Whether `systemd-run` is on PATH.
+pub(super) fn systemd_run_available() -> bool {
+    std::env::var_os("PATH").is_some_and(|path| {
+        std::env::split_paths(&path).any(|dir| dir.join("systemd-run").is_file())
+    })
 }
 
 /// The `launch_app` D-Bus-activation hand-off timed out: the launcher exited

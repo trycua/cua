@@ -186,12 +186,19 @@ backend and so Electron do, never binds the agent seats. For such a client the
 plugin binds an agent seat in place of the user's seat, when the client is
 tagged:
 
-- The tag is `CUA_AGENT_SEAT=<lane>` in the client's environment, lane `1` (the
-  `cua-input-v3.sock` lane) or `2`. Driver sets it with `launch_app agent_seat`.
-  Any other value is no tag. The environment is inherited by wrapper scripts and
-  helpers, so it identifies the process that connects however the app started.
-- At `wl_seat` bind, the plugin reads the tag from `/proc/<pid>/environ` of the
-  connecting client (at most 512 KiB). For a tagged client on an enabled lane,
+- The tag is the client's cgroup: a systemd user scope named
+  `cua-agent-seat-<lane>-<token>.scope`, lane `1` (the `cua-input-v3.sock` lane)
+  or `2`, token 1 to 32 alphanumerics. Driver starts the app in it with
+  `systemd-run --user --scope` when you ask `launch_app` for `agent_seat`. The
+  cgroup is set before the program starts and inherited by every helper process.
+  It is not an environment variable because Chromium and Electron overwrite
+  their environment block at startup, so `/proc/<pid>/environ` is empty by the
+  time they connect. Where there is no systemd, Driver sets
+  `CUA_AGENT_SEAT=<1|2>` in the environment instead, which only works for apps
+  that keep their environment; the scope wins when both are present.
+- At `wl_seat` bind, the plugin reads the tag from `/proc/<pid>/cgroup` (at most
+  64 KiB), then `/proc/<pid>/environ` (at most 512 KiB), of the connecting
+  client. For a tagged client on an enabled lane,
   it binds that lane's agent seat on the same object id instead of the user's
   seat. Every other client's bind is Hyprland's own and unchanged. No
   display-wide global filter is installed, and nothing is decided from a

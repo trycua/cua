@@ -1558,7 +1558,7 @@ InputExperiment::InputExperiment(const std::string& directory, void* plugin) {
     (void)plugin;
 #endif
     desktop_listeners_ = std::make_unique<DesktopListeners>(*this);
-    // A client the driver tagged with CUA_AGENT_SEAT gets that lane's agent seat
+    // A client the driver started in a cua-agent-seat scope gets that lane's agent seat
     // as its wl_seat, so a toolkit that binds only its first seat can take
     // agent input (agent_seat_tag.hpp). Only an enabled lane takes clients:
     // while the transport is off, nothing could drive the app.

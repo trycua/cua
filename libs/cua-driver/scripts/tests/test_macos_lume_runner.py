@@ -27,6 +27,7 @@ SEED_TCC_GUEST = REPO_ROOT / "libs/cua-driver/tests/runners/macos-lume/seed-tcc-
 HARNESS_GUIDE = REPO_ROOT / "libs/cua-driver/docs/test-harnesses-guide.md"
 RUNNER_GUIDE = REPO_ROOT / "libs/cua-driver/tests/runners/macos-lume/README.md"
 RUN_RUST_E2E = REPO_ROOT / "scripts/ci/macos/run-rust-e2e.sh"
+APPKIT_CELLS = REPO_ROOT / "scripts/ci/macos/appkit-cells.tsv"
 ELECTRON_BUILD = REPO_ROOT / "libs/cua-driver/tests/fixtures/apps/cross-platform/electron/build.sh"
 ELECTRON_LOCK = (
     REPO_ROOT / "libs/cua-driver/tests/fixtures/apps/cross-platform/electron/package-lock.json"
@@ -1069,7 +1070,11 @@ def test_appkit_selection_invokes_only_the_exact_native_test(
 
 @pytest.mark.parametrize(
     "harness,cell,expected_count",
-    [("", "", 40), ("appkit", "unknown-cell", 0), ("swiftui", "", 0)],
+    [
+        ("", "", len(APPKIT_CELLS.read_text().splitlines())),
+        ("appkit", "unknown-cell", 0),
+        ("swiftui", "", 0),
+    ],
 )
 def test_appkit_dispatch_preserves_full_scope_and_never_falls_back_on_no_match(
     tmp_path: Path, harness: str, cell: str, expected_count: int

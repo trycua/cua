@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.52.8](https://github.com/trycua/cua/compare/cua-driver-rs-v0.52.7...cua-driver-rs-v0.52.8) (2026-11-16)
+
+
+### Bug Fixes
+
+* **cua-driver:** join the AT-SPI bus AT_SPI_BUS_ADDRESS names on Linux ([#7943](https://github.com/trycua/cua/issues/7943)) ([91b39fb](https://github.com/trycua/cua/commit/91b39fb16c6241539697cabc16377236b271bd23))
+* **cua-driver:** scale shared Electron PX points by the capture's frame_scale ([#7941](https://github.com/trycua/cua/issues/7941)) ([27de17c](https://github.com/trycua/cua/commit/27de17c945ca0a9221a2a3a26e90d99205021abd))
+
 ## [0.52.7](https://github.com/trycua/cua/compare/cua-driver-rs-v0.52.6...cua-driver-rs-v0.52.7) (2026-11-16)
 
 

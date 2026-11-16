@@ -1,5 +1,62 @@
 # Changelog
 
+## [0.36.27](https://github.com/trycua/cua/compare/cua-spaces-v0.36.26...cua-spaces-v0.36.27) (2026-11-16)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.52.7 in Cua Spaces ([#7960](https://github.com/trycua/cua/issues/7960)) ([c3a48c0](https://github.com/trycua/cua/commit/c3a48c0e77486092c69e6672aaa816b0924fec5c))
+
+## [0.36.26](https://github.com/trycua/cua/compare/cua-spaces-v0.36.25...cua-spaces-v0.36.26) (2026-11-16)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.52.6 in Cua Spaces ([#7935](https://github.com/trycua/cua/issues/7935)) ([f286d94](https://github.com/trycua/cua/commit/f286d941554013976febc1db671028eede8c1f6a))
+
+## [0.36.25](https://github.com/trycua/cua/compare/cua-spaces-v0.36.24...cua-spaces-v0.36.25) (2026-11-16)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.52.4 in Cua Spaces ([#7898](https://github.com/trycua/cua/issues/7898)) ([133259a](https://github.com/trycua/cua/commit/133259a34f926d3e294e0399e9901b69f240a830))
+
+## [0.36.24](https://github.com/trycua/cua/compare/cua-spaces-v0.36.23...cua-spaces-v0.36.24) (2026-11-16)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.52.1 in Cua Spaces ([#7846](https://github.com/trycua/cua/issues/7846)) ([2e00a14](https://github.com/trycua/cua/commit/2e00a1463f8c70b021fe3cac381ca7ed42105cae))
+
+## [0.36.23](https://github.com/trycua/cua/compare/cua-spaces-v0.36.22...cua-spaces-v0.36.23) (2026-11-15)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.27.7 in Cua Spaces ([#7878](https://github.com/trycua/cua/issues/7878)) ([a0d7c5a](https://github.com/trycua/cua/commit/a0d7c5ad8d8ef612c17d97ae3e67a0a3c107d09f))
+
+## [0.36.22](https://github.com/trycua/cua/compare/cua-spaces-v0.36.21...cua-spaces-v0.36.22) (2026-11-15)
+
+
+### Bug Fixes
+
+* **cua-daemon:** name a digest-pinned Lume image's digest once and check what Lume pulled ([#7868](https://github.com/trycua/cua/issues/7868)) ([b729604](https://github.com/trycua/cua/commit/b729604b0fab2a926ea47603784e78938e8c7702))
+
+## [0.36.21](https://github.com/trycua/cua/compare/cua-spaces-v0.36.20...cua-spaces-v0.36.21) (2026-11-15)
+
+
+### Bug Fixes
+
+* **cua-cli:** two fixes re-landed from [#6199](https://github.com/trycua/cua/issues/6199) and [#6230](https://github.com/trycua/cua/issues/6230) ([#7864](https://github.com/trycua/cua/issues/7864)) ([a49f60a](https://github.com/trycua/cua/commit/a49f60ae8a106735e2568f9f54594e830c2af816))
+* **spaces:** pass saved custom endpoints to persistent agents ([#7417](https://github.com/trycua/cua/issues/7417)) ([7b3a88d](https://github.com/trycua/cua/commit/7b3a88d6752a039cd077510ce02cd98591c8e23b))
+
+## [0.36.20](https://github.com/trycua/cua/compare/cua-spaces-v0.36.19...cua-spaces-v0.36.20) (2026-11-15)
+
+
+### Bug Fixes
+
+* **teleport:** copy browser databases data-only (macOS 27 EPERM) ([#4844](https://github.com/trycua/cua/issues/4844)) ([b1632d3](https://github.com/trycua/cua/commit/b1632d30af832a7572288007bca63a34842f4da7))
+
 ## [0.36.19](https://github.com/trycua/cua/compare/cua-spaces-v0.36.18...cua-spaces-v0.36.19) (2026-11-15)
 
 

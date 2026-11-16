@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.7](https://github.com/trycua/cua/compare/sandbox-v0.11.6...sandbox-v0.11.7) (2026-11-15)
+
+
+### Bug Fixes
+
+* **sandbox:** preserve registry identity for QEMU image layers ([#7865](https://github.com/trycua/cua/issues/7865)) ([2509cba](https://github.com/trycua/cua/commit/2509cba9f3769807c7fb3a5c752de93e5f6697a1))
+
 ## [0.11.6](https://github.com/trycua/cua/compare/sandbox-v0.11.5...sandbox-v0.11.6) (2026-11-15)
 
 

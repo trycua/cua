@@ -3349,15 +3349,28 @@ pub(crate) fn hyprland_input_result(result: anyhow::Result<Value>, foreground: b
         "background_unavailable"
     };
     match result {
-        Ok(value) if value["ok"] == true => ToolResult::text(
-            "Dispatched exact-target Hyprland input; application effect is unverifiable.",
-        )
-        .with_action_record(
-            record(ActionEffect::Unverifiable)
-                .actual_delivery(actual)
-                .build()
-                .expect("isolated input record is valid"),
-        ),
+        Ok(value) if value["ok"] == true => {
+            let outcome = record(ActionEffect::Unverifiable).actual_delivery(actual);
+            if value["admission"] == "user" {
+                let detail = "Admitted by the user's hyprland-apps.txt, not qualified by Cua.";
+                ToolResult::text(format!(
+                    "Dispatched exact-target Hyprland input; application effect is unverifiable. \
+                     {detail}"
+                ))
+                .with_structured(json!({"ok": true, "admission": "user"}))
+                .with_action_record(
+                    outcome
+                        .detail(detail)
+                        .build()
+                        .expect("isolated input record is valid"),
+                )
+            } else {
+                ToolResult::text(
+                    "Dispatched exact-target Hyprland input; application effect is unverifiable.",
+                )
+                .with_action_record(outcome.build().expect("isolated input record is valid"))
+            }
+        }
         Ok(mut value) => {
             if foreground && value["code"] == "foreground_partial_unknown" {
                 return hyprland_input_result(
@@ -3770,6 +3783,33 @@ fn persistent_wayland_pointer_coordinates_include_window_origin() {
 
 #[cfg(test)]
 #[test]
+fn nested_inject_focus_point_maps_screenshot_pixels_or_refuses() {
+    let state = ToolState::new();
+    let args = json!({ "pid": 41, "window_id": 9, "x": 387.0, "y": 133.5 });
+    let refusal = nested_inject_focus_point(&state, &args, 41, 9, (387.0, 133.5))
+        .expect_err("a point read off no screenshot must not be clicked");
+    assert_eq!(
+        refusal.structured_content.as_ref().unwrap()["code"],
+        "screenshot_context_missing"
+    );
+
+    // A screenshot downscaled to half the window's size: its pixels are
+    // doubled into the window-local frame the compositor clicks in.
+    state.snapshots.publish_capture_for_session(
+        41,
+        9,
+        crate::atspi::snapshot::AtspiSnapshot::from_nodes(&[]),
+        None,
+        Some(2.0),
+    );
+    assert_eq!(
+        nested_inject_focus_point(&state, &args, 41, 9, (387.0, 133.5)).unwrap(),
+        (774.0, 267.0)
+    );
+}
+
+#[cfg(test)]
+#[test]
 fn session_end_releases_only_its_hold_before_discarding_state() {
     let state = ToolState::new();
     let session_id = "ending-session";
@@ -3866,6 +3906,29 @@ fn failed_session_end_release_remains_retryable_and_bounded() {
         .unwrap()
         .insert(session_id.to_owned(), hold)
         .is_none());
+}
+
+#[cfg(test)]
+#[test]
+fn a_user_admitted_dispatch_says_the_user_qualified_it() {
+    let user = isolated_hyprland_result(Ok(json!({"ok": true, "admission": "user"})));
+    assert_eq!(user.is_error, None);
+    assert_eq!(
+        user.structured_content.as_ref().unwrap()["admission"],
+        "user"
+    );
+    assert!(serde_json::to_string(&user.content)
+        .unwrap()
+        .contains("not qualified by Cua"));
+    assert!(user
+        .action_record
+        .unwrap()
+        .detail
+        .unwrap()
+        .contains("hyprland-apps.txt"));
+    let driver = isolated_hyprland_result(Ok(json!({"ok": true})));
+    assert!(driver.structured_content.is_none());
+    assert!(driver.action_record.unwrap().detail.is_none());
 }
 
 #[cfg(test)]
@@ -4276,6 +4339,145 @@ pub(crate) async fn desktop_input_space() -> anyhow::Result<crate::wayland::Desk
     .map_err(|error| anyhow::anyhow!("task error: {error}"))?
 }
 
+pub(crate) async fn prepare_desktop_click_cursor(
+    layer_shell: bool,
+    wayland_arrival: impl std::future::Future<Output = anyhow::Result<()>>,
+    best_effort_reveal: impl std::future::Future<Output = ()>,
+) -> anyhow::Result<()> {
+    if layer_shell {
+        wayland_arrival.await
+    } else {
+        best_effort_reveal.await;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod desktop_click_arrival_tests {
+    use super::prepare_desktop_click_cursor;
+    use std::cell::Cell;
+
+    #[tokio::test]
+    async fn click_tool_delivers_when_wayland_overlay_probe_cannot_connect() {
+        const CHILD: &str = "CUA_TEST_UNAVAILABLE_CLICK_OVERLAY";
+        if std::env::var_os(CHILD).is_none() {
+            // Isolate process-wide Wayland environment and the cached probe from
+            // other tests. A nonexistent socket reproduces available() == false.
+            let directory = tempfile::tempdir().unwrap();
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "tools::impl_::desktop_click_arrival_tests::click_tool_delivers_when_wayland_overlay_probe_cannot_connect",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .env(crate::wayland::ENABLE_WAYLAND_ENV, "1")
+                .env("WAYLAND_DISPLAY", directory.path().join("missing-compositor"))
+                .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
+                .env_remove("NIRI_SOCKET")
+                .env_remove("CUA_INJECT_SOCKET")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            return;
+        }
+        assert!(crate::wayland::is_wayland());
+        assert!(!crate::wayland::overlay::available());
+        crate::wayland::overlay::set_config(cursor_overlay::CursorConfig::default());
+        let reveals = Cell::new(0);
+        let clicks = Cell::new(0);
+        prepare_desktop_click_cursor(
+            crate::overlay::wayland_overlay_backend()
+                == crate::overlay::WaylandOverlayBackend::LayerShell,
+            async { panic!("unavailable layer-shell must not gate clicks") },
+            async { reveals.set(reveals.get() + 1) },
+        )
+        .await
+        .unwrap();
+        clicks.set(clicks.get() + 1);
+        assert_eq!(reveals.get(), 1);
+        assert_eq!(clicks.get(), 1);
+    }
+
+    #[tokio::test]
+    async fn layer_shell_arrival_failure_refuses_click_without_fallback() {
+        let overlay_available = false;
+        let arrival_attempts = Cell::new(0);
+        let native_clicks = Cell::new(0);
+        let x11_reveals = Cell::new(0);
+        let result: anyhow::Result<()> = async {
+            prepare_desktop_click_cursor(
+                true,
+                async {
+                    arrival_attempts.set(arrival_attempts.get() + 1);
+                    anyhow::ensure!(overlay_available, "Wayland arrival renderer unavailable");
+                    Ok(())
+                },
+                async { x11_reveals.set(x11_reveals.get() + 1) },
+            )
+            .await?;
+            native_clicks.set(native_clicks.get() + 1);
+            Ok(())
+        }
+        .await;
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Wayland arrival renderer unavailable"
+        );
+        assert_eq!(arrival_attempts.get(), 1);
+        assert_eq!(native_clicks.get(), 0);
+        assert_eq!(x11_reveals.get(), 0);
+    }
+
+    #[tokio::test]
+    async fn layer_shell_click_waits_for_arrival_before_one_delivery() {
+        let (ack, arrived) = tokio::sync::oneshot::channel();
+        let native_clicks = Cell::new(0);
+        let arrival_authorized = Cell::new(false);
+        let action = async {
+            prepare_desktop_click_cursor(
+                true,
+                async {
+                    arrived.await?;
+                    arrival_authorized.set(true);
+                    Ok(())
+                },
+                async { panic!("native Wayland must never use X11 reveal") },
+            )
+            .await?;
+            assert!(arrival_authorized.get());
+            native_clicks.set(native_clicks.get() + 1);
+            Ok::<(), anyhow::Error>(())
+        };
+        tokio::pin!(action);
+        tokio::select! {
+            result = &mut action => panic!("click completed before arrival: {result:?}"),
+            _ = tokio::task::yield_now() => {}
+        }
+        assert_eq!(native_clicks.get(), 0);
+        ack.send(()).unwrap();
+        action.await.unwrap();
+        assert_eq!(native_clicks.get(), 1);
+    }
+
+    #[tokio::test]
+    async fn x11_keeps_best_effort_reveal_without_wayland_arrival() {
+        let reveals = Cell::new(0);
+        prepare_desktop_click_cursor(
+            false,
+            async { panic!("X11 must not require a Wayland compositor") },
+            async { reveals.set(reveals.get() + 1) },
+        )
+        .await
+        .unwrap();
+        assert_eq!(reveals.get(), 1);
+    }
+}
+
 /// Keep the logical cursor position in sync with every visibly targeted
 /// pointer action. Overlay delivery is intentionally best-effort: registry
 /// state is still updated when no renderer is running or its queue is closed.
@@ -4661,10 +4863,36 @@ pub(crate) async fn focus_by_pixel(
     Ok(())
 }
 
+/// Map a keyboard tool's PX focus point into the window-local frame the
+/// nested compositor clicks in, as the pointer tools map theirs. Screenshot
+/// pixels need this session's screenshot of the window, so a point read off
+/// no screenshot is refused instead of clicking an arbitrary spot.
+pub(crate) fn nested_inject_focus_point(
+    state: &ToolState,
+    args: &Value,
+    pid: u32,
+    window_id: u64,
+    (x, y): (f64, f64),
+) -> Result<(f64, f64), ToolResult> {
+    if desktop_frame_requested(args) {
+        return desktop_to_window_local(window_id, x, y)
+            .map_err(|error| desktop_frame_unmapped(window_id, error));
+    }
+    if args.bool_or("from_zoom", false) {
+        return state
+            .zoom_context(args, pid, Some(window_id))
+            .map(|context| context.zoom_to_window(x, y));
+    }
+    screenshot_scale(state, args, pid, Some(window_id)).map(|scale| (x * scale, y * scale))
+}
+
 /// Establish widget-local focus inside a nested-compositor target without
 /// changing the compositor's focused toplevel. AX uses Component.GrabFocus;
-/// PX sends a private per-surface left click at the requested local point.
+/// PX sends a private per-surface left click at the requested point, mapped
+/// by [`nested_inject_focus_point`].
 pub(crate) async fn focus_nested_inject_target(
+    state: &ToolState,
+    args: &Value,
     pid: u32,
     window_id: u64,
     element: Option<crate::atspi::TokenElement>,
@@ -4684,7 +4912,8 @@ pub(crate) async fn focus_nested_inject_target(
             Err(error) => Err(ToolResult::error(format!("Task error: {error}"))),
         };
     }
-    if let Some((x, y)) = pixel {
+    if let Some(pixel) = pixel {
+        let (x, y) = nested_inject_focus_point(state, args, pid, window_id, pixel)?;
         return match tokio::task::spawn_blocking(move || {
             crate::wayland::inject_click(pid, window_id, x, y, 1, 1)
         })

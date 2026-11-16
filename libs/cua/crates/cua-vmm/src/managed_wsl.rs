@@ -956,6 +956,7 @@ mod tests {
         assert!(calls.iter().all(|c| c.contains(DISTRO_PREFIX)));
     }
 
+    #[cfg(feature = "lume")]
     #[tokio::test]
     async fn a_failed_import_names_the_cause_and_cleans_up() {
         let tmp = tempfile::tempdir().unwrap();
@@ -976,6 +977,7 @@ mod tests {
         assert!(!tmp.path().join("disk").exists());
     }
 
+    #[cfg(feature = "lume")]
     #[tokio::test]
     async fn a_failed_install_unregisters_only_what_it_imported() {
         let tmp = tempfile::tempdir().unwrap();
@@ -998,6 +1000,7 @@ mod tests {
         assert!(!marker_in(tmp.path()).exists());
     }
 
+    #[cfg(feature = "lume")]
     #[tokio::test]
     async fn setup_configures_before_it_installs_and_marks_the_end() {
         let tmp = tempfile::tempdir().unwrap();

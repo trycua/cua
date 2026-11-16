@@ -19,35 +19,7 @@ use pipewire_sys::{
 
 const SONAME: &str = "libpipewire-0.3.so.0";
 
-macro_rules! entry_points {
-    ($($name:ident: fn($($arg:ty),*) $(-> $ret:ty)?;)*) => {
-        /// The libpipewire functions the portal capture calls.
-        pub(crate) struct PipeWire {
-            $(pub(crate) $name: unsafe extern "C" fn($($arg),*) $(-> $ret)?,)*
-            _library: libloading::Library,
-        }
-
-        impl PipeWire {
-            fn open(soname: &str) -> Result<Self, libloading::Error> {
-                // SAFETY: libpipewire has no load-time initialisers with preconditions.
-                let library = unsafe { libloading::Library::new(soname) }?;
-                $(
-                    // Fails to compile if the type drifts from pipewire-sys's prototype.
-                    const _: unsafe extern "C" fn($($arg),*) $(-> $ret)? = pipewire_sys::$name;
-                    // SAFETY: the symbol has the type checked above.
-                    let $name = *unsafe {
-                        library.get::<unsafe extern "C" fn($($arg),*) $(-> $ret)?>(
-                            concat!(stringify!($name), "\0").as_bytes(),
-                        )
-                    }?;
-                )*
-                Ok(Self { $($name,)* _library: library })
-            }
-        }
-    };
-}
-
-entry_points! {
+super::dynamic_library::entry_points! { PipeWire, pipewire_sys, {
     pw_init: fn(*mut c_int, *mut *mut *mut c_char);
     pw_main_loop_new: fn(*const spa_dict) -> *mut pw_main_loop;
     pw_main_loop_get_loop: fn(*mut pw_main_loop) -> *mut pw_loop;
@@ -66,10 +38,11 @@ entry_points! {
     pw_stream_dequeue_buffer: fn(*mut pw_stream) -> *mut pw_buffer;
     pw_stream_queue_buffer: fn(*mut pw_stream, *mut pw_buffer) -> c_int;
     pw_stream_destroy: fn(*mut pw_stream);
-}
+}}
 
 fn load(soname: &str) -> anyhow::Result<PipeWire> {
-    PipeWire::open(soname).map_err(|error| {
+    // SAFETY: libpipewire has no load-time initialisers with preconditions.
+    unsafe { PipeWire::open(soname) }.map_err(|error| {
         anyhow::anyhow!(
             "portal ScreenCast video needs the PipeWire client library, and {soname} could not \
              be loaded ({error}). Install it (libpipewire-0.3-0 on Debian and Ubuntu, \

@@ -14,7 +14,6 @@ on:
       - "libs/cua-driver/rust/crates/cua-driver-e2e/**"
       - "libs/cua-driver/rust/crates/cua-cursor-motion/**"
       - "libs/cua-driver/rust/crates/cursor-overlay/**"
-      - "libs/cua-driver/rust/crates/pip-preview/**"
       - "libs/cua-driver/rust/crates/platform-linux/**"
       - "libs/cua-driver/rust/crates/platform-macos/**"
       - "libs/cua-driver/rust/crates/platform-windows/**"
@@ -44,7 +43,6 @@ on:
       - "libs/cua-driver/rust/crates/cua-driver-e2e/**"
       - "libs/cua-driver/rust/crates/cua-cursor-motion/**"
       - "libs/cua-driver/rust/crates/cursor-overlay/**"
-      - "libs/cua-driver/rust/crates/pip-preview/**"
       - "libs/cua-driver/rust/crates/platform-linux/**"
       - "libs/cua-driver/rust/crates/platform-macos/**"
       - "libs/cua-driver/rust/crates/platform-windows/**"
@@ -174,7 +172,7 @@ jobs:
           packages: >-
             clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev
             libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
-            imagemagick xvfb xauth x11-utils ffmpeg dbus-daemon picom
+            imagemagick xvfb xauth x11-utils ffmpeg dbus-daemon picom sway xwayland
       - name: Prove the AT-SPI connection graph excludes peer-to-peer
         working-directory: libs/cua-driver/rust
         run: |
@@ -217,6 +215,15 @@ jobs:
         run: |
           xvfb-run -a cargo test -p platform-linux --test key_input_x11 \
             --locked -- --ignored --nocapture --test-threads=1
+      - name: Run X11 desktop capture regression (Xvfb and rootless Xwayland)
+        working-directory: libs/cua-driver/rust
+        run: |
+          xvfb-run -a --server-args="-screen 0 640x480x24" \
+            cargo test -p platform-linux --lib --locked -- --ignored --exact \
+            capture::tests::live_desktop_capture_shows_stacked_windows_at_their_screen_position
+          ../../../scripts/ci/linux/with-rootless-xwayland.sh \
+            cargo test -p platform-linux --lib --locked -- --ignored --exact \
+            capture::tests::live_desktop_capture_shows_stacked_windows_at_their_screen_position
       - name: Run X11 spare keycode restore regressions
         working-directory: libs/cua-driver/rust
         run: |

@@ -307,6 +307,11 @@ Each action that watches for window changes (`click`, `double_click`,
   action's result. On Linux X11 a foreground action then reports no
   window-change evidence.
 
+The driver admits one desktop action at a time, across every client of the
+process. An action holds that admission only until its result returns, never
+through the detached watch, so the next action from any client starts without
+waiting for the previous action's watch.
+
 Windows does not advertise `post_action_wait`, and its action schemas refuse it
 as an unknown argument (`invalid_arguments`): the Windows adapter does not wait
 for window changes after an action.

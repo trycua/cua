@@ -44,6 +44,10 @@
 //!   it exists, so its Spaces stay reachable); `builtin` always the built-in
 //!   one; `system` only this Mac's own engine, never downloading anything.
 
+// Provisioning downloads (needs `lume`'s reqwest) and the engine paths need
+// `container`; without either, their helpers are intentionally unused.
+#![cfg_attr(not(all(feature = "lume", feature = "container")), allow(dead_code))]
+
 use std::path::{Path, PathBuf};
 
 #[path = "managed_wsl.rs"]

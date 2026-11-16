@@ -270,7 +270,7 @@ impl Client {
             .iter()
             .find(|tool| tool["name"] == name)
             .and_then(|tool| tool.get("outputSchema"));
-        if name == "get_session_state" {
+        if name == "get_session" {
             assert!(schema.is_some(), "session state must advertise a schema");
         }
         let response = self.request("tools/call", json!({"name":name,"arguments":arguments}));
@@ -407,7 +407,7 @@ async fn real_proxies_recover_from_control_loss_without_waiting_for_stdin() {
     session_absent(&daemon_endpoint, "peer-client").await;
     session_active(&daemon_endpoint, "idle-client").await;
     idle.call("get_config", json!({"session":"idle-client"}));
-    idle.call("get_session_state", json!({"session":"idle-client"}));
+    idle.call("get_session", json!({"session":"idle-client"}));
 
     let mut survivor = Client::spawn(&proxy_endpoint);
     let _survivor_control = tokio::time::timeout(BOUND, controls.recv())
@@ -439,13 +439,13 @@ async fn real_proxies_recover_from_control_loss_without_waiting_for_stdin() {
         .unwrap();
     fresh.call("get_config", json!({}));
     fresh.call("start_session", json!({"session":"fresh-client"}));
-    fresh.call("get_session_state", json!({"session":"fresh-client"}));
+    fresh.call("get_session", json!({"session":"fresh-client"}));
     survivor.call("get_config", json!({"session":"survivor"}));
     relay_task.abort();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn idle_reclaimed_unnamed_session_is_recreated_through_the_daemon() {
+async fn idle_reclaimed_sessions_are_recreated_through_the_daemon() {
     #[cfg(unix)]
     let directory = tempfile::Builder::new()
         .prefix("cua-idle-")
@@ -494,6 +494,10 @@ async fn idle_reclaimed_unnamed_session_is_recreated_through_the_daemon() {
     }
 
     client.call("get_config", json!({}));
+    client.call("get_config", json!({"session": "named-idle"}));
+
+    // Only end_session makes the label refuse, with its working recovery.
+    client.call("end_session", json!({"session": "named-idle"}));
     let named = client.request(
         "tools/call",
         json!({"name": "get_config", "arguments": {"session": "named-idle"}}),

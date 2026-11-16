@@ -13,6 +13,8 @@
 //! compositor-attested surfaces and return a typed identity error otherwise.
 
 mod compositor_peer;
+mod cua_compositor_capture;
+mod dynamic_library;
 pub mod ext_screencopy;
 pub mod ext_toplevel;
 pub mod hyprland;
@@ -24,7 +26,7 @@ pub mod kwin_capture;
 pub mod kwin_helper;
 #[cfg(feature = "portal-input")]
 mod kwin_keystate;
-pub(crate) mod kwin_layout;
+pub(crate) mod logical_layout;
 pub mod niri;
 pub use niri::keyboard::call_budget as niri_keyboard_budget;
 pub(crate) use niri::AimedPoint;
@@ -909,6 +911,12 @@ fn capture_via_screencopy() -> anyhow::Result<Vec<u8>> {
     screencopy_first_output().map(|(png, _)| png)
 }
 
+/// [`capture_via_screencopy`] over a connection the caller has already
+/// attested, so the pixels come from that compositor and no other.
+fn capture_via_screencopy_on(conn: Connection) -> anyhow::Result<Vec<u8>> {
+    screencopy_first_output_on(conn, None).map(|(png, _)| png)
+}
+
 /// [`capture_via_screencopy`], plus the wl_output v4 name of the copied
 /// output when the compositor reports one.
 fn screencopy_first_output() -> anyhow::Result<(Vec<u8>, Option<String>)> {
@@ -918,7 +926,15 @@ fn screencopy_first_output() -> anyhow::Result<(Vec<u8>, Option<String>)> {
     // ends the capture at the deadline instead of hanging it.
     let niri = niri::is_session();
     let bounded = niri.then_some(deadline);
-    let conn = wayland_connection(niri)?;
+    screencopy_first_output_on(wayland_connection(niri)?, bounded)
+}
+
+fn screencopy_first_output_on(
+    conn: Connection,
+    bounded: Option<std::time::Instant>,
+) -> anyhow::Result<(Vec<u8>, Option<String>)> {
+    let deadline =
+        bounded.unwrap_or_else(|| std::time::Instant::now() + std::time::Duration::from_secs(5));
     let mut queue = conn.new_event_queue::<State>();
     let qh = queue.handle();
     conn.display().get_registry(&qh, ());
@@ -1046,7 +1062,7 @@ fn screencopy_first_output() -> anyhow::Result<(Vec<u8>, Option<String>)> {
         &conn,
         &mut queue,
         &mut state,
-        niri.then(|| std::time::Instant::now() + crate::interaction::CLEANUP_CAP),
+        bounded.map(|_| std::time::Instant::now() + crate::interaction::CLEANUP_CAP),
     );
     cleanup_mmap(mmap_ptr, mmap_len, fd);
 
@@ -1281,6 +1297,10 @@ fn screenshot_dispatch_for_pid(xid: u64, pid: Option<u32>) -> anyhow::Result<Vec
     }
     if niri::is_session() {
         return niri_window_capture(xid, pid);
+    }
+    if is_wayland() && is_inject_mode() {
+        return cua_compositor_capture::capture(xid, pid)
+            .map_err(|error| surface_identity_unproven(xid, format!("cua-compositor: {error:#}")));
     }
     if is_wayland() {
         // A GNOME helper with API 9+ snapshots the window's own actor, so a
@@ -1758,7 +1778,7 @@ fn pointer_reaches(origin_x: i32, origin_y: i32, w: u32, h: u32, x: i32, y: i32)
 #[derive(Clone, Debug, Default)]
 pub struct DesktopInputSpace {
     snapshot: Option<hyprland::DesktopSnapshot>,
-    kwin_distorted: Option<kwin_layout::DistortedCapture>,
+    kwin_distorted: Option<logical_layout::DistortedCapture>,
 }
 
 impl DesktopInputSpace {
@@ -1775,9 +1795,9 @@ impl DesktopInputSpace {
                 kwin_distorted: None,
             });
         }
-        // KWin input goes through libei, which takes layout coordinates, so it
-        // has no virtual-pointer layout to qualify.
-        let Some(layout) = kwin_desktop_layout()? else {
+        // KWin and Mutter input goes through libei, which takes layout
+        // coordinates, so it has no virtual-pointer layout to qualify.
+        let Some(layout) = logical_desktop_layout()? else {
             return Ok(Self::default());
         };
         Ok(Self {
@@ -1878,21 +1898,21 @@ pub(crate) fn compositor_logical_frame() -> Option<anyhow::Result<(u32, u32)>> {
     if hyprland::is_session() {
         return Some(hyprland::screen_size().map(|(width, height, _scale)| (width, height)));
     }
-    kwin_desktop_layout()
+    logical_desktop_layout()
         .transpose()
         .map(|layout| layout.map(|layout| (layout.frame.width, layout.frame.height)))
 }
 
-/// KWin's desktop layout: its pointer input is logical while its screenshots
-/// are physical, so a screenshot pixel and a pointer coordinate only agree in
-/// this frame. `None` on any other compositor; a KWin that cannot report a
-/// usable layout is an error rather than a silent return to the mismatched
-/// physical frame.
-pub(crate) fn kwin_desktop_layout() -> anyhow::Result<Option<kwin_layout::DesktopLayout>> {
+/// The KWin or GNOME Mutter desktop layout: their pointer input is logical
+/// while their screenshots can be physical, so a screenshot pixel and a
+/// pointer coordinate only agree in this frame. `None` on any other
+/// compositor; one that cannot report a usable layout is an error rather than
+/// a silent return to the mismatched physical frame.
+pub(crate) fn logical_desktop_layout() -> anyhow::Result<Option<logical_layout::DesktopLayout>> {
     if !is_wayland() || hyprland::is_session() || niri::is_session() {
         return Ok(None);
     }
-    kwin_layout::desktop_layout()
+    logical_layout::desktop_layout()
 }
 
 /// Pointer space for `zwlr_virtual_pointer_v1::motion_absolute`, as

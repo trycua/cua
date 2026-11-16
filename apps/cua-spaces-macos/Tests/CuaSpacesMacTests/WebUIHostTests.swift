@@ -187,6 +187,31 @@ struct WebUIHostTests {
         #expect(try await bridge.handle("spaces.sendFiles", ["spaceId": id, "paths": ["/tmp/a.txt"]]) is [Any])
     }
 
+    /// "Choose Windows ISO…": the picked file is checked and remembered for
+    /// the image at once; a wrong file is refused in plain words, a cancelled
+    /// picker answers nothing, and no image means a bad request.
+    @Test func chooseWindowsIsoChecksAndRemembersThePickedFile() async throws {
+        let (bridge, _) = bridge()
+        var remembered: [(String, String)] = []
+        bridge.pickIso = { URL(fileURLWithPath: "/tmp/Win11_ARM64.iso") }
+        bridge.useWindowsIso = { image, path in
+            remembered.append((image, path))
+            return WindowsIsoChoice(ok: true, name: "Win11_ARM64.iso", problem: "")
+        }
+        let chosen = try await bridge.handle("windows.chooseIso", ["image": "ghcr.io/trycua/windows:11"]) as? [String: Any]
+        #expect(chosen?["name"] as? String == "Win11_ARM64.iso")
+        #expect(remembered.count == 1 && remembered[0].0 == "ghcr.io/trycua/windows:11" && remembered[0].1 == "/tmp/Win11_ARM64.iso")
+
+        bridge.useWindowsIso = { _, _ in
+            WindowsIsoChoice(ok: false, name: "", problem: "notes.txt is not a Windows disc image (.iso). Choose the file you downloaded from Microsoft.")
+        }
+        #expect(await failure(bridge, "windows.chooseIso", ["image": "ghcr.io/trycua/windows:11"]) == "bad_iso")
+
+        bridge.pickIso = { nil }
+        #expect(try await bridge.handle("windows.chooseIso", ["image": "ghcr.io/trycua/windows:11"]) is NSNull)
+        #expect(await failure(bridge, "windows.chooseIso", [:]) == "bad_args")
+    }
+
     /// The operations the Electron router answers under the same names.
     @Test func theContractsOperationsAreRouted() {
         for m in ["spaces.cancelCreate", "host.status", "keyvault.approve", "keyvault.deny", "keyvault.revokeGrant",

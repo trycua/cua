@@ -825,6 +825,44 @@ fn ax_write_progress(
     })
 }
 
+/// Classify an AX write of a line that a single-line field submits with its
+/// own Return. Only a read-back equal to the pre-write value with its
+/// selection replaced by the whole line confirms it: the write replaces the
+/// selection, so insertion-relative progress cannot count it, and a field that
+/// already held the line reads the same after a no-op write. Anything short of
+/// that match is unverifiable, never a partial count, because a count taken
+/// against the wrong baseline would invite a duplicating retry. `None` means
+/// the attribute is unsupported and nothing was written.
+fn ax_submit_progress(
+    error: i32,
+    pre_write: Option<&str>,
+    expected: Option<&str>,
+    trusted: bool,
+    deadline: std::time::Instant,
+    mut read_after: impl FnMut() -> Option<String>,
+) -> Option<TypedProgress> {
+    if error == crate::ax::bindings::kAXErrorAttributeUnsupported {
+        return None;
+    }
+    if error != kAXErrorSuccess || !trusted || pre_write.is_none() || expected.is_none() {
+        return Some(TypedProgress::Unverifiable);
+    }
+    let started = std::time::Instant::now();
+    loop {
+        let after = read_after();
+        if submit_read_back_matches(pre_write, expected, after.as_deref()) {
+            return Some(TypedProgress::Complete);
+        }
+        let unchanged = after.is_some() && after.as_deref() == pre_write;
+        if (unchanged && started.elapsed() >= UNCHANGED_GIVE_UP)
+            || std::time::Instant::now() >= deadline
+        {
+            return Some(TypedProgress::Unverifiable);
+        }
+        std::thread::sleep(DELIVERY_DRAIN_POLL_INTERVAL);
+    }
+}
+
 /// Whether the element reports `AXSelectedText` as settable; `None` when the
 /// query itself fails.
 ///
@@ -1600,12 +1638,18 @@ fn type_text_in_key_window(
         let err = unsafe { set_string_attr(element, "AXSelectedText", ax_text) };
         let trusted = web == Some(false);
         let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
-        let mut last_read = None;
-        let progress =
-            ax_write_progress(err, before.as_deref(), ax_text, trusted, deadline, || {
-                last_read = unsafe { copy_string_attr(element, "AXValue") };
-                last_read.clone()
-            });
+        let read_after = || unsafe { copy_string_attr(element, "AXValue") };
+        let progress = match submit_body {
+            None => ax_write_progress(err, before.as_deref(), text, trusted, deadline, read_after),
+            Some(_) => ax_submit_progress(
+                err,
+                pre_write.as_deref(),
+                expected_after_submit.as_deref(),
+                trusted,
+                deadline,
+                read_after,
+            ),
+        };
         if let Some(progress) = progress {
             // An AX insert bypasses NSTextView's edit model, so a document is
             // not marked edited and would never save the new text (DS-07).
@@ -1617,16 +1661,7 @@ fn type_text_in_key_window(
             let (progress, submitted) = match submit_body {
                 None => (progress, ""),
                 Some(body) => {
-                    // Only a read-back equal to the selection replaced by the
-                    // whole line earns a submit: a field that already held the
-                    // line, or a partial write that happens to complete a
-                    // matching value, does not.
-                    let insert_observed = progress == TypedProgress::Complete
-                        && submit_read_back_matches(
-                            pre_write.as_deref(),
-                            expected_after_submit.as_deref(),
-                            last_read.as_deref(),
-                        );
+                    let insert_observed = progress == TypedProgress::Complete;
                     // Return reaches whichever field has focus, so it goes out
                     // only once the written field is confirmed focused.
                     let return_reaches_field = insert_observed && {
@@ -1643,14 +1678,6 @@ fn type_text_in_key_window(
                              focus",
                         )
                     } else {
-                        // A complete-looking read-back that is not the full
-                        // insert (the field already held the line) proves
-                        // nothing; any other progress stands as observed.
-                        let progress = if progress == TypedProgress::Complete {
-                            TypedProgress::Unverifiable
-                        } else {
-                            progress
-                        };
                         (
                             progress,
                             "; Return was not sent because the field did not read back the \
@@ -2552,6 +2579,70 @@ mod tests {
         assert_eq!(expect("😀b", 2, 1, "c").as_deref(), Some("😀c"));
         assert_eq!(expect("😀", 1, 0, "c"), None);
         assert_eq!(expect("ab", 1, 5, "c"), None);
+    }
+
+    #[test]
+    fn submit_write_that_replaces_the_selection_is_confirmed() {
+        use TypedProgress::*;
+        let soon = || std::time::Instant::now() + std::time::Duration::from_millis(50);
+        let progress = |pre: &str, expected: &str, reads: Vec<&str>| {
+            let mut reads: std::collections::VecDeque<String> =
+                reads.into_iter().map(str::to_owned).collect();
+            let last = reads.back().cloned();
+            ax_submit_progress(
+                kAXErrorSuccess,
+                Some(pre),
+                Some(expected),
+                true,
+                soon(),
+                || reads.pop_front().or_else(|| last.clone()),
+            )
+        };
+        // A selected URL replaced by the line: not an insertion, still the
+        // whole line.
+        let url = "https://a.test/";
+        assert_eq!(
+            progress(url, "netflix.com", vec!["netflix.com"]),
+            Some(Complete)
+        );
+        // Selected "a" replaced by "aa": both characters landed, not one.
+        assert_eq!(progress("a", "aa", vec!["aa"]), Some(Complete));
+        // Published after a few polls.
+        assert_eq!(progress("", "query", vec!["", "", "query"]), Some(Complete));
+        // A prefix of the line is not a count the caller may retry from.
+        assert_eq!(progress("", "query", vec!["qu"]), Some(Unverifiable));
+        // The field already held the line: a no-op write reads the same.
+        assert_eq!(progress("foo", "foo", vec!["foo"]), Some(Unverifiable));
+        // Never published within the drain.
+        assert_eq!(progress("", "query", vec![""]), Some(Unverifiable));
+    }
+
+    #[test]
+    fn submit_write_without_a_trusted_baseline_is_unverifiable() {
+        let soon = std::time::Instant::now() + std::time::Duration::from_millis(50);
+        let read = || Some("x".to_owned());
+        assert_eq!(
+            ax_submit_progress(
+                crate::ax::bindings::kAXErrorAttributeUnsupported,
+                Some(""),
+                Some("x"),
+                true,
+                soon,
+                read
+            ),
+            None
+        );
+        for (trusted, pre, expected) in [
+            (false, Some(""), Some("x")),
+            (true, None, Some("x")),
+            (true, Some(""), None),
+        ] {
+            assert_eq!(
+                ax_submit_progress(kAXErrorSuccess, pre, expected, trusted, soon, read),
+                Some(TypedProgress::Unverifiable),
+                "trusted={trusted} pre={pre:?} expected={expected:?}"
+            );
+        }
     }
 
     #[test]

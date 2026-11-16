@@ -570,7 +570,8 @@ impl Tool for TypeTextTool {
         // compositor's focused toplevel, so keys reach the addressed control.
         if crate::wayland::is_inject_mode() {
             if let Err(error) =
-                focus_nested_inject_target(pid, xid, token.clone(), px.zip(py)).await
+                focus_nested_inject_target(&self.state, &args, pid, xid, token.clone(), px.zip(py))
+                    .await
             {
                 return error;
             }

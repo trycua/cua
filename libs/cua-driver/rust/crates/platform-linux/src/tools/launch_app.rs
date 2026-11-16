@@ -103,6 +103,9 @@ fn spawn_launch_command(
     )
     .spawn()?;
     let pid = child.id();
+    if let Some(lane) = agent_seat_lane {
+        crate::wayland::hyprland_input::remember_agent_seat_launch(pid, usize::from(lane) - 1);
+    }
     reap_in_background(child);
     Ok(pid)
 }
@@ -574,27 +577,29 @@ impl Tool for LaunchAppTool {
                         "launcher_pid": launcher_pid,
                     });
                     if let Some(lane) = agent_seat_lane {
-                        // The tag lives in the process that connects to Wayland. A
-                        // launcher that handed off to a running instance, or a
-                        // D-Bus activated service, did not pass it on.
+                        // Chromium and Electron move themselves into their own
+                        // systemd scope after startup, so the scope cannot be read
+                        // back here; remember the lane for this process instead, and
+                        // for the window's owner when a wrapper handed off.
                         let lane_index = usize::from(lane) - 1;
-                        let tagged = resolved.pid.is_some_and(|pid| {
-                            crate::wayland::hyprland_input::agent_seat_lane(pid) == Some(lane_index)
-                        });
-                        structured["agent_seat"] = json!({"lane": lane, "tagged": tagged});
-                        if tagged {
-                            text.push_str(&format!(
-                                " Started on agent seat lane {lane}: it takes background input; \
-                                 the person's own mouse and keyboard do not reach it while it runs."
-                            ));
-                        } else {
-                            text.push_str(&format!(
-                                " Warning: the process that owns the window does not carry the \
-                                 agent seat tag (cua-agent-seat scope); it probably joined an \
-                                 instance that was already running, which is on the user's seat. \
-                                 Quit that instance, or start the app with a separate profile, and \
-                                 launch it again."
-                            ));
+                        if let Some(pid) = resolved.pid {
+                            crate::wayland::hyprland_input::remember_agent_seat_launch(
+                                pid, lane_index,
+                            );
+                        }
+                        let handed_off = resolved.handed_off;
+                        structured["agent_seat"] = json!({"lane": lane});
+                        text.push_str(&format!(
+                            " Started on agent seat lane {lane}: it takes background input; \
+                             the person's own mouse and keyboard do not reach it while it runs."
+                        ));
+                        if handed_off {
+                            text.push_str(
+                                " Warning: the launcher handed the request to another process. If \
+                                 that process was already running it is on the user's seat and \
+                                 its actions refuse with client_not_agent_seat_bound: quit it, or \
+                                 start the app with a separate profile, and launch it again.",
+                            );
                         }
                     }
                     if resolved.handed_off {

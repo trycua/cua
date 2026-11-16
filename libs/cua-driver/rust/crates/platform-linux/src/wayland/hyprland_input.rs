@@ -1035,12 +1035,46 @@ fn read_capped(path: String, cap: u64) -> Vec<u8> {
     bytes
 }
 
-/// The lane `pid` is bound to: its cgroup scope, else its environment, read
-/// from `/proc/<pid>/` with the plugin's caps (64 KiB and 512 KiB).
+/// Lanes of processes this driver launched with `agent_seat`. Chromium and
+/// Electron move themselves into their own systemd scope after startup, so the
+/// launch scope cannot be read back from `/proc` for the apps that matter most;
+/// the plugin reads it at bind, before that move, and the driver remembers it.
+static LAUNCHED_LANES: Mutex<Vec<(u32, usize)>> = Mutex::new(Vec::new());
+const MAX_LAUNCHED_LANES: usize = 256;
+
+pub(crate) fn remember_agent_seat_launch(pid: u32, lane: usize) {
+    if let Ok(mut launched) = LAUNCHED_LANES.lock() {
+        launched.retain(|(known, _)| *known != pid);
+        if launched.len() >= MAX_LAUNCHED_LANES {
+            launched.remove(0);
+        }
+        launched.push((pid, lane));
+    }
+}
+
+fn launched_lane(pid: u32) -> Option<usize> {
+    // A recycled pid must not inherit a lane: only a live process counts.
+    let alive = std::path::Path::new(&format!("/proc/{pid}")).exists();
+    let mut launched = LAUNCHED_LANES.lock().ok()?;
+    if !alive {
+        launched.retain(|(known, _)| *known != pid);
+        return None;
+    }
+    launched
+        .iter()
+        .find(|(known, _)| *known == pid)
+        .map(|(_, lane)| *lane)
+}
+
+/// The lane `pid` is bound to: the lane remembered at launch, else its cgroup
+/// scope, else its environment, read from `/proc/<pid>/` with the plugin's caps
+/// (64 KiB and 512 KiB).
 pub(crate) fn agent_seat_lane(pid: u32) -> Option<usize> {
-    let cgroup = read_capped(format!("/proc/{pid}/cgroup"), 64 * 1024);
-    agent_seat_lane_from_cgroup(&String::from_utf8_lossy(&cgroup)).or_else(|| {
-        agent_seat_lane_from_environ(&read_capped(format!("/proc/{pid}/environ"), 512 * 1024))
+    launched_lane(pid).or_else(|| {
+        let cgroup = read_capped(format!("/proc/{pid}/cgroup"), 64 * 1024);
+        agent_seat_lane_from_cgroup(&String::from_utf8_lossy(&cgroup)).or_else(|| {
+            agent_seat_lane_from_environ(&read_capped(format!("/proc/{pid}/environ"), 512 * 1024))
+        })
     })
 }
 
@@ -3747,6 +3781,30 @@ mod tests {
         }
         assert_eq!(lane(b"CUA_AGENT_SEAT=1\0CUA_AGENT_SEAT=2\0"), Some(0));
         assert_eq!(lane(b"CUA_AGENT_SEAT=9\0CUA_AGENT_SEAT=2\0"), None);
+    }
+
+    #[test]
+    fn a_launched_lane_is_remembered_for_a_live_process_only() {
+        // A child of its own, so no other test's pid is touched.
+        let mut child = std::process::Command::new("/bin/sh")
+            .args(["-c", "read _"])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .expect("/bin/sh should spawn");
+        let pid = child.id();
+        assert_eq!(launched_lane(pid), None);
+        remember_agent_seat_launch(pid, 1);
+        assert_eq!(agent_seat_lane(pid), Some(1));
+        remember_agent_seat_launch(pid, 0);
+        assert_eq!(agent_seat_lane(pid), Some(0));
+        drop(child.stdin.take());
+        child.wait().unwrap();
+        // Once the process is gone its pid keeps no lane, even if the number is reused.
+        assert_eq!(launched_lane(pid), None);
+        assert_eq!(agent_seat_lane(pid), None);
+        // A pid that was never running keeps none either.
+        remember_agent_seat_launch(u32::MAX - 1, 1);
+        assert_eq!(launched_lane(u32::MAX - 1), None);
     }
 
     #[test]

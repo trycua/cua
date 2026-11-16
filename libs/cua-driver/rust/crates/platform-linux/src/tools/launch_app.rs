@@ -405,7 +405,7 @@ impl Tool for LaunchAppTool {
                 "urls":{"type":"array","items":{"type":"string"},"description":"URLs to open via xdg-open."},
                 "additional_arguments":{"type":"array","items":{"type":"string"},"description":"Extra command-line arguments passed to the launched process."},
                 "agent_seat":{"type":"boolean","description":"Hyprland with the Cua plugin only. Start the app on the agent seat so it accepts background clicks and typing even if it binds only its first wl_seat (Chromium, Electron). Its only seat is then the agent's: the person's own mouse and keyboard do not reach it while it runs. A browser or Electron app already running on the same profile takes the request over and is not tagged: quit it or use a separate profile first."},
-                "agent_seat_lane":{"type":"integer","enum":[1,2],"description":"Which agent seat lane the app is bound to (default 1). Two agents driving apps at once use different lanes."}
+                "agent_seat_lane":{"type":"integer","minimum":1,"maximum":2,"description":"Which agent seat lane the app is bound to, 1 or 2 (default 1). Two agents driving apps at once use different lanes."}
             },"additionalProperties":false}),
             read_only: false, destructive: false, idempotent: false, open_world: true,
         })

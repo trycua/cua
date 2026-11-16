@@ -121,6 +121,19 @@ class Session:
 
         return wait_for(mapped, 30, f"{app_id} window did not map")
 
+    def release_clients(self, keep):
+        """Close the clients started after the first `keep`, so a later smoke gets the layout it was written for."""
+        released, self.clients = self.clients[keep:], self.clients[:keep]
+        for process in released:
+            if process.poll() is None:
+                process.terminate()
+        for process in released:
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+
     def stop(self):
         for process in self.clients:
             if process.poll() is None:
@@ -519,6 +532,7 @@ def main():
             return
         try:
             evidence = smoke(session)
+            clients_before = len(session.clients)
             try:
                 probe = build_probe(args.out)
                 agent_seat = agent_seat_smoke(session, probe)
@@ -528,6 +542,8 @@ def main():
                 evidence["agent_seat"] = {"status": "error", "reason": f"{type(error).__name__}: {error}",
                                           "detail": str(detail)[-1500:] if detail else None,
                                           "compositor_log_tail": tail(args.out / "compositor.log")}
+            # Its eight windows would tile the driver smoke's window down to a blank 47x74 screenshot.
+            session.release_clients(clients_before)
             if args.driver:
                 try:
                     driven = driver_smoke(session, args.driver)

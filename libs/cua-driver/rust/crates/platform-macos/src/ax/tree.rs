@@ -550,6 +550,25 @@ fn collapse_layout_container(
         && !has_value_or_help
 }
 
+/// The actions a node is addressable by. A kept group or scroll area whose
+/// only actions are the generic menu and scroll ones every section carries
+/// (SwiftUI, Catalyst and web content) is a section label, not a target, so
+/// it stays an unindexed display row and indexes after it do not shift. One
+/// with an action of its own (a press, an app's custom action) is a target.
+fn layout_group_actions(
+    role: &str,
+    mut advertised: super::actions::ElementActions,
+) -> super::actions::ElementActions {
+    let generic = |action: &String| action == "AXShowMenu" || action.starts_with("AXScroll");
+    if is_layout_container(role)
+        && advertised.custom.is_empty()
+        && advertised.standard.iter().all(generic)
+    {
+        advertised.standard.clear();
+    }
+    advertised
+}
+
 /// `max_depth` budget a node's children are walked at. A named layout group
 /// kept as a row indents its children but spends no budget, so `max_depth`
 /// admits the same elements as when every group collapsed.
@@ -650,7 +669,7 @@ unsafe fn walk_element(
         }
         return;
     }
-    let advertised = super::actions::split(copy_action_names(element));
+    let advertised = layout_group_actions(&role, super::actions::split(copy_action_names(element)));
 
     // Some native controls expose no AX action names but do expose a writable
     // AXValue. Finder's transient inline-rename field is the important case:
@@ -684,13 +703,20 @@ unsafe fn walk_element(
         !visible_title.is_empty() || !visible_description.is_empty() || !visible_value.is_empty();
 
     if !is_actionable && !has_content && role != "AXWindow" && role != "AXSheet" {
+        // A help-only group with no action of its own has nothing to show:
+        // it collapses like any layout wrapper, at its parent's depth.
+        let (child_depth, child_walk_depth) = if is_layout_container(&role) {
+            (depth, walk_depth)
+        } else {
+            (depth + 1, walk_depth + 1)
+        };
         let children = attrs.children();
         drop(attrs);
         for child in children {
             walk_element(
                 child,
-                depth + 1,
-                walk_depth + 1,
+                child_depth,
+                child_walk_depth,
                 parent_index,
                 in_web_content,
                 nodes,
@@ -1076,6 +1102,35 @@ mod tests {
         assert!(!collapse_layout_container("AXWebArea", None, None, false));
         assert!(is_layout_container("AXGroup") && is_layout_container("AXScrollArea"));
         assert!(!is_layout_container("AXButton"));
+    }
+
+    #[test]
+    fn a_kept_group_is_addressable_only_by_an_action_of_its_own() {
+        let actions = |names: &[&str]| {
+            super::super::actions::split(names.iter().map(|n| (*n).to_owned()).collect())
+        };
+        // Web and SwiftUI sections advertise only menu and scroll actions:
+        // the group stays a display row, so an echoing text child keeps
+        // its own index (#7780).
+        for generic in [
+            &["AXShowMenu", "AXScrollToVisible"][..],
+            &["AXScrollUpByPage", "AXScrollDownByPage"][..],
+            &[][..],
+        ] {
+            assert!(layout_group_actions("AXGroup", actions(generic)).is_empty());
+            assert!(layout_group_actions("AXScrollArea", actions(generic)).is_empty());
+        }
+        let pressable = layout_group_actions("AXGroup", actions(&["AXPress", "AXShowMenu"]));
+        assert_eq!(pressable.standard, ["AXPress", "AXShowMenu"]);
+        let custom = layout_group_actions(
+            "AXGroup",
+            actions(&["AXShowMenu", "Name:Pin List\nTarget:0x0\nSelector:(null)"]),
+        );
+        assert_eq!(custom.standard, ["AXShowMenu"]);
+        assert_eq!(custom.custom.len(), 1);
+        // Other roles keep every action they advertise.
+        let menu_only = layout_group_actions("AXImage", actions(&["AXShowMenu"]));
+        assert_eq!(menu_only.standard, ["AXShowMenu"]);
     }
 
     #[test]

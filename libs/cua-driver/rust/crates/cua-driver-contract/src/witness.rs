@@ -161,7 +161,10 @@ impl RuntimeWitnessV0 {
                 return Err("runtime witness probe tool must be non-empty".into());
             }
             if !seen_tools.insert(probe.tool.as_str()) {
-                return Err(format!("runtime witness contains duplicate probe {}", probe.tool));
+                return Err(format!(
+                    "runtime witness contains duplicate probe {}",
+                    probe.tool
+                ));
             }
             if let Some(previous) = previous_tool {
                 if previous > probe.tool.as_str() {
@@ -206,14 +209,11 @@ impl RuntimeWitnessV0 {
             if let Some(code) = &probe.diagnostic_code {
                 if code.is_empty()
                     || code.len() > 128
-                    || !code
-                        .bytes()
-                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"._-".contains(&b))
+                    || !code.bytes().all(|b| {
+                        b.is_ascii_lowercase() || b.is_ascii_digit() || b"._-".contains(&b)
+                    })
                 {
-                    return Err(format!(
-                        "probe {} has invalid diagnostic_code",
-                        probe.tool
-                    ));
+                    return Err(format!("probe {} has invalid diagnostic_code", probe.tool));
                 }
             }
         }
@@ -295,7 +295,10 @@ mod tests {
             false,
             vec![probe],
         );
-        assert!(witness.validate().unwrap_err().contains("refuses acting probe"));
+        assert!(witness
+            .validate()
+            .unwrap_err()
+            .contains("refuses acting probe"));
     }
 
     #[test]
@@ -398,7 +401,10 @@ mod ordering_tests {
                 },
             ],
         );
-        assert!(duplicate.validate().unwrap_err().contains("duplicate probe"));
+        assert!(duplicate
+            .validate()
+            .unwrap_err()
+            .contains("duplicate probe"));
 
         let unsorted_capabilities = RuntimeWitnessV0::new(
             "0.14.0",

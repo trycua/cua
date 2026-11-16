@@ -72,7 +72,7 @@ It is not a substitute for end-to-end action tests or task benchmarks.
 
 ## Future runner
 
-This PR deliberately defines the portable contract before choosing a runner.
+v0 defines the portable contract before choosing a runner.
 A later runner can call `tools/list`, `health_report`, then a small
 platform-safe read-only probe set and emit `RuntimeWitnessV0`.
 

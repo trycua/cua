@@ -89,6 +89,7 @@ pub struct RuntimeWitnessV0 {
 }
 
 impl RuntimeWitnessV0 {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         driver_version: impl Into<String>,
         driver_git_sha: Option<String>,
@@ -234,13 +235,21 @@ mod tests {
     fn passing_probe() -> ProbeWitness {
         ProbeWitness {
             tool: "get_screen_size".into(),
-            capabilities: vec!["screen.size.read".into()],
+            capabilities: vec!["screen.dimensions".into()],
             read_only: true,
             outcome: ProbeOutcome::Pass,
             output_schema_valid: Some(true),
             elapsed_ms: 12,
             diagnostic_code: None,
         }
+    }
+
+    #[test]
+    fn fixture_probe_matches_the_published_contract() {
+        let probe = passing_probe();
+        let contract = crate::tool_contract(&probe.tool).expect("fixture tool is published");
+        assert_eq!(probe.capabilities, contract.capabilities);
+        assert!(contract.annotations.read_only);
     }
 
     #[test]
@@ -356,7 +365,7 @@ mod ordering_tests {
             false,
             vec![ProbeWitness {
                 tool: "get_screen_size".into(),
-                capabilities: vec!["screen.size.read".into()],
+                capabilities: vec!["screen.dimensions".into()],
                 read_only: true,
                 outcome: ProbeOutcome::Pass,
                 output_schema_valid: Some(true),
@@ -383,7 +392,7 @@ mod ordering_tests {
             vec![
                 ProbeWitness {
                     tool: "get_screen_size".into(),
-                    capabilities: vec!["screen.size.read".into()],
+                    capabilities: vec!["screen.dimensions".into()],
                     read_only: true,
                     outcome: ProbeOutcome::Pass,
                     output_schema_valid: Some(true),
@@ -392,7 +401,7 @@ mod ordering_tests {
                 },
                 ProbeWitness {
                     tool: "get_screen_size".into(),
-                    capabilities: vec!["screen.size.read".into()],
+                    capabilities: vec!["screen.dimensions".into()],
                     read_only: true,
                     outcome: ProbeOutcome::Pass,
                     output_schema_valid: Some(true),

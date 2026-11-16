@@ -139,7 +139,6 @@ deterministically regenerates both UniFFI binding sets, verifies parity against
 the live tool registry, and crosses the real Python and Node FFI loaders into a
 deterministic daemon-socket fixture.
 
-
 ## Runtime conformance witness
 
 The generated manifest and live `tools/list` surface describe advertised

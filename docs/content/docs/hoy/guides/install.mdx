@@ -37,7 +37,7 @@ The installer turns on crash reports and basic usage data, both on by default. E
 Run the command from the email. It has this shape:
 
 ```bash skip="host-install"
-curl -fsSL https://hoy.cua.ai/install.sh | HOY_TOKEN=... sh
+curl -fsSL https://hoy.cua.ai/install.sh | HOY_TOKEN=... bash
 ```
 
 Replace `...` with your token. The installer:
@@ -63,7 +63,7 @@ new terminal window afterwards, or run `. ~/.local/hoy/env` in the current one.
 Options go after `sh -s --`:
 
 ```bash skip="host-install"
-curl -fsSL https://hoy.cua.ai/install.sh | HOY_TOKEN=... sh -s -- --version <version>
+curl -fsSL https://hoy.cua.ai/install.sh | HOY_TOKEN=... bash -s -- --version <version>
 ```
 
 | Option | Effect |

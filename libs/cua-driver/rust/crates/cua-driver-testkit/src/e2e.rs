@@ -2546,6 +2546,26 @@ mod tests {
         (root, case, result, turn)
     }
 
+    // The same single-turn bundle, declared and observed as an honest refusal
+    // so the case-level oracle agrees with a recorded `refused` action truth.
+    fn refused_turn_fixture(code: RefusalCode) -> (TempDir, CaseSpec, CaseResult, PathBuf) {
+        let (root, mut case, delivered, turn) = complete_turn_fixture();
+        case.oracles = vec![
+            OracleKind::FixtureState,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::NoLeakedInput,
+        ];
+        let case = case.expecting_refusal(vec![code]);
+        let result = CaseResult::evaluate(
+            case.clone(),
+            Observation::refused(code, case.oracles.clone(), "", delivered.evidence),
+            Duration::from_millis(1),
+        );
+        assert_eq!(result.test_status, TestStatus::Pass);
+        (root, case, result, turn)
+    }
+
     #[test]
     fn required_delivery_rejects_honest_refusal() {
         let case = delivered_case("required-delivery");
@@ -2901,7 +2921,7 @@ mod tests {
             "after":{"state":{"status":"not_applicable","classification":"action_refused_before_dispatch"},"screenshot":{"status":"captured"}},
             "click":{"status":"not_applicable","classification":"action_refused_before_dispatch"}
         }"#;
-        let (root, case, result, turn) = complete_turn_fixture();
+        let (root, case, result, turn) = refused_turn_fixture(RefusalCode::BackgroundUnavailable);
         std::fs::write(
             turn.join("action.json"),
             br#"{
@@ -3150,7 +3170,7 @@ mod tests {
 
     #[test]
     fn validator_accepts_missing_images_for_typed_minimized_refusal() {
-        let (root, case, result, turn) = complete_turn_fixture();
+        let (root, case, result, turn) = refused_turn_fixture(RefusalCode::WindowMinimized);
         std::fs::write(
             turn.join("action.json"),
             br#"{

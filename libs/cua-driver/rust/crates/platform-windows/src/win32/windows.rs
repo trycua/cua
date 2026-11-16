@@ -776,3 +776,130 @@ mod exact_window_tests {
         assert!(!owner_chain_reaches_target(10, 30, |_| Some(30)));
     }
 }
+
+#[cfg(test)]
+mod hung_window_tests {
+    use super::list_windows;
+    use std::io::{BufRead, BufReader};
+    use std::process::{Child, Command, Stdio};
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+    use windows::core::w;
+    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DefWindowProcW, DispatchMessageW, PeekMessageW, RegisterClassW, MSG,
+        PM_REMOVE, WINDOW_EX_STYLE, WNDCLASSW, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+    };
+
+    const HOST_ENV: &str = "CUA_TEST_HUNG_WINDOW_HOST";
+    const TITLE: &str = "cua list_windows hung window";
+
+    unsafe extern "system" fn window_proc(
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        DefWindowProcW(hwnd, msg, wparam, lparam)
+    }
+
+    /// Child-process half of the test below: shows a titled window, then
+    /// stops pumping messages so it stays hung until the parent kills it.
+    #[test]
+    #[ignore = "spawned by list_windows_does_not_wait_on_a_hung_window"]
+    fn hung_window_host() {
+        if std::env::var_os(HOST_ENV).is_none() {
+            return;
+        }
+        unsafe {
+            let instance = GetModuleHandleW(None).expect("module handle");
+            let class = WNDCLASSW {
+                lpfnWndProc: Some(window_proc),
+                hInstance: instance.into(),
+                lpszClassName: w!("CuaListWindowsHungHost"),
+                ..Default::default()
+            };
+            assert_ne!(RegisterClassW(&class), 0, "register window class");
+            let hwnd = CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                class.lpszClassName,
+                &windows::core::HSTRING::from(TITLE),
+                WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                100,
+                100,
+                400,
+                300,
+                None,
+                None,
+                instance,
+                None,
+            )
+            .expect("create hung window");
+            let pumped = Instant::now();
+            let mut msg = MSG::default();
+            while pumped.elapsed() < Duration::from_millis(500) {
+                while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                    DispatchMessageW(&msg);
+                }
+            }
+            println!("hwnd={}", hwnd.0 as u64);
+        }
+        std::thread::sleep(Duration::from_secs(120));
+    }
+
+    struct KillOnDrop(Child);
+
+    impl Drop for KillOnDrop {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    /// #4906: listing windows must not wait on another process's window
+    /// that has stopped answering messages, and must still list it.
+    #[test]
+    #[ignore = "shows a window on the interactive desktop; ci-rust-windows.yml selects it"]
+    fn list_windows_does_not_wait_on_a_hung_window() {
+        let host_test = module_path!()
+            .split_once("::")
+            .map(|(_, path)| format!("{path}::hung_window_host"))
+            .expect("crate-qualified module path");
+        let mut child = Command::new(std::env::current_exe().expect("test binary"))
+            .args([host_test.as_str(), "--exact", "--ignored", "--nocapture"])
+            .env(HOST_ENV, "1")
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("spawn hung window host");
+        let stdout = child.stdout.take().expect("host stdout");
+        let _host = KillOnDrop(child);
+
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                if let Some(hwnd) = line.strip_prefix("hwnd=") {
+                    let _ = tx.send(hwnd.trim().parse::<u64>().expect("hwnd"));
+                    return;
+                }
+            }
+        });
+        let hung = rx
+            .recv_timeout(Duration::from_secs(30))
+            .expect("host window created");
+
+        let started = Instant::now();
+        let windows = list_windows(None);
+        let elapsed = started.elapsed();
+
+        let listed = windows
+            .iter()
+            .find(|w| w.hwnd == hung)
+            .expect("the hung window is listed");
+        assert_eq!(listed.title, TITLE);
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "list_windows took {elapsed:?} with a hung window on the desktop"
+        );
+    }
+}

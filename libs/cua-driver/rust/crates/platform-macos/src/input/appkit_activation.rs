@@ -47,146 +47,186 @@ const ACTIVATION_SETTLE: Duration = Duration::from_millis(120);
 /// How long to wait for `AXFrontmost` to report the activation.
 const ACTIVATION_CONFIRM: Duration = Duration::from_millis(400);
 
-/// The app-wide state the activation event changes, as a pure transition table
-/// so the lifecycle is testable without a window server.
+/// One pid's activation as the table tracks it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum LeaseState {
-    /// The target has not been sent an activation, or it has been undone.
-    Inactive,
-    /// The activation went out; `until` is when it lapses without new input.
-    Active { until: Instant },
+enum Phase {
+    /// No pid holds an activation.
+    Idle,
+    /// The activation event went out and is being confirmed; nobody may send
+    /// input to that pid yet.
+    Activating,
+    /// Confirmed. `holders` actions are using it; at zero the idle timer
+    /// deactivates it.
+    Active,
 }
 
+/// What an acquirer does next, from the table as it stands. Pure, so the
+/// lifecycle is testable without a window server.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum LeaseStep {
-    /// Post the activation event, then act.
-    Activate,
-    /// The target is still active from an earlier action: act.
-    Extend,
+enum Decision {
+    /// The pid is already confirmed active: join as another holder.
+    Join,
+    /// Another acquirer is confirming this pid, or another pid has actions in
+    /// flight: wait and look again.
+    Wait,
+    /// Post the activation (after deactivating `previous` when it was active).
+    Activate { deactivate_previous: bool },
 }
 
-fn step_for(state: LeaseState, now: Instant) -> LeaseStep {
-    match state {
-        LeaseState::Active { until } if until > now => LeaseStep::Extend,
-        _ => LeaseStep::Activate,
+fn decide(table_pid: Option<i32>, phase: Phase, holders: usize, pid: i32) -> Decision {
+    match (table_pid, phase) {
+        (_, Phase::Idle) | (None, _) => Decision::Activate {
+            deactivate_previous: false,
+        },
+        (Some(p), Phase::Active) if p == pid => Decision::Join,
+        (Some(p), Phase::Activating) if p == pid => Decision::Wait,
+        (Some(_), Phase::Activating) => Decision::Wait,
+        (Some(_), Phase::Active) if holders > 0 => Decision::Wait,
+        (Some(_), Phase::Active) => Decision::Activate {
+            deactivate_previous: true,
+        },
     }
 }
 
-/// Per-pid lease table. Only one pid can be AppKit-active through this route
-/// at a time: activating another app first deactivates the previous one.
-struct Leases {
+/// The one activation this process holds. Only one pid is AppKit-active
+/// through this route at a time.
+struct Table {
     pid: Option<i32>,
     window_id: u32,
-    state: LeaseState,
+    phase: Phase,
+    holders: usize,
+    /// Bumped on every acquire and release, so a pending idle timer can tell
+    /// whether anything happened since it was armed.
     generation: u64,
 }
 
-fn leases() -> &'static Mutex<Leases> {
-    static LEASES: OnceLock<Mutex<Leases>> = OnceLock::new();
-    LEASES.get_or_init(|| {
-        Mutex::new(Leases {
+fn table() -> &'static Mutex<Table> {
+    static TABLE: OnceLock<Mutex<Table>> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        Mutex::new(Table {
             pid: None,
             window_id: 0,
-            state: LeaseState::Inactive,
+            phase: Phase::Idle,
+            holders: 0,
             generation: 0,
         })
     })
 }
 
+fn lock() -> std::sync::MutexGuard<'static, Table> {
+    table().lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// How long an acquirer waits for another pid's actions or another
+/// acquirer's confirmation before refusing.
+const ACQUIRE_WAIT: Duration = Duration::from_secs(10);
+
 /// Holds `pid` AppKit-active (without raising it or taking the user's focus)
-/// for the duration of one action. Drop extends the lease; the deactivation
-/// goes out [`IDLE_DEACTIVATE`] after the last action of a burst.
+/// for the duration of one action. When the last holder drops, the
+/// deactivation goes out after [`IDLE_DEACTIVATE`] unless another action
+/// joins first.
 pub struct ActivationLease {
     pid: i32,
 }
 
 impl ActivationLease {
-    /// Activate `pid` through `window_id`, or extend its current lease.
+    /// Activate `pid` through `window_id`, or join its confirmed activation.
     /// Returns `Err` when the activation could not be confirmed: input must
     /// not be sent then, because GDK would activate itself and raise the app.
     pub fn acquire(pid: i32, window_id: u32) -> Result<Self, String> {
-        let now = Instant::now();
-        let (step, previous) = {
-            let mut table = leases().lock().unwrap_or_else(|e| e.into_inner());
-            let same = table.pid == Some(pid);
-            let step = if same {
-                step_for(table.state, now)
-            } else {
-                LeaseStep::Activate
-            };
-            let previous = (!same)
-                .then_some(table.pid.zip(Some(table.window_id)))
-                .flatten()
-                .filter(|_| matches!(table.state, LeaseState::Active { .. }));
-            table.pid = Some(pid);
-            table.window_id = window_id;
-            table.generation += 1;
-            table.state = LeaseState::Active {
-                until: now + IDLE_DEACTIVATE,
-            };
-            (step, previous)
+        let deadline = Instant::now() + ACQUIRE_WAIT;
+        let previous = loop {
+            let mut t = lock();
+            match decide(t.pid, t.phase, t.holders, pid) {
+                Decision::Join => {
+                    t.holders += 1;
+                    t.generation += 1;
+                    return Ok(Self { pid });
+                }
+                Decision::Wait => {
+                    drop(t);
+                    if Instant::now() >= deadline {
+                        return Err(format!(
+                            "pid {pid} could not be made active: another app's background input \
+                             through the AppKit activation route did not finish in time"
+                        ));
+                    }
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+                Decision::Activate {
+                    deactivate_previous,
+                } => {
+                    let previous = deactivate_previous
+                        .then_some(t.pid.zip(Some(t.window_id)))
+                        .flatten();
+                    t.pid = Some(pid);
+                    t.window_id = window_id;
+                    t.phase = Phase::Activating;
+                    t.holders = 1;
+                    t.generation += 1;
+                    break previous;
+                }
+            }
         };
         if let Some((old_pid, old_wid)) = previous {
             post_appkit_event(old_pid, old_wid, SUBTYPE_DEACTIVATED);
         }
-        if step == LeaseStep::Activate {
-            post_appkit_event(pid, window_id, SUBTYPE_ACTIVATED);
-            std::thread::sleep(ACTIVATION_SETTLE);
-            if !wait_frontmost(pid, true, ACTIVATION_CONFIRM) {
-                release_now(pid);
-                return Err(format!(
-                    "pid {pid} did not report itself active after the AppKit activation event \
-                     (AXFrontmost stayed false), so no input was sent: its toolkit would have \
-                     raised the app instead"
-                ));
-            }
+        post_appkit_event(pid, window_id, SUBTYPE_ACTIVATED);
+        std::thread::sleep(ACTIVATION_SETTLE);
+        let confirmed = wait_frontmost(pid, true, ACTIVATION_CONFIRM);
+        let mut t = lock();
+        if confirmed {
+            t.phase = Phase::Active;
+            return Ok(Self { pid });
         }
-        Ok(Self { pid })
+        t.pid = None;
+        t.phase = Phase::Idle;
+        t.holders = 0;
+        t.generation += 1;
+        drop(t);
+        post_appkit_event(pid, window_id, SUBTYPE_DEACTIVATED);
+        Err(format!(
+            "pid {pid} did not report itself active after the AppKit activation event \
+             (AXFrontmost stayed false), so no input was sent: its toolkit would have raised \
+             the app instead"
+        ))
     }
 }
 
 impl Drop for ActivationLease {
     fn drop(&mut self) {
         let generation = {
-            let mut table = leases().lock().unwrap_or_else(|e| e.into_inner());
-            if table.pid != Some(self.pid) {
+            let mut t = lock();
+            if t.pid != Some(self.pid) || t.holders == 0 {
                 return;
             }
-            table.state = LeaseState::Active {
-                until: Instant::now() + IDLE_DEACTIVATE,
-            };
-            table.generation
+            t.holders -= 1;
+            t.generation += 1;
+            if t.holders > 0 {
+                return;
+            }
+            t.generation
         };
         let pid = self.pid;
         std::thread::spawn(move || {
             std::thread::sleep(IDLE_DEACTIVATE);
             let window_id = {
-                let mut table = leases().lock().unwrap_or_else(|e| e.into_inner());
-                if table.pid != Some(pid) || table.generation != generation {
+                let mut t = lock();
+                if t.pid != Some(pid)
+                    || t.generation != generation
+                    || t.holders > 0
+                    || t.phase != Phase::Active
+                {
                     return;
                 }
-                table.pid = None;
-                table.state = LeaseState::Inactive;
-                table.window_id
+                t.pid = None;
+                t.phase = Phase::Idle;
+                t.generation += 1;
+                t.window_id
             };
             post_appkit_event(pid, window_id, SUBTYPE_DEACTIVATED);
         });
     }
-}
-
-/// Undo an activation at once (a failed confirmation, or a test).
-fn release_now(pid: i32) {
-    let window_id = {
-        let mut table = leases().lock().unwrap_or_else(|e| e.into_inner());
-        if table.pid != Some(pid) {
-            return;
-        }
-        table.pid = None;
-        table.state = LeaseState::Inactive;
-        table.generation += 1;
-        table.window_id
-    };
-    post_appkit_event(pid, window_id, SUBTYPE_DEACTIVATED);
 }
 
 /// Post the AppKit activation or deactivation event to `pid` only.
@@ -396,22 +436,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_fresh_or_lapsed_lease_activates_and_a_live_one_extends() {
-        let now = Instant::now();
-        assert_eq!(step_for(LeaseState::Inactive, now), LeaseStep::Activate);
+    fn acquirers_join_a_confirmed_activation_and_wait_out_an_unconfirmed_one() {
+        let first = Decision::Activate {
+            deactivate_previous: false,
+        };
+        assert_eq!(decide(None, Phase::Idle, 0, 7), first);
+        assert_eq!(decide(Some(7), Phase::Active, 1, 7), Decision::Join);
+        assert_eq!(decide(Some(7), Phase::Active, 0, 7), Decision::Join);
         assert_eq!(
-            step_for(
-                LeaseState::Active {
-                    until: now + Duration::from_millis(1)
-                },
-                now
-            ),
-            LeaseStep::Extend
+            decide(Some(7), Phase::Activating, 1, 7),
+            Decision::Wait,
+            "no input before the activation is confirmed"
         );
+    }
+
+    #[test]
+    fn another_pid_waits_while_actions_are_in_flight_and_takes_over_an_idle_activation() {
+        assert_eq!(decide(Some(7), Phase::Active, 1, 9), Decision::Wait);
+        assert_eq!(decide(Some(7), Phase::Activating, 1, 9), Decision::Wait);
         assert_eq!(
-            step_for(LeaseState::Active { until: now }, now),
-            LeaseStep::Activate,
-            "a lease that lapsed may already have been deactivated"
+            decide(Some(7), Phase::Active, 0, 9),
+            Decision::Activate {
+                deactivate_previous: true
+            }
         );
     }
 

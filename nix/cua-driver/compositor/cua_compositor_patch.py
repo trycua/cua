@@ -277,12 +277,18 @@ static const char *cua_query_geometry(struct tinywl_server *server, pid_t target
 	snprintf(out, out_len, "geometry %d %d %d %d", x, y, scene_x, scene_y);
 	return NULL;
 }
+static void cua_count_buffer(struct wlr_scene_buffer *buffer, int sx, int sy, void *data) {
+	(void)buffer; (void)sx; (void)sy;
+	(*(int *)data)++;
+}
 /* Read-only capture attestation for the toplevel owned by `target_pid`'s
  * process family. It never focuses or raises. The rectangle is the scene
  * origin plus xdg geometry, the same frame `g` and pointer injection use, in
  * the pixels of the single output screencopy copies. Only the topmost mapped
  * toplevel qualifies: popups live in their parent's subtree, so nothing from
- * another client can be drawn over it. */
+ * another client can be drawn over it. An unmapped toplevel keeps an enabled
+ * scene root with a disabled surface subtree, so a sibling counts as above the
+ * target only when it still holds an enabled buffer. */
 static const char *cua_query_capture(struct tinywl_server *server, pid_t target_pid, char *out, size_t out_len) {
 	struct tinywl_toplevel *t, *target = NULL;
 	int matches = 0;
@@ -292,11 +298,12 @@ static const char *cua_query_capture(struct tinywl_server *server, pid_t target_
 	if (!matches) return "target-not-found";
 	if (matches > 1) return "ambiguous-pid";
 	struct wlr_scene_node *node = &target->scene_tree->node, *above;
-	if (!node->enabled) return "unmapped-target";
+	int visible_above = 0;
 	for (struct wl_list *link = node->link.next; link != &server->scene->tree.children; link = link->next) {
 		above = wl_container_of(link, above, link);
-		if (above->enabled) return "target-occluded";
+		wlr_scene_node_for_each_buffer(above, cua_count_buffer, &visible_above);
 	}
+	if (visible_above) return "target-occluded";
 	if (wl_list_length(&server->outputs) != 1) return "unsupported-output-layout";
 	struct tinywl_output *output = wl_container_of(server->outputs.next, output, link);
 	struct wlr_output *wlr_output = output->wlr_output;

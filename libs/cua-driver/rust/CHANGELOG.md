@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.52.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.52.2...cua-driver-rs-v0.52.3) (2026-11-16)
+
+
+### Bug Fixes
+
+* **cua-driver:** bind window screenshots on the nested cua-compositor ([#7890](https://github.com/trycua/cua/issues/7890)) ([5fa8992](https://github.com/trycua/cua/commit/5fa899214e263835c90bd1b1850b590639e57345))
+
 ## [0.52.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.52.1...cua-driver-rs-v0.52.2) (2026-11-15)
 
 

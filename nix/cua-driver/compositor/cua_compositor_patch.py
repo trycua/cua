@@ -40,6 +40,7 @@ INCLUDES = r"""#include <stdint.h>
 #include <unistd.h>
 #include <errno.h>
 #include <time.h>
+#include <math.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -274,7 +275,9 @@ static const char *cua_query_geometry(struct tinywl_server *server, pid_t target
 	int scene_x = x, scene_y = y;
 	struct wlr_box geo = target->xdg_toplevel->base->geometry;
 	x -= geo.x; y -= geo.y;
-	snprintf(out, out_len, "geometry %d %d %d %d", x, y, scene_x, scene_y);
+	/* The window's size is the xdg geometry, not GTK's AT-SPI frame, which
+	 * also counts the client-side shadow. */
+	snprintf(out, out_len, "geometry %d %d %d %d %d %d", x, y, scene_x, scene_y, geo.width, geo.height);
 	return NULL;
 }
 static void cua_count_buffer(struct wlr_scene_buffer *buffer, int sx, int sy, void *data) {
@@ -649,6 +652,15 @@ static const char *cua_handle_cmd(struct tinywl_server *server, char *line) {
 			if (!cua_button(server, t, 0, btn, true)) return "no-pointer-resource";
 			if (!cua_button(server, t, 0, btn, false)) return "no-pointer-resource";
 		}
+		return NULL;
+	} else if (!strcmp(cmd, "e")) {
+		/* Desktop wheel: the scene hit-test picks the surface under the point,
+		 * as for `d`. The driver cannot know the stacking order itself. */
+		double x, y, value; unsigned axis;
+		if (sscanf(line, "e %lf %lf %u %lf", &x, &y, &axis, &value) != 4 || axis > 1
+			|| !isfinite(x) || !isfinite(y) || !isfinite(value) || value == 0) return "bad-args";
+		if (!(t = cua_desktop_motion(server, x, y))) return "no-surface-at-point";
+		if (!cua_axis(server, t, 0, axis, value)) return "no-pointer-resource";
 		return NULL;
 	} else if (!strcmp(cmd, "m")) {
 		int idx; double x, y;

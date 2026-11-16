@@ -36,7 +36,10 @@ describe("RelayClient", () => {
   });
 
   it("registers a device with a signature the relay can verify and opens a session", async () => {
-    const { fetcher, calls } = fake({ "POST /v1/devices": { body: { device: { id: "dev_x", name: "This phone", state: "pending" }, code: "ABCD-1234" } }, "POST /v1/devices/session": { body: { session: "s1", expires_at: 99 } } });
+    const { fetcher, calls } = fake({
+      "POST /v1/devices": { body: { device: { id: "dev_x", name: "This phone", state: "pending" }, code: "ABCD-1234" } },
+      "POST /v1/devices/session": { body: { session: "s1", expires_at: 99 } },
+    });
     const r = new RelayClient("https://relay.test", fetcher);
     const key = testSigner();
     const e = await r.registerDevice("tok", key, "This phone", "ios", 1700000000);

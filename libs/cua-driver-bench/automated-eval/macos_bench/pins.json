@@ -133,5 +133,24 @@
     "codex_cli_sha256": "6b582e8813ce7e8ed4c52814ee5cf230dba647bf2292df747a4003f2657ef201",
     "model": "gpt-6.1-sol",
     "effort": "low"
+  },
+  "agent_desktop": {
+    "version": "1.2.0",
+    "package": "agent-desktop@1.2.0 on npm (vercel-labs/agent-desktop, Apache-2.0)",
+    "adapter": "tools/agent_desktop/ad_mcp.py",
+    "instructions": "tools/agent_desktop/ad-instructions.md"
+  },
+  "browser_use_harness": {
+    "macos_harness_version": "0.2.1",
+    "windows_harness_version": "0.2.2",
+    "windows_harness_repo": "https://github.com/browser-use/windows-harness",
+    "windows_harness_commit": "46a37cf1d411c7816adffc274d5bdc2cca2bd9f0",
+    "macos_adapter": "tools/browser_use_harness/bu_mcp.py",
+    "windows_adapter": "tools/browser_use_harness/wh_mcp.py"
+  },
+  "codex_cu_platforms": {
+    "macos_chatgpt_app": "26.930",
+    "windows_chatgpt_codex_app": "26.1029.9216.0",
+    "filter": "tools/codex_cu/codex_cu_filter.py"
   }
 }

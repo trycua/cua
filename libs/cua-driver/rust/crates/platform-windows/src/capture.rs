@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Window screenshot via PrintWindow + GDI BitBlt on Windows.
 //!
 //! `PW_RENDERFULLCONTENT` (0x2) renders the window contents even if it is

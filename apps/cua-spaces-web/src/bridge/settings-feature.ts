@@ -399,7 +399,10 @@ export class SettingsFeature {
 
   private every(key: string, ms: number, f: () => unknown): void {
     if (this.timers.has(key) || this.disposed) return;
-    this.timers.set(key, setInterval(() => void f(), ms));
+    this.timers.set(
+      key,
+      setInterval(() => void f(), ms),
+    );
   }
 
   private stop(key: string): void {
@@ -797,6 +800,38 @@ export class SettingsFeature {
     if (this.pinned.has("notifications")) return;
     await this.adapter.call("notifications.markRead", { ids: [id] });
     // A poll that started before the ack may answer it unread: read again after it.
+    await this.inflight.get("notifications");
+    await this.refresh("notifications");
+  }
+
+  /** Deletes entries for good (this app's own here, the daemon's through
+   * `notifications.delete`). Gone from the list and the unread count at once. */
+  async deleteNotifications(ids: string[]): Promise<void> {
+    const gone = new Set(ids);
+    const mine = this.local.some((n) => gone.has(n.id));
+    if (mine) {
+      this.local = this.local.filter((n) => !gone.has(n.id));
+      this.saveLocal();
+    }
+    const theirs = this.feed.filter((n) => gone.has(n.id)).map((n) => n.id);
+    if (theirs.length) this.feed = this.feed.filter((n) => !gone.has(n.id));
+    if (mine || theirs.length) this.publish("notifications");
+    if (!theirs.length || this.pinned.has("notifications")) return;
+    await this.adapter.call("notifications.delete", { ids: theirs });
+    // A poll that started before the delete may still list them: read again after it.
+    await this.inflight.get("notifications");
+    await this.refresh("notifications");
+  }
+
+  /** Deletes every entry, this app's own and the daemon's. */
+  async deleteAllNotifications(): Promise<void> {
+    const had = this.local.length > 0 || this.feed.length > 0;
+    this.local = [];
+    this.saveLocal();
+    this.feed = [];
+    if (had) this.publish("notifications");
+    if (this.pinned.has("notifications")) return;
+    await this.adapter.call("notifications.deleteAll", {});
     await this.inflight.get("notifications");
     await this.refresh("notifications");
   }

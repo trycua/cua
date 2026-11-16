@@ -43,7 +43,15 @@ describe("the picture-in-picture panel", () => {
     };
     const url = new URL(`cua-spaces://app${pipPath(spec)}`);
     expect(url.pathname).toBe("/pip");
-    expect(Object.fromEntries(url.searchParams)).toEqual({ space: "local:aurora", name: "Aurora", title: "cua@space: ~", key: "window:w-1", os: "linux", window: "w-1", epoch: "3" });
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      space: "local:aurora",
+      name: "Aurora",
+      title: "cua@space: ~",
+      key: "window:w-1",
+      os: "linux",
+      window: "w-1",
+      epoch: "3",
+    });
     const desktop = new URL(`cua-spaces://app${pipPath({ ...spec, key: "desktop", title: "Desktop", source: { kind: "desktop" } })}`);
     expect(desktop.searchParams.has("window")).toBe(false);
   });

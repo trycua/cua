@@ -148,6 +148,7 @@ impl World {
             recheck: cua_spacesd_server::mesh_host::GATE_RECHECK,
             gang_home: None,
             gang_wait: cua_spacesd_server::mesh_host::GANG_WAIT,
+            lan: true,
         };
         self._dirs.push(dir);
         tokio::spawn(cua_spacesd_server::mesh_host::run(cfg, self.stop.clone()));

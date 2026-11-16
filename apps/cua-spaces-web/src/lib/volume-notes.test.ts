@@ -16,7 +16,7 @@ describe("why a Space has no Cua Volume", () => {
 
   it("names the missing FUSE", () => {
     const note = volumeUnavailableNote("no Cua Volume in this Space: no /dev/fuse (a container on runc)");
-    expect(note).toContain("Cua Volume isn't available in this Space: it can't mount it (no FUSE here).");
+    expect(note).toContain("Cua Volume can't open in this Space.");
     expect(note).toContain("don't sync");
   });
 
@@ -29,10 +29,17 @@ describe("why a Space has no Cua Volume", () => {
   it("reads volume_errors from sync and mount status, one row per Space", () => {
     const errors = spaceVolumeErrors(
       { device_id: "d", device_name: "Mac", feed: "live", volume_errors: [{ space: "e2e-1005", error: "no /dev/fuse" }] },
-      { state: "off", method: "none", volume_errors: [{ space: "e2e-1005", error: "dup" }, { space: "other", error: "x predates y" }] },
+      {
+        state: "off",
+        method: "none",
+        volume_errors: [
+          { space: "e2e-1005", error: "dup" },
+          { space: "other", error: "x predates y" },
+        ],
+      },
     );
     expect(errors.map((e) => e.space)).toEqual(["e2e-1005", "other"]);
-    expect(volumeUnavailableNote(errors[0]!.error)).toContain("no FUSE here");
+    expect(volumeUnavailableNote(errors[0]!.error)).toContain("can't open in this Space");
     expect(volumeUnavailableNote(errors[1]!.error)).toContain("predates");
     // An older daemon without volume_errors: nothing to say.
     expect(spaceVolumeErrors({ device_id: "d", device_name: "Mac", feed: "live" }, null)).toEqual([]);

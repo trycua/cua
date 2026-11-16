@@ -159,6 +159,7 @@ const LASTING: &[&str] = &[
     "insufficient_disk",
     "runtime_permission",
     "runtime_missing",
+    "vm_runtime_missing",
     "runtime_not_running",
     "unsupported",
     "invalid_argument",

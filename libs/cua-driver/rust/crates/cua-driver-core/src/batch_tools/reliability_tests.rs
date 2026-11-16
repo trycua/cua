@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! One test per run_steps failure class seen in bench run v036: the call
 //! shapes models sent, and what the batch does with them now.
 

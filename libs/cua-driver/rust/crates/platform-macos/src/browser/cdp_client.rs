@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Legacy-compatible CDP client for Electron and other Chromium apps.
 //! HTTP discovery stays compatible with the page tool; WebSocket calls use
 //! cua-driver-core's shared event-aware `CdpConnection` transport.

@@ -777,11 +777,44 @@ fn power_off(grace: Duration) -> ! {
     unsafe {
         libc::kill(-1, libc::SIGKILL);
         libc::sync();
-        libc::reboot(libc::RB_AUTOBOOT);
+        // Firecracker and Virtualization.framework end the VM on a reboot; QEMU under
+        // WHPX hangs on one ("Unexpected VP exit code 4") and ends on an ACPI power-off.
+        libc::reboot(if link().tcp_port.is_some() {
+            libc::RB_POWER_OFF
+        } else {
+            libc::RB_AUTOBOOT
+        });
     }
     loop {
         std::thread::sleep(Duration::from_secs(60));
     }
+}
+
+/// What the kernel command line says about the host link (`cua.agent=tcp:PORT`,
+/// `cua.key=HEX`, `cua.dns=ADDR`): a VM without vsock (QEMU on Windows) reaches
+/// the init over a TCP port its user-mode network forwards to the host's
+/// loopback, and each connection starts with the key.
+struct Link {
+    tcp_port: Option<u16>,
+    key: Option<String>,
+    dns: Option<String>,
+}
+
+fn link() -> &'static Link {
+    static LINK: std::sync::OnceLock<Link> = std::sync::OnceLock::new();
+    LINK.get_or_init(|| {
+        let cmdline = std::fs::read_to_string("/proc/cmdline").unwrap_or_default();
+        let get = |k: &str| {
+            cmdline
+                .split_whitespace()
+                .find_map(|w| w.strip_prefix(k).map(str::to_string))
+        };
+        Link {
+            tcp_port: get("cua.agent=tcp:").and_then(|p| p.parse().ok()),
+            key: get("cua.key="),
+            dns: get("cua.dns="),
+        }
+    })
 }
 
 fn handle(conn: OwnedFd) {
@@ -790,6 +823,14 @@ fn handle(conn: OwnedFd) {
     let w = Arc::new(Mutex::new(file));
     let mut line = String::new();
     let mut reader = BufReader::new(reader);
+    if let Some(key) = &link().key {
+        // A TCP link is on the host's loopback: only a client that knows the
+        // key (given on the kernel command line) may speak to the init.
+        if reader.read_line(&mut line).unwrap_or(0) == 0 || line.trim() != format!("AUTH {key}") {
+            return;
+        }
+        line.clear();
+    }
     if reader.read_line(&mut line).unwrap_or(0) == 0 {
         return;
     }
@@ -902,6 +943,12 @@ fn vsock_listener() -> std::io::Result<OwnedFd> {
     }
 }
 
+/// The agent over TCP (`cua.agent=tcp:PORT`), for a guest with no vsock.
+fn tcp_listener(port: u16) -> std::io::Result<OwnedFd> {
+    let l = std::net::TcpListener::bind(("0.0.0.0", port))?;
+    Ok(OwnedFd::from(l))
+}
+
 fn serve(listener: OwnedFd) {
     use std::os::fd::AsRawFd;
     loop {
@@ -1000,11 +1047,19 @@ pub fn main() {
     }
     replace_file(
         "/etc/resolv.conf",
-        format!("nameserver {}\n", cua_microvm_init::DNS_IP).as_bytes(),
+        format!(
+            "nameserver {}\n",
+            link().dns.as_deref().unwrap_or(cua_microvm_init::DNS_IP)
+        )
+        .as_bytes(),
         0o644,
     );
     set_hostname("localhost");
-    match vsock_listener() {
+    let listener = match link().tcp_port {
+        Some(p) => tcp_listener(p),
+        None => vsock_listener(),
+    };
+    match listener {
         Ok(l) => {
             std::thread::spawn(move || serve(l));
         }

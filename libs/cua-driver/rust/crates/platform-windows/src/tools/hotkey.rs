@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_contract::HotkeyInput;
 use cua_driver_core::{
@@ -115,6 +118,7 @@ impl Tool for HotkeyTool {
                 Ok(hwnd) => hwnd,
                 Err(error) => return ToolResult::error(error.to_string()),
             };
+            position_keyboard_cursor(&self.state, &args, hwnd, None).await;
             let key_display = full_keys.join("+");
             return match tokio::task::spawn_blocking(move || {
                 let modifiers: Vec<&str> = mods.iter().map(String::as_str).collect();
@@ -129,7 +133,7 @@ impl Tool for HotkeyTool {
                     "scope": "desktop", "path": "SendInput", "keys": full_keys,
                     "effect": "unverifiable"
                 })),
-                Ok(Err(error)) => ToolResult::error(error.to_string()),
+                Ok(Err(error)) => crate::typing_turn::foreground_input_error(error),
                 Err(error) => ToolResult::error(format!("desktop hotkey task failed: {error}")),
             };
         }
@@ -391,7 +395,7 @@ impl Tool for HotkeyTool {
                 "✅ Pressed {key_display} on pid {raw_pid} via {path} \
                  (Win32 target)."
             )),
-            Ok(Err(e)) => ToolResult::error(e.to_string()),
+            Ok(Err(e)) => crate::typing_turn::foreground_input_error(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }

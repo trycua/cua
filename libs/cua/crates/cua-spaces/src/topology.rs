@@ -70,13 +70,12 @@ pub struct Member {
 /// `at_localhost`: the Space's daemon publishes the host's ports on its own
 /// loopback (`crate::host_ports`), so `localhost:<port>` works as written.
 pub fn host_section(settings: &NetworkSettings, at_localhost: bool) -> Value {
-    let ports: Vec<u16> = if settings.preset == crate::network::NetworkPreset::Localhost {
+    let ports: Vec<u16> = if settings.preset.opens_localhost() {
         settings.localhost_ports.clone()
     } else {
         Vec::new()
     };
-    let all =
-        settings.preset == crate::network::NetworkPreset::Localhost && settings.all_localhost_ports;
+    let all = settings.preset.opens_localhost() && settings.all_localhost_ports;
     json!({
         "name": HOST_NAME,
         "ports": ports,

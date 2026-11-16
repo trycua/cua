@@ -337,7 +337,8 @@ function Remove-AppRegistryKey {
 }
 
 function Remove-HostTask {
-    foreach ($task in @('Cua\SpacesdHost', 'Cua\EnvDriverHost')) {
+    # Production's task, staging's (CUA-3512) and the pre-rename one.
+    foreach ($task in @('Cua\SpacesdHost', 'Cua\SpacesdHost-staging', 'Cua\EnvDriverHost')) {
         $null = & schtasks.exe /End /TN $task 2>&1
         $null = & schtasks.exe /Delete /TN $task /F 2>&1
     }
@@ -480,6 +481,7 @@ function Remove-CuaApp($Entry) {
         Remove-HostTask
         Remove-RunValue 'ai.cua.spaces.desktop'
         Remove-RunValue 'CuaSpacesdHost'
+        Remove-RunValue 'CuaSpacesdHost-staging'
         Remove-AppRegistryKey
     }
     if (-not $KeepData) { Remove-CuaPath (Join-Path (Get-RoamingAppData) 'Cua Spaces') }

@@ -45,7 +45,13 @@ describe("Home", () => {
   });
 
   it("lists a Space that has no agent yet, so every Space can be opened", async () => {
-    await home((b) => ({ ...b, listSpaces: async () => { const l = await b.listSpaces(); return { ...l, agents: l.agents.filter((r) => !r.places.some((p) => p.spaceId === "relay:sample-ledger")) }; } }));
+    await home((b) => ({
+      ...b,
+      listSpaces: async () => {
+        const l = await b.listSpaces();
+        return { ...l, agents: l.agents.filter((r) => !r.places.some((p) => p.spaceId === "relay:sample-ledger")) };
+      },
+    }));
     expect((await screen.findAllByLabelText(/^Ledger, on Desktop PC/)).length).toBeGreaterThan(0);
   });
 
@@ -53,7 +59,13 @@ describe("Home", () => {
     // A fixed clock: the core words the line from what it is told, so the same times give the same answer.
     setClockForTests(() => 1_800_000_000_000);
     let fail = false;
-    await home((b) => ({ ...b, listSpaces: async () => { if (fail) throw new Error("no route to host"); return b.listSpaces(); } }));
+    await home((b) => ({
+      ...b,
+      listSpaces: async () => {
+        if (fail) throw new Error("no route to host");
+        return b.listSpaces();
+      },
+    }));
     await screen.findByText("Sample data. Not your account.");
     await screen.findAllByText("Needs you");
     fail = true;

@@ -272,6 +272,17 @@ impl LumeClient {
                 .unwrap_or(message);
             return Err(VmmError::NotFound(name));
         }
+        // Apple's license allows two running macOS VMs per Mac: say how to
+        // free one rather than only that Lume refused.
+        let message = if crate::error::is_vm_limit(&message.to_ascii_lowercase()) {
+            format!(
+                "{message}. This Mac is already running two macOS VMs, the most Apple allows at \
+                 once: stop one (in Cua Spaces, or `cua sb ls` then `cua sb suspend <name>`) and \
+                 try again"
+            )
+        } else {
+            message
+        };
         Err(VmmError::Lume {
             status: status.as_u16(),
             message,
@@ -503,9 +514,9 @@ impl LumeClient {
                 status: 400,
                 message: format!(
                     "this Lume does not take a network gateway ({}). The secure network default \
-                     for macOS Spaces needs a Lume built from this repository \
-                     (libs/lume/scripts/install-local.sh); CUA_SECURE_DEFAULT=0 runs on Apple's \
-                     NAT as before",
+                     for macOS Spaces needs Lume 0.7.0 or newer (cua installs it itself unless \
+                     runtime.lume is set to this Mac's own Lume: update that one, or set it back \
+                     to auto); CUA_SECURE_DEFAULT=0 runs on Apple's NAT as before",
                     text.trim()
                 ),
             });
@@ -730,9 +741,20 @@ impl LumeClient {
                     message,
                 }) if message.contains("Pull failed") => {
                     guard.done();
+                    let reason = pull_failed_reason(&message);
+                    // Lume refused the request's arguments (an image it
+                    // cannot pull, such as a digest reference): the same
+                    // pull fails the same way, so it is not offered as a
+                    // download to resume.
+                    if reason.contains("ValidationError") {
+                        return Err(VmmError::Refused(format!(
+                            "Lume refused to pull the image for {name} ({reason}); \
+                             trying again will not help"
+                        )));
+                    }
                     return Err(VmmError::PullStopped {
                         name: name.into(),
-                        reason: pull_failed_reason(&message),
+                        reason,
                     });
                 }
                 // The pull ended without making the VM: cancelled outside
@@ -1000,6 +1022,19 @@ pub(crate) mod tests {
         )
     }
 
+    /// Lume's 409 at Apple's two macOS VMs says how to free one, and
+    /// telemetry reads it as `vm_limit`.
+    #[tokio::test]
+    async fn the_macos_vm_limit_says_how_to_free_one() {
+        let body =
+            r#"{"message":"VM start rejected: host limit of 2 running macOS guests reached"}"#;
+        let (lume, _) = scripted_lume(vec![(409, body.to_string())]).await;
+        let e = lume.get("b").await.unwrap_err().to_string();
+        assert!(e.starts_with("lume API 409: VM start rejected"), "{e}");
+        assert!(e.contains("`cua sb suspend <name>`"), "{e}");
+        assert_eq!(crate::error::failure_kind(&e), Some("vm_limit"));
+    }
+
     #[tokio::test]
     async fn a_pull_reports_lumes_bytes() {
         let mut gets = vec![];
@@ -1127,6 +1162,20 @@ pub(crate) mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("disk full"), "{err}");
+        assert!(matches!(err, VmmError::PullStopped { .. }), "{err}");
+        // Lume refused the arguments: not a download to resume.
+        let (client, _) = scripted_lume(vec![(
+            400,
+            r#"{"message":"Pull failed for 'b': The operation couldn’t be completed. (ArgumentParser.ValidationError error 1.)"}"#
+                .to_string(),
+        )])
+        .await;
+        let err = client
+            .wait_pulled("b4d", Duration::from_secs(30))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, VmmError::Refused(_)), "{err}");
+        assert!(!err.to_string().contains("Try again"), "{err}");
     }
 
     #[test]

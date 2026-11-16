@@ -5,7 +5,7 @@ import CuaSpacesFFI
 import Foundation
 
 /// The sidebar's account area (CUA-2204): one line, the account, with a
-/// menu (Settings, Plan, Sign out), and on Free only the "Run more Spaces
+/// menu (Settings, Plan, Sign out), and on Free only the "Use more computers
 /// at once with Pro" banner above it. What shows and what it says are the core's
 /// (`account::menu`, `upsell::pro_banner`); this reads the app's facts.
 extension AppModel {

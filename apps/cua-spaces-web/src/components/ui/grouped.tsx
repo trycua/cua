@@ -33,7 +33,12 @@ import { cn } from "@/lib/utils";
 type Div = ComponentProps<"div">;
 
 /** "IN THIS SPACE", "DETAILS": the Space page's headings. */
-export function SectionHeading({ children, action, className, ...props }: { children: ReactNode; action?: ReactNode } & Omit<ComponentProps<"h2">, "children">) {
+export function SectionHeading({
+  children,
+  action,
+  className,
+  ...props
+}: { children: ReactNode; action?: ReactNode } & Omit<ComponentProps<"h2">, "children">) {
   return (
     <div className={cn("mt-7 mb-1.5 flex min-h-5 items-center justify-between gap-3 px-1 first:mt-0", className)}>
       <h2 className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase" {...props}>
@@ -49,7 +54,10 @@ export function HeadingAction({ className, ...props }: ComponentProps<"button">)
   return (
     <button
       type="button"
-      className={cn("cursor-default rounded-lg px-1.5 py-0.5 text-xs text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60", className)}
+      className={cn(
+        "cursor-default rounded-lg px-1.5 py-0.5 text-xs text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60",
+        className,
+      )}
       {...props}
     />
   );
@@ -126,7 +134,9 @@ export function SettingRow({
         </label>
         {help ? <p className="mt-px text-xs text-muted-foreground">{help}</p> : null}
       </div>
-      {value !== undefined && value !== null ? <div className="min-w-0 shrink-0 truncate text-right text-[13px] text-muted-foreground select-text">{value}</div> : null}
+      {value !== undefined && value !== null ? (
+        <div className="min-w-0 shrink-0 truncate text-right text-[13px] text-muted-foreground select-text">{value}</div>
+      ) : null}
       {control ? <div className="shrink-0">{control}</div> : null}
     </GroupedRow>
   );

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Typed contracts and result reporting for desktop E2E cells.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -136,6 +139,7 @@ pub enum DriverRoute {
     LinuxLibei,
     LinuxWaylandVirtualPointer,
     LinuxCuaCompositorInject,
+    LinuxHyprlandIsolatedInput,
     Cdp,
     Composite,
 }
@@ -1496,6 +1500,11 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
                 .as_str()
                 .is_some_and(|summary| summary.starts_with("refused (window_minimized):"))
     });
+    // A call on a pid that has no window errors out and the recorder names the
+    // missing window, so there is no image or tree to require.
+    let errored_without_window = action
+        .as_ref()
+        .is_some_and(|value| value["result_error"].as_bool() == Some(true));
     let restored_state_captured = manifest
         .as_ref()
         .is_some_and(|value| value["after"]["state"]["status"].as_str() == Some("captured"));
@@ -1511,6 +1520,8 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
                         && classification(phase, "screenshot") == Some("capture_failed"))))
             || (refused_minimized_action
                 && classification(phase, "screenshot") == Some("target_minimized"))
+            || (errored_without_window
+                && classification(phase, "screenshot") == Some(NO_TARGET_WINDOW))
     };
 
     for (phase, kind) in [("before", "screenshot"), ("after", "screenshot")] {
@@ -1561,6 +1572,11 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
                 value[phase]["state"]["status"] == "not_applicable"
                     && value[phase]["state"]["classification"] == "action_refused_before_dispatch"
             })
+            || (errored_without_window
+                && manifest.as_ref().is_some_and(|value| {
+                    value[phase]["state"]["status"] == "not_applicable"
+                        && value[phase]["state"]["classification"] == NO_TARGET_WINDOW
+                }))
     };
     if state_expected {
         for phase in ["before", "after"] {
@@ -1795,6 +1811,10 @@ fn semantic_action_without_point(action: &Value) -> bool {
         })
 }
 
+/// Recorder classification for a pid that has no window (see
+/// `cua_driver_core::recording::TARGET_UNAVAILABLE`).
+const NO_TARGET_WINDOW: &str = cua_driver_core::recording::TARGET_UNAVAILABLE;
+
 fn validate_capture_status(
     manifest: Option<&Value>,
     path: &[&str],
@@ -1812,8 +1832,13 @@ fn validate_capture_status(
     let classification = value["classification"]
         .as_str()
         .unwrap_or("missing_classification");
+    let cause = if classification == NO_TARGET_WINDOW {
+        ": the target pid had no window to capture, but the call did not error"
+    } else {
+        ""
+    };
     errors.push(format!(
-        "required evidence capture failed for {cell_id}: {label} (classified {classification})"
+        "required evidence capture failed for {cell_id}: {label} (classified {classification}){cause}"
     ));
 }
 
@@ -2728,6 +2753,63 @@ mod tests {
         assert!(errors.iter().any(|error| {
             error.contains("turn-00001/after.png") && error.contains("classified capture_failed")
         }));
+    }
+
+    #[test]
+    fn validator_accepts_errored_no_window_turn() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        std::fs::write(
+            turn.join("action.json"),
+            br#"{
+                "tool":"get_window_state",
+                "arguments":{"pid":1},
+                "result_error":true,
+                "result_summary":"No windows found for pid 1. Provide window_id."
+            }"#,
+        )
+        .expect("write no-window action");
+        std::fs::write(
+            turn.join("evidence.json"),
+            br#"{
+                "schema":"cua-turn-evidence/v1",
+                "before":{"state":{"status":"not_applicable","classification":"target_unavailable"},"screenshot":{"status":"unavailable","classification":"target_unavailable"}},
+                "after":{"state":{"status":"not_applicable","classification":"target_unavailable"},"screenshot":{"status":"unavailable","classification":"target_unavailable"}},
+                "click":{"status":"not_applicable","classification":"no_target_pid"}
+            }"#,
+        )
+        .expect("write no-window evidence");
+        for file in [
+            "before.png",
+            "after.png",
+            "screenshot.png",
+            "before_state.json",
+            "after_state.json",
+            "app_state.json",
+        ] {
+            let _ = std::fs::remove_file(turn.join(file));
+        }
+        validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect("an errored call on a windowless pid needs no image or tree");
+    }
+
+    #[test]
+    fn validator_rejects_no_window_classification_on_a_successful_call() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        std::fs::write(
+            turn.join("evidence.json"),
+            br#"{
+                "schema":"cua-turn-evidence/v1",
+                "before":{"state":{"status":"captured"},"screenshot":{"status":"unavailable","classification":"target_unavailable"}},
+                "after":{"state":{"status":"captured"},"screenshot":{"status":"captured"}},
+                "click":{"status":"captured"}
+            }"#,
+        )
+        .expect("write evidence");
+        let errors = validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect_err("a successful call still needs its screenshot");
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("had no window to capture")));
     }
 
     #[test]

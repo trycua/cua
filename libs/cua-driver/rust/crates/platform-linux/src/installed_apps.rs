@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Linux installed-app enumeration via the XDG Desktop Entry Specification.
 //!
 //! Scans `.desktop` files in the standard XDG application directories and

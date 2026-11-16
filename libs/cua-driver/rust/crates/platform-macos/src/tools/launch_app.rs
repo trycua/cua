@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_core::{
     protocol::ToolResult,
@@ -88,10 +91,13 @@ impl Tool for LaunchAppTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        crate::window_change_detector::end_tail();
-        crate::window_change_detector::note_intentional_activation();
+        crate::focus_arbiter::note_intentional();
+        // Every lease and demotion below belongs to this launch: a driver
+        // activation after this point is not undone.
+        let watch = crate::focus_arbiter::UndoWatch::arm();
         let bundle_id = args.opt_str("bundle_id");
         let name = args.opt_str("name");
+        let mut located = None;
         let mut response_bundle_id = bundle_id.clone();
         let response_requested_name = name.clone();
         let urls: Vec<String> = args
@@ -138,22 +144,19 @@ impl Tool for LaunchAppTool {
                     serde_json::json!({ "bundle_id": bid }),
                 );
             }
-        } else if let Some(ref n) = name {
-            let Some(locator) = crate::apps::locate_by_name(n) else {
-                return structured_launch_error(
-                    "APP_NOT_INSTALLED",
-                    format!("No installed macOS app found for name '{n}'."),
-                    serde_json::json!({ "name": n }),
-                );
+        } else if let Some(n) = name.as_deref() {
+            let locator = match crate::apps::locate_by_name(n) {
+                Ok(locator) => locator,
+                Err(miss) => return name_miss_refusal(n, &miss),
             };
-            let (_, resolved_bundle_id) = locator.app_ref_and_bundle_id();
-            response_bundle_id = resolved_bundle_id.clone();
-            if resolved_bundle_id
+            response_bundle_id = locator.bundle_id();
+            if response_bundle_id
                 .as_deref()
                 .is_some_and(is_cua_driver_bundle_id)
             {
                 return protected_host_launch_refusal();
             }
+            located = Some(locator);
         }
         if let Some(err) = preflight_file_urls(&urls) {
             return err;
@@ -207,10 +210,11 @@ impl Tool for LaunchAppTool {
         let wildcard_lease = prior_frontmost
             .filter(|_| !finder_folder_handoff)
             .map(|prior| {
-                crate::focus_steal::FocusStealPreventer::begin_suppression(
+                crate::focus_steal::FocusStealPreventer::begin_suppression_for(
                     None,
                     prior,
                     "LaunchAppTool.pre",
+                    watch.clone(),
                 )
             });
 
@@ -247,16 +251,16 @@ impl Tool for LaunchAppTool {
                     )?
                 }
             } else {
-                let n = name.as_deref().unwrap();
+                let located = located.expect("a name resolves before launch");
                 if urls.is_empty()
                     && additional_arguments.is_empty()
                     && env.is_empty()
                     && !creates_new_instance
                 {
-                    crate::apps::launch_app_by_name(n)?
+                    crate::apps::launch_located(located)?
                 } else {
-                    crate::apps::launch_with_urls_by_name(
-                        n,
+                    crate::apps::launch_with_urls_located(
+                        located,
                         &urls,
                         &additional_arguments,
                         &env,
@@ -294,11 +298,13 @@ impl Tool for LaunchAppTool {
         if let Ok(Ok((pid, _, _))) = &launch_result {
             if let Some(prior) = prior_frontmost {
                 if *pid != prior {
-                    let targeted_lease = crate::focus_steal::FocusStealPreventer::begin_suppression(
-                        Some(*pid),
-                        prior,
-                        "LaunchAppTool.post",
-                    );
+                    let targeted_lease =
+                        crate::focus_steal::FocusStealPreventer::begin_suppression_for(
+                            Some(*pid),
+                            prior,
+                            "LaunchAppTool.post",
+                            watch.clone(),
+                        );
                     // Now safe to drop the wildcard — targeted is armed.
                     drop(wildcard_lease);
                     // Hold the targeted lease long enough to cover the
@@ -334,7 +340,7 @@ impl Tool for LaunchAppTool {
                     // the same tokio tick the lease dropped), demote it.
                     // Loop 5x200ms = 1s of post-window coverage. Each
                     // iteration is cheap (one frontmost_pid + maybe one
-                    // activate_pid call) so this stays well under the
+                    // reactivate_app call) so this stays well under the
                     // RPC budget even when the demote keeps working.
                     let mut demotion_succeeded = true;
                     for _ in 0..5 {
@@ -343,7 +349,11 @@ impl Tool for LaunchAppTool {
                             // Not frontmost — nothing to do this tick.
                             continue;
                         }
-                        let activated = crate::apps::activate_pid(prior);
+                        // The driver or the user fronted it: stand down.
+                        if watch.decide() == crate::focus_arbiter::Decision::Leave {
+                            break;
+                        }
+                        let activated = crate::apps::reactivate_app(prior);
                         let still_frontmost = crate::apps::frontmost_pid() == Some(*pid);
                         if still_frontmost {
                             tracing::warn!(
@@ -410,19 +420,27 @@ impl Tool for LaunchAppTool {
                         let launched_pid = *pid;
                         let prior_pid = prior;
                         tokio::spawn(async move {
-                            let _lease = crate::focus_steal::FocusStealPreventer::begin_suppression(
-                                Some(launched_pid),
-                                prior_pid,
-                                "LaunchAppTool.watchdog",
-                            );
+                            let _lease =
+                                crate::focus_steal::FocusStealPreventer::begin_suppression_for(
+                                    Some(launched_pid),
+                                    prior_pid,
+                                    "LaunchAppTool.watchdog",
+                                    watch.clone(),
+                                );
                             let mut late_activations = 0u32;
                             for _ in 0..32 {
                                 // 32 × 250ms = 8s
                                 tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-                                if crate::apps::frontmost_pid() == Some(launched_pid) {
-                                    late_activations += 1;
-                                    let _ = crate::apps::activate_pid(prior_pid);
+                                if crate::apps::frontmost_pid() != Some(launched_pid) {
+                                    continue;
                                 }
+                                // The driver activated an app since, or the
+                                // user just switched to it: stand down.
+                                if watch.decide() == crate::focus_arbiter::Decision::Leave {
+                                    break;
+                                }
+                                late_activations += 1;
+                                let _ = crate::apps::reactivate_app(prior_pid);
                             }
                             if late_activations > 0 {
                                 tracing::warn!(
@@ -533,6 +551,20 @@ fn resolve_windows_for_pid(pid: i32) -> Vec<crate::windows::WindowInfo> {
 
 fn rank_launch_windows(windows: &mut [crate::windows::WindowInfo]) {
     windows.sort_by_key(|window| std::cmp::Reverse(!window.title.trim().is_empty()));
+}
+
+/// A name that resolves to no app is `APP_NOT_INSTALLED`, one that fits
+/// several equally well `APP_NAME_AMBIGUOUS`; both carry the closest names.
+fn name_miss_refusal(name: &str, miss: &cua_driver_core::app_names::NameMiss) -> ToolResult {
+    structured_launch_error(
+        if miss.ambiguous {
+            "APP_NAME_AMBIGUOUS"
+        } else {
+            "APP_NOT_INSTALLED"
+        },
+        crate::apps::name_miss_message(name, miss),
+        serde_json::json!({ "name": name, "suggestions": miss.suggestions }),
+    )
 }
 
 fn structured_launch_error(code: &str, message: String, details: serde_json::Value) -> ToolResult {
@@ -717,12 +749,43 @@ fn hex_value(byte: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_cua_driver_bundle_id, local_file_target, normalize_launch_url, preflight_file_urls,
-        rank_launch_windows, response_identity, structured_launch_failure, LaunchAppTool,
+        is_cua_driver_bundle_id, local_file_target, name_miss_refusal, normalize_launch_url,
+        preflight_file_urls, rank_launch_windows, response_identity, structured_launch_failure,
+        LaunchAppTool,
     };
+    use cua_driver_core::app_names::NameMiss;
     use cua_driver_core::tool::Tool;
     use serde_json::json;
     use std::path::PathBuf;
+
+    #[test]
+    fn a_name_two_apps_answer_to_is_refused_with_both() {
+        let result = name_miss_refusal(
+            "Adobe InDesign",
+            &NameMiss {
+                ambiguous: true,
+                suggestions: vec!["Adobe InDesign 2025".into(), "Adobe InDesign 2026".into()],
+            },
+        );
+        assert_eq!(result.is_error, Some(true));
+        let structured = result.structured_content.expect("structured error");
+        assert_eq!(structured["error"], "APP_NAME_AMBIGUOUS");
+        assert_eq!(
+            structured["suggestions"],
+            json!(["Adobe InDesign 2025", "Adobe InDesign 2026"])
+        );
+
+        let result = name_miss_refusal(
+            "note",
+            &NameMiss {
+                ambiguous: false,
+                suggestions: vec!["Keynote".into()],
+            },
+        );
+        let structured = result.structured_content.expect("structured error");
+        assert_eq!(structured["error"], "APP_NOT_INSTALLED");
+        assert_eq!(structured["suggestions"], json!(["Keynote"]));
+    }
 
     fn window(window_id: u32, title: &str, width: f64, height: f64) -> crate::windows::WindowInfo {
         crate::windows::WindowInfo {

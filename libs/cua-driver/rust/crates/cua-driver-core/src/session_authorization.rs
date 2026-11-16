@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Immutable authorization contexts for shared-daemon sessions.
 //!
 //! Public session strings are lifecycle labels, not credentials. This module
@@ -819,6 +822,7 @@ fn now_unix_ms() -> u128 {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "yaml")]
     use std::io::Write;
 
     use super::*;
@@ -834,6 +838,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "yaml")]
     fn manifest_with_allowed_tool(tool: &str) -> Arc<SessionManifest> {
         let mut file = tempfile::NamedTempFile::new().unwrap();
         writeln!(
@@ -1126,6 +1131,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "yaml")]
     #[test]
     fn capability_manifests_are_stored_per_connection_context() {
         let registry = SessionAuthorizationRegistry::delegated_for_test(
@@ -1169,6 +1175,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "yaml")]
     #[test]
     fn capability_manifest_is_optional_except_in_bounded_mode() {
         let registry =

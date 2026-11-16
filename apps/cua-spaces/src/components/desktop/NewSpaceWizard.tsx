@@ -270,7 +270,7 @@ export function NewSpaceWizard({
   const env = useMemo(
     () => ({
       defaultLocation,
-          localAvailable,
+      localAvailable,
       localReason: localReason ?? null,
       localBackends: localBackends ? [...localBackends] : null,
       maxCpus,
@@ -283,13 +283,13 @@ export function NewSpaceWizard({
     }),
     [
       defaultLocation,
-          localAvailable,
+      localAvailable,
       localReason,
       localBackends,
       maxCpus,
       hostArch,
       storage,
-          clouds,
+      clouds,
       hosts,
       experiments,
       gpus,
@@ -297,7 +297,7 @@ export function NewSpaceWizard({
   );
   const [state, setState] = useState<WizardState>(() =>
     (quick ? [{ type: "choose-os", os: quick }] : (startActions ?? [])).reduce<WizardState>(
-      (s, action) => core<WizardState>("wizard.reduce", { state: s, action, env }),
+      (s, action) => core<WizardState>("wizard.reduce", { state: s, action, env, hostOs: hostOs() }),
       // The wasm core has no randomness: a seed for the name an unnamed
       // Space gets (the core shows it and creates the Space with it).
       core<WizardState>("wizard.initial", { env: { ...env, nameSeed: nameSeed() } }),
@@ -311,11 +311,18 @@ export function NewSpaceWizard({
     onCancel();
   };
   const dispatch = (action: WizardAction) =>
-    setState((s) => core<WizardState>("wizard.reduce", { state: s, action, env }));
+    setState((s) => core<WizardState>("wizard.reduce", { state: s, action, env, hostOs: hostOs() }));
   // Until the person picks, follow the configured default (it can arrive
   // after the sheet opens); the core ignores it once they picked.
   useEffect(() => {
-    setState((s) => core<WizardState>("wizard.reduce", { state: s, action: { type: "sync-default", location: defaultLocation }, env }));
+    setState((s) =>
+      core<WizardState>("wizard.reduce", {
+        state: s,
+        action: { type: "sync-default", location: defaultLocation },
+        env,
+        hostOs: hostOs(),
+      }),
+    );
   }, [defaultLocation, env]);
   const v = core<WizardView>("wizard.view", { state, env, hostOs: hostOs() });
   // Before paint, so a quick create never shows the sheet; once, because StrictMode runs mount effects twice.
@@ -381,9 +388,11 @@ export function NewSpaceWizard({
                       </button>
                       {v.advanced && (
                         <div className="wz-stack" role="group" aria-label={v.labels.advanced}>
-                          {v.fields.filter((f) => f.advanced).map((f) => (
-                            <SystemField key={f.id} field={f} view={v} dispatch={dispatch} />
-                          ))}
+                          {v.fields
+                            .filter((f) => f.advanced)
+                            .map((f) => (
+                              <SystemField key={f.id} field={f} view={v} dispatch={dispatch} />
+                            ))}
                         </div>
                       )}
                     </div>
@@ -439,39 +448,39 @@ export function NewSpaceWizard({
                   </span>
                 </label>
               )}
-                {v.diskEditable && (
-                  <div className="wz-disk">
-                    <label className="dw-field">
-                      <span>{label(v, "disk")}</span>
-                      <span className="wz-slider" title={v.diskHelp ?? undefined}>
-                        <input
-                          type="range"
-                          min={v.minDiskGb}
-                          max={v.maxDiskGb}
-                          step={1}
-                          value={v.diskGb}
-                          aria-label={label(v, "disk")}
-                          onChange={(event) => dispatch({ type: "set-disk", diskGb: Number(event.target.value) })}
-                        />
-                        <output>{v.diskText}</output>
-                      </span>
-                    </label>
-                    {(v.diskNote || v.diskResetLabel) && (
-                      <div className="wz-disk-note">
-                        {v.diskNote && <p className="wz-help">{v.diskNote}</p>}
-                        {v.diskResetLabel && (
-                          <button
-                            type="button"
-                            className="dw-btn dw-btn-quiet"
-                            onClick={() => dispatch({ type: "reset-disk" })}
-                          >
-                            {v.diskResetLabel}
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
+              {v.diskEditable && (
+                <div className="wz-disk">
+                  <label className="dw-field">
+                    <span>{label(v, "disk")}</span>
+                    <span className="wz-slider" title={v.diskHelp ?? undefined}>
+                      <input
+                        type="range"
+                        min={v.minDiskGb}
+                        max={v.maxDiskGb}
+                        step={1}
+                        value={v.diskGb}
+                        aria-label={label(v, "disk")}
+                        onChange={(event) => dispatch({ type: "set-disk", diskGb: Number(event.target.value) })}
+                      />
+                      <output>{v.diskText}</output>
+                    </span>
+                  </label>
+                  {(v.diskNote || v.diskResetLabel) && (
+                    <div className="wz-disk-note">
+                      {v.diskNote && <p className="wz-help">{v.diskNote}</p>}
+                      {v.diskResetLabel && (
+                        <button
+                          type="button"
+                          className="dw-btn dw-btn-quiet"
+                          onClick={() => dispatch({ type: "reset-disk" })}
+                        >
+                          {v.diskResetLabel}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
               {v.gpu && <GpuField row={v.gpu} dispatch={dispatch} onOpenExternal={onOpenExternal} />}
               {v.price && (
                 <p className="wz-price" aria-label={t("spaces.wizard.cost_label")}>

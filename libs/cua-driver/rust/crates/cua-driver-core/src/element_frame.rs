@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `get_window_state` element rectangles in the two coordinate spaces a
 //! caller uses.
 //!

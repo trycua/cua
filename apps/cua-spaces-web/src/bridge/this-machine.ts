@@ -61,9 +61,19 @@ export interface HostFailure {
   message: string;
   /** The raw error, unchanged. */
   details?: string;
-  /** The retry button: "Retry", or "Sign In" when the account is missing. */
+  /** The button: "Retry", "Sign In" when the account is missing, or "Use a
+   * code from another computer" when the account wants proof (`needsProof`). */
   actionLabel?: string;
+  /** Which failure it is, as the host classed it (`HostSetupFailure.Kind`). */
+  kind?: string;
+  /** The relay's code for a refusal, when it gave one. */
+  refusalCode?: string;
 }
+
+/** The failure is a new computer the account wants proof for: its button
+ * opens "Enter a code" instead of trying again. */
+export const NEEDS_PROOF = "needsProof";
+export const isNeedsProof = (f: HostFailure | null | undefined): boolean => f?.kind === NEEDS_PROOF;
 
 export interface ThisMachineState {
   /** The setup form's state; null while the page shows. */
@@ -84,10 +94,26 @@ const IDLE: ThisMachineState = { form: null, busy: false, error: null, setupErro
 export function hostFailure(e: unknown): HostFailure {
   const message = e instanceof Error ? e.message : String(e);
   const p = e instanceof HostError ? e.presented : undefined;
-  if (p) return { title: p.title, message, details: p.details, actionLabel: p.actionLabel };
+  if (p)
+    return {
+      title: p.title,
+      message,
+      details: p.details,
+      actionLabel: p.actionLabel,
+      ...(p.kind ? { kind: p.kind } : {}),
+      ...(p.refusalCode ? { refusalCode: p.refusalCode } : {}),
+    };
   // A host that only says the error: the server's "slow down" in plain words.
   const throttled = plainThrottleError(message);
-  return throttled ? { title: "Too many attempts right now", message: throttled.replace(/^Too many attempts right now\. Wait (\d+) (seconds?), then try again\./, "Trying again in $1 $2.").replace("Wait a few seconds, then try again.", "Trying again in a few seconds."), details: message } : { message };
+  return throttled
+    ? {
+        title: "Too many attempts right now",
+        message: throttled
+          .replace(/^Too many attempts right now\. Wait (\d+) (seconds?), then try again\./, "Trying again in $1 $2.")
+          .replace("Wait a few seconds, then try again.", "Trying again in a few seconds."),
+        details: message,
+      }
+    : { message };
 }
 
 export class ThisMachineStore {
@@ -114,6 +140,14 @@ export class ThisMachineStore {
   private set(next: Partial<ThisMachineState>): void {
     this.state = { ...this.state, ...next };
     for (const l of [...this.listeners]) l();
+  }
+
+  /** This computer joined another way (a code from another computer): the
+   * failure that asked for it is answered, so it no longer shows. */
+  joinedWithCode(): void {
+    this.failedRequest = null;
+    this.failedAction = null;
+    this.set({ error: null, setupError: null, form: null });
   }
 
   /** Opens the form, with a setup choice's profile (`desktop`, `spare`). */

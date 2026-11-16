@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use crate::element_token::{
     current_snapshots_json, current_snapshots_phrase, format_snapshot_id, parse_token, refusal,
     token_for, CurrentSnapshot, ResolvedElement, TokenOwner, LRU_CAP_PER_PID, STALE_TOKEN_ERROR,
@@ -25,7 +28,10 @@ pub trait SnapshotPayload: Send + Sync + 'static {
 struct Snapshot<S> {
     id: u32,
     window_id: u64,
-    screenshot_owner: Option<String>,
+    /// The session whose read published this snapshot. Each session keeps
+    /// its own latest snapshot of a window, so another session's read never
+    /// retires this one's tokens.
+    session: Option<String>,
     screenshot_scale: Option<f64>,
     /// Window size in points when the screenshot was taken. A tree-only read
     /// keeps the screenshot frame only while the window still has this size.
@@ -36,10 +42,14 @@ struct Snapshot<S> {
 }
 
 impl<S> Snapshot<S> {
+    fn is_for(&self, session: Option<&str>, window_id: u64) -> bool {
+        self.session.as_deref() == session && self.window_id == window_id
+    }
+
     fn screenshot(&self, session: Option<&str>) -> Option<ScreenshotContext> {
         let scale = self
             .screenshot_scale
-            .filter(|_| self.screenshot_owner.as_deref() == session)?;
+            .filter(|_| self.session.as_deref() == session)?;
         Some(ScreenshotContext {
             snapshot_id: self.id,
             window_id: self.window_id,
@@ -220,11 +230,12 @@ fn row_snapshot<'a, S: SnapshotPayload>(
     pid: i32,
     lane: &'a [Snapshot<S>],
     reads: &HashMap<(String, i32, u64), ReadRecord>,
-    session: &str,
+    session: Option<&str>,
     window_id: Option<u64>,
 ) -> Result<&'a Snapshot<S>, RowMiss<'a, S>> {
+    let reader = session.unwrap_or_default().to_owned();
     let attribution = |snapshot: &'a Snapshot<S>| {
-        match reads.get(&(session.to_owned(), pid, snapshot.window_id)) {
+        match reads.get(&(reader.clone(), pid, snapshot.window_id)) {
             // One read, and it printed the snapshot that is current now: the
             // row can only be a row of that read.
             Some(read) if read.reads == 1 && read.snapshot_id == snapshot.id => Ok(snapshot),
@@ -235,14 +246,25 @@ fn row_snapshot<'a, S: SnapshotPayload>(
             None => Err(RowMiss::NotRead(snapshot)),
         }
     };
+    let own: Vec<&Snapshot<S>> = lane
+        .iter()
+        .filter(|snapshot| snapshot.session.as_deref() == session)
+        .collect();
+    // Only another session read the window: no read of this caller's is
+    // behind the row, and the refusal names that session's full token.
+    let not_read = |snapshot: &'a Snapshot<S>| Err(RowMiss::NotRead(snapshot));
     match window_id {
-        Some(window_id) => lane
-            .iter()
-            .find(|snapshot| snapshot.window_id == window_id)
-            .map_or(Err(RowMiss::NoSnapshot), attribution),
-        None => match lane {
-            [only] => attribution(only),
-            [] => Err(RowMiss::NoSnapshot),
+        Some(window_id) => match own.iter().find(|snapshot| snapshot.window_id == window_id) {
+            Some(snapshot) => attribution(snapshot),
+            None => lane
+                .iter()
+                .find(|snapshot| snapshot.window_id == window_id)
+                .map_or(Err(RowMiss::NoSnapshot), not_read),
+        },
+        None => match (own.as_slice(), lane) {
+            ([only], _) => attribution(only),
+            ([], [only]) => not_read(only),
+            ([], []) => Err(RowMiss::NoSnapshot),
             _ => Err(RowMiss::Ambiguous),
         },
     }
@@ -252,7 +274,7 @@ fn row_snapshot<'a, S: SnapshotPayload>(
 fn row_refusal<S: SnapshotPayload>(
     pid: i32,
     row: usize,
-    lane: &[Snapshot<S>],
+    lane: &[&Snapshot<S>],
     miss: RowMiss<'_, S>,
 ) -> ToolResult {
     let reason = miss.as_str();
@@ -309,7 +331,7 @@ fn row_refusal<S: SnapshotPayload>(
     error
 }
 
-fn invalid_token_refusal<S>(token: &str, lane: &[Snapshot<S>]) -> ToolResult {
+fn invalid_token_refusal<S>(token: &str, lane: &[&Snapshot<S>]) -> ToolResult {
     let example = lane.last().map_or_else(
         || "s0000002a:11".to_owned(),
         |snapshot| token_for(snapshot.id, 11),
@@ -386,6 +408,27 @@ impl<S> SnapshotState<S> {
         self.lanes.get(&pid).map(Vec::as_slice).unwrap_or_default()
     }
 
+    /// The snapshots `session` published for `pid`, oldest first.
+    fn session_lane(&self, pid: i32, session: Option<&str>) -> Vec<&Snapshot<S>> {
+        self.lane(pid)
+            .iter()
+            .filter(|snapshot| snapshot.session.as_deref() == session)
+            .collect()
+    }
+
+    /// `session`'s current snapshot of the window.
+    fn snapshot_mut(
+        &mut self,
+        pid: i32,
+        window_id: u64,
+        session: Option<&str>,
+    ) -> Option<&mut Snapshot<S>> {
+        self.lanes
+            .get_mut(&pid)?
+            .iter_mut()
+            .find(|snapshot| snapshot.is_for(session, window_id))
+    }
+
     fn remember_retired(&mut self, pid: i32, ids: impl IntoIterator<Item = u32>) {
         for id in ids {
             if self.retired.len() == RETIRED_MEMORY {
@@ -395,10 +438,12 @@ impl<S> SnapshotState<S> {
         }
     }
 
-    /// The current snapshots of `pid`, in the shape every stale refusal reports.
-    fn current_snapshots(&self, pid: i32) -> Vec<CurrentSnapshot> {
-        self.lane(pid)
-            .iter()
+    /// The current snapshots `session` holds for `pid`, in the shape every
+    /// stale refusal reports. Another session's snapshots are left out: their
+    /// tokens are not the caller's to switch to.
+    fn current_snapshots(&self, pid: i32, session: Option<&str>) -> Vec<CurrentSnapshot> {
+        self.session_lane(pid, session)
+            .into_iter()
             .map(|snapshot| CurrentSnapshot {
                 snapshot_id: format_snapshot_id(snapshot.id),
                 window_id: snapshot.window_id,
@@ -504,8 +549,8 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
     /// keeping its id, its elements and their tokens. Used by a
     /// screenshot-only read (no tree walk): it adds a new image but no new
     /// element indices, so the tokens the caller holds stay valid. Returns the
-    /// kept snapshot id, or `None` when the window has no snapshot with
-    /// elements (the caller then publishes a new one).
+    /// kept snapshot id, or `None` when this session has no snapshot of the
+    /// window with elements (the caller then publishes a new one).
     pub fn refresh_screenshot_for_session(
         &self,
         pid: i32,
@@ -519,12 +564,8 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
             return None;
         }
         let snapshot = inner
-            .lanes
-            .get_mut(&pid)?
-            .iter_mut()
-            .find(|snapshot| snapshot.window_id == window_id)
+            .snapshot_mut(pid, window_id, session)
             .filter(|snapshot| snapshot.semantic && !snapshot.payload.is_empty())?;
-        snapshot.screenshot_owner = session.map(str::to_owned);
         snapshot.screenshot_scale = Some(screenshot_scale);
         snapshot.screenshot_window_size = window_size;
         snapshot.zoom = None;
@@ -567,12 +608,16 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
             if session.is_some_and(crate::session::is_session_ended) {
                 return None;
             }
-            // The new snapshot replaces the window's current one, so the lane
-            // borrow has to end before the bookkeeping below.
+            // The new snapshot replaces this session's current one of the
+            // window, so the lane borrow has to end before the bookkeeping
+            // below. Other sessions' snapshots of the window stay current.
             let (id, retired_here) = {
                 let lane = inner.lanes.entry(pid).or_default();
                 let mut retired = Vec::new();
-                if let Some(position) = lane.iter().position(|entry| entry.window_id == window_id) {
+                if let Some(position) = lane
+                    .iter()
+                    .position(|entry| entry.is_for(session, window_id))
+                {
                     retired.push(lane.remove(position));
                 }
                 // A new screenshot brings its own frame. A tree-only read keeps
@@ -581,7 +626,6 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
                     (Some(scale), size) => (Some(scale), size),
                     (None, Some(now)) => retired
                         .first()
-                        .filter(|previous| previous.screenshot_owner.as_deref() == session)
                         .and_then(|previous| {
                             let then = previous.screenshot_window_size?;
                             let same = (then.0 - now.0).abs() < 0.5 && (then.1 - now.1).abs() < 0.5;
@@ -590,14 +634,17 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
                         .map_or((None, None), |(scale, size)| (Some(scale), Some(size))),
                     (None, None) => (None, None),
                 };
-                if lane.len() == LRU_CAP_PER_PID {
-                    retired.push(lane.remove(0));
+                let owned = |entry: &Snapshot<S>| entry.session.as_deref() == session;
+                if lane.iter().filter(|entry| owned(entry)).count() == LRU_CAP_PER_PID {
+                    if let Some(oldest) = lane.iter().position(owned) {
+                        retired.push(lane.remove(oldest));
+                    }
                 }
                 let id = crate::element_token::mint_snapshot_id();
                 lane.push(Snapshot {
                     id,
                     window_id,
-                    screenshot_owner: session.map(str::to_owned),
+                    session: session.map(str::to_owned),
                     screenshot_scale: scale,
                     screenshot_window_size: frame_size,
                     zoom: None,
@@ -640,31 +687,32 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
         session: Option<&str>,
     ) -> Result<ScreenshotContext, ToolResult> {
         let inner = self.inner.lock().unwrap();
-        let lane = inner.lane(pid);
+        let lane = inner.session_lane(pid, session);
         match window_id {
             Some(window_id) => {
-                let snapshot = lane
-                    .iter()
-                    .find(|snapshot| snapshot.window_id == window_id)
-                    .ok_or_else(|| {
-                        screenshot_context_refusal(
-                            Some(pid),
-                            Some(window_id),
-                            MissingFrame::WindowNeverRead,
-                        )
-                    })?;
-                snapshot.screenshot(session).ok_or_else(|| {
-                    let why = if snapshot.screenshot_scale.is_some() {
+                let Some(snapshot) = lane.iter().find(|snapshot| snapshot.window_id == window_id)
+                else {
+                    let others_have_one = inner.lane(pid).iter().any(|snapshot| {
+                        snapshot.window_id == window_id && snapshot.screenshot_scale.is_some()
+                    });
+                    let why = if others_have_one {
                         MissingFrame::OtherSession
                     } else {
-                        MissingFrame::NoScreenshot
+                        MissingFrame::WindowNeverRead
                     };
-                    screenshot_context_refusal(Some(pid), Some(window_id), why)
+                    return Err(screenshot_context_refusal(Some(pid), Some(window_id), why));
+                };
+                snapshot.screenshot(session).ok_or_else(|| {
+                    screenshot_context_refusal(
+                        Some(pid),
+                        Some(window_id),
+                        MissingFrame::NoScreenshot,
+                    )
                 })
             }
             None => {
                 let mut contexts = lane.iter().map(|snapshot| snapshot.screenshot(session));
-                let why = match lane {
+                let why = match lane.as_slice() {
                     [] => MissingFrame::WindowNeverRead,
                     [_] => MissingFrame::NoScreenshot,
                     _ => MissingFrame::Ambiguous,
@@ -719,7 +767,7 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
         let mut matches = inner.lanes.iter().filter_map(|(pid, lane)| {
             let snapshot = lane
                 .iter()
-                .find(|snapshot| snapshot.window_id == window_id)?;
+                .find(|snapshot| snapshot.is_for(session, window_id))?;
             Some((*pid, snapshot.screenshot(session)?))
         });
         match (matches.next(), matches.next()) {
@@ -740,12 +788,7 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
     ) -> Result<(), ToolResult> {
         let mut inner = self.inner.lock().unwrap();
         let snapshot = inner
-            .lanes
-            .get_mut(&pid)
-            .and_then(|lane| {
-                lane.iter_mut()
-                    .find(|snapshot| snapshot.window_id == zoom.screenshot.window_id)
-            })
+            .snapshot_mut(pid, zoom.screenshot.window_id, session)
             .filter(|snapshot| snapshot.screenshot(session) == Some(zoom.screenshot))
             .ok_or_else(|| zoom_context_refusal(pid, Some(zoom.screenshot.window_id)))?;
         snapshot.zoom = Some(zoom);
@@ -766,7 +809,7 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
             .flatten()
             .filter(|snapshot| {
                 window_id.is_none_or(|window_id| snapshot.window_id == window_id)
-                    && snapshot.screenshot_owner.as_deref() == session
+                    && snapshot.session.as_deref() == session
             })
             .filter_map(|snapshot| snapshot.zoom);
         match (zooms.next(), zooms.next()) {
@@ -783,7 +826,7 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
             for (pid, lane) in inner.lanes.iter_mut() {
                 let (owned, kept) = std::mem::take(lane)
                     .into_iter()
-                    .partition(|snapshot| snapshot.screenshot_owner.as_deref() == Some(session));
+                    .partition(|snapshot| snapshot.session.as_deref() == Some(session));
                 *lane = kept;
                 retired_ids.extend(owned.iter().map(|snapshot| (*pid, snapshot.id)));
                 retired.extend::<Vec<_>>(owned);
@@ -845,6 +888,22 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
         self.inner.lock().unwrap().pid_of_current(snapshot_id)
     }
 
+    /// The `(pid, window_id)` a live `element_token` was minted for. `None`
+    /// when the token is absent, malformed, or no longer current.
+    pub fn window_for_token(&self, args: &serde_json::Value) -> Option<(i32, u64)> {
+        let token = args.get("element_token")?.as_str()?;
+        let (snapshot_id, _) = parse_token(token)?;
+        let inner = self.inner.lock().unwrap();
+        let pid = inner.pid_of_current(snapshot_id)?;
+        let window_id = inner
+            .lanes
+            .get(&pid)?
+            .iter()
+            .find(|entry| entry.id == snapshot_id)?
+            .window_id;
+        Some((pid, window_id))
+    }
+
     /// Who a call's `element_token` belonged to, and that process's current
     /// snapshots, for the refusal [`crate::element_token::fill_pid_from_token`]
     /// reports when the token is gone.
@@ -865,9 +924,10 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
         let Some(pid) = inner.pid_of(snapshot_id) else {
             return TokenOwner::default();
         };
+        let session = args.get("_session_id").and_then(serde_json::Value::as_str);
         TokenOwner {
             pid: Some(pid),
-            current: inner.current_snapshots(pid),
+            current: inner.current_snapshots(pid, session),
             live: inner.pid_of_current(snapshot_id).is_some(),
         }
     }
@@ -884,12 +944,25 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
             return Ok(ResolvedElement::None);
         };
         let window_arg = args["window_id"].as_u64();
+        let session = args.get("_session_id").and_then(serde_json::Value::as_str);
         let inner = self.inner.lock().unwrap();
-        let lane = inner.lane(pid);
+        // The snapshots a refusal suggests: the caller's own, else any.
+        let lane = match inner.session_lane(pid, session) {
+            own if own.is_empty() => inner.lane(pid).iter().collect(),
+            own => own,
+        };
         let (snapshot, element_index) = match parse_token(token) {
+            // A full token names its snapshot by id, whichever session read it.
             Some((snapshot_id, element_index)) => {
-                let Some(snapshot) = lane.iter().find(|snapshot| snapshot.id == snapshot_id) else {
-                    return Err(stale_token_refusal(pid, &inner.current_snapshots(pid)));
+                let Some(snapshot) = inner
+                    .lane(pid)
+                    .iter()
+                    .find(|snapshot| snapshot.id == snapshot_id)
+                else {
+                    return Err(stale_token_refusal(
+                        pid,
+                        &inner.current_snapshots(pid, session),
+                    ));
                 };
                 (snapshot, element_index)
             }
@@ -899,19 +972,13 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
             // number came from and the number is refused rather than re-pointed
             // at whatever row [11] now holds.
             None => match token.trim().parse::<usize>() {
-                Ok(row) => match row_snapshot(
-                    pid,
-                    lane,
-                    &inner.reads,
-                    args.get("_session_id")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or_default(),
-                    window_arg,
-                ) {
-                    Ok(snapshot) => (snapshot, row),
-                    Err(miss) => return Err(row_refusal(pid, row, lane, miss)),
-                },
-                Err(_) => return Err(invalid_token_refusal(token, lane)),
+                Ok(row) => {
+                    match row_snapshot(pid, inner.lane(pid), &inner.reads, session, window_arg) {
+                        Ok(snapshot) => (snapshot, row),
+                        Err(miss) => return Err(row_refusal(pid, row, &lane, miss)),
+                    }
+                }
+                Err(_) => return Err(invalid_token_refusal(token, &lane)),
             },
         };
         if window_arg.is_some_and(|window_id| window_id != snapshot.window_id) {
@@ -931,11 +998,15 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
         })
     }
 
-    pub fn remove(&self, pid: i32, window_id: u64) -> Option<u32> {
+    /// Drop `session`'s current snapshot of the window, returning its id.
+    /// Other sessions' snapshots of the window stay current.
+    pub fn remove(&self, pid: i32, window_id: u64, session: Option<&str>) -> Option<u32> {
         let retired = {
             let mut inner = self.inner.lock().unwrap();
             let removed = inner.lanes.get_mut(&pid).and_then(|lane| {
-                let position = lane.iter().position(|entry| entry.window_id == window_id)?;
+                let position = lane
+                    .iter()
+                    .position(|entry| entry.is_for(session, window_id))?;
                 Some(lane.remove(position))
             });
             let id = removed.as_ref().map(|snapshot| snapshot.id);
@@ -1126,7 +1197,7 @@ mod tests {
         assert!(!cache.contains_semantic_window(9, 100));
         assert!(!cache.contains_semantic_window(10, 99));
 
-        cache.remove(9, 99);
+        cache.remove(9, 99, None);
         assert!(!cache.contains_window(9, 99));
         assert!(!cache.contains_semantic_window(9, 99));
     }
@@ -1238,7 +1309,7 @@ mod tests {
     fn a_retired_snapshot_still_attributes_its_token() {
         let cache = SnapshotStore::new();
         let first = cache.publish(7, 42, Payload(vec![1]));
-        cache.remove(7, 42);
+        cache.remove(7, 42, None);
         let owner = cache.token_owner(&serde_json::json!({ "element_token": token_for(first, 0) }));
         assert_eq!(owner.pid, Some(7));
         assert!(owner.current.is_empty(), "the lane was removed");
@@ -1377,9 +1448,14 @@ mod tests {
 
         cache.publish_for_session(10, 20, Payload(vec![]), Some("client-b"), Some(1.0));
         assert_eq!(scale(&cache, 20, "client-b"), Some(1.0));
+        assert_eq!(
+            scale(&cache, 20, "client-a"),
+            Some(7.35),
+            "a keeps the frame of its own screenshot"
+        );
         let refusal = cache
-            .screenshot_context(10, Some(20), Some("client-a"))
-            .expect_err("stale image coordinates must be refused");
+            .screenshot_context(10, Some(20), Some("client-c"))
+            .expect_err("a session without a screenshot of its own is refused");
         assert_eq!(refusal_code(refusal), "screenshot_context_missing");
     }
 
@@ -1474,7 +1550,11 @@ mod tests {
 
         cache.publish_sized_for_session(10, 20, Payload(vec![1]), Some("a"), Some(1.0), size);
         cache.publish_sized_for_session(10, 20, Payload(vec![1]), Some("b"), None, size);
-        assert_eq!(scale(&cache, 20, "a"), None, "another session's tree read");
+        assert_eq!(
+            scale(&cache, 20, "a"),
+            Some(1.0),
+            "another session's tree read leaves a's frame"
+        );
         assert_eq!(
             scale(&cache, 20, "b"),
             None,
@@ -1542,8 +1622,8 @@ mod tests {
         cache.publish_for_session(10, 20, Payload(vec![1]), Some("a"), None);
         assert_eq!(reason(&cache, 20).0, "no_screenshot");
 
-        cache.publish_for_session(10, 20, Payload(vec![1]), Some("b"), Some(1.0));
-        assert_eq!(reason(&cache, 20).0, "other_session");
+        cache.publish_for_session(10, 21, Payload(vec![1]), Some("b"), Some(1.0));
+        assert_eq!(reason(&cache, 21).0, "other_session");
     }
 
     #[test]
@@ -1653,32 +1733,33 @@ mod tests {
         ));
     }
 
-    /// The same protection for a *different* caller re-reading the window: the
-    /// row is not theirs to re-point either.
+    /// A bare row number names the caller's own read: another session reading
+    /// the window does not re-point it, and the caller's own second read
+    /// retires it.
     #[test]
-    fn another_sessions_read_retires_a_bare_row_number() {
+    fn a_bare_row_number_follows_the_callers_own_reads() {
         let cache = SnapshotStore::new();
-        let first = cache
+        cache
             .publish_for_session(10, 100, Payload(vec![1, 2]), Some("mine"), None)
-            .unwrap()
-            .0;
+            .unwrap();
         cache
             .publish_for_session(10, 100, Payload(vec![7, 8]), Some("theirs"), None)
             .unwrap();
 
-        let refused = cache
-            .resolve(
-                10,
-                &serde_json::json!({
-                    "window_id": 100,
-                    "element_token": "0",
-                    "_session_id": "mine",
-                }),
-            )
-            .expect_err("a row printed by a replaced snapshot must be refused");
-        let structured = refused.structured_content.unwrap();
-        assert_eq!(structured["reason"], "stale_bare_row");
-        assert_ne!(structured["current_snapshot"], format_snapshot_id(first));
+        let row = |token: &str| {
+            serde_json::json!({
+                "window_id": 100,
+                "element_token": token,
+                "_session_id": "mine",
+            })
+        };
+        assert!(
+            matches!(
+                cache.resolve(10, &row("0")).unwrap(),
+                ResolvedElement::Element { element: 1, .. }
+            ),
+            "another session's read does not re-point my row"
+        );
 
         // A caller's own second read spends the convenience too: the number
         // still cannot say which of its two reads printed it.
@@ -1686,14 +1767,7 @@ mod tests {
             .publish_for_session(10, 100, Payload(vec![5, 6]), Some("mine"), None)
             .unwrap();
         let refused = cache
-            .resolve(
-                10,
-                &serde_json::json!({
-                    "window_id": 100,
-                    "element_token": "1",
-                    "_session_id": "mine",
-                }),
-            )
+            .resolve(10, &row("1"))
             .expect_err("two reads, one ambiguous number");
         assert_eq!(
             refused.structured_content.unwrap()["reason"],
@@ -1717,6 +1791,86 @@ mod tests {
                 .unwrap(),
             ResolvedElement::Element { element: 4, .. }
         ));
+    }
+
+    /// #4722: two sessions reading the same window each keep their own latest
+    /// snapshot. Another session's read, screenshot-only refresh, unscoped
+    /// removal or reads of other windows never retire this session's tokens.
+    #[test]
+    fn another_sessions_read_of_the_same_window_keeps_this_sessions_tokens() {
+        let cache = SnapshotStore::new();
+        let as_session = |token: String, session: &str| serde_json::json!({ "element_token": token, "_session_id": session });
+        let (mine, _) = cache
+            .publish_for_session(10, 100, Payload(vec![1, 2, 3]), Some("a"), None)
+            .unwrap();
+        let (theirs, invalidated) = cache
+            .publish_for_session(10, 100, Payload(vec![7, 8, 9]), Some("b"), Some(2.0))
+            .unwrap();
+        assert!(
+            invalidated.is_empty(),
+            "b's read must not retire a's snapshot: {invalidated:?}"
+        );
+        assert!(matches!(
+            cache
+                .resolve(10, &as_session(token_for(mine, 2), "a"))
+                .unwrap(),
+            ResolvedElement::Element {
+                window_id: 100,
+                element: 3,
+                ..
+            }
+        ));
+        assert!(matches!(
+            cache
+                .resolve(10, &as_session(token_for(theirs, 2), "b"))
+                .unwrap(),
+            ResolvedElement::Element { element: 9, .. }
+        ));
+
+        // a's bare row still names a's only read of the window.
+        let row = serde_json::json!({ "element_token": "1", "window_id": 100, "_session_id": "a" });
+        assert!(matches!(
+            cache.resolve(10, &row).unwrap(),
+            ResolvedElement::Element { element: 2, .. }
+        ));
+
+        // b's screenshot-only refresh updates b's frame, not a's snapshot.
+        assert_eq!(
+            cache.refresh_screenshot_for_session(10, 100, Some("b"), 3.0, None),
+            Some(theirs)
+        );
+        assert_eq!(scale(&cache, 100, "b"), Some(3.0));
+        assert_eq!(scale(&cache, 100, "a"), None, "a never took a screenshot");
+
+        // b reading more windows than the lane holds evicts only b's snapshots.
+        for window_id in 101..=(100 + LRU_CAP_PER_PID as u64) {
+            cache.publish_for_session(10, window_id, Payload(vec![0]), Some("b"), None);
+        }
+        // b's unscoped read of the window drops b's snapshot only.
+        cache.publish_for_session(10, 100, Payload(vec![4]), Some("b"), None);
+        assert!(cache.remove(10, 100, Some("b")).is_some());
+        assert!(matches!(
+            cache
+                .resolve(10, &as_session(token_for(mine, 0), "a"))
+                .unwrap(),
+            ResolvedElement::Element { element: 1, .. }
+        ));
+
+        // a's own re-read still retires a's earlier snapshot.
+        let (newer, invalidated) = cache
+            .publish_for_session(10, 100, Payload(vec![5]), Some("a"), None)
+            .unwrap();
+        assert_eq!(invalidated, vec![mine]);
+        let stale = cache
+            .resolve(10, &as_session(token_for(mine, 0), "a"))
+            .unwrap_err();
+        assert_eq!(
+            stale.structured_content.unwrap()["refusal"]["code"],
+            "stale_element_token"
+        );
+        assert!(cache
+            .resolve(10, &as_session(token_for(newer, 0), "a"))
+            .is_ok());
     }
 
     /// A bare row number from a caller that has read nothing this session has
@@ -1791,7 +1945,13 @@ mod tests {
         let cache = SnapshotStore::<Payload>::new();
         assert_eq!(scale(&cache, 20, "client-a"), None);
         cache.publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(2.0));
-        cache.remove(10, 20);
+        cache.remove(10, 20, Some("client-b"));
+        assert_eq!(
+            scale(&cache, 20, "client-a"),
+            Some(2.0),
+            "b removes only b's"
+        );
+        cache.remove(10, 20, Some("client-a"));
         assert_eq!(scale(&cache, 20, "client-a"), None);
     }
 
@@ -2000,15 +2160,20 @@ mod tests {
             .set_zoom(10, Some("client-a"), zoom_on(snapshot, 7.35))
             .unwrap();
         cache.publish_for_session(10, 20, Payload(vec![]), Some("client-b"), Some(1.0));
-        assert_eq!(
-            refusal_code(cache.zoom(10, Some(20), Some("client-a")).unwrap_err()),
-            "zoom_context_missing"
+        assert!(
+            cache.zoom(10, Some(20), Some("client-a")).is_ok(),
+            "another session's read leaves a's zoom"
         );
 
         let latest = cache
             .publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(1.0))
             .unwrap()
             .0;
+        assert_eq!(
+            refusal_code(cache.zoom(10, Some(20), Some("client-a")).unwrap_err()),
+            "zoom_context_missing",
+            "a's own newer snapshot retires its zoom"
+        );
         cache
             .set_zoom(10, Some("client-a"), zoom_on(latest, 1.0))
             .unwrap();
@@ -2072,7 +2237,7 @@ mod tests {
         assert_eq!(drops.load(Ordering::SeqCst), 0);
         cache.publish(1, 1, payload());
         assert_eq!(drops.load(Ordering::SeqCst), 1);
-        cache.remove(1, 1);
+        cache.remove(1, 1, None);
         assert_eq!(drops.load(Ordering::SeqCst), 2);
         cache.publish(1, 1, payload());
         cache.clear();
@@ -2091,7 +2256,7 @@ mod tests {
             cache.resolve(42, &token).unwrap(),
             ResolvedElement::Element { window_id, element: 20, .. } if window_id == high
         ));
-        cache.remove(42, high);
+        cache.remove(42, high, None);
         assert!(cache.resolve(42, &token).is_err());
         assert!(matches!(
             cache

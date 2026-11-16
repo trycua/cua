@@ -32,7 +32,7 @@ public final class AgentKeysModel {
     /// after it) replaces the shown one, and is returned as is.
     @discardableResult
     func call(_ method: String, _ args: [String: Any] = [:]) async throws -> Any {
-        guard let tools else { throw AgentsToolError(message: "Agent keys need the cua daemon") }
+        guard let tools else { throw AgentsToolError(message: serviceDownMessage) }
         let r = try await tools.agentsTool(method, args)
         // Every method answers the list after it, except agent_keys.shell (names your shell has).
         if method != "agent_keys.shell", let r = r as? [String: Any] {
@@ -68,7 +68,7 @@ public final class AgentKeysModel {
 
     /// The core's input for the daemon's answer.
     public var input: AppAgentKeysInput {
-        Self.input(report: report, error: error ?? (available ? nil : "Agent keys need the cua daemon"))
+        Self.input(report: report, error: error ?? (available ? nil : serviceDownMessage))
     }
 
     static func input(report: [String: Any]?, error: String?) -> AppAgentKeysInput {
@@ -84,7 +84,8 @@ public final class AgentKeysModel {
         }
         let unavailable = report?["available"] as? Bool == false
             ? (report?["unavailable"] as? String ?? "this machine can't keep keys") : nil
-        return AppAgentKeysInput(keys: keys.filter { !$0.env.isEmpty }, unavailable: unavailable, error: error)
+        let warning = report?["available"] as? Bool != false ? (report?["insecure"] as? String).flatMap { $0.isEmpty ? nil : $0 } : nil
+        return AppAgentKeysInput(keys: keys.filter { !$0.env.isEmpty }, unavailable: unavailable, warning: warning, error: error)
     }
 
     public var view: AppAgentKeysView { appAgentKeysView(input: input) }

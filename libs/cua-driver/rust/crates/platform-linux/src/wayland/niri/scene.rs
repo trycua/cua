@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Geometry: window placement in layout coordinates, built from one IPC
 //! snapshot.
 

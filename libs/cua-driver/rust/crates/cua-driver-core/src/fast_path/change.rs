@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! What changed after a sparse-target action: compare low-resolution
 //! thumbnails taken before and after, and return the padded box of the
 //! changed tiles (in full-resolution window pixels).

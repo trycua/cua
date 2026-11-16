@@ -22,6 +22,7 @@ pub mod http;
 pub mod identity;
 pub mod mesh_host;
 pub mod peer;
+pub mod pending_deletions;
 pub mod phone_control;
 pub mod privilege;
 pub mod process;

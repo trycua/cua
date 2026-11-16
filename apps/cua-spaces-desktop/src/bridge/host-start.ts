@@ -31,9 +31,9 @@ export function isMachineDesktop(space: Pick<AppSpace, "id" | "status" | "provid
   return own.length > 0 && !own.includes("/") && !own.startsWith("space-");
 }
 
-/** The Spaces the user created (what the menu and the tray count and list). */
-export const realSpaces = <T extends Pick<AppSpace, "id" | "status" | "provider" | "host">>(spaces: readonly T[]): T[] =>
-  spaces.filter((s) => !isMachineDesktop(s));
+/** The Spaces the user created (what the menu and the tray count and list), never the home warming for Home's prompt box (`hidden`). */
+export const realSpaces = <T extends Pick<AppSpace, "id" | "status" | "provider" | "host"> & { hidden?: boolean }>(spaces: readonly T[]): T[] =>
+  spaces.filter((s) => !isMachineDesktop(s) && !s.hidden);
 
 /** The menu bar item's menu (the core's `appMenu`): the count, the Volume's sync line and conflicts, then Open, New Space, Settings and Quit. */
 export function menuItems(ctx: BridgeContext): AppMenuItem[] {

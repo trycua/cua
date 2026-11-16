@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use std::path::PathBuf;
 
 use cua_driver_testkit::e2e::{

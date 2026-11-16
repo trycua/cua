@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Per-daemon isolation from the developer's real per-user state.
 //!
 //! The driver resolves its own persistent state (Computer History admission,

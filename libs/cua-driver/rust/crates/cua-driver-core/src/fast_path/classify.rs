@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Per-target choice of guard: rich tree, sparse tree, or a remote surface.
 
 use super::Rect;

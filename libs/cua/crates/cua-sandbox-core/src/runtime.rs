@@ -45,6 +45,10 @@ pub enum RuntimeError {
     /// the error lists what would.
     #[error("{0}")]
     InvalidPlacement(crate::placement::PlacementError),
+    /// The backend refused the request itself (an image reference it
+    /// cannot pull, say): the same request fails the same way.
+    #[error("{0}")]
+    InvalidArgument(String),
     /// Anything else.
     #[error("{0}")]
     Other(String),
@@ -472,6 +476,14 @@ pub trait LocalRuntime: Send + Sync {
         name: &str,
         runtime_type: &str,
     ) -> RuntimeResult<Option<crate::StopReason>> {
+        let _ = (name, runtime_type);
+        Ok(None)
+    }
+
+    /// Repairs the running instance `name` when it lost what it needs to be
+    /// reached (a macOS VM whose network gateway ended), returning it as it
+    /// is now when it had to be restarted. Default: nothing to repair.
+    async fn mend(&self, name: &str, runtime_type: &str) -> RuntimeResult<Option<LocalInstance>> {
         let _ = (name, runtime_type);
         Ok(None)
     }

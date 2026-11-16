@@ -19,7 +19,7 @@
 //! and a new policy applies to the running VM at once (`set_egress`).
 //!
 //! ```text
-//! CUA_EXPERIMENTS=secure-spaces CUA_HOME=$(mktemp -d) CUA_VZ=... CUA_NETGW=... CUA_MICROVM_INIT=... \
+//! CUA_HOME=$(mktemp -d) CUA_VZ=... CUA_NETGW=... CUA_MICROVM_INIT=... \
 //!   CUA_NETGW_TEST_DISK=noble-server-cloudimg-arm64.img \
 //!   cargo test -p cua-daemon --test space_netgw -- --ignored --nocapture --test-threads=1
 //! ```

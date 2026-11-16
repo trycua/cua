@@ -1,8 +1,12 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use cua_driver_core::action_record::{
     ActionEffect, ActionExecutionRecord, ActionTransport, ActualDelivery, RequestedDelivery,
 };
 use cua_driver_core::recording::{
-    set_ax_snapshot_fn, set_element_bounds_fn, set_screenshot_fn, RecordingCaller, RecordingSession,
+    set_ax_snapshot_fn, set_element_bounds_fn, set_screenshot_fn, RecordingCaller,
+    RecordingSession, StopBy,
 };
 use serde_json::{json, Value};
 
@@ -37,7 +41,7 @@ fn macos_semantic_activation_without_a_point_preserves_truth_without_a_marker() 
         .begin_turn("click", &args, 0, RecordingCaller::default())
         .unwrap();
     recording.finish_turn_with_outcome(pending, "Performed AXPress", Some(&action), false);
-    recording.stop_owner(None).unwrap();
+    recording.stop(StopBy::Anyone).unwrap();
 
     let turn = directory.path().join("turn-00001");
     let read_json = |name: &str| -> Value {

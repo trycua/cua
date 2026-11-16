@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Parsing, classification, and cursor bookkeeping shared by the platform
 //! browser adapters.
 //!
@@ -112,6 +115,23 @@ pub fn is_firefox(identity: &str) -> bool {
         .to_ascii_lowercase()
         .split(|ch: char| !ch.is_ascii_alphanumeric())
         .any(|token| token == "firefox")
+}
+
+/// Whether `executable` sits in an Electron app's install layout.
+///
+/// Electron apps carry their own product name (`Obsidian`, `slack.exe`), so a
+/// name never identifies them. On Linux and Windows every packaged Electron
+/// app keeps its JavaScript bundle in `resources/app.asar` or `resources/app/`
+/// next to the executable, and a bare Electron runtime ships
+/// `resources/default_app.asar`; Chromium browsers have neither. (macOS
+/// bundles are recognized by their `Electron Framework.framework` instead.)
+pub fn is_electron_app_layout(executable: &std::path::Path) -> bool {
+    let Some(resources) = executable.parent().map(|dir| dir.join("resources")) else {
+        return false;
+    };
+    resources.join("app.asar").is_file()
+        || resources.join("app").join("package.json").is_file()
+        || resources.join("default_app.asar").is_file()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -232,6 +252,32 @@ mod tests {
         ] {
             assert!(!is_firefox(identity), "{identity}");
         }
+    }
+
+    #[test]
+    fn electron_layout_is_the_app_bundle_next_to_the_executable() {
+        let root = tempfile::tempdir().unwrap();
+        let install = |name: &str, bundle: &str| {
+            let dir = root.path().join(name);
+            let file = dir.join("resources").join(bundle);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(&file, b"{}").unwrap();
+            dir.join(name)
+        };
+        assert!(is_electron_app_layout(&install("obsidian", "app.asar")));
+        assert!(is_electron_app_layout(&install(
+            "unpacked",
+            "app/package.json"
+        )));
+        assert!(is_electron_app_layout(&install(
+            "electron",
+            "default_app.asar"
+        )));
+        // Chrome's resources hold paks and locales, never an app bundle.
+        assert!(!is_electron_app_layout(&install("chrome", "resources.pak")));
+        assert!(!is_electron_app_layout(&install("empty-app", "app/README")));
+        assert!(!is_electron_app_layout(&root.path().join("missing/app")));
+        assert!(!is_electron_app_layout(std::path::Path::new("/")));
     }
 
     #[test]

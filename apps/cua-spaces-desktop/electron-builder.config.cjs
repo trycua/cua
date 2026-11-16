@@ -46,7 +46,10 @@
 // repository (<owner>/<repo>) updates from that repository. GitHub's own
 // provider cannot serve this monorepo: it wants semver tags and reads the
 // repository-wide latest release. An X.Y.Z-suffix version is channel `beta`
-// (beta*.yml), anything else `latest`.
+// (beta*.yml), anything else `latest`. A nightly (X.Y.Z-nightly.YYYYMMDD.N,
+// nightly-cua-spaces.yml) is channel `nightly` (nightly*.yml) on the rolling
+// `cua-spaces-nightly` prerelease instead, so its feed never sits beside the
+// stable one.
 // The CI (cd-cua-spaces.yml) uploads the feed files with their URLs made
 // absolute (scripts/feed-urls.mjs); scripts pass `--publish never`.
 //
@@ -90,7 +93,9 @@ const buildVersion = `${semver[1]}.${semver[2]}.${semver[3]}.${buildNumber}`;
 
 const repository = env.GITHUB_REPOSITORY || "trycua/cua";
 if (!/^[\w.-]+\/[\w.-]+$/.test(repository)) throw new Error(`GITHUB_REPOSITORY must be owner/repo, got ${repository}`);
-const feedUrl = `https://github.com/${repository}/releases/download/cua-spaces-latest`;
+const nightly = /^nightly(\.|$)/.test(semver[4] || "");
+const feedUrl = `https://github.com/${repository}/releases/download/${nightly ? "cua-spaces-nightly" : "cua-spaces-latest"}`;
+const feedChannel = nightly ? "nightly" : prerelease ? "beta" : "latest";
 
 // The Swift app's Info.plist strings this app must carry as well.
 const swiftPlist = fs.readFileSync(path.join(__dirname, "../cua-spaces-macos/Support/Info.plist"), "utf8");
@@ -105,9 +110,7 @@ const swiftInfo = (key) => {
 const linuxId = "cua-spaces";
 
 const macSigning = Boolean(env.CSC_LINK || env.CSC_NAME);
-const macNotarize =
-  macSigning &&
-  Boolean((env.APPLE_API_KEY && env.APPLE_API_KEY_ID && env.APPLE_API_ISSUER) || (env.APPLE_ID && env.APPLE_TEAM_ID));
+const macNotarize = macSigning && Boolean((env.APPLE_API_KEY && env.APPLE_API_KEY_ID && env.APPLE_API_ISSUER) || (env.APPLE_ID && env.APPLE_TEAM_ID));
 /** This build's arches for a platform's targets (CUA_SPACES_ARCHS, packaging/archs.cjs). */
 const archs = (platform, all) => packageArchs(platform, all, env.CUA_SPACES_ARCHS);
 
@@ -137,6 +140,8 @@ function nativeLayout(platform, arch) {
   const libraryFile = { darwin: "libcua_spaces_ffi.dylib", win32: "cua_spaces_ffi.dll", linux: "libcua_spaces_ffi.so" }[platform];
   const files = [libraryFile, "cua_node_runtime.node", platform === "win32" ? "cua.exe" : "cua"];
   if (platform === "linux") files.push(`cua-spacesd-linux-${spacesdArch[arch] ?? arch}`);
+  // Windows microVMs (QEMU on the Windows Hypervisor Platform) boot this static Linux init.
+  if (platform === "win32" && spacesdArch[arch] === "x86_64") files.push("cua-microvm-init");
   return { libraryFile, files };
 }
 
@@ -169,9 +174,7 @@ module.exports = {
   ],
   extraResources: [
     // The built web UI sits next to the asar, served by the cua-spaces:// handler.
-    ...(fs.existsSync(path.join(webDist, "index.html"))
-      ? [{ from: webDist, to: "web", filter: ["**/*", "!**/*.map"] }]
-      : []),
+    ...(fs.existsSync(path.join(webDist, "index.html")) ? [{ from: webDist, to: "web", filter: ["**/*", "!**/*.map"] }] : []),
   ],
   // Every package carries its native layer: without it the app cannot start.
   afterPack: async (context) => {
@@ -196,7 +199,8 @@ module.exports = {
     // (cua-keyvault `windows_signing`), so the daemon and the libraries beside it
     // are signed here, with the same signer, before the installer is made.
     if (context.electronPlatformName === "win32" && azureSigning) {
-      for (const f of files) await context.packager.signIf(path.join(resources, "native", f));
+      // cua-microvm-init is a static Linux ELF for the QEMU guest: Authenticode cannot sign it.
+      for (const f of files.filter((f) => f !== "cua-microvm-init")) await context.packager.signIf(path.join(resources, "native", f));
     }
   },
   // Chromium's English strings are `en-US.pak`, which "en" alone strips from
@@ -246,9 +250,7 @@ module.exports = {
     // identity, hardened runtime and (inherited) entitlements, so it
     // notarizes with the app. It is already universal, so the universal
     // merge keeps it as is.
-    extraFiles: fs.existsSync(path.join(notchApp, "Contents/Info.plist"))
-      ? [{ from: notchApp, to: "Helpers/Cua Spaces Notch.app" }]
-      : [],
+    extraFiles: fs.existsSync(path.join(notchApp, "Contents/Info.plist")) ? [{ from: notchApp, to: "Helpers/Cua Spaces Notch.app" }] : [],
   },
   dmg: { sign: false, artifactName: "Cua-Spaces-${version}-${arch}.dmg" },
 
@@ -332,5 +334,5 @@ module.exports = {
   },
 
   // Feed for electron-updater (written to app-update.yml); see the header.
-  publish: [{ provider: "generic", url: feedUrl, channel: prerelease ? "beta" : "latest" }],
+  publish: [{ provider: "generic", url: feedUrl, channel: feedChannel }],
 };

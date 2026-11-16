@@ -251,6 +251,20 @@ pub fn config_mac_in(dirs: &[std::path::PathBuf], name: &str) -> Option<String> 
     })
 }
 
+/// The manifest digest of the image Lume pulled into VM `name`: the
+/// `.manifest-digest` it writes once a pull completes (read-only).
+pub fn pulled_digest(home: &Path, name: &str) -> Option<String> {
+    pulled_digest_in(&vm_dirs(home), name)
+}
+
+/// [`pulled_digest`] in `dirs`.
+pub fn pulled_digest_in(dirs: &[std::path::PathBuf], name: &str) -> Option<String> {
+    dirs.iter().find_map(|d| {
+        let raw = std::fs::read_to_string(d.join(name).join(".manifest-digest")).ok()?;
+        Some(raw.trim().to_string()).filter(|s| s.starts_with("sha256:"))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -359,6 +373,23 @@ mod tests {
             Some("e2:2d:52:04:4e:bb")
         );
         assert_eq!(config_mac_in(&dirs, "nope"), None);
+    }
+
+    #[test]
+    fn pulled_digest_is_read_from_lume_vm_dirs() {
+        let home = tempfile::tempdir().unwrap();
+        let lume = home.path().join(".lume");
+        std::fs::create_dir_all(lume.join("base")).unwrap();
+        std::fs::write(lume.join("base/.manifest-digest"), "sha256:abc\n").unwrap();
+        std::fs::create_dir_all(lume.join("odd")).unwrap();
+        std::fs::write(lume.join("odd/.manifest-digest"), "").unwrap();
+        let dirs = vm_dirs_for(CuaChannel::Stable, home.path(), None);
+        assert_eq!(
+            pulled_digest_in(&dirs, "base").as_deref(),
+            Some("sha256:abc")
+        );
+        assert_eq!(pulled_digest_in(&dirs, "odd"), None);
+        assert_eq!(pulled_digest_in(&dirs, "nope"), None);
     }
 
     #[test]

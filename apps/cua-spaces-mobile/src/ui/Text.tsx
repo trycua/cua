@@ -28,7 +28,15 @@ export interface Props extends TextProps {
 
 export function Text({ variant = "body", color = "foreground", weight, style, ...rest }: Props) {
   const { c, mono } = useTheme();
-  const col = { foreground: c.foreground, muted: c.mutedForeground, brand: c.brandStrong, warning: c.warning, success: c.success, destructive: c.destructive, inverse: c.primaryForeground }[color];
+  const col = {
+    foreground: c.foreground,
+    muted: c.mutedForeground,
+    brand: c.brandStrong,
+    warning: c.warning,
+    success: c.success,
+    destructive: c.destructive,
+    inverse: c.primaryForeground,
+  }[color];
   return (
     <RNText
       // Dynamic Type: text follows the reader's size up to the accessibility sizes.

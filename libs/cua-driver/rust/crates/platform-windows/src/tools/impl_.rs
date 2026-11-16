@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Real Windows tool implementations (compiled only on Windows).
 
 use async_trait::async_trait;
@@ -33,8 +36,9 @@ pub(crate) fn pin_overlay_above(key: &str, hwnd: u64) {
 /// `explicit` is the targeted element's screen centre when the action has
 /// one. Without it the cursor reuses its remembered position, then falls back
 /// to the target window's centre, so the first keyboard action of a session
-/// is visible. Anonymous calls keep their existing behavior. Geometry and
-/// overlay failures are observational and never affect the input result.
+/// is visible, and last to the hardware pointer. Anonymous calls keep their
+/// existing behavior. Geometry and overlay failures are observational and
+/// never affect the input result.
 pub(crate) async fn position_keyboard_cursor(
     state: &ToolState,
     args: &Value,
@@ -49,15 +53,15 @@ pub(crate) async fn position_keyboard_cursor(
         .cursor_registry
         .get(&cursor_key)
         .and_then(|cursor| cursor.x.zip(cursor.y));
-    let window_center = if hwnd != 0
-        && cursor_overlay::keyboard_cursor_target(explicit, remembered, None, None).is_none()
-    {
-        keyboard_window_center(hwnd)
-    } else {
-        None
-    };
+    let (window_center, pointer) =
+        if cursor_overlay::keyboard_cursor_target(explicit, remembered, None, None).is_none() {
+            let center = (hwnd != 0).then(|| keyboard_window_center(hwnd)).flatten();
+            (center, center.is_none().then(pointer_position).flatten())
+        } else {
+            (None, None)
+        };
     let Some((x, y)) =
-        cursor_overlay::keyboard_cursor_target(explicit, remembered, window_center, None)
+        cursor_overlay::keyboard_cursor_target(explicit, remembered, window_center, pointer)
     else {
         return;
     };
@@ -66,6 +70,14 @@ pub(crate) async fn position_keyboard_cursor(
     }
     overlay_glide_to(&cursor_key, x, y).await;
     state.cursor_registry.update_position(&cursor_key, x, y);
+}
+
+fn pointer_position() -> Option<(f64, f64)> {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    let mut point = POINT::default();
+    unsafe { GetCursorPos(&mut point) }.ok()?;
+    Some((f64::from(point.x), f64::from(point.y)))
 }
 
 fn keyboard_window_center(hwnd: u64) -> Option<(f64, f64)> {
@@ -185,6 +197,35 @@ pub(crate) fn resolve_onscreen_point_with_scroll(
             "message": message,
         }
     })))
+}
+
+/// Re-read `IsEnabled` on an admitted token target and refuse a disabled one
+/// before any cursor or input work, as macOS does (`element_disabled`). The
+/// snapshot's `enabled` can be stale. An element whose state cannot be read
+/// is left to the tool.
+pub(crate) async fn refuse_if_disabled(
+    pid: u32,
+    admitted: &Option<crate::uia::snapshot::RetainedElement>,
+    tool: &str,
+) -> Option<ToolResult> {
+    let element = admitted.clone()?;
+    let enabled = tokio::task::spawn_blocking(move || element.element_is_enabled())
+        .await
+        .ok()?;
+    (enabled == Some(false)).then(|| element_disabled_refusal(pid, tool))
+}
+
+pub(crate) fn element_disabled_refusal(pid: u32, tool: &str) -> ToolResult {
+    ToolResult::error(format!(
+        "refusing {tool}: the target reports IsEnabled=false, so the app would ignore it. \
+         Nothing was sent. Snapshot again and act once the element reports enabled"
+    ))
+    .with_structured(json!({
+        "code": "element_disabled",
+        "effect": "refused",
+        "pid": pid,
+        "action": tool,
+    }))
 }
 
 pub(crate) fn minimized_element_refusal(
@@ -476,7 +517,7 @@ impl Tool for ExactPidWindowTargetGuard {
         &self,
         adapter_id: &str,
         args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, cua_driver_core::tool::ProtectedResourceScopeError> {
         self.inner.protected_resource_scope(adapter_id, args).await
     }
 
@@ -485,7 +526,7 @@ impl Tool for ExactPidWindowTargetGuard {
         adapter_id: &str,
         args: &Value,
         approved_scope: &Value,
-    ) -> Result<(), String> {
+    ) -> Result<(), cua_driver_core::tool::ProtectedResourceScopeError> {
         self.inner
             .validate_protected_resource_scope(adapter_id, args, approved_scope)
             .await
@@ -604,12 +645,13 @@ impl Default for DriverConfig {
 /// affects behavior — `get_window_state` always returns tree + screenshot.)
 pub fn load_driver_config() -> DriverConfig {
     let mut cfg = DriverConfig::default();
-    if let Some(v) =
-        pip_preview::read_config_value("capture_mode").and_then(|v| v.as_str().map(str::to_owned))
+    if let Some(v) = cua_driver_core::config_file::read_config_value("capture_mode")
+        .and_then(|v| v.as_str().map(str::to_owned))
     {
         cfg.capture_mode = v;
     }
-    if let Some(v) = pip_preview::read_config_value("max_image_dimension").and_then(|v| v.as_u64())
+    if let Some(v) = cua_driver_core::config_file::read_config_value("max_image_dimension")
+        .and_then(|v| v.as_u64())
     {
         if let Ok(v32) = u32::try_from(v) {
             cfg.max_image_dimension = v32;
@@ -1047,9 +1089,9 @@ pub(crate) fn focus_cached_element_for_foreground(
     )
 }
 
-// `ScreenshotTool` and `ScreenshotCompatTool` were removed in PR #1692 —
-// `get_window_state` (which now always returns a screenshot) is the single
-// canonical screenshot path. The underlying capture functions
+// The standalone screenshot tools were removed in PR #1692.
+// `get_window_state` is the canonical window-capture path and
+// `get_desktop_state` handles full-display capture. The underlying functions
 // (`crate::capture::screenshot_window_bytes_with_occlusion`,
 // `screenshot_display_bytes`, etc.) and the WGC backend
 // (`crate::wgc::screenshot_window_via_wgc`) are still in use by
@@ -1239,16 +1281,16 @@ pub(crate) fn physical_screen_size() -> (i32, i32) {
 
 // ── registry builder ──────────────────────────────────────────────────────────
 
-pub fn build_registry(compat: bool) -> ToolRegistry {
-    build_registry_with_provider(compat, None)
-}
-
 pub fn build_registry_with_provider(
     compat: bool,
     provider: Option<std::sync::Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>>,
 ) -> ToolRegistry {
     let mut r = ToolRegistry::new_with_protected_consent_provider(provider);
     let state = ToolState::new(Some(r.capture_service()));
+    {
+        let state = state.clone();
+        r.set_token_window_resolver(Arc::new(move |args| state.snapshots.window_for_token(args)));
+    }
     let cursor_outcome_reader = {
         let cursor_registry = state.cursor_registry.clone();
         cua_driver_core::session::register_scoped_cursor_outcome_reader(std::sync::Arc::new(
@@ -1287,6 +1329,7 @@ pub fn build_registry_with_provider(
     // Share the element cache with the recording-hook layer so it can
     // resolve element_index → window-local screenshot coords for click.png.
     crate::recording_hooks::set_snapshots(state.snapshots.clone());
+    crate::recording_hooks::install();
 
     // Drop a session's owned cursor on `session_end` (explicit end_session, the
     // CLI `session end` verb, or the daemon idle-TTL sweep). The session id IS
@@ -1409,9 +1452,9 @@ pub fn build_registry_with_provider(
         &mut r,
         Arc::new(crate::clipboard::WindowsClipboard::new()),
     );
-    // `screenshot` / `ScreenshotCompatTool` removed from the tool surface
-    // — `get_window_state` (which now always returns a screenshot) is the
-    // single canonical path for getting a window screenshot. Reasons:
+    // The standalone screenshot tools were removed from the tool surface.
+    // `get_window_state` is the canonical path for a window screenshot and
+    // `get_desktop_state` handles explicit full-display capture. Reasons:
     //   1. One entry point means callers always have a window_id context,
     //      which `screenshot` made ambiguous (whole-display fallback
     //      always picked the wrong thing for headless agent workflows).
@@ -1421,12 +1464,8 @@ pub fn build_registry_with_provider(
     //   3. Claude Code's vision pipeline can be retargeted at
     //      `get_window_state` via its tool-anchor config — no need for
     //      a dedicated "screenshot" name.
-    // The `ScreenshotTool` and `ScreenshotCompatTool` structs are kept in
-    // this file for now as private impl helpers — the `capture::*`
-    // functions they wrap are still the actual screenshot machinery.
-    // Delete the structs in a follow-up after confirming no callers
-    // depend on them via `Tool` trait reflection.
-    let _ = compat; // formerly drove the ScreenshotCompatTool branch
+    // The `capture::*` functions remain the underlying screenshot machinery.
+    let _ = compat; // legacy flag; no current tool-surface effect
     r.register(Box::new(GetScreenSizeTool));
     r.register(Box::new(GetDesktopStateTool {
         state: state.clone(),
@@ -1473,7 +1512,7 @@ pub fn build_registry_with_provider(
         _state: state.clone(),
     }; // touch struct so it stays in this crate for now
        // Cross-platform `page` tool definition lives in mcp-server; Windows plugs
-       // in its UIA TextPattern + FindAll backend (CDP for execute_javascript).
+       // in its UIA TextPattern + FindAll backend.
     r.register(Box::new(cua_driver_core::page::PageTool::new(
         std::sync::Arc::new(super::page::WindowsPageBackend::new()),
     )));

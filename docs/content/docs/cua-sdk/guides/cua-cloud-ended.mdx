@@ -48,9 +48,11 @@ Questions: [GitHub issues](https://github.com/trycua/cua/issues) or
 ## Deprecated packages
 
 <Callout type="warn" title="Deprecated">
-  Cua no longer maintains `cuabot`, `cua-computer`, `cua-computer-server` or
-  `cua-agent`. They will not receive updates or fixes. Existing releases stay on
-  npm and PyPI, so current installs keep installing, but you should move off them.
+  Cua no longer maintains `cuabot`, `cua-computer`, `cua-computer-server`,
+  `cua-agent`, `cua-core`, `cua-bench-ui` or the `cua-xfce`, `xfce-cua`, Kasm and
+  `cua-qemu-*` Docker images. They will not receive updates, rebuilds or fixes.
+  Existing releases and image tags stay on npm, PyPI and Docker Hub, so current
+  installs keep working, but you should move off them.
 </Callout>
 
 <Callout type="error" title="Do not run cuabot">
@@ -63,7 +65,10 @@ Questions: [GitHub issues](https://github.com/trycua/cua/issues) or
 | `cuabot` | npm | 1.0.14 | [Cua Driver](/cua-driver) over MCP, or a sandbox from the [`cua` CLI](/cua-sdk/quickstart) or [Cua Spaces](/spaces) |
 | `cua-computer` | PyPI | 0.5.19 | The [`cua` SDK](/cua-sdk/quickstart) (`cua-sandbox`) for sandboxes, [Cua Driver](/cua-driver) for the machine you are on |
 | `cua-computer-server` | PyPI | 0.3.46 | Images that ship [cua-spacesd](/cua-sdk/guides/spacesd), or [Cua Driver](/cua-driver) on a host |
-| `cua-agent` | PyPI | 0.10.1 | A coding agent with the [Cua Driver MCP](/cua-driver/guides/connect-your-agent), or [`sandbox.agents()`](/cua-sdk/guides/run-a-coding-agent) |
+| `cua-agent` | PyPI | 0.9.1 | A coding agent with the [Cua Driver MCP](/cua-driver/guides/connect-your-agent), or [`sandbox.agents()`](/cua-sdk/guides/run-a-coding-agent) |
+| `cua-core` | PyPI | 0.3.2 | The [`cua` SDK](/cua-sdk/quickstart) or [Cua Driver](/cua-driver). cua-bench still uses it at this release |
+| `cua-bench-ui` | PyPI | 0.7.1 | Nothing. Only [cua-bench](/cua-bench) uses it, at this release |
+| `trycua/cua-xfce`, `trycua/xfce-cua`, Kasm, `trycua/cua-qemu-*` | Docker Hub | last published tags | The images in the [image catalog](/cua-sdk/reference/os-image-catalog) (`ghcr.io/trycua/linux`, `windows`, `macos`) through the [`cua` SDK](/cua-sdk/quickstart) |
 
 ### cuabot
 

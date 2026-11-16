@@ -57,7 +57,7 @@ or the app). They describe one computer, and the **Computers** tab joins them in
 one row when it can match them safely, for example by the same id or matching
 names. If the match is unclear, such as two Macs with the same name, they stay as
 separate rows. The `cua devices` commands manage the sign-in record, and
-`cua machines rm` removes a computer that is gone.
+`cua spaces rm` removes a computer that is gone, and keeps its Spaces on your account (detached) unless you pass `--delete-spaces`.
 
 A computer that only hosts, set up with `--direct` or with its own token, can't
 reach your other computers: signing in is what lets a computer see them.
@@ -65,3 +65,13 @@ reach your other computers: signing in is what lets a computer see them.
 See [Add a computer](/spaces/guides/add-a-computer) for the two switches and how
 to add one, and [How Spaces works](/spaces/concepts/how-spaces-works#space-ids)
 for Space ids.
+
+## Your default Space
+
+Your account can name one Space as its default: where "my Space" goes when you do not say. The
+relay keeps it, so the app, `cua`, your phone and your agents all agree. If the default is
+offline, they try the order you set (or, by default, every online computer, oldest first), and
+then this computer. `cua spaces default` shows which one it picks and why, `cua spaces default
+<space>` sets it, and `--clear`, `--fallback a,b` and `--no-fallback` change the rest.
+`cua spaces ls --json` and the `list_spaces` tool mark it with `"default": true`, and give each
+Space a `parent`: the computer that provides it, or null for a computer.

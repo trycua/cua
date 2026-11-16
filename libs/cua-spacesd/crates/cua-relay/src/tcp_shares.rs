@@ -706,6 +706,7 @@ pub async fn reconcile(relay: &Relay, tcp: &Arc<TcpShares>) {
             match relay.directory.get(&a.machine) {
                 None => Some("machine_removed"),
                 Some(r) if r.owner.id != a.owner => Some("machine_changed_owner"),
+                Some(r) if relay.directory.is_detached(&r) => Some("machine_removed"),
                 Some(r) if !r.sharing => Some("sharing_stopped"),
                 Some(_) => None,
             }

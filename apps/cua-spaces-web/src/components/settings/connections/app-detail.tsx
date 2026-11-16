@@ -7,6 +7,7 @@ import { CheckIcon, ChevronLeftIcon, Loader2Icon } from "lucide-react";
 import { HarnessMark } from "@/components/agents/harness-mark";
 import { useThisAndOthers } from "@/components/agents/other-machine-block";
 import { SettingsGroup, SettingsRow } from "@/components/settings-group";
+import { AgentSignIns } from "@/components/settings/connections/agent-sign-ins";
 import { UsesRow } from "@/components/settings/connections/uses-row";
 import { Snippet } from "@/components/settings/snippet";
 import { Button } from "@/components/ui/button";
@@ -14,6 +15,7 @@ import { DetailsDisclosure, GroupedRow, SettingRow } from "@/components/ui/group
 import { Switch } from "@/components/ui/switch";
 import { useConnectors } from "@/hooks/use-connectors";
 import { BY_HAND } from "@/lib/connected-apps";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 /**
@@ -24,12 +26,17 @@ import { cn } from "@/lib/utils";
  * `connectors.appDetail`.
  */
 export function ConnectorAppPage({ agent }: { agent: string }) {
+  const t = useT();
   const c = useConnectors();
   const { hereName } = useThisAndOthers();
   const d = c.detail(agent);
   const back = (
-    <Link to="/settings/connections" className="-ml-1 mb-4 inline-flex items-center gap-0.5 rounded-lg px-1 py-0.5 text-[13px] text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60" data-connector-back="">
-      <ChevronLeftIcon className="size-4" /> {d?.backLabel ?? "Connectors"}
+    <Link
+      to="/settings/connections"
+      className="-ml-1 mb-4 inline-flex items-center gap-0.5 rounded-lg px-1 py-0.5 text-[13px] text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+      data-connector-back=""
+    >
+      <ChevronLeftIcon className="size-4" /> {d?.backLabel ?? t("settings.connections.app.back")}
     </Link>
   );
   if (c.apps.rows === null) return <div className="h-96" aria-busy="true" />;
@@ -37,7 +44,7 @@ export function ConnectorAppPage({ agent }: { agent: string }) {
     return (
       <div>
         {back}
-        <p className="text-[13px] text-muted-foreground">This app isn't on this machine.</p>
+        <p className="text-[13px] text-muted-foreground">{t("settings.connections.app.missing")}</p>
       </div>
     );
   }
@@ -58,7 +65,7 @@ export function ConnectorAppPage({ agent }: { agent: string }) {
           </p>
           {/* Connect edits the apps of this machine only: the page says which. */}
           <p className="text-xs text-muted-foreground" data-connector-on="">
-            On {hereName}
+            {t("settings.connections.app.on_here", { name: hereName })}
           </p>
           {failure ? <p className="text-[13px] text-destructive">{failure}</p> : null}
         </div>
@@ -70,17 +77,25 @@ export function ConnectorAppPage({ agent }: { agent: string }) {
       </header>
 
       {d.toggles.length ? (
-      <SettingsGroup title={d.toolsTitle}>
-        {d.toggles.map((t) => (
-          <SettingsRow
-            key={t.id}
-            label={t.label}
-            description={t.help}
-            htmlFor={`connector-${t.id}`}
-            control={<Switch id={`connector-${t.id}`} data-connector-toggle={t.id} checked={t.on} disabled={!t.enabled} onCheckedChange={(on) => void c.setToggle(agent, t.id, on)} />}
-          />
-        ))}
-      </SettingsGroup>
+        <SettingsGroup title={d.toolsTitle}>
+          {d.toggles.map((tg) => (
+            <SettingsRow
+              key={tg.id}
+              label={tg.label}
+              description={tg.help}
+              htmlFor={`connector-${tg.id}`}
+              control={
+                <Switch
+                  id={`connector-${tg.id}`}
+                  data-connector-toggle={tg.id}
+                  checked={tg.on}
+                  disabled={!tg.enabled}
+                  onCheckedChange={(on) => void c.setToggle(agent, tg.id, on)}
+                />
+              }
+            />
+          ))}
+        </SettingsGroup>
       ) : null}
 
       <SettingsGroup title={d.signInTitle} footer={d.uses ? d.uses.note : d.signIn?.way}>
@@ -115,8 +130,10 @@ export function ConnectorAppPage({ agent }: { agent: string }) {
         )}
       </SettingsGroup>
 
+      <AgentSignIns agent={agent} c={c} />
+
       {d.settingsFile || snippet ? (
-        <DetailsDisclosure title="Advanced" className="mb-8">
+        <DetailsDisclosure title={t("settings.connections.app.advanced")} className="mb-8">
           <div className="mt-4">
             {d.settingsFile ? (
               <SettingsGroup title={d.settingsFileLabel}>
@@ -124,10 +141,10 @@ export function ConnectorAppPage({ agent }: { agent: string }) {
               </SettingsGroup>
             ) : null}
             {snippet ? (
-              <SettingsGroup title="Add it by hand" className="mb-0">
+              <SettingsGroup title={t("settings.connections.app.add_by_hand")} className="mb-0">
                 <div className="px-4 py-4">
-                  <Snippet file={snippet.file} text={snippet.snippet} />
-                  <p className="mt-2 text-xs text-muted-foreground">Paste this into the file, then restart {d.name}.</p>
+                  <Snippet file={agent === "claude-code" ? t("settings.connections.app.by_hand_terminal") : snippet.file} text={snippet.snippet} />
+                  <p className="mt-2 text-xs text-muted-foreground">{t("settings.connections.app.paste_restart", { name: d.name })}</p>
                 </div>
               </SettingsGroup>
             ) : null}

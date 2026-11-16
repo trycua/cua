@@ -326,6 +326,10 @@ actor FakeSpacesBackend: SpacesTransport {
         case "network_show":
             return .object(["settings": .object(["preset": "internet"]), "enforcement": "enforced"])
 
+        case "network_log":
+            return .array([.object(["reason": "platform:metadata", "dst": "169.254.169.254:80",
+                                    "proto": "tcp", "count": 2, "last_unix": 1])])
+
         case "network_set":
             return .object(["applied": "now",
                             "network": .object(["settings": .object(["preset": arguments["network"] ?? "internet"])])])
@@ -508,6 +512,8 @@ actor FakeSpacesBackend: SpacesTransport {
                 "title": "ada", "body": "Your research is ready.", "read": false])])])
         case "notifications_ack":
             return .object(["marked": 1])
+        case "notifications_delete":
+            return .object(["deleted": 1])
         case "computer_access_grant":
             return .object(["id": "g-1", "agent": arguments["agent"] ?? "ada",
                             "machine": arguments["machine"] ?? "relay:0123", "created_ms": 1])

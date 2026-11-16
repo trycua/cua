@@ -1,8 +1,8 @@
 """Reads the relay's plan-limit refusal back out of an error's text.
 
-The relay answers a new live session over the plan's cap with HTTP 429. The
-SDK turns it into one plain sentence, such as "You're using 5 of 5 live
-sessions on Pro. Close one or upgrade to Teams.", and appends
+The relay answers a new computer in use over the plan's cap with HTTP 429. The
+SDK turns it into one plain sentence, such as "You have 5 of 5 computers in
+use at once on Pro. Close one or upgrade to Teams.", and appends
 "Upgrade: <url>". This module holds no native code, so it loads anywhere.
 """
 
@@ -11,7 +11,10 @@ from __future__ import annotations
 import re
 from typing import NamedTuple, Optional
 
+# The sessions sentence has two wordings: the current one, and the old "live
+# sessions" one that older relays, daemons and SDKs still send. Both are read.
 _FORMS = (
+    ("You have ", "sessions", " computers in use at once on "),
     ("You're using ", "sessions", " live sessions on "),
     ("You've used ", "hours", " remote hours this month on "),
 )

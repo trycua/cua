@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! The pointer gate that checks clicks and drags against niri's current
 //! layout. [`prepare_target`] is the one entry point for pointer input;
 //! [`PointerGate::holds`] rechecks before every later event.

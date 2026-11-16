@@ -6,21 +6,20 @@
 
 import { useSyncExternalStore } from "react";
 
-import { useBridge, useExperiments } from "@/bridge";
+import { useBridge } from "@/bridge";
 import type { NetworkPreview } from "@/bridge/contracts/network";
 
 const noop = () => () => {};
 
-/**
- * The host's store, re-rendering on every change; null on a host without it
- * and while the Secure Spaces experiment (Labs) is off, so none of the
- * network settings show and the host is not asked for them.
- */
+/** The host's store, re-rendering on every change; null on a host without it. */
 export function useNetworkPreview(): NetworkPreview | null {
   const { data } = useBridge();
-  const on = useExperiments().data?.experiments.secureSpaces === true;
-  const store = on ? (data?.network ?? null) : null;
-  useSyncExternalStore(store ? store.subscribe : noop, () => store?.version() ?? 0, () => 0);
+  const store = data?.network ?? null;
+  useSyncExternalStore(
+    store ? store.subscribe : noop,
+    () => store?.version() ?? 0,
+    () => 0,
+  );
   return store;
 }
 

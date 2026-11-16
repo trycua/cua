@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_core::{
     protocol::ToolResult,
@@ -6,12 +9,14 @@ use cua_driver_core::{
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+use crate::atspi::native::{OptionPick, OptionPickSent};
+
 use super::impl_::{
     attach_focus_guard, background_virtual_key, background_virtual_text, foreground_budget,
     input_error_result, non_ax_escalation, position_named_session_keyboard_cursor,
-    prove_token_element, resolve_cursor_key, resolve_element_local_coords, spawn_blocking_bounded,
-    stale_observed_element, values_agree, window_local_to_screen, with_cleanup_warning,
-    x11_pixel_click_no_focus_steal, ToolState,
+    prove_token_element, refuse_if_disabled, resolve_cursor_key, resolve_element_local_coords,
+    spawn_blocking_bounded, stale_observed_element, values_agree, window_local_to_screen,
+    with_cleanup_warning, x11_pixel_click_no_focus_steal, ToolState,
 };
 
 // ── set_value ─────────────────────────────────────────────────────────────────
@@ -63,6 +68,9 @@ impl Tool for SetValueTool {
             Ok(token) => token,
             Err(refusal) => return refusal,
         };
+        if let Some(refusal) = refuse_if_disabled(pid, &resolved, "set_value").await {
+            return refusal;
+        }
         let (token, xid) = match (token, &resolved) {
             (
                 Some(token),
@@ -109,6 +117,10 @@ impl Tool for SetValueTool {
             Ok(Err(error)) if crate::atspi::native::is_no_such_option(&error) => {
                 return no_such_option_result(idx, &error)
             }
+            Ok(Err(error)) if error.is::<OptionPickSent>() => {
+                let readback = read_back(token).await;
+                return pick_sent_result(idx, &value, "ax", readback, &error);
+            }
             Ok(Err(error)) => {
                 return stale_observed_element("set_value", idx, &error)
                     .unwrap_or_else(|| input_error_result(error))
@@ -121,7 +133,7 @@ impl Tool for SetValueTool {
         //    typed like a user would: click the field (real pointer), select
         //    all, type, commit with Tab.
         let is_combo = token.observed.role.eq_ignore_ascii_case("combo box");
-        let wayland = crate::wayland::wayland_input_enabled();
+        let wayland = crate::wayland::is_wayland();
         let background_route = !delivery.is_foreground()
             && !wayland
             && crate::input::real_pointer_input_available()
@@ -173,6 +185,7 @@ impl Tool for SetValueTool {
                     crate::interaction::with_x11_foreground(
                         win,
                         crate::input::ForegroundOptions::pointer(),
+                        crate::interaction::session_policy().menu,
                         || {
                             crate::input::send_click_xtest_desktop(
                                 sx.round() as i32,
@@ -192,7 +205,13 @@ impl Tool for SetValueTool {
                     x11_pixel_click_no_focus_steal(&cursor_id, win, lx as i32, ly as i32, 1, 1)?;
                     std::thread::sleep(std::time::Duration::from_millis(80));
                     background_virtual_key(&cursor_id, pid, win, "a", &["ctrl"])?;
-                    background_virtual_text(&cursor_id, pid, win, &value_for_keys)?;
+                    background_virtual_text(
+                        &cursor_id,
+                        pid,
+                        win,
+                        &value_for_keys,
+                        crate::input::TypePacing::default(),
+                    )?;
                     background_virtual_key(&cursor_id, pid, win, "Tab", &[])?;
                     Ok(())
                 })?;
@@ -225,6 +244,15 @@ impl Tool for SetValueTool {
             }
             Ok(Err(error)) if crate::atspi::native::is_no_such_option(&error) => {
                 no_such_option_result(idx, &error)
+            }
+            Ok(Err(error)) if error.is::<OptionPickSent>() => {
+                let path = if foreground_route {
+                    "click_select_fg"
+                } else {
+                    "click_select_mpx"
+                };
+                let readback = read_back(token).await;
+                pick_sent_result(idx, &value, path, readback, &error)
             }
             Ok(Err(error)) => input_error_result(error),
             Err(error) => ToolResult::error(format!("Task error: {error}")),
@@ -270,38 +298,32 @@ fn pick_from_popup(
             return Ok(());
         }
         if foreground {
-            crate::interaction::with_x11_foreground(
-                win,
-                crate::input::ForegroundOptions::keyboard(),
-                || crate::input::send_key_xtest("Escape", &[]),
-            )
-            .map(|_| ())
+            // Inside the click's transaction: the target still has the focus.
+            crate::input::send_key_xtest("Escape", &[])
         } else {
             background_virtual_key(cursor_id, pid, win, "Escape", &[]).map(|_| ())
         }
     };
-    let pick = || -> anyhow::Result<String> {
-        let deadline = std::time::Instant::now() + POPUP_OPTIONS_WAIT;
-        loop {
-            match crate::atspi::activate_option_token(token, value) {
-                Ok(Some(name)) => return Ok(name),
-                Ok(None) if std::time::Instant::now() < deadline => {
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                }
-                Ok(None) => anyhow::bail!("the combo box popup listed no options"),
-                Err(error) => return Err(error),
-            }
-        }
+    let pick = || {
+        pick_listed_option(value, POPUP_OPTIONS_WAIT, || {
+            crate::atspi::activate_option_token(token, value)
+        })
     };
     let open_and_pick = || pick_then_close(pick, close_popup);
     if foreground {
+        // Open, pick and close in one transaction, so the restore runs once
+        // the popup is gone instead of closing it before the pick.
         let (sx, sy) = window_local_to_screen(win, lx, ly)?;
-        crate::interaction::with_x11_foreground(
+        let (warning, _report) = crate::interaction::with_x11_foreground(
             win,
             crate::input::ForegroundOptions::pointer(),
-            || crate::input::send_click_xtest_desktop(sx.round() as i32, sy.round() as i32, 1, 1),
+            crate::interaction::session_policy().menu,
+            || {
+                crate::input::send_click_xtest_desktop(sx.round() as i32, sy.round() as i32, 1, 1)?;
+                open_and_pick()
+            },
         )?;
-        return Ok((None, open_and_pick()?));
+        return Ok((None, warning));
     }
     let (warning, guard) = crate::input::focus_guard::guarded(Some(pid), || {
         x11_pixel_click_no_focus_steal(cursor_id, win, lx as i32, ly as i32, 1, 1)?;
@@ -346,6 +368,76 @@ fn a_failed_popup_close_never_turns_a_pick_into_an_error() {
         closing_fails,
     );
     assert_eq!(failed.unwrap_err().to_string(), "no option named Huge");
+}
+
+/// Retry `activate` until the opened popup answers with its options or
+/// `wait` runs out, then pick the option `value` names. A popup whose every
+/// read answered and that still lists no options has no option `value`
+/// names: the same `no_such_option` refusal as an unknown option. One whose
+/// options could not be read stays an error, since a populated popup can be
+/// unreadable too.
+fn pick_listed_option(
+    value: &str,
+    wait: std::time::Duration,
+    mut activate: impl FnMut() -> anyhow::Result<OptionPick>,
+) -> anyhow::Result<String> {
+    let deadline = std::time::Instant::now() + wait;
+    loop {
+        let pick = activate()?;
+        let waiting = std::time::Instant::now() < deadline;
+        match pick {
+            OptionPick::Picked { name } => return Ok(name),
+            OptionPick::NoMatch { options } => {
+                return Err(crate::atspi::no_such_option(value, &options))
+            }
+            OptionPick::NoOptions | OptionPick::Unavailable if waiting => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            OptionPick::NoOptions => return Err(crate::atspi::no_such_option(value, &[])),
+            OptionPick::Unavailable => {
+                anyhow::bail!("the combo box popup's options could not be read")
+            }
+        }
+    }
+}
+
+async fn read_back(token: crate::atspi::TokenElement) -> Option<String> {
+    tokio::task::spawn_blocking(move || crate::atspi::read_value_token(&token))
+        .await
+        .ok()
+        .flatten()
+}
+
+/// `set_value` result for a combo box pick that was sent but not answered
+/// ([`OptionPickSent`]): the option may be set, so it is reported like a
+/// write with its readback, never as a failure that invites picking again.
+/// Without a matching readback the effect is unknown, not a no-op, and no
+/// escalation is offered.
+fn pick_sent_result(
+    idx: usize,
+    value: &str,
+    path: &str,
+    readback: Option<String>,
+    error: &anyhow::Error,
+) -> ToolResult {
+    let mut result = set_value_result(idx, value, path, readback, None);
+    let note = format!("the option pick was sent, but {error}; it may have taken effect");
+    if let Some(structured) = result.structured_content.as_mut() {
+        if structured["verified"] != true {
+            structured["effect"] = json!("unverifiable");
+            if let Some(fields) = structured.as_object_mut() {
+                fields.remove("escalation");
+            }
+        }
+        structured["note"] = json!(note);
+    }
+    if let Some(cua_driver_core::protocol::Content::Text { text, .. }) = result.content.first_mut()
+    {
+        text.push_str(&format!(
+            " Note: {note}. Read it back before picking again."
+        ));
+    }
+    result
 }
 
 /// `set_value` result with an honest verification: `verified` only when the
@@ -458,5 +550,75 @@ mod set_value_tests {
         assert_eq!(s["readback"], "10.0");
         let blind = set_value_result(3, "40", "ax", None, None);
         assert_eq!(blind.structured_content.unwrap()["effect"], "unverifiable");
+    }
+
+    #[test]
+    fn a_combo_box_listing_no_options_refuses_the_value_and_changes_nothing() {
+        let mut attempts = 0;
+        let error = pick_listed_option("Blue", std::time::Duration::ZERO, || {
+            attempts += 1;
+            Ok(OptionPick::NoOptions)
+        })
+        .unwrap_err();
+        assert_eq!(attempts, 1);
+        assert!(crate::atspi::native::is_no_such_option(&error), "{error}");
+        let refused = no_such_option_result(3, &error);
+        assert_eq!(refused.is_error, Some(true));
+        let s = refused.structured_content.unwrap();
+        assert_eq!(s["code"], "option_not_found");
+        assert_eq!(s["effect"], "none");
+        assert_eq!(s["detail"], "no option \"Blue\"; it lists no options");
+    }
+
+    #[test]
+    fn an_unreadable_popup_is_never_reported_as_having_no_such_option() {
+        let error = pick_listed_option("Blue", std::time::Duration::ZERO, || {
+            Ok(OptionPick::Unavailable)
+        })
+        .unwrap_err();
+        assert!(!crate::atspi::native::is_no_such_option(&error), "{error}");
+    }
+
+    #[test]
+    fn a_popup_that_lists_its_options_late_still_gets_the_pick() {
+        let mut attempts = 0;
+        let picked = pick_listed_option("Blue", std::time::Duration::from_secs(5), || {
+            attempts += 1;
+            Ok(match attempts {
+                1 => OptionPick::Unavailable,
+                2 => OptionPick::NoOptions,
+                _ => OptionPick::Picked {
+                    name: "Blue".to_owned(),
+                },
+            })
+        })
+        .unwrap();
+        assert_eq!(picked, "Blue");
+        assert_eq!(attempts, 3);
+    }
+
+    #[test]
+    fn a_sent_pick_is_never_reported_as_failed_or_a_noop() {
+        let sent = anyhow::Error::new(OptionPickSent("the option's action did not answer".into()));
+        // The combo box already shows the option: the pick landed.
+        let landed = pick_sent_result(3, "Medium", "ax", Some("Medium".into()), &sent);
+        assert_ne!(landed.is_error, Some(true));
+        let s = landed.structured_content.unwrap();
+        assert_eq!(s["verified"], true);
+        assert_eq!(s["effect"], "confirmed");
+        // It shows the old option, or nothing: unknown, with no escalation
+        // that would send the pick again.
+        for readback in [Some("Small".to_owned()), None] {
+            let unknown = pick_sent_result(3, "Medium", "click_select_mpx", readback, &sent);
+            assert_ne!(unknown.is_error, Some(true));
+            let s = unknown.structured_content.unwrap();
+            assert_eq!(s["verified"], false);
+            assert_eq!(s["effect"], "unverifiable");
+            assert!(s.get("escalation").is_none(), "{s}");
+            assert!(s["note"]
+                .as_str()
+                .unwrap()
+                .contains("may have taken effect"));
+        }
     }
 }

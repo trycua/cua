@@ -1,0 +1,24 @@
+id = "router"
+name = "Ramp Router"
+icon = "router"
+tier = "more"
+rank = 300
+kind = "hosted"
+hidden = true
+hidden_reason = "Unverified: Cua has not run this provider end to end yet."
+aliases = ["ramp"]
+wire = "openai-responses"
+base_url = "https://api.router.com/v1"
+base_url_env = "RAMP_ROUTER_BASE_URL"
+default_model = ""
+hermes_id = "router"
+key_help = "Create a key at router.com."
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "RAMP_ROUTER_API_KEY"
+aliases = ["ROUTER_API_KEY"]
+
+[delivery]
+hermes = ["RAMP_ROUTER_API_KEY"]

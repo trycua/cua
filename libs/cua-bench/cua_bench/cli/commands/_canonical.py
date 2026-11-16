@@ -17,8 +17,8 @@ from cua_bench.images import CANONICAL
 _FALLBACK = CANONICAL
 
 _ROWS = (
-    ("linux", ("container", "vm"), ("local", "cloud"), "rootfs (container), -disk (VM)"),
-    ("windows", ("vm",), ("local", "cloud"), "-disk containerDisk (VM-only)"),
+    ("linux", ("container", "vm"), ("local",), "rootfs (container), -disk (VM)"),
+    ("windows", ("vm",), ("local",), "-disk containerDisk (VM-only)"),
     ("macos", ("vm",), ("local",), "Lume image (VM-only, Apple Silicon)"),
 )
 

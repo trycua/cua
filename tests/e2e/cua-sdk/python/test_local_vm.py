@@ -89,3 +89,59 @@ def test_local_qemu_env_token_reaches_guest(local_cua):
             await sb.delete()
 
     e2e.run_async(body(), timeout=1200)
+
+
+@pytest.mark.e2e("local-qemu-fork", "qemu")
+def test_local_qemu_fork_fan_out_of_a_pinned_checkpoint(local_cua):
+    """A forkable (bake) VM dirties RAM, is checkpointed and pinned, and two
+    forks of the checkpoint hold its RAM state, are independent of each other,
+    and share its memory copy-on-write; a pinned checkpoint is kept until
+    unpinned, then pruned."""
+
+    async def body():
+        token = secrets.token_hex(16)
+        opts = _vm_opts(token)
+        opts.forkable = True
+        sbx = local_cua.sandboxes()
+        bake = await sbx.create(opts)
+        ck = e2e.name("ck")
+        forks = []
+        try:
+            env = await e2e.wait_env(bake, 180)
+            await e2e.sh_ok(env, "cloud-init status --wait >/dev/null 2>&1; true", 300_000)
+            world = await e2e.sh_ok(
+                env,
+                "head -c 64M /dev/urandom >/dev/shm/world && sha256sum /dev/shm/world | cut -d' ' -f1",
+            )
+            summary = await sbx.checkpoint(bake.name(), ck, pin=True)
+            assert summary.pinned and summary.shared_memory, summary
+            for i in range(2):
+                forks.append(await sbx.fork(ck, e2e.name(f"fork{i}")))
+            for f in forks:
+                fenv = await e2e.wait_env(f, 120)
+                got = await e2e.sh_ok(fenv, "sha256sum /dev/shm/world | cut -d' ' -f1")
+                assert got.strip() == world.strip()
+                await e2e.sh_ok(fenv, f"echo {f.name()} >/dev/shm/me")
+            for f in forks:
+                fenv = await e2e.wait_env(f, 60)
+                assert (await e2e.sh_ok(fenv, "cat /dev/shm/me")).strip() == f.name()
+            with pytest.raises(Exception, match="pinned"):
+                await sbx.delete_checkpoint(ck)
+            unpinned = await sbx.pin_checkpoint(ck, False)
+            assert not unpinned.pinned
+            for f in forks:
+                await f.delete()
+            forks = []
+            assert ck in await sbx.prune_checkpoints()
+            assert all(c.name != ck for c in await sbx.checkpoints())
+        finally:
+            for f in forks:
+                await f.delete()
+            try:
+                await sbx.pin_checkpoint(ck, False)
+                await sbx.delete_checkpoint(ck)
+            except Exception:
+                pass
+            await bake.delete()
+
+    e2e.run_async(body(), timeout=1800)

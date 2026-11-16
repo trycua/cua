@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Golden parity with the motion lab, the design source of truth.
 //!
 //! `tests/fixtures/motion_parity.json` is exported by

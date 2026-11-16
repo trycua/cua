@@ -1,0 +1,2128 @@
+{
+ "package": "daytona",
+ "symbols": {
+  "daytona.AsyncComputerUse": {
+   "bases": [],
+   "fields": {},
+   "init": "(api_client: 'ComputerUseApi')",
+   "kind": "class",
+   "methods": {
+    "get_process_errors": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, process_name: 'str', request_timeout: 'float | None' = None) -> 'ProcessErrorsResponse'"
+    },
+    "get_process_logs": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, process_name: 'str', request_timeout: 'float | None' = None) -> 'ProcessLogsResponse'"
+    },
+    "get_process_status": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, process_name: 'str', request_timeout: 'float | None' = None) -> 'ProcessStatusResponse'"
+    },
+    "get_status": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, request_timeout: 'float | None' = None) -> 'ComputerUseStatusResponse'"
+    },
+    "restart_process": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, process_name: 'str', request_timeout: 'float | None' = None) -> 'ProcessRestartResponse'"
+    },
+    "start": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, request_timeout: 'float | None' = None) -> 'ComputerUseStartResponse'"
+    },
+    "stop": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, request_timeout: 'float | None' = None) -> 'ComputerUseStopResponse'"
+    }
+   }
+  },
+  "daytona.AsyncDaytona": {
+   "bases": [],
+   "fields": {},
+   "init": "(config: 'DaytonaConfig | None' = None)",
+   "kind": "class",
+   "methods": {
+    "close": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self)"
+    },
+    "create": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, params: 'CreateSandboxFromSnapshotParams | CreateSandboxFromImageParams | None' = None, *, timeout: 'float' = 60, on_snapshot_create_logs: 'Callable[[str], None] | None' = None) -> 'AsyncSandbox'"
+    },
+    "delete": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, sandbox: 'AsyncSandbox', timeout: 'float' = 60, wait: 'bool' = False) -> 'None'"
+    },
+    "get": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, sandbox_id_or_name: 'str', request_timeout: 'float | None' = None) -> 'AsyncSandbox'"
+    },
+    "list": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, query: 'ListSandboxesQuery | None' = None, request_timeout: 'float | None' = None) -> 'AsyncIterator[AsyncSandbox]'"
+    },
+    "start": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, sandbox: 'AsyncSandbox', timeout: 'float' = 60) -> 'None'"
+    },
+    "stop": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, sandbox: 'AsyncSandbox', timeout: 'float' = 60) -> 'None'"
+    }
+   }
+  },
+  "daytona.AsyncDisplay": {
+   "bases": [],
+   "fields": {},
+   "init": "(api_client: 'ComputerUseApi')",
+   "kind": "class",
+   "methods": {
+    "get_info": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, request_timeout: 'float | None' = None) -> 'DisplayInfoResponse'"
+    },
+    "get_windows": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, request_timeout: 'float | None' = None) -> 'WindowsResponse'"
+    }
+   }
+  },
+  "daytona.AsyncKeyboard": {
+   "bases": [],
+   "fields": {},
+   "init": "(api_client: 'ComputerUseApi')",
+   "kind": "class",
+   "methods": {
+    "down": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, key: 'str', request_timeout: 'float | None' = None) -> 'None'"
+    },
+    "hotkey": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, keys: 'str', request_timeout: 'float | None' = None) -> 'None'"
+    },
+    "press": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, key: 'str', modifiers: 'list[str] | None' = None, request_timeout: 'float | None' = None) -> 'None'"
+    },
+    "type": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, text: 'str', delay: 'int | None' = None, request_timeout: 'float | None' = None) -> 'None'"
+    },
+    "up": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, key: 'str', request_timeout: 'float | None' = None) -> 'None'"
+    }
+   }
+  },
+  "daytona.AsyncMouse": {
+   "bases": [],
+   "fields": {},
+   "init": "(api_client: 'ComputerUseApi')",
+   "kind": "class",
+   "methods": {
+    "click": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, x: 'int', y: 'int', button: 'str' = 'left', double: 'bool' = False, request_timeout: 'float | None' = None, *, clicks: 'int | None' = None, modifiers: 'list[str] | None' = None) -> 'MouseClickResponse'"
+    },
+    "down": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, x: 'int | None' = None, y: 'int | None' = None, button: 'str' = 'left', request_timeout: 'float | None' = None) -> 'MousePositionResponse'"
+    },
+    "drag": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, start_x: 'int', start_y: 'int', end_x: 'int', end_y: 'int', button: 'str' = 'left', request_timeout: 'float | None' = None, *, modifiers: 'list[str] | None' = None) -> 'MouseDragResponse'"
+    },
+    "get_position": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, request_timeout: 'float | None' = None) -> 'MousePositionResponse'"
+    },
+    "move": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, x: 'int', y: 'int', request_timeout: 'float | None' = None) -> 'MousePositionResponse'"
+    },
+    "scroll": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, x: 'int', y: 'int', direction: 'str', amount: 'int' = 1, request_timeout: 'float | None' = None, *, modifiers: 'list[str] | None' = None) -> 'bool'"
+    },
+    "up": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, x: 'int | None' = None, y: 'int | None' = None, button: 'str' = 'left', request_timeout: 'float | None' = None) -> 'MousePositionResponse'"
+    }
+   }
+  },
+  "daytona.AsyncSandbox": {
+   "bases": [
+    "Sandbox"
+   ],
+   "fields": {
+    "additional_properties": "Dict",
+    "auto_archive_interval": "Union",
+    "auto_delete_interval": "Union",
+    "auto_destroy_at": "Optional",
+    "auto_pause_interval": "Union",
+    "auto_stop_interval": "Union",
+    "backup_created_at": "Optional",
+    "backup_state": "Optional",
+    "build_info": "Optional",
+    "cpu": "int",
+    "created_at": "Optional",
+    "daemon_version": "Optional",
+    "desired_state": "Optional",
+    "disk": "int",
+    "domain_allow_list": "Optional",
+    "env": "dict[str, str] | None",
+    "error_reason": "Optional",
+    "gpu": "int",
+    "gpu_type": "Optional",
+    "id": "str",
+    "kvm": "bool | None",
+    "labels": "Dict",
+    "last_activity_at": "Optional",
+    "linked_sandbox_id": "Optional",
+    "memory": "int",
+    "name": "str",
+    "network_allow_list": "Optional",
+    "network_block_all": "bool | None",
+    "organization_id": "str",
+    "otel_endpoint_override": "Optional",
+    "outbound_proxy_url": "Optional",
+    "public": "bool",
+    "queue_timed_out_at": "Optional",
+    "queue_timeout": "Optional",
+    "recoverable": "Optional",
+    "runner_id": "Optional",
+    "sandbox_class": "Optional",
+    "snapshot": "Optional",
+    "spot": "Optional",
+    "spot_evicted_at": "Optional",
+    "state": "Optional",
+    "target": "str",
+    "toolbox_proxy_url": "str",
+    "updated_at": "Optional",
+    "user": "str",
+    "volumes": "Optional",
+    "warm_pool_id": "Optional"
+   },
+   "init": "(sandbox_dto: 'SandboxDto | SandboxListItem', toolbox_api: 'ApiClient', sandbox_api: 'SandboxApi', language: 'str', subscription_manager: 'AsyncEventSubscriptionManager', pool_tracker: 'AsyncPoolSaturationTracker | None' = None, analytics_api_url_provider: 'Callable[[], Awaitable[str | None]] | None' = None) -> None",
+   "kind": "class",
+   "methods": {
+    "archive": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, request_timeout: 'float | None' = None) -> 'None'"
+    },
+    "code_interpreter": {
+     "property": true
+    },
+    "computer_use": {
+     "property": true
+    },
+    "create_lsp_server": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, language_id: 'LspLanguageId | LspLanguageIdLiteral', path_to_project: 'str') -> 'AsyncLspServer'"
+    },
+    "create_signed_preview_url": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, port: 'int', expires_in_seconds: 'int | None' = None, request_timeout: 'float | None' = None) -> 'SignedPortPreviewUrl'"
+    },
+    "create_snapshot": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, name: 'str', timeout: 'float | None' = 60) -> 'None'"
+    },
+    "create_ssh_access": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, expires_in_minutes: 'int | None' = None, request_timeout: 'float | None' = None) -> 'SshAccessDto'"
+    },
+    "delete": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, timeout: 'float | None' = 60, wait: 'bool' = False) -> 'None'"
+    },
+    "download_url": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, path: 'str', ttl_seconds: 'int | None' = None) -> 'str'"
+    },
+    "expire_signed_preview_url": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, port: 'int', token: 'str', request_timeout: 'float | None' = None) -> 'None'"
+    },
+    "fork": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, name: 'str | None' = None, timeout: 'float | None' = 60) -> \"'AsyncSandbox'\""
+    },
+    "fs": {
+     "property": true
+    },
+    "get_metrics": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, start: 'datetime | None' = None, end: 'datetime | None' = None) -> 'list[SandboxMetrics]'"
+    },
+    "get_metrics_latest": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self) -> 'SandboxMetrics'"
+    },
+    "get_preview_link": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, port: 'int', request_timeout: 'float | None' = None) -> 'PortPreviewUrl'"
+    },
+    "get_user_home_dir": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self) -> 'str'"
+    },
+    "get_user_root_dir": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self) -> 'str'"
+    },
+    "get_work_dir": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self) -> 'str'"
+    },
+    "git": {
+     "property": true
+    },
+    "model_post_init": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self: 'BaseModel', context: 'Any', /) -> 'None'"
+    },
+    "pause": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, timeout: 'float' = 60) -> 'None'"
+    },
+    "process": {
+     "property": true
+    },
+    "recover": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, timeout: 'float | None' = 60)"
+    },
+    "refresh_activity": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, request_timeout: 'float | None' = None) -> 'None'"
+    },
+    "refresh_data": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, request_timeout: 'float | None' = None) -> 'None'"
+    },
+    "resize": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, resources: 'Resources', timeout: 'float | None' = 60) -> 'None'"
+    },
+    "revoke_ssh_access": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, token: 'str', request_timeout: 'float | None' = None) -> 'None'"
+    },
+    "rotate_signing_key": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self) -> 'None'"
+    },
+    "set_auto_archive_interval": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, interval: 'int', request_timeout: 'float | None' = None) -> 'None'"
+    },
+    "set_auto_delete_interval": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, interval: 'int', request_timeout: 'float | None' = None) -> 'None'"
+    },
+    "set_auto_pause_interval": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, interval: 'int') -> 'None'"
+    },
+    "set_autostop_interval": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, interval: 'int', request_timeout: 'float | None' = None) -> 'None'"
+    },
+    "set_labels": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, labels: 'dict[str, str]', request_timeout: 'float | None' = None) -> 'dict[str, str]'"
+    },
+    "set_public": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, public: 'bool', request_timeout: 'float | None' = None) -> 'None'"
+    },
+    "set_ttl": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, ttl_minutes: 'int', request_timeout: 'float | None' = None) -> 'None'"
+    },
+    "start": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, timeout: 'float | None' = 60)"
+    },
+    "stop": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, timeout: 'float | None' = 60, force: 'bool' = False)"
+    },
+    "update_env": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, env: 'dict[str, str]', *, unset: 'list[str] | None' = None) -> 'None'"
+    },
+    "update_network_settings": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, *, network_block_all: 'bool | None' = None, network_allow_list: 'str | None' = None, domain_allow_list: 'str | None' = None, request_timeout: 'float | None' = None) -> 'None'"
+    },
+    "update_secrets": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, secrets: 'dict[str, str]') -> 'None'"
+    },
+    "upload_url": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, path: 'str', ttl_seconds: 'int | None' = None) -> 'str'"
+    },
+    "validate_ssh_access": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, token: 'str', request_timeout: 'float | None' = None) -> 'SshAccessValidationDto'"
+    },
+    "wait_for_resize_complete": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, timeout: 'float | None' = 60) -> 'None'"
+    },
+    "wait_for_sandbox_start": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, timeout: 'float | None' = 60) -> 'None'"
+    },
+    "wait_for_sandbox_stop": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, timeout: 'float | None' = 60) -> 'None'"
+    }
+   }
+  },
+  "daytona.AsyncScreenshot": {
+   "bases": [],
+   "fields": {},
+   "init": "(api_client: 'ComputerUseApi')",
+   "kind": "class",
+   "methods": {
+    "take_compressed": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, options: 'ScreenshotOptions | None' = None, request_timeout: 'float | None' = None) -> 'ScreenshotResponse'"
+    },
+    "take_compressed_region": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, region: 'ScreenshotRegion', options: 'ScreenshotOptions | None' = None, request_timeout: 'float | None' = None) -> 'ScreenshotResponse'"
+    },
+    "take_full_screen": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, show_cursor: 'bool' = False, request_timeout: 'float | None' = None) -> 'ScreenshotResponse'"
+    },
+    "take_region": {
+     "async": true,
+     "kind": "method",
+     "sig": "(self, region: 'ScreenshotRegion', show_cursor: 'bool' = False, request_timeout: 'float | None' = None) -> 'ScreenshotResponse'"
+    }
+   }
+  },
+  "daytona.BarChart": {
+   "bases": [
+    "Chart2D"
+   ],
+   "fields": {
+    "additional_properties": "Dict",
+    "elements": "list",
+    "png": "Optional",
+    "title": "Optional",
+    "type": "Optional",
+    "x_label": "Optional",
+    "x_scale": "Optional",
+    "x_tick_labels": "Optional",
+    "x_ticks": "Optional",
+    "y_label": "Optional",
+    "y_scale": "Optional",
+    "y_tick_labels": "Optional",
+    "y_ticks": "Optional"
+   },
+   "init": "(*, elements: list[daytona_toolbox_api_client.models.chart_element.ChartElement] = <factory>, png: Optional[Annotated[str, Strict(strict=True)]] = None, title: Optional[Annotated[str, Strict(strict=True)]] = None, type: Optional[Annotated[str, Strict(strict=True)]] = None, x_label: Optional[Annotated[str, Strict(strict=True)]] = None, x_scale: Optional[Annotated[str, Strict(strict=True)]] = None, x_tick_labels: Optional[List[Annotated[str, Strict(strict=True)]]] = None, x_ticks: Optional[List[Union[Annotated[float, Strict(strict=True)], Annotated[int, Strict(strict=True)]]]] = None, y_label: Optional[Annotated[str, Strict(strict=True)]] = None, y_scale: Optional[Annotated[str, Strict(strict=True)]] = None, y_tick_labels: Optional[List[Annotated[str, Strict(strict=True)]]] = None, y_ticks: Optional[List[Union[Annotated[float, Strict(strict=True)], Annotated[int, Strict(strict=True)]]]] = None, additional_properties: Dict[str, Any] = {}) -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.BoxAndWhiskerChart": {
+   "bases": [
+    "Chart2D"
+   ],
+   "fields": {
+    "additional_properties": "Dict",
+    "elements": "list",
+    "png": "Optional",
+    "title": "Optional",
+    "type": "Optional",
+    "x_label": "Optional",
+    "x_scale": "Optional",
+    "x_tick_labels": "Optional",
+    "x_ticks": "Optional",
+    "y_label": "Optional",
+    "y_scale": "Optional",
+    "y_tick_labels": "Optional",
+    "y_ticks": "Optional"
+   },
+   "init": "(*, elements: list[daytona_toolbox_api_client.models.chart_element.ChartElement] = <factory>, png: Optional[Annotated[str, Strict(strict=True)]] = None, title: Optional[Annotated[str, Strict(strict=True)]] = None, type: Optional[Annotated[str, Strict(strict=True)]] = None, x_label: Optional[Annotated[str, Strict(strict=True)]] = None, x_scale: Optional[Annotated[str, Strict(strict=True)]] = None, x_tick_labels: Optional[List[Annotated[str, Strict(strict=True)]]] = None, x_ticks: Optional[List[Union[Annotated[float, Strict(strict=True)], Annotated[int, Strict(strict=True)]]]] = None, y_label: Optional[Annotated[str, Strict(strict=True)]] = None, y_scale: Optional[Annotated[str, Strict(strict=True)]] = None, y_tick_labels: Optional[List[Annotated[str, Strict(strict=True)]]] = None, y_ticks: Optional[List[Union[Annotated[float, Strict(strict=True)], Annotated[int, Strict(strict=True)]]]] = None, additional_properties: Dict[str, Any] = {}) -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.CancelEvent": {
+   "bases": [
+    "Protocol"
+   ],
+   "fields": {},
+   "init": "(*args, **kwargs)",
+   "kind": "class",
+   "methods": {
+    "is_set": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self) -> 'bool'"
+    }
+   }
+  },
+  "daytona.Chart": {
+   "bases": [
+    "Chart"
+   ],
+   "fields": {
+    "additional_properties": "Dict",
+    "elements": "list",
+    "png": "Optional",
+    "title": "Optional",
+    "type": "Optional",
+    "x_label": "Optional",
+    "x_scale": "Optional",
+    "x_tick_labels": "Optional",
+    "x_ticks": "Optional",
+    "y_label": "Optional",
+    "y_scale": "Optional",
+    "y_tick_labels": "Optional",
+    "y_ticks": "Optional"
+   },
+   "init": "(*, elements: list[daytona_toolbox_api_client.models.chart_element.ChartElement] = <factory>, png: Optional[Annotated[str, Strict(strict=True)]] = None, title: Optional[Annotated[str, Strict(strict=True)]] = None, type: Optional[Annotated[str, Strict(strict=True)]] = None, x_label: Optional[Annotated[str, Strict(strict=True)]] = None, x_scale: Optional[Annotated[str, Strict(strict=True)]] = None, x_tick_labels: Optional[List[Annotated[str, Strict(strict=True)]]] = None, x_ticks: Optional[List[Union[Annotated[float, Strict(strict=True)], Annotated[int, Strict(strict=True)]]]] = None, y_label: Optional[Annotated[str, Strict(strict=True)]] = None, y_scale: Optional[Annotated[str, Strict(strict=True)]] = None, y_tick_labels: Optional[List[Annotated[str, Strict(strict=True)]]] = None, y_ticks: Optional[List[Union[Annotated[float, Strict(strict=True)], Annotated[int, Strict(strict=True)]]]] = None, additional_properties: Dict[str, Any] = {}) -> None",
+   "kind": "class",
+   "methods": {
+    "model_validate": {
+     "async": false,
+     "kind": "classmethod",
+     "sig": "(cls, obj: 'object', **kwargs: 'object') -> 'Chart'"
+    }
+   }
+  },
+  "daytona.ChartType": {
+   "bases": [
+    "Enum",
+    "str"
+   ],
+   "kind": "enum",
+   "members": {
+    "BAR": "'bar'",
+    "BOX_AND_WHISKER": "'box_and_whisker'",
+    "COMPOSITE_CHART": "'composite_chart'",
+    "LINE": "'line'",
+    "PIE": "'pie'",
+    "SCATTER": "'scatter'",
+    "UNKNOWN": "'unknown'"
+   }
+  },
+  "daytona.CodeLanguage": {
+   "bases": [
+    "Enum",
+    "str"
+   ],
+   "kind": "enum",
+   "members": {
+    "JAVASCRIPT": "'javascript'",
+    "PYTHON": "'python'",
+    "TYPESCRIPT": "'typescript'"
+   }
+  },
+  "daytona.CodeRunParams": {
+   "bases": [],
+   "fields": {
+    "argv": "list[str] | None",
+    "env": "dict[str, str] | None"
+   },
+   "init": "(argv: 'list[str] | None' = None, env: 'dict[str, str] | None' = None) -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.CompositeChart": {
+   "bases": [
+    "Chart"
+   ],
+   "fields": {
+    "additional_properties": "Dict",
+    "elements": "list",
+    "png": "Optional",
+    "title": "Optional",
+    "type": "Optional",
+    "x_label": "Optional",
+    "x_scale": "Optional",
+    "x_tick_labels": "Optional",
+    "x_ticks": "Optional",
+    "y_label": "Optional",
+    "y_scale": "Optional",
+    "y_tick_labels": "Optional",
+    "y_ticks": "Optional"
+   },
+   "init": "(*, elements: list[daytona_toolbox_api_client.models.chart_element.ChartElement] = <factory>, png: Optional[Annotated[str, Strict(strict=True)]] = None, title: Optional[Annotated[str, Strict(strict=True)]] = None, type: Optional[Annotated[str, Strict(strict=True)]] = None, x_label: Optional[Annotated[str, Strict(strict=True)]] = None, x_scale: Optional[Annotated[str, Strict(strict=True)]] = None, x_tick_labels: Optional[List[Annotated[str, Strict(strict=True)]]] = None, x_ticks: Optional[List[Union[Annotated[float, Strict(strict=True)], Annotated[int, Strict(strict=True)]]]] = None, y_label: Optional[Annotated[str, Strict(strict=True)]] = None, y_scale: Optional[Annotated[str, Strict(strict=True)]] = None, y_tick_labels: Optional[List[Annotated[str, Strict(strict=True)]]] = None, y_ticks: Optional[List[Union[Annotated[float, Strict(strict=True)], Annotated[int, Strict(strict=True)]]]] = None, additional_properties: Dict[str, Any] = {}) -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.CreateSandboxBaseParams": {
+   "bases": [
+    "BaseModel"
+   ],
+   "fields": {
+    "auto_archive_interval": "int | None",
+    "auto_delete_interval": "int | None",
+    "auto_pause_interval": "int | None",
+    "auto_stop_interval": "int | None",
+    "domain_allow_list": "str | None",
+    "env_vars": "dict[str, str] | None",
+    "ephemeral": "bool | None",
+    "kvm": "bool | None",
+    "labels": "dict[str, str] | None",
+    "language": "Union",
+    "linked_sandbox": "str | None",
+    "name": "str | None",
+    "network_allow_list": "str | None",
+    "network_block_all": "bool | None",
+    "os_user": "str | None",
+    "otel_endpoint_override": "str | None",
+    "outbound_proxy_url": "str | None",
+    "public": "bool | None",
+    "queue_timeout": "int | None",
+    "secrets": "dict[str, str] | None",
+    "spot": "bool | None",
+    "target": "str | None",
+    "ttl_minutes": "int | None",
+    "volumes": "list[daytona.common.volume.VolumeMount] | None"
+   },
+   "init": "(*, name: str | None = None, language: Union[daytona.common.daytona.CodeLanguage, Literal['python', 'typescript', 'javascript'], NoneType] = None, os_user: str | None = None, env_vars: dict[str, str] | None = None, labels: dict[str, str] | None = None, public: bool | None = None, auto_stop_interval: int | None = None, auto_pause_interval: int | None = None, auto_archive_interval: int | None = None, auto_delete_interval: int | None = None, ttl_minutes: int | None = None, queue_timeout: int | None = None, volumes: list[daytona.common.volume.VolumeMount] | None = None, secrets: dict[str, str] | None = None, network_block_all: bool | None = None, kvm: bool | None = None, network_allow_list: str | None = None, domain_allow_list: str | None = None, outbound_proxy_url: str | None = None, otel_endpoint_override: str | None = None, ephemeral: bool | None = None, spot: bool | None = None, linked_sandbox: str | None = None, target: str | None = None) -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.CreateSandboxFromImageParams": {
+   "bases": [
+    "CreateSandboxBaseParams"
+   ],
+   "fields": {
+    "auto_archive_interval": "int | None",
+    "auto_delete_interval": "int | None",
+    "auto_pause_interval": "int | None",
+    "auto_stop_interval": "int | None",
+    "domain_allow_list": "str | None",
+    "env_vars": "dict[str, str] | None",
+    "ephemeral": "bool | None",
+    "image": "str | daytona.common.image.Image",
+    "kvm": "bool | None",
+    "labels": "dict[str, str] | None",
+    "language": "Union",
+    "linked_sandbox": "str | None",
+    "name": "str | None",
+    "network_allow_list": "str | None",
+    "network_block_all": "bool | None",
+    "os_user": "str | None",
+    "otel_endpoint_override": "str | None",
+    "outbound_proxy_url": "str | None",
+    "public": "bool | None",
+    "queue_timeout": "int | None",
+    "resources": "daytona.common.sandbox.Resources | None",
+    "secrets": "dict[str, str] | None",
+    "spot": "bool | None",
+    "target": "str | None",
+    "ttl_minutes": "int | None",
+    "volumes": "list[daytona.common.volume.VolumeMount] | None"
+   },
+   "init": "(*, name: str | None = None, language: Union[daytona.common.daytona.CodeLanguage, Literal['python', 'typescript', 'javascript'], NoneType] = None, os_user: str | None = None, env_vars: dict[str, str] | None = None, labels: dict[str, str] | None = None, public: bool | None = None, auto_stop_interval: int | None = None, auto_pause_interval: int | None = None, auto_archive_interval: int | None = None, auto_delete_interval: int | None = None, ttl_minutes: int | None = None, queue_timeout: int | None = None, volumes: list[daytona.common.volume.VolumeMount] | None = None, secrets: dict[str, str] | None = None, network_block_all: bool | None = None, kvm: bool | None = None, network_allow_list: str | None = None, domain_allow_list: str | None = None, outbound_proxy_url: str | None = None, otel_endpoint_override: str | None = None, ephemeral: bool | None = None, spot: bool | None = None, linked_sandbox: str | None = None, target: str | None = None, image: str | daytona.common.image.Image, resources: daytona.common.sandbox.Resources | None = None) -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.CreateSandboxFromSnapshotParams": {
+   "bases": [
+    "CreateSandboxBaseParams"
+   ],
+   "fields": {
+    "auto_archive_interval": "int | None",
+    "auto_delete_interval": "int | None",
+    "auto_pause_interval": "int | None",
+    "auto_stop_interval": "int | None",
+    "domain_allow_list": "str | None",
+    "env_vars": "dict[str, str] | None",
+    "ephemeral": "bool | None",
+    "kvm": "bool | None",
+    "labels": "dict[str, str] | None",
+    "language": "Union",
+    "linked_sandbox": "str | None",
+    "name": "str | None",
+    "network_allow_list": "str | None",
+    "network_block_all": "bool | None",
+    "os_user": "str | None",
+    "otel_endpoint_override": "str | None",
+    "outbound_proxy_url": "str | None",
+    "public": "bool | None",
+    "queue_timeout": "int | None",
+    "secrets": "dict[str, str] | None",
+    "snapshot": "str | None",
+    "spot": "bool | None",
+    "target": "str | None",
+    "ttl_minutes": "int | None",
+    "volumes": "list[daytona.common.volume.VolumeMount] | None"
+   },
+   "init": "(*, name: str | None = None, language: Union[daytona.common.daytona.CodeLanguage, Literal['python', 'typescript', 'javascript'], NoneType] = None, os_user: str | None = None, env_vars: dict[str, str] | None = None, labels: dict[str, str] | None = None, public: bool | None = None, auto_stop_interval: int | None = None, auto_pause_interval: int | None = None, auto_archive_interval: int | None = None, auto_delete_interval: int | None = None, ttl_minutes: int | None = None, queue_timeout: int | None = None, volumes: list[daytona.common.volume.VolumeMount] | None = None, secrets: dict[str, str] | None = None, network_block_all: bool | None = None, kvm: bool | None = None, network_allow_list: str | None = None, domain_allow_list: str | None = None, outbound_proxy_url: str | None = None, otel_endpoint_override: str | None = None, ephemeral: bool | None = None, spot: bool | None = None, linked_sandbox: str | None = None, target: str | None = None, snapshot: str | None = None) -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.CreateSecretParams": {
+   "bases": [
+    "BaseModel"
+   ],
+   "fields": {
+    "description": "str | None",
+    "hosts": "list[str] | None",
+    "name": "str",
+    "value": "str"
+   },
+   "init": "(*, name: str, value: str, description: str | None = None, hosts: list[str] | None = None) -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.CreateSnapshotParams": {
+   "bases": [
+    "BaseModel"
+   ],
+   "fields": {
+    "entrypoint": "list[str] | None",
+    "image": "str | daytona.common.image.Image",
+    "name": "str",
+    "region_id": "str | None",
+    "resources": "daytona.common.sandbox.Resources | None",
+    "sandbox_class": "daytona_api_client_async.models.sandbox_class.SandboxClass | None"
+   },
+   "init": "(*, name: str, image: str | daytona.common.image.Image, resources: daytona.common.sandbox.Resources | None = None, entrypoint: list[str] | None = None, region_id: str | None = None, sandbox_class: daytona_api_client_async.models.sandbox_class.SandboxClass | None = None) -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.Daytona": {
+   "bases": [],
+   "fields": {},
+   "init": "(config: 'DaytonaConfig | None' = None)",
+   "kind": "class",
+   "methods": {
+    "create": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, params: 'CreateSandboxFromSnapshotParams | CreateSandboxFromImageParams | None' = None, *, timeout: 'float' = 60, on_snapshot_create_logs: 'Callable[[str], None] | None' = None) -> 'Sandbox'"
+    },
+    "delete": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, sandbox: 'Sandbox', timeout: 'float' = 60, wait: 'bool' = False) -> 'None'"
+    },
+    "get": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, sandbox_id_or_name: 'str', request_timeout: 'float | None' = None) -> 'Sandbox'"
+    },
+    "list": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, query: 'ListSandboxesQuery | None' = None, request_timeout: 'float | None' = None) -> 'Iterator[Sandbox]'"
+    },
+    "start": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, sandbox: 'Sandbox', timeout: 'float' = 60) -> 'None'"
+    },
+    "stop": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, sandbox: 'Sandbox', timeout: 'float' = 60) -> 'None'"
+    }
+   }
+  },
+  "daytona.DaytonaA11yUnavailableError": {
+   "bases": [
+    "DaytonaServiceUnavailableError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaAuthenticationError": {
+   "bases": [
+    "DaytonaError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaAuthorizationError": {
+   "bases": [
+    "DaytonaError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaBadGatewayError": {
+   "bases": [
+    "DaytonaError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaBadRequestError": {
+   "bases": [
+    "DaytonaError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaCommandAlreadyCompletedError": {
+   "bases": [
+    "DaytonaGoneError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaConfig": {
+   "bases": [
+    "BaseModel"
+   ],
+   "fields": {
+    "api_key": "str | None",
+    "api_url": "str | None",
+    "connection_pool_maxsize": "int | None",
+    "jwt_token": "str | None",
+    "organization_id": "str | None",
+    "otel_enabled": "bool | None",
+    "server_url": "str | None",
+    "target": "str | None",
+    "use_deprecated_polling": "bool | None"
+   },
+   "init": "(*, api_key: str | None = None, api_url: str | None = None, server_url: str | None = None, target: str | None = None, jwt_token: str | None = None, organization_id: str | None = None, connection_pool_maxsize: int | None = 250, otel_enabled: bool | None = None, use_deprecated_polling: bool | None = None) -> None",
+   "kind": "class",
+   "methods": {
+    "model_post_init": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self: 'BaseModel', context: 'Any', /) -> 'None'"
+    }
+   }
+  },
+  "daytona.DaytonaConflictError": {
+   "bases": [
+    "DaytonaError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaConnectionError": {
+   "bases": [
+    "DaytonaError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaConnectionTimeoutError": {
+   "bases": [
+    "DaytonaConnectionError",
+    "DaytonaTimeoutError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaError": {
+   "bases": [
+    "Exception"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {
+    "error_code": {
+     "property": true
+    }
+   }
+  },
+  "daytona.DaytonaFileAccessDeniedError": {
+   "bases": [
+    "DaytonaForbiddenError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaFileNotFoundError": {
+   "bases": [
+    "DaytonaNotFoundError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaFileReadFailedError": {
+   "bases": [
+    "DaytonaInternalServerError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaForbiddenError": {
+   "bases": [
+    "DaytonaError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaGitAuthFailedError": {
+   "bases": [
+    "DaytonaAuthenticationError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaGitBranchExistsError": {
+   "bases": [
+    "DaytonaConflictError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaGitBranchNotFoundError": {
+   "bases": [
+    "DaytonaNotFoundError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaGitDirtyWorktreeError": {
+   "bases": [
+    "DaytonaConflictError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaGitMergeConflictError": {
+   "bases": [
+    "DaytonaConflictError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaGitPushRejectedError": {
+   "bases": [
+    "DaytonaConflictError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaGitRemoteRejectedError": {
+   "bases": [
+    "DaytonaUnprocessableEntityError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaGitRepoNotFoundError": {
+   "bases": [
+    "DaytonaNotFoundError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaGitTransportFailedError": {
+   "bases": [
+    "DaytonaBadGatewayError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaGoneError": {
+   "bases": [
+    "DaytonaError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaInternalServerError": {
+   "bases": [
+    "DaytonaError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaInvalidFilePathError": {
+   "bases": [
+    "DaytonaBadRequestError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaLspServerNotInitializedError": {
+   "bases": [
+    "DaytonaBadRequestError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaNotFoundError": {
+   "bases": [
+    "DaytonaError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaProcessExecutionTimeoutError": {
+   "bases": [
+    "DaytonaTimeoutError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaProcessNotFoundError": {
+   "bases": [
+    "DaytonaNotFoundError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaQueueTimeoutError": {
+   "bases": [
+    "DaytonaTimeoutError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaRateLimitError": {
+   "bases": [
+    "DaytonaError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaRecordingFfmpegNotFoundError": {
+   "bases": [
+    "DaytonaServiceUnavailableError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaRecordingStillActiveError": {
+   "bases": [
+    "DaytonaConflictError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaServiceUnavailableError": {
+   "bases": [
+    "DaytonaError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaSessionEndedError": {
+   "bases": [
+    "DaytonaGoneError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaSpotEvictedError": {
+   "bases": [
+    "DaytonaError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaTimeoutError": {
+   "bases": [
+    "DaytonaError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaUnprocessableEntityError": {
+   "bases": [
+    "DaytonaError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DaytonaValidationError": {
+   "bases": [
+    "DaytonaError"
+   ],
+   "fields": {},
+   "init": "(message: 'str', status_code: 'int | None' = None, headers: 'Mapping[str, Any] | None' = None, code: 'str | None' = None, source: 'str | None' = None)",
+   "kind": "exception",
+   "methods": {}
+  },
+  "daytona.DownloadProgress": {
+   "bases": [],
+   "fields": {
+    "bytes_received": "int",
+    "total_bytes": "int | None"
+   },
+   "init": "(bytes_received: 'int', total_bytes: 'int | None' = None) -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.ExecuteResponse": {
+   "bases": [
+    "BaseModel"
+   ],
+   "fields": {
+    "additional_properties": "dict",
+    "artifacts": "daytona.common.process.ExecutionArtifacts | None",
+    "exit_code": "int",
+    "result": "str"
+   },
+   "init": "(*, exit_code: int, result: str, artifacts: daytona.common.process.ExecutionArtifacts | None = None, additional_properties: dict[str, object] = <factory>, **extra_data: Any) -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.ExecutionArtifacts": {
+   "bases": [],
+   "fields": {
+    "charts": "list[Chart] | None",
+    "stdout": "str"
+   },
+   "init": "(stdout: 'str' = '', charts: 'list[Chart] | None' = None) -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.ExecutionError": {
+   "bases": [
+    "BaseModel"
+   ],
+   "fields": {
+    "name": "str",
+    "traceback": "str",
+    "value": "str"
+   },
+   "init": "(*, name: str, value: str, traceback: str = '') -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.ExecutionResult": {
+   "bases": [
+    "BaseModel"
+   ],
+   "fields": {
+    "error": "daytona.common.code_interpreter.ExecutionError | None",
+    "stderr": "str",
+    "stdout": "str"
+   },
+   "init": "(*, stdout: str = '', stderr: str = '', error: daytona.common.code_interpreter.ExecutionError | None = None) -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.FileDownloadErrorDetails": {
+   "bases": [],
+   "fields": {
+    "code": "str | None",
+    "error_code": "str | None",
+    "message": "str",
+    "source": "str | None",
+    "status_code": "int | None"
+   },
+   "init": "(message: 'str', status_code: 'int | None' = None, code: 'str | None' = None, source: 'str | None' = None, error_code: 'str | None' = None) -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.FileDownloadRequest": {
+   "bases": [],
+   "fields": {
+    "destination": "str | None",
+    "source": "str"
+   },
+   "init": "(source: 'str', destination: 'str | None' = None) -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.FileDownloadResponse": {
+   "bases": [],
+   "fields": {
+    "error": "str | None",
+    "error_details": "FileDownloadErrorDetails | None",
+    "result": "str | bytes | None",
+    "source": "str"
+   },
+   "init": "(source: 'str', result: 'str | bytes | None' = None, error: 'str | None' = None, error_details: 'FileDownloadErrorDetails | None' = None) -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.FileUpload": {
+   "bases": [],
+   "fields": {
+    "destination": "str",
+    "source": "bytes | str"
+   },
+   "init": "(source: 'bytes | str', destination: 'str') -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.GpuType": {
+   "bases": [
+    "Enum",
+    "str"
+   ],
+   "kind": "enum",
+   "members": {
+    "B200": "'B200'",
+    "B300": "'B300'",
+    "H100": "'H100'",
+    "H200": "'H200'",
+    "MI355X": "'MI355X'",
+    "RTX_4090": "'RTX-4090'",
+    "RTX_5090": "'RTX-5090'",
+    "RTX_PRO_6000": "'RTX-PRO-6000'",
+    "UNKNOWN_DEFAULT_OPEN_API": "'unknown_default_open_api'"
+   }
+  },
+  "daytona.Image": {
+   "bases": [
+    "BaseModel"
+   ],
+   "fields": {},
+   "init": "() -> None",
+   "kind": "class",
+   "methods": {
+    "add_local_dir": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, local_path: 'str | Path', remote_path: 'str') -> \"'Image'\""
+    },
+    "add_local_file": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, local_path: 'str | Path', remote_path: 'str') -> \"'Image'\""
+    },
+    "base": {
+     "async": false,
+     "kind": "staticmethod",
+     "sig": "(image: 'str') -> \"'Image'\""
+    },
+    "cmd": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, cmd: 'list[str]') -> \"'Image'\""
+    },
+    "debian_slim": {
+     "async": false,
+     "kind": "staticmethod",
+     "sig": "(python_version: 'SupportedPythonSeries | None' = None) -> \"'Image'\""
+    },
+    "dockerfile": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self) -> 'str'"
+    },
+    "dockerfile_commands": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, dockerfile_commands: 'list[str]', context_dir: 'Path | str | None' = None, *, strict_context: 'bool' = False) -> \"'Image'\""
+    },
+    "entrypoint": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, entrypoint_commands: 'list[str]') -> \"'Image'\""
+    },
+    "env": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, env_vars: 'dict[str, str]') -> \"'Image'\""
+    },
+    "from_dockerfile": {
+     "async": false,
+     "kind": "staticmethod",
+     "sig": "(path: 'str | Path', *, strict_context: 'bool' = False) -> \"'Image'\""
+    },
+    "model_post_init": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self: 'BaseModel', context: 'Any', /) -> 'None'"
+    },
+    "pip_install": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, *packages: 'str | list[str]', find_links: 'list[str] | None' = None, index_url: 'str | None' = None, extra_index_urls: 'list[str] | None' = None, pre: 'bool' = False, extra_options: 'str' = '') -> \"'Image'\""
+    },
+    "pip_install_from_pyproject": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, pyproject_toml: 'str', optional_dependencies: 'list[str]', find_links: 'str | None' = None, index_url: 'str | None' = None, extra_index_url: 'str | None' = None, pre: 'bool' = False, extra_options: 'str' = '') -> \"'Image'\""
+    },
+    "pip_install_from_requirements": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, requirements_txt: 'str', find_links: 'list[str] | None' = None, index_url: 'str | None' = None, extra_index_urls: 'list[str] | None' = None, pre: 'bool' = False, extra_options: 'str' = '') -> \"'Image'\""
+    },
+    "run_commands": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, *commands: 'str | list[str]') -> \"'Image'\""
+    },
+    "workdir": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, path: 'str | Path') -> \"'Image'\""
+    }
+   }
+  },
+  "daytona.LineChart": {
+   "bases": [
+    "PointChart"
+   ],
+   "fields": {
+    "additional_properties": "Dict",
+    "elements": "list",
+    "png": "Optional",
+    "title": "Optional",
+    "type": "Optional",
+    "x_label": "Optional",
+    "x_scale": "Optional",
+    "x_tick_labels": "Optional",
+    "x_ticks": "Optional",
+    "y_label": "Optional",
+    "y_scale": "Optional",
+    "y_tick_labels": "Optional",
+    "y_ticks": "Optional"
+   },
+   "init": "(*, elements: list[daytona_toolbox_api_client.models.chart_element.ChartElement] = <factory>, png: Optional[Annotated[str, Strict(strict=True)]] = None, title: Optional[Annotated[str, Strict(strict=True)]] = None, type: Optional[Annotated[str, Strict(strict=True)]] = None, x_label: Optional[Annotated[str, Strict(strict=True)]] = None, x_scale: Optional[Annotated[str, Strict(strict=True)]] = None, x_tick_labels: Optional[List[Annotated[str, Strict(strict=True)]]] = None, x_ticks: Optional[List[Union[Annotated[float, Strict(strict=True)], Annotated[int, Strict(strict=True)]]]] = None, y_label: Optional[Annotated[str, Strict(strict=True)]] = None, y_scale: Optional[Annotated[str, Strict(strict=True)]] = None, y_tick_labels: Optional[List[Annotated[str, Strict(strict=True)]]] = None, y_ticks: Optional[List[Union[Annotated[float, Strict(strict=True)], Annotated[int, Strict(strict=True)]]]] = None, additional_properties: Dict[str, Any] = {}) -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.ListSandboxesQuery": {
+   "bases": [],
+   "fields": {
+    "auto_destroy_at_after": "datetime | None",
+    "auto_destroy_at_before": "datetime | None",
+    "created_at_after": "datetime | None",
+    "created_at_before": "datetime | None",
+    "id": "str | None",
+    "is_public": "bool | None",
+    "is_recoverable": "bool | None",
+    "labels": "dict[str, str] | None",
+    "last_activity_after": "datetime | None",
+    "last_activity_before": "datetime | None",
+    "limit": "int | None",
+    "max_cpu": "int | None",
+    "max_disk_gib": "int | None",
+    "max_memory_gib": "int | None",
+    "min_cpu": "int | None",
+    "min_disk_gib": "int | None",
+    "min_memory_gib": "int | None",
+    "name": "str | None",
+    "order": "SandboxListSortDirection | None",
+    "snapshots": "list[str] | None",
+    "sort": "SandboxListSortField | None",
+    "states": "list[SandboxState] | None",
+    "targets": "list[str] | None"
+   },
+   "init": "(limit: 'int | None' = None, id: 'str | None' = None, name: 'str | None' = None, labels: 'dict[str, str] | None' = None, states: 'list[SandboxState] | None' = None, snapshots: 'list[str] | None' = None, targets: 'list[str] | None' = None, min_cpu: 'int | None' = None, max_cpu: 'int | None' = None, min_memory_gib: 'int | None' = None, max_memory_gib: 'int | None' = None, min_disk_gib: 'int | None' = None, max_disk_gib: 'int | None' = None, is_public: 'bool | None' = None, is_recoverable: 'bool | None' = None, created_at_after: 'datetime | None' = None, created_at_before: 'datetime | None' = None, last_activity_after: 'datetime | None' = None, last_activity_before: 'datetime | None' = None, auto_destroy_at_after: 'datetime | None' = None, auto_destroy_at_before: 'datetime | None' = None, sort: 'SandboxListSortField | None' = None, order: 'SandboxListSortDirection | None' = None) -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.ListSecretsResponse": {
+   "bases": [
+    "ListSecretsResponse"
+   ],
+   "fields": {
+    "additional_properties": "Dict",
+    "items": "List",
+    "next_cursor": "Optional",
+    "total": "int"
+   },
+   "init": "(*, items: List[daytona_api_client.models.secret.Secret], total: Annotated[int, Strict(strict=True)], next_cursor: Optional[Annotated[str, Strict(strict=True)]], additional_properties: Dict[str, Any] = {}) -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.LspCompletionPosition": {
+   "bases": [],
+   "fields": {
+    "character": "int",
+    "line": "int"
+   },
+   "init": "(line: 'int', character: 'int') -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.LspLanguageId": {
+   "bases": [
+    "Enum",
+    "str"
+   ],
+   "kind": "enum",
+   "members": {
+    "JAVASCRIPT": "'javascript'",
+    "PYTHON": "'python'",
+    "TYPESCRIPT": "'typescript'"
+   }
+  },
+  "daytona.OutputHandler": {
+   "kind": "value",
+   "type": "UnionType"
+  },
+  "daytona.OutputMessage": {
+   "bases": [
+    "BaseModel"
+   ],
+   "fields": {
+    "output": "str"
+   },
+   "init": "(*, output: str) -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.PieChart": {
+   "bases": [
+    "Chart"
+   ],
+   "fields": {
+    "additional_properties": "Dict",
+    "elements": "list",
+    "png": "Optional",
+    "title": "Optional",
+    "type": "Optional",
+    "x_label": "Optional",
+    "x_scale": "Optional",
+    "x_tick_labels": "Optional",
+    "x_ticks": "Optional",
+    "y_label": "Optional",
+    "y_scale": "Optional",
+    "y_tick_labels": "Optional",
+    "y_ticks": "Optional"
+   },
+   "init": "(*, elements: list[daytona_toolbox_api_client.models.chart_element.ChartElement] = <factory>, png: Optional[Annotated[str, Strict(strict=True)]] = None, title: Optional[Annotated[str, Strict(strict=True)]] = None, type: Optional[Annotated[str, Strict(strict=True)]] = None, x_label: Optional[Annotated[str, Strict(strict=True)]] = None, x_scale: Optional[Annotated[str, Strict(strict=True)]] = None, x_tick_labels: Optional[List[Annotated[str, Strict(strict=True)]]] = None, x_ticks: Optional[List[Union[Annotated[float, Strict(strict=True)], Annotated[int, Strict(strict=True)]]]] = None, y_label: Optional[Annotated[str, Strict(strict=True)]] = None, y_scale: Optional[Annotated[str, Strict(strict=True)]] = None, y_tick_labels: Optional[List[Annotated[str, Strict(strict=True)]]] = None, y_ticks: Optional[List[Union[Annotated[float, Strict(strict=True)], Annotated[int, Strict(strict=True)]]]] = None, additional_properties: Dict[str, Any] = {}) -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.PtySize": {
+   "bases": [],
+   "fields": {
+    "cols": "int",
+    "rows": "int"
+   },
+   "init": "(rows: 'int', cols: 'int') -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.Resources": {
+   "bases": [],
+   "fields": {
+    "cpu": "int | None",
+    "disk": "int | None",
+    "gpu": "int | None",
+    "gpu_type": "GpuType | list[GpuType] | None",
+    "memory": "int | None"
+   },
+   "init": "(cpu: 'int | None' = None, memory: 'int | None' = None, disk: 'int | None' = None, gpu: 'int | None' = None, gpu_type: 'GpuType | list[GpuType] | None' = None) -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.Sandbox": {
+   "bases": [
+    "Sandbox"
+   ],
+   "fields": {
+    "additional_properties": "Dict",
+    "auto_archive_interval": "Union",
+    "auto_delete_interval": "Union",
+    "auto_destroy_at": "Optional",
+    "auto_pause_interval": "Union",
+    "auto_stop_interval": "Union",
+    "backup_created_at": "Optional",
+    "backup_state": "Optional",
+    "build_info": "Optional",
+    "cpu": "int",
+    "created_at": "Optional",
+    "daemon_version": "Optional",
+    "desired_state": "Optional",
+    "disk": "int",
+    "domain_allow_list": "Optional",
+    "env": "dict[str, str] | None",
+    "error_reason": "Optional",
+    "gpu": "int",
+    "gpu_type": "Optional",
+    "id": "str",
+    "kvm": "bool | None",
+    "labels": "Dict",
+    "last_activity_at": "Optional",
+    "linked_sandbox_id": "Optional",
+    "memory": "int",
+    "name": "str",
+    "network_allow_list": "Optional",
+    "network_block_all": "bool | None",
+    "organization_id": "str",
+    "otel_endpoint_override": "Optional",
+    "outbound_proxy_url": "Optional",
+    "public": "bool",
+    "queue_timed_out_at": "Optional",
+    "queue_timeout": "Optional",
+    "recoverable": "Optional",
+    "runner_id": "Optional",
+    "sandbox_class": "Optional",
+    "snapshot": "Optional",
+    "spot": "Optional",
+    "spot_evicted_at": "Optional",
+    "state": "Optional",
+    "target": "str",
+    "toolbox_proxy_url": "str",
+    "updated_at": "Optional",
+    "user": "str",
+    "volumes": "Optional",
+    "warm_pool_id": "Optional"
+   },
+   "init": "(sandbox_dto: 'SandboxDto | SandboxListItem', toolbox_api: 'ApiClient', sandbox_api: 'SandboxApi', language: 'str', subscription_manager: 'SyncEventSubscriptionManager', http_client: 'httpx.Client', analytics_api_url_provider: 'Callable[[], str | None] | None' = None) -> None",
+   "kind": "class",
+   "methods": {
+    "archive": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, request_timeout: 'float | None' = None) -> 'None'"
+    },
+    "code_interpreter": {
+     "property": true
+    },
+    "computer_use": {
+     "property": true
+    },
+    "create_lsp_server": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, language_id: 'LspLanguageId | LspLanguageIdLiteral', path_to_project: 'str') -> 'LspServer'"
+    },
+    "create_signed_preview_url": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, port: 'int', expires_in_seconds: 'int | None' = None, request_timeout: 'float | None' = None) -> 'SignedPortPreviewUrl'"
+    },
+    "create_snapshot": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, name: 'str', timeout: 'float | None' = 60) -> 'None'"
+    },
+    "create_ssh_access": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, expires_in_minutes: 'int | None' = None, request_timeout: 'float | None' = None) -> 'SshAccessDto'"
+    },
+    "delete": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, timeout: 'float | None' = 60, wait: 'bool' = False) -> 'None'"
+    },
+    "download_url": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, path: 'str', ttl_seconds: 'int | None' = None) -> 'str'"
+    },
+    "expire_signed_preview_url": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, port: 'int', token: 'str', request_timeout: 'float | None' = None) -> 'None'"
+    },
+    "fork": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, name: 'str | None' = None, timeout: 'float | None' = 60) -> \"'Sandbox'\""
+    },
+    "fs": {
+     "property": true
+    },
+    "get_metrics": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, start: 'datetime | None' = None, end: 'datetime | None' = None) -> 'list[SandboxMetrics]'"
+    },
+    "get_metrics_latest": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self) -> 'SandboxMetrics'"
+    },
+    "get_preview_link": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, port: 'int', request_timeout: 'float | None' = None) -> 'PortPreviewUrl'"
+    },
+    "get_user_home_dir": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self) -> 'str'"
+    },
+    "get_user_root_dir": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self) -> 'str'"
+    },
+    "get_work_dir": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self) -> 'str'"
+    },
+    "git": {
+     "property": true
+    },
+    "model_post_init": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self: 'BaseModel', context: 'Any', /) -> 'None'"
+    },
+    "pause": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, timeout: 'float' = 60) -> 'None'"
+    },
+    "process": {
+     "property": true
+    },
+    "recover": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, timeout: 'float | None' = 60)"
+    },
+    "refresh_activity": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, request_timeout: 'float | None' = None) -> 'None'"
+    },
+    "refresh_data": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, request_timeout: 'float | None' = None) -> 'None'"
+    },
+    "resize": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, resources: 'Resources', timeout: 'float | None' = 60) -> 'None'"
+    },
+    "revoke_ssh_access": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, token: 'str', request_timeout: 'float | None' = None) -> 'None'"
+    },
+    "rotate_signing_key": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self) -> 'None'"
+    },
+    "set_auto_archive_interval": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, interval: 'int', request_timeout: 'float | None' = None) -> 'None'"
+    },
+    "set_auto_delete_interval": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, interval: 'int', request_timeout: 'float | None' = None) -> 'None'"
+    },
+    "set_auto_pause_interval": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, interval: 'int') -> 'None'"
+    },
+    "set_autostop_interval": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, interval: 'int', request_timeout: 'float | None' = None) -> 'None'"
+    },
+    "set_labels": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, labels: 'dict[str, str]', request_timeout: 'float | None' = None) -> 'dict[str, str]'"
+    },
+    "set_public": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, public: 'bool', request_timeout: 'float | None' = None) -> 'None'"
+    },
+    "set_ttl": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, ttl_minutes: 'int', request_timeout: 'float | None' = None) -> 'None'"
+    },
+    "start": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, timeout: 'float | None' = 60)"
+    },
+    "stop": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, timeout: 'float | None' = 60, force: 'bool' = False)"
+    },
+    "update_env": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, env: 'dict[str, str]', *, unset: 'list[str] | None' = None) -> 'None'"
+    },
+    "update_network_settings": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, *, network_block_all: 'bool | None' = None, network_allow_list: 'str | None' = None, domain_allow_list: 'str | None' = None, request_timeout: 'float | None' = None) -> 'None'"
+    },
+    "update_secrets": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, secrets: 'dict[str, str]') -> 'None'"
+    },
+    "upload_url": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, path: 'str', ttl_seconds: 'int | None' = None) -> 'str'"
+    },
+    "validate_ssh_access": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, token: 'str', request_timeout: 'float | None' = None) -> 'SshAccessValidationDto'"
+    },
+    "wait_for_resize_complete": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, timeout: 'float | None' = 60) -> 'None'"
+    },
+    "wait_for_sandbox_start": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, timeout: 'float | None' = 60) -> 'None'"
+    },
+    "wait_for_sandbox_stop": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self, timeout: 'float | None' = 60) -> 'None'"
+    }
+   }
+  },
+  "daytona.SandboxClass": {
+   "bases": [
+    "Enum",
+    "str"
+   ],
+   "kind": "enum",
+   "members": {
+    "CONTAINER": "'container'",
+    "LINUX_VM": "'linux-vm'",
+    "UNKNOWN_DEFAULT_OPEN_API": "'unknown_default_open_api'",
+    "WINDOWS": "'windows'"
+   }
+  },
+  "daytona.SandboxListSortDirection": {
+   "bases": [
+    "Enum",
+    "str"
+   ],
+   "kind": "enum",
+   "members": {
+    "ASC": "'asc'",
+    "DESC": "'desc'",
+    "UNKNOWN_DEFAULT_OPEN_API": "'unknown_default_open_api'"
+   }
+  },
+  "daytona.SandboxListSortField": {
+   "bases": [
+    "Enum",
+    "str"
+   ],
+   "kind": "enum",
+   "members": {
+    "CPU": "'cpu'",
+    "CREATEDAT": "'createdAt'",
+    "DISKGIB": "'diskGib'",
+    "LASTACTIVITYAT": "'lastActivityAt'",
+    "MEMORYGIB": "'memoryGib'",
+    "NAME": "'name'",
+    "UNKNOWN_DEFAULT_OPEN_API": "'unknown_default_open_api'"
+   }
+  },
+  "daytona.SandboxMetrics": {
+   "bases": [],
+   "fields": {
+    "cpu_count": "int",
+    "cpu_used_pct": "float",
+    "disk_total": "int",
+    "disk_used": "int",
+    "mem_cache": "int",
+    "mem_total": "int",
+    "mem_used": "int",
+    "timestamp": "datetime"
+   },
+   "init": "(cpu_count: 'int', cpu_used_pct: 'float', disk_total: 'int', disk_used: 'int', mem_total: 'int', mem_used: 'int', mem_cache: 'int', timestamp: 'datetime') -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.SandboxState": {
+   "bases": [
+    "Enum",
+    "str"
+   ],
+   "kind": "enum",
+   "members": {
+    "ARCHIVED": "'archived'",
+    "ARCHIVING": "'archiving'",
+    "BUILDING_SNAPSHOT": "'building_snapshot'",
+    "BUILD_FAILED": "'build_failed'",
+    "CREATING": "'creating'",
+    "DESTROYED": "'destroyed'",
+    "DESTROYING": "'destroying'",
+    "ERROR": "'error'",
+    "FORKING": "'forking'",
+    "PAUSED": "'paused'",
+    "PAUSING": "'pausing'",
+    "PENDING_BUILD": "'pending_build'",
+    "PULLING_SNAPSHOT": "'pulling_snapshot'",
+    "RESIZING": "'resizing'",
+    "RESTORING": "'restoring'",
+    "RESUMING": "'resuming'",
+    "SNAPSHOTTING": "'snapshotting'",
+    "STARTED": "'started'",
+    "STARTING": "'starting'",
+    "STOPPED": "'stopped'",
+    "STOPPING": "'stopping'",
+    "UNKNOWN": "'unknown'",
+    "UNKNOWN_DEFAULT_OPEN_API": "'unknown_default_open_api'"
+   }
+  },
+  "daytona.ScatterChart": {
+   "bases": [
+    "PointChart"
+   ],
+   "fields": {
+    "additional_properties": "Dict",
+    "elements": "list",
+    "png": "Optional",
+    "title": "Optional",
+    "type": "Optional",
+    "x_label": "Optional",
+    "x_scale": "Optional",
+    "x_tick_labels": "Optional",
+    "x_ticks": "Optional",
+    "y_label": "Optional",
+    "y_scale": "Optional",
+    "y_tick_labels": "Optional",
+    "y_ticks": "Optional"
+   },
+   "init": "(*, elements: list[daytona_toolbox_api_client.models.chart_element.ChartElement] = <factory>, png: Optional[Annotated[str, Strict(strict=True)]] = None, title: Optional[Annotated[str, Strict(strict=True)]] = None, type: Optional[Annotated[str, Strict(strict=True)]] = None, x_label: Optional[Annotated[str, Strict(strict=True)]] = None, x_scale: Optional[Annotated[str, Strict(strict=True)]] = None, x_tick_labels: Optional[List[Annotated[str, Strict(strict=True)]]] = None, x_ticks: Optional[List[Union[Annotated[float, Strict(strict=True)], Annotated[int, Strict(strict=True)]]]] = None, y_label: Optional[Annotated[str, Strict(strict=True)]] = None, y_scale: Optional[Annotated[str, Strict(strict=True)]] = None, y_tick_labels: Optional[List[Annotated[str, Strict(strict=True)]]] = None, y_ticks: Optional[List[Union[Annotated[float, Strict(strict=True)], Annotated[int, Strict(strict=True)]]]] = None, additional_properties: Dict[str, Any] = {}) -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.ScreenshotOptions": {
+   "bases": [
+    "BaseModel"
+   ],
+   "fields": {
+    "fmt": "str | None",
+    "quality": "int | None",
+    "scale": "float | None",
+    "show_cursor": "bool | None"
+   },
+   "init": "(*, show_cursor: bool | None = None, fmt: str | None = None, quality: Annotated[int | None, Ge(ge=0), Le(le=100)] = None, scale: Annotated[float | None, Gt(gt=0)] = None) -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.ScreenshotRegion": {
+   "bases": [
+    "BaseModel"
+   ],
+   "fields": {
+    "height": "int",
+    "width": "int",
+    "x": "int",
+    "y": "int"
+   },
+   "init": "(*, x: int, y: int, width: int, height: int) -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.Secret": {
+   "bases": [
+    "Secret"
+   ],
+   "fields": {
+    "additional_properties": "Dict",
+    "created_at": "datetime",
+    "description": "Optional",
+    "hosts": "List",
+    "id": "str",
+    "name": "str",
+    "placeholder": "str",
+    "updated_at": "datetime"
+   },
+   "init": "(*, id: Annotated[str, Strict(strict=True)], name: Annotated[str, Strict(strict=True)], description: Optional[Annotated[str, Strict(strict=True)]] = None, created_at: datetime.datetime, placeholder: Annotated[str, Strict(strict=True)], hosts: List[Annotated[str, Strict(strict=True)]], updated_at: datetime.datetime, additional_properties: Dict[str, Any] = {}) -> None",
+   "kind": "class",
+   "methods": {
+    "from_dto": {
+     "async": false,
+     "kind": "classmethod",
+     "sig": "(cls, dto: 'SecretDto | AsyncSecretDto') -> \"'Secret'\""
+    }
+   }
+  },
+  "daytona.SessionExecuteRequest": {
+   "bases": [
+    "SessionExecuteRequest",
+    "SessionExecuteRequest"
+   ],
+   "fields": {
+    "additional_properties": "Dict",
+    "command": "str",
+    "run_async": "Optional",
+    "suppress_input_echo": "Optional",
+    "var_async": "Optional"
+   },
+   "init": "(*, var_async: Optional[Annotated[bool, Strict(strict=True)]] = None, command: Annotated[str, Strict(strict=True)], run_async: Optional[Annotated[bool, Strict(strict=True)]] = None, suppress_input_echo: Optional[Annotated[bool, Strict(strict=True)]] = None, additional_properties: Dict[str, Any] = {}) -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.SessionExecuteResponse": {
+   "bases": [
+    "BaseModel"
+   ],
+   "fields": {
+    "additional_properties": "Dict",
+    "cmd_id": "str",
+    "exit_code": "Optional",
+    "output": "Optional",
+    "stderr": "Optional",
+    "stdout": "Optional"
+   },
+   "init": "(*, cmd_id: Annotated[str, Strict(strict=True)], exit_code: Optional[Annotated[int, Strict(strict=True)]] = None, output: Optional[Annotated[str, Strict(strict=True)]] = None, stderr: Optional[Annotated[str, Strict(strict=True)]] = None, stdout: Optional[Annotated[str, Strict(strict=True)]] = None, additional_properties: Dict[str, Any] = {}) -> None",
+   "kind": "class",
+   "methods": {
+    "from_dict": {
+     "async": false,
+     "kind": "classmethod",
+     "sig": "(cls, obj: 'Optional[Dict[str, Any]]') -> 'Optional[Self]'"
+    },
+    "from_json": {
+     "async": false,
+     "kind": "classmethod",
+     "sig": "(cls, json_str: 'str') -> 'Optional[Self]'"
+    },
+    "to_dict": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self) -> 'Dict[str, Any]'"
+    },
+    "to_json": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self) -> 'str'"
+    },
+    "to_str": {
+     "async": false,
+     "kind": "method",
+     "sig": "(self) -> 'str'"
+    }
+   }
+  },
+  "daytona.UpdateSecretParams": {
+   "bases": [
+    "BaseModel"
+   ],
+   "fields": {
+    "description": "str | None",
+    "hosts": "list[str] | None",
+    "value": "str | None"
+   },
+   "init": "(*, value: str | None = None, description: str | None = None, hosts: list[str] | None = None) -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.UploadProgress": {
+   "bases": [],
+   "fields": {
+    "bytes_sent": "int"
+   },
+   "init": "(bytes_sent: 'int') -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.VolumeMount": {
+   "bases": [
+    "SandboxVolume",
+    "SandboxVolume"
+   ],
+   "fields": {
+    "additional_properties": "Dict",
+    "mount_path": "str",
+    "subpath": "Optional",
+    "volume_id": "str"
+   },
+   "init": "(*, volume_id: Annotated[str, Strict(strict=True)], mount_path: Annotated[str, Strict(strict=True)], subpath: Optional[Annotated[str, Strict(strict=True)]] = None, additional_properties: Dict[str, Any] = {}) -> None",
+   "kind": "class",
+   "methods": {}
+  },
+  "daytona.WarmPool": {
+   "bases": [
+    "WarmPool"
+   ],
+   "fields": {
+    "additional_properties": "Dict",
+    "cpu": "Union",
+    "created_at": "str",
+    "current_size": "Union",
+    "disk": "Union",
+    "env": "Dict",
+    "error_reason": "Optional",
+    "id": "str",
+    "mem": "Union",
+    "organization_id": "str",
+    "os_user": "str",
+    "pool": "Union",
+    "snapshot": "str",
+    "target": "str",
+    "updated_at": "str"
+   },
+   "init": "(*, id: Annotated[str, Strict(strict=True)], organization_id: Annotated[str, Strict(strict=True)], snapshot: Annotated[str, Strict(strict=True)], target: Annotated[str, Strict(strict=True)], pool: Union[Annotated[float, Strict(strict=True)], Annotated[int, Strict(strict=True)]], current_size: Union[Annotated[float, Strict(strict=True)], Annotated[int, Strict(strict=True)]], cpu: Union[Annotated[float, Strict(strict=True)], Annotated[int, Strict(strict=True)]], mem: Union[Annotated[float, Strict(strict=True)], Annotated[int, Strict(strict=True)]], disk: Union[Annotated[float, Strict(strict=True)], Annotated[int, Strict(strict=True)]], os_user: Annotated[str, Strict(strict=True)], env: Dict[str, Annotated[str, Strict(strict=True)]], error_reason: Optional[Annotated[str, Strict(strict=True)]] = None, created_at: Annotated[str, Strict(strict=True)], updated_at: Annotated[str, Strict(strict=True)], additional_properties: Dict[str, Any] = {}) -> None",
+   "kind": "class",
+   "methods": {
+    "from_dto": {
+     "async": false,
+     "kind": "classmethod",
+     "sig": "(cls, dto: 'WarmPoolDto | AsyncWarmPoolDto') -> \"'WarmPool'\""
+    }
+   }
+  }
+ },
+ "version": "0.225.0"
+}

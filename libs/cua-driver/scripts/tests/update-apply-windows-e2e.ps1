@@ -62,8 +62,23 @@ $versions = @($tags.Output -split "`r?`n" |
     ForEach-Object { [version]($_ -replace '^cua-driver-rs-v', '') } |
     Where-Object { $withdrawn -notcontains $_.ToString() } |
     Sort-Object -Descending -Unique)
-Assert-True ($versions.Count -ge 2) 'need two published releases to test an update'
-$from = $versions[1].ToString()
+# The updater's stable channel resolves the version baked into the published
+# installer, which lags the newest release until that release is promoted.
+# Update from the release below that version, or "Already up to date" is the
+# correct (and failing) answer here.
+$latest = $versions[0]
+try {
+    $script = (Invoke-WebRequest -UseBasicParsing -Uri 'https://cua.ai/driver/_install-rust.sh').Content
+    if ($script -match '(?m)^CUA_DRIVER_RS_BAKED_VERSION="v?(\d+\.\d+\.\d+)"') {
+        $latest = [version]$Matches[1]
+    }
+} catch {
+    Write-Host "could not read the installer's baked version, using the newest release: $_"
+}
+Write-Host "Updater target (installer's stable version): $latest"
+$versions = @($versions | Where-Object { $_ -lt $latest })
+Assert-True ($versions.Count -ge 1) 'need a published release below the updater target to test an update'
+$from = $versions[0].ToString()
 Write-Host "Updating from cua-driver $from"
 
 $testRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('cua-driver-update-apply-' + [guid]::NewGuid().ToString('N'))

@@ -101,7 +101,7 @@ export function renderPicker(c: TeleportPickerController, icons: Map<string, str
   const space = esc(s.spaceName)
   switch (s.step) {
     case "loading":
-      return `<div class="panel"><h1>Teleport an app to ${space}</h1><p class="hint">Looking for apps on this machine…</p></div>`
+      return `<div class="panel"><h1>Teleport an app to ${space}</h1><p class="hint">Looking for apps on this computer…</p></div>`
     case "pick": {
       const rows = sections(s)
         .map(
@@ -158,9 +158,9 @@ export function renderPicker(c: TeleportPickerController, icons: Map<string, str
       return `<div class="panel"><h1>Teleport ${esc(p.app.name)} to ${space}?</h1>
         <p class="hint">${esc(p.steps.map((x) => x.summary).join(" · "))}</p>
         <div class="items" role="list">${items}</div>
-        <p class="hint">${p.totalBytes ? `${esc(formatBytes(p.totalBytes))} leaves this machine.` : "No files or app data leave this machine."}</p>
+        <p class="hint">${p.totalBytes ? `${esc(formatBytes(p.totalBytes))} leaves this computer.` : "No files or app data leave this computer."}</p>
         ${p.warnings.map((w) => `<p class="warn">${esc(w)}</p>`).join("")}
-        ${p.sensitive ? `<label class="choice"><input type="checkbox" data-act="ack" ${s.acknowledged ? "checked" : ""}><span>I understand the secrets above leave this machine.</span></label>` : ""}
+        ${p.sensitive ? `<label class="choice"><input type="checkbox" data-act="ack" ${s.acknowledged ? "checked" : ""}><span>I understand the secrets above leave this computer.</span></label>` : ""}
         <footer><button class="btn" data-act="back">Back</button>
         <button class="btn primary" data-act="confirm" ${canConfirm(s) ? "" : "disabled"}>Teleport</button></footer></div>`
     }

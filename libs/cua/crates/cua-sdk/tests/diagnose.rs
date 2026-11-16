@@ -11,9 +11,6 @@ fn cua(dir: &tempfile::TempDir) -> std::sync::Arc<Cua> {
     Cua::embedded(CuaConfig {
         state_dir: Some(dir.path().join("sandboxes").display().to_string()),
         spaces_home: Some(dir.path().join("cua").display().to_string()),
-        fleet_pool_home: Some(dir.path().join("pools").display().to_string()),
-        fleet_from_env: false,
-        fleet_from_session: false,
         ..Default::default()
     })
     .unwrap()

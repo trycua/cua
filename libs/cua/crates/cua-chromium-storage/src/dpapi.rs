@@ -56,7 +56,7 @@ impl Dpapi for SystemDpapi {
             )
         };
         if ok == 0 {
-            return Err("CryptUnprotectData failed (a different Windows user or machine?)".into());
+            return Err("CryptUnprotectData failed (a different Windows user or computer?)".into());
         }
         // SAFETY: on success `pbData` points at `cbData` bytes we now own.
         let data = unsafe { std::slice::from_raw_parts(out.pbData, out.cbData as usize) }.to_vec();

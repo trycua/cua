@@ -13,7 +13,7 @@
 #     Google-branded Chrome for Testing, which this public image must not ship;
 #   - bench-web-ctl on :7000: a small HTTP API over CDP (health, reset,
 #     navigate, eval) so adapters reach the browser the same way locally and
-#     on Fleet (plain HTTP through the service gateway);
+#     through a service gateway (plain HTTP);
 #   - MiniWoB++ (MIT) at /opt/miniwob, served on :7560;
 #   - bench-ui (libs/python/bench-ui) and pywebview (GTK + WebKit2) in the
 #     system Python, which cua-bench's remote session imports.

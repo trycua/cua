@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 #[cfg(target_os = "macos")]
 use std::ffi::CString;
 
@@ -14,7 +17,7 @@ unsafe extern "C" {
 
 #[cfg(target_os = "macos")]
 pub fn already_disclaimed() -> bool {
-    std::env::var_os(cua_driver_core::RESPONSIBILITY_DISCLAIMED_ENV).is_some()
+    crate::env_vars::var_os(cua_driver_core::RESPONSIBILITY_DISCLAIMED_ENV).is_some()
 }
 
 /// Split out from [`reexec_disclaimed_if_needed`] so the decision is
@@ -181,7 +184,7 @@ fn unbundled_warning(embedded: bool, inside_bundle: bool) -> Option<&'static str
         "warning: running unbundled (outside CuaDriver.app). The daemon is its own responsible \
          process, so macOS gives it no valid WindowServer connection: background (no-raise) \
          focus steps fail with status 1002 and background actions will be refused. Run the \
-         app-bundle daemon instead: `open -n -g -a CuaDriver --args serve`.",
+         app-bundle daemon instead: `cua-driver permissions grant`.",
     )
 }
 
@@ -207,7 +210,8 @@ mod tests {
     #[test]
     fn unbundled_daemon_gets_a_startup_warning_and_bundled_or_embedded_does_not() {
         let message = unbundled_warning(false, false).expect("warns when unbundled");
-        assert!(message.contains("open -n -g -a CuaDriver --args serve"));
+        assert!(message.contains("cua-driver permissions grant"));
+        assert!(!message.contains("-a CuaDriver"));
         assert!(unbundled_warning(false, true).is_none());
         assert!(unbundled_warning(true, false).is_none());
     }
@@ -224,17 +228,10 @@ mod tests {
     #[test]
     fn already_disclaimed_reflects_env_var() {
         let name = cua_driver_core::RESPONSIBILITY_DISCLAIMED_ENV;
-        let original = std::env::var_os(name);
-
-        std::env::remove_var(name);
+        let mut env = crate::env_vars::Overrides::new();
+        env.unset(name);
         assert!(!already_disclaimed());
-
-        std::env::set_var(name, "1");
+        env.set(name, "1");
         assert!(already_disclaimed());
-
-        match original {
-            Some(value) => std::env::set_var(name, value),
-            None => std::env::remove_var(name),
-        }
     }
 }

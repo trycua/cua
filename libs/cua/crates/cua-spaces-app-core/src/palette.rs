@@ -168,12 +168,15 @@ mod tests {
             .into_iter()
             .map(|k| (k.command, k.key))
             .collect();
+        assert!(
+            !keys.iter().any(|(c, _)| c == "nav.machines"),
+            "Machines is part of Computers (CUA-3551): {keys:?}"
+        );
         for (command, key) in [
             ("commandPalette.toggle", "mod+k"),
             ("nav.spaces", "mod+1"),
-            ("nav.machines", "mod+2"),
-            ("nav.agents", "mod+3"),
-            ("nav.keyvault", "mod+4"),
+            ("nav.agents", "mod+2"),
+            ("nav.keyvault", "mod+3"),
         ] {
             assert!(
                 keys.contains(&(command.into(), key.into())),
@@ -200,13 +203,14 @@ mod tests {
         let entries = vec![
             entry("Actions", "New Space", "create add"),
             entry("Go to", "Spaces", "page"),
-            entry("Go to", "Machines", "page"),
+            entry("Go to", "Computers", "page machines"),
             entry("Spaces", "Open dev box", "linux running"),
             entry("Spaces", "Stop dev box", "linux running"),
         ];
         assert_eq!(rank(&entries, ""), [0, 1, 2, 3, 4]);
         assert_eq!(rank(&entries, "  "), [0, 1, 2, 3, 4]);
         assert_eq!(rank(&entries, "machines"), [2]);
+        assert_eq!(rank(&entries, "comp"), [2]);
         assert_eq!(rank(&entries, "dev stop"), [4]);
         // "spa": Spaces (Go to) beats New Space; Go to's group comes first.
         assert_eq!(rank(&entries, "spa"), [1, 0]);

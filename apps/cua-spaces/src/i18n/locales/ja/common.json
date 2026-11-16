@@ -1,0 +1,13 @@
+{
+  "common": {
+    "app_name": "Cua Spaces"
+  },
+  "common.action.dismiss": "閉じる",
+  "common.action.retry": "再試行",
+  "common.action.cancel": "キャンセル",
+  "common.action.close": "閉じる",
+  "common.action.reconnect": "再接続",
+  "common.status.connecting": "接続中…",
+  "common.action.back": "戻る",
+  "common.action.done": "完了"
+}

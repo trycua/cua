@@ -5,8 +5,8 @@
 
 use async_trait::async_trait;
 use cua_sandbox_core::{
-    Error, FleetState, ImageMode, InstanceStatus, LocalEndpoints, LocalInstance, LocalRuntime,
-    LocalStartSpec, LocalState, LocalSummary, PortExposure, PowerControl, PowerState, Provider,
+    Error, ImageMode, InstanceStatus, LocalEndpoints, LocalInstance, LocalRuntime, LocalStartSpec,
+    LocalState, LocalSummary, PortExposure, PowerControl, PowerState, Provider,
     ProviderCapabilities, ProviderCreate, ProviderInstance, ProviderKind, Result, RunKind,
     RuntimeError, RuntimeResult, SandboxState, Sandboxes, ServiceEndpoint, Status, StopReason,
 };
@@ -23,6 +23,9 @@ struct Runtime {
     calls: Mutex<Vec<String>>,
     /// The engine's exit record of each stopped instance.
     exits: Mutex<HashMap<String, StopReason>>,
+    /// An instance the engine restarted behind a new gateway, and the host
+    /// port its agent listens on now ([`LocalRuntime::mend`]).
+    mended: Mutex<HashMap<String, u16>>,
 }
 
 impl Runtime {
@@ -99,6 +102,20 @@ impl LocalRuntime for Runtime {
             .get(name)
             .copied()
             .filter(|_| stopped))
+    }
+
+    async fn mend(&self, name: &str, _rt: &str) -> RuntimeResult<Option<LocalInstance>> {
+        let port = self.mended.lock().unwrap().remove(name);
+        Ok(port.map(|p| LocalInstance {
+            name: name.into(),
+            backend: "fake".into(),
+            status: InstanceStatus::Running,
+            endpoints: LocalEndpoints {
+                host: "127.0.0.1".into(),
+                ports: [(3211, p)].into(),
+                ..Default::default()
+            },
+        }))
     }
 
     async fn status(&self, name: &str) -> RuntimeResult<InstanceStatus> {
@@ -208,25 +225,6 @@ async fn sandboxes_without_a_power_control_refuse_by_name() {
     }
     assert!(rt.calls().is_empty());
 
-    // A cloud claim has no per-claim power.
-    sbx.state()
-        .save(&SandboxState::Fleet(FleetState {
-            name: "claim".into(),
-            runtime_type: "fleet".into(),
-            pool_name: "pool".into(),
-            status: "running".into(),
-            created_at: String::new(),
-            extra: Default::default(),
-        }))
-        .unwrap();
-    assert_eq!(sbx.power_control("claim"), None);
-    assert!(matches!(
-        sbx.power_on("claim").await,
-        Err(Error::Unsupported {
-            provider: ProviderKind::Fleet,
-            ..
-        })
-    ));
     // No such sandbox.
     assert_eq!(sbx.power_control("nope"), None);
     assert!(matches!(
@@ -381,6 +379,29 @@ async fn the_watch_finds_a_stop_nobody_listed() {
 }
 
 #[tokio::test]
+async fn one_sandbox_can_be_looked_at_for_an_unasked_stop() {
+    let (_dir, rt, sbx) = env();
+    sbx.state().save(&local("box", "runc")).unwrap();
+    sbx.state().save(&local("other", "runc")).unwrap();
+    rt.set("box", InstanceStatus::Running);
+    rt.set("other", InstanceStatus::Running);
+    // Running: nothing to say, and nothing recorded.
+    assert_eq!(sbx.unasked_stop("box").await, None);
+    assert_eq!(sbx.unasked_stop("missing").await, None);
+    let killed = StopReason {
+        exit_code: 137,
+        out_of_memory: false,
+    };
+    rt.exit("box", killed);
+    // Only the one asked about is looked at, and it is recorded as stopped.
+    assert_eq!(sbx.unasked_stop("box").await, Some(killed));
+    assert_eq!(sbx.stop_reason("box"), Some(killed));
+    assert_eq!(sbx.stop_reason("other"), None);
+    // Already recorded as stopped: it is not an unasked stop again.
+    assert_eq!(sbx.unasked_stop("box").await, None);
+}
+
+#[tokio::test]
 async fn a_stop_that_was_asked_for_has_no_reason() {
     let (_dir, rt, sbx) = env();
     sbx.state().save(&local("mac", "lume")).unwrap();
@@ -397,4 +418,30 @@ async fn a_stop_that_was_asked_for_has_no_reason() {
     assert!(sbx.note_unasked_stops().await.is_empty());
     assert_eq!(sbx.get("mac").await.unwrap().stop_reason, None);
     assert_eq!(sbx.stop_reason("mac"), None);
+}
+
+/// A VM the engine restarted behind a new network gateway listens on new
+/// host ports, and the watch had recorded its restart as a stop: the record
+/// catches up (running, at the new port), and the caller is told so it drops
+/// what it holds for the old run.
+#[tokio::test]
+async fn a_vm_mended_behind_a_new_gateway_is_recorded_running_at_its_new_port() {
+    let (_dir, rt, sbx) = env();
+    let mut s = local("mac", "lume");
+    if let SandboxState::Local(l) = &mut s {
+        l.status = "stopped".into();
+    }
+    sbx.state().save(&s).unwrap();
+    rt.set("mac", InstanceStatus::Running);
+    // Nothing to mend: nothing reported, the record is left as it is.
+    assert!(sbx.mend_local().await.is_empty());
+    rt.mended.lock().unwrap().insert("mac".into(), 9999);
+    assert_eq!(sbx.mend_local().await, ["mac"]);
+    assert_eq!(sbx.power_state("mac"), Some(PowerState::Running));
+    match sbx.state().load("mac") {
+        Some(SandboxState::Local(l)) => assert_eq!(l.api_port, 9999),
+        other => panic!("{other:?}"),
+    }
+    // Told once.
+    assert!(sbx.mend_local().await.is_empty());
 }

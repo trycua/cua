@@ -42,7 +42,7 @@ tasks.named("compileKotlin") { dependsOn(patchBinding) }
 
 application {
     mainClass.set("ai.cua.examples.streaming.MainKt")
-    // Where the host cua-sdk library lives (cargo build --release -p cua-sdk).
+    // Where the host cua-sdk library lives (cargo build --release -p cua-sdk-native).
     val libDir = System.getenv("CUA_SDK_LIB_DIR")
         ?: rootDir.resolve("../../../libs/cua/target/release").canonicalPath
     applicationDefaultJvmArgs = listOf("-Djna.library.path=$libDir")

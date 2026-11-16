@@ -50,7 +50,7 @@ struct CreateOptionsTests {
     @Test func theAnswerHasTheShapeThePageReads() async throws {
         let (bridge, model) = bridge(liveMac())
         let options = try json(try await bridge.handle("spaces.createOptions", [:]))
-        #expect(Set(options.keys) == ["local", "gpus", "cloudPricing", "experiments", "maxCpus", "env", "macosVmsRunning"])
+        #expect(Set(options.keys) == ["local", "gpus", "experiments", "maxCpus", "env", "macosVmsRunning"])
         #expect(options["pending"] == nil)
         #expect(options["macosVmsRunning"] as? Int == 2)
         // The env the core takes, unchanged.

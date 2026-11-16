@@ -1,7 +1,6 @@
 """``Sandbox.get_display_url()`` on SDK-backed sandboxes: the cua-spacesd
 viewer link when the sandbox runs cua-spacesd, else the page of a declared
-legacy web display service (local loopback or a Fleet signed URL). Fakes only;
-nothing is started."""
+legacy web display service (local loopback). Fakes only; nothing is started."""
 
 from __future__ import annotations
 
@@ -152,34 +151,3 @@ async def test_no_display_points_at_cua_spacesd():
     assert "cua-spacesd" in message and "3211" in message
     assert "novnc" not in message.lower() and "6080" not in message
     assert "EnvTransport" not in message
-
-
-@pytest.mark.asyncio
-async def test_fleet_transport_returns_the_viewer_link(monkeypatch):
-    from cua_sandbox.transport import fleet as fleet_module
-
-    handle = _Handle({}, {}, viewer="https://gw.example/api/svc/ns/box/env/viewer/#t=1")
-
-    async def fake_fleet_sandbox(*_args):
-        return handle
-
-    monkeypatch.setattr(fleet_module, "fleet_sandbox", fake_fleet_sandbox)
-    bound = SimpleNamespace(name="box", namespace="ns", claim="c1", services={"env": 3211})
-    transport = fleet_module.FleetTransport(sdk=object(), bound=bound)
-    assert await transport.get_display_url() == handle._viewer
-
-
-@pytest.mark.asyncio
-async def test_fleet_transport_reads_the_claims_legacy_services(monkeypatch):
-    from cua_sandbox.transport import fleet as fleet_module
-
-    handle = _Handle({}, {"novnc": "https://gw.example/api/svc/ns/box/novnc?sig=1"})
-
-    async def fake_fleet_sandbox(*_args):
-        return handle
-
-    monkeypatch.setattr(fleet_module, "fleet_sandbox", fake_fleet_sandbox)
-    bound = SimpleNamespace(name="box", namespace="ns", claim="c1", services={"novnc": 6080})
-    transport = fleet_module.FleetTransport(sdk=object(), bound=bound)
-    url = await transport.get_display_url()
-    assert url.startswith("https://gw.example/api/svc/ns/box/novnc/vnc.html?sig=1&autoconnect=1")

@@ -1,0 +1,42 @@
+{
+  "factor": 1.5,
+  "profiles": {
+    "macos-hvf-m2max": {
+      "on": "local",
+      "count": 8,
+      "group_size": 0,
+      "parallel": 4,
+      "ok": 8,
+      "groups_split": [],
+      "fork_ms_p50": 501,
+      "fork_ms_p95": 586,
+      "first_ready_ms": 442,
+      "total_ms": 1123,
+      "per_host": {
+        "local": 8
+      },
+      "peak_parallel": {
+        "local": 4
+      }
+    },
+    "linux-kvm-gh": {
+      "on": "local",
+      "count": 4,
+      "group_size": 0,
+      "parallel": 2,
+      "ok": 4,
+      "groups_split": [],
+      "fork_ms_p50": 9229,
+      "fork_ms_p95": 13528,
+      "first_ready_ms": 3738,
+      "total_ms": 17869,
+      "per_host": {
+        "local": 4
+      },
+      "peak_parallel": {
+        "local": 2
+      },
+      "factor": 3.0
+    }
+  }
+}

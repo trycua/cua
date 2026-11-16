@@ -191,10 +191,11 @@ frontmost state:
   raises its window to be key. Even when delivered to a backgrounded
   pid via `hotkey`, the downstream app pulls focus. **For omnibox
   navigation specifically**, the correct path is `launch_app({path:
-"...msedge.exe", urls: ["https://…"]})` (or `{aumid:
-"Microsoft.MicrosoftEdge.Stable_…!App", urls: [...]}`). No
-  omnibox dance, no `Ctrl+L`, no focus-steal. The browser opens the
-  URL in a new window without activating it.
+"...msedge.exe", additional_arguments: ["https://example.com/"]})`.
+  This hands the URL to the selected browser process; no omnibox dance
+  or `Ctrl+L` is needed. Do not combine `path` or `aumid` with `urls`
+  for selected-browser navigation: `urls` opens separately in the default
+  browser. For the default browser, use `urls` only: `launch_app({urls: [url]})`.
 - **Tab-switching shortcuts in browsers (`Ctrl+1..9`, `Ctrl+Tab`,
   `Ctrl+Shift+Tab`, `Ctrl+PageUp/Down`)** are visibly disruptive
   even when delivered to a backgrounded pid. The app's key handler
@@ -349,7 +350,7 @@ gone wrong: re-read "The no-foreground contract" above.
 | Drag / drag-and-drop               | `drag({pid, from_x, from_y, to_x, to_y})`                                                       | `SendInput` with `MOUSEEVENTF_MOVE`, mouse_event                                     |
 | Screenshot                         | `get_window_state` (window) or authorized `get_desktop_state` (desktop)                         | `[System.Windows.Forms.Screen]::CopyFromScreen`, `nircmd savescreenshot`             |
 | Quit an app                        | ask the user first, then `hotkey({pid, keys:["alt","f4"]})`                                     | `taskkill /F`, `Stop-Process -Force`, `Get-Process \| Stop-Process`                  |
-| Hand a file/URL to an app          | `launch_app({urls:[<path>]})` (default app) or `{path: "...exe", args:[<file>]}` (specific app) | `& "app.exe" "file"`, `Invoke-Item`, shell associations                              |
+| Hand a file/URL to an app          | `launch_app({urls:[<path>]})` (default app) or `{path: "...exe", additional_arguments:[<file>]}` (specific app) | `& "app.exe" "file"`, `Invoke-Item`, shell associations                              |
 
 ### The narrow carve-out
 
@@ -371,7 +372,7 @@ When a cua-driver surprises you, diagnose cua-driver first:
   point.
 - **`stale_element_token` / `No cached UIA state`?** You either
   skipped `get_window_state` this turn or used a token from an older
-  snapshot. Snapshots are keyed on `(pid, window_id)`: tokens don't carry across windows of
+  snapshot. Snapshots are keyed on `(session, pid, window_id)`: tokens don't carry across windows of
   the same app. Re-snapshot with the same window_id you're about to
   click in.
 - **`Invalid window handle (0x80070578)`?** The HWND you passed is
@@ -521,7 +522,7 @@ Do not assume the window array is populated immediately on a cold launch.
 - **Before**: the pre-action snapshot resolves the `element_token`
   you're about to use. Targets from previous turns are stale; the
   server replaces the snapshot on every read, keyed on
-  `(pid, window_id)`, and lists the replaced ids in
+  `(session, pid, window_id)`, and lists the replaced ids in
   `invalidated_snapshot_ids`. Tokens from turn N don't resolve in turn
   N+1, and targets from window A don't resolve against window B of
   the same app. Skip this and element actions fail with

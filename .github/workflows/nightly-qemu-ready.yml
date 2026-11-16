@@ -1,0 +1,114 @@
+name: "Nightly: VM Space ready after boot"
+
+# A cold-booted VM Space must be usable the moment create returns. Cloud-init's
+# final stage runs the seed's runcmd about two seconds after cua-spacesd first
+# answers; a seed that restarted the driver there aborted every call in flight
+# (`Aborted`, `SendRequest`, exit -1). The integration test
+# (cua-sdk/tests/vm_ready_after_boot.rs) cold-boots VM Spaces from the
+# published Linux disk and runs commands back to back from the moment create
+# returns (at least 50 commands over 15 s, a fresh connection for every second
+# one); not one may fail. Sequential and several-at-once.
+#
+# Same KVM runner shape as the QEMU fork lane (nightly-qemu-fork.yml where it
+# exists); fold this job into that workflow's linux-kvm lane if you prefer one
+# file.
+
+on:
+  schedule:
+    - cron: "41 6 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "libs/cua/crates/cua-vmm/src/cloudinit.rs"
+      - "libs/cua/crates/cua-daemon-core/src/guest_identity.rs"
+      - "libs/cua/crates/cua-daemon-core/src/local.rs"
+      - "libs/cua/crates/cua-sdk/tests/vm_ready_after_boot.rs"
+      - "libs/images/common/boot-qemu.sh"
+      - ".github/workflows/nightly-qemu-ready.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-qemu-ready-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: "10"
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  linux-kvm:
+    name: linux-kvm (${{ matrix.shape }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shape: sequential
+            creates: "4"
+            concurrency: "1"
+          - shape: concurrent
+            creates: "8"
+            concurrency: "4"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: ./.github/actions/rust-cache
+        with:
+          workspaces: libs/cua
+          shared-key: libs-cua-qemu-tests
+      - name: Set up pasta (secure network)
+        uses: ./.github/actions/setup-pasta
+      - name: Install QEMU and firmware
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-utils qemu-system-x86 ovmf genisoimage
+          "$GITHUB_WORKSPACE/scripts/images/enable-kvm.sh" --require
+      - name: Cold VM Spaces are usable the moment create returns
+        working-directory: libs/cua
+        env:
+          CUA_TEST_VM_READY: "1"
+          CUA_TEST_VM_READY_CREATES: ${{ matrix.creates }}
+          CUA_TEST_VM_READY_CONCURRENCY: ${{ matrix.concurrency }}
+          # Quarantine (CUA-3132, see .github/workflows/FLAKY.md): with
+          # four creates at once on a hosted runner, an anonymous ghcr manifest
+          # pull sometimes comes back "Not authorized" and some guests miss the
+          # spacesd connect window. Only the concurrent shape, and only when every
+          # failure line matches one of those two signatures, gets one more run.
+          # Any other failure, or a second failure, fails the job.
+          QUARANTINE_SHAPE: ${{ matrix.shape }}
+        run: |
+          set -uo pipefail
+          run_test() {
+            cargo test --locked -p cua-sdk --test vm_ready_after_boot \
+              -- --ignored --nocapture 2>&1 | tee "$RUNNER_TEMP/vm-ready.log"
+            return "${PIPESTATUS[0]}"
+          }
+          run_test && exit 0
+          status=$?
+          [[ "$QUARANTINE_SHAPE" == concurrent ]] || exit "$status"
+          # The failure lines are the "<sandbox>: <phase>: <error>" rows the test prints.
+          failures=$(grep -E '^cua-e2e-ready-[0-9a-f]+-[0-9]+: ' "$RUNNER_TEMP/vm-ready.log" || true)
+          known='registry: Not authorized: .*ghcr\.io/v2/trycua/|cua-spacesd is not available in sandbox .*nothing answered at'
+          if [[ -z "$failures" ]] || grep -Evq "$known" <<<"$failures"; then
+            echo "::error::linux-kvm (concurrent) failed outside the quarantined signatures"
+            exit "$status"
+          fi
+          echo "::warning::linux-kvm (concurrent): known flake (CUA-3132), running once more"
+          {
+            echo "### linux-kvm (concurrent): quarantined flake, retried once (CUA-3132)"
+            echo '```'
+            echo "$failures"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          run_test

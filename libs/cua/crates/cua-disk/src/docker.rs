@@ -81,6 +81,13 @@ pub trait DockerApi: Send + Sync {
     async fn remove_image(&self, reference: &str) -> Result<(), String>;
     /// Removes a volume (never forced).
     async fn remove_volume(&self, name: &str) -> Result<(), String>;
+    /// Bytes each volume in `names` holds, by name (the engine's disk-usage
+    /// report; a volume it did not size is left out). An engine that cannot
+    /// say answers none.
+    async fn volume_sizes(&self, names: &[String]) -> Result<HashMap<String, u64>, String> {
+        let _ = names;
+        Ok(HashMap::new())
+    }
 }
 
 /// The engine the SDK would use (this Mac's own, discovered like the docker
@@ -210,5 +217,54 @@ impl DockerApi for Engine {
             .remove_volume(name, Some(RemoveVolumeOptions { force: false }))
             .await
             .map_err(|e| e.to_string())
+    }
+
+    async fn volume_sizes(&self, names: &[String]) -> Result<HashMap<String, u64>, String> {
+        use bollard::query_parameters::DataUsageOptions;
+        if names.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let r = self
+            .0
+            .df(Some(DataUsageOptions {
+                _type: Some(vec!["volume".into()]),
+                verbose: true,
+            }))
+            .await
+            .map_err(|e| e.to_string())?;
+        let items = r.volume_usage.and_then(|v| v.items).unwrap_or_default();
+        Ok(volume_sizes_of(&items, names))
+    }
+}
+
+/// The sizes of the volumes in `names` from a disk-usage report's volume
+/// items (`{"Name": ..., "UsageData": {"Size": ...}}`; -1 is "not sized").
+pub fn volume_sizes_of(items: &[serde_json::Value], names: &[String]) -> HashMap<String, u64> {
+    items
+        .iter()
+        .filter_map(|v| {
+            let name = v.get("Name")?.as_str()?;
+            let size = v.get("UsageData")?.get("Size")?.as_i64()?;
+            (names.iter().any(|n| n == name) && size >= 0).then(|| (name.to_string(), size as u64))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod volume_size_tests {
+    use super::*;
+
+    #[test]
+    fn the_disk_usage_report_sizes_only_the_volumes_asked_for() {
+        let items = vec![
+            serde_json::json!({"Name": "a", "UsageData": {"Size": 1024, "RefCount": 1}}),
+            serde_json::json!({"Name": "b", "UsageData": {"Size": 2048, "RefCount": 1}}),
+            // Not sized by the engine.
+            serde_json::json!({"Name": "c", "UsageData": {"Size": -1, "RefCount": 0}}),
+            serde_json::json!({"Name": "d"}),
+        ];
+        let names = ["a", "c", "d", "e"].map(String::from);
+        let got = volume_sizes_of(&items, &names);
+        assert_eq!(got, HashMap::from([("a".to_string(), 1024)]));
     }
 }

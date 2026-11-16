@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Regression coverage for #4094: testkit-owned daemons must not inherit the
 //! developer's installed-product state.
 //!

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! AT-SPI hit-test for presence cursor shapes: the chain of accessibles from
 //! a top-level frame down to the deepest one under a point, with role and
 //! the states the shape table needs. Read-only: no action, focus or pointer

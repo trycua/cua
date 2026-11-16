@@ -44,7 +44,7 @@ def test_run_output_schemas(cli_env, tmp_path):  # noqa: F811 - pytest fixture
     assert run_cb(["run", str(HELLO), "--output-dir", str(out)]) == 0
     summary = json.loads((out / "summary.json").read_text())
     result = json.loads((out / "hello_file_env_v0" / "result.json").read_text())
-    assert summary["schema_version"] == 1 and result["schema_version"] == 1
+    assert summary["schema_version"] == 2 and result["schema_version"] == 2
     check_golden("summary_schema", _schema(summary))
     check_golden("result_schema", _schema(result))
 

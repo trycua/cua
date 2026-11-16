@@ -26,6 +26,7 @@ env:
 
 jobs:
   unit:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Linux protocol, transport, and mocked plugin API
     runs-on: ubuntu-24.04
     timeout-minutes: 15

@@ -15,7 +15,7 @@
 //! rest are answered 502.
 
 use crate::relay::{ConnectedClient, Identity, Machine};
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -73,11 +73,27 @@ struct State_ {
     /// Statuses the next machine registrations answer with, in order
     /// (a relay mid-deploy, a proxy in front of it).
     fail_register: std::collections::VecDeque<u16>,
+    /// Statuses the next machine deletes answer with, in order.
+    fail_deletes: std::collections::VecDeque<u16>,
     /// Statuses the next machine reads (GET) answer with, in order.
     fail_reads: std::collections::VecDeque<u16>,
     /// Every machine read answers 503, as the proxy in front of the
     /// relay does while it has no backend.
     reads_down: bool,
+    /// `/m/<id>` of a machine listed offline answers 502 at once, as the
+    /// relay does once past its start-up grace.
+    refuse_offline: bool,
+    /// A relay that predates meta patches: the key is ignored.
+    ignore_meta_patches: bool,
+    /// Answers `POST /v1/machines/{id}/leave` as a relay that predates it.
+    without_leave: bool,
+    /// The account default Space settings last saved, by account id.
+    spaces_settings: BTreeMap<String, serde_json::Value>,
+    /// Answers the `/v1/spaces/...` routes as a relay that predates them.
+    without_spaces_settings: bool,
+    /// A relay (or its control plane) that refuses to change who a computer
+    /// is shared with, with this code (`share_outside_team`).
+    refuse_shares: Option<String>,
     /// Machine registrations received (including refused ones).
     register_calls: usize,
     /// machine id → `(path prefix, base URL)` its `/m/<id>/…` gRPC-Web
@@ -88,6 +104,9 @@ struct State_ {
     usage: Option<serde_json::Value>,
     /// Pairing codes by canonical code.
     pairing: BTreeMap<String, FakePairing>,
+    /// The most unused pairing codes an account may hold (none: no cap),
+    /// as the real relay's 429.
+    max_unused_codes: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -222,6 +241,34 @@ pub struct FakeRelay {
     /// `http://127.0.0.1:<port>`.
     pub url: String,
     state: Arc<Mutex<State_>>,
+    load: Arc<Load>,
+}
+
+/// What the fake relay was asked, for tests of how much a client costs it.
+#[derive(Default)]
+struct Load {
+    requests: std::sync::atomic::AtomicUsize,
+    in_flight: std::sync::atomic::AtomicUsize,
+    peak: std::sync::atomic::AtomicUsize,
+    delay_ms: std::sync::atomic::AtomicU64,
+}
+
+async fn count_load(
+    State(load): State<Arc<Load>>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    use std::sync::atomic::Ordering::SeqCst;
+    load.requests.fetch_add(1, SeqCst);
+    let now = load.in_flight.fetch_add(1, SeqCst) + 1;
+    load.peak.fetch_max(now, SeqCst);
+    let delay = load.delay_ms.load(SeqCst);
+    if delay > 0 {
+        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+    }
+    let r = next.run(req).await;
+    load.in_flight.fetch_sub(1, SeqCst);
+    r
 }
 
 fn err(status: StatusCode, message: &str) -> Response {
@@ -293,6 +340,10 @@ async fn register(
     st.register_calls += 1;
     if let Some(code) = st.fail_register.pop_front() {
         let status = StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        if code == 429 {
+            // The proxy's bare throttle, which the client waits out.
+            return (status, "Too Many Requests").into_response();
+        }
         return err(status, "the fake relay failed this registration");
     }
     let id = body["id"].as_str().unwrap_or_default().to_string();
@@ -312,7 +363,7 @@ async fn register(
                 return err(StatusCode::UNAUTHORIZED, "this pairing code is not valid");
             };
             if id.len() < 8 {
-                return err(StatusCode::BAD_REQUEST, "invalid machine id");
+                return err(StatusCode::BAD_REQUEST, "invalid computer id");
             }
             p.used_at = Some(now_secs());
             p.machine = Some(id.clone());
@@ -326,12 +377,12 @@ async fn register(
         },
     };
     if id.len() < 8 {
-        return err(StatusCode::BAD_REQUEST, "invalid machine id");
+        return err(StatusCode::BAD_REQUEST, "invalid computer id");
     }
     if let Some(existing) = st.machines.get(&id)
         && existing.machine.owner.id != who.id
     {
-        return err(StatusCode::CONFLICT, "machine id owned by another account");
+        return err(StatusCode::CONFLICT, "computer id owned by another account");
     }
     let allow: Vec<String> = body["allow"]
         .as_array()
@@ -370,10 +421,11 @@ async fn register(
         viewers: vec![],
         clients: vec![],
         host,
-        // This mock never asks for a device signature or MFA, so a
-        // registration here has nothing to vouch for either way; default to
-        // confirmed, matching behavior before S5 added the field.
-        confirmed: true,
+        // Like the real relay once devices are required: only a
+        // registration carrying an enrolled device's session is proven.
+        // Otherwise (devices not required) there is nothing to vouch for
+        // either way, so it is confirmed, as before S5 added the field.
+        confirmed: !st.require_devices || st.device_of(&headers, &who).is_some(),
         team: None,
         meta: body["meta"]
             .as_object()
@@ -415,6 +467,21 @@ async fn pairing_mint(
     let Some(Caller::Account(who)) = caller(&st, &headers) else {
         return err(StatusCode::UNAUTHORIZED, "account token required");
     };
+    if let Some(max) = st.max_unused_codes
+        && st
+            .pairing
+            .values()
+            .filter(|p| p.owner.id == who.id && p.state() == "active")
+            .count()
+            >= max
+    {
+        return err(
+            StatusCode::TOO_MANY_REQUESTS,
+            &format!(
+                "at most {max} unused pairing codes at once; revoke one or wait for it to expire"
+            ),
+        );
+    }
     let code: String = (0..12)
         .map(|_| b"0123456789ABCDEFGHJKMNPQRSTVWXYZ"[(rand::random::<u32>() % 32) as usize] as char)
         .collect();
@@ -499,7 +566,19 @@ async fn list(State(s): State<S>, headers: HeaderMap) -> Response {
     let Some(Caller::Account(who)) = caller(&st, &headers) else {
         return err(StatusCode::UNAUTHORIZED, "account token required");
     };
-    let machines: Vec<Machine> = st.machines.values().filter_map(|r| view(r, &who)).collect();
+    // A Space whose computer was removed is detached: hidden until the
+    // computer registers again.
+    let machines: Vec<Machine> = st
+        .machines
+        .values()
+        .filter(|r| {
+            r.machine
+                .host
+                .as_deref()
+                .is_none_or(|h| h.is_empty() || st.machines.contains_key(h))
+        })
+        .filter_map(|r| view(r, &who))
+        .collect();
     Json(serde_json::json!({ "machines": machines })).into_response()
 }
 
@@ -512,7 +591,7 @@ fn authorize<'a>(
 ) -> Result<(Machine, &'a Record), Response> {
     st.gate(headers)?;
     let Some(record) = st.machines.get(id) else {
-        return Err(err(StatusCode::NOT_FOUND, "no such machine"));
+        return Err(err(StatusCode::NOT_FOUND, "no such computer"));
     };
     match caller(st, headers) {
         Some(Caller::Machine(m)) if m == id => {
@@ -523,7 +602,7 @@ fn authorize<'a>(
         Some(Caller::Account(who)) => match view(record, &who) {
             Some(v) if !owner_only || v.role == "owner" => Ok((v, record)),
             Some(_) => Err(err(StatusCode::FORBIDDEN, "owner only")),
-            None => Err(err(StatusCode::NOT_FOUND, "no such machine")),
+            None => Err(err(StatusCode::NOT_FOUND, "no such computer")),
         },
         _ => Err(err(StatusCode::UNAUTHORIZED, "credential required")),
     }
@@ -559,6 +638,11 @@ async fn patch(
     if matches!(caller(&st, &headers), Some(Caller::Machine(_))) {
         return err(StatusCode::FORBIDDEN, "owner only");
     }
+    if let Some(code) = st.refuse_shares.clone()
+        && (body["allow"].is_array() || body["viewers"].is_array())
+    {
+        return err(StatusCode::FORBIDDEN, &code);
+    }
     let rec = st.machines.get_mut(&id).unwrap();
     if let Some(n) = body["name"].as_str() {
         rec.machine.name = n.into();
@@ -581,16 +665,252 @@ async fn patch(
             rec.machine.clients.clear();
         }
     }
+    let ignore_meta = st.ignore_meta_patches;
+    let rec = st.machines.get_mut(&id).unwrap();
+    if let Some(meta) = body["meta"].as_object().filter(|_| !ignore_meta) {
+        for (k, v) in meta {
+            match v.as_str() {
+                Some("") | None => {
+                    rec.machine.meta.remove(k);
+                }
+                Some(v) => {
+                    rec.machine.meta.insert(k.clone(), v.to_string());
+                }
+            }
+        }
+    }
     Json(rec.machine.clone()).into_response()
 }
 
-async fn delete(State(s): State<S>, headers: HeaderMap, Path(id): Path<String>) -> Response {
+async fn delete(
+    State(s): State<S>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(q): Query<BTreeMap<String, String>>,
+) -> Response {
     let mut st = s.lock().unwrap();
+    if let Some(code) = st.fail_deletes.pop_front() {
+        return err(
+            StatusCode::from_u16(code).unwrap_or(StatusCode::BAD_GATEWAY),
+            "delete failed",
+        );
+    }
     if let Err(r) = authorize(&st, &headers, &id, true) {
         return r;
     }
     st.machines.remove(&id);
+    // The Spaces it provides stay, detached; `?spaces=delete` removes them.
+    if q.get("spaces").map(String::as_str) == Some("delete") {
+        st.machines
+            .retain(|_, r| r.machine.host.as_deref() != Some(id.as_str()));
+    }
     StatusCode::NO_CONTENT.into_response()
+}
+
+/// The account (and device gate) behind a `/v1/spaces/...` call.
+#[allow(clippy::result_large_err)]
+fn spaces_caller(st: &State_, headers: &HeaderMap) -> Result<Identity, Response> {
+    if st.without_spaces_settings {
+        return Err(StatusCode::NOT_FOUND.into_response());
+    }
+    st.gate(headers)?;
+    match caller(st, headers) {
+        Some(Caller::Account(who)) => Ok(who),
+        Some(Caller::Machine(_)) => {
+            Err(err(StatusCode::FORBIDDEN, "a machine token cannot do this"))
+        }
+        None => Err(err(StatusCode::UNAUTHORIZED, "account token required")),
+    }
+}
+
+fn settings_of(st: &State_, who: &Identity) -> serde_json::Value {
+    st.spaces_settings.get(&who.id).cloned().unwrap_or_else(|| {
+        serde_json::json!({"default_space": null, "fallback": [], "fallback_on": true, "updated_at": 0})
+    })
+}
+
+async fn spaces_settings_get(State(s): State<S>, headers: HeaderMap) -> Response {
+    let st = s.lock().unwrap();
+    match spaces_caller(&st, &headers) {
+        Ok(who) => Json(settings_of(&st, &who)).into_response(),
+        Err(r) => r,
+    }
+}
+
+async fn spaces_settings_put(
+    State(s): State<S>,
+    headers: HeaderMap,
+    Json(mut body): Json<serde_json::Value>,
+) -> Response {
+    let mut st = s.lock().unwrap();
+    let who = match spaces_caller(&st, &headers) {
+        Ok(w) => w,
+        Err(r) => return r,
+    };
+    let machine_of = |id: &str| {
+        id.strip_prefix("relay:")
+            .map(|r| r.split('/').next().unwrap_or(r).to_string())
+    };
+    let mut ids: Vec<String> = body["fallback"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect();
+    if let Some(d) = body["default_space"].as_str() {
+        ids.insert(0, d.to_string());
+    }
+    for (i, id) in ids.iter().enumerate() {
+        let Some(m) = machine_of(id) else {
+            return err(StatusCode::BAD_REQUEST, "bad Space id");
+        };
+        if ids[..i].contains(id) {
+            return err(StatusCode::BAD_REQUEST, "duplicate Space");
+        }
+        match st.machines.get(&m).and_then(|r| view(r, &who)) {
+            Some(_) => {}
+            None => return err(StatusCode::FORBIDDEN, "no such computer for you"),
+        }
+    }
+    body["updated_at"] = serde_json::json!(now_secs());
+    st.spaces_settings.insert(who.id.clone(), body.clone());
+    Json(body).into_response()
+}
+
+async fn spaces_default(
+    State(s): State<S>,
+    headers: HeaderMap,
+    Query(q): Query<BTreeMap<String, String>>,
+) -> Response {
+    let st = s.lock().unwrap();
+    let who = match spaces_caller(&st, &headers) {
+        Ok(w) => w,
+        Err(r) => return r,
+    };
+    let settings = settings_of(&st, &who);
+    let mine: Vec<(String, Machine)> = st
+        .machines
+        .values()
+        .filter(|r| {
+            r.machine
+                .host
+                .as_deref()
+                .is_none_or(|h| h.is_empty() || st.machines.contains_key(h))
+        })
+        .filter_map(|r| view(r, &who))
+        .map(|m| (format!("relay:{}", m.id), m))
+        .collect();
+    let default = settings["default_space"].as_str().map(str::to_string);
+    let step = |id: &str, role: &str| {
+        let m = mine.iter().find(|(i, _)| i == id).map(|(_, m)| m);
+        serde_json::json!({"space": id, "name": m.map(|m| m.name.clone()).unwrap_or_default(),
+            "online": m.is_some_and(|m| m.online && m.sharing), "role": role})
+    };
+    let mut order = Vec::new();
+    if let Some(d) = &default {
+        order.push(step(d, "default"));
+    }
+    let here = q.get("here").map(|h| format!("relay:{h}"));
+    let fallback: Vec<String> = if settings["fallback_on"].as_bool() == Some(false) {
+        vec![]
+    } else if let Some(list) = settings["fallback"].as_array().filter(|l| !l.is_empty()) {
+        list.iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect()
+    } else {
+        let mut all: Vec<_> = mine
+            .iter()
+            .filter(|(_, m)| m.role == "owner" && m.host.as_deref().is_none_or(str::is_empty))
+            .map(|(i, m)| (m.connected_at.unwrap_or(0), i.clone()))
+            .collect();
+        all.sort();
+        all.into_iter().map(|(_, i)| i).collect()
+    };
+    for f in fallback {
+        if Some(&f) != default.as_ref() && Some(&f) != here.as_ref() {
+            order.push(step(&f, "fallback"));
+        }
+    }
+    if let Some(h) = &here
+        && mine.iter().any(|(i, _)| i == h)
+    {
+        order.push(step(h, "here"));
+    }
+    let first = order.iter().find(|o| o["online"] == true).cloned();
+    let (space, reason) = match &first {
+        Some(o) => (
+            o["space"].clone(),
+            o["role"].as_str().unwrap_or("here").to_string(),
+        ),
+        None if default.is_none() && order.is_empty() => (serde_json::Value::Null, "unset".into()),
+        None => (serde_json::Value::Null, "here".to_string()),
+    };
+    let reason = if default.is_none() && reason == "fallback" {
+        "unset".into()
+    } else {
+        reason
+    };
+    Json(serde_json::json!({
+        "space": if reason == "here" && here.is_none() { serde_json::Value::Null } else { space },
+        "reason": reason,
+        "default_space": default,
+        "default_online": default.as_ref().map(|d| step(d, "default")["online"] == true),
+        "order": order,
+    }))
+    .into_response()
+}
+
+async fn leave(State(s): State<S>, headers: HeaderMap, Path(id): Path<String>) -> Response {
+    let mut st = s.lock().unwrap();
+    if st.without_leave {
+        // What an older relay answers: no such route.
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let (view, _) = match authorize(&st, &headers, &id, false) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    if view.role == "owner" {
+        return err(
+            StatusCode::FORBIDDEN,
+            "you own this computer; delete it instead of leaving it",
+        );
+    }
+    let Some(Caller::Account(who)) = caller(&st, &headers) else {
+        return err(StatusCode::FORBIDDEN, "a machine token cannot do this");
+    };
+    let mine = |a: &String| {
+        a == &who.id
+            || who
+                .email
+                .as_deref()
+                .is_some_and(|e| e.eq_ignore_ascii_case(a))
+    };
+    let rec = st.machines.get_mut(&id).unwrap();
+    let removed: Vec<String> = rec
+        .machine
+        .allow
+        .iter()
+        .chain(&rec.machine.viewers)
+        .filter(|a| mine(a))
+        .cloned()
+        .collect();
+    rec.machine.allow.retain(|a| !mine(a));
+    rec.machine.viewers.retain(|a| !mine(a));
+    rec.machine.clients.retain(|c| c.id != who.id);
+    let owner = rec_owner(&st, &id);
+    st.audit.push((
+        owner,
+        serde_json::json!({"ts": now_secs(), "kind": "share_left", "machine": id, "subject": who.email.clone().unwrap_or_else(|| who.id.clone())}),
+    ));
+    Json(serde_json::json!({"id": id, "removed": removed})).into_response()
+}
+
+fn rec_owner(st: &State_, id: &str) -> String {
+    st.machines
+        .get(id)
+        .map(|r| r.machine.owner.id.clone())
+        .unwrap_or_default()
 }
 
 async fn sharing(s: S, headers: HeaderMap, id: String, on: bool) -> Response {
@@ -706,7 +1026,7 @@ async fn device_register(
             StatusCode::FORBIDDEN,
             &match &entry.superseded_by {
                 Some(by) => format!(
-                    "this device key was replaced by {by} on the same machine; create a new device key to enroll again"
+                    "this device key was replaced by {by} on the same computer; create a new device key to enroll again"
                 ),
                 None => "this device was revoked; create a new device key to enroll again".into(),
             },
@@ -948,6 +1268,18 @@ async fn proxied(
     if let Some(r) = refused {
         return r;
     }
+    {
+        let st = s.lock().unwrap();
+        let offline = uri
+            .path()
+            .strip_prefix("/m/")
+            .and_then(|rest| rest.split('/').next())
+            .and_then(|id| st.machines.get(id))
+            .is_some_and(|r| !r.machine.online);
+        if st.refuse_offline && offline {
+            return err(StatusCode::BAD_GATEWAY, "the computer is not connected");
+        }
+    }
     if let Some(target) = target
         && headers
             .get(axum::http::header::CONTENT_TYPE)
@@ -1016,7 +1348,7 @@ fn proxied_record(
     // As the real relay: a machine that stopped sharing refuses everything
     // but its health check (a gRPC caller gets a gRPC status).
     if st.machines.get(&id).is_some_and(|r| !r.machine.sharing) && !is_health {
-        let message = "the host stopped sharing this machine";
+        let message = "the host stopped sharing this computer";
         if content_type.starts_with("application/grpc") {
             let r = Response::builder()
                 .status(StatusCode::OK)
@@ -1055,7 +1387,16 @@ async fn forward(
         .and_then(|rest| rest.find('/').map(|i| &rest[i..]))
         .unwrap_or(path);
     let url = format!("{}{path}", target.trim_end_matches('/'));
-    let mut req = reqwest::Client::new().request(method, url).body(payload);
+    // One client for every forward: a client per request read the system
+    // proxy settings each time, which serialized a test's many connects.
+    static HTTP: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    let http = HTTP.get_or_init(|| {
+        reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("fake relay client")
+    });
+    let mut req = http.request(method, url).body(payload);
     for (k, v) in headers {
         if k != axum::http::header::HOST && k != axum::http::header::CONTENT_LENGTH {
             req = req.header(k, v);
@@ -1085,6 +1426,7 @@ impl FakeRelay {
     /// Starts on loopback `port` (0 = ephemeral).
     pub async fn start_on(port: u16) -> Self {
         let state: S = Arc::default();
+        let load: Arc<Load> = Arc::default();
         let app = Router::new()
             .route(
                 "/v1/info",
@@ -1108,6 +1450,12 @@ impl FakeRelay {
             )
             .route("/v1/machines/{id}/stop-sharing", post(stop))
             .route("/v1/machines/{id}/start-sharing", post(start))
+            .route("/v1/machines/{id}/leave", post(leave))
+            .route(
+                "/v1/spaces/settings",
+                get(spaces_settings_get).put(spaces_settings_put),
+            )
+            .route("/v1/spaces/default", get(spaces_default))
             .route("/v1/devices", get(device_list).post(device_register))
             .route("/v1/devices/session", post(device_session))
             .route("/v1/devices/approve", post(device_approve))
@@ -1123,7 +1471,11 @@ impl FakeRelay {
                 axum::routing::delete(pairing_revoke),
             )
             .fallback(proxied)
-            .with_state(state.clone());
+            .with_state(state.clone())
+            .layer(axum::middleware::from_fn_with_state(
+                load.clone(),
+                count_load,
+            ));
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
             .await
             .expect("bind fake relay");
@@ -1132,7 +1484,32 @@ impl FakeRelay {
         tokio::spawn(async move {
             let _ = axum::serve(listener, app).await;
         });
-        Self { url, state }
+        Self { url, state, load }
+    }
+
+    /// HTTP requests answered so far.
+    pub fn requests(&self) -> usize {
+        self.load.requests.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// The most requests that were in flight at once since the last
+    /// [`Self::reset_load`].
+    pub fn peak_in_flight(&self) -> usize {
+        self.load.peak.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Zeroes [`Self::requests`] and [`Self::peak_in_flight`].
+    pub fn reset_load(&self) {
+        use std::sync::atomic::Ordering::SeqCst;
+        self.load.requests.store(0, SeqCst);
+        self.load.peak.store(0, SeqCst);
+    }
+
+    /// Every request takes `ms` more (a slow relay), 0 for none.
+    pub fn set_latency_ms(&self, ms: u64) {
+        self.load
+            .delay_ms
+            .store(ms, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Accepts `token` as the account `id` (with `email`).
@@ -1167,6 +1544,15 @@ impl FakeRelay {
         }
     }
 
+    /// Sets a machine's session: online since `connected_at` (Unix
+    /// seconds), or offline (a new driver session gets a new time).
+    pub fn set_session(&self, id: &str, online: bool, connected_at: Option<u64>) {
+        if let Some(r) = self.state.lock().unwrap().machines.get_mut(id) {
+            r.machine.online = online;
+            r.machine.connected_at = if online { connected_at } else { None };
+        }
+    }
+
     /// Adds a connected client to a machine.
     pub fn add_client(&self, id: &str, client: ConnectedClient) {
         if let Some(r) = self.state.lock().unwrap().machines.get_mut(id) {
@@ -1184,6 +1570,24 @@ impl FakeRelay {
             .map(|r| r.machine.clone())
     }
 
+    /// Caps the unused pairing codes an account may hold at `max` (the
+    /// real relay's is 10): a mint over it answers 429.
+    pub fn cap_unused_codes(&self, max: usize) {
+        self.state.lock().unwrap().max_unused_codes = Some(max);
+    }
+
+    /// The pairing codes of `account` (its id) not used, revoked or
+    /// expired yet.
+    pub fn unused_codes(&self, account: &str) -> usize {
+        self.state
+            .lock()
+            .unwrap()
+            .pairing
+            .values()
+            .filter(|p| p.owner.id == account && p.state() == "active")
+            .count()
+    }
+
     /// The next machine registrations answer with `statuses`, in order,
     /// before the relay registers normally again.
     pub fn fail_registrations(&self, statuses: &[u16]) {
@@ -1191,6 +1595,17 @@ impl FakeRelay {
             .lock()
             .unwrap()
             .fail_register
+            .extend(statuses.iter().copied());
+    }
+
+    /// The next machine deletes answer with `statuses`, in order, before the
+    /// relay deletes normally again (a relay mid-deploy: 503; a refused
+    /// token: 401 or 403).
+    pub fn fail_deletes(&self, statuses: &[u16]) {
+        self.state
+            .lock()
+            .unwrap()
+            .fail_deletes
             .extend(statuses.iter().copied());
     }
 
@@ -1204,10 +1619,41 @@ impl FakeRelay {
             .extend(statuses.iter().copied());
     }
 
+    /// While `on`, a request to a computer listed offline answers 502 at
+    /// once, as the relay does past its start-up grace.
+    pub fn set_refuse_offline(&self, on: bool) {
+        self.state.lock().unwrap().refuse_offline = on;
+    }
+
     /// While `down`, every machine read answers 503 "no available server"
     /// (a relay deploy, as its proxy answers).
     pub fn set_reads_down(&self, down: bool) {
         self.state.lock().unwrap().reads_down = down;
+    }
+
+    /// While set, a PATCH that changes who a computer is shared with is
+    /// refused with `code` (`share_outside_team`), as the relay does for
+    /// someone outside the owner's team.
+    pub fn refuse_shares(&self, code: Option<&str>) {
+        self.state.lock().unwrap().refuse_shares = code.map(str::to_string);
+    }
+
+    /// While `on`, a PATCH with `meta` is accepted but its keys are
+    /// dropped, as a relay that predates them does.
+    pub fn set_ignore_meta_patches(&self, on: bool) {
+        self.state.lock().unwrap().ignore_meta_patches = on;
+    }
+
+    /// Answers `POST /v1/machines/{id}/leave` the way a relay that
+    /// predates it does (404, no body), or as the current relay again.
+    pub fn without_leave(&self, on: bool) {
+        self.state.lock().unwrap().without_leave = on;
+    }
+
+    /// Answers the `/v1/spaces/...` routes the way a relay that predates
+    /// them does (404, no body), or as the current relay again.
+    pub fn without_spaces_settings(&self, on: bool) {
+        self.state.lock().unwrap().without_spaces_settings = on;
     }
 
     /// Machine registrations received so far (refused ones too).
@@ -1339,6 +1785,8 @@ struct ApiState {
     entitlement_reads: usize,
     /// Every org route answers 410, as a server without Teams.
     gone: bool,
+    /// (owner sub, removal) not yet acknowledged.
+    removals: Vec<(String, crate::spaces_api::ApiShareRemoval)>,
 }
 
 type A = Arc<Mutex<ApiState>>;
@@ -1441,8 +1889,11 @@ impl FakeSpacesApi {
             )
             .route(
                 "/v1/orgs/{org}/machines/{id}",
-                axum::routing::delete(api_remove_machine),
+                axum::routing::delete(api_remove_machine).patch(api_set_machine_role),
             )
+            .route("/v1/me/sharing", get(api_sharing))
+            .route("/v1/me/share-removals", get(api_share_removals))
+            .route("/v1/me/share-removals/ack", post(api_ack_share_removals))
             .route("/v1/orgs/{org}/devices", get(api_devices))
             .route("/v1/orgs/{org}/devices/request", post(api_request_device))
             .route(
@@ -1512,6 +1963,32 @@ impl FakeSpacesApi {
     /// How often `GET /v1/me/entitlements` was read.
     pub fn entitlement_reads(&self) -> usize {
         self.state.lock().unwrap().entitlement_reads
+    }
+
+    /// Records that `who` lost access to a computer of `owner` (a sub).
+    pub fn add_share_removal(&self, owner: &str, machine_name: &str, who: &str) {
+        self.state.lock().unwrap().removals.push((
+            owner.into(),
+            crate::spaces_api::ApiShareRemoval {
+                machine_id: "m1".into(),
+                machine_name: machine_name.into(),
+                who: who.into(),
+                removed_at: api_now(),
+            },
+        ));
+    }
+
+    /// The role of `machine` on `org` (`editor` or `viewer`).
+    pub fn machine_role(&self, org: &str, machine: &str) -> Option<String> {
+        self.state
+            .lock()
+            .unwrap()
+            .orgs
+            .get(org)?
+            .machines
+            .iter()
+            .find(|m| m.machine_id == machine)
+            .map(|m| m.role.clone())
     }
 
     /// The machine ids bound to `org`.
@@ -1792,6 +2269,7 @@ async fn api_add_machine(
         platform: b["platform"].as_str().unwrap_or("").into(),
         label: b["label"].as_str().unwrap_or("").into(),
         added_by: sub,
+        role: b["role"].as_str().unwrap_or("editor").into(),
         added_at: api_now(),
     });
     (
@@ -1799,6 +2277,76 @@ async fn api_add_machine(
         Json(serde_json::json!({ "machine_id": machine })),
     )
         .into_response()
+}
+
+async fn api_set_machine_role(
+    State(s): State<A>,
+    h: HeaderMap,
+    Path((org, machine)): Path<(String, String)>,
+    Json(b): Json<serde_json::Value>,
+) -> Response {
+    let mut st = s.lock().unwrap();
+    let (sub, _) = tri!(api_caller(&st, &h));
+    let (id, _) = tri!(api_org(&st, &org, &sub, "admin"));
+    let role = b["role"].as_str().unwrap_or("");
+    if role != "viewer" && role != "editor" {
+        return api_fail(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "bad_role",
+            "role is viewer or editor",
+        );
+    }
+    let o = st.orgs.get_mut(&id).unwrap();
+    let Some(m) = o.machines.iter_mut().find(|m| m.machine_id == machine) else {
+        return api_fail(StatusCode::NOT_FOUND, "machine_not_found", "");
+    };
+    m.role = role.into();
+    Json(serde_json::json!({ "machine_id": machine, "role": role })).into_response()
+}
+
+/// `GET /v1/me/sharing`: can share when in an org with `space_sharing`.
+async fn api_sharing(State(s): State<A>, h: HeaderMap) -> Response {
+    let st = s.lock().unwrap();
+    let (sub, _) = tri!(api_caller(&st, &h));
+    if st.gone {
+        return api_fail(StatusCode::GONE, "gone", "retired");
+    }
+    let teams: Vec<_> = st
+        .orgs
+        .values()
+        .filter(|o| o.members.contains_key(&sub) && o.features.iter().any(|f| f == "space_sharing"))
+        .map(|o| {
+            let role = o.members[&sub].as_str();
+            serde_json::json!({
+                "id": o.id, "alias": o.alias, "name": o.name,
+                "can_add": role == "owner" || role == "admin",
+            })
+        })
+        .collect();
+    let mut out = serde_json::json!({ "can_share": !teams.is_empty(), "teams": teams });
+    if teams.is_empty() {
+        out["reason"] = "no_team".into();
+    }
+    Json(out).into_response()
+}
+
+async fn api_share_removals(State(s): State<A>, h: HeaderMap) -> Response {
+    let st = s.lock().unwrap();
+    let (sub, _) = tri!(api_caller(&st, &h));
+    let rows: Vec<_> = st
+        .removals
+        .iter()
+        .filter(|(owner, _)| *owner == sub)
+        .map(|(_, r)| r.clone())
+        .collect();
+    Json(serde_json::json!({ "removals": rows })).into_response()
+}
+
+async fn api_ack_share_removals(State(s): State<A>, h: HeaderMap) -> Response {
+    let mut st = s.lock().unwrap();
+    let (sub, _) = tri!(api_caller(&st, &h));
+    st.removals.retain(|(owner, _)| *owner != sub);
+    StatusCode::NO_CONTENT.into_response()
 }
 
 async fn api_remove_machine(

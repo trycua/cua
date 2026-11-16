@@ -10,7 +10,7 @@ service DaemonService {
   rpc GetInfo(GetInfoRequest) returns (GetInfoResponse);
   // Opens a media session in a sandbox and returns a loopback WebSocket URL
   // that relays it. The URL carries a short-lived bridge ticket; the
-  // browser never sees the Fleet bearer or the spacesd token.
+  // browser never sees the spacesd token.
   rpc OpenMediaBridge(OpenMediaBridgeRequest) returns (OpenMediaBridgeResponse);
   // Stops the daemon after the response is sent.
   rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
@@ -25,8 +25,8 @@ enum DaemonErrorReason {
   DAEMON_ERROR_REASON_INVALID_ARGUMENT = 1;
   // No such sandbox, forward or bridge.
   DAEMON_ERROR_REASON_NOT_FOUND = 2;
-  // The provider is not configured in the daemon (for example no Fleet
-  // credentials).
+  // The provider is not configured in the daemon (for example no local
+  // runtime).
   DAEMON_ERROR_REASON_PROVIDER_NOT_CONFIGURED = 3;
   // The provider or build cannot do this.
   DAEMON_ERROR_REASON_UNSUPPORTED = 4;
@@ -34,8 +34,6 @@ enum DaemonErrorReason {
   DAEMON_ERROR_REASON_SPACESD_NOT_AVAILABLE = 5;
   // A deadline elapsed.
   DAEMON_ERROR_REASON_TIMEOUT = 6;
-  // Fleet API failure.
-  DAEMON_ERROR_REASON_FLEET = 7;
   // Local runtime failure.
   DAEMON_ERROR_REASON_RUNTIME = 8;
   // spacesd call failure.
@@ -53,12 +51,6 @@ enum DaemonErrorReason {
   DAEMON_ERROR_REASON_HOST_CAPABILITY_MISSING = 14;
   // The teleport consent gate refused.
   DAEMON_ERROR_REASON_TELEPORT_REFUSED = 15;
-  // A named cloud pool's template differs from the requested sandbox fields
-  // (pass apply to update it).
-  DAEMON_ERROR_REASON_POOL_SPEC_MISMATCH = 16;
-  // A claim bound but its per-claim secrets never reached the sandbox; the
-  // claim was released.
-  DAEMON_ERROR_REASON_CLAIM_SECRETS_NOT_DELIVERED = 17;
   // A bare sandbox name matches sandboxes in more than one location. The
   // qualified candidates are in `DaemonErrorInfo.metadata["candidates"]`
   // (comma-separated, for example "local:box,cloud:box").
@@ -72,21 +64,30 @@ enum DaemonErrorReason {
   // "auto,gvisor,runc") and the axis in `metadata["axis"]` ("on", "kind",
   // "runtime" or "image").
   DAEMON_ERROR_REASON_INVALID_PLACEMENT = 20;
-  // Fleet's admission refused a write, for example a sandbox size over the
-  // account's limits. The message is Fleet's and names the limit.
-  DAEMON_ERROR_REASON_FLEET_ADMISSION_DENIED = 21;
-  // The account is out of Cua Cloud credit (no credit left, and no card or
-  // plan): new cloud sandboxes are refused, running ones keep running. The
-  // message ends with the website billing page's URL.
-  DAEMON_ERROR_REASON_CLOUD_CREDIT_EXHAUSTED = 22;
   // The create was cancelled (`CancelCreateSpace`, or its caller went
   // away); what it made is gone. The message says what was removed and
   // what stays (finished image downloads stay cached).
   DAEMON_ERROR_REASON_CANCELLED = 23;
-  // Your own cloud account (AWS, Google Cloud, Modal) refused or failed a
+  // Your own cloud account (AWS, Google Cloud, Hetzner, Modal) refused or failed a
   // call Cua made there: a missing permission, a quota, a region without
   // the machine type. The message names the cloud's own error.
   DAEMON_ERROR_REASON_CLOUD = 24;
+  // This host has no room for another Space now: its VMs are at their
+  // memory or CPU limit (`CUA_VM_MAX_RSS_FRACTION`,
+  // `CUA_VM_VCPU_OVERCOMMIT`) or the machine is low on memory. Nothing was
+  // started; the message says which limit, by how much, and what to do.
+  DAEMON_ERROR_REASON_HOST_CAPACITY = 25;
+  // Signed in, but not allowed: the relay refused the call for this
+  // account (for example renaming a Space shared with you; only its owner
+  // can). Unlike UNAUTHENTICATED, signing in again does not help. Older
+  // daemons answered these as UNAUTHENTICATED.
+  DAEMON_ERROR_REASON_PERMISSION_DENIED = 26;
+  // Removed with Cua Cloud (Fleets), which ended on 18 Oct 2026: the Fleet
+  // API failure, a named pool's template mismatch, claim secrets that never
+  // arrived, Fleet's admission refusal and the cloud credit refusal. Their
+  // numbers and names are never reused.
+  reserved 7, 16, 17, 21, 22;
+  reserved "DAEMON_ERROR_REASON_FLEET", "DAEMON_ERROR_REASON_POOL_SPEC_MISMATCH", "DAEMON_ERROR_REASON_CLAIM_SECRETS_NOT_DELIVERED", "DAEMON_ERROR_REASON_FLEET_ADMISSION_DENIED", "DAEMON_ERROR_REASON_CLOUD_CREDIT_EXHAUSTED";
 }
 
 // Structured error detail of daemon RPCs.
@@ -115,7 +116,7 @@ message GetInfoResponse {
   string loopback_url = 4;
   // Bearer token of the loopback listener.
   string loopback_token = 5;
-  // Compiled-in SDK features, for example "env", "fleet", "local".
+  // Compiled-in SDK features, for example "env", "sandboxes", "local".
   repeated string features = 6;
   // When the daemon started.
   google.protobuf.Timestamp started_at = 7;
@@ -127,6 +128,14 @@ message GetInfoResponse {
   // and modification time), so a client can tell a daemon whose executable
   // was rebuilt or updated since. Empty from daemons that predate it.
   string build_id = 9;
+  // Local Spaces the daemon keeps ready to claim (its warm pool). Zero from
+  // daemons that predate warm pools.
+  uint32 warm_spaces = 10;
+  // Memory those Spaces hold, in bytes.
+  uint64 warm_memory_bytes = 11;
+  // Why the daemon keeps that many ready, in a few words (for example "no
+  // repeat traffic" or "burst: 12.0 creates/min, 3 kept ready").
+  string warm_reason = 12;
 }
 
 // Request for `DaemonService.OpenMediaBridge`.

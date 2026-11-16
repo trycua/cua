@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Non-Windows stubs — return a helpful "not implemented" message.
 //! Schemas match the macOS platform-macos implementations (cross-platform interface).
 
@@ -172,10 +175,6 @@ stub_tool!(scroll_m, ScrollTool, "scroll",
     "Scroll the target pid's focused region. direction required; by defaults to line, amount defaults to 3.",
     serde_json::json!({"type":"object","required":["direction"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"direction":{"type":"string","enum":["up","down","left","right"]},"by":{"type":"string","enum":["line","page"]},"amount":{"type":"integer","minimum":1,"maximum":50},"window_id":{"type":"integer"},"element_token": cua_driver_core::tool_schema::element_token_schema()},"additionalProperties":false}));
 
-stub_tool!(screenshot_m, ScreenshotTool, "screenshot",
-    "Capture a screenshot. Without window_id captures the full display. Supports png and jpeg formats.",
-    serde_json::json!({"type":"object","properties":{"window_id":{"type":"integer"},"format":{"type":"string","enum":["png","jpeg"]},"quality":{"type":"integer","minimum":1,"maximum":95}},"additionalProperties":false}));
-
 stub_tool!(
     get_screen_size_m,
     GetScreenSizeTool,
@@ -212,7 +211,36 @@ contract_stub_tool!(
     SetAgentCursorThemeTool,
     "set_agent_cursor_theme"
 );
-contract_stub_tool!(invoke_menu_m, InvokeMenuTool, "invoke_menu");
+
+mod invoke_menu_m {
+    use super::*;
+    pub struct InvokeMenuTool;
+    static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+    #[async_trait]
+    impl Tool for InvokeMenuTool {
+        fn def(&self) -> &ToolDef {
+            // The menu contract is a portable subset, which `ToolDef::from_contract`
+            // rejects. Copy its fields the way the native Windows tool does.
+            DEF.get_or_init(|| {
+                let contract = cua_driver_contract::tool_contract("invoke_menu")
+                    .expect("invoke_menu contract");
+                ToolDef {
+                    name: contract.name,
+                    description: contract.description,
+                    input_schema: contract.input_schema,
+                    read_only: contract.annotations.read_only,
+                    destructive: contract.annotations.destructive,
+                    idempotent: contract.annotations.idempotent,
+                    open_world: contract.annotations.open_world,
+                }
+            })
+        }
+        async fn invoke(&self, _args: Value) -> ToolResult {
+            not_impl("invoke_menu")
+        }
+    }
+}
+pub use invoke_menu_m::InvokeMenuTool;
 
 stub_tool!(
     check_perms_m,
@@ -320,7 +348,6 @@ pub fn build_registry() -> cua_driver_core::tool::ToolRegistry {
     r.register(Box::new(SetValueTool));
     r.register(Box::new(InvokeMenuTool));
     r.register(Box::new(ScrollTool));
-    r.register(Box::new(ScreenshotTool));
     r.register(Box::new(GetScreenSizeTool));
     r.register(Box::new(GetCursorPositionTool));
     r.register(Box::new(MoveCursorTool));

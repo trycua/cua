@@ -12,7 +12,7 @@ class CustomAgentEntry:
     """Entry for a custom agent in .cua/agents.yaml.
 
     Agents can be defined in two ways:
-    1. Docker image (cloud-ready): Specify `image` field with a Docker image
+    1. Docker image: Specify `image` field with a Docker image
     2. Import path (local dev): Specify `import_path` for Python import
 
     Examples:

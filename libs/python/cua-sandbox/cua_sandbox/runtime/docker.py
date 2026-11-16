@@ -138,9 +138,9 @@ class DockerRuntime(NativeRuntime):
         self.stop_timeout = stop_timeout
 
     async def _image_ref(self, image: Image, name: str, **opts) -> str:
-        from cua_sandbox.image import cloud_registry_image
+        from cua_sandbox.image import registry_image
 
-        ref = cloud_registry_image(image)
+        ref = registry_image(image)
         if ref is None:
             raise ValueError(
                 f"no image for {image.os_type}/{image.distro} {image.version}; use "

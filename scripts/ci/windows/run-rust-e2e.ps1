@@ -44,6 +44,16 @@ if ($null -eq $ffmpeg -or $null -eq $ffprobe) {
 & (Join-Path $scriptDir "verify-user-session.ps1")
 if ($RequireGui) { $env:CUA_REQUIRE_GUI = "1" }
 
+# Harness hosts named by CUA_E2E_HARNESS_FILTER (the Rust test reads the same
+# variable and keeps only those hosts); empty means every host. The fixture
+# target "webview" is the host "webview2".
+function Test-HarnessWanted([string]$Name) {
+    $selected = @(([string]$env:CUA_E2E_HARNESS_FILTER).Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if ($selected.Count -eq 0) { return $true }
+    if ($Name -eq "webview") { $Name = "webview2" }
+    return $selected -contains $Name
+}
+
 $env:CUA_TEST_WORKSPACE_ROOT = $rustRoot
 $env:CUA_TEST_DRIVER_BIN = Join-Path $rustRoot "target\release\cua-driver.exe"
 $env:CUA_TEST_APPS_ROOT = Join-Path $rustRoot "test-apps"
@@ -83,7 +93,9 @@ if (-not $NoBuild) {
     }
     if ($buildExit -ne 0) { throw "Rust driver build failed" }
     $fixtureTargets = switch ($suite) {
-        "shared" { @("electron", "tauri", "webview") }
+        # The PR quick lane sets CUA_E2E_HARNESS_FILTER=electron: build only the
+        # harnesses it names, like the Linux runner does. Empty builds them all.
+        "shared" { @(@("electron", "tauri", "webview") | Where-Object { Test-HarnessWanted $_ }) }
         "native" { @("wpf", "winui3", "webview", "electron") }
         "capture" { @("wpf", "electron") }
         default { @("wpf", "winui3", "webview", "electron", "tauri") }
@@ -96,13 +108,13 @@ if (-not (Test-Path $env:CUA_TEST_DRIVER_BIN)) {
 }
 $requiredFixtures = @()
 $requiredFixtures += Join-Path $env:CUA_TEST_APPS_ROOT "harness-electron\CuaTestHarness.Electron.exe"
-if ($suite -in @("shared", "all")) {
+if (($suite -in @("shared", "all")) -and (Test-HarnessWanted "tauri")) {
     $requiredFixtures += Join-Path $env:CUA_TEST_APPS_ROOT "harness-tauri\CuaTestHarness.Tauri.exe"
 }
 if ($suite -in @("native", "capture", "all")) {
     $requiredFixtures += Join-Path $env:CUA_TEST_APPS_ROOT "harness-wpf\CuaTestHarness.Wpf.exe"
 }
-if ($suite -in @("shared", "native", "all")) {
+if (($suite -in @("shared", "native", "all")) -and (Test-HarnessWanted "webview")) {
     $requiredFixtures += Join-Path $env:CUA_TEST_APPS_ROOT "harness-webview\CuaTestHarness.WebView.exe"
 }
 if ($suite -in @("native", "all")) {

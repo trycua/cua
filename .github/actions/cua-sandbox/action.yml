@@ -1,6 +1,6 @@
 name: "Cua sandbox"
 description: >-
-  Create a Cua sandbox from any image (local on the runner, or in the cloud),
+  Create a Cua sandbox from any image (local on the runner, or on a contrib provider),
   inject the binaries under test, check that they are what runs, run a
   command or test suite against it, upload logs, the doctor report and a
   screenshot, and always delete it, even on cancel.
@@ -14,8 +14,8 @@ branding:
 #
 # Cleanup: the collect, upload and delete steps are `if: always()`, so they
 # run after a failed or cancelled step too. The sandbox name is fixed before
-# creation starts, so a creation cancelled half way is still deleted. Cloud
-# sandboxes also carry a claim TTL (claim-ttl) as a backstop.
+# creation starts, so a creation cancelled half way is still deleted. Contrib
+# provider sandboxes also carry a claim TTL (claim-ttl) as a backstop.
 
 inputs:
   image:
@@ -26,8 +26,7 @@ inputs:
   on:
     description: >-
       Where to run it: local (the runner: Docker, or QEMU with KVM for VM
-      images), docker, qemu, cloud (Fleet auto pools; needs CUA_CLIENT_ID
-      and CUA_CLIENT_SECRET in the step env), or a contrib provider: e2b,
+      images), docker, qemu, or a contrib provider: e2b,
       daytona or modal (needs a cua built with --features contrib, see
       build-cua-under-test's cua-features, and the provider's key in the
       step env: E2B_API_KEY, DAYTONA_API_KEY, or MODAL_TOKEN_ID and
@@ -58,7 +57,7 @@ inputs:
     description: "Extra `cua sb create` flags (for example --cpu 4 --memory 8GB)."
     default: ""
   claim-ttl:
-    description: "Cloud and contrib providers: lifetime without keep-alives, a backstop if cleanup never runs."
+    description: "Contrib providers: lifetime without keep-alives, a backstop if cleanup never runs."
     default: 60m
   doctor:
     description: >-
@@ -112,7 +111,7 @@ inputs:
 
 outputs:
   ref:
-    description: "The sandbox ref (local:<name> or cloud:<name>) for `cua sb ...` and `cua doctor`."
+    description: "The sandbox ref (such as local:<name>) for `cua sb ...` and `cua doctor`."
     value: ${{ steps.setup.outputs.ref }}
   name:
     description: "The sandbox name."

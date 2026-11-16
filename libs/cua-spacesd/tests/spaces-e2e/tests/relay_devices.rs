@@ -155,7 +155,7 @@ async fn devices_enroll_and_reach_machines_on_the_real_relay() {
     assert!(
         refused
             .to_string()
-            .contains("needs its machine token or an enrolled device"),
+            .contains("needs its computer token or an enrolled device"),
         "{refused}"
     );
     assert!(

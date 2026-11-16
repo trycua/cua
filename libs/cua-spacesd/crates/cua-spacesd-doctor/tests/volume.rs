@@ -134,6 +134,7 @@ async fn space_view_at_the_default_mount_point(client: &SpacesdClient, dir: &std
         .attach_volume(pb::AttachVolumeRequest {
             mount_path: String::new(),
             ticket_ttl: None,
+            binds: Vec::new(),
         })
         .await
         .unwrap()

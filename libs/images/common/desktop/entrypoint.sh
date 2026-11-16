@@ -21,6 +21,12 @@ fi
 # (Modal's VM runtime) has none of the image's.
 install -d -m 0755 /run/systemd/seats /run/systemd/sessions /run/systemd/users
 rm -f /run/dbus/pid
+# Each container is its own machine: the image ships an empty
+# /etc/machine-id (dbus needs one), so make this container's now. Kept when a
+# runtime or an earlier start already set one.
+if [ -w /etc/machine-id ] && [ ! -s /etc/machine-id ]; then
+    tr -d '-' </proc/sys/kernel/random/uuid >/etc/machine-id
+fi
 
 # Same knobs as the plain ubuntu-server image, so any image can be reached over
 # SSH when the harness asks for it.
@@ -37,5 +43,17 @@ for hook in /opt/cua/entrypoint.d/*.sh; do
     # shellcheck disable=SC1090
     . "$hook"
 done
+
+# supervisord starts its programs only after its first one-second poll comes
+# back empty, so every boot waited a second for nothing. One connection to
+# its control socket ends that first poll as soon as the socket exists.
+(
+    for _ in $(seq 1 100); do
+        [ -S /run/supervisor.sock ] && break
+        sleep 0.01
+    done
+    python3 -c 'import socket; s = socket.socket(socket.AF_UNIX); s.connect("/run/supervisor.sock"); s.close()' \
+        2>/dev/null || true
+) &
 
 exec /usr/bin/supervisord -n -c /etc/supervisor/supervisord.conf

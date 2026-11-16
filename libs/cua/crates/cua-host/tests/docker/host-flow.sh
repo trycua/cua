@@ -9,7 +9,9 @@ BIN=/opt/cua
 fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "ok - $*"; }
 
-export HOME=/root CUA_CREDENTIAL_STORE=file
+# The stub driver never joins the fake relay: setup must not wait for it
+# to come online.
+export HOME=/root CUA_CREDENTIAL_STORE=file CUA_HOST_ONLINE_WAIT_SECS=0
 rm -rf /root/.cua /tmp/stub-driver.args
 mkdir -p /root/.cua
 

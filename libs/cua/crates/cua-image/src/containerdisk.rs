@@ -1,5 +1,5 @@
 //! KubeVirt containerDisk images: `FROM scratch` + `/disk/disk.img` (qcow2,
-//! owned by uid/gid 107). This is the format Fleet boots, so the same ref
+//! owned by uid/gid 107). This is the KubeVirt format, so the same ref
 //! runs locally under QEMU.
 
 use std::io::{BufReader, Read, Write};
@@ -343,6 +343,15 @@ impl ContainerDiskResolver {
 #[async_trait::async_trait]
 impl cua_vmm::DiskResolver for ContainerDiskResolver {
     async fn resolve(&self, reference: &str, arch: cua_vmm::Arch) -> cua_vmm::Result<PathBuf> {
+        // `windows:11` and its kin have no published image: the first create
+        // installs Windows from an ISO on this computer, later ones find it.
+        let win_arch = match arch {
+            cua_vmm::Arch::X86_64 => crate::windows::WindowsArch::Amd64,
+            cua_vmm::Arch::Aarch64 => crate::windows::WindowsArch::Arm64,
+        };
+        if let Some(disk) = crate::windows::ensure_local_base(reference, win_arch).await? {
+            return Ok(disk);
+        }
         Ok(pull(&self.client, &self.cache, reference, arch.oci()).await?)
     }
 

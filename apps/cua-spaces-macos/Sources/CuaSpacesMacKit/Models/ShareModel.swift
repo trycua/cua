@@ -15,6 +15,9 @@ public final class ShareModel {
     public let spaceName: String
     public var signedIn: Bool
     public var shareable: Bool
+    /// In a team that can share; nil until read, or when it cannot be said
+    /// (the server decides). Set by whoever opens the sheet.
+    public var hasTeam: Bool?
     public private(set) var shares: [AppShareEntryInput] = []
     public private(set) var state = appShareInitial()
     private let backend: SpacesBackend
@@ -32,6 +35,11 @@ public final class ShareModel {
     }
 
     public var view: AppShareSheetView { appShareView(input: input, state: state) }
+
+    /// Why the sheet is closed: sharing is for teams, so an account known to
+    /// be in none is sent to Teams. This only explains; the control plane
+    /// and the relay refuse an outside share either way.
+    public var gate: AppShareGate? { signedIn && shareable ? appShareGate(hasTeam: hasTeam) : nil }
 
     public func load() async {
         guard signedIn else { return }
@@ -59,7 +67,12 @@ public final class ShareModel {
             if case .share = request { onShared?() }
             state = appShareReduce(input: input, state: state, action: .done)
         } catch {
-            let failed = AppShareSheetAction.failed(error: "\(error.localizedDescription)")
+            // A refusal for who is not in the team (or no team) reads in plain words.
+            var who = ""
+            if case let .share(_, w, _) = request { who = w }
+            let raw = "\(error.localizedDescription) \(error)"
+            let words = appShareErrorWords(error: raw, who: who) ?? error.localizedDescription
+            let failed = AppShareSheetAction.failed(error: words)
             telemetry?.record(appTelemetryShare(input: before, state: state, action: failed))
             state = appShareReduce(input: input, state: state, action: failed)
         }

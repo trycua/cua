@@ -150,20 +150,42 @@ fn sq(s: &str) -> String {
 /// Shell helpers. `cua_exe PID` prints a process's executable (from
 /// `/proc/PID/exe`, else its argv[0]: root in gVisor may not read another
 /// user's `exe` link), without a ` (deleted)` suffix. `cua_exe_sha PID`
-/// prints the sha256 of what it runs (as its owner when root cannot read
-/// it). `cua_daemon` prints `<pid> <exe>` of the running cua-spacesd (the
-/// exec's parent first).
+/// prints the sha256 of what it runs. The kernel lets a caller read
+/// `/proc/PID/exe` only as the process's owner holding every capability the
+/// process holds (or with CAP_SYS_PTRACE), so when a plain read fails it
+/// retries as the owner, then as the owner with the process's permitted
+/// capabilities (the image starts cua-spacesd as `cua` with CAP_SETUID,
+/// CAP_SETGID and CAP_KILL, which neither plain root nor a plain `runuser`
+/// satisfies). `cua_daemon` prints `<pid> <exe>` of the running cua-spacesd
+/// (the exec's parent first).
 const FIND_DAEMON: &str = r#"cua_exe() {
   e=$(readlink "/proc/$1/exe" 2>/dev/null) || e=""
   [ -n "$e" ] || e=$(tr '\0' '\n' <"/proc/$1/cmdline" 2>/dev/null | head -n1) || true
   [ -n "$e" ] || return 1
   echo "${e% (deleted)}"
 }
+cua_caps() {
+  h=$(sed -n 's/^CapPrm:[[:space:]]*//p' "/proc/$1/status" 2>/dev/null | head -n1)
+  [ -n "$h" ] || return 0
+  v=$((0x$h)); n=0; l=""
+  while [ "$v" -ne 0 ] && [ "$n" -lt 63 ]; do
+    [ $((v & 1)) -eq 0 ] || l="$l,+cap_$n"
+    v=$((v >> 1)); n=$((n + 1))
+  done
+  echo "${l#,}"
+}
 cua_exe_sha() {
   s=$(sha256sum "/proc/$1/exe" 2>/dev/null | cut -d' ' -f1)
-  if [ -z "$s" ] && [ "$(id -u)" = 0 ]; then
-    u=$(stat -c %U "/proc/$1" 2>/dev/null)
-    s=$(runuser -u "$u" -- sha256sum "/proc/$1/exe" 2>/dev/null | cut -d' ' -f1)
+  if [ -z "$s" ]; then
+    R=""
+    if [ "$(id -u)" != 0 ]; then R="sudo -n"; $R true 2>/dev/null || { echo ""; return 0; }; fi
+    u=$(stat -c %U "/proc/$1" 2>/dev/null) || u=""
+    [ -n "$u" ] || { echo ""; return 0; }
+    s=$($R runuser -u "$u" -- sha256sum "/proc/$1/exe" 2>/dev/null | cut -d' ' -f1)
+    c=$(cua_caps "$1")
+    if [ -z "$s" ] && [ -n "$c" ]; then
+      s=$($R setpriv --reuid "$u" --regid "$u" --init-groups --inh-caps "$c" --ambient-caps "$c" -- sha256sum "/proc/$1/exe" 2>/dev/null | cut -d' ' -f1)
+    fi
   fi
   echo "$s"
 }
@@ -605,7 +627,11 @@ async fn restart_daemon(
                 if pid != old_pid && sha == sha256 {
                     return Ok(how);
                 }
-                last = format!("pid {pid} runs sha256 {}", &sha[..sha.len().min(12)]);
+                last = if sha.is_empty() {
+                    format!("pid {pid}: its executable's sha256 could not be read")
+                } else {
+                    format!("pid {pid} runs sha256 {}", &sha[..sha.len().min(12)])
+                };
             }
             Err(e) => last = e.to_string(),
         }
@@ -736,6 +762,58 @@ mod tests {
                 format!("30 {server_hash}")
             );
         }
+    }
+
+    /// The image starts cua-spacesd as `cua` holding CAP_SETUID, CAP_SETGID and
+    /// CAP_KILL (permitted 0xe0). The kernel then refuses `/proc/PID/exe` to
+    /// plain root and to the owner alike; only the owner holding the same
+    /// capabilities may read it.
+    #[cfg(unix)]
+    const UNREADABLE_EXE: &str = r#"
+sed() { case "$*" in *CapPrm*) echo 00000000000000e0;; *) command sed "$@";; esac; }
+sha256sum() { return 1; }
+stat() { echo cua; }
+runuser() { return 1; }
+setpriv() {
+  [ "$*" = "--reuid cua --regid cua --init-groups --inh-caps +cap_5,+cap_6,+cap_7 --ambient-caps +cap_5,+cap_6,+cap_7 -- sha256sum /proc/30/exe" ] || return 1
+  echo "new  /proc/30/exe"
+}
+"#;
+
+    #[cfg(unix)]
+    #[test]
+    fn daemon_identity_reads_an_exe_only_its_capabilities_open() {
+        let process = [("30", "/usr/local/bin/cua-spacesd", "", "unused")];
+        let root = format!("id() {{ echo 0; }}\n{UNREADABLE_EXE}");
+        let out = daemon_shell(&process, &root, DAEMON_IDENTITY);
+        assert!(out.status.success(), "{out:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "30 new");
+
+        // Not root: the same read goes through passwordless sudo.
+        let sudo = "id() { echo 1000; }\nsudo() { [ \"$1\" = -n ] && shift; \"$@\"; }";
+        let out = daemon_shell(
+            &process,
+            &format!("{sudo}\n{UNREADABLE_EXE}"),
+            DAEMON_IDENTITY,
+        );
+        assert!(out.status.success(), "{out:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "30 new");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn daemon_identity_is_empty_when_the_exe_cannot_be_read() {
+        let process = [("30", "/usr/local/bin/cua-spacesd", "", "unused")];
+        // Root, but neither the owner nor the owner with its capabilities can.
+        let root = format!("id() {{ echo 0; }}\n{UNREADABLE_EXE}\nsetpriv() {{ return 1; }}");
+        let out = daemon_shell(&process, &root, DAEMON_IDENTITY);
+        assert!(out.status.success(), "{out:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "30");
+        // Not root and no sudo: nothing to retry with.
+        let user = format!("id() {{ echo 1000; }}\nsudo() {{ return 1; }}\n{UNREADABLE_EXE}");
+        let out = daemon_shell(&process, &user, DAEMON_IDENTITY);
+        assert!(out.status.success(), "{out:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "30");
     }
 
     #[cfg(unix)]

@@ -23,7 +23,10 @@
 # (verify-appcast.sh --electron).
 #
 # A version with a suffix (X.Y.Z-suffix) goes to the `beta` channel, which
-# only apps set to "Update to: Beta" see; X.Y.Z goes to everyone. --notes
+# only apps set to Beta see; X.Y.Z goes to everyone. A nightly
+# (X.Y.Z-nightly.YYYYMMDD+sha, nightly-cua-spaces.yml, written into the
+# separate nightly appcast) goes to the `nightly` channel, so only apps set
+# to Nightly install it even if another app read that feed. --notes
 # (Markdown) becomes the item's release notes. The key (the base64 Ed25519
 # seed from Sparkle's key format) is read from the environment and handed
 # to Sparkle on standard input; it is never written to disk or printed.
@@ -56,7 +59,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 [ -f "$dmg" ] || { echo "--dmg must be a disk image" >&2; exit 2; }
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "--version must look like 1.2.3 or 1.2.3-suffix" >&2; exit 2; }
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]] || { echo "--version must look like 1.2.3, 1.2.3-suffix or 1.2.3-suffix+build" >&2; exit 2; }
 case "$base" in http://* | https://*) ;; *) echo "--download-base must be a URL" >&2; exit 2 ;; esac
 case "$base" in */) ;; *) base="$base/" ;; esac
 [ -n "$out" ] || { echo "--out is required" >&2; exit 2; }
@@ -74,7 +77,9 @@ cp "$dmg" "$work/$name"
 [ -n "$previous" ] && [ -s "$previous" ] && cp "$previous" "$work/cua-spaces-appcast.xml"
 [ -n "$notes" ] && [ -s "$notes" ] && cp "$notes" "$work/${name%.dmg}.md"
 channel=()
-[[ "$version" == *-* ]] && channel=(--channel beta)
+if [[ "${version%%+*}" == *-nightly* ]]; then channel=(--channel nightly)
+elif [[ "${version%%+*}" == *-* ]]; then channel=(--channel beta)
+fi
 
 printf '%s' "$CUA_SPACES_SPARKLE_ED_PRIVATE_KEY" |
   "$bin/generate_appcast" --ed-key-file - ${channel[@]+"${channel[@]}"} --embed-release-notes \

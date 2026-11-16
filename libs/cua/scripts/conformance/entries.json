@@ -1,0 +1,1026 @@
+{
+  "cases": [
+    {
+      "case": "ready",
+      "what": "time from create to a Space that answers"
+    },
+    {
+      "case": "policy",
+      "what": "the default network holds: internet yes; host, LAN, cloud metadata, other trees no, and each refusal is in the network log with its destination and time"
+    },
+    {
+      "case": "dns",
+      "what": "a Space resolves names and downloads over https, on the secure and the default network; with no network the lookup fails at once"
+    },
+    {
+      "case": "download",
+      "what": "the guest downloads the coding app's package"
+    },
+    {
+      "case": "registry",
+      "what": "a private image is pulled with the host-held registry credential"
+    },
+    {
+      "case": "children",
+      "what": "a home creates, lists, uses and deletes a child Space, audited"
+    },
+    {
+      "case": "agent",
+      "what": "a coding agent session starts and answers"
+    },
+    {
+      "case": "lifecycle",
+      "what": "stop and resume, and the declared pause, checkpoint and fork"
+    },
+    {
+      "case": "warm",
+      "what": "a Space claimed from a warm member answers with its own token and only that one, or the runtime says it starts cold"
+    },
+    {
+      "case": "teardown",
+      "what": "delete leaves no Space, process, container or network"
+    }
+  ],
+  "entries": [
+    {
+      "backend": "managed",
+      "capabilities": {
+        "archs": [
+          "aarch64",
+          "x86_64"
+        ],
+        "checkpoint": true,
+        "claim": true,
+        "fork": true,
+        "guests": [
+          "linux"
+        ],
+        "kvm": false,
+        "nested_virt": false,
+        "pause": true,
+        "prepare": true
+      },
+      "guest": "linux",
+      "hosts": [
+        {
+          "cases": [
+            {
+              "case": "ready",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "policy",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "dns",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "download",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "registry",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "children",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "agent",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "warm",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "teardown",
+              "expect": "pass",
+              "why": null
+            }
+          ],
+          "os": "macos"
+        },
+        {
+          "cases": [
+            {
+              "case": "ready",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "policy",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "dns",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "download",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "registry",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "children",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "agent",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "warm",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "teardown",
+              "expect": "pass",
+              "why": null
+            }
+          ],
+          "os": "windows"
+        }
+      ],
+      "id": "builtin-gvisor",
+      "kind": "container",
+      "needs": "the built-in Linux runtime (downloaded on first use)",
+      "not_runnable": null,
+      "runtime": "gvisor"
+    },
+    {
+      "backend": "managed",
+      "capabilities": {
+        "archs": [
+          "aarch64",
+          "x86_64"
+        ],
+        "checkpoint": true,
+        "claim": true,
+        "fork": true,
+        "guests": [
+          "linux"
+        ],
+        "kvm": false,
+        "nested_virt": false,
+        "pause": true,
+        "prepare": true
+      },
+      "guest": "linux",
+      "hosts": [
+        {
+          "cases": [
+            {
+              "case": "ready",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "policy",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "dns",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "download",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "registry",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "children",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "agent",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "warm",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "teardown",
+              "expect": "pass",
+              "why": null
+            }
+          ],
+          "os": "macos"
+        },
+        {
+          "cases": [
+            {
+              "case": "ready",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "policy",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "dns",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "download",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "registry",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "children",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "agent",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "warm",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "teardown",
+              "expect": "pass",
+              "why": null
+            }
+          ],
+          "os": "windows"
+        }
+      ],
+      "id": "builtin-runc",
+      "kind": "container",
+      "needs": "the built-in Linux runtime (downloaded on first use)",
+      "not_runnable": null,
+      "runtime": "runc"
+    },
+    {
+      "backend": "container",
+      "capabilities": {
+        "archs": [
+          "aarch64",
+          "x86_64"
+        ],
+        "checkpoint": true,
+        "claim": true,
+        "fork": true,
+        "guests": [
+          "linux"
+        ],
+        "kvm": false,
+        "nested_virt": false,
+        "pause": true,
+        "prepare": true
+      },
+      "guest": "linux",
+      "hosts": [
+        {
+          "cases": [
+            {
+              "case": "ready",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "policy",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "dns",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "download",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "registry",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "children",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "agent",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "warm",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "teardown",
+              "expect": "pass",
+              "why": null
+            }
+          ],
+          "os": "linux"
+        }
+      ],
+      "id": "engine-gvisor",
+      "kind": "container",
+      "needs": "Docker or containerd with gVisor (runsc) and nftables",
+      "not_runnable": null,
+      "runtime": "gvisor"
+    },
+    {
+      "backend": "container",
+      "capabilities": {
+        "archs": [
+          "aarch64",
+          "x86_64"
+        ],
+        "checkpoint": true,
+        "claim": true,
+        "fork": true,
+        "guests": [
+          "linux"
+        ],
+        "kvm": false,
+        "nested_virt": false,
+        "pause": true,
+        "prepare": true
+      },
+      "guest": "linux",
+      "hosts": [
+        {
+          "cases": [
+            {
+              "case": "ready",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "policy",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "dns",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "download",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "registry",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "children",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "agent",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "warm",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "teardown",
+              "expect": "pass",
+              "why": null
+            }
+          ],
+          "os": "linux"
+        }
+      ],
+      "id": "engine-runc",
+      "kind": "container",
+      "needs": "Docker or containerd and nftables",
+      "not_runnable": null,
+      "runtime": "runc"
+    },
+    {
+      "backend": "firecracker",
+      "capabilities": {
+        "archs": [
+          "aarch64",
+          "x86_64"
+        ],
+        "checkpoint": true,
+        "claim": true,
+        "fork": true,
+        "guests": [
+          "linux"
+        ],
+        "kvm": true,
+        "nested_virt": true,
+        "pause": true,
+        "prepare": false
+      },
+      "guest": "linux",
+      "hosts": [
+        {
+          "cases": [
+            {
+              "case": "ready",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "policy",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "dns",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "download",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "registry",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "children",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "agent",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "warm",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "teardown",
+              "expect": "pass",
+              "why": null
+            }
+          ],
+          "os": "linux"
+        }
+      ],
+      "id": "firecracker-microvm",
+      "kind": "microvm",
+      "needs": "Linux with /dev/kvm and Firecracker",
+      "not_runnable": null,
+      "runtime": "firecracker"
+    },
+    {
+      "backend": "vz",
+      "capabilities": {
+        "archs": [
+          "aarch64"
+        ],
+        "checkpoint": true,
+        "claim": true,
+        "fork": true,
+        "guests": [
+          "linux"
+        ],
+        "kvm": false,
+        "nested_virt": false,
+        "pause": true,
+        "prepare": false
+      },
+      "guest": "linux",
+      "hosts": [
+        {
+          "cases": [
+            {
+              "case": "ready",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "policy",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "dns",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "download",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "registry",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "children",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "agent",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "warm",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "teardown",
+              "expect": "pass",
+              "why": null
+            }
+          ],
+          "os": "macos"
+        }
+      ],
+      "id": "vz-microvm",
+      "kind": "microvm",
+      "needs": "an Apple silicon Mac with cua-vz and cua-microvm-init next to `cua`",
+      "not_runnable": null,
+      "runtime": "vz"
+    },
+    {
+      "backend": "containerization",
+      "capabilities": {
+        "archs": [
+          "aarch64",
+          "x86_64"
+        ],
+        "checkpoint": false,
+        "claim": true,
+        "fork": false,
+        "guests": [
+          "linux"
+        ],
+        "kvm": false,
+        "nested_virt": false,
+        "pause": false,
+        "prepare": false
+      },
+      "guest": "linux",
+      "hosts": [
+        {
+          "cases": [
+            {
+              "case": "ready",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "policy",
+              "expect": "refused",
+              "why": "Apple's Containerization can't protect your network: its guests sit on Apple's vmnet network, which only pf can filter (pf needs root), and a firewall inside the guest would not hold against the Space's own root. Use the Cua microVM monitor (`--runtime vz`: cua-vz and cua-microvm-init, which the Cua Spaces app ships next to `cua`) or choose No protection."
+            },
+            {
+              "case": "dns",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "download",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "registry",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "children",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "agent",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "warm",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "teardown",
+              "expect": "pass",
+              "why": null
+            }
+          ],
+          "os": "macos"
+        }
+      ],
+      "id": "containerization-microvm",
+      "kind": "microvm",
+      "needs": "macOS 26 on Apple silicon (Cua installs Apple's container itself)",
+      "not_runnable": null,
+      "runtime": "containerization"
+    },
+    {
+      "backend": "qemu",
+      "capabilities": {
+        "archs": [
+          "aarch64",
+          "x86_64"
+        ],
+        "checkpoint": true,
+        "claim": true,
+        "fork": true,
+        "guests": [
+          "linux",
+          "windows",
+          "android",
+          "macos"
+        ],
+        "kvm": false,
+        "nested_virt": false,
+        "pause": true,
+        "prepare": false
+      },
+      "guest": "linux",
+      "hosts": [
+        {
+          "cases": [
+            {
+              "case": "ready",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "policy",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "dns",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "download",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "registry",
+              "expect": "refused",
+              "why": "not applicable to this guest"
+            },
+            {
+              "case": "children",
+              "expect": "refused",
+              "why": "not applicable to this guest"
+            },
+            {
+              "case": "agent",
+              "expect": "refused",
+              "why": "not applicable to this guest"
+            },
+            {
+              "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "warm",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "teardown",
+              "expect": "pass",
+              "why": null
+            }
+          ],
+          "os": "linux"
+        },
+        {
+          "cases": [
+            {
+              "case": "ready",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "policy",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "dns",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "download",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "registry",
+              "expect": "refused",
+              "why": "not applicable to this guest"
+            },
+            {
+              "case": "children",
+              "expect": "refused",
+              "why": "not applicable to this guest"
+            },
+            {
+              "case": "agent",
+              "expect": "refused",
+              "why": "not applicable to this guest"
+            },
+            {
+              "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "warm",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "teardown",
+              "expect": "pass",
+              "why": null
+            }
+          ],
+          "os": "macos"
+        },
+        {
+          "cases": [
+            {
+              "case": "ready",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "policy",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "dns",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "download",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "registry",
+              "expect": "refused",
+              "why": "not applicable to this guest"
+            },
+            {
+              "case": "children",
+              "expect": "refused",
+              "why": "not applicable to this guest"
+            },
+            {
+              "case": "agent",
+              "expect": "refused",
+              "why": "not applicable to this guest"
+            },
+            {
+              "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "warm",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "teardown",
+              "expect": "pass",
+              "why": null
+            }
+          ],
+          "os": "windows"
+        }
+      ],
+      "id": "qemu-vm",
+      "kind": "vm",
+      "needs": "qemu-system and a Linux VM image (a containerDisk)",
+      "not_runnable": null,
+      "runtime": "qemu"
+    },
+    {
+      "backend": "lume",
+      "capabilities": {
+        "archs": [
+          "aarch64"
+        ],
+        "checkpoint": false,
+        "claim": true,
+        "fork": true,
+        "guests": [
+          "macos"
+        ],
+        "kvm": false,
+        "nested_virt": false,
+        "pause": false,
+        "prepare": false
+      },
+      "guest": "macos",
+      "hosts": [
+        {
+          "cases": [
+            {
+              "case": "ready",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "policy",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "dns",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "download",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "registry",
+              "expect": "refused",
+              "why": "not applicable to this guest"
+            },
+            {
+              "case": "children",
+              "expect": "refused",
+              "why": "not applicable to this guest"
+            },
+            {
+              "case": "agent",
+              "expect": "refused",
+              "why": "not applicable to this guest"
+            },
+            {
+              "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "warm",
+              "expect": "refused",
+              "why": "not applicable to this guest"
+            },
+            {
+              "case": "teardown",
+              "expect": "pass",
+              "why": null
+            }
+          ],
+          "os": "macos"
+        }
+      ],
+      "id": "lume-macos-vm",
+      "kind": "vm",
+      "needs": "an Apple silicon Mac with Lume and a macOS image",
+      "not_runnable": null,
+      "runtime": "lume"
+    },
+    {
+      "backend": "qemu-docker",
+      "capabilities": {
+        "archs": [],
+        "checkpoint": false,
+        "claim": false,
+        "fork": false,
+        "guests": [],
+        "kvm": false,
+        "nested_virt": false,
+        "pause": false,
+        "prepare": false
+      },
+      "guest": "linux",
+      "hosts": [],
+      "id": "qemu-docker",
+      "kind": "vm",
+      "needs": "nothing: no runtime of this build starts QEMU inside a container",
+      "not_runnable": "no runtime of this build starts QEMU inside a container",
+      "runtime": ""
+    }
+  ]
+}

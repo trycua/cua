@@ -13,6 +13,7 @@
 //! compositor-attested surfaces and return a typed identity error otherwise.
 
 mod compositor_peer;
+mod cua_compositor_capture;
 mod dynamic_library;
 pub mod ext_screencopy;
 pub mod ext_toplevel;
@@ -1282,6 +1283,10 @@ fn screenshot_dispatch_for_pid(xid: u64, pid: Option<u32>) -> anyhow::Result<Vec
     }
     if niri::is_session() {
         return niri_window_capture(xid, pid);
+    }
+    if is_wayland() && is_inject_mode() {
+        return cua_compositor_capture::capture(xid, pid)
+            .map_err(|error| surface_identity_unproven(xid, format!("cua-compositor: {error:#}")));
     }
     if is_wayland() {
         // A GNOME helper with API 9+ snapshots the window's own actor, so a

@@ -50,6 +50,9 @@ INCLUDES = r"""#include <stdint.h>
 #include <wlr/types/wlr_foreign_toplevel_management_v1.h>
 #include <wlr/types/wlr_screencopy_v1.h>
 #include <wlr/types/wlr_xdg_output_v1.h>
+#include <wlr/render/pass.h>
+#include <wlr/render/swapchain.h>
+#include <wlr/render/wlr_texture.h>
 
 #define CUA_MAXDEV 64
 /* Per-cursor / per-keyboard enter bookkeeping (idx = logical device). */
@@ -272,6 +275,106 @@ static const char *cua_query_geometry(struct tinywl_server *server, pid_t target
 	x -= geo.x; y -= geo.y;
 	snprintf(out, out_len, "geometry %d %d %d %d", x, y, scene_x, scene_y);
 	return NULL;
+}
+/* ── window capture: render one toplevel's own surfaces, never the output ──── */
+#define CUA_CAPTURE_MAX_EXTENT 16384
+#define CUA_FORMAT_ARGB8888 0x34325241 /* DRM_FORMAT_ARGB8888: B,G,R,A bytes */
+struct cua_capture_pass { struct wlr_render_pass *pass; int x, y; const char *err; };
+static void cua_capture_buffer(struct wlr_scene_buffer *buffer, int sx, int sy, void *data) {
+	struct cua_capture_pass *capture = data;
+	if (!buffer->buffer || capture->err) return;
+	struct wlr_scene_surface *scene_surface = wlr_scene_surface_try_from_buffer(buffer);
+	struct wlr_texture *texture = scene_surface ? wlr_surface_get_texture(scene_surface->surface) : NULL;
+	if (!texture) { capture->err = "untextured-surface"; return; }
+	wlr_render_pass_add_texture(capture->pass, &(struct wlr_render_texture_options){
+		.texture = texture,
+		.src_box = buffer->src_box,
+		.dst_box = {
+			.x = sx - capture->x, .y = sy - capture->y,
+			.width = buffer->dst_width > 0 ? buffer->dst_width : (int)texture->width,
+			.height = buffer->dst_height > 0 ? buffer->dst_height : (int)texture->height,
+		},
+		.alpha = &buffer->opacity,
+		.transform = buffer->transform,
+		.filter_mode = buffer->filter_mode,
+	});
+}
+/* Capture the toplevel owned by `target_pid`'s process family, the same
+ * identity `g` and `root:<pid>` injection resolve. Only the target's scene
+ * subtree is drawn (its surface, subsurfaces and popups, all owned by its
+ * client), so another window stacked above it can never appear and the target
+ * need not be focused, raised or even visible. The frame is the xdg window
+ * geometry, the frame pointer injection uses. On success *fd_out is a memfd of
+ * width*height ARGB8888 pixels with stride width*4. */
+static const char *cua_capture_pid(struct tinywl_server *server, pid_t target_pid,
+		char *out, size_t out_len, int *fd_out) {
+	struct tinywl_toplevel *t, *target = NULL;
+	int matches = 0;
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (cua_pid_in_family(cua_toplevel_pid(t), target_pid)) { target = t; matches++; }
+	}
+	if (!matches) return "target-not-found";
+	if (matches > 1) return "ambiguous-pid";
+	int x = 0, y = 0;
+	if (!wlr_scene_node_coords(&target->scene_tree->node, &x, &y)) return "unmapped-target";
+	struct wlr_box geo = target->xdg_toplevel->base->geometry;
+	if (geo.width <= 0 || geo.height <= 0) return "empty-geometry";
+	if (geo.width > CUA_CAPTURE_MAX_EXTENT || geo.height > CUA_CAPTURE_MAX_EXTENT) return "oversized-geometry";
+	if (wl_list_empty(&server->outputs)) return "no-output";
+	struct tinywl_output *output = wl_container_of(server->outputs.next, output, link);
+	if (!output->wlr_output->swapchain) return "no-render-format";
+	struct wlr_buffer *canvas = wlr_allocator_create_buffer(server->allocator,
+		geo.width, geo.height, &output->wlr_output->swapchain->format);
+	if (!canvas) return "allocation-failed";
+	const char *err = NULL;
+	struct wlr_render_pass *pass = wlr_renderer_begin_buffer_pass(server->renderer, canvas, NULL);
+	if (!pass) { wlr_buffer_drop(canvas); return "render-failed"; }
+	/* Opaque black, the colour the output shows where no surface draws. */
+	wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){
+		.box = { .width = geo.width, .height = geo.height },
+		.color = { .r = 0, .g = 0, .b = 0, .a = 1 },
+		.blend_mode = WLR_RENDER_BLEND_MODE_NONE,
+	});
+	struct cua_capture_pass capture = { .pass = pass, .x = x, .y = y };
+	wlr_scene_node_for_each_buffer(&target->scene_tree->node, cua_capture_buffer, &capture);
+	if (!wlr_render_pass_submit(pass)) err = "render-failed";
+	if (!err) err = capture.err;
+	size_t stride = (size_t)geo.width * 4, size = stride * (size_t)geo.height;
+	int fd = -1;
+	struct wlr_texture *texture = err ? NULL : wlr_texture_from_buffer(server->renderer, canvas);
+	if (!err && !texture) err = "readback-failed";
+	if (!err && ((fd = memfd_create("cua-capture", MFD_CLOEXEC)) < 0 || ftruncate(fd, (off_t)size) < 0))
+		err = "allocation-failed";
+	void *pixels = MAP_FAILED;
+	if (!err && (pixels = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0)) == MAP_FAILED)
+		err = "allocation-failed";
+	if (!err && !wlr_texture_read_pixels(texture, &(struct wlr_texture_read_pixels_options){
+			.data = pixels, .format = CUA_FORMAT_ARGB8888, .stride = (uint32_t)stride }))
+		err = "readback-failed";
+	if (pixels != MAP_FAILED) munmap(pixels, size);
+	if (texture) wlr_texture_destroy(texture);
+	wlr_buffer_drop(canvas);
+	if (err) { if (fd >= 0) close(fd); return err; }
+	snprintf(out, out_len, "image %d %d", geo.width, geo.height);
+	*fd_out = fd;
+	return NULL;
+}
+/* One reply line carrying `payload` as SCM_RIGHTS. */
+static void cua_reply_fd(int fd, const char *line, int payload) {
+	char buf[256];
+	int n = snprintf(buf, sizeof buf, "%s\n", line);
+	if (n < 0 || n >= (int)sizeof buf) return;
+	struct iovec iov = { .iov_base = buf, .iov_len = (size_t)n };
+	union { char buf[CMSG_SPACE(sizeof(int))]; struct cmsghdr align; } control;
+	memset(&control, 0, sizeof control);
+	struct msghdr msg = { .msg_iov = &iov, .msg_iovlen = 1,
+		.msg_control = control.buf, .msg_controllen = sizeof control.buf };
+	struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
+	cmsg->cmsg_level = SOL_SOCKET;
+	cmsg->cmsg_type = SCM_RIGHTS;
+	cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+	memcpy(CMSG_DATA(cmsg), &payload, sizeof(int));
+	sendmsg(fd, &msg, MSG_NOSIGNAL);
 }
 static void cua_ptr_leave(struct wlr_seat *seat, struct wlr_surface *surf) {
 	if (!surf) return;
@@ -674,10 +777,19 @@ static int cua_conn_readable(int fd, uint32_t mask, void *data) {
 				return cua_conn_drop(c, fd);
 			}
 		} else {
-			int query_pid, geometry_pid, activate_pid;
+			int query_pid, geometry_pid, activate_pid, capture_pid;
 			if (sscanf(p, "q %d", &query_pid) == 1) {
 				char msg[128]; cua_query_state(c->server, (pid_t)query_pid, msg, sizeof msg);
 				cua_reply(fd, msg);
+			} else if (sscanf(p, "s %d", &capture_pid) == 1) {
+				char msg[128]; int pixels = -1;
+				const char *err = cua_capture_pid(c->server, (pid_t)capture_pid, msg, sizeof msg, &pixels);
+				if (err) {
+					char reply[128]; snprintf(reply, sizeof reply, "err %s", err); cua_reply(fd, reply);
+				} else {
+					cua_reply_fd(fd, msg, pixels);
+					close(pixels);
+				}
 			} else if (sscanf(p, "g %d", &geometry_pid) == 1) {
 				char msg[128];
 				const char *err = cua_query_geometry(c->server, (pid_t)geometry_pid, msg, sizeof msg);
@@ -846,6 +958,14 @@ src = repl(src,
     "headless-custom-mode")
 
 # 7) Create the extra managers + the seat caps + the control socket in main.
+# Scene visibility culling would stop frame callbacks to an occluded client,
+# which then stops drawing and leaves `s` a stale buffer. Every mapped window
+# keeps rendering, as background capture and background input both need.
+src = repl(src,
+    "\tserver.scene = wlr_scene_create();",
+    "\tsetenv(\"WLR_SCENE_DISABLE_VISIBILITY\", \"1\", 1);\n\tserver.scene = wlr_scene_create();\n"
+    "\tunsetenv(\"WLR_SCENE_DISABLE_VISIBILITY\");",
+    "scene-visibility")
 src = repl(src,
     "\tserver.output_layout = wlr_output_layout_create(server.wl_display);",
     "\tserver.output_layout = wlr_output_layout_create(server.wl_display);\n"

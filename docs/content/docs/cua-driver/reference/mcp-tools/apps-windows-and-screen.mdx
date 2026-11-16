@@ -206,6 +206,8 @@ Launch a Linux app in the background. Provide launch_path (preferred: round-trip
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="launch_app--linux--additional_arguments"></span>`additional_arguments` | `string[]` |  | Extra command-line arguments passed to the launched process. |
+| <span id="launch_app--linux--agent_seat"></span>`agent_seat` | `boolean` |  | Hyprland with the Cua plugin only. Start the app on the agent seat so it accepts background clicks and typing even if it binds only its first wl_seat (Chromium, Electron). Its only seat is then the agent's: the person's own mouse and keyboard do not reach it while it runs. A browser or Electron app already running on the same profile takes the request over and is not tagged: quit it or use a separate profile first. |
+| <span id="launch_app--linux--agent_seat_lane"></span>`agent_seat_lane` | `integer` |  | Which agent seat lane the app is bound to, 1 or 2 (default 1). Two agents driving apps at once use different lanes. Range: 1 to 2. |
 | <span id="launch_app--linux--bundle_id"></span>`bundle_id` | `string` |  | Ignored on Linux (macOS/Windows concept). |
 | <span id="launch_app--linux--launch_path"></span>`launch_path` | `string` |  | Round-trip the `launch_path` returned by `list_apps`: the Exec= command from the .desktop file with XDG field codes already stripped. Highest precedence on Linux; spawned directly via the system shell. |
 | <span id="launch_app--linux--name"></span>`name` | `string` |  | App name or command to launch. Tried as a direct command first, then matched against installed .desktop applications (exact display name, desktop-file id, or Exec basename; else an unambiguous display-name substring). |

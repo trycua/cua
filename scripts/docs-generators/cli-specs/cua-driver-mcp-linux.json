@@ -302,6 +302,16 @@
       },
       "type": "array"
      },
+     "agent_seat": {
+      "description": "Hyprland with the Cua plugin only. Start the app on the agent seat so it accepts background clicks and typing even if it binds only its first wl_seat (Chromium, Electron). Its only seat is then the agent's: the person's own mouse and keyboard do not reach it while it runs. A browser or Electron app already running on the same profile takes the request over and is not tagged: quit it or use a separate profile first.",
+      "type": "boolean"
+     },
+     "agent_seat_lane": {
+      "description": "Which agent seat lane the app is bound to, 1 or 2 (default 1). Two agents driving apps at once use different lanes.",
+      "maximum": 2,
+      "minimum": 1,
+      "type": "integer"
+     },
      "bundle_id": {
       "description": "Ignored on Linux (macOS/Windows concept).",
       "type": "string"

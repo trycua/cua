@@ -1,6 +1,6 @@
 ---
 title: Choose where sandboxes run
-description: Run sandboxes on this machine, in your own AWS, Google Cloud, Hetzner or Modal account, or on E2B, Daytona or Modal. Check the host, pick a runtime, and set the default.
+description: Run sandboxes on this machine, in your own AWS, Google Cloud, Azure, Hetzner or Modal account, or on E2B, Daytona or Modal. Check the host, pick a runtime, and set the default.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -12,7 +12,7 @@ machine.
 | Where | `on` | What you set up |
 | --- | --- | --- |
 | [This machine](#this-machine) | `local` (the default) | A container engine, QEMU or Lume, with `cua runtime setup` |
-| [Your own cloud](#your-own-cloud) | `aws`, `gcp`, `hetzner`, `modal` | `cua cloud connect` |
+| [Your own cloud](#your-own-cloud) | `aws`, `gcp`, `azure`, `hetzner`, `modal` | `cua cloud connect` |
 | [Another provider](#other-sandbox-providers) | `e2b`, `daytona`, `modal` | The provider's API key, and a `cua` build with `--features contrib` |
 | A machine that runs cua-spacesd | `direct:<host:port>` | [Attach to or run cua-spacesd](/cua-sdk/guides/spacesd) |
 
@@ -245,13 +245,14 @@ network.
 ## Your own cloud
 
 Sandboxes and Spaces can run in a cloud account you own: `--on aws` (EC2),
-`--on gcp` (Compute Engine), `--on hetzner` (Hetzner Cloud servers) or
+`--on gcp` (Compute Engine), `--on azure` (Azure Virtual Machines), `--on hetzner` (Hetzner Cloud servers) or
 `--on modal` (Modal Sandboxes). The same images, SDK calls and `cua-bench`
 runs work there, each sandbox dials out to the cua.ai relay as a machine of
 your account, and you pay the cloud directly. Connect one with
 `cua cloud connect`; [Use your own cloud](/cua-sdk/guides/your-cloud) covers
 what you need, what Cua creates there, costs, notes for each cloud and
-cleanup.
+cleanup. Azure is linked through Cua's sign-in with no key:
+[Link a cloud without a key](/cua-sdk/guides/your-cloud-without-a-key#azure).
 
 ## Other sandbox providers
 

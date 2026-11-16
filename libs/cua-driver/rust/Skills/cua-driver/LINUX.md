@@ -353,8 +353,14 @@ Background input reaches any native Wayland app that binds the agent seats
 (GTK 3 and 4 and Qt 6 apps do). Before each action, Driver checks that the
 compositor reports the target as a native Wayland window of that process;
 XWayland windows refuse with `client_xwayland`. The plugin refuses an app that
-never bound the agent seat with `client_not_bound`: Chromium and Electron bind
-only the user's seat, so use the browser tools for their pages. Qt 6 apps take
+never bound the agent seat with `client_not_bound`. Chromium and Electron bind
+only their first seat, so start them with `launch_app` and `agent_seat: true`
+(optionally `agent_seat_lane: 1|2`): the app then has the agent seat as its only
+seat and takes background input, and the person's own mouse and keyboard do not
+reach it while it runs. An instance that was already running keeps refusing with
+`client_not_bound` (detail `client_not_agent_seat_bound`): quit it, or start the
+app on a separate profile, and launch it again. Check the launch result's
+`agent_seat.tagged`. Qt 6 apps take
 background clicks, scrolls and drags, but refuse keys
 (`client_drops_background_keys`): Qt sends keys only to the window the user has
 active.
@@ -365,8 +371,8 @@ executable path, one per line (`#` starts a comment), in
 default). Driver matches each entry, symlinks resolved, against the target's
 `/proc/<pid>/exe`. A dispatch admitted this way carries `admission: "user"` and
 says the user qualified the app, not Cua. The list lifts only quirk refusals:
-XWayland, `client_not_bound` (Chromium, Electron) and the plugin's own checks
-still refuse.
+XWayland, `client_not_bound` (an app that did not bind the agent seat) and the
+plugin's own checks still refuse.
 
 The plugin separately binds the exact live native surface and checks geometry,
 desktop availability, and primary-client and other-lane conflicts. Each

@@ -3403,11 +3403,26 @@ pub(crate) fn hyprland_input_result(result: anyhow::Result<Value>, foreground: b
                 unavailable
             };
             if !foreground && code.starts_with("client_") {
-                value["hint"] = json!(
+                let mut hint = String::from(
                     "This app does not take background pointer or key input on Hyprland's \
                      agent seats. Use element_token (accessibility actions), the browser \
-                     tools for a browser page, or delivery_mode:\"foreground\"."
+                     tools for a browser page, or delivery_mode:\"foreground\".",
                 );
+                if code == "client_not_bound" {
+                    hint.push_str(match detail.as_str() {
+                        "client_bound_to_other_lane" => {
+                            " It was started on the other agent seat lane: relaunch it with \
+                             launch_app agent_seat:true and the lane this session uses."
+                        }
+                        _ => {
+                            " An app that binds only its first seat (Chromium, Electron) takes \
+                             it when started with launch_app agent_seat:true; quit the running \
+                             instance first. The app then has the agent seat only: the \
+                             person's own mouse and keyboard do not reach it."
+                        }
+                    });
+                }
+                value["hint"] = json!(hint);
             }
             value["reason"] = json!(code);
             value["code"] = json!(refusal);
@@ -3913,7 +3928,21 @@ fn background_client_refusals_name_the_alternatives() {
         assert_eq!(value["code"], "background_unavailable");
         assert_eq!(value["reason"], code);
         assert!(value["hint"].as_str().unwrap().contains("element_token"));
+        // Only client_not_bound can be fixed by relaunching on the agent seat.
+        assert_eq!(
+            value["hint"].as_str().unwrap().contains("agent_seat:true"),
+            code == "client_not_bound"
+        );
     }
+    let other_lane = isolated_hyprland_result(Ok(
+        json!({"ok":false,"code":"client_not_bound","detail":"client_bound_to_other_lane"}),
+    ));
+    let hint = other_lane.structured_content.as_ref().unwrap()["hint"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(hint.contains("other agent seat lane"));
+    assert!(!hint.contains("Chromium"));
     let foreground = hyprland_input_result(
         Ok(json!({"ok":false,"code":"client_not_bound","detail":"client_not_bound"})),
         true,

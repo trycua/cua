@@ -19,7 +19,10 @@
 //! The plugin repeats the live checks at dispatch and adds the one only the
 //! compositor can see: whether the client bound the lane seat's pointer or
 //! keyboard. A client that binds only its first `wl_seat` (Chromium's Ozone
-//! backend, and so Electron) is refused there with `client_not_bound`, before
+//! backend, and so Electron) is handed an agent seat by the plugin when it was
+//! launched with `launch_app agent_seat` (the `CUA_AGENT_SEAT` tag, see
+//! `hyprland_input::AGENT_SEAT_ENV`); otherwise it is refused there with
+//! `client_not_bound`, before
 //! any event is sent.
 //!
 //! This is a compatibility check, not a security boundary against same-user

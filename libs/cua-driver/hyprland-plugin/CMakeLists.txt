@@ -53,6 +53,12 @@ if(BUILD_TESTING)
     target_compile_options(cua_hyprland_foreground_route_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
     add_test(NAME cua_hyprland_foreground_route_test COMMAND cua_hyprland_foreground_route_test)
 
+    add_executable(cua_hyprland_agent_seat_tag_test tests/agent_seat_tag_test.cpp)
+    target_compile_features(cua_hyprland_agent_seat_tag_test PRIVATE cxx_std_26)
+    target_include_directories(cua_hyprland_agent_seat_tag_test PRIVATE src)
+    target_compile_options(cua_hyprland_agent_seat_tag_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    add_test(NAME cua_hyprland_agent_seat_tag_test COMMAND cua_hyprland_agent_seat_tag_test)
+
     add_executable(cua_hyprland_user_seat_policy_test tests/user_seat_policy_test.cpp)
     target_compile_features(cua_hyprland_user_seat_policy_test PRIVATE cxx_std_26)
     target_include_directories(cua_hyprland_user_seat_policy_test PRIVATE src)
@@ -263,7 +269,7 @@ if(CUA_HYPRLAND_BUILD_PLUGIN)
                 "Hyprland ${HYPRLAND_VERSION} headers expose no supported window input API")
         endif()
         target_sources(cua_hyprland_plugin PRIVATE src/input_experiment.cpp src/user_seat_guard.cpp
-            src/ime_popup_guard.cpp)
+            src/ime_popup_guard.cpp src/agent_seat_bind.cpp)
         target_compile_definitions(cua_hyprland_plugin PRIVATE
             CUA_HYPRLAND_WINDOW_BACKEND_API=${cua_hyprland_window_backend_api})
     endif()

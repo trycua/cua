@@ -18,7 +18,15 @@ static LAUNCH_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 /// Spawn a launcher command line (an executable plus arguments, e.g. an XDG
 /// `Exec=` value with field codes stripped) in the background and return the
 /// child pid.
-fn spawn_launch_command(cmd: &str, additional_arguments: &[String]) -> std::io::Result<u32> {
+///
+/// With `agent_seat_lane` (1 or 2) the child starts with `CUA_AGENT_SEAT=<lane>`
+/// in its environment, which tells the Hyprland plugin to give it that lane's
+/// agent seat as its only `wl_seat` (see `wayland::hyprland_input::AGENT_SEAT_ENV`).
+fn spawn_launch_command(
+    cmd: &str,
+    additional_arguments: &[String],
+    agent_seat_lane: Option<u8>,
+) -> std::io::Result<u32> {
     let mut parts = cmd.split_whitespace();
     let prog = parts.next().unwrap_or(cmd);
     let mut rest: Vec<String> = parts.map(str::to_owned).collect();
@@ -38,6 +46,15 @@ fn spawn_launch_command(cmd: &str, additional_arguments: &[String]) -> std::io::
         // toolkits ignore these when they do not need them.
         .env("ACCESSIBILITY_ENABLED", "1")
         .env("NO_AT_BRIDGE", "0");
+    // Never inherit a tag from the driver's own environment: only the launch
+    // that asked for the agent seat carries one.
+    match agent_seat_lane {
+        Some(lane) => launch.env(
+            crate::wayland::hyprland_input::AGENT_SEAT_ENV,
+            lane.to_string(),
+        ),
+        None => launch.env_remove(crate::wayland::hyprland_input::AGENT_SEAT_ENV),
+    };
     if chromium_family_program(prog)
         && !rest
             .iter()
@@ -186,7 +203,7 @@ mod launch_app_tests {
         // `/bin/sh` rather than a richer coreutils binary: it is the one
         // executable POSIX and the Nix build sandbox both guarantee, and the
         // sandbox has no `/bin/true`.
-        let pid = spawn_launch_command("/bin/sh -c exit", &[]).expect("/bin/sh should spawn");
+        let pid = spawn_launch_command("/bin/sh -c exit", &[], None).expect("/bin/sh should spawn");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         loop {
             match proc_state(pid) {
@@ -205,6 +222,70 @@ mod launch_app_tests {
             );
             std::thread::sleep(std::time::Duration::from_millis(25));
         }
+    }
+
+    #[test]
+    fn agent_seat_request_validates_before_anything_is_launched() {
+        assert_eq!(agent_seat_request(&json!({"name": "x"})), Ok(None));
+        assert_eq!(agent_seat_request(&json!({"agent_seat": false})), Ok(None));
+        assert!(agent_seat_request(&json!({"agent_seat_lane": 2}))
+            .unwrap_err()
+            .contains("only applies"));
+        assert!(
+            agent_seat_request(&json!({"agent_seat": true, "agent_seat_lane": 3}))
+                .unwrap_err()
+                .contains("1 or 2")
+        );
+        assert!(
+            agent_seat_request(&json!({"agent_seat": true, "agent_seat_lane": "1"}))
+                .unwrap_err()
+                .contains("1 or 2")
+        );
+        // Valid lanes still need the plugin: a plain session has no agent seats.
+        if !crate::wayland::hyprland_input::enabled() {
+            assert!(agent_seat_request(&json!({"agent_seat": true}))
+                .unwrap_err()
+                .contains("Hyprland"));
+        }
+    }
+
+    #[test]
+    fn agent_seat_launch_tags_the_child_environment() {
+        use std::io::Read;
+        // The child prints its tag; an untagged launch must not leak one in from the caller.
+        let dir =
+            std::env::temp_dir().join(format!("cua-agent-seat-launch-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("tag.txt");
+        let script = dir.join("print-tag.sh");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s' \"${{CUA_AGENT_SEAT-unset}}\" > '{}'\n",
+                out.display()
+            ),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        for (lane, want) in [(Some(2), "2"), (None, "unset")] {
+            let _ = std::fs::remove_file(&out);
+            spawn_launch_command(script.to_str().unwrap(), &[], lane).unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            let mut seen = String::new();
+            while std::time::Instant::now() < deadline {
+                if let Ok(mut file) = std::fs::File::open(&out) {
+                    seen.clear();
+                    file.read_to_string(&mut seen).unwrap();
+                    if !seen.is_empty() {
+                        break;
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            assert_eq!(seen, want);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -271,7 +352,9 @@ impl Tool for LaunchAppTool {
                 "name":{"type":"string","description":"App name or command to launch. Tried as a direct command first, then matched against installed .desktop applications (exact display name, desktop-file id, or Exec basename; else an unambiguous display-name substring)."},
                 "bundle_id":{"type":"string","description":"Ignored on Linux (macOS/Windows concept)."},
                 "urls":{"type":"array","items":{"type":"string"},"description":"URLs to open via xdg-open."},
-                "additional_arguments":{"type":"array","items":{"type":"string"},"description":"Extra command-line arguments passed to the launched process."}
+                "additional_arguments":{"type":"array","items":{"type":"string"},"description":"Extra command-line arguments passed to the launched process."},
+                "agent_seat":{"type":"boolean","description":"Hyprland with the Cua plugin only. Start the app on the agent seat so it accepts background clicks and typing even if it binds only its first wl_seat (Chromium, Electron). Its only seat is then the agent's: the person's own mouse and keyboard do not reach it while it runs. A browser or Electron app already running on the same profile takes the request over and is not tagged: quit it or use a separate profile first."},
+                "agent_seat_lane":{"type":"integer","enum":[1,2],"description":"Which agent seat lane the app is bound to (default 1). Two agents driving apps at once use different lanes."}
             },"additionalProperties":false}),
             read_only: false, destructive: false, idempotent: false, open_world: true,
         })
@@ -283,6 +366,10 @@ impl Tool for LaunchAppTool {
         let name_opt = args.opt_str("name");
         let urls: Vec<String> = args.str_array("urls");
         let additional_arguments: Vec<String> = args.str_array("additional_arguments");
+        let agent_seat_lane = match agent_seat_request(&args) {
+            Ok(lane) => lane,
+            Err(refusal) => return ToolResult::error(refusal),
+        };
         if args.get("cdp_debugging_port").is_some() {
             return ToolResult::error(
                 "cdp_debugging_port moved to browser_prepare so DevTools is never enabled on an unproven user profile",
@@ -302,6 +389,12 @@ impl Tool for LaunchAppTool {
 
         if launch_path_opt.is_none() && name_opt.is_none() && urls.is_empty() {
             return ToolResult::error("Provide at least one of: launch_path, name, or urls.");
+        }
+        if agent_seat_lane.is_some() && !urls.is_empty() {
+            return ToolResult::error(
+                "agent_seat needs launch_path or name: urls open in whatever instance xdg-open \
+                 reaches, which the agent seat cannot be attached to.",
+            );
         }
 
         // Snapshot the top-levels before spawning so a window created by an
@@ -340,7 +433,7 @@ impl Tool for LaunchAppTool {
                 // canonical form preferred by list_apps callers.
                 let command = launch_path_opt.as_deref().or(name_opt.as_deref());
                 if let Some(cmd) = command {
-                    match spawn_launch_command(cmd, &additional_arguments) {
+                    match spawn_launch_command(cmd, &additional_arguments, agent_seat_lane) {
                         Ok(pid) => {
                             return Ok((
                                 format!("✅ Launched {cmd} (pid {pid}) in background."),
@@ -354,16 +447,19 @@ impl Tool for LaunchAppTool {
                             // source list_apps reads — and run the match's Exec=.
                             let installed = crate::installed_apps::list_installed_apps();
                             if let Some(app) = match_installed_app(&installed, cmd) {
-                                let pid =
-                                    spawn_launch_command(&app.launch_path, &additional_arguments)
-                                        .map_err(|e| {
-                                        anyhow::anyhow!(
-                                            "'{cmd}' matched installed app '{}' but its launcher \
+                                let pid = spawn_launch_command(
+                                    &app.launch_path,
+                                    &additional_arguments,
+                                    agent_seat_lane,
+                                )
+                                .map_err(|e| {
+                                    anyhow::anyhow!(
+                                        "'{cmd}' matched installed app '{}' but its launcher \
                                          `{}` failed to start: {e}",
-                                            app.name,
-                                            app.launch_path
-                                        )
-                                    })?;
+                                        app.name,
+                                        app.launch_path
+                                    )
+                                })?;
                                 return Ok((
                                     format!(
                                         "✅ Launched {} (`{}`, pid {pid}) in background — \
@@ -429,6 +525,30 @@ impl Tool for LaunchAppTool {
                         "windows": windows,
                         "launcher_pid": launcher_pid,
                     });
+                    if let Some(lane) = agent_seat_lane {
+                        // The tag lives in the process that connects to Wayland. A
+                        // launcher that handed off to a running instance, or a
+                        // D-Bus activated service, did not pass it on.
+                        let lane_index = usize::from(lane) - 1;
+                        let tagged = resolved.pid.is_some_and(|pid| {
+                            crate::wayland::hyprland_input::agent_seat_lane(pid) == Some(lane_index)
+                        });
+                        structured["agent_seat"] = json!({"lane": lane, "tagged": tagged});
+                        if tagged {
+                            text.push_str(&format!(
+                                " Started on agent seat lane {lane}: it takes background input; \
+                                 the person's own mouse and keyboard do not reach it while it runs."
+                            ));
+                        } else {
+                            text.push_str(&format!(
+                                " Warning: the process that owns the window does not carry the \
+                                 agent seat tag (CUA_AGENT_SEAT={lane}); it probably joined an \
+                                 instance that was already running, which is on the user's seat. \
+                                 Quit that instance, or start the app with a separate profile, and \
+                                 launch it again."
+                            ));
+                        }
+                    }
                     if resolved.handed_off {
                         match resolved.pid {
                             Some(pid) => {
@@ -470,6 +590,39 @@ impl Tool for LaunchAppTool {
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
+}
+
+/// The agent seat lane (1 or 2) a launch asks for: `agent_seat: true`, with
+/// `agent_seat_lane` choosing the lane (default 1). `Err` is the refusal text.
+/// The seat needs Hyprland with the Cua plugin; elsewhere the request would
+/// start an app nothing can drive.
+fn agent_seat_request(args: &Value) -> Result<Option<u8>, String> {
+    let requested = args
+        .get("agent_seat")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let lane = args.get("agent_seat_lane");
+    if !requested {
+        return match lane {
+            Some(_) => Err("agent_seat_lane only applies with agent_seat:true.".to_owned()),
+            None => Ok(None),
+        };
+    }
+    let lane = match lane {
+        None => 1,
+        Some(value) => match value.as_u64() {
+            Some(lane @ (1 | 2)) => lane as u8,
+            _ => return Err("agent_seat_lane must be 1 or 2.".to_owned()),
+        },
+    };
+    if !crate::wayland::hyprland_input::enabled() {
+        return Err(
+            "agent_seat needs Hyprland with the Cua plugin loaded and input enabled \
+             (see `hyprctl -j cua:status`); this session has no agent seats."
+                .to_owned(),
+        );
+    }
+    Ok(Some(lane))
 }
 
 /// The `launch_app` D-Bus-activation hand-off timed out: the launcher exited

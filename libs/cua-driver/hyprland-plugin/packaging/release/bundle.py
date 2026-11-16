@@ -23,6 +23,9 @@ cmake/VerifyRuntime.cmake
 include/cua_hyprland/protocol.hpp
 include/cua_hyprland/session.hpp
 include/cua_hyprland/status.hpp
+src/agent_seat_bind.cpp
+src/agent_seat_bind.hpp
+src/agent_seat_tag.hpp
 src/drag_geometry.hpp
 src/foreground_route.hpp
 src/ime_popup_guard.cpp
@@ -47,6 +50,7 @@ src/user_seat_guard.cpp
 src/user_seat_guard.hpp
 src/user_seat_policy.hpp
 tests/agent_key_repeat_test.py
+tests/agent_seat_tag_test.cpp
 tests/cmake-api/CMakeLists.txt
 tests/cmake-api/include/src/Compositor.hpp
 tests/cmake-api/include/src/managers/input/InputManager.hpp

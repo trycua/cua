@@ -57,6 +57,7 @@ std::uint32_t xkb_state_serialize_layout(xkb_state*, xkb_state_component) { retu
 std::uint32_t event_ms() { return 0; }
 std::uint64_t number(const std::string& value) { return std::stoull(value); }
 std::string refusal(const char* code) { return code; }
+template <class T> std::string not_bound_refusal(const T&) { return "client_not_bound"; }
 constexpr std::size_t kMaxResources = 512;
 
 void check(bool ok, const std::string& why) {

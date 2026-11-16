@@ -1,4 +1,5 @@
 #include "mock-hyprland/mock.hpp"
+#include "agent_seat_bind.hpp"
 #include "ime_popup_guard.hpp"
 #include "input_experiment.hpp"
 #include "user_seat_guard.hpp"
@@ -58,6 +59,12 @@ unsigned ime_guard_installs = 0, ime_guard_removals = 0;
 bool install_ime_popup_guard(void*) { ++ime_guard_installs; return true; }
 void remove_ime_popup_guard() { ++ime_guard_removals; }
 bool ime_popup_guard_active() { return ime_guard_installs > ime_guard_removals; }
+unsigned seat_bind_installs = 0, seat_bind_removals = 0;
+bool install_agent_seat_bind(void*) { ++seat_bind_installs; return true; }
+void remove_agent_seat_bind() { ++seat_bind_removals; }
+bool agent_seat_bind_active() { return seat_bind_installs > seat_bind_removals; }
+void set_agent_seat_binder(AgentSeatBinder) {}
+std::uint64_t agent_seat_binds() { return 0; }
 }
 
 int main() {
@@ -79,8 +86,8 @@ int main() {
     const auto initial_status = HyprlandAPI::registered_legacy_command->fn(FORMAT_JSON, {});
     check(created == 0 && initial_status.find(R"("configured":false)") != std::string::npos,
           "plugin starts with input disabled");
-    check(initial_status.find(R"("user_seat_guard":true,"popup_grabs_withheld":0,"drags_withheld":0,"ime_popup_guard":true)") != std::string::npos,
-          "user seat and IME popup guards are installed with the plugin and reported");
+    check(initial_status.find(R"("user_seat_guard":true,"popup_grabs_withheld":0,"drags_withheld":0,"ime_popup_guard":true,"agent_seat_binding":true,"agent_seat_binds":0)") != std::string::npos,
+          "user seat, IME popup and agent seat bind guards are installed with the plugin and reported");
 #ifdef CUA_HYPRLAND_INPUT
     check(advertises_keyboard_behavior(initial_status),
           "disabled v3 module advertises its compiled keyboard behavior before enable");
@@ -137,6 +144,7 @@ int main() {
           "unload detaches configuration listener");
     check(!cua::hyprland::user_seat_guard_active(), "unload removes the user seat guard");
     check(!cua::hyprland::ime_popup_guard_active(), "unload removes the IME popup guard");
+    check(!cua::hyprland::agent_seat_bind_active(), "unload removes the agent seat bind hook");
     check(rmdir(instance.c_str()) == 0 && rmdir(hypr.c_str()) == 0 &&
               rmdir(directory) == 0,
           "remove test-owned runtime");

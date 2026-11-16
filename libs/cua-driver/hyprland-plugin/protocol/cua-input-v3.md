@@ -172,6 +172,43 @@ include `lane_busy`, `lane_not_claimed`, `stale_target`, `stale_geometry`,
 `agent_target_busy`, `lease_expired`, `action_not_admitted`, `lease_busy`,
 `client_not_bound`, `replay`, `unsupported`, and `invalid_request`.
 
+A `client_not_bound` refusal carries one of these details: `client_not_bound`
+(the client bound this lane's seat but has no pointer or keyboard there),
+`client_not_agent_seat_bound` (it bound no agent seat; relaunch it with
+`launch_app agent_seat`), or `client_bound_to_other_lane` (it holds the other
+lane's seat; connect to that lane's socket). Nothing falls back to the user's
+seat.
+
+## Per-client agent seat
+
+A client that binds only its first `wl_seat`, as Chromium's Ozone Wayland
+backend and so Electron do, never binds the agent seats. For such a client the
+plugin binds an agent seat in place of the user's seat, when the client is
+tagged:
+
+- The tag is `CUA_AGENT_SEAT=<lane>` in the client's environment, lane `1` (the
+  `cua-input-v3.sock` lane) or `2`. Driver sets it with `launch_app agent_seat`.
+  Any other value is no tag. The environment is inherited by wrapper scripts and
+  helpers, so it identifies the process that connects however the app started.
+- At `wl_seat` bind, the plugin reads the tag from `/proc/<pid>/environ` of the
+  connecting client (at most 512 KiB). For a tagged client on an enabled lane,
+  it binds that lane's agent seat on the same object id instead of the user's
+  seat. Every other client's bind is Hyprland's own and unchanged. No
+  display-wide global filter is installed, and nothing is decided from a
+  process name.
+- The tag can only be read at bind. An app started before it was tagged keeps
+  the user's seat and refuses with `client_not_agent_seat_bound`.
+- Driver reads the same tag from the target process and connects to that lane's
+  socket only, so a tagged app is driven through its own lane. A busy lane is
+  `lane_busy`, with no fallback.
+- A tagged app has the agent seat only: the person's own mouse and keyboard do
+  not reach it while it runs, the single-seat trade-off recorded on #4257,
+  limited to apps the agent launched. Quit the app to give it back.
+- `hyprctl -j cua:status` reports `agent_seat_binding` (the hook is installed)
+  and `agent_seat_binds` (clients handed an agent seat). Where the hook cannot
+  be installed on a Hyprland build, the plugin still works and tagged apps
+  behave as untagged ones.
+
 ## Exact-target foreground extension
 
 `FOREGROUND_TARGET` binds an ordinary live native top-level surface to

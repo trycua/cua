@@ -941,13 +941,59 @@ impl SessionClient {
 
 /// The compositor owns the cross-process allocation. No target or action has
 /// been sent while this bounded search is running, and errors never fall back.
-fn claim_available(mut connect: impl FnMut(usize) -> Result<Option<Client>>) -> Result<Client> {
-    for lane in 0..MAX_LANES {
+fn claim_available(connect: impl FnMut(usize) -> Result<Option<Client>>) -> Result<Client> {
+    claim_lane(None, connect)
+}
+
+/// [`claim_available`], restricted to one lane when the target is bound to it.
+/// A client tagged with [`AGENT_SEAT_ENV`] holds only that lane's agent seat,
+/// so no other lane can drive it: a busy lane is `lane_busy`, never a fallback.
+fn claim_lane(
+    only: Option<usize>,
+    mut connect: impl FnMut(usize) -> Result<Option<Client>>,
+) -> Result<Client> {
+    for lane in only.map_or(0..MAX_LANES, |lane| lane..lane + 1) {
         if let Some(client) = connect(lane)? {
             return Ok(client);
         }
     }
     Err(LaneBusy.into())
+}
+
+/// A client the driver launched with `launch_app agent_seat` carries
+/// `CUA_AGENT_SEAT=<lane>` (1 or 2) in its environment. At `wl_seat` bind the
+/// plugin hands such a client that lane's agent seat as its only seat, which is
+/// how Chromium and Electron (they bind only their first `wl_seat`) take
+/// background input. The driver reads the same tag to connect to that lane.
+pub(crate) const AGENT_SEAT_ENV: &str = "CUA_AGENT_SEAT";
+
+/// The lane index (0 or 1) named by the first `CUA_AGENT_SEAT` entry of a
+/// NUL-separated environment block. Only the exact values `1` and `2` name a
+/// lane; the first entry wins, as in `getenv`. Mirrors the plugin's
+/// `agent_seat_lane_from_environ`.
+pub(crate) fn agent_seat_lane_from_environ(block: &[u8]) -> Option<usize> {
+    let name = AGENT_SEAT_ENV.as_bytes();
+    block.split(|byte| *byte == 0).find_map(|entry| {
+        let value = entry.strip_prefix(name)?.strip_prefix(b"=")?;
+        Some(match value {
+            b"1" => Some(0),
+            b"2" => Some(1),
+            _ => None,
+        })
+    })?
+}
+
+/// The lane `pid` is bound to, from `/proc/<pid>/environ`. Reads at most
+/// 512 KiB, the same cap as the plugin.
+pub(crate) fn agent_seat_lane(pid: u32) -> Option<usize> {
+    use std::io::Read;
+    let mut block = Vec::new();
+    std::fs::File::open(format!("/proc/{pid}/environ"))
+        .ok()?
+        .take(512 * 1024)
+        .read_to_end(&mut block)
+        .ok()?;
+    agent_seat_lane_from_environ(&block)
 }
 
 static CLIENTS: OnceLock<Mutex<HashMap<String, Arc<SessionClient>>>> = OnceLock::new();
@@ -1260,7 +1306,8 @@ fn execute_actions_routed(
         }
     }
     if slot.is_none() {
-        *slot = Some(claim_available(|lane| {
+        // An agent-seat app holds one lane's seat: only that lane can drive it.
+        *slot = Some(claim_lane(agent_seat_lane(pid), |lane| {
             Client::connect(
                 socket_path(lane)?,
                 owner.clone(),
@@ -3588,5 +3635,87 @@ mod tests {
             .to_string()
             .contains("oversized"));
         server.join().unwrap();
+    }
+
+    #[test]
+    fn agent_seat_tag_names_a_lane_only_for_exact_values() {
+        let lane = agent_seat_lane_from_environ;
+        assert_eq!(
+            lane(b"HOME=/home/u\0CUA_AGENT_SEAT=1\0PATH=/bin\0"),
+            Some(0)
+        );
+        assert_eq!(lane(b"CUA_AGENT_SEAT=2\0"), Some(1));
+        assert_eq!(lane(b"CUA_AGENT_SEAT=2"), Some(1));
+        for untagged in [
+            &b""[..],
+            b"HOME=/home/u\0PATH=/bin\0",
+            b"CUA_AGENT_SEAT=0\0",
+            b"CUA_AGENT_SEAT=3\0",
+            b"CUA_AGENT_SEAT=\0",
+            b"CUA_AGENT_SEAT=11\0",
+            b"CUA_AGENT_SEAT= 1\0",
+            b"CUA_AGENT_SEAT\0",
+            b"XCUA_AGENT_SEAT=1\0",
+            b"CUA_AGENT_SEATS=1\0",
+            b"X=CUA_AGENT_SEAT=1\0",
+        ] {
+            assert_eq!(
+                lane(untagged),
+                None,
+                "{:?}",
+                String::from_utf8_lossy(untagged)
+            );
+        }
+        // Like getenv, the first entry wins, and an invalid first entry hides a later one.
+        assert_eq!(lane(b"CUA_AGENT_SEAT=1\0CUA_AGENT_SEAT=2\0"), Some(0));
+        assert_eq!(lane(b"CUA_AGENT_SEAT=9\0CUA_AGENT_SEAT=2\0"), None);
+    }
+
+    #[test]
+    fn agent_seat_lane_reads_a_live_process_environment() {
+        // This test process is not tagged; a process that does not exist is not either.
+        assert_eq!(agent_seat_lane(std::process::id()), None);
+        assert_eq!(agent_seat_lane(u32::MAX), None);
+        // A child started with the tag is read back from /proc.
+        let mut child = std::process::Command::new("/bin/sh")
+            .args(["-c", "read _"])
+            .env(AGENT_SEAT_ENV, "2")
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .expect("/bin/sh should spawn");
+        let lane = agent_seat_lane(child.id());
+        drop(child.stdin.take());
+        child.wait().unwrap();
+        if std::path::Path::new("/proc/self/environ").exists() {
+            assert_eq!(lane, Some(1));
+        }
+    }
+
+    #[test]
+    fn agent_seat_target_claims_only_its_own_lane() {
+        let pool = Arc::new(Mutex::new([None, None]));
+        let mut attempts = Vec::new();
+        // Tagged for lane 2 (index 1): lane 1 is never tried, even though it is free.
+        let tagged = claim_lane(Some(1), |lane| {
+            attempts.push(lane);
+            fake_claim(lane, &pool)
+        })
+        .unwrap();
+        assert_eq!(tagged.lane, Some(1));
+        assert_eq!(attempts, [1]);
+        // Its lane is now held: a second claim for that lane is lane_busy, with no fallback to lane 1.
+        attempts.clear();
+        assert!(claim_lane(Some(1), |lane| {
+            attempts.push(lane);
+            fake_claim(lane, &pool)
+        })
+        .err()
+        .unwrap()
+        .is::<LaneBusy>());
+        assert_eq!(attempts, [1]);
+        // An untagged target still takes the first free lane.
+        let untagged = claim_lane(None, |lane| fake_claim(lane, &pool)).unwrap();
+        assert_eq!(untagged.lane, Some(0));
+        drop(tagged);
     }
 }

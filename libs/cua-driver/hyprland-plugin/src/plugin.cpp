@@ -1,5 +1,6 @@
 #include "inject_server.hpp"
 #if defined(CUA_HYPRLAND_TEST_INPUT) || defined(CUA_HYPRLAND_INPUT)
+#include "agent_seat_bind.hpp"
 #include "ime_popup_guard.hpp"
 #include "input_experiment.hpp"
 #include "user_seat_guard.hpp"
@@ -224,9 +225,10 @@ std::string status_output(bool json) {
         // Whether popups and drags the user did not start are kept off the
         // user's seat (user_seat_policy.hpp), and how many it withheld.
         result.pop_back();
-        result += std::format(R"(,"user_seat_guard":{},"popup_grabs_withheld":{},"drags_withheld":{},"ime_popup_guard":{}}})",
+        result += std::format(R"(,"user_seat_guard":{},"popup_grabs_withheld":{},"drags_withheld":{},"ime_popup_guard":{},"agent_seat_binding":{},"agent_seat_binds":{}}})",
             cua::hyprland::user_seat_guard_active(), cua::hyprland::popup_grabs_withheld(),
-            cua::hyprland::drags_withheld(), cua::hyprland::ime_popup_guard_active());
+            cua::hyprland::drags_withheld(), cua::hyprland::ime_popup_guard_active(),
+            cua::hyprland::agent_seat_bind_active(), cua::hyprland::agent_seat_binds());
 #endif
 #ifdef CUA_HYPRLAND_INPUT
         // Compiled keyboard behavior of this loaded module, reported whether or
@@ -359,6 +361,11 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     // The agent seats also make an input method register per seat; see
     // ime_popup_guard.cpp. Best effort, reported in status like the above.
     static_cast<void>(cua::hyprland::install_ime_popup_guard(handle));
+    // A client the driver launched with CUA_AGENT_SEAT gets an agent seat as its
+    // only wl_seat (agent_seat_bind.cpp). Best effort too: without the hook,
+    // Chromium and Electron keep refusing with client_not_bound, and status
+    // reports agent_seat_binding false.
+    static_cast<void>(cua::hyprland::install_agent_seat_bind(handle));
 #endif
 
     return {
@@ -374,6 +381,7 @@ APICALL EXPORT void PLUGIN_EXIT() {
 #if defined(CUA_HYPRLAND_TEST_INPUT) || defined(CUA_HYPRLAND_INPUT)
     cua::hyprland::remove_user_seat_guard();
     cua::hyprland::remove_ime_popup_guard();
+    cua::hyprland::remove_agent_seat_bind();
 #endif
 #if defined(CUA_HYPRLAND_TEST_INPUT) || defined(CUA_HYPRLAND_INPUT)
     // Retire input directly so an in-flight action receives plugin_shutdown,

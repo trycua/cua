@@ -1,6 +1,8 @@
 // Independent-seat design adapted from Dillon DuPont's Hyprland prototype.
 // TARGET uses independent resources; FOREGROUND_TARGET explicitly uses the primary seat.
 #include "input_experiment.hpp"
+#include "agent_seat_bind.hpp"
+#include "agent_seat_tag.hpp"
 #include "drag_geometry.hpp"
 #include "input_grant.hpp"
 #include "input_client_deadline.hpp"
@@ -1054,6 +1056,27 @@ struct InputExperiment::Impl {
                 xkb_state_serialize_layout(physical_keyboard_state, XKB_STATE_LAYOUT_EFFECTIVE));
         }
     }
+    // client_not_bound, with what the caller can do about it. A client that
+    // bound none of the agent seats (an app started before the driver tagged it,
+    // or one that binds only its first wl_seat) must be relaunched with
+    // launch_app agent_seat; one bound to the other lane is driven through that
+    // lane's socket. Never a fallback to the user's seat.
+    std::string_view not_bound_detail(Client& c) const {
+        const auto root = c.surface.lock();
+        if (!root) return "client_not_bound";
+        const auto bound = [&](const Impl* lane) {
+            return lane && std::ranges::any_of(lane->seats, [&](const auto& seat) {
+                return !seat->dead && seat->wl->resource() && seat->wl->client() == root->client();
+            });
+        };
+        if (bound(this)) return "client_not_bound";
+        for (const auto* peer : peers)
+            if (peer != this && bound(peer)) return "client_bound_to_other_lane";
+        return "client_not_agent_seat_bound";
+    }
+    std::string not_bound_refusal(Client& c) const {
+        return std::format(R"({{"ok":false,"code":"client_not_bound","detail":"{}"}})", not_bound_detail(c));
+    }
     bool pointer_enter(Client& c, double x, double y) {
         const auto root = c.surface.lock(); if (!root) return false;
         // Initial experiment refuses subsurface targets instead of misrouting.
@@ -1272,7 +1295,7 @@ struct InputExperiment::Impl {
             const auto code = number(f[4]); const auto mods = number(f[5]);
             if (code == 0 || code > 247 || mods > 15 || code == 58 || code == 69 || code == 70) { send(c, refusal("unsupported")); return; }
             if (!consume_grant(c, cap)) return;
-            if (!keyboard_enter(c)) { send(c, refusal("client_not_bound")); return; }
+            if (!keyboard_enter(c)) { send(c, not_bound_refusal(c)); return; }
             // Every key is released in this handler; sync_key_repeat relies on it.
             const std::array<std::uint32_t, 4> keys{42, 29, 56, 125};
             for (unsigned i = 0; i < 4; ++i) if ((mods & (1u << i)) && keys[i] != code) key(keys[i], true);
@@ -1286,18 +1309,18 @@ struct InputExperiment::Impl {
                 // point afterwards, so hover state and tooltips stay until the
                 // target changes or another lane action moves it.
                 if (!consume_grant(c, cap)) return;
-                if (!pointer_enter(c, x, y)) { send(c, refusal("client_not_bound")); return; }
+                if (!pointer_enter(c, x, y)) { send(c, not_bound_refusal(c)); return; }
             } else if (command == "CLICK") {
                 const auto btn = number(f[6]), clicks = number(f[7]);
                 if (btn < 272 || btn > 274 || clicks < 1 || clicks > 2) { send(c, refusal("invalid_request")); return; }
                 if (!consume_grant(c, cap)) return;
-                if (!pointer_enter(c, x, y)) { send(c, refusal("client_not_bound")); return; }
+                if (!pointer_enter(c, x, y)) { send(c, not_bound_refusal(c)); return; }
                 for (unsigned i = 0; i < clicks; ++i) { button(btn, true); button(btn, false); }
             } else if (command == "SCROLL") {
                 const auto axis = number(f[6]); const auto value = real(f[7]);
                 if (axis > 1 || value == 0 || std::abs(value) > 1000) { send(c, refusal("invalid_request")); return; }
                 if (!consume_grant(c, cap)) return;
-                if (!pointer_enter(c, x, y)) { send(c, refusal("client_not_bound")); return; }
+                if (!pointer_enter(c, x, y)) { send(c, not_bound_refusal(c)); return; }
                 for (auto& p : pointers) {
                     if (p->dead || !p->wl->resource() || !p->focus) continue;
                     if (p->wl->version() >= 5) p->wl->sendAxisSource(WL_POINTER_AXIS_SOURCE_WHEEL);
@@ -1309,7 +1332,7 @@ struct InputExperiment::Impl {
                 if (!point(c, x2, y2) || duration < 50 || duration > 2000) { send(c, refusal("invalid_request")); return; }
                 if (Clock::now() + std::chrono::milliseconds(duration + 50) >= expires) { send(c, refusal("lease_expired")); return; }
                 if (!consume_grant(c, cap)) return;
-                if (!pointer_enter(c, x, y)) { send(c, refusal("client_not_bound")); return; }
+                if (!pointer_enter(c, x, y)) { send(c, not_bound_refusal(c)); return; }
                 if (trace) trace->mark("agent_drag_start", lane + 1);
                 button(272, true);
                 drag.emplace(Drag{&c, x, y, x2, y2, Clock::now(), static_cast<unsigned>(duration), DragGeometry{c.revision}});
@@ -1535,9 +1558,25 @@ InputExperiment::InputExperiment(const std::string& directory, void* plugin) {
     (void)plugin;
 #endif
     desktop_listeners_ = std::make_unique<DesktopListeners>(*this);
+    // A client the driver tagged with CUA_AGENT_SEAT gets that lane's agent seat
+    // as its wl_seat, so a toolkit that binds only its first seat can take
+    // agent input (agent_seat_tag.hpp). Only an enabled lane takes clients:
+    // while the transport is off, nothing could drive the app.
+    set_agent_seat_binder([this](wl_client* client, std::uint32_t version, std::uint32_t id) {
+        pid_t pid = 0; uid_t uid = 0; gid_t gid = 0;
+        wl_client_get_credentials(client, &pid, &uid, &gid);
+        if (pid <= 0 || uid != geteuid()) return false;
+        const auto lane = agent_seat_lane_for_pid(pid);
+        if (!lane || *lane >= lanes_.size()) return false;
+        auto& impl = *lanes_[*lane];
+        if (impl.retired || impl.suspended) return false;
+        Impl::bind_seat(client, &impl, version, id);
+        return true;
+    });
     lifetime.publish();
 }
 InputExperiment::~InputExperiment() {
+    set_agent_seat_binder({});
     desktop_listeners_.reset();
     for (auto& lane : lanes_) { lane->retire(); lane->trace = nullptr; lane->peers = {}; }
     trace_.reset();

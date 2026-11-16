@@ -62,8 +62,12 @@ outside the normal installer, adds two independent agent seats (`Cua-Agent`,
 - Apps: any native Wayland app that binds the agent seats, such as GTK 3 and 4
   and Qt 6 apps. Before every action the driver checks that the target is a
   native Wayland window of that process, and the plugin refuses an app that never
-  bound the agent seat (`client_not_bound`). Chromium and Electron bind only the
-  user's seat, so drive their pages with the browser tools.
+  bound the agent seat (`client_not_bound`). Chromium and Electron bind only
+  their first seat, so they take background input only when started with
+  `launch_app` and `agent_seat: true`: the app then has the agent seat as its
+  only seat, and your own mouse and keyboard do not reach it while it runs. An
+  instance that was already running cannot be moved; quit it first, or use a
+  separate profile. For a browser page you can also use the browser tools.
 - Qt 6 apps take background clicks, scrolls and drags but not keys: Qt sends keys
   only to the window the user has active, so background keys refuse
   (`client_drops_background_keys`). To admit a Qt app you have checked

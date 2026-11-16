@@ -7,7 +7,9 @@
 //! surface, subsurfaces and popups) into an offscreen buffer and passes the
 //! pixels back over the control socket as a memfd. Nothing outside that
 //! subtree is drawn, so a window stacked above the target never shows and the
-//! target is never focused or raised to be captured.
+//! target is never focused or raised to be captured. The control socket must
+//! belong to the same compositor process as `WAYLAND_DISPLAY`, the one the
+//! window was listed on.
 
 use std::io::{IoSliceMut, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
@@ -15,6 +17,8 @@ use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
+
+use super::compositor_peer::{peer_pid, wayland_socket_with_timeout};
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -115,8 +119,12 @@ fn recv_with_fd(socket: RawFd, buffer: &mut [u8]) -> Result<(usize, Option<Owned
     Ok((read as usize, fds.pop()))
 }
 
-/// Request window pixels for `pid` over a fresh control connection.
-fn request(stream: UnixStream, pid: u32) -> Result<(Image, OwnedFd)> {
+/// Request window pixels for `pid` over a control connection whose peer must
+/// be the `compositor` process.
+fn request(stream: UnixStream, compositor: libc::pid_t, pid: u32) -> Result<(Image, OwnedFd)> {
+    if peer_pid(stream.as_raw_fd())? != compositor {
+        bail!("CUA_INJECT_SOCKET and WAYLAND_DISPLAY name different compositor processes");
+    }
     stream.set_read_timeout(Some(TIMEOUT))?;
     stream.set_write_timeout(Some(TIMEOUT))?;
     let mut writer = &stream;
@@ -167,8 +175,9 @@ pub(super) fn capture(xid: u64, pid: Option<u32>) -> Result<Vec<u8>> {
     if !super::window_was_listed_for_pid(pid, xid) {
         bail!("window {xid} was not listed for process {pid}");
     }
+    let compositor = peer_pid(wayland_socket_with_timeout(TIMEOUT)?.as_raw_fd())?;
     let socket = super::inject_socket_path().context("CUA_INJECT_SOCKET is not set")?;
-    let (image, fd) = request(UnixStream::connect(socket)?, pid)?;
+    let (image, fd) = request(UnixStream::connect(socket)?, compositor, pid)?;
     encode(image, &fd)
 }
 
@@ -270,6 +279,21 @@ mod tests {
         })
     }
 
+    fn ours(client: &UnixStream) -> libc::pid_t {
+        peer_pid(client.as_raw_fd()).unwrap()
+    }
+
+    #[test]
+    fn refuses_a_control_socket_from_another_process() {
+        let (client, _server) = UnixStream::pair().unwrap();
+        let other = ours(&client) + 1;
+        let error = request(client, other, 42).unwrap_err();
+        assert!(
+            error.to_string().contains("different compositor"),
+            "{error}"
+        );
+    }
+
     #[test]
     fn decodes_the_window_pixels_the_compositor_sends() {
         // Two pixels, B,G,R,A in memory: opaque red, then opaque blue.
@@ -279,7 +303,11 @@ mod tests {
             "image 2 1",
             Some(vec![0, 0, 255, 255, 255, 0, 0, 255]),
         );
-        let (image, fd) = request(client, 42).unwrap();
+        let (image, fd) = {
+            let compositor = ours(&client);
+            request(client, compositor, 42)
+        }
+        .unwrap();
         peer.join().unwrap();
         let png = encode(image, &fd).unwrap();
         let decoded = image::load_from_memory(&png).unwrap().to_rgba8();
@@ -292,7 +320,11 @@ mod tests {
     fn surfaces_the_compositor_refusal() {
         let (client, server) = UnixStream::pair().unwrap();
         let peer = compositor(server, "err unmapped-target", None);
-        let error = request(client, 42).unwrap_err();
+        let error = {
+            let compositor = ours(&client);
+            request(client, compositor, 42)
+        }
+        .unwrap_err();
         peer.join().unwrap();
         assert!(error.to_string().contains("unmapped-target"), "{error}");
     }
@@ -301,7 +333,11 @@ mod tests {
     fn refuses_a_reply_without_pixels() {
         let (client, server) = UnixStream::pair().unwrap();
         let peer = compositor(server, "image 2 1", None);
-        let error = request(client, 42).unwrap_err();
+        let error = {
+            let compositor = ours(&client);
+            request(client, compositor, 42)
+        }
+        .unwrap_err();
         peer.join().unwrap();
         assert!(error.to_string().contains("no window pixels"), "{error}");
     }
@@ -310,7 +346,11 @@ mod tests {
     fn refuses_pixels_shorter_than_the_reported_size() {
         let (client, server) = UnixStream::pair().unwrap();
         let peer = compositor(server, "image 2 2", Some(vec![0; 8]));
-        let (image, fd) = request(client, 42).unwrap();
+        let (image, fd) = {
+            let compositor = ours(&client);
+            request(client, compositor, 42)
+        }
+        .unwrap();
         peer.join().unwrap();
         let error = encode(image, &fd).unwrap_err();
         assert!(error.to_string().contains("shorter"), "{error}");

@@ -1,0 +1,497 @@
+{
+  "versions": {
+    "arc_commit": "74ffae1108b1cb4b1f6b161084af12646f544ba5",
+    "arc_version": "0.1.1",
+    "native_version": "0.34.0",
+    "native_latest_version": "0.34.0",
+    "native_release": "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.34.0",
+    "arc_upstream_checked_at": "2026-10-06T13:43:51.957268+00:00",
+    "candidates_checked_at": "2026-10-06T13:43:50Z",
+    "macos": "27.0.1",
+    "python": "3.12.12"
+  },
+  "server": {
+    "name": "cua-driver",
+    "version": "0.34.0"
+  },
+  "rows": [
+    {
+      "mode": "sequential",
+      "rep": 0,
+      "warmup": true,
+      "action_ms": 1668.0088749999413,
+      "final_read_ms": 74.97520800097845,
+      "seconds": 1.7438319159991806,
+      "verification_seconds": 1.7438315829931526,
+      "reads": 1,
+      "independent_effect": true,
+      "no_later_mutation": true
+    },
+    {
+      "mode": "overlap",
+      "rep": 0,
+      "warmup": true,
+      "action_ms": 1129.7635000082664,
+      "final_read_ms": 73.54904200474266,
+      "seconds": 1.2036464170087129,
+      "verification_seconds": 0.18339616700541228,
+      "reads": 3,
+      "independent_effect": true,
+      "no_later_mutation": true
+    },
+    {
+      "mode": "overlap",
+      "rep": 1,
+      "warmup": true,
+      "action_ms": 1141.5462919976562,
+      "final_read_ms": 61.320167005760595,
+      "seconds": 1.2034868750051828,
+      "verification_seconds": 0.21430716699978802,
+      "reads": 3,
+      "independent_effect": true,
+      "no_later_mutation": true
+    },
+    {
+      "mode": "sequential",
+      "rep": 1,
+      "warmup": true,
+      "action_ms": 1160.3598330111708,
+      "final_read_ms": 71.64237499819137,
+      "seconds": 1.2323282080033096,
+      "verification_seconds": 1.2323278330004541,
+      "reads": 1,
+      "independent_effect": true,
+      "no_later_mutation": true
+    },
+    {
+      "mode": "sequential",
+      "rep": 2,
+      "warmup": false,
+      "action_ms": 1141.5547919896198,
+      "final_read_ms": 82.63270799943712,
+      "seconds": 1.2246419169969158,
+      "verification_seconds": 1.2246416249981849,
+      "reads": 1,
+      "independent_effect": true,
+      "no_later_mutation": true
+    },
+    {
+      "mode": "overlap",
+      "rep": 2,
+      "warmup": false,
+      "action_ms": 1128.8071669987403,
+      "final_read_ms": 60.52020800416358,
+      "seconds": 1.1916850830020849,
+      "verification_seconds": 0.21873870799026918,
+      "reads": 3,
+      "independent_effect": true,
+      "no_later_mutation": true
+    },
+    {
+      "mode": "overlap",
+      "rep": 3,
+      "warmup": false,
+      "action_ms": 1136.8736250005895,
+      "final_read_ms": 72.83400000596885,
+      "seconds": 1.2101600829919335,
+      "verification_seconds": 0.1883899999957066,
+      "reads": 3,
+      "independent_effect": true,
+      "no_later_mutation": true
+    },
+    {
+      "mode": "sequential",
+      "rep": 3,
+      "warmup": false,
+      "action_ms": 1149.9790829984704,
+      "final_read_ms": 76.36208400072064,
+      "seconds": 1.2268807090003975,
+      "verification_seconds": 1.2268805839994457,
+      "reads": 1,
+      "independent_effect": true,
+      "no_later_mutation": true
+    },
+    {
+      "mode": "sequential",
+      "rep": 4,
+      "warmup": false,
+      "action_ms": 1138.438915993902,
+      "final_read_ms": 88.73758300615009,
+      "seconds": 1.2279807500017341,
+      "verification_seconds": 1.2279804580030032,
+      "reads": 1,
+      "independent_effect": true,
+      "no_later_mutation": true
+    },
+    {
+      "mode": "overlap",
+      "rep": 4,
+      "warmup": false,
+      "action_ms": 1134.0523329999996,
+      "final_read_ms": 63.98704199818894,
+      "seconds": 1.1991448329936247,
+      "verification_seconds": 0.20370529100182466,
+      "reads": 3,
+      "independent_effect": true,
+      "no_later_mutation": true
+    },
+    {
+      "mode": "overlap",
+      "rep": 5,
+      "warmup": false,
+      "action_ms": 1147.6679999905173,
+      "final_read_ms": 54.24199999833945,
+      "seconds": 1.2026327079947805,
+      "verification_seconds": 0.18787524999061134,
+      "reads": 3,
+      "independent_effect": true,
+      "no_later_mutation": true
+    },
+    {
+      "mode": "sequential",
+      "rep": 5,
+      "warmup": false,
+      "action_ms": 1136.6479579883162,
+      "final_read_ms": 76.90091700351331,
+      "seconds": 1.2224710829905234,
+      "verification_seconds": 1.2224707919958746,
+      "reads": 1,
+      "independent_effect": true,
+      "no_later_mutation": true
+    },
+    {
+      "mode": "sequential",
+      "rep": 6,
+      "warmup": false,
+      "action_ms": 1184.1395420051413,
+      "final_read_ms": 90.07824999571312,
+      "seconds": 1.2746413749991916,
+      "verification_seconds": 1.274641124997288,
+      "reads": 1,
+      "independent_effect": true,
+      "no_later_mutation": true
+    },
+    {
+      "mode": "overlap",
+      "rep": 6,
+      "warmup": false,
+      "action_ms": 1149.2908329964848,
+      "final_read_ms": 61.42074998933822,
+      "seconds": 1.2112542500108248,
+      "verification_seconds": 0.20952870800101664,
+      "reads": 3,
+      "independent_effect": true,
+      "no_later_mutation": true
+    },
+    {
+      "mode": "overlap",
+      "rep": 7,
+      "warmup": false,
+      "action_ms": 1124.5484170067357,
+      "final_read_ms": 74.15404199855402,
+      "seconds": 1.1994544170011068,
+      "verification_seconds": 0.20308837499760557,
+      "reads": 3,
+      "independent_effect": true,
+      "no_later_mutation": true
+    },
+    {
+      "mode": "sequential",
+      "rep": 7,
+      "warmup": false,
+      "action_ms": 1128.2686670019757,
+      "final_read_ms": 83.97808301378973,
+      "seconds": 1.2127438750030706,
+      "verification_seconds": 1.212743666008464,
+      "reads": 1,
+      "independent_effect": true,
+      "no_later_mutation": true
+    },
+    {
+      "mode": "sequential",
+      "rep": 8,
+      "warmup": false,
+      "action_ms": 1129.1281659941887,
+      "final_read_ms": 73.12812500458676,
+      "seconds": 1.2026222909917124,
+      "verification_seconds": 1.2026220410043607,
+      "reads": 1,
+      "independent_effect": true,
+      "no_later_mutation": true
+    },
+    {
+      "mode": "overlap",
+      "rep": 8,
+      "warmup": false,
+      "action_ms": 1158.8238750118762,
+      "final_read_ms": 56.44891600240953,
+      "seconds": 1.2157395829999587,
+      "verification_seconds": 0.20580683299340308,
+      "reads": 3,
+      "independent_effect": true,
+      "no_later_mutation": true
+    },
+    {
+      "mode": "overlap",
+      "rep": 9,
+      "warmup": false,
+      "action_ms": 1124.0983340103412,
+      "final_read_ms": 54.73824999353383,
+      "seconds": 1.1798954589903587,
+      "verification_seconds": 0.19286708399886265,
+      "reads": 3,
+      "independent_effect": true,
+      "no_later_mutation": true
+    },
+    {
+      "mode": "sequential",
+      "rep": 9,
+      "warmup": false,
+      "action_ms": 1122.3929169937037,
+      "final_read_ms": 76.4270000072429,
+      "seconds": 1.1992894160066498,
+      "verification_seconds": 1.199289124997449,
+      "reads": 1,
+      "independent_effect": true,
+      "no_later_mutation": true
+    },
+    {
+      "mode": "sequential",
+      "rep": 10,
+      "warmup": false,
+      "action_ms": 1157.6927910064114,
+      "final_read_ms": 72.65641700359993,
+      "seconds": 1.2309896250080783,
+      "verification_seconds": 1.230989417003002,
+      "reads": 1,
+      "independent_effect": true,
+      "no_later_mutation": true
+    },
+    {
+      "mode": "overlap",
+      "rep": 10,
+      "warmup": false,
+      "action_ms": 1134.7831669991137,
+      "final_read_ms": 69.0442500053905,
+      "seconds": 1.2042797500034794,
+      "verification_seconds": 0.193443665993982,
+      "reads": 3,
+      "independent_effect": true,
+      "no_later_mutation": true
+    },
+    {
+      "mode": "overlap",
+      "rep": 11,
+      "warmup": false,
+      "action_ms": 1129.9475830019219,
+      "final_read_ms": 54.80625000200234,
+      "seconds": 1.185154834005516,
+      "verification_seconds": 0.1813929170020856,
+      "reads": 3,
+      "independent_effect": true,
+      "no_later_mutation": true
+    },
+    {
+      "mode": "sequential",
+      "rep": 11,
+      "warmup": false,
+      "action_ms": 1122.5587499939138,
+      "final_read_ms": 66.78850000025705,
+      "seconds": 1.1896364999993239,
+      "verification_seconds": 1.1896362500119722,
+      "reads": 1,
+      "independent_effect": true,
+      "no_later_mutation": true
+    },
+    {
+      "mode": "sequential",
+      "rep": 12,
+      "warmup": false,
+      "action_ms": 1172.5220840016846,
+      "final_read_ms": 76.95724999939557,
+      "seconds": 1.2498747080098838,
+      "verification_seconds": 1.2498745410121046,
+      "reads": 1,
+      "independent_effect": true,
+      "no_later_mutation": true
+    },
+    {
+      "mode": "overlap",
+      "rep": 12,
+      "warmup": false,
+      "action_ms": 1174.8320839978987,
+      "final_read_ms": 61.821167008019984,
+      "seconds": 1.2371428329934133,
+      "verification_seconds": 0.21098708298814017,
+      "reads": 3,
+      "independent_effect": true,
+      "no_later_mutation": true
+    },
+    {
+      "mode": "overlap",
+      "rep": 13,
+      "warmup": false,
+      "action_ms": 1126.6571250016568,
+      "final_read_ms": 58.90883300162386,
+      "seconds": 1.1862331660086056,
+      "verification_seconds": 0.1889692500117235,
+      "reads": 3,
+      "independent_effect": true,
+      "no_later_mutation": true
+    },
+    {
+      "mode": "sequential",
+      "rep": 13,
+      "warmup": false,
+      "action_ms": 1126.105874995119,
+      "final_read_ms": 136.4875419967575,
+      "seconds": 1.2631429589964682,
+      "verification_seconds": 1.2631427089945646,
+      "reads": 1,
+      "independent_effect": true,
+      "no_later_mutation": true
+    }
+  ],
+  "transport": "two independent public MCP sessions; read-only observer",
+  "summary": {
+    "sequential": {
+      "seconds": 1.2257613129986566,
+      "action_ms": 1137.543436991109,
+      "final_read_ms": 76.92908350145444,
+      "n": 12
+    },
+    "overlap": {
+      "seconds": 1.2010435624979436,
+      "action_ms": 1134.4177499995567,
+      "final_read_ms": 60.9704789967509,
+      "n": 12
+    },
+    "paired_median_s": 0.01961616600601701,
+    "pairs_faster": 11,
+    "deltas_s": [
+      0.03295683399483096,
+      0.016720626008464023,
+      0.02883591700810939,
+      0.019838374995742925,
+      0.06338712498836685,
+      0.013289458001963794,
+      -0.013117292008246295,
+      0.019393957016291097,
+      0.02670987500459887,
+      0.004481665993807837,
+      0.01273187501647044,
+      0.0769097929878626
+    ],
+    "paired_median_bootstrap_95_s": [
+      0.013010666509217117,
+      0.030896375501470175
+    ]
+  },
+  "safety": [
+    {
+      "mode": "sequential",
+      "rep": 0,
+      "seconds": 1.7637400420062477,
+      "verification_seconds": 1.7637396670033922,
+      "reads": 1,
+      "early_read_matches": false,
+      "final_state_matches": false,
+      "no_later_mutation": true
+    },
+    {
+      "mode": "overlap",
+      "rep": 0,
+      "seconds": 1.218961666992982,
+      "verification_seconds": 0.1911127920029685,
+      "reads": 3,
+      "early_read_matches": false,
+      "final_state_matches": false,
+      "no_later_mutation": true
+    },
+    {
+      "mode": "overlap",
+      "rep": 1,
+      "seconds": 1.2139890830003424,
+      "verification_seconds": 0.19979920799960382,
+      "reads": 3,
+      "early_read_matches": false,
+      "final_state_matches": false,
+      "no_later_mutation": true
+    },
+    {
+      "mode": "sequential",
+      "rep": 1,
+      "seconds": 1.2155570830072975,
+      "verification_seconds": 1.2155568750022212,
+      "reads": 1,
+      "early_read_matches": false,
+      "final_state_matches": false,
+      "no_later_mutation": true
+    }
+  ],
+  "source_inspected": "0b90b6f4af6885ecbe696a6b33a3ad63773183d4",
+  "scope": "synthetic native AppKit; unchanged released public daemon; caller strategy only",
+  "exact_helper_live_cases": [
+    {
+      "case": "stable",
+      "rep": 0,
+      "seconds": 1.7153569579968462,
+      "advisory_match": false,
+      "final_read_matches_independent_oracle": true,
+      "deferred_rejection_detected": false,
+      "mutations": 1
+    },
+    {
+      "case": "stable",
+      "rep": 1,
+      "seconds": 1.2067483749997336,
+      "advisory_match": true,
+      "final_read_matches_independent_oracle": true,
+      "deferred_rejection_detected": false,
+      "mutations": 1
+    },
+    {
+      "case": "stable",
+      "rep": 2,
+      "seconds": 1.2441319579957053,
+      "advisory_match": true,
+      "final_read_matches_independent_oracle": true,
+      "deferred_rejection_detected": false,
+      "mutations": 1
+    },
+    {
+      "case": "deferred_rejection",
+      "rep": 0,
+      "seconds": 1.2282991670072079,
+      "advisory_match": true,
+      "final_read_matches_independent_oracle": true,
+      "deferred_rejection_detected": true,
+      "mutations": 1
+    },
+    {
+      "case": "deferred_rejection",
+      "rep": 1,
+      "seconds": 1.2134555830125464,
+      "advisory_match": true,
+      "final_read_matches_independent_oracle": true,
+      "deferred_rejection_detected": true,
+      "mutations": 1
+    },
+    {
+      "case": "deferred_rejection",
+      "rep": 2,
+      "seconds": 1.2017487080011051,
+      "advisory_match": true,
+      "final_read_matches_independent_oracle": true,
+      "deferred_rejection_detected": true,
+      "mutations": 1
+    }
+  ],
+  "exact_helper_sha256": "c9a9f854d4c8ace1abee95565b60737e8ff81469d33fee64be6df86bd7723e6e",
+  "offline_checks": {
+    "owner_tests": 4,
+    "final_read_mutation": "fails",
+    "cancellation_join_mutation": "fails",
+    "independent_review": "approved after cancellation fix"
+  }
+}

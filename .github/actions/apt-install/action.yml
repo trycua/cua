@@ -78,6 +78,17 @@ runs:
             break
           fi
           echo "::warning::apt-install attempt $attempt failed or timed out after 300s (slow or unreachable Ubuntu mirror); $(find "$DIR" -maxdepth 1 -name '*.deb' | wc -l) package files cached"
+          # The runner's default mirror (azure.archive.ubuntu.com) has had
+          # outages where it did not even resolve (11 Nov 2026), failing three
+          # attempts in a row. From the second attempt on, use Canonical's own
+          # archive instead; cached .deb files are mirror-independent.
+          if [ "$attempt" = 1 ]; then
+            sudo sed -i -E \
+              -e 's#mirror\+file:/etc/apt/apt-mirrors\.txt#http://archive.ubuntu.com/ubuntu/#' \
+              -e 's#https?://azure\.archive\.ubuntu\.com/ubuntu/?#http://archive.ubuntu.com/ubuntu/#' \
+              /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list 2>/dev/null || true
+            echo "apt-install: switched to archive.ubuntu.com for the next attempts"
+          fi
           sleep $((attempt * 10))
         done
         if [ "$ok" != 1 ]; then

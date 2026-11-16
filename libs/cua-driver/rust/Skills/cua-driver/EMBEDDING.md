@@ -265,8 +265,11 @@ with `0`.
 ### Steps inside `run_steps` and `run_script` (macOS)
 
 Two waits make up most of a macOS action's latency: the agent cursor's glide to
-the target (600 ms or more with the default `steady` timing) and the first 300 ms
-of the window watch above. A call that is one step of a `run_steps` batch or a
+the target and the first 300 ms of the window watch above. The default `steady`
+timing (like `relaxed` and `calm`) stretches a short hop to its floor so a person
+can follow it, but the action does not wait for the stretch: it goes ahead when
+the same move under `native` timing would have arrived, and the cursor finishes
+its glide during the action. A call that is one step of a `run_steps` batch or a
 `run_script` program is followed at once by another step, so the driver shortens
 both for it: the step waits at most 120 ms for the cursor to arrive and 100 ms
 for a window change. The cursor keeps gliding and the watch keeps running
@@ -295,6 +298,11 @@ result to wait for the window watch. Each action that waits for it (`click`,
   its whole deadline and keeps the focus-steal lease, exactly like the
   remainder of a quiet watch above, so focus protection is unchanged and a
   window that opens is reported on the next action's result.
+
+The driver admits one desktop action at a time, across every client of the
+process. An action holds that admission only until its result returns, never
+through the detached watch, so the next action from any client starts without
+waiting for the previous action's watch.
 
 Linux and Windows do not advertise `post_action_wait`, and their action
 schemas refuse it as an unknown argument (`invalid_arguments`): the Linux X11

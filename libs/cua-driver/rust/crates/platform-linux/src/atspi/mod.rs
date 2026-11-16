@@ -42,7 +42,14 @@ pub struct AtspiNode {
     pub enabled: Option<bool>,
     /// Toggle/selection state for selectable controls.
     pub selected: Option<bool>,
+    /// Keyboard-focus state when the native AT-SPI state set is available.
+    /// Browser consent uses this as structural contradiction evidence; it is
+    /// never inferred from a localized accessible name.
+    pub focused: Option<bool>,
     pub description: Option<String>,
+    /// Exact document URI reported by the AT-SPI Document interface. Unlike a
+    /// localized title or accessible name, this identifies the rendered page.
+    pub document_uri: Option<String>,
     pub actions: Vec<String>,
     /// For AT-SPI: element_key = element_index as u64.
     /// For X11 fallback: element_key = xid.
@@ -106,7 +113,7 @@ pub const DEFAULT_WALK_TIMEOUT: std::time::Duration = std::time::Duration::from_
 impl AtspiTreeResult {
     fn from_walked(walked: native::WalkedTree, query: Option<&str>) -> Self {
         let md = match query {
-            Some(q) => filter_tree(&walked.markdown, q),
+            Some(q) => cua_driver_core::element_query::filter_tree(&walked.markdown, q),
             None => walked.markdown,
         };
         let (truncated, truncation_reason, nodes_visited, nodes_pending) = match &walked.truncation
@@ -385,6 +392,17 @@ pub fn element_showing_observed(element: &cache::CachedElement) -> Result<bool> 
         );
     };
     native::element_showing_ref(object_ref)
+}
+
+/// Whether the exact object a snapshot observed is enabled right now. `None`
+/// when it exposes no state set. Never re-walks.
+pub fn element_enabled_observed(element: &cache::CachedElement) -> Result<Option<bool>> {
+    let Some(object_ref) = element.object_ref.as_ref() else {
+        return Err(
+            native::CachedElementGone("observed element has no D-Bus address".into()).into(),
+        );
+    };
+    native::element_enabled_ref(object_ref)
 }
 
 /// Give an indexed AT-SPI element keyboard focus without activating its window.
@@ -834,11 +852,13 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
         checked: None,
         enabled: None,
         selected: None,
+        focused: None,
         description: if wm_class.is_empty() {
             None
         } else {
             Some(wm_class.clone())
         },
+        document_uri: None,
         actions: vec!["activate".into()],
         element_key: xid,
         identity: None,
@@ -855,7 +875,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
 
     let raw_md = md;
     let tree_markdown = if let Some(q) = query {
-        filter_tree(&raw_md, q)
+        cua_driver_core::element_query::filter_tree(&raw_md, q)
     } else {
         raw_md
     };
@@ -923,44 +943,6 @@ fn get_x11_wm_class(conn: &x11rb::rust_connection::RustConnection, window: u32) 
     Some(s.trim_end_matches('\0').replace('\0', "."))
 }
 
-fn filter_tree(markdown: &str, query: &str) -> String {
-    let needle = query.to_lowercase();
-    let lines: Vec<&str> = markdown.lines().collect();
-    let mut ancestors: Vec<&str> = Vec::new();
-    let mut last_emitted: Vec<Option<&str>> = Vec::new();
-    let mut output: Vec<&str> = Vec::new();
-
-    for line in &lines {
-        let depth = line.chars().take_while(|c| *c == ' ').count() / 2;
-        while ancestors.len() <= depth {
-            ancestors.push("");
-            last_emitted.push(None);
-        }
-        last_emitted[depth + 1..ancestors.len()].fill(None);
-        ancestors[depth] = line;
-        if line.to_lowercase().contains(&needle) {
-            for d in 0..depth {
-                if ancestors[d].is_empty() {
-                    continue;
-                }
-                if last_emitted[d] == Some(ancestors[d]) {
-                    continue;
-                }
-                last_emitted[d] = Some(ancestors[d]);
-                output.push(ancestors[d]);
-            }
-            last_emitted[depth] = Some(line);
-            output.push(line);
-        }
-    }
-    if output.is_empty() {
-        return String::new();
-    }
-    let mut r = output.join("\n");
-    r.push('\n');
-    r
-}
-
 #[cfg(test)]
 mod budget_tests {
     use super::*;
@@ -975,7 +957,9 @@ mod budget_tests {
                 checked: None,
                 enabled: Some(true),
                 selected: None,
+                focused: None,
                 description: None,
+                document_uri: None,
                 actions,
                 element_key: idx as u64,
                 depth,
@@ -1063,6 +1047,7 @@ mod token_dispatch_tests {
                     path: path.into(),
                 }),
                 role: "text".into(),
+                disabled: false,
                 in_web_content: false,
                 bounds: None,
             },
@@ -1097,7 +1082,9 @@ mod token_dispatch_tests {
             checked: None,
             enabled: Some(true),
             selected: None,
+            focused: None,
             description: None,
+            document_uri: None,
             actions: vec!["click".into()],
             element_key: 0,
             identity: Some(AtspiIdentity {

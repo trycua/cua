@@ -61,7 +61,8 @@ class TestCuaSandboxReleaseWiring(unittest.TestCase):
     def test_metadata_ci_covers_sandbox_and_offline_engine_preview(self) -> None:
         metadata = (REPO_ROOT / ".github/workflows/ci-release-metadata.yml").read_text()
         self.assertIn("libs/python/cua-sandbox/*)", metadata)
-        self.assertIn("--tag-prefix sandbox-v", metadata)
+        script = (REPO_ROOT / ".github/scripts/release_queue_preflight.py").read_text()
+        self.assertIn('"sandbox-v"', script)
         ci = (REPO_ROOT / ".github/workflows/ci-test-scripts.yml").read_text()
         self.assertIn('".github/workflows/cd-py-sandbox.yml"', ci)
         self.assertIn("release_please_sandbox_preview.cjs", ci)

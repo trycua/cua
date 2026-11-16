@@ -56,7 +56,7 @@ DRIVER_PLATFORM = {
 # Driver crates every OS compiles.
 DRIVER_COMMON = (
     "cua-driver-core", "cua-driver-contract", "cua-driver-sdk", "cua-cursor-motion",
-    "cursor-overlay", "pip-preview",
+    "cursor-overlay",
 )
 
 LANES = {

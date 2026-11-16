@@ -101,24 +101,56 @@ export interface PermissionsStepView {
   line: string;
   /** Under the rows. */
   note: string;
-  /** The button: Continue once both are on, else Later (the step never blocks the run). */
-  primary: { label: "Continue" | "Later"; white: boolean };
+  /**
+   * The button. Continue (white) once everything is on. Until then it says it goes on without what is still off, so
+   * nobody reads it as done (the step never blocks the run).
+   */
+  primary: { label: string; white: boolean };
+  /** The rows still off, in the order they show: `id` is the row's `data-app-permission`. */
+  missing: { id: string; title: string }[];
+  /** Beside the button while something is off: what, by the rows' own titles. Pressing it shows that row. */
+  stillOff: string | null;
+}
+
+/** "A", "A and B", "A, B and C". */
+export function listWords(items: readonly string[]): string {
+  if (items.length <= 1) return items[0] ?? "";
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+/** The button and the line beside it, from the rows still off. */
+function stepPrimary(missing: PermissionsStepView["missing"]): Pick<PermissionsStepView, "primary" | "stillOff"> {
+  if (missing.length === 0) return { primary: { label: "Continue", white: true }, stillOff: null };
+  return {
+    primary: { label: missing.length === 1 ? "Continue without it" : "Continue without them", white: false },
+    stillOff: `Still off: ${listWords(missing.map((m) => m.title))}`,
+  };
 }
 
 /**
+ * `off`: the app's permissions still off (`screen`, `accessibility`); without it, both when `allGranted` is false.
  * `localNetwork`: this Mac runs macOS Spaces, so the step also asks for Local Network (`off` until allowed, `denied`
  * once macOS was told no); `none` on any other computer.
  */
-export function permissionsStepView(input: { appName: string; allGranted: boolean; localNetwork?: "none" | "off" | "denied" | "on" }): PermissionsStepView {
+export function permissionsStepView(input: {
+  appName: string;
+  allGranted: boolean;
+  off?: readonly DriverPermission["id"][];
+  localNetwork?: "none" | "off" | "denied" | "on";
+}): PermissionsStepView {
   const ln = input.localNetwork ?? "none";
+  const off = input.allGranted ? [] : (input.off ?? (["screen", "accessibility"] as const));
+  const missing = off.map((id) => ({ id: String(id), title: permissionWords(id, input.appName).title }));
   if (ln === "none") {
     return {
       title: `Let ${input.appName} see and use apps`,
       line: "Agents can then use the apps on this Mac. Your own pointer never moves.",
       note: input.allGranted ? allowHint(input.appName, true) : `${allowHint(input.appName)} You can also do this later on the Cua Driver page.`,
-      primary: input.allGranted ? { label: "Continue", white: true } : { label: "Later", white: false },
+      missing,
+      ...stepPrimary(missing),
     };
   }
+  if (ln !== "on") missing.push({ id: "local-network", title: localNetworkWords(input.appName).title });
   const done = input.allGranted && ln === "on";
   return {
     title: `Let ${input.appName} use this Mac`,
@@ -128,7 +160,8 @@ export function permissionsStepView(input: { appName: string; allGranted: boolea
       : ln === "on"
         ? `${allowHint(input.appName)} You can also do this later on the Cua Driver page.`
         : localNetworkNote(input.appName, ln === "denied"),
-    primary: done ? { label: "Continue", white: true } : { label: "Later", white: false },
+    missing,
+    ...stepPrimary(missing),
   };
 }
 

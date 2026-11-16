@@ -496,12 +496,10 @@ pub fn classify_cursor_semantics(name: &str, args: &Value) -> Option<CursorSeman
             CursorAction::Record
         }
 
-        "start_session" | "escalate_session" | "get_session_state" | "end_session"
-        | "check_permissions" | "get_config" | "set_config" | "health_report"
-        | "browser_prepare" | "browser_close" | "browser_release" | "browser_activate"
-        | "install_ffmpeg" | "install_extension" | "check_update" | "update" => {
-            CursorAction::System
-        }
+        "start_session" | "end_session" | "check_permissions" | "get_config" | "set_config"
+        | "health_report" | "browser_prepare" | "browser_close" | "browser_release"
+        | "browser_activate" | "install_ffmpeg" | "install_extension" | "check_update"
+        | "update" => CursorAction::System,
 
         "set_agent_cursor_enabled"
         | "set_agent_cursor_motion"

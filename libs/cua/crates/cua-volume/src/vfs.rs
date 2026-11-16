@@ -48,6 +48,46 @@ pub const PIN_TTL: Duration = Duration::from_secs(30);
 /// Quiet time after the last write before a spool uploads (mounts without
 /// a close signal).
 pub const UPLOAD_IDLE: Duration = Duration::from_millis(1500);
+/// How long one file operation served to a mount (a Space's NFS or FUSE
+/// mount, this machine's own) may take before it is answered with an I/O
+/// error. Most operations wait on the store, and with replication on, on
+/// the other computer: while sync has stalled they would wait for as long
+/// as it does. A guest's NFS client gives up on a request after its
+/// `timeo` (5 s), retransmits it and keeps the folder busy meanwhile, and
+/// declares the whole mount dead after `deadtimeout` (30 s): a `mkdir`
+/// behind a busy listing then waits past every caller's timeout, and the
+/// mount goes away. Answering each request within this keeps the mount
+/// alive; the call fails fast with EIO and works again once sync does.
+pub const OP_DEADLINE: Duration = Duration::from_secs(4);
+/// [`OP_DEADLINE`] for a request that uploads a file (FUSE's close and
+/// fsync): an upload of a large file takes longer, and nothing in a FUSE
+/// client gives up on its own.
+pub const FLUSH_DEADLINE: Duration = Duration::from_secs(60);
+
+/// Runs `op` as a task of its own and answers within `limit`. On time out
+/// the caller gets an I/O error naming `what`; the operation itself is not
+/// cancelled (its state changes happen whole), and ends when the store
+/// answers or gives up.
+pub async fn bounded<T, F>(limit: Duration, what: &str, op: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: std::future::Future<Output = Result<T>> + Send + 'static,
+{
+    let task = tokio::spawn(op);
+    match tokio::time::timeout(limit, task).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => Err(Error::Backend(format!("{what}: {e}"))),
+        Err(_) => Err(Error::Backend(not_answering(what, limit))),
+    }
+}
+
+/// What a file operation that ran out of time says.
+pub fn not_answering(what: &str, limit: Duration) -> String {
+    format!(
+        "Cua Volume did not answer {what} within {} s: sync with your other computers is stalled or slow",
+        limit.as_secs()
+    )
+}
 
 /// One file or folder's attributes.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

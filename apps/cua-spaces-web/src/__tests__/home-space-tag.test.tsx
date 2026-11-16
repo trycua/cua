@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-// The agent's home is a Space like any other in the Spaces list; a plain "Home" tag
-// (no middle dot, like the "Desktop" tag) says which one takes the requests from Home.
+// The agent's home is a Space like any other in the Spaces list: no "Home" label beside its name.
 
 import { act, cleanup, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -28,13 +27,10 @@ describe.skipIf(!wasmBuilt)("the Home tag in the list of your computers", () => 
       expect(found.length).toBeGreaterThan(1);
       return found;
     });
-    expect(document.querySelector("[data-home-tag]")).toBeNull();
+    // No "Home" label beside the name, remembered as the agent's home or not: the agent and its role say what it is elsewhere.
     act(() => rememberHome("claude-code", ids[0]!));
-    await waitFor(() => expect(document.querySelectorAll("[data-home-tag]")).toHaveLength(1));
-    const tagged = document.querySelector("[data-home-tag]")!;
-    expect(tagged.textContent).toBe("Home");
-    expect(tagged.textContent).not.toContain("·");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(document.querySelector("[data-home-tag]")).toBeNull();
     act(() => forgetHome("claude-code"));
-    await waitFor(() => expect(document.querySelector("[data-home-tag]")).toBeNull());
   });
 });

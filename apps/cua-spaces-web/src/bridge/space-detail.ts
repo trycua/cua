@@ -39,7 +39,8 @@ export type * from "./ops/space-detail";
 export const THIS_MACHINE_ID = "this-mac";
 
 export const USAGE_REFRESH_MS = 10_000;
-export const WINDOWS_REFRESH_MS = 5_000;
+/** An app an agent opens (here, or in a Space under this one) joins the Stream list within this long. */
+export const WINDOWS_REFRESH_MS = 2_000;
 /** The host's raw `cua:event` when its picture-in-picture panels change by
  * themselves (`{ spaceId, open: rows }`; the SwiftUI app's `stream.pipChanged`). */
 export const PIP_CHANGED_EVENT = "stream.pipChanged";
@@ -378,6 +379,8 @@ export interface SpaceDetailHook {
   stream: StreamSection | null;
   /** The host can't list windows: the section has its Desktop row only, and no status line. */
   windowsUnsupported: boolean;
+  /** The first read of the Space's windows has come back (before it, the list is empty because nothing is known yet). */
+  windowsLoaded: boolean;
   /** The sections' words (loading, empty, failed). */
   copy: DetailCopy | null;
   /** A row's picture-in-picture button. */
@@ -454,6 +457,7 @@ export function useSpaceDetail(space: Space | undefined, hostArch: string | null
       detail: null,
       stream: null,
       windowsUnsupported: false,
+      windowsLoaded: false,
       copy: null,
       pip: async () => "done",
       query: "",
@@ -474,6 +478,7 @@ export function useSpaceDetail(space: Space | undefined, hostArch: string | null
     query: readings.query,
     setQuery: (q) => (details && space ? details.setQuery(space.id, q) : undefined),
     windowsUnsupported: Boolean(readings.windowsUnsupported),
+    windowsLoaded: readings.windows !== null,
     copy: detailCopy(core),
     pip: (row) => (details ? details.pip(space.id, row) : Promise.resolve("open-window")),
     agents: {

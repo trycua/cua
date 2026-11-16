@@ -43,6 +43,7 @@
     "ci-openkoalabot-example-tauri.yml",
     "ci-release-spacesd-pin.yml",
     "ci-test-python.yml",
+    "ci-test-scripts.yml",
     "e2b-core-nightly.yml",
     "e2e-cua-sdk.yml",
     "license-check.yml",
@@ -104,6 +105,7 @@
     "ci-cua-spacesd.yml",
     "ci-driver-mcp-candidate.yml",
     "ci-hyprland-plugin.yml",
+    "ci-hyprland-plugin-kit.yml",
     "ci-jev-use.yml",
     "ci-nix-linux.yml",
     "ci-platform-linux-portability.yml",
@@ -154,6 +156,7 @@
     "ci-openkoalabot-example-tauri.yml",
     "ci-pi-durable-crash.yml",
     "ci-test-python.yml",
+    "ci-test-scripts.yml",
     "ci-vm-density.yml",
     "docs-compile-lanes.yml",
     "docs-nightly.yml",
@@ -190,6 +193,7 @@
     "ci-cua-spacesd.yml",
     "ci-images-chromium-pin.yml",
     "ci-images-spacesd-lag.yml",
+    "ci-test-scripts.yml",
     "e2b-core-nightly.yml",
     "e2e-cua-sdk.yml",
     "license-check.yml",
@@ -219,6 +223,7 @@
     "ci-cua-spaces-web.yml",
     "ci-cua-spaces.yml",
     "ci-installers.yml",
+    "ci-test-scripts.yml",
     "license-check.yml"
    ]
   },
@@ -228,6 +233,7 @@
    ],
    "workflows": [
     "ci-check-docs-links.yml",
+    "ci-test-scripts.yml",
     "license-check.yml"
    ]
   },
@@ -283,6 +289,7 @@
     "ci-check-docs-image-refs.yml",
     "ci-check-docs-links.yml",
     "ci-lint-typescript.yml",
+    "ci-test-scripts.yml",
     "ci-ts-cursor-motion.yml",
     "license-check.yml"
    ]
@@ -314,6 +321,7 @@
    "workflows": [
     "ci-check-docs-image-refs.yml",
     "ci-check-docs-links.yml",
+    "ci-test-scripts.yml",
     "license-check.yml"
    ]
   },
@@ -350,6 +358,7 @@
     "ci-cua-compat-daytona.yml",
     "ci-cua-compat-e2b.yml",
     "ci-cua-compat.yml",
+    "ci-test-scripts.yml",
     "e2e-compat-examples.yml",
     "license-check.yml"
    ]
@@ -372,15 +381,17 @@
    "workflows": [
     "ci-check-docs-links.yml",
     "ci-openkoalabot-example-tauri.yml",
+    "ci-test-scripts.yml",
     "license-check.yml"
    ]
   }
  },
  "narrow": {
   "ci-test-python.yml": {
-   "why": "Tests the Python packages and cua-sandbox against cua-sdk (cargo build -p cua-sdk); no other libs/cua crate.",
+   "why": "Tests the Python packages and cua-sandbox against cua-sdk (cargo build -p cua-sdk-native); no other libs/cua crate.",
    "packages": [
     "libs/cua/crates/cua-sdk",
+    "libs/cua/crates/cua-sdk-native",
     "libs/cua/crates/cua-cli"
    ],
    "paths": [
@@ -404,6 +415,7 @@
    "why": "Builds cua-sdk for the TypeScript and Swift samples; its own scope job (ci_swift_samples_scope.py) narrows the Swift build further.",
    "packages": [
     "libs/cua/crates/cua-sdk",
+    "libs/cua/crates/cua-sdk-native",
     "libs/cua/typescript",
     "examples/openkoalabot-example-ts"
    ],
@@ -415,5 +427,11 @@
     "libs/images/sandbox-images.json"
    ]
   }
+ },
+ "queue": {
+  "why": "Workflows that also run in the merge queue, on the merged result, when the change reaches them. Each runs there only its push-only jobs that fit the queue timeout (the pull request ran the rest); the gate judges the queue run in addition to the pull request run. CI: cua SDK is not here: its Windows rust leg takes more than the queue's 60 minutes.",
+  "workflows": [
+   "e2e-cua-driver-release-gate.yml"
+  ]
  }
 }

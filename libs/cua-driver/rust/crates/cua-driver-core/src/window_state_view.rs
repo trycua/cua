@@ -16,8 +16,9 @@
 //! * `capture_id=<id>` on the text header when this read registered a capture,
 //!   next to `snapshot_id` when that id is present.
 //!
-//! `full_output: true` restores the previous payload byte for byte (both
-//! representations, all metadata, the platform walk caps).
+//! `full_output: true` restores the full tree and structured payload (both
+//! representations, all metadata, the platform walk caps), with snapshot identity
+//! also available in the text header.
 //!
 //! The diff works on the rendered markdown rows, which every backend emits in
 //! the same `- [N] Role "label" ...` shape, so it also sees display-only rows
@@ -275,20 +276,44 @@ pub fn apply(
     content: &mut [Content],
     structured: &mut Value,
 ) {
+    // Publish identity even for full_output and empty trees. It comes from the
+    // completed structured result, never a guessed or not-yet-published id.
+    let capture_id_early = registered_capture_id(structured);
+    let mut identity_extra = String::new();
+    if let Some(sid) = structured.get("snapshot_id").and_then(Value::as_str) {
+        identity_extra.push_str(&format!(" snapshot_id={sid}"));
+    }
+    if let Some(cid) = &capture_id_early {
+        identity_extra.push_str(&format!(" capture_id={cid}"));
+    }
+    if !identity_extra.is_empty() {
+        for part in content.iter_mut() {
+            if let Content::Text { text, .. } = part {
+                if text.starts_with("window_id=") {
+                    let end = text.find('\n').unwrap_or(text.len());
+                    text.insert_str(end, &identity_extra);
+                    break;
+                }
+            }
+        }
+    }
+    let no_match = structured
+        .get("tree_markdown")
+        .and_then(Value::as_str)
+        .and_then(|md| no_match_line(&ctx.key, md, structured));
+    if let Some(line) = &no_match {
+        append_to_tree_block(content, line);
+    }
     if opts.full_output {
         return;
     }
     trim_metadata(opts, structured);
-    let capture_id = registered_capture_id(structured);
     let Some(md) = structured
         .get("tree_markdown")
         .and_then(Value::as_str)
         .map(str::to_owned)
     else {
         drop_walk_diagnostics(opts, structured);
-        if let Some(cid) = capture_id.as_deref() {
-            stamp_capture_id(content, cid);
-        }
         return;
     };
     let snapshot_id = structured
@@ -317,12 +342,6 @@ pub fn apply(
 
     // Header text added to the first line of the tree block.
     let mut header_extra = String::new();
-    if let Some(sid) = &snapshot_id {
-        header_extra.push_str(&format!(" snapshot_id={sid}"));
-    }
-    if let Some(cid) = &capture_id {
-        header_extra.push_str(&format!(" capture_id={cid}"));
-    }
     let truncation = truncation_line(structured, &ctx.key);
     if let Some(line) = &truncation {
         structured["truncation_hint"] = json!(line);
@@ -424,15 +443,52 @@ pub fn apply(
         }
     }
 
-    // A capture-only read has no tree block to rewrite. The id still has to
-    // land on the existing summary line, or a text-only host cannot call
-    // `parse_visual_regions`.
-    if !rewrite_tree_block(content, &md, &header_extra, &body) {
-        if let Some(cid) = capture_id.as_deref() {
-            stamp_capture_id(content, cid);
-        }
-    }
+    // A capture-only or empty-tree read has no tree block to rewrite. The
+    // capture and snapshot ids were already stamped on the header above.
+    rewrite_tree_block(content, &md, &header_extra, &body);
     drop_walk_diagnostics(opts, structured);
+}
+
+/// A `query` that matched no row would otherwise return a bare header over an
+/// empty tree, which callers read as a failed walk and retry unchanged.
+fn no_match_line(key: &ViewKey, md: &str, structured: &Value) -> Option<String> {
+    let query = key.query.as_deref().filter(|q| !q.trim().is_empty())?;
+    if crate::element_query::matching_rows(md, query) > 0 {
+        return None;
+    }
+    let total = structured
+        .get("element_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    Some(format!(
+        "0 of {total} elements match query {query:?}. A query is a case-insensitive \
+         substring of a row's role, label, value or id; \"a|b\" matches either. Try a \
+         shorter or different word, or read without query."
+    ))
+}
+
+/// Append `line` to the platform's tree block, after whatever tree or note it
+/// ends with. Only a read that walked a tree has one: its first line is the
+/// `window_id=… elements=N` header, which a capture-only read lacks.
+fn append_to_tree_block(content: &mut [Content], line: &str) {
+    let block = content.iter_mut().find_map(|part| match part {
+        Content::Text { text, .. }
+            if text.starts_with("window_id=")
+                && text
+                    .lines()
+                    .next()
+                    .is_some_and(|h| h.contains(" elements=")) =>
+        {
+            Some(text)
+        }
+        _ => None,
+    });
+    if let Some(text) = block {
+        if !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(line);
+    }
 }
 
 /// `capture_id` already published on this observation, when it is a non-empty string.
@@ -460,16 +516,6 @@ pub fn append_capture_id(summary: &mut String, capture_id: &str) {
         format!(" {field}")
     };
     summary.insert_str(newline, &insertion);
-}
-
-fn stamp_capture_id(content: &mut [Content], capture_id: &str) {
-    for part in content.iter_mut() {
-        let Content::Text { text, .. } = part else {
-            continue;
-        };
-        append_capture_id(text, capture_id);
-        return;
-    }
 }
 
 /// Walk diagnostics cost every read context and no caller acts on them:
@@ -1409,9 +1455,9 @@ mod tests {
             "elements": []
         });
         apply(&opts(json!({})), &ctx(7304), &mut content, &mut structured);
-        assert!(text_of(&content)
-            .starts_with("window_id=7 pid=9 size=10x10 elements=0 capture_id=cap_00000001\n"));
-        assert!(!text_of(&content).contains("snapshot_id="));
+        assert!(text_of(&content).starts_with(
+            "window_id=7 pid=9 size=10x10 elements=0 snapshot_id=s000000b3 capture_id=cap_00000001\n"
+        ));
         assert_eq!(structured["capture_id"], "cap_00000001");
         assert_eq!(structured["snapshot_id"], "s000000b3");
     }
@@ -1525,8 +1571,174 @@ mod tests {
         assert_eq!(s3["since"], "s000000f2");
     }
 
+    fn query_ctx(window_id: u64, query: &str) -> ViewContext<'static> {
+        let mut ctx = ctx(window_id);
+        ctx.key.query = Some(query.into());
+        ctx
+    }
+
     #[test]
-    fn full_output_is_untouched() {
+    fn a_query_that_matches_nothing_says_so() {
+        // What a backend renders when its filtered tree is empty.
+        let (mut content, mut s) = payload("s000000i1", "");
+        s["element_count"] = json!(150);
+        apply(
+            &opts(json!({})),
+            &query_ctx(7030, "Build|Reload"),
+            &mut content,
+            &mut s,
+        );
+        let text = text_of(&content);
+        assert!(text.starts_with("window_id=7 pid=9 size=10x10 elements=4 snapshot_id=s000000i1\n"));
+        assert!(
+            text.contains("0 of 150 elements match query \"Build|Reload\"."),
+            "{text}"
+        );
+        assert!(text.contains("\"a|b\" matches either"));
+    }
+
+    #[test]
+    fn a_zero_match_line_follows_a_walk_note() {
+        // macOS appends its walk note to the (empty) filtered tree.
+        let md = "\n⚠️ PARTIAL TREE: walk stopped";
+        let (mut content, mut s) = payload("s000000i2", md);
+        apply(
+            &opts(json!({})),
+            &query_ctx(7031, "Settings"),
+            &mut content,
+            &mut s,
+        );
+        let text = text_of(&content);
+        assert!(
+            text.contains("PARTIAL TREE: walk stopped\n0 of 4 elements match query \"Settings\".")
+        );
+    }
+
+    #[test]
+    fn a_full_output_read_still_says_its_query_matched_nothing() {
+        let (mut content, mut s) = payload("s000000i5", "");
+        let before = s.clone();
+        apply(
+            &opts(json!({"full_output": true})),
+            &query_ctx(7035, "Build|Reload"),
+            &mut content,
+            &mut s,
+        );
+        assert_eq!(s, before);
+        assert!(text_of(&content).ends_with("\n0 of 4 elements match query \"Build|Reload\". A query is a case-insensitive substring of a row's role, label, value or id; \"a|b\" matches either. Try a shorter or different word, or read without query."));
+    }
+
+    #[test]
+    fn a_capture_only_read_with_a_query_adds_no_line() {
+        let mut content = vec![Content::text("window_id=7 pid=9 size=10x10")];
+        let mut s = json!({"window_id": 7, "pid": 9, "tree_markdown": "", "element_count": 0});
+        apply(
+            &opts(json!({})),
+            &query_ctx(7034, "Settings"),
+            &mut content,
+            &mut s,
+        );
+        assert_eq!(text_of(&content), "window_id=7 pid=9 size=10x10");
+    }
+
+    #[test]
+    fn a_query_with_matches_and_a_read_without_query_add_no_line() {
+        let (mut content, mut s) = payload("s000000i3", OLD);
+        apply(
+            &opts(json!({})),
+            &query_ctx(7032, "Save"),
+            &mut content,
+            &mut s,
+        );
+        assert!(!text_of(&content).contains("elements match query"));
+        let (mut content, mut s) = payload("s000000i4", "");
+        apply(&opts(json!({})), &ctx(7033), &mut content, &mut s);
+        assert!(!text_of(&content).contains("elements match query"));
+    }
+
+    #[test]
+    fn text_snapshot_identity_resolves_and_rejects_stale_targets() {
+        use crate::element_token::{format_snapshot_id, ResolvedElement};
+        use crate::snapshot_store::{SnapshotPayload, SnapshotStore};
+        struct Rows;
+        impl SnapshotPayload for Rows {
+            type Element = usize;
+            fn len(&self) -> usize {
+                2
+            }
+            fn retain(&self, index: usize) -> Option<usize> {
+                (index < 2).then_some(index)
+            }
+        }
+        for args in [
+            json!({}),
+            json!({"full_output": true}),
+            json!({"tree_format": "elements"}),
+        ] {
+            let store = SnapshotStore::new();
+            let id = store.publish(9, 7, Rows);
+            let sid = format_snapshot_id(id);
+            let (mut content, mut structured) = payload(&sid, OLD);
+            apply(&opts(args), &ctx(7), &mut content, &mut structured);
+            let text = text_of(&content);
+            let handle = text
+                .lines()
+                .next()
+                .unwrap()
+                .split_whitespace()
+                .find_map(|field| field.strip_prefix("snapshot_id="))
+                .unwrap();
+            assert_eq!(handle, structured["snapshot_id"].as_str().unwrap());
+            assert_eq!(text.matches("snapshot_id=").count(), 1);
+            let target = json!({"element_token": format!("{handle}:1"), "window_id": 7});
+            assert!(matches!(
+                store.resolve(9, &target).unwrap(),
+                ResolvedElement::Element {
+                    window_id: 7,
+                    element_index: 1,
+                    element: 1
+                }
+            ));
+            let wrong_window = json!({"element_token": format!("{handle}:1"), "window_id": 8});
+            assert_eq!(
+                store
+                    .resolve(9, &wrong_window)
+                    .unwrap_err()
+                    .structured_content
+                    .unwrap()["refusal"]["code"],
+                "conflicting_element_target"
+            );
+            store.publish(9, 7, Rows);
+            assert_eq!(
+                store
+                    .resolve(9, &target)
+                    .unwrap_err()
+                    .structured_content
+                    .unwrap()["refusal"]["code"],
+                "stale_element_token"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_tree_identity_is_visible_only_when_published() {
+        for args in [json!({}), json!({"full_output": true})] {
+            for published in [true, false] {
+                let (mut content, mut structured) = payload("s000000a2", "");
+                if !published {
+                    structured.as_object_mut().unwrap().remove("snapshot_id");
+                }
+                apply(&opts(args.clone()), &ctx(7), &mut content, &mut structured);
+                assert_eq!(
+                    text_of(&content).contains("snapshot_id=s000000a2"),
+                    published
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn full_output_preserves_payload_and_adds_text_identity() {
         let (mut content, mut s) = payload("s000000a2", OLD);
         let before = s.clone();
         let text_before = text_of(&content);
@@ -1537,7 +1749,10 @@ mod tests {
             &mut s,
         );
         assert_eq!(s, before);
-        assert_eq!(text_of(&content), text_before);
+        assert_eq!(
+            text_of(&content),
+            text_before.replacen("elements=4", "elements=4 snapshot_id=s000000a2", 1)
+        );
         assert_eq!(s["elements"], before["elements"]);
         assert_eq!(s["_note"], before["_note"]);
         assert_eq!(s["background_input"], before["background_input"]);

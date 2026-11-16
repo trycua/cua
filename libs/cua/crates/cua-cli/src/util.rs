@@ -394,11 +394,35 @@ const UNREPORTED: u8 = 0;
 const REPORTED: u8 = 1;
 const CLEARED: u8 = 2;
 
+/// A child record of the report (its id and title); `None` is the root record.
+pub type StatusRecord<'a> = Option<(&'a str, &'a str)>;
+
 pub fn program_status(state: ProgramState, progress: Option<u8>, msg: &str) {
+    program_status_of(None, state, progress, msg);
+}
+
+pub fn program_status_of(
+    record: StatusRecord,
+    state: ProgramState,
+    progress: Option<u8>,
+    msg: &str,
+) {
     // The stderr lock spans the check and the write, so no report lands after a clear.
     let mut err = std::io::stderr().lock();
     if err.is_terminal() && program_status_may_write(&PROGRAM_STATUS, REPORTED) {
-        let _ = write!(err, "{}", program_status_report(state, progress, msg));
+        let _ = write!(
+            err,
+            "{}",
+            program_status_report(record, state, progress, msg)
+        );
+    }
+}
+
+/// Removes one child record (`clear_program_status` removes every record).
+pub fn clear_program_record(id: &str) {
+    let mut err = std::io::stderr().lock();
+    if err.is_terminal() && program_status_may_write(&PROGRAM_STATUS, REPORTED) {
+        let _ = write!(err, "\x1b]7501;state=clear:id={id}\x1b\\");
     }
 }
 
@@ -414,14 +438,26 @@ fn program_status_may_write(status: &AtomicU8, next: u8) -> bool {
     prev == REPORTED || (prev == UNREPORTED && next == REPORTED)
 }
 
-fn program_status_report(state: ProgramState, progress: Option<u8>, msg: &str) -> String {
+fn program_status_report(
+    record: StatusRecord,
+    state: ProgramState,
+    progress: Option<u8>,
+    msg: &str,
+) -> String {
     use base64::{Engine, engine::general_purpose::STANDARD};
+    // Single-line text, trimmed and cut to `max` bytes, in base64.
+    let text = |s: &str, max: usize| {
+        let s = s.replace(char::is_control, " ");
+        STANDARD.encode(&s.trim()[..s.trim().floor_char_boundary(max)])
+    };
     let name = format!("{state:?}").to_lowercase();
+    let record = record.map_or(String::new(), |(id, title)| {
+        format!(":id={id}:title={}", text(title, 192))
+    });
     let progress = progress.filter(|_| state == ProgramState::Working);
     let progress = progress.map_or(String::new(), |p| format!(":progress={}", p.min(100)));
-    let msg = msg.replace(char::is_control, " ");
-    let msg = STANDARD.encode(&msg.trim()[..msg.trim().floor_char_boundary(2048)]);
-    format!("\x1b]7501;state={name}{progress}:app=cua:msg={msg}\x1b\\")
+    let msg = text(msg, 2048);
+    format!("\x1b]7501;state={name}{record}{progress}:app=cua:msg={msg}\x1b\\")
 }
 
 /// What is being created, for the words of its steps.
@@ -539,6 +575,171 @@ impl StepLines {
     }
 }
 
+/// Create `i`'s name on its line and record (`Space <n>` until it has one).
+fn label(labels: &[Option<String>], i: usize) -> String {
+    labels[i]
+        .clone()
+        .unwrap_or_else(|| format!("Space {}", i + 1))
+}
+
+/// The lines, over the ones drawn before when `redraw`.
+fn render(s: &Drawn, redraw: bool) -> String {
+    let labels: Vec<String> = (0..s.lines.len()).map(|i| label(&s.labels, i)).collect();
+    let width = labels.iter().map(|l| l.chars().count()).max().unwrap_or(0);
+    // Autowrap off while drawing, so a long line cannot push the rest down.
+    let mut out = String::from("\x1b[?7l");
+    if redraw {
+        out += &format!("\r\x1b[{}A", s.lines.len());
+    }
+    for (label, (text, _)) in labels.iter().zip(&s.lines) {
+        out += format!("\x1b[2K{label:width$}  {text}").trim_end();
+        out.push('\n');
+    }
+    out + "\x1b[?7h"
+}
+
+/// `s` on one terminal line: control characters (newlines, escapes) become spaces.
+fn one_line(s: &str) -> String {
+    s.replace(char::is_control, " ")
+}
+
+/// The overall line for `n` creates at once, and its percent (the share ended).
+fn creating_many(n: usize, created: usize, failed: usize) -> (String, u8) {
+    let failed_ = if failed > 0 {
+        format!(", {failed} failed")
+    } else {
+        String::new()
+    };
+    let msg = format!("Creating {n} Spaces: {created} created{failed_}");
+    (msg, ((created + failed) * 100 / n.max(1)) as u8)
+}
+
+/// Several creates at once on a terminal (stderr): one line per create,
+/// rewritten in place with its step and then its result, and in OSC 7501 a
+/// record per create (`id=space-N`) under the overall count on the root
+/// record. Never used for `--json` or when stderr is not a terminal.
+pub struct ParallelSteps {
+    words: CreateWords,
+    state: std::sync::Mutex<Drawn>,
+}
+
+/// What `ParallelSteps` has drawn and reported.
+#[derive(Default)]
+struct Drawn {
+    /// Each create's name (`None` until an unnamed one's id is known).
+    labels: Vec<Option<String>>,
+    /// Each create's line text and its last reported percent.
+    lines: Vec<(String, Option<u8>)>,
+    created: usize,
+    failed: usize,
+    drawn: bool,
+    /// Ctrl-C: nothing more is drawn, so the cancel's own output stays.
+    stopped: bool,
+}
+
+impl ParallelSteps {
+    /// Lines for creates of this kind, one per label.
+    pub fn new(words: CreateWords, labels: Vec<Option<String>>) -> Self {
+        Self {
+            words,
+            state: std::sync::Mutex::new(Drawn {
+                lines: vec![Default::default(); labels.len()],
+                labels: labels.iter().map(|l| l.as_deref().map(one_line)).collect(),
+                ..Default::default()
+            }),
+        }
+    }
+
+    /// Names create `i`: by the id an unnamed one reports while it runs
+    /// (`local:<id>`), then by its name once `created` (`final_`).
+    pub fn name(&self, i: usize, name: &str, final_: bool) {
+        let mut s = self.lock();
+        if (final_ || s.labels[i].is_none()) && !name.is_empty() {
+            s.labels[i] = Some(one_line(name));
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Drawn> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Stops drawing (Ctrl-C); a draw under way finishes first.
+    pub fn stop(&self) {
+        self.lock().stopped = true;
+    }
+
+    /// Create `i` reported `p`: redraws the lines when its step changed.
+    pub fn show(&self, i: usize, p: &cua_sandbox_core::progress::Progress) {
+        let Some(text) = self.words.line(p) else {
+            return;
+        };
+        let progress = p.fraction.map(|f| (f * 100.0) as u8);
+        self.update(i, text, ProgramState::Working, progress);
+    }
+
+    /// Create `i` ended: its line becomes `Created …` or the error.
+    pub fn ended(&self, i: usize, result: Result<String, String>) {
+        match result {
+            Ok(text) => self.update(i, text, ProgramState::Done, None),
+            Err(e) => self.update(i, format!("failed: {e}"), ProgramState::Error, None),
+        }
+    }
+
+    fn update(&self, i: usize, text: String, state: ProgramState, progress: Option<u8>) {
+        let line = (one_line(&text), progress);
+        let mut s = self.lock();
+        let ended = state != ProgramState::Working;
+        if (s.lines[i] == line && !ended) || s.stopped {
+            return;
+        }
+        s.lines[i] = line;
+        match state {
+            ProgramState::Done => s.created += 1,
+            ProgramState::Error => s.failed += 1,
+            _ => {}
+        }
+        let redraw = std::mem::replace(&mut s.drawn, true);
+        let mut err = std::io::stderr();
+        let _ = write!(err, "{}", render(&s, redraw));
+        let _ = err.flush();
+        let id = format!("space-{}", i + 1);
+        let title = label(&s.labels, i);
+        program_status_of(Some((&id, &title)), state, progress, &s.lines[i].0);
+        // The overall record changes only when a create starts or ends.
+        if !redraw || ended {
+            let (msg, progress) = creating_many(s.lines.len(), s.created, s.failed);
+            program_status(ProgramState::Working, Some(progress), &msg);
+        }
+    }
+
+    /// Ends the output: the lines go (the results follow on stdout), each
+    /// create's record goes, and the root record says how it ended.
+    pub fn finish(&self, first_error: Option<&str>) {
+        let s = self.lock();
+        let n = s.lines.len();
+        if s.drawn {
+            eprint!("\r\x1b[{n}A\x1b[J");
+            for i in 1..=n {
+                clear_program_record(&format!("space-{i}"));
+            }
+        }
+        let (state, msg) = created_many(n, s.created, first_error);
+        program_status(state, None, &msg);
+    }
+}
+
+/// How `n` creates ended, for the root record: `error` when any failed,
+/// even if others were created.
+fn created_many(n: usize, created: usize, first_error: Option<&str>) -> (ProgramState, String) {
+    match first_error {
+        None => (ProgramState::Done, format!("Created {n} Spaces")),
+        Some(e) => (
+            ProgramState::Error,
+            format!("Created {created} of {n} Spaces: {e}"),
+        ),
+    }
+}
+
 #[cfg(test)]
 mod secret_tests {
     use super::*;
@@ -577,7 +778,7 @@ mod secret_tests {
 
     #[test]
     fn program_status_reports_are_osc_7501() {
-        let report = program_status_report;
+        let report = |s, p, m| program_status_report(None, s, p, m);
         assert_eq!(
             report(ProgramState::Working, None, "Installing updates"),
             "\x1b]7501;state=working:app=cua:msg=SW5zdGFsbGluZyB1cGRhdGVz\x1b\\"
@@ -597,6 +798,19 @@ mod secret_tests {
     }
 
     #[test]
+    fn a_child_record_carries_its_id_and_title() {
+        assert_eq!(
+            program_status_report(
+                Some(("space-2", "web-2")),
+                ProgramState::Working,
+                Some(40),
+                "Booting"
+            ),
+            "\x1b]7501;state=working:id=space-2:title=d2ViLTI=:progress=40:app=cua:msg=Qm9vdGluZw==\x1b\\"
+        );
+    }
+
+    #[test]
     fn program_status_messages_fit_the_limits() {
         use base64::Engine;
         let msg = |report: &str| {
@@ -609,10 +823,10 @@ mod secret_tests {
                 .unwrap();
             String::from_utf8(bytes).unwrap()
         };
-        let long = program_status_report(ProgramState::Error, None, &"é".repeat(3000));
+        let long = program_status_report(None, ProgramState::Error, None, &"é".repeat(3000));
         assert!(long.len() <= 4096, "{}", long.len());
         assert_eq!(msg(&long), "é".repeat(1024));
-        let control = program_status_report(ProgramState::Error, None, "a\x1bb\u{85}c\n");
+        let control = program_status_report(None, ProgramState::Error, None, "a\x1bb\u{85}c\n");
         assert_eq!(msg(&control), "a b c");
     }
 
@@ -751,6 +965,59 @@ mod create_step_tests {
         let vm = super::CreateWords::for_image("linux", "vm", false);
         assert_eq!(vm.step(Phase::Creating), Some("Preparing the disk"));
         assert_eq!(vm.step(Phase::Booting), Some("Booting"));
+    }
+}
+
+#[cfg(test)]
+mod parallel_step_tests {
+    #[test]
+    fn several_creates_keep_a_line_each_and_count_overall() {
+        let words = super::CreateWords::for_image("linux", "", true);
+        let lines = super::ParallelSteps::new(words, vec![Some("web".into()), None]);
+        lines.lock().lines = vec![("Starting".into(), None), ("Preparing".into(), None)];
+        assert_eq!(
+            super::render(&lines.lock(), false),
+            "\x1b[?7l\x1b[2Kweb      Starting\n\x1b[2KSpace 2  Preparing\n\x1b[?7h"
+        );
+        // An unnamed create takes the id it reports; a named one keeps its name.
+        lines.name(1, "local:sb-1a2b", false);
+        lines.name(0, "local:other", false);
+        assert_eq!(
+            super::render(&lines.lock(), false),
+            "\x1b[?7l\x1b[2Kweb            Starting\n\x1b[2Klocal:sb-1a2b  Preparing\n\x1b[?7h"
+        );
+        // Once created, it takes its name.
+        lines.name(1, "sb-1a2b", true);
+        assert!(super::render(&lines.lock(), false).contains("\x1b[2Ksb-1a2b  Preparing\n"));
+        // Drawn again: back up over the two lines first.
+        assert!(super::render(&lines.lock(), true).starts_with("\x1b[?7l\r\x1b[2A\x1b[2Kweb "));
+        assert_eq!(
+            super::creating_many(3, 0, 0),
+            ("Creating 3 Spaces: 0 created".into(), 0)
+        );
+        assert_eq!(
+            super::creating_many(3, 1, 1),
+            ("Creating 3 Spaces: 1 created, 1 failed".into(), 66)
+        );
+        assert_eq!(super::creating_many(3, 3, 0).1, 100);
+        // The root record ends `error` when any create failed, `done` only when none did.
+        assert_eq!(
+            super::created_many(3, 2, Some("no room")),
+            (
+                super::ProgramState::Error,
+                "Created 2 of 3 Spaces: no room".into()
+            )
+        );
+        assert_eq!(
+            super::created_many(3, 0, Some("no room")).0,
+            super::ProgramState::Error
+        );
+        assert_eq!(
+            super::created_many(3, 3, None),
+            (super::ProgramState::Done, "Created 3 Spaces".into())
+        );
+        // An error's newline or escape cannot add a line or reach the terminal.
+        assert_eq!(super::one_line("no room\n\x1b[2Jhere"), "no room  [2Jhere");
     }
 }
 

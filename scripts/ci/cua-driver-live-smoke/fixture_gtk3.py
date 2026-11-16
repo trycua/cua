@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """GTK3 window for the cua-driver live smoke: a text entry, two buttons, a
-dropdown combo box and an editable combo box, each with a label that echoes
-its state so a fresh snapshot can verify every action."""
+dropdown combo box, an editable combo box and an empty dropdown combo box,
+each with a label that echoes its state so a fresh snapshot can verify every
+action."""
 
 import gi
 
@@ -58,9 +59,16 @@ def main():
         "changed", lambda c: size.set_text("Size: " + (c.get_active_text() or ""))
     )
 
+    # No options at all: set_value must refuse, never fail or leave a popup.
+    empty = Gtk.Label(label="Empty: none")
+    empty_combo = named(Gtk.ComboBoxText(), "Empty")
+    empty_combo.connect(
+        "changed", lambda c: empty.set_text("Empty: " + (c.get_active_text() or ""))
+    )
+
     for widget in (
         entry, apply_button, status, increment_button, count,
-        color_combo, color, size_combo, size,
+        color_combo, color, size_combo, size, empty_combo, empty,
     ):
         box.pack_start(widget, False, False, 0)
     # Padding rows keep a one-row change small next to the whole tree, as in a

@@ -36,7 +36,11 @@ aws = [
 contrib-modal = ["dep:cua-contrib", "cua-contrib/modal"]
 
 [dependencies]
-cua-cli = { path = "../cua-cli", features = ["byoc"] }
+# The gateway of `cua compat` is built beside the CLI, not before it: the CLI
+# comes without it and `CuaSpacesCli` registers it (`CliExtension::compat`).
+cua-cli = { path = "../cua-cli", default-features = false, features = ["byoc"] }
+cua-compat.workspace = true
+cua-compat-cmd.workspace = true
 # Hetzner and Modal tokens sealed with the pool keys (cloud_tokens).
 cua-byoc = { workspace = true, features = ["federation"] }
 zeroize = "1"

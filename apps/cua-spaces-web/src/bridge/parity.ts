@@ -58,6 +58,7 @@ import {
 import { githubView } from "./github";
 import { ciReduce, ciView } from "./ci-runners";
 import { prepareHidden, prepareListed, prepareMetrics, prepareReduce, prepareView } from "./prepare-core";
+import { holdWarmStart } from "@/lib/prepare/store";
 import { hostFormInitial, hostFormReduce, hostFormView, type HostFormView } from "./this-machine";
 import type { AccountMenuInput, ProBannerInput } from "./contracts/spaces-page";
 import { accountMenu, bulkConfirm, bulkDone, bulkProgress, chooseSettings, proBanner, spaceMenu, tipsReduce, tipsView } from "./spaces-page";
@@ -369,6 +370,9 @@ declare global {
 export function installParityHandle(store: BridgeStore): () => void {
   if (typeof window === "undefined" || store.adapter.mode !== "demo") return () => {};
   if (!new URLSearchParams(window.location.search).has("parity")) return () => {};
+  // A parity replay records exactly the events its flow makes: the warm home (on by default now) would add a
+  // space-create of its own, so it is held for the replay page, as the unit-test harness holds it.
+  holdWarmStart(true);
   const core = store.core;
   window.__cuaParity = {
     coreStatus: core.status,

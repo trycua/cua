@@ -19,8 +19,8 @@ beforeEach(() => localStorage.clear());
 stubBrowserApis();
 
 const q = (s: string) => document.querySelector<HTMLElement>(s);
-const CODEX = "acct_ada/codex/codex";
-const HERMES = "acct_ada/hermes/hermes";
+const CODEX = "local:design-review/codex";
+const HERMES = "relay:mac-mini/release-checks/hermes";
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 /** What each Space's machine takes to answer a thread call (ms); `off` is a machine that is off. */
 const TAKES: Record<string, number | "off"> = {

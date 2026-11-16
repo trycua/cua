@@ -7,7 +7,7 @@
       "signature": "registry: Not authorized: .*ghcr\\.io/v2/trycua/|cua-spacesd is not available in sandbox .*nothing answered at",
       "owner": "f-trycua",
       "issue": "CUA-3132",
-      "expires": "2026-11-10"
+      "expires": "2026-11-18"
     },
     {
       "job": "macOS * mock E2E",
@@ -15,7 +15,7 @@
       "signature": "database is locked",
       "owner": "f-trycua",
       "issue": "CUA-3133",
-      "expires": "2026-11-10"
+      "expires": "2026-11-18"
     },
     {
       "test": "handover_process::the_next_relay_waits_then_serves_what_queued",

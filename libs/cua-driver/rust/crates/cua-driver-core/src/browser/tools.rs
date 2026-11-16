@@ -26,6 +26,7 @@ use crate::tool_args::ArgsExt;
 use super::cdp_ws::CdpConnection;
 use super::download::BrowserDownloadTool;
 use super::engine::{BrowserEngine, BrowserTabScreenshot, DIALOG_SUBSCRIPTION_TIMEOUT};
+use super::motion_policy::BrowserMotionPolicy;
 use super::platform::{
     BrowserVisualActionKind, PrepareAction, PrepareProfile, PrepareProfileMode, PrepareRequest,
     PrepareStrategy,
@@ -34,7 +35,7 @@ use super::pointer::BrowserPointerTool;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::session_schema as schema_session;
 use super::store::BrowserActionKind;
-use super::types::BindingQuality;
+use super::types::{BindingQuality, EndpointAccessClass};
 
 /// Register the complete browser surface against one shared engine. Platform
 /// crates call this from their `register_all` after constructing the
@@ -43,6 +44,7 @@ pub fn register_browser_tools(engine: &Arc<BrowserEngine>, registry: &mut ToolRe
     registry.register(Box::new(GetBrowserStateTool::new(engine.clone())));
     registry.register(Box::new(BrowserPrepareTool::new(engine.clone())));
     registry.register(Box::new(BrowserNavigateTool::new(engine.clone())));
+    registry.register(Box::new(BrowserMotionPolicyTool::new(engine.clone())));
     registry.register(Box::new(BrowserClickTool::new(engine.clone())));
     registry.register(Box::new(BrowserTypeTool::new(engine.clone())));
     registry.register(Box::new(BrowserSelectTool::new(engine.clone())));
@@ -162,13 +164,17 @@ async fn observe_dom_click(
     }
 }
 
-fn dom_click_action_record(observation: &DomClickObservation) -> ActionExecutionRecord {
+fn click_readback_action_record(
+    observation: &DomClickObservation,
+    transport: ActionTransport,
+    delivery: ActualDelivery,
+) -> ActionExecutionRecord {
     let mut builder = ActionExecutionRecord::builder(
         observation.effect,
-        ActionTransport::BrowserCdpRuntimeFunction,
+        transport,
         RequestedDelivery::NotApplicable,
     )
-    .actual_delivery(ActualDelivery::Background);
+    .actual_delivery(delivery);
     if observation.readback_available {
         builder = builder.evidence(ActionEvidence {
             kind: EvidenceKind::BrowserReadback,
@@ -1004,6 +1010,195 @@ fn isolated_session_lifecycle(
     }))
 }
 
+// ── browser_motion_policy ────────────────────────────────────────────────────
+
+pub struct BrowserMotionPolicyTool {
+    def: ToolDef,
+    engine: Arc<BrowserEngine>,
+}
+
+impl BrowserMotionPolicyTool {
+    pub fn new(engine: Arc<BrowserEngine>) -> Self {
+        let def = ToolDef {
+            name: "browser_motion_policy".into(),
+            description: "Apply or clear the standard prefers-reduced-motion media \
+                emulation for one exactly-bound driver-owned browser tab. This is an \
+                explicit experimental performance/accessibility policy: it does not \
+                inject CSS, freeze timers, video, canvas, or WebGL, and refuses \
+                existing user profiles in v0."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "target_id": schema_target_id(),
+                    "tab_id": schema_tab_id(),
+                    "session": schema_session(),
+                    "mode": {
+                        "type": "string",
+                        "enum": ["reduce", "default"],
+                        "description": "reduce emulates prefers-reduced-motion: reduce; default clears the emulated media-feature override."
+                    }
+                },
+                "required": ["target_id", "tab_id", "mode"],
+                "additionalProperties": false
+            }),
+            read_only: false,
+            destructive: false,
+            idempotent: true,
+            open_world: true,
+        };
+        Self { def, engine }
+    }
+}
+
+#[async_trait]
+impl Tool for BrowserMotionPolicyTool {
+    fn def(&self) -> &ToolDef {
+        &self.def
+    }
+
+    async fn protected_resource_ownership(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> ProtectedResourceOwnership {
+        if adapter_id == "browser_bound_input" {
+            browser_resource_ownership(&self.engine, args).await
+        } else {
+            ProtectedResourceOwnership::UserOwned
+        }
+    }
+
+    async fn protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
+        if adapter_id == "browser_bound_input" {
+            browser_protected_resource_scope(&self.engine, args, "browser_motion_policy").await
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        let (target_id, tab_id, mode) = match (
+            args.require_str("target_id"),
+            args.require_str("tab_id"),
+            args.require_str("mode"),
+        ) {
+            (Ok(target), Ok(tab), Ok(mode)) => (target, tab, mode),
+            (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => return error,
+        };
+        let motion_policy = match BrowserMotionPolicy::parse(&mode) {
+            Ok(policy) => policy,
+            Err(error) => return ToolResult::error(error),
+        };
+        let session = match require_explicit_session(&args) {
+            Ok(session) => session,
+            Err(error) => return error,
+        };
+
+        let _mutation = match self
+            .engine
+            .lock_mutation(&session, &target_id, &tab_id)
+            .await
+        {
+            Ok(guard) => guard,
+            Err(refusal) => return refusal.to_tool_result(),
+        };
+        let validated = match self
+            .engine
+            .revalidate_for_mutation(&session, &target_id, Some(&tab_id))
+            .await
+        {
+            Ok(validated) => validated,
+            Err(refusal) => return refusal.to_tool_result(),
+        };
+
+        if validated.record.endpoint_access_class != EndpointAccessClass::DriverOwned {
+            return BrowserRefusal::new(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "browser_motion_policy v0 is limited to driver-owned isolated browser tabs; existing user profiles and embedded applications are unchanged",
+            )
+            .with_detail(json!({
+                "reason": "motion_policy_driver_owned_only",
+                "endpoint_access_class": validated.record.endpoint_access_class,
+                "requested_mode": mode,
+            }))
+            .to_tool_result();
+        }
+
+        // Chromium keeps an emulation override only while the session that
+        // set it stays attached, and revalidation attaches a fresh session
+        // per call. The session that set this tab's override stays its holder,
+        // even after a failed call that may have applied it, until a clear
+        // succeeds or the session is gone, and both modes go to it.
+        let conn = &validated.conn;
+        let cdp_target_id = &validated.tab.cdp_target_id;
+        let send = |cdp_session: String| async move {
+            let sent = conn
+                .call(
+                    Some(&cdp_session),
+                    "Emulation.setEmulatedMedia",
+                    motion_policy.cdp_params(),
+                )
+                .await;
+            let gone = sent.as_ref().is_err_and(is_session_not_found);
+            if gone || (sent.is_ok() && motion_policy == BrowserMotionPolicy::Default) {
+                conn.clear_media_override_session(cdp_target_id, &cdp_session);
+            }
+            (sent.map(|_| ()), gone)
+        };
+        let applied = match (motion_policy, conn.media_override_session(cdp_target_id)) {
+            (BrowserMotionPolicy::Default, None) => Ok(()),
+            (BrowserMotionPolicy::Default, Some(holder)) => match send(holder).await {
+                // The holder's session ended, taking its override along.
+                (Err(_), true) => Ok(()),
+                (result, _) => result,
+            },
+            (BrowserMotionPolicy::Reduce, holder) => {
+                let on_holder = match holder {
+                    Some(holder) => match send(holder).await {
+                        (Err(_), true) => None,
+                        (result, _) => Some(result),
+                    },
+                    None => None,
+                };
+                match on_holder {
+                    Some(result) => result,
+                    None => {
+                        // Recorded before sending, so a detach during the
+                        // call removes it again.
+                        conn.set_media_override_session(cdp_target_id, &validated.cdp_session);
+                        send(validated.cdp_session.clone()).await.0
+                    }
+                }
+            }
+        };
+
+        match applied {
+            Ok(()) => ToolResult::text(format!("browser motion policy for {tab_id}: {mode}"))
+                .with_structured(json!({
+                    "status": "ok",
+                    "target_id": target_id,
+                    "tab_id": tab_id,
+                    "mode": mode,
+                    "prefer_reduced_motion": motion_policy.prefers_reduced_motion(),
+                    "browser_generation": validated.record.generation,
+                    "scope": "driver_owned_tab",
+                    "css_injected": false,
+                })),
+            Err(error) => ToolResult::error(format!("Emulation.setEmulatedMedia failed: {error}")),
+        }
+    }
+}
+
+/// Chromium's answer for a command on a session that no longer exists.
+fn is_session_not_found(error: &anyhow::Error) -> bool {
+    error.to_string().contains("(-32001)")
+}
+
 // ── browser_navigate ─────────────────────────────────────────────────────────
 
 pub struct BrowserNavigateTool {
@@ -1473,7 +1668,11 @@ impl Tool for BrowserClickTool {
                             ext_ref.as_deref().unwrap_or("?")
                         ),
                     };
-                    let action_record = dom_click_action_record(&observation);
+                    let action_record = click_readback_action_record(
+                        &observation,
+                        ActionTransport::BrowserCdpRuntimeFunction,
+                        ActualDelivery::Background,
+                    );
                     ToolResult::text(text).with_action_record(action_record)
                 }
                 (Ok(_), Some(open)) => {
@@ -1485,6 +1684,7 @@ impl Tool for BrowserClickTool {
                         open.kind,
                         dialog_capability_id(open.generation)
                     );
+                    // The dialog blocks the renderer, so no readback can run.
                     ToolResult::text(text).with_structured(json!({
                         "status": "ok",
                         "effect": "unverifiable",
@@ -1557,6 +1757,34 @@ impl Tool for BrowserClickTool {
                 BrowserVisualActionKind::Click,
             )
             .await;
+
+        // A ref-targeted trusted click gets the same bounded target readback
+        // as the dom_event route, so a press that misses its target is not
+        // reported like one that toggled it. Coordinate clicks have no node.
+        let readback_object = match backend_node_id {
+            Some(backend) => conn
+                .call(
+                    Some(cdp),
+                    "DOM.resolveNode",
+                    json!({ "backendNodeId": backend }),
+                )
+                .await
+                .ok()
+                .and_then(|resolved| {
+                    resolved
+                        .pointer("/object/objectId")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                }),
+            None => None,
+        };
+        let before = match readback_object.as_deref() {
+            Some(object_id) => {
+                read_dom_click_state(conn, cdp, object_id, DOM_CLICK_BASELINE_DEADLINE).await
+            }
+            None => None,
+        };
+        let ref_targeted = backend_node_id.is_some();
 
         if let Err(error) = conn
             .call(
@@ -1654,8 +1882,44 @@ impl Tool for BrowserClickTool {
             "y": y,
         });
         let Some(open) = opened else {
-            return ToolResult::text(format!("clicked ({x:.0}, {y:.0}) in {tab_id}"))
-                .with_structured(structured);
+            let text = format!("clicked ({x:.0}, {y:.0}) in {tab_id}");
+            if !ref_targeted {
+                return ToolResult::text(text).with_structured(structured);
+            }
+            let observation = match readback_object.as_deref() {
+                Some(object_id) => observe_dom_click(conn, cdp, object_id, before).await,
+                None => DomClickObservation {
+                    effect: effect_from_value_readback(false, false, false),
+                    readback_available: false,
+                },
+            };
+            let text = match observation.effect {
+                ActionEffect::Confirmed => {
+                    format!("{text}; bounded semantic readback confirmed a target-state change")
+                }
+                _ if observation.readback_available => format!(
+                    "{text}; bounded semantic target state remained unchanged; application \
+                     effect is unverifiable. Refresh page state and verify the expected \
+                     postcondition"
+                ),
+                _ => format!(
+                    "{text}; application effect not verified because semantic target readback \
+                     was unavailable. Refresh page state and verify the expected postcondition"
+                ),
+            };
+            let delivery = if foreground {
+                ActualDelivery::Foreground
+            } else {
+                ActualDelivery::Background
+            };
+            let action_record = click_readback_action_record(
+                &observation,
+                ActionTransport::BrowserCdpInputMouse,
+                delivery,
+            );
+            return ToolResult::text(text)
+                .with_structured(structured)
+                .with_action_record(action_record);
         };
         structured["dialog"] = dialog_block(&open);
         structured["escalation"] = json!({
@@ -3194,6 +3458,19 @@ mod tests {
         launch_delay: std::time::Duration,
         /// Start time reported for every pid; a change stands for pid reuse.
         start_time: std::sync::atomic::AtomicU64,
+        /// What the isolated-launch tests observe and control.
+        launches: Arc<LaunchSignals>,
+    }
+
+    /// Isolated launches the mock performed, and a stand-in for an OS
+    /// security prompt (a macOS keychain prompt) on screen.
+    #[derive(Default)]
+    struct LaunchSignals {
+        spawned: std::sync::atomic::AtomicUsize,
+        prompt_open: std::sync::atomic::AtomicBool,
+        /// Each launched browser raises a prompt, as a Chromium that reads
+        /// its keychain secret does.
+        prompt_on_launch: std::sync::atomic::AtomicBool,
     }
 
     impl MockPlatform {
@@ -3249,6 +3526,15 @@ mod tests {
                     channel: None,
                     process_role: crate::browser::types::BrowserProcessRole::StandaloneConsumer,
                     supports_cdp: false,
+                },
+                5 => BrowserClassification {
+                    is_browser: true,
+                    engine: BrowserEngineFamily::Chromium,
+                    product_kind: BrowserProduct::Electron,
+                    product: Some("Obsidian".into()),
+                    channel: None,
+                    process_role: crate::browser::types::BrowserProcessRole::EmbeddedApplication,
+                    supports_cdp: true,
                 },
                 _ => BrowserClassification {
                     is_browser: false,
@@ -3343,12 +3629,23 @@ mod tests {
             }
         }
 
+        fn security_prompt_open(&self) -> bool {
+            self.launches
+                .prompt_open
+                .load(std::sync::atomic::Ordering::SeqCst)
+        }
+
         fn spawn_isolated_browser(
             &self,
             _command: std::process::Command,
             profile: &std::path::Path,
         ) -> Result<Box<dyn crate::browser::platform::IsolatedBrowserProcess>, BrowserRefusal>
         {
+            use std::sync::atomic::Ordering;
+            self.launches.spawned.fetch_add(1, Ordering::SeqCst);
+            if self.launches.prompt_on_launch.load(Ordering::SeqCst) {
+                self.launches.prompt_open.store(true, Ordering::SeqCst);
+            }
             std::thread::sleep(self.launch_delay);
             let port = self.devtools.as_ref().unwrap().local_addr().unwrap().port();
             std::fs::write(
@@ -3375,6 +3672,14 @@ mod tests {
 
     #[cfg(unix)]
     fn slow_launching_engine(launch_delay: std::time::Duration) -> Arc<BrowserEngine> {
+        observed_launching_engine(launch_delay, Arc::default())
+    }
+
+    #[cfg(unix)]
+    fn observed_launching_engine(
+        launch_delay: std::time::Duration,
+        launches: Arc<LaunchSignals>,
+    ) -> Arc<BrowserEngine> {
         static PROFILE_ROOT: std::sync::Once = std::sync::Once::new();
         PROFILE_ROOT.call_once(|| {
             std::env::set_var(
@@ -3385,6 +3690,7 @@ mod tests {
         BrowserEngine::new(Arc::new(MockPlatform {
             devtools: Some(std::net::TcpListener::bind("127.0.0.1:0").unwrap()),
             launch_delay,
+            launches,
             ..MockPlatform::default()
         }))
     }
@@ -3487,6 +3793,10 @@ mod tests {
                 "browser_navigate",
             ),
             (
+                BrowserMotionPolicyTool::new(e.clone()).def().clone(),
+                "browser_motion_policy",
+            ),
+            (
                 BrowserClickTool::new(e.clone()).def().clone(),
                 "browser_click",
             ),
@@ -3524,6 +3834,7 @@ mod tests {
         for def in [
             BrowserPrepareTool::new(e.clone()).def().clone(),
             BrowserNavigateTool::new(e.clone()).def().clone(),
+            BrowserMotionPolicyTool::new(e.clone()).def().clone(),
             BrowserClickTool::new(e.clone()).def().clone(),
             BrowserTypeTool::new(e.clone()).def().clone(),
             BrowserSelectTool::new(e.clone()).def().clone(),
@@ -3549,6 +3860,7 @@ mod tests {
                 "get_browser_state",
                 "browser_prepare",
                 "browser_navigate",
+                "browser_motion_policy",
                 "browser_click",
                 "browser_type",
                 "browser_select",
@@ -3673,6 +3985,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn electron_app_without_endpoint_names_the_isolated_launch() {
+        let tool = GetBrowserStateTool::new(engine());
+        let result = tool
+            .invoke(json!({ "pid": 5, "window_id": 7, "_session_id": "run-1" }))
+            .await;
+        let refusal = &structured(&result)["refusal"];
+        assert_eq!(refusal["code"], "browser_requires_setup");
+        assert_eq!(
+            refusal["detail"]["reason"],
+            "embedded_application_endpoint_closed"
+        );
+        assert!(refusal["message"]
+            .as_str()
+            .unwrap()
+            .contains("--remote-debugging-port"));
+        assert_eq!(
+            refusal["detail"]["next_call"],
+            json!({
+                "tool": "browser_prepare",
+                "arguments": {
+                    "pid": 5,
+                    "session": "run-1",
+                    "allow_launch": true,
+                    "profile": { "mode": "isolated_new" },
+                },
+            })
+        );
+    }
+
+    #[tokio::test]
     async fn standalone_consumer_refuses_existing_profile_approval_without_preparing() {
         let tool = GetBrowserStateTool::new(engine());
         let result = tool
@@ -3753,6 +4095,107 @@ mod tests {
                 "{body}"
             );
         }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn existing_profile_requests_never_launch_a_browser() {
+        let launches = Arc::new(LaunchSignals::default());
+        let tool = BrowserPrepareTool::new(observed_launching_engine(
+            std::time::Duration::ZERO,
+            launches.clone(),
+        ));
+        for request in [
+            json!({
+                "pid": 1,
+                "window_id": 7,
+                "strategy": { "kind": "existing_profile" },
+                "session": "existing-never-launches"
+            }),
+            json!({
+                "pid": 1,
+                "window_id": 7,
+                "allow_launch": true,
+                "strategy": { "kind": "existing_profile" },
+                "session": "existing-never-launches"
+            }),
+            json!({
+                "pid": 1,
+                "window_id": 7,
+                "allow_launch": true,
+                "profile": { "mode": "isolated_new" },
+                "strategy": { "kind": "existing_profile" },
+                "session": "existing-never-launches"
+            }),
+        ] {
+            let result = tool.invoke(request).await;
+            assert_eq!(structured(&result)["status"], "refused", "{result:?}");
+        }
+        assert_eq!(
+            launches.spawned.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "the user's own profile must never be launched or relaunched"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_open_security_prompt_blocks_isolated_launches() {
+        use std::sync::atomic::Ordering;
+        let launches = Arc::new(LaunchSignals::default());
+        launches.prompt_open.store(true, Ordering::SeqCst);
+        let tool = BrowserPrepareTool::new(observed_launching_engine(
+            std::time::Duration::ZERO,
+            launches.clone(),
+        ));
+        for _ in 0..5 {
+            let result = tool
+                .invoke(json!({
+                    "allow_launch": true,
+                    "profile": { "mode": "isolated_new" },
+                    "session": "prompt-already-open"
+                }))
+                .await;
+            let refusal = &structured(&result)["refusal"];
+            assert_eq!(refusal["code"], "browser_route_unavailable", "{refusal}");
+            assert_eq!(refusal["detail"]["reason"], "security_prompt_open");
+        }
+        assert_eq!(launches.spawned.load(Ordering::SeqCst), 0);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_prompt_raised_by_a_launch_stops_it_and_further_launches() {
+        use std::sync::atomic::Ordering;
+        let launches = Arc::new(LaunchSignals::default());
+        launches.prompt_on_launch.store(true, Ordering::SeqCst);
+        let tool = BrowserPrepareTool::new(observed_launching_engine(
+            std::time::Duration::ZERO,
+            launches.clone(),
+        ));
+        let request = json!({
+            "allow_launch": true,
+            "profile": { "mode": "isolated_new" },
+            "session": "prompt-on-launch"
+        });
+        let first = tool.invoke(request.clone()).await;
+        let refusal = &structured(&first)["refusal"];
+        assert_eq!(
+            refusal["detail"]["reason"], "security_prompt_appeared",
+            "{refusal}"
+        );
+        assert_eq!(launches.spawned.load(Ordering::SeqCst), 1);
+
+        // Even after the person dismisses the prompt, an immediate retry is
+        // held back instead of raising the next prompt.
+        launches.prompt_open.store(false, Ordering::SeqCst);
+        let retry = tool.invoke(request).await;
+        let refusal = &structured(&retry)["refusal"];
+        assert_eq!(
+            refusal["detail"]["reason"], "isolated_launch_backoff",
+            "{refusal}"
+        );
+        assert_eq!(launches.spawned.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

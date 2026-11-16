@@ -143,11 +143,13 @@ list a skill twice when another agent that reads only `~/.agents/skills`
 
 ## Bundled skills
 
-`libs/cua/skills/` is bundled with `include_dir`:
+`libs/cua/skills/` is bundled with `include_dir`, and so is `cua-driver`:
 
-- `cua-driver` and `gui-automation` are copies of
-  `libs/cua-driver/rust/Skills/cua-driver` and `skills/gui-automation`.
-  `scripts/sync-skills.sh` refreshes them; `--check` fails on drift.
+- `cua-driver` is bundled from `libs/cua-driver/rust/Skills/cua-driver`, the
+  skill each cua-driver release versions (`build.rs`), so there is no copy to
+  keep in step.
+- `gui-automation` is a copy of `skills/gui-automation`.
+  `scripts/sync-skills.sh` refreshes it; `--check` fails on drift.
 - `cua-sandboxes`, `cua-spaces` and `cua-volume` live only here.
 
 ## Tests

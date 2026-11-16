@@ -30,6 +30,7 @@ const both = (on: boolean, appName = "Cua Spaces Local"): AppPermissions => ({
   ],
 });
 const net = (over: Partial<LocalNetworkState> = {}): LocalNetworkState => ({
+  loading: false,
   available: true,
   granted: false,
   asked: false,
@@ -86,7 +87,9 @@ describe("the permissions step on a Mac that runs macOS Spaces", () => {
     expect(row().querySelector("[data-permission-status]")!.getAttribute("data-permission-status")).toBe("checking");
     expect(row().textContent).toContain("Waiting for your answer");
     expect(row().querySelector("button")).toBeNull();
-    expect(screen.getByRole("button", { name: "Later" })).toBeTruthy();
+    // Until it is on, the button says the run goes on without it, and what is still off.
+    expect(screen.getByRole("button", { name: "Continue without it" })).toBeTruthy();
+    expect(document.querySelector("[data-new-run-still-off]")!.textContent).toBe("Still off: Run macOS Spaces on this Mac");
     cleanup();
     draw(both(true), net({ asked: true, granted: true }));
     expect(row().querySelector("[data-permission-status]")!.getAttribute("data-permission-status")).toBe("on");
@@ -104,7 +107,21 @@ describe("the permissions step on a Mac that runs macOS Spaces", () => {
     fireEvent.click(row.querySelector("button")!);
     expect(n.allow).toHaveBeenCalled();
     // Never blocks the run.
-    expect(screen.getByRole("button", { name: "Later" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Continue without it" })).toBeTruthy();
+  });
+
+  // Device test 10 Nov: on a short window the Local Network row was cut off under the fade, so the button stayed
+  // "Later" with both visible switches on and nothing said why.
+  it("names the row still off and shows it on request, wherever it is on the page", () => {
+    draw(both(true), net());
+    const row = document.querySelector<HTMLElement>("[data-app-permission=local-network]")!;
+    const scrolled = vi.fn();
+    row.scrollIntoView = scrolled;
+    const stillOff = document.querySelector<HTMLButtonElement>("[data-new-run-still-off]")!;
+    expect(stillOff.textContent).toBe("Still off: Run macOS Spaces on this Mac");
+    fireEvent.click(stillOff);
+    expect(scrolled).toHaveBeenCalled();
+    expect(document.activeElement).toBe(row.querySelector("button"));
   });
 
   it("a Mac that doesn't run macOS Spaces keeps the two rows and the old words", () => {

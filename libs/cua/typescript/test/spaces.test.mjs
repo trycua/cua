@@ -45,7 +45,14 @@ function findFile(dir, name, budget = { n: 0 }) {
 
 test("every contract tool maps to a generated method", () => {
   const rows = spacesApi.spacesToolMethods()
-  assert.equal(rows.length, 122)
+  // One source of truth for the tool set: the generated contract manifest.
+  const manifestPath = new URL("../../spaces-contract/manifest.json", import.meta.url)
+  const expected = new Set(JSON.parse(readFileSync(manifestPath, "utf8")).tools.map((t) => t.name))
+  const got = new Set(rows.map((r) => r.tool))
+  assert.ok(
+    rows.length === expected.size && [...expected].every((t) => got.has(t)) && [...got].every((t) => expected.has(t)),
+    `binding tools differ from spaces-contract/manifest.json: missing ${JSON.stringify([...expected].filter((t) => !got.has(t)).sort())}, extra ${JSON.stringify([...got].filter((t) => !expected.has(t)).sort())}, rows ${rows.length} vs manifest ${expected.size}`,
+  )
   const classes = { Spaces: spacesApi.Spaces, Space: spacesApi.Space }
   for (const row of rows) {
     const [cls, method] = row.method.split(".")

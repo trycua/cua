@@ -106,14 +106,14 @@ jobs:
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
-          # Its own family: this job builds `--release -p cua-sdk`, whose units
+          # Its own family: this job builds `--release -p cua-sdk-native`, whose units
           # the default libs-cua family (debug test builds) does not hold, so
           # every run compiled the SDK tree cold (25 minutes). Pushes to main
           # save this family; pull requests restore it.
           shared-key: libs-cua-sdk-release-macos
       - name: Build and stage the cua SDK for Swift
         run: |
-          (cd libs/cua && cargo build --locked --release -p cua-sdk)
+          (cd libs/cua && cargo build --locked --release -p cua-sdk-native)
           node libs/cua/scripts/stage-uniffi-library.mjs --only=swift
       - name: Cursor theme is the driver's
         run: examples/infinite-canvas-swift/scripts/sync-cursor-assets.sh --check
@@ -145,7 +145,7 @@ jobs:
           save-if: "false"
       - name: Build and stage the cua SDK for Swift
         run: |
-          (cd libs/cua && cargo build --locked --release -p cua-sdk)
+          (cd libs/cua && cargo build --locked --release -p cua-sdk-native)
           node libs/cua/scripts/stage-uniffi-library.mjs --only=swift
       - name: Benchmark
         working-directory: examples/infinite-canvas-swift

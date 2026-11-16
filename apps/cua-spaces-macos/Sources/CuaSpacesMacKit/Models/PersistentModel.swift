@@ -160,11 +160,12 @@ public final class PersistentModel {
     /// own (a chat from `agent_threads`) in `cwd`, its folder.
     func startRun(space: String, agent: String, prompt: String, repo: String?, branch: String?, model: String?,
                   envFromHost: [String], cwd: String? = nil, resumeSession: String? = nil,
-                  resumeContext: String? = nil) async throws -> [String: Any] {
+                  resumeContext: String? = nil, effort: String? = nil) async throws -> [String: Any] {
         var args: [String: Any] = ["space": space, "agent": agent, "prompt": prompt]
         if let repo { args["repo"] = repo }
         if let branch { args["branch"] = branch }
         if let model { args["model"] = model }
+        if let effort { args["effort"] = effort }
         if !envFromHost.isEmpty { args["env_from_host"] = envFromHost }
         if let cwd { args["cwd"] = cwd }
         if let resumeSession { args["resume_session"] = resumeSession }

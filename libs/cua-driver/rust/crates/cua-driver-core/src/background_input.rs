@@ -377,11 +377,18 @@ fn exact_window_status(facts: &BackgroundTargetFacts) -> &'static str {
 /// proven, not that a future call is guaranteed to succeed; every action
 /// revalidates instead of trusting this report. The report contains no window
 /// titles, control values, or private symbol addresses.
+///
+/// `keyboard_action` is the class the platform's window-addressed keyboard
+/// tools are gated as (`ExactWindowKeys` where the key-window transport
+/// exists, else `GenericKey`), so the `pid_keyboard` route reports what those
+/// tools would decide rather than a stricter class they never use.
 pub fn background_input_capability_report(
     target: ExactWindowTarget,
     facts: &BackgroundTargetFacts,
+    keyboard_action: BackgroundAction,
     one_shot_capture_available: Option<bool>,
 ) -> Value {
+    debug_assert!(keyboard_action.is_pid_keyboard());
     let route_entry = |route: &str, action: BackgroundAction| -> Value {
         match decide_background_input(target, facts, action) {
             BackgroundInputDecision::Execute { .. } => {
@@ -401,7 +408,7 @@ pub fn background_input_capability_report(
         "routes": [
             route_entry("accessibility", BackgroundAction::AxSemantic),
             route_entry("window_pointer", BackgroundAction::WindowPointer),
-            route_entry("pid_keyboard", BackgroundAction::GenericKey),
+            route_entry("pid_keyboard", keyboard_action),
         ],
         "observation": {
             "one_shot_capture": match one_shot_capture_available {
@@ -746,7 +753,12 @@ mod tests {
 
     #[test]
     fn capability_report_shape_is_stable() {
-        let report = background_input_capability_report(TARGET, &matched_facts(), Some(true));
+        let report = background_input_capability_report(
+            TARGET,
+            &matched_facts(),
+            BackgroundAction::GenericKey,
+            Some(true),
+        );
         assert_eq!(report["exact_window"]["status"], "matched");
         assert_eq!(report["exact_window"]["pid"], 42);
         assert_eq!(report["exact_window"]["window_id"], 700);
@@ -764,7 +776,12 @@ mod tests {
             ax_window_present: false,
             ..matched_facts()
         };
-        let report = background_input_capability_report(TARGET, &facts, Some(false));
+        let report = background_input_capability_report(
+            TARGET,
+            &facts,
+            BackgroundAction::GenericKey,
+            Some(false),
+        );
         assert_eq!(report["exact_window"]["status"], "ax_unresolved");
         for route in report["routes"].as_array().unwrap() {
             assert_eq!(route["status"], "refused");
@@ -776,7 +793,12 @@ mod tests {
             competing_keyboard_destinations: 1,
             ..matched_facts()
         };
-        let report = background_input_capability_report(TARGET, &two_windows, None);
+        let report = background_input_capability_report(
+            TARGET,
+            &two_windows,
+            BackgroundAction::GenericKey,
+            None,
+        );
         assert_eq!(report["routes"][0]["status"], "available");
         assert_eq!(report["routes"][2]["status"], "refused");
         assert_eq!(
@@ -784,6 +806,56 @@ mod tests {
             refusal_codes::SAME_PID_KEYBOARD_AMBIGUITY
         );
         assert_eq!(report["observation"]["one_shot_capture"], "unknown");
+    }
+
+    /// #4241: Chrome with one browser window and its omnibox popup open. The
+    /// popup is a second same-pid destination, so the generic class refuses,
+    /// but window-addressed keyboard tools are gated as `ExactWindowKeys`
+    /// where that transport exists. The report must say what those tools
+    /// will do, not send the agent to foreground for nothing.
+    #[test]
+    fn capability_report_judges_pid_keyboard_as_the_tools_gate_it() {
+        let popup_open = BackgroundTargetFacts {
+            competing_keyboard_destinations: 1,
+            ..matched_facts()
+        };
+        let exact = background_input_capability_report(
+            TARGET,
+            &popup_open,
+            BackgroundAction::ExactWindowKeys,
+            Some(true),
+        );
+        assert_eq!(exact["routes"][2]["route"], "pid_keyboard");
+        assert_eq!(exact["routes"][2]["status"], "available");
+
+        let generic = background_input_capability_report(
+            TARGET,
+            &popup_open,
+            BackgroundAction::GenericKey,
+            Some(true),
+        );
+        assert_eq!(generic["routes"][2]["status"], "refused");
+        assert_eq!(
+            generic["routes"][2]["reason"],
+            refusal_codes::SAME_PID_KEYBOARD_AMBIGUITY
+        );
+
+        // The exact-window class still reports every other guard.
+        let minimized = BackgroundTargetFacts {
+            target_minimized: Some(true),
+            ..popup_open
+        };
+        let report = background_input_capability_report(
+            TARGET,
+            &minimized,
+            BackgroundAction::ExactWindowKeys,
+            Some(true),
+        );
+        assert_eq!(report["routes"][2]["status"], "refused");
+        assert_eq!(
+            report["routes"][2]["reason"],
+            refusal_codes::MINIMIZED_OR_HIDDEN
+        );
     }
 
     /// A locked session (screen saver or display sleep) empties every app's
@@ -808,7 +880,12 @@ mod tests {
                 BackgroundInputDecision::Execute { .. } => panic!("{action:?} must refuse"),
             }
         }
-        let report = background_input_capability_report(TARGET, &facts, Some(true));
+        let report = background_input_capability_report(
+            TARGET,
+            &facts,
+            BackgroundAction::GenericKey,
+            Some(true),
+        );
         assert_eq!(report["exact_window"]["status"], "screen_locked");
         for route in report["routes"].as_array().unwrap() {
             assert_eq!(route["reason"], refusal_codes::SCREEN_LOCKED);

@@ -178,8 +178,8 @@ struct LocalNetworkPermissionTests {
 /// A Mac that accepts Spaces from your other computers asks for Local
 /// Network when it starts to (the switch, a setup, a join code), while
 /// someone is here, so a macOS Space another device creates here does not
-/// meet macOS's bare prompt first. Never during the first run or a sign-in:
-/// finishing the first run asks instead.
+/// meet macOS's bare prompt first. Never during the first run or a sign-in,
+/// nor as it finishes: its permissions step asks, with the reason.
 @MainActor
 @Suite("Local Network access when providing Spaces")
 struct LocalNetworkWhenProvidingTests {
@@ -195,7 +195,7 @@ struct LocalNetworkWhenProvidingTests {
                             profile: "desktop", shareDesktop: nil, provideSpaces: provide)
     }
 
-    @Test func theSignInsSetupAsksOnlyWhenTheFirstRunEnds() async throws {
+    @Test func theFirstRunNeverAsksFromTheHost() async throws {
         let host = FixtureHost()
         let shown = LocalNetworkPermissionTests.Shown()
         let probe = LocalNetworkPermissionTests.FakeProbe([.blocked, .allowed], prompts: [0, 1, 1])
@@ -210,12 +210,13 @@ struct LocalNetworkWhenProvidingTests {
         #expect(m.hostingLocalNetworkCheck == nil)
         #expect(shown.steps.isEmpty && probe.connects == 0)
 
-        // Done: the explanation, then macOS's prompt, once.
+        // Done: Home opens with no dialog and no prompt (device test, 10 Nov:
+        // the explanation popped up as Home opened). The permissions step asked.
         let bridge = WebUIBridge(model: m, allowedOrigins: [])
         _ = try bridge.completeOnboarding(["mode": "host"])
         await m.hostingLocalNetworkCheck?.value
-        #expect(shown.steps.map(\.kind) == [.explain])
-        #expect(probe.connects == 2, "macOS asked from this app's own process")
+        #expect(m.hostingLocalNetworkCheck == nil)
+        #expect(shown.steps.isEmpty && probe.connects == 0)
     }
 
     /// The switch asks, also before the first run is done ("Skip for now").

@@ -43,8 +43,8 @@ export const NEW_COMPUTER_POLL_MS = 3000;
 /** How long after opening, computers that show up are the account's own, not new (ms). */
 export const SETTLE_MS = 10_000;
 
-/** The sheet's pages: the method rows, one page per method, and entering a code made elsewhere. */
-export type AddView = "pick" | "signin" | "link" | "qr" | "command" | "code" | "enter";
+/** The sheet's pages: the first page (the usual way, then the others), one page per other way, and entering a code made elsewhere. */
+export type AddView = "pick" | "signin" | "link" | "qr" | "command" | "code" | "agent" | "enter";
 
 type Shell = "sh" | "powershell";
 const shells = (t: typeof tr): readonly { value: Shell; label: string }[] => [
@@ -52,14 +52,21 @@ const shells = (t: typeof tr): readonly { value: Shell; label: string }[] => [
   { value: "powershell", label: t("computers.add.shell_powershell") },
 ];
 
-/** The methods, in order; the first is the default. `code`: it needs a one-time code. */
+/**
+ * The ways to add a computer, in order. The first, signing in there, is how most people do it: the first page shows
+ * it in full. The others are one tap away under "Other ways to add it", each needing a one-time code (`code`).
+ */
 export const METHODS: readonly { view: Exclude<AddView, "pick" | "enter">; code: boolean }[] = [
   { view: "signin", code: false },
   { view: "link", code: true },
   { view: "qr", code: true },
   { view: "command", code: true },
   { view: "code", code: true },
+  { view: "agent", code: true },
 ];
+
+/** The ways listed under "Other ways to add it". */
+export const OTHER_METHODS = METHODS.slice(1);
 
 /** The page titles; the methods' names are the same words. */
 const titles = (t: typeof tr): Record<AddView, string> => ({
@@ -69,7 +76,8 @@ const titles = (t: typeof tr): Record<AddView, string> => ({
   qr: t("computers.add.method_qr"),
   command: t("computers.add.method_command"),
   code: t("computers.add.method_code"),
-  enter: t("computers.add.method_code"),
+  agent: t("computers.add.method_agent"),
+  enter: t("computers.add.enter_title"),
 });
 
 /** "Expires in 29 min" (rounded up), "Expires in 40 s" in the last minute. */
@@ -90,10 +98,11 @@ export function agentPrompt(code: string, url: string | null = null): string {
 }
 
 /**
- * "Add a computer": a title, one line, and one row per method (Sign in
- * there, Open a link, Scan a QR code, Run a command, Enter a code), each
- * opening only what that method needs, and a prompt to paste into an agent
- * on the other computer. The footer waits for the computer and says
+ * "Add a computer": a title, one line, and the usual way in full (install
+ * Cua Spaces there and sign in, with the link to copy). The other ways
+ * (Open a link, Scan a QR code, Run a command, Type a code there, Ask an
+ * agent there) sit under "Other ways to add it", each opening only what it
+ * needs. The footer waits for the computer and says
  * "Added: <name>" by itself, whichever way it was added. "Have a code?
  * Enter it" is the other side: this computer joins with a code made
  * elsewhere (a `cua://add/<code>` link opens it with the code filled in).
@@ -213,11 +222,7 @@ export function AddComputerSheet({
                 {titles(t)[view]}
               </DialogTitle>
               {view === "pick" ? (
-                <Pick
-                  pairing={pairing}
-                  noCode={noCode}
-                  onPick={setView}
-                />
+                <Pick pairing={pairing} noCode={noCode} identity={session?.identity ?? null} done={added !== null} open={open} onPick={setView} />
               ) : view === "signin" ? (
                 <SignInThere identity={session?.identity ?? null} done={added !== null} />
               ) : (
@@ -243,7 +248,10 @@ export function AddComputerSheet({
                     aria-label={t("computers.add.add_it_for")}
                     className="h-7 min-w-0 border-transparent bg-transparent text-xs text-muted-foreground shadow-none"
                     value={chosen ?? "me"}
-                    options={[{ value: "me", label: t("computers.add.for_just_me") }, ...choices.teams.map((c) => ({ value: c.id, label: t("computers.add.for_team", { team: teamName(c) }) }))]}
+                    options={[
+                      { value: "me", label: t("computers.add.for_just_me") },
+                      ...choices.teams.map((c) => ({ value: c.id, label: t("computers.add.for_team", { team: teamName(c) }) })),
+                    ]}
                     onValueChange={(v) => setPicked(v === "me" ? null : v)}
                   />
                 ) : null
@@ -269,33 +277,38 @@ function thisComputerName(t: typeof tr, list: readonly Machine[]): string {
 
 /* ---- The first page: the methods -------------------------------------------------- */
 
-function Pick({ pairing, noCode, onPick }: { pairing: PairingHook; noCode: boolean; onPick: (v: AddView) => void }) {
+function Pick({
+  pairing,
+  noCode,
+  identity,
+  done,
+  open,
+  onPick,
+}: {
+  pairing: PairingHook;
+  noCode: boolean;
+  identity: string | null;
+  done: boolean;
+  open: boolean;
+  onPick: (v: AddView) => void;
+}) {
   const t = useT();
   const names = titles(t);
-  const code = pairing.code?.code ?? null;
+  const [others, setOthers] = useState(false);
+  useEffect(() => {
+    if (!open) setOthers(false);
+  }, [open]);
   return (
     <>
       <DialogDescription className="mt-1 text-[13px] text-muted-foreground">{t("computers.add.lede")}</DialogDescription>
-      <nav aria-label={t("computers.add.methods_label")} className="mt-3" data-add-methods="">
-        <GroupedSection>
-          {METHODS.map((m) => {
-            const off = m.code && noCode;
-            return (
-              <button
-                key={m.view}
-                type="button"
-                disabled={off}
-                data-add-method={m.view}
-                onClick={() => onPick(m.view)}
-                className="flex min-h-11 w-full items-center gap-3 px-4 py-2.5 text-left text-[13px] outline-none hover:bg-accent/50 focus-visible:bg-accent disabled:opacity-45"
-              >
-                <span className="flex-1">{names[m.view]}</span>
-                <ChevronRightIcon className="size-3.5 text-muted-foreground/70" aria-hidden />
-              </button>
-            );
-          })}
-        </GroupedSection>
-      </nav>
+      {/* The usual way, in full: nothing to pick first. */}
+      <div className="mt-4" data-add-primary="" data-add-signin="">
+        <p className="text-[13px] font-medium">{t("computers.add.primary_title")}</p>
+        <p className="mt-1 text-[13px] text-muted-foreground">
+          {identity ? t("computers.add.signin_as", { identity }) : t("computers.add.signin_this_account")}
+        </p>
+        <CopyLine text={INSTALL_URL} label={t("computers.add.copy_link")} dim={done} />
+      </div>
       {pairing.phase === "error" && pairing.error ? (
         <p className="mt-3 text-xs text-muted-foreground" data-add-code-error="">
           {pairing.error.unsupported ? t("computers.add.codes_unsupported") : `${pairing.error.message} `}
@@ -307,21 +320,36 @@ function Pick({ pairing, noCode, onPick }: { pairing: PairingHook; noCode: boole
         </p>
       ) : null}
       {noCode ? null : (
-        <div className="mt-5" data-add-prompt="">
-          <div className="flex items-center justify-between">
-            <label htmlFor="add-agent-prompt" className="text-[13px] font-medium">
-              {t("computers.add.paste_into_agent")}
-            </label>
-            <CopyButton text={code ? agentPrompt(code, pairing.code?.url ?? null) : ""} label={t("computers.add.copy_prompt")} disabled={!code || pairing.phase !== "ready"} />
-          </div>
-          <textarea
-            id="add-agent-prompt"
-            readOnly
-            rows={2}
-            value={code ? agentPrompt(code, pairing.code?.url ?? null) : t("computers.add.making_code")}
-            style={{ fieldSizing: "content" } as CSSProperties}
-            className="mt-1.5 block w-full resize-none rounded-lg bg-muted px-2.5 py-2 text-[12.5px] leading-relaxed text-foreground outline-none"
-          />
+        <div className="mt-5">
+          <button
+            type="button"
+            aria-expanded={others}
+            aria-controls="add-other-ways"
+            onClick={() => setOthers((o) => !o)}
+            className="flex items-center gap-1 text-[13px] font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground"
+            data-add-other-toggle=""
+          >
+            <ChevronRightIcon className={cn("size-3.5 transition-transform motion-reduce:transition-none", others && "rotate-90")} aria-hidden />
+            {t("computers.add.other_ways")}
+          </button>
+          {others ? (
+            <nav id="add-other-ways" aria-label={t("computers.add.methods_label")} className="mt-2" data-add-methods="">
+              <GroupedSection>
+                {OTHER_METHODS.map((m) => (
+                  <button
+                    key={m.view}
+                    type="button"
+                    data-add-method={m.view}
+                    onClick={() => onPick(m.view)}
+                    className="flex min-h-11 w-full items-center gap-3 px-4 py-2.5 text-left text-[13px] outline-none hover:bg-accent/50 focus-visible:bg-accent"
+                  >
+                    <span className="flex-1">{names[m.view]}</span>
+                    <ChevronRightIcon className="size-3.5 text-muted-foreground/70" aria-hidden />
+                  </button>
+                ))}
+              </GroupedSection>
+            </nav>
+          ) : null}
         </div>
       )}
     </>
@@ -399,7 +427,30 @@ function CodeMethod({ view, pairing, noCode, done }: { view: AddView; pairing: P
       </div>
     );
   }
-  // Enter a code: for a computer that already has Cua Spaces.
+  if (view === "agent") {
+    const prompt = agentPrompt(code.code ?? "", code.url ?? null);
+    return (
+      <div data-add-prompt="">
+        <DialogDescription className="mt-1 text-[13px] text-muted-foreground">{t("computers.add.agent_help")}</DialogDescription>
+        <div className="mt-3 flex justify-end">
+          <CopyButton text={prompt} label={t("computers.add.copy_prompt")} disabled={dim} />
+        </div>
+        <textarea
+          id="add-agent-prompt"
+          aria-label={t("computers.add.method_agent")}
+          readOnly
+          rows={2}
+          value={prompt}
+          style={{ fieldSizing: "content" } as CSSProperties}
+          className={cn(
+            "mt-1.5 block w-full resize-none rounded-lg bg-muted px-2.5 py-2 text-[12.5px] leading-relaxed text-foreground outline-none",
+            dim && "opacity-45",
+          )}
+        />
+      </div>
+    );
+  }
+  // Type a code there: for a computer that already has Cua Spaces.
   return (
     <div data-add-code="">
       <DialogDescription className="mt-1 text-[13px] text-muted-foreground">{t("computers.add.code_help")}</DialogDescription>
@@ -493,31 +544,31 @@ function Footer({
     }
     return (
       <>
-      {asCard ? <UpgradeCard reason={cardReason} className="mx-4 mb-3" /> : null}
-      <FooterBar>
-        <Status kind={team?.phase === "failed" ? "ended" : "ok"} data={{ "data-pairing-added": "", "data-pairing-team": team?.phase ?? "" }}>
-          {team?.phase === "failed"
-            ? t("computers.add.added_not_on_team", { name: added, team: forTeam ?? t("computers.add.your_team"), error: team.error ?? "" }).trim()
-            : forTeam
-              ? t("computers.add.added_for_team", { name: added, team: forTeam })
-              : t("computers.add.added", { name: added })}
-        </Status>
-        {team?.phase === "failed" && team.upgradeUrl && !asCard ? (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="text-brand"
-            data-pairing-upgrade=""
-            onClick={() => {
-              plans.opened("app_team", { kind: team.kind ?? "other", plan });
-              void openExternal(plans.link(team.upgradeUrl!, "app_team")).catch(() => {});
-            }}
-          >
-            {t("computers.add.upgrade")}
-          </Button>
-        ) : null}
-        {done}
-      </FooterBar>
+        {asCard ? <UpgradeCard reason={cardReason} className="mx-4 mb-3" /> : null}
+        <FooterBar>
+          <Status kind={team?.phase === "failed" ? "ended" : "ok"} data={{ "data-pairing-added": "", "data-pairing-team": team?.phase ?? "" }}>
+            {team?.phase === "failed"
+              ? t("computers.add.added_not_on_team", { name: added, team: forTeam ?? t("computers.add.your_team"), error: team.error ?? "" }).trim()
+              : forTeam
+                ? t("computers.add.added_for_team", { name: added, team: forTeam })
+                : t("computers.add.added", { name: added })}
+          </Status>
+          {team?.phase === "failed" && team.upgradeUrl && !asCard ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-brand"
+              data-pairing-upgrade=""
+              onClick={() => {
+                plans.opened("app_team", { kind: team.kind ?? "other", plan });
+                void openExternal(plans.link(team.upgradeUrl!, "app_team")).catch(() => {});
+              }}
+            >
+              {t("computers.add.upgrade")}
+            </Button>
+          ) : null}
+          {done}
+        </FooterBar>
       </>
     );
   }
@@ -649,9 +700,7 @@ function EnterCode({
           </Button>
           {t("computers.add.method_code")}
         </DialogTitle>
-        <DialogDescription className="mt-1 text-[13px] text-muted-foreground">
-          {t("computers.add.enter_trust")}
-        </DialogDescription>
+        <DialogDescription className="mt-1 text-[13px] text-muted-foreground">{t("computers.add.enter_trust")}</DialogDescription>
         {relay ? (
           <p className="mt-2 text-xs text-muted-foreground" data-join-relay="">
             <Trans i18nKey="computers.add.own_relay" ns="computers" values={{ relay }} components={{ host: <span className="text-foreground" /> }} />
@@ -751,7 +800,16 @@ export function QrCode({ text, size = 148 }: { text: string; size?: number }) {
     }),
   );
   return (
-    <svg role="img" aria-label={t("computers.add.qr_alt")} data-pairing-qr="" width={size} height={size} viewBox={`0 0 ${qr.size} ${qr.size}`} shapeRendering="crispEdges" className="rounded-lg bg-white">
+    <svg
+      role="img"
+      aria-label={t("computers.add.qr_alt")}
+      data-pairing-qr=""
+      width={size}
+      height={size}
+      viewBox={`0 0 ${qr.size} ${qr.size}`}
+      shapeRendering="crispEdges"
+      className="rounded-lg bg-white"
+    >
       <path d={d} fill="#000" />
     </svg>
   );

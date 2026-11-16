@@ -612,9 +612,9 @@ export function sandboxAnchors(pages: PageSpec[] = SANDBOX_PAGES): Map<string, s
   return anchors;
 }
 
-function sandboxSectionBody(page: PageSpec, docs: Map<string, PyDoc>, version: string, examples?: ExampleSet): string[] {
+function sandboxSectionBody(page: PageSpec, docs: Map<string, PyDoc>, examples?: ExampleSet): string[] {
   const body: string[] = [escapeMdxText(page.intro), ''];
-  const header = readHeader(`cua-sdk/python/${page.file}.md`, { version });
+  const header = readHeader(`cua-sdk/python/${page.file}.md`);
   if (header) body.push(header, '');
   for (const section of page.sections) {
     body.push(`## ${section.title}`, '');
@@ -632,18 +632,16 @@ function sandboxSectionBody(page: PageSpec, docs: Map<string, PyDoc>, version: s
 export function renderSandboxPage(
   page: PageSpec,
   docs: Map<string, PyDoc>,
-  version: string,
   examples?: ExampleSet,
   merged: PageSpec[] = []
 ): string {
-  const body = sandboxSectionBody(page, docs, version, examples);
-  for (const part of merged) body.push(`## ${part.title}`, '', ...sandboxSectionBody(part, docs, version, examples));
+  const body = sandboxSectionBody(page, docs, examples);
+  for (const part of merged) body.push(`## ${part.title}`, '', ...sandboxSectionBody(part, docs, examples));
   return renderPage({
     title: page.title,
     description: page.description,
     generator: GENERATOR,
     source: `griffe over libs/python/cua-sandbox/cua_sandbox (${[page, ...merged].map((p) => `${SB}.${p.file}`).join(', ')})`,
-    version: `cua-sandbox ${version}`,
     components: body.some((l) => l.startsWith('<Tabs')) ? ['Tabs'] : [],
     body: body.join('\n'),
   });
@@ -674,8 +672,6 @@ export function renderCuaPython(
   docs: Map<string, PyDoc>,
   modules: Map<string, PyModuleDoc>,
   anchors: Map<string, string>,
-  version: string,
-  sandboxVersion: string,
   examples?: ExampleSet
 ): string {
   const root = modules.get('cua')!;
@@ -684,7 +680,7 @@ export function renderCuaPython(
     'The high-level Python API: `cua_sandbox` (`Sandbox`, `Image`, the computer interfaces) and the helpers the `cua` package adds. It is a thin layer over the [Cua SDK objects](/cua-sdk/reference): the local runtimes and cua-spacesd all go through `cua`, whose generated binding (`cua._native`) those pages document.',
     ''
   );
-  const header = readHeader('cua-sdk/python/index.md', { version, sandboxVersion });
+  const header = readHeader('cua-sdk/python/index.md');
   if (header) body.push(header, '');
   body.push('## Pages', '', '| Page | Covers |', '| --- | --- |');
   for (const page of SANDBOX_PAGES.filter((p) => !PY_MERGED[p.file])) {
@@ -748,7 +744,6 @@ export function renderCuaPython(
       'cua_sandbox and the cua package helpers: packages, configuration, and the page for each class.',
     generator: GENERATOR,
     source: 'griffe over libs/cua/python/src/cua (cua._native excluded) and libs/python/cua-sandbox',
-    version: `cua ${version}, cua-sandbox ${sandboxVersion}`,
     components: body.some((l) => l.startsWith('<Tabs')) ? ['Tabs'] : [],
     body: body.join('\n'),
   });
@@ -756,13 +751,6 @@ export function renderCuaPython(
 
 function firstParagraph(markdown: string): string {
   return markdown.split('\n\n')[0] ?? '';
-}
-
-function readVersion(file: string): string {
-  const text = fs.readFileSync(path.join(REPO_ROOT, file), 'utf-8');
-  const m = text.match(/^__version__\s*=\s*"([^"]+)"/m);
-  if (!m) throw new Error(`no __version__ in ${file}`);
-  return m[1];
 }
 
 // ============================================================================
@@ -779,11 +767,10 @@ export function buildFiles(
   const anchors = sandboxAnchors();
   const set: ExampleSet = { examples, used: new Set() };
 
-  const sandboxVersion = readVersion('libs/python/cua-sandbox/cua_sandbox/__init__.py');
   const homes = SANDBOX_PAGES.filter((p) => !PY_MERGED[p.file]);
   for (const page of homes) {
     const merged = SANDBOX_PAGES.filter((p) => PY_MERGED[p.file] === page.file);
-    let content = renderSandboxPage(page, docs, sandboxVersion, set, merged);
+    let content = renderSandboxPage(page, docs, set, merged);
     if (page.file === 'sandbox') {
       const reexports = renderReexports(modules.get(SB)!, new Set(anchors.keys()));
       if (reexports) content = content.replace(/\n$/, `\n\n${reexports}\n`);
@@ -796,7 +783,7 @@ export function buildFiles(
   );
   files.set(
     CUA_PYTHON_PAGE,
-    renderCuaPython(docs, modules, anchors, readVersion('libs/cua/python/src/cua/__init__.py'), sandboxVersion, set)
+    renderCuaPython(docs, modules, anchors, set)
   );
   const unused = [...examples.keys()].filter((k) => !set.used.has(k));
   if (unused.length) {

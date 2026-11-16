@@ -10,8 +10,9 @@
 //! `cua-driver`, or under the old Claude Code name `cua-computer-use`, is left
 //! alone. When that server launches a different Cua Driver (Cua Spaces' Set up
 //! writes the same name for the one it carries), the agent is reported as
-//! using another Cua Driver instead of as connected. A failure for one agent
-//! never stops the others.
+//! using another Cua Driver instead of as connected; `--replace` switches it
+//! to this one through the step Set up runs. A failure for one agent never
+//! stops the others.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -50,6 +51,17 @@ impl Agent {
         }
     }
 
+    /// The agent's id in `cua-agent-setup`, whose `configure_mcp` Cua Spaces'
+    /// Set up runs. Droid is not in its registry.
+    fn setup_id(self) -> Option<&'static str> {
+        match self {
+            Agent::Claude => Some("claude-code"),
+            Agent::Codex => Some("codex"),
+            Agent::Cursor => Some("cursor"),
+            Agent::Droid => None,
+        }
+    }
+
     /// The `--client` value (and the `mcp-config` client) for this agent.
     pub fn parse(name: &str) -> Option<Agent> {
         match name {
@@ -68,6 +80,9 @@ pub enum Status {
     AlreadyConnected,
     /// The agent's `cua-driver` server launches a different Cua Driver.
     OtherDriver,
+    /// That server now launches this driver (`--replace`).
+    Replaced,
+    WouldReplace,
     WouldConnect,
     NotInstalled,
     Failed,
@@ -79,6 +94,8 @@ impl Status {
             Status::Connected => "connected",
             Status::AlreadyConnected => "already_connected",
             Status::OtherDriver => "other_driver",
+            Status::Replaced => "replaced",
+            Status::WouldReplace => "would_replace",
             Status::WouldConnect => "would_connect",
             Status::NotInstalled => "not_installed",
             Status::Failed => "failed",
@@ -119,11 +136,24 @@ impl AgentResult {
         match self.status {
             Status::Connected => format!("{label}: connected"),
             Status::AlreadyConnected => format!("{label}: already connected"),
+            Status::OtherDriver if self.replaceable() => format!(
+                "{label}: uses another Cua Driver ({}); left as is. To use this one, run \
+                 `cua-driver connect --replace`.",
+                self.detail.as_deref().unwrap_or("unknown")
+            ),
             Status::OtherDriver => format!(
                 "{label}: uses another Cua Driver ({}); left as is. To use this one, remove its \
                  `{}` server and run `cua-driver connect` again.",
                 self.detail.as_deref().unwrap_or("unknown"),
                 self.server
+            ),
+            Status::Replaced => format!(
+                "{label}: switched to this Cua Driver from {}",
+                self.detail.as_deref().unwrap_or("another one")
+            ),
+            Status::WouldReplace => format!(
+                "{label}: would switch to this Cua Driver from {}",
+                self.detail.as_deref().unwrap_or("another one")
             ),
             Status::WouldConnect => format!("{label}: would connect"),
             Status::NotInstalled => format!("{label}: not installed"),
@@ -140,8 +170,54 @@ impl AgentResult {
             Status::Connected
                 | Status::AlreadyConnected
                 | Status::OtherDriver
+                | Status::Replaced
+                | Status::WouldReplace
                 | Status::WouldConnect
         )
+    }
+
+    /// Whether `--replace` can switch this agent: Set up's step knows it and
+    /// the server has the name that step writes (a legacy-named one would be
+    /// left beside the new entry).
+    fn replaceable(&self) -> bool {
+        self.agent.setup_id().is_some() && self.server == SERVER_NAME
+    }
+
+    /// Points the agent's `cua-driver` server at `bin` with
+    /// the writer Cua Spaces' Set up runs (`AgentSetup::configure_mcp`): the
+    /// agent's own CLI where it has one, a format-preserving edit otherwise,
+    /// and a backup of the file first. Unlike Set up it leaves a retired
+    /// `cua-spaces` entry alone. Anything but a replaceable other driver is
+    /// returned as is.
+    fn replace(self, env: &Env, bin: &str, dry_run: bool) -> AgentResult {
+        let id = match self.agent.setup_id() {
+            Some(id) if self.status == Status::OtherDriver && self.replaceable() => id,
+            _ => return self,
+        };
+        if dry_run {
+            return AgentResult {
+                status: Status::WouldReplace,
+                ..self
+            };
+        }
+        let setup = cua_agent_setup::AgentSetup::new(env.setup_env());
+        let server = cua_agent_setup::McpServer::driver(bin);
+        let written = setup
+            .configure_mcp_only(&[id.to_owned()], &server)
+            .map_err(|e| e.to_string())
+            .and_then(|out| {
+                out.into_iter()
+                    .find(|o| o.item == SERVER_NAME)
+                    .ok_or_else(|| "nothing was written".to_owned())
+            });
+        match written {
+            Ok(o) if o.failed() => AgentResult::failed(self.agent, o.detail),
+            Ok(_) => AgentResult {
+                status: Status::Replaced,
+                ..self
+            },
+            Err(e) => AgentResult::failed(self.agent, e),
+        }
     }
 }
 
@@ -218,6 +294,8 @@ pub struct Env {
     pub codex_home: PathBuf,
     /// Extra places an agent's app may live (e.g. `/Applications/Cursor.app`).
     pub app_dirs: Vec<PathBuf>,
+    /// `$CUA_HOME` when set, where `--replace` keeps Set up's record.
+    pub cua_home: Option<PathBuf>,
 }
 
 impl Env {
@@ -249,7 +327,26 @@ impl Env {
             claude_config_dir,
             codex_home,
             app_dirs,
+            cua_home: nonempty("CUA_HOME"),
         })
+    }
+
+    /// The same machine as `cua-agent-setup` sees it, for `--replace`.
+    fn setup_env(&self) -> cua_agent_setup::HostEnv {
+        let mut host = cua_agent_setup::HostEnv::isolated(&self.home);
+        host.path = self.path_dirs.clone();
+        host.run_agent_clis = true;
+        let dirs = [
+            ("CLAUDE_CONFIG_DIR", Some(&self.claude_config_dir)),
+            ("CODEX_HOME", Some(&self.codex_home)),
+            ("CUA_HOME", self.cua_home.as_ref()),
+        ];
+        for (key, dir) in dirs {
+            if let Some(dir) = dir {
+                host.vars.insert(key.into(), dir.display().to_string());
+            }
+        }
+        host
     }
 
     fn find_on_path(&self, name: &str) -> Option<PathBuf> {
@@ -558,14 +655,16 @@ fn connect_droid(env: &Env, bin: &str, tools: &serde_json::Value, dry_run: bool)
 // ── Orchestration ─────────────────────────────────────────────────────────
 
 /// Connect each of `agents` (every known agent when empty). `tools` is the
-/// driver's tool inventory, read for Droid's autonomy ratings. Skill packs are
-/// not handled here; `run_connect` adds them.
+/// driver's tool inventory, read for Droid's autonomy ratings. With `replace`,
+/// an agent that uses another Cua Driver is switched to this one. Skill packs
+/// are not handled here; `run_connect` adds them.
 pub fn connect_agents(
     env: &Env,
     agents: &[Agent],
     bin: &str,
     tools: &serde_json::Value,
     dry_run: bool,
+    replace: bool,
 ) -> Vec<AgentResult> {
     let list: Vec<Agent> = if agents.is_empty() {
         Agent::ALL.to_vec()
@@ -577,11 +676,16 @@ pub fn connect_agents(
             let Some(cli) = env.installed(agent) else {
                 return AgentResult::new(agent, Status::NotInstalled);
             };
-            match agent {
+            let result = match agent {
                 Agent::Claude => connect_claude(env, &cli, bin, dry_run),
                 Agent::Codex => connect_codex(env, &cli, bin, dry_run),
                 Agent::Cursor => connect_cursor(env, bin, dry_run),
                 Agent::Droid => connect_droid(env, bin, tools, dry_run),
+            };
+            if replace {
+                result.replace(env, bin, dry_run)
+            } else {
+                result
             }
         })
         .collect()
@@ -605,7 +709,13 @@ fn stable_binary_path() -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
-pub fn run_connect(clients: &[String], tools: &serde_json::Value, dry_run: bool, json: bool) {
+pub fn run_connect(
+    clients: &[String],
+    tools: &serde_json::Value,
+    dry_run: bool,
+    replace: bool,
+    json: bool,
+) {
     let mut agents = Vec::new();
     for name in clients {
         match Agent::parse(name) {
@@ -625,7 +735,7 @@ pub fn run_connect(clients: &[String], tools: &serde_json::Value, dry_run: bool,
         std::process::exit(1);
     };
     let bin = stable_binary_path();
-    let results = connect_agents(&env, &agents, &bin, tools, dry_run);
+    let results = connect_agents(&env, &agents, &bin, tools, dry_run, replace);
 
     // Skill pack, for every agent that is now connected to this driver.
     let mut skills: Vec<(Agent, String)> = Vec::new();
@@ -708,6 +818,7 @@ mod tests {
             home,
             path_dirs: vec![bin_dir.clone()],
             app_dirs: vec![],
+            cua_home: None,
         };
         Fixture {
             _dir: dir,
@@ -748,7 +859,7 @@ mod tests {
     #[test]
     fn nothing_installed_reports_not_installed_and_does_not_fail() {
         let f = fixture();
-        let r = connect_agents(&f.env, &[], "/b/cua-driver", &no_tools(), false);
+        let r = connect_agents(&f.env, &[], "/b/cua-driver", &no_tools(), false, false);
         assert!(r.iter().all(|r| r.status == Status::NotInstalled));
         assert_eq!(by(&r, Agent::Codex).line(), "Codex: not installed");
         assert!(!exit_failed(&r));
@@ -761,7 +872,7 @@ mod tests {
         fake_cli(&f, "claude", "exit 0");
         fake_cli(&f, "codex", "exit 0");
         std::fs::create_dir_all(f.env.home.join(".cursor")).unwrap();
-        let r = connect_agents(&f.env, &[], "/b/cua-driver", &no_tools(), false);
+        let r = connect_agents(&f.env, &[], "/b/cua-driver", &no_tools(), false, false);
         assert_eq!(by(&r, Agent::Claude).status, Status::Connected);
         assert_eq!(by(&r, Agent::Codex).status, Status::Connected);
         assert_eq!(by(&r, Agent::Cursor).status, Status::Connected);
@@ -793,6 +904,7 @@ mod tests {
                 "/b/cua-driver",
                 &no_tools(),
                 false,
+                false,
             );
             assert_eq!(
                 by(&r, Agent::Claude).line(),
@@ -805,7 +917,14 @@ mod tests {
             "[mcp_servers.cua-driver]\ncommand = \"x\"\n",
         )
         .unwrap();
-        let r = connect_agents(&f.env, &[Agent::Codex], "/b/cua-driver", &no_tools(), false);
+        let r = connect_agents(
+            &f.env,
+            &[Agent::Codex],
+            "/b/cua-driver",
+            &no_tools(),
+            false,
+            false,
+        );
         assert_eq!(by(&r, Agent::Codex).status, Status::AlreadyConnected);
         assert!(!calls(&f).contains("add"), "{}", calls(&f));
     }
@@ -837,7 +956,7 @@ mod tests {
             std::fs::write(f.env.home.join(dir).join("mcp.json"), &entry).unwrap();
         }
         for dry_run in [true, false] {
-            let r = connect_agents(&f.env, &[], ours, &droid_tools(), dry_run);
+            let r = connect_agents(&f.env, &[], ours, &droid_tools(), dry_run, false);
             for agent in Agent::ALL {
                 let result = by(&r, agent);
                 assert_eq!(result.status, Status::OtherDriver, "{agent:?}");
@@ -847,14 +966,23 @@ mod tests {
         }
         assert_eq!(
             by(
-                &connect_agents(&f.env, &[Agent::Codex], ours, &no_tools(), false),
+                &connect_agents(&f.env, &[Agent::Codex], ours, &no_tools(), false, false),
                 Agent::Codex
             )
             .line(),
             format!(
                 "Codex: uses another Cua Driver ({SPACES_DRIVER}); left as is. To use this one, \
-                 remove its `cua-driver` server and run `cua-driver connect` again."
+                 run `cua-driver connect --replace`."
             )
+        );
+        assert!(
+            by(
+                &connect_agents(&f.env, &[Agent::Droid], ours, &droid_tools(), false, false),
+                Agent::Droid
+            )
+            .line()
+            .ends_with("remove its `cua-driver` server and run `cua-driver connect` again."),
+            "Set up's step does not know Droid, so --replace is not offered"
         );
         assert!(!calls(&f).contains("add"), "{}", calls(&f));
         for path in [".claude.json", ".cursor/mcp.json", ".factory/mcp.json"] {
@@ -868,6 +996,100 @@ mod tests {
             std::fs::read_to_string(f.env.codex_home.join("config.toml")).unwrap(),
             toml
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replace_switches_an_agent_that_uses_another_driver_to_this_one() {
+        let f = fixture();
+        // `claude mcp add-json --scope user <name> <json>` writes the entry.
+        let claude_json = f.env.home.join(".claude.json");
+        fake_cli(
+            &f,
+            "claude",
+            &format!(
+                "[ \"$2\" = add-json ] && printf '{{\"mcpServers\":{{\"%s\":%s}}}}' \"$5\" \"$6\" > '{}'\nexit 0",
+                claude_json.display()
+            ),
+        );
+        fake_cli(&f, "codex", "exit 0");
+        let ours = f.bin_dir.join("cua-driver");
+        std::fs::write(&ours, "").unwrap();
+        let ours = ours.to_str().unwrap();
+        let entry = serde_json::json!({ "mcpServers": {
+            "cua-driver": { "command": SPACES_DRIVER, "args": ["mcp", "--embedded"] },
+            "cua-spaces": { "command": "python3", "args": ["/x/spaces_mcp.py"] },
+            "other": { "command": "/x/other" } } })
+        .to_string();
+        std::fs::write(&claude_json, &entry).unwrap();
+        std::fs::create_dir_all(&f.env.codex_home).unwrap();
+        let toml = format!(
+            "# mine\nmodel = \"o3\"\n\n[mcp_servers.cua-driver]\ncommand = \"{SPACES_DRIVER}\"\nargs = [\"mcp\"]\n"
+        );
+        std::fs::write(f.env.codex_home.join("config.toml"), &toml).unwrap();
+        for dir in [".cursor", ".factory"] {
+            std::fs::create_dir_all(f.env.home.join(dir)).unwrap();
+            std::fs::write(f.env.home.join(dir).join("mcp.json"), &entry).unwrap();
+        }
+
+        let preview = connect_agents(&f.env, &[], ours, &droid_tools(), true, true);
+        assert_eq!(
+            by(&preview, Agent::Codex).line(),
+            format!("Codex: would switch to this Cua Driver from {SPACES_DRIVER}")
+        );
+        assert_eq!(std::fs::read_to_string(&claude_json).unwrap(), entry);
+
+        let r = connect_agents(&f.env, &[], ours, &droid_tools(), false, true);
+        for agent in [Agent::Claude, Agent::Codex, Agent::Cursor] {
+            assert_eq!(
+                by(&r, agent).line(),
+                format!(
+                    "{}: switched to this Cua Driver from {SPACES_DRIVER}",
+                    agent.label()
+                )
+            );
+        }
+        assert_eq!(by(&r, Agent::Droid).status, Status::OtherDriver);
+        let command = |path: &Path| {
+            let v: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+            v["mcpServers"]["cua-driver"]["command"].clone()
+        };
+        assert_eq!(command(&claude_json), ours);
+        assert_eq!(command(&f.env.home.join(".cursor/mcp.json")), ours);
+        assert_eq!(
+            command(&f.env.home.join(".factory/mcp.json")),
+            SPACES_DRIVER
+        );
+        let cursor: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(f.env.home.join(".cursor/mcp.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(cursor["mcpServers"]["other"]["command"], "/x/other");
+        // Unlike Set up, `--replace` leaves the retired `cua-spaces` entry.
+        assert_eq!(cursor["mcpServers"]["cua-spaces"]["command"], "python3");
+        let codex = std::fs::read_to_string(f.env.codex_home.join("config.toml")).unwrap();
+        assert!(codex.starts_with("# mine\nmodel = \"o3\"\n"), "{codex}");
+        assert!(codex.contains(&format!("command = \"{ours}\"")), "{codex}");
+        // Set up's bookkeeping: a backup of each file before it is written.
+        let backups = |dir: &Path, name: &str| {
+            std::fs::read_dir(dir)
+                .unwrap()
+                .filter(|e| {
+                    let file = e.as_ref().unwrap().file_name();
+                    file.to_string_lossy()
+                        .starts_with(&format!("{name}.cua-backup-"))
+                })
+                .count()
+        };
+        assert_eq!(backups(&f.env.home, ".claude.json"), 1);
+        assert_eq!(backups(&f.env.codex_home, "config.toml"), 1);
+        assert_eq!(backups(&f.env.home.join(".cursor"), "mcp.json"), 1);
+
+        let again = connect_agents(&f.env, &[], ours, &droid_tools(), false, true);
+        for agent in [Agent::Claude, Agent::Codex, Agent::Cursor] {
+            assert_eq!(by(&again, agent).status, Status::AlreadyConnected);
+        }
     }
 
     #[cfg(unix)]
@@ -887,7 +1109,7 @@ mod tests {
             format!("mcp_servers = {{ cua-driver = {{ command = \"{SPACES_DRIVER}\" }} }}\n"),
         ] {
             std::fs::write(f.env.codex_home.join("config.toml"), &toml).unwrap();
-            let r = connect_agents(&f.env, &[Agent::Codex], ours, &no_tools(), false);
+            let r = connect_agents(&f.env, &[Agent::Codex], ours, &no_tools(), false, false);
             assert_eq!(by(&r, Agent::Codex).status, Status::OtherDriver, "{toml}");
         }
         std::fs::write(
@@ -895,12 +1117,12 @@ mod tests {
             "[mcp_servers.other]\ncommand = \"/x/cua-driver\"\n",
         )
         .unwrap();
-        let r = connect_agents(&f.env, &[Agent::Codex], ours, &no_tools(), true);
+        let r = connect_agents(&f.env, &[Agent::Codex], ours, &no_tools(), true, false);
         assert_eq!(by(&r, Agent::Codex).status, Status::WouldConnect);
 
         let broken = "[mcp_servers.cua-driver]\ncommand = \"/x\n";
         std::fs::write(f.env.codex_home.join("config.toml"), broken).unwrap();
-        let r = connect_agents(&f.env, &[Agent::Codex], ours, &no_tools(), false);
+        let r = connect_agents(&f.env, &[Agent::Codex], ours, &no_tools(), false, false);
         assert_eq!(
             by(&r, Agent::Codex).line(),
             "Codex: could not connect (config.toml is not valid TOML; left unchanged)"
@@ -912,7 +1134,7 @@ mod tests {
                 .to_string(),
         )
         .unwrap();
-        let r = connect_agents(&f.env, &[Agent::Claude], ours, &no_tools(), false);
+        let r = connect_agents(&f.env, &[Agent::Claude], ours, &no_tools(), false, false);
         assert!(
             by(&r, Agent::Claude).line().ends_with(
                 "remove its `cua-computer-use` server and run `cua-driver connect` again."
@@ -944,7 +1166,14 @@ mod tests {
             format!("[mcp_servers.cua-driver]\ncommand = '{}'\n", link.display()),
         )
         .unwrap();
-        let r = connect_agents(&f.env, &[], ours.to_str().unwrap(), &no_tools(), false);
+        let r = connect_agents(
+            &f.env,
+            &[],
+            ours.to_str().unwrap(),
+            &no_tools(),
+            false,
+            false,
+        );
         assert_eq!(by(&r, Agent::Claude).status, Status::AlreadyConnected);
         assert_eq!(by(&r, Agent::Codex).status, Status::AlreadyConnected);
     }
@@ -964,6 +1193,7 @@ mod tests {
             "/b/cua-driver",
             &no_tools(),
             false,
+            false,
         );
         assert_eq!(by(&r, Agent::Claude).status, Status::AlreadyConnected);
         std::fs::create_dir_all(f.env.home.join(".cursor")).unwrap();
@@ -973,6 +1203,7 @@ mod tests {
             "/b/cua-driver",
             &no_tools(),
             false,
+            false,
         );
         assert_eq!(by(&first, Agent::Cursor).status, Status::Connected);
         let second = connect_agents(
@@ -980,6 +1211,7 @@ mod tests {
             &[Agent::Cursor],
             "/b/cua-driver",
             &no_tools(),
+            false,
             false,
         );
         assert_eq!(by(&second, Agent::Cursor).status, Status::AlreadyConnected);
@@ -1031,6 +1263,7 @@ mod tests {
             "/b/cua-driver",
             &droid_tools(),
             false,
+            false,
         );
         assert_eq!(by(&r, Agent::Droid).line(), "Factory Droid: connected");
 
@@ -1062,6 +1295,7 @@ mod tests {
             "/b/cua-driver",
             &droid_tools(),
             false,
+            false,
         );
         assert_eq!(by(&again, Agent::Droid).status, Status::AlreadyConnected);
     }
@@ -1072,7 +1306,7 @@ mod tests {
         let dir = f.env.home.join(".factory");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("settings.json"), "{ not json").unwrap();
-        let r = connect_agents(&f.env, &[Agent::Droid], "/b", &droid_tools(), false);
+        let r = connect_agents(&f.env, &[Agent::Droid], "/b", &droid_tools(), false, false);
         assert_eq!(by(&r, Agent::Droid).status, Status::Failed);
         assert_eq!(
             std::fs::read_to_string(dir.join("settings.json")).unwrap(),
@@ -1087,7 +1321,7 @@ mod tests {
         let dir = f.env.home.join(".cursor");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("mcp.json"), "{ not json").unwrap();
-        let r = connect_agents(&f.env, &[Agent::Cursor], "/b", &no_tools(), false);
+        let r = connect_agents(&f.env, &[Agent::Cursor], "/b", &no_tools(), false, false);
         assert_eq!(by(&r, Agent::Cursor).status, Status::Failed);
         assert_eq!(
             std::fs::read_to_string(dir.join("mcp.json")).unwrap(),
@@ -1104,7 +1338,7 @@ mod tests {
         fake_cli(&f, "codex", "exit 0");
         std::fs::create_dir_all(f.env.home.join(".cursor")).unwrap();
         std::fs::create_dir_all(f.env.home.join(".factory")).unwrap();
-        let r = connect_agents(&f.env, &[], "/b/cua-driver", &droid_tools(), true);
+        let r = connect_agents(&f.env, &[], "/b/cua-driver", &droid_tools(), true, false);
         assert!(r.iter().all(|r| r.status == Status::WouldConnect));
         assert_eq!(calls(&f), "");
         assert!(!f.env.home.join(".cursor/mcp.json").exists());
@@ -1118,7 +1352,7 @@ mod tests {
         let f = fixture();
         fake_cli(&f, "claude", "echo boom >&2; exit 1");
         fake_cli(&f, "codex", "exit 0");
-        let r = connect_agents(&f.env, &[], "/b/cua-driver", &no_tools(), false);
+        let r = connect_agents(&f.env, &[], "/b/cua-driver", &no_tools(), false, false);
         assert_eq!(
             by(&r, Agent::Claude).line(),
             "Claude Code: could not connect (boom)"
@@ -1132,7 +1366,7 @@ mod tests {
     fn exits_non_zero_only_when_agents_were_found_and_none_connected() {
         let f = fixture();
         fake_cli(&f, "claude", "echo boom >&2; exit 1");
-        let r = connect_agents(&f.env, &[], "/b/cua-driver", &no_tools(), false);
+        let r = connect_agents(&f.env, &[], "/b/cua-driver", &no_tools(), false, false);
         assert!(exit_failed(&r));
     }
 
@@ -1142,7 +1376,14 @@ mod tests {
         let f = fixture();
         fake_cli(&f, "claude", "exit 0");
         fake_cli(&f, "codex", "exit 0");
-        let r = connect_agents(&f.env, &[Agent::Codex], "/b/cua-driver", &no_tools(), false);
+        let r = connect_agents(
+            &f.env,
+            &[Agent::Codex],
+            "/b/cua-driver",
+            &no_tools(),
+            false,
+            false,
+        );
         assert_eq!(r.len(), 1);
         assert!(!calls(&f).contains("claude"));
     }

@@ -6540,14 +6540,19 @@ fn screen_answer_overrides_window(
 /// window id `xid` AND `pid`) as native Wayland, not XWayland, with an origin.
 /// Hyprland reports XWayland per client; under niri an X11 client belongs to
 /// xwayland-satellite's pid, so a matching pid on a placed niri window is a
-/// native client. Missing, mismatched, or unreported clients fail closed, so
+/// native client. The nested cua-compositor runs no XWayland, so a window
+/// listed for this process whose origin the compositor reports is native.
+/// Missing, mismatched, or unreported clients fail closed, so
 /// `Screen` extents keep winning, which is correct for XWayland GTK and
 /// LibreOffice. Performs blocking compositor IPC: async callers must use
 /// `bounded_blocking`.
 fn native_wayland_origin_attested(pid: u32, xid: u64) -> bool {
     xid != 0
         && crate::wayland::is_wayland()
-        && if crate::wayland::hyprland::is_session() {
+        && if crate::wayland::is_inject_mode() {
+            crate::wayland::window_was_listed_for_pid(pid, xid)
+                && crate::wayland::inject_accessibility_offset(pid).is_some()
+        } else if crate::wayland::hyprland::is_session() {
             crate::wayland::hyprland::native_client_attested(xid, pid)
         } else {
             crate::wayland::niri::is_session()

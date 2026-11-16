@@ -15,7 +15,7 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "list_windows".into(),
-        description: "List top-level windows known to WindowServer, including off-screen ones (minimized, other Space, hidden): without `pid`, normal windows (layer 0) and modal panels (layer 8: alerts, open and save panels, app-modal dialogs); with `pid`, every layer. Use it to find a `pid` and `window_id` for get_window_state; filter with `app` or `pid`, because an unfiltered call lists every window on the host. AppKit-internal helper windows and the driver's own overlay are omitted.\n\
+        description: "List top-level windows known to WindowServer, including off-screen ones (minimized, other Space, hidden): without `pid`, normal windows (layer 0) and modal panels (visible, panel-sized layer-8 windows: alerts, open and save panels, app-modal dialogs); with `pid`, every layer. Use it to find a `pid` and `window_id` for get_window_state; filter with `app` or `pid`, because an unfiltered call lists every window on the host. AppKit-internal helper windows and the driver's own overlay are omitted.\n\
             \n\
             Per record: window_id, pid, app_name, title, bounds, layer, z_index, is_on_screen, space_ids, current_space_id, on_current_space. For the frontmost window take the maximum integer z_index; null means stacking is unavailable, so do not infer it from array order.".into(),
         input_schema: serde_json::json!({

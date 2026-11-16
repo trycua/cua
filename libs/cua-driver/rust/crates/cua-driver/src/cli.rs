@@ -2776,6 +2776,35 @@ mod call_tests {
     }
 }
 
+/// The command that starts a daemon on `socket_path` when a daemon-only
+/// command finds none (#4802).
+///
+/// `call` never starts one itself. On macOS the daemon must run as the Cua
+/// Driver app through LaunchServices, so it uses the app's own Accessibility
+/// and Screen Recording grants. A bare `serve` from a shell would run inside
+/// the caller's process tree and use the caller's grants instead. An embedded
+/// host runs its own daemon in its process tree, so it keeps `serve`.
+fn daemon_start_hint(socket_path: &str) -> String {
+    let cli_name = crate::bundle::cli_name();
+    let default_socket = socket_path == crate::serve::default_socket_path();
+    #[cfg(target_os = "macos")]
+    if !cua_driver_core::embedded_mode() {
+        return if default_socket {
+            format!("Start it with: {cli_name} permissions grant")
+        } else {
+            format!(
+                "Start it with: open -n -g {} --args serve --socket {socket_path}",
+                crate::bundle::app_bundle_path()
+            )
+        };
+    }
+    if default_socket {
+        format!("Start it with: {cli_name} serve")
+    } else {
+        format!("Start it with: {cli_name} serve --socket {socket_path}")
+    }
+}
+
 pub fn run_call(
     tool: &str,
     json_args: Option<serde_json::Value>,
@@ -2793,8 +2822,8 @@ pub fn run_call(
     let socket_path = socket_override.unwrap_or_else(crate::serve::default_socket_path);
     if !crate::serve::is_daemon_listening(&socket_path) {
         eprintln!(
-            "Cua Driver daemon is not running on {socket_path}.\n\
-             Start it first with: cua-driver serve --socket {socket_path}"
+            "Cua Driver daemon is not running on {socket_path}.\n{}",
+            daemon_start_hint(&socket_path)
         );
         process::exit(1);
     }
@@ -3269,8 +3298,8 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
 
     if !crate::serve::is_daemon_listening(&socket_path) {
         eprintln!(
-            "Cua Driver daemon is not running.\n\
-             Start it first with: cua-driver serve"
+            "Cua Driver daemon is not running.\n{}",
+            daemon_start_hint(&socket_path)
         );
         process::exit(1);
     }
@@ -5743,8 +5772,8 @@ pub fn run_config_cmd(
 
     if !crate::serve::is_daemon_listening(&socket_path) {
         eprintln!(
-            "Cua Driver daemon is not running on {socket_path}.\n\
-             Start it first with: cua-driver serve --socket {socket_path}"
+            "Cua Driver daemon is not running on {socket_path}.\n{}",
+            daemon_start_hint(&socket_path)
         );
         process::exit(1);
     }
@@ -6976,6 +7005,37 @@ mod tests {
             for banned in ["TCC", "daemon", "unknown", "CuaDriver ", "AX "] {
                 assert!(!text.contains(banned), "{text:?} contains {banned:?}");
             }
+        }
+    }
+
+    /// #4802: `call` does not start a daemon. Its hint names a start that
+    /// keeps Cua Driver's own identity on macOS.
+    #[test]
+    fn daemon_start_hint_names_a_launch_that_keeps_the_app_identity() {
+        let cli = crate::bundle::cli_name();
+        let default_hint = daemon_start_hint(&crate::serve::default_socket_path());
+        let custom_hint = daemon_start_hint("/tmp/cua-test.sock");
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(
+                default_hint,
+                format!("Start it with: {cli} permissions grant")
+            );
+            assert_eq!(
+                custom_hint,
+                format!(
+                    "Start it with: open -n -g {} --args serve --socket /tmp/cua-test.sock",
+                    crate::bundle::app_bundle_path()
+                )
+            );
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            assert_eq!(default_hint, format!("Start it with: {cli} serve"));
+            assert_eq!(
+                custom_hint,
+                format!("Start it with: {cli} serve --socket /tmp/cua-test.sock")
+            );
         }
     }
 

@@ -9,9 +9,10 @@
 #
 # both routed by stable process identity (with app_id fallback), driven over a tiny line
 # protocol on a unix control socket ($CUA_INJECT_SOCKET). It also exposes
-# foreign-toplevel-management (so cua-driver's list_windows enumerates windows)
-# and screencopy (so grim captures the output) — the same protocols labwc gives
-# the non-nested cells — so the nested-injection cells keep working end to end.
+# foreign-toplevel-management (so cua-driver's list_windows enumerates windows),
+# screencopy (so grim captures the output) and wlr-layer-shell (so the driver's
+# agent cursor overlay is drawn) — the same protocols labwc gives the non-nested
+# cells — so the nested-injection cells keep working end to end.
 #
 # The injection primitives (cua_motion/cua_button/cua_kbd_*) deliver wl_pointer/
 # wl_keyboard straight to a target client's resources, bypassing seat focus —
@@ -48,6 +49,7 @@ INCLUDES = r"""#include <stdint.h>
 #include <xkbcommon/xkbcommon.h>
 #include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/types/wlr_foreign_toplevel_management_v1.h>
+#include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_screencopy_v1.h>
 #include <wlr/types/wlr_xdg_output_v1.h>
 #include <wlr/render/pass.h>
@@ -69,6 +71,11 @@ static xkb_mod_mask_t g_logo_mask = 0;
 struct cua_keyent { uint32_t keycode; int shift; int valid; };
 static struct cua_keyent g_chartab[128];
 static struct wlr_foreign_toplevel_manager_v1 *g_ftl_mgr = NULL;
+/* Scene trees in stacking order: background and bottom layer surfaces, the
+ * toplevels, then top and overlay layer surfaces. */
+static struct wlr_scene_tree *g_layer_trees[4];
+static struct wlr_scene_tree *g_toplevel_tree = NULL;
+static struct wlr_output_layout *g_output_layout = NULL;
 struct tinywl_toplevel;
 static void cua_ftl_request_activate(struct wl_listener *listener, void *data);
 static void cua_maybe_focus_new_toplevel(struct tinywl_toplevel *toplevel);
@@ -852,6 +859,51 @@ static void cua_setup_control_socket(struct tinywl_server *server) {
 		WL_EVENT_READABLE, cua_listen_cb, server);
 	wlr_log(WLR_INFO, "[cua] injection control socket on %s", path);
 }
+/* ── wlr-layer-shell: the driver draws its agent cursor on an overlay layer ─ */
+struct cua_layer_surface {
+	struct wlr_scene_layer_surface_v1 *scene;
+	struct wl_listener commit;
+	struct wl_listener destroy;
+};
+static void cua_layer_arrange(struct cua_layer_surface *layer) {
+	struct wlr_box full = {0};
+	wlr_output_layout_get_box(g_output_layout, layer->scene->layer_surface->output, &full);
+	struct wlr_box usable = full;
+	wlr_scene_layer_surface_v1_configure(layer->scene, &full, &usable);
+}
+static void cua_layer_commit(struct wl_listener *listener, void *data) {
+	(void)data;
+	struct cua_layer_surface *layer = wl_container_of(listener, layer, commit);
+	struct wlr_layer_surface_v1 *surface = layer->scene->layer_surface;
+	if (!surface->initialized) return;
+	if (surface->current.committed & WLR_LAYER_SURFACE_V1_STATE_LAYER)
+		wlr_scene_node_reparent(&layer->scene->tree->node, g_layer_trees[surface->current.layer]);
+	if (surface->initial_commit || surface->current.committed)
+		cua_layer_arrange(layer);
+}
+static void cua_layer_destroy(struct wl_listener *listener, void *data) {
+	(void)data;
+	struct cua_layer_surface *layer = wl_container_of(listener, layer, destroy);
+	wl_list_remove(&layer->commit.link);
+	wl_list_remove(&layer->destroy.link);
+	free(layer);
+}
+static void cua_new_layer_surface(struct wl_listener *listener, void *data) {
+	(void)listener;
+	struct wlr_layer_surface_v1 *surface = data;
+	if (!surface->output) {
+		struct wlr_output *output = wlr_output_layout_output_at(g_output_layout, 0, 0);
+		if (!output) { wlr_layer_surface_v1_destroy(surface); return; }
+		surface->output = output;
+	}
+	struct cua_layer_surface *layer = calloc(1, sizeof *layer);
+	layer->scene = wlr_scene_layer_surface_v1_create(g_layer_trees[surface->pending.layer], surface);
+	layer->commit.notify = cua_layer_commit;
+	wl_signal_add(&surface->surface->events.commit, &layer->commit);
+	layer->destroy.notify = cua_layer_destroy;
+	wl_signal_add(&surface->events.destroy, &layer->destroy);
+}
+static struct wl_listener g_new_layer_surface = { .notify = cua_new_layer_surface };
 
 """
 
@@ -986,11 +1038,36 @@ src = repl(src,
     "\twlr_backend_destroy(server.backend);\n"
     "\twl_display_destroy(server.wl_display);\n"
     "\treturn 0;",
+    "\twl_list_remove(&g_new_layer_surface.link);\n"
     "\twlr_backend_destroy(server.backend);\n"
     "\twlr_keyboard_finish(&g_keyboard);\n"
     "\twl_display_destroy(server.wl_display);\n"
     "\treturn 0;",
-    "virtual-keyboard-cleanup")
+    "virtual-keyboard-and-layer-shell-cleanup")
+
+# 8) Layer shell. Layer surfaces stack below and above the toplevels, so the
+#    toplevels move into a tree of their own between them.
+src = repl(src,
+    "\tserver.scene_layout = wlr_scene_attach_output_layout(server.scene, server.output_layout);",
+    "\tserver.scene_layout = wlr_scene_attach_output_layout(server.scene, server.output_layout);\n"
+    "\tg_output_layout = server.output_layout;\n"
+    "\tg_layer_trees[ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND] = wlr_scene_tree_create(&server.scene->tree);\n"
+    "\tg_layer_trees[ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM] = wlr_scene_tree_create(&server.scene->tree);\n"
+    "\tg_toplevel_tree = wlr_scene_tree_create(&server.scene->tree);\n"
+    "\tg_layer_trees[ZWLR_LAYER_SHELL_V1_LAYER_TOP] = wlr_scene_tree_create(&server.scene->tree);\n"
+    "\tg_layer_trees[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY] = wlr_scene_tree_create(&server.scene->tree);\n"
+    "\tstruct wlr_layer_shell_v1 *cua_layer_shell = wlr_layer_shell_v1_create(server.wl_display, 4);\n"
+    "\twl_signal_add(&cua_layer_shell->events.new_surface, &g_new_layer_surface);",
+    "layer-shell")
+src = repl(src,
+    "wlr_scene_xdg_surface_create(&toplevel->server->scene->tree, xdg_toplevel->base);",
+    "wlr_scene_xdg_surface_create(g_toplevel_tree, xdg_toplevel->base);",
+    "toplevel-tree")
+# A layer surface has no toplevel ancestor; a hit on one is not a window.
+src = repl(src,
+    "\treturn tree->node.data;\n",
+    "\treturn tree ? tree->node.data : NULL;\n",
+    "desktop-hit-layer-surface")
 
 io.open(out, "w", encoding="utf-8").write(src)
 sys.stderr.write("cua-compositor.c written (%d bytes)\n" % len(src))

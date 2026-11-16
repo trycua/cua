@@ -3,32 +3,34 @@
 
 //! Enumerate top-level windows on Windows.
 //!
-//! Two enumeration sources, then union + dedupe by HWND:
+//! Window listing uses Win32 calls only. None of them sends a message to a
+//! window in another process, so a hung or slow app cannot stall it. UI
+//! Automation's desktop `FindAll` does: it asks every top-level window's
+//! provider, so each call waited on the slowest app (up to its 2 s deadline
+//! when one was hung, #4906).
 //!
-//! 1. **`EnumWindows`** (canonical z-order) — the Win32 enumerator walks the
-//!    window manager's z-order list top-to-bottom, so iteration order IS the
-//!    actual z-order. We list these first so the merged array's index reflects
-//!    the true Win32 stacking for any HWND the Win32 path can see.
+//! 1. **`EnumWindows`**, whose iteration order is the window manager's
+//!    z-order (top-to-bottom), so the list index doubles as a z_index.
+//! 2. **`FindWindowExW` walk**, appended after, for the immersive shell
+//!    windows `EnumWindows` skips (an open Start menu or Search flyout).
+//!    Only uncloaked, non-minimized ones are kept, since a closed flyout
+//!    stays visible and titled but cloaked.
 //!
-//! 2. **UI Automation** (extra coverage) — appended after `EnumWindows`,
-//!    contributing only HWNDs Win32 didn't surface. UIA exposes modern
-//!    containers (WebView2 hosts, packaged-UWP frames, Electron container
-//!    HWNDs) that `EnumWindows` may miss or return as wrapper HWNDs. UIA's
-//!    `FindAll(TreeScope::Children, ...)` makes no z-order guarantee, so we
-//!    deliberately do NOT let it reorder anything Win32 already reported.
-//!
-//! Both sources apply the same filters (visible, non-empty title). Minimized
-//! windows remain addressable and are reported as off-screen so callers can
-//! restore them explicitly. The `filter_pid` argument is applied to the merged
-//! list so the union/dedupe pipeline runs unconditionally.
+//! Both sources require a visible window with a non-empty title. Minimized
+//! `EnumWindows` windows remain addressable and are reported as off-screen
+//! so callers can restore them explicitly.
 
 use std::collections::HashSet;
 use std::sync::Mutex;
+use windows::core::PCWSTR;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT, TRUE};
-use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
+use windows::Win32::Graphics::Dwm::{
+    DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumChildWindows, EnumWindows, GetClassNameW, GetWindow, GetWindowRect, GetWindowTextLengthW,
-    GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, GW_OWNER,
+    EnumChildWindows, EnumWindows, FindWindowExW, GetClassNameW, GetWindow, GetWindowRect,
+    GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow,
+    IsWindowVisible, GW_OWNER,
 };
 
 #[derive(Debug, Clone)]
@@ -50,47 +52,80 @@ struct EnumState {
     windows: Vec<WindowInfo>,
 }
 
-/// List top-level visible windows. If `filter_pid` is Some, only that process.
-///
-/// `EnumWindows` first — its iteration order is the Win32 window manager's
-/// z-order (top-to-bottom), so the merged array's index doubles as a z_index
-/// for any HWND the Win32 path saw. Then UIA-only entries are appended (UIA
-/// makes no z-order guarantee, so it must not be allowed to reorder anything
-/// EnumWindows already reported). The pid filter is applied to the merged
-/// list.
+/// List top-level visible windows in z-order, front first. If `filter_pid`
+/// is Some, only that process's windows.
 pub fn list_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
-    let win32_windows = list_windows_via_win32(None);
-    let uia_windows = crate::uia::enumerate_top_level_windows();
-
-    let mut seen: HashSet<u64> = HashSet::with_capacity(uia_windows.len() + win32_windows.len());
-    let mut merged: Vec<WindowInfo> = Vec::with_capacity(uia_windows.len() + win32_windows.len());
-
-    // EnumWindows first — canonical Win32 z-order.
-    for w in win32_windows {
-        if seen.insert(w.hwnd) {
-            merged.push(w);
-        }
+    let mut windows = merge_top_level_windows(
+        enumerate_via_enum_windows(),
+        top_level_handles(),
+        immersive_window_info,
+    );
+    if let Some(pid) = filter_pid {
+        windows.retain(|w| w.pid == pid);
     }
-    // Then any UIA-only HWND that EnumWindows didn't surface (modern
-    // containers, WebView2 hosts, etc.). These get appended (no claim on
-    // z-order priority relative to the Win32 list).
-    for w in uia_windows {
-        if seen.insert(w.hwnd) {
-            merged.push(w);
-        }
-    }
+    windows
+}
 
-    if let Some(fp) = filter_pid {
-        merged.retain(|w| w.pid == fp);
-    }
+/// Append the `handles` that `enum_windows` skipped and `probe` accepts,
+/// keeping the `EnumWindows` order first.
+fn merge_top_level_windows(
+    enum_windows: Vec<WindowInfo>,
+    handles: Vec<u64>,
+    probe: impl Fn(u64) -> Option<WindowInfo>,
+) -> Vec<WindowInfo> {
+    let seen: HashSet<u64> = enum_windows.iter().map(|w| w.hwnd).collect();
+    let mut merged = enum_windows;
+    merged.extend(
+        handles
+            .into_iter()
+            .filter(|hwnd| !seen.contains(hwnd))
+            .filter_map(probe),
+    );
     merged
 }
 
-/// Resolve one exact Win32 window without entering the global UIA tree.
-///
-/// Exact `(pid, HWND)` callers already have a native identity anchor. Avoiding
-/// the UIA union keeps an unrelated unresponsive provider from blocking that
-/// ownership check.
+/// Every top-level HWND on this desktop, including the immersive windows
+/// `EnumWindows` leaves out.
+fn top_level_handles() -> Vec<u64> {
+    let mut handles = Vec::new();
+    let mut after = HWND::default();
+    while let Ok(next) =
+        unsafe { FindWindowExW(HWND::default(), after, PCWSTR::null(), PCWSTR::null()) }
+    {
+        if next.0.is_null() {
+            break;
+        }
+        handles.push(next.0 as u64);
+        after = next;
+    }
+    handles
+}
+
+/// A window `EnumWindows` skipped, kept only while it is actually shown:
+/// visible, titled, not minimized and not cloaked.
+fn immersive_window_info(hwnd: u64) -> Option<WindowInfo> {
+    let native = HWND(hwnd as *mut _);
+    if unsafe { IsIconic(native) }.as_bool() || window_is_cloaked(native) {
+        return None;
+    }
+    window_info_by_handle(hwnd)
+}
+
+fn window_is_cloaked(hwnd: HWND) -> bool {
+    let mut cloaked = 0u32;
+    unsafe {
+        DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_CLOAKED,
+            &mut cloaked as *mut u32 as *mut _,
+            std::mem::size_of::<u32>() as u32,
+        )
+        .is_err()
+            || cloaked != 0
+    }
+}
+
+/// Resolve one exact Win32 window without enumerating the desktop.
 pub(crate) fn find_window_by_pid_and_handle(pid: u32, hwnd: u64) -> Option<WindowInfo> {
     exact_window_from_probe(pid, hwnd, window_info_by_handle)
 }
@@ -108,10 +143,9 @@ pub(crate) enum PidWindowLookup {
 
 /// Validate that `hwnd` is a listed top-level window of `pid`.
 ///
-/// Probes the exact HWND through Win32 first, so the common case never waits
-/// on the desktop-wide UIA enumeration (and its 2 s deadline, #4416). Only a
-/// miss falls back to the full Win32 + UIA union, which still resolves
-/// UIA-only windows and names the owning pid of a mismatched HWND.
+/// Probes the exact HWND first. Only a miss falls back to the full listing,
+/// which resolves immersive windows and names the owning pid of a
+/// mismatched HWND.
 pub(crate) fn lookup_window_for_pid(pid: u32, hwnd: u64) -> PidWindowLookup {
     lookup_window_for_pid_with(pid, hwnd, find_window_by_pid_and_handle, || {
         list_windows(None)
@@ -131,30 +165,6 @@ fn lookup_window_for_pid_with(
         Some(window) if window.pid == pid => PidWindowLookup::Found(window),
         Some(window) => PidWindowLookup::OtherPid(window.pid),
         None => PidWindowLookup::Missing,
-    }
-}
-
-/// List `pid`'s top-level windows, consulting UIA only when Win32 finds none.
-///
-/// Polling callers (e.g. `launch_app` waiting for a first window) otherwise
-/// pay the UIA desktop-enumeration deadline on every attempt even when
-/// `EnumWindows` already sees the window (#4416).
-pub(crate) fn list_windows_win32_first(pid: u32) -> Vec<WindowInfo> {
-    win32_first_with(
-        || list_windows_via_win32(Some(pid)),
-        || list_windows(Some(pid)),
-    )
-}
-
-fn win32_first_with(
-    win32: impl FnOnce() -> Vec<WindowInfo>,
-    full: impl FnOnce() -> Vec<WindowInfo>,
-) -> Vec<WindowInfo> {
-    let windows = win32();
-    if windows.is_empty() {
-        full()
-    } else {
-        windows
     }
 }
 
@@ -608,8 +618,8 @@ pub fn resolve_uwp_app_pid(host_pid: u32, frame_hwnd: u64) -> Option<u32> {
 #[cfg(test)]
 mod exact_window_tests {
     use super::{
-        exact_window_from_probe, lookup_window_for_pid_with, owner_chain_reaches_target,
-        post_action_foreground_allowed, win32_first_with, PidWindowLookup,
+        exact_window_from_probe, lookup_window_for_pid_with, merge_top_level_windows,
+        owner_chain_reaches_target, post_action_foreground_allowed, PidWindowLookup,
         PostActionForegroundRelation, WindowInfo,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -640,7 +650,7 @@ mod exact_window_tests {
     }
 
     #[test]
-    fn pid_window_lookup_falls_back_for_uia_only_window() {
+    fn pid_window_lookup_falls_back_for_a_window_only_the_full_listing_finds() {
         let calls = AtomicUsize::new(0);
         let found = lookup_window_for_pid_with(
             42,
@@ -665,20 +675,14 @@ mod exact_window_tests {
     }
 
     #[test]
-    fn win32_first_listing_consults_uia_only_when_win32_is_empty() {
-        let listed = win32_first_with(
-            || vec![window(42, 0x1)],
-            || panic!("Win32 hit must not enumerate UIA"),
+    fn skipped_top_level_windows_are_appended_after_enum_windows_order() {
+        let merged = merge_top_level_windows(
+            vec![window(1, 0x30), window(2, 0x10)],
+            vec![0x10, 0x20, 0x30, 0x40, 0x50],
+            |hwnd| (hwnd != 0x40).then(|| window(3, hwnd)),
         );
-        assert_eq!(listed.len(), 1);
-
-        let calls = AtomicUsize::new(0);
-        let listed = win32_first_with(Vec::new, || {
-            calls.fetch_add(1, Ordering::SeqCst);
-            vec![window(42, 0x2)]
-        });
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert_eq!(listed[0].hwnd, 0x2);
+        let order: Vec<_> = merged.iter().map(|w| (w.hwnd, w.pid)).collect();
+        assert_eq!(order, [(0x30, 1), (0x10, 2), (0x20, 3), (0x50, 3)]);
     }
 
     #[test]

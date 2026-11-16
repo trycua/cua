@@ -2960,6 +2960,25 @@ fn harness_appkit_slider_drag_px_background() {
     });
 }
 
+/// Whether the window's tree shows `text` within 2 s. AppKit sends a menu
+/// item's action after the menu closes, so a menu pick's effect can arrive
+/// after the call that made it returns.
+fn tree_shows_within(driver: &mut McpDriver, pid: u32, wid: u64, text: &str) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if snapshot_elements(driver, pid, wid)
+            .tree_text()
+            .contains(text)
+        {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 /// popup_select: a background AXPress opens the NSPopUpButton's menu. The menu
 /// steals key focus from the front app, so the background oracles (the
 /// foreground sentinel must not blur) check that the driver hands it back.
@@ -3008,17 +3027,10 @@ fn harness_appkit_popup_click_keeps_front_key_focus_background() {
                 chosen.text()
             );
 
-            let deadline = Instant::now() + Duration::from_secs(2);
-            loop {
-                if snapshot_elements(driver, pid, wid)
-                    .tree_text()
-                    .contains("popup_value=Research")
-                {
-                    break;
-                }
-                assert!(Instant::now() < deadline, "popup selection did not land");
-                std::thread::sleep(Duration::from_millis(100));
-            }
+            assert!(
+                tree_shows_within(driver, pid, wid, "popup_value=Research"),
+                "popup selection did not land"
+            );
         },
     );
 }
@@ -3043,11 +3055,8 @@ fn harness_appkit_popup_set_value_keeps_front_key_focus_background() {
                 }),
             );
             assert!(!set.is_error(), "popup set_value failed: {}", set.text());
-            std::thread::sleep(Duration::from_millis(250));
             assert!(
-                snapshot_elements(driver, pid, wid)
-                    .tree_text()
-                    .contains("popup_value=Finance"),
+                tree_shows_within(driver, pid, wid, "popup_value=Finance"),
                 "popup set_value did not land"
             );
         },
@@ -3095,11 +3104,8 @@ fn harness_appkit_context_menu_keeps_front_key_focus_background() {
                 "context item click failed: {}",
                 chosen.text()
             );
-            std::thread::sleep(Duration::from_millis(250));
             assert!(
-                snapshot_elements(driver, pid, wid)
-                    .tree_text()
-                    .contains("menu_action=Copy"),
+                tree_shows_within(driver, pid, wid, "menu_action=Copy"),
                 "context menu item did not fire"
             );
         },

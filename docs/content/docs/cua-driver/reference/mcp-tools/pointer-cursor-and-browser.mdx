@@ -608,45 +608,9 @@ Effect: mutating. Platforms: macOS, Linux, Windows.
 
 ### `browser_type`
 
-Effect: mutating. Platforms: macOS, Linux, Windows.
-
-<Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
-<Tab value="macOS">
-
 Type text into an exactly-bound tab via the Input domain. mode="insert_text" (default) uses Input.insertText; mode="keystrokes" dispatches per-character key events. Both insert at the caret, so typing into a field that already holds text appends to it; pass replace=true to set the field instead, or to clear it by typing an empty string. On a single-line input, a trailing newline is pressed as a real Enter (key, code, keyCode 13) after the text and the result reports enter_pressed; a textarea or contenteditable keeps it as content. Pass a ref to an editable element from the latest snapshot. A ref is required; heuristic bindings are refused.
 
-**macOS parameters**
-
-| Parameter | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="browser_type--macos--text"></span>`text` | `string` | required | Text to type. End it with \n to press Enter after the text on a single-line input. |
-
-</Tab>
-<Tab value="Linux">
-
-Type text into an exactly-bound tab via the Input domain. mode="insert_text" (default) uses Input.insertText; mode="keystrokes" dispatches per-character key events. Both insert at the caret, so typing into a field that already holds text appends to it; pass replace=true to set the field instead, or to clear it by typing an empty string. Pass a ref to an editable element from the latest snapshot. A ref is required; heuristic bindings are refused.
-
-**Linux parameters**
-
-| Parameter | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="browser_type--linux--text"></span>`text` | `string` | required | Text to type. |
-
-</Tab>
-<Tab value="Windows">
-
-Type text into an exactly-bound tab via the Input domain. mode="insert_text" (default) uses Input.insertText; mode="keystrokes" dispatches per-character key events. Both insert at the caret, so typing into a field that already holds text appends to it; pass replace=true to set the field instead, or to clear it by typing an empty string. Pass a ref to an editable element from the latest snapshot. A ref is required; heuristic bindings are refused.
-
-**Windows parameters**
-
-| Parameter | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="browser_type--windows--text"></span>`text` | `string` | required | Text to type. |
-
-</Tab>
-</Tabs>
-
-**Parameters on every platform**
+Effect: mutating. Platforms: macOS, Linux, Windows.
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -656,6 +620,7 @@ Type text into an exactly-bound tab via the Input domain. mode="insert_text" (de
 | <span id="browser_type--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session. |
 | <span id="browser_type--tab_id"></span>`tab_id` | `string` | required | Opaque tab id from get_browser_state (session-scoped). |
 | <span id="browser_type--target_id"></span>`target_id` | `string` | required | Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id). |
+| <span id="browser_type--text"></span>`text` | `string` | required | Text to type. End it with \n to press Enter after the text on a single-line input. |
 
 **Example arguments**
 

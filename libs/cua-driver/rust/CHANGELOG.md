@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.52.7](https://github.com/trycua/cua/compare/cua-driver-rs-v0.52.6...cua-driver-rs-v0.52.7) (2026-11-16)
+
+
+### Bug Fixes
+
+* **cua-driver:** map PX keyboard focus points on the nested cua-compositor ([#7937](https://github.com/trycua/cua/issues/7937)) ([c0a22bf](https://github.com/trycua/cua/commit/c0a22bf102e0c3b375f60638dbb962334fbb7289))
+
 ## [0.52.6](https://github.com/trycua/cua/compare/cua-driver-rs-v0.52.5...cua-driver-rs-v0.52.6) (2026-11-16)
 
 

@@ -308,7 +308,10 @@ pub fn post_type_text_with_delay(hwnd: u64, text: &str, inter_char_ms: u64) -> R
     // Resolve focused-child once at entry — re-querying per-character would
     // race with text-insertion side effects on the focus.
     let h = focused_descendant(h_parent).unwrap_or(h_parent);
+    post_text_messages(h, text, inter_char_ms)
+}
 
+fn post_text_messages(h: HWND, text: &str, inter_char_ms: u64) -> Result<()> {
     let units = text_units(text);
     let batched = type_pacing::is_batched(inter_char_ms);
     // Batched: up to BATCH_UNITS posts, then one pump barrier, so the target
@@ -429,9 +432,23 @@ pub fn post_key(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<()> {
     // the renderer; mirror the WM_CHAR path and retarget to that child when
     // the target thread exposes one.
     let target = focused_descendant(hwnd_win).unwrap_or(hwnd_win);
+    post_key_messages(target, key, modifiers)
+}
+
+/// Post to an already admitted native control, without retargeting to a
+/// focused descendant. Element-addressed background keys must not fall back
+/// to the frame's previously focused (possibly different) control.
+pub fn post_key_to_hwnd(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<()> {
+    if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd) {
+        anyhow::bail!(msg);
+    }
+    post_key_messages(HWND(hwnd as *mut _), key, modifiers)
+}
+
+fn post_key_messages(target: HWND, key: &str, modifiers: &[&str]) -> Result<()> {
     let (vk, scan) = match resolve_press(target, key, modifiers)? {
         Press::Key { vk, scan } => (vk, scan),
-        Press::Text(ch) => return post_type_text(hwnd, &ch.to_string()),
+        Press::Text(ch) => return post_text_messages(target, &ch.to_string(), 0),
     };
     let has_alt = modifiers.iter().any(|m| *m == "alt" || *m == "menu");
 

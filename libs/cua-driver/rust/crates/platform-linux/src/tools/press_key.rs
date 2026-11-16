@@ -20,8 +20,8 @@ use super::impl_::{
     key_route_result, position_named_session_keyboard_cursor, prove_token_element,
     resolve_cursor_key, spawn_blocking_bounded, split_key_combo, stale_observed_element,
     unavailable_chromium_background, unavailable_gtk_keyboard_background,
-    unavailable_wayland_focused_input_background, unavailable_webkit_keyboard_background,
-    wm_chord_background, KeyRoute, ToolState,
+    unavailable_qt_shortcut_background, unavailable_wayland_focused_input_background,
+    unavailable_webkit_keyboard_background, wm_chord_background, KeyRoute, ToolState,
 };
 
 /// True when `key` names the Enter key in the shared X keysym vocabulary
@@ -251,6 +251,9 @@ impl Tool for PressKeyTool {
         if let Some(result) = wm_chord_background(pid, xid, &key, &mods, delivery).await {
             return result;
         }
+        if let Some(refusal) = unavailable_qt_shortcut_background(pid, xid, &mods, delivery) {
+            return refusal;
+        }
 
         let px = args.get("x").and_then(|value| value.as_f64());
         let py = args.get("y").and_then(|value| value.as_f64());
@@ -310,7 +313,8 @@ impl Tool for PressKeyTool {
         // Preserve legacy modifiers by promoting the request to a chord.
         if crate::wayland::is_inject_mode() {
             if let Err(error) =
-                focus_nested_inject_target(pid, xid, token.clone(), px.zip(py)).await
+                focus_nested_inject_target(&self.state, &args, pid, xid, token.clone(), px.zip(py))
+                    .await
             {
                 return error;
             }

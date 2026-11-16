@@ -108,19 +108,30 @@ jobs:
           PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
           PUSH_BEFORE: ${{ github.event.before }}
           PUSH_AFTER: ${{ github.sha }}
+          QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
+          QUEUE_HEAD: ${{ github.event.merge_group.head_sha }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          # lanes: quick on a PR (core paths per OS), full everywhere else.
+          # lanes: quick on a PR (core paths per OS), queue in the merge queue (the lanes that fit its
+          # 60-minute timeout), full everywhere else.
           emit() {
             { echo "run=$1"; echo "mode=$2"; echo "reason=$3"; echo "lanes=${4:-full}"; } >> "$GITHUB_OUTPUT"
             echo "gate: run=$1 mode=$2 lanes=${4:-full} ($3)"
+          }
+          # The files two commits differ in, or nothing when that cannot be read in full: an API error on
+          # any page, or 300 files, where the compare API stops listing them.
+          compare_files() {
+            local out
+            out=$(gh api --paginate "repos/$REPO/compare/$1...$2" --jq '.files[].filename' 2>/dev/null) || return 0
+            (( $(grep -c . <<< "$out") < 300 )) || return 0
+            printf '%s\n' "$out"
           }
           if [[ "$EVENT" == push ]]; then
             # Post-merge: the full suite when the pushed commits touch a gated path. The paths
             # filter of the trigger is broad (all of libs/cua-driver); this narrows it to the
             # globs the PR gate uses. Anything we cannot read runs the suite.
-            files=$(gh api --paginate "repos/$REPO/compare/${PUSH_BEFORE}...${PUSH_AFTER}" --jq '.files[].filename' 2>/dev/null || true)
+            files=$(compare_files "$PUSH_BEFORE" "$PUSH_AFTER")
             if [[ -z "$files" || "$PUSH_BEFORE" =~ ^0+$ ]]; then
               emit true post-merge "push to ${GITHUB_REF_NAME}, changed files unreadable"; exit 0
             fi
@@ -132,6 +143,21 @@ jobs:
               emit true post-merge "push touching gated paths, e.g. $(head -n 1 <<< "$matched")"
             else
               emit false post-merge "push without gated paths"
+            fi
+            exit 0
+          fi
+          if [[ "$EVENT" == merge_group ]]; then
+            # The merged result of the queued pull requests, when they touch a gated path. Anything we
+            # cannot read runs the lanes.
+            files=$(compare_files "$QUEUE_BASE" "$QUEUE_HEAD")
+            if [[ -z "$files" || ! -f .github/scripts/cua_driver_e2e_gate_paths.py ]]; then
+              emit true queue "merge queue, changed files unreadable" queue; exit 0
+            fi
+            matched=$(python3 .github/scripts/cua_driver_e2e_gate_paths.py <<< "$files" | head -n 5)
+            if [[ -n "$matched" ]]; then
+              emit true queue "merge queue touching gated paths, e.g. $(head -n 1 <<< "$matched")" queue
+            else
+              emit false queue "merge queue without gated paths"
             fi
             exit 0
           fi
@@ -188,7 +214,9 @@ jobs:
     uses: ./.github/workflows/e2e-rust-windows.yml
     with:
       ref: ${{ github.sha }}
-      lane: ${{ needs.decide.outputs.lanes == 'quick' && 'shared' || 'all' }}
+      # Queue: every lane but the shared Electron + Tauri one (up to 54 minutes), which the PR's
+      # quick lane ran and the full run after merge runs.
+      lane: ${{ needs.decide.outputs.lanes == 'quick' && 'shared' || needs.decide.outputs.lanes == 'queue' && 'native,capture,installer' || 'all' }}
       harness_filter: ${{ needs.decide.outputs.lanes == 'quick' && 'electron' || '' }}
 
   # Hosted macOS seeds TCC state, so it never runs on pull_request events
@@ -196,7 +224,9 @@ jobs:
   macos:
     name: "gate / macOS hosted E2E"
     needs: [quick, decide]
-    if: ${{ !failure() && !cancelled() && needs.decide.outputs.run == 'true' && github.event_name != 'pull_request' && needs.quick.outputs.skip != 'true' }}
+    # Not in the merge queue either: queued hosted macOS runners and the lane (51 to 73 minutes)
+    # outlast the queue's 60-minute timeout. The full run after merge runs it.
+    if: ${{ !failure() && !cancelled() && needs.decide.outputs.run == 'true' && github.event_name != 'pull_request' && needs.decide.outputs.lanes != 'queue' && needs.quick.outputs.skip != 'true' }}
     permissions:
       actions: read
       contents: read
@@ -289,8 +319,9 @@ jobs:
   browsers:
     name: "gate / standalone browser E2E"
     needs: [quick, decide]
-    # Full runs only: the quick PR lane leaves the browser lanes to the run after merge.
-    if: ${{ !failure() && !cancelled() && needs.decide.outputs.run == 'true' && needs.decide.outputs.lanes != 'quick' && needs.quick.outputs.skip != 'true' }}
+    # Full runs only: the quick PR lane and the merge queue (40 to 53 minutes, too close to its
+    # 60-minute timeout) leave the browser lanes to the run after merge.
+    if: ${{ !failure() && !cancelled() && needs.decide.outputs.run == 'true' && needs.decide.outputs.lanes != 'quick' && needs.decide.outputs.lanes != 'queue' && needs.quick.outputs.skip != 'true' }}
     permissions:
       actions: read
       contents: read
@@ -324,7 +355,7 @@ jobs:
             echo "Release-gate lanes not required for this change." | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          bad=$(jq -r 'to_entries[] | select(.key != "decide") | select(.value.result != "success") | select((.key != "quick" or .value.result != "skipped" or env.EVENT == "pull_request" or env.EVENT == "merge_group") and (.key != "macos" or .value.result != "skipped" or env.EVENT != "pull_request") and (.key != "macos-pr" or .value.result != "skipped") and (.key != "browsers" or .value.result != "skipped" or env.LANES_SIZE != "quick")) | "\(.key)=\(.value.result)"' <<< "$LANES")
+          bad=$(jq -r 'to_entries[] | select(.key != "decide") | select(.value.result != "success") | select((.key != "quick" or .value.result != "skipped" or env.EVENT == "pull_request" or env.EVENT == "merge_group") and (.key != "macos" or .value.result != "skipped" or (env.EVENT != "pull_request" and env.LANES_SIZE != "queue")) and (.key != "macos-pr" or .value.result != "skipped") and (.key != "browsers" or .value.result != "skipped" or (env.LANES_SIZE != "quick" and env.LANES_SIZE != "queue"))) | "\(.key)=\(.value.result)"' <<< "$LANES")
           if [[ -n "$bad" ]]; then
             echo "::error::release-gate lanes not green: $bad"; exit 1
           fi

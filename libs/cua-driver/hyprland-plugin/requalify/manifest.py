@@ -7,6 +7,8 @@ versions and package hashes) and plugin source tree to a status:
 - pass: built against the exact headers, CTest passed, loaded into a headless
   Hyprland session and passed the window-targeted input smoke;
 - build-only: built and CTest passed, but no headless session was available;
+- unsupported: a released plugin source whose own input pin refuses this
+  Hyprland, so only a newer release can qualify it;
 - fail: any build, test, load or smoke failure.
 
 Statuses are CI requalification, not native certification or a kit.
@@ -108,7 +110,8 @@ def failures(manifest, fresh):
     return problems
 
 
-ICONS = {"pass": "pass", "build-only": "build only", "fail": "**FAIL**", "unavailable": "n/a"}
+ICONS = {"pass": "pass", "build-only": "build only", "unsupported": "unsupported", "fail": "**FAIL**",
+         "unavailable": "n/a"}
 
 
 def matrix(manifest, fresh):

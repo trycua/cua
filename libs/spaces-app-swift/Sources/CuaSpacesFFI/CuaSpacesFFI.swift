@@ -11706,6 +11706,19 @@ public struct AppCreateFix: Equatable, Hashable {
      * The command to copy or the page to open.
      */
     public var value: String?
+    /**
+     * Keep Try again next to the button: the fix is something to do first
+     * (download a file), after which the same create is tried again.
+     */
+    public var keepRetry: Bool
+    /**
+     * A second button beside the first: its words (with `link_url`).
+     */
+    public var linkLabel: String?
+    /**
+     * The page that second button opens.
+     */
+    public var linkUrl: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -11721,11 +11734,24 @@ public struct AppCreateFix: Equatable, Hashable {
          */action: AppCreateFixAction,
         /**
          * The command to copy or the page to open.
-         */value: String?) {
+         */value: String?,
+        /**
+         * Keep Try again next to the button: the fix is something to do first
+         * (download a file), after which the same create is tried again.
+         */keepRetry: Bool,
+        /**
+         * A second button beside the first: its words (with `link_url`).
+         */linkLabel: String?,
+        /**
+         * The page that second button opens.
+         */linkUrl: String?) {
         self.text = text
         self.label = label
         self.action = action
         self.value = value
+        self.keepRetry = keepRetry
+        self.linkLabel = linkLabel
+        self.linkUrl = linkUrl
     }
 
 
@@ -11747,7 +11773,10 @@ public struct FfiConverterTypeAppCreateFix: FfiConverterRustBuffer {
                 text: FfiConverterString.read(from: &buf),
                 label: FfiConverterString.read(from: &buf),
                 action: FfiConverterTypeAppCreateFixAction.read(from: &buf),
-                value: FfiConverterOptionString.read(from: &buf)
+                value: FfiConverterOptionString.read(from: &buf),
+                keepRetry: FfiConverterBool.read(from: &buf),
+                linkLabel: FfiConverterOptionString.read(from: &buf),
+                linkUrl: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -11756,6 +11785,9 @@ public struct FfiConverterTypeAppCreateFix: FfiConverterRustBuffer {
         FfiConverterString.write(value.label, into: &buf)
         FfiConverterTypeAppCreateFixAction.write(value.action, into: &buf)
         FfiConverterOptionString.write(value.value, into: &buf)
+        FfiConverterBool.write(value.keepRetry, into: &buf)
+        FfiConverterOptionString.write(value.linkLabel, into: &buf)
+        FfiConverterOptionString.write(value.linkUrl, into: &buf)
     }
 }
 
@@ -35445,6 +35477,12 @@ public struct AppSandboxImage: Equatable, Hashable {
      */
     public var published: Bool
     /**
+     * `windows-iso`: nothing is pulled; the image is built on this computer
+     * on first use (an unattended Windows install). Offered in pickers
+     * though not published.
+     */
+    public var localBuild: String?
+    /**
      * The guest's distribution.
      */
     public var distro: AppImageDistro?
@@ -35495,6 +35533,11 @@ public struct AppSandboxImage: Equatable, Hashable {
          * Offered in pickers.
          */published: Bool,
         /**
+         * `windows-iso`: nothing is pulled; the image is built on this computer
+         * on first use (an unattended Windows install). Offered in pickers
+         * though not published.
+         */localBuild: String?,
+        /**
          * The guest's distribution.
          */distro: AppImageDistro?,
         /**
@@ -35516,6 +35559,7 @@ public struct AppSandboxImage: Equatable, Hashable {
         self.local = local
         self.tier = tier
         self.published = published
+        self.localBuild = localBuild
         self.distro = distro
         self.arch = arch
         self.sizes = sizes
@@ -35548,6 +35592,7 @@ public struct FfiConverterTypeAppSandboxImage: FfiConverterRustBuffer {
                 local: FfiConverterOptionTypeAppLocalEngine.read(from: &buf),
                 tier: FfiConverterOptionTypeAppImageTier.read(from: &buf),
                 published: FfiConverterBool.read(from: &buf),
+                localBuild: FfiConverterOptionString.read(from: &buf),
                 distro: FfiConverterOptionTypeAppImageDistro.read(from: &buf),
                 arch: FfiConverterSequenceString.read(from: &buf),
                 sizes: FfiConverterOptionTypeAppImageSizes.read(from: &buf),
@@ -35566,6 +35611,7 @@ public struct FfiConverterTypeAppSandboxImage: FfiConverterRustBuffer {
         FfiConverterOptionTypeAppLocalEngine.write(value.local, into: &buf)
         FfiConverterOptionTypeAppImageTier.write(value.tier, into: &buf)
         FfiConverterBool.write(value.published, into: &buf)
+        FfiConverterOptionString.write(value.localBuild, into: &buf)
         FfiConverterOptionTypeAppImageDistro.write(value.distro, into: &buf)
         FfiConverterSequenceString.write(value.arch, into: &buf)
         FfiConverterOptionTypeAppImageSizes.write(value.sizes, into: &buf)
@@ -35953,6 +35999,17 @@ public struct AppSettings: Equatable, Hashable {
      * ([`crate::agent_menu::sync`]).
      */
     public var agentMenuSeen: [String]
+    /**
+     * Settings, General, "When I close the window": closing the main
+     * window leaves Cua Spaces and its background service running (on, the
+     * default); off, it quits Cua Spaces, as Quit does.
+     */
+    public var closeWindowKeepsRunning: Bool
+    /**
+     * "Don't show this again" on the notice that Cua Spaces keeps running
+     * when the window closes, or the Settings switch turned off.
+     */
+    public var closeNoticeOff: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -36041,7 +36098,16 @@ public struct AppSettings: Equatable, Hashable {
          * The working accounts the menu last saw (`app|variable|slot`): a new
          * one is a connect, which shows its app again
          * ([`crate::agent_menu::sync`]).
-         */agentMenuSeen: [String]) {
+         */agentMenuSeen: [String],
+        /**
+         * Settings, General, "When I close the window": closing the main
+         * window leaves Cua Spaces and its background service running (on, the
+         * default); off, it quits Cua Spaces, as Quit does.
+         */closeWindowKeepsRunning: Bool,
+        /**
+         * "Don't show this again" on the notice that Cua Spaces keeps running
+         * when the window closes, or the Settings switch turned off.
+         */closeNoticeOff: Bool) {
         self.hotkey = hotkey
         self.menuBar = menuBar
         self.theme = theme
@@ -36062,6 +36128,8 @@ public struct AppSettings: Equatable, Hashable {
         self.agentMenuShown = agentMenuShown
         self.agentMenuHidden = agentMenuHidden
         self.agentMenuSeen = agentMenuSeen
+        self.closeWindowKeepsRunning = closeWindowKeepsRunning
+        self.closeNoticeOff = closeNoticeOff
     }
 
 
@@ -36099,7 +36167,9 @@ public struct FfiConverterTypeAppSettings: FfiConverterRustBuffer {
                 tips: FfiConverterTypeAppTipsState.read(from: &buf),
                 agentMenuShown: FfiConverterSequenceString.read(from: &buf),
                 agentMenuHidden: FfiConverterSequenceString.read(from: &buf),
-                agentMenuSeen: FfiConverterSequenceString.read(from: &buf)
+                agentMenuSeen: FfiConverterSequenceString.read(from: &buf),
+                closeWindowKeepsRunning: FfiConverterBool.read(from: &buf),
+                closeNoticeOff: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -36124,6 +36194,8 @@ public struct FfiConverterTypeAppSettings: FfiConverterRustBuffer {
         FfiConverterSequenceString.write(value.agentMenuShown, into: &buf)
         FfiConverterSequenceString.write(value.agentMenuHidden, into: &buf)
         FfiConverterSequenceString.write(value.agentMenuSeen, into: &buf)
+        FfiConverterBool.write(value.closeWindowKeepsRunning, into: &buf)
+        FfiConverterBool.write(value.closeNoticeOff, into: &buf)
     }
 }
 
@@ -36236,6 +36308,17 @@ public struct AppSettingsInput: Equatable, Hashable {
      * (`!AppSettings.tips.off`). A shell that does not say reads as on.
      */
     public var showTips: Bool
+    /**
+     * Settings, General's "When I close the window": the window's close
+     * button keeps Cua Spaces running in the background (none: no rows; a
+     * shell without a background service leaves them out).
+     */
+    public var closeWindowKeepsRunning: Bool?
+    /**
+     * The notice that Cua Spaces keeps running is on (shown with the row
+     * above).
+     */
+    public var closeNotice: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -36311,7 +36394,16 @@ public struct AppSettingsInput: Equatable, Hashable {
         /**
          * Settings, General's Show tips switch: tips are on
          * (`!AppSettings.tips.off`). A shell that does not say reads as on.
-         */showTips: Bool) {
+         */showTips: Bool,
+        /**
+         * Settings, General's "When I close the window": the window's close
+         * button keeps Cua Spaces running in the background (none: no rows; a
+         * shell without a background service leaves them out).
+         */closeWindowKeepsRunning: Bool?,
+        /**
+         * The notice that Cua Spaces keeps running is on (shown with the row
+         * above).
+         */closeNotice: Bool) {
         self.identity = identity
         self.apiKeyClient = apiKeyClient
         self.signIn = signIn
@@ -36332,6 +36424,8 @@ public struct AppSettingsInput: Equatable, Hashable {
         self.overflow = overflow
         self.runtimes = runtimes
         self.showTips = showTips
+        self.closeWindowKeepsRunning = closeWindowKeepsRunning
+        self.closeNotice = closeNotice
     }
 
 
@@ -36369,7 +36463,9 @@ public struct FfiConverterTypeAppSettingsInput: FfiConverterRustBuffer {
                 autoConnect: FfiConverterOptionBool.read(from: &buf),
                 overflow: FfiConverterOptionBool.read(from: &buf),
                 runtimes: FfiConverterOptionTypeAppRuntimesInput.read(from: &buf),
-                showTips: FfiConverterBool.read(from: &buf)
+                showTips: FfiConverterBool.read(from: &buf),
+                closeWindowKeepsRunning: FfiConverterOptionBool.read(from: &buf),
+                closeNotice: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -36394,6 +36490,8 @@ public struct FfiConverterTypeAppSettingsInput: FfiConverterRustBuffer {
         FfiConverterOptionBool.write(value.overflow, into: &buf)
         FfiConverterOptionTypeAppRuntimesInput.write(value.runtimes, into: &buf)
         FfiConverterBool.write(value.showTips, into: &buf)
+        FfiConverterOptionBool.write(value.closeWindowKeepsRunning, into: &buf)
+        FfiConverterBool.write(value.closeNotice, into: &buf)
     }
 }
 
@@ -53746,6 +53844,85 @@ public func FfiConverterTypeTeleportWindowDragEvent_lower(_ value: TeleportWindo
     return FfiConverterTypeTeleportWindowDragEvent.lower(value)
 }
 
+
+/**
+ * What [`windows_use_iso`] answers.
+ */
+public struct WindowsIsoChoice: Equatable, Hashable {
+    /**
+     * The file is usable and remembered.
+     */
+    public var ok: Bool
+    /**
+     * The file's name when `ok`.
+     */
+    public var name: String
+    /**
+     * Why the file cannot be used, in plain words; empty when `ok`.
+     */
+    public var problem: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The file is usable and remembered.
+         */ok: Bool,
+        /**
+         * The file's name when `ok`.
+         */name: String,
+        /**
+         * Why the file cannot be used, in plain words; empty when `ok`.
+         */problem: String) {
+        self.ok = ok
+        self.name = name
+        self.problem = problem
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension WindowsIsoChoice: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeWindowsIsoChoice: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> WindowsIsoChoice {
+        return
+            try WindowsIsoChoice(
+                ok: FfiConverterBool.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                problem: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: WindowsIsoChoice, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.ok, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.problem, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeWindowsIsoChoice_lift(_ buf: RustBuffer) throws -> WindowsIsoChoice {
+    return try FfiConverterTypeWindowsIsoChoice.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeWindowsIsoChoice_lower(_ value: WindowsIsoChoice) -> RustBuffer {
+    return FfiConverterTypeWindowsIsoChoice.lower(value)
+}
+
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
@@ -56033,6 +56210,11 @@ public enum AppCreateFixAction: Equatable, Hashable {
      * Opens the failed create's details (the diagnostic report to review).
      */
     case details
+    /**
+     * Asks for a Windows ISO the person downloaded (the host's file picker),
+     * remembers it for the image, and runs the create again with it.
+     */
+    case chooseWindowsIso
 
 
 
@@ -56060,6 +56242,8 @@ public struct FfiConverterTypeAppCreateFixAction: FfiConverterRustBuffer {
 
         case 3: return .details
 
+        case 4: return .chooseWindowsIso
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -56078,6 +56262,10 @@ public struct FfiConverterTypeAppCreateFixAction: FfiConverterRustBuffer {
 
         case .details:
             writeInt(&buf, Int32(3))
+
+
+        case .chooseWindowsIso:
+            writeInt(&buf, Int32(4))
 
         }
     }
@@ -82653,6 +82841,18 @@ public func teleport(cua: Cua) -> Teleport  {
     )
 })
 }
+/**
+ * Checks the ISO at `path` for the Windows image `image` and remembers it
+ * for that image's next build.
+ */
+public func windowsUseIso(image: String, path: String) -> WindowsIsoChoice  {
+    return try!  FfiConverterTypeWindowsIsoChoice_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_windows_use_iso(
+        FfiConverterString.lower(image),
+        FfiConverterString.lower(path),$0
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -83705,6 +83905,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_teleport() != 49330) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_windows_use_iso() != 42760) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_method_appcliinstaller_install() != 58313) {

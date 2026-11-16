@@ -17,6 +17,10 @@ use zbus::zvariant::OwnedObjectPath;
 
 const SERVICE: &str = "org.cua.FakeCombo";
 const COMBO: &str = "/org/a11y/atspi/accessible/combo";
+/// A combo box with no options.
+const EMPTY_COMBO: &str = "/org/a11y/atspi/accessible/empty";
+/// A combo box whose one child cannot be read (nothing serves it).
+const UNREADABLE_COMBO: &str = "/org/a11y/atspi/accessible/unreadable";
 /// Each option answers its pick as its name says.
 const OPTIONS: [&str; 5] = ["Acts", "Stalls", "Declines", "Raises", "Vanishes"];
 
@@ -85,6 +89,33 @@ impl Combo {
     #[zbus(property)]
     fn name(&self) -> String {
         "Size".into()
+    }
+}
+
+/// A combo box whose children are `children` (object paths on this service).
+struct BareCombo(&'static [&'static str]);
+#[zbus::interface(name = "org.a11y.atspi.Accessible")]
+impl BareCombo {
+    fn get_role_name(&self) -> String {
+        "combo box".into()
+    }
+    fn get_interfaces(&self) -> Vec<String> {
+        vec!["org.a11y.atspi.Accessible".into()]
+    }
+    fn get_children(&self) -> Vec<(String, OwnedObjectPath)> {
+        self.0
+            .iter()
+            .map(|path| {
+                (
+                    SERVICE.to_owned(),
+                    OwnedObjectPath::try_from(*path).unwrap(),
+                )
+            })
+            .collect()
+    }
+    #[zbus(property)]
+    fn name(&self) -> String {
+        "Bare".into()
     }
 }
 
@@ -186,6 +217,13 @@ fn fake_combo() -> Option<(PrivateBus, tokio::runtime::Runtime, zbus::Connection
             .serve_at(COMBO, Combo)
             .unwrap()
             .serve_at(COMBO, ComboSelection)
+            .unwrap()
+            .serve_at(EMPTY_COMBO, BareCombo(&[]))
+            .unwrap()
+            .serve_at(
+                UNREADABLE_COMBO,
+                BareCombo(&["/org/a11y/atspi/accessible/unreadable/gone"]),
+            )
             .unwrap();
         for index in 0..OPTIONS.len() {
             builder = builder
@@ -239,4 +277,19 @@ fn a_pick_that_was_sent_but_not_answered_is_never_reported_as_failed() {
             );
         }
     }
+    // An open popup that answers with no options lists none; one whose
+    // child cannot be read proves nothing (it shares this process's one
+    // AT-SPI connection, so it lives in this test).
+    let bare = |path: &str| ObjectRef {
+        bus: SERVICE.into(),
+        path: path.into(),
+    };
+    assert_eq!(
+        activate_option_ref(&bare(EMPTY_COMBO), "Blue").unwrap(),
+        OptionPick::NoOptions
+    );
+    assert_eq!(
+        activate_option_ref(&bare(UNREADABLE_COMBO), "Blue").unwrap(),
+        OptionPick::Unavailable
+    );
 }

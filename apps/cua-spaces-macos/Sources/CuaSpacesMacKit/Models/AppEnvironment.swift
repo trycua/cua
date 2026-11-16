@@ -72,6 +72,9 @@ public enum AppEnvironment {
         // replaces another build's, or its own from before an update);
         // fixtures never touch the host.
         let supervisor = fixtures ? nil : bundledCua.flatMap { DaemonSupervisor(bundledCua: $0) }
+        // Quit stops what this app's supervisor keeps running (a fixtures
+        // run has none, so it stops nothing).
+        BackgroundService.shared.manage(supervisor)
         // The live services come later, off the main thread (`StartupModel`):
         // until then the window shows the launch, on stand-ins that wait
         // for them. Nothing here reads the keychain or waits on the daemon.

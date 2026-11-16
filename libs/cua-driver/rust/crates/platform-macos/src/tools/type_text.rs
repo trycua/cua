@@ -43,6 +43,7 @@ use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
 use core_foundation::base::CFRelease;
 use cua_driver_core::background_input::BackgroundRefusal;
+use cua_driver_core::security_prompt::PromptInput;
 
 use super::ToolState;
 
@@ -68,7 +69,7 @@ fn def() -> &'static ToolDef {
             "type": "object",
             "required": ["text"],
             "properties": {
-                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it." },
+                "session": cua_driver_core::tool_schema::session_schema(),
                 "pid":  { "type": "integer", "description": "Target process ID." },
                 "text": { "type": "string",  "description": "Text to insert." },
                 "window_id": {
@@ -153,8 +154,10 @@ impl Tool for TypeTextTool {
             ) {
                 return synthesis_refusal_result("hid", &refusal, AxAttempt::NotAttempted);
             }
+            super::cursor_tools::position_desktop_keyboard_cursor(&self.state, &args).await;
+            let prompt = PromptInput::from_args(&args);
             let result = tokio::task::spawn_blocking(move || {
-                crate::input::keyboard::type_text_global(&text, delay_ms)
+                crate::input::keyboard::type_text_global(prompt, &text, delay_ms)
             })
             .await;
             return match result {
@@ -166,7 +169,11 @@ impl Tool for TypeTextTool {
                             "effect": "unverifiable"
                         }))
                 }
-                Ok(Err(error)) => ToolResult::error(format!("desktop type_text failed: {error}")),
+                Ok(Err(error)) => {
+                    crate::security_prompt::tool_result(&error).unwrap_or_else(|| {
+                        ToolResult::error(format!("desktop type_text failed: {error}"))
+                    })
+                }
                 Err(error) => ToolResult::error(format!("desktop type_text task failed: {error}")),
             };
         }
@@ -376,6 +383,7 @@ impl Tool for TypeTextTool {
         let is_terminal_target = crate::terminal::is_terminal_pid(pid);
 
         let blocking_policy = keyboard_policy.clone();
+        let prompt = PromptInput::from_args(&args);
         let native_guard = element_guard.clone();
         let result = focus_guard::with_focus_suppressed(
             Some(pid),
@@ -396,6 +404,7 @@ impl Tool for TypeTextTool {
                             keyboard_policy: blocking_policy,
                             explicit_target: element_ptr.is_some() || used_pixel_focus,
                             key_window_confirmed: false,
+                            prompt,
                         },
                     )
                 })
@@ -439,9 +448,11 @@ impl Tool for TypeTextTool {
                     &format!("{note}{}", changes.result_suffix()),
                 )
             }
-            Ok(Err(e)) => window_id
-                .and_then(|wid| {
-                    super::element_disabled_error(pid, wid, &e, delivery_mode.is_foreground())
+            Ok(Err(e)) => crate::security_prompt::tool_result(&e)
+                .or_else(|| {
+                    window_id.and_then(|wid| {
+                        super::element_disabled_error(pid, wid, &e, delivery_mode.is_foreground())
+                    })
                 })
                 .unwrap_or_else(|| ToolResult::error(format!("type_text failed: {e}"))),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -528,7 +539,7 @@ const PATH_KEY_EVENTS_FG: &str = "key_events_fg";
 // Atomic AX writes are deliberately excluded: their cost does not scale per
 // character and a single write remains the preferred route for large text.
 const SYNTHESIS_BUDGET_MS: u64 = 100_000;
-const KEY_DOWN_GAP_MS: u64 = 8;
+const KEY_DOWN_GAP_MS: u64 = crate::input::keyboard::DEFAULT_KEY_GAP.as_millis() as u64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TextDeliveryRoute {
@@ -646,7 +657,7 @@ fn electron_background_ax_refusal(
     }
     Some(BackgroundRefusal {
         code: "background_unavailable",
-        reason: "The Electron AX target cannot establish a safe exact background text route on macOS because its ancestry is web content or could not be proven native; use the pixel-targeted type_text form (x,y) or delivery_mode:\"foreground\"."
+        reason: "The Electron AX target cannot establish a safe exact background text route on macOS because its ancestry is web content or could not be proven native; write the field with set_value(element_token, text), use the pixel-targeted type_text form (x,y), or retry with delivery_mode:\"foreground\" if the user allows the window to come forward."
             .to_owned(),
         advice: Some("px"),
     })
@@ -1214,6 +1225,8 @@ struct KeyboardRoute {
     /// call. An app that is not active reports no focused element even then
     /// (LibreOffice), so a missing focus is not a reason to refuse.
     key_window_confirmed: bool,
+    /// Whether keys may reach an OS security or consent prompt.
+    prompt: PromptInput,
 }
 
 /// Best-effort-background ladder for `type_text`.
@@ -1278,6 +1291,7 @@ fn type_text_in_key_window(
         keyboard_policy,
         explicit_target,
         key_window_confirmed,
+        prompt,
     } = route;
     // Original field value before any rung drives read-back verification only.
     // An unreadable value is not evidence that the field is empty — and for a
@@ -1397,7 +1411,7 @@ fn type_text_in_key_window(
                                 foreground_settle_ms,
                             ));
                         }
-                        crate::input::keyboard::type_text_physical_global(text, delay_ms)
+                        crate::input::keyboard::type_text_physical_global(prompt, text, delay_ms)
                     },
                 )?;
                 (TypedProgress::Unverifiable, true)
@@ -1565,12 +1579,32 @@ fn type_text_in_key_window(
         });
     if let Some((ptr, web)) = ax_target {
         let element = ptr as AXUIElementRef;
-        let err = unsafe { set_string_attr(element, "AXSelectedText", text) };
+        let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
+        // A single-line field cannot hold a trailing Return, so it goes out as
+        // its own pid-routed key after the line is confirmed. A semantic-only
+        // request may not send keys.
+        let submit_body = keys_allowed
+            .then(|| single_line_submit_body(&role, text))
+            .flatten();
+        let ax_text = submit_body.unwrap_or(text);
+        // What a full insert of the line must leave in the field, from the
+        // value and selection read just before the write.
+        let pre_write = submit_body.and_then(|_| unsafe { copy_string_attr(element, "AXValue") });
+        let expected_after_submit =
+            submit_body
+                .zip(pre_write.as_deref())
+                .and_then(|(body, value)| {
+                    let (location, length) = unsafe { selected_range(element)? };
+                    replace_utf16_range(value, location, length, body)
+                });
+        let err = unsafe { set_string_attr(element, "AXSelectedText", ax_text) };
         let trusted = web == Some(false);
         let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
+        let mut last_read = None;
         let progress =
-            ax_write_progress(err, before.as_deref(), text, trusted, deadline, || unsafe {
-                copy_string_attr(element, "AXValue")
+            ax_write_progress(err, before.as_deref(), ax_text, trusted, deadline, || {
+                last_read = unsafe { copy_string_attr(element, "AXValue") };
+                last_read.clone()
             });
         if let Some(progress) = progress {
             // An AX insert bypasses NSTextView's edit model, so a document is
@@ -1580,9 +1614,54 @@ fn type_text_in_key_window(
             } else {
                 crate::document_edit::DocumentEdited::NotADocument
             };
+            let (progress, submitted) = match submit_body {
+                None => (progress, ""),
+                Some(body) => {
+                    // Only a read-back equal to the selection replaced by the
+                    // whole line earns a submit: a field that already held the
+                    // line, or a partial write that happens to complete a
+                    // matching value, does not.
+                    let insert_observed = progress == TypedProgress::Complete
+                        && submit_read_back_matches(
+                            pre_write.as_deref(),
+                            expected_after_submit.as_deref(),
+                            last_read.as_deref(),
+                        );
+                    // Return reaches whichever field has focus, so it goes out
+                    // only once the written field is confirmed focused.
+                    let return_reaches_field = insert_observed && {
+                        let _ = crate::input::ax_actions::focus_element(ptr);
+                        crate::input::ax_actions::element_has_keyboard_focus(pid, ptr)
+                    };
+                    if return_reaches_field {
+                        crate::input::keyboard::type_text_with_delay(pid, "\n", 0)?;
+                        (TypedProgress::Complete, ", then pressed Return")
+                    } else if insert_observed {
+                        (
+                            TypedProgress::Partial(body.chars().count()),
+                            "; Return was not sent because the field does not hold keyboard \
+                             focus",
+                        )
+                    } else {
+                        // A complete-looking read-back that is not the full
+                        // insert (the field already held the line) proves
+                        // nothing; any other progress stands as observed.
+                        let progress = if progress == TypedProgress::Complete {
+                            TypedProgress::Unverifiable
+                        } else {
+                            progress
+                        };
+                        (
+                            progress,
+                            "; Return was not sent because the field did not read back the \
+                             inserted line",
+                        )
+                    }
+                }
+            };
             return Ok(TypeTextDelivery::Typed(TypeTextOutcome {
                 detail: format!(
-                    " via AXSelectedText{}",
+                    " via AXSelectedText{}{submitted}",
                     document.note().trim_end_matches('.')
                 ),
                 transport: ActionTransport::MacosAxValue,
@@ -1644,6 +1723,81 @@ unsafe fn focused_accepts_text(element: AXUIElementRef) -> bool {
             CFRelease(range);
             true
         })
+}
+
+/// The text before a final Return, when `text` is one line plus that Return
+/// and `role` is a single-line field. Such a field cannot hold a newline, so
+/// the Return can only mean submit. An AX insert of the whole string cannot be
+/// read back (the field drops the newline) and never submits, and typing the
+/// string again after it doubled the text (Safari's address bar searched for
+/// "netflix.com netflix.com"). So the line is inserted and confirmed alone,
+/// and Return is sent as its own key.
+fn single_line_submit_body<'a>(role: &str, text: &'a str) -> Option<&'a str> {
+    if !matches!(role, "AXTextField" | "AXSearchField" | "AXComboBox") {
+        return None;
+    }
+    let body = text
+        .strip_suffix("\r\n")
+        .or_else(|| text.strip_suffix(['\n', '\r']))?;
+    (!body.is_empty() && !body.contains(['\n', '\r', '\t'])).then_some(body)
+}
+
+/// The selection of a text element as a UTF-16 `(location, length)`.
+///
+/// # Safety
+/// `element` must be a live `AXUIElementRef`.
+unsafe fn selected_range(element: AXUIElementRef) -> Option<(usize, usize)> {
+    use crate::ax::bindings::{kAXValueCFRangeType, AXValueGetValue, AXValueRef};
+    #[repr(C)]
+    struct CfRange {
+        location: isize,
+        length: isize,
+    }
+    let value = copy_raw_attr(element, SELECTED_RANGE)?;
+    let mut range = CfRange {
+        location: -1,
+        length: -1,
+    };
+    let ok = AXValueGetValue(
+        value as AXValueRef,
+        kAXValueCFRangeType,
+        &mut range as *mut CfRange as *mut std::ffi::c_void,
+    );
+    CFRelease(value);
+    if !ok {
+        return None;
+    }
+    Some((
+        usize::try_from(range.location).ok()?,
+        usize::try_from(range.length).ok()?,
+    ))
+}
+
+/// Whether the read-back after an AX insert of a line proves the whole line
+/// landed: it equals the expected value, and that value differs from the one
+/// before the write (otherwise a no-op write reads the same).
+fn submit_read_back_matches(
+    pre_write: Option<&str>,
+    expected: Option<&str>,
+    after: Option<&str>,
+) -> bool {
+    match (pre_write, expected, after) {
+        (Some(pre), Some(expected), Some(after)) => after == expected && expected != pre,
+        _ => false,
+    }
+}
+
+/// `value` with the UTF-16 range `location..location + length` replaced by
+/// `body`, or `None` when the range is outside `value` or splits a character.
+fn replace_utf16_range(value: &str, location: usize, length: usize, body: &str) -> Option<String> {
+    let units: Vec<u16> = value.encode_utf16().collect();
+    let end = location.checked_add(length)?;
+    if end > units.len() {
+        return None;
+    }
+    let head = String::from_utf16(&units[..location]).ok()?;
+    let tail = String::from_utf16(&units[end..]).ok()?;
+    Some(format!("{head}{body}{tail}"))
 }
 
 fn is_text_input_role(role: &str) -> bool {
@@ -2215,6 +2369,7 @@ mod tests {
                 keyboard_policy: BackgroundKeyboardPolicy::SemanticOnly(refusal.clone()),
                 explicit_target: false,
                 key_window_confirmed: false,
+                prompt: PromptInput::Refuse,
             },
         );
         match r {
@@ -2239,6 +2394,7 @@ mod tests {
                 keyboard_policy: BackgroundKeyboardPolicy::Allowed,
                 explicit_target: false,
                 key_window_confirmed: false,
+                prompt: PromptInput::Refuse,
             },
         )
         .expect("the refusal is a delivery outcome");
@@ -2283,6 +2439,7 @@ mod tests {
                 keyboard_policy: BackgroundKeyboardPolicy::Allowed,
                 explicit_target: false,
                 key_window_confirmed: false,
+                prompt: PromptInput::Refuse,
             },
         )
         .expect("preflight refusal must not attempt the invalid pid");
@@ -2365,6 +2522,70 @@ mod tests {
                 "delivery": {"mode": "background"}
             })
         );
+    }
+
+    #[test]
+    fn submit_needs_the_read_back_to_equal_the_full_insert() {
+        use super::replace_utf16_range as expect;
+        // Each case: value and selection before, line, what a full insert
+        // leaves. Partial writes that happen to read as "complete" differ.
+        assert_eq!(
+            expect("", 0, 0, "netflix.com").as_deref(),
+            Some("netflix.com")
+        );
+        let url = "https://a.test/";
+        assert_eq!(
+            expect(url, 0, 15, "netflix.com").as_deref(),
+            Some("netflix.com")
+        );
+        // Already held the line, caret at end: a no-op write reads "netflix.com".
+        assert_ne!(
+            expect("netflix.com", 11, 0, "netflix.com").as_deref(),
+            Some("netflix.com")
+        );
+        // "fo" + partial "o" reads "foo"; a full insert reads "fofoo".
+        assert_eq!(expect("fo", 2, 0, "foo").as_deref(), Some("fofoo"));
+        // "foo" + partial "f" reads "foof"; a full insert reads "foofoo".
+        assert_eq!(expect("foo", 3, 0, "foo").as_deref(), Some("foofoo"));
+        assert_eq!(expect("ab", 1, 0, "X").as_deref(), Some("aXb"));
+        // UTF-16 ranges: an emoji is two units.
+        assert_eq!(expect("😀b", 2, 1, "c").as_deref(), Some("😀c"));
+        assert_eq!(expect("😀", 1, 0, "c"), None);
+        assert_eq!(expect("ab", 1, 5, "c"), None);
+    }
+
+    #[test]
+    fn submit_read_back_must_differ_from_the_pre_write_value() {
+        use super::submit_read_back_matches as ok;
+        assert!(ok(Some(""), Some("netflix.com"), Some("netflix.com")));
+        // Selection already was the line: a no-op write reads the same.
+        assert!(!ok(Some("foo"), Some("foo"), Some("foo")));
+        // Partial write of "foo" over "fo".
+        assert!(!ok(Some("fo"), Some("fofoo"), Some("foo")));
+        assert!(!ok(None, Some("x"), Some("x")));
+        assert!(!ok(Some(""), None, Some("x")));
+        assert!(!ok(Some(""), Some("x"), None));
+    }
+
+    #[test]
+    fn single_line_fields_split_off_one_trailing_return() {
+        for (role, text, expected) in [
+            ("AXTextField", "netflix.com\n", Some("netflix.com")),
+            ("AXSearchField", "query\r", Some("query")),
+            ("AXComboBox", "A1\r\n", Some("A1")),
+            ("AXTextField", "netflix.com", None),
+            ("AXTextField", "\n", None),
+            ("AXTextField", "a\n\n", None),
+            ("AXTextField", "a\nb\n", None),
+            ("AXTextField", "a\tb\n", None),
+            ("AXTextArea", "line\n", None),
+        ] {
+            assert_eq!(
+                super::single_line_submit_body(role, text),
+                expected,
+                "role={role} text={text:?}"
+            );
+        }
     }
 
     #[test]

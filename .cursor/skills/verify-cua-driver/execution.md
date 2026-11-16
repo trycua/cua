@@ -18,7 +18,7 @@ The helper automatically checks its printed evidence directory after desktop tea
 .cursor/skills/verify-cua-driver/scripts/check-evidence.sh /absolute/printed/evidence/directory
 ```
 
-The checker requires both exact delivered/pass summary rows, current-attempt per-cell evidence, preflight diagnostics, and at least one recorded owned PID with none still alive. A helper timeout in CI is a defect to fix, for example by raising its internal bound if build/staging exhausts it; do not add a second pre-build harness.
+The checker reads the cells the run declared in `cases.jsonl`. Each declared cell needs exactly one summary row with its expected outcome (`Delivered` or `Refused`) and `Pass`, plus current-attempt per-cell evidence. Background cells also need sentinel and desktop-observation evidence with a heartbeat, and delivered click cells need their `last_action` marker. It also requires preflight diagnostics, and at least one recorded owned PID with none still alive. A helper timeout in CI is a defect to fix, for example by raising its internal bound if build/staging exhausts it; do not add a second pre-build harness.
 
 ## Stand-ins
 

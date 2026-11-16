@@ -277,6 +277,14 @@ fn window_closed(description: Option<&crate::windows::WindowDescription>) -> boo
     description.is_none()
 }
 
+/// Whether the press closed its own window: the window existed just before
+/// the press and is gone after it. A window that was already gone when the
+/// press ran (closed between the snapshot and the press) did not close because
+/// of it, so a dead element's error is not reported as a press that landed.
+fn press_closed_its_window(open_before_press: bool, closes_after: impl FnOnce() -> bool) -> bool {
+    open_before_press && closes_after()
+}
+
 /// Whether a window `exists` no longer within `timeout`, polled every `poll`.
 fn window_closes_within(
     mut exists: impl FnMut() -> bool,
@@ -2328,6 +2336,8 @@ fn perform_ax_click(
         let deadline = std::time::Instant::now() + MENU_OPEN_TIMEOUT;
         unsafe { !menu_beside(element, deadline) }
     };
+    let window_open_before_press =
+        !window_closed(crate::windows::describe_window(window_id).as_ref());
     let pressed_at = std::time::Instant::now();
     let err = unsafe { crate::ax::bindings::perform_action(element, ax_action) };
     if err != crate::ax::bindings::kAXErrorSuccess {
@@ -2387,11 +2397,13 @@ fn perform_ax_click(
         // A button that closes its own window (a dialog's OK, an open panel's
         // Open) can return an error because the window is gone before the app
         // answers. The press ran; reporting it as failed invites a retry.
-        if window_closes_within(
-            || !window_closed(crate::windows::describe_window(window_id).as_ref()),
-            SELECTION_READBACK_TIMEOUT,
-            SELECTION_READBACK_POLL,
-        ) {
+        if press_closed_its_window(window_open_before_press, || {
+            window_closes_within(
+                || !window_closed(crate::windows::describe_window(window_id).as_ref()),
+                SELECTION_READBACK_TIMEOUT,
+                SELECTION_READBACK_POLL,
+            )
+        }) {
             return Ok(AxClickOutcome {
                 summary: format!(
                     "Performed {ax_action} on [{idx}] {role} \"{title}\"; its window {window_id} \
@@ -2897,6 +2909,16 @@ mod tests {
         for refused in [-25201, -25202, -25204, -25211] {
             assert!(!press_error_may_have_acted(refused), "{refused}");
         }
+    }
+
+    #[test]
+    fn only_a_window_open_before_the_press_counts_as_closed_by_it() {
+        assert!(press_closed_its_window(true, || true));
+        assert!(!press_closed_its_window(true, || false));
+        // Already gone before the press: not its doing, and not even polled.
+        assert!(!press_closed_its_window(false, || panic!(
+            "a window missing before the press must not be polled"
+        )));
     }
 
     #[test]

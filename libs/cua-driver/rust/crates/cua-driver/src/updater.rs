@@ -69,8 +69,12 @@ pub(crate) fn update_owner() -> Option<UpdateOwner> {
     #[cfg(target_os = "linux")]
     {
         let executable = std::env::current_exe().ok()?;
-        pacman_owns_executable(&executable, std::path::Path::new("/usr/bin/pacman"))
-            .then_some(UpdateOwner::Pacman)
+        pacman_owns_executable(
+            &executable,
+            std::path::Path::new("/usr/bin/pacman"),
+            PACMAN_QUERY_TIMEOUT,
+        )
+        .then_some(UpdateOwner::Pacman)
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
@@ -90,18 +94,30 @@ fn host_app(path: &std::path::Path) -> Option<String> {
     (helpers == "Helpers" && contents == "Contents" && !app.is_empty()).then(|| app.to_owned())
 }
 
+/// How long one ownership query may run before the install counts as unmanaged.
 #[cfg(any(target_os = "linux", all(test, unix)))]
-fn pacman_owns_executable(executable: &std::path::Path, pacman: &std::path::Path) -> bool {
-    if pacman_owns_path(executable, pacman) {
+const PACMAN_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
+
+#[cfg(any(target_os = "linux", all(test, unix)))]
+fn pacman_owns_executable(
+    executable: &std::path::Path,
+    pacman: &std::path::Path,
+    timeout: std::time::Duration,
+) -> bool {
+    if pacman_owns_path(executable, pacman, timeout) {
         return true;
     }
-    executable
-        .canonicalize()
-        .is_ok_and(|resolved| resolved != executable && pacman_owns_path(&resolved, pacman))
+    executable.canonicalize().is_ok_and(|resolved| {
+        resolved != executable && pacman_owns_path(&resolved, pacman, timeout)
+    })
 }
 
 #[cfg(any(target_os = "linux", all(test, unix)))]
-fn pacman_owns_path(path: &std::path::Path, pacman: &std::path::Path) -> bool {
+fn pacman_owns_path(
+    path: &std::path::Path,
+    pacman: &std::path::Path,
+    timeout: std::time::Duration,
+) -> bool {
     use std::process::Stdio;
     use std::time::{Duration, Instant};
 
@@ -127,7 +143,7 @@ fn pacman_owns_path(path: &std::path::Path, pacman: &std::path::Path) -> bool {
             Err(_) => return false,
         }
     };
-    let deadline = Instant::now() + Duration::from_millis(500);
+    let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {
             Ok(Some(status)) => return status.success(),
@@ -281,6 +297,11 @@ mod tests {
         }
     }
 
+    /// Room for a fake pacman to answer on a loaded test host. The shipped
+    /// bound is checked by the hung-query case below.
+    #[cfg(unix)]
+    const ANSWER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
     #[cfg(unix)]
     fn fake_pacman(root: &std::path::Path, script: &str) -> std::path::PathBuf {
         use std::os::unix::fs::PermissionsExt;
@@ -300,11 +321,13 @@ mod tests {
         );
         assert!(pacman_owns_executable(
             std::path::Path::new("/usr/bin/driver ; $(false)"),
-            &pacman
+            &pacman,
+            ANSWER_TIMEOUT
         ));
         assert!(!pacman_owns_executable(
             std::path::Path::new("/usr/bin/unmanaged"),
-            &pacman
+            &pacman,
+            ANSWER_TIMEOUT
         ));
     }
 
@@ -320,7 +343,7 @@ mod tests {
             root.path(),
             "case \"$3\" in */packaged-driver) exit 0;; *) exit 1;; esac",
         );
-        assert!(pacman_owns_executable(&link, &pacman));
+        assert!(pacman_owns_executable(&link, &pacman, ANSWER_TIMEOUT));
     }
 
     #[cfg(unix)]
@@ -330,13 +353,22 @@ mod tests {
         let executable = root.path().join("missing-driver");
         assert!(!pacman_owns_executable(
             &executable,
-            &root.path().join("missing-pacman")
+            &root.path().join("missing-pacman"),
+            ANSWER_TIMEOUT
         ));
         let pacman = fake_pacman(root.path(), "exit 2");
-        assert!(!pacman_owns_executable(&executable, &pacman));
+        assert!(!pacman_owns_executable(
+            &executable,
+            &pacman,
+            ANSWER_TIMEOUT
+        ));
         fake_pacman(root.path(), "while :; do :; done");
         let started = std::time::Instant::now();
-        assert!(!pacman_owns_executable(&executable, &pacman));
+        assert!(!pacman_owns_executable(
+            &executable,
+            &pacman,
+            PACMAN_QUERY_TIMEOUT
+        ));
         assert!(started.elapsed() < std::time::Duration::from_secs(2));
     }
 }

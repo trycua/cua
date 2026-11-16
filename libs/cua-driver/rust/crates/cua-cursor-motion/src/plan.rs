@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Planned trajectories.
 //!
 //! A move is planned once as a list of timed samples. A renderer then only

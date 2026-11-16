@@ -17,7 +17,7 @@
  * ```
  *
  * The same objects work against a running `cua daemon` (`connect()`).
- * Browser builds use `@trycua/cua/browser` (env over gRPC-Web + Fleet).
+ * Browser builds use `@trycua/cua/browser` (env over gRPC-Web).
  */
 import { existsSync } from "node:fs"
 import { createRequire } from "node:module"
@@ -29,13 +29,10 @@ import {
   CuaError,
   CuaError_Tags,
   type CuaLike,
-  type FleetLike,
-  type FleetPool,
-  PoolOptions,
+  PoolCreateOptions,
   ReadinessProbe,
   RegistrySecret,
   type ResolvedImage,
-  SandboxSpec,
   ambiguousSandboxCandidates,
   canonicalImageTier,
   errorDocUrl,
@@ -115,9 +112,9 @@ function defaultCuaBin(): void {
 }
 
 /**
- * An SDK runtime in this process (no I/O until the first call). Fleet uses
- * `CUA_CLIENT_ID`/`CUA_CLIENT_SECRET` (or `FLEETS_TOKEN`); pass
- * `fleetFromSession: true` to fall back to the `cua auth login` session.
+ * An SDK runtime in this process (no I/O until the first call). Pass
+ * `accountFromSession: true` to use the `cua auth login` session for the
+ * relay account the runtime lists "My machines" with.
  */
 export function embedded(config: Partial<CuaConfig> = {}): CuaLike {
   defaultCuaBin()
@@ -129,8 +126,11 @@ export function connect(address?: string, token?: string): CuaLike {
   return Cua.connect(address, token)
 }
 
-/** An image tier: `slim`, `full` (the default), or on macOS `xcode` / `xcode-<X.Y>`. */
-export type ImageTier = "slim" | "full" | "xcode" | `xcode-${string}`
+/**
+ * An image tier: `slim`, `full` (the default), on macOS `xcode` / `xcode-<X.Y>`,
+ * or on Linux `docker` (slim plus the Docker engine, a VM: `-docker-disk`).
+ */
+export type ImageTier = "slim" | "full" | "docker" | "xcode" | `xcode-${string}`
 
 /** Options for `Image.linux()` / `windows()` / `macos()`. */
 export interface ImageOptions {
@@ -148,7 +148,8 @@ function tierImage(os: string, version?: string | ImageOptions, tier?: ImageTier
  * (`CUA_IMAGE_LINUX` overrides it), `Image.windows()`
  * `ghcr.io/trycua/windows:2022`, `Image.macos()` `ghcr.io/trycua/macos:26`.
  * These are the full tier (dev tooling); `{ tier: "slim" }` is the minimal
- * image CI runs and, on macOS, `{ tier: "xcode" }` adds a pinned Xcode.
+ * image CI runs, on macOS `{ tier: "xcode" }` adds a pinned Xcode and, on Linux,
+ * `{ tier: "docker" }` is a VM with dockerd up at boot (`24.04-docker-disk`).
  * `Image.omarchy()` is `ghcr.io/trycua/omarchy:edge`, an amd64 VM. Images CI
  * has not published yet throw `ImageNotPublished`; pass the reference to
  * `fromRegistry` to use one anyway.
@@ -235,38 +236,33 @@ const toMap = <V>(m: Record<string, V> | Map<string, V> | undefined): Map<string
   m instanceof Map ? new Map(m) : new Map(Object.entries(m ?? {}))
 
 /**
- * What a sandbox runs: the one model behind `Sandbox.create`, managed pools
- * and `fleet.apply(name, spec, options)`. `env` and `services` take plain
- * objects too. Unset fields keep Fleet's defaults (and are not compared by
- * `fleet.checkPoolSpec`).
+ * Options for `cua.sandboxes().createPool(image, options)`: sandboxes of
+ * one shape the cua daemon keeps ready on this machine, `min` at all times
+ * (one starts again as soon as one is created from the pool), up to `max`
+ * while creates come faster than sandboxes start, and none after
+ * `idleSeconds` without a create. `env` and `services` take plain objects
+ * too. A create with `pool: <name>` takes one of its ready sandboxes.
  *
  * ```ts
- * const spec = sandboxSpec("python:3.12-slim", {
- *   command: ["python", "-m", "srv"], services: { mcp: 8765 }, readiness: http("mcp", "/health") })
- * await c.fleet().apply("my-pool", spec, poolOptions({ warm: true, idleTtlSeconds: 3600 }))
+ * const c = connect()  // pools are kept by the cua daemon
+ * const pool = await c.sandboxes().createPool("ghcr.io/trycua/linux:24.04-slim",
+ *   poolCreateOptions({ name: "agents", min: 2, max: 8, idleSeconds: 600 }))
+ * const sb = await c.sandboxes().create(SandboxCreateOptions.create({
+ *   on: "local", image: pool.image, pool: pool.name }))
  * ```
  */
-export function sandboxSpec(
-  image: string,
-  opts: Partial<Omit<SandboxSpec, "image" | "env" | "services">> & { env?: StringMap; services?: PortMap } = {},
-): SandboxSpec {
-  const { env, services, ...rest } = opts
-  return SandboxSpec.create({ ...rest, image, env: toMap(env), services: toMap(services) })
-}
-
-/** How a pool keeps capacity for a `SandboxSpec` (warm floor, size, TTLs, runtime). */
-export function poolOptions(opts: Partial<PoolOptions> = {}): PoolOptions {
-  return PoolOptions.create(opts)
-}
-
-/**
- * `Pool.apply(fleet, name, spec, options)`: the one pool writer, the same
- * call as `fleet.apply`. Named pools are compared against a spec with
- * `fleet.checkPoolSpec` (raises `CuaError.PoolSpecMismatch` with a diff) and
- * updated with `fleet.applyPoolTemplate`; `fleet.exportPool(name).terraform`
- * prints the equivalent `fleets_pool` block.
- */
-export const Pool = {
-  apply: (fleet: FleetLike, name: string, spec: SandboxSpec, options: PoolOptions = poolOptions()): Promise<FleetPool> =>
-    fleet.apply(name, spec, options),
+export function poolCreateOptions(
+  opts: Partial<Omit<PoolCreateOptions, "env" | "services" | "idleMs">> & {
+    env?: StringMap
+    services?: PortMap
+    idleSeconds?: number
+  } = {},
+): PoolCreateOptions {
+  const { env, services, idleSeconds, ...rest } = opts
+  return PoolCreateOptions.create({
+    ...rest,
+    env: toMap(env),
+    services: toMap(services),
+    ...(idleSeconds !== undefined ? { idleMs: BigInt(Math.round(idleSeconds * 1000)) } : {}),
+  })
 }

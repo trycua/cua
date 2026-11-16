@@ -5,8 +5,8 @@ import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RemoteWindow } from "../model/teleport";
-import type { ViewerConfig } from "../native/fleet";
-import { fakeFleetBridge } from "../test/fakeFleet";
+import type { ViewerConfig } from "../native/spacesBridge";
+import { fakeSpacesBridge } from "../test/fakeSpacesBridge";
 import { avcCodecFromAnnexB } from "@cua/spacesd-html5/core/h264";
 import {
   applyCursorShape,
@@ -28,8 +28,19 @@ describe("avcCodecFromAnnexB", () => {
 
   it("finds the SPS after a leading 3-byte-start NAL", () => {
     const data = new Uint8Array([
-      0, 0, 1, 0x09, 0x10, // access unit delimiter (type 9)
-      0, 0, 0, 1, 0x67, 0x42, 0xe0, 0x1f, // SPS (type 7)
+      0,
+      0,
+      1,
+      0x09,
+      0x10, // access unit delimiter (type 9)
+      0,
+      0,
+      0,
+      1,
+      0x67,
+      0x42,
+      0xe0,
+      0x1f, // SPS (type 7)
     ]);
     expect(avcCodecFromAnnexB(data)).toBe("avc1.42E01F");
   });
@@ -47,9 +58,7 @@ describe("cursorShapeToCss", () => {
     expect(cursorShapeToCss({ kind: "grabbing" })).toBe("grabbing");
     expect(cursorShapeToCss({ kind: "not_allowed" })).toBe("not-allowed");
     expect(cursorShapeToCss({ kind: "resize", axis: "north_south" })).toBe("ns-resize");
-    expect(cursorShapeToCss({ kind: "resize", axis: "north_west_south_east" })).toBe(
-      "nwse-resize",
-    );
+    expect(cursorShapeToCss({ kind: "resize", axis: "north_west_south_east" })).toBe("nwse-resize");
     expect(cursorShapeToCss({ kind: "resize", axis: "column" })).toBe("col-resize");
   });
 
@@ -59,9 +68,7 @@ describe("cursorShapeToCss", () => {
   it("treats unknown as 'hold the previous shape', NOT as an arrow", () => {
     expect(cursorShapeToCss({ kind: "unknown" })).toBeNull();
     expect(cursorShapeToCss({ kind: "default" })).toBe("default");
-    expect(cursorShapeToCss({ kind: "unknown" })).not.toBe(
-      cursorShapeToCss({ kind: "default" }),
-    );
+    expect(cursorShapeToCss({ kind: "unknown" })).not.toBe(cursorShapeToCss({ kind: "default" }));
   });
 
   it("holds the previous shape for a shape introduced after this build", () => {
@@ -133,9 +140,7 @@ describe("WindowStream", () => {
     RecordingSocket.urls = [];
     originalWebSocket = (globalThis as { WebSocket?: unknown }).WebSocket;
     (globalThis as { WebSocket: unknown }).WebSocket = RecordingSocket;
-    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
-      null as unknown as CanvasRenderingContext2D,
-    );
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null as unknown as CanvasRenderingContext2D);
   });
   afterEach(() => {
     (globalThis as { WebSocket?: unknown }).WebSocket = originalWebSocket;
@@ -163,7 +168,7 @@ describe("WindowStream", () => {
         mediaSessionId: "m-9",
       },
     };
-    render(<WindowStream fleet={fakeFleetBridge({ viewerConfig: async () => config, openStream })} />);
+    render(<WindowStream bridge={fakeSpacesBridge({ viewerConfig: async () => config, openStream })} />);
     await screen.findByText(/Connecting to Firefox/);
     // The canvas opens its socket after the status text renders.
     await vi.waitFor(() => expect(RecordingSocket.urls).toEqual(["ws://h:1/media?ticket=from-mcp"]));
@@ -189,7 +194,7 @@ describe("WindowStream", () => {
       targetWindow: { id: "w-7", appName: "Firefox", title: "Docs" },
     };
     const { unmount } = render(
-      <WindowStream fleet={fakeFleetBridge({ viewerConfig: async () => primary, openStream })} />,
+      <WindowStream bridge={fakeSpacesBridge({ viewerConfig: async () => primary, openStream })} />,
     );
     await vi.waitFor(() => expect(openStream).toHaveBeenCalled());
     expect(openStream).toHaveBeenLastCalledWith(
@@ -201,7 +206,7 @@ describe("WindowStream", () => {
     unmount();
 
     const replica: ViewerConfig = { ...primary, targetWindow: { ...primary.targetWindow!, replica: true } };
-    render(<WindowStream fleet={fakeFleetBridge({ viewerConfig: async () => replica, openStream })} />);
+    render(<WindowStream bridge={fakeSpacesBridge({ viewerConfig: async () => replica, openStream })} />);
     await vi.waitFor(() => expect(openStream).toHaveBeenCalledTimes(2));
     expect(openStream).toHaveBeenLastCalledWith(
       "space://direct/h:1",
@@ -229,7 +234,7 @@ describe("WindowStream", () => {
     const config: ViewerConfig = { view: "windows", space: { id: "space://direct/h:1", name: "Box" } };
     render(
       <WindowStream
-        fleet={fakeFleetBridge({ viewerConfig: async () => config, openStream: openStream as never })}
+        bridge={fakeSpacesBridge({ viewerConfig: async () => config, openStream: openStream as never })}
         listWindows={listWindows}
       />,
     );

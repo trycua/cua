@@ -7,6 +7,8 @@ from litellm import acompletion, completion
 from litellm.llms.custom_llm import CustomLLM
 from litellm.types.utils import GenericStreamingChunk, ModelResponse
 
+from ..human_auth import auth_headers
+
 
 class HumanAdapter(CustomLLM):
     """Human Adapter for human-in-the-loop completions.
@@ -15,21 +17,35 @@ class HumanAdapter(CustomLLM):
     where humans can review and respond to AI requests.
     """
 
-    def __init__(self, base_url: str | None = None, timeout: float = 300.0, **kwargs):
+    def __init__(
+        self,
+        base_url: str | None = None,
+        timeout: float = 300.0,
+        token: str | None = None,
+        **kwargs,
+    ):
         """Initialize the human adapter.
 
         Args:
             base_url: Base URL for the human completion server.
                      Defaults to HUMAN_BASE_URL environment variable or http://localhost:8002
             timeout: Timeout in seconds for waiting for human response
+            token: Bearer token for the server. Defaults to the
+                   CUA_HUMAN_TOOL_TOKEN environment variable, then the token file the
+                   server writes on this machine (~/.cua/human_tool/token)
             **kwargs: Additional arguments
         """
         super().__init__()
         self.base_url = base_url or os.getenv("HUMAN_BASE_URL", "http://localhost:8002")
         self.timeout = timeout
+        self.token = token
 
         # Ensure base_url doesn't end with slash
         self.base_url = self.base_url.rstrip("/")
+
+    def _headers(self) -> Dict[str, str]:
+        """Bearer token header, read fresh so a restarted server's new token is picked up."""
+        return auth_headers(self.token)
 
     def _queue_completion(self, messages: List[Dict[str, Any]], model: str) -> str:
         """Queue a completion request and return the call ID.
@@ -46,8 +62,17 @@ class HumanAdapter(CustomLLM):
         """
         try:
             response = requests.post(
-                f"{self.base_url}/queue", json={"messages": messages, "model": model}, timeout=10
+                f"{self.base_url}/queue",
+                json={"messages": messages, "model": model},
+                headers=self._headers(),
+                timeout=10,
             )
+            if response.status_code == 401:
+                raise Exception(
+                    "The human tool server rejected the token. Set CUA_HUMAN_TOOL_TOKEN to "
+                    "the server's token, or run the server on this machine so the token "
+                    "file can be read."
+                )
             response.raise_for_status()
             return response.json()["id"]
         except requests.RequestException as e:
@@ -73,7 +98,9 @@ class HumanAdapter(CustomLLM):
         while True:
             try:
                 # Check status
-                status_response = requests.get(f"{self.base_url}/status/{call_id}")
+                status_response = requests.get(
+                    f"{self.base_url}/status/{call_id}", headers=self._headers()
+                )
                 status_response.raise_for_status()
                 status_data = status_response.json()
 
@@ -122,7 +149,7 @@ class HumanAdapter(CustomLLM):
 
         start_time = time.time()
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(headers=self._headers()) as session:
             while True:
                 try:
                     # Check status

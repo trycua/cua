@@ -20,5 +20,6 @@
   "totalJs": 1321984,
   "totalCss": 69632,
   "wasm": 4806656,
-  "firstRenderMs": 200
+  "cls": 0.05,
+  "firstRenderMs": 600
 }

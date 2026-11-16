@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Deterministic in-process mock CDP endpoint for tests.
 //!
 //! A tiny scripted WebSocket server on a loopback port: each incoming
@@ -33,6 +36,9 @@ pub(crate) struct MockEvent {
 /// The scripted reaction to one command.
 pub(crate) struct MockReply {
     pub events: Vec<MockEvent>,
+    pub suppress_response: bool,
+    /// Hold the reply this long before sending it (a slow but live page).
+    pub delay: Option<std::time::Duration>,
     pub result: Result<Value, (i64, String)>,
 }
 
@@ -41,6 +47,18 @@ impl MockReply {
         Self {
             events: Vec::new(),
             result: Ok(result),
+            suppress_response: false,
+            delay: None,
+        }
+    }
+
+    /// A command whose reply never comes; any attached events still go out.
+    pub fn hang() -> Self {
+        Self {
+            events: Vec::new(),
+            result: Ok(json!({})),
+            suppress_response: true,
+            delay: None,
         }
     }
 
@@ -48,6 +66,8 @@ impl MockReply {
         Self {
             events: Vec::new(),
             result: Err((code, message.to_owned())),
+            suppress_response: false,
+            delay: None,
         }
     }
 
@@ -123,6 +143,12 @@ impl MockCdpServer {
                             if ws.send(Message::Text(frame.to_string())).await.is_err() {
                                 return;
                             }
+                        }
+                        if reply.suppress_response {
+                            continue;
+                        }
+                        if let Some(delay) = reply.delay {
+                            tokio::time::sleep(delay).await;
                         }
                         let mut response = match reply.result {
                             Ok(result) => json!({ "id": id, "result": result }),

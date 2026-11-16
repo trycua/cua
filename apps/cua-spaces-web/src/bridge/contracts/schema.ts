@@ -99,8 +99,7 @@ export class Defs {
 
 /* ---- Validation ------------------------------------------------------------ */
 
-const typeOf = (v: unknown): JsonType =>
-  v === null ? "null" : Array.isArray(v) ? "array" : typeof v === "number" ? "number" : (typeof v as JsonType);
+const typeOf = (v: unknown): JsonType => (v === null ? "null" : Array.isArray(v) ? "array" : typeof v === "number" ? "number" : (typeof v as JsonType));
 
 function matchesType(t: JsonType, v: unknown): boolean {
   if (t === "integer") return typeof v === "number" && Number.isInteger(v);

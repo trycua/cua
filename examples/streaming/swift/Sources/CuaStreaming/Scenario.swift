@@ -30,7 +30,7 @@ final class Scenario: @unchecked Sendable {
         let tmp = NSTemporaryDirectory() + "cua-streaming-swift-\(getpid())"
         try FileManager.default.createDirectory(atPath: tmp, withIntermediateDirectories: true)
         let cua = try Cua.embedded(
-            stateDir: tmp + "/state", fleetFromEnv: false,
+            stateDir: tmp + "/state",
             spacesHome: tmp + "/home", teleportHome: tmp + "/home")
         return try await cua.spacesd(url: cfg.url, token: cfg.token)
     }

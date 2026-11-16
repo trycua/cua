@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { hostPanel, settingChange, type HostAction, type HostActionId, type PermissionRow } from "../model/host";
 import type { HostBridge, HostStatus } from "../native/host";
 import { HostSetupForm } from "./HostSetupForm";
+import { useT } from "../i18n";
 
 /** "just now", "5 min ago", "3 h ago", "2 d ago" (the viewer's locale). */
 export function relativeTime(atMs: number, nowMs: number): string {
@@ -67,6 +68,7 @@ export function ThisMachinePanel({
   /** Open with the setup form showing (captures). */
   initialSetup?: boolean;
 }) {
+  const t = useT("settings");
   const [status, setStatus] = useState<HostStatus | null>(null);
   const [setup, setSetup] = useState(initialSetup);
   const [busy, setBusy] = useState(false);
@@ -164,7 +166,7 @@ export function ThisMachinePanel({
         </dl>
       )}
       {view.toggles && view.toggles.length > 0 && (
-        <div className="this-machine-settings" role="group" aria-label="Sharing">
+        <div className="this-machine-settings" role="group" aria-label={t("settings.this_machine.sharing_label")}>
           {view.toggles.map((t) => (
             <label className="create-cloud-toggle" key={t.id} title={t.help}>
               <input

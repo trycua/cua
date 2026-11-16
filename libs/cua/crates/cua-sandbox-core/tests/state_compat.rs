@@ -1,12 +1,11 @@
 //! State files are interchangeable with cua-sandbox's `sandbox_state.py`.
 //!
 //! The fixtures in `tests/fixtures/python-state/` were written by the real
-//! Python module (`sandbox_state.save(...)`, `save_fleet_claim(...)`,
-//! `update(..., status="stopped")`) with `HOME` pointed at a scratch dir and
+//! Python module (`sandbox_state.save(...)`, `update(..., status="stopped")`) with `HOME` pointed at a scratch dir and
 //! `Image.from_registry(...).to_dict()` / `Image.linux().to_dict()` images.
 
 use cua_sandbox_core::state::{
-    FleetState, LocalState, SandboxState, StateStore, python_utc_now, registry_image_dict,
+    LocalState, SandboxState, StateStore, python_utc_now, registry_image_dict,
 };
 use serde_json::{Map, Value};
 use std::path::PathBuf;
@@ -33,7 +32,7 @@ fn reads_python_written_files() {
     let all = store.list_all();
     assert_eq!(
         all.iter().map(|s| s.name()).collect::<Vec<_>>(),
-        ["py-docker-sbx", "py-fleet-claim", "py-qemu-sbx"]
+        ["py-docker-sbx", "py-qemu-sbx"]
     );
     match store.load("py-qemu-sbx").unwrap() {
         SandboxState::Local(l) => {
@@ -51,14 +50,6 @@ fn reads_python_written_files() {
             assert!(l.extra.is_empty());
         }
         other => panic!("expected local state, got {other:?}"),
-    }
-    match store.load("py-fleet-claim").unwrap() {
-        SandboxState::Fleet(f) => {
-            assert_eq!(f.runtime_type, "fleet");
-            assert_eq!(f.pool_name, "cua-e2e-pool");
-            assert_eq!(f.status, "running");
-        }
-        other => panic!("expected fleet state, got {other:?}"),
     }
     assert_eq!(store.load("py-docker-sbx").unwrap().status(), "stopped");
     assert!(store.load("missing").is_none());
@@ -116,16 +107,8 @@ fn writes_the_python_shape() {
         .collect();
     assert_eq!(keys, py_keys);
 
-    store
-        .save_fleet_claim("py-fleet-claim", "cua-e2e-pool")
-        .unwrap();
-    let fleet = store.load_raw("py-fleet-claim").unwrap();
-    assert_eq!(
-        without_created_at(Value::Object(fleet.clone())),
-        without_created_at(read("py-fleet-claim"))
-    );
     // `datetime.now(timezone.utc).isoformat()` shape.
-    let ts = fleet["created_at"].as_str().unwrap();
+    let ts = ours["created_at"].as_str().unwrap();
     assert!(
         ts.ends_with("+00:00") && ts.len() == "2026-09-22T23:19:06.056535+00:00".len(),
         "{ts}"
@@ -142,19 +125,26 @@ fn update_preserves_unknown_fields_and_delete_is_idempotent() {
     let store = StateStore::new(dir.path());
     let mut fields = Map::new();
     fields.insert("custom".into(), Value::String("kept".into()));
-    store.update("py-fleet-claim", fields).unwrap();
-    store.set_status("py-fleet-claim", "suspended").unwrap();
-    match store.load("py-fleet-claim").unwrap() {
-        SandboxState::Fleet(FleetState { status, extra, .. }) => {
+    store.update("py-docker-sbx", fields).unwrap();
+    store.set_status("py-docker-sbx", "suspended").unwrap();
+    match store.load("py-docker-sbx").unwrap() {
+        SandboxState::Local(LocalState { status, extra, .. }) => {
             assert_eq!(status, "suspended");
             assert_eq!(extra["custom"], "kept");
         }
         other => panic!("{other:?}"),
     }
-    store.delete("py-fleet-claim").unwrap();
-    store.delete("py-fleet-claim").unwrap();
-    assert!(store.load("py-fleet-claim").is_none());
-    assert!(store.save_fleet_claim("../escape", "p").is_err());
+    store.delete("py-docker-sbx").unwrap();
+    store.delete("py-docker-sbx").unwrap();
+    assert!(store.load("py-docker-sbx").is_none());
+    assert!(
+        store
+            .save(&SandboxState::Local(LocalState {
+                name: "../escape".into(),
+                ..Default::default()
+            }))
+            .is_err()
+    );
 }
 
 #[test]
@@ -186,7 +176,12 @@ fn a_test_cannot_write_real_sandbox_state() {
     };
     let store = StateStore::new(real.join("sandboxes"));
     let name = "cua-home-guard-probe";
-    let err = store.save_fleet_claim(name, "pool").unwrap_err();
+    let err = store
+        .save(&SandboxState::Local(LocalState {
+            name: name.into(),
+            ..Default::default()
+        }))
+        .unwrap_err();
     assert!(err.to_string().contains("CUA_HOME"), "{err}");
     assert!(store.write_lease(name, 1).is_err());
     assert!(!real.join("sandboxes").join(format!("{name}.json")).exists());

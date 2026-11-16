@@ -44,6 +44,145 @@ pub struct ToolCall<'a> {
     pub broker: Option<&'a Arc<dyn SessionBroker>>,
     /// The Space a Space-scoped call was pinned to, if any.
     pub pinned: Option<&'a Space>,
+    /// Who is calling, as the transport authenticated them ([`Caller`]).
+    /// Never taken from the arguments.
+    pub caller: Caller,
+}
+
+/// Who made a tool call, as the transport that carried it authenticated
+/// them (never from the call's arguments). Extensions that record an
+/// author (the Space thread) stamp it from here.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Caller {
+    /// This machine's own user: the local socket (`cua.sock`), the stdio and
+    /// HTTP MCP servers, an embedded runtime.
+    #[default]
+    Owner,
+    /// Another account, through the relay (the identity the host's
+    /// cua-spacesd verified and forwarded).
+    Relay {
+        /// Relay account id.
+        account: String,
+        /// Display name, when the relay shares one.
+        name: Option<String>,
+        /// `owner` or `shared`.
+        role: String,
+    },
+    /// A persistent agent's run, through its bridge.
+    Agent {
+        /// The agent's name.
+        name: String,
+        /// The Space it works in.
+        space: String,
+    },
+    /// An agent connected from a computer (`cua join`), authenticated by its
+    /// member key: it reaches only its Space's thread tools, as
+    /// `agent:<handle>`.
+    Member {
+        /// The member's handle.
+        handle: String,
+        /// The Space it is a member of (a Space id).
+        space: String,
+    },
+}
+
+/// The tools an agent connected with a member key ([`Caller::Member`]) may
+/// call: its Space's thread and member list, nothing else.
+pub const MEMBER_TOOLS: &[&str] = &[
+    "thread_join",
+    "thread_read",
+    "thread_post",
+    "thread_inbox",
+    "thread_claim",
+    "thread_reply",
+    "agent_members",
+];
+
+/// The argument a connected agent's call carries its member credential in
+/// (`{member_id, key, ts_ms?, signature?}`); taken out before the tool runs.
+pub const MEMBER_CREDENTIAL: &str = "_member";
+
+/// The internal operation that turns a member credential into
+/// `{handle, space}` (served by the Cua Spaces extension).
+pub const MEMBER_AUTH_OP: &str = "thread.member_auth";
+
+tokio::task_local! {
+    static CALLER: Caller;
+    static DEVICE: CallerDevice;
+}
+
+/// The enrolled device behind a relay caller, as the relay vouched for it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CallerDevice {
+    /// The device id (`dev_...`), when the relay named it.
+    pub id: Option<String>,
+    /// The device is a phone (the relay's signed class).
+    pub phone: bool,
+}
+
+impl Caller {
+    /// The caller of the tool call this task is running (the owner when no
+    /// transport set one).
+    pub fn current() -> Caller {
+        CALLER.try_with(Caller::clone).unwrap_or_default()
+    }
+
+    /// Runs `fut` with `self` as [`Caller::current`]. Transports that
+    /// authenticate someone other than the owner wrap their dispatch in it.
+    pub async fn scope<F: Future>(self, fut: F) -> F::Output {
+        CALLER.scope(self, fut).await
+    }
+
+    /// [`Caller::scope`] that also says which device made the call, and whether it is a
+    /// phone ([`Caller::current_device`]).
+    pub async fn scope_with_device<F: Future>(self, device: CallerDevice, fut: F) -> F::Output {
+        DEVICE.scope(device, CALLER.scope(self, fut)).await
+    }
+
+    /// The device behind the tool call this task is running (none for the owner's own
+    /// calls and for transports that do not say).
+    pub fn current_device() -> CallerDevice {
+        DEVICE.try_with(Clone::clone).unwrap_or_default()
+    }
+
+    /// The [`Caller::Member`] a [`MEMBER_AUTH_OP`] answer names.
+    pub fn member_from(v: &Value) -> Result<Caller> {
+        let field = |k: &str| {
+            v.get(k)
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .ok_or_else(|| Error::invalid(format!("{MEMBER_AUTH_OP}: no `{k}`")))
+        };
+        Ok(Caller::Member {
+            handle: field("handle")?,
+            space: field("space")?,
+        })
+    }
+
+    /// An agent member's `(name, space)`: a persistent agent through its
+    /// bridge or an agent connected with a member key.
+    pub fn agent_member(&self) -> Option<(&str, &str)> {
+        match self {
+            Caller::Agent { name, space } => Some((name, space)),
+            Caller::Member { handle, space } => Some((handle, space)),
+            _ => None,
+        }
+    }
+
+    /// The caller a host's cua-spacesd forwarded
+    /// ([`crate::host_spaces::CALLER_METADATA`]): the owner for a call made
+    /// on this machine, else the relay account.
+    pub fn from_host(c: &crate::host_spaces::HostCaller) -> Caller {
+        if c.account == "local" || c.account.is_empty() {
+            return Caller::Owner;
+        }
+        Caller::Relay {
+            account: c.account.clone(),
+            name: c.name.clone().filter(|n| !n.is_empty()),
+            role: c.role.clone(),
+        }
+    }
 }
 
 /// A capability served outside this crate. Implementations must be cheap to
@@ -71,6 +210,13 @@ pub trait SpacesExtension: Send + Sync + 'static {
     /// A Space is going away (removed, deleted, released): what this
     /// extension holds for it ends here, while the Space still answers.
     fn space_dropped<'a>(&'a self, spaces: &'a Spaces, space: &'a str) -> BoxFuture<'a, ()> {
+        let _ = (spaces, space);
+        Box::pin(async {})
+    }
+
+    /// A Space was deleted for good (its sandbox is gone): what lived in it
+    /// ends here. Not called when a Space is only forgotten or released.
+    fn space_deleted<'a>(&'a self, spaces: &'a Spaces, space: &'a str) -> BoxFuture<'a, ()> {
         let _ = (spaces, space);
         Box::pin(async {})
     }
@@ -119,6 +265,7 @@ impl Spaces {
                 args,
                 broker: None,
                 pinned: None,
+                caller: Caller::current(),
             })
             .await?;
         outcome_json(out)

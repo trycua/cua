@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Read-only transport for the canonical, compiled-in Cua Driver skill pack.
 //!
 //! Implements SEP-2640 at d6b31a03504c15677d49b922b6b6ace0ef65728d.
@@ -60,6 +63,20 @@ const FILES: &[(&str, &str)] = &[
         include_str!("../../../Skills/cua-driver/WINDOWS.md"),
     ),
 ];
+
+/// The compiled-in skill files as `(file name, text)`. The same bytes back
+/// the MCP resources, the `get_guide` tool and the offline skill installer, so
+/// all three always match this binary.
+pub fn embedded_files() -> &'static [(&'static str, &'static str)] {
+    FILES
+}
+
+/// One compiled-in skill file by its name (for example `MACOS.md`).
+pub fn embedded_file(name: &str) -> Option<&'static str> {
+    FILES
+        .iter()
+        .find_map(|(file, text)| (*file == name).then_some(*text))
+}
 
 struct Pack {
     entry: Value,
@@ -193,6 +210,25 @@ mod tests {
     use super::*;
     use crate::protocol::ResponseBody;
 
+    #[test]
+    fn windows_selected_browser_guidance() {
+        let read = call(
+            "resources/read",
+            Some(json!({"uri": "skill://cua-driver/WINDOWS.md"})),
+        );
+        let text = read["contents"][0]["text"].as_str().unwrap();
+        assert!(
+            text.contains("\"...msedge.exe\", additional_arguments: [\"https://example.com/\"]")
+        );
+        assert!(text.contains("Do not combine `path` or `aumid` with `urls`"));
+        assert!(text.contains("For the default browser, use `urls` only"));
+        assert!(text.contains("additional_arguments:[<file>]"));
+        assert!(!text.contains("msedge.exe\", urls:"));
+        assert!(!text.contains("args:[<file>]"));
+        assert!(!text.contains("Microsoft.MicrosoftEdge.Stable_…!App"));
+        assert!(!text.contains("URL in a new window without activating it"));
+    }
+
     fn request(method: &str, params: Option<Value>) -> Request {
         Request {
             jsonrpc: "2.0".into(),
@@ -278,7 +314,7 @@ mod tests {
         let yaml = source.split("---").nth(1).unwrap();
         let expected: Value = serde_yaml_ng::from_str(yaml).unwrap();
         assert_eq!(pack().entry["frontmatter"], expected);
-        assert!(expected["version"].is_string());
+        assert!(expected["metadata"]["version"].is_string());
         assert_eq!(
             expected["metadata"]["openclaw"]["envVars"][0]["required"],
             false

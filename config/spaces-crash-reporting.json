@@ -1,0 +1,6 @@
+{
+  "_comment": "Sentry crash reporting for the Cua Spaces desktop app (CUA-2343). The DSN is a public ingest key, not a secret. An empty dsn turns crash reporting off in every build.",
+  "org": "cua-ai",
+  "project": "cua-spaces-desktop",
+  "dsn": "https://63781af5be2cf48728df3f94dfa78611@o4512320704413696.ingest.de.sentry.io/4512320720601168"
+}

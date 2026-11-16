@@ -1,14 +1,14 @@
 {
   "name": "create-space",
-  "about": "New Space wizard (the cloud tile is coming soon and refuses a pick; every field, label and the image field with its suggestions, a custom image ref and Connect by address) to a local plan, then the roster picks the Space up and the window selects it.",
+  "about": "New Space wizard (every field, label and the image field with its suggestions, a custom image ref and Connect by address) to a local plan, then the roster picks the Space up and the window selects it.",
   "env": {
     "defaultLocation": "local",
-    "cloudAvailable": false,
     "localAvailable": true,
     "localReason": null,
     "localBackends": [
       "docker"
     ],
+    "nameSeed": 42,
     "maxCpus": 8
   },
   "wizard": [
@@ -19,10 +19,6 @@
     {
       "type": "choose-os",
       "os": "linux"
-    },
-    {
-      "type": "set-placement",
-      "placement": "cloud"
     },
     {
       "type": "set-placement",

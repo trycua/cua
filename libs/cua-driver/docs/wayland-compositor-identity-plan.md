@@ -72,6 +72,14 @@ wlroots compositors may expose additional management or compositor IPC. Each
 route remains compositor-specific until it proves all required fields. No
 screen-coordinate fallback is allowed.
 
+niri (not a wlroots compositor) reports window identity on its IPC socket:
+a window id, PID, title, application ID, workspace, and, for floating windows,
+geometry. Cua Driver uses that socket only when its peer is the compositor
+serving `WAYLAND_DISPLAY`. Once niri is recognized, a lost socket, a changed
+peer, or a new compositor process refuses instead of falling back to generic
+discovery. Browser attachment through this route is not accepted: no niri
+browser matrix has run against the threat cases below.
+
 ## Threat Cases
 
 Each adapter and harness must cover:

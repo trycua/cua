@@ -66,6 +66,21 @@
       "section": {
         "addOther": "Add another key (For another provider, save its key under the variable its agent reads, like GEMINI_API_KEY.)",
         "added": "Added",
+        "canEdit": true,
+        "intro": "Agents in your Spaces need a provider key to run. Keys stay on this Mac in the Keychain, and each one is only given to the agents that use it.",
+        "notice": "Keychain not available in this development build: keys are stored unencrypted in ~/.cua-local/agent-keys. Do not use real production secrets.",
+        "rows": [
+          "Anthropic | ANTHROPIC_API_KEY | anthropic | •••• 0000 | Replace | Remove | added 1790000000000 | For Claude Code and other agents that use Claude.",
+          "OpenAI | OPENAI_API_KEY | openai | Not set | Add key | - | added - | For Codex and other agents that use OpenAI models."
+        ],
+        "title": "Agent keys"
+      },
+      "step": "a development build keeps keys in an unencrypted file"
+    },
+    {
+      "section": {
+        "addOther": "Add another key (For another provider, save its key under the variable its agent reads, like GEMINI_API_KEY.)",
+        "added": "Added",
         "canEdit": false,
         "intro": "Agents in your Spaces need a provider key to run. Keys stay on this Mac in the Keychain, and each one is only given to the agents that use it.",
         "notice": "Couldn't read your agent keys: The Cua daemon isn't running.",

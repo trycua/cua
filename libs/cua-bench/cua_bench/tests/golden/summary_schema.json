@@ -12,7 +12,6 @@
       "image_digest": "NoneType",
       "image_variant": "str",
       "kind": "str",
-      "pool": "NoneType",
       "retries": "int",
       "reward": "float",
       "runtime": "NoneType",

@@ -11,6 +11,8 @@ use std::net::{TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+/// A port that was free a moment ago. Another test process can take it
+/// before the relay binds it, so [`start_ready`] retries on fresh ports.
 fn free_port() -> u16 {
     TcpListener::bind("127.0.0.1:0")
         .unwrap()
@@ -31,6 +33,19 @@ fn start(port: u16, grace_secs: u64) -> Child {
         .expect("spawn cua-relay")
 }
 
+/// Starts a relay on fresh ports until one is ready, up to 5 tries: a relay
+/// that exits while starting lost the pick-then-bind race (`AddrInUse`).
+fn start_ready(grace_secs: u64) -> (Child, u16) {
+    for _ in 0..5 {
+        let port = free_port();
+        let mut child = start(port, grace_secs);
+        if wait_ready(&mut child, port) {
+            return (child, port);
+        }
+    }
+    panic!("relay did not start on any of 5 port picks");
+}
+
 fn healthz(port: u16) -> Option<String> {
     let mut s = TcpStream::connect(("127.0.0.1", port)).ok()?;
     s.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
@@ -41,15 +56,20 @@ fn healthz(port: u16) -> Option<String> {
     out.lines().next().map(str::to_owned)
 }
 
-fn wait_ready(port: u16) {
+/// True once `port` answers with `child` still running; false if the child
+/// exited first.
+fn wait_ready(child: &mut Child, port: u16) -> bool {
     let deadline = Instant::now() + Duration::from_secs(20);
     while Instant::now() < deadline {
+        if child.try_wait().expect("try_wait").is_some() {
+            return false;
+        }
         if let Some(status) = healthz(port) {
             assert!(
                 status.contains(" 204 "),
                 "unexpected /healthz status: {status}"
             );
-            return;
+            return child.try_wait().expect("try_wait").is_none();
         }
         std::thread::sleep(Duration::from_millis(50));
     }
@@ -82,9 +102,7 @@ fn wait_exit(child: &mut Child, within: Duration) -> std::process::ExitStatus {
 
 #[test]
 fn sigterm_stops_an_idle_relay() {
-    let port = free_port();
-    let mut child = start(port, 10);
-    wait_ready(port);
+    let (mut child, _port) = start_ready(10);
     sigterm(&child);
     let status = wait_exit(&mut child, Duration::from_secs(5));
     assert!(status.success(), "exit status {status:?}");
@@ -92,9 +110,7 @@ fn sigterm_stops_an_idle_relay() {
 
 #[test]
 fn sigterm_with_an_open_request_exits_after_the_grace() {
-    let port = free_port();
-    let mut child = start(port, 1);
-    wait_ready(port);
+    let (mut child, port) = start_ready(1);
     // A request whose body never arrives keeps its connection busy.
     let mut open = TcpStream::connect(("127.0.0.1", port)).unwrap();
     open.write_all(

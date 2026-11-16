@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Protocol integration tests for snapshot-bound element targeting.
 //!
 //! These exercise the MCP protocol surface (schema + capability claims)

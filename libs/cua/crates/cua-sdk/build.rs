@@ -1,12 +1,6 @@
 use std::path::Path;
 
 fn main() {
-    // Make the released dylib loadable from any host directory (Python
-    // wheels, npm platform packages, app bundles).
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
-        println!("cargo:rustc-cdylib-link-arg=-Wl,-install_name,@rpath/libcua_sdk.dylib");
-    }
-
     // The SDK version is libs/cua/VERSION (release-please bumps it with the
     // Python and npm manifests; the Cargo workspace version is not released).
     // cd-cua-sdk.yml sets CUA_SDK_RELEASE_VERSION to the version it publishes

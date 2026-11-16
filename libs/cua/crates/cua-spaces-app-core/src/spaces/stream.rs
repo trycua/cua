@@ -8,8 +8,9 @@
 //! - The Desktop row's icon is the Space's OS mark ([`crate::notch::os_icon`]):
 //!   the label already says "Desktop", so a generic display glyph would say
 //!   it twice, while the OS mark tells an Ubuntu desktop from a Windows one.
-//!   Its label carries the resolution of the Space's primary display
-//!   ("Desktop (1280×800)"), from the display list.
+//!   Its label is "Desktop"; the resolution of the Space's primary display
+//!   ("1280×800", from the display list) is the row's quiet right-hand
+//!   detail ([`StreamRow::resolution`]), said once, never in the label too.
 //! - A window row's label is the window's title (the app name only when the
 //!   title is empty) and its icon is the app's own, from the SDK's
 //!   `Space.app_icon`; a Space with no icon for the app shows none, never a
@@ -126,7 +127,7 @@ pub struct StreamRow {
     pub id: String,
     /// Desktop or window.
     pub kind: StreamRowKind,
-    /// The one line ("Desktop (1280×800)", a window's title).
+    /// The one line ("Desktop", a window's title).
     pub label: String,
     /// The full label, for the tooltip when it is truncated.
     pub help: String,
@@ -134,8 +135,25 @@ pub struct StreamRow {
     pub resolution: Option<String>,
     /// The icon.
     pub icon: StreamRowIcon,
+    /// For a window another Space shows here: the Space it lives in, drawn
+    /// as its OS mark and name beside the label. Absent on a Space's own
+    /// rows (older shells ignore it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<StreamRowOrigin>,
     /// Icon buttons, in order.
     pub actions: Vec<StreamRowAction>,
+}
+
+/// The Space a window row comes from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamRowOrigin {
+    /// The origin Space's id.
+    pub space_id: String,
+    /// Its name.
+    pub name: String,
+    /// Its OS mark (`os-macos`, ...): the core's artwork (`notch.osIconSvg`).
+    pub os_icon: String,
 }
 
 /// The Stream section.
@@ -186,16 +204,17 @@ pub fn stream_section(input: &StreamSectionInput) -> StreamSection {
     let resolution = input
         .display
         .and_then(|d| resolution_text(d.width_px, d.height_px));
-    let label = desktop_label(resolution.as_deref());
+    // The resolution shows once, as the row's detail; the tooltip has both.
     let mut rows = vec![StreamRow {
         id: DESKTOP_ROW_ID.into(),
         kind: StreamRowKind::Desktop,
-        help: label.clone(),
-        label,
+        help: desktop_label(resolution.as_deref()),
+        label: "Desktop".into(),
         resolution,
         icon: StreamRowIcon::Os {
             id: os_icon(input.os, input.os_name.as_deref()).into(),
         },
+        origin: None,
         actions: vec![pip(is_open(DESKTOP_ROW_ID))],
     }];
     let copy = detail_copy();
@@ -212,11 +231,29 @@ pub fn stream_section(input: &StreamSectionInput) -> StreamSection {
             let shown = filter_remote_windows(&windows, &input.query);
             rows.extend(shown.iter().map(|w| {
                 let label = window_label(w);
+                let origin = w.origin.as_ref().map(|o| StreamRowOrigin {
+                    space_id: o.space_id.clone(),
+                    name: o.name.clone(),
+                    os_icon: os_icon(
+                        match o.os.as_str() {
+                            "macos" => SpaceOs::Macos,
+                            "windows" => SpaceOs::Windows,
+                            "linux" => SpaceOs::Linux,
+                            _ => SpaceOs::Unknown,
+                        },
+                        None,
+                    )
+                    .into(),
+                });
                 StreamRow {
                     id: w.id.clone(),
                     kind: StreamRowKind::Window,
-                    help: label.clone(),
+                    help: match &origin {
+                        Some(o) => format!("{label} in {}", o.name),
+                        None => label.clone(),
+                    },
                     label,
+                    origin,
                     resolution: None,
                     icon: StreamRowIcon::App {
                         app_name: w.app_name.clone(),
@@ -320,6 +357,7 @@ pub fn pip_click(open: &[String], row: &str) -> PipCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::teleport::windows::RemoteWindowOrigin;
 
     #[test]
     fn pip_panels_track_opens_closes_and_resyncs() {
@@ -369,7 +407,31 @@ mod tests {
             width_px: None,
             height_px: None,
             pid: Some(42),
+            origin: None,
         }
+    }
+
+    #[test]
+    fn a_window_shown_from_another_space_says_where_it_lives() {
+        let mut shown = win("xs:1", "Safari", "Apple");
+        shown.origin = Some(RemoteWindowOrigin {
+            space_id: "local:mac-child".into(),
+            name: "mac-child".into(),
+            os: "macos".into(),
+        });
+        let section = stream_section(&input(Some(vec![win("w1", "Firefox", "Docs"), shown])));
+        let own = &section.rows[1];
+        assert!(own.origin.is_none());
+        let row = &section.rows[2];
+        assert_eq!(row.label, "Apple");
+        assert_eq!(row.help, "Apple in mac-child");
+        let o = row.origin.as_ref().expect("origin");
+        assert_eq!(
+            (o.name.as_str(), o.os_icon.as_str()),
+            ("mac-child", "os-macos")
+        );
+        // An older shell's rows (no origin) serialize without the field.
+        assert!(serde_json::to_value(own).unwrap().get("origin").is_none());
     }
 
     fn input(windows: Option<Vec<RemoteWindow>>) -> StreamSectionInput {
@@ -391,8 +453,10 @@ mod tests {
     fn desktop_row_carries_the_resolution_and_the_os_mark() {
         let s = stream_section(&input(Some(vec![])));
         let d = &s.rows[0];
-        assert_eq!(d.label, "Desktop (1280\u{d7}800)");
+        // Said once: the label is "Desktop", the resolution its detail.
+        assert_eq!(d.label, "Desktop");
         assert_eq!(d.resolution.as_deref(), Some("1280\u{d7}800"));
+        assert_eq!(d.help, "Desktop (1280\u{d7}800)");
         assert_eq!(
             d.icon,
             StreamRowIcon::Os {
@@ -417,10 +481,7 @@ mod tests {
         i.open = vec!["w2".into()];
         let s = stream_section(&i);
         let labels: Vec<&str> = s.rows.iter().map(|r| r.label.as_str()).collect();
-        assert_eq!(
-            labels,
-            ["Desktop (1280\u{d7}800)", "Mozilla Firefox", "xterm"]
-        );
+        assert_eq!(labels, ["Desktop", "Mozilla Firefox", "xterm"]);
         assert_eq!(
             s.rows[1].icon,
             StreamRowIcon::App {
@@ -444,6 +505,151 @@ mod tests {
         assert_eq!(
             s.status_text.as_deref(),
             Some("Looking for this Space\u{2019}s windows\u{2026}")
+        );
+    }
+}
+
+/// What a thread post says the person was looking at, when the Space's main
+/// view shows `row` (the Stream rail's pick): a window by its app, title and
+/// id. The desktop is the default view, so a post made on it carries none.
+/// The daemon stores it with the entry (`thread_post`'s `view`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamView {
+    /// `window` (a desktop view is never sent).
+    pub kind: String,
+    /// The app ("Firefox").
+    pub app: Option<String>,
+    /// The window's title ("Pull requests").
+    pub title: Option<String>,
+    /// The window's handle (the row's id).
+    pub window_id: Option<String>,
+}
+
+/// [`StreamView`] for `row`, `None` for the desktop.
+pub fn view_context(row: &StreamRow) -> Option<StreamView> {
+    if row.kind == StreamRowKind::Desktop || row.id == DESKTOP_ROW_ID {
+        return None;
+    }
+    let app = match &row.icon {
+        StreamRowIcon::App { app_name, .. } if !app_name.trim().is_empty() => {
+            Some(app_name.trim().to_string())
+        }
+        _ => None,
+    };
+    // A window with no title is labelled with its app name: no title then.
+    let title =
+        Some(row.label.trim().to_string()).filter(|t| !t.is_empty() && Some(t) != app.as_ref());
+    Some(StreamView {
+        kind: "window".into(),
+        app,
+        title,
+        window_id: Some(row.id.clone()),
+    })
+}
+
+/// The quiet line under a message that carries a view: "Sent from
+/// Firefox", the window's title when its app is not known, or "Sent from
+/// the desktop". `kind`, `app` and `title` are the entry's `view`.
+pub fn view_line(kind: &str, app: Option<&str>, title: Option<&str>) -> String {
+    fn some(s: Option<&str>) -> Option<&str> {
+        s.map(str::trim).filter(|s| !s.is_empty())
+    }
+    match (kind, some(app), some(title)) {
+        ("window", Some(app), _) => format!("Sent from {app}"),
+        ("window", None, Some(title)) => format!("Sent from {title}"),
+        ("window", None, None) => "Sent from a window".into(),
+        _ => "Sent from the desktop".into(),
+    }
+}
+
+#[cfg(test)]
+mod view_tests {
+    use super::*;
+
+    fn row(kind: StreamRowKind, id: &str, label: &str, app: Option<&str>) -> StreamRow {
+        StreamRow {
+            id: id.into(),
+            kind,
+            label: label.into(),
+            help: label.into(),
+            resolution: None,
+            icon: match app {
+                Some(a) => StreamRowIcon::App {
+                    app_name: a.into(),
+                    app_id: format!("org.{a}"),
+                    pid: 0,
+                },
+                None => StreamRowIcon::Os {
+                    id: "os-ubuntu".into(),
+                },
+            },
+            origin: None,
+            actions: vec![],
+        }
+    }
+
+    #[test]
+    fn a_window_pick_says_its_app_title_and_id() {
+        let v = view_context(&row(
+            StreamRowKind::Window,
+            "w42",
+            "Pull requests",
+            Some("Firefox"),
+        ))
+        .unwrap();
+        assert_eq!(
+            v,
+            StreamView {
+                kind: "window".into(),
+                app: Some("Firefox".into()),
+                title: Some("Pull requests".into()),
+                window_id: Some("w42".into()),
+            }
+        );
+        assert_eq!(
+            view_line(&v.kind, v.app.as_deref(), v.title.as_deref()),
+            "Sent from Firefox"
+        );
+        assert_eq!(
+            serde_json::to_value(&v).unwrap(),
+            serde_json::json!({"kind": "window", "app": "Firefox", "title": "Pull requests", "windowId": "w42"})
+        );
+    }
+
+    #[test]
+    fn the_desktop_is_the_default_view_and_sends_none() {
+        assert_eq!(
+            view_context(&row(
+                StreamRowKind::Desktop,
+                DESKTOP_ROW_ID,
+                "Desktop (1280×800)",
+                None
+            )),
+            None
+        );
+    }
+
+    #[test]
+    fn an_untitled_window_is_its_app_and_an_unknown_app_its_title() {
+        let untitled = view_context(&row(
+            StreamRowKind::Window,
+            "w1",
+            "Terminal",
+            Some("Terminal"),
+        ))
+        .unwrap();
+        assert_eq!(untitled.title, None);
+        let no_app = view_context(&row(StreamRowKind::Window, "w2", "notes.txt", None)).unwrap();
+        assert_eq!(no_app.app, None);
+        assert_eq!(
+            view_line("window", None, Some("notes.txt")),
+            "Sent from notes.txt"
+        );
+        assert_eq!(view_line("window", None, None), "Sent from a window");
+        assert_eq!(
+            view_line("desktop", Some("x"), None),
+            "Sent from the desktop"
         );
     }
 }

@@ -729,7 +729,7 @@ export const NegotiatedAudioSchema: GenMessage<NegotiatedAudio> = /*@__PURE__*/
 
 /**
  * Direct QUIC media endpoint. Only reachable when the client can reach the
- * guest's UDP port directly (not through the Fleet gateway or relay).
+ * guest's UDP port directly (not through a gateway or the relay).
  *
  * @generated from message cua.env.v1.QuicEndpoint
  */
@@ -835,8 +835,8 @@ export type OpenMediaResponse = Message<"cua.env.v1.OpenMediaResponse"> & {
 
   /**
    * WebSocket path relative to the spacesd base URL, including the
-   * ticket, for example "/media?ticket=…". Works through the Fleet gateway
-   * and the relay.
+   * ticket, for example "/media?ticket=…". Works through gateways and the
+   * relay.
    *
    * @generated from field: string ws_path = 4;
    */

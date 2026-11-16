@@ -8,8 +8,9 @@ alias = defines["alias"]  # noqa: F821
 art = defines["art"]  # noqa: F821
 app_name = os.path.basename(app)
 
-format = "UDZO"
-compression_level = 9
+# LZMA (macOS 10.15+; the app needs 26): about 30% smaller than zlib
+# (UDZO) for this app, whose binaries are mostly code.
+format = "ULMO"
 filesystem = "HFS+"
 files = [app, alias]
 icon = os.path.join(app, "Contents", "Resources", "AppIcon.icns")
@@ -30,6 +31,6 @@ text_size = 12
 icon_size = 144
 hide_extensions = [app_name]
 icon_locations = {
-    app_name: (173, 240),
-    os.path.basename(alias): (566, 147),
+    app_name: (150, 300),
+    os.path.basename(alias): (600, 196),
 }

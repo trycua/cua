@@ -135,7 +135,7 @@ impl ExportProvider for WhatsAppProvider {
             total_est_bytes: total,
             notes: vec![
                 "Carries the linked-device session and chat store. WhatsApp may \
-                 re-validate on a new machine and ask to re-link via QR."
+                 re-validate on a new computer and ask to re-link via QR."
                     .to_string(),
                 "Close WhatsApp before transfer for a clean capture.".to_string(),
             ],

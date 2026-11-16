@@ -9,7 +9,6 @@ import yaml
 ROOT = Path(__file__).resolve().parents[3]
 TRIGGER = ROOT / ".github/workflows/review-cua-perception-candidates.yml"
 CANDIDATE = ROOT / ".github/workflows/cd-cua-perception-review-supplied-inputs.yml"
-LIVE = ROOT / ".github/workflows/authorized-live-jev-use-demo.yml"
 MACOS_ENTRY = ROOT / ".github/workflows/e2e-rust-macos.yml"
 
 
@@ -135,45 +134,18 @@ def test_pr_review_produces_candidates_without_entering_the_protected_environmen
     assert not re.findall(r"^\s*environment:", trigger_text, re.MULTILINE)
 
 
-def test_protected_candidate_workflow_is_secret_free_and_keeps_environment() -> None:
-    live_text, live_workflow = load_workflow(LIVE)
-    live_job = live_workflow["jobs"]["candidate"]
-    assert live_job["environment"] == "authorized-live-jev-use-demo"
-    assert "TYPESAFE_API_KEY" not in live_text
-    assert "LIVE_TYPESAFE_API_KEY" not in live_text
-    assert "${{ secrets." not in live_text
-    assert "run_live" not in live_text
-    assert "CUA_JEV_LIVE" not in live_text
-    secret_steps = [step for step in live_job["steps"] if "${{ secrets." in str(step)]
-    assert secret_steps == []
-    assert "TYPESAFE_API_KEY" not in "\n".join(
-        str(job) for name, job in live_workflow["jobs"].items() if name != "candidate"
-    )
-    evidence_step = next(
-        step
-        for step in live_job["steps"]
-        if "CUA_PERCEPTION_EVIDENCE_RECIPIENT" in step.get("env", {})
-    )
-    assert evidence_step["env"] == {
-        "CUA_PERCEPTION_EVIDENCE_RECIPIENT": ("${{ vars.EVIDENCE_ARCHIVE_RECIPIENT_PUBLIC_KEY }}"),
-    }
-    assert "EVIDENCE_ARCHIVE_KEY" not in live_text
-    validation = next(
-        step["run"] for step in live_job["steps"] if step.get("name", "").startswith("Fully decode")
-    )
-    assert 'chooser["mode"] == "mock"' in validation
-    assert 'chooser["provider"] == "fixture"' in validation
-
-
 def test_macos_direct_lume_registration_is_manual_and_not_pr_event_chained() -> None:
     _, workflow = load_workflow(TRIGGER)
     assert "macos" not in workflow["jobs"]
     entry_text, entry_workflow = load_workflow(MACOS_ENTRY)
     entry_triggers = triggers(entry_workflow)
     assert set(entry_triggers) == {"workflow_dispatch", "workflow_call"}
-    # The release-gate call exposes only the hosted source SHA; direct Lume
+    # The release-gate call exposes only the hosted source SHA and the rebuild flag; direct Lume
     # registration stays a manual dispatch.
-    assert set(entry_triggers["workflow_call"]["inputs"]) == {"source_sha"}
+    assert set(entry_triggers["workflow_call"]["inputs"]) == {
+        "source_sha",
+        "rebuild_of_released_source",
+    }
     assert entry_workflow["jobs"]["register-lume"]["if"] == "inputs.mode == 'lume'"
     callers = sorted(
         path.name

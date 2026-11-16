@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-use crate::{schema_settings, CaptureScope, EscalationReason, Platform};
+use crate::{schema_settings, CaptureScope, Platform};
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -179,7 +179,7 @@ impl EffectiveScope {
     }
 }
 
-/// Successful structured result shared by session state and escalation tools.
+/// Capture-scope state carried by the `start_session` result.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
 pub struct SessionStateOutput {
     pub session: String,
@@ -191,10 +191,6 @@ pub struct SessionStateOutput {
     /// Compatibility field: this reports whether this session has unlocked
     /// desktop capture scope. It is not an operating-system lock-screen probe.
     pub desktop_unlocked: bool,
-    #[schemars(required, schema_with = "nullable_escalation_reason_schema")]
-    pub escalation_reason: Option<EscalationReason>,
-    #[schemars(required, schema_with = "nullable_string_schema")]
-    pub escalation_detail: Option<String>,
 }
 
 impl ToolOutput for SessionStateOutput {}
@@ -696,6 +692,93 @@ pub struct ActionResult {
     /// Present only with `effect: refused`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<ActionError>,
+    /// What to do next, in one short sentence. Present when the effect is
+    /// `unverifiable` or `suspected_noop`, so an unconfirmed action points at
+    /// the next step instead of leaving the agent to guess. Also carries a
+    /// suggestion to chain steps with `run_steps` after several direct actions
+    /// in a row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+    /// The call that moves the task forward, always safe to run as is (a read,
+    /// or a call that keeps the user's window where it is).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_call: Option<ActionNextCall>,
+    /// Present only when the `fast_path` config key is `on`: the check cost,
+    /// the target class and the changed regions since the last read, as one
+    /// JSON object. Absent when the flag is off, so default results are
+    /// unchanged.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "optional_json_object_text"
+    )]
+    #[schemars(schema_with = "object_schema")]
+    pub fast_path: Option<String>,
+}
+
+/// A call an agent can make next: `{tool, arguments}`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ActionNextCall {
+    pub tool: String,
+    /// The call's arguments. A JSON object on the wire; the SDK records carry
+    /// the same object as JSON text.
+    #[serde(with = "json_object_text")]
+    #[schemars(schema_with = "object_schema")]
+    pub arguments: String,
+}
+
+/// Serde adapter: a JSON object on the wire, JSON text in the record.
+mod json_object_text {
+    use serde::{
+        de::Error as _, ser::Error as _, Deserialize, Deserializer, Serialize, Serializer,
+    };
+    use serde_json::Value;
+
+    pub fn serialize<S: Serializer>(text: &str, serializer: S) -> Result<S::Ok, S::Error> {
+        match serde_json::from_str::<Value>(text).map_err(S::Error::custom)? {
+            value @ Value::Object(_) => value.serialize(serializer),
+            _ => Err(S::Error::custom(
+                "next_call arguments must be a JSON object",
+            )),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+        match Value::deserialize(deserializer)? {
+            value @ Value::Object(_) => Ok(value.to_string()),
+            _ => Err(D::Error::custom(
+                "next_call arguments must be a JSON object",
+            )),
+        }
+    }
+}
+
+/// Serde adapter: an optional JSON object on the wire, JSON text in the record.
+mod optional_json_object_text {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use serde_json::Value;
+
+    pub fn serialize<S: Serializer>(
+        text: &Option<String>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        match text {
+            Some(text) => super::json_object_text::serialize(text, serializer),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<String>, D::Error> {
+        Ok(
+            Option::<Value>::deserialize(deserializer)?.and_then(|v| match v {
+                Value::Object(_) => Some(v.to_string()),
+                _ => None,
+            }),
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -766,6 +849,10 @@ impl ToolOutput for ActionResult {
     }
 }
 
+fn object_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({ "type": "object" })
+}
+
 fn string_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
     schemars::json_schema!({ "type": "string" })
 }
@@ -796,24 +883,6 @@ fn nullable_string_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema
 fn nullable_cursor_point_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
     let point = generator.subschema_for::<CursorPointOutput>();
     schemars::json_schema!({ "anyOf": [point, { "type": "null" }] })
-}
-
-fn nullable_escalation_reason_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-    schemars::json_schema!({
-        "anyOf": [
-            {
-                "type": "string",
-                "enum": [
-                    "ax_tree_pixel_mismatch",
-                    "background_delivery_failed",
-                    "foreground_ineffective",
-                    "no_window_target",
-                    "other"
-                ]
-            },
-            { "type": "null" }
-        ]
-    })
 }
 
 #[cfg(test)]
@@ -848,6 +917,9 @@ mod tests {
             escalation: None,
             summary: None,
             error: None,
+            hint: None,
+            next_call: None,
+            fast_path: None,
         }
     }
 
@@ -908,6 +980,9 @@ mod tests {
                 "error",
                 "escalation",
                 "evidence",
+                "fast_path",
+                "hint",
+                "next_call",
                 "route",
                 "summary"
             ]
@@ -1068,6 +1143,47 @@ mod tests {
             }
         });
         assert!(serde_json::from_value::<ActionResult>(escalation_extension).is_err());
+    }
+
+    #[test]
+    fn hint_and_next_call_travel_as_a_string_and_a_json_object() {
+        let wire = json!({
+            "effect": "unverifiable",
+            "route": "synthetic_events",
+            "hint": "Read what changed before clicking again.",
+            "next_call": {
+                "tool": "get_window_state",
+                "arguments": {"pid": 7, "window_id": 3, "since": "latest"}
+            }
+        });
+        let result = serde_json::from_value::<ActionResult>(wire.clone()).expect("hint");
+        assert_eq!(result.validate_invariants(), Ok(()));
+        assert_eq!(
+            result.hint.as_deref(),
+            Some("Read what changed before clicking again.")
+        );
+        let call = result.next_call.as_ref().expect("next_call");
+        assert_eq!(call.tool, "get_window_state");
+        // The record keeps the arguments as JSON text, so every SDK language reads them.
+        assert_eq!(
+            serde_json::from_str::<Value>(&call.arguments).expect("json text"),
+            json!({"pid": 7, "window_id": 3, "since": "latest"})
+        );
+        // The wire form is the object again.
+        assert_eq!(serde_json::to_value(&result).expect("serialize"), wire);
+
+        let mut not_an_object = wire.clone();
+        not_an_object["next_call"]["arguments"] = json!("get_window_state");
+        assert!(serde_json::from_value::<ActionResult>(not_an_object).is_err());
+        let mut extra = wire;
+        extra["next_call"]["note"] = json!("x");
+        assert!(serde_json::from_value::<ActionResult>(extra).is_err());
+
+        let schema = ActionResult::output_schema();
+        let next_call = object_variant(&schema["properties"]["next_call"]);
+        assert_eq!(next_call["additionalProperties"], false);
+        assert_eq!(next_call["required"], json!(["tool", "arguments"]));
+        assert_eq!(next_call["properties"]["arguments"]["type"], "object");
     }
 
     #[test]

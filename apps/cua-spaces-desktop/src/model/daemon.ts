@@ -18,6 +18,7 @@ import { execFile, spawn } from "node:child_process";
 import { readFileSync, readlinkSync, realpathSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { daemonLacksDockerGroup } from "./linux-runtime";
 import { sleep } from "./time";
 
 /** `CUA_KEYCHAIN_NONINTERACTIVE` (cua-auth's `KEYCHAIN_NONINTERACTIVE_ENV`). */
@@ -91,7 +92,7 @@ const alive = (pid: number) => {
 };
 
 /** The executable a process runs, when the system says. */
-export function executablePath(pid: number, platform: NodeJS.Platform = process.platform): Promise<string | null> {
+export function executablePath(pid: number, platform: NodeJS.Platform = process.platform, run: typeof execFile = execFile): Promise<string | null> {
   if (pid <= 0) return Promise.resolve(null);
   if (platform === "linux") {
     try {
@@ -105,10 +106,17 @@ export function executablePath(pid: number, platform: NodeJS.Platform = process.
       ? ["powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `(Get-Process -Id ${pid}).Path`]]
       : ["ps", ["-o", "comm=", "-p", String(pid)]];
   return new Promise((resolve) => {
-    execFile(cmd as string, args as string[], { timeout: 5000, windowsHide: true }, (error, stdout) => {
-      const out = String(stdout ?? "").trim();
-      resolve(error || !out ? null : out);
-    });
+    // `execFile` can throw while spawning (Windows, when a process cannot be
+    // created: CUA-SPACES-DESKTOP-5), which rejected this promise and then the
+    // supervisor's loop. A process that cannot be inspected has no known path.
+    try {
+      run(cmd as string, args as string[], { timeout: 5000, windowsHide: true }, (error, stdout) => {
+        const out = String(stdout ?? "").trim();
+        resolve(error || !out ? null : out);
+      });
+    } catch {
+      resolve(null);
+    }
   });
 }
 
@@ -196,6 +204,7 @@ export class DaemonSupervisor {
    * starts it again (`CUA_DAEMON_KEEP`, here and for the SDK in this process).
    */
   async start(timeoutMs = 60_000): Promise<string | null> {
+    await this.replaceDaemonWithoutDockerGroup();
     const before = await this.stranger();
     const error = await this.run(["daemon", "start"], timeoutMs);
     // Replaced: another daemon is named now, or that one is gone.
@@ -206,6 +215,24 @@ export class DaemonSupervisor {
       console.log(`[cua-spaces] replaced another app's cua daemon (${before.executable}); if it comes back, it is kept`);
     }
     return error;
+  }
+
+  /**
+   * Linux (CUA-1763): a daemon of this bundle that started before the user
+   * joined the `docker` group never gets it (a lingering session keeps the
+   * old groups), so it cannot reach Docker while this app can. Stops it
+   * here; the start that follows runs a new one with the group.
+   */
+  private async replaceDaemonWithoutDockerGroup(): Promise<void> {
+    if (this.platform !== "linux") return;
+    for (const pid of daemonPids(this.cuaHome)) {
+      if (!(await this.isOwn(pid))) continue;
+      if (await daemonLacksDockerGroup(pid)) {
+        console.log(`[cua-spaces] the cua daemon (pid ${pid}) started without the docker group this app has; replacing it`);
+        await this.run(["daemon", "stop"], 15_000);
+        await DaemonSupervisor.stop(pid);
+      }
+    }
   }
 
   /** Stops this app's daemon (bounded), kills one of this bundle that still starts or no longer answers, then starts it. */

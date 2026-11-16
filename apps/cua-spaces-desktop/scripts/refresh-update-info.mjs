@@ -25,7 +25,13 @@ function builderLib(subpath) {
   return require(join(lib, subpath));
 }
 
-export async function refresh(files, { buildBlockMap = builderLib("out/targets/blockmap/blockmap.js").buildBlockMap, yaml = require(require.resolve("js-yaml", { paths: [dirname(require.resolve("electron-builder/package.json"))] })) } = {}) {
+export async function refresh(
+  files,
+  {
+    buildBlockMap = builderLib("out/targets/blockmap/blockmap.js").buildBlockMap,
+    yaml = require(require.resolve("js-yaml", { paths: [dirname(require.resolve("electron-builder/package.json"))] })),
+  } = {},
+) {
   for (const file of files) {
     const info = await buildBlockMap(file, "gzip", `${file}.blockmap`);
     const name = basename(file);

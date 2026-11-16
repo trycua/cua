@@ -24,7 +24,7 @@ pub const PAIRING_TOKEN_PREFIX: &str = "cpc_";
 /// Characters of a code.
 pub const PAIRING_CODE_LEN: usize = 12;
 /// Where an add-machine link opens in production.
-pub const ADD_MACHINE_BASE_URL: &str = "https://spaces.cua.ai/add";
+pub const ADD_MACHINE_BASE_URL: &str = "https://cua.ai/add";
 
 /// Where an add-machine link opens: `<Spaces site>/add`, the site of
 /// `CUA_SPACES_SITE_URL` or `CUA_ENV` ([`ADD_MACHINE_BASE_URL`] in
@@ -80,7 +80,7 @@ pub fn display_pairing_code(code: &str) -> String {
 }
 
 /// The add-machine link for `code`: `<add_machine_base_url>/<code>`
-/// (`https://spaces.cua.ai/add/<code>` in production), plus `?relay=<url>`
+/// (`https://cua.ai/add/<code>` in production), plus `?relay=<url>`
 /// when the machine must join another relay than the production
 /// [`DEFAULT_RELAY_URL`] (a staging relay is always named, since the
 /// machine being added has no `CUA_ENV`).
@@ -204,7 +204,7 @@ struct PairingCodeList {
 fn check_pairing_team(req: &PairingCodeRequest, teams: bool) -> Result<()> {
     if req.team.is_some() && !teams {
         return Err(Error::InvalidArgument(format!(
-            "{} A pairing code adds the machine to your account; leave out the team.",
+            "{} A pairing code adds the computer to your account; leave out the team.",
             cua_home::experimental::TEAMS_UNAVAILABLE
         )));
     }
@@ -249,7 +249,8 @@ impl RelayClient {
             .is_some_and(|h| !h.is_empty() && h.bytes().all(|b| b.is_ascii_alphanumeric()));
         if !valid {
             return Err(Error::InvalidArgument(format!(
-                "{id:?} is not a pairing code id (pc_…; see `cua host pair --list`)"
+                "{id:?} is not a pairing code id (pc_…; see `{} host pair --list`)",
+                crate::cli()
             )));
         }
         let _: serde_json::Value = self
@@ -298,7 +299,7 @@ impl RelayClient {
                 }
                 Some(c) if c.state == "revoked" || c.state == "expired" => {
                     return Err(Error::InvalidArgument(format!(
-                        "pairing code {code_id} was {} before a machine used it",
+                        "pairing code {code_id} was {} before a computer used it",
                         c.state
                     )));
                 }
@@ -307,19 +308,24 @@ impl RelayClient {
                 }
                 Some(_) if now() >= until => {
                     return Err(Error::InvalidArgument(format!(
-                        "no machine used pairing code {code_id} in time"
+                        "no computer used pairing code {code_id} in time"
                     )));
                 }
                 Some(_) => tokio::time::sleep(poll).await,
             }
         };
-        api.finishing_setup(
-            token,
-            crate::spaces_api::SETUP_RETRY_WINDOW,
-            waiting,
-            || api.add_org_machine(token, org, &machine, "", &name),
-        )
-        .await?;
+        if let Err(e) = api
+            .finishing_setup_org(
+                token,
+                org,
+                crate::spaces_api::SETUP_RETRY_WINDOW,
+                waiting,
+                || api.add_org_machine(token, org, &machine, "", &name),
+            )
+            .await
+        {
+            return Err(api.explain_plan_error(token, org, e).await);
+        }
         Ok(machine)
     }
 }
@@ -350,6 +356,11 @@ mod tests {
             Some("K7QM4XPB2RHD")
         );
         assert_eq!(
+            normalize_pairing_code("https://cua.ai/add/K7QM-4XPB-2RHD?relay=x").as_deref(),
+            Some("K7QM4XPB2RHD")
+        );
+        // Links printed by older apps keep working.
+        assert_eq!(
             normalize_pairing_code("https://spaces.cua.ai/add/K7QM-4XPB-2RHD?relay=x").as_deref(),
             Some("K7QM4XPB2RHD")
         );
@@ -364,10 +375,8 @@ mod tests {
             other => panic!("expected InvalidArgument, got {:?}", other.map(|t| t.0)),
         }
         assert_eq!(
-            pairing_link_relay(
-                "https://spaces.cua.ai/add/K7QM-4XPB-2RHD?relay=https%3A%2F%2Fr.example"
-            )
-            .as_deref(),
+            pairing_link_relay("https://cua.ai/add/K7QM-4XPB-2RHD?relay=https%3A%2F%2Fr.example")
+                .as_deref(),
             Some("https://r.example")
         );
         assert_eq!(pairing_link_relay("K7QM-4XPB-2RHD"), None);
@@ -378,11 +387,11 @@ mod tests {
     fn links_and_commands_carry_a_custom_relay_only() {
         assert_eq!(
             add_machine_url("k7qm4xpb2rhd", DEFAULT_RELAY_URL),
-            "https://spaces.cua.ai/add/K7QM-4XPB-2RHD"
+            "https://cua.ai/add/K7QM-4XPB-2RHD"
         );
         assert_eq!(
             add_machine_url("K7QM4XPB2RHD", "https://relay.example.com/"),
-            "https://spaces.cua.ai/add/K7QM-4XPB-2RHD?relay=https%3A%2F%2Frelay.example.com"
+            "https://cua.ai/add/K7QM-4XPB-2RHD?relay=https%3A%2F%2Frelay.example.com"
         );
         assert_eq!(
             install_command("K7QM4XPB2RHD", DEFAULT_RELAY_URL, "linux"),

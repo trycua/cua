@@ -16,8 +16,6 @@ except ModuleNotFoundError:  # Python 3.10 and earlier
     import tomli as tomllib
 from typing import Sequence
 
-from sync_driver_release_docs import driver_reference_paths
-from sync_lume_release_docs import lume_reference_paths
 
 
 class VersionError(RuntimeError):
@@ -116,7 +114,6 @@ def read_withdrawn_versions(path: Path) -> dict[str, str]:
 
 def driver_versions(root: Path) -> tuple[str, dict[str, str]]:
     base = root / "libs/cua-driver"
-    docs_dir = "docs/content/docs/cua-driver/reference"
     expected = (base / "rust/VERSION").read_text().strip()
     cargo = tomllib.loads((base / "rust/Cargo.toml").read_text())
     python_project = tomllib.loads((base / "python/pyproject.toml").read_text())
@@ -139,13 +136,9 @@ def driver_versions(root: Path) -> tuple[str, dict[str, str]]:
         ),
         "rust/Skills/cua-driver/SKILL.md": read_match(
             base / "rust/Skills/cua-driver/SKILL.md",
-            r"^version:\s*([^\s#]+)",
+            r"^  version:\s*([^\s#]+)",
         ),
     }
-    for relative in driver_reference_paths(root):
-        values[f"docs/{Path(relative).relative_to(docs_dir).as_posix()}:metadata"] = read_match(
-            root / relative, r"^  Version: (\S+)$"
-        )
 
     members = [base / "rust" / member for member in cargo["workspace"]["members"]]
     local_names = {
@@ -181,7 +174,6 @@ def perception_versions(root: Path) -> tuple[str, dict[str, str]]:
 
 def lume_versions(root: Path) -> tuple[str, dict[str, str]]:
     base = root / "libs/lume"
-    docs_dir = "docs/content/docs/lume/reference"
     expected = (base / "VERSION").read_text().strip()
     values = {
         "src/Main.swift": read_match(
@@ -190,14 +182,7 @@ def lume_versions(root: Path) -> tuple[str, dict[str, str]]:
         "scripts/install.sh": read_match(
             base / "scripts/install.sh", r'^LUME_BAKED_VERSION="([^"]+)"'
         ),
-        "docs/http-api.mdx:body": read_match(
-            root / docs_dir / "http-api.mdx", r"Documented against Lume \*\*(\S+)\*\*\."
-        ),
     }
-    for relative in lume_reference_paths(root):
-        values[f"docs/{Path(relative).relative_to(docs_dir).as_posix()}:metadata"] = read_match(
-            root / relative, r"^  Version: (\S+)$"
-        )
     return expected, values
 
 
@@ -258,7 +243,33 @@ def sdk_versions(root: Path) -> tuple[str, dict[str, str]]:
         "typescript/package.json": str(package["version"]),
         "typescript/package-lock.json": str(lock["version"]),
         "typescript/package-lock.json:root": str(lock["packages"][""]["version"]),
+        **sdk_crate_versions(base),
     }
+
+
+def sdk_crate_versions(base: Path) -> dict[str, str]:
+    """The libs/cua Cargo workspace releases at the SDK version: its package
+    version, the versions its crates require of each other, and their
+    entries in libs/cua/Cargo.lock (cua-sdk and the crates it needs are
+    published to crates.io at it)."""
+    workspace = tomllib.loads((base / "Cargo.toml").read_text())["workspace"]
+    values = {"Cargo.toml:workspace.package.version": str(workspace["package"]["version"])}
+    for name, dep in workspace["dependencies"].items():
+        if isinstance(dep, dict) and str(dep.get("path", "")).startswith("crates/") and "version" in dep:
+            values[f"Cargo.toml:workspace.dependencies.{name}"] = str(dep["version"])
+    sdk = tomllib.loads((base / "crates/cua-sdk/Cargo.toml").read_text())
+    for name, dep in sdk.get("dependencies", {}).items():
+        if isinstance(dep, dict) and "path" in dep and "version" in dep:
+            values[f"crates/cua-sdk/Cargo.toml:dependencies.{name}"] = str(dep["version"])
+    members = {
+        tomllib.loads(manifest.read_text())["package"]["name"]
+        for manifest in base.glob("crates/*/Cargo.toml")
+    }
+    lock = tomllib.loads((base / "Cargo.lock").read_text())
+    for entry in lock["package"]:
+        if entry["name"] in members and "source" not in entry:
+            values[f"Cargo.lock:{entry['name']}"] = str(entry["version"])
+    return values
 
 
 def spaces_app_versions(root: Path) -> tuple[str, dict[str, str]]:
@@ -289,16 +300,7 @@ def spaces_app_versions(root: Path) -> tuple[str, dict[str, str]]:
 # Packages whose Release Please entry is the whole version contract: the
 # manifest version must equal every extra file Release Please bumps.
 CONFIG_ONLY_PACKAGES = (
-    "libs/python/agent",
-    "libs/python/core",
     "libs/cua-bench",
-    "libs/python/bench-ui",
-    "libs/python/som",
-    "libs/python/cua-sandbox-apps",
-    "libs/python/cua-train",
-    "libs/typescript/core",
-    "libs/typescript/playground",
-    "libs/cuabot",
 )
 LOCK_ENTRY = re.compile(r"^\$\.package\[\?\(@\.name\.value=='([^']+)'\)\]\.version$")
 

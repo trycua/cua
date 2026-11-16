@@ -1,0 +1,24 @@
+id = "nous"
+name = "Nous Portal"
+icon = "nous"
+tier = "more"
+rank = 340
+kind = "aggregator"
+hidden = true
+hidden_reason = "Subscription sign-in: Cua has not reviewed the provider's terms for use in a third-party app yet."
+terms = "review"
+aliases = ["nous research", "hermes"]
+wire = "openai-chat"
+base_url = "https://inference-api.nousresearch.com/v1"
+default_model = ""
+hermes_id = "nous"
+key_help = "Sign in with your Nous Portal account."
+
+[[method]]
+id = "portal"
+kind = "device_code"
+env = "NOUS_API_KEY"
+scope = "hermes"
+terms = "review"
+label = "Sign in with Nous Portal"
+help = "Shows a code to enter on the Nous Portal. Only Hermes uses this sign-in."

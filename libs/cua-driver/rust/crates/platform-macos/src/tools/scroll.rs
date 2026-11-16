@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use core_foundation::base::{CFRelease, CFTypeRef};
 use cua_driver_contract::{ScrollBy, ScrollDirection, ScrollInput};
@@ -60,10 +63,16 @@ fn clamp_amount(requested: u64) -> usize {
 
 const ELECTRON_BACKGROUND_SCROLL_UNAVAILABLE: &str = "Background scroll is unavailable for \
      this Electron/Chromium window on macOS: it drops background wheel events and keystrokes, \
-     and no scroll container under the target moved through accessibility, so nothing \
-     scrolled. Retry with delivery_mode:\"foreground\" (and the same window_id, element_token \
-     or x,y); the driver briefly fronts that window, scrolls, and restores the prior frontmost \
-     app.";
+     and background scroll movement could not be established through accessibility. \
+     Without fronting the window: find the item with a get_window_state query and act on it by \
+     element_token, or make the window taller with set_window_frame. If the user allows the \
+     window to come forward, retry with delivery_mode:\"foreground\" (same window_id, \
+     element_token or x,y); the driver briefly fronts it, scrolls, and restores the prior \
+     frontmost app.";
+
+const ELECTRON_BACKGROUND_SCROLL_SUGGESTION: &str = "Act on the item by element_token (find it \
+     with a get_window_state query) instead of scrolling, or retry with \
+     delivery_mode:\"foreground\" only if the user allows the window to come forward.";
 
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
@@ -80,7 +89,7 @@ fn def() -> &'static ToolDef {
             // schema — keeps the contract consistent across platforms.
             "required": ["direction"],
             "properties": {
-                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it." },
+                "session": cua_driver_core::tool_schema::session_schema(),
                 "pid": { "type": "integer", "description": "Target process ID. Required unless scope is \"desktop\" or element_token is supplied." },
                 "direction": {
                     "type": "string",
@@ -145,14 +154,15 @@ impl Tool for ScrollTool {
                 ScrollDirection::Right => (0, -step),
                 ScrollDirection::Left => (0, step),
             };
-            let (x, y) = super::desktop_screenshot_point(x, y).await;
+            let (x, y) = super::desktop_screenshot_point(x, y);
             if let Some(refusal) =
                 super::desktop_pointer_guard::check("scroll", &args, vec![(x, y)]).await
             {
                 return refusal;
             }
+            let prompt = cua_driver_core::security_prompt::PromptInput::from_args(&args);
             let result = tokio::task::spawn_blocking(move || {
-                crate::input::mouse::scroll_wheel_desktop(x, y, delta_y, delta_x, amount)
+                crate::input::mouse::scroll_wheel_desktop(prompt, x, y, delta_y, delta_x, amount)
             })
             .await;
             return match result {
@@ -164,7 +174,11 @@ impl Tool for ScrollTool {
                     "path": "hid",
                     "effect": "unverifiable"
                 })),
-                Ok(Err(error)) => ToolResult::error(format!("desktop scroll failed: {error}")),
+                Ok(Err(error)) => {
+                    crate::security_prompt::tool_result(&error).unwrap_or_else(|| {
+                        ToolResult::error(format!("desktop scroll failed: {error}"))
+                    })
+                }
                 Err(error) => ToolResult::error(format!("desktop scroll task failed: {error}")),
             };
         }
@@ -703,11 +717,12 @@ async fn electron_reveal_scroll(
     lease: &mut Option<super::BackgroundMutationLease>,
 ) -> ToolResult {
     let unavailable = || {
-        cua_driver_core::delivery::background_unavailable_result(
+        cua_driver_core::delivery::background_unavailable_result_with_suggestion(
             ELECTRON_BACKGROUND_SCROLL_UNAVAILABLE,
             "background_unavailable",
             "Electron/Chromium windows drop background wheel events and keystrokes on macOS",
             serde_json::json!({ "effect": "refused" }),
+            ELECTRON_BACKGROUND_SCROLL_SUGGESTION,
         )
     };
     let window = window_id.and_then(crate::windows::window_bounds_by_id);
@@ -749,17 +764,6 @@ async fn electron_reveal_scroll(
     })
     .await;
     match outcome {
-        Ok(Some(outcome)) if outcome.at_end => ToolResult::text(format!(
-            "Nothing to scroll {direction}: the {} under the target is already at its end \
-             (checked through accessibility; this Electron/Chromium window drops background \
-             wheel events).",
-            outcome.container_role
-        ))
-        .with_structured(serde_json::json!({
-            "path": "ax",
-            "verified": false,
-            "effect": "unverifiable",
-        })),
         Ok(Some(outcome)) => ToolResult::text(format!(
             "✅ Scrolled {direction} about {:.0} pt in the background through accessibility \
              (revealed the content just past the {}'s edge; this Electron/Chromium window drops \

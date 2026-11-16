@@ -7,7 +7,7 @@
 # Run it before every push. For each REF (<repo>:<tag>):
 #   - tag absent                         -> ok
 #   - tag present and equal to --digest  -> ok (already published)
-#   - tag present, --moving, canonical repo, a floating tag (<ver>[-slim|-xcode[-X.Y]][-disk]) -> ok
+#   - tag present, --moving, canonical repo, a floating tag (<ver>[-slim|-docker|-xcode[-X.Y]][-disk]) -> ok
 #   - `latest` in a canonical repo       -> refused, present or not
 #   - tag present, --moving, bench repo, a version tag (<ver>, <ver>-disk) -> ok
 #   - tag present, --moving, channel repo, a channel tag (edge, rc, stable, +-disk) -> ok
@@ -15,7 +15,7 @@
 #
 # Canonical repos (ghcr.io/trycua/{linux,windows,macos}) may re-point only
 # their floating tags <ver>[-<tier>][-disk] (CANONICAL_FLOAT_TAG_RE: 24.04,
-# 24.04-disk, 24.04-slim-disk, 26-xcode, 26-xcode-26.1, 2022-disk, 15) and
+# 24.04-disk, 24.04-slim-disk, 24.04-docker-disk, 26-xcode, 26-xcode-26.1, 2022-disk, 15) and
 # never get a `latest` tag; every other tag there (the
 # dated pins, the per-arch children, build tags) is written once and never
 # moves. ghcr.io/trycua/linux is published by cd-image-linux.yml (`cua images
@@ -65,7 +65,7 @@ CHANNEL_TAG_RE='^(edge|rc|stable)(-disk)?$'
 BENCH_VERSION_TAG_RE='^[A-Za-z0-9][A-Za-z0-9._-]*$'
 BENCH_RESERVED_TAG_RE='^(latest|main|stable|edge|nightly)(-disk)?$'
 # Mirrored by CANONICAL_FLOAT_TAG_RE in libs/cua/crates/cua-image/src/publish.rs.
-CANONICAL_FLOAT_TAG_RE='^[0-9]+(\.[0-9]+)*(-slim|-xcode(-[0-9]+(\.[0-9]+)*)?)?(-disk)?$'
+CANONICAL_FLOAT_TAG_RE='^[0-9]+(\.[0-9]+)*(-slim|-docker|-xcode(-[0-9]+(\.[0-9]+)*)?)?(-disk)?$'
 IMMUTABLE_TAG_RE='-[0-9]{8}-[0-9a-f]{7}(-(amd64|arm64))?$'
 
 usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
@@ -140,7 +140,7 @@ for ref in "${refs[@]}"; do
         if [[ "$tag" =~ $CANONICAL_FLOAT_TAG_RE ]]; then
             echo "ok      $ref (floating tag, was $cur)"; continue
         fi
-        echo "REFUSED $ref: canonical repos float only <ver>[-slim|-xcode[-X.Y]][-disk] tags" >&2; refused=1; continue
+        echo "REFUSED $ref: canonical repos float only <ver>[-slim|-docker|-xcode[-X.Y]][-disk] tags" >&2; refused=1; continue
     fi
     if [ "$moving" = 1 ] && in_list "$nrepo" "${BENCH_REPOS[@]}"; then
         if [[ "$tag" =~ $BENCH_VERSION_TAG_RE ]] && ! [[ "$tag" =~ $BENCH_RESERVED_TAG_RE ]]; then

@@ -12,7 +12,6 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 const CHILD: &str = "CUA_TEST_TRANSPORT_FAILURE";
-const ADDRESS: &str = "CUA_TEST_PROXY_ADDRESS";
 
 #[test]
 fn session_failure_and_cancellation_contract() {
@@ -30,9 +29,6 @@ fn session_failure_and_cancellation_contract() {
             "cancel-tls",
             "cancel-ws",
         ] {
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            let address = listener.local_addr().unwrap();
-            drop(listener);
             let mut child = Command::new(std::env::current_exe().unwrap());
             child.args([
                 "--exact",
@@ -52,18 +48,15 @@ fn session_failure_and_cancellation_contract() {
             ] {
                 child.env_remove(key);
             }
-            let proxy = if mode == "bad-config" {
-                "http://secret-user:secret-password@proxy.invalid".to_owned()
-            } else {
-                format!("http://{address}")
-            };
-            let output = child
-                .env(CHILD, mode)
-                .env(ADDRESS, address.to_string())
-                .env("HTTP_PROXY", &proxy)
-                .env("HTTPS_PROXY", &proxy)
-                .output()
-                .unwrap();
+            // The child binds its own proxy and points the variables at it:
+            // a port picked here and rebound there can be taken in between
+            // by a test running in parallel ("Address already in use").
+            child.env(CHILD, mode);
+            if mode == "bad-config" {
+                let proxy = "http://secret-user:secret-password@proxy.invalid";
+                child.env("HTTP_PROXY", proxy).env("HTTPS_PROXY", proxy);
+            }
+            let output = child.output().unwrap();
             assert!(
                 output.status.success(),
                 "{mode}: {}\n{}",
@@ -73,11 +66,19 @@ fn session_failure_and_cancellation_contract() {
         }
         return;
     }
+    let mode = std::env::var(CHILD).unwrap();
+    let proxy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    proxy.set_nonblocking(true).unwrap();
+    if mode != "bad-config" {
+        // Set in this child only, before its runtime starts.
+        let url = format!("http://{}", proxy.local_addr().unwrap());
+        std::env::set_var("HTTP_PROXY", &url);
+        std::env::set_var("HTTPS_PROXY", &url);
+    }
     tokio::runtime::Runtime::new().unwrap().block_on(async {
-        let mode = std::env::var(CHILD).unwrap();
         let origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = origin.local_addr().unwrap();
-        let proxy = TcpListener::bind(std::env::var(ADDRESS).unwrap()).await.unwrap();
+        let proxy = TcpListener::from_std(proxy).unwrap();
         let stop = CancellationToken::new();
         let stopped = stop.clone();
         let (ready, waiting) = tokio::sync::oneshot::channel();

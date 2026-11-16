@@ -3,9 +3,9 @@
 Upstream benchmark controllers (OSWorld's ``PythonController`` and
 ``SetupController``, CDP clients, BrowserGym ...) take a host and a port and
 build ``http://{host}:{port}/path`` themselves. Locally a guest port is
-exactly that (``http://127.0.0.1:<published>``). On Fleet a service is a
-signed URL such as ``https://<gateway>/api/svc/<ns>/<sandbox>-<svc>?...``: a
-path prefix (and maybe a query) that such code cannot express.
+exactly that (``http://127.0.0.1:<published>``). A service behind a signed URL
+such as ``https://<gateway>/api/svc/<ns>/<sandbox>-<svc>?...`` has a path
+prefix (and maybe a query) that such code cannot express.
 
 :class:`PathBridge` listens on ``127.0.0.1:<ephemeral>`` and forwards every
 request to the URL:

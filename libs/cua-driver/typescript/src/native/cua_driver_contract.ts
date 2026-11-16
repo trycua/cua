@@ -356,6 +356,56 @@ const FfiConverterTypeActionEvidence = (() => {
     return new FFIConverter();
 })();
 
+/**
+ * A call an agent can make next: `{tool, arguments}`.
+ */
+export type ActionNextCall = {
+    tool: string,
+    /**
+     * The call's arguments. A JSON object on the wire; the SDK records carry
+     * the same object as JSON text.
+     */
+    arguments: string
+}
+
+/**
+ * Generated factory for {@link ActionNextCall} record objects.
+ */
+export const ActionNextCall = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ActionNextCall, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ActionNextCall>,
+    });
+})();
+
+const FfiConverterTypeActionNextCall = (() => {
+    type TypeName = ActionNextCall;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                tool: FfiConverterString.read(from),
+                arguments: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.tool, into);
+            FfiConverterString.write(value.arguments, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.tool) +
+             FfiConverterString.allocationSize(value.arguments);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export enum ActionEffect {
     Confirmed,
     Partial,
@@ -451,7 +501,27 @@ export type ActionResult = {
     /**
      * Present only with `effect: refused`.
      */
-    error?: ActionError
+    error?: ActionError,
+    /**
+     * What to do next, in one short sentence. Present when the effect is
+     * `unverifiable` or `suspected_noop`, so an unconfirmed action points at
+     * the next step instead of leaving the agent to guess. Also carries a
+     * suggestion to chain steps with `run_steps` after several direct actions
+     * in a row.
+     */
+    hint?: string,
+    /**
+     * The call that moves the task forward, always safe to run as is (a read,
+     * or a call that keeps the user's window where it is).
+     */
+    nextCall?: ActionNextCall,
+    /**
+     * Present only when the `fast_path` config key is `on`: the check cost,
+     * the target class and the changed regions since the last read, as one
+     * JSON object. Absent when the flag is off, so default results are
+     * unchanged.
+     */
+    fastPath?: string
 }
 
 /**
@@ -481,7 +551,10 @@ const FfiConverterTypeActionResult = (() => {
                 evidence: FfiConverterOptionalSequenceTypeActionEvidence.read(from),
                 escalation: FfiConverterOptionalTypeActionEscalation.read(from),
                 summary: FfiConverterOptionalString.read(from),
-                error: FfiConverterOptionalTypeActionError.read(from)
+                error: FfiConverterOptionalTypeActionError.read(from),
+                hint: FfiConverterOptionalString.read(from),
+                nextCall: FfiConverterOptionalTypeActionNextCall.read(from),
+                fastPath: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -492,6 +565,9 @@ const FfiConverterTypeActionResult = (() => {
             FfiConverterOptionalTypeActionEscalation.write(value.escalation, into);
             FfiConverterOptionalString.write(value.summary, into);
             FfiConverterOptionalTypeActionError.write(value.error, into);
+            FfiConverterOptionalString.write(value.hint, into);
+            FfiConverterOptionalTypeActionNextCall.write(value.nextCall, into);
+            FfiConverterOptionalString.write(value.fastPath, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeActionEffect.allocationSize(value.effect) +
@@ -500,7 +576,10 @@ const FfiConverterTypeActionResult = (() => {
              FfiConverterOptionalSequenceTypeActionEvidence.allocationSize(value.evidence) +
              FfiConverterOptionalTypeActionEscalation.allocationSize(value.escalation) +
              FfiConverterOptionalString.allocationSize(value.summary) +
-             FfiConverterOptionalTypeActionError.allocationSize(value.error);
+             FfiConverterOptionalTypeActionError.allocationSize(value.error) +
+             FfiConverterOptionalString.allocationSize(value.hint) +
+             FfiConverterOptionalTypeActionNextCall.allocationSize(value.nextCall) +
+             FfiConverterOptionalString.allocationSize(value.fastPath);
 
         }
     };
@@ -1099,7 +1178,7 @@ export type ClipboardReadInput = {
     includeText: boolean,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string
 }
@@ -1212,7 +1291,7 @@ export type ClipboardWriteInput = {
     filePath?: string,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string
 }
@@ -2137,7 +2216,7 @@ export type DragInput = {
     scope?: DesktopScope,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string,
     durationMs?: bigint,
@@ -2456,100 +2535,6 @@ const FfiConverterTypeEndSessionOutput = (() => {
     return new FFIConverter();
 })();
 
-export enum EscalationReason {
-    AxTreePixelMismatch,
-    BackgroundDeliveryFailed,
-    ForegroundIneffective,
-    NoWindowTarget,
-    Other
-}
-
-const FfiConverterTypeEscalationReason = (() => {
-    const ordinalConverter = FfiConverterInt32;
-    type TypeName = EscalationReason;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        read(from: RustBuffer): TypeName {
-            switch (ordinalConverter.read(from)) {
-                case 1: return EscalationReason.AxTreePixelMismatch;
-                case 2: return EscalationReason.BackgroundDeliveryFailed;
-                case 3: return EscalationReason.ForegroundIneffective;
-                case 4: return EscalationReason.NoWindowTarget;
-                case 5: return EscalationReason.Other;
-                default: throw new UniffiInternalError.UnexpectedEnumCase();
-            }
-        }
-        write(value: TypeName, into: RustBuffer): void {
-            switch (value) {
-                case EscalationReason.AxTreePixelMismatch: return ordinalConverter.write(1, into);
-                case EscalationReason.BackgroundDeliveryFailed: return ordinalConverter.write(2, into);
-                case EscalationReason.ForegroundIneffective: return ordinalConverter.write(3, into);
-                case EscalationReason.NoWindowTarget: return ordinalConverter.write(4, into);
-                case EscalationReason.Other: return ordinalConverter.write(5, into);
-            }
-        }
-        allocationSize(value: TypeName): number {
-            return ordinalConverter.allocationSize(0);
-        }
-    }
-    return new FFIConverter();
-})();
-
-export type EscalateSessionInput = {
-    /**
-     * Public label of the legacy capture-scope session to escalate.
-     */
-    session: string,
-    /**
-     * Why the window-scoped attempt failed and desktop capture is needed.
-     */
-    reason: EscalationReason,
-    /**
-     * Optional bounded diagnostic detail. Never use secrets or page content.
-     */
-    detail?: string
-}
-
-/**
- * Generated factory for {@link EscalateSessionInput} record objects.
- */
-export const EscalateSessionInput = (() => {
-    const defaults = () => ({
-    });
-    const create = (() => {
-        return uniffiCreateRecord<EscalateSessionInput, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<EscalateSessionInput>,
-    });
-})();
-
-const FfiConverterTypeEscalateSessionInput = (() => {
-    type TypeName = EscalateSessionInput;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        read(from: RustBuffer): TypeName {
-            return {
-                session: FfiConverterString.read(from),
-                reason: FfiConverterTypeEscalationReason.read(from),
-                detail: FfiConverterOptionalString.read(from)
-            };
-        }
-        write(value: TypeName, into: RustBuffer): void {
-            FfiConverterString.write(value.session, into);
-            FfiConverterTypeEscalationReason.write(value.reason, into);
-            FfiConverterOptionalString.write(value.detail, into);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterString.allocationSize(value.session) +
-             FfiConverterTypeEscalationReason.allocationSize(value.reason) +
-             FfiConverterOptionalString.allocationSize(value.detail);
-
-        }
-    };
-    return new FFIConverter();
-})();
-
 export type GetAgentCursorStateInput = {
     /**
      * Public label of the session whose cursor to inspect.
@@ -2654,7 +2639,7 @@ const FfiConverterTypeGetAgentCursorStateOutput = (() => {
 export type GetCursorPositionInput = {
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string
 }
@@ -2697,7 +2682,7 @@ const FfiConverterTypeGetCursorPositionInput = (() => {
 export type GetDesktopStateInput = {
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string,
     /**
@@ -2757,7 +2742,7 @@ const FfiConverterTypeGetDesktopStateInput = (() => {
 export type GetScreenSizeInput = {
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string
 }
@@ -2823,49 +2808,6 @@ export const GetSessionInput = (() => {
 
 const FfiConverterTypeGetSessionInput = (() => {
     type TypeName = GetSessionInput;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        read(from: RustBuffer): TypeName {
-            return {
-                session: FfiConverterOptionalString.read(from)
-            };
-        }
-        write(value: TypeName, into: RustBuffer): void {
-            FfiConverterOptionalString.write(value.session, into);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterOptionalString.allocationSize(value.session);
-
-        }
-    };
-    return new FFIConverter();
-})();
-
-export type GetSessionStateInput = {
-    /**
-     * Optional public label. When omitted, inspect the caller's attached
-     * implicit session.
-     */
-    session?: string
-}
-
-/**
- * Generated factory for {@link GetSessionStateInput} record objects.
- */
-export const GetSessionStateInput = (() => {
-    const defaults = () => ({
-    });
-    const create = (() => {
-        return uniffiCreateRecord<GetSessionStateInput, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<GetSessionStateInput>,
-    });
-})();
-
-const FfiConverterTypeGetSessionStateInput = (() => {
-    type TypeName = GetSessionStateInput;
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         read(from: RustBuffer): TypeName {
             return {
@@ -3023,7 +2965,7 @@ export type HotkeyInput = {
     scope?: DesktopScope,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string
 }
@@ -3094,8 +3036,15 @@ export type InvokeMenuInput = {
      */
     path: Array<string>,
     /**
+     * `background` (default) never takes the user's keyboard or pointer and refuses with
+     * `background_unavailable` when the item can only be reached by opening a menu. `foreground`
+     * is the explicit escalation that may activate the window and open menus. Linux honors it;
+     * macOS and Windows accept it and keep their existing menu behavior.
+     */
+    deliveryMode?: InputDeliveryMode,
+    /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string
 }
@@ -3124,6 +3073,7 @@ const FfiConverterTypeInvokeMenuInput = (() => {
                 pid: FfiConverterUInt32.read(from),
                 windowId: FfiConverterUInt64.read(from),
                 path: FfiConverterSequenceString.read(from),
+                deliveryMode: FfiConverterOptionalTypeInputDeliveryMode.read(from),
                 session: FfiConverterOptionalString.read(from)
             };
         }
@@ -3131,12 +3081,14 @@ const FfiConverterTypeInvokeMenuInput = (() => {
             FfiConverterUInt32.write(value.pid, into);
             FfiConverterUInt64.write(value.windowId, into);
             FfiConverterSequenceString.write(value.path, into);
+            FfiConverterOptionalTypeInputDeliveryMode.write(value.deliveryMode, into);
             FfiConverterOptionalString.write(value.session, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterUInt32.allocationSize(value.pid) +
              FfiConverterUInt64.allocationSize(value.windowId) +
              FfiConverterSequenceString.allocationSize(value.path) +
+             FfiConverterOptionalTypeInputDeliveryMode.allocationSize(value.deliveryMode) +
              FfiConverterOptionalString.allocationSize(value.session);
 
         }
@@ -3734,7 +3686,7 @@ export type MoveCursorInput = {
     scope?: DesktopScope,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string
 }
@@ -4873,7 +4825,7 @@ export type PressKeyInput = {
     scope?: DesktopScope,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string,
     modifiers?: Array<string>
@@ -5005,7 +4957,7 @@ export type ScrollInput = {
     scope?: DesktopScope,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string,
     by?: ScrollBy,
@@ -5130,7 +5082,7 @@ const FfiConverterTypeEffectiveScope = (() => {
 })();
 
 /**
- * Successful structured result shared by session state and escalation tools.
+ * Capture-scope state carried by the `start_session` result.
  */
 export type SessionStateOutput = {
     session: string,
@@ -5145,9 +5097,7 @@ export type SessionStateOutput = {
      * Compatibility field: this reports whether this session has unlocked
      * desktop capture scope. It is not an operating-system lock-screen probe.
      */
-    desktopUnlocked: boolean,
-    escalationReason?: EscalationReason,
-    escalationDetail?: string
+    desktopUnlocked: boolean
 }
 
 /**
@@ -5175,9 +5125,7 @@ const FfiConverterTypeSessionStateOutput = (() => {
                 captureScope: FfiConverterTypeCaptureScope.read(from),
                 effectiveScope: FfiConverterTypeEffectiveScope.read(from),
                 desktopCaptureAuthorized: FfiConverterBool.read(from),
-                desktopUnlocked: FfiConverterBool.read(from),
-                escalationReason: FfiConverterOptionalTypeEscalationReason.read(from),
-                escalationDetail: FfiConverterOptionalString.read(from)
+                desktopUnlocked: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -5186,17 +5134,13 @@ const FfiConverterTypeSessionStateOutput = (() => {
             FfiConverterTypeEffectiveScope.write(value.effectiveScope, into);
             FfiConverterBool.write(value.desktopCaptureAuthorized, into);
             FfiConverterBool.write(value.desktopUnlocked, into);
-            FfiConverterOptionalTypeEscalationReason.write(value.escalationReason, into);
-            FfiConverterOptionalString.write(value.escalationDetail, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.session) +
              FfiConverterTypeCaptureScope.allocationSize(value.captureScope) +
              FfiConverterTypeEffectiveScope.allocationSize(value.effectiveScope) +
              FfiConverterBool.allocationSize(value.desktopCaptureAuthorized) +
-             FfiConverterBool.allocationSize(value.desktopUnlocked) +
-             FfiConverterOptionalTypeEscalationReason.allocationSize(value.escalationReason) +
-             FfiConverterOptionalString.allocationSize(value.escalationDetail);
+             FfiConverterBool.allocationSize(value.desktopUnlocked);
 
         }
     };
@@ -5609,7 +5553,7 @@ export type SetWindowFrameInput = {
     height: number,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string
 }
@@ -5936,7 +5880,7 @@ export type TypeTextInput = {
     scope?: DesktopScope,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string
 }
@@ -6000,8 +5944,7 @@ export type VerifyStateInput = {
     expect: Array<StatePredicate>,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session. This
-     * field never selects capture modality or authorization.
+     * accepts it. This field never selects capture modality or authorization.
      */
     session?: string,
     /**
@@ -6572,6 +6515,9 @@ const FfiConverterOptionalTypeActionEscalation = new FfiConverterOptional(FfiCon
 // FfiConverter for ActionError | undefined
 const FfiConverterOptionalTypeActionError = new FfiConverterOptional(FfiConverterTypeActionError);
 
+// FfiConverter for ActionNextCall | undefined
+const FfiConverterOptionalTypeActionNextCall = new FfiConverterOptional(FfiConverterTypeActionNextCall);
+
 // FfiConverter for number | undefined
 const FfiConverterOptionalFloat64 = new FfiConverterOptional(FfiConverterFloat64);
 
@@ -6614,6 +6560,9 @@ const FfiConverterOptionalBoolean = new FfiConverterOptional(FfiConverterBool);
 // FfiConverter for CursorPointOutput | undefined
 const FfiConverterOptionalTypeCursorPointOutput = new FfiConverterOptional(FfiConverterTypeCursorPointOutput);
 
+// FfiConverter for InputDeliveryMode | undefined
+const FfiConverterOptionalTypeInputDeliveryMode = new FfiConverterOptional(FfiConverterTypeInputDeliveryMode);
+
 // FfiConverter for Array<AppInfo>
 const FfiConverterSequenceTypeAppInfo = new FfiConverterArray(FfiConverterTypeAppInfo);
 
@@ -6652,9 +6601,6 @@ const FfiConverterOptionalTypeUnknownReason = new FfiConverterOptional(FfiConver
 
 // FfiConverter for ScrollBy | undefined
 const FfiConverterOptionalTypeScrollBy = new FfiConverterOptional(FfiConverterTypeScrollBy);
-
-// FfiConverter for EscalationReason | undefined
-const FfiConverterOptionalTypeEscalationReason = new FfiConverterOptional(FfiConverterTypeEscalationReason);
 
 // FfiConverter for CaptureScope | undefined
 const FfiConverterOptionalTypeCaptureScope = new FfiConverterOptional(FfiConverterTypeCaptureScope);
@@ -6729,6 +6675,7 @@ export default Object.freeze({
     FfiConverterTypeActionEscalationTarget,
     FfiConverterTypeActionEvidence,
     FfiConverterTypeActionEvidenceKind,
+    FfiConverterTypeActionNextCall,
     FfiConverterTypeActionResult,
     FfiConverterTypeActionRoute,
     FfiConverterTypeActionTarget,
@@ -6763,15 +6710,12 @@ export default Object.freeze({
     FfiConverterTypeElementSelector,
     FfiConverterTypeEndSessionInput,
     FfiConverterTypeEndSessionOutput,
-    FfiConverterTypeEscalateSessionInput,
-    FfiConverterTypeEscalationReason,
     FfiConverterTypeGetAgentCursorStateInput,
     FfiConverterTypeGetAgentCursorStateOutput,
     FfiConverterTypeGetCursorPositionInput,
     FfiConverterTypeGetDesktopStateInput,
     FfiConverterTypeGetScreenSizeInput,
     FfiConverterTypeGetSessionInput,
-    FfiConverterTypeGetSessionStateInput,
     FfiConverterTypeGetWindowStateInput,
     FfiConverterTypeHotkeyInput,
     FfiConverterTypeInputDeliveryMode,

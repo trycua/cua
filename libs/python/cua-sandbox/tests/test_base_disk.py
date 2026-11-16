@@ -109,29 +109,29 @@ async def test_session_disk_overlays_the_container_disk(local, monkeypatch, tmp_
     ],
 )
 async def test_canonical_images_are_overridable_by_env(local, monkeypatch, image, variable):
-    from cua_sandbox.image import cloud_registry_image
+    from cua_sandbox.image import registry_image
 
     override = "registry.example/override/desktop:vm-1"
     monkeypatch.setenv(variable, override)
 
-    assert cloud_registry_image(image) == override
+    assert registry_image(image) == override
     await build.resolve_backing_disk(image)
     assert local.refs == [f"vm:{override}"]
 
 
 @pytest.mark.parametrize("value", ["", "   "])
 def test_empty_override_keeps_the_canonical_image(monkeypatch, value):
-    from cua_sandbox.image import cloud_registry_image
+    from cua_sandbox.image import registry_image
 
     monkeypatch.setenv("CUA_IMAGE_LINUX", value)
-    assert cloud_registry_image(Image.linux()) == LINUX
+    assert registry_image(Image.linux()) == LINUX
 
 
 def test_override_does_not_touch_explicit_or_non_canonical_images(monkeypatch):
-    from cua_sandbox.image import cloud_registry_image
+    from cua_sandbox.image import registry_image
 
     monkeypatch.setenv("CUA_IMAGE_LINUX", "registry.example/override:1")
     monkeypatch.setenv("CUA_IMAGE_WINDOWS", "registry.example/override:2")
     explicit = Image.from_registry("registry.example/mine:3")
-    assert cloud_registry_image(explicit) == "registry.example/mine:3"
-    assert cloud_registry_image(Image.windows("11")) is None
+    assert registry_image(explicit) == "registry.example/mine:3"
+    assert registry_image(Image.windows("11")) is None

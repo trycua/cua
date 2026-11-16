@@ -24,6 +24,7 @@ on:
       - "libs/cua-driver/rust/Cargo.lock"
       - ".release-please-manifest.json"
       - "release-please-config.json"
+  merge_group:
   push:
     branches: [main]
     paths:
@@ -47,6 +48,13 @@ on:
       - ".release-please-manifest.json"
       - "release-please-config.json"
 
+  # Cua Perception is frozen (no new work). Pull requests and main run one
+  # Linux smoke build plus the contract job; the Windows and macOS builds run
+  # weekly and on demand.
+  schedule:
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+
 permissions:
   contents: read
 
@@ -63,25 +71,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  quick:
+    name: quick
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    uses: ./.github/workflows/ci-quick.yml
+
   crate:
+    needs: quick
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: crate (${{ matrix.target }})
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - target: linux-x64
-            os: ubuntu-latest
-          - target: macos-x64
-            os: macos-15-intel
-          - target: windows-x64
-            os: windows-latest
+        include: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '[{"target":"linux-x64","os":"ubuntu-latest"},{"target":"macos-x64","os":"macos-15-intel"},{"target":"windows-x64","os":"windows-latest"}]' || '[{"target":"linux-x64","os":"ubuntu-latest"}]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      # Only macOS compiles long enough (about 1 minute of cacheable work) to
+      # pay for the restore; Linux and Windows take 5 to 25 seconds cold.
+      - if: runner.os == 'macOS'
+        uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua-driver/rust
       - name: Compile and test Cua Perception
@@ -89,6 +101,8 @@ jobs:
         run: cargo test --locked -p cua-perception
 
   contract:
+    needs: quick
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

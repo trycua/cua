@@ -11,9 +11,6 @@ fn cua(dir: &tempfile::TempDir) -> std::sync::Arc<Cua> {
     Cua::embedded(CuaConfig {
         state_dir: Some(dir.path().join("sandboxes").display().to_string()),
         spaces_home: Some(dir.path().join("cua").display().to_string()),
-        fleet_pool_home: Some(dir.path().join("pools").display().to_string()),
-        fleet_from_env: false,
-        fleet_from_session: false,
         ..Default::default()
     })
     .unwrap()
@@ -69,7 +66,7 @@ async fn a_host_that_does_not_share_its_desktop_is_never_asked_for_one() {
     let server = MockServer::start(Default::default()).await;
     server.state.withhold(
         "desktop_stream",
-        "this machine does not share its desktop (it only provides Spaces)",
+        "this computer does not share its desktop (it only provides Spaces)",
     );
     let shots = || server.state.observed.screenshots.lock().unwrap().len();
     let c = cua(&dir);

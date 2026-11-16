@@ -12,6 +12,7 @@ import { ListGlyph } from "./NavGlyphs";
 import { SearchGlyph } from "./SearchGlyph";
 import { GearGlyph } from "./SettingsPanel";
 import { SpaceTile } from "./SpaceTile";
+import { useT } from "../i18n";
 
 interface SwitcherProps {
   spaces: readonly Space[];
@@ -78,6 +79,7 @@ export function Switcher({
   footer,
   spacesList,
 }: SwitcherProps) {
+  const t = useT("spaces");
   const newRef = useRef<HTMLButtonElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
@@ -117,22 +119,22 @@ export function Switcher({
   }, [focusIndex]);
 
   return (
-    <section className="shelf switcher" aria-label="Cua Spaces switcher" data-drop-mode={dropMode ? "true" : undefined}>
+    <section className="shelf switcher" aria-label={t("spaces.switcher.label")} data-drop-mode={dropMode ? "true" : undefined}>
       <header className="shelf-header">
         {dropMode ? (
           <p className="shelf-drop-hint" role="status">
-            Drop on a Space to Teleport{dragAppName ? ` ${dragAppName}` : ""}
+            {dragAppName ? t("spaces.switcher.drop_hint_app", { app: dragAppName }) : t("spaces.switcher.drop_hint")}
           </p>
         ) : (
-          <label className="switcher-search" title="Search Spaces">
+          <label className="switcher-search" title={t("spaces.switcher.search_hint")}>
             <SearchGlyph className="glyph switcher-search-glyph" />
             <input
               ref={searchRef}
               type="search"
               className="switcher-search-input"
-              placeholder="Search"
+              placeholder={t("spaces.switcher.search_placeholder")}
               value={query}
-              aria-label="Filter Cua Spaces by name, OS, status, or location"
+              aria-label={t("spaces.switcher.search_label")}
               spellCheck={false}
               autoComplete="off"
               // The filter box is focused on open, so let navigation + shortcut
@@ -165,13 +167,13 @@ export function Switcher({
         )}
       </header>
 
-      <div className="tile-row" role="listbox" aria-label="Spaces, most recent first">
+      <div className="tile-row" role="listbox" aria-label={t("spaces.switcher.list_label")}>
         {query.trim() && filtered.length === 0 ? (
           // No matches: fold the "New" action into the empty message as a link.
           <p className="switcher-empty" role="status">
-            No Spaces match “{query.trim()}”.{" "}
+            {t("spaces.switcher.no_match", { query: query.trim() })}{" "}
             <button type="button" className="link-button" data-owns-enter onClick={onNew}>
-              Create a new Space
+              {t("spaces.switcher.create_new")}
             </button>
           </p>
         ) : (
@@ -190,7 +192,7 @@ export function Switcher({
               tabIndex={focusIndex === NEW_TILE_INDEX ? 0 : -1}
               onFocus={() => onFocus(NEW_TILE_INDEX)}
               onClick={onNew}
-              aria-label={dropMode ? "Drop here for a new Space" : `New Space (${MOD} N)`}
+              aria-label={dropMode ? t("spaces.switcher.new_drop_label") : t("spaces.switcher.new_label", { shortcut: `${MOD} N` })}
             >
               <span className="tile-frame tile-new-frame">
                 <span className="tile-plus" aria-hidden="true">
@@ -198,7 +200,7 @@ export function Switcher({
                 </span>
               </span>
               <span className="tile-caption">
-                <span className="tile-name">New</span>
+                <span className="tile-name">{t("spaces.switcher.new_tile")}</span>
               </span>
             </button>
             {/* While teleporting, drop "This Mac": you cannot teleport to the local machine.
@@ -241,8 +243,8 @@ export function Switcher({
                 type="button"
                 className="settings-gear"
                 data-owns-enter
-                aria-label="List view"
-                title="Open the Cua Spaces window"
+                aria-label={t("spaces.switcher.list_view_label")}
+                title={t("spaces.switcher.list_view_hint")}
                 onClick={() => openList()}
               >
                 <ListGlyph className="glyph" />
@@ -251,8 +253,8 @@ export function Switcher({
                 type="button"
                 className="settings-gear"
                 data-owns-enter
-                aria-label="Settings"
-                title="Settings"
+                aria-label={t("spaces.switcher.settings")}
+                title={t("spaces.switcher.settings")}
                 onClick={() => void spacesListBridge.openSettings().catch(() => {})}
               >
                 <GearGlyph className="glyph" />
@@ -266,10 +268,10 @@ export function Switcher({
                 className="switcher-hotspot-stop"
                 data-owns-enter
                 onClick={onStopHotspot}
-                title="Stop sharing your network"
+                title={t("spaces.switcher.stop_hotspot_hint")}
               >
                 <HotspotGlyph className="switcher-hotspot-stop-glyph" />
-                Stop sharing network
+                {t("spaces.switcher.stop_hotspot")}
               </button>
             )}
             {notice && (

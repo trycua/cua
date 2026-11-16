@@ -1,8 +1,8 @@
-"""Sandbox options that mean the same thing locally and in the cloud.
+"""Sandbox options: command, env, services, readiness probes and sizing.
 
 ::
 
-    from cua_sandbox import CloudOptions, Image, Sandbox, http
+    from cua_sandbox import Image, Sandbox, http
 
     sb = await Sandbox.create(
         Image.from_registry("python:3.12-slim"),
@@ -10,50 +10,16 @@
         env={"FOO": "bar"},
         services={"mcp": 8765},
         wait_for=http("mcp", "/health"),
-        on="cloud",                      # or local=False; unset: `cua config` default
+        on="local",
         kind="container",                # "auto" | "container" | "vm"
         runtime="gvisor",                # the engine; "auto" picks one
-        cloud=CloudOptions(warm=True),   # cloud-only options
     )
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import timedelta
-from typing import TYPE_CHECKING, Any, Iterable, Mapping, Optional, Sequence, Union
-
-if TYPE_CHECKING:
-    from cua_sandbox.pool import Pool
-
-
-@dataclass(frozen=True)
-class CloudOptions:
-    """Advanced options for cloud sandboxes. Passing them implies the cloud;
-    with ``on="local"``/``local=True`` they are an ``InvalidArgument``. The
-    engine is ``Sandbox.create(runtime="gvisor"|"kubevirt")``, not a cloud
-    option.
-
-    * ``warm``: keep one sandbox of this image ready (faster next start).
-    * ``max_pool_size``: most sandboxes of this image at once (default 10).
-    * ``claim_ttl``: how long the sandbox outlives this process without a
-      ``keep_alive`` (seconds or a timedelta; renewed while held; default
-      15 min).
-    * ``pool``: dedicated capacity: claim from this existing pool. Sandbox
-      fields given with it (``image``, ``command``, ``env``, ``services``,
-      ``sidecars``, ``cpu``, ``memory``, a registry secret) must match the
-      pool's template, else :class:`~cua_sandbox.PoolSpecMismatch` (with a
-      readable diff) is raised; fields left unset are not compared.
-    * ``apply``: with ``pool``, update the pool's template to the given
-      fields instead (the pool's capacity is kept; managed ``cua-auto-*``
-      pools refuse it).
-    """
-
-    warm: Optional[bool] = None
-    max_pool_size: Optional[int] = None
-    claim_ttl: Union[float, timedelta, None] = None
-    pool: "Pool | str | None" = None
-    apply: bool = False
+from typing import Any, Iterable, Mapping, Optional, Sequence, Union
 
 
 @dataclass(frozen=True)
@@ -125,8 +91,8 @@ NETWORK_MODES = ("default", "none")
 def check_network(network: Optional[str]) -> Optional[str]:
     """Normalizes ``network=`` (``None`` / ``"default"`` / ``"none"``).
 
-    Only local QEMU VMs can run with ``"none"``; containers, Lume and cloud
-    sandboxes reject it (``Unsupported``) rather than ignore it.
+    Only local QEMU VMs can run with ``"none"``; containers and Lume reject it
+    (``Unsupported``) rather than ignore it.
     """
     if network is None:
         return None
@@ -172,8 +138,8 @@ def parse_memory(memory: Union[str, int, None]) -> Optional[int]:
 @dataclass(frozen=True)
 class PublicUrl:
     """A shareable URL of a sandbox service that stops working at
-    ``expires_at``. Cloud: a signed service URL; local: a loopback URL with
-    its own token, served by the cua daemon."""
+    ``expires_at``: a loopback URL with its own token, served by the cua
+    daemon."""
 
     url: str
     expires_at: str

@@ -18,42 +18,19 @@ use tokio_tungstenite::tungstenite::Message;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-#[derive(Clone)]
-pub struct Bearer(Option<tonic::metadata::MetadataValue<tonic::metadata::Ascii>>);
+pub type Grpc = pb::stream_service_client::StreamServiceClient<cua_spacesd_client::GrpcChannel>;
 
-impl tonic::service::Interceptor for Bearer {
-    fn call(
-        &mut self,
-        mut request: tonic::Request<()>,
-    ) -> std::result::Result<tonic::Request<()>, tonic::Status> {
-        if let Some(value) = &self.0 {
-            request
-                .metadata_mut()
-                .insert("authorization", value.clone());
-        }
-        Ok(request)
-    }
-}
-
-pub type Grpc = pb::stream_service_client::StreamServiceClient<
-    tonic::service::interceptor::InterceptedService<tonic::transport::Channel, Bearer>,
->;
-
+/// The StreamService of the spacesd at `url`, through the same client the
+/// SDK uses: TLS, a relay's `/m/<machine>` prefix and the token are handled
+/// there, so the bench measures a relayed Space as well as a local one.
 pub async fn grpc(url: &str, token: &str) -> Result<Grpc> {
-    let channel = tonic::transport::Endpoint::from_shared(url.to_owned())?
-        .connect_timeout(Duration::from_secs(10))
-        .tcp_nodelay(true)
-        .connect()
-        .await?;
-    let bearer = format!("Bearer {token}")
-        .parse()
-        .map_err(|_| "token is not header text")?;
+    let options = cua_spacesd_client::ConnectOptions::parse(url)?
+        .token(token.to_owned())
+        .transport(cua_spacesd_client::TransportPreference::Native);
+    let client = cua_spacesd_client::SpacesdClient::connect(options).await?;
     Ok(
-        pb::stream_service_client::StreamServiceClient::with_interceptor(
-            channel,
-            Bearer(Some(bearer)),
-        )
-        .max_decoding_message_size(64 * 1024 * 1024),
+        pb::stream_service_client::StreamServiceClient::new(client.channel())
+            .max_decoding_message_size(64 * 1024 * 1024),
     )
 }
 
@@ -340,7 +317,9 @@ async fn connect_ws(base: &str, ticket: &str) -> Result<Socket> {
     };
     let host = parsed.host_str().ok_or("URL has no host")?;
     let port = parsed.port_or_known_default().ok_or("URL has no port")?;
-    let mut request = format!("{scheme}://{host}:{port}/media").into_client_request()?;
+    // Keep a relay's `/m/<machine>` prefix.
+    let prefix = parsed.path().trim_end_matches('/');
+    let mut request = format!("{scheme}://{host}:{port}{prefix}/media").into_client_request()?;
     request.headers_mut().insert(
         "sec-websocket-protocol",
         format!("rcdp.v2, cua.ticket.{ticket}").parse()?,

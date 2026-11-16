@@ -151,10 +151,8 @@ test(
       const driver = CuaDriver.connect(socketPath)
       const expectedMethods = [
         "startSession",
-        "escalateSession",
         "getSession",
         "listSessions",
-        "getSessionState",
         "endSession",
         "getDesktopState",
         "listApps",
@@ -321,7 +319,7 @@ test(
   { skip: !existsSync(library), timeout: 10_000 },
   async () => {
     const { CuaDriver, DriverExecutionMode } = await import("@trycua/cua-driver")
-    const driver = CuaDriver.create(undefined)
+    const driver = CuaDriver.create({ embedded: true })
     try {
       assert.equal(driver.executionMode(), DriverExecutionMode.Embedded)
       assert.equal(driver.socketPath(), "")

@@ -36,6 +36,42 @@ def test_get_binary_path():
         pytest.skip("Binary not bundled yet (run build_wheel.py first)")
 
 
+def _bundle_fake_binary(
+    wrapper: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mode: int
+) -> Path:
+    binary = tmp_path / "bin" / ("cua-driver.exe" if sys.platform == "win32" else "cua-driver")
+    binary.parent.mkdir()
+    binary.write_bytes(b"")
+    binary.chmod(mode)
+    monkeypatch.setattr(wrapper, "__file__", str(tmp_path / "wrapper.py"))
+    return binary
+
+
+def test_get_binary_path_does_not_chmod_an_executable_binary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A binary owned by another user (root-installed venv) starts without a chmod."""
+    wrapper = load_wrapper_module()
+    binary = _bundle_fake_binary(wrapper, monkeypatch, tmp_path, 0o755)
+    monkeypatch.setattr(
+        wrapper.os, "chmod", Mock(side_effect=PermissionError(1, "Operation not permitted"))
+    )
+
+    assert wrapper.get_binary_path() == binary
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="no executable bit on Windows")
+def test_get_binary_path_restores_a_lost_executable_bit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    wrapper = load_wrapper_module()
+    binary = _bundle_fake_binary(wrapper, monkeypatch, tmp_path, 0o644)
+
+    wrapper.get_binary_path()
+
+    assert os.access(binary, os.X_OK)
+
+
 def test_run_cua_driver_version(monkeypatch):
     """Test running cua-driver --version through the wrapper."""
     wrapper = load_wrapper_module()

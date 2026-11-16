@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Legacy-compatible CDP client for Electron and other Chromium apps.
 //! HTTP discovery stays compatible with the page tool; WebSocket calls use
 //! cua-driver-core's shared event-aware `CdpConnection` transport.
@@ -148,6 +151,11 @@ impl CdpSessionCache {
         let arc = Arc::new(AsyncMutex::new(session));
         map.insert(port, arc.clone());
         Ok(arc)
+    }
+
+    /// Whether a connection for `port` is already open (and so approved).
+    pub async fn has_session(&self, port: u16) -> bool {
+        self.sessions.lock().await.contains_key(&port)
     }
 
     async fn evict(&self, port: u16) {

@@ -13,6 +13,7 @@
 import { app, Menu, nativeImage, nativeTheme, Tray, type MenuItemConstructorOptions } from "electron";
 import { existsSync } from "node:fs";
 import * as path from "node:path";
+import { channel } from "./channel";
 
 let tray: Tray | null = null;
 let quitting = false;
@@ -136,7 +137,7 @@ export function installTray(o: {
   if (!icon) return;
 
   tray = new Tray(trayImage(icon));
-  tray.setToolTip("Cua Spaces");
+  tray.setToolTip(channel.appName);
 
   const fallback: TrayMenuItem[] = [
     { id: "open", label: "Open Cua Spaces", enabled: true },

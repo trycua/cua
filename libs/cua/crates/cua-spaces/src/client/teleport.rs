@@ -353,7 +353,7 @@ impl Approval {
 pub struct TeleportReceipt {
     pub app: String,
     pub space: String,
-    /// `teleport` or `file` on Local; `teleport` on Fleet.
+    /// `teleport` or `file`.
     pub method: String,
     /// The `rel_path`s that were asked for. Empty when the approval deferred
     /// to the server's own default set.

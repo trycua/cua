@@ -5,8 +5,9 @@
 # random one is generated so the driver never listens unauthenticated.
 # Read it back with: cat /run/cua/env-token
 #
-# Fleet (await-token-file mode): /run/cua is the claim Secret mount; it is
-# left alone and no token is generated. See env-token-mode.sh.
+# Await-token-file mode: /run/cua is the token Secret mount written by an
+# orchestrator; it is left alone and no token is generated. See
+# env-token-mode.sh.
 set -euo pipefail
 . /opt/cua/bin/env-token-mode.sh
 if cua_await_token_file; then

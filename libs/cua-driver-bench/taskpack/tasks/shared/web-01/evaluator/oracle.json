@@ -1,0 +1,6 @@
+{
+  "task": "WEB-01",
+  "required_checks": ["account_count", "fields", "complete_records"],
+  "collection": "accounts",
+  "fields": ["name", "email", "password", "plan", "invite"]
+}

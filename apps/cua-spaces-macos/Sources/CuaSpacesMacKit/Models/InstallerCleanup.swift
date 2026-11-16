@@ -7,8 +7,8 @@ import Foundation
 enum InstallerCleanup {
     static func installed(_ app: URL, home: URL) -> Bool {
         let path = app.resolvingSymlinksInPath().path
-        let folders = ["/Applications/", home.appendingPathComponent("Applications").path + "/"]
-        return folders.contains { path.hasPrefix($0) }
+        let folders = [URL(fileURLWithPath: "/Applications"), home.appendingPathComponent("Applications")]
+        return folders.contains { path.hasPrefix($0.resolvingSymlinksInPath().path + "/") }
     }
 
     static func installers(among volumes: [URL], holding bundleIdentifier: String, isInstaller: (URL) -> Bool) -> [URL] {

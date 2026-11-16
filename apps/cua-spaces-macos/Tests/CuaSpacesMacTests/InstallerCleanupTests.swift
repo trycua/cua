@@ -55,4 +55,15 @@ struct InstallerCleanupTests {
         for path in inside { #expect(InstallerCleanup.installed(URL(fileURLWithPath: path), home: home)) }
         for path in outside { #expect(!InstallerCleanup.installed(URL(fileURLWithPath: path), home: home)) }
     }
+
+    @Test func installedUnderASymlinkedHome() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("cua-mac-home-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let real = root.appendingPathComponent("real")
+        let link = root.appendingPathComponent("link")
+        try FileManager.default.createDirectory(at: real.appendingPathComponent("Applications/X.app"), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+        #expect(InstallerCleanup.installed(link.appendingPathComponent("Applications/X.app"), home: link))
+        #expect(!InstallerCleanup.installed(link.appendingPathComponent("Downloads/X.app"), home: link))
+    }
 }

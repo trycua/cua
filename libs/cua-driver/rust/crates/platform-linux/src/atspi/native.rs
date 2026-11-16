@@ -1534,13 +1534,12 @@ async fn collect_visited_bounded_opts<'a>(
         resolve_window_frame(conn, pid, xid, &seeds).await
     };
     // Wake the application once, then settle each window once. A concurrent
-    // walk of the same pid or window waits for these instead of walking a
-    // tree that is still empty.
-    once_per(pid, None)
-        .get_or_init(|| async {
-            let _ = call(app.get_attributes()).await;
-        })
-        .await;
+    // walk of the same pid or window waits for these, within its own budget,
+    // instead of walking a tree that is still empty.
+    let _ = call(once_per(pid, None).get_or_init(|| async {
+        let _ = call(app.get_attributes()).await;
+    }))
+    .await;
     let root = match scoped_frame {
         Some(ordinal) => seeds[ordinal].clone(),
         None => RawObjectRef {
@@ -1549,9 +1548,11 @@ async fn collect_visited_bounded_opts<'a>(
         },
     };
     // A settle the budget cut short is not cached, so a later walk retries it.
-    let _ = once_per(pid, Some(&root))
-        .get_or_try_init(|| settle_woken_chromium_tree(conn, &app, &root))
-        .await;
+    let _ = call(
+        once_per(pid, Some(&root))
+            .get_or_try_init(|| settle_woken_chromium_tree(conn, &app, &root)),
+    )
+    .await;
 
     // Walk the caller's window FIRST when it was resolved: under a short
     // budget an application-wide pre-order (main window, then dialogs) could
@@ -2583,10 +2584,12 @@ async fn web_document_populated(
         .await?
         .ok()?;
     for document in documents.iter().filter_map(RawObjectRef::from_atspi) {
-        if let Some(Ok(count)) = call(raw_child_count(conn.connection(), &document)).await {
-            if count > 0 {
-                return Some(true);
-            }
+        if call(raw_child_count(conn.connection(), &document))
+            .await?
+            .ok()?
+            > 0
+        {
+            return Some(true);
         }
     }
     Some(false)

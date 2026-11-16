@@ -359,6 +359,7 @@ impl crate::Spaces {
     }
 
     /// [`adopt_machine_name`] for this runtime: its cached directory too.
+    #[cfg_attr(not(feature = "spaces-agents"), allow(dead_code))]
     pub(crate) fn adopt_relay_machine_name(&self, machine_id: &str, name: &str) {
         if let Some(account) = self.relay_account() {
             adopt_machine_name(self.home_dir(), &account.url, machine_id, name);

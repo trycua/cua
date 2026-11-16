@@ -499,7 +499,6 @@ impl SpacesBuilder {
                 overlay: Default::default(),
                 #[cfg(feature = "spaces-hotspot")]
                 topologies: Default::default(),
-                #[cfg(feature = "spaces-agents")]
                 relay: std::sync::RwLock::new(self.relay),
                 resources: crate::resources::Hub::new(),
                 relay_cache: std::sync::Mutex::new(Vec::new()),
@@ -751,7 +750,6 @@ pub(crate) struct Inner {
     /// The topology hint last written into each running Space (a hash).
     #[cfg(feature = "spaces-hotspot")]
     pub(crate) topologies: tokio::sync::Mutex<BTreeMap<String, u64>>,
-    #[cfg(feature = "spaces-agents")]
     relay: std::sync::RwLock<Option<crate::relay::RelayAccount>>,
     /// The resource sampler and its watchers ([`crate::resources`]).
     pub(crate) resources: Arc<crate::resources::Hub>,
@@ -1891,6 +1889,7 @@ impl Spaces {
 
     /// Whether the registry remembers cua-spacesd answering for `id`: its
     /// image runs one, so a connection without it is a Space still waking.
+    #[cfg_attr(not(feature = "spaces-agents"), allow(dead_code))]
     pub(crate) fn record_expects_spacesd(&self, id: &SpaceId) -> bool {
         record_runs_spacesd(
             self.inner
@@ -4586,6 +4585,42 @@ fn kind_of_runtime(
         _ => "",
     }
     .to_string()
+}
+
+/// What a build without the `mcp` extension points does where the full
+/// build asks an extension: nothing is installed.
+#[cfg(not(feature = "mcp"))]
+impl Spaces {
+    pub(crate) fn has_extension(&self, _name: &str) -> bool {
+        false
+    }
+
+    pub(crate) async fn call_extension(
+        &self,
+        what: &str,
+        _op: &str,
+        _args: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        Err(Error::needs_cua_spaces(what))
+    }
+}
+
+/// Without `spaces-agents` there is no relay sharing: no Space is attached to
+/// the relay and no computer is on it to remove.
+#[cfg(not(feature = "spaces-agents"))]
+impl Spaces {
+    #[cfg_attr(not(feature = "mcp"), allow(dead_code))]
+    pub(crate) fn attached_machines(&self) -> BTreeMap<String, String> {
+        BTreeMap::new()
+    }
+
+    pub(crate) async fn relay_unregister_computer(
+        &self,
+        _space: &str,
+        _delete_spaces: bool,
+    ) -> Result<bool> {
+        Ok(false)
+    }
 }
 
 #[cfg(test)]

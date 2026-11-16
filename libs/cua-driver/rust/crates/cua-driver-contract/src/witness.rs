@@ -182,7 +182,9 @@ impl RuntimeWitnessV0 {
                     probe.tool
                 ));
             }
-            if !probe.read_only {
+            let published_acting = crate::cached_tool_contract(&probe.tool)
+                .is_some_and(|contract| !contract.annotations.read_only);
+            if !probe.read_only || published_acting {
                 return Err(format!(
                     "runtime witness v0 refuses acting probe {}",
                     probe.tool
@@ -298,6 +300,26 @@ mod tests {
             "0.14.0",
             None,
             Platform::Windows,
+            WitnessRuntimeHost::Daemon,
+            true,
+            WitnessHealthOverall::Unknown,
+            false,
+            vec![probe],
+        );
+        assert!(witness
+            .validate()
+            .unwrap_err()
+            .contains("refuses acting probe"));
+    }
+
+    #[test]
+    fn v0_refuses_published_acting_tool_claimed_read_only() {
+        let mut probe = passing_probe();
+        probe.tool = "click".into();
+        let witness = RuntimeWitnessV0::new(
+            "0.14.0",
+            None,
+            Platform::Linux,
             WitnessRuntimeHost::Daemon,
             true,
             WitnessHealthOverall::Unknown,

@@ -53,6 +53,11 @@ v0 accepts read-only probes only. Acting probes such as click, hotkey, typing,
 dragging, window movement, or clipboard writes require a future explicit
 opt-in design. They must not silently appear in a metadata conformance run.
 
+Validation refuses a probe whose `read_only` flag is false, and a probe naming
+a tool the portable contract publishes as acting, whatever its flag says. For
+runtime-only tools outside the portable contract, the flag is the producer's
+claim.
+
 This boundary also keeps CI and downstream fleet qualification safe: a default
 conformance job may inspect capabilities, but it cannot interact with a user's
 desktop.

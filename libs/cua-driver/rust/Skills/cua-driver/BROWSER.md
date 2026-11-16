@@ -197,7 +197,10 @@ browser_prepare
 ```
 
 For long-running service use, place `--grant existing-profile` on
-`cua-driver serve`. An embedding application may instead provide
+`cua-driver serve`. A grant applies only to a newly started driver: if a
+driver is already running without it, stop it with `cua-driver stop` first.
+`cua-driver serve` started from a terminal uses Cua Driver's own macOS
+permissions, the same as when the app starts it. An embedding application may instead provide
 `DriverAuthorizationHost`. Bounded mode uses a reviewed manifest with
 `resources.browser.profiles: [{kind: existing_profile}]`. Unrestricted mode
 requires `--dangerously-bypass-approvals`.
@@ -229,6 +232,15 @@ only sees the targets it bound. The shared connection closes after 30 minutes
 without a session, 8 hours after the prompt that opened it, when the daemon
 restarts, on `cua-driver revoke --all`, or when the driver turns remote
 debugging back off; the next session after that prompts once again.
+
+Chrome approves one connection per prompt and holds that connection until the
+prompt is answered. The driver presses the exact **Allow** itself when it can
+read the prompt. When it cannot, an attach the user can see keeps that same
+connection open for up to two minutes, so a person's **Allow** attaches it.
+**Cancel** refuses with `browser_consent_revoked`. No answer refuses with
+`browser_consent_required` and `detail.reason: "browser_consent_unanswered"`.
+On either refusal the driver closes the prompt it raised: an answer given after
+the connection is gone would attach nothing.
 When the Chrome window is on another Space than the user's, the attach runs in
 the background: the driver turns remote debugging on without bringing Chrome
 forward, and reverts Chrome's own brief activations (its consent window opens

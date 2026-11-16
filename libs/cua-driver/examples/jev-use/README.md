@@ -233,10 +233,11 @@ TypeSafe Jev and Cua-S1 chose correctly in all 1,680 decisions at about 4,
 
 #### Choose with Cua-S1
 
-The native runners also accept `--provider s1`, and `verify_native.py` accepts
-`--s1`. Loading Cua-S1 takes 10 to 35 seconds, so a per-step model load would
+The native and browser-fixture runners also accept `--provider s1`, and
+`verify_native.py` accepts `--s1`. Loading Cua-S1 takes 10 to 35 seconds, so a per-step model load would
 not fit inside Driver's 60-second capture lifetime. The runners therefore send
-each validated `cua.jev_choice_request_v2` request to an already loaded model
+each validated request (`cua.jev_choice_request_v2` from the native runners,
+`cua.jev_choice_request_v1` from the browser runners) to an already loaded model
 behind a loopback HTTP endpoint, and read one `cua.decision_choice_v1`
 response. `CUA_S1_DECISION_URL` names that endpoint. It must be a plain
 `http://` URL on `127.0.0.1`, `localhost`, or `::1`; a model on another host is
@@ -256,6 +257,14 @@ then stops with a logged `S1ServiceError` outcome. For example, to verify the na
 export CUA_S1_DECISION_URL=http://127.0.0.1:8791/decide
 uv run --frozen python verify_native.py --harness appkit --typescript --s1 --output-dir /tmp/jev-native-s1
 ```
+
+The browser-fixture runners send S1 the same validated
+`cua.jev_choice_request_v1` request that `choose_action.py` accepts: the goal,
+one `capture_id`, any typed visual regions, compact history, and candidate IDs
+with descriptions. They never send action arguments or the verification token.
+`--provider live` is unchanged and still sends the TypeSafe request pinned by
+the golden files above. Both runners check `CUA_S1_DECISION_URL` before they
+reset the fixture or start Driver.
 
 The MCP connection stays open across the entire loop. This preserves the
 explicit named Cua Driver session and avoids rebuilding tool state for every
@@ -305,6 +314,49 @@ atomically, so a retired, changed, or mismatched capture is refused before
 native dispatch. The agents never retry that refusal as an unbound coordinate
 click. Stale, malformed, out-of-bounds, duplicate, or ambiguous visual results
 produce no executable visual candidate.
+
+### Literal text plans
+
+When the caller already holds the exact native text-field labels and literal
+values, asking a chooser to select each sole permitted setter only adds
+provider calls. [`python/literal_text_plan.py`](python/literal_text_plan.py)
+runs one to three such setters directly, with no model call. It is opt-in,
+Python only, and does not interpret a natural-language goal.
+
+```python
+from literal_text_plan import LiteralTextStep, execute_literal_text_plan
+
+# driver is run.Driver over one MCP session; the labels and values are the
+# caller's authorized intent, never a model's guess.
+receipt = await execute_literal_text_plan(
+    driver, pid=pid, window_id=window_id, platform="macos",
+    steps=(LiteralTextStep("Full name", name), LiteralTextStep("Email", email)),
+    verify_context=still_the_requested_record,
+    verify_step=application_has_step_value,
+    verify_final=application_has_final_state,
+)
+```
+
+Each step observes the window with `run_native.observe`, binds the label to
+exactly one eligible non-risky `text_input`, observes again, and types only if
+the fresh control has the same stable ID, label, value and selection. Input
+uses the fresh observation's token. A truncated tree, or a partial tree with no
+eligible control, is observed once more, as in `observe_step`. The caller's
+`verify_context` runs on every observation and must reject a different record,
+modal or owner even when the labels match. `verify_step` and `verify_final`
+must read application state independently; an input acknowledgement is not
+completion.
+
+The plan raises `LiteralPlanHandoff` on an ambiguous, missing, risky or changed
+field, a failed context guard or a failed oracle. Driver errors and refusals
+propagate, and the plan deadline (`timeout_s`) raises. Input is never retried:
+after any stop, observe the effect before starting another plan.
+
+If a model transcribes the plan, `validate_literal_text_plan` accepts only the
+caller's owner and steps, exactly and in order. It refuses extra fields or
+actions, changed literals, and missing, duplicate or reordered steps. The
+optional `choose` hook on `execute_literal_text_plan` exists for comparisons
+with a chooser; it may only return the sole candidate's ID.
 
 ## Install the prerequisites
 
@@ -371,7 +423,12 @@ are not provider billing caps.
 
 Every `step` event in a runner's JSONL log records the Driver tool that acted
 (`browser_type`, `browser_click`, or `click`), its `delivery_mode` for a visual
-click, and a redacted `visual` record:
+click, and a redacted `visual` record. In the browser-fixture runners, every
+step and decision outcome also records `backend`, the backend that chose it:
+`mock`, `typesafe` (for `--provider live`), or `s1`. It is `null` on a guarded
+completion step, where no provider ran. A provider failure ends the run with an
+`unknown` outcome, `phase: "provider"`, the backend and the error class, before
+any action is dispatched. The `visual` record is one of:
 
 ```json
 {"status": "skipped", "reason": "page_structure_candidate"}

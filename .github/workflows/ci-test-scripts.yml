@@ -72,6 +72,7 @@ on:
       - "AGENTS.md"
       - ".github/CONTRIBUTING.md"
       - "docs/content/docs/reference/cua-driver/**"
+      - "libs/cua-driver/examples/action-read-overlap/**"
       - "libs/cua-driver/examples/agent-sdks/**"
       - "libs/cua-driver/rust/Cargo.lock"
       - "libs/cua-driver/rust/VERSION"
@@ -193,6 +194,9 @@ jobs:
 
       - name: Test private evidence cache, envelope, and sanitizer contracts
         run: python -m pytest libs/cua-driver/tests/perception-demo/ -v
+
+      - name: Test the action and read overlap example
+        run: python3 -m unittest discover -s libs/cua-driver/examples/action-read-overlap -p 'test_*.py' -v
 
       - uses: actions/setup-node@v4
         with:

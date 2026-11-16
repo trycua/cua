@@ -114,6 +114,8 @@ class GuardedRunnerTest(unittest.TestCase):
         no_choice=False,
         reobserve=False,
         action_failure=False,
+        provider="mock",
+        s1_requests=None,
         expected="verified",
     ):
         token = "private-field-canary-4316"
@@ -124,7 +126,7 @@ class GuardedRunnerTest(unittest.TestCase):
                 fixture_url=url,
                 max_steps=4,
                 log=str(Path(directory) / "run.jsonl"),
-                provider="mock",
+                provider=provider,
                 guarded_completion=guarded,
                 visual_observation="off",
                 dry_run=False,
@@ -159,11 +161,26 @@ class GuardedRunnerTest(unittest.TestCase):
                         return "reobserve", 1.0, {"reobserve": 1.0}
                 return original_choose(*values)
 
+            # S1 answers like the mock, through the counted provider patch.
+            decided_from = None
+            original_request = run.browser_decision_request
+
+            def build_request(*values):
+                nonlocal decided_from
+                decided_from = values
+                return original_request(*values)
+
+            def choose_s1(request):
+                s1_requests.append(request)
+                return run.choose_mock_for_task(*decided_from)
+
             with (
                 patch.object(run, "stdio_client", transport),
                 patch.object(run, "ClientSession", return_value=session),
                 patch.object(run, "plan_guarded_completion", side_effect=plan),
                 patch.object(run, "choose_mock_for_task", side_effect=choose) as provider,
+                patch.object(run, "browser_decision_request", side_effect=build_request),
+                patch.object(run, "choose_s1_service", side_effect=choose_s1),
                 contextlib.redirect_stdout(io.StringIO()),
             ):
                 self.assertEqual(asyncio.run(run.run(args)), expected)
@@ -239,6 +256,7 @@ class GuardedRunnerTest(unittest.TestCase):
                 "step": 2,
                 "phase": "provider",
                 "decision_route": "provider",
+                "backend": "mock",
                 "error": "RuntimeError",
                 "guarded_completion": {"status": "declined", "reason": "session_mismatch"},
                 "visual": {"status": "skipped", "reason": "disabled"},
@@ -277,3 +295,45 @@ class GuardedRunnerTest(unittest.TestCase):
         events, calls, _ = self.execute(guarded=False)
         self.assertEqual(calls, 2)
         self.assertTrue(all("guarded_completion" not in event for event in events))
+
+    def test_every_decision_record_names_the_backend_that_decided(self):
+        events, _, _ = self.execute()
+        steps = [event for event in events if event["event"] == "step"]
+        self.assertEqual(
+            [(step["decision_route"], step["backend"]) for step in steps],
+            [("provider", "mock"), ("guarded-completion", None)],
+        )
+
+    def test_default_off_provider_failure_logs_unknown_before_any_action(self):
+        events, _, mutations = self.execute(
+            guarded=False, provider_failure=True, expected="unknown"
+        )
+        self.assertEqual(mutations, ["browser_type"])
+        self.assertEqual(
+            events[-1],
+            {
+                "event": "outcome",
+                "outcome": "unknown",
+                "step": 2,
+                "phase": "provider",
+                "decision_route": "provider",
+                "backend": "mock",
+                "error": "RuntimeError",
+                "visual": {"status": "skipped", "reason": "disabled"},
+            },
+        )
+
+    def test_s1_receives_only_the_bounded_request(self):
+        requests = []
+        events, calls, _ = self.execute(guarded=False, provider="s1", s1_requests=requests)
+        self.assertEqual(calls, 2)
+        self.assertEqual(len(requests), 2)
+        for request in requests:
+            self.assertEqual(request["schema"], "cua.jev_choice_request_v1")
+            wire = json.dumps(request)
+            self.assertNotIn("private-field-canary-4316", wire)
+            self.assertNotIn("arguments", wire)
+            self.assertNotIn("browser_type", wire)
+        steps = [event for event in events if event["event"] == "step"]
+        self.assertEqual([step["backend"] for step in steps], ["s1", "s1"])
+        self.assertEqual(events[-1], {"event": "outcome", "outcome": "verified"})

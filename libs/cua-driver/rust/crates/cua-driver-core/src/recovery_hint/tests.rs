@@ -225,8 +225,8 @@ fn a_drag_refused_by_macos_drag_and_drop_names_a_non_drag_route_and_the_foregrou
     );
     assert_eq!(
         hint.hint,
-        "No drop landed: macOS drag-and-drop needs the real pointer. Try a route that is not a drag first \
-         (Move button, menu item, shortcut). Retry with delivery_mode:\"foreground\" \
+        "No drop landed: the drag-and-drop session did not end at the drop point. Try a route that is \
+         not a drag first (Move button, menu item, shortcut). Retry with delivery_mode:\"foreground\" \
          only if the user allows the window to come forward."
     );
     assert_eq!(
@@ -530,6 +530,26 @@ fn the_producers_own_attach_call_wins_over_the_rebuilt_one() {
         call_value(&hint),
         json!({"tool": "browser_prepare", "arguments": {"pid": 1, "window_id": 7}})
     );
+}
+
+#[test]
+fn an_unprepared_electron_app_keeps_the_launch_call_it_was_given() {
+    let launch = json!({"tool": "browser_prepare", "arguments": {
+        "pid": 659, "session": "web", "allow_launch": true,
+        "profile": {"mode": "isolated_new"},
+    }});
+    let hint = hint_for(
+        "get_browser_state",
+        &seed(json!({"pid": 659, "window_id": 12, "session": "web"})),
+        false,
+        json!({"status": "refused", "refusal": {
+            "code": "browser_requires_setup",
+            "message": "m",
+            "detail": {"next_call": launch.clone()},
+        }}),
+    );
+    assert!(hint.hint.contains("browser_prepare call in next_call"));
+    assert_eq!(call_value(&hint), launch);
 }
 
 #[test]

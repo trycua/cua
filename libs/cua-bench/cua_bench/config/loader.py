@@ -157,6 +157,7 @@ class ConfigLoader:
             effective["output_dir"] = config.defaults.output_dir
 
         # 2. Apply agent config from config.yaml
+        env_overrides: dict[str, Any] = {}
         if config and config.agent:
             if config.agent.name:
                 effective["agent"] = config.agent.name
@@ -167,24 +168,28 @@ class ConfigLoader:
             if config.agent.max_steps:
                 effective["max_steps"] = config.agent.max_steps
 
-            # 3. Apply environment-specific overrides
             if env_type and config.agent.environments:
                 env_overrides = config.agent.environments.get(env_type, {})
-                for key, value in env_overrides.items():
-                    if value is not None:
-                        effective[key] = value
 
-        # 4. Apply agent defaults from agents.yaml (if agent is specified)
-        agent_name = effective.get("agent") or cli_args.get("agent")
+        # 3. Resolve the selected agent before applying its defaults.
+        agent_name = cli_args.get("agent") or env_overrides.get("agent") or effective.get("agent")
+        if agent_name != effective.get("agent"):
+            effective.pop("agent_import_path", None)
         if agent_name:
             agent_entry = self.get_agent_by_name(agent_name)
             if agent_entry:
                 # Use import_path from agents.yaml
-                effective["agent_import_path"] = agent_entry.import_path
+                if agent_entry.import_path is not None:
+                    effective["agent_import_path"] = agent_entry.import_path
                 # Apply defaults from agents.yaml
                 for key, value in agent_entry.defaults.items():
-                    if key not in effective or effective[key] is None:
+                    if value is not None:
                         effective[key] = value
+
+        # 4. Environment-specific overrides take precedence over agent defaults.
+        for key, value in env_overrides.items():
+            if value is not None:
+                effective[key] = value
 
         # 5. Override with CLI arguments (highest priority)
         for key, value in cli_args.items():

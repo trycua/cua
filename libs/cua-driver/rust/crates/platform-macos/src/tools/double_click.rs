@@ -51,7 +51,7 @@ fn def() -> &'static ToolDef {
             "type": "object",
             "required": [],
             "properties": {
-                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
+                "session": cua_driver_core::tool_schema::session_schema(),
                 "pid":           { "type": "integer", "description": "Target process ID. Optional with element_token (the token carries the pid)." },
                 "x":             { "type": "number",  "description": "Screen X coordinate (pixel path)." },
                 "y":             { "type": "number",  "description": "Screen Y coordinate (pixel path)." },
@@ -261,9 +261,20 @@ fn ax_double_click(
 
     // Try AXOpen first (Finder items, openable list rows, document cells).
     if has_ax_open {
+        let window_before = unsafe { super::click::window_before_open(element) };
         let err = unsafe { perform_action(element, "AXOpen") };
         if err == kAXErrorSuccess {
             return Ok(format!("AXOpen performed on element [{idx}]."));
+        }
+        if let Some((now, before)) = window_before.as_ref().and_then(|(window, before)| {
+            unsafe { super::click::replaced_by_open(element, err, window, before) }
+                .map(|now| (now, before))
+        }) {
+            return Ok(format!(
+                "AXOpen performed on element [{idx}]; the element no longer exists and the \
+                 window title is now \"{now}\" (was \"{before}\"), although the app returned \
+                 AX error {err}. Take a fresh snapshot before acting again."
+            ));
         }
         if !foreground {
             anyhow::bail!(

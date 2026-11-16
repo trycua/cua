@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.11.7](https://github.com/trycua/cua/compare/sandbox-v0.11.6...sandbox-v0.11.7) (2026-11-15)
+
+
+### Bug Fixes
+
+* **sandbox:** preserve registry identity for QEMU image layers ([#7865](https://github.com/trycua/cua/issues/7865)) ([2509cba](https://github.com/trycua/cua/commit/2509cba9f3769807c7fb3a5c752de93e5f6697a1))
+
+## [0.11.6](https://github.com/trycua/cua/compare/sandbox-v0.11.5...sandbox-v0.11.6) (2026-11-15)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** allow cua-driver 0.52 in the driver extra ([#7840](https://github.com/trycua/cua/issues/7840)) ([a7d3173](https://github.com/trycua/cua/commit/a7d317373f80372c0bc93a130c0e22f5383ba61d))
+
+## [0.11.5](https://github.com/trycua/cua/compare/sandbox-v0.11.4...sandbox-v0.11.5) (2026-11-15)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** allow cua-driver 0.51 ([#7781](https://github.com/trycua/cua/issues/7781)) ([1569bea](https://github.com/trycua/cua/commit/1569bea5977d61d38b5f341bb7632cc809e2f464))
+
+## [0.11.4](https://github.com/trycua/cua/compare/sandbox-v0.11.3...sandbox-v0.11.4) (2026-11-14)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** allow cua-driver 0.50 ([#7767](https://github.com/trycua/cua/issues/7767)) ([e31ab77](https://github.com/trycua/cua/commit/e31ab7705de2806bd22492b70867cb5fb767f224))
+
+## [0.11.3](https://github.com/trycua/cua/compare/sandbox-v0.11.2...sandbox-v0.11.3) (2026-11-14)
+
+
+### Bug Fixes
+
+* **core:** upgrade dnspython and the OpenTelemetry stack (CVE-2026-128089, CVE-2026-126360) ([#7699](https://github.com/trycua/cua/issues/7699)) ([79c4a8d](https://github.com/trycua/cua/commit/79c4a8dd7e0de599cd29739f6c04523aca54835c))
+
 ## [0.11.2](https://github.com/trycua/cua/compare/sandbox-v0.11.1...sandbox-v0.11.2) (2026-11-13)
 
 

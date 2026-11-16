@@ -590,6 +590,7 @@ impl AgentSessionState {
             "get_browser_state"
                 | "browser_prepare"
                 | "browser_navigate"
+                | "browser_motion_policy"
                 | "browser_click"
                 | "browser_type"
                 | "browser_dialog"
@@ -2062,6 +2063,7 @@ fn fixed_cli_client_kind(command: &str, client_kind: &str) -> &'static str {
         "qwen_code" => "qwen_code",
         "factory_droid" => "factory_droid",
         "zcode" => "zcode",
+        "deepseek_harness" => "deepseek_harness",
         _ => "other",
     }
 }
@@ -3547,6 +3549,7 @@ mod tests {
         };
 
         for (tool_name, operation) in [
+            ("browser_motion_policy", ToolOperation::NotApplicable),
             ("browser_dialog", ToolOperation::BrowserDialogAccept),
             (
                 "browser_set_input_files",
@@ -3779,6 +3782,10 @@ mod tests {
         assert_eq!(
             fixed_cli_client_kind("mcp_config", "claude_code"),
             "claude_code"
+        );
+        assert_eq!(
+            fixed_cli_client_kind("mcp_config", "deepseek_harness"),
+            "deepseek_harness"
         );
         assert_eq!(
             fixed_cli_client_kind("mcp_config", "/private/client"),

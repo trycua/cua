@@ -14,7 +14,7 @@
 //! - AXStaticText with no title/value is omitted.
 //! - Tree is walked depth-first; element_index is assigned in DFS order.
 
-use super::batch::{NodeAttr, NodeAttributes};
+use super::batch::{copy_string_attrs, NodeAttr, NodeAttributes};
 use super::bindings::*;
 use super::launch::{is_still_launching, LaunchStep, LaunchWait};
 use super::window_scope::{decide_window_scope, ScopeDecision, TopLevelCandidate, WindowScope};
@@ -45,7 +45,7 @@ pub const DEFAULT_MAX_ELEMENTS: usize = 2_000;
 /// `AXUIElementCopyAttributeValue` after `spawn_blocking` starts, so the native
 /// messaging timeout is what keeps an unresponsive app from retaining a worker
 /// indefinitely.
-const AX_MESSAGING_TIMEOUT_SECONDS: f32 = 2.0;
+pub(crate) const AX_MESSAGING_TIMEOUT_SECONDS: f32 = 2.0;
 
 /// Most windows of one app a walk brings up to date (see
 /// [`super::enablement::flush_pending_web_updates`]).
@@ -80,8 +80,8 @@ pub struct AXNode {
     /// The raw AXUIElementRef pointer value, for caching.
     pub element_ptr: usize,
     /// Depth in the rendered markdown tree (matches the indent level used in
-    /// `tree_markdown`). Layout containers AXScrollArea/AXGroup collapse so
-    /// children share the parent's depth.
+    /// `tree_markdown`). Unnamed AXScrollArea/AXGroup layout wrappers collapse
+    /// so children share the parent's depth; named ones keep their own row.
     pub depth: usize,
     /// `element_index` of the nearest actionable ancestor, if any. Walks the
     /// rendered tree (so it skips collapsed layout containers).
@@ -377,6 +377,7 @@ fn walk_tree_with_web_content(
             walk_element(
                 child,
                 0,
+                0,
                 None,
                 false,
                 &mut nodes,
@@ -399,7 +400,7 @@ fn walk_tree_with_web_content(
     prune_echo_text_rows(&mut lines);
     let raw_markdown = render_lines(&lines);
     let mut tree_markdown = if let Some(q) = query {
-        filter_tree(&raw_markdown, q)
+        cua_driver_core::element_query::filter_tree(&raw_markdown, q)
     } else {
         raw_markdown
     };
@@ -503,9 +504,9 @@ unsafe fn scope_top_level(
 
 unsafe fn top_level_candidate(child: AXUIElementRef) -> TopLevelCandidate {
     set_messaging_timeout(child);
-    let role = copy_string_attr(child, "AXRole").unwrap_or_default();
-    let subrole = copy_string_attr(child, "AXSubrole");
-    let identifier = copy_string_attr(child, "AXIdentifier");
+    let [role, subrole, identifier] =
+        copy_string_attrs(child, ["AXRole", "AXSubrole", "AXIdentifier"]);
+    let role = role.unwrap_or_default();
     // Match AX window element → CGWindowID via private SPI. Only windows and
     // sheets carry one, so skip the round-trip elsewhere.
     let ax_window_id = if matches!(role.as_str(), "AXWindow" | "AXSheet") {
@@ -528,10 +529,43 @@ unsafe fn release_all(elements: Vec<AXUIElementRef>) {
     }
 }
 
+fn is_layout_container(role: &str) -> bool {
+    matches!(role, "AXGroup" | "AXScrollArea")
+}
+
+/// Whether an AXGroup/AXScrollArea is only a layout wrapper to collapse. One
+/// that carries content (AXTitle or AXDescription, such as a "Profile" or
+/// "Billing" section, or a non-empty AXValue or AXHelp) keeps its row, so
+/// identical controls in different sections can be told apart, and its own
+/// actions (a SwiftUI row's press or custom actions) stay addressable.
+fn collapse_layout_container(
+    role: &str,
+    title: Option<&str>,
+    description: Option<&str>,
+    has_value_or_help: bool,
+) -> bool {
+    is_layout_container(role)
+        && title.is_none_or(|text| text.trim().is_empty())
+        && description.is_none_or(|text| text.trim().is_empty())
+        && !has_value_or_help
+}
+
+/// `max_depth` budget a node's children are walked at. A named layout group
+/// kept as a row indents its children but spends no budget, so `max_depth`
+/// admits the same elements as when every group collapsed.
+fn child_walk_depth(role: &str, walk_depth: usize) -> usize {
+    if is_layout_container(role) {
+        walk_depth
+    } else {
+        walk_depth + 1
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 unsafe fn walk_element(
     element: AXUIElementRef,
     depth: usize,
+    walk_depth: usize,
     parent_index: Option<usize>,
     in_web_content: bool,
     nodes: &mut Vec<AXNode>,
@@ -542,7 +576,7 @@ unsafe fn walk_element(
     max_depth: usize,
     include_web_content: bool,
 ) {
-    if depth > max_depth {
+    if walk_depth > max_depth {
         *depth_truncated = true;
         return;
     }
@@ -586,18 +620,22 @@ unsafe fn walk_element(
     let help = attrs
         .string(NodeAttr::Help)
         .filter(|h| !h.trim().is_empty());
-    if (role == "AXScrollArea" || role == "AXGroup")
-        && title.as_deref().is_none_or(|s| s.trim().is_empty())
-        && description.as_deref().is_none_or(|s| s.trim().is_empty())
-        && value.is_none()
-        && help.is_none()
-    {
+    if collapse_layout_container(
+        &role,
+        title.as_deref(),
+        description.as_deref(),
+        value.is_some() || help.is_some(),
+    ) {
+        // Still recurse — children may be interesting. Layout containers
+        // collapse, so children inherit the parent's depth AND the same
+        // parent_index (no actionable node was emitted here).
         let children = attrs.children();
         drop(attrs);
         for child in children {
             walk_element(
                 child,
                 depth,
+                walk_depth,
                 parent_index,
                 in_web_content,
                 nodes,
@@ -652,6 +690,7 @@ unsafe fn walk_element(
             walk_element(
                 child,
                 depth + 1,
+                walk_depth + 1,
                 parent_index,
                 in_web_content,
                 nodes,
@@ -797,6 +836,7 @@ unsafe fn walk_element(
         walk_element(
             child,
             depth + 1,
+            child_walk_depth(&role, walk_depth),
             next_parent,
             in_web_content,
             nodes,
@@ -934,7 +974,9 @@ const UNLISTED_ACTIONS: &[&str] = &["AXShowMenu", "AXScrollToVisible"];
 /// Drop static-text leaf rows that only repeat text already shown on their
 /// parent row (a web button "Save case" with a child text "Save case"). The
 /// rows keep their element indices; only the rendering omits them, and a
-/// `query` for the text still matches the parent.
+/// `query` for the text still matches the parent. Only an addressable parent
+/// (one with its own `[N]` index) stands in for the child: a named group kept
+/// as a display row has no index, so its echoing text row stays the target.
 fn prune_echo_text_rows(lines: &mut Vec<(usize, String)>) {
     let mut keep = vec![true; lines.len()];
     for i in 0..lines.len() {
@@ -947,7 +989,9 @@ fn prune_echo_text_rows(lines: &mut Vec<(usize, String)>) {
             continue;
         }
         let parent = lines[..i].iter().rev().find(|(d, _)| *d + 1 == *depth);
-        if parent.is_some_and(|(_, parent_line)| quoted_text_contains(parent_line, text)) {
+        if parent.is_some_and(|(_, parent_line)| {
+            parent_line.starts_with("- [") && quoted_text_contains(parent_line, text)
+        }) {
             keep[i] = false;
         }
     }
@@ -991,68 +1035,58 @@ fn render_lines(lines: &[(usize, String)]) -> String {
     out
 }
 
-/// Filter the tree markdown to lines matching `query` plus their ancestor chain.
-fn filter_tree(markdown: &str, query: &str) -> String {
-    let needle = query.to_lowercase();
-    let lines: Vec<&str> = markdown.lines().collect();
-
-    let mut current_ancestor: Vec<&str> = Vec::new();
-    let mut last_emitted_at: Vec<Option<&str>> = Vec::new();
-    let mut output: Vec<&str> = Vec::new();
-
-    for line in &lines {
-        let depth = leading_indent_depth(line);
-
-        while current_ancestor.len() <= depth {
-            current_ancestor.push("");
-            last_emitted_at.push(None);
-        }
-        for emitted_at in last_emitted_at.iter_mut().skip(depth + 1) {
-            *emitted_at = None;
-        }
-        current_ancestor[depth] = line;
-
-        if line.to_lowercase().contains(&needle) {
-            for ancestor_depth in 0..depth {
-                let ancestor = current_ancestor[ancestor_depth];
-                if ancestor.is_empty() {
-                    continue;
-                }
-                if last_emitted_at[ancestor_depth] == Some(ancestor) {
-                    continue;
-                }
-                last_emitted_at[ancestor_depth] = Some(ancestor);
-                output.push(ancestor);
-            }
-            last_emitted_at[depth] = Some(line);
-            output.push(line);
-        }
-    }
-
-    if output.is_empty() {
-        return String::new();
-    }
-    let mut result = output.join("\n");
-    result.push('\n');
-    result
-}
-
-fn leading_indent_depth(line: &str) -> usize {
-    let mut count = 0;
-    for ch in line.chars() {
-        if ch == ' ' {
-            count += 1;
-        } else {
-            break;
-        }
-    }
-    count / 2
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn named_layout_groups_keep_their_row_and_unnamed_wrappers_collapse() {
+        for role in ["AXGroup", "AXScrollArea"] {
+            assert!(!collapse_layout_container(
+                role,
+                Some("Billing"),
+                None,
+                false
+            ));
+            assert!(!collapse_layout_container(
+                role,
+                None,
+                Some("Profile"),
+                false
+            ));
+            assert!(!collapse_layout_container(
+                role,
+                Some("  "),
+                Some("Billing"),
+                false
+            ));
+            // An unnamed group with its own value or help is content, not a
+            // wrapper.
+            assert!(!collapse_layout_container(role, None, None, true));
+            assert!(collapse_layout_container(role, None, None, false));
+            assert!(collapse_layout_container(
+                role,
+                Some(" "),
+                Some("\n\t"),
+                false
+            ));
+        }
+        assert!(!collapse_layout_container("AXButton", None, None, false));
+        assert!(!collapse_layout_container("AXWebArea", None, None, false));
+        assert!(is_layout_container("AXGroup") && is_layout_container("AXScrollArea"));
+        assert!(!is_layout_container("AXButton"));
+    }
+
+    #[test]
+    fn a_kept_named_group_spends_no_max_depth_budget() {
+        // A button at walk depth 3 under a named group stays within
+        // max_depth=3, as it did when the group collapsed.
+        assert_eq!(child_walk_depth("AXGroup", 3), 3);
+        assert_eq!(child_walk_depth("AXScrollArea", 3), 3);
+        assert_eq!(child_walk_depth("AXWindow", 2), 3);
+        assert_eq!(child_walk_depth("AXButton", 2), 3);
+    }
 
     #[test]
     fn a_disabled_control_row_says_so() {
@@ -1243,6 +1277,22 @@ mod lean_row_tests {
                 "- [12] AXStaticText = \"Inbox\"",
             ]
         );
+    }
+
+    #[test]
+    fn echo_text_under_an_unindexed_group_is_kept_as_the_target() {
+        // A named group is a display row with no element_index, so the text
+        // row repeating its name is the only addressable carrier (a web
+        // scroll region labelled by its own text).
+        let mut lines = rows(&[
+            (0, "- [0] AXWindow \"Harness\" [actions=[raise]]"),
+            (1, "- AXGroup \"scroll-tall\""),
+            (2, "- [33] AXStaticText = \"top marker\""),
+            (2, "- [34] AXStaticText = \"scroll-tall\""),
+            (2, "- [35] AXStaticText = \"line 02\""),
+        ]);
+        prune_echo_text_rows(&mut lines);
+        assert_eq!(lines.len(), 5);
     }
 
     #[test]

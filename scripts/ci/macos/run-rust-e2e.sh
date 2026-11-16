@@ -359,6 +359,7 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     harness_appkit_query_projects_structured_elements \
     harness_appkit_stale_element_token_fails_closed \
     snapshot_publication::harness_appkit_pending_snapshot_cannot_retarget_token \
+    snapshot_publication::harness_appkit_relabelled_cached_click_fails_closed \
     harness_appkit_invoke_menu_live_path \
     harness_appkit_invoke_menu_failed_path_leaves_no_menu_open \
     harness_appkit_text_input \
@@ -375,6 +376,8 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     harness_appkit_erroring_toggle_press_counts_only_when_its_value_moved \
     harness_appkit_disabled_control_is_published_and_its_press_refused \
     harness_appkit_foreground_from_the_background_rereads_enablement_after_activation \
+    harness_appkit_save_sheet_controls_act_through_their_window \
+    harness_appkit_foreground_key_reaches_an_attached_sheet \
     harness_appkit_px_background_press_key_reports_honest_delivery_truth \
     harness_appkit_exact_activation_with_agent_cursor \
     harness_appkit_exact_activation_ignores_competing_application_window \

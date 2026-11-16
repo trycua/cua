@@ -13,6 +13,7 @@
 //! compositor-attested surfaces and return a typed identity error otherwise.
 
 mod compositor_peer;
+mod cua_compositor_capture;
 mod dynamic_library;
 pub mod ext_screencopy;
 pub mod ext_toplevel;
@@ -910,6 +911,12 @@ fn capture_via_screencopy() -> anyhow::Result<Vec<u8>> {
     screencopy_first_output().map(|(png, _)| png)
 }
 
+/// [`capture_via_screencopy`] over a connection the caller has already
+/// attested, so the pixels come from that compositor and no other.
+fn capture_via_screencopy_on(conn: Connection) -> anyhow::Result<Vec<u8>> {
+    screencopy_first_output_on(conn, None).map(|(png, _)| png)
+}
+
 /// [`capture_via_screencopy`], plus the wl_output v4 name of the copied
 /// output when the compositor reports one.
 fn screencopy_first_output() -> anyhow::Result<(Vec<u8>, Option<String>)> {
@@ -919,7 +926,15 @@ fn screencopy_first_output() -> anyhow::Result<(Vec<u8>, Option<String>)> {
     // ends the capture at the deadline instead of hanging it.
     let niri = niri::is_session();
     let bounded = niri.then_some(deadline);
-    let conn = wayland_connection(niri)?;
+    screencopy_first_output_on(wayland_connection(niri)?, bounded)
+}
+
+fn screencopy_first_output_on(
+    conn: Connection,
+    bounded: Option<std::time::Instant>,
+) -> anyhow::Result<(Vec<u8>, Option<String>)> {
+    let deadline =
+        bounded.unwrap_or_else(|| std::time::Instant::now() + std::time::Duration::from_secs(5));
     let mut queue = conn.new_event_queue::<State>();
     let qh = queue.handle();
     conn.display().get_registry(&qh, ());
@@ -1047,7 +1062,7 @@ fn screencopy_first_output() -> anyhow::Result<(Vec<u8>, Option<String>)> {
         &conn,
         &mut queue,
         &mut state,
-        niri.then(|| std::time::Instant::now() + crate::interaction::CLEANUP_CAP),
+        bounded.map(|_| std::time::Instant::now() + crate::interaction::CLEANUP_CAP),
     );
     cleanup_mmap(mmap_ptr, mmap_len, fd);
 
@@ -1282,6 +1297,10 @@ fn screenshot_dispatch_for_pid(xid: u64, pid: Option<u32>) -> anyhow::Result<Vec
     }
     if niri::is_session() {
         return niri_window_capture(xid, pid);
+    }
+    if is_wayland() && is_inject_mode() {
+        return cua_compositor_capture::capture(xid, pid)
+            .map_err(|error| surface_identity_unproven(xid, format!("cua-compositor: {error:#}")));
     }
     if is_wayland() {
         // A GNOME helper with API 9+ snapshots the window's own actor, so a

@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.11.7](https://github.com/trycua/cua/compare/sandbox-v0.11.6...sandbox-v0.11.7) (2026-11-15)
+
+
+### Bug Fixes
+
+* **sandbox:** preserve registry identity for QEMU image layers ([#7865](https://github.com/trycua/cua/issues/7865)) ([2509cba](https://github.com/trycua/cua/commit/2509cba9f3769807c7fb3a5c752de93e5f6697a1))
+
+## [0.11.6](https://github.com/trycua/cua/compare/sandbox-v0.11.5...sandbox-v0.11.6) (2026-11-15)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** allow cua-driver 0.52 in the driver extra ([#7840](https://github.com/trycua/cua/issues/7840)) ([a7d3173](https://github.com/trycua/cua/commit/a7d317373f80372c0bc93a130c0e22f5383ba61d))
+
+## [0.11.5](https://github.com/trycua/cua/compare/sandbox-v0.11.4...sandbox-v0.11.5) (2026-11-15)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** allow cua-driver 0.51 ([#7781](https://github.com/trycua/cua/issues/7781)) ([1569bea](https://github.com/trycua/cua/commit/1569bea5977d61d38b5f341bb7632cc809e2f464))
+
 ## [0.11.4](https://github.com/trycua/cua/compare/sandbox-v0.11.3...sandbox-v0.11.4) (2026-11-14)
 
 

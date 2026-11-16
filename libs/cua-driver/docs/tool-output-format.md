@@ -36,6 +36,13 @@ records in `structuredContent` and can attach a PNG as image content. A
 multimodal harness interprets the image; Cua Driver does not OCR it or assign
 task meaning.
 
+The `get_window_state` text header repeats the published `snapshot_id`
+(`window_id=… pid=… snapshot_id=s…`), so a model whose client shows it only
+text content can form `element_token: "<snapshot_id>:N"` from a row `[N]` in
+the tree. This includes `full_output:true` and empty trees when a snapshot was
+published; observation-only reads without a snapshot omit the field. Programs should
+still read `snapshot_id` and `element_token` from `structuredContent`.
+
 On Windows, `get_window_state.elements_complete` is true only when the
 unprojected UI Automation walk visited every exposed node without a traversal
 bound, timeout, or enumeration failure skipping a node or subtree. Reaching

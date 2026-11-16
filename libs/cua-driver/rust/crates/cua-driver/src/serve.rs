@@ -3228,6 +3228,122 @@ mod gate_tests {
         let _ = server.await;
         let _ = std::fs::remove_file(&socket);
     }
+
+    /// A label a live `cua-driver mcp` process started is refused to a
+    /// `cua-driver call` as held by another connection, not as ended, and
+    /// runs for the CLI once the MCP process has closed (#4724).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_live_label_held_by_another_transport_is_refused_as_owned_not_ended() {
+        let _runtime_guard = crate::test_runtime_lock().lock().await;
+        PROBE_INVOCATIONS.store(0, Ordering::SeqCst);
+
+        let driver =
+            cua_driver_sdk::CuaDriver::create_for_host(cua_driver_sdk::DriverHostOptions {
+                cursor: cursor_overlay::CursorConfig {
+                    enabled: false,
+                    ..cursor_overlay::CursorConfig::default()
+                },
+                host_owns_permission_ux: false,
+                host_bundle_id: None,
+                claude_code_compatibility: false,
+                prepare_desktop_environment: false,
+                register_host_tools: Some(register_probe),
+                authorization_host: None,
+                activity_observer: None,
+            });
+        let sdk = crate::sdk_adapter::SdkAdapter::load(driver)
+            .await
+            .expect("SDK adapter");
+        let socket = format!(
+            "/tmp/cua-driver-owned-test-{}-{}.sock",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let socket_for_server = socket.clone();
+        let server = tokio::spawn(async move {
+            let _ = run_serve(sdk, &socket_for_server, None).await;
+        });
+        for _ in 0..100 {
+            if std::path::Path::new(&socket).exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+
+        let send = |method: &str, name: Option<&str>, label: Option<&str>, transport: &str| {
+            let socket = socket.clone();
+            let request = DaemonRequest {
+                method: method.into(),
+                name: name.map(str::to_owned),
+                args: label.map(|label| serde_json::json!({ "session": label })),
+                session_id: Some(transport.to_owned()),
+                observation_origin: None,
+                client_kind: None,
+            };
+            async move {
+                tokio::task::spawn_blocking(move || send_request(&socket, &request))
+                    .await
+                    .unwrap()
+                    .expect("daemon response")
+            }
+        };
+        let refusal = |resp: &cua_driver_core::daemon::DaemonResponse| {
+            assert!(resp.ok, "{resp:?}");
+            let result = resp.result.clone().expect("tool result");
+            assert_eq!(result.get("isError"), Some(&Value::Bool(true)), "{result}");
+            result
+                .pointer("/structuredContent/refusal")
+                .cloned()
+                .unwrap_or_else(|| panic!("no refusal in {result}"))
+        };
+        // The transport ids `cua-driver mcp` and `cua-driver call` send.
+        let (mcp, cli) = ("mcp-owned-test-4724", "cli-owned-test-4724");
+
+        let started = send("call", Some("start_session"), Some("ra-transport"), mcp).await;
+        assert!(started.ok, "{started:?}");
+        assert!(
+            send("call", Some("probe"), Some("ra-transport"), mcp)
+                .await
+                .ok
+        );
+        assert_eq!(PROBE_INVOCATIONS.load(Ordering::SeqCst), 1);
+
+        let foreign = refusal(&send("call", Some("probe"), Some("ra-transport"), cli).await);
+        assert_eq!(
+            foreign,
+            serde_json::json!({
+                "code": "session_owned_by_other_transport",
+                "message": "session 'ra-transport' is live on another connection (mcp_stdio); make this call from that connection, or use a new session label here",
+                "owner_transport": "mcp_stdio",
+            })
+        );
+        assert_eq!(
+            PROBE_INVOCATIONS.load(Ordering::SeqCst),
+            1,
+            "the refused call must not run the tool"
+        );
+
+        // Once the MCP process closes, the CLI's next call starts the label.
+        assert!(send("session_end", None, None, mcp).await.ok);
+        let after = send("call", Some("probe"), Some("ra-transport"), cli).await;
+        assert!(after.ok, "{after:?}");
+        assert_ne!(
+            after
+                .result
+                .as_ref()
+                .and_then(|result| result.get("isError")),
+            Some(&Value::Bool(true)),
+            "{after:?}"
+        );
+        assert_eq!(PROBE_INVOCATIONS.load(Ordering::SeqCst), 2);
+
+        let _ = send("shutdown", None, None, cli).await;
+        let _ = server.await;
+        let _ = std::fs::remove_file(&socket);
+    }
 }
 
 #[cfg(test)]

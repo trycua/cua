@@ -270,8 +270,7 @@ fn canonical_cursor_contracts_match_active_backend() {
             .find(|entry| entry["name"].as_str() == Some(&contract.name))
             .unwrap_or_else(|| panic!("{} missing from live registry", contract.name));
         assert_eq!(
-            live["description"],
-            cua_driver_core::tool::lead_on_own_line(&contract.description),
+            live["description"], contract.description,
             "{} description",
             contract.name
         );

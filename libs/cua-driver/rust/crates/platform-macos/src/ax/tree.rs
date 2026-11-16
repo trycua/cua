@@ -14,7 +14,7 @@
 //! - AXStaticText with no title/value is omitted.
 //! - Tree is walked depth-first; element_index is assigned in DFS order.
 
-use super::batch::{NodeAttr, NodeAttributes};
+use super::batch::{copy_string_attrs, NodeAttr, NodeAttributes};
 use super::bindings::*;
 use super::launch::{is_still_launching, LaunchStep, LaunchWait};
 use super::window_scope::{decide_window_scope, ScopeDecision, TopLevelCandidate, WindowScope};
@@ -399,7 +399,7 @@ fn walk_tree_with_web_content(
     prune_echo_text_rows(&mut lines);
     let raw_markdown = render_lines(&lines);
     let mut tree_markdown = if let Some(q) = query {
-        filter_tree(&raw_markdown, q)
+        cua_driver_core::element_query::filter_tree(&raw_markdown, q)
     } else {
         raw_markdown
     };
@@ -503,9 +503,9 @@ unsafe fn scope_top_level(
 
 unsafe fn top_level_candidate(child: AXUIElementRef) -> TopLevelCandidate {
     set_messaging_timeout(child);
-    let role = copy_string_attr(child, "AXRole").unwrap_or_default();
-    let subrole = copy_string_attr(child, "AXSubrole");
-    let identifier = copy_string_attr(child, "AXIdentifier");
+    let [role, subrole, identifier] =
+        copy_string_attrs(child, ["AXRole", "AXSubrole", "AXIdentifier"]);
+    let role = role.unwrap_or_default();
     // Match AX window element → CGWindowID via private SPI. Only windows and
     // sheets carry one, so skip the round-trip elsewhere.
     let ax_window_id = if matches!(role.as_str(), "AXWindow" | "AXSheet") {
@@ -961,7 +961,9 @@ const UNLISTED_ACTIONS: &[&str] = &["AXShowMenu", "AXScrollToVisible"];
 /// Drop static-text leaf rows that only repeat text already shown on their
 /// parent row (a web button "Save case" with a child text "Save case"). The
 /// rows keep their element indices; only the rendering omits them, and a
-/// `query` for the text still matches the parent.
+/// `query` for the text still matches the parent. Only an addressable parent
+/// (one with its own `[N]` index) stands in for the child: a named group kept
+/// as a display row has no index, so its echoing text row stays the target.
 fn prune_echo_text_rows(lines: &mut Vec<(usize, String)>) {
     let mut keep = vec![true; lines.len()];
     for i in 0..lines.len() {
@@ -974,7 +976,9 @@ fn prune_echo_text_rows(lines: &mut Vec<(usize, String)>) {
             continue;
         }
         let parent = lines[..i].iter().rev().find(|(d, _)| *d + 1 == *depth);
-        if parent.is_some_and(|(_, parent_line)| quoted_text_contains(parent_line, text)) {
+        if parent.is_some_and(|(_, parent_line)| {
+            parent_line.starts_with("- [") && quoted_text_contains(parent_line, text)
+        }) {
             keep[i] = false;
         }
     }
@@ -1016,64 +1020,6 @@ fn render_lines(lines: &[(usize, String)]) -> String {
         out.push('\n');
     }
     out
-}
-
-/// Filter the tree markdown to lines matching `query` plus their ancestor chain.
-fn filter_tree(markdown: &str, query: &str) -> String {
-    let needle = query.to_lowercase();
-    let lines: Vec<&str> = markdown.lines().collect();
-
-    let mut current_ancestor: Vec<&str> = Vec::new();
-    let mut last_emitted_at: Vec<Option<&str>> = Vec::new();
-    let mut output: Vec<&str> = Vec::new();
-
-    for line in &lines {
-        let depth = leading_indent_depth(line);
-
-        while current_ancestor.len() <= depth {
-            current_ancestor.push("");
-            last_emitted_at.push(None);
-        }
-        for emitted_at in last_emitted_at.iter_mut().skip(depth + 1) {
-            *emitted_at = None;
-        }
-        current_ancestor[depth] = line;
-
-        if line.to_lowercase().contains(&needle) {
-            for ancestor_depth in 0..depth {
-                let ancestor = current_ancestor[ancestor_depth];
-                if ancestor.is_empty() {
-                    continue;
-                }
-                if last_emitted_at[ancestor_depth] == Some(ancestor) {
-                    continue;
-                }
-                last_emitted_at[ancestor_depth] = Some(ancestor);
-                output.push(ancestor);
-            }
-            last_emitted_at[depth] = Some(line);
-            output.push(line);
-        }
-    }
-
-    if output.is_empty() {
-        return String::new();
-    }
-    let mut result = output.join("\n");
-    result.push('\n');
-    result
-}
-
-fn leading_indent_depth(line: &str) -> usize {
-    let mut count = 0;
-    for ch in line.chars() {
-        if ch == ' ' {
-            count += 1;
-        } else {
-            break;
-        }
-    }
-    count / 2
 }
 
 #[cfg(test)]
@@ -1260,6 +1206,22 @@ mod lean_row_tests {
                 "- [12] AXStaticText = \"Inbox\"",
             ]
         );
+    }
+
+    #[test]
+    fn echo_text_under_an_unindexed_group_is_kept_as_the_target() {
+        // A named group is a display row with no element_index, so the text
+        // row repeating its name is the only addressable carrier (a web
+        // scroll region labelled by its own text).
+        let mut lines = rows(&[
+            (0, "- [0] AXWindow \"Harness\" [actions=[raise]]"),
+            (1, "- AXGroup \"scroll-tall\""),
+            (2, "- [33] AXStaticText = \"top marker\""),
+            (2, "- [34] AXStaticText = \"scroll-tall\""),
+            (2, "- [35] AXStaticText = \"line 02\""),
+        ]);
+        prune_echo_text_rows(&mut lines);
+        assert_eq!(lines.len(), 5);
     }
 
     #[test]

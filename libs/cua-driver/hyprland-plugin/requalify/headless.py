@@ -13,6 +13,12 @@ window and a background CLICK lands on a third; each application's own output
 is the oracle (typed text, and the terminal's SGR mouse report), and primary
 focus must not move.
 
+Agent-seat smoke: a client that binds only its first wl_seat, as Chromium and
+Electron do (first_seat_client.c), is started twice. Tagged with CUA_AGENT_SEAT
+(the environment fallback: the CI container has no systemd) it must be handed the Cua-Agent seat and take a background click and key; untagged
+it must keep the user's seat and still be refused with client_not_agent_seat_bound.
+This is recorded under smoke.agent_seat and does not yet gate the smoke status.
+
 Driver smoke (when --driver names a Cua Driver release tree): the released
 `cua-driver` serves the same session with native Wayland on and is asked for
 the four calls an agent starts with, against a fresh native window:
@@ -115,6 +121,19 @@ class Session:
 
         return wait_for(mapped, 30, f"{app_id} window did not map")
 
+    def release_clients(self, keep):
+        """Close the clients started after the first `keep`, so a later smoke gets the layout it was written for."""
+        released, self.clients = self.clients[keep:], self.clients[:keep]
+        for process in released:
+            if process.poll() is None:
+                process.terminate()
+        for process in released:
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+
     def stop(self):
         for process in self.clients:
             if process.poll() is None:
@@ -181,6 +200,126 @@ class InputLane:
 
     def close(self):
         self.socket.close()
+
+
+AGENT_SEAT_TAGGED_CLASS = "cua-requalify-seat-tagged"
+AGENT_SEAT_UNTAGGED_CLASS = "cua-requalify-seat-untagged"
+AGENT_SEAT_HOLDER_CLASS = "cua-requalify-seat-holder"
+AGENT_SEAT_NAME = "Cua-Agent"
+PROBE_SOURCE = Path(__file__).resolve().parent / "first_seat_client.c"
+XDG_SHELL_XML = Path("/usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml")
+
+
+def build_probe(out):
+    """Compile first_seat_client.c against the container's libwayland-client."""
+    build = out / "probe"
+    build.mkdir(exist_ok=True)
+    scanner = "wayland-scanner"
+    subprocess.run([scanner, "client-header", str(XDG_SHELL_XML), str(build / "xdg-shell-client-protocol.h")], check=True)
+    subprocess.run([scanner, "private-code", str(XDG_SHELL_XML), str(build / "xdg-shell-protocol.c")], check=True)
+    flags = subprocess.check_output(["pkg-config", "--cflags", "--libs", "wayland-client"], text=True).split()
+    binary = build / "first_seat_client"
+    subprocess.run(["gcc", "-std=gnu11", "-O1", "-Wall", f"-I{build}", str(PROBE_SOURCE), str(build / "xdg-shell-protocol.c"),
+                    "-o", str(binary), *flags], check=True, capture_output=True, text=True)
+    return binary
+
+
+def spawn_probe(session, binary, app_id, log, tag=None):
+    """Start the first-seat-only client, optionally tagged for a lane (1 or 2), and wait for its window."""
+    env = dict(os.environ, WAYLAND_DISPLAY=session.wayland, HYPRLAND_INSTANCE_SIGNATURE=session.instance)
+    env.pop("CUA_AGENT_SEAT", None)
+    if tag:
+        env["CUA_AGENT_SEAT"] = str(tag)
+    process = subprocess.Popen([str(binary), str(log), app_id], env=env, stdout=session.log, stderr=subprocess.STDOUT)
+    session.clients.append(process)
+
+    def mapped():
+        if process.poll() is not None:
+            raise RuntimeError(f"{app_id} exited with {process.returncode}")
+        found = [c for c in session.json("clients") if c.get("class") == app_id and c.get("mapped", True)]
+        return found[0] if found else None
+
+    return wait_for(mapped, 30, f"{app_id} window did not map")
+
+
+def probe_lines(log):
+    try:
+        return Path(log).read_text().splitlines()
+    except OSError:
+        return []
+
+
+def claim_lane(path):
+    """A claimed cua-input-v3 lane; a lane still held by the previous smoke's connection is retried."""
+    deadline = time.monotonic() + 15
+    while True:
+        lane = InputLane(path)
+        lane.request("HELLO")
+        claim = lane.request("CLAIM")
+        if claim.get("ok"):
+            return lane
+        lane.close()
+        if time.monotonic() > deadline:
+            raise RuntimeError(f"no free lane: {claim}")
+        time.sleep(0.5)
+
+
+def agent_seat_smoke(session, binary):
+    tagged_log, untagged_log = session.out / "seat-tagged.log", session.out / "seat-untagged.log"
+    # Lane 1 (CUA_AGENT_SEAT=1) is the cua-input-v3.sock lane.
+    tagged = spawn_probe(session, binary, AGENT_SEAT_TAGGED_CLASS, tagged_log, tag=1)
+    untagged = spawn_probe(session, binary, AGENT_SEAT_UNTAGGED_CLASS, untagged_log)
+    holder = session.spawn(AGENT_SEAT_HOLDER_CLASS, "sleep", "600")
+    wait_for(lambda: session.json("activewindow").get("address") == holder["address"], 10,
+             "the agent-seat smoke's holder window did not take primary focus")
+    wait_for(lambda: any(l.startswith("seat ") for l in probe_lines(tagged_log)) and
+             any(l.startswith("seat ") for l in probe_lines(untagged_log)), 10, "a probe never received its seat name")
+    checks, evidence = {}, {}
+    status = session.json("cua:status")
+    evidence["agent_seat_binding"] = status.get("agent_seat_binding")
+    evidence["agent_seat_binds"] = status.get("agent_seat_binds")
+    checks["agent_seat_binding_active"] = status.get("agent_seat_binding") is True
+    checks["agent_seat_bound_once"] = status.get("agent_seat_binds") == 1
+    seats = lambda log: [l.split(" ", 1)[1] for l in probe_lines(log) if l.startswith("seat ")]
+    evidence["tagged_seat"], evidence["untagged_seat"] = seats(tagged_log), seats(untagged_log)
+    checks["tagged_client_has_agent_seat"] = evidence["tagged_seat"] == [AGENT_SEAT_NAME]
+    checks["untagged_client_keeps_user_seat"] = len(evidence["untagged_seat"]) == 1 and evidence["untagged_seat"][0] != AGENT_SEAT_NAME
+    path = Path(os.environ["XDG_RUNTIME_DIR"]) / "hypr" / session.instance / "cua-input-v3.sock"
+    lane = claim_lane(path)
+    try:
+        grant = lane.target(tagged, capability=1)
+        evidence["tagged_click_target"] = grant
+        if grant.get("ok"):
+            reply = lane.click(grant, int(grant["width"]) // 2, int(grant["height"]) // 2)
+            evidence["tagged_click"] = reply
+            checks["tagged_click_acknowledged"] = reply.get("ok") is True
+        else:
+            checks["tagged_click_acknowledged"] = False
+        grant = lane.target(tagged, capability=2)
+        if grant.get("ok"):
+            reply = lane.key(grant, 30)  # evdev 30: a
+            evidence["tagged_key"] = reply
+            checks["tagged_key_acknowledged"] = reply.get("ok") is True
+        else:
+            checks["tagged_key_acknowledged"] = False
+        # The untagged client bound the user's seat only: still refused, and told how to fix it.
+        grant = lane.target(untagged, capability=1)
+        if grant.get("ok"):
+            refused = lane.click(grant, int(grant["width"]) // 2, int(grant["height"]) // 2)
+        else:
+            refused = grant
+        evidence["untagged_click"] = refused
+        checks["untagged_client_refused"] = (refused.get("ok") is False and refused.get("code") == "client_not_bound"
+                                             and refused.get("detail") == "client_not_agent_seat_bound")
+    finally:
+        lane.close()
+    time.sleep(0.5)
+    lines = probe_lines(tagged_log)
+    evidence["tagged_events"] = lines
+    checks["tagged_client_received_click"] = "button 272 1" in lines and "button 272 0" in lines
+    checks["tagged_client_received_key"] = "key 30 1" in lines and "key 30 0" in lines
+    checks["untagged_client_received_nothing"] = not any(l.startswith(("button", "key")) for l in probe_lines(untagged_log))
+    return {"checks": checks, "evidence": evidence, "transcript": lane.transcript}
 
 
 def smoke(session):
@@ -393,6 +532,18 @@ def main():
             return
         try:
             evidence = smoke(session)
+            clients_before = len(session.clients)
+            try:
+                probe = build_probe(args.out)
+                agent_seat = agent_seat_smoke(session, probe)
+                evidence["agent_seat"] = {"status": "pass" if all(agent_seat["checks"].values()) else "fail", **agent_seat}
+            except Exception as error:
+                detail = getattr(error, "stderr", None)
+                evidence["agent_seat"] = {"status": "error", "reason": f"{type(error).__name__}: {error}",
+                                          "detail": str(detail)[-1500:] if detail else None,
+                                          "compositor_log_tail": tail(args.out / "compositor.log")}
+            # Its eight windows would tile the driver smoke's window down to a blank 47x74 screenshot.
+            session.release_clients(clients_before)
             if args.driver:
                 try:
                     driven = driver_smoke(session, args.driver)

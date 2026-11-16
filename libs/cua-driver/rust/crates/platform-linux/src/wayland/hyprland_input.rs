@@ -947,13 +947,142 @@ impl SessionClient {
 
 /// The compositor owns the cross-process allocation. No target or action has
 /// been sent while this bounded search is running, and errors never fall back.
-fn claim_available(mut connect: impl FnMut(usize) -> Result<Option<Client>>) -> Result<Client> {
-    for lane in 0..MAX_LANES {
+#[cfg(test)]
+fn claim_available(connect: impl FnMut(usize) -> Result<Option<Client>>) -> Result<Client> {
+    claim_lane(None, connect)
+}
+
+/// [`claim_available`], restricted to one lane when the target is bound to it.
+/// A client in a [`AGENT_SEAT_SCOPE_PREFIX`] scope holds only that lane's agent seat,
+/// so no other lane can drive it: a busy lane is `lane_busy`, never a fallback.
+fn claim_lane(
+    only: Option<usize>,
+    mut connect: impl FnMut(usize) -> Result<Option<Client>>,
+) -> Result<Client> {
+    for lane in only.map_or(0..MAX_LANES, |lane| lane..lane + 1) {
         if let Some(client) = connect(lane)? {
             return Ok(client);
         }
     }
     Err(LaneBusy.into())
+}
+
+/// A client the driver launched with `launch_app agent_seat` runs in a transient
+/// systemd user scope named `cua-agent-seat-<lane>-<token>.scope` (lane 1 or 2).
+/// At `wl_seat` bind the plugin hands such a client that lane's agent seat as its
+/// only seat, which is how Chromium and Electron (they bind only their first
+/// `wl_seat`) take background input. The driver reads the same tag to connect to
+/// that lane.
+///
+/// The tag is the process's cgroup, not its environment: Chromium and Electron
+/// overwrite their environment block at startup, so `/proc/<pid>/environ` is
+/// empty by the time they connect to Wayland. A cgroup is set before the program
+/// starts and is inherited by every helper process.
+pub(crate) const AGENT_SEAT_SCOPE_PREFIX: &str = "cua-agent-seat-";
+
+/// The scope unit name for a launch on `lane` (1 or 2); `token` is 1 to 32
+/// ASCII alphanumerics that make the unit unique.
+pub(crate) fn agent_seat_unit(lane: u8, token: &str) -> String {
+    format!("{AGENT_SEAT_SCOPE_PREFIX}{lane}-{token}.scope")
+}
+
+/// The lane index (0 or 1) named by one cgroup path component. Only
+/// `cua-agent-seat-<1|2>-<token>.scope` with a 1 to 32 character alphanumeric
+/// token names a lane. Mirrors the plugin's `agent_seat_lane_from_unit`.
+fn agent_seat_lane_from_unit(unit: &str) -> Option<usize> {
+    let rest = unit
+        .strip_prefix(AGENT_SEAT_SCOPE_PREFIX)?
+        .strip_suffix(".scope")?;
+    let (lane, token) = rest.split_once('-')?;
+    let lane = match lane {
+        "1" => 0,
+        "2" => 1,
+        _ => return None,
+    };
+    (!token.is_empty() && token.len() <= 32 && token.bytes().all(|b| b.is_ascii_alphanumeric()))
+        .then_some(lane)
+}
+
+/// The lane named by a `/proc/<pid>/cgroup` listing: the first line whose path
+/// has a lane scope component.
+pub(crate) fn agent_seat_lane_from_cgroup(listing: &str) -> Option<usize> {
+    listing.lines().find_map(|line| {
+        let path = line.splitn(3, ':').nth(2)?;
+        path.split('/').find_map(agent_seat_lane_from_unit)
+    })
+}
+
+/// Where there is no systemd user manager the launch is tagged with
+/// `CUA_AGENT_SEAT=<1|2>` in the environment instead. That works for apps that
+/// keep their environment, not for Chromium and Electron, so it is the fallback
+/// and the scope wins.
+pub(crate) const AGENT_SEAT_ENV: &str = "CUA_AGENT_SEAT";
+
+/// The lane index named by the first `CUA_AGENT_SEAT` entry of a NUL-separated
+/// environment block: only exactly `1` or `2`; the first entry wins, as in
+/// `getenv`. Mirrors the plugin's `agent_seat_lane_from_environ`.
+pub(crate) fn agent_seat_lane_from_environ(block: &[u8]) -> Option<usize> {
+    let name = AGENT_SEAT_ENV.as_bytes();
+    block.split(|byte| *byte == 0).find_map(|entry| {
+        let value = entry.strip_prefix(name)?.strip_prefix(b"=")?;
+        Some(match value {
+            b"1" => Some(0),
+            b"2" => Some(1),
+            _ => None,
+        })
+    })?
+}
+
+fn read_capped(path: String, cap: u64) -> Vec<u8> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    if let Ok(file) = std::fs::File::open(path) {
+        let _ = file.take(cap).read_to_end(&mut bytes);
+    }
+    bytes
+}
+
+/// Lanes of processes this driver launched with `agent_seat`. Chromium and
+/// Electron move themselves into their own systemd scope after startup, so the
+/// launch scope cannot be read back from `/proc` for the apps that matter most;
+/// the plugin reads it at bind, before that move, and the driver remembers it.
+static LAUNCHED_LANES: Mutex<Vec<(u32, usize)>> = Mutex::new(Vec::new());
+const MAX_LAUNCHED_LANES: usize = 256;
+
+pub(crate) fn remember_agent_seat_launch(pid: u32, lane: usize) {
+    if let Ok(mut launched) = LAUNCHED_LANES.lock() {
+        launched.retain(|(known, _)| *known != pid);
+        if launched.len() >= MAX_LAUNCHED_LANES {
+            launched.remove(0);
+        }
+        launched.push((pid, lane));
+    }
+}
+
+fn launched_lane(pid: u32) -> Option<usize> {
+    // A recycled pid must not inherit a lane: only a live process counts.
+    let alive = std::path::Path::new(&format!("/proc/{pid}")).exists();
+    let mut launched = LAUNCHED_LANES.lock().ok()?;
+    if !alive {
+        launched.retain(|(known, _)| *known != pid);
+        return None;
+    }
+    launched
+        .iter()
+        .find(|(known, _)| *known == pid)
+        .map(|(_, lane)| *lane)
+}
+
+/// The lane `pid` is bound to: the lane remembered at launch, else its cgroup
+/// scope, else its environment, read from `/proc/<pid>/` with the plugin's caps
+/// (64 KiB and 512 KiB).
+pub(crate) fn agent_seat_lane(pid: u32) -> Option<usize> {
+    launched_lane(pid).or_else(|| {
+        let cgroup = read_capped(format!("/proc/{pid}/cgroup"), 64 * 1024);
+        agent_seat_lane_from_cgroup(&String::from_utf8_lossy(&cgroup)).or_else(|| {
+            agent_seat_lane_from_environ(&read_capped(format!("/proc/{pid}/environ"), 512 * 1024))
+        })
+    })
 }
 
 static CLIENTS: OnceLock<Mutex<HashMap<String, Arc<SessionClient>>>> = OnceLock::new();
@@ -1266,7 +1395,8 @@ fn execute_actions_routed(
         }
     }
     if slot.is_none() {
-        *slot = Some(claim_available(|lane| {
+        // An agent-seat app holds one lane's seat: only that lane can drive it.
+        *slot = Some(claim_lane(agent_seat_lane(pid), |lane| {
             Client::connect(
                 socket_path(lane)?,
                 owner.clone(),
@@ -3594,5 +3724,128 @@ mod tests {
             .to_string()
             .contains("oversized"));
         server.join().unwrap();
+    }
+
+    #[test]
+    fn agent_seat_tag_names_a_lane_only_for_exact_units() {
+        let unit = agent_seat_lane_from_unit;
+        assert_eq!(unit("cua-agent-seat-1-abc123.scope"), Some(0));
+        assert_eq!(unit("cua-agent-seat-2-ABC.scope"), Some(1));
+        assert_eq!(unit(&agent_seat_unit(2, "0")), Some(1));
+        for untagged in [
+            "cua-agent-seat-0-abc.scope",
+            "cua-agent-seat-3-abc.scope",
+            "cua-agent-seat-12-abc.scope",
+            "cua-agent-seat-1-.scope",
+            "cua-agent-seat-1.scope",
+            "cua-agent-seat-1-a_b.scope",
+            "cua-agent-seat-1-abc.service",
+            "xcua-agent-seat-1-abc.scope",
+            "",
+        ] {
+            assert_eq!(unit(untagged), None, "{untagged}");
+        }
+        assert_eq!(
+            unit(&format!("cua-agent-seat-1-{}.scope", "a".repeat(32))),
+            Some(0)
+        );
+        assert_eq!(
+            unit(&format!("cua-agent-seat-1-{}.scope", "a".repeat(33))),
+            None
+        );
+        let cg = agent_seat_lane_from_cgroup;
+        assert_eq!(
+            cg("0::/user.slice/user-1000.slice/user@1000.service/app.slice/cua-agent-seat-2-9f3c.scope\n"),
+            Some(1)
+        );
+        assert_eq!(
+            cg("12:cpu:/x/cua-agent-seat-1-ab.scope\n0::/user.slice\n"),
+            Some(0)
+        );
+        assert_eq!(cg("0::/user.slice/user-1000.slice/session-3.scope\n"), None);
+        assert_eq!(cg("0::/a/cua-agent-seat-1-ab.scope.d/b\n"), None);
+        assert_eq!(cg(""), None);
+    }
+
+    #[test]
+    fn agent_seat_environment_fallback_names_a_lane_only_for_exact_values() {
+        let lane = agent_seat_lane_from_environ;
+        assert_eq!(lane(b"HOME=/h\0CUA_AGENT_SEAT=1\0PATH=/bin\0"), Some(0));
+        assert_eq!(lane(b"CUA_AGENT_SEAT=2"), Some(1));
+        for untagged in [
+            &b""[..],
+            b"CUA_AGENT_SEAT=0\0",
+            b"CUA_AGENT_SEAT=3\0",
+            b"CUA_AGENT_SEAT=\0",
+            b"CUA_AGENT_SEAT=11\0",
+            b"CUA_AGENT_SEAT= 1\0",
+            b"CUA_AGENT_SEAT\0",
+            b"XCUA_AGENT_SEAT=1\0",
+            b"CUA_AGENT_SEATS=1\0",
+            b"X=CUA_AGENT_SEAT=1\0",
+        ] {
+            assert_eq!(lane(untagged), None);
+        }
+        assert_eq!(lane(b"CUA_AGENT_SEAT=1\0CUA_AGENT_SEAT=2\0"), Some(0));
+        assert_eq!(lane(b"CUA_AGENT_SEAT=9\0CUA_AGENT_SEAT=2\0"), None);
+    }
+
+    #[test]
+    fn a_launched_lane_is_remembered_for_a_live_process_only() {
+        // A child of its own, so no other test's pid is touched.
+        let mut child = std::process::Command::new("/bin/sh")
+            .args(["-c", "read _"])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .expect("/bin/sh should spawn");
+        let pid = child.id();
+        assert_eq!(launched_lane(pid), None);
+        remember_agent_seat_launch(pid, 1);
+        assert_eq!(agent_seat_lane(pid), Some(1));
+        remember_agent_seat_launch(pid, 0);
+        assert_eq!(agent_seat_lane(pid), Some(0));
+        drop(child.stdin.take());
+        child.wait().unwrap();
+        // Once the process is gone its pid keeps no lane, even if the number is reused.
+        assert_eq!(launched_lane(pid), None);
+        assert_eq!(agent_seat_lane(pid), None);
+        // A pid that was never running keeps none either.
+        remember_agent_seat_launch(u32::MAX - 1, 1);
+        assert_eq!(launched_lane(u32::MAX - 1), None);
+    }
+
+    #[test]
+    fn agent_seat_lane_reads_a_live_process_cgroup() {
+        // This test process is not in an agent seat scope; a process that does not exist is not either.
+        assert_eq!(agent_seat_lane(std::process::id()), None);
+        assert_eq!(agent_seat_lane(u32::MAX), None);
+    }
+
+    #[test]
+    fn agent_seat_target_claims_only_its_own_lane() {
+        let pool = Arc::new(Mutex::new([None, None]));
+        let mut attempts = Vec::new();
+        // Tagged for lane 2 (index 1): lane 1 is never tried, even though it is free.
+        let tagged = claim_lane(Some(1), |lane| {
+            attempts.push(lane);
+            fake_claim(lane, &pool)
+        })
+        .unwrap();
+        assert_eq!(tagged.lane, Some(1));
+        assert_eq!(attempts, [1]);
+        // Its lane is now held: a second claim for that lane is lane_busy, with no fallback to lane 1.
+        attempts.clear();
+        assert!(claim_lane(Some(1), |lane| {
+            attempts.push(lane);
+            fake_claim(lane, &pool)
+        })
+        .err()
+        .unwrap()
+        .is::<LaneBusy>());
+        assert_eq!(attempts, [1]);
+        // An untagged target still takes the first free lane.
+        let untagged = claim_lane(None, |lane| fake_claim(lane, &pool)).unwrap();
+        assert_eq!(untagged.lane, Some(0));
+        drop(tagged);
     }
 }

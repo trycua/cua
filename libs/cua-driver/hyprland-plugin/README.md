@@ -39,8 +39,10 @@ tree and uninstrumented module hash at
 actions and observation intervals. Background input now admits any native
 Wayland window whose app bound the agent seats `Cua-Agent` and `Cua-Agent-2`
 (GTK 3 and 4 and Qt 6 do; Qt 6 keys refuse), with the plain compiled
-`evdev`/`pc105`/`us` keymap. Chromium and Electron bind only the user's seat and
-refuse with `client_not_bound`; XWayland refuses. Semantic AT-SPI actions are
+`evdev`/`pc105`/`us` keymap. Chromium and Electron bind only their first
+`wl_seat`: they take background input when Driver launched them for the agent
+(see [Per-client agent seat](#per-client-agent-seat)), and otherwise refuse with
+`client_not_bound`; XWayland refuses. Semantic AT-SPI actions are
 separate.
 
 The exact-target foreground route intentionally changes primary focus and,
@@ -69,6 +71,33 @@ tested artifacts and remaining gates, not production certification.
 This design builds on Dillon DuPont's Hyprland injection prototype. That credit
 records the prototype lineage; it does not claim that the prototype or input
 mutation support has shipped in Cua Driver.
+
+## Per-client agent seat
+
+Chromium and Electron (Ozone Wayland) bind only the first `wl_seat` they are
+offered, which is the user's. To let them take background input, Driver starts
+them for the agent with `launch_app` and `agent_seat: true`. That sets
+a transient systemd user scope named `cua-agent-seat-<lane>-<token>.scope` (lane
+1 or 2). When a client in such a scope binds a `wl_seat`, the plugin hands it that lane's agent seat instead
+of the user's, so the agent seat is its only seat. Other clients are untouched:
+imv, Zed and every untagged app see exactly what they saw before, and nothing
+falls back to the user's seat. The protocol details, including the new refusal
+details, are in [protocol/cua-input-v3.md](protocol/cua-input-v3.md#per-client-agent-seat).
+
+Known limits:
+
+- The tag is read when the client binds, so an app that was already running
+  cannot be moved. It refuses with `client_not_agent_seat_bound`; quit it and
+  launch it again. Chromium and Electron hand a second launch on the same
+  profile to the running instance, so use a separate profile or quit first.
+- A tagged app has only the agent seat: the person's own mouse and keyboard do
+  not reach it while it runs.
+- `hyprctl -j cua:status` reports `agent_seat_binding`. It needs the
+  `CWLSeatProtocol::bindManager` symbol, which each Hyprland build must be
+  requalified for; without it tagged apps behave as untagged ones.
+- The requalification session (`requalify/headless.py`) checks the binding on
+  every Hyprland build with `requalify/first_seat_client.c`, a client that binds
+  only its first seat. That check is recorded but does not yet gate the result.
 
 ## Build
 

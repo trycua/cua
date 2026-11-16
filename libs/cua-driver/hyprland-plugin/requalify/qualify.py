@@ -32,7 +32,7 @@ import channels  # noqa: E402
 BUILD_OPTIONS = {"CUA_HYPRLAND_INPUT": "ON", "CUA_HYPRLAND_TEST_INPUT": "OFF", "CUA_HYPRLAND_INPUT_TRACE": "OFF"}
 # make: the CMake API probe test configures a nested project with the default generator.
 BUILD_PACKAGES = ("hyprland", "gcc", "cmake", "ninja", "make", "pkgconf", "binutils", "python", "openssl",
-                  "libxkbcommon", "xkeyboard-config")
+                  "libxkbcommon", "xkeyboard-config", "wayland-protocols")
 # The headless session's native Wayland clients and font.
 # The released cua-driver links the X libraries and reads the AT-SPI bus.
 SESSION_PACKAGES = ("foot", "ttf-dejavu", "mesa", "at-spi2-core", "libx11", "libxcb", "libxext", "libxi")

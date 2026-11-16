@@ -101,7 +101,9 @@ This is fixture regression coverage. For background `TARGET` input, the producti
 window whose app bound the agent seats, so the GTK3 fixture's background pointer
 and key rows are delivered through the agent seats on Hyprland. A client that
 binds only its first `wl_seat` (Chromium and Electron through Ozone) refuses with
-`client_not_bound`; Qt 6 keys refuse with `client_drops_background_keys`. XWayland
+`client_not_bound` unless Driver launched it with `agent_seat`, which gives it the
+agent seat as its only seat (`hyprland-plugin/requalify/first_seat_client.c` checks
+this on each Hyprland build); Qt 6 keys refuse with `client_drops_background_keys`. XWayland
 targets refuse. Do not add a test bypass to make a refusing client pass.
 
 The [accepted foreground extension](https://github.com/trycua/cua/issues/3550#issuecomment-5564996417)

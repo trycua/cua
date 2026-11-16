@@ -615,7 +615,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp() != 53713:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_agentsetup_connect_json() != 21138:
+    if lib.uniffi_cua_sdk_checksum_method_agentsetup_connect_json() != 1379:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_agentsetup_connection_status_json() != 47692:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -1090,6 +1090,8 @@ def _uniffi_check_api_checksums(lib):
     if lib.uniffi_cua_sdk_checksum_method_space_info() != 20024:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_join_presence() != 56636:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_space_join_presence_for() != 40031:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_kept_services() != 50248:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -2627,6 +2629,8 @@ _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_connect_json.argtypes = (
     ctypes.c_int8,
     ctypes.c_int8,
     ctypes.c_int8,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_connect_json.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_connection_status_json.argtypes = (
@@ -3878,6 +3882,13 @@ _UniffiLib.uniffi_cua_sdk_fn_method_space_join_presence.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_space_join_presence.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_space_join_presence_for.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_space_join_presence_for.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_space_kept_services.argtypes = (
     ctypes.c_uint64,
 )
@@ -6011,6 +6022,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_space_info.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_join_presence.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_join_presence.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_space_join_presence_for.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_space_join_presence_for.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_kept_services.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_kept_services.restype = ctypes.c_uint16
@@ -27908,11 +27922,87 @@ class _UniffiFfiConverterSequenceFloat64(_UniffiConverterRustBuffer):
         ]
 
 @dataclass
+class SpaceWindowOrigin:
+    """
+    The Space a window row's picture comes from ([`SpaceWindow::origin`]).
+"""
+    def __init__(self, *, space_id:str, name:str, os:str, window_id:str):
+        self.space_id = space_id
+        self.name = name
+        self.os = os
+        self.window_id = window_id
+
+
+
+
+    def __str__(self):
+        return "SpaceWindowOrigin(space_id={}, name={}, os={}, window_id={})".format(self.space_id, self.name, self.os, self.window_id)
+    def __eq__(self, other):
+        if self.space_id != other.space_id:
+            return False
+        if self.name != other.name:
+            return False
+        if self.os != other.os:
+            return False
+        if self.window_id != other.window_id:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeSpaceWindowOrigin(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return SpaceWindowOrigin(
+            space_id=_UniffiFfiConverterString.read(buf),
+            name=_UniffiFfiConverterString.read(buf),
+            os=_UniffiFfiConverterString.read(buf),
+            window_id=_UniffiFfiConverterString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.space_id)
+        _UniffiFfiConverterString.check_lower(value.name)
+        _UniffiFfiConverterString.check_lower(value.os)
+        _UniffiFfiConverterString.check_lower(value.window_id)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.space_id, buf)
+        _UniffiFfiConverterString.write(value.name, buf)
+        _UniffiFfiConverterString.write(value.os, buf)
+        _UniffiFfiConverterString.write(value.window_id, buf)
+
+class _UniffiFfiConverterOptionalTypeSpaceWindowOrigin(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeSpaceWindowOrigin.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeSpaceWindowOrigin.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeSpaceWindowOrigin.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
+@dataclass
 class SpaceWindow:
     """
     A streamable window.
 """
-    def __init__(self, *, window_id:str, epoch:int, title:str, app_name:str, app_id:str, pid:int, bounds:typing.List[float], on_screen:bool, focused:bool, available:bool, limitation:str):
+    def __init__(self, *, window_id:str, epoch:int, title:str, app_name:str, app_id:str, pid:int, bounds:typing.List[float], on_screen:bool, focused:bool, available:bool, limitation:str, origin:typing.Optional[SpaceWindowOrigin] = _DEFAULT):
         self.window_id = window_id
         self.epoch = epoch
         self.title = title
@@ -27924,12 +28014,16 @@ class SpaceWindow:
         self.focused = focused
         self.available = available
         self.limitation = limitation
+        if origin is _DEFAULT:
+            self.origin = None
+        else:
+            self.origin = origin
 
 
 
 
     def __str__(self):
-        return "SpaceWindow(window_id={}, epoch={}, title={}, app_name={}, app_id={}, pid={}, bounds={}, on_screen={}, focused={}, available={}, limitation={})".format(self.window_id, self.epoch, self.title, self.app_name, self.app_id, self.pid, self.bounds, self.on_screen, self.focused, self.available, self.limitation)
+        return "SpaceWindow(window_id={}, epoch={}, title={}, app_name={}, app_id={}, pid={}, bounds={}, on_screen={}, focused={}, available={}, limitation={}, origin={})".format(self.window_id, self.epoch, self.title, self.app_name, self.app_id, self.pid, self.bounds, self.on_screen, self.focused, self.available, self.limitation, self.origin)
     def __eq__(self, other):
         if self.window_id != other.window_id:
             return False
@@ -27953,6 +28047,8 @@ class SpaceWindow:
             return False
         if self.limitation != other.limitation:
             return False
+        if self.origin != other.origin:
+            return False
         return True
 
 class _UniffiFfiConverterTypeSpaceWindow(_UniffiConverterRustBuffer):
@@ -27970,6 +28066,7 @@ class _UniffiFfiConverterTypeSpaceWindow(_UniffiConverterRustBuffer):
             focused=_UniffiFfiConverterBoolean.read(buf),
             available=_UniffiFfiConverterBoolean.read(buf),
             limitation=_UniffiFfiConverterString.read(buf),
+            origin=_UniffiFfiConverterOptionalTypeSpaceWindowOrigin.read(buf),
         )
 
     @staticmethod
@@ -27985,6 +28082,7 @@ class _UniffiFfiConverterTypeSpaceWindow(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.check_lower(value.focused)
         _UniffiFfiConverterBoolean.check_lower(value.available)
         _UniffiFfiConverterString.check_lower(value.limitation)
+        _UniffiFfiConverterOptionalTypeSpaceWindowOrigin.check_lower(value.origin)
 
     @staticmethod
     def write(value, buf):
@@ -27999,6 +28097,7 @@ class _UniffiFfiConverterTypeSpaceWindow(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.write(value.focused, buf)
         _UniffiFfiConverterBoolean.write(value.available, buf)
         _UniffiFfiConverterString.write(value.limitation, buf)
+        _UniffiFfiConverterOptionalTypeSpaceWindowOrigin.write(value.origin, buf)
 
 @dataclass
 class SpaceWriteReport:
@@ -31564,13 +31663,17 @@ class AgentSetupProtocol(typing.Protocol):
         `agents`. A server without a name gets the channel's.
 """
         raise NotImplementedError
-    async def connect_json(self, agents: typing.List[str],server: typing.Optional[AgentMcpServer],skills: bool,mcp: bool,sign_in: bool) -> str:
+    async def connect_json(self, agents: typing.List[str],server: typing.Optional[AgentMcpServer],skills: bool,mcp: bool,sign_in: bool,driver: typing.Optional[AgentMcpServer],driver_permissions_granted: typing.Optional[bool]) -> str:
         """
         Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
         (`server`, default this channel's cua), and with `sign_in` the
         agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
-        sign-in it already has, read from where Claude Code keeps it). JSON:
-        one result per agent.
+        sign-in it already has, read from where Claude Code keeps it). With
+        `driver`, the `cua-driver` entry the host app wants (the Cua Driver it
+        carries, by absolute path) is written too; `driver_permissions_granted`
+        says whether Screen Recording and Accessibility are on for it (None:
+        unknown). Each part asked for is reported on its own (`parts`), so
+        one can be retried by asking for it alone. JSON: one result per agent.
 """
         raise NotImplementedError
     def connection_status_json(self, expected: typing.Optional[AgentMcpServer],refresh: bool) -> str:
@@ -31730,13 +31833,17 @@ class AgentSetup(AgentSetupProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
-    async def connect_json(self, agents: typing.List[str],server: typing.Optional[AgentMcpServer],skills: bool,mcp: bool,sign_in: bool) -> str:
+    async def connect_json(self, agents: typing.List[str],server: typing.Optional[AgentMcpServer],skills: bool,mcp: bool,sign_in: bool,driver: typing.Optional[AgentMcpServer],driver_permissions_granted: typing.Optional[bool]) -> str:
         """
         Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
         (`server`, default this channel's cua), and with `sign_in` the
         agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
-        sign-in it already has, read from where Claude Code keeps it). JSON:
-        one result per agent.
+        sign-in it already has, read from where Claude Code keeps it). With
+        `driver`, the `cua-driver` entry the host app wants (the Cua Driver it
+        carries, by absolute path) is written too; `driver_permissions_granted`
+        says whether Screen Recording and Accessibility are on for it (None:
+        unknown). Each part asked for is reported on its own (`parts`), so
+        one can be retried by asking for it alone. JSON: one result per agent.
 """
 
         _UniffiFfiConverterSequenceString.check_lower(agents)
@@ -31748,6 +31855,10 @@ class AgentSetup(AgentSetupProtocol):
         _UniffiFfiConverterBoolean.check_lower(mcp)
 
         _UniffiFfiConverterBoolean.check_lower(sign_in)
+
+        _UniffiFfiConverterOptionalTypeAgentMcpServer.check_lower(driver)
+
+        _UniffiFfiConverterOptionalBoolean.check_lower(driver_permissions_granted)
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
             _UniffiFfiConverterSequenceString.lower(agents),
@@ -31755,6 +31866,8 @@ class AgentSetup(AgentSetupProtocol):
             _UniffiFfiConverterBoolean.lower(skills),
             _UniffiFfiConverterBoolean.lower(mcp),
             _UniffiFfiConverterBoolean.lower(sign_in),
+            _UniffiFfiConverterOptionalTypeAgentMcpServer.lower(driver),
+            _UniffiFfiConverterOptionalBoolean.lower(driver_permissions_granted),
         )
         _uniffi_lift_return = _UniffiFfiConverterString.lift
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
@@ -41673,6 +41786,17 @@ class SpaceProtocol(typing.Protocol):
         roster.
 """
         raise NotImplementedError
+    async def join_presence_for(self, window_id: typing.Optional[str],identity: PresenceIdentity,timeout_ms: typing.Optional[int]) -> SpacePresence:
+        """
+        Joins presence for the window being watched. For a window another
+        Space shows here and the viewer streams straight from its origin
+        (`window_id` from [`Space::windows`]), this joins the origin's channel
+        and this Space's, publishes the cursor to both and reads them as one:
+        one avatar and one cursor per viewer, as if the stream came through
+        this Space. For any other window, or `None`, it is
+        [`Space::join_presence`].
+"""
+        raise NotImplementedError
     async def kept_services(self, ) -> typing.List[SpaceServiceInfo]:
         """
         This Space's services.
@@ -42492,6 +42616,38 @@ class Space(SpaceProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_sdk_fn_method_space_join_presence(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_u64,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_u64,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_u64,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def join_presence_for(self, window_id: typing.Optional[str],identity: PresenceIdentity,timeout_ms: typing.Optional[int]) -> SpacePresence:
+        """
+        Joins presence for the window being watched. For a window another
+        Space shows here and the viewer streams straight from its origin
+        (`window_id` from [`Space::windows`]), this joins the origin's channel
+        and this Space's, publishes the cursor to both and reads them as one:
+        one avatar and one cursor per viewer, as if the stream came through
+        this Space. For any other window, or `None`, it is
+        [`Space::join_presence`].
+"""
+
+        _UniffiFfiConverterOptionalString.check_lower(window_id)
+
+        _UniffiFfiConverterTypePresenceIdentity.check_lower(identity)
+
+        _UniffiFfiConverterOptionalUInt64.check_lower(timeout_ms)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterOptionalString.lower(window_id),
+            _UniffiFfiConverterTypePresenceIdentity.lower(identity),
+            _UniffiFfiConverterOptionalUInt64.lower(timeout_ms),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeSpacePresence.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_space_join_presence_for(*_uniffi_lowered_args),
             _UniffiLib.ffi_cua_sdk_rust_future_poll_u64,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_u64,
             _UniffiLib.ffi_cua_sdk_rust_future_free_u64,
@@ -50133,6 +50289,7 @@ __all__ = [
     "SpaceTransferReport",
     "SpaceTransport",
     "SpaceUsage",
+    "SpaceWindowOrigin",
     "SpaceWindow",
     "SpaceWriteReport",
     "SpacesHostLimit",

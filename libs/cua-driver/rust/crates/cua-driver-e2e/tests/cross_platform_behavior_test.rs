@@ -872,6 +872,25 @@ fn scroll_oracle_rejects_missing_or_invalid_geometry() {
     }
 }
 
+// Exercise text-only MCP clients even though the testkit requests full_output.
+fn text_snapshot_id(state: &ToolResponse) -> String {
+    let text = state.raw["result"]["content"]
+        .as_array()
+        .expect("MCP content blocks")
+        .iter()
+        .find_map(|block| block.get("text")?.as_str())
+        .unwrap();
+    let handle = text
+        .lines()
+        .next()
+        .unwrap()
+        .split_whitespace()
+        .find_map(|field| field.strip_prefix("snapshot_id="))
+        .expect("snapshot_id in text header");
+    assert_eq!(handle, state.snapshot_id());
+    handle.to_owned()
+}
+
 fn action_target_args(
     fixture: &Fixture,
     state: &ToolResponse,
@@ -889,7 +908,7 @@ fn action_target_args(
     if addressing == "ax" {
         object.insert(
             "element_token".to_owned(),
-            serde_json::json!(state.element_token(index)),
+            serde_json::json!(format!("{}:{index}", text_snapshot_id(state))),
         );
     } else {
         let origin = window_origin(fixture, state);
@@ -1751,6 +1770,10 @@ fn shared_case_with_native_hyprland(
     let cell_id = format!("{}-{}-{scenario}", std::env::consts::OS, spec.name).replace('_', "-");
     let native_semantic =
         native_hyprland_semantic_case(native_hyprland, spec.name, action, targeting, delivery_kind);
+    let linux_x11 = cfg!(target_os = "linux")
+        && std::env::var_os("CUA_INJECT_SOCKET").is_none()
+        && cua_driver_testkit::e2e::DisplayServer::current()
+            == cua_driver_testkit::e2e::DisplayServer::X11;
     let expected_refusals = if native_semantic {
         Vec::new()
     } else if cfg!(target_os = "windows") && delivery_kind == Delivery::Background {
@@ -1788,15 +1811,17 @@ fn shared_case_with_native_hyprland(
         && spec.name == "electron"
         && delivery_kind == Delivery::Background
     {
-        // Chromium's X11 renderer drops synthetic input addressed to a fully
-        // occluded, unfocused toplevel. Focus-free AT-SPI button actions are
-        // the exception: they are externally verified by the fixture and the
-        // focus/z-order/leak sentinels.
+        // Chromium's X11 renderer drops synthetic input addressed to an
+        // unfocused toplevel. Focus-free AT-SPI button actions are the
+        // exception, by element or (on X11) at the button's pixel: they are
+        // externally verified by the fixture and the focus/z-order/leak
+        // sentinels.
         if std::env::var_os("CUA_INJECT_SOCKET").is_some() {
             Vec::new()
         } else {
             match (action, targeting) {
                 ("left_click" | "child_window", Targeting::Ax) => Vec::new(),
+                ("left_click" | "child_window", Targeting::Px) if linux_x11 => Vec::new(),
                 _ => vec![RefusalCode::BackgroundUnavailable],
             }
         }
@@ -1860,7 +1885,13 @@ fn shared_case_with_native_hyprland(
         delivery_kind,
     )
     .unwrap_or_else(|error| panic!("{error}"));
-    if native_semantic {
+    if native_semantic
+        || (linux_x11
+            && spec.name == "electron"
+            && targeting == Targeting::Px
+            && delivery_kind == Delivery::Background
+            && matches!(action, "left_click" | "child_window"))
+    {
         route = cua_driver_testkit::e2e::DriverRoute::LinuxAtSpiAction;
     } else if cfg!(target_os = "windows")
         && spec.name == "electron"

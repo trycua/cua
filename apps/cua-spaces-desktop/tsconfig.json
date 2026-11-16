@@ -13,7 +13,7 @@
     "verbatimModuleSyntax": true,
     // The web sources this shell imports (../cua-spaces-web/src) resolve their
     // packages from this project's node_modules: the release build installs
-    // only this project, not the web app. See tsdown.config.mts.
+    // only this project, not the web app. The bundler gets the same packages from tsdown.config.mts (tsconfig.build.json).
     "paths": { "*": ["./node_modules/*"] }
   },
   "include": ["src", "test", "tsdown.config.mts"]

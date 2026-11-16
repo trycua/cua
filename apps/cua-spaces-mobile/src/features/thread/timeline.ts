@@ -22,6 +22,7 @@ export type Row =
   | { type: "tools"; key: string; calls: ToolCall[] }
   | { type: "live"; key: string; agent: string; stage: string; text: string; children: LiveChild[] }
   | { type: "subagent"; key: string; sub: Extract<ChildNote, { kind: "subagent" }> }
+  | { type: "creator"; key: string; entry: ThreadEntry }
   | { type: "child_space"; key: string; space: Extract<ChildNote, { kind: "child_space" }> }
   | { type: "pending"; key: string; row: OutboxRow };
 
@@ -109,6 +110,13 @@ export function buildRows(opts: {
         entry: e,
         answered: it.answer ? { approve: it.answer.approve, by: it.answer.by.name, tsMs: it.answer.tsMs, scope: it.answer.scope } : null,
       });
+      lastWasMessage = false;
+      lastAuthor = "";
+      continue;
+    }
+    // A created Space's creator: its header alone (the row follows).
+    if (it.type === "message" && it.entry.id.endsWith(":header")) {
+      rows.push({ type: "creator", key: it.key, entry: e });
       lastWasMessage = false;
       lastAuthor = "";
       continue;

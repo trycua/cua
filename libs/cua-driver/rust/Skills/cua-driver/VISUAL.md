@@ -1,5 +1,7 @@
 # Optional visual-region parsing
 
+> **Frozen: no new work.** This capability is in maintenance only. It is not part of the default agent workflow; use it only when the user explicitly asks for visual-region parsing or `jev-use`.
+
 Use `parse_visual_regions` when a current Cua Driver screenshot contains useful
 text or icons that accessibility and typed browser state do not expose. The
 tool returns model-neutral observations. It does not decide that a region is

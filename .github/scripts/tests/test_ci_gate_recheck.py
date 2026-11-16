@@ -16,13 +16,13 @@ GATE_TEXT = (WORKFLOWS / 'ci-gate.yml').read_text()
 
 
 def gate_waits_on(path: Path) -> bool:
-    """Mirror the gate's run filter: pull_request(_target) runs, minus the workflows it skips."""
+    """Mirror the gate's run filter: pull_request runs, minus the workflows it skips."""
     skip = re.search(r'test\(\\"(claude-auto-fix[^"]*)\\"\)', GATE_TEXT).group(1).replace('\\\\', '\\')
     if path.name in ('ci-gate.yml', 'ci-gate-recheck.yml') or re.search(skip, '/' + path.name):
         return False
     on = yaml.safe_load(path.read_text()).get(True) or {}
     keys = [on] if isinstance(on, str) else list(on)
-    return 'pull_request' in keys or 'pull_request_target' in keys
+    return 'pull_request' in keys
 
 
 def test_recheck_listens_to_every_workflow_the_gate_waits_on():

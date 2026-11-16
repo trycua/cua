@@ -429,6 +429,11 @@ pub trait ServiceManager: Send + Sync {
     fn retire_legacy_names(&self) -> Vec<String> {
         Vec::new()
     }
+    /// Something about how this runner keeps the service alive that the
+    /// user should fix (status and `cua doctor` show it); `None` when fine.
+    fn warning(&self) -> Option<String> {
+        None
+    }
 }
 
 // ------------------------------------------------------------- generators
@@ -755,6 +760,95 @@ fn is_root() -> bool {
     }
 }
 
+/// Whether systemd keeps a user's services running after their last login
+/// session ends (`loginctl enable-linger`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Linger {
+    Enabled,
+    Disabled,
+    /// `loginctl` did not answer (no logind, or no such user).
+    Unknown,
+}
+
+/// `loginctl show-user --property=Linger --value` output as a [`Linger`].
+pub fn parse_linger(output: &str) -> Linger {
+    match output.trim() {
+        "yes" => Linger::Enabled,
+        "no" => Linger::Disabled,
+        _ => Linger::Unknown,
+    }
+}
+
+/// What a computer that stops sharing at logout is told, with the one fix.
+pub fn linger_warning(user: &str) -> String {
+    format!(
+        "systemd stops this computer's service when the last login session ends (an ssh \
+         session closing, on a computer with no screen), so it goes offline. Run \
+         `sudo loginctl enable-linger {user}` once to keep it running."
+    )
+}
+
+/// The login name systemd knows this user by.
+fn linger_user() -> String {
+    std::env::var("USER")
+        .ok()
+        .filter(|u| !u.is_empty())
+        .unwrap_or_else(|| "$USER".to_string())
+}
+
+/// Linger for `user`, asked through `loginctl` (`ask` runs it with these
+/// arguments and returns its output when it succeeds).
+pub fn linger_with(user: &str, ask: impl Fn(&[&str]) -> Option<String>) -> Linger {
+    ask(&["show-user", user, "--property=Linger", "--value"])
+        .map_or(Linger::Unknown, |o| parse_linger(&o))
+}
+
+/// Turns linger on for `user` when it is off and the user may do that
+/// without a password (usually yes in the user's own login session; a
+/// session polkit does not call active needs `sudo`). Returns the warning
+/// to show when it is still off afterwards, `None` when it is on (or when
+/// systemd cannot say).
+pub fn ensure_linger_with(
+    user: &str,
+    ask: impl Fn(&[&str]) -> Option<String>,
+    enable: impl Fn(&[&str]) -> bool,
+) -> Option<String> {
+    match linger_with(user, &ask) {
+        Linger::Enabled | Linger::Unknown => None,
+        Linger::Disabled => {
+            if enable(&["--no-ask-password", "enable-linger", user])
+                && linger_with(user, &ask) == Linger::Enabled
+            {
+                None
+            } else {
+                Some(linger_warning(user))
+            }
+        }
+    }
+}
+
+fn loginctl_ask(args: &[&str]) -> Option<String> {
+    let out = Command::new("loginctl")
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+fn loginctl_enable(args: &[&str]) -> bool {
+    Command::new("loginctl")
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
 /// systemd.
 pub struct Systemd {
     /// System unit (root) vs user unit.
@@ -785,6 +879,12 @@ impl Systemd {
 
     fn unit(&self) -> String {
         self.names.systemd_unit()
+    }
+
+    /// Linger applies to a user unit run by the real `systemctl` (a test's
+    /// stand-in must never turn it on for the developer's own account).
+    fn manages_linger(&self) -> bool {
+        !self.system && self.systemctl == Path::new("systemctl")
     }
 
     fn unit_path(&self) -> PathBuf {
@@ -819,7 +919,22 @@ impl ServiceManager for Systemd {
         write_file(&self.unit_path(), &systemd_unit(spec, self.system))?;
         run(self.systemctl().arg("daemon-reload"))?;
         run(self.systemctl().args(["enable", &self.unit()]))?;
+        // A user unit stops with the user's last session unless linger is
+        // on: turn it on when allowed. If not, `warning` says so (status
+        // and doctor show it); the install itself still succeeds.
+        if self.manages_linger()
+            && let Some(w) = ensure_linger_with(&linger_user(), loginctl_ask, loginctl_enable)
+        {
+            tracing::warn!("{w}");
+        }
         Ok(())
+    }
+    fn warning(&self) -> Option<String> {
+        if !self.manages_linger() {
+            return None;
+        }
+        let user = linger_user();
+        (linger_with(&user, loginctl_ask) == Linger::Disabled).then(|| linger_warning(&user))
     }
     fn start(&self) -> Result<()> {
         run(self.systemctl().args(["restart", &self.unit()])).map(drop)
@@ -2458,6 +2573,65 @@ mod tests {
             log_path: "/home/ada/.cua/host/driver.log".into(),
             working_dir: "/home/ada".into(),
         }
+    }
+
+    #[test]
+    fn linger_output_is_read_as_yes_or_no() {
+        assert_eq!(parse_linger("yes\n"), Linger::Enabled);
+        assert_eq!(parse_linger("no\n"), Linger::Disabled);
+        assert_eq!(parse_linger(""), Linger::Unknown);
+        assert_eq!(parse_linger("Failed to get user"), Linger::Unknown);
+    }
+
+    #[test]
+    fn linger_off_is_turned_on_when_loginctl_allows_it() {
+        use std::cell::Cell;
+        let on = Cell::new(false);
+        let ask = |_: &[&str]| Some(if on.get() { "yes\n" } else { "no\n" }.to_string());
+        let enable = |args: &[&str]| {
+            assert_eq!(args, ["--no-ask-password", "enable-linger", "ana"]);
+            on.set(true);
+            true
+        };
+        assert_eq!(ensure_linger_with("ana", ask, enable), None);
+        assert!(on.get());
+    }
+
+    #[test]
+    fn linger_that_stays_off_gives_the_exact_fix() {
+        let ask = |_: &[&str]| Some("no\n".to_string());
+        let w = ensure_linger_with("ana", ask, |_| false).expect("warning");
+        assert!(w.contains("sudo loginctl enable-linger ana"), "{w}");
+        assert!(w.contains("last login session"), "{w}");
+        // loginctl said yes but the property did not change: still a warning.
+        assert!(ensure_linger_with("ana", ask, |_| true).is_some());
+    }
+
+    #[test]
+    fn linger_already_on_or_unknown_is_left_alone() {
+        let never = |_: &[&str]| -> bool { panic!("must not enable") };
+        assert_eq!(
+            ensure_linger_with("ana", |_| Some("yes\n".into()), never),
+            None
+        );
+        assert_eq!(ensure_linger_with("ana", |_| None, never), None);
+        assert_eq!(linger_with("ana", |_| None), Linger::Unknown);
+    }
+
+    #[test]
+    fn a_stand_in_systemctl_never_touches_linger() {
+        let sd = Systemd {
+            system: false,
+            unit_dir: PathBuf::from("/nonexistent"),
+            names: ServiceNames::for_home(
+                CuaChannel::Stable,
+                Path::new("/nonexistent"),
+                Path::new("/nonexistent"),
+            ),
+            systemctl: PathBuf::from("/tmp/stand-in-systemctl"),
+        };
+        assert!(!sd.manages_linger());
+        assert_eq!(sd.warning(), None);
     }
 
     #[test]

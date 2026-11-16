@@ -15,8 +15,8 @@ exclusive: a change that touches two areas runs both.
 | You changed | Workflows that run |
 |---|---|
 | `libs/cua/**` (Rust core: SDK, daemon, CLI, spaces crates) | CI: cua SDK (rust lint, rust test, spaces e2e, bindings drift, python/node/browser smoke, kotlin; macOS and Windows legs with the `ci:full` label), CI: Cua Spaces (frontend + Rust tests; installer bundles only with the `ci:full` label), CI: Test Python, CI: openkoalabot-example (TypeScript and Tauri; its Swift job only for the rows below), CI: cua contrib providers, CI: cua your-cloud providers, CI: Check Docs |
-| `libs/cua/swift/**`, `libs/spaces-sdk-swift/**`, `libs/spaces-app-swift/**`, `libs/cua/crates/cua-sdk/**`, `libs/cua/proto/**`, the Rust workspace manifest, lockfile and toolchain pin, `.github/actions/setup-protoc/**`, `.github/actions/rust-cache/**`, or the Swift samples (`examples/infinite-canvas-swift/**`, `examples/openkoalabot-example-swift/**` and the files its tests read) | CI: infinite-canvas (Swift) and the Swift job of CI: openkoalabot-example, each 28 to 33 macOS minutes. The full list is in `.github/scripts/ci_swift_samples_scope.py`. Other `libs/cua/**` changes skip them. Both workflows start a cheap scope job on every pull request and push; it decides, so main, the nightly schedule and the `ci:full` label build them every time. Release-please branches skip them as before |
-| `libs/cua-spacesd/**` | CI: cua-spacesd (3 OS + relay e2e), CI: Image doctor, CD: Image linux (build and gates only), CI: Images on the current cua-spacesd, openkoalabot (Tauri) |
+| `libs/cua/swift/**`, `libs/spaces-sdk-swift/**`, `libs/spaces-app-swift/**`, `libs/cua/crates/cua-sdk/**`, `libs/cua/crates/cua-sdk-native/**`, `libs/cua/proto/**`, the Rust workspace manifest, lockfile and toolchain pin, `.github/actions/setup-protoc/**`, `.github/actions/rust-cache/**`, or the Swift samples (`examples/infinite-canvas-swift/**`, `examples/openkoalabot-example-swift/**` and the files its tests read) | CI: infinite-canvas (Swift) and the Swift job of CI: openkoalabot-example, each 28 to 33 macOS minutes. The full list is in `.github/scripts/ci_swift_samples_scope.py`. Other `libs/cua/**` changes skip them. Both workflows start a cheap scope job on every pull request and push; it decides, so main, the nightly schedule and the `ci:full` label build them every time. Release-please branches skip them as before |
+| `libs/cua-spacesd/**` | CI: cua-spacesd (3 OS + relay e2e), CI: Image doctor, CD: Image linux (build and gates only; amd64 slim only on a PR that leaves the image definitions and build scripts alone), CI: Images on the current cua-spacesd, openkoalabot (Tauri) |
 | `libs/cua-driver/**` | CI: Rust Linux / macOS / Windows unit, CI: Nix Linux Rust source, CI: cua-driver contract clients, driver quick feedback, Image doctor, CI: cua-spacesd |
 | `apps/cua-spaces/src/**` (web frontend only) | CI: Cua Spaces: vitest + typecheck and the Rust command-layer tests. The installer bundles (a Tauri app that does not ship) are not built on pull requests; add the `ci:full` label to build them, and then the Windows and macOS bundles run only when something other than `src/`, `public/`, `e2e/`, `tests/`, `docs/` or markdown changed |
 | `apps/cua-spaces/src-tauri/**` or anything native | CI: Cua Spaces (Rust command-layer tests compile and test the Tauri crate; all three bundles with the `ci:full` label) |
@@ -85,6 +85,14 @@ workflow.
   main already keeps warm, or add a `push: main` trigger with the same paths.
 * CI uses a cheaper release profile (opt-level 1, no LTO, no debug info) for
   smoke tests; release builds in `cd-*.yml` keep the shipped profile.
+* The budget is kept for main by `ci-cache-hygiene.yml`
+  (`.github/scripts/cache_hygiene.py`): it deletes a pull request's caches
+  when the PR closes, and daily the caches of closed PRs, tags and branches
+  older than two days, and every superseded day of a main family (only the
+  newest entry per family stays; a family is its key without the date or
+  hash). Try it with a manual run (dry run by default). `ci-cache-warm.yml`
+  dispatches the seeding Rust workflows when none has run green on main for
+  36 hours, so a quiet weekend does not let the 7 day idle eviction drop them.
 * When sccache cannot start, cargo compiles normally.
 * sccache hashes the rustc version into every object key, so a toolchain bump
   simply misses until main re-seeds, and the cap ages the old objects out.

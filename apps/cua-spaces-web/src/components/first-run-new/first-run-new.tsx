@@ -10,7 +10,7 @@
  */
 
 import { useNavigate } from "@tanstack/react-router";
-import { CheckIcon, CopyIcon, LoaderCircleIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon, CircleAlertIcon, CopyIcon, LoaderCircleIcon } from "lucide-react";
 import { useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 
 import { folderLabel, isNeedsProof, useMachines, useSession, useSettings, type SignInPhase } from "@/bridge";
@@ -29,29 +29,41 @@ import { agoLabel, PICK_UP_LIMIT, recentThreads, useRecentThreads } from "@/comp
 import { CuaLogo } from "@/components/cua-logo";
 import { Switch } from "@/components/ui/switch";
 import { permissionsStepView, type PermissionsStepView } from "@/lib/app-permissions";
-import { addImportedTask, type AskTask } from "@/lib/ask-first";
+import { addImportedTask, hostSpaceId, type AskTask } from "@/lib/ask-first";
 import {
   addingView,
-  afterSignIn,
   agentInfo,
   agentView,
+  CHECKLIST_WAITING,
+  checklistFromResult,
+  checklistRowView,
+  checklistSettled,
+  checklistView,
   chosenAgents,
+  connectArgs,
+  connectedAgents,
+  connectPlan,
+  type ChecklistItem,
+  type ChecklistRowView,
+  type ChecklistState,
   toggleAgentOff,
   dotStep,
+  furthestStep,
   INSTALL_PAGES,
-  listNames,
   NEW_RUN_EMPTY,
+  nextStepScreen,
   placeName,
-  reachedAfter,
   readyComputers,
   readyView,
   signInView,
   stepDots,
+  stepOf,
   WELCOME,
   welcomeUsage,
   type AgentView,
   type NewRunSaved,
   type ReadyView,
+  type RunFacts,
   type SignInView,
   type StepDot,
   type WelcomeUsage,
@@ -61,6 +73,7 @@ import { cn } from "@/lib/utils";
 import { FloatKeys } from "./float-keys";
 import { CARD, GLASS_CHIP, GREY } from "./hero";
 import { thisComputerText } from "@/lib/host-labels";
+import { hostStatusWhenOnline, thisMacSetupSteps } from "@/lib/this-mac-target";
 
 /* ---- The site's pieces ------------------------------------------------------------------ */
 
@@ -262,6 +275,35 @@ function useFadeUnder(scroller: RefObject<HTMLElement | null>, screen: string) {
       for (const el of [...masked]) clear(el);
     };
   }, [scroller, screen]);
+}
+
+/** How far the content may run under the action row before "More below" shows, in px. */
+const MORE_SLACK = 8;
+
+/**
+ * Whether the screen's content runs on below the window (a short window: a 13" MacBook with the Dock, a small
+ * external display). The fade under the action row alone hid that there was more, so a row could be missed; the page
+ * then shows "More below", which scrolls to it.
+ */
+export function useMoreBelow(scroller: RefObject<HTMLElement | null>, screen: string): boolean {
+  const [more, setMore] = useState(false);
+  useLayoutEffect(() => {
+    const main = scroller.current;
+    if (!main) return;
+    const update = () => setMore(main.scrollHeight - main.scrollTop - main.clientHeight > MORE_SLACK);
+    update();
+    main.addEventListener("scroll", update, { passive: true });
+    window.addEventListener("resize", update);
+    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
+    ro?.observe(main);
+    if (main.firstElementChild) ro?.observe(main.firstElementChild);
+    return () => {
+      main.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+      ro?.disconnect();
+    };
+  }, [scroller, screen]);
+  return more;
 }
 
 /**
@@ -498,6 +540,91 @@ export function AgentScreen({
   );
 }
 
+/** A checklist row's mark: done in Cua Blue, a spinner while it runs, a ring while it waits, an alert when it needs you. */
+function RowMark({ status }: { status: ChecklistRowView["status"] }) {
+  if (status === "done") return <Check on />;
+  if (status === "running")
+    return (
+      <span className="flex size-[22px] shrink-0 items-center justify-center" data-check="running">
+        <LoaderCircleIcon aria-hidden className="size-[18px] animate-spin text-white/80 motion-reduce:animate-none" />
+      </span>
+    );
+  if (status === "waiting") return <Check on={false} />;
+  return (
+    <span className="flex size-[22px] shrink-0 items-center justify-center" data-check="attention">
+      <CircleAlertIcon aria-hidden className="size-[19px] text-white" />
+    </span>
+  );
+}
+
+/**
+ * Step 3 after Continue (CUA-4067): one row per thing Cua does, live, each saying what and where in plain words. A
+ * row that failed says why and has its own Retry; Cua Driver without its permissions has Allow; Codex's sign-in has
+ * Get a code. Continue waits only for nothing to be running; a row left as it is can be done later in Settings.
+ */
+export function ChecklistScreen({
+  view,
+  rows,
+  onAction,
+  onContinue,
+}: {
+  view: { title: string; line: string };
+  rows: ChecklistRowView[];
+  onAction: (key: string, action: NonNullable<ChecklistRowView["action"]>["id"]) => void;
+  onContinue: (() => void) | null;
+}) {
+  const shown = rows.filter((r) => r.status !== "skipped");
+  return (
+    <div data-new-run="agent" data-state="connecting">
+      <Title>{view.title}</Title>
+      <Line>{view.line}</Line>
+      <ul className={cn(CARD, "mt-[min(28px,3vh)]")} data-new-run-checklist="" aria-live="polite">
+        {shown.map((r) => (
+          <li key={r.key} className="flex items-start gap-3 px-3 py-[9px]" data-checklist-row={r.key} data-status={r.status}>
+            <span className="flex shrink-0 pt-px">
+              <RowMark status={r.status} />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span
+                className={cn("block text-[15px] leading-5 font-medium text-pretty break-words", r.status === "waiting" ? "text-white/55" : "text-white")}
+                data-checklist-text=""
+              >
+                {r.text}
+              </span>
+              {r.sub ? (
+                <span
+                  className={cn(
+                    "mt-0.5 block text-[13.5px] leading-[19px] font-medium text-pretty break-words select-text",
+                    r.status === "failed" ? "text-white/85" : GREY,
+                  )}
+                  data-checklist-sub=""
+                >
+                  {r.sub}
+                </span>
+              ) : null}
+            </span>
+            {r.action ? (
+              <button
+                type="button"
+                className={cn(LINK, "mt-px shrink-0 text-[14px]")}
+                onClick={() => onAction(r.key, r.action!.id)}
+                data-checklist-action={r.action.id}
+              >
+                {r.action.label}
+              </button>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+      <Actions className="flex flex-wrap items-center gap-6">
+        <button type="button" className={WHITE_BUTTON} disabled={!onContinue} onClick={() => onContinue?.()} data-onboarding-primary="">
+          {onContinue ? "Continue" : "Setting up…"}
+        </button>
+      </Actions>
+    </div>
+  );
+}
+
 /**
  * "Pick up where you left off" (CUA-3319): 2 to 4 of the person's recent chats with their agents on
  * this computer, each with **Continue in Cua**, which opens it in a new Home task with what was said
@@ -656,22 +783,54 @@ export function PermissionsScreen({
         footer={view.note}
         extra={net?.available ? <LocalNetworkRow net={net} appName={appName ?? "Cua Spaces"} /> : null}
       />
-      <Actions>
+      <Actions className="flex items-center gap-x-6">
         <button
           type="button"
-          className={view.primary.white ? WHITE_BUTTON : GLASS_BUTTON}
+          className={cn("shrink-0", view.primary.white ? WHITE_BUTTON : GLASS_BUTTON)}
           onClick={onContinue}
           data-onboarding-primary=""
           data-new-run-permissions-next={view.primary.label}
         >
           {view.primary.label}
         </button>
+        {view.stillOff && view.missing[0] ? (
+          // What is still off, by name: on a short window its row can be below the fold, so pressing this shows it.
+          <button
+            type="button"
+            className={cn(LINK, "line-clamp-2 min-w-0 text-left text-[14px] leading-tight font-medium text-white/85")}
+            onClick={() => showRow(view.missing[0]!.id)}
+            data-new-run-still-off=""
+          >
+            {view.stillOff}
+          </button>
+        ) : null}
       </Actions>
     </div>
   );
 }
 
+/** Scrolls a permission row into view and puts the focus on its Allow (or the row itself once there is none). */
+function showRow(id: string): void {
+  const row = document.querySelector<HTMLElement>(`[data-app-permission="${id}"]`);
+  if (!row) return;
+  const reduce = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  row.scrollIntoView?.({ block: "center", behavior: reduce ? "auto" : "smooth" });
+  const target = row.querySelector<HTMLElement>("button") ?? row;
+  if (target === row && !row.hasAttribute("tabindex")) row.tabIndex = -1;
+  target.focus({ preventScroll: true });
+}
+
 /* ---- The page ------------------------------------------------------------------------- */
+
+/** The page's side padding (`px-16`) and the copy column's widest (`max-w-[600px]`), in px. */
+const PAGE_PAD = 64;
+const COPY_MAX = 600;
+/**
+ * Where the copy column ends, from the left. The keys show only on windows 860px and wider, where the column is
+ * always at its widest, so the keys never cover the text, the buttons or the links (the action rows run to the
+ * column's full width: "Install Claude Code", "Install Codex instead", "Install later").
+ */
+export const COPY_RIGHT = PAGE_PAD + COPY_MAX;
 
 /**
  * The usage data's name for each screen (`schema::FIRST_RUN_STEPS`), so the onboarding funnel keeps its steps:
@@ -712,10 +871,39 @@ export function NewFirstRun() {
   const s: NewRunSaved = { ...NEW_RUN_EMPTY, ...(savedAll.newRun ?? {}) };
   const save = (patch: Partial<NewRunSaved>) => {
     const prev = { ...NEW_RUN_EMPTY, ...(readFirstRun().newRun ?? {}) };
-    const reached = patch.screen ? reachedAfter(reachedAfter(prev.reached, prev.screen), patch.screen) : prev.reached;
-    writeFirstRun({ newRun: { ...prev, ...patch, reached } });
+    const reachedStep = patch.screen ? furthestStep(furthestStep(prev.reachedStep, prev.screen), patch.screen) : prev.reachedStep;
+    writeFirstRun({ newRun: { ...prev, ...patch, reachedStep } });
   };
   const go = (screen: NewRunScreenName) => save({ screen });
+
+  // Step 3's checklist once Continue was pressed (CUA-4067): the rows, in order, and where each stands.
+  const [checklist, setChecklist] = useState<{ agents: string[]; items: ChecklistItem[]; states: Record<string, ChecklistState> } | null>(null);
+  // Which steps this run shows (`runSteps`): the step dots and every move to the next step read the same facts.
+  // On a Mac, Cua Spaces' permissions (and Local Network, where macOS Spaces runs here) are read from the first step
+  // on, so the dots know whether the permissions step asks anything; it is left out when every one is already on.
+  // Once the run leaves the first step the answer is kept (`s.permissions`), so turning them on on that step doesn't
+  // change the dots under it.
+  const readPermissions = os === "macos" && (stepOf(s.screen) === "computer" || s.screen === "permissions" || (s.screen === "agent" && checklist !== null));
+  const perms = useAppPermissions(readPermissions);
+  const net = useLocalNetwork(readPermissions);
+  const permissionsNow: RunFacts["permissions"] = perms.loading
+    ? null
+    : !perms.available
+      ? "skip"
+      : !perms.allGranted
+        ? "ask"
+        : net.loading
+          ? null
+          : net.available && !net.granted
+            ? "ask"
+            : "skip";
+  const facts: RunFacts = { os, permissions: stepOf(s.screen) === "computer" ? permissionsNow : (s.permissions ?? permissionsNow) };
+  /** The first step is done (signed in and added) or skipped: on to the next step this run shows. */
+  const leaveFirstStep = () => {
+    const permissions = os === "macos" ? (permissionsNow ?? "ask") : undefined;
+    const screen = nextStepScreen({ os, permissions: permissions ?? null }, "welcome") ?? "agent";
+    save(permissions ? { screen, permissions } : { screen });
+  };
 
   const signedIn = Boolean(session.data?.signedIn);
   const phase: SignInPhase = session.data?.signIn ?? { kind: "idle" };
@@ -735,6 +923,7 @@ export function NewFirstRun() {
   const [addEnter, setAddEnter] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
   useFadeUnder(mainRef, s.screen);
+  const moreBelow = useMoreBelow(mainRef, s.screen);
 
   // The onboarding funnel (`cua_onboarding_*`): the run starts once, then each screen counts when it shows.
   const core = ctx?.core ?? null;
@@ -831,13 +1020,13 @@ export function NewFirstRun() {
   useEffect(() => {
     if (s.screen !== "signin" || !authed) return;
     if (thisState === "idle") void addThis();
-    else if (thisState === "added") go(afterSignIn(os));
+    else if (thisState === "added") leaveFirstStep();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [s.screen, authed, thisState]);
 
   // A run saved on the removed "Pick where your agents work" step goes on from the step after the sign-in.
   useEffect(() => {
-    if (s.screen === "where") go(afterSignIn(os));
+    if (s.screen === "where") leaveFirstStep();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [s.screen]);
 
@@ -867,14 +1056,12 @@ export function NewFirstRun() {
     };
   }, [s.screen, adapter]);
 
-  // 2b: Cua Spaces' permissions, read while the step shows. A host with none to give (not a Mac, an older app) has
-  // no step: it goes on to the coding agent.
-  const perms = useAppPermissions(s.screen === "permissions");
-  // A Mac that runs macOS Spaces (set up on screen 2) also needs Local Network: asked on the same step, so the issue
-  // never shows up later on its page, and its first macOS Space just starts.
-  const net = useLocalNetwork(s.screen === "permissions");
+  // 2b: Cua Spaces' permissions (`perms`, read above). A host with none to give (an older app) has no step: it goes
+  // on to the coding agent, and the dots drop the step. A Mac that runs macOS Spaces also needs Local Network (`net`):
+  // asked on the same step, so the issue never shows up later on its page, and its first macOS Space just starts.
+  const afterPermissions = nextStepScreen(facts, "permissions") ?? "agent";
   useEffect(() => {
-    if (s.screen === "permissions" && !perms.loading && !perms.available) go("agent");
+    if (s.screen === "permissions" && !perms.loading && !perms.available) save({ screen: afterPermissions, permissions: "skip" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [s.screen, perms.loading, perms.available]);
 
@@ -888,6 +1075,72 @@ export function NewFirstRun() {
 
   const agentsOff = s.agentsOff ?? [];
   const agentScreen = agentView({ os, found, off: agentsOff, error: connectError });
+  const setRow = (key: string, state: ChecklistState) => setChecklist((c) => (c ? { ...c, states: { ...c.states, [key]: state } } : c));
+  const running: ChecklistState = { status: "running", where: null, line: null };
+  const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+  /**
+   * This computer, set up to run the agents' jobs: the same steps as Home's Set up (`thisMacSetupSteps`: added to the
+   * account, sharing on, its desktop shared), then a wait until its host service says it's back online. Sharing the
+   * desktop restarts that service, and a job sent while it reconnects couldn't reach this computer (#7161).
+   */
+  const runThisComputer = async (key: string) => {
+    if (!adapter) return;
+    setRow(key, running);
+    const read = () => adapter.call("host.status", {}).catch(() => null);
+    try {
+      for (const step of thisMacSetupSteps(await read())) {
+        if (step === "add") {
+          if (!(await (store?.addThisComputer(session.data?.identity ?? null) ?? Promise.resolve(false))))
+            throw new Error(store?.thisMachine.get().setupError?.message ?? `${placeName(os)} couldn't be added to your account.`);
+        } else await adapter.call("host.action", { action: step });
+      }
+      const after = await hostStatusWhenOnline(read, { timeoutMs: 30_000 });
+      if (!hostSpaceId(after)) throw new Error(after?.error ?? "Its desktop isn't shared yet. Try again.");
+      if (after?.online === false) throw new Error(`${placeName(os)} didn't come back online yet. Try again in a moment.`);
+      setRow(key, { status: "done", where: null, line: null });
+      void machines.refresh().catch(() => {});
+    } catch (e) {
+      setRow(key, { status: "failed", where: null, line: message(e) });
+    }
+  };
+
+  /** One agent's part, on its own (`connectArgs`): Continue runs them one by one, Retry runs one again. */
+  const runPart = async (item: ChecklistItem) => {
+    if (!adapter || !item.agent || item.part === "this-computer") return;
+    setRow(item.key, running);
+    try {
+      const results = await adapter.call("agents.connect", connectArgs(item.agent, item.part));
+      const state = checklistFromResult(
+        item.part,
+        results.find((r) => r.agent === item.agent),
+      );
+      // A part the host doesn't have (an app that carries no Cua Driver) leaves no row.
+      setRow(item.key, state ?? { status: "skipped", where: null, line: null });
+    } catch (e) {
+      setRow(item.key, { status: "failed", where: null, line: message(e) });
+    }
+  };
+
+  const runItem = (item: ChecklistItem) => (item.part === "this-computer" ? runThisComputer(item.key) : runPart(item));
+
+  /** Codex's sign-in made for Cua: a code to enter on its page (opened here), then saved to Keyvault once entered. */
+  const runCode = async (item: ChecklistItem) => {
+    if (!adapter || !item.agent) return;
+    try {
+      const started = await adapter.call("agents.signInStart", { agent: item.agent });
+      setRow(item.key, { status: "needs_code", where: null, line: null, code: { code: started.code, url: started.url } });
+      open(started.url);
+      const r = await adapter.call("agents.signInWait", { id: started.id });
+      setRow(
+        item.key,
+        r.imported ? { status: "done", where: "Keyvault", line: null } : { status: "failed", where: null, line: r.line ?? "The sign-in didn't finish." },
+      );
+    } catch (e) {
+      setRow(item.key, { status: "failed", where: null, line: message(e) });
+    }
+  };
+
   const continueAgent = async () => {
     const agents = chosenAgents(found, agentsOff);
     if (!adapter || connecting) return;
@@ -899,45 +1152,54 @@ export function NewFirstRun() {
     // there when the screen shows (CUA-3319).
     void recentThreads(adapter, agents, PICK_UP_LIMIT);
     const started = performance.now();
-    try {
-      // Only Cua's tools in each agent's settings wait here: they are all the Ready screen needs, and take well under a
-      // second. Copying an agent's sign-in can run Claude Code to refresh a sign-in that ran out (seconds, up to 30),
-      // so it runs after, below.
-      const results = await adapter.call("agents.connect", { agents, signIn: false }).catch(() => null);
-      // A host without Connect, or an answer missing an agent: the agents' rows say.
-      const missing = results ? agents.filter((id) => !results.some((r) => r.agent === id)) : agents;
-      const rows = missing.length ? (results ? await adapter.call("agents.setup", {}) : await adapter.call("agents.configure", { agents })) : [];
-      const failed = agents
-        .map((id) => {
-          const r = results?.find((x) => x.agent === id);
-          if (r) return { agent: id, name: agentInfo(id).name, configured: Boolean(r.tools_ok), detail: r.tools_line ?? null };
-          return rows.find((x) => x.agent === id) ?? { agent: id, name: agentInfo(id).name, configured: false, detail: null };
-        })
-        .filter((r) => !r.configured);
-      if (failed.length) {
-        const one = failed.length === 1 ? failed[0]! : null;
-        setConnectError(
-          one
-            ? `Cua couldn't add itself to ${one.name ?? "the agent"}'s settings.${one.detail ? ` ${one.detail}` : ""}`
-            : `Cua couldn't add itself to the settings of ${listNames(failed.map((r) => r.name ?? r.agent))}.`,
-        );
-        return;
-      }
-      console.info(`first run: ${agents.join(", ")} connected in ${Math.round(performance.now() - started)} ms`);
-      // Ready's line to try uses the first one that has a command to type.
-      const primary = agents.find((id) => agentInfo(id).command) ?? agents[0]!;
-      save({ agent: primary, connected: agents, screen: "ready" });
-      // The same connect as Settings, now with the sign-ins kept for runs in your Spaces. Nothing on Ready waits on it.
-      void adapter.call("agents.connect", { agents, signIn: true }).then(
-        () => console.info(`first run: sign-ins kept in ${Math.round(performance.now() - started)} ms`),
-        (e: unknown) => console.warn("first run: keeping the sign-ins failed", e),
-      );
-    } catch (e) {
-      setConnectError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setConnecting(false);
-    }
+    const items = connectPlan({ agents, driver: os === "macos", thisComputer: signedIn });
+    setChecklist({ agents, items, states: Object.fromEntries(items.map((i) => [i.key, CHECKLIST_WAITING])) });
+    // One row at a time, in order: this computer first (it restarts its service), the sign-ins last.
+    for (const item of items) await runItem(item);
+    console.info(`first run: ${agents.join(", ")} connected in ${Math.round(performance.now() - started)} ms`);
+    setConnecting(false);
   };
+
+  /** A row's button: Retry runs its step again; Allow opens the permission that is off; Get a code signs in. */
+  const checklistAction = (key: string, action: NonNullable<ChecklistRowView["action"]>["id"]) => {
+    const item = checklist?.items.find((i) => i.key === key);
+    if (!item) return;
+    if (action === "retry") return void runItem(item);
+    if (action === "code") return void runCode(item);
+    if (action === "open") {
+      const url = checklist?.states[key]?.code?.url;
+      if (url) open(url);
+      return;
+    }
+    const off = perms.data?.permissions.find((p) => !p.granted);
+    if (off) void perms.allow(off.id).catch(() => {});
+    else void runItem(item);
+  };
+
+  // Back from System Settings: a Cua Driver row waiting for its permissions is checked again.
+  const recheck = useRef<() => void>(() => {});
+  recheck.current = () => {
+    for (const item of checklist?.items ?? []) if (checklist?.states[item.key]?.status === "needs_permission") void runItem(item);
+  };
+  useEffect(() => {
+    if (!checklist) return;
+    const again = () => recheck.current();
+    window.addEventListener("focus", again);
+    return () => window.removeEventListener("focus", again);
+  }, [checklist !== null]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Continue from the checklist: Ready names the agents whose tools went in; none went in, setup ends on Home. */
+  const leaveChecklist = () => {
+    if (!checklist) return;
+    const connected = connectedAgents(checklist.agents, checklist.states);
+    if (!connected.length) return void finish();
+    // Ready's line to try uses the first one that has a command to type.
+    const primary = connected.find((id) => agentInfo(id).command) ?? connected[0]!;
+    save({ agent: primary, connected, screen: nextStepScreen(facts, "agent") ?? "ready" });
+  };
+  const checklistStates = checklist ? checklist.items.map((i) => checklist.states[i.key] ?? CHECKLIST_WAITING) : [];
+  const checklistRows = checklist ? checklist.items.map((i) => checklistRowView(i, checklist.states[i.key] ?? CHECKLIST_WAITING, os)) : [];
+
   // Choose later: setup is done without connecting an agent; Settings, Connections does it any time.
   const agentsLater = () => {
     funnel("step_skipped", "later");
@@ -959,7 +1221,7 @@ export function NewFirstRun() {
     if (s.screen === "welcome" || s.screen === "signin") {
       funnel("step_skipped", "step");
       session.cancelSignIn();
-      go(afterSignIn(os));
+      leaveFirstStep();
     } else leave();
   };
   const finished = async () => {
@@ -995,7 +1257,7 @@ export function NewFirstRun() {
     if (!signedIn) void session.signIn().catch(() => {});
   };
 
-  const dots = stepDots(s.screen, reachedAfter(s.reached, s.screen));
+  const dots = stepDots(facts, s.screen, furthestStep(s.reachedStep, s.screen));
   const goDot = (i: number, viaKey: boolean) => {
     const to = dots?.[i]?.to;
     if (!to) return;
@@ -1050,17 +1312,25 @@ export function NewFirstRun() {
           view={permissionsStepView({
             appName: perms.data?.appName ?? "Cua Spaces",
             allGranted: perms.allGranted,
+            off: perms.data?.permissions.filter((p) => !p.granted).map((p) => p.id),
             localNetwork: !net.available ? "none" : net.granted ? "on" : net.denied ? "denied" : "off",
           })}
           perms={perms}
           net={net}
           appName={perms.data?.appName ?? "Cua Spaces"}
-          onContinue={() => go("agent")}
+          onContinue={() => go(afterPermissions)}
         />
       );
       break;
     case "agent":
-      body = (
+      body = checklist ? (
+        <ChecklistScreen
+          view={checklistView(checklistStates)}
+          rows={checklistRows}
+          onAction={checklistAction}
+          onContinue={!connecting && checklistSettled(checklistStates) ? leaveChecklist : null}
+        />
+      ) : (
         <AgentScreen
           view={agentScreen}
           busy={connecting}
@@ -1099,7 +1369,7 @@ export function NewFirstRun() {
       data-new-first-run=""
       data-step={s.screen}
     >
-      <FloatKeys copyRight={544} />
+      <FloatKeys copyRight={COPY_RIGHT} />
       {/* A fixed height, with or without Skip for now, so the content under it never moves between steps. */}
       <header className="relative z-30 box-content flex h-9 shrink-0 items-center justify-between pt-[calc(var(--titlebar-height,0px)+12px)] pr-16 pb-2 pl-16">
         <span className="flex items-center gap-1.5" data-new-run-logo="">
@@ -1117,6 +1387,7 @@ export function NewFirstRun() {
           (`Actions`) sits at the bottom of it; content longer than the window scrolls above that row. On windows taller
           than 1000px the area stops at 860px, so the button stays near the text instead of the far bottom edge. */}
       <main ref={mainRef} className="relative z-20 flex min-h-0 flex-1 flex-col scroll-y-stable px-16" data-new-run-main="">
+        {/* px-16 and max-w-[600px] are PAGE_PAD and COPY_MAX: change them together, they keep the keys off the copy. */}
         <div className="flex w-full max-w-[600px] shrink-0 grow flex-col pt-[clamp(16px,8vh,96px)] *:flex *:grow *:flex-col [@media(min-height:1000px)]:max-h-[860px]">
           {body}
         </div>
@@ -1124,6 +1395,24 @@ export function NewFirstRun() {
       {/* The dots' row keeps its height on the screens without dots, so the area above it keeps its height too. */}
       <div className="relative z-20 flex h-[38px] shrink-0 flex-col justify-end" data-new-run-dots-row="">
         {dots ? <StepDots dots={dots} onGo={goDot} /> : null}
+        {moreBelow ? (
+          <div className="pointer-events-none absolute bottom-[3px] left-16 flex w-[min(600px,calc(100%-128px))] justify-end">
+            <button
+              type="button"
+              className={cn(GLASS_CHIP, "pointer-events-auto h-8 gap-1 px-3 text-[13.5px]")}
+              onClick={() => {
+                const main = mainRef.current;
+                if (!main) return;
+                const reduce = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+                main.scrollBy({ top: Math.max(120, main.clientHeight * 0.6), behavior: reduce ? "auto" : "smooth" });
+              }}
+              data-new-run-more-below=""
+            >
+              More below
+              <ChevronDownIcon aria-hidden className="size-3.5" />
+            </button>
+          </div>
+        ) : null}
       </div>
       <AddComputerSheet
         open={addOpen}

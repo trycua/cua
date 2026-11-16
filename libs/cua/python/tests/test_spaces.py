@@ -11,6 +11,7 @@ home, apps or keychain.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import tempfile
@@ -32,9 +33,19 @@ class Approver(cua.TeleportApprover):
         return self.decision
 
 
+CONTRACT_MANIFEST = Path(__file__).resolve().parents[2] / "spaces-contract" / "manifest.json"
+
+
 def test_every_contract_tool_maps_to_a_generated_method():
     rows = cua.spaces_tool_methods()
-    assert len(rows) == 122
+    # One source of truth for the tool set: the generated contract manifest.
+    expected = {t["name"] for t in json.loads(CONTRACT_MANIFEST.read_text())["tools"]}
+    got = {row.tool for row in rows}
+    assert got == expected and len(rows) == len(expected), (
+        f"binding tools differ from spaces-contract/manifest.json: "
+        f"missing {sorted(expected - got)}, extra {sorted(got - expected)}, "
+        f"rows {len(rows)} vs manifest {len(expected)}"
+    )
     classes = {"Spaces": cua.Spaces, "Space": cua.Space}
     for row in rows:
         cls, method = row.method.split(".")

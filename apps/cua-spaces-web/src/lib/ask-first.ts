@@ -67,8 +67,21 @@ export interface AskTask {
   imported?: ImportedChat;
   /** The model the person picked (its id), when they did. */
   model?: string;
+  /** The reasoning level the person picked, when the model has levels. */
+  effort?: string;
   /** The repo the task starts from, when one was chosen. */
   repo?: { url: string; label: string };
+  /** The computer Home's "Run something" placed it on (`pool.place`). */
+  computer?: TaskComputer;
+  /** The computer it was meant for, which couldn't be reached, so it moved to `computer`. */
+  movedFrom?: TaskComputer;
+}
+
+/** One of your computers, as a task remembers it. */
+export interface TaskComputer {
+  /** The account's id for it (`machines.list`). */
+  id: string;
+  name: string;
 }
 
 /** Which of the agent's own chats a task continues. */
@@ -156,6 +169,11 @@ export function addAskTask(t: Pick<AskTask, "prompt" | "agent" | "os"> & Partial
 
 export function updateAskTask(id: string, patch: Partial<AskTask> | ((t: AskTask) => Partial<AskTask>)): void {
   save(load().map((t) => (t.id === id ? { ...t, ...(typeof patch === "function" ? patch(t) : patch) } : t)));
+}
+
+/** Forgets a task's record on this device (a run that never started). Nothing else is touched: a Space, an agent or its thread stay. */
+export function removeAskTask(id: string): void {
+  save(load().filter((t) => t.id !== id));
 }
 
 /**
@@ -397,6 +415,28 @@ export function thisMacConfirmText(agent: string): { title: string; description:
   };
 }
 
+/**
+ * A Space on one of your other computers: that computer's own desktop over the relay, or a Space it provides. It
+ * can go away between being picked and the job starting, and its thread lives on the relay, so a job posted to it
+ * would still "succeed" and wait there for a computer that is gone. A start asks it first (`spaces.reach`).
+ */
+export function onAnotherComputer(spaceId: string, spaces: readonly Pick<Space, "id" | "provider" | "host">[] | null | undefined): boolean {
+  if (spaceId.startsWith("relay:")) return true;
+  const row = spaces?.find((s) => s.id === spaceId);
+  return Boolean(row && (row.provider === "relay" || row.host));
+}
+
+/** Why a start stops before it hands the job over (`spaces.reach` said no): words `isUnreachableError` reads. */
+export function unreachableError(spaceId: string, reach: { listedOffline: boolean; reason: string | null }): string {
+  const why = reach.reason ?? (reach.listedOffline ? "its computer is offline" : "it did not answer");
+  return `${spaceId} is unreachable: ${why}`;
+}
+
+/** A start that failed because its computer (or Space) couldn't be reached: another computer can take the job. */
+export function isUnreachableError(raw: string): boolean {
+  return /not running|space_off|stopped|suspended|offline|unreachable|timed out|timeout|connection|refused/.test(raw.toLowerCase());
+}
+
 /** What a failed start offers in its card. */
 export type StartErrorAction = "change-computer" | "add-key" | "retry" | "set-up-host";
 
@@ -416,7 +456,7 @@ export interface StartErrorView {
  * words with the one thing to do next. The raw text stays on the task and
  * shows under Details.
  */
-export function startErrorView(raw: string, agent: string): StartErrorView {
+export function startErrorView(raw: string, agent: string, onHost = false): StartErrorView {
   const e = raw.toLowerCase();
   if (e.includes("isn't shared"))
     return {
@@ -446,8 +486,16 @@ export function startErrorView(raw: string, agent: string): StartErrorView {
     return { title: t("home.start_error.not_found_title"), body: t("home.start_error.not_found_body"), action: "change-computer", retry: false };
   if (/api key|key|sign in|signed in|auth|login|credential|unauthori[sz]ed|401/.test(e))
     return { title: t("home.start_error.key_title", { agent }), body: t("home.start_error.key_body"), action: "add-key", retry: true };
-  if (/not running|space_off|stopped|suspended|offline|unreachable|timed out|timeout|connection|refused/.test(e))
-    return { title: t("home.start_error.unreachable_title"), body: t("home.start_error.unreachable_body"), action: "retry", retry: true };
+  if (isUnreachableError(e))
+    // This computer is plainly on: "Check it's on" would send the person looking for nothing.
+    return onHost
+      ? {
+          title: t("home.start_error.host_unreachable_title", { computer: thisComputerLabel() }),
+          body: t("home.start_error.host_unreachable_body", { computer: thisComputerText() }),
+          action: "retry",
+          retry: true,
+        }
+      : { title: t("home.start_error.unreachable_title"), body: t("home.start_error.unreachable_body"), action: "retry", retry: true };
   if (/disk|space left|no room|memory|quota|limit/.test(e))
     return {
       title: t("home.start_error.no_room_title", { computer: thisComputerLabel() }),
@@ -476,6 +524,14 @@ export function taskState(
   if (run.status === "running") return run.lastEventMs !== null && now - run.lastEventMs > STUCK_MS ? "stuck" : "working";
   if (run.status === "failed" || run.status === "crashed") return "failed";
   return task.ending === "kept" ? "kept" : "done";
+}
+
+/** A task that never got a run (it did not start, or never got past starting) and is older than this is not a task any
+ * more: Home clears it itself, so an old failure does not sit on Home for days. */
+export const STALE_TASK_MS = 30 * 60_000;
+
+export function withoutStaleTasks<T extends Pick<AskTask, "runId" | "createdMs" | "ending">>(tasks: readonly T[], now = Date.now()): T[] {
+  return tasks.filter((t) => t.runId || t.ending || now - t.createdMs < STALE_TASK_MS);
 }
 
 /** An object whose values are catalog strings read when used, so a language change shows at once. */

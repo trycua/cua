@@ -225,6 +225,8 @@ export interface StoreOptions {
 const SIGN_IN_TIMEOUT_MS = 11 * 60_000;
 
 const CREATE_TICK_MS = 1_000;
+/** The Windows image a disc image the person chooses is remembered for. */
+const WINDOWS_ISO_IMAGE = "ghcr.io/trycua/windows:11";
 /** How often a watched run is read while a turn runs, and while it waits. */
 const EVENTS_LIVE_MS = 500;
 const EVENTS_IDLE_MS = 4_000;
@@ -652,6 +654,22 @@ export class BridgeStore {
     return next;
   }
 
+  /** "Choose Windows ISO…": the host's picker for a disc image, checked and
+   * remembered for `image` (default: the Windows 11 image). Its file name;
+   * null when the picker was cancelled. A file that cannot be used rejects
+   * with the reason in plain words. */
+  async chooseWindowsIso(image: string = WINDOWS_ISO_IMAGE): Promise<string | null> {
+    const chosen = await this.adapter.call("windows.chooseIso", { image });
+    return chosen?.name ?? null;
+  }
+
+  /** The same, for a failed create: then the create runs again with that
+   * file (the same request, a new row). Null when cancelled. */
+  async chooseWindowsIsoAndRetry(pendingId: string): Promise<{ name: string; next: string } | null> {
+    const name = await this.chooseWindowsIso(this.createRequests.get(pendingId)?.image);
+    return name ? { name, next: this.retryCreate(pendingId) } : null;
+  }
+
   private beginCreate(req: CreateSpaceRequest, id?: string): { pendingId: string; done: Promise<Space> } {
     if (req.image && !req.appImage) {
       const problem = validateImageRef(this.core, req.image);
@@ -883,7 +901,7 @@ export class BridgeStore {
   private publishMachines(): void {
     // The home warming for Home's box is on no machine's list until a person wrote into it (the core's rule).
     const warming = new Set(hiddenSpaceIdsNow(this.core));
-    const spaces = ((this.resources.spaces.data as Space[] | undefined) ?? []).filter((s) => !warming.has(s.id));
+    const spaces = ((this.resources.spaces.data as Space[] | undefined) ?? []).filter((s) => !warming.has(s.id) && !s.hidden);
     let machines: Machine[] = toMachines(this.machineRows, spaces, this.core, this.machinesNow);
     const override = this.hostOverride;
     if (override) {

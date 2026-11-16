@@ -131,6 +131,8 @@ fn spare_keycodes(conn: &RustConnection) -> Result<Vec<u8>> {
         .enumerate()
         .filter(|(_, keysyms)| keysyms.iter().all(|&keysym| keysym == 0))
         .map(|(index, _)| min + index as u8)
+        // The virtual keyboard's warm-up key is never borrowed.
+        .filter(|&keycode| keycode != 248)
         .collect())
 }
 
@@ -349,6 +351,28 @@ fn text_delivers_distinct_unmapped_keysyms_on_both_paths() -> Result<()> {
             before.keysyms
         );
     }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires an isolated X11 display with XTEST"]
+fn xtest_text_holds_each_key_on_a_borrowed_keycode() -> Result<()> {
+    let (conn, screen) = connect()?;
+    focused_input_window(&conn, screen)?;
+    send_type_text_xtest("a你")?;
+    let events = keyboard_events(&conn, 4)?;
+    let held = |pair: &[(bool, KeyPressEvent)]| {
+        assert!(pair[0].0 && !pair[1].0);
+        pair[1].1.time.wrapping_sub(pair[0].1.time)
+    };
+    // Batched text sends an in-map key's press and release together. A key
+    // on a borrowed keycode is held, so the client is not handed a backlog.
+    // XTEST timestamps come from the server.
+    assert!(
+        held(&events[2..]) >= 5,
+        "borrowed key held {} ms",
+        held(&events[2..])
+    );
     Ok(())
 }
 

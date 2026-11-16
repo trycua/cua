@@ -15,7 +15,7 @@ on:
         type: string
         default: "windows-latest"
       lane:
-        description: "Diagnostic lane; release gates use all"
+        description: "Diagnostic lane, or a comma list of lanes (the merge queue passes native,capture,installer); release gates use all"
         required: false
         type: string
         default: all
@@ -94,7 +94,7 @@ jobs:
           echo "sha=${sha,,}" >> "$GITHUB_OUTPUT"
 
   shared:
-    if: inputs.lane == 'all' || inputs.lane == 'shared'
+    if: inputs.lane == 'all' || contains(format(',{0},', inputs.lane), ',shared,')
     name: "Windows / shared Electron + Tauri"
     needs: source
     runs-on: ${{ inputs.runner }}
@@ -141,7 +141,7 @@ jobs:
           retention-days: 14
 
   native:
-    if: inputs.lane == 'all' || inputs.lane == 'native'
+    if: inputs.lane == 'all' || contains(format(',{0},', inputs.lane), ',native,')
     name: "Windows / native WPF + WinUI3 + WebView2"
     needs: source
     runs-on: ${{ inputs.runner }}
@@ -186,7 +186,7 @@ jobs:
           retention-days: 14
 
   capture:
-    if: inputs.lane == 'all' || inputs.lane == 'capture'
+    if: inputs.lane == 'all' || contains(format(',{0},', inputs.lane), ',capture,')
     name: "Windows / capture and desktop scope"
     needs: source
     runs-on: ${{ inputs.runner }}
@@ -231,7 +231,7 @@ jobs:
           retention-days: 14
 
   installer:
-    if: inputs.lane == 'all' || inputs.lane == 'installer'
+    if: inputs.lane == 'all' || contains(format(',{0},', inputs.lane), ',installer,')
     name: "Windows / installer and update smoke"
     needs: source
     runs-on: windows-latest

@@ -31,11 +31,20 @@ pub type AXUIElementRef = *mut __AXUIElement;
 pub type AXError = c_int;
 pub const kAXErrorSuccess: AXError = 0;
 pub const kAXErrorFailure: AXError = -25200;
+pub const kAXErrorIllegalArgument: AXError = -25201;
 pub const kAXErrorInvalidUIElement: AXError = -25202;
+pub const kAXErrorInvalidUIElementObserver: AXError = -25203;
+pub const kAXErrorCannotComplete: AXError = -25204;
 pub const kAXErrorAttributeUnsupported: AXError = -25205;
 pub const kAXErrorActionUnsupported: AXError = -25206;
-pub const kAXErrorNoValue: AXError = -25212;
+pub const kAXErrorNotificationUnsupported: AXError = -25207;
+pub const kAXErrorNotImplemented: AXError = -25208;
+pub const kAXErrorNotificationAlreadyRegistered: AXError = -25209;
+pub const kAXErrorNotificationNotRegistered: AXError = -25210;
 pub const kAXErrorAPIDisabled: AXError = -25211;
+pub const kAXErrorNoValue: AXError = -25212;
+pub const kAXErrorParameterizedAttributeUnsupported: AXError = -25213;
+pub const kAXErrorNotEnoughPrecision: AXError = -25214;
 
 // ── AXValue opaque type ──────────────────────────────────────────────────────
 
@@ -661,6 +670,55 @@ pub fn focused_element_window_id_of_pid(pid: i32) -> Option<u32> {
     }
 }
 
+/// Whether `pid`'s keyboard focus is in an inline editor of `target`: a text
+/// field drawn in its own WindowServer window whose parent is `target`.
+/// Finder's rename field is one: its AX parent is the application (it has no
+/// `AXWindow`), so only WindowServer's parent record ties it to the window.
+pub fn inline_editor_open(pid: i32, target: u32) -> bool {
+    let (role, window) = focused_role_and_window(pid);
+    is_inline_editor(
+        role.as_deref(),
+        window,
+        target,
+        crate::input::skylight::window_parent_id,
+    )
+}
+
+/// The role and own WindowServer window of `pid`'s focused element.
+fn focused_role_and_window(pid: i32) -> (Option<String>, Option<u32>) {
+    // Short reads: a busy app must not stretch foreground delivery.
+    const READ_TIMEOUT_SECONDS: f32 = 0.2;
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return (None, None);
+        }
+        AXUIElementSetMessagingTimeout(app, READ_TIMEOUT_SECONDS);
+        let element = copy_element_attr(app, "AXFocusedUIElement");
+        CFRelease(app as CFTypeRef);
+        let Some(element) = element else {
+            return (None, None);
+        };
+        AXUIElementSetMessagingTimeout(element, READ_TIMEOUT_SECONDS);
+        let role = copy_string_attr(element, "AXRole");
+        let window = ax_get_window_id(element);
+        CFRelease(element as CFTypeRef);
+        (role, window)
+    }
+}
+
+/// [`inline_editor_open`]'s decision, with an injectable WindowServer parent
+/// lookup.
+fn is_inline_editor(
+    role: Option<&str>,
+    window: Option<u32>,
+    target: u32,
+    parent_of: impl Fn(u32) -> Option<u32>,
+) -> bool {
+    role == Some("AXTextField")
+        && window.is_some_and(|window| window != target && parent_of(window) == Some(target))
+}
+
 /// Get the children of an AX element.
 ///
 /// # Safety
@@ -715,6 +773,21 @@ pub unsafe fn copy_element_attr(
         return None;
     }
     Some(value as AXUIElementRef)
+}
+
+/// Whether `element` no longer exists: a read answers `kAXErrorInvalidUIElement`.
+///
+/// # Safety
+///
+/// `element` must be a valid (retained) `AXUIElementRef`.
+pub unsafe fn element_destroyed(element: AXUIElementRef) -> bool {
+    let attr = CFStr::new("AXRole");
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
+    if !value.is_null() {
+        CFRelease(value);
+    }
+    err == kAXErrorInvalidUIElement
 }
 
 /// Perform an AX action using a string attribute name.
@@ -817,6 +890,9 @@ pub unsafe fn set_bool_attr_true(element: AXUIElementRef, attr_name: &str) -> AX
 pub enum AccessibilityOptIn {
     ManualAccessibility,
     EnhancedUserInterface,
+    /// `AXManualAccessibility` is unsupported and the app is neither Chromium
+    /// nor Electron: nothing was written, and nothing needs enabling.
+    NotNeeded,
     NotAccepted,
 }
 
@@ -826,13 +902,29 @@ pub enum AccessibilityOptIn {
 /// `AXManualAccessibility` is the modern opt-in with no screen-reader side
 /// effects; `AXEnhancedUserInterface` is the legacy fallback some Electron
 /// builds expose instead (the modern attribute returns
-/// `kAXErrorAttributeUnsupported` on those builds).
+/// `kAXErrorAttributeUnsupported` on those builds). Native AppKit and Catalyst
+/// apps also accept the legacy attribute and switch into screen-reader mode
+/// for the rest of their life, so it is written only when
+/// `is_chromium_family` says the app is Chromium or Electron.
 ///
 /// # Safety
 ///
 /// `app_element` must be a valid, live application `AXUIElementRef`.
-pub unsafe fn enable_chromium_accessibility(app_element: AXUIElementRef) -> AccessibilityOptIn {
-    let manual = set_bool_attr_true(app_element, "AXManualAccessibility");
+pub unsafe fn enable_chromium_accessibility(
+    app_element: AXUIElementRef,
+    is_chromium_family: impl FnOnce() -> bool,
+) -> AccessibilityOptIn {
+    choose_accessibility_opt_in(
+        |attr| set_bool_attr_true(app_element, attr),
+        is_chromium_family,
+    )
+}
+
+fn choose_accessibility_opt_in(
+    mut set_true: impl FnMut(&str) -> AXError,
+    is_chromium_family: impl FnOnce() -> bool,
+) -> AccessibilityOptIn {
+    let manual = set_true("AXManualAccessibility");
     if manual == kAXErrorSuccess {
         return AccessibilityOptIn::ManualAccessibility;
     }
@@ -842,7 +934,10 @@ pub unsafe fn enable_chromium_accessibility(app_element: AXUIElementRef) -> Acce
         // fallback, and don't claim enablement happened.
         return AccessibilityOptIn::NotAccepted;
     }
-    if set_bool_attr_true(app_element, "AXEnhancedUserInterface") == kAXErrorSuccess {
+    if !is_chromium_family() {
+        return AccessibilityOptIn::NotNeeded;
+    }
+    if set_true("AXEnhancedUserInterface") == kAXErrorSuccess {
         AccessibilityOptIn::EnhancedUserInterface
     } else {
         AccessibilityOptIn::NotAccepted
@@ -873,20 +968,32 @@ pub unsafe fn ax_get_window_id(element: AXUIElementRef) -> Option<u32> {
 ///
 /// `element` must be valid, and the caller must release every returned element.
 pub unsafe fn copy_ax_windows(element: AXUIElementRef) -> Vec<AXUIElementRef> {
+    copy_ax_windows_or_error(element).unwrap_or_default()
+}
+
+/// # Safety
+///
+/// `element` must be valid, and the caller must release every returned element.
+pub unsafe fn copy_ax_windows_or_error(
+    element: AXUIElementRef,
+) -> Result<Vec<AXUIElementRef>, AXError> {
     let attr = CFStr::new("AXWindows");
     let mut value: CFTypeRef = std::ptr::null();
     let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
-    if err != kAXErrorSuccess || value.is_null() {
-        return vec![];
+    if err != kAXErrorSuccess {
+        return Err(err);
+    }
+    if value.is_null() {
+        return Ok(vec![]);
     }
     let cf_array_type_id = CFArray::<CFTypeRef>::type_id();
     if core_foundation::base::CFGetTypeID(value) != cf_array_type_id {
         CFRelease(value);
-        return vec![];
+        return Ok(vec![]);
     }
     let arr = CFArray::<CFTypeRef>::wrap_under_create_rule(value as _);
     let ax_type_id = AXUIElementGetTypeID();
-    (0..arr.len())
+    Ok((0..arr.len())
         .filter_map(|i| {
             let item = *arr.get(i)?;
             if core_foundation::base::CFGetTypeID(item) == ax_type_id {
@@ -896,7 +1003,28 @@ pub unsafe fn copy_ax_windows(element: AXUIElementRef) -> Vec<AXUIElementRef> {
                 None
             }
         })
-        .collect()
+        .collect())
+}
+
+pub fn ax_error_name(error: AXError) -> &'static str {
+    match error {
+        kAXErrorFailure => "kAXErrorFailure",
+        kAXErrorIllegalArgument => "kAXErrorIllegalArgument",
+        kAXErrorInvalidUIElement => "kAXErrorInvalidUIElement",
+        kAXErrorInvalidUIElementObserver => "kAXErrorInvalidUIElementObserver",
+        kAXErrorCannotComplete => "kAXErrorCannotComplete",
+        kAXErrorAttributeUnsupported => "kAXErrorAttributeUnsupported",
+        kAXErrorActionUnsupported => "kAXErrorActionUnsupported",
+        kAXErrorNotificationUnsupported => "kAXErrorNotificationUnsupported",
+        kAXErrorNotImplemented => "kAXErrorNotImplemented",
+        kAXErrorNotificationAlreadyRegistered => "kAXErrorNotificationAlreadyRegistered",
+        kAXErrorNotificationNotRegistered => "kAXErrorNotificationNotRegistered",
+        kAXErrorAPIDisabled => "kAXErrorAPIDisabled",
+        kAXErrorNoValue => "kAXErrorNoValue",
+        kAXErrorParameterizedAttributeUnsupported => "kAXErrorParameterizedAttributeUnsupported",
+        kAXErrorNotEnoughPrecision => "kAXErrorNotEnoughPrecision",
+        _ => "unknown AXError",
+    }
 }
 
 /// CGWindowIDs of `pid`'s `AXWindows`, or `None` when that list cannot be
@@ -1043,7 +1171,22 @@ pub unsafe fn copy_ax_windows_including(
     pid: i32,
     window_id: u32,
 ) -> Vec<AXUIElementRef> {
-    let mut windows = copy_ax_windows(app);
+    copy_ax_windows_including_or_error(app, pid, window_id).0
+}
+
+/// # Safety
+///
+/// `app` must be the valid application element of `pid`, and the caller must
+/// release every returned element.
+pub unsafe fn copy_ax_windows_including_or_error(
+    app: AXUIElementRef,
+    pid: i32,
+    window_id: u32,
+) -> (Vec<AXUIElementRef>, Option<AXError>) {
+    let (mut windows, error) = match copy_ax_windows_or_error(app) {
+        Ok(windows) => (windows, None),
+        Err(error) => (Vec::new(), Some(error)),
+    };
     let listed = windows
         .iter()
         .any(|&window| ax_get_window_id(window) == Some(window_id));
@@ -1052,14 +1195,101 @@ pub unsafe fn copy_ax_windows_including(
     }) {
         windows.extend(copy_ax_window_by_remote_token(pid, window_id));
     }
-    windows
+    (windows, error)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::windows::WindowSpaceView;
     use core_foundation::{boolean::CFBoolean, number::CFNumber};
+
+    /// Window 70 is a child of window 7; 71 is a child of 70.
+    fn parent_of(window: u32) -> Option<u32> {
+        match window {
+            70 => Some(7),
+            71 => Some(70),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn a_focused_text_field_in_a_child_window_is_an_inline_editor() {
+        assert!(is_inline_editor(
+            Some("AXTextField"),
+            Some(70),
+            7,
+            parent_of
+        ));
+    }
+
+    #[test]
+    fn other_focus_is_not_an_inline_editor() {
+        // A field in the window itself (a toolbar search field), a button in
+        // the child, a field in another window's child, a field in an
+        // unrelated window, an unknown window, an unreadable role.
+        for (role, window) in [
+            (Some("AXTextField"), Some(7)),
+            (Some("AXButton"), Some(70)),
+            (Some("AXTextField"), Some(71)),
+            (Some("AXTextField"), Some(80)),
+            (Some("AXTextField"), None),
+            (None, Some(70)),
+        ] {
+            assert!(!is_inline_editor(role, window, 7, parent_of));
+        }
+        // The parent lookup failed.
+        assert!(!is_inline_editor(Some("AXTextField"), Some(70), 7, |_| {
+            None
+        }));
+    }
+
+    /// The legacy attribute is written only to Chromium or Electron apps.
+    #[test]
+    fn enhanced_user_interface_is_written_only_for_chromium_family_apps() {
+        let run = |manual: AXError, chromium: bool| {
+            let mut written = Vec::new();
+            let opt_in = choose_accessibility_opt_in(
+                |attr| {
+                    written.push(attr.to_string());
+                    if attr == "AXManualAccessibility" {
+                        manual
+                    } else {
+                        kAXErrorSuccess
+                    }
+                },
+                || chromium,
+            );
+            (opt_in, written)
+        };
+        let manual_only = vec!["AXManualAccessibility".to_string()];
+        // A native app (TextEdit, Calculator, Stocks) rejects the modern
+        // attribute and must not get the legacy one.
+        assert_eq!(
+            run(kAXErrorAttributeUnsupported, false),
+            (AccessibilityOptIn::NotNeeded, manual_only.clone())
+        );
+        // An Electron build without the modern attribute keeps the fallback.
+        assert_eq!(
+            run(kAXErrorAttributeUnsupported, true),
+            (
+                AccessibilityOptIn::EnhancedUserInterface,
+                vec![
+                    "AXManualAccessibility".to_string(),
+                    "AXEnhancedUserInterface".to_string()
+                ]
+            )
+        );
+        assert_eq!(
+            run(kAXErrorSuccess, false),
+            (AccessibilityOptIn::ManualAccessibility, manual_only.clone())
+        );
+        assert_eq!(
+            run(kAXErrorFailure, true),
+            (AccessibilityOptIn::NotAccepted, manual_only)
+        );
+    }
 
     #[test]
     fn remote_token_layout_is_pid_zero_coco_element_id() {

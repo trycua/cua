@@ -35,7 +35,7 @@ export const DEMO_NEW_SPACE_OPTIONS: NewSpaceOptions = {
       lume: { availableBytes: 212 * GB, totalBytes: 494 * GB, name: "Macintosh HD" },
       qemu: { availableBytes: 212 * GB, totalBytes: 494 * GB, name: "Macintosh HD" },
       container: { availableBytes: 58 * GB, totalBytes: 100 * GB, name: "Docker Desktop" },
-      pulled: ["ghcr.io/trycua/linux:24.04"],
+      pulled: ["ghcr.io/trycua/linux:24.04", "ghcr.io/trycua/linux:24.04-slim"],
     },
   },
   gpus: [
@@ -86,7 +86,9 @@ export function demoMacHostOptions(_defaultLocation: string, vmsRunning: number,
     hostArch: "arm64",
     lumeSource: pending ? null : "auto",
     linuxSource: pending ? null : "auto",
-    storage: pending ? null : { reserveBytes: 5 * GB, lume: hd, qemu: hd, container: hd, pulled: ["ghcr.io/trycua/linux:24.04"] },
+    storage: pending
+      ? null
+      : { reserveBytes: 5 * GB, lume: hd, qemu: hd, container: hd, pulled: ["ghcr.io/trycua/linux:24.04", "ghcr.io/trycua/linux:24.04-slim"] },
     clouds: [],
     hosts: [],
     experiments: d.experiments,

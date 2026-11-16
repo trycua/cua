@@ -20,7 +20,11 @@ on:
   pull_request:
     paths:
       - "libs/cua/crates/cua-compat/**"
-      - "libs/cua/crates/cua-cli/src/compat_cmd.rs"
+      - "libs/cua/crates/cua-compat-cmd/**"
+      - "libs/cua/crates/cua-cli/src/extension.rs"
+      - "libs/cua/crates/cua-cli/Cargo.toml"
+      - "libs/cua/crates/cua-spaces-cli/Cargo.toml"
+      - "scripts/check-spaces-build-graph.sh"
       - "libs/cua/crates/cua-spacesd-client/src/testing.rs"
       - "tests/compat/**"
       - ".github/workflows/ci-cua-compat.yml"
@@ -31,7 +35,11 @@ on:
     branches: [main]
     paths:
       - "libs/cua/crates/cua-compat/**"
-      - "libs/cua/crates/cua-cli/src/compat_cmd.rs"
+      - "libs/cua/crates/cua-compat-cmd/**"
+      - "libs/cua/crates/cua-cli/src/extension.rs"
+      - "libs/cua/crates/cua-cli/Cargo.toml"
+      - "libs/cua/crates/cua-spaces-cli/Cargo.toml"
+      - "scripts/check-spaces-build-graph.sh"
       - "libs/cua/crates/cua-spacesd-client/src/testing.rs"
       - "tests/compat/**"
       - ".github/workflows/ci-cua-compat.yml"
@@ -90,8 +98,11 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: libs/cua
         run: |
-          cargo fmt -p cua-compat -- --check
+          cargo fmt -p cua-compat -p cua-compat-cmd -- --check
           cargo clippy --locked -p cua-compat --features testing --all-targets -- -D warnings
+      - name: The Cua Spaces build keeps the gateway beside the CLI
+        if: runner.os == 'Linux'
+        run: bash scripts/check-spaces-build-graph.sh
       - name: Rust tests (wire level, mock Spaces)
         working-directory: libs/cua
         run: cargo test --locked -p cua-compat --features testing

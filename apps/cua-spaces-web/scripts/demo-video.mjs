@@ -57,16 +57,27 @@ try {
       document.documentElement.appendChild(p);
       const ring = document.createElement("div");
       Object.assign(ring.style, {
-        position: "fixed", width: "28px", height: "28px", margin: "-14px 0 0 -14px", borderRadius: "50%",
-        border: "2px solid rgba(80,120,255,.7)", zIndex: "2147483646", pointerEvents: "none", opacity: "0",
+        position: "fixed",
+        width: "28px",
+        height: "28px",
+        margin: "-14px 0 0 -14px",
+        borderRadius: "50%",
+        border: "2px solid rgba(80,120,255,.7)",
+        zIndex: "2147483646",
+        pointerEvents: "none",
+        opacity: "0",
         transition: "opacity .35s, transform .35s",
       });
       document.documentElement.appendChild(ring);
       addEventListener("mousemove", (e) => (p.style.transform = `translate(${e.clientX - 3}px,${e.clientY - 2}px)`), true);
-      addEventListener("mousedown", (e) => {
-        Object.assign(ring.style, { left: `${e.clientX}px`, top: `${e.clientY}px`, transition: "none", opacity: "1", transform: "scale(.6)" });
-        requestAnimationFrame(() => Object.assign(ring.style, { transition: "opacity .45s, transform .45s", opacity: "0", transform: "scale(1.4)" }));
-      }, true);
+      addEventListener(
+        "mousedown",
+        (e) => {
+          Object.assign(ring.style, { left: `${e.clientX}px`, top: `${e.clientY}px`, transition: "none", opacity: "1", transform: "scale(.6)" });
+          requestAnimationFrame(() => Object.assign(ring.style, { transition: "opacity .45s, transform .45s", opacity: "0", transform: "scale(1.4)" }));
+        },
+        true,
+      );
     };
     if (document.readyState === "loading") addEventListener("DOMContentLoaded", draw);
     else draw();
@@ -133,118 +144,117 @@ try {
   await cdp.send("Page.startScreencast", { format: "jpeg", quality: 92, maxWidth: W, maxHeight: H, everyNthFrame: 1 });
 
   try {
-  // Spaces grid, then New Space: System, Run on, Resources, name, create.
-  await pause(2500);
-  await click(page.getByRole("button", { name: "New Space" }).first());
-  await pause(2200);
-  await click(page.locator("[data-run-on]"));
-  await pause(2200);
-  await page.keyboard.press("Escape");
-  await pause(600);
-  await click(page.locator("[data-tile='os:macos']"));
-  await pause(1200);
-  await next();
-  await pause(1500);
-  await click(page.locator("[data-gpu]"));
-  await pause(1800);
-  await next();
-  await pause(900);
-  await click(page.locator("[data-name-input]"));
-  await page.locator("[data-name-input]").fill("");
-  await type("release-mac");
-  await pause(900);
-  await next();
-  await pause(2400);
-  await next();
-  await pause(4500);
-
-  // A Space's detail: facts, Stream, Share, then Teleport an app to review.
-  await click(page.locator('[data-space-id="local:design-review"]'));
-  await pause(2800);
-  const stream = page.getByText("Stream", { exact: true }).first();
-  if (await stream.count()) {
-    await scrollTo(stream);
+    // Spaces grid, then New Space: System, Run on, Resources, name, create.
+    await pause(2500);
+    await click(page.getByRole("button", { name: "New Space" }).first());
     await pause(2200);
-    await page.evaluate(() => document.querySelector("main")?.scrollTo({ top: 0, behavior: "smooth" }) ?? scrollTo({ top: 0, behavior: "smooth" }));
+    await click(page.locator("[data-run-on]"));
+    await pause(2200);
+    await page.keyboard.press("Escape");
+    await pause(600);
+    await click(page.locator("[data-tile='os:macos']"));
+    await pause(1200);
+    await next();
+    await pause(1500);
+    await click(page.locator("[data-gpu]"));
+    await pause(1800);
+    await next();
+    await pause(900);
+    await click(page.locator("[data-name-input]"));
+    await page.locator("[data-name-input]").fill("");
+    await type("release-mac");
+    await pause(900);
+    await next();
+    await pause(2400);
+    await next();
+    await pause(4500);
+
+    // A Space's detail: facts, Stream, Share, then Teleport an app to review.
+    await click(page.locator('[data-space-id="local:design-review"]'));
+    await pause(2800);
+    const stream = page.getByText("Stream", { exact: true }).first();
+    if (await stream.count()) {
+      await scrollTo(stream);
+      await pause(2200);
+      await page.evaluate(() => document.querySelector("main")?.scrollTo({ top: 0, behavior: "smooth" }) ?? scrollTo({ top: 0, behavior: "smooth" }));
+      await pause(1000);
+    }
+    await point(page.getByRole("button", { name: "Share", exact: true }).first());
+    await pause(1200);
+    await click(page.getByRole("button", { name: "Teleport an app" }));
+    await page.locator("[data-teleport][data-step=pick]").waitFor();
+    await pause(2400);
+    await point(page.locator("[data-tile='com.google.Chrome']"));
+    await pause(300);
+    await page.locator("[data-tile='com.google.Chrome']").dblclick();
+    await pause(1400);
+    await click(page.getByText("The app with its signed-in state"));
     await pause(1000);
-  }
-  await point(page.getByRole("button", { name: "Share", exact: true }).first());
-  await pause(1200);
-  await click(page.getByRole("button", { name: "Teleport an app" }));
-  await page.locator("[data-teleport][data-step=pick]").waitFor();
-  await pause(2400);
-  await point(page.locator("[data-tile='com.google.Chrome']"));
-  await pause(300);
-  await page.locator("[data-tile='com.google.Chrome']").dblclick();
-  await pause(1400);
-  await click(page.getByText("The app with its signed-in state"));
-  await pause(1000);
-  await click(page.getByText("Keep me signed in"));
-  await pause(1200);
-  await click(page.locator("[data-teleport-plan]"));
-  await page.locator("[data-review-site]").first().waitFor();
-  await pause(3200);
-  await page.keyboard.press("Escape");
-  await pause(900);
+    await click(page.getByText("Keep me signed in"));
+    await pause(1200);
+    await click(page.locator("[data-teleport-plan]"));
+    await page.locator("[data-review-site]").first().waitFor();
+    await pause(3200);
+    await page.keyboard.press("Escape");
+    await pause(900);
 
-  // The demo's live agent turn is written over the first ~25 s after the
-  // adapter starts. Rewind the clock the adapter reads so it streams when
-  // Agents opens, without reloading the page.
-  await page.evaluate(() => window.__demoRewind());
+    // The demo's live agent turn is written over the first ~25 s after the
+    // adapter starts. Rewind the clock the adapter reads so it streams when
+    // Agents opens, without reloading the page.
+    await page.evaluate(() => window.__demoRewind());
 
-  // Computers, then This Mac's page.
-  await nav("Computers");
-  await pause(2200);
-  await page.locator('[data-tree-kind="computer"] [data-tree-name]').first().click();
-  await pause(1200);
-  await scrollTo(page.locator("[data-host-action]").first());
-  await pause(2600);
+    // Computers, then This Mac's page.
+    await nav("Computers");
+    await pause(2200);
+    await page.locator('[data-tree-kind="computer"] [data-tree-name]').first().click();
+    await pause(1200);
+    await scrollTo(page.locator("[data-host-action]").first());
+    await pause(2600);
 
-  // Agents, streaming.
-  await nav("Agents");
-  await pause(900);
-  await click(page.getByText("ada", { exact: true }).first());
-  await page.waitForTimeout(9000);
+    // Agents, streaming.
+    await nav("Agents");
+    await pause(900);
+    await click(page.getByText("ada", { exact: true }).first());
+    await page.waitForTimeout(9000);
 
-  // Keyvault: search.
-  await nav("Keyvault");
-  await pause(2200);
-  await click(page.getByRole("textbox", { name: "Search Keyvault" }));
-  await type("github");
-  await pause(2400);
+    // Keyvault: search.
+    await nav("Keyvault");
+    await pause(2200);
+    await click(page.getByRole("textbox", { name: "Search Keyvault" }));
+    await type("github");
+    await pause(2400);
 
-  // Settings, Experiments: turn on Cua Volume, then open Volume.
-  await nav("Settings");
-  await pause(1400);
-  await settingsTab("Experiments");
-  await pause(1600);
-  await click(volumeSwitch);
-  await pause(1600);
-  await nav("Volume");
-  await pause(3600);
+    // Settings, Experiments: turn on Cua Volume, then open Volume.
+    await nav("Settings");
+    await pause(1400);
+    await settingsTab("Experiments");
+    await pause(1600);
+    await click(volumeSwitch);
+    await pause(1600);
+    await nav("Volume");
+    await pause(3600);
 
-  // Settings: About and Devices.
-  await nav("Settings");
-  await pause(900);
-  await settingsTab("About");
-  await pause(2600);
-  await settingsTab("Devices");
-  await pause(2800);
+    // Settings: About and Devices.
+    await nav("Settings");
+    await pause(900);
+    await settingsTab("About");
+    await pause(2600);
+    await settingsTab("Devices");
+    await pause(2800);
 
-  // Notifications.
-  await nav("Notifications");
-  await pause(3200);
+    // Notifications.
+    await nav("Notifications");
+    await pause(3200);
 
-  // A glimpse of the first run.
-  await page.keyboard.press("Meta+k");
-  await pause(700);
-  await type("Onboarding");
-  await pause(900);
-  await page.keyboard.press("Enter");
-  await pause(2600);
-  await click(page.getByRole("button", { name: "Get started" }));
-  await pause(3200);
-
+    // A glimpse of the first run.
+    await page.keyboard.press("Meta+k");
+    await pause(700);
+    await type("Onboarding");
+    await pause(900);
+    await page.keyboard.press("Enter");
+    await pause(2600);
+    await click(page.getByRole("button", { name: "Get started" }));
+    await pause(3200);
   } catch (e) {
     await page.screenshot({ path: join(tmpdir(), "cua-demo-fail.png") });
     throw e;
@@ -257,16 +267,35 @@ try {
 }
 
 // Each frame lasts until the next one arrived.
-const list = frames
-  .map((f, i) => `file '${f.file}'\nduration ${((frames[i + 1]?.t ?? f.t + 1) - f.t).toFixed(4)}`)
-  .join("\n");
+const list = frames.map((f, i) => `file '${f.file}'\nduration ${((frames[i + 1]?.t ?? f.t + 1) - f.t).toFixed(4)}`).join("\n");
 await writeFile(join(frameDir, "list.txt"), `${list}\nfile '${frames.at(-1).file}'\n`);
 await mkdir(`${root}docs/demo`, { recursive: true });
 const ff = spawnSync(
   "ffmpeg",
-  ["-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", join(frameDir, "list.txt"),
-    "-vf", `fps=30,scale=${W}:${H}:flags=lanczos:out_range=tv,format=yuv420p`, "-c:v", "libx264", "-preset", "slow", "-crf", "24",
-    "-pix_fmt", "yuv420p", "-movflags", "+faststart", out],
+  [
+    "-y",
+    "-loglevel",
+    "error",
+    "-f",
+    "concat",
+    "-safe",
+    "0",
+    "-i",
+    join(frameDir, "list.txt"),
+    "-vf",
+    `fps=30,scale=${W}:${H}:flags=lanczos:out_range=tv,format=yuv420p`,
+    "-c:v",
+    "libx264",
+    "-preset",
+    "slow",
+    "-crf",
+    "24",
+    "-pix_fmt",
+    "yuv420p",
+    "-movflags",
+    "+faststart",
+    out,
+  ],
   { stdio: "inherit" },
 );
 await rm(frameDir, { recursive: true, force: true });

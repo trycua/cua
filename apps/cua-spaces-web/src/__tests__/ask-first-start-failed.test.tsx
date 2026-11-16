@@ -48,7 +48,7 @@ async function startJob(text: string) {
 
 describe.skipIf(!wasmBuilt)("This Mac as a task's computer (real routes, wasm core)", () => {
   it("defaults to This Mac once it's in the account, asks once on the first Start, then starts on this Mac's Space id", async () => {
-    await mountApp("/home", HOST);
+    await mountApp("/home/ask", HOST);
     await waitFor(() => expect(document.querySelector("[data-ask-box]")).not.toBeNull());
     await waitFor(() => expect(document.querySelector('[data-picker="where"]')!.textContent).toContain("This Mac"));
     await startJob("Tidy my Downloads folder");
@@ -66,7 +66,7 @@ describe.skipIf(!wasmBuilt)("This Mac as a task's computer (real routes, wasm co
 
   it("opens the task's own page, never the unlisted relay Space (trycua/cua#6363)", async () => {
     setThisMacConfirmed(true);
-    await mountApp("/home", HOST);
+    await mountApp("/home/ask", HOST);
     await waitFor(() => expect(document.querySelector("[data-ask-box]")).not.toBeNull());
     await pickThisMac();
     await startJob("hi");
@@ -77,7 +77,7 @@ describe.skipIf(!wasmBuilt)("This Mac as a task's computer (real routes, wasm co
   });
 
   it("Pick another starts nothing and reopens the picker", async () => {
-    await mountApp("/home", HOST);
+    await mountApp("/home/ask", HOST);
     await waitFor(() => expect(document.querySelector("[data-ask-box]")).not.toBeNull());
     await waitFor(() => expect(document.querySelector('[data-picker="where"]')!.textContent).toContain("This Mac"));
     await startJob("Tidy my Downloads folder");
@@ -91,7 +91,7 @@ describe.skipIf(!wasmBuilt)("This Mac as a task's computer (real routes, wasm co
 
   it("doesn't ask again once answered on this device", async () => {
     setThisMacConfirmed(true);
-    await mountApp("/home", HOST);
+    await mountApp("/home/ask", HOST);
     await waitFor(() => expect(document.querySelector("[data-ask-box]")).not.toBeNull());
     await pickThisMac();
     await waitFor(() => expect(document.querySelector('[data-picker="where"]')!.textContent).toContain("This Mac"));
@@ -105,8 +105,9 @@ describe.skipIf(!wasmBuilt)("a task that couldn't start (real routes, wasm core)
     const task = addAskTask({ prompt: "Hey!", agent: "openai-codex", os: "macos", spaceId: "this-mac", error: CORE_NOT_FOUND });
     await mountApp(`/home/${task.id}`, HOST);
     await screen.findByText("Couldn't start on this Mac");
-    // The header and the screen agree.
-    expect(screen.getAllByText("Didn't start").length).toBeGreaterThanOrEqual(2);
+    // Said once, in the header; the empty screen says nothing ran (CUA-3974).
+    expect(screen.getAllByText("Didn't start")).toHaveLength(1);
+    expect(screen.getByText("Nothing ran yet")).toBeTruthy();
     expect(screen.queryByText("Finished")).toBeNull();
     expect(screen.queryByText("Stopped")).toBeNull();
     // Jargon only under Details.

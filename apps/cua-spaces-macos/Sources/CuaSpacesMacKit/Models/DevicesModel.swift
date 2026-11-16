@@ -59,7 +59,7 @@ public final class LiveDevices: DevicesRunning, @unchecked Sendable {
     /// This Mac on the default relay (`CUA_RELAY_URL`, else relay.cua.ai),
     /// named as Sharing names it ("Dana's MacBook Pro").
     public static func make(auth: CuaSDK.Auth) -> LiveDevices? {
-        (try? auth.devices(relayUrl: nil, name: Foundation.Host.current().localizedName))
+        (try? auth.devices(relayUrl: nil, name: ComputerName.current))
             .map { LiveDevices(inner: $0, auth: auth) }
     }
 

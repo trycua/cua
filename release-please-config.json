@@ -105,11 +105,6 @@
         {
           "type": "toml",
           "path": "/libs/cua-spacesd/Cargo.lock",
-          "jsonpath": "$.package[?(@.name.value=='pip-preview')].version"
-        },
-        {
-          "type": "toml",
-          "path": "/libs/cua-spacesd/Cargo.lock",
           "jsonpath": "$.package[?(@.name.value=='platform-linux')].version"
         },
         {
@@ -150,11 +145,6 @@
         {
           "type": "toml",
           "path": "/libs/cua-spacesd/tests/spaces-e2e/Cargo.lock",
-          "jsonpath": "$.package[?(@.name.value=='pip-preview')].version"
-        },
-        {
-          "type": "toml",
-          "path": "/libs/cua-spacesd/tests/spaces-e2e/Cargo.lock",
           "jsonpath": "$.package[?(@.name.value=='platform-linux')].version"
         },
         {
@@ -191,11 +181,6 @@
           "type": "toml",
           "path": "/libs/cua-spacesd/tests/teleport-e2e/Cargo.lock",
           "jsonpath": "$.package[?(@.name.value=='cua-cursor-motion')].version"
-        },
-        {
-          "type": "toml",
-          "path": "/libs/cua-spacesd/tests/teleport-e2e/Cargo.lock",
-          "jsonpath": "$.package[?(@.name.value=='pip-preview')].version"
         },
         {
           "type": "toml",

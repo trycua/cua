@@ -37,6 +37,9 @@ on:
         description: "The version that was published"
         value: ${{ jobs.build-and-publish.outputs.version }}
 
+permissions:
+  contents: read
+
 jobs:
   build-and-publish:
     runs-on: macos-latest
@@ -77,7 +80,7 @@ jobs:
           touch pdm.lock
 
       - name: Install PDM
-        uses: pdm-project/setup-pdm@v3
+        uses: pdm-project/setup-pdm@ddc33ca746b5716353581f988b29464200212702 # v3
         with:
           python-version: ${{ inputs.python_version }}
           cache: true

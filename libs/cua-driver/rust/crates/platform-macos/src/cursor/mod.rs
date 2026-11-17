@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Agent cursor overlay — transparent click-through window.
 //!
 //! Public surface:
@@ -5,6 +8,7 @@
 //! - `overlay::run_on_main_thread()` — called from `main()` on the main thread
 //! - `overlay::send_command(cmd)` — called from tool implementations
 
+mod display_layout;
 pub mod overlay;
 /// System cursor shape reporting (what the OS draws, not what Cua draws).
 pub mod shape;

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Read a `start_recording` output directory into the inputs the
 //! renderer needs: `SessionMetadata` block, sorted `[ClickEvent]`,
 //! sorted `[CursorSample]`, and sorted `[ActionSpan]`. Pure file I/O
@@ -259,10 +262,9 @@ fn parse_click_turn(action_path: &Path) -> Option<ClickEvent> {
                     .unwrap_or(""),
             )?
         }
-    } else if let Some(cp) = v.get("click_point") {
-        (double_value(cp.get("x"))?, double_value(cp.get("y"))?)
     } else {
-        return None;
+        let cp = v.get("click_point")?;
+        (double_value(cp.get("x"))?, double_value(cp.get("y"))?)
     };
 
     let t_ms = double_value(v.get("t_ms_from_session_start"))?;

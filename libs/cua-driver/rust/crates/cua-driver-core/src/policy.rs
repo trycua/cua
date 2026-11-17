@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Optional permission-policy enforcement for MCP tool calls.
 
 use std::path::{Path, PathBuf};
@@ -116,6 +119,8 @@ impl PolicyEngine {
     /// "no-args" sentinel if finer control is needed.
     pub fn is_potentially_listable(&self, tool: &str) -> bool {
         let tool = canonical_tool_name(tool);
+        #[cfg(not(any(feature = "yaml", feature = "rego")))]
+        let _ = tool;
         match self {
             #[cfg(feature = "yaml")]
             Self::Yaml(policy) => policy.is_potentially_listable(tool),
@@ -133,7 +138,7 @@ impl PolicyEngine {
 fn canonical_tool_name(tool: &str) -> &str {
     match tool {
         "type_text_chars" => "type_text",
-        other => other,
+        other => crate::tool::renamed_tool(other).unwrap_or(other),
     }
 }
 
@@ -318,21 +323,22 @@ pub fn authorize_tool_call(tool: &str, args: &Value) -> Result<(), Authorization
 /// `allow.rules` are still listed so that callers can attempt a constrained
 /// invocation.  When no policy is configured, all tools are listable.
 ///
-/// On a policy loading error, this returns `true` (fail-open for listing).
-/// The error will surface at invocation time through [`authorize_tool_call`],
-/// and [`validate_configured_policy`] is expected to have caught it at startup.
+/// A policy layer that failed to load lists nothing, so `tools/list` never
+/// advertises tools that [`authorize_tool_call`] will refuse.
+/// [`validate_configured_policy`] normally stops startup before this point.
 pub fn is_tool_listable(tool: &str) -> bool {
-    let managed = match configured_managed_policy() {
-        Ok(policy) => policy,
-        Err(_) => return true,
-    };
-    let user = match configured_policy() {
-        Ok(policy) => policy,
-        Err(_) => return true,
-    };
-    for policy in [managed, user].into_iter().flatten() {
-        if !policy.is_potentially_listable(tool) {
-            return false;
+    tool_listable_in(tool, [configured_managed_policy(), configured_policy()])
+}
+
+fn tool_listable_in(tool: &str, layers: [Result<Option<&PolicyEngine>, String>; 2]) -> bool {
+    for layer in layers {
+        match layer {
+            Ok(Some(policy)) if !policy.is_potentially_listable(tool) => return false,
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(%error, "permission policy failed to load; listing no tools");
+                return false;
+            }
         }
     }
     true
@@ -779,13 +785,13 @@ mod tests {
         let policy = yaml_policy(
             r#"
 allow:
-  tools: [screenshot, wait]
+  tools: [get_window_state, wait]
 deny:
   tools: [shell_execute]
 "#,
         );
         assert_eq!(
-            policy.evaluate("screenshot", &serde_json::json!({})),
+            policy.evaluate("get_window_state", &serde_json::json!({})),
             PolicyDecision::Allow
         );
         assert!(matches!(
@@ -797,7 +803,7 @@ deny:
     #[cfg(feature = "yaml")]
     #[test]
     fn yaml_is_deny_by_default() {
-        let policy = yaml_policy("allow:\n  tools: [screenshot]\n");
+        let policy = yaml_policy("allow:\n  tools: [get_window_state]\n");
         assert!(matches!(
             policy.evaluate("click", &serde_json::json!({"x": 10, "y": 10})),
             PolicyDecision::Deny(_)
@@ -899,9 +905,11 @@ allow:
     #[cfg(feature = "yaml")]
     #[test]
     fn explicit_deny_overrides_allow() {
-        let policy = yaml_policy("allow:\n  tools: [screenshot]\ndeny:\n  tools: [screenshot]\n");
+        let policy = yaml_policy(
+            "allow:\n  tools: [get_window_state]\ndeny:\n  tools: [get_window_state]\n",
+        );
         assert!(matches!(
-            policy.evaluate("screenshot", &serde_json::json!({})),
+            policy.evaluate("get_window_state", &serde_json::json!({})),
             PolicyDecision::Deny(_)
         ));
     }
@@ -937,7 +945,7 @@ default allow = false
 
 allow if {
     input.server == "cua-driver"
-    input.tool == "screenshot"
+    input.tool == "get_window_state"
 }
 
 allow if {
@@ -952,7 +960,7 @@ allow if {
         .unwrap();
         let policy = PolicyEngine::load(&path).unwrap().unwrap();
         assert_eq!(
-            policy.evaluate("screenshot", &serde_json::json!({})),
+            policy.evaluate("get_window_state", &serde_json::json!({})),
             PolicyDecision::Allow
         );
         assert_eq!(
@@ -979,13 +987,13 @@ allow if {
         )
         .unwrap();
         fs::write(
-            dir.path().join("screenshot.rego"),
-            "package cua.policy\nallow if input.tool == \"screenshot\"\n",
+            dir.path().join("window-state.rego"),
+            "package cua.policy\nallow if input.tool == \"get_window_state\"\n",
         )
         .unwrap();
         let policy = PolicyEngine::load(dir.path()).unwrap().unwrap();
         assert_eq!(
-            policy.evaluate("screenshot", &serde_json::json!({})),
+            policy.evaluate("get_window_state", &serde_json::json!({})),
             PolicyDecision::Allow
         );
     }
@@ -1042,5 +1050,26 @@ allow if {
         assert!(error
             .to_string()
             .contains("configured permission policy path does not exist"));
+    }
+
+    #[test]
+    fn a_policy_layer_that_failed_to_load_lists_no_tools() {
+        assert!(tool_listable_in("list_apps", [Ok(None), Ok(None)]));
+        assert!(!tool_listable_in(
+            "list_apps",
+            [Err("managed policy missing".into()), Ok(None)]
+        ));
+        assert!(!tool_listable_in(
+            "list_apps",
+            [Ok(None), Err("user policy missing".into())]
+        ));
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn a_loaded_layer_still_filters_listing_when_the_other_is_unset() {
+        let policy = yaml_policy("allow:\n  tools: [list_apps]\n");
+        assert!(tool_listable_in("list_apps", [Ok(None), Ok(Some(&policy))]));
+        assert!(!tool_listable_in("kill_app", [Ok(Some(&policy)), Ok(None)]));
     }
 }

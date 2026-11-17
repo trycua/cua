@@ -1,26 +1,83 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use super::bindings::AXUIElementRef;
 use super::tree::AXNode;
 use core_foundation::base::{CFRelease, CFRetain, CFTypeRef};
 use cua_driver_core::snapshot_store::{SnapshotPayload, SnapshotStore};
 
-pub struct RetainedElement(usize);
+/// What a snapshot showed the caller about one element: the attributes that
+/// say which control it is, read and normalised the way the tree prints them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ObservedIdentity {
+    role: String,
+    title: Option<String>,
+    description: Option<String>,
+    identifier: Option<String>,
+}
+
+impl ObservedIdentity {
+    fn from_node(node: &AXNode) -> Self {
+        Self {
+            role: node.role.clone(),
+            title: node.title.clone(),
+            description: node.description.clone(),
+            identifier: node.identifier.clone(),
+        }
+    }
+
+    unsafe fn read(ptr: usize) -> Self {
+        let [role, title, description, identifier] = super::batch::copy_string_attrs(
+            ptr as AXUIElementRef,
+            ["AXRole", "AXTitle", "AXDescription", "AXIdentifier"],
+        );
+        Self {
+            role: role.unwrap_or_else(|| "AXUnknown".into()),
+            title: normalized_label(title),
+            description: normalized_label(description),
+            identifier,
+        }
+    }
+}
+
+fn normalized_label(value: Option<String>) -> Option<String> {
+    value.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty())
+}
+
+pub struct RetainedElement(usize, Option<ObservedIdentity>);
 
 impl RetainedElement {
     pub fn as_ptr(&self) -> usize {
         self.0
     }
 
+    /// Recheck the identity that the caller observed, without treating mutable
+    /// control values or layout as identity. The retained AX object alone does
+    /// not prove that a button still represents the observed action.
+    pub fn observed_identity_is_current(&self) -> bool {
+        self.1.as_ref().is_some_and(|expected| {
+            self.0 != 0 && unsafe { ObservedIdentity::read(self.0) } == *expected
+        })
+    }
+
+    /// Take a +1 reference on an AX element pointer (0 is kept as null).
+    ///
+    /// # Safety
+    ///
+    /// A nonzero `ptr` must be a live `AXUIElementRef`.
     pub unsafe fn retain(ptr: usize) -> Self {
         if ptr != 0 {
             unsafe { CFRetain(ptr as AXUIElementRef as CFTypeRef) };
         }
-        Self(ptr)
+        Self(ptr, None)
     }
 }
 
 impl Clone for RetainedElement {
     fn clone(&self) -> Self {
-        unsafe { Self::retain(self.0) }
+        let mut retained = unsafe { Self::retain(self.0) };
+        retained.1 = self.1.clone();
+        retained
     }
 }
 
@@ -34,6 +91,9 @@ impl Drop for RetainedElement {
 
 pub struct AxSnapshot {
     pub elements: Vec<usize>,
+    /// One per entry of `elements`. An element without one never passes
+    /// [`RetainedElement::observed_identity_is_current`].
+    pub identities: Vec<ObservedIdentity>,
 }
 
 impl AxSnapshot {
@@ -43,6 +103,11 @@ impl AxSnapshot {
                 .iter()
                 .filter(|node| node.element_index.is_some())
                 .map(|node| node.element_ptr)
+                .collect(),
+            identities: nodes
+                .iter()
+                .filter(|node| node.element_index.is_some())
+                .map(ObservedIdentity::from_node)
                 .collect(),
         }
     }
@@ -54,9 +119,11 @@ impl SnapshotPayload for AxSnapshot {
         self.elements.len()
     }
     fn retain(&self, index: usize) -> Option<RetainedElement> {
-        self.elements
-            .get(index)
-            .map(|ptr| unsafe { RetainedElement::retain(*ptr) })
+        self.elements.get(index).map(|ptr| {
+            let mut element = unsafe { RetainedElement::retain(*ptr) };
+            element.1 = self.identities.get(index).cloned();
+            element
+        })
     }
 }
 
@@ -96,7 +163,31 @@ mod tests {
         unsafe { CFRetain(ptr as CFTypeRef) };
         AxSnapshot {
             elements: vec![ptr],
+            identities: vec![],
         }
+    }
+
+    #[test]
+    fn fresh_labels_match_tree_normalization() {
+        assert_eq!(normalized_label(None), None);
+        assert_eq!(normalized_label(Some(String::new())), None);
+        assert_eq!(normalized_label(Some("  ".into())), None);
+        assert_eq!(
+            normalized_label(Some("  Submit  ".into())),
+            Some("Submit".into())
+        );
+    }
+
+    #[test]
+    fn element_without_an_observed_identity_is_never_current() {
+        let value = CFString::new("cua-driver-unobserved-element");
+        let ptr = value.as_concrete_TypeRef() as usize;
+        let cache = Snapshots::new();
+        let snapshot = cache.publish(1, 2, payload(ptr));
+        let element = resolve(&cache, snapshot, 0).unwrap();
+        assert!(!element.observed_identity_is_current());
+        assert!(!element.clone().observed_identity_is_current());
+        assert!(!unsafe { RetainedElement::retain(0) }.observed_identity_is_current());
     }
 
     #[test]

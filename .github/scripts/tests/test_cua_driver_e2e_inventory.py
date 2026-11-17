@@ -22,12 +22,14 @@ CRATES_ROOT = REPO_ROOT / "libs/cua-driver/rust/crates"
 TEST_PACKAGES = ("cua-driver", "cua-driver-e2e")
 ALLOWLIST = REPO_ROOT / "libs/cua-driver/tests/manual-e2e-allowlist.txt"
 
-# Canonical runners and the workflows that call them. The Windows Sandbox
-# runner is documented as non-canonical and cannot certify a test.
+# Canonical runners, the workflows that call them, and the manifests a runner
+# reads its test list from. The Windows Sandbox runner is documented as
+# non-canonical and cannot certify a test.
 RUNNER_GLOBS = (
     ".github/workflows/*.yml",
     "scripts/ci/**/*.sh",
     "scripts/ci/**/*.ps1",
+    "scripts/ci/**/*.tsv",
     "libs/cua-driver/tests/runners/macos-lume/*.sh",
     "libs/cua-driver/tests/runners/windows/*.ps1",
 )
@@ -40,13 +42,28 @@ PATH_MOD_RE = re.compile(r'#\[path\s*=\s*"([^"]+)"\]')
 COMMAND_BOUNDARY_RE = re.compile(r"\bcargo\s|Invoke-CargoTest\b|\brun_test\s|\n\s*\n")
 
 
+def _is_ignore_attribute(lines: list[str], index: int) -> bool:
+    """`#[ignore...]`, or a `#[cfg_attr(<cfg>, ignore...)]` spanning any lines."""
+    stripped = lines[index].lstrip()
+    if stripped.startswith("#[ignore"):
+        return True
+    if not stripped.startswith("#[cfg_attr("):
+        return False
+    attribute = []
+    for following in lines[index:]:
+        attribute.append(following.strip())
+        if following.rstrip().endswith(")]"):
+            break
+    return re.search(r"(?:,|\()\s*ignore\b", " ".join(attribute)) is not None
+
+
 def _ignored_in_source(text: str) -> list[str]:
     """Return ignored test names, expanding ignored `macro_rules!` rows."""
     lines = text.splitlines()
     names: list[str] = []
     ignored_macros: set[str] = set()
     for index, line in enumerate(lines):
-        if not line.lstrip().startswith("#[ignore"):
+        if not _is_ignore_attribute(lines, index):
             continue
         for following in lines[index + 1 :]:
             match = FN_RE.match(following)
@@ -163,6 +180,14 @@ def test_every_ignored_test_is_routed_or_allowlisted() -> None:
     )
 
 
+def test_private_atspi_regressions_run_as_a_whole_binary() -> None:
+    """The private-bus platform suite must not disappear behind `#[ignore]`."""
+    workflow = REPO_ROOT / ".github/workflows/ci-rust-linux.yml"
+    assert runs_whole_binary_ignored(workflow.read_text(encoding="utf-8"), "set_value_fallback"), (
+        "Route all set_value_fallback ignored tests in Linux CI under dbus-run-session"
+    )
+
+
 def test_allowlist_entries_are_live_and_still_manual() -> None:
     texts = runner_texts()
     ignored = ignored_tests()
@@ -251,3 +276,13 @@ def test_inventory_expands_macro_rows_and_support_modules() -> None:
 )
 def test_whole_binary_detection_is_scoped_to_one_command(runner: str, selected: bool) -> None:
     assert runs_whole_binary_ignored(runner, "demo_test") is selected
+
+
+def test_platform_conditional_ignores_are_inventoried() -> None:
+    source = (
+        '#[test]\n#[cfg_attr(\n    target_os = "macos",\n    ignore = "desktop"\n)]\n'
+        "fn wrapped_row() {}\n"
+        '#[cfg_attr(windows, ignore = "desktop")]\nfn one_line_row() {}\n'
+        '#[cfg_attr(windows, should_panic)]\nfn not_ignored() {}\n'
+    )
+    assert _ignored_in_source(source) == ["wrapped_row", "one_line_row"]

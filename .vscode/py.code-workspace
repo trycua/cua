@@ -5,20 +5,12 @@
             "path": ".."
         },
         {
-            "name": "computer",
-            "path": "../libs/python/computer"
-        },
-        {
             "name": "agent",
             "path": "../libs/python/agent"
         },
         {
             "name": "som",
             "path": "../libs/python/som"
-        },
-        {
-            "name": "computer-server",
-            "path": "../libs/python/computer-server"
         },
         {
             "name": "core",
@@ -44,7 +36,6 @@
         ],
         "python.analysis.extraPaths": [
             "${workspaceFolder:cua-root}/libs/python/core",
-            "${workspaceFolder:cua-root}/libs/python/computer",
             "${workspaceFolder:cua-root}/libs/python/agent",
             "${workspaceFolder:cua-root}/libs/python/som",
             "${workspaceFolder:cua-root}/.vscode/typings"
@@ -71,10 +62,6 @@
         ],
         "python.analysis.packageIndexDepths": [
             {
-                "name": "computer",
-                "depth": 2
-            },
-            {
                 "name": "agent",
                 "depth": 2
             },
@@ -89,7 +76,6 @@
         ],
         "python.autoComplete.extraPaths": [
             "${workspaceFolder:cua-root}/libs/python/core",
-            "${workspaceFolder:cua-root}/libs/python/computer",
             "${workspaceFolder:cua-root}/libs/python/agent",
             "${workspaceFolder:cua-root}/libs/python/som"
         ],

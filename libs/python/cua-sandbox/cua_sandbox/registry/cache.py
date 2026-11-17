@@ -7,7 +7,9 @@ import shutil
 from pathlib import Path
 from typing import Optional
 
-CACHE_ROOT = Path.home() / ".cua" / "cua-sandbox" / "images"
+from cua_sandbox._paths import cua_home
+
+CACHE_ROOT = cua_home() / "cua-sandbox" / "images"
 
 
 class ImageCache:

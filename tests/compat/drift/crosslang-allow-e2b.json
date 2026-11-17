@@ -1,0 +1,3 @@
+{
+  "sbx_lifecycle_pause_no_resume.s0": "the committed Python recording (cases-py-2.56.0) has this sleep cancelled (CancelledError) while TypeScript completed it: a recording artifact, not an SDK difference; re-record against real E2B"
+}

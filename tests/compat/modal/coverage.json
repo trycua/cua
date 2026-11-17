@@ -1,0 +1,1389 @@
+{
+ "modal": "1.6.2",
+ "rows": [
+  {
+   "area": "Sandbox: create, entrypoint, definition checks",
+   "symbols": [
+    "Sandbox",
+    "Sandbox.create",
+    "Sandbox._experimental_create",
+    "Sandbox.object_id",
+    "Sandbox.client",
+    "Sandbox.hydrate",
+    "Sandbox.get_dashboard_url",
+    "Sandbox.detach"
+   ],
+   "status": "implemented",
+   "tests": [
+    "py:hermetic_sdk:entrypoint_output_and_wait",
+    "py:hermetic_sdk:entrypoint_exit_code",
+    "py:sandbox_extra_sdk:sandbox_handle_members",
+    "py:sandbox_extra_sdk:sandbox_create_validation",
+    "py:sandbox_extra_sdk:sandbox_resources_and_options_accepted",
+    "js:entrypoint_output",
+    "go:entrypoint_output",
+    "py:conformance:workdir",
+    "rust:modal_wire::a_sandbox_runs_through_the_v2_flow_and_the_router_checks_its_token"
+   ],
+   "lane": "mock+space",
+   "notes": "Both the V2 RPCs the 1.6.2 client uses by default (SandboxCreateV2, router stdio, x-modal-auth-token) and the V1 set are served. A Sandbox is a Cua Space started from the layer checkpoint of its Image; the entrypoint is the Image ENTRYPOINT/CMD or the command given."
+  },
+  {
+   "area": "Sandbox: exec and ContainerProcess, StreamReader, StreamWriter",
+   "symbols": [
+    "Sandbox.exec",
+    "Sandbox.stdin",
+    "Sandbox.stdout",
+    "Sandbox.stderr",
+    "ContainerProcess",
+    "ContainerProcess.attach",
+    "ContainerProcess.poll",
+    "ContainerProcess.returncode",
+    "ContainerProcess.stderr",
+    "ContainerProcess.stdin",
+    "ContainerProcess.stdout",
+    "ContainerProcess.wait",
+    "StreamReader",
+    "StreamReader.aclose",
+    "StreamReader.close",
+    "StreamReader.file_descriptor",
+    "StreamReader.read",
+    "StreamWriter",
+    "StreamWriter.drain",
+    "StreamWriter.write",
+    "StreamWriter.write_eof"
+   ],
+   "status": "implemented",
+   "tests": [
+    "py:hermetic_sdk:exec_stdout_wait_returncode",
+    "py:hermetic_sdk:exec_exit_code_and_stderr",
+    "py:hermetic_sdk:exec_stdin_eof",
+    "py:hermetic_sdk:exec_bytes_text_and_line_buffering",
+    "py:hermetic_sdk:exec_poll_then_wait",
+    "py:hermetic_sdk:exec_missing_executable_is_127",
+    "py:hermetic_sdk:exec_timeout_returns_minus_one",
+    "py:hermetic_sdk:exec_validation_errors",
+    "py:sandbox_extra_sdk:container_process_members",
+    "js:exec_stdin_eof",
+    "js:exec_binary_mode",
+    "go:exec_stdin",
+    "py:conformance:exec_streams_and_exit_code",
+    "py:conformance:stdin_binary_roundtrip",
+    "py:conformance:stdout_binary_large",
+    "py:conformance:invalid_utf8_in_text_mode",
+    "py:conformance:killed_by_signal_is_128_plus",
+    "py:conformance:exec_timeout_kills_the_process",
+    "py:conformance:pty_exec",
+    "py:conformance:parallel_execs",
+    "py:conformance:entrypoint_stdout_streams_in_order"
+   ],
+   "lane": "mock+space",
+   "notes": "The command router (TaskCommandRouter) is served with Modal's JWT flow: exec start/wait/poll, stdout/stderr by offset (idempotent re-reads), stdin by offset (exactly once), PTY. Output keeps the last 64 MiB per descriptor. A missing executable exits 127 (derived guess)."
+  },
+  {
+   "area": "Sandbox: lifecycle, lookup, tags, listing, naming",
+   "symbols": [
+    "Sandbox.terminate",
+    "Sandbox.wait",
+    "Sandbox.poll",
+    "Sandbox.returncode",
+    "Sandbox.from_id",
+    "Sandbox.from_name",
+    "Sandbox.list",
+    "Sandbox.get_tags",
+    "Sandbox.set_tags",
+    "Sandbox._experimental_from_name",
+    "Sandbox._experimental_list",
+    "Sandbox._experimental_set_name"
+   ],
+   "status": "implemented",
+   "tests": [
+    "py:hermetic_sdk:terminate_wait_poll_returncode",
+    "py:hermetic_sdk:from_id_from_name_names_unique",
+    "py:hermetic_sdk:tags_set_get_list",
+    "py:hermetic_sdk:sandbox_timeout_is_124",
+    "py:hermetic_sdk:sandbox_idle_timeout",
+    "py:sandbox_extra_sdk:names_and_listing",
+    "py:sandbox_extra_sdk:terminated_sandbox_semantics",
+    "py:sandbox_extra_sdk:experimental_sandbox_calls",
+    "js:tags_and_list",
+    "js:named_lookup_and_listing",
+    "js:fromId_and_terminate",
+    "go:tags_and_from_id",
+    "go:name_lookup_and_list",
+    "py:conformance:sandbox_timeout_is_124_and_space_ends",
+    "py:conformance:exec_after_terminate",
+    "py:conformance:idle_timeout"
+   ],
+   "lane": "mock+space",
+   "notes": "timeout ends the Sandbox with exit code 124 (SandboxTimeoutError from wait); idle_timeout ends it after that long without exec or stdio activity; terminate exits 137. Names are unique per App among running Sandboxes (AlreadyExistsError)."
+  },
+  {
+   "area": "Sandbox: tunnels, ports, readiness and connect tokens",
+   "symbols": [
+    "Sandbox.tunnels",
+    "Sandbox.wait_until_ready",
+    "Sandbox.create_connect_token",
+    "Tunnel",
+    "Tunnel.tcp_socket",
+    "Tunnel.tls_socket",
+    "Tunnel.url",
+    "Probe",
+    "Probe.exec_argv",
+    "Probe.interval_ms",
+    "Probe.tcp_port",
+    "Probe.with_exec",
+    "Probe.with_tcp"
+   ],
+   "status": "implemented",
+   "tests": [
+    "py:hermetic_sdk:tunnels_tls_and_raw_tcp",
+    "py:sandbox_extra_sdk:tunnel_and_probe_objects",
+    "py:sandbox_extra_sdk:wait_until_ready",
+    "py:sandbox_extra_sdk:connect_token",
+    "rust:modal_wire::h2_ports_negotiate_http2_and_others_do_not",
+    "js:logs_and_poll_and_tunnels",
+    "js:connect_token",
+    "go:poll_tunnels_connect_token",
+    "py:conformance:tunnels_encrypted_and_raw",
+    "py:conformance:readiness_probe_and_connect_token"
+   ],
+   "lane": "mock+space",
+   "notes": "encrypted_ports are `<port>-<sandbox id>.<domain>` names on the gateway's TLS router (the generated CA is in SSL_CERT_FILE); unencrypted_ports are loopback listeners. A connect token authorizes requests (Authorization: Bearer) to its port; the router adds X-Verified-User-Data. h2_ports offer h2 in ALPN on their names (and http/1.1 only elsewhere)."
+  },
+  {
+   "area": "Sandbox: filesystem snapshots and exit snapshots",
+   "symbols": [
+    "Sandbox.snapshot_filesystem",
+    "Sandbox._legacy_snapshot_filesystem",
+    "Sandbox._experimental_get_exit_snapshot"
+   ],
+   "status": "implemented",
+   "tests": [
+    "py:sandbox_extra_sdk:snapshot_filesystem_and_sandbox_from_image",
+    "py:sandbox_extra_sdk:experimental_sandbox_calls",
+    "js:snapshot_filesystem_and_sandbox_from_it",
+    "go:snapshot_filesystem_and_boot_from_it",
+    "py:conformance:snapshot_filesystem_boots_fresh"
+   ],
+   "lane": "mock+space",
+   "notes": "A Cua checkpoint of the Space, registered as an Image; Sandboxes created from it fork the checkpoint (files kept; the snapshotted machine's processes continue in the copy, unlike Modal's fresh boot: differences #5). enable_exit_snapshot takes one when the Sandbox ends. INTERIM: moves to the core snapshot store; not extended meanwhile."
+  },
+  {
+   "area": "Sandbox: directory snapshots and image mounts",
+   "symbols": [
+    "Sandbox.snapshot_directory",
+    "Sandbox.mount_image",
+    "Sandbox.unmount_image"
+   ],
+   "status": "implemented",
+   "tests": [
+    "py:sandbox_extra_sdk:snapshot_directory_returns_an_image",
+    "py:sandbox_extra_sdk:mount_unmount_errors",
+    "py:conformance:snapshot_directory_and_mount_image"
+   ],
+   "lane": "space",
+   "notes": "snapshot_directory is a tar of the directory (stored in the gateway) registered as an Image; mount_image bind-mounts it read-only at the path, unmount_image removes it. The behaviour needs a real guest, so it is verified on a Mac test host. INTERIM: moves to the core snapshot store; not extended meanwhile."
+  },
+  {
+   "area": "Sandbox: memory snapshots",
+   "symbols": [
+    "Sandbox._experimental_snapshot",
+    "Sandbox._experimental_from_snapshot",
+    "Sandbox._experimental_from_snapshot_v2",
+    "SandboxSnapshot",
+    "SandboxSnapshot.client",
+    "SandboxSnapshot.from_id",
+    "SandboxSnapshot.get_dashboard_url",
+    "SandboxSnapshot.hydrate",
+    "SandboxSnapshot.object_id"
+   ],
+   "status": "implemented",
+   "tests": [
+    "py:sandbox_extra_sdk:experimental_snapshot_roundtrip",
+    "py:sandbox_extra_sdk:snapshot_requires_enable",
+    "py:sandbox_extra_sdk:sandbox_snapshot_by_id_errors",
+    "py:sandbox_extra_sdk:experimental_sandbox_calls",
+    "js:experimental_name_and_memory_snapshot",
+    "py:conformance:memory_snapshot_keeps_processes"
+   ],
+   "lane": "mock+space",
+   "notes": "A Cua checkpoint with memory (suspend-and-attach); restoring starts a fork with the processes of the snapshot. Requires `_experimental_enable_snapshot=True` at create, as in Modal. INTERIM: moves to the core power states + snapshot store; not extended meanwhile."
+  },
+  {
+   "area": "Sandbox: logs and volumes reload",
+   "symbols": [
+    "Sandbox.logs",
+    "Sandbox.reload_volumes"
+   ],
+   "status": "implemented",
+   "tests": [
+    "py:sandbox_extra_sdk:logs_manager",
+    "py:sandbox_extra_sdk:reload_volumes_and_policy_errors"
+   ],
+   "lane": "mock",
+   "notes": "logs.fetch/tail/stream read the entrypoint's output with timestamps. reload_volumes pushes the Sandbox's changes and pulls what others committed."
+  },
+  {
+   "area": "Sandbox.filesystem (SandboxFilesystem)",
+   "symbols": [
+    "Sandbox.filesystem",
+    "SandboxFilesystem",
+    "SandboxFilesystem.copy_from_local",
+    "SandboxFilesystem.copy_to_local",
+    "SandboxFilesystem.list_files",
+    "SandboxFilesystem.make_directory",
+    "SandboxFilesystem.read_bytes",
+    "SandboxFilesystem.read_text",
+    "SandboxFilesystem.remove",
+    "SandboxFilesystem.stat",
+    "SandboxFilesystem.watch",
+    "SandboxFilesystem.write_bytes",
+    "SandboxFilesystem.write_text"
+   ],
+   "status": "implemented",
+   "tests": [
+    "py:hermetic_sdk:filesystem_write_read_stat_list",
+    "py:hermetic_sdk:filesystem_copy_from_and_to_local_large_binary",
+    "py:hermetic_sdk:filesystem_errors_map_to_modal_exceptions",
+    "js:filesystem_roundtrip_and_errors",
+    "js:filesystem_dirs_copy_watch_api",
+    "go:filesystem_roundtrip_and_errors",
+    "py:conformance:filesystem_stat_symlink_list",
+    "py:conformance:filesystem_large_file",
+    "py:conformance:filesystem_watch"
+   ],
+   "lane": "mock+space",
+   "notes": "The client runs Modal's guest-side fs tool as an exec; the gateway answers those execs (read, write, list, mkdir, rm, stat, watch) through cua-spacesd with the tool's JSON stderr errors, so each failure maps to its SandboxFilesystem*Error. Reads above 1 GiB raise FileTooLarge."
+  },
+  {
+   "area": "Sandbox: sidecar containers",
+   "symbols": [
+    "Sandbox._experimental_sidecars",
+    "SidecarManager",
+    "SidecarManager.create",
+    "SidecarManager.get",
+    "SidecarManager.list",
+    "SidecarContainer",
+    "SidecarContainer.exec",
+    "SidecarContainer.filesystem",
+    "SidecarContainer.mount_image",
+    "SidecarContainer.name",
+    "SidecarContainer.object_id",
+    "SidecarContainer.poll",
+    "SidecarContainer.reload_volumes",
+    "SidecarContainer.snapshot_directory",
+    "SidecarContainer.snapshot_filesystem",
+    "SidecarContainer.terminate",
+    "SidecarContainer.unmount_image",
+    "SidecarContainer.wait"
+   ],
+   "status": "native-error",
+   "tests": [
+    "py:sandbox_extra_sdk:sidecars_are_refused"
+   ],
+   "lane": "mock",
+   "notes": "UnimplementedError (TaskContainerCreate / SandboxContainerCreateV2): a Space is one machine; a second container sharing its network namespace is a Modal runtime feature. Run the second process in the same Space with Sandbox.exec, or start another Sandbox."
+  },
+  {
+   "area": "Sandbox: network policies",
+   "symbols": [
+    "Sandbox._experimental_set_outbound_network_policy",
+    "Sandbox._experimental_update_outbound_policy"
+   ],
+   "status": "native-error",
+   "tests": [
+    "py:sandbox_extra_sdk:reload_volumes_and_policy_errors"
+   ],
+   "lane": "mock",
+   "notes": "UnimplementedError: Cua Spaces have no host-enforced egress filtering beyond block-all (block_network=True) or open. A policy that code running as root in the Space could undo would be a fake. INTERIM: moves to the core Space Policy / network policy (native errors until it exists); not extended meanwhile."
+  },
+  {
+   "area": "Image: builders and layers",
+   "symbols": [
+    "Image",
+    "Image.add_local_dir",
+    "Image.add_local_file",
+    "Image.add_local_python_source",
+    "Image.apt_install",
+    "Image.run_commands",
+    "Image.build",
+    "Image.client",
+    "Image.cmd",
+    "Image.debian_slim",
+    "Image.dockerfile_commands",
+    "Image.entrypoint",
+    "Image.env",
+    "Image.from_dockerfile",
+    "Image.from_registry",
+    "Image.from_scratch",
+    "Image.get_dashboard_url",
+    "Image.hydrate",
+    "Image.micromamba",
+    "Image.micromamba_install",
+    "Image.object_id",
+    "Image.pip_install",
+    "Image.pip_install_from_pyproject",
+    "Image.pip_install_from_requirements",
+    "Image.pip_install_private_repos",
+    "Image.poetry_install_from_file",
+    "Image.run_function",
+    "Image.shell",
+    "Image.uv_pip_install",
+    "Image.uv_sync",
+    "Image.workdir"
+   ],
+   "status": "implemented",
+   "tests": [
+    "py:hermetic_sdk:image_layers_are_cached_by_spec",
+    "py:hermetic_sdk:image_add_local_file_mount_and_copy",
+    "py:hermetic_sdk:unmappable_base_image_is_an_image_build_error",
+    "py:hermetic_sdk:failing_build_raises_or_dry_runs",
+    "py:objects_sdk:image_builders",
+    "py:objects_sdk:image_dockerfile_and_requirements",
+    "py:objects_sdk:image_logs_and_more_builders",
+    "py:functions_sdk:image_run_function",
+    "py:conformance:image_run_function",
+    "js:images_registry_and_dockerfile",
+    "go:volumes_secrets_queues_images",
+    "py:conformance:images_python_and_pip",
+    "rust:src::parses_the_lines_modal_generates",
+    "rust:src::maps_bases",
+    "rust:src::hashes_depend_on_everything_that_changes_the_image"
+   ],
+   "lane": "mock+space",
+   "notes": "Each layer is built in a Space from its parent's checkpoint (FROM ghcr.io/trycua/*, images.json entries, python:X through uv, ubuntu/debian, micromamba, scratch; another base raises ImageBuildError naming how to map it) and cached by a hash of the whole spec. COPY/ADD take the context files and mounts; `COPY --from=ghcr.io/astral-sh/uv` and add_python's python-build-standalone mount are recognised and installed with uv. `run_function` runs the Function in a Function container of the parent layer and keeps the container's disk as the layer. Hermetic runs log the build commands (CUA_MODAL_BUILD_DRY_RUN); real builds are in the a real-Space test host lane. INTERIM: moves to the core image build service; not extended meanwhile."
+  },
+  {
+   "area": "Image: lookup, publish and logs",
+   "symbols": [
+    "Image.from_id",
+    "Image.from_name",
+    "Image.publish",
+    "Image.imports",
+    "Image.logs",
+    "Image.pipe"
+   ],
+   "status": "implemented",
+   "tests": [
+    "py:objects_sdk:image_from_id_and_name_and_publish",
+    "py:objects_sdk:image_logs_and_more_builders"
+   ],
+   "lane": "mock",
+   "notes": "publish names an Image in the gateway; from_name resolves it (NotFoundError when unpublished). Image.logs reads each layer's build output through ImageBuildChainGet and the logs RPCs; the output of a gateway that restarted is gone. INTERIM: moves to the core image build service; not extended meanwhile."
+  },
+  {
+   "area": "Image: private registries",
+   "symbols": [
+    "Image.from_aws_ecr",
+    "Image.from_gcp_artifact_registry"
+   ],
+   "status": "native-error",
+   "tests": [
+    "py:objects_sdk:image_unsupported"
+   ],
+   "lane": "mock",
+   "notes": "ImageBuildError/UnimplementedError. A private registry base must run on Cua Spaces, which need cua-spacesd in the image, so the base is mapped (images.json) rather than pulled. INTERIM: moves to the core image build service; not extended meanwhile."
+  },
+  {
+   "area": "Volume",
+   "symbols": [
+    "Volume",
+    "Volume.batch_upload",
+    "Volume.client",
+    "Volume.commit",
+    "Volume.copy_files",
+    "Volume.ephemeral",
+    "Volume.from_id",
+    "Volume.from_name",
+    "Volume.get_dashboard_url",
+    "Volume.hydrate",
+    "Volume.info",
+    "Volume.iterdir",
+    "Volume.listdir",
+    "Volume.name",
+    "Volume.object_id",
+    "Volume.objects",
+    "Volume.read_file",
+    "Volume.read_file_into_fileobj",
+    "Volume.read_only",
+    "Volume.reload",
+    "Volume.remove_file",
+    "Volume.rename",
+    "Volume.with_mount_options"
+   ],
+   "status": "implemented",
+   "tests": [
+    "py:objects_sdk:volume_lifecycle",
+    "py:objects_sdk:volume_ephemeral",
+    "py:objects_sdk:volume_files",
+    "py:objects_sdk:volume_views",
+    "js:volumes_secrets_queues",
+    "go:volumes_secrets_queues_images",
+    "py:conformance:volume_mount_roundtrip",
+    "py:conformance:volume_read_only_and_sub_path",
+    "rust:modal_wire::errors_carry_the_codes_the_client_maps",
+    "rust:src::paths_are_confined_to_the_volume",
+    "rust:src::volume_paths_cannot_escape"
+   ],
+   "lane": "mock+space",
+   "notes": "A Volume is a folder of Cua Volume (`modal-volumes/<store>/`); uploads and downloads go through the gateway's block endpoints (protocol version 1). Mounting copies the volume into the Sandbox (read_only and sub_path honoured); its changes are pushed back every 3 s and when it ends, and reload_volumes pulls what others committed (Modal v1's model; Cua Volume is guarded per Space, so a Space cannot bind it). Ownership and modes are not stored. Version 2 volumes raise InvalidError (the v2 block protocol is not served). INTERIM: moves to the core volumes system; not extended meanwhile."
+  },
+  {
+   "area": "CloudBucketMount",
+   "symbols": [
+    "CloudBucketMount"
+   ],
+   "status": "implemented",
+   "tests": [
+    "py:conformance:cloud_bucket_mount_public_bucket"
+   ],
+   "lane": "space",
+   "notes": "AWS Mountpoint for S3 installed in the Space on demand (S3, and R2/GCS through their S3-compatible endpoints, with the secret's keys; anonymous without a secret; key_prefix, read_only, requester_pays honoured). oidc_auth_role_arn needs Modal's OIDC provider and raises UnimplementedError. Needs network in the Space. INTERIM: moves to the core volumes system; not extended meanwhile."
+  },
+  {
+   "area": "Secret",
+   "symbols": [
+    "Secret",
+    "Secret.client",
+    "Secret.from_dict",
+    "Secret.from_dotenv",
+    "Secret.from_local_environ",
+    "Secret.from_name",
+    "Secret.get_dashboard_url",
+    "Secret.hydrate",
+    "Secret.info",
+    "Secret.name",
+    "Secret.object_id",
+    "Secret.objects",
+    "Secret.update"
+   ],
+   "status": "implemented",
+   "tests": [
+    "py:objects_sdk:secret_named_objects",
+    "py:objects_sdk:secret_builders",
+    "py:hermetic_sdk:secrets_and_env",
+    "js:volumes_secrets_queues",
+    "go:volumes_secrets_queues_images"
+   ],
+   "lane": "mock",
+   "notes": "Named secrets are stored in the gateway state (0600); a Sandbox, Function or Image build gets them as environment variables (the image's environment first, the secret over it, `env=` last). INTERIM: moves to the core egress gateway + secrets broker; not extended meanwhile."
+  },
+  {
+   "area": "Dict",
+   "symbols": [
+    "Dict",
+    "Dict.clear",
+    "Dict.client",
+    "Dict.contains",
+    "Dict.ephemeral",
+    "Dict.from_id",
+    "Dict.from_name",
+    "Dict.get",
+    "Dict.get_dashboard_url",
+    "Dict.hydrate",
+    "Dict.info",
+    "Dict.items",
+    "Dict.keys",
+    "Dict.len",
+    "Dict.name",
+    "Dict.object_id",
+    "Dict.objects",
+    "Dict.pop",
+    "Dict.put",
+    "Dict.update",
+    "Dict.values"
+   ],
+   "status": "implemented",
+   "tests": [
+    "py:objects_sdk:dict_ops",
+    "py:objects_sdk:dict_ephemeral_and_from_id",
+    "py:objects_sdk:dict_values_are_pickled_python",
+    "py:conformance:dict_and_queue"
+   ],
+   "lane": "mock+space",
+   "notes": "Persisted in the gateway; values are Modal's pickled bytes, opaque to the gateway. Ephemeral Dicts are removed when their client stops heartbeating."
+  },
+  {
+   "area": "Queue",
+   "symbols": [
+    "Queue",
+    "Queue.clear",
+    "Queue.client",
+    "Queue.ephemeral",
+    "Queue.from_id",
+    "Queue.from_name",
+    "Queue.get",
+    "Queue.get_dashboard_url",
+    "Queue.get_many",
+    "Queue.hydrate",
+    "Queue.info",
+    "Queue.iterate",
+    "Queue.len",
+    "Queue.name",
+    "Queue.object_id",
+    "Queue.objects",
+    "Queue.put",
+    "Queue.put_many",
+    "Queue.validate_partition_key"
+   ],
+   "status": "implemented",
+   "tests": [
+    "py:objects_sdk:queue_ops",
+    "py:objects_sdk:queue_partitions",
+    "py:objects_sdk:queue_blocking_get_wakes_on_put",
+    "py:objects_sdk:queue_ephemeral_and_from_id",
+    "js:volumes_secrets_queues",
+    "go:volumes_secrets_queues_images",
+    "py:conformance:dict_and_queue"
+   ],
+   "lane": "mock+space",
+   "notes": "Persisted FIFO partitions with blocking gets (a get waits for a put, up to the timeout, then raises queue.Empty); partition keys up to 64 bytes."
+  },
+  {
+   "area": "App",
+   "symbols": [
+    "App",
+    "App.app_id",
+    "App.cls",
+    "App.deploy",
+    "App.description",
+    "App.function",
+    "App.get_dashboard_url",
+    "App.get_tags",
+    "App.include",
+    "App.info",
+    "App.local_entrypoint",
+    "App.logs",
+    "App.lookup",
+    "App.name",
+    "App.registered_classes",
+    "App.registered_entrypoints",
+    "App.registered_functions",
+    "App.registered_web_endpoints",
+    "App.run",
+    "App.set_tags"
+   ],
+   "status": "implemented",
+   "tests": [
+    "py:hermetic_sdk:apps",
+    "py:objects_sdk:app_lookup_tags_info",
+    "py:objects_sdk:app_logs_stream",
+    "py:functions_sdk:deploy_and_lookup",
+    "py:functions_sdk:app_members",
+    "py:functions_sdk:local_entrypoint",
+    "rust:modal_wire::a_sandbox_runs_through_the_v2_flow_and_the_router_checks_its_token"
+   ],
+   "lane": "mock",
+   "notes": "Apps are looked up or created by name, tagged and deployed (published with their Functions and Classes). An ephemeral App ends with its Sandboxes when its client stops heartbeating (90 s grace)."
+  },
+  {
+   "area": "App.server",
+   "symbols": [
+    "App.server",
+    "Server",
+    "Server.autoscaler",
+    "Server.from_id",
+    "Server.from_name",
+    "Server.get_url",
+    "Server.hydrate",
+    "Server.info",
+    "Server.logs",
+    "Server.metrics",
+    "Server.object_id",
+    "Server.sessions",
+    "Server.stats",
+    "Server.update_autoscaler"
+   ],
+   "status": "native-error",
+   "tests": [
+    "py:objects_sdk:refused_products",
+    "py:functions_sdk:refused_at_registration"
+   ],
+   "lane": "mock",
+   "notes": "UnimplementedError: modal.Server routes inbound HTTP to containers through Modal's edge; expose a port of a Sandbox with encrypted_ports."
+  },
+  {
+   "area": "Client",
+   "symbols": [
+    "Client",
+    "Client.anonymous",
+    "Client.from_credentials",
+    "Client.from_env",
+    "Client.get_stub",
+    "Client.hello",
+    "Client.is_closed",
+    "Client.set_env_client",
+    "Client.stub",
+    "Client.verify"
+   ],
+   "status": "implemented",
+   "tests": [
+    "py:objects_sdk:client_calls",
+    "rust:modal_wire::calls_need_the_token_pair",
+    "rust:modal_wire::token_info_names_the_workspace"
+   ],
+   "lane": "mock",
+   "notes": "Token pairs are `ak-<hash>` / the gateway key (MODAL_TOKEN_ID/SECRET from `cua compat env --provider modal`); anything else is AuthError."
+  },
+  {
+   "area": "Client: OAuth and input plane",
+   "symbols": [
+    "Client.from_oauth_credentials",
+    "Client.get_input_plane_metadata"
+   ],
+   "status": "client-side",
+   "tests": [
+    "py:objects_sdk:client_calls"
+   ],
+   "lane": "mock",
+   "notes": "from_oauth_credentials exchanges a refresh token with Modal's identity provider, not the gateway; the gateway does not name an input-plane URL, so Functions use the control-plane call protocol."
+  },
+  {
+   "area": "Environment",
+   "symbols": [
+    "Environment",
+    "Environment.apps",
+    "Environment.client",
+    "Environment.from_context",
+    "Environment.from_name",
+    "Environment.get_dashboard_url",
+    "Environment.hydrate",
+    "Environment.name",
+    "Environment.object_id",
+    "Environment.objects"
+   ],
+   "status": "implemented",
+   "tests": [
+    "py:objects_sdk:environments",
+    "py:objects_sdk:workspace_and_environment_administration_is_refused"
+   ],
+   "lane": "mock",
+   "notes": "Environments are namespaces for objects (create, list, delete, rename)."
+  },
+  {
+   "area": "Environment and Workspace administration",
+   "symbols": [
+    "Environment.billing",
+    "Environment.members",
+    "Environment.roles",
+    "Workspace",
+    "Workspace.billing",
+    "Workspace.client",
+    "Workspace.from_context",
+    "Workspace.get_dashboard_url",
+    "Workspace.hydrate",
+    "Workspace.members",
+    "Workspace.name",
+    "Workspace.object_id",
+    "Workspace.proxy_tokens",
+    "Workspace.service_users",
+    "Workspace.settings",
+    "billing",
+    "billing.workspace_billing_report"
+   ],
+   "status": "native-error",
+   "tests": [
+    "py:objects_sdk:workspace_and_environment_administration_is_refused",
+    "py:objects_sdk:client_calls",
+    "rust:modal_wire::unserved_rpcs_say_why"
+   ],
+   "lane": "mock",
+   "notes": "Workspace.from_context/hydrate/name work (the workspace is the gateway's). Members, roles, service users, proxy tokens, settings and billing are Modal organisation features: UnimplementedError naming the RPC; access to Cua Spaces is the Cua account's."
+  },
+  {
+   "area": "Function: calls",
+   "symbols": [
+    "Function",
+    "Function.remote",
+    "Function.remote_gen",
+    "Function.map",
+    "Function.starmap",
+    "Function.for_each",
+    "Function.spawn",
+    "Function.spawn_map",
+    "Function.experimental_spawn_map",
+    "Function.local",
+    "Function.from_name",
+    "Function.from_id",
+    "Function.hydrate",
+    "Function.app",
+    "Function.client",
+    "Function.object_id",
+    "Function.get_dashboard_url",
+    "Function.get_web_url"
+   ],
+   "status": "implemented",
+   "tests": [
+    "py:functions_sdk:remote",
+    "py:functions_sdk:local",
+    "py:functions_sdk:container_env",
+    "py:functions_sdk:map",
+    "py:functions_sdk:map_unordered",
+    "py:functions_sdk:starmap",
+    "py:functions_sdk:for_each",
+    "py:functions_sdk:remote_error",
+    "py:functions_sdk:map_exception",
+    "py:functions_sdk:generator",
+    "py:functions_sdk:spawn_get",
+    "py:functions_sdk:spawn_map",
+    "py:functions_sdk:function_call_iter",
+    "py:functions_sdk:secret_env",
+    "py:functions_sdk:resources_and_env",
+    "py:functions_sdk:deploy_and_lookup",
+    "py:functions_sdk:app_members",
+    "jsfn:remote",
+    "jsfn:remote_error_is_a_remote_error",
+    "py:conformance:function_remote_and_map_in_a_space"
+   ],
+   "lane": "mock+space",
+   "notes": "Containers are Cua Spaces started from the Function's Image plus the modal client (a cached layer), running Modal's own container entrypoint; the gateway queues calls and inputs, scales containers (max_containers, min_containers, scaledown_window), retries by the Function's policy and ends inputs past their timeout. The hermetic suite runs the real entrypoint as a host process (test only); a real-Space test host runs it in a Space."
+  },
+  {
+   "area": "Function: options and autoscaling",
+   "symbols": [
+    "Function.with_options",
+    "Function.with_batching",
+    "Function.with_concurrency",
+    "Function.autoscaler",
+    "Function.update_autoscaler",
+    "Function.get_current_stats",
+    "Function.info",
+    "Function.logs",
+    "batched",
+    "concurrent",
+    "enter",
+    "exit",
+    "method",
+    "parameter",
+    "current_function_call_id",
+    "current_input_id",
+    "is_local",
+    "enable_output"
+   ],
+   "status": "implemented",
+   "tests": [
+    "py:functions_sdk:with_options",
+    "py:functions_sdk:batched",
+    "py:functions_sdk:concurrent",
+    "py:functions_sdk:current_ids",
+    "py:functions_sdk:is_local",
+    "py:functions_sdk:update_autoscaler",
+    "py:functions_sdk:stats",
+    "py:functions_sdk:function_info",
+    "py:functions_sdk:logs_managers",
+    "py:functions_sdk:lifecycle_hooks",
+    "py:functions_sdk:timeout",
+    "py:functions_sdk:retries",
+    "jsfn:stats"
+   ],
+   "lane": "mock",
+   "notes": "Batching and input concurrency are the container's (Modal's entrypoint); the gateway delivers up to batch_max_size inputs per FunctionGetInputs. timeout is enforced by the container and, as a backstop, by the gateway (FunctionTimeoutError); retries follow the Retries policy with its backoff."
+  },
+  {
+   "area": "Function: metrics and web URLs",
+   "symbols": [
+    "Function.metrics",
+    "Function.stats"
+   ],
+   "status": "native-error",
+   "tests": [
+    "py:functions_sdk:metrics_are_refused"
+   ],
+   "lane": "mock",
+   "notes": "UnimplementedError (FunctionGetMetrics, FunctionGetTimeRangeStats, MetricsGetInfo): utilization and request-count time series are Modal's observability product. get_current_stats() (backlog, running inputs) is served."
+  },
+  {
+   "area": "FunctionCall",
+   "symbols": [
+    "FunctionCall",
+    "FunctionCall.cancel",
+    "FunctionCall.client",
+    "FunctionCall.from_id",
+    "FunctionCall.gather",
+    "FunctionCall.get",
+    "FunctionCall.get_call_graph",
+    "FunctionCall.get_dashboard_url",
+    "FunctionCall.hydrate",
+    "FunctionCall.iter",
+    "FunctionCall.logs",
+    "FunctionCall.num_inputs",
+    "FunctionCall.object_id"
+   ],
+   "status": "implemented",
+   "tests": [
+    "py:functions_sdk:spawn_get",
+    "py:functions_sdk:function_call_from_id",
+    "py:functions_sdk:cancel",
+    "py:functions_sdk:spawn_map",
+    "py:functions_sdk:function_call_iter",
+    "py:functions_sdk:gather_and_graph",
+    "py:functions_sdk:logs_managers",
+    "jsfn:spawn_and_get"
+   ],
+   "lane": "mock",
+   "notes": "A call's inputs and outputs are kept in the gateway until it restarts. cancel marks the inputs and tells the container (with terminate_containers, stops it)."
+  },
+  {
+   "area": "Cls",
+   "symbols": [
+    "Cls",
+    "Cls.client",
+    "Cls.from_name",
+    "Cls.get_dashboard_url",
+    "Cls.hydrate",
+    "Cls.object_id",
+    "Cls.with_batching",
+    "Cls.with_concurrency",
+    "Cls.with_options"
+   ],
+   "status": "implemented",
+   "tests": [
+    "py:functions_sdk:cls",
+    "py:functions_sdk:cls_generator",
+    "py:functions_sdk:cls_options",
+    "py:functions_sdk:lifecycle_hooks",
+    "py:functions_sdk:deploy_and_lookup"
+   ],
+   "lane": "mock",
+   "notes": "Parametrised classes bind their parameters (FunctionBindParams); enter/exit hooks run in the container."
+  },
+  {
+   "area": "Function registration refusals",
+   "symbols": [
+    "asgi_app",
+    "fastapi_endpoint",
+    "web_endpoint",
+    "web_server",
+    "wsgi_app",
+    "clustered",
+    "experimental.clustered",
+    "experimental",
+    "experimental.flash_forward",
+    "experimental.flash_get_containers",
+    "experimental.http_server",
+    "experimental.server_forward",
+    "Cluster",
+    "Cluster.client",
+    "Cluster.container_ids",
+    "Cluster.container_ips",
+    "Cluster.container_rank",
+    "Cluster.from_context",
+    "Cluster.from_id",
+    "Cluster.get_dashboard_url",
+    "Cluster.hydrate",
+    "Cluster.object_id",
+    "experimental.get_cluster_info",
+    "experimental.get_fabric_peers",
+    "experimental.list_cluster_reservations",
+    "Cron",
+    "Period",
+    "SchedulerPlacement",
+    "sessioned",
+    "forward",
+    "interact"
+   ],
+   "status": "native-error",
+   "tests": [
+    "py:functions_sdk:refused_at_registration",
+    "py:functions_sdk:clustered_is_refused",
+    "py:objects_sdk:network_products_are_refused"
+   ],
+   "lane": "mock",
+   "notes": "UnimplementedError naming the feature when the Function is created: web endpoints need Modal's public edge (expose a port of a Sandbox instead), schedules are Modal's scheduler (use a Cua routine), clusters and flash are multi-node products, GPUs need the cua.gpu option (below). forward/interact are container-only client calls; sessioned and SchedulerPlacement are accepted by the client and carry no behaviour here."
+  },
+  {
+   "area": "Retries",
+   "symbols": [
+    "Retries"
+   ],
+   "status": "implemented",
+   "tests": [
+    "py:functions_sdk:retries"
+   ],
+   "lane": "mock",
+   "notes": "Server-side retries with initial_delay, backoff_coefficient and max_delay."
+  },
+  {
+   "area": "modal.experimental: App objects and lifecycle",
+   "symbols": [
+    "experimental.get_app_lifecycle",
+    "experimental.get_app_objects",
+    "experimental.image_delete",
+    "experimental.list_deployed_apps",
+    "experimental.stop_app"
+   ],
+   "status": "implemented",
+   "tests": [
+    "py:objects_sdk:experimental_app_calls"
+   ],
+   "lane": "mock",
+   "notes": ""
+  },
+  {
+   "area": "modal.experimental: container-only calls",
+   "symbols": [
+    "experimental.get_local_input_concurrency",
+    "experimental.set_local_input_concurrency",
+    "experimental.stop_fetching_inputs",
+    "types"
+   ],
+   "status": "client-side",
+   "tests": [
+    "py:functions_sdk:concurrent"
+   ],
+   "lane": "mock",
+   "notes": "These act inside a Function container on the entrypoint's own state; the gateway sees only the resulting FunctionGetInputs/FunctionGetDynamicConcurrency calls."
+  },
+  {
+   "area": "NetworkFileSystem",
+   "symbols": [
+    "NetworkFileSystem",
+    "NetworkFileSystem.add_local_dir",
+    "NetworkFileSystem.add_local_file",
+    "NetworkFileSystem.client",
+    "NetworkFileSystem.create_deployed",
+    "NetworkFileSystem.delete",
+    "NetworkFileSystem.ephemeral",
+    "NetworkFileSystem.from_name",
+    "NetworkFileSystem.get_dashboard_url",
+    "NetworkFileSystem.hydrate",
+    "NetworkFileSystem.iterdir",
+    "NetworkFileSystem.listdir",
+    "NetworkFileSystem.object_id",
+    "NetworkFileSystem.read_file",
+    "NetworkFileSystem.remove_file",
+    "NetworkFileSystem.write_file"
+   ],
+   "status": "native-error",
+   "tests": [
+    "py:objects_sdk:network_products_are_refused",
+    "py:functions_sdk:refused_at_registration"
+   ],
+   "lane": "mock",
+   "notes": "UnimplementedError (SharedVolume*): Modal deprecated NetworkFileSystem in favour of Volume."
+  },
+  {
+   "area": "Proxy",
+   "symbols": [
+    "Proxy",
+    "Proxy.client",
+    "Proxy.from_name",
+    "Proxy.get_dashboard_url",
+    "Proxy.hydrate",
+    "Proxy.object_id"
+   ],
+   "status": "native-error",
+   "tests": [
+    "py:objects_sdk:refused_products",
+    "rust:modal_wire::unserved_rpcs_say_why"
+   ],
+   "lane": "mock",
+   "notes": "UnimplementedError (ProxyGet): Modal Proxies are a Modal networking product (static outbound IPs)."
+  },
+  {
+   "area": "FilePatternMatcher",
+   "symbols": [
+    "FilePatternMatcher",
+    "FilePatternMatcher.can_prune_directories",
+    "FilePatternMatcher.from_file",
+    "FilePatternMatcher.patterns"
+   ],
+   "status": "client-side",
+   "tests": [
+    "py:objects_sdk:file_pattern_matcher"
+   ],
+   "lane": "mock",
+   "notes": "Client-side ignore patterns for add_local_dir; the gateway receives the resulting files."
+  },
+  {
+   "area": "Exceptions the gateway provokes",
+   "symbols": [
+    "exception.AlreadyExistsError",
+    "exception.AuthError",
+    "exception.ConflictError",
+    "exception.FunctionTimeoutError",
+    "exception.ImageBuildError",
+    "exception.InvalidError",
+    "exception.NotFoundError",
+    "exception.RemoteError",
+    "exception.SandboxFilesystemDirectoryNotEmptyError",
+    "exception.SandboxFilesystemError",
+    "exception.SandboxFilesystemFileTooLargeError",
+    "exception.SandboxFilesystemIsADirectoryError",
+    "exception.SandboxFilesystemNotADirectoryError",
+    "exception.SandboxFilesystemNotFoundError",
+    "exception.SandboxFilesystemPathAlreadyExistsError",
+    "exception.SandboxFilesystemPermissionError",
+    "exception.SandboxTerminatedError",
+    "exception.SandboxTimeoutError",
+    "exception.UnimplementedError"
+   ],
+   "status": "implemented",
+   "tests": [
+    "jsfn:remote_error_is_a_remote_error",
+    "py:functions_sdk:remote_error",
+    "py:functions_sdk:timeout",
+    "py:hermetic_sdk:exec_validation_errors",
+    "py:hermetic_sdk:failing_build_raises_or_dry_runs",
+    "py:hermetic_sdk:filesystem_errors_map_to_modal_exceptions",
+    "py:hermetic_sdk:sandbox_timeout_is_124",
+    "py:hermetic_sdk:terminate_wait_poll_returncode",
+    "py:hermetic_sdk:unmappable_base_image_is_an_image_build_error",
+    "py:hermetic_sdk:unsupported_features_raise_modal_unimplemented",
+    "py:objects_sdk:dict_ops",
+    "py:objects_sdk:environments",
+    "py:objects_sdk:experimental_app_calls",
+    "py:objects_sdk:volume_lifecycle",
+    "py:sandbox_extra_sdk:names_and_listing",
+    "py:sandbox_extra_sdk:sandbox_create_validation",
+    "rust:modal_wire::calls_need_the_token_pair"
+   ],
+   "lane": "mock",
+   "notes": "Each gRPC code maps as Modal's client maps it (NOT_FOUND to NotFoundError, ALREADY_EXISTS, INVALID_ARGUMENT, FAILED_PRECONDITION/ABORTED to ConflictError, UNIMPLEMENTED, UNAUTHENTICATED to AuthError); a cancelled input is a RemoteError, and the Function and Sandbox results map to FunctionTimeoutError, SandboxTimeoutError, SandboxTerminatedError and the SandboxFilesystem* classes."
+  },
+  {
+   "area": "Exceptions raised by the client only",
+   "symbols": [
+    "Error",
+    "exception.Error",
+    "exception.ClientClosed",
+    "exception.InputCancellation",
+    "exception.ExecTimeoutError",
+    "exception.ExecutionError",
+    "exception.InternalFailure",
+    "exception.OutputExpiredError",
+    "exception.PermissionDeniedError",
+    "exception.AsyncUsageWarning",
+    "exception.ConnectionError",
+    "exception.DataLossError",
+    "exception.DeprecationError",
+    "exception.DeserializationError",
+    "exception.InteractiveTimeoutError",
+    "exception.InternalAPIWarning",
+    "exception.InternalError",
+    "exception.LogsFetchError",
+    "exception.ModuleNotMountable",
+    "exception.MountUploadTimeoutError",
+    "exception.RequestSizeError",
+    "exception.ResourceExhaustedError",
+    "exception.SerializationError",
+    "exception.ServerWarning",
+    "exception.ServiceError",
+    "exception.SnapshotCreationError",
+    "exception.TimeoutError",
+    "exception.UserCodeException",
+    "exception.VersionError",
+    "exception.VolumeUploadTimeoutError",
+    "exception.WorkspaceManagementError"
+   ],
+   "status": "client-side",
+   "tests": [
+    "py:objects_sdk:client_calls",
+    "py:functions_sdk:remote_error",
+    "py:hermetic_sdk:exec_timeout_returns_minus_one"
+   ],
+   "lane": "mock",
+   "notes": "Raised by the SDK itself (transport, serialization, deprecations, client-side validation, a detached Sandbox, an exec timeout it enforces, InputCancellation raised inside a container) or for gateway answers the suites do not provoke (output expiry: outputs are kept until the gateway ends; quota and spend errors have no gateway equivalent). They carry no gateway behaviour."
+  }
+ ],
+ "create_params": [
+  {
+   "name": "app",
+   "status": "implemented",
+   "tests": [
+    "py:hermetic_sdk:apps"
+   ],
+   "notes": "The App the Sandbox belongs to (looked up or created by name)."
+  },
+  {
+   "name": "name",
+   "status": "implemented",
+   "tests": [
+    "py:sandbox_extra_sdk:names_and_listing"
+   ],
+   "notes": "Unique among running Sandboxes of the App."
+  },
+  {
+   "name": "tags",
+   "status": "implemented",
+   "tests": [
+    "py:hermetic_sdk:tags_set_get_list"
+   ],
+   "notes": "Listable by tag."
+  },
+  {
+   "name": "image",
+   "status": "implemented",
+   "tests": [
+    "py:hermetic_sdk:image_layers_are_cached_by_spec"
+   ],
+   "notes": "The layer checkpoint the Space starts from."
+  },
+  {
+   "name": "env",
+   "status": "implemented",
+   "tests": [
+    "py:hermetic_sdk:secrets_and_env"
+   ],
+   "notes": "Environment variables of the entrypoint and execs."
+  },
+  {
+   "name": "secrets",
+   "status": "implemented",
+   "tests": [
+    "py:hermetic_sdk:secrets_and_env"
+   ],
+   "notes": "Secrets as environment variables."
+  },
+  {
+   "name": "network_file_systems",
+   "status": "native-error",
+   "tests": [
+    "py:objects_sdk:network_products_are_refused"
+   ],
+   "notes": "UnimplementedError: use a Volume."
+  },
+  {
+   "name": "timeout",
+   "status": "implemented",
+   "tests": [
+    "py:hermetic_sdk:sandbox_timeout_is_124"
+   ],
+   "notes": "Seconds; the Sandbox ends with exit code 124. At most 24 hours."
+  },
+  {
+   "name": "idle_timeout",
+   "status": "implemented",
+   "tests": [
+    "py:hermetic_sdk:sandbox_idle_timeout",
+    "py:conformance:idle_timeout"
+   ],
+   "notes": "Ends the Sandbox after that long without exec or stdio activity."
+  },
+  {
+   "name": "workdir",
+   "status": "implemented",
+   "tests": [
+    "py:conformance:workdir",
+    "py:sandbox_extra_sdk:sandbox_create_validation"
+   ],
+   "notes": "Absolute path, created if missing; the entrypoint and execs start there."
+  },
+  {
+   "name": "gpu",
+   "status": "implemented",
+   "tests": [
+    "py:sandbox_extra_sdk:gpu_needs_the_cua_option"
+   ],
+   "notes": "A Modal GPU model is refused (UnimplementedError) unless experimental_options sets cua.gpu to the runtime's GPU option (nvidia, auto, virgl, ...) and cua.on to a machine that has the GPU. Only the refusal is tested: no GPU host was available to verify a GPU Space end to end (evidence: AWS compat boxes are c8i CPU instances; the a real-Space test host Macs are not a runtime GPU option)."
+  },
+  {
+   "name": "cloud",
+   "status": "implemented",
+   "tests": [
+    "py:sandbox_extra_sdk:sandbox_resources_and_options_accepted"
+   ],
+   "notes": "A Modal cloud is not a Cua placement; ignored with a warning. Placement is the gateway's --on or experimental_options cua.on."
+  },
+  {
+   "name": "region",
+   "status": "implemented",
+   "tests": [
+    "py:sandbox_extra_sdk:sandbox_resources_and_options_accepted"
+   ],
+   "notes": "Same as cloud."
+  },
+  {
+   "name": "cpu",
+   "status": "implemented",
+   "tests": [
+    "py:sandbox_extra_sdk:sandbox_resources_and_options_accepted"
+   ],
+   "notes": "Rounded up to whole CPUs for the Space (the larger of a (request, limit) pair)."
+  },
+  {
+   "name": "memory",
+   "status": "implemented",
+   "tests": [
+    "py:sandbox_extra_sdk:sandbox_resources_and_options_accepted"
+   ],
+   "notes": "MiB of the Space (the larger of a pair)."
+  },
+  {
+   "name": "runtime",
+   "status": "implemented",
+   "tests": [
+    "py:sandbox_extra_sdk:sandbox_create_validation"
+   ],
+   "notes": "gvisor or vm becomes the Space's isolation kind (an explicit cua.kind wins); other values are InvalidError."
+  },
+  {
+   "name": "block_network",
+   "status": "implemented",
+   "tests": [
+    "py:sandbox_extra_sdk:sandbox_resources_and_options_accepted"
+   ],
+   "notes": "A Space without outbound network."
+  },
+  {
+   "name": "outbound_cidr_allowlist",
+   "status": "native-error",
+   "tests": [
+    "py:sandbox_extra_sdk:sandbox_unsupported_options_are_native_errors"
+   ],
+   "notes": "UnimplementedError: no host-enforced allowlist (block-all or open only)."
+  },
+  {
+   "name": "outbound_domain_allowlist",
+   "status": "native-error",
+   "tests": [
+    "py:sandbox_extra_sdk:sandbox_unsupported_options_are_native_errors"
+   ],
+   "notes": "UnimplementedError, as the CIDR allowlist."
+  },
+  {
+   "name": "_experimental_outbound_policy",
+   "status": "native-error",
+   "tests": [
+    "py:sandbox_extra_sdk:reload_volumes_and_policy_errors"
+   ],
+   "notes": "UnimplementedError: header replacement needs an egress proxy outside the Space."
+  },
+  {
+   "name": "inbound_cidr_allowlist",
+   "status": "native-error",
+   "tests": [
+    "py:sandbox_extra_sdk:sandbox_unsupported_options_are_native_errors"
+   ],
+   "notes": "UnimplementedError: tunnels do not filter by source address."
+  },
+  {
+   "name": "cidr_allowlist",
+   "status": "native-error",
+   "tests": [
+    "py:sandbox_extra_sdk:sandbox_unsupported_options_are_native_errors"
+   ],
+   "notes": "The deprecated alias of outbound_cidr_allowlist: UnimplementedError."
+  },
+  {
+   "name": "volumes",
+   "status": "implemented",
+   "tests": [
+    "py:conformance:volume_mount_roundtrip",
+    "py:conformance:volume_read_only_and_sub_path",
+    "py:conformance:cloud_bucket_mount_public_bucket"
+   ],
+   "notes": "Volume and CloudBucketMount mounts (see their rows)."
+  },
+  {
+   "name": "pty",
+   "status": "implemented",
+   "tests": [
+    "py:conformance:pty_exec"
+   ],
+   "notes": "The entrypoint runs on a PTY; stdout and stderr are merged."
+  },
+  {
+   "name": "pty_info",
+   "status": "implemented",
+   "tests": [
+    "py:conformance:pty_exec"
+   ],
+   "notes": "The PTY's size and mode for the entrypoint."
+  },
+  {
+   "name": "encrypted_ports",
+   "status": "implemented",
+   "tests": [
+    "py:hermetic_sdk:tunnels_tls_and_raw_tcp",
+    "py:sandbox_extra_sdk:sandbox_create_validation"
+   ],
+   "notes": "Ports 1-65535, each once; served under the TLS router."
+  },
+  {
+   "name": "h2_ports",
+   "status": "implemented",
+   "tests": [
+    "py:sandbox_extra_sdk:sandbox_create_validation",
+    "rust:modal_wire::h2_ports_negotiate_http2_and_others_do_not"
+   ],
+   "notes": "Encrypted ports whose TLS name negotiates h2 (a guest server speaking HTTP/2 without TLS, such as a gRPC server); ordinary encrypted ports negotiate http/1.1."
+  },
+  {
+   "name": "unencrypted_ports",
+   "status": "implemented",
+   "tests": [
+    "py:hermetic_sdk:tunnels_tls_and_raw_tcp"
+   ],
+   "notes": "Loopback listeners (Tunnel.tcp_socket)."
+  },
+  {
+   "name": "custom_domain",
+   "status": "native-error",
+   "tests": [
+    "py:sandbox_extra_sdk:sandbox_unsupported_options_are_native_errors"
+   ],
+   "notes": "UnimplementedError: tunnels are served under the gateway's own domain."
+  },
+  {
+   "name": "proxy",
+   "status": "native-error",
+   "tests": [
+    "py:sandbox_extra_sdk:sandbox_unsupported_options_are_native_errors"
+   ],
+   "notes": "UnimplementedError (ProxyGet)."
+  },
+  {
+   "name": "include_oidc_identity_token",
+   "status": "native-error",
+   "tests": [
+    "py:sandbox_extra_sdk:sandbox_unsupported_options_are_native_errors"
+   ],
+   "notes": "UnimplementedError: tokens are issued by Modal's identity provider."
+  },
+  {
+   "name": "readiness_probe",
+   "status": "implemented",
+   "tests": [
+    "py:sandbox_extra_sdk:wait_until_ready",
+    "py:conformance:readiness_probe_and_connect_token"
+   ],
+   "notes": "tcp and exec probes, polled by wait_until_ready."
+  },
+  {
+   "name": "verbose",
+   "status": "implemented",
+   "tests": [
+    "py:sandbox_extra_sdk:sandbox_resources_and_options_accepted"
+   ],
+   "notes": "Client-side logging only."
+  },
+  {
+   "name": "experimental_options",
+   "status": "implemented",
+   "tests": [
+    "py:sandbox_extra_sdk:sandbox_unsupported_options_are_native_errors",
+    "py:sandbox_extra_sdk:experimental_sandbox_calls"
+   ],
+   "notes": "enable_exit_snapshot and the Cua options (cua.on, cua.kind, cua.cpus, cua.memory_mb, cua.gpu, cua.disk_gb) are honoured; any other option is UnimplementedError."
+  },
+  {
+   "name": "_experimental_enable_snapshot",
+   "status": "implemented",
+   "tests": [
+    "py:sandbox_extra_sdk:experimental_snapshot_roundtrip",
+    "py:sandbox_extra_sdk:snapshot_requires_enable"
+   ],
+   "notes": "Allows _experimental_snapshot."
+  },
+  {
+   "name": "environment_name",
+   "status": "implemented",
+   "tests": [
+    "py:objects_sdk:environments"
+   ],
+   "notes": "The Environment namespace."
+  }
+ ]
+}

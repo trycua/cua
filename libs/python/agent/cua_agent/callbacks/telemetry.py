@@ -2,7 +2,9 @@
 Telemetry callback handler for Computer-Use Agent (cua-agent)
 """
 
+import logging
 import platform
+import sys
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Union
@@ -11,21 +13,57 @@ from cua_core.telemetry import (
     is_telemetry_enabled,
     record_event,
 )
+from cua_core.telemetry._config import sanitize_model_name
 
 from .base import AsyncCallbackHandler
 
+logger = logging.getLogger(__name__)
+
+# Coarse, non-identifying system info. No kernel release, hostname or paths.
 SYSTEM_INFO = {
     "os": platform.system().lower(),
-    "os_version": platform.release(),
-    "python_version": platform.python_version(),
+    "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
 }
+
+# Only these numeric usage keys are ever sent in agent_usage.
+USAGE_KEYS = ("prompt_tokens", "completion_tokens", "total_tokens", "response_cost")
+
+_trajectory_warning_emitted = False
+
+
+def _warn_trajectory_sharing_moved() -> None:
+    global _trajectory_warning_emitted
+    if _trajectory_warning_emitted:
+        return
+    _trajectory_warning_emitted = True
+    logger.warning(
+        "log_trajectory=True no longer uploads anything: trajectory sharing is not "
+        "available. Only anonymous usage telemetry is sent."
+    )
+
+
+def _coarse_agent_type(agent_loop: Any) -> str:
+    """Built-in loop class name, or "custom" for user-registered loops."""
+    cls = type(agent_loop)
+    if (cls.__module__ or "").startswith("cua_agent."):
+        return cls.__name__
+    return "custom"
+
+
+def _numeric(value: Any) -> Optional[Union[int, float]]:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return value
+    return None
 
 
 class TelemetryCallback(AsyncCallbackHandler):
     """
     Telemetry callback handler for Computer-Use Agent (cua-agent)
 
-    Tracks agent usage, performance metrics, and optionally trajectory data.
+    Tracks anonymous agent usage and performance metrics. Never sends prompts,
+    outputs, screenshots or other trajectory content.
     """
 
     def __init__(self, agent, log_trajectory: bool = False):
@@ -34,10 +72,13 @@ class TelemetryCallback(AsyncCallbackHandler):
 
         Args:
             agent: The ComputerAgent instance
-            log_trajectory: Whether to log full trajectory items (opt-in)
+            log_trajectory: Deprecated. Trajectories are never uploaded through
+                telemetry; setting this only logs a one-time warning.
         """
         self.agent = agent
         self.log_trajectory = log_trajectory
+        if log_trajectory:
+            _warn_trajectory_sharing_moved()
 
         # Generate session/run IDs
         self.session_id = str(uuid.uuid4())
@@ -63,19 +104,15 @@ class TelemetryCallback(AsyncCallbackHandler):
         # Get the agent loop type (class name)
         agent_type = "unknown"
         if hasattr(self.agent, "agent_loop") and self.agent.agent_loop is not None:
-            agent_type = type(self.agent.agent_loop).__name__
+            agent_type = _coarse_agent_type(self.agent.agent_loop)
 
+        model = getattr(self.agent, "model", None)
         agent_info = {
             "session_id": self.session_id,
             "agent_type": agent_type,
-            "model": getattr(self.agent, "model", "unknown"),
+            "model": (sanitize_model_name(model) if isinstance(model, str) else None) or "unknown",
             **SYSTEM_INFO,
         }
-
-        # Include VM name if available
-        vm_name = self._get_vm_name()
-        if vm_name:
-            agent_info["vm_name"] = vm_name
 
         record_event("agent_session_start", agent_info)
 
@@ -98,17 +135,6 @@ class TelemetryCallback(AsyncCallbackHandler):
             "input_context_size": input_context_size,
             "num_existing_messages": len(old_items),
         }
-
-        # Include VM name if available
-        vm_name = self._get_vm_name()
-        if vm_name:
-            run_data["vm_name"] = vm_name
-
-        # Log trajectory if opted in
-        if self.log_trajectory:
-            trajectory = self._extract_trajectory(old_items)
-            if trajectory:
-                run_data["uploaded_trajectory"] = trajectory
 
         record_event("agent_run_start", run_data)
 
@@ -133,17 +159,6 @@ class TelemetryCallback(AsyncCallbackHandler):
             "total_usage": self.total_usage.copy(),
         }
 
-        # Include VM name if available
-        vm_name = self._get_vm_name()
-        if vm_name:
-            run_data["vm_name"] = vm_name
-
-        # Log trajectory if opted in
-        if self.log_trajectory:
-            trajectory = self._extract_trajectory(new_items)
-            if trajectory:
-                run_data["uploaded_trajectory"] = trajectory
-
         record_event("agent_run_end", run_data)
 
     async def on_usage(self, usage: Dict[str, Any]) -> None:
@@ -151,18 +166,19 @@ class TelemetryCallback(AsyncCallbackHandler):
         if not is_telemetry_enabled():
             return
 
-        # Accumulate usage stats
-        self.total_usage["prompt_tokens"] += usage.get("prompt_tokens", 0)
-        self.total_usage["completion_tokens"] += usage.get("completion_tokens", 0)
-        self.total_usage["total_tokens"] += usage.get("total_tokens", 0)
-        self.total_usage["response_cost"] += usage.get("response_cost", 0.0)
+        # Only known numeric keys; provider-specific extras are never sent.
+        known: Dict[str, Union[int, float]] = {}
+        for key in USAGE_KEYS:
+            value = _numeric(usage.get(key))
+            if value is not None:
+                known[key] = value
+                self.total_usage[key] += value
 
-        # Record individual usage event
         usage_data = {
             "session_id": self.session_id,
             "run_id": self.run_id,
             "step": self.step_count,
-            **usage,
+            **known,
         }
 
         record_event("agent_usage", usage_data)
@@ -192,20 +208,6 @@ class TelemetryCallback(AsyncCallbackHandler):
 
         record_event("agent_step", step_data)
 
-    def _get_vm_name(self) -> Optional[str]:
-        """Extract VM name from agent's computer handler if available."""
-        try:
-            if hasattr(self.agent, "computer_handler") and self.agent.computer_handler:
-                handler = self.agent.computer_handler
-                # Check if it's a cuaComputerHandler with a cua_computer
-                if hasattr(handler, "cua_computer"):
-                    computer = handler.cua_computer
-                    if hasattr(computer, "config") and hasattr(computer.config, "name"):
-                        return computer.config.name
-        except Exception:
-            pass
-        return None
-
     def _calculate_context_size(self, items: List[Dict[str, Any]]) -> int:
         """Calculate approximate context size in tokens/characters."""
         total_size = 0
@@ -223,25 +225,3 @@ class TelemetryCallback(AsyncCallbackHandler):
                 total_size += len(item["content"])
 
         return total_size
-
-    def _extract_trajectory(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Extract trajectory items that should be logged."""
-        trajectory = []
-
-        for item in items:
-            # Include user messages, assistant messages, reasoning, computer calls, and computer outputs
-            if (
-                item.get("role") == "user"  # User inputs
-                or (
-                    item.get("type") == "message" and item.get("role") == "assistant"
-                )  # Model outputs
-                or item.get("type") == "reasoning"  # Reasoning traces
-                or item.get("type") == "computer_call"  # Computer actions
-                or item.get("type") == "computer_call_output"  # Computer outputs
-            ):
-                # Create a copy of the item with timestamp
-                trajectory_item = item.copy()
-                trajectory_item["logged_at"] = time.time()
-                trajectory.append(trajectory_item)
-
-        return trajectory

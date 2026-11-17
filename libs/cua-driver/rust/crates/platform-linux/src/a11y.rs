@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Switch on Chromium / Electron accessibility for the whole desktop session.
 //!
 //! Chromium — and therefore every Electron, CEF, and Chrome-based app — ships

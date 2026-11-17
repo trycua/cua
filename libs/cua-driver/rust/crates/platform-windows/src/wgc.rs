@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Windows.Graphics.Capture (WGC) backend for window screenshots.
 //!
 //! Used when PrintWindow returns black (UWP / DirectComposition) AND/OR
@@ -146,9 +149,8 @@ unsafe fn wgc_capture_impl(hwnd: HWND) -> Result<(Vec<u8>, u32, u32)> {
     //    (both `Create` and `CreateFreeThreaded` pool variants) but
     //    the event never fired in our daemon's thread environment —
     //    likely an STA/COM-apartment mismatch we couldn't isolate.
-    //    Polling is what windows-capture and OBS-style consumers do
-    //    for single-shot capture anyway: WGC drops frames in the pool
-    //    as DWM composes them, and TryGetNextFrame returns Ok(None) /
+    //    Polling suits single-shot capture anyway: WGC drops frames
+    //    in the pool as DWM composes them, and TryGetNextFrame returns Ok(None) /
     //    NULL until one's available. 50 ms polling interval keeps the
     //    "frame finally arrived" detection latency low without burning
     //    CPU on a tight spin.

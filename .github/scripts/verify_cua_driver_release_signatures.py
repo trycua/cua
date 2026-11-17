@@ -11,7 +11,11 @@ macOS (``macos``, run on a macOS runner)
     ``codesign --verify --deep --strict``, carry a hardened-runtime Developer ID
     signature from the pinned team, be accepted by ``spctl -a -t exec`` with
     source ``Notarized Developer ID``, and have a stapled notarization ticket
-    (``xcrun stapler validate``). The standalone ``cua-driver``,
+    (``xcrun stapler validate``). Its designated requirement must equal
+    ``expected_designated_requirement``: macOS keeps the user's Accessibility and
+    Screen Recording approval against that requirement, so one that pins a
+    cdhash, a version or another identifier asks every user to approve again
+    after the update. The standalone ``cua-driver``,
     ``cua-cursor-theme``, ``libcua_driver_sdk.dylib``, and
     ``cua_driver_node_runtime.node`` copies must carry the same team's
     hardened-runtime signature. Any ``.pkg`` or ``.dmg`` asset must be
@@ -46,6 +50,7 @@ from typing import Callable, Sequence
 
 
 RELEASE_TEAM_ID = "YCK386LBJ7"
+RELEASE_BUNDLE_ID = "com.trycua.driver"
 RELEASE_SIGNER = "Cua AI, Inc."
 DARWIN_LABELS = ("darwin-arm64", "darwin-x86_64", "darwin-universal")
 WINDOWS_ARCHES = ("x86_64", "arm64")
@@ -137,6 +142,44 @@ def check_developer_id_signature(
     return True
 
 
+def expected_designated_requirement(team_id: str = RELEASE_TEAM_ID) -> str:
+    """The requirement codesign derives for a Developer ID app, as macOS prints it.
+
+    It names the bundle identifier and the signing team and nothing else, so
+    every release signed by that team satisfies the requirement an earlier
+    release stored in the user's privacy database. The two OID fields are Apple's
+    "Developer ID Certification Authority" and "Developer ID Application" marks.
+    """
+    return (
+        f'identifier "{RELEASE_BUNDLE_ID}" and anchor apple generic'
+        " and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */"
+        " and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */"
+        f" and certificate leaf[subject.OU] = {team_id}"
+    )
+
+
+def check_designated_requirement(
+    path: Path, label: str, team_id: str, run: Runner, report: Report
+) -> bool:
+    """The app's designated requirement is the stable, version-free one."""
+    result = run(["codesign", "-d", "-r-", str(path)])
+    match = re.search(r"^designated => (.+)$", result.output, re.MULTILINE)
+    if result.returncode != 0 or not match:
+        report.fail(f"{label}: could not read the designated requirement\n{_indent(result.output)}")
+        return False
+    expected = expected_designated_requirement(team_id)
+    actual = " ".join(match.group(1).replace(f'"{team_id}"', team_id).split())
+    if actual != expected:
+        report.fail(
+            f"{label}: designated requirement is not the stable one, so macOS would ask"
+            " for Accessibility and Screen Recording again after the update\n"
+            f"    expected: {expected}\n    actual:   {actual}"
+        )
+        return False
+    report.ok(f"{label}: designated requirement is stable ({RELEASE_BUNDLE_ID}, team {team_id})")
+    return True
+
+
 def check_notarized(
     path: Path, label: str, team_id: str, run: Runner, report: Report, *, assessment: str
 ) -> None:
@@ -162,6 +205,28 @@ def check_notarized(
         report.fail(f"{label}: no valid stapled notarization ticket\n{_indent(stapled.output)}")
     else:
         report.ok(f"{label}: stapled notarization ticket is valid")
+
+
+LSREGISTER = (
+    "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/"
+    "LaunchServices.framework/Versions/A/Support/lsregister"
+)
+
+
+def _forget_extracted_apps(scratch: Path, run: Runner) -> None:
+    """Unregister every app bundle extracted under ``scratch`` from LaunchServices.
+
+    ``codesign`` and ``spctl`` make macOS learn a bundle's path and bundle id.
+    A released CuaDriver.app extracted into a temp dir and then deleted would
+    stay registered, and ``open -a CuaDriver`` (or a permission row in System
+    Settings) can later resolve to that dead copy. Best effort; the files are
+    deleted by the caller.
+    """
+    for app in sorted(scratch.rglob("*.app")):
+        try:
+            run([LSREGISTER, "-u", str(app)])
+        except OSError:
+            return  # no lsregister here (not macOS); nothing was registered
 
 
 def _extract_tar(archive: Path, destination: Path, run: Runner) -> bool:
@@ -217,6 +282,7 @@ def verify_macos(
                     if check_developer_id_signature(
                         app, label, team_id, run, report, deep=True
                     ):
+                        check_designated_requirement(app, label, team_id, run, report)
                         check_notarized(app, label, team_id, run, report, assessment="exec")
                     for executable in APP_EXECUTABLES:
                         inner = app / executable
@@ -235,6 +301,7 @@ def verify_macos(
                     target, f"{name}:{file_name}", team_id, run, report, deep=False
                 )
     finally:
+        _forget_extracted_apps(scratch, run)
         shutil.rmtree(scratch, ignore_errors=True)
 
     for installer in sorted(artifacts.rglob("*.pkg")):

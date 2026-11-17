@@ -1,0 +1,14 @@
+# DHCP on the first NIC with a MAC client id, as KubeVirt masquerade expects
+# (the NetworkManager form of common/vm/files/99-kubevirt.yaml).
+[connection]
+id=kubevirt
+type=ethernet
+autoconnect=true
+autoconnect-priority=100
+
+[ipv4]
+method=auto
+dhcp-client-id=mac
+
+[ipv6]
+method=disabled

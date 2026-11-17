@@ -185,7 +185,7 @@ final class Server: @unchecked Sendable {
 
     // MARK: - Initialization
 
-    init(port: UInt16 = 7777) {
+    init(port: UInt16 = LumeChannel.current.lumePort) {
         self.portNumber = port
         self.controller = LumeController()
         self.routes = []
@@ -293,6 +293,28 @@ final class Server: @unchecked Sendable {
                         name: name, storage: storage, force: force, timeout: timeout)
                 }),
             Route(
+                method: "POST", path: "/lume/vms/:name/suspend",
+                handler: { [weak self] request in
+                    guard let self else { throw HTTPError.internalError }
+                    let params = self.extractPathParams(
+                        pattern: "/lume/vms/:name/suspend", from: request)
+                    guard let name = params["name"] else {
+                        return HTTPResponse(statusCode: .badRequest, body: "Missing VM name")
+                    }
+                    return try await self.handleSuspendVM(name: name)
+                }),
+            Route(
+                method: "POST", path: "/lume/vms/:name/rename",
+                handler: { [weak self] request in
+                    guard let self else { throw HTTPError.internalError }
+                    let params = self.extractPathParams(
+                        pattern: "/lume/vms/:name/rename", from: request)
+                    guard let name = params["name"] else {
+                        return HTTPResponse(statusCode: .badRequest, body: "Missing VM name")
+                    }
+                    return try await self.handleRenameVM(name: name, body: request.body)
+                }),
+            Route(
                 method: "POST", path: "/lume/vms/:name/setup",
                 handler: { [weak self] request in
                     guard let self else { throw HTTPError.internalError }
@@ -320,6 +342,12 @@ final class Server: @unchecked Sendable {
                 handler: { [weak self] request in
                     guard let self else { throw HTTPError.internalError }
                     return try await self.handlePullStart(request.body)
+                }),
+            Route(
+                method: "POST", path: "/lume/pull/cancel",
+                handler: { [weak self] request in
+                    guard let self else { throw HTTPError.internalError }
+                    return try await self.handlePullCancel(request.body)
                 }),
             Route(
                 method: "POST", path: "/lume/prune",

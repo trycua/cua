@@ -1,0 +1,294 @@
+syntax = "proto3";
+
+package cua.env.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+// Receiving side of "teleport": moving an app session (browser profile
+// cookies and storage, editor state) or a set of files from a user's
+// machine into the guest.
+//
+// The approval gate (biometric or explicit user consent for sensitive items)
+// lives on the sending side, in the SDK; the guest never pulls. All uploads
+// are unary chunks so browsers on gRPC-Web can send them.
+service TeleportService {
+  // Describes what the guest can accept for an app: whether the provider
+  // exists, whether the app is installed or running, and which bundle
+  // format version to send.
+  rpc GetManifest(GetManifestRequest) returns (GetManifestResponse);
+  // Uploads an rcdp-app-session bundle in offset-addressed chunks and, on
+  // the final chunk, verifies and imports it. Resumable: resend from the
+  // returned `received_bytes`.
+  rpc ImportSession(ImportSessionRequest) returns (ImportSessionResponse);
+  // Starts a file transfer into the guest's Downloads folder by declaring
+  // its manifest. Entries matching ignore rules are dropped here.
+  rpc BeginReceiveFiles(BeginReceiveFilesRequest) returns (BeginReceiveFilesResponse);
+  // Uploads one chunk of one declared file.
+  rpc ReceiveFilesChunk(ReceiveFilesChunkRequest) returns (ReceiveFilesChunkResponse);
+  // Verifies every file's SHA-256 and publishes the transfer atomically.
+  rpc CommitReceiveFiles(CommitReceiveFilesRequest) returns (CommitReceiveFilesResponse);
+  // Discards a transfer.
+  rpc AbortReceiveFiles(AbortReceiveFilesRequest) returns (AbortReceiveFilesResponse);
+  // Removes what a committed import left in the guest: every file and
+  // directory it created and every Keychain item it installed, as recorded
+  // in the import's ledger. Guests that support it advertise the feature
+  // "teleport.wipe". An unknown `import_id` is `NOT_FOUND`.
+  rpc WipeImport(WipeImportRequest) returns (WipeImportResponse);
+}
+
+// Which part of an app's state to teleport.
+enum TeleportScope {
+  // Not set. Treated as `TELEPORT_SCOPE_SESSION`.
+  TELEPORT_SCOPE_UNSPECIFIED = 0;
+  // Sign-in state only: cookies, local storage, session storage.
+  TELEPORT_SCOPE_SESSION = 1;
+  // The whole profile: session plus history, bookmarks, extensions,
+  // settings.
+  TELEPORT_SCOPE_PROFILE = 2;
+}
+
+// Request for `TeleportService.GetManifest`.
+message GetManifestRequest {
+  // Provider / app id, for example "firefox", "chromium", "chrome",
+  // "vscode". Advertised as capability "teleport.<app>".
+  string app = 1;
+  // Requested scope.
+  TeleportScope scope = 2;
+}
+
+// Response for `TeleportService.GetManifest`.
+message GetManifestResponse {
+  // True if the guest has a provider for this app.
+  bool supported = 1;
+  // Why not, when unsupported.
+  string limitation = 2;
+  // True if the app is installed in the guest.
+  bool app_installed = 3;
+  // True if the app is running. Importing may require closing it.
+  bool app_running = 4;
+  // Bundle format version the sender must produce.
+  uint32 bundle_version = 5;
+  // Scopes this provider can import.
+  repeated TeleportScope scopes = 6;
+  // Every app id the guest can import, for discovery.
+  repeated string supported_apps = 7;
+}
+
+// Options applied when an imported session is committed.
+message ImportOptions {
+  // Replace existing state instead of merging.
+  bool replace_existing = 1;
+  // Close the app (gracefully, then forcefully after 5 seconds) if it is
+  // running.
+  bool close_running_app = 2;
+  // Launch the app after importing.
+  bool launch_after = 3;
+  // Unix time in milliseconds at which the guest wipes the import on its
+  // own, as `WipeImport` would. 0 means no expiry. Checked every 60 seconds
+  // and when the guest daemon starts, so an expiry survives restarts.
+  uint64 expires_at_ms = 4;
+  // Set by the Cua Keyvault broker when it delivers a session it authorized
+  // (a consent grant, an unattended rule or a first-party approval), to
+  // `keyvault`; empty for a direct SDK send. Not a secret and not verified
+  // by the guest. cua-spacesd counts deliveries with and without it
+  // (present or absent) in its opt-in aggregate telemetry; nothing else
+  // reads it.
+  string broker_grant = 5;
+}
+
+// Request for `TeleportService.ImportSession`.
+message ImportSessionRequest {
+  // Client-chosen import id, stable across retries. The first chunk
+  // (offset 0) creates the import.
+  string import_id = 1;
+  // App id as in `GetManifestRequest.app`.
+  string app = 2;
+  // Scope of the bundle.
+  TeleportScope scope = 3;
+  // Offset of `data[0]` in the bundle. Must equal `received_bytes`; a chunk
+  // wholly below it is acknowledged as a duplicate.
+  uint64 offset = 4;
+  // Bundle bytes. At most `Limits.max_chunk_bytes`.
+  bytes data = 5;
+  // True on the last chunk: verify and import. May carry data.
+  bool commit = 6;
+  // Lowercase hex SHA-256 of the whole bundle. Required when `commit`.
+  string sha256 = 7;
+  // Import options, read when `commit`.
+  ImportOptions options = 8;
+}
+
+// Outcome of an import, returned on the final chunk.
+message ImportResult {
+  // Items imported (for example "cookies", "localStorage").
+  repeated string imported = 1;
+  // Items skipped, with reasons, as "item: reason".
+  repeated string skipped = 2;
+  // True if the app was launched.
+  bool launched = 3;
+}
+
+// Response for `TeleportService.ImportSession`.
+message ImportSessionResponse {
+  // Bundle bytes received so far.
+  uint64 received_bytes = 1;
+  // True if the chunk was a retry and was not written again.
+  bool duplicate = 2;
+  // Set on the final chunk once the import completed.
+  ImportResult result = 3;
+}
+
+// What to do when a received file already exists.
+enum ConflictPolicy {
+  // Not set. Treated as `CONFLICT_POLICY_RENAME`.
+  CONFLICT_POLICY_UNSPECIFIED = 0;
+  // Keep both: the new file becomes "name (1).ext".
+  CONFLICT_POLICY_RENAME = 1;
+  // Replace the existing file.
+  CONFLICT_POLICY_OVERWRITE = 2;
+  // Keep the existing file and drop the new one.
+  CONFLICT_POLICY_SKIP = 3;
+}
+
+// One entry of a file transfer manifest.
+message TransferEntry {
+  // Path relative to the transfer root, "/"-separated. No "..", no
+  // absolute paths.
+  string relative_path = 1;
+  // True for a directory (no content).
+  bool directory = 2;
+  // File size in bytes.
+  uint64 size = 3;
+  // Lowercase hex SHA-256 of the file content.
+  string sha256 = 4;
+  // Unix permission bits. 0 means 0o644 (files) or 0o755 (directories).
+  uint32 mode = 5;
+  // Modification time to preserve.
+  google.protobuf.Timestamp modified_at = 6;
+}
+
+// Request for `TeleportService.BeginReceiveFiles`.
+message BeginReceiveFilesRequest {
+  // Client-chosen transfer id, stable across retries. Repeating the call
+  // with the same id returns the current progress.
+  string transfer_id = 1;
+  // Subdirectory of the guest user's Downloads folder to place the transfer
+  // in. Empty places entries directly in Downloads.
+  string destination_subdir = 2;
+  // All entries. Directories may be listed explicitly or implied by file
+  // paths.
+  repeated TransferEntry entries = 3;
+  // gitignore-syntax patterns applied relative to the transfer root.
+  repeated string ignore_patterns = 4;
+  // Also honor `.gitignore` files that are part of the transfer (their
+  // content must be uploaded first; the server evaluates them at commit).
+  bool honor_gitignore = 5;
+  // What to do with existing files.
+  ConflictPolicy conflict_policy = 6;
+  // How long partial data is kept without progress. Unset means 1 hour.
+  google.protobuf.Duration ttl = 7;
+}
+
+// Progress of one file in a transfer.
+message TransferFileProgress {
+  // Index into the accepted entries.
+  uint32 index = 1;
+  // Bytes received.
+  uint64 received_bytes = 2;
+}
+
+// Response for `TeleportService.BeginReceiveFiles`.
+message BeginReceiveFilesResponse {
+  // The transfer id.
+  string transfer_id = 1;
+  // Entries that will be received, in the order indices refer to.
+  repeated TransferEntry accepted = 2;
+  // Relative paths dropped by ignore patterns.
+  repeated string ignored = 3;
+  // Progress per accepted file, for resuming.
+  repeated TransferFileProgress progress = 4;
+  // Largest chunk accepted.
+  uint32 max_chunk_bytes = 5;
+}
+
+// Request for `TeleportService.ReceiveFilesChunk`.
+message ReceiveFilesChunkRequest {
+  // Which transfer.
+  string transfer_id = 1;
+  // Index into `BeginReceiveFilesResponse.accepted`.
+  uint32 index = 2;
+  // Offset of `data[0]` in that file. Must equal its received bytes; a
+  // chunk wholly below is a duplicate.
+  uint64 offset = 3;
+  // File bytes. At most `max_chunk_bytes`.
+  bytes data = 4;
+}
+
+// Response for `TeleportService.ReceiveFilesChunk`.
+message ReceiveFilesChunkResponse {
+  // Bytes received for that file.
+  uint64 received_bytes = 1;
+  // True if the chunk was a retry.
+  bool duplicate = 2;
+}
+
+// Request for `TeleportService.CommitReceiveFiles`.
+message CommitReceiveFilesRequest {
+  // Which transfer.
+  string transfer_id = 1;
+}
+
+// A file placed by a committed transfer.
+message ReceivedFile {
+  // Final absolute guest path (after conflict renaming).
+  string path = 1;
+  // Size in bytes.
+  uint64 size = 2;
+  // Verified lowercase hex SHA-256.
+  string sha256 = 3;
+}
+
+// Response for `TeleportService.CommitReceiveFiles`.
+message CommitReceiveFilesResponse {
+  // Absolute guest path of the transfer root.
+  string destination = 1;
+  // Files placed.
+  repeated ReceivedFile files = 2;
+  // Relative paths skipped by `CONFLICT_POLICY_SKIP` or by `.gitignore`
+  // rules evaluated at commit.
+  repeated string skipped = 3;
+}
+
+// Request for `TeleportService.AbortReceiveFiles`.
+message AbortReceiveFilesRequest {
+  // Which transfer.
+  string transfer_id = 1;
+}
+
+// Response for `TeleportService.AbortReceiveFiles`.
+message AbortReceiveFilesResponse {}
+
+// Request for `TeleportService.WipeImport`.
+message WipeImportRequest {
+  // Import to wipe, as sent in `ImportSessionRequest.import_id`. Ignored
+  // when `all` is set.
+  string import_id = 1;
+  // Wipe every ledgered import in the guest.
+  bool all = 2;
+}
+
+// Response for `TeleportService.WipeImport`.
+message WipeImportResponse {
+  // Import ids whose ledgers were wiped and removed.
+  repeated string wiped_import_ids = 1;
+  // Absolute guest paths removed (files, and directories the import
+  // created).
+  repeated string removed_paths = 2;
+  // Keychain items removed (macOS guests; 0 elsewhere).
+  uint32 keychain_items_removed = 3;
+  // Cookie rows deleted out of an existing Cookies database the import
+  // merged into (not itself in removed_paths: it was not the import's
+  // file to remove).
+  uint32 cookie_rows_removed = 4;
+}

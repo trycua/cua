@@ -1,0 +1,128 @@
+name: Backfill the downloads CDN
+
+# Copies existing GitHub releases to the downloads CDN (s3://trycua-cua-downloads,
+# CloudFront) with the same script the release jobs use. GitHub stays the source
+# of truth; this only adds copies. Safe to re-run: objects that already match are
+# skipped. Start with dry_run (default) to list what would be copied. Use
+# prefix=test/ for a rehearsal that touches nothing real.
+#
+# tags: explicit tags, one per line or comma separated. Leave empty to copy
+# "current": the newest published release of each product (Cua Spaces,
+# SDK/CLI, spacesd, driver), about 9 GB, plus more Spaces releases with
+# `stable_count`. The rolling tags are opt-in (`include_rolling`, with
+# `follow_refs`): their feeds name every release they list, tens of GB.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tags:
+        description: "Tags to copy (comma or newline separated). Empty = the rolling tags, the newest of each product, and the last N stable Spaces releases"
+        required: false
+        default: ""
+      stable_count:
+        description: "How many of the newest stable Cua Spaces releases to include when tags is empty"
+        required: false
+        default: "1"
+      include_rolling:
+        description: "Also copy the rolling tags (cua-install-latest, cua-spaces-latest, cua-spaces-nightly) when tags is empty. Their feeds name many releases, so turn on follow_refs with it"
+        type: boolean
+        default: false
+      follow_refs:
+        description: "Also copy the releases a feed names (one level). Without it such a feed is held back with a warning. Adds tens of GB"
+        type: boolean
+        default: false
+      dry_run:
+        description: "Only list what would be copied"
+        type: boolean
+        default: true
+      prefix:
+        description: "Key prefix in the bucket (test/ for a rehearsal, empty for real)"
+        required: false
+        default: ""
+      allow_overwrite:
+        description: "Let different bytes replace existing versioned objects (rare)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backfill-downloads-cdn
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Pick the releases
+    if: github.repository == 'trycua/cua'
+    runs-on: ubuntu-latest
+    outputs:
+      tags: ${{ steps.pick.outputs.tags }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+      - id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAGS: ${{ inputs.tags }}
+          STABLE_COUNT: ${{ inputs.stable_count }}
+          INCLUDE_ROLLING: ${{ inputs.include_rolling }}
+        run: |
+          set -euo pipefail
+          extra=()
+          [ "$INCLUDE_ROLLING" = true ] || extra+=(--no-rolling)
+          python3 .github/scripts/backfill_downloads_plan.py --repo "$GITHUB_REPOSITORY" \
+            --tags "$TAGS" --stable-count "${STABLE_COUNT:-1}" "${extra[@]}" > tags.txt
+          cat tags.txt
+          { echo 'tags<<EOF'; cat tags.txt; echo EOF; } >> "$GITHUB_OUTPUT"
+          { echo "### Tags to copy"; echo; sed 's/^/- /' tags.txt; } >> "$GITHUB_STEP_SUMMARY"
+
+  dry-run:
+    name: List what would be copied
+    if: inputs.dry_run
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github/scripts
+            .github/actions
+          persist-credentials: false
+      - uses: ./.github/actions/publish-downloads-cdn
+        with:
+          tags: ${{ needs.plan.outputs.tags }}
+          dry-run: "true"
+          prefix: ${{ inputs.prefix }}
+          follow-refs: ${{ inputs.follow_refs }}
+
+  copy:
+    name: Copy to the CDN
+    if: "!inputs.dry_run"
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    # The publish role trusts main and this environment (OIDC).
+    environment: cua-driver-release-signing
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github/scripts
+            .github/actions
+          persist-credentials: false
+      - uses: ./.github/actions/publish-downloads-cdn
+        with:
+          tags: ${{ needs.plan.outputs.tags }}
+          dry-run: "false"
+          prefix: ${{ inputs.prefix }}
+          allow-overwrite: ${{ inputs.allow_overwrite }}
+          follow-refs: ${{ inputs.follow_refs }}

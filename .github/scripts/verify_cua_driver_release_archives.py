@@ -75,7 +75,7 @@ def release_contracts(version: str) -> tuple[ArchiveContract, ...]:
             (
                 ArchiveContract(
                     f"{stage}.tar.gz",
-                    tuple(f"{stage}/{member}" for member in (*linux_payload, "LICENSE")),
+                    tuple(f"{stage}/{member}" for member in (*linux_payload, "LICENSE", "THIRD_PARTY_NOTICES.md")),
                     (
                         f"{stage}/cua-driver",
                         f"{stage}/cua-cursor-theme",
@@ -109,7 +109,7 @@ def release_contracts(version: str) -> tuple[ArchiveContract, ...]:
             (
                 ArchiveContract(
                     f"{stage}.zip",
-                    tuple(f"{stage}/{member}" for member in (*windows_payload, "LICENSE")),
+                    tuple(f"{stage}/{member}" for member in (*windows_payload, "LICENSE", "THIRD_PARTY_NOTICES.md")),
                     binary_members=tuple(
                         f"{stage}/{member}" for member in windows_payload[:-1]
                     ),
@@ -153,7 +153,7 @@ def release_contracts(version: str) -> tuple[ArchiveContract, ...]:
         contracts.append(
             ArchiveContract(
                 f"{stage}.tar.gz",
-                tuple(f"{stage}/{member}" for member in (*macos_payload, "LICENSE")),
+                tuple(f"{stage}/{member}" for member in (*macos_payload, "LICENSE", "THIRD_PARTY_NOTICES.md")),
                 (
                     f"{stage}/cua-driver",
                     f"{stage}/cua-cursor-theme",

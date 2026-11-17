@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Parity check for `set_value`.
 //!
 //! Tests the Swift-shaped error wording and text format.  We don't issue a
@@ -5,7 +8,9 @@
 //! freshly-walked UIA cache; the response-shape verification on the error
 //! paths is sufficient to lock the parity.
 
+#[cfg(target_os = "windows")]
 use std::io::{Read, Write};
+#[cfg(target_os = "windows")]
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "windows")]

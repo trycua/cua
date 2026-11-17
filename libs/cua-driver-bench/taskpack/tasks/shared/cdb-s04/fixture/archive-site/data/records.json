@@ -1,0 +1,9 @@
+{
+  "schema": "morrowglass-archive/1",
+  "records": [
+    { "id": "vesper-17", "title": "Vesper plate 17", "legacy": true, "layers": [], "summary": "Glass plate transferred from the early index." },
+    { "id": "vesper-21", "title": "Vesper plate 21", "legacy": true, "layers": [], "summary": "Glass plate transferred from the early index." },
+    { "id": "tide-08", "title": "Tide chart 08", "legacy": false, "layers": [{ "id": "shoreline-annotations", "label": "Shoreline annotations" }], "summary": "Annotated tidal survey." },
+    { "id": "tide-11", "title": "Tide chart 11", "legacy": false, "layers": [{ "id": "datum-grid", "label": "Datum grid" }], "summary": "" }
+  ]
+}

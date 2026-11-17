@@ -1,0 +1,77 @@
+{
+  "schema": "cua.transcript.jsonui/2",
+  "cast": "claude-interrupted",
+  "instant": "after-escape",
+  "source": {
+    "cli": "claude",
+    "cliVersion": "2.1.278 (Claude Code)",
+    "layoutProfile": "claude-code/2.x",
+    "frameTimeMs": 14194,
+    "alternateScreen": true,
+    "unsupportedSequences": 0
+  },
+  "elements": [
+    {
+      "type": "rawText",
+      "provenance": "unrecognised",
+      "region": {
+        "firstRow": 0,
+        "lastRow": 29
+      },
+      "lines": [
+        "",
+        "▗ ▗   ▖ ▖  Claude Code v2.1.278",
+        "           Opus 5 (1M context) with low effort · Claude Max",
+        "  ▘▘ ▝▝    /private/tmp/cua-cast-sandbox",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    },
+    {
+      "type": "composer",
+      "provenance": "observed",
+      "region": {
+        "firstRow": 30,
+        "lastRow": 32
+      },
+      "content": "Write a detailed 500 word essay about the history of the calculator into ESSAY.md.",
+      "placeholder": null,
+      "cursorIsInside": true
+    },
+    {
+      "type": "modeIndicator",
+      "provenance": "observed",
+      "region": {
+        "firstRow": 33,
+        "lastRow": 33
+      },
+      "mode": "accept_edits",
+      "rawText": "⏵⏵ accept edits on (shift+tab to cycle)",
+      "hint": "shift+tab to cycle"
+    }
+  ]
+}

@@ -101,7 +101,6 @@ class OtelCallback(AsyncCallbackHandler):
                 duration_seconds=duration,
                 status="success",
                 model=self.model,
-                steps=self.step_count,
             )
 
         self.run_start_time = None
@@ -122,7 +121,6 @@ class OtelCallback(AsyncCallbackHandler):
                 duration_seconds=step_duration,
                 status="success",
                 model=self.model,
-                step_number=self.step_count,
             )
 
         # Start timing next step

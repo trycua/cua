@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Pure decision logic for the token that runs a Windows isolated browser.
 //!
 //! Cua Driver launches an isolated Chrome or Edge only from a vendor-signed

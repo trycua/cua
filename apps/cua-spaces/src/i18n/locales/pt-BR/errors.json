@@ -1,0 +1,9 @@
+{
+  "errors.viewer.stream_unreachable": "Não foi possível acessar o stream da área de trabalho.",
+  "errors.viewer.agent_open_failed": "Não foi possível abrir {agent}: {reason}",
+  "errors.viewer.stop_hotspot_failed": "Não foi possível parar o compartilhamento",
+  "errors.spaces.create_failed": "Não foi possível criar um Space",
+  "errors.spaces.refresh_failed": "Não foi possível atualizar os Spaces. As linhas carregadas antes podem estar desatualizadas.",
+  "errors.spaces.load_failed": "Não foi possível carregar os Spaces. Tente atualizar de novo.",
+  "errors.settings.sign_in_start_failed": "Não foi possível iniciar o login"
+}

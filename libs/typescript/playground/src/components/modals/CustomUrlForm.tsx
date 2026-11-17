@@ -62,7 +62,7 @@ export function CustomUrlForm({
           type="text"
           value={agentUrl}
           onChange={(e) => onAgentUrlChange(e.target.value)}
-          placeholder="http://localhost:8000"
+          placeholder="http://localhost:8080"
           className="w-full rounded-md border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-600 dark:bg-neutral-700 dark:text-white"
           disabled={isLoading}
         />

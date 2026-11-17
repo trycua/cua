@@ -32,6 +32,8 @@ jobs:
     with:
       version: "0.28.2"
       source: release
+      # Cua Driver releases are published on trycua/cua; forks have none.
+      release_repository: trycua/cua
       legacy_unsigned_node_runtime: true
 
   unsigned-node-runtime:
@@ -40,6 +42,7 @@ jobs:
     with:
       version: "0.28.2"
       source: release
+      release_repository: trycua/cua
       verify_windows: false
       expect_macos: fail
 
@@ -49,5 +52,7 @@ jobs:
     with:
       version: "0.28.3"
       source: release
+      # Cua Driver releases are published on trycua/cua; forks have none.
+      release_repository: trycua/cua
       expect_macos: fail
       expect_windows: pass

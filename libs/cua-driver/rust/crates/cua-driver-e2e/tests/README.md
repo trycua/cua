@@ -146,7 +146,14 @@ desktop state outside the repo-local fixtures:
 - `installed_app_launch_macos_test.rs`: macOS Calculator/TextEdit launch focus
   checks. Requires a logged-in GUI session and usable System Events scripting.
 - `installed_app_textedit_macos_test.rs`: real TextEdit background AX write and
-  verification. Requires a logged-in GUI session and Accessibility permission.
+  verification, plus the window-only foreground chord delivered while Finder
+  holds the front or while a sibling document holds the keyboard focus.
+  Requires a logged-in GUI session and Accessibility permission.
+- `screen_sharing_macos_test.rs`: foreground `type_text` into a minimized
+  Apple Screen Sharing window while a sibling connection of the same pid stays
+  open and Finder holds the front. Two in-test VNC servers are the oracle for
+  which connection got the keys. Requires a logged-in GUI session and
+  Accessibility permission.
 - `standalone_browser_behavior_test.rs`: installed Chrome and Edge browser-tool
   targeting, mutation, frame, tab, ambiguity, and isolated-profile rows. The
   harness owns a fresh browser profile and creates adversarial tabs and windows

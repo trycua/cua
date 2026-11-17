@@ -1,0 +1,27 @@
+name: "Rust build cache: save"
+description: >-
+  Saves the sccache directory of a ./.github/actions/rust-cache step that ran
+  with save-always "true". Use it with `if: always()` as the job's last step so
+  the warm cache is kept even when a later test step failed.
+inputs:
+  key:
+    description: "The rust-cache step's `key` output."
+    required: true
+  dir:
+    description: "The rust-cache step's `dir` output."
+    required: true
+  exact-hit:
+    description: "The rust-cache step's `exact-hit` output; an exact hit is not saved again."
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Stop the sccache server so the directory is complete
+      shell: bash
+      run: sccache --stop-server >/dev/null 2>&1 || true
+    - name: Save the sccache directory
+      if: inputs.exact-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ inputs.dir }}
+        key: ${{ inputs.key }}

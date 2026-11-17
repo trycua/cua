@@ -1,8 +1,11 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Private unary carrier, disabled unless CUA_DRIVER_ENVELOPE_HTTP_PORT is set.
 //!
 //! This loopback endpoint is NOT an authentication boundary. A trusted upstream
 //! service must authorize and forward requests inside the guest before any later
-//! Fleet exposure; packaging and exposure require a separate explicit change.
+//! exposure; packaging and exposure require a separate explicit change.
 //! Connection IDs and generations are routing/lifecycle markers, not credentials.
 //! Each connection already has a host-bound root session; independent bound
 //! sessions are unsupported. No request supplies permission options or paths.

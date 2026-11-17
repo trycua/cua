@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Packaged Windows/Linux lifecycle gate for encrypted Computer History.
 //!
 //! This test intentionally uses the installed local product, its authenticated
@@ -41,8 +44,8 @@ fn daemon_socket() -> String {
 fn history_root() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
-        return PathBuf::from(std::env::var_os("LOCALAPPDATA").expect("LOCALAPPDATA must be set"))
-            .join("cua-driver-local/computer-history");
+        PathBuf::from(std::env::var_os("LOCALAPPDATA").expect("LOCALAPPDATA must be set"))
+            .join("cua-driver-local/computer-history")
     }
     #[cfg(target_os = "linux")]
     {
@@ -148,7 +151,7 @@ fn max_sequence(query: &Value) -> u64 {
 fn fixture_path() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
-        return harness_app("harness-electron", "CuaTestHarness.Electron.exe");
+        harness_app("harness-electron", "CuaTestHarness.Electron.exe")
     }
     #[cfg(target_os = "linux")]
     {

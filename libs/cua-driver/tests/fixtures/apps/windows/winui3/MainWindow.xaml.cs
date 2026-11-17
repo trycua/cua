@@ -1,5 +1,9 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Runtime.InteropServices;
+using System.Text.Json;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
@@ -11,6 +15,8 @@ public sealed partial class MainWindow : Window
     private int _counter;
     private int _clickCount;
     private DateTime _lastClickTime = DateTime.MinValue;
+    private readonly string? _fixtureStatePath = Environment.GetEnvironmentVariable("CUA_E2E_FIXTURE_STATE_PATH");
+    private DispatcherQueueTimer? _fixtureStateTimer;
 
     // Keep a strong reference to the subclass delegate so the GC doesn't
     // collect it while Win32 still holds the function pointer.
@@ -21,6 +27,14 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
         Title = "CuaTestHarness WinUI3";
         InstallScrollMessageHook();
+        if (!string.IsNullOrWhiteSpace(_fixtureStatePath))
+        {
+            _fixtureStateTimer = DispatcherQueue.GetForCurrentThread().CreateTimer();
+            _fixtureStateTimer.Interval = TimeSpan.FromMilliseconds(50);
+            _fixtureStateTimer.IsRepeating = false;
+            _fixtureStateTimer.Tick += (_, _) => PublishFixtureState();
+        }
+        PublishFixtureState();
     }
 
     private void OnIncrementClick(object sender, RoutedEventArgs e)
@@ -64,6 +78,40 @@ public sealed partial class MainWindow : Window
     private void OnInputChanged(object sender, TextChangedEventArgs e)
     {
         LblInputMirror.Text = $"mirror={TxtInput.Text}";
+        ScheduleFixtureStatePublish();
+    }
+
+    private void OnMultilineInputChanged(object sender, TextChangedEventArgs e)
+    {
+        ScheduleFixtureStatePublish();
+    }
+
+    private void ScheduleFixtureStatePublish()
+    {
+        if (_fixtureStateTimer is not { } timer) return;
+        timer.Stop();
+        timer.Start();
+    }
+
+    private void PublishFixtureState()
+    {
+        if (string.IsNullOrWhiteSpace(_fixtureStatePath)) return;
+
+        var state = new Dictionary<string, object>
+        {
+            ["txt-input"] = new { text = TxtInput?.Text ?? "" },
+            ["txt-multiline-input"] = new { text = TxtMultilineInput?.Text ?? "" },
+        };
+        try
+        {
+            var temporaryPath = $"{_fixtureStatePath}.{Environment.ProcessId}.tmp";
+            File.WriteAllText(temporaryPath, JsonSerializer.Serialize(state));
+            File.Move(temporaryPath, _fixtureStatePath, true);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"WinUI3 fixture state publish failed: {ex.Message}");
+        }
     }
 
     private void OnSliderChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)

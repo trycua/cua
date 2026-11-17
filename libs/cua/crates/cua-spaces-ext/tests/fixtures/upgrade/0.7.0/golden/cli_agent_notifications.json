@@ -1,0 +1,22 @@
+{
+  "notifications": [
+    {
+      "agent": "ada",
+      "at_ms": 1792859193205,
+      "body": "Ship the fix?",
+      "id": "44d0fee7b23210f3",
+      "kind": "message",
+      "read": false,
+      "title": "Need a decision"
+    },
+    {
+      "agent": null,
+      "at_ms": 1792859193188,
+      "body": "All 12 tests passed",
+      "id": "5522fe10c31a88bc",
+      "kind": "message",
+      "read": true,
+      "title": "Build finished"
+    }
+  ]
+}

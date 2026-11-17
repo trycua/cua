@@ -128,31 +128,23 @@ def create_gradio_ui() -> gr.Blocks:
 
         model_string = get_model_string(model_name, agent_loop_choice)
 
-        computer_args = []
-        if computer_os != "macos":
-            computer_args.append(f'os_type="{computer_os}"')
-        if computer_provider != "lume":
-            computer_args.append(f'provider_type="{computer_provider}"')
-        if container_name:
-            computer_args.append(f'name="{container_name}"')
-        if cua_cloud_api_key:
-            computer_args.append(f'api_key="{cua_cloud_api_key}"')
-
-        computer_args_str = ", ".join(computer_args)
-        if computer_args_str:
-            computer_args_str = f"({computer_args_str})"
+        if computer_provider == "cloud":
+            key_arg = f', api_key="{cua_cloud_api_key}"' if cua_cloud_api_key else ""
+            opener = f'Sandbox.connect("{container_name}"{key_arg})'
         else:
-            computer_args_str = "()"
+            image = {
+                "lume": "Image.macos()",
+                "winsandbox": "Image.windows()",
+                "docker": 'Image.linux(kind="container")',
+            }.get(computer_provider, "Image.linux()")
+            opener = f"Sandbox.ephemeral({image}, local=True)"
 
         code = f"""import asyncio
-try:
-    from computer import Computer
-except ImportError:
-    Computer = None  # type: ignore[assignment,misc]
 from cua_agent import ComputerAgent
+from cua_sandbox import Image, Sandbox
 
 async def main():
-    async with Computer{computer_args_str} as computer:
+    async with {opener} as computer:
         agent = ComputerAgent(
             model="{model_string}",
             tools=[computer],
@@ -227,7 +219,7 @@ if __name__ == "__main__":
                     is_windows = platform.system().lower() == "windows"
                     is_mac = platform.system().lower() == "darwin"
 
-                    providers = ["cloud", "localhost", "docker"]
+                    providers = ["cloud", "docker"]
                     if is_mac:
                         providers += ["lume"]
                     if is_windows:
@@ -477,25 +469,6 @@ if __name__ == "__main__":
                         visible=(initial_model == "Custom model (OpenAI compatible API)"),
                         interactive=True,
                         type="password",
-                    )
-
-                    # Provider visibility update function
-                    def update_provider_visibility(provider):
-                        """Update visibility of container name and API key based on selected provider."""
-                        is_localhost = provider == "localhost"
-                        return [
-                            gr.update(visible=not is_localhost),  # container_name
-                            gr.update(
-                                visible=not is_localhost and not has_cua_key
-                            ),  # cua_cloud_api_key
-                        ]
-
-                    # Connect provider change event
-                    computer_provider.change(
-                        fn=update_provider_visibility,
-                        inputs=[computer_provider],
-                        outputs=[container_name, cua_cloud_api_key],
-                        queue=False,
                     )
 
                     # Connect UI update events

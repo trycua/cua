@@ -1,0 +1,10 @@
+{
+  "settings.this_machine.sharing_label": "共有",
+  "settings.cloud.clouds_label": "クラウド",
+  "settings.cloud.sign_in_found": "サインインが見つかりました",
+  "settings.cloud.touches_label": "Cua が操作する対象",
+  "settings.cloud.checks_label": "チェック",
+  "settings.accessibility.enable_window_drag": "システム設定 → プライバシー → アクセシビリティでウィンドウのドラッグを有効にします",
+  "settings.language.label": "言語",
+  "settings.language.system_default": "システムのデフォルト"
+}

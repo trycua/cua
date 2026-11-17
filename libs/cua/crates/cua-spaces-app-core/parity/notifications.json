@@ -1,0 +1,32 @@
+{
+  "name": "notifications",
+  "about": "Notifications: the first poll posts nothing and marks the backlog seen; a new turn end is posted once; a burst posts the newest three and one summary; the list and mark-all.",
+  "nowMs": 1790000060000,
+  "steps": [
+    {
+      "step": "first poll",
+      "seenMs": 0,
+      "feed": [
+        { "id": "n1", "atMs": 1789990000000, "agent": "ada", "kind": "turn_ended", "title": "ada", "body": "Done.", "read": true }
+      ]
+    },
+    {
+      "step": "a turn ended",
+      "feed": [
+        { "id": "n1", "atMs": 1789990000000, "agent": "ada", "kind": "turn_ended", "title": "ada", "body": "Done.", "read": true },
+        { "id": "n2", "atMs": 1790000000000, "agent": "ada", "kind": "turn_ended", "title": "ada", "body": "Your research is ready.\n3 sources." }
+      ]
+    },
+    { "step": "the same feed again" },
+    {
+      "step": "a burst",
+      "feed": [
+        { "id": "n2", "atMs": 1790000000000, "agent": "ada", "kind": "turn_ended", "title": "ada", "body": "Your research is ready." },
+        { "id": "n3", "atMs": 1790000010000, "agent": "ada", "kind": "message", "title": "Heads up", "body": "The build broke." },
+        { "id": "n4", "atMs": 1790000020000, "agent": "bob", "kind": "approval", "title": "bob asks to sign in", "body": "Approve or deny it in Cua." },
+        { "id": "n5", "atMs": 1790000030000, "agent": "bob", "kind": "error", "title": "bob ran into a problem", "body": "" },
+        { "id": "n6", "atMs": 1790000040000, "agent": "ada", "kind": "turn_ended", "title": "ada", "body": "Filed the issue." }
+      ]
+    }
+  ]
+}

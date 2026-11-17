@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `get_window_state` perception contract,
 //! asserted on each platform's native controlled-harness app.
 //!
@@ -19,13 +22,15 @@
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "macos")]
+use cua_driver_testkit::ax::element_index_by_id;
 use cua_driver_testkit::e2e::{
     execute_case, native_readonly_case, recording_evidence, DriverRoute, Evidence, Observation,
     OracleKind, Targeting,
 };
 #[cfg(target_os = "windows")]
 use cua_driver_testkit::e2e::{CaseSpec, Delivery, Scope};
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 use cua_driver_testkit::observer::TargetWindow;
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 use cua_driver_testkit::sentinel::ForegroundSentinel;
@@ -129,16 +134,17 @@ fn snapshot_settled(driver: &mut McpDriver, pid: u32, wid: u64, mode: &str) -> T
 /// Snapshot with NO capture_mode / no extra args (the default path), retrying
 /// until the tree settles.
 fn snapshot_settled_default(driver: &mut McpDriver, pid: u32, wid: u64) -> ToolResponse {
+    // A cold window can serve its tree before its first frame is capturable,
+    // so settle on both halves of the default response, not the tree alone.
     let args = serde_json::json!({ "pid": pid as i64, "window_id": wid });
-    let mut resp = driver.call("get_window_state", args.clone());
-    for _ in 0..16 {
-        if tree_has_marker(&resp) {
-            break;
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let resp = driver.call("get_window_state", args.clone());
+        if (tree_has_marker(&resp) && has_image(&resp)) || std::time::Instant::now() >= deadline {
+            return resp;
         }
-        std::thread::sleep(Duration::from_millis(500));
-        resp = driver.call("get_window_state", args.clone());
+        std::thread::sleep(Duration::from_millis(100));
     }
-    resp
 }
 
 /// Snapshot with `include_screenshot:false` (the perf opt-out), retrying until
@@ -717,4 +723,522 @@ fn background_screenshot_preserves_desktop() {
         passed.push(OracleKind::Pixels);
         Observation::delivered(passed, Evidence::default())
     });
+}
+
+/// The `element_token` of the snapshot element whose tree line names `name`.
+#[cfg(target_os = "linux")]
+fn element_token(resp: &ToolResponse, name: &str) -> String {
+    let index = cua_driver_testkit::ax::element_index_containing(resp.tree_text(), name)
+        .unwrap_or_else(|| panic!("{name:?} not in the tree: {}", resp.tree_text()));
+    resp.structured()["elements"]
+        .as_array()
+        .and_then(|elements| {
+            elements
+                .iter()
+                .find(|element| element["element_index"].as_u64() == Some(index))
+        })
+        .and_then(|element| element["element_token"].as_str())
+        .unwrap_or_else(|| panic!("{name:?} has no element_token"))
+        .to_owned()
+}
+
+/// The decoded RGBA screenshot of a `get_window_state` response.
+#[cfg(target_os = "linux")]
+fn screenshot_rgba(resp: &ToolResponse) -> image::RgbaImage {
+    use base64::Engine as _;
+    let png = resp.raw["result"]["content"]
+        .as_array()
+        .and_then(|content| {
+            content
+                .iter()
+                .find(|entry| entry["type"].as_str() == Some("image"))
+        })
+        .and_then(|entry| entry["data"].as_str())
+        .unwrap_or_else(|| panic!("response carries no screenshot: {}", resp.raw));
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(png)
+        .expect("screenshot is base64");
+    image::load_from_memory(&bytes)
+        .expect("screenshot decodes")
+        .to_rgba8()
+}
+
+/// On the nested cua-compositor, a GTK3 window covered by the foreground
+/// sentinel still yields its own, fresh pixels: the screenshot is the
+/// target's size, PX targeting can use it, and it changes when the covered
+/// fixture changes. Neither capture may disturb the foreground desktop.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore]
+fn occluded_cua_compositor_window_capture_is_fresh() {
+    if std::env::var_os("CUA_INJECT_SOCKET").is_none() {
+        return;
+    }
+    let case = cua_driver_testkit::e2e::CaseSpec::delivered(
+        "linux-gtk3-screenshot-px-background",
+        "gtk3",
+        "gtk3",
+        "screenshot",
+        Targeting::Px,
+        cua_driver_testkit::e2e::Delivery::Background,
+        cua_driver_testkit::e2e::Scope::Window,
+        DriverRoute::WindowState,
+        vec![
+            OracleKind::Pixels,
+            OracleKind::FixtureState,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::NoLeakedInput,
+        ],
+    );
+    let cell_id = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = test_driver(&cell_id).expect("start exact source-built driver");
+        *evidence = recording_evidence(driver.recording_dir());
+        let (pid, wid) = launch(&mut driver).expect("required capture harness did not launch");
+        let target = TargetWindow {
+            pid,
+            native_id: wid,
+        };
+        let tree = snapshot_settled_tree_only(&mut driver, pid, wid);
+        assert!(tree_has_marker(&tree), "fixture tree never settled");
+
+        let sentinel = ForegroundSentinel::launch(&mut driver);
+        sentinel
+            .assert_background_posture(target)
+            .expect("the sentinel covers the fixture");
+        driver.start_behavior_recording();
+        sentinel
+            .prepare_background_observation(&mut driver, target)
+            .expect("re-establish background posture after recording setup");
+        let (captures, mut passed) = sentinel
+            .observe_background(target, || {
+                let args = serde_json::json!({ "pid": pid as i64, "window_id": wid });
+                let mut captures = vec![driver.call("get_window_state", args.clone())];
+                // Several increments: a covered client that is no longer sent
+                // frame callbacks draws one more frame and then goes stale.
+                for count in 1..=3 {
+                    let increment = element_token(captures.last().unwrap(), TREE_MARKER);
+                    let clicked = driver.call(
+                        "click",
+                        serde_json::json!({
+                            "pid": pid as i64,
+                            "window_id": wid,
+                            "element_token": increment,
+                            "delivery_mode": "background"
+                        }),
+                    );
+                    assert!(
+                        !clicked.is_error(),
+                        "background increment failed: {}",
+                        clicked.text()
+                    );
+                    let expected = format!("counter={count}");
+                    let deadline = Instant::now() + Duration::from_secs(5);
+                    let capture = loop {
+                        let capture = driver.call("get_window_state", args.clone());
+                        if capture.tree_text().contains(&expected) || Instant::now() >= deadline {
+                            break capture;
+                        }
+                        std::thread::sleep(Duration::from_millis(200));
+                    };
+                    assert!(
+                        capture.tree_text().contains(&expected),
+                        "background increment {count} never reached the fixture"
+                    );
+                    // Let the client draw the change before the next capture.
+                    std::thread::sleep(Duration::from_millis(500));
+                    captures.push(driver.call("get_window_state", args.clone()));
+                }
+                captures
+            })
+            .unwrap_or_else(|error| panic!("occluded capture disturbed the desktop: {error}"));
+
+        assert!(captures[0].tree_text().contains("counter=0"));
+        let pixels = captures
+            .iter()
+            .map(|capture| {
+                let png = screenshot_rgba(capture);
+                assert_eq!(capture.structured()["screenshot_frame_valid"], true);
+                assert_eq!(
+                    (
+                        capture.structured()["screenshot_width"].as_u64(),
+                        capture.structured()["screenshot_height"].as_u64()
+                    ),
+                    (Some(png.width() as u64), Some(png.height() as u64)),
+                );
+                png
+            })
+            .collect::<Vec<_>>();
+        // The 1280x900 sentinel is larger than the fixture, so a crop of the
+        // output would be the sentinel's size.
+        assert!(
+            pixels[0].width() < 1280 && pixels[0].height() < 900,
+            "capture is not the fixture window: {:?}",
+            pixels[0].dimensions()
+        );
+        for (count, pair) in pixels.windows(2).enumerate() {
+            assert_eq!(pair[0].dimensions(), pair[1].dimensions());
+            assert_ne!(
+                pair[0].as_raw(),
+                pair[1].as_raw(),
+                "the capture after increment {} still shows the previous frame",
+                count + 1
+            );
+        }
+        passed.extend([OracleKind::Pixels, OracleKind::FixtureState]);
+        Observation::delivered(passed, Evidence::default())
+    });
+}
+
+/// On the nested cua-compositor, a background PX `type_text` aims at the
+/// pixel of the window's own screenshot, even when that screenshot is
+/// downscaled: the point must land on the field in the screenshot, not on
+/// whatever sits at the same number in window pixels. Without a screenshot of
+/// the window, the point is refused before anything is clicked or typed.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore]
+fn downscaled_cua_compositor_px_type_text_reaches_the_field() {
+    if std::env::var_os("CUA_INJECT_SOCKET").is_none() {
+        return;
+    }
+    let case = cua_driver_testkit::e2e::CaseSpec::delivered(
+        "linux-gtk3-type-text-px-background-downscaled",
+        "gtk3",
+        "gtk3",
+        "type_text",
+        Targeting::Px,
+        cua_driver_testkit::e2e::Delivery::Background,
+        cua_driver_testkit::e2e::Scope::Window,
+        DriverRoute::WindowState,
+        vec![
+            OracleKind::FixtureState,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::NoLeakedInput,
+        ],
+    );
+    let cell_id = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = test_driver(&cell_id).expect("start exact source-built driver");
+        *evidence = recording_evidence(driver.recording_dir());
+        let (pid, wid) = launch(&mut driver).expect("required capture harness did not launch");
+        let target = TargetWindow {
+            pid,
+            native_id: wid,
+        };
+        let tree = snapshot_settled_tree_only(&mut driver, pid, wid);
+        assert!(tree_has_marker(&tree), "fixture tree never settled");
+        let text = "cua-downscaled";
+        let type_at = |driver: &mut McpDriver, x: f64, y: f64| {
+            driver.call(
+                "type_text",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "x": x,
+                    "y": y,
+                    "text": text,
+                    "delivery_mode": "background"
+                }),
+            )
+        };
+
+        // The tree-only read published no screenshot frame.
+        let refused = type_at(&mut driver, 10.0, 10.0);
+        assert_eq!(
+            refused.structured()["code"],
+            "screenshot_context_missing",
+            "a PX point read off no screenshot must be refused: {}",
+            refused.text()
+        );
+
+        let sentinel = ForegroundSentinel::launch(&mut driver);
+        sentinel
+            .assert_background_posture(target)
+            .expect("the sentinel covers the fixture");
+        driver.start_behavior_recording();
+        sentinel
+            .prepare_background_observation(&mut driver, target)
+            .expect("re-establish background posture after recording setup");
+        let (after, passed) = sentinel
+            .observe_background(target, || {
+                // Half the window's width, so screenshot and window pixels differ.
+                let shot = driver.call(
+                    "get_window_state",
+                    serde_json::json!({
+                        "pid": pid as i64,
+                        "window_id": wid,
+                        "max_image_dimension": 300
+                    }),
+                );
+                let width = shot.structured()["screenshot_width"]
+                    .as_f64()
+                    .unwrap_or_else(|| panic!("no screenshot: {}", shot.text()));
+                let original = shot.structured()["screenshot_original_width"]
+                    .as_f64()
+                    .unwrap_or(width);
+                assert!(
+                    original >= width * 1.5,
+                    "the screenshot was not downscaled: {width} of {original}"
+                );
+                // Screen frame -> window-local -> screenshot pixels.
+                let structured = shot.structured();
+                let field = structured["elements"]
+                    .as_array()
+                    .and_then(|elements| {
+                        elements
+                            .iter()
+                            .find(|element| element["label"].as_str() == Some("txt-input"))
+                    })
+                    .map(|element| element["frame"].clone())
+                    .unwrap_or_else(|| panic!("txt-input has no frame: {}", shot.raw));
+                let number = |value: &serde_json::Value, key: &str| {
+                    value[key]
+                        .as_f64()
+                        .unwrap_or_else(|| panic!("{key} missing from {value}"))
+                };
+                let bounds = &structured["window_bounds"];
+                let scale = width / original;
+                let typed = type_at(
+                    &mut driver,
+                    (number(&field, "x") + number(&field, "w") / 2.0 - number(bounds, "x")) * scale,
+                    (number(&field, "y") + number(&field, "h") / 2.0 - number(bounds, "y")) * scale,
+                );
+                assert!(!typed.is_error(), "PX type_text failed: {}", typed.text());
+                let expected = format!("mirror={text}");
+                let deadline = Instant::now() + Duration::from_secs(5);
+                loop {
+                    let state = snapshot_settled_tree_only(&mut driver, pid, wid);
+                    if state.tree_text().contains(&expected) || Instant::now() >= deadline {
+                        break state;
+                    }
+                    std::thread::sleep(Duration::from_millis(200));
+                }
+            })
+            .unwrap_or_else(|error| panic!("PX type_text disturbed the desktop: {error}"));
+        assert!(
+            after.tree_text().contains(&format!("mirror={text}")),
+            "the text never reached the field the screenshot pixel names"
+        );
+        let mut passed = passed;
+        passed.push(OracleKind::FixtureState);
+        Observation::delivered(passed, Evidence::default())
+    });
+}
+
+// ── JPEG screenshots (macOS) ────────────────────────────────────────────────
+
+/// The structured `elements` entry for the marker button. On AppKit the
+/// marker is only the accessibility identifier, shown as `id=...` in the tree
+/// text, so find its `[N]` index there and join on `element_index`.
+#[cfg(target_os = "macos")]
+fn marker_element(resp: &ToolResponse) -> Option<&serde_json::Value> {
+    let index = element_index_by_id(resp.tree_text(), TREE_MARKER)?;
+    resp.structured()["elements"]
+        .as_array()?
+        .iter()
+        .find(|e| e["element_index"].as_u64() == Some(index))
+}
+
+/// A session label unique to one test invocation, so it never matches a
+/// tombstone left on the shared daemon by an earlier session.
+#[cfg(target_os = "macos")]
+fn jpeg_session(case: &str) -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    format!("jpeg-capture-{case}-{}-{nanos}", std::process::id())
+}
+
+/// `get_window_state` with `extra` merged into the request, retried until the
+/// `btn-increment` element and a screenshot (inline or written to a file) are
+/// both present, or a bounded deadline passes.
+#[cfg(target_os = "macos")]
+fn snapshot_with(
+    driver: &mut McpDriver,
+    pid: u32,
+    wid: u64,
+    session: &str,
+    extra: serde_json::Value,
+) -> ToolResponse {
+    let mut args = serde_json::json!({
+        "pid": pid as i64,
+        "window_id": wid,
+        "session": session,
+        "tree_format": "both",
+    });
+    args.as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().unwrap().clone());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let resp = driver.call("get_window_state", args.clone());
+        let shot = has_image(&resp)
+            || resp.structured()["screenshot_file_path"]
+                .as_str()
+                .is_some_and(|p| !p.is_empty());
+        if (marker_element(&resp).is_some() && shot) || Instant::now() >= deadline {
+            return resp;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn image_parts(resp: &ToolResponse) -> Vec<serde_json::Value> {
+    resp.raw["result"]["content"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter(|c| c["type"].as_str() == Some("image"))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[cfg(target_os = "macos")]
+fn assert_jpeg_at_screenshot_size(bytes: &[u8], resp: &ToolResponse) {
+    assert_eq!(&bytes[..3], &[0xFF, 0xD8, 0xFF], "JPEG SOI marker");
+    let decoded = image::load_from_memory_with_format(bytes, image::ImageFormat::Jpeg).unwrap();
+    let s = resp.structured();
+    assert_eq!(
+        (u64::from(decoded.width()), u64::from(decoded.height())),
+        (
+            s["screenshot_width"].as_u64().unwrap(),
+            s["screenshot_height"].as_u64().unwrap()
+        )
+    );
+}
+
+/// The `screenshot_frame` of the `btn-increment` element, as `[x, y, w, h]`.
+#[cfg(target_os = "macos")]
+fn marker_frames(resp: &ToolResponse) -> ([f64; 4], [f64; 4]) {
+    let text = resp.tree_text();
+    let element = marker_element(resp)
+        .unwrap_or_else(|| panic!("{TREE_MARKER} element not found in elements: {text}"))
+        .clone();
+    let get = |v: &serde_json::Value, keys: [&str; 4]| {
+        keys.map(|k| {
+            v[k].as_f64()
+                .unwrap_or_else(|| panic!("{k} is not a number: {v}"))
+        })
+    };
+    (
+        get(&element["frame"], ["x", "y", "w", "h"]),
+        get(&element["screenshot_frame"], ["x", "y", "w", "h"]),
+    )
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore]
+fn jpeg_screenshot_keeps_pixel_mapping_and_mints_no_capture_id() {
+    run_capture_case(
+        "jpeg_pixel_mapping",
+        vec![OracleKind::AxState, OracleKind::Pixels],
+        |pid, wid, driver| {
+            use base64::Engine as _;
+            let session = jpeg_session("pixel-mapping");
+            let png = snapshot_with(driver, pid, wid, &session, serde_json::json!({}));
+            assert!(
+                marker_element(&png).is_some(),
+                "PNG read lacks {TREE_MARKER}"
+            );
+            assert!(!png.is_error(), "PNG read errored: {}", png.text());
+            let p = png.structured();
+            assert_eq!(p["screenshot_mime_type"], "image/png");
+            assert!(
+                p["capture_id"].as_str().is_some_and(|id| !id.is_empty()),
+                "a PNG read must mint a capture_id: {p}"
+            );
+
+            let jpeg = snapshot_with(
+                driver,
+                pid,
+                wid,
+                &session,
+                serde_json::json!({ "screenshot_format": "jpeg" }),
+            );
+            assert!(
+                marker_element(&jpeg).is_some(),
+                "JPEG read lacks {TREE_MARKER}"
+            );
+            assert!(!jpeg.is_error(), "JPEG read errored: {}", jpeg.text());
+            let j = jpeg.structured();
+            let parts = image_parts(&jpeg);
+            assert_eq!(parts.len(), 1, "exactly one image part");
+            assert_eq!(parts[0]["mimeType"], "image/jpeg");
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(parts[0]["data"].as_str().unwrap())
+                .unwrap();
+            assert_jpeg_at_screenshot_size(&bytes, &jpeg);
+            assert_eq!(j["screenshot_mime_type"], "image/jpeg");
+            assert!(j.get("capture_id").is_none(), "JPEG minted a capture_id");
+            assert!(j.get("snapshot_id").is_some(), "snapshot_id missing");
+
+            for key in [
+                "screenshot_width",
+                "screenshot_height",
+                "screenshot_scale",
+                "window_bounds",
+            ] {
+                assert!(!j[key].is_null(), "{key} missing");
+                assert_eq!(p[key], j[key], "{key} differs between PNG and JPEG");
+            }
+
+            let (png_frame, png_shot) = marker_frames(&png);
+            let (jpeg_frame, jpeg_shot) = marker_frames(&jpeg);
+            assert_eq!(png_shot, jpeg_shot, "screenshot_frame differs");
+            assert_eq!(png_frame, jpeg_frame, "frame differs");
+            let bounds = &j["window_bounds"];
+            let scale = j["screenshot_width"].as_f64().unwrap() / bounds["width"].as_f64().unwrap();
+            let (ox, oy) = (bounds["x"].as_f64().unwrap(), bounds["y"].as_f64().unwrap());
+            let [x, y, w, h] = jpeg_frame;
+            let expected = [
+                ((x - ox) * scale).round(),
+                ((y - oy) * scale).round(),
+                (w * scale).round(),
+                (h * scale).round(),
+            ];
+            assert_eq!(jpeg_shot, expected, "screenshot_frame mapping");
+        },
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore]
+fn jpeg_screenshot_out_file_contains_jpeg() {
+    run_capture_case(
+        "jpeg_out_file",
+        vec![OracleKind::AxState, OracleKind::Pixels],
+        |pid, wid, driver| {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("shot.jpg");
+            let resp = snapshot_with(
+                driver,
+                pid,
+                wid,
+                &jpeg_session("out-file"),
+                serde_json::json!({
+                    "screenshot_format": "jpeg",
+                    "screenshot_out_file": path.to_str().unwrap(),
+                }),
+            );
+            assert!(!resp.is_error(), "JPEG read errored: {}", resp.text());
+            assert!(
+                image_parts(&resp).is_empty(),
+                "out file must omit the image part"
+            );
+            let s = resp.structured();
+            assert_eq!(s["screenshot_file_path"], path.to_str().unwrap());
+            assert_jpeg_at_screenshot_size(&std::fs::read(&path).unwrap(), &resp);
+            assert_eq!(s["screenshot_mime_type"], "image/jpeg");
+            assert!(s.get("capture_id").is_none(), "JPEG minted a capture_id");
+        },
+    );
 }

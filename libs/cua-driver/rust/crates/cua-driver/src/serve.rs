@@ -3320,6 +3320,25 @@ mod gate_tests {
                 "owner_transport": "mcp_stdio",
             })
         );
+        let foreign_start = send("call", Some("start_session"), Some("ra-transport"), cli).await;
+        assert_eq!(refusal(&foreign_start), foreign);
+        let result = foreign_start.result.as_ref().unwrap();
+        let hint = result
+            .pointer("/structuredContent/hint")
+            .and_then(Value::as_str)
+            .unwrap();
+        assert!(hint.contains("Make the call from that connection, or use a new session label."));
+        assert!(result.pointer("/structuredContent/next_call").is_none());
+        assert!(result["content"].as_array().unwrap().iter().any(|item| {
+            item["text"]
+                .as_str()
+                .is_some_and(|text| text.contains(hint))
+        }));
+        let serialized = result.to_string();
+        assert!(!serialized.contains(mcp));
+        assert!(!serialized.contains(cli));
+        assert!(!serialized.contains("__cua_runtime_"));
+
         assert_eq!(
             PROBE_INVOCATIONS.load(Ordering::SeqCst),
             1,
@@ -3339,6 +3358,14 @@ mod gate_tests {
             "{after:?}"
         );
         assert_eq!(PROBE_INVOCATIONS.load(Ordering::SeqCst), 2);
+        let reverse = send("call", Some("start_session"), Some("ra-transport"), mcp).await;
+        assert_eq!(refusal(&reverse)["owner_transport"], "cli");
+        assert_eq!(
+            refusal(&reverse)["code"],
+            "session_owned_by_other_transport"
+        );
+        let repeated = send("call", Some("start_session"), Some("ra-transport"), cli).await;
+        assert_ne!(repeated.result.unwrap()["isError"], true);
 
         let _ = send("shutdown", None, None, cli).await;
         let _ = server.await;

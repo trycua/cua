@@ -51,7 +51,20 @@ fn registry_with(name: &str) -> Arc<ToolRegistry> {
     registry.register(Box::new(Stub(ToolDef {
         name: name.to_owned(),
         description: "stub".to_owned(),
-        input_schema: json!({"type": "object", "properties": {}}),
+        input_schema: if name == "get_window_state" {
+            json!({
+                "type": "object",
+                "properties": {
+                    "pid": {"type": "integer"},
+                    "window_id": {"type": "integer"},
+                    "max_dimension": {"type": "integer", "minimum": 1},
+                    "max_image_dimension": {"type": "integer", "minimum": 0}
+                },
+                "additionalProperties": false
+            })
+        } else {
+            json!({"type": "object", "properties": {}})
+        },
         read_only: true,
         destructive: false,
         idempotent: true,
@@ -60,6 +73,67 @@ fn registry_with(name: &str) -> Arc<ToolRegistry> {
     let registry = Arc::new(registry);
     registry.init_self_weak();
     registry
+}
+
+#[tokio::test]
+async fn window_state_rejects_invalid_legacy_screenshot_caps_before_dispatch() {
+    let registry = registry_with("get_window_state");
+    for invalid in [
+        json!(0),
+        json!(-1),
+        json!(1.5),
+        json!(true),
+        json!("bad"),
+        json!(u64::from(u32::MAX) + 1),
+    ] {
+        for canonical_override in [None, Some(0)] {
+            let mut args = json!({"pid": 42, "window_id": 7, "max_dimension": invalid});
+            if let Some(canonical_override) = canonical_override {
+                args["max_image_dimension"] = json!(canonical_override);
+            }
+            let result = registry
+                .invoke_with_context("get_window_state", args.clone(), unrestricted_context())
+                .await;
+            assert_eq!(result.is_error, Some(true), "accepted {args}");
+            let refusal = result.structured_content.expect("structured refusal");
+            assert_eq!(refusal["code"], "invalid_arguments", "{args}");
+            assert_eq!(refusal["tool"], "get_window_state");
+            assert!(refusal["detail"]
+                .as_str()
+                .unwrap()
+                .contains("max_dimension"));
+        }
+    }
+}
+
+#[tokio::test]
+async fn window_state_accepts_valid_caps_and_native_resolution_override() {
+    let registry = registry_with("get_window_state");
+    for cap in [
+        None,
+        Some(json!(null)),
+        Some(json!(1)),
+        Some(json!(1024)),
+        Some(json!(u32::MAX)),
+    ] {
+        for canonical_override in [None, Some(0), Some(2048)] {
+            let mut args = json!({"pid": 42, "window_id": 7});
+            if let Some(cap) = &cap {
+                args["max_dimension"] = cap.clone();
+            }
+            if let Some(canonical_override) = canonical_override {
+                args["max_image_dimension"] = json!(canonical_override);
+            }
+            let result = registry
+                .invoke_with_context("get_window_state", args.clone(), unrestricted_context())
+                .await;
+            assert_eq!(
+                serde_json::to_value(result).unwrap(),
+                serde_json::to_value(ToolResult::text("stub")).unwrap(),
+                "valid arguments did not reach the backend: {args}"
+            );
+        }
+    }
 }
 
 #[tokio::test]

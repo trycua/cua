@@ -2033,6 +2033,24 @@ impl ToolRegistry {
         // Normalize deprecated public argument spellings before any policy,
         // consent, recording, or implementation layer interprets the call.
         coerce_string_scalars(&tool.def().input_schema, &mut args);
+        // Enforce the legacy screenshot cap before any platform lookup or
+        // capture. Zero is native resolution only for max_image_dimension.
+        if resolved_name == "get_window_state" {
+            if let Some(value) = args.get("max_dimension").filter(|value| !value.is_null()) {
+                if !value
+                    .as_u64()
+                    .is_some_and(|cap| (1..=u64::from(u32::MAX)).contains(&cap))
+                {
+                    let detail = "max_dimension must be an integer between 1 and 4294967295";
+                    return ToolResult::error(format!("get_window_state: {detail}"))
+                        .with_structured(serde_json::json!({
+                            "code": "invalid_arguments",
+                            "tool": "get_window_state",
+                            "detail": detail,
+                        }));
+                }
+            }
+        }
         normalize_delivery_mode_args(tool.def(), &mut args);
         if let Err(detail) = normalize_argument_aliases(resolved_name, &mut args) {
             return ToolResult::error(format!("{resolved_name}: {detail}")).with_structured(

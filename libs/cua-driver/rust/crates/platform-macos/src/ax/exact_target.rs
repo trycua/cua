@@ -781,17 +781,26 @@ mod tests {
             })
         );
         // Addressed to the sheet: its own controls only, never the parent's.
-        assert_eq!(element_ancestry(in_sheet, false, 15304), ProvenDescendant);
         assert_eq!(
-            element_ancestry(in_parent, false, 15304),
+            element_ancestry(in_sheet, false, false, 15304),
+            ProvenDescendant
+        );
+        assert_eq!(
+            element_ancestry(in_parent, false, false, 15304),
             OutsideTargetWindow
         );
         // Addressed to the parent: the sheet is modal to it and counts.
-        assert_eq!(element_ancestry(in_sheet, false, 167), ProvenDescendant);
-        assert_eq!(element_ancestry(in_parent, false, 167), ProvenDescendant);
+        assert_eq!(
+            element_ancestry(in_sheet, false, false, 167),
+            ProvenDescendant
+        );
+        assert_eq!(
+            element_ancestry(in_parent, false, false, 167),
+            ProvenDescendant
+        );
         // Another window is outside both.
         assert_eq!(
-            element_ancestry(Some(AxWindowId::window(200)), false, 15304),
+            element_ancestry(Some(AxWindowId::window(200)), false, false, 15304),
             OutsideTargetWindow
         );
     }

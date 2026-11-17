@@ -1047,6 +1047,7 @@ struct FixtureStalls {
     dismissals: AtomicUsize,
     /// Turning remote debugging back off blocks its thread while this holds.
     hold_cleanup: AtomicBool,
+    cleanup_fails: AtomicBool,
     cleanup_finished: AtomicBool,
 }
 
@@ -1057,6 +1058,7 @@ impl Default for FixtureStalls {
             fingerprints: AtomicUsize::new(usize::MAX),
             dismissals: AtomicUsize::new(usize::MAX),
             hold_cleanup: AtomicBool::new(false),
+            cleanup_fails: AtomicBool::new(false),
             cleanup_finished: AtomicBool::new(false),
         }
     }
@@ -1269,6 +1271,12 @@ impl BrowserPlatform for FixturePlatform {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         self.stalls.cleanup_finished.store(true, Ordering::SeqCst);
+        if self.stalls.cleanup_fails.load(Ordering::SeqCst) {
+            return Err(BrowserRefusal::new(
+                super::refusal::BrowserRefusalCode::BrowserRouteUnavailable,
+                "fixture cleanup failed",
+            ));
+        }
         Ok(true)
     }
 
@@ -1778,7 +1786,27 @@ async fn existing_profile_reconnect_refuses_within_its_bound_when_a_process_chec
         !stalls.cleanup_finished.load(Ordering::SeqCst),
         "the refusal must not wait for a stalled remote-debugging cleanup"
     );
+
+    // The cleanup fails after the refusal went out; it must still be queued
+    // for the session-end retry.
+    stalls.cleanup_fails.store(true, Ordering::SeqCst);
     stalls.hold_cleanup.store(false, Ordering::SeqCst);
+    let queued = || {
+        f.engine
+            .pending_existing_profile_cleanups
+            .lock()
+            .unwrap()
+            .get(SESSION)
+            .map_or(0, Vec::len)
+    };
+    for _ in 0..500 {
+        if queued() > 0 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(queued(), 1, "a late cleanup failure is queued for retry");
 }
 
 #[tokio::test]

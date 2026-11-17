@@ -103,7 +103,8 @@ pub struct BrowserEngine {
     pub(crate) protected_resource_ownership: Arc<crate::consent::ProtectedResourceOwnershipStore>,
     mutation_gates: MutationGates,
     reconnect_gates: ReconnectGates,
-    pending_existing_profile_cleanups: Mutex<HashMap<String, Vec<ExistingProfileSetupRequest>>>,
+    pub(crate) pending_existing_profile_cleanups:
+        Arc<Mutex<HashMap<String, Vec<ExistingProfileSetupRequest>>>>,
     session_end_hook: Mutex<Option<crate::session::SessionEndHookRegistration>>,
 }
 
@@ -738,7 +739,7 @@ impl BrowserEngine {
             protected_resource_ownership,
             mutation_gates: MutationGates::new(),
             reconnect_gates: ReconnectGates::new(),
-            pending_existing_profile_cleanups: Mutex::new(HashMap::new()),
+            pending_existing_profile_cleanups: Default::default(),
             session_end_hook: Mutex::new(None),
         });
         let weak: Weak<Self> = Arc::downgrade(&engine);
@@ -832,19 +833,7 @@ impl BrowserEngine {
             GrantLookup::Missing => Ok(None),
             GrantLookup::Live(grant) => Ok(Some(grant)),
             GrantLookup::Expired(grant) => {
-                if grant.cleanup_remote_debugging {
-                    self.restore_remote_debugging(session, &grant).await;
-                }
-                self.pool
-                    .release_existing(
-                        &grant.endpoint_ws_url,
-                        grant.generation,
-                        SharedSocketRelease::Close,
-                    )
-                    .await;
-                if let Some(protected) = grant.protected_consent.as_ref() {
-                    self.approval_broker.revoke(protected).await;
-                }
+                self.release_ended_grant(session, grant).await;
                 Err(refuse(
                     BrowserRefusalCode::BrowserConsentRequired,
                     "the existing-profile grant expired; approve this attachment again",
@@ -853,31 +842,56 @@ impl BrowserEngine {
         }
     }
 
-    /// Turn remote debugging back off for a grant that has ended. The
-    /// platform drives browser UI to do it, which can stall, so it runs off
-    /// the async workers and the caller waits at most
-    /// `SETUP_CLEANUP_TIMEOUT`. A failed cleanup is retried at session end;
-    /// one still running is left to finish.
-    async fn restore_remote_debugging(&self, session: &str, grant: &ExistingProfileGrant) {
-        let request = ExistingProfileSetupRequest {
-            pid: grant.pid,
-            window_id: grant.window_id,
-            browser: grant.browser_product,
-        };
-        let platform = self.platform.clone();
-        let cleanup = tokio::task::spawn_blocking({
-            let request = request.clone();
-            move || platform.cleanup_existing_profile_setup(request)
+    /// Release what a grant held once it has left the registry: turn remote
+    /// debugging back off if the driver turned it on, close the socket, and
+    /// revoke the consent. This runs as its own task, so a caller cancelled
+    /// partway (a reconnect that ran out of time) cannot strand the socket
+    /// or the consent. Turning remote debugging off drives browser UI and
+    /// can stall, so it runs on a blocking thread, the caller waits at most
+    /// `SETUP_CLEANUP_TIMEOUT` for it, and a failure, however late, is queued
+    /// for the session-end retry.
+    async fn release_ended_grant(&self, session: &str, grant: ExistingProfileGrant) {
+        let cleanup = grant.cleanup_remote_debugging.then(|| {
+            let request = ExistingProfileSetupRequest {
+                pid: grant.pid,
+                window_id: grant.window_id,
+                browser: grant.browser_product,
+            };
+            let platform = self.platform.clone();
+            let pending = self.pending_existing_profile_cleanups.clone();
+            let session = session.to_owned();
+            tokio::spawn(async move {
+                let cleaned = tokio::task::spawn_blocking({
+                    let request = request.clone();
+                    move || platform.cleanup_existing_profile_setup(request)
+                })
+                .await;
+                if !matches!(cleaned, Ok(Ok(_))) {
+                    pending
+                        .lock()
+                        .unwrap()
+                        .entry(session)
+                        .or_default()
+                        .push(request);
+                }
+            })
         });
-        match tokio::time::timeout(SETUP_CLEANUP_TIMEOUT, cleanup).await {
-            Ok(Ok(Ok(_))) | Err(_) => {}
-            Ok(_) => self
-                .pending_existing_profile_cleanups
-                .lock()
-                .unwrap()
-                .entry(session.to_owned())
-                .or_default()
-                .push(request),
+        let pool = self.pool.clone();
+        let approval_broker = self.approval_broker.clone();
+        let release = tokio::spawn(async move {
+            pool.release_existing(
+                &grant.endpoint_ws_url,
+                grant.generation,
+                SharedSocketRelease::Close,
+            )
+            .await;
+            if let Some(protected) = grant.protected_consent.as_ref() {
+                approval_broker.revoke(protected).await;
+            }
+        });
+        let _ = release.await;
+        if let Some(cleanup) = cleanup {
+            let _ = tokio::time::timeout(SETUP_CLEANUP_TIMEOUT, cleanup).await;
         }
     }
 
@@ -891,19 +905,7 @@ impl BrowserEngine {
             .existing_profile_grants
             .revoke(session, transport_session, pid)
         {
-            if grant.cleanup_remote_debugging {
-                self.restore_remote_debugging(session, &grant).await;
-            }
-            self.pool
-                .release_existing(
-                    &grant.endpoint_ws_url,
-                    grant.generation,
-                    SharedSocketRelease::Close,
-                )
-                .await;
-            if let Some(protected) = grant.protected_consent.as_ref() {
-                self.approval_broker.revoke(protected).await;
-            }
+            self.release_ended_grant(session, grant).await;
         }
     }
 

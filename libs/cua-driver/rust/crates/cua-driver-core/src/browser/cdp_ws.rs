@@ -737,6 +737,7 @@ impl Drop for PoolInner {
 /// entries are shared by every grant for that browser instance: each grant
 /// generation is a refcounted holder, and the socket outlives individual
 /// sessions only within the bounded parking window.
+#[derive(Clone)]
 pub struct CdpPool {
     inner: Arc<PoolInner>,
 }

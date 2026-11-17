@@ -1048,6 +1048,63 @@ mod tests {
         assert_eq!(result["echoed"]["x"], 7);
     }
 
+    /// A browser that completes the handshake and then stops reading, the
+    /// way a renderer or browser process blocked on the main thread does.
+    async fn unread_browser() -> (String, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let _ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            std::future::pending::<()>().await;
+        });
+        (
+            format!("ws://127.0.0.1:{port}/devtools/browser/unread"),
+            task,
+        )
+    }
+
+    #[tokio::test]
+    async fn a_stalled_send_cannot_hold_other_calls_past_their_timeout() {
+        let (url, _browser) = unread_browser().await;
+        let conn = Arc::new(CdpConnection::connect(&url).await.unwrap());
+        // Larger than the loopback socket buffers, so the send never finishes
+        // while the peer does not read.
+        let stalled = tokio::spawn({
+            let conn = conn.clone();
+            async move {
+                conn.call_with_timeout(
+                    None,
+                    "Runtime.evaluate",
+                    json!({ "expression": "x".repeat(64 << 20) }),
+                    Duration::from_secs(1),
+                )
+                .await
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let started = std::time::Instant::now();
+        let queued = tokio::time::timeout(
+            Duration::from_secs(10),
+            conn.call_with_timeout(None, "Browser.getVersion", json!({}), Duration::from_secs(1)),
+        )
+        .await
+        .expect("a call queued behind a stalled send must honor its own timeout");
+        assert!(queued.is_err());
+        assert!(started.elapsed() < Duration::from_secs(5));
+
+        let stalled = tokio::time::timeout(Duration::from_secs(10), stalled)
+            .await
+            .expect("the stalled send must honor its timeout")
+            .unwrap();
+        assert!(stalled.is_err());
+        assert!(
+            conn.is_closed(),
+            "a socket with a partly written frame cannot carry another command"
+        );
+    }
+
     #[tokio::test]
     async fn claimed_existing_profile_socket_is_generation_owned() {
         let server = MockCdpServer::start(StdArc::new(|_| MockReply::ok(json!({})))).await;

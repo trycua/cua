@@ -9,7 +9,7 @@
 
 use std::io::Cursor;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc, Mutex as StdMutex,
 };
 
@@ -22,6 +22,7 @@ use crate::action_record::ActionExecutionRecord;
 use crate::protocol::{Content, ToolResult};
 use crate::tool::Tool;
 
+use super::cdp_ws::SharedSocketRelease;
 use super::engine::BrowserEngine;
 use super::mock_cdp::{MockCdpServer, MockEvent, MockHandler, MockReply};
 use super::platform::{
@@ -1034,7 +1035,33 @@ struct FixturePlatform {
     setup_invoked: Arc<AtomicBool>,
     setup_aborted: Arc<AtomicBool>,
     stall_consent: bool,
+    stalls: Arc<FixtureStalls>,
     focus: Arc<FixtureFocus>,
+}
+
+/// How many of each platform proof the fixture answers before every later
+/// one stalls forever, the way a hung `lsof` or profile read does.
+struct FixtureStalls {
+    reproofs: AtomicUsize,
+    fingerprints: AtomicUsize,
+}
+
+impl Default for FixtureStalls {
+    fn default() -> Self {
+        Self {
+            reproofs: AtomicUsize::new(usize::MAX),
+            fingerprints: AtomicUsize::new(usize::MAX),
+        }
+    }
+}
+
+async fn answer_or_stall(remaining: &AtomicUsize) {
+    if remaining
+        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+        .is_err()
+    {
+        std::future::pending::<()>().await;
+    }
 }
 
 /// Foreground model for existing-profile attachment: whether attaching
@@ -1180,6 +1207,7 @@ impl BrowserPlatform for FixturePlatform {
         pid: i64,
         expected_ws_url: &str,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        answer_or_stall(&self.stalls.reproofs).await;
         if expected_ws_url != self.ws_url {
             return Ok(None);
         }
@@ -1254,6 +1282,7 @@ impl BrowserPlatform for FixturePlatform {
     }
 
     async fn process_fingerprint(&self, pid: i64) -> Result<ProcessFingerprint, BrowserRefusal> {
+        answer_or_stall(&self.stalls.fingerprints).await;
         Ok(ProcessFingerprint {
             pid,
             start_time: Some(1),
@@ -1310,6 +1339,7 @@ async fn fixture_with_platform(
         setup_invoked: setup_invoked.clone(),
         setup_aborted: Arc::new(AtomicBool::new(false)),
         stall_consent: false,
+        stalls: Default::default(),
         focus: Default::default(),
     }));
     Fixture {
@@ -1347,6 +1377,12 @@ impl crate::consent::ProtectedConsentProvider for FixtureProtectedProvider {
 }
 
 async fn protected_existing_profile_fixture() -> (Fixture, Arc<FixtureProtectedProvider>) {
+    protected_existing_profile_fixture_with(Default::default()).await
+}
+
+async fn protected_existing_profile_fixture_with(
+    stalls: Arc<FixtureStalls>,
+) -> (Fixture, Arc<FixtureProtectedProvider>) {
     let state = Arc::new(StdMutex::new(FixtureState::default()));
     let server = MockCdpServer::start(fixture_handler(state.clone())).await;
     let setup_invoked = Arc::new(AtomicBool::new(false));
@@ -1365,6 +1401,7 @@ async fn protected_existing_profile_fixture() -> (Fixture, Arc<FixtureProtectedP
             setup_invoked: setup_invoked.clone(),
             setup_aborted: Arc::new(AtomicBool::new(false)),
             stall_consent: false,
+            stalls,
             focus: Default::default(),
         }),
         Some(provider.clone()),
@@ -1396,6 +1433,7 @@ async fn existing_profile_setup_fixture() -> (Fixture, Arc<AtomicBool>) {
             setup_invoked: setup_invoked.clone(),
             setup_aborted: Arc::new(AtomicBool::new(false)),
             stall_consent: false,
+            stalls: Default::default(),
             focus: Default::default(),
         }),
         Some(Arc::new(FixtureProtectedProvider {
@@ -1450,6 +1488,7 @@ async fn attach_fixture_with_space(
             setup_invoked: setup_invoked.clone(),
             setup_aborted: Arc::new(AtomicBool::new(false)),
             stall_consent: false,
+            stalls: Default::default(),
             focus: focus.clone(),
         }),
         Some(provider.clone()),
@@ -1505,6 +1544,7 @@ async fn standalone_consumer_bind_without_grant_refuses_before_endpoint_discover
         setup_invoked: setup_invoked.clone(),
         setup_aborted: Arc::new(AtomicBool::new(false)),
         stall_consent: false,
+        stalls: Default::default(),
         focus: Default::default(),
     }));
 
@@ -1583,6 +1623,107 @@ async fn approved_existing_profile_attach_claims_then_binds_one_generation() {
         .await;
     assert_eq!(structured(&state)["status"], "ok", "{}", structured(&state));
     crate::session::fire_session_end("transport-v2-attach");
+}
+
+async fn prepare_existing_profile(engine: &Arc<BrowserEngine>, transport: &str) {
+    let prepare = BrowserPrepareTool::new(engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "_transport_session_id": transport,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    assert_eq!(
+        structured(&prepare)["status"],
+        "ok",
+        "{}",
+        structured(&prepare)
+    );
+}
+
+async fn bind_existing_profile(engine: &Arc<BrowserEngine>, transport: &str) -> Value {
+    let state = GetBrowserStateTool::new(engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "_transport_session_id": transport
+        }))
+        .await;
+    structured(&state).clone()
+}
+
+#[tokio::test]
+async fn existing_profile_bind_refuses_when_the_endpoint_reproof_stalls() {
+    const TRANSPORT: &str = "transport-v2-reproof-stall";
+    let stalls = Arc::new(FixtureStalls::default());
+    let (f, _) = protected_existing_profile_fixture_with(stalls.clone()).await;
+    prepare_existing_profile(&f.engine, TRANSPORT).await;
+
+    stalls.reproofs.store(0, Ordering::SeqCst);
+    tokio::time::pause();
+    let state = tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        bind_existing_profile(&f.engine, TRANSPORT),
+    )
+    .await
+    .expect("a stalled endpoint proof must not hang the bind");
+    assert_eq!(
+        state["refusal"]["code"], "browser_route_unavailable",
+        "{state}"
+    );
+    crate::session::fire_session_end(TRANSPORT);
+}
+
+#[tokio::test]
+async fn existing_profile_reconnect_refuses_within_its_bound_when_a_process_check_stalls() {
+    const TRANSPORT: &str = "transport-v2-reconnect-stall";
+    let stalls = Arc::new(FixtureStalls::default());
+    let (f, _) = protected_existing_profile_fixture_with(stalls.clone()).await;
+    prepare_existing_profile(&f.engine, TRANSPORT).await;
+
+    // The approved socket is gone, so the bind must reconnect, and the
+    // reconnect's own process check never answers.
+    let grant = f
+        .engine
+        .existing_profile_grant(SESSION, Some(TRANSPORT), 1)
+        .await
+        .unwrap()
+        .expect("prepare minted a grant");
+    f.engine
+        .pool
+        .release_existing(
+            &grant.endpoint_ws_url,
+            grant.generation,
+            SharedSocketRelease::Close,
+        )
+        .await;
+    stalls.fingerprints.store(1, Ordering::SeqCst);
+    tokio::time::pause();
+    let state = tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        bind_existing_profile(&f.engine, TRANSPORT),
+    )
+    .await
+    .expect("a stalled reconnect must not hang the bind");
+    assert_eq!(
+        state["refusal"]["code"], "browser_reconnect_exhausted",
+        "{state}"
+    );
+    assert_eq!(
+        state["refusal"]["detail"]["last_error"], "timed_out",
+        "{state}"
+    );
+    assert!(
+        f.engine
+            .existing_profile_grant(SESSION, Some(TRANSPORT), 1)
+            .await
+            .unwrap()
+            .is_none(),
+        "a reconnect that ran out of time ends the grant"
+    );
 }
 
 #[tokio::test]
@@ -1997,6 +2138,7 @@ async fn refused_consent_cancels_stalled_claim_before_revoking_grant() {
             setup_invoked: Arc::new(AtomicBool::new(false)),
             setup_aborted: Arc::new(AtomicBool::new(false)),
             stall_consent: false,
+            stalls: Default::default(),
             focus: Default::default(),
         }),
         Some(Arc::new(FixtureProtectedProvider {
@@ -2043,6 +2185,7 @@ async fn cancelled_prepare_aborts_the_exact_pending_setup() {
             setup_invoked: Arc::new(AtomicBool::new(false)),
             setup_aborted: setup_aborted.clone(),
             stall_consent: true,
+            stalls: Default::default(),
             focus: Default::default(),
         }),
         Some(Arc::new(FixtureProtectedProvider {
@@ -2107,6 +2250,7 @@ async fn declined_consent_rolls_back_pending_setup_before_refusing() {
             setup_invoked: Arc::new(AtomicBool::new(false)),
             setup_aborted: setup_aborted.clone(),
             stall_consent: false,
+            stalls: Default::default(),
             focus: Default::default(),
         }),
         Some(Arc::new(DecliningProtectedProvider)),

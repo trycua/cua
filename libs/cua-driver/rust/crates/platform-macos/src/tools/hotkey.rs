@@ -40,8 +40,10 @@ fn def() -> &'static ToolDef {
              `delivery_mode` ladder as click/type_text — it does NOT raise the \
              window by default:\n\
              • `background` (default): post the combo to the target pid WITHOUT \
-               fronting or raising it — uses the macOS 14+ auth-message envelope so \
-               Chromium/Electron accept it as trusted live input. With an AX target, \
+               fronting or raising it, using the macOS 14+ auth-message envelope. \
+               Chromium/Electron renderers often drop it anyway, so an unverifiable \
+               background result for those apps carries `escalation.recommended: \
+               \"foreground\"`. With an AX target, \
                focus that exact element first. No top-level focus steal. \
                `window_id` here only targets the combo; it does not raise. Background \
                key events never reach a native app's menus, so when the combo is a \

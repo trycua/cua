@@ -620,6 +620,8 @@ where
 #[derive(Debug, Clone, Copy)]
 enum InvokeMode {
     Regular,
+    // In-process trusted-adapter calls take this path only on Windows.
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     TrustedAdapter,
 }
 
@@ -1435,6 +1437,10 @@ impl NativeAbiDriver {
     }
 
     pub(crate) fn create_for_host(options: RuntimeOptions) -> Result<Self, DriverError> {
+        // Only Windows needs the executor's physical-pixel threads up front.
+        // Elsewhere in-process hosts never use it, and building it would leave
+        // its threads running at exit.
+        #[cfg(target_os = "windows")]
         abi_executor().map_err(|error| DriverError::Protocol {
             reason: error.message,
         })?;
@@ -1651,48 +1657,64 @@ impl NativeAbiDriver {
                     .clone()
             }
         };
-        if !arguments.is_object() {
-            return Err(DriverError::InvalidArguments {
-                tool: name.into(),
-                reason: "arguments must be a JSON object".into(),
-            });
+        // Outside Windows there is no DPI context to guard, so run on the
+        // caller's runtime like `shutdown` does and keep the ABI executor's
+        // blocking-pool threads out of the host process.
+        #[cfg(not(target_os = "windows"))]
+        {
+            let result = runtime
+                .invoke_from_trusted_adapter(name, arguments)
+                .await
+                .ok_or(DriverError::Shutdown)?;
+            serde_json::to_value(result).map_err(|error| DriverError::Protocol {
+                reason: format!("serialize {name} trusted-adapter result: {error}"),
+            })
         }
+        #[cfg(target_os = "windows")]
+        {
+            if !arguments.is_object() {
+                return Err(DriverError::InvalidArguments {
+                    tool: name.into(),
+                    reason: "arguments must be a JSON object".into(),
+                });
+            }
 
-        let (receiver, guard) = {
-            let (sender, receiver) = oneshot::channel();
-            let context = Box::into_raw(Box::new(CallbackContext { sender })).cast::<c_void>();
-            let operation = match start_invoke_completion(
-                runtime,
-                name.to_owned(),
-                arguments,
-                InvokeMode::TrustedAdapter,
-                rust_completion,
-                context,
-            ) {
-                Ok(operation) => operation,
-                Err(error) => {
-                    unsafe { drop(Box::from_raw(context.cast::<CallbackContext>())) };
-                    return Err(map_status(error.status, error.message, name));
-                }
+            let (receiver, guard) = {
+                let (sender, receiver) = oneshot::channel();
+                let context = Box::into_raw(Box::new(CallbackContext { sender })).cast::<c_void>();
+                let operation = match start_invoke_completion(
+                    runtime,
+                    name.to_owned(),
+                    arguments,
+                    InvokeMode::TrustedAdapter,
+                    rust_completion,
+                    context,
+                ) {
+                    Ok(operation) => operation,
+                    Err(error) => {
+                        unsafe { drop(Box::from_raw(context.cast::<CallbackContext>())) };
+                        return Err(map_status(error.status, error.message, name));
+                    }
+                };
+                (
+                    receiver,
+                    OperationGuard {
+                        operation: operation.cast::<ffi::Operation>(),
+                        completed: false,
+                    },
+                )
             };
-            (
-                receiver,
-                OperationGuard {
-                    operation: operation.cast::<ffi::Operation>(),
-                    completed: false,
-                },
-            )
-        };
-        let completed = receiver.await.map_err(|_| DriverError::Protocol {
-            reason: format!("{name} trusted-adapter completion callback was dropped"),
-        })?;
-        guard.complete();
-        if completed.status != CuaDriverStatus::Ok {
-            return Err(map_status(completed.status, completed.error, name));
+            let completed = receiver.await.map_err(|_| DriverError::Protocol {
+                reason: format!("{name} trusted-adapter completion callback was dropped"),
+            })?;
+            guard.complete();
+            if completed.status != CuaDriverStatus::Ok {
+                return Err(map_status(completed.status, completed.error, name));
+            }
+            serde_json::from_str(&completed.result).map_err(|error| DriverError::Protocol {
+                reason: format!("{name} returned invalid trusted-adapter JSON: {error}"),
+            })
         }
-        serde_json::from_str(&completed.result).map_err(|error| DriverError::Protocol {
-            reason: format!("{name} returned invalid trusted-adapter JSON: {error}"),
-        })
     }
 
     /// Shut down on the caller's runtime. The exported `cua_driver_shutdown_v1`

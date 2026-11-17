@@ -83,6 +83,252 @@ fn by_id(lines: &[Value], id: u64) -> Value {
 }
 
 #[tokio::test]
+async fn a_restarted_bridge_does_not_repeat_answered_calls() {
+    let (srv, _home, spaces, space_id) = setup().await;
+    let p = spaces.persistent();
+    let rec = p
+        .create(AgentSpec {
+            name: "ada".into(),
+            harness: "claude-code".into(),
+            space: space_id.clone(),
+            ..Default::default()
+        })
+        .unwrap();
+    let space = spaces.space(&space_id).await.unwrap();
+    let guest = space.spacesd().unwrap().clone();
+    let server = bridge::server(&spaces, p.clone(), &rec, "run-00000001");
+    let pipe_in = format!("{RUN_DIR}/bridge/restart.in");
+    let pipe_out = format!("{RUN_DIR}/bridge/restart.out");
+    let mut requests = call(1, "notify_user", json!({"title": "First", "body": "Once"}));
+    requests.push_str(&call(
+        2,
+        "thread_post",
+        json!({"text": "The lesson summary."}),
+    ));
+    srv.state.put_file(&pipe_in, requests.clone().into_bytes());
+    srv.state.put_file(&pipe_out, vec![]);
+    let mut state = bridge::BridgeState::default();
+    assert_eq!(
+        bridge::pump(&guest, RUN_DIR, &mut state, &server)
+            .await
+            .unwrap(),
+        2
+    );
+    let initial = answers(&srv, &pipe_out, 2).await;
+    assert_eq!(
+        by_id(&initial, 2)["result"]["isError"],
+        false,
+        "{initial:?}"
+    );
+    assert_eq!(p.feed().list(false, None).unwrap().len(), 1);
+
+    // The daemon lost all memory while the same guest pipe stayed open.
+    // This unanswered request must still run, and string and numeric IDs
+    // must not be confused when matching the old responses.
+    requests.push_str(&format!(
+        "{}\n",
+        json!({
+            "jsonrpc": "2.0", "id": "1", "method": "tools/call",
+            "params": {"name": "notify_user", "arguments": {"title": "Second", "body": "New"}}
+        })
+    ));
+    srv.state.put_file(&pipe_in, requests.clone().into_bytes());
+    let mut restarted = bridge::BridgeState::default();
+    let fresh_server = bridge::server(&spaces, p.clone(), &rec, "run-00000001");
+    assert_eq!(
+        bridge::pump(&guest, RUN_DIR, &mut restarted, &fresh_server)
+            .await
+            .unwrap(),
+        1,
+        "a restart replayed completed MCP calls"
+    );
+    answers(&srv, &pipe_out, 3).await;
+    let mut titles: Vec<_> = p
+        .feed()
+        .list(false, None)
+        .unwrap()
+        .into_iter()
+        .map(|n| n.title)
+        .collect();
+    titles.sort();
+    assert_eq!(titles, ["First", "Second"]);
+    let result = fresh_server
+        .call("thread_read", json!({"space": space_id, "limit": 100}))
+        .await;
+    let result = cua_spaces::extension::outcome_json(result).unwrap();
+    let summaries = result["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["text"] == "The lesson summary.")
+        .count();
+    assert_eq!(summaries, 1);
+    assert_eq!(
+        bridge::pump(&guest, RUN_DIR, &mut restarted, &fresh_server)
+            .await
+            .unwrap(),
+        0
+    );
+
+    // A later reuse of a completed numeric ID still represents a new call.
+    requests.push_str(&call(
+        1,
+        "notify_user",
+        json!({"title": "Third", "body": "New"}),
+    ));
+    srv.state.put_file(&pipe_in, requests.into_bytes());
+    let mut restarted_again = bridge::BridgeState::default();
+    assert_eq!(
+        bridge::pump(&guest, RUN_DIR, &mut restarted_again, &fresh_server)
+            .await
+            .unwrap(),
+        1
+    );
+    answers(&srv, &pipe_out, 4).await;
+    let mut titles: Vec<_> = p
+        .feed()
+        .list(false, None)
+        .unwrap()
+        .into_iter()
+        .map(|n| n.title)
+        .collect();
+    titles.sort();
+    assert_eq!(titles, ["First", "Second", "Third"]);
+}
+
+#[tokio::test]
+async fn bridge_recovery_refuses_ambiguous_receipts_without_consuming_requests() {
+    let (srv, _home, spaces, space_id) = setup().await;
+    let p = spaces.persistent();
+    let rec = p
+        .create(AgentSpec {
+            name: "ada".into(),
+            harness: "claude-code".into(),
+            space: space_id.clone(),
+            ..Default::default()
+        })
+        .unwrap();
+    let space = spaces.space(&space_id).await.unwrap();
+    let guest = space.spacesd().unwrap().clone();
+    let server = bridge::server(&spaces, p.clone(), &rec, "run-00000001");
+    let pipe_in = format!("{RUN_DIR}/bridge/recovery.in");
+    let pipe_out = format!("{RUN_DIR}/bridge/recovery.out");
+    srv.state.put_file(
+        &pipe_in,
+        call(1, "notify_user", json!({"title": "Old", "body": "Once"})).into_bytes(),
+    );
+    let mut state = bridge::BridgeState::default();
+    for (receipt, reason) in [
+        ("{", "incomplete"),
+        ("broken\n", "invalid"),
+        (
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}\n",
+            "invalid",
+        ),
+        ("{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":null}\n", "invalid"),
+        (
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":\"bad\",\"message\":\"failed\"}}\n",
+            "invalid",
+        ),
+        (
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32603}}\n",
+            "invalid",
+        ),
+        (
+            "[[{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}]]\n",
+            "invalid",
+        ),
+    ] {
+        srv.state.put_file(&pipe_out, receipt.as_bytes().to_vec());
+        let error = bridge::pump(&guest, RUN_DIR, &mut state, &server)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!("agent: bridge response journal contains an {reason} response")
+        );
+        assert!(p.feed().list(false, None).unwrap().is_empty());
+    }
+    // A repaired journal is reread; a response spanning download chunks
+    // still suppresses its completed request, without publishing anything.
+    let receipt = format!(
+        "{}\n",
+        json!({"jsonrpc": "2.0", "id": 1, "result": "x".repeat(70_000)})
+    );
+    srv.state.put_file(&pipe_out, receipt.into_bytes());
+    assert_eq!(
+        bridge::pump(&guest, RUN_DIR, &mut state, &server)
+            .await
+            .unwrap(),
+        0
+    );
+    assert!(p.feed().list(false, None).unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn bridge_recovery_keeps_unanswered_members_of_a_batch() {
+    let (srv, _home, spaces, space_id) = setup().await;
+    let p = spaces.persistent();
+    let rec = p
+        .create(AgentSpec {
+            name: "ada".into(),
+            harness: "claude-code".into(),
+            space: space_id.clone(),
+            ..Default::default()
+        })
+        .unwrap();
+    let space = spaces.space(&space_id).await.unwrap();
+    let guest = space.spacesd().unwrap().clone();
+    let server = bridge::server(&spaces, p.clone(), &rec, "run-00000001");
+    let pipe_in = format!("{RUN_DIR}/bridge/batch.in");
+    let pipe_out = format!("{RUN_DIR}/bridge/batch.out");
+    let old: Value = serde_json::from_str(&call(
+        1,
+        "notify_user",
+        json!({"title": "Old", "body": "Once"}),
+    ))
+    .unwrap();
+    let new: Value = serde_json::from_str(&call(
+        2,
+        "notify_user",
+        json!({"title": "New", "body": "Once"}),
+    ))
+    .unwrap();
+    srv.state
+        .put_file(&pipe_in, format!("{}\n", json!([old, new])).into_bytes());
+    srv.state.put_file(
+        &pipe_out,
+        format!("{}\n", json!([{"jsonrpc": "2.0", "id": 1, "result": {}}])).into_bytes(),
+    );
+    let mut state = bridge::BridgeState::default();
+    assert_eq!(
+        bridge::pump(&guest, RUN_DIR, &mut state, &server)
+            .await
+            .unwrap(),
+        1
+    );
+    let replies = answers(&srv, &pipe_out, 2).await;
+    assert_eq!(replies[1].as_array().unwrap().len(), 1);
+    assert_eq!(replies[1][0]["id"], 2);
+    let mut titles: Vec<_> = p
+        .feed()
+        .list(false, None)
+        .unwrap()
+        .into_iter()
+        .map(|n| n.title)
+        .collect();
+    titles.sort();
+    assert_eq!(titles, ["New"]);
+    let mut restarted = bridge::BridgeState::default();
+    assert_eq!(
+        bridge::pump(&guest, RUN_DIR, &mut restarted, &server)
+            .await
+            .unwrap(),
+        0
+    );
+}
+
+#[tokio::test]
 async fn the_bridge_answers_as_the_agent_and_only_with_its_rights() {
     let (srv, _home, spaces, space_id) = setup().await;
     let p = spaces.persistent();

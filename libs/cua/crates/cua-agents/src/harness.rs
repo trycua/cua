@@ -8,6 +8,10 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 use serde_json::{Value, json};
 
+#[path = "hermes_config.rs"]
+mod hermes_config;
+pub(crate) use hermes_config::merge as merge_hermes_config;
+
 /// A model endpoint's wire format.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -710,6 +714,8 @@ pub fn apply_effort(h: &Harness, l: &mut Launch, effort: Option<&str>) {
 /// from the person's connections (`cua_connections::hermes`). Hermes then
 /// starts from it, not from the guest's own setup, and uses the provider it
 /// names. Ignored for any other harness and when an endpoint is given.
+/// [`crate::Agents::start`] merges this file into a persistent Hermes home,
+/// preserving unrelated saved settings and an existing context-length override.
 pub fn launch_with_config(
     h: &Harness,
     endpoint: Option<&Endpoint>,

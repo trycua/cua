@@ -776,7 +776,7 @@ dev = [{ name = "pytest", specifier = ">=8.3.5" }]
 
 [[package]]
 name = "cua-sandbox"
-version = "0.11.8"
+version = "0.11.9"
 source = { editable = "../python/cua-sandbox" }
 dependencies = [
     { name = "cua" },

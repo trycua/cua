@@ -155,6 +155,8 @@ native_retry_filter_active() {
   [[ -n "${CUA_E2E_CELL_FILTER:-}" || -n "${CUA_E2E_HARNESS_FILTER:-}" ]]
 }
 
+# scripts/ci/macos/appkit-cells.tsv maps each AppKit cell id to the exact Rust
+# test that owns it. The full native lane and a single-cell selection both read it.
 run_appkit_cells() {
   local cell test_name
   while IFS=$'\t' read -r cell test_name; do

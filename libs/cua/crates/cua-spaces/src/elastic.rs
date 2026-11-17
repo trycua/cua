@@ -3060,6 +3060,7 @@ mod quota_tests {
 impl Spaces {
     /// Before a Space goes: what it uses now and how long it lived, for the
     /// sizes the elastic pool books next time (best effort, bounded).
+    #[cfg(feature = "spaces-stream")]
     pub(crate) async fn learn_usage_before_delete(&self, id: &str) {
         let Ok(Some(rec)) = self.inner.registry.get(id) else {
             return;
@@ -3088,4 +3089,9 @@ impl Spaces {
             self.elastic_record_usage(&rec.image, None, u.memory_used / (1024 * 1024), lifetime);
         }
     }
+
+    /// Without the stream feature the guest's usage cannot be read, so there
+    /// is nothing to learn.
+    #[cfg(not(feature = "spaces-stream"))]
+    pub(crate) async fn learn_usage_before_delete(&self, _id: &str) {}
 }

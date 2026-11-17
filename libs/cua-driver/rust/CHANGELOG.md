@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.52.11](https://github.com/trycua/cua/compare/cua-driver-rs-v0.52.10...cua-driver-rs-v0.52.11) (2026-11-17)
+
+
+### Bug Fixes
+
+* **cua-driver:** attach existing Chrome profiles after one consent, honestly ([#7999](https://github.com/trycua/cua/issues/7999)) ([4f023d7](https://github.com/trycua/cua/commit/4f023d72b4cb9acad4f1ad5fe9d853f6ae33871d))
+
+## [0.52.10](https://github.com/trycua/cua/compare/cua-driver-rs-v0.52.9...cua-driver-rs-v0.52.10) (2026-11-17)
+
+
+### Bug Fixes
+
+* **cua-driver:** document macOS background Save Automation consent ([#5776](https://github.com/trycua/cua/issues/5776)) ([70117cc](https://github.com/trycua/cua/commit/70117cca32f1a1176cefbb973c43e61eae14902c))
+* **cua-driver:** name the failed Hyprland input availability predicate ([#7983](https://github.com/trycua/cua/issues/7983)) ([3fca227](https://github.com/trycua/cua/commit/3fca227046f850648f6a1b60daa8fe0a6d4fb476))
+* **cua-driver:** re-land the exit wait and browser_type Enter fixes from [#4488](https://github.com/trycua/cua/issues/4488) and [#4499](https://github.com/trycua/cua/issues/4499) ([#7857](https://github.com/trycua/cua/issues/7857)) ([81423fc](https://github.com/trycua/cua/commit/81423fc06fca78f07c94176a497aeef9bef750bd))
+* **cua-driver:** stop re-sending input that may already have landed ([#5574](https://github.com/trycua/cua/issues/5574)) ([abc5c46](https://github.com/trycua/cua/commit/abc5c46ca7028100b2760190ab436c82688f5284))
+
 ## [0.52.9](https://github.com/trycua/cua/compare/cua-driver-rs-v0.52.8...cua-driver-rs-v0.52.9) (2026-11-16)
 
 

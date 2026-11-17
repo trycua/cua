@@ -610,15 +610,16 @@ libs/cua-driver/tests/runners/macos-lume/run-all.sh \
   --retry-harness appkit --retry-only --retry-attempts 1
 ```
 
-The single-attempt invocation preserves exact-source installation, unrestricted
+The single-attempt invocation keeps exact-source installation, the unrestricted
 daemon preflight, native oracles, evidence validation, and standard-daemon
 restoration. It is focused evidence, not full-matrix certification. A failure
-remains a failure; this command does not automatically retry it.
+stays a failure; this command does not retry it.
 
 `scripts/ci/macos/appkit-cells.tsv` maps each AppKit cell ID to its exact Rust test
-name, separated by a tab. The full native lane and single-cell selection consume
-the same list. Add a row there when registering a new AppKit case. Unknown cells
-or an incorrect harness cannot fall back to running the full suite. AppKit
+name, separated by a tab. The full native lane and single-cell selection read the
+same list, and a host-side test fails when an ignored `harness_appkit_*` test is
+missing from it. Add a row there when registering a new AppKit case. Unknown cells
+or a mismatched harness cannot fall back to running the full suite. AppKit
 selection requires `--retry-only`; full-matrix automatic retry eligibility is
 unchanged.
 

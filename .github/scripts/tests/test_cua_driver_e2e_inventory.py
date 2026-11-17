@@ -22,13 +22,13 @@ CRATES_ROOT = REPO_ROOT / "libs/cua-driver/rust/crates"
 TEST_PACKAGES = ("cua-driver", "cua-driver-e2e")
 ALLOWLIST = REPO_ROOT / "libs/cua-driver/tests/manual-e2e-allowlist.txt"
 
-# Canonical runners and the workflows that call them. The Windows Sandbox
-# runner is documented as non-canonical and cannot certify a test.
+# Canonical runners, the workflows that call them, and the manifests a runner
+# reads its test list from. The Windows Sandbox runner is documented as
+# non-canonical and cannot certify a test.
 RUNNER_GLOBS = (
     ".github/workflows/*.yml",
     "scripts/ci/**/*.sh",
     "scripts/ci/**/*.ps1",
-    # Cell tables the shell runners read, one test name per row.
     "scripts/ci/**/*.tsv",
     "libs/cua-driver/tests/runners/macos-lume/*.sh",
     "libs/cua-driver/tests/runners/windows/*.ps1",
@@ -177,6 +177,14 @@ def test_every_ignored_test_is_routed_or_allowlisted() -> None:
         "These #[ignore] tests are never selected by a canonical runner. Route "
         f"them or add them with a reason to {ALLOWLIST.relative_to(REPO_ROOT)}:\n  "
         + "\n  ".join(orphans)
+    )
+
+
+def test_private_atspi_regressions_run_as_a_whole_binary() -> None:
+    """The private-bus platform suite must not disappear behind `#[ignore]`."""
+    workflow = REPO_ROOT / ".github/workflows/ci-rust-linux.yml"
+    assert runs_whole_binary_ignored(workflow.read_text(encoding="utf-8"), "set_value_fallback"), (
+        "Route all set_value_fallback ignored tests in Linux CI under dbus-run-session"
     )
 
 

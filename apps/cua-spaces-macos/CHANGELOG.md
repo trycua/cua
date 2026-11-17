@@ -1,5 +1,68 @@
 # Changelog
 
+## [0.38.3](https://github.com/trycua/cua/compare/cua-spaces-v0.38.2...cua-spaces-v0.38.3) (2026-11-17)
+
+
+### Bug Fixes
+
+* **spaces:** keep a deleted prepared agent home removed ([#7979](https://github.com/trycua/cua/issues/7979)) ([59debb5](https://github.com/trycua/cua/commit/59debb541b94da819fb94869a3cabdec2f7f08b7))
+
+## [0.38.2](https://github.com/trycua/cua/compare/cua-spaces-v0.38.1...cua-spaces-v0.38.2) (2026-11-17)
+
+
+### Bug Fixes
+
+* **spaces:** a create's Making line names its step before its bytes ([#6975](https://github.com/trycua/cua/issues/6975)) ([bff492d](https://github.com/trycua/cua/commit/bff492d0b8508462477229ec5ee29336382ea064))
+
+## [0.38.1](https://github.com/trycua/cua/compare/cua-spaces-v0.38.0...cua-spaces-v0.38.1) (2026-11-17)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.28.0 in Cua Spaces ([#7994](https://github.com/trycua/cua/issues/7994)) ([e33d480](https://github.com/trycua/cua/commit/e33d480699974f6dc029b00077165f324c237bfe))
+* **spaces-macos:** the app comes to the front when the browser confirms the sign-in ([#6974](https://github.com/trycua/cua/issues/6974)) ([d67ddfd](https://github.com/trycua/cua/commit/d67ddfd6ffea9bb62155bff689460940186d97b3))
+* **spaces-macos:** the Local Network step waits on macOS's prompt when it is already open ([#6972](https://github.com/trycua/cua/issues/6972)) ([d2ceafb](https://github.com/trycua/cua/commit/d2ceafb1caa2e0cc2f2c6dc940c5612e7e6d5037))
+
+## [0.38.0](https://github.com/trycua/cua/compare/cua-spaces-v0.37.2...cua-spaces-v0.38.0) (2026-11-16)
+
+
+### Features
+
+* **cua-spaces:** eject the installer disk image after a drag install ([#4567](https://github.com/trycua/cua/issues/4567)) ([baf720c](https://github.com/trycua/cua/commit/baf720c2bf06da59bc938a4c331c00d496d7db93))
+
+
+### Bug Fixes
+
+* **spaces:** the Space's viewer waits for its first picture only while the window can be seen ([#6973](https://github.com/trycua/cua/issues/6973)) ([05fece5](https://github.com/trycua/cua/commit/05fece5da50377802b840621e1b782cbf433b22e))
+
+## [0.37.2](https://github.com/trycua/cua/compare/cua-spaces-v0.37.1...cua-spaces-v0.37.2) (2026-11-16)
+
+
+### Bug Fixes
+
+* **cua-cli:** say containers accept --network none under the Secure default ([#7990](https://github.com/trycua/cua/issues/7990)) ([3a0b44f](https://github.com/trycua/cua/commit/3a0b44fc40504ed146ff98dc06ced0d767d936b0))
+* **cua-sdk:** check image-pull free space on the engine's data root ([#7989](https://github.com/trycua/cua/issues/7989)) ([0efaeeb](https://github.com/trycua/cua/commit/0efaeeb15e4e0324c417c45ed9a31f0d9b802414))
+
+## [0.37.1](https://github.com/trycua/cua/compare/cua-spaces-v0.37.0...cua-spaces-v0.37.1) (2026-11-16)
+
+
+### Bug Fixes
+
+* **cua-sdk:** keep HTTP MCP reply waits cancellable ([#7980](https://github.com/trycua/cua/issues/7980)) ([d735f38](https://github.com/trycua/cua/commit/d735f383d43a2abecc100c08be23c4540f4cba95))
+
+## [0.37.0](https://github.com/trycua/cua/compare/cua-spaces-v0.36.27...cua-spaces-v0.37.0) (2026-11-16)
+
+
+### Features
+
+* **spaces:** delete one or all notifications, and prune old read ones ([#7396](https://github.com/trycua/cua/issues/7396)) ([5fe2ca9](https://github.com/trycua/cua/commit/5fe2ca9a4715469a467c65e04ce7ca0a7b44a64d))
+
+
+### Bug Fixes
+
+* **agents:** install Hermes dependencies in macOS spaces ([#7978](https://github.com/trycua/cua/issues/7978)) ([a090ad5](https://github.com/trycua/cua/commit/a090ad5f5e7f3333b0c5649ff96ea1e34c607ac5))
+* **cua-spaces:** compile with reduced feature sets ([#4846](https://github.com/trycua/cua/issues/4846)) ([c871171](https://github.com/trycua/cua/commit/c8711718ebc2f4aad364caf3daed74631deab5fa))
+
 ## [0.36.27](https://github.com/trycua/cua/compare/cua-spaces-v0.36.26...cua-spaces-v0.36.27) (2026-11-16)
 
 

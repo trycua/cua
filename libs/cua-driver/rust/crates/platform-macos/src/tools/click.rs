@@ -1426,15 +1426,20 @@ impl ClickTool {
                     }
                     // An element that does not advertise AXPress can still
                     // accept it as a no-op. On a toolkit that drops routed
-                    // mouse events (LibreOffice's Calc cells) that no-op used
-                    // to come back as a pressed click; fall through so the
-                    // pixel route refuses instead.
+                    // mouse events (LibreOffice's Calc cells) or only takes
+                    // them while active (GTK 3) that no-op used to come back
+                    // as a pressed click; fall through to the pixel route.
                     if !focus_only
                         && !crate::ax::bindings::copy_action_names(element)
                             .iter()
                             .any(|action| action == "AXPress")
-                        && crate::input::pointer_toolkit::detect(pid)
-                            == Some(crate::input::pointer_toolkit::PointerReadingToolkit::Vcl)
+                        && matches!(
+                            crate::input::pointer_toolkit::detect(pid),
+                            Some(
+                                crate::input::pointer_toolkit::PointerReadingToolkit::Vcl
+                                    | crate::input::pointer_toolkit::PointerReadingToolkit::GdkQuartz
+                            )
+                        )
                     {
                         CFRelease(element as _);
                         return Ok(None);
@@ -1520,11 +1525,25 @@ impl ClickTool {
             }
             // Background delivery cannot satisfy a toolkit that reads the
             // hardware pointer; refuse before any activation or dispatch.
-            let route = match super::pixel_route::resolve(pid, fg, window_id, "mouse_click").await {
-                Ok(route) => route,
-                Err(refusal) => return refusal,
+            let gesture = if button_str == "left" && modifiers.is_empty() {
+                super::pixel_route::PointerGesture::LeftClick
+            } else {
+                super::pixel_route::PointerGesture::Other
             };
-            let activation_policy = pixel_activation_policy(&button_str, fg, window_id.is_some());
+            let route =
+                match super::pixel_route::resolve(pid, fg, window_id, "mouse_click", gesture).await
+                {
+                    Ok(route) => route,
+                    Err(refusal) => return refusal,
+                };
+            // The AppKit-activated route replaces the SkyLight focus prologue:
+            // the app is made active in its own eyes, and the suppression
+            // lease still undoes any activation the click provokes.
+            let activation_policy = if route == PixelClickRoute::BackgroundAppKitActivated {
+                PixelActivationPolicy::SuppressTarget
+            } else {
+                pixel_activation_policy(&button_str, fg, window_id.is_some())
+            };
 
             // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
             // A pixel click can land on a "Sign In" button that opens a sheet
@@ -1635,6 +1654,28 @@ impl ClickTool {
                     tokio::task::spawn_blocking(move || {
                         let do_click = move || -> anyhow::Result<()> {
                             let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
+                            if let (PixelClickRoute::BackgroundAppKitActivated, Some(wid)) =
+                                (route, window_id)
+                            {
+                                let height = crate::windows::window_bounds_by_id(wid)
+                                    .map(|bounds| bounds.height)
+                                    .ok_or_else(|| {
+                                        anyhow::anyhow!("window {wid} has no frame to click in")
+                                    })?;
+                                let _lease =
+                                    crate::input::appkit_activation::ActivationLease::acquire(
+                                        pid, wid,
+                                    )
+                                    .map_err(|reason| anyhow::anyhow!(reason))?;
+                                return crate::input::appkit_activation::click(
+                                    pid,
+                                    wid,
+                                    (screen_x, screen_y),
+                                    (win_local_x, win_local_y),
+                                    height,
+                                    count,
+                                );
+                            }
                             if route == PixelClickRoute::ForegroundHid {
                                 // Warp the hardware pointer to the mapped global
                                 // point and post at the HID tap. The pointer stays

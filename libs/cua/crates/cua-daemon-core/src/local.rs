@@ -75,11 +75,44 @@ fn rt_err(e: VmmError) -> RuntimeError {
         VmmError::UnsupportedImage { reason, .. } => RuntimeError::UnsupportedImage(reason),
         VmmError::InsufficientDisk(d) => RuntimeError::InsufficientDisk(d.to_string()),
         VmmError::HostCapacity(m) => RuntimeError::HostCapacity(m),
+        VmmError::Refused(m) => RuntimeError::InvalidArgument(m),
         VmmError::Unsupported { backend, op } => RuntimeError::Unsupported {
             backend: backend.to_string(),
             op: op.to_string(),
         },
         other => RuntimeError::Other(other.to_string()),
+    }
+}
+
+/// [`rt_err`] for a start of the image the user named, `image`. When Lume
+/// pulled another image than the digest the base is named for
+/// ([`VmmError::DigestMoved`]): a digest `image` pinned is one no retry or
+/// other machine can pull, so it is refused; one this create resolved, the
+/// tag moved under it, and trying again resolves it afresh.
+fn start_err(image: &str, e: VmmError) -> RuntimeError {
+    let VmmError::DigestMoved {
+        tag,
+        want,
+        got,
+        note,
+    } = e
+    else {
+        return rt_err(e);
+    };
+    let image = backend_prefix(image).map_or(image, |(_, rest)| rest);
+    let pinned = cua_image::resolve::NormalizedRef::parse(image)
+        .is_ok_and(|r| r.digest.is_some_and(|d| d.eq_ignore_ascii_case(&want)));
+    if pinned {
+        RuntimeError::InvalidArgument(format!(
+            "{tag} names {got} now, not the pinned {want}, and Lume pulls by tag, so it cannot \
+             fetch {want}; create from {tag} for the image it names now, or from a tag that \
+             still names {want}{note}"
+        ))
+    } else {
+        RuntimeError::Other(format!(
+            "{tag} moved from {want} to {got} while this create pulled it; try again for the \
+             image it names now{note}"
+        ))
     }
 }
 
@@ -90,7 +123,7 @@ pub fn vmm_error(e: VmmError) -> Error {
         VmmError::Unsupported { backend, op } => {
             Error::Unsupported(format!("{backend} does not support {op}"))
         }
-        VmmError::Invalid(m) => Error::InvalidArgument(m),
+        VmmError::Invalid(m) | VmmError::Refused(m) => Error::InvalidArgument(m),
         VmmError::UnsupportedImage { reason, .. } => Error::Unsupported(reason),
         e @ (VmmError::Missing { .. } | VmmError::NotRunning { .. }) => {
             Error::ProviderNotConfigured(e.to_string())
@@ -358,6 +391,47 @@ async fn resolve_placement_inner(
         arch: None,
         image: None,
     };
+    // A Windows image built on this computer (`windows:11`) has no registry
+    // entry to read: it is a VM disk that carries cua-spacesd, so readiness
+    // waits for it like for a published Windows image.
+    if let ImageSource::Oci { reference } = &placement.image
+        && matches!(prefix, None | Some("vm"))
+        && let Some(version) = cua_image::windows::build::local_build_target(reference)
+    {
+        // Always a VM, whatever the kind said by default: a Windows image is
+        // never a container.
+        let mut placement = placement.clone();
+        placement.backend = BackendKind::Qemu;
+        // The host's own architecture when the version has a build for it
+        // (ARM64 Windows 11 on Apple silicon: hardware accelerated), else the
+        // one it has (x64 Windows Server on an ARM Mac: the build says why
+        // that is not done).
+        let own = cua_image::windows::WindowsArch::host();
+        let guest = if version.supports(own) {
+            own
+        } else {
+            version.iso_arch.first().copied().unwrap_or(own)
+        };
+        let host = cua_image::windows::native::vmm_arch(guest);
+        let image = cua_image::ResolvedImage {
+            reference: reference.clone(),
+            variant_ref: reference.clone(),
+            pinned_ref: reference.clone(),
+            digest: String::new(),
+            variant: Variant::Containerdisk,
+            arch: Some(host.oci().to_string()),
+            architectures: vec![host.oci().to_string()],
+            emulated: guest != own,
+            os: "windows".into(),
+            spacesd: Some(true),
+            layers: vec![],
+        };
+        return Ok(Resolved {
+            placement,
+            arch: Some(host),
+            image: Some(image),
+        });
+    }
     let (reference, backend) = match (&placement.backend, &placement.image, prefix) {
         (_, ImageSource::Oci { reference }, Some("container" | "docker")) => {
             (reference.clone(), Backend::Container)
@@ -460,15 +534,9 @@ async fn resolve_placement_inner(
             backend: BackendKind::Qemu,
             image: ImageSource::oci(&found.pinned_ref),
         },
-        // Lume pulls by tag; the digest rides along so the cached base VM
-        // follows it (a moved tag must not keep cloning the old base).
         Variant::Lume => Placement {
             backend: BackendKind::Lume,
-            image: ImageSource::oci(&if found.digest.starts_with("sha256:") {
-                format!("{}@{}", found.variant_ref, found.digest)
-            } else {
-                found.variant_ref.clone()
-            }),
+            image: ImageSource::oci(&lume_image_ref(&found)?),
         },
         Variant::Rootfs => Placement {
             backend: BackendKind::Container,
@@ -494,6 +562,34 @@ async fn resolve_placement_inner(
         },
         placement,
         image: Some(found),
+    })
+}
+
+/// The reference a Lume placement names: the variant's tag reference with
+/// the resolved digest riding along (`repo:tag@sha256:…`). Lume pulls by
+/// tag, and the digest keys the cached base VM, so a moved tag does not keep
+/// cloning the old base. A digest the input already carried is dropped
+/// first, so `macos:26@sha256:…` keys the same base as `macos:26` at that
+/// digest instead of naming the digest twice. A digest-only reference has
+/// no tag for Lume to pull, which is an error.
+fn lume_image_ref(found: &cua_image::ResolvedImage) -> Result<String> {
+    let mut tagged = cua_image::resolve::NormalizedRef::parse(&found.variant_ref)
+        .map_err(|e| Error::InvalidArgument(format!("{}: {e}", found.variant_ref)))?;
+    tagged.digest = None;
+    if tagged.tag.is_none() {
+        return Err(Error::InvalidArgument(format!(
+            "{}: Lume pulls macOS images by tag, so a digest-only reference cannot run on Lume; \
+             name the tag, optionally with the digest (`{}:<tag>@{}`)",
+            found.reference,
+            tagged.repo(),
+            found.digest,
+        )));
+    }
+    let tag_ref = tagged.full();
+    Ok(if found.digest.starts_with("sha256:") {
+        format!("{tag_ref}@{}", found.digest)
+    } else {
+        tag_ref
     })
 }
 
@@ -2177,6 +2273,7 @@ impl VmmLocal {
                 message,
                 valid,
             }),
+            Error::InvalidArgument(m) => RuntimeError::InvalidArgument(m),
             other => RuntimeError::Other(other.to_string()),
         })?;
         if missing_fallback_allowed(
@@ -2643,9 +2740,9 @@ impl LocalRuntime for VmmLocal {
                 REPO_CACHE_MOUNT_REFUSED.store(true, std::sync::atomic::Ordering::SeqCst);
                 s.mounts
                     .retain(|m| m.guest != cua_sandbox_core::repo_cache::GUEST_ROOT);
-                rt.start(&s).await.map_err(rt_err)?
+                rt.start(&s).await.map_err(|e| start_err(&spec.image, e))?
             }
-            Err(e) => return Err(rt_err(e)),
+            Err(e) => return Err(start_err(&spec.image, e)),
         };
         // Behind a port forward (the probe on cua-spacesd's port says so),
         // ready once it serves an authenticated call with the Space's
@@ -3506,7 +3603,11 @@ fn component(report: &DoctorReport, name: &str, kind: BackendKind) -> Component 
     if b.provisionable {
         return Component::Pending(plan);
     }
-    if kind == BackendKind::Qemu && qemu_installed(report) {
+    let net_blocked = b
+        .missing
+        .iter()
+        .any(|m| m == cua_vmm::auto::PASST_FIX || m == cua_vmm::auto::USERNS_FIX);
+    if kind == BackendKind::Qemu && qemu_installed(report) && !net_blocked {
         // Installed, held back by KVM access: the kvm step handles that.
         return Component::Ready("already installed".into());
     }
@@ -4300,6 +4401,64 @@ mod tests {
         assert!(matches!(r, Ok((BackendKind::Lume, ()))));
     }
 
+    /// A start the backend refuses outright (Lume's argument check, or an
+    /// image pinned to a digest its tag no longer names) reaches the caller
+    /// as an invalid argument, which `on=auto` does not take elsewhere. An
+    /// invalid request of one machine's (its base VM is running), or a tag
+    /// that moved under an unpinned create, stays a failure another try or
+    /// machine can get past.
+    #[test]
+    fn only_a_refused_start_is_an_invalid_argument() {
+        use super::{RuntimeError, VmmError, rt_err, start_err};
+        let code = |r: RuntimeError| {
+            let err = crate::Error::from(cua_sandbox_core::Error::Runtime(r));
+            err.to_status().code()
+        };
+        let refused = || rt_err(VmmError::Refused("Lume refused to pull the image".into()));
+        assert!(matches!(refused(), RuntimeError::InvalidArgument(_)));
+        assert_eq!(code(refused()), tonic::Code::InvalidArgument);
+        #[cfg(feature = "spaces")]
+        {
+            let err = crate::Error::from(cua_spaces::Error::from(
+                cua_sandbox_core::Error::Runtime(refused()),
+            ));
+            assert!(matches!(err, crate::Error::InvalidArgument(_)), "{err:?}");
+        }
+        let running = rt_err(VmmError::invalid("base VM 'b' is running"));
+        assert!(matches!(running, RuntimeError::Other(_)), "{running:?}");
+        assert_eq!(code(running), tonic::Code::Aborted);
+
+        let want = format!("sha256:{}", "a".repeat(64));
+        let got = format!("sha256:{}", "b".repeat(64));
+        let moved = || VmmError::DigestMoved {
+            tag: "ghcr.io/trycua/macos:26".into(),
+            want: want.clone(),
+            got: got.clone(),
+            note: String::new(),
+        };
+        let pinned = start_err(&format!("ghcr.io/trycua/macos:26@{want}"), moved());
+        let RuntimeError::InvalidArgument(m) = &pinned else {
+            panic!("a pinned digest is refused: {pinned:?}");
+        };
+        assert!(m.contains(&format!("not the pinned {want}")), "{m}");
+        let upper = format!("ghcr.io/trycua/macos:26@sha256:{}", "A".repeat(64));
+        assert!(matches!(
+            start_err(&upper, moved()),
+            RuntimeError::InvalidArgument(_)
+        ));
+        let prefixed = start_err(&format!("lume:ghcr.io/trycua/macos:26@{want}"), moved());
+        assert!(
+            matches!(prefixed, RuntimeError::InvalidArgument(_)),
+            "a backend prefix still pins: {prefixed:?}"
+        );
+        let unpinned = start_err("ghcr.io/trycua/macos:26", moved());
+        let RuntimeError::Other(m) = &unpinned else {
+            panic!("a tag that moved under the create is retried: {unpinned:?}");
+        };
+        assert!(m.contains("try again"), "{m}");
+        assert_eq!(code(unpinned), tonic::Code::Aborted);
+    }
+
     #[test]
     fn containers_under_gvisor_report_the_gvisor_runtime() {
         let inst = |backend, isolation| cua_vmm::Instance {
@@ -4442,6 +4601,52 @@ mod tests {
         assert_eq!(r.placement.backend, BackendKind::Lume, "{image}: {r:?}");
     }
 
+    /// A Windows image built on this computer (`windows:11`) has no registry
+    /// entry, yet it is a VM disk that carries cua-spacesd: readiness waits
+    /// for it, on the architecture this host runs natively when the version
+    /// has a build for it, and on the one it has otherwise.
+    #[tokio::test]
+    async fn a_windows_image_built_here_resolves_without_a_registry() {
+        use cua_sandbox_core::placement::{Kind, Runtime};
+        // With no kind given (`cua sb create windows:11`) it is still a VM.
+        let by_default = resolve_placement_for(
+            "ghcr.io/trycua/windows:11",
+            "windows",
+            Kind::Auto,
+            &Runtime::Auto,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(by_default.placement.backend, BackendKind::Qemu);
+        let r = resolve_placement_for(
+            "ghcr.io/trycua/windows:11",
+            "windows",
+            Kind::Vm,
+            &Runtime::Auto,
+            None,
+        )
+        .await
+        .unwrap();
+        let image = r.image.expect("a local build resolves to an image");
+        assert_eq!(image.spacesd, Some(true));
+        assert_eq!(image.os, "windows");
+        assert_eq!(r.placement.backend, BackendKind::Qemu);
+        // Windows 11 has a build for either architecture: this host's own.
+        assert_eq!(r.arch, Some(cua_vmm::Arch::host()));
+        // Server 2025 is x64 only: that is its architecture, here or not.
+        let s = resolve_placement_for(
+            "ghcr.io/trycua/windows:2025",
+            "windows",
+            Kind::Vm,
+            &Runtime::Auto,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(s.arch, Some(cua_vmm::Arch::X86_64));
+    }
+
     /// A rootfs published only for the other architecture keeps that arch,
     /// so the container engine pulls (and emulates) the right platform.
     /// The fake registry is process-wide: tests that install one take turns.
@@ -4497,6 +4702,54 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert_eq!(lume_only_vm.unwrap().placement.backend, BackendKind::Lume);
+    }
+
+    /// A digest-only Lume reference is refused at placement, and a create
+    /// keeps it an invalid argument, so `on=auto` does not try every machine
+    /// with it.
+    #[tokio::test]
+    async fn a_digest_only_lume_create_is_an_invalid_argument() {
+        let _turn = FAKE_REGISTRY.lock().await;
+        let mut reg = cua_image::testing::FakeRegistry::default();
+        let digest = reg.lume("ghcr.io/acme/mac:1");
+        cua_image::resolve::set_source(Some(std::sync::Arc::new(reg)));
+        let spec = LocalStartSpec {
+            name: "digest-only".into(),
+            image: format!("ghcr.io/acme/mac@{digest}"),
+            os: "macos".into(),
+            cpus: 2,
+            memory_mb: 4096,
+            disk_size_gb: None,
+            ports: vec![],
+            env: Default::default(),
+            command: None,
+            ready_timeout: std::time::Duration::from_secs(30),
+            firmware: None,
+            sidecars: vec![],
+            registry_credentials: None,
+            container_runtime: None,
+            kind: None,
+            runtime: None,
+            restrict_network: false,
+            headless: false,
+            spacesd: None,
+            egress: Default::default(),
+            network: None,
+            tree: None,
+            gpu: None,
+            probes: vec![],
+            ephemeral: false,
+            warm: None,
+            mounts: vec![],
+            forkable: false,
+        };
+        let got = VmmLocal::default().prepare(&spec).await;
+        cua_image::resolve::set_source(None);
+        match got {
+            Err(RuntimeError::InvalidArgument(m)) => assert!(m.contains("digest-only"), "{m}"),
+            Err(e) => panic!("a digest-only Lume create is an invalid argument: {e:?}"),
+            Ok(_) => panic!("a digest-only Lume reference was placed"),
+        }
     }
 
     /// Any OCI rootfs without cua-spacesd is injected one on the kinds that
@@ -5116,6 +5369,40 @@ mod tests {
             provisioning: provisioning.iter().map(|p| p.to_string()).collect(),
         });
         r
+    }
+
+    /// QEMU installed but without passt, or on a host that denies pasta its
+    /// user namespace: `runtime setup qemu` never calls that "already
+    /// installed". With a passwordless installer it plans the install; without
+    /// one (or for the namespace, which needs an administrator) it names the
+    /// missing piece and its fix.
+    #[tokio::test]
+    async fn setup_names_the_network_prerequisites_qemu_still_lacks() {
+        use cua_proto::daemon::v1::CheckStatus::{Error, Installable};
+        let installed = |missing: &str, provisionable: bool| {
+            let mut r = qemu_report(false);
+            r.qemu.qemu_img = Some("/usr/bin/qemu-img".into());
+            r.qemu
+                .binaries
+                .insert("x86_64".into(), Some("/usr/bin/qemu-system-x86_64".into()));
+            r.backends[0].missing = vec![missing.into()];
+            r.backends[0].provisionable = provisionable;
+            r
+        };
+        let (steps, n) = setup_full(
+            installed(cua_vmm::auto::PASST_FIX, true),
+            &["qemu"],
+            true,
+            true,
+        )
+        .await;
+        assert_eq!(steps[0].status, Installable as i32, "{steps:?}");
+        assert_eq!(n, [0, 0, 0]);
+        for fix in [cua_vmm::auto::PASST_FIX, cua_vmm::auto::USERNS_FIX] {
+            let (steps, _) = setup_full(installed(fix, false), &["qemu"], false, true).await;
+            assert_eq!(steps[0].status, Error as i32, "{steps:?}");
+            assert!(steps[0].detail.contains(fix), "{steps:?}");
+        }
     }
 
     /// A component the host has no backend for (Firecracker on a Mac, Lume

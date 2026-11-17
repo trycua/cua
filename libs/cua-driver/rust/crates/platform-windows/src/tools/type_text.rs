@@ -103,6 +103,7 @@ impl Tool for TypeTextTool {
                 Ok(hwnd) => hwnd,
                 Err(error) => return ToolResult::error(error.to_string()),
             };
+            position_keyboard_cursor(&self.state, &args, hwnd, None).await;
             let text_len = text.chars().count();
             if args.get("element_token").is_none()
                 && args.get("x").is_none()

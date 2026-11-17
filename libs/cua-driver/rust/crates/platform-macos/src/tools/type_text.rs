@@ -68,7 +68,7 @@ fn def() -> &'static ToolDef {
             "type": "object",
             "required": ["text"],
             "properties": {
-                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it." },
+                "session": cua_driver_core::tool_schema::session_schema(),
                 "pid":  { "type": "integer", "description": "Target process ID." },
                 "text": { "type": "string",  "description": "Text to insert." },
                 "window_id": {
@@ -153,6 +153,7 @@ impl Tool for TypeTextTool {
             ) {
                 return synthesis_refusal_result("hid", &refusal, AxAttempt::NotAttempted);
             }
+            super::cursor_tools::position_desktop_keyboard_cursor(&self.state, &args).await;
             let prompt = PromptInput::from_args(&args);
             let result = tokio::task::spawn_blocking(move || {
                 crate::input::keyboard::type_text_global(prompt, &text, delay_ms)
@@ -610,7 +611,7 @@ const PATH_KEY_EVENTS_FG: &str = "key_events_fg";
 // Atomic AX writes are deliberately excluded: their cost does not scale per
 // character and a single write remains the preferred route for large text.
 const SYNTHESIS_BUDGET_MS: u64 = 100_000;
-const KEY_DOWN_GAP_MS: u64 = 8;
+const KEY_DOWN_GAP_MS: u64 = crate::input::keyboard::DEFAULT_KEY_GAP.as_millis() as u64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TextDeliveryRoute {
@@ -791,7 +792,7 @@ fn electron_background_ax_refusal(
     }
     Some(BackgroundRefusal {
         code: "background_unavailable",
-        reason: "The Electron AX target cannot establish a safe exact background text route on macOS because its ancestry is web content or could not be proven native; use the pixel-targeted type_text form (x,y) or delivery_mode:\"foreground\"."
+        reason: "The Electron AX target cannot establish a safe exact background text route on macOS because its ancestry is web content or could not be proven native; write the field with set_value(element_token, text), use the pixel-targeted type_text form (x,y), or retry with delivery_mode:\"foreground\" if the user allows the window to come forward."
             .to_owned(),
         advice: Some("px"),
     })

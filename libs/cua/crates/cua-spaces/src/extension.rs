@@ -247,6 +247,11 @@ impl Spaces {
         }
     }
 
+    /// Whether an extension named `name` is installed.
+    pub(crate) fn has_extension(&self, name: &str) -> bool {
+        self.inner.extensions.iter().any(|e| e.name() == name)
+    }
+
     /// The extension that serves `tool`, if any.
     pub fn extension_for(&self, tool: &str) -> Option<&Arc<dyn SpacesExtension>> {
         self.inner.extensions.iter().find(|e| e.serves(tool))

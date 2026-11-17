@@ -308,14 +308,12 @@ fn assert_tools_list_schema_shape(mut d: RawDriver) {
             "start_session.capture_scope should advertise {expected}: {capture_scope:?}"
         );
     }
-    assert!(
-        tools.iter().any(|tool| tool["name"] == "escalate_session"),
-        "escalate_session missing from tools/list"
-    );
-    assert!(
-        tools.iter().any(|tool| tool["name"] == "get_session_state"),
-        "get_session_state missing from tools/list"
-    );
+    for removed in ["escalate_session", "get_session_state"] {
+        assert!(
+            !tools.iter().any(|tool| tool["name"] == removed),
+            "{removed} was removed and must not be advertised in tools/list"
+        );
+    }
     assert!(
         properties("set_config")["capture_scope"].is_null(),
         "persistent set_config.capture_scope must remain retired"

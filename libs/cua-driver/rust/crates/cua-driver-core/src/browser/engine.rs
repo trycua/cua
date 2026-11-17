@@ -103,8 +103,7 @@ pub struct BrowserEngine {
     pub(crate) protected_resource_ownership: Arc<crate::consent::ProtectedResourceOwnershipStore>,
     mutation_gates: MutationGates,
     reconnect_gates: ReconnectGates,
-    pub(crate) pending_existing_profile_cleanups:
-        Arc<Mutex<HashMap<String, Vec<ExistingProfileSetupRequest>>>>,
+    pub(crate) setup_cleanups: Arc<Mutex<SetupCleanups>>,
     session_end_hook: Mutex<Option<crate::session::SessionEndHookRegistration>>,
 }
 
@@ -271,6 +270,51 @@ fn embedded_app_without_endpoint(
             },
         },
     }))
+}
+
+/// Remote-debugging cleanups owed for ended existing-profile grants, keyed by
+/// public session.
+#[derive(Default)]
+pub(crate) struct SetupCleanups {
+    /// Failed cleanups, retried when their session ends.
+    pub(crate) failed: HashMap<String, Vec<ExistingProfileSetupRequest>>,
+    /// Cleanups still running, per session.
+    pub(crate) running: HashMap<String, usize>,
+    /// Sessions that ended while one of their cleanups was running. Such a
+    /// cleanup missed the session-end retry, so it retries at once on failure.
+    ended_while_running: HashSet<String>,
+}
+
+impl SetupCleanups {
+    fn finish(&mut self, session: &str, failed: Option<ExistingProfileSetupRequest>) {
+        if let Some(request) = failed {
+            self.failed
+                .entry(session.to_owned())
+                .or_default()
+                .push(request);
+        }
+        if let Some(running) = self.running.get_mut(session) {
+            *running -= 1;
+            if *running == 0 {
+                self.running.remove(session);
+                self.ended_while_running.remove(session);
+            }
+        }
+    }
+}
+
+/// Turn remote debugging back off on a blocking thread: the platform drives
+/// browser UI to do it, which can stall. Returns whether it succeeded.
+async fn restore_remote_debugging(
+    platform: &Arc<dyn BrowserPlatform>,
+    request: &ExistingProfileSetupRequest,
+) -> bool {
+    let platform = platform.clone();
+    let request = request.clone();
+    matches!(
+        tokio::task::spawn_blocking(move || platform.cleanup_existing_profile_setup(request)).await,
+        Ok(Ok(_))
+    )
 }
 
 fn reconnect_exhausted(last_error: Option<&str>) -> BrowserRefusal {
@@ -739,7 +783,7 @@ impl BrowserEngine {
             protected_resource_ownership,
             mutation_gates: MutationGates::new(),
             reconnect_gates: ReconnectGates::new(),
-            pending_existing_profile_cleanups: Default::default(),
+            setup_cleanups: Default::default(),
             session_end_hook: Mutex::new(None),
         });
         let weak: Weak<Self> = Arc::downgrade(&engine);
@@ -750,8 +794,11 @@ impl BrowserEngine {
                     engine.store.remove_session(session_id);
                     engine.cleanup_prepared_session(session_id);
                     let pending = {
-                        let mut pending = engine.pending_existing_profile_cleanups.lock().unwrap();
-                        let mut requests = pending.remove(session_id).unwrap_or_default();
+                        let mut cleanups = engine.setup_cleanups.lock().unwrap();
+                        let mut requests = cleanups.failed.remove(session_id).unwrap_or_default();
+                        if cleanups.running.contains_key(session_id) {
+                            cleanups.ended_while_running.insert(session_id.to_owned());
+                        }
                         for grant in engine.existing_profile_grants.remove_session(session_id) {
                             if grant.cleanup_remote_debugging {
                                 requests.push(ExistingProfileSetupRequest {
@@ -801,11 +848,17 @@ impl BrowserEngine {
                             failed.push(request);
                         }
                     }
-                    let mut pending = engine.pending_existing_profile_cleanups.lock().unwrap();
-                    if failed.is_empty() {
-                        pending.remove(session_id);
-                    } else {
-                        pending.insert(session_id.to_owned(), failed);
+                    // Merge rather than replace: a cleanup still running when
+                    // the session ended may have queued its failure meanwhile.
+                    if !failed.is_empty() {
+                        engine
+                            .setup_cleanups
+                            .lock()
+                            .unwrap()
+                            .failed
+                            .entry(session_id.to_owned())
+                            .or_default()
+                            .extend(failed);
                     }
                 }
                 if cleanup_errors.is_empty() {
@@ -848,8 +901,8 @@ impl BrowserEngine {
     /// partway (a reconnect that ran out of time) cannot strand the socket
     /// or the consent. Turning remote debugging off drives browser UI and
     /// can stall, so it runs on a blocking thread, the caller waits at most
-    /// `SETUP_CLEANUP_TIMEOUT` for it, and a failure, however late, is queued
-    /// for the session-end retry.
+    /// `SETUP_CLEANUP_TIMEOUT` for it. A failure, however late, is queued for
+    /// the session-end retry, or retried at once if the session already ended.
     async fn release_ended_grant(&self, session: &str, grant: ExistingProfileGrant) {
         let cleanup = grant.cleanup_remote_debugging.then(|| {
             let request = ExistingProfileSetupRequest {
@@ -858,21 +911,30 @@ impl BrowserEngine {
                 browser: grant.browser_product,
             };
             let platform = self.platform.clone();
-            let pending = self.pending_existing_profile_cleanups.clone();
+            let cleanups = self.setup_cleanups.clone();
             let session = session.to_owned();
+            *cleanups
+                .lock()
+                .unwrap()
+                .running
+                .entry(session.clone())
+                .or_default() += 1;
             tokio::spawn(async move {
-                let cleaned = tokio::task::spawn_blocking({
-                    let request = request.clone();
-                    move || platform.cleanup_existing_profile_setup(request)
-                })
-                .await;
-                if !matches!(cleaned, Ok(Ok(_))) {
-                    pending
+                let cleaned = restore_remote_debugging(&platform, &request).await;
+                let missed_session_end_retry = {
+                    let mut state = cleanups.lock().unwrap();
+                    let missed = !cleaned && state.ended_while_running.contains(&session);
+                    if !missed {
+                        state.finish(&session, (!cleaned).then_some(request.clone()));
+                    }
+                    missed
+                };
+                if missed_session_end_retry {
+                    let cleaned = restore_remote_debugging(&platform, &request).await;
+                    cleanups
                         .lock()
                         .unwrap()
-                        .entry(session)
-                        .or_default()
-                        .push(request);
+                        .finish(&session, (!cleaned).then_some(request));
                 }
             })
         });

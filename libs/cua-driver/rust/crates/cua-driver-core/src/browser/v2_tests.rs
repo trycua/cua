@@ -1047,7 +1047,9 @@ struct FixtureStalls {
     dismissals: AtomicUsize,
     /// Turning remote debugging back off blocks its thread while this holds.
     hold_cleanup: AtomicBool,
-    cleanup_fails: AtomicBool,
+    /// Cleanup calls that fail before the next ones succeed.
+    cleanup_failures: AtomicUsize,
+    cleanup_calls: AtomicUsize,
     cleanup_finished: AtomicBool,
 }
 
@@ -1058,7 +1060,8 @@ impl Default for FixtureStalls {
             fingerprints: AtomicUsize::new(usize::MAX),
             dismissals: AtomicUsize::new(usize::MAX),
             hold_cleanup: AtomicBool::new(false),
-            cleanup_fails: AtomicBool::new(false),
+            cleanup_failures: AtomicUsize::new(0),
+            cleanup_calls: AtomicUsize::new(0),
             cleanup_finished: AtomicBool::new(false),
         }
     }
@@ -1264,6 +1267,7 @@ impl BrowserPlatform for FixturePlatform {
         &self,
         _request: ExistingProfileSetupRequest,
     ) -> Result<bool, BrowserRefusal> {
+        self.stalls.cleanup_calls.fetch_add(1, Ordering::SeqCst);
         let held_since = std::time::Instant::now();
         while self.stalls.hold_cleanup.load(Ordering::SeqCst)
             && held_since.elapsed() < std::time::Duration::from_secs(30)
@@ -1271,7 +1275,12 @@ impl BrowserPlatform for FixturePlatform {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         self.stalls.cleanup_finished.store(true, Ordering::SeqCst);
-        if self.stalls.cleanup_fails.load(Ordering::SeqCst) {
+        if self
+            .stalls
+            .cleanup_failures
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+            .is_ok()
+        {
             return Err(BrowserRefusal::new(
                 super::refusal::BrowserRefusalCode::BrowserRouteUnavailable,
                 "fixture cleanup failed",
@@ -1789,16 +1798,9 @@ async fn existing_profile_reconnect_refuses_within_its_bound_when_a_process_chec
 
     // The cleanup fails after the refusal went out; it must still be queued
     // for the session-end retry.
-    stalls.cleanup_fails.store(true, Ordering::SeqCst);
+    stalls.cleanup_failures.store(1, Ordering::SeqCst);
     stalls.hold_cleanup.store(false, Ordering::SeqCst);
-    let queued = || {
-        f.engine
-            .pending_existing_profile_cleanups
-            .lock()
-            .unwrap()
-            .get(SESSION)
-            .map_or(0, Vec::len)
-    };
+    let queued = || queued_cleanups(&f.engine);
     for _ in 0..500 {
         if queued() > 0 {
             break;
@@ -1807,6 +1809,61 @@ async fn existing_profile_reconnect_refuses_within_its_bound_when_a_process_chec
         tokio::task::yield_now().await;
     }
     assert_eq!(queued(), 1, "a late cleanup failure is queued for retry");
+}
+
+fn queued_cleanups(engine: &BrowserEngine) -> usize {
+    engine
+        .setup_cleanups
+        .lock()
+        .unwrap()
+        .failed
+        .get(SESSION)
+        .map_or(0, Vec::len)
+}
+
+/// Waits in real time: a blocking cleanup thread is what moves next.
+async fn wait_for(mut done: impl FnMut() -> bool) -> bool {
+    for _ in 0..500 {
+        if done() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        tokio::task::yield_now().await;
+    }
+    done()
+}
+
+#[tokio::test]
+async fn a_cleanup_that_fails_after_its_session_ended_retries_at_once() {
+    const TRANSPORT: &str = "transport-v2-cleanup-after-end";
+    let stalls = Arc::new(FixtureStalls::default());
+    // Setup turned remote debugging on, so ending the grant turns it back off.
+    let (f, _) = existing_profile_setup_fixture_with(stalls.clone()).await;
+    prepare_existing_profile(&f.engine, TRANSPORT).await;
+
+    stalls.hold_cleanup.store(true, Ordering::SeqCst);
+    let revoke = tokio::spawn({
+        let engine = f.engine.clone();
+        async move {
+            engine
+                .revoke_existing_profile_grant(SESSION, Some(TRANSPORT), 1)
+                .await
+        }
+    });
+    assert!(wait_for(|| stalls.cleanup_calls.load(Ordering::SeqCst) == 1).await);
+
+    // The session ends while its cleanup still runs, then that cleanup fails:
+    // the session-end retry has already passed, so it must retry by itself.
+    crate::session::fire_session_end(SESSION);
+    stalls.cleanup_failures.store(1, Ordering::SeqCst);
+    stalls.hold_cleanup.store(false, Ordering::SeqCst);
+    assert!(
+        wait_for(|| stalls.cleanup_calls.load(Ordering::SeqCst) == 2).await,
+        "the failed cleanup retries without waiting for another session end"
+    );
+    revoke.await.unwrap();
+    assert!(wait_for(|| f.engine.setup_cleanups.lock().unwrap().running.is_empty()).await);
+    assert_eq!(queued_cleanups(&f.engine), 0, "the retry succeeded");
 }
 
 #[tokio::test]

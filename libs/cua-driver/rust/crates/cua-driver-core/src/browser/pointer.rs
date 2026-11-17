@@ -21,7 +21,10 @@ use crate::tool_args::ArgsExt;
 
 use super::cdp_ws::CdpConnection;
 use super::engine::{BrowserEngine, ValidatedTab};
-use super::input::{confirm_ref_point, ref_point, trusted_ref_point, trusted_ref_point_in_place};
+use super::input::{
+    confirm_ref_point, ref_point, refuse_in_focus_emulation, trusted_ref_point,
+    trusted_ref_point_in_place,
+};
 use super::platform::BrowserVisualActionKind;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::required_session_schema;
@@ -644,14 +647,9 @@ impl BrowserPointerTool {
             )
             .await
             {
-                let _ = conn
-                    .call(
-                        Some(cdp_session),
-                        "Emulation.setFocusEmulationEnabled",
-                        json!({ "enabled": false }),
-                    )
-                    .await;
-                return refusal.to_tool_result();
+                return refuse_in_focus_emulation(conn, cdp_session, refusal)
+                    .await
+                    .to_tool_result();
             }
         }
 

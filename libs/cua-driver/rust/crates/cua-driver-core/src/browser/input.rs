@@ -136,6 +136,32 @@ pub(crate) async fn confirm_ref_point(
     }
 }
 
+/// Leave focus emulation after [`confirm_ref_point`] refused, and say so in
+/// the refusal when that fails, because the page then stays focus-emulated.
+pub(crate) async fn refuse_in_focus_emulation(
+    conn: &CdpConnection,
+    cdp_session: &str,
+    mut refusal: BrowserRefusal,
+) -> BrowserRefusal {
+    let Err(error) = conn
+        .call(
+            Some(cdp_session),
+            "Emulation.setFocusEmulationEnabled",
+            json!({ "enabled": false }),
+        )
+        .await
+    else {
+        return refusal;
+    };
+    refusal.message = format!(
+        "{} Focus emulation could not be restored afterwards ({error}).",
+        refusal.message
+    );
+    let mut detail = refusal.detail.take().unwrap_or_else(|| json!({}));
+    detail["focus_emulation_restored"] = json!(false);
+    refusal.with_detail(detail)
+}
+
 async fn ref_hit(
     conn: &CdpConnection,
     cdp_session: &str,

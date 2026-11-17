@@ -105,6 +105,8 @@ pub(super) struct FixtureState {
     /// Entering focus emulation runs a page focus handler that draws this
     /// node over every point.
     focus_emulation_covers: Option<i64>,
+    /// Leaving focus emulation fails.
+    focus_emulation_restore_fails: bool,
     /// The covering node is a descendant of the hit-tested ref.
     covering_node_is_descendant: bool,
     /// Scrolling this backend into view moves every main-frame box by `dy`.
@@ -189,6 +191,7 @@ impl Default for FixtureState {
             layout_scroll_y: 0.0,
             covering_node: None,
             focus_emulation_covers: None,
+            focus_emulation_restore_fails: false,
             covering_node_is_descendant: false,
             scroll_into_view_shifts: None,
             box_shift_y: 0.0,
@@ -889,6 +892,11 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     st.dom_click_generation += 1;
                 }
                 MockReply::ok(json!({}))
+            }
+            "Emulation.setFocusEmulationEnabled"
+                if call.params["enabled"] == false && st.focus_emulation_restore_fails =>
+            {
+                MockReply::err(-32000, "fixture focus restore failure")
             }
             "Emulation.setFocusEmulationEnabled"
                 if call.params["enabled"] == true && st.focus_emulation_covers.is_some() =>
@@ -3673,6 +3681,37 @@ async fn trusted_ref_click_refuses_an_overlay_drawn_on_focus() {
         .await;
 
     assert_refused_after_focus_cover(&f, &result);
+}
+
+#[tokio::test]
+async fn trusted_ref_click_refusal_on_focus_reports_a_failed_focus_restore() {
+    let f = fixture_with(|state| {
+        state.focus_emulation_covers = Some(999);
+        state.focus_emulation_restore_fails = true;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref, "session": SESSION
+        }))
+        .await;
+
+    assert_refused_after_focus_cover(&f, &result);
+    let s = structured(&result);
+    assert_eq!(
+        s["refusal"]["detail"]["focus_emulation_restored"], false,
+        "{s}"
+    );
+    assert!(
+        s["refusal"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("could not be restored")),
+        "{s}"
+    );
 }
 
 #[tokio::test]

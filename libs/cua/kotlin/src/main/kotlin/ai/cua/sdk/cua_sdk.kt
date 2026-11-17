@@ -1543,6 +1543,8 @@ external fun uniffi_cua_sdk_checksum_method_spaces_notifications(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_notifications_ack(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_spaces_notifications_delete(
+): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_notify_user(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_persistent_agent_create(
@@ -2651,6 +2653,8 @@ external fun uniffi_cua_sdk_fn_method_spaces_computer_access_revoke(`ptr`: Long,
 external fun uniffi_cua_sdk_fn_method_spaces_notifications(`ptr`: Long,`unreadOnly`: Byte,`sinceMs`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_notifications_ack(`ptr`: Long,`ids`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cua_sdk_fn_method_spaces_notifications_delete(`ptr`: Long,`ids`: RustBuffer.ByValue,`all`: Byte,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_notify_user(`ptr`: Long,`title`: RustBuffer.ByValue,`body`: RustBuffer.ByValue,`agent`: RustBuffer.ByValue,
 ): Long
@@ -4333,6 +4337,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_notifications_ack() != 64477.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_notifications_delete() != 26912.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_notify_user() != 48805.toShort()) {
@@ -21474,6 +21481,12 @@ public interface SpacesInterface {
     suspend fun `notificationsAck`(`ids`: List<kotlin.String>): kotlin.ULong
 
     /**
+     * Deletes notifications: these ids, or every one when `all` (an empty
+     * `ids` without `all` deletes nothing). Returns how many were deleted.
+     */
+    suspend fun `notificationsDelete`(`ids`: List<kotlin.String>, `all`: kotlin.Boolean): kotlin.ULong
+
+    /**
      * Posts a notification to the Cua app. Returns its id.
      */
     suspend fun `notifyUser`(`title`: kotlin.String, `body`: kotlin.String?, `agent`: kotlin.String?): kotlin.String
@@ -22755,6 +22768,31 @@ open class Spaces: Disposable, AutoCloseable, SpacesInterface
             UniffiLib.uniffi_cua_sdk_fn_method_spaces_notifications_ack(
                 uniffiHandle,
                 FfiConverterSequenceString.lower(`ids`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_u64(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_u64(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_u64(future) },
+        // lift function
+        { FfiConverterULong.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Deletes notifications: these ids, or every one when `all` (an empty
+     * `ids` without `all` deletes nothing). Returns how many were deleted.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `notificationsDelete`(`ids`: List<kotlin.String>, `all`: kotlin.Boolean) : kotlin.ULong {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_spaces_notifications_delete(
+                uniffiHandle,
+                FfiConverterSequenceString.lower(`ids`),FfiConverterBoolean.lower(`all`),
             )
         },
         { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_u64(future, callback, continuation) },

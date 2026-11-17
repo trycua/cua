@@ -591,7 +591,17 @@ fn screenshot_scale(state: &ToolResponse) -> (f64, f64) {
 }
 
 fn screenshot_scale_for_platform(state: &serde_json::Value, linux: bool) -> (f64, f64) {
-    let window_role = if linux { "frame" } else { "AXWindow" };
+    if linux {
+        // The AT-SPI frame can include a client-side shadow that the window
+        // capture leaves out, so its size says nothing about a resize. The
+        // driver publishes frame_scale exactly when it shrank the capture.
+        let scale = state["frame_scale"].as_f64().unwrap_or(1.0);
+        assert!(
+            scale.is_finite() && scale > 0.0,
+            "invalid frame_scale: {scale}"
+        );
+        return (scale, scale);
+    }
     let capture = (
         state["screenshot_width"].as_f64().unwrap_or(0.0),
         state["screenshot_height"].as_f64().unwrap_or(0.0),
@@ -601,7 +611,7 @@ fn screenshot_scale_for_platform(state: &serde_json::Value, linux: bool) -> (f64
         .and_then(|elements| {
             elements
                 .iter()
-                .find(|element| element["role"].as_str() == Some(window_role))
+                .find(|element| element["role"].as_str() == Some("AXWindow"))
         })
         .map(|window| {
             (
@@ -629,10 +639,11 @@ fn screenshot_local_point(
 }
 
 #[test]
-fn linux_frame_geometry_drives_resized_screenshot_scale() {
+fn linux_frame_scale_drives_resized_screenshot_scale() {
     let state = serde_json::json!({
         "screenshot_width": 1568,
         "screenshot_height": 852,
+        "frame_scale": 0.8,
         "elements": [{
             "element_index": 0,
             "role": "frame",
@@ -644,9 +655,7 @@ fn linux_frame_geometry_drives_resized_screenshot_scale() {
         }]
     });
 
-    let linux_scale = screenshot_scale_for_platform(&state, true);
-    assert!((linux_scale.0 - 1568.0 / 1896.0).abs() < f64::EPSILON);
-    assert!((linux_scale.1 - 852.0 / 1030.0).abs() < f64::EPSILON);
+    assert_eq!(screenshot_scale_for_platform(&state, true), (0.8, 0.8));
 
     let ax_scale = screenshot_scale_for_platform(&state, false);
     assert!((ax_scale.0 - 1568.0 / 1000.0).abs() < f64::EPSILON);
@@ -654,10 +663,33 @@ fn linux_frame_geometry_drives_resized_screenshot_scale() {
 }
 
 #[test]
+fn linux_decorated_frame_is_not_a_screenshot_resize() {
+    // A cua-compositor window capture is the 896x736 window without its
+    // client-side shadow, while AT-SPI reports the 940x780 shadowed frame.
+    // The driver did not resize the capture, so it publishes no frame_scale.
+    let state = serde_json::json!({
+        "screenshot_width": 896,
+        "screenshot_height": 736,
+        "elements": [{
+            "element_index": 0,
+            "role": "frame",
+            "frame": {"x": 0, "y": 0, "w": 940, "h": 780}
+        }]
+    });
+
+    let scale = screenshot_scale_for_platform(&state, true);
+    assert_eq!(scale, (1.0, 1.0));
+    // The "Open child window" button centre stays on the button.
+    let point = screenshot_local_point((672.5, 363.5), (0.0, 0.0), scale);
+    assert_eq!(point, (672.5, 363.5));
+}
+
+#[test]
 fn resized_screenshot_coordinates_use_capture_scale() {
     let state = serde_json::json!({
         "screenshot_width": 1568,
         "screenshot_height": 852,
+        "frame_scale": 0.8,
         "elements": [{
             "role": "frame",
             "frame": {"x": 12, "y": 38, "w": 1896, "h": 1030}
@@ -666,8 +698,9 @@ fn resized_screenshot_coordinates_use_capture_scale() {
     let scale = screenshot_scale_for_platform(&state, true);
     let point = screenshot_local_point((949.0, 398.0), (12.0, 38.0), scale);
 
-    assert!((point.0 - 774.903).abs() < 0.001);
-    assert!((point.1 - 297.786).abs() < 0.001);
+    // (949 - 12) * 0.8 and (398 - 38) * 0.8.
+    assert!((point.0 - 749.6).abs() < 0.001);
+    assert!((point.1 - 288.0).abs() < 0.001);
     assert!(point.0 < 1568.0);
     assert!(point.1 < 852.0);
 }
@@ -872,6 +905,25 @@ fn scroll_oracle_rejects_missing_or_invalid_geometry() {
     }
 }
 
+// Exercise text-only MCP clients even though the testkit requests full_output.
+fn text_snapshot_id(state: &ToolResponse) -> String {
+    let text = state.raw["result"]["content"]
+        .as_array()
+        .expect("MCP content blocks")
+        .iter()
+        .find_map(|block| block.get("text")?.as_str())
+        .unwrap();
+    let handle = text
+        .lines()
+        .next()
+        .unwrap()
+        .split_whitespace()
+        .find_map(|field| field.strip_prefix("snapshot_id="))
+        .expect("snapshot_id in text header");
+    assert_eq!(handle, state.snapshot_id());
+    handle.to_owned()
+}
+
 fn action_target_args(
     fixture: &Fixture,
     state: &ToolResponse,
@@ -889,7 +941,7 @@ fn action_target_args(
     if addressing == "ax" {
         object.insert(
             "element_token".to_owned(),
-            serde_json::json!(state.element_token(index)),
+            serde_json::json!(format!("{}:{index}", text_snapshot_id(state))),
         );
     } else {
         let origin = window_origin(fixture, state);

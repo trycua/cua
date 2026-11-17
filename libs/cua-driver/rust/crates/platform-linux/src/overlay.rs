@@ -236,7 +236,7 @@ pub(crate) fn wayland_capture_limitation() -> Option<String> {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum WaylandOverlayBackend {
+pub(crate) enum WaylandOverlayBackend {
     SemanticShellHelper,
     LayerShell,
     LegacyShellHelper,
@@ -263,7 +263,7 @@ fn select_wayland_overlay_backend(
 }
 
 #[cfg(target_os = "linux")]
-fn wayland_overlay_backend() -> WaylandOverlayBackend {
+pub(crate) fn wayland_overlay_backend() -> WaylandOverlayBackend {
     *WAYLAND_OVERLAY_BACKEND.get_or_init(|| {
         select_wayland_overlay_backend(
             crate::wayland::shell_helper::semantic_cursor_available(),
@@ -714,7 +714,7 @@ fn dispatch_shell_helper_command(
             crate::wayland::shell_helper::move_cursor(*x as i32, *y as i32);
         }
         OverlayCommand::BeginAction {
-            action,
+            action: _,
             delivery,
             target,
         } if semantic => {
@@ -724,12 +724,8 @@ fn dispatch_shell_helper_command(
                 cursor_overlay::BadgeMode::Verbose => (*delivery, *target),
                 cursor_overlay::BadgeMode::Minimal | cursor_overlay::BadgeMode::Off => (None, None),
             };
-            // Its action marks are opt-in too (`cursor.marks`).
-            let action = if cursor_overlay::cursor_options::active().marks {
-                *action
-            } else {
-                cursor_overlay::CursorAction::Idle
-            };
+            // The cursor draws no action marks: always the idle frame.
+            let action = cursor_overlay::CursorAction::Idle;
             crate::wayland::shell_helper::set_cursor_state(
                 action.as_str(),
                 delivery.as_ref().map_or("", |value| value.as_str()),
@@ -825,12 +821,10 @@ pub async fn animate_cursor_to_target_for(
     seed_start_if_unplaced(&key, x, y);
     let should_animate = {
         let guard = RENDER.lock().unwrap();
-        matches!(
-            guard.as_ref().and_then(|m| m.cursors.get(&key)),
-            Some(rs) if rs.core.cfg.enabled
-                && rs.core.visible
-                && rs.core.placed
-        )
+        guard
+            .as_ref()
+            .and_then(|m| m.cursors.get(&key))
+            .is_some_and(|rs| rs.core.animates())
     };
     if !should_animate {
         return;

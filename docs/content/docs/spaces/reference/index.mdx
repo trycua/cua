@@ -9,7 +9,7 @@ description: "Every Spaces tool by category, with parameters, results, errors an
   Source: libs/cua/spaces-contract/manifest.json
 */}
 
-The Spaces contract: 122 tools with the same names and schemas on every surface: `cua mcp`, `cua daemon mcp` and the Spaces SDKs. Contract 0.9.0, MCP protocol revision 2025-06-18, transports `mcp_stdio` and `mcp_streamable_http`. Experimental: names and shapes can change between minor versions.
+The Spaces contract: 123 tools with the same names and schemas on every surface: `cua mcp`, `cua daemon mcp` and the Spaces SDKs. Contract 0.9.0, MCP protocol revision 2025-06-18, transports `mcp_stdio` and `mcp_streamable_http`. Experimental: names and shapes can change between minor versions.
 
 ## Tools
 
@@ -105,6 +105,7 @@ Named agents whose memory outlives their Space: homes in Cua Volume, routines, n
 | [`notify_user`](/spaces/reference/agents#notify_user) | Tell the user something in the Cua app. | destructive |
 | [`notifications_list`](/spaces/reference/agents#notifications_list) | Read the notifications feed. | read-only, idempotent |
 | [`notifications_ack`](/spaces/reference/agents#notifications_ack) | Mark notifications read. | mutating, idempotent |
+| [`notifications_delete`](/spaces/reference/agents#notifications_delete) | Delete notifications. | mutating, idempotent |
 | [`computer_access_grant`](/spaces/reference/agents#computer_access_grant) | Let a persistent agent use one of the user's computers. | destructive |
 | [`computer_access_revoke`](/spaces/reference/agents#computer_access_revoke) | Take back a persistent agent's access to a computer. | mutating, idempotent |
 | [`computer_access_list`](/spaces/reference/agents#computer_access_list) | List per-agent computer access. | read-only, idempotent |

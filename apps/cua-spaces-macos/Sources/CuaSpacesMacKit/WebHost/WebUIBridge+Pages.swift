@@ -322,6 +322,15 @@ extension WebUIBridge {
             guard let ids = args["ids"] as? [String] else { throw Failure.badArgs("ids: array of strings") }
             await model.persistent.markRead(ids: ids)
             return NSNull()
+        case "notifications.delete":
+            guard model.persistent.canCallTools else { throw Failure.unsupported(serviceDownMessage) }
+            guard let ids = args["ids"] as? [String] else { throw Failure.badArgs("ids: array of strings") }
+            await model.persistent.deleteNotifications(ids: ids)
+            return NSNull()
+        case "notifications.deleteAll":
+            guard model.persistent.canCallTools else { throw Failure.unsupported(serviceDownMessage) }
+            await model.persistent.deleteAllNotifications()
+            return NSNull()
 
         // Usage events
         case "telemetry.track":

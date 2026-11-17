@@ -204,7 +204,13 @@ off Chrome's remote-debugging setting; do that in Chrome.
 
 Supported: Chrome and Edge on macOS, Windows, and Linux X11; Chrome on GNOME
 Wayland; Chrome, Edge, and Chromium on Sway. On Linux, start the browser
-with `--force-renderer-accessibility`. Setup recognizes English UI labels only.
+with `--force-renderer-accessibility`. On macOS, setup recognizes English UI labels only. On Windows, setup does not depend on the UI language. On Linux, setup accepts a localized browser, but the browser's internal setup page must show its English heading and checkbox.
+
+On macOS 27 and later, reading the Chrome and Edge profile folders needs Full
+Disk Access or a per-app grant, so attachment through the daemon refuses with
+`browser_route_unavailable` until CuaDriver.app has that access. Grant it Full
+Disk Access in System Settings, then restart the daemon. A runtime started with
+`cua-driver mcp --direct` reads the folder with its host app's access instead.
 
 ## Refusals
 
@@ -220,7 +226,7 @@ with `--force-renderer-accessibility`. Setup recognizes English UI labels only.
 | `browser_origin_outside_scope` | The tab left the manifest's origins; mutation pauses. |
 | `browser_action_unavailable` | The ref does not declare the needed action. |
 
-The legacy `page` tool keeps its read-only `get_text` and `query_dom` actions.
-Its mutation actions need `CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1` at daemon
-start and skip the typed tools' binding and consent checks; migrate to
-`browser_*`.
+The legacy `page` tool keeps its read-only `get_text` and `query_dom` actions,
+which are the way to read Safari and Firefox pages. Its page actions (run
+JavaScript, click, type) and the `CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS`
+switch were removed; act on a page with the typed `browser_*` tools.

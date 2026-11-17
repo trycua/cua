@@ -34,6 +34,30 @@
 //! Accessibility is on, and opens the next pane. When both are on it shows
 //! "All set. Cua Driver can now use this Mac." and closes itself.
 //!
+//! ## Docking under System Settings
+//!
+//! While System Settings has a window, the guide shrinks to what the person
+//! needs there and docks under that window's pane, moving with it, as the
+//! Cua Spaces guide does:
+//!
+//! ```text
+//! ┌─ System Settings ──┬──────────────────────────────┐
+//! │ (sidebar)          │ Accessibility                │
+//! │                    │  Cua Driver            [ ◯ ] │
+//! └────────────────────┴──────────────────────────────┘
+//!                      ┌─ Set up Cua Driver ──────────┐
+//!                      │ Let Cua Driver use your …    │
+//!                      │ In System Settings, turn on …│
+//!                      │ If Cua Driver isn't in the … │
+//!                      │ [icon]  Cua Driver   ✋ Drag  │
+//!                      └──────────────────────────────┘
+//! ```
+//!
+//! A 30 Hz timer reads System Settings' frame from the window server
+//! (`settings_window`; no permission needed) and places the guide with the
+//! geometry in `dock`. When System Settings has had no window for a moment,
+//! or the guide finishes, the full window comes back where it was.
+//!
 //! ## Threading
 //!
 //! Everything here runs on the main thread: `show_modal` is called by the
@@ -47,8 +71,10 @@ use objc2::runtime::{AnyObject, Bool, Sel};
 use objc2::{class, msg_send};
 use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize};
 
+use crate::permissions::dock;
 use crate::permissions::gate::MissingPermission;
 use crate::permissions::guide::{self, GuideEffect, GuideMachine, GuideStep};
+use crate::permissions::settings_window;
 use crate::permissions::status::PermissionsStatus;
 
 // ── Public API ──────────────────────────────────────────────────────────
@@ -175,7 +201,7 @@ fn running_inside_app_bundle() -> bool {
 // ── Layout ──────────────────────────────────────────────────────────────
 //
 // Fixed layout, measured from the top of the content view (AppKit's origin
-// is bottom-left, so `top()` converts).
+// is bottom-left, so `rect()` converts).
 
 const WIN_W: f64 = 480.0;
 const WIN_H: f64 = 420.0;
@@ -185,16 +211,25 @@ const TILE_H: f64 = 60.0;
 const ICON: f64 = 36.0;
 /// Ticks (1 s each) the finished state stays up before the window closes.
 const DONE_TICKS: u32 = 2;
-
-fn top(y_from_top: f64, height: f64) -> f64 {
-    WIN_H - y_from_top - height
-}
+/// Height of the docked layout: the step, what to do, and the drag tile.
+const DOCK_H: f64 = 156.0;
+/// How often the docked guide re-reads where System Settings is, so it
+/// moves with the window.
+const FOLLOW_INTERVAL: f64 = 1.0 / 30.0;
+/// Follow ticks System Settings may be missing (opening, swapping panes)
+/// before the guide goes back to its full layout.
+const UNDOCK_AFTER_MISSES: u32 = 12;
 
 fn rect(x: f64, y_from_top: f64, w: f64, h: f64) -> NSRect {
+    rect_in(WIN_H, x, y_from_top, w, h)
+}
+
+/// [`rect`] in a view `view_h` tall (the docked layout).
+fn rect_in(view_h: f64, x: f64, y_from_top: f64, w: f64, h: f64) -> NSRect {
     NSRect {
         origin: NSPoint {
             x,
-            y: top(y_from_top, h),
+            y: view_h - y_from_top - h,
         },
         size: NSSize {
             width: w,
@@ -211,11 +246,14 @@ struct Views {
     window: usize,
     step_view: usize,
     done_view: usize,
+    docked_view: usize,
     counter: usize,
     title: usize,
     why: usize,
     how: usize,
     note: usize,
+    dock_title: usize,
+    dock_how: usize,
 }
 
 struct Session {
@@ -223,6 +261,16 @@ struct Session {
     hooks: PanelHooks,
     views: Views,
     done_ticks: u32,
+    dock: DockState,
+}
+
+/// Whether the guide is docked under System Settings, and where the full
+/// window goes back to when it undocks.
+#[derive(Default)]
+struct DockState {
+    docked: bool,
+    misses: u32,
+    home: Option<NSRect>,
 }
 
 thread_local! {
@@ -391,17 +439,42 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
     let _: () = msg_send![done_view, addSubview: done_why];
     let _: () = msg_send![content, addSubview: done_view];
 
+    // ---- Docked view: under System Settings, only what to do there ----
+    let docked_view = new_view(rect_in(DOCK_H, 0.0, 0.0, WIN_W, DOCK_H));
+    let _: () = msg_send![docked_view, setHidden: true];
+    let dock_title = label("", 13.0, true, rect_in(DOCK_H, PAD, 14.0, CONTENT_W, 18.0));
+    let _: () = msg_send![docked_view, addSubview: dock_title];
+    let dock_how = label("", 12.0, false, rect_in(DOCK_H, PAD, 36.0, CONTENT_W, 16.0));
+    let _: () = msg_send![docked_view, addSubview: dock_how];
+    let dock_hint = label(
+        guide::DRAG_HINT,
+        12.0,
+        false,
+        rect_in(DOCK_H, PAD, 54.0, CONTENT_W, 16.0),
+    );
+    set_secondary(dock_hint);
+    let _: () = msg_send![docked_view, addSubview: dock_hint];
+    let dock_tile = drag_tile(
+        rect_in(DOCK_H, PAD, 78.0, CONTENT_W, TILE_H),
+        bundle.as_deref(),
+    );
+    let _: () = msg_send![docked_view, addSubview: dock_tile];
+    let _: () = msg_send![content, addSubview: docked_view];
+
     let views = Views {
         window: window as usize,
         step_view: step_view as usize,
         done_view: done_view as usize,
+        docked_view: docked_view as usize,
         counter: counter as usize,
         title: title as usize,
         why: why as usize,
         how: how as usize,
         note: note as usize,
+        dock_title: dock_title as usize,
+        dock_how: dock_how as usize,
     };
-    render(&views, machine.step());
+    render(&views, machine.step(), false);
     OUTCOME.with(|cell| *cell.borrow_mut() = None);
     SESSION.with(|cell| {
         *cell.borrow_mut() = Some(Session {
@@ -409,11 +482,12 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
             hooks,
             views,
             done_ticks: 0,
+            dock: DockState::default(),
         })
     });
 
-    // Top right of the screen, clear of System Settings, which opens in the
-    // middle.
+    // Top right of the screen while System Settings is closed; `follow`
+    // docks the guide under System Settings once it is open.
     let visible: NSRect = msg_send![main_screen, visibleFrame];
     let origin = NSPoint {
         x: visible.origin.x + visible.size.width - WIN_W - 24.0,
@@ -424,13 +498,16 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
     let _: () = msg_send![window, orderFrontRegardless];
     let _: () = msg_send![app, activateIgnoringOtherApps: true];
 
-    let timer = schedule_tick(target);
+    let timer = schedule_timer(target, 1.0, objc2::sel!(pollTick:));
+    let follow_timer = schedule_timer(target, FOLLOW_INTERVAL, objc2::sel!(followTick:));
     // Run one tick now so a pending request goes out without a 1 s delay.
     tick();
+    follow();
     if OUTCOME.with(|cell| cell.borrow().is_none()) {
         let _: i64 = msg_send![app, runModalForWindow: window];
     }
     let _: () = msg_send![timer, invalidate];
+    let _: () = msg_send![follow_timer, invalidate];
     let _: () = msg_send![window, setDelegate: std::ptr::null::<AnyObject>()];
 
     let outcome = OUTCOME
@@ -443,11 +520,9 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
 }
 
 /// Draw `step`: the step's words, or the finished view.
-unsafe fn render(views: &Views, step: GuideStep) {
-    let done = step == GuideStep::Done;
-    let _: () = msg_send![ptr(views.step_view), setHidden: done];
-    let _: () = msg_send![ptr(views.done_view), setHidden: !done];
-    if done {
+unsafe fn render(views: &Views, step: GuideStep, docked: bool) {
+    show_layout(views, step, docked);
+    if step == GuideStep::Done {
         return;
     }
     let copy = step.copy();
@@ -456,18 +531,129 @@ unsafe fn render(views: &Views, step: GuideStep) {
     let _: () = msg_send![ptr(views.why), setStringValue: ns_string(copy.why)];
     let _: () = msg_send![ptr(views.how), setStringValue: ns_string(copy.how)];
     let _: () = msg_send![ptr(views.note), setStringValue: ns_string(copy.note)];
+    let _: () = msg_send![ptr(views.dock_title), setStringValue: ns_string(copy.title)];
+    let _: () = msg_send![ptr(views.dock_how), setStringValue: ns_string(copy.how)];
     let _: () = msg_send![ptr(views.window), setTitle: ns_string(guide::WINDOW_TITLE)];
+}
+
+// ── Docking under System Settings ────────────────────────────────────────
+
+/// One follow step: dock under System Settings while it has a window, move
+/// with it, and go back to the full layout once it has been gone for a
+/// moment or the guide has finished.
+fn follow() {
+    SESSION.with(|cell| {
+        let mut guard = cell.borrow_mut();
+        let Some(session) = guard.as_mut() else {
+            return;
+        };
+        let step = session.machine.step();
+        let finished = step == GuideStep::Done;
+        let settings = if finished {
+            None
+        } else {
+            settings_window::frame()
+        };
+        unsafe {
+            match settings {
+                Some(settings) => {
+                    session.dock.misses = 0;
+                    place_docked(&session.views, &mut session.dock, settings, step);
+                }
+                None if session.dock.docked => {
+                    session.dock.misses += 1;
+                    if finished || session.dock.misses >= UNDOCK_AFTER_MISSES {
+                        undock(&session.views, &mut session.dock, step);
+                    }
+                }
+                None => {}
+            }
+        }
+    });
+}
+
+unsafe fn place_docked(
+    views: &Views,
+    dock_state: &mut DockState,
+    settings: dock::Rect,
+    step: GuideStep,
+) {
+    let window = ptr(views.window);
+    if !dock_state.docked {
+        let home: NSRect = msg_send![window, frame];
+        dock_state.home = Some(home);
+        dock_state.docked = true;
+        show_layout(views, step, true);
+        let _: () = msg_send![window, setMovable: false];
+    }
+    let screens = settings_window::screens();
+    let Some(screen) = dock::screen_for(settings, &screens).or_else(|| screens.first().copied())
+    else {
+        return;
+    };
+    let size = window_size_for_content(window, WIN_W, DOCK_H);
+    let target = dock::docked_frame(settings, screen.visible, size.width, size.height);
+    let target = NSRect {
+        origin: NSPoint {
+            x: target.x,
+            y: target.y,
+        },
+        size,
+    };
+    let current: NSRect = msg_send![window, frame];
+    if !same_rect(current, target) {
+        let _: () = msg_send![window, setFrame: target display: true];
+    }
+}
+
+unsafe fn undock(views: &Views, dock_state: &mut DockState, step: GuideStep) {
+    let window = ptr(views.window);
+    dock_state.docked = false;
+    dock_state.misses = 0;
+    show_layout(views, step, false);
+    let size = window_size_for_content(window, WIN_W, WIN_H);
+    let current: NSRect = msg_send![window, frame];
+    let origin = dock_state
+        .home
+        .take()
+        .map_or(current.origin, |home| home.origin);
+    let _: () = msg_send![window, setFrame: NSRect { origin, size } display: true];
+    let _: () = msg_send![window, setMovable: true];
+}
+
+/// Show the docked layout, or the full window's step or finished view.
+unsafe fn show_layout(views: &Views, step: GuideStep, docked: bool) {
+    let done = step == GuideStep::Done;
+    let _: () = msg_send![ptr(views.docked_view), setHidden: !docked];
+    let _: () = msg_send![ptr(views.step_view), setHidden: docked || done];
+    let _: () = msg_send![ptr(views.done_view), setHidden: docked || !done];
+}
+
+unsafe fn window_size_for_content(window: *mut AnyObject, width: f64, height: f64) -> NSSize {
+    let content = NSRect {
+        origin: NSPoint { x: 0.0, y: 0.0 },
+        size: NSSize { width, height },
+    };
+    let frame: NSRect = msg_send![window, frameRectForContentRect: content];
+    frame.size
+}
+
+fn same_rect(a: NSRect, b: NSRect) -> bool {
+    (a.origin.x - b.origin.x).abs() < 0.5
+        && (a.origin.y - b.origin.y).abs() < 0.5
+        && (a.size.width - b.size.width).abs() < 0.5
+        && (a.size.height - b.size.height).abs() < 0.5
 }
 
 // ── Timer, buttons, window close ─────────────────────────────────────────
 
-unsafe fn schedule_tick(target: *mut AnyObject) -> *mut AnyObject {
+unsafe fn schedule_timer(target: *mut AnyObject, interval: f64, selector: Sel) -> *mut AnyObject {
     // `runModalForWindow:` runs the loop in NSModalPanelRunLoopMode, which a
     // default-scheduled timer never fires in, so add it to that mode.
     let timer: *mut AnyObject = msg_send![class!(NSTimer),
-        timerWithTimeInterval: 1.0_f64
+        timerWithTimeInterval: interval
         target: target
-        selector: objc2::sel!(pollTick:)
+        selector: selector
         userInfo: std::ptr::null::<AnyObject>()
         repeats: true
     ];
@@ -497,7 +683,10 @@ fn tick() {
                     if step == GuideStep::ScreenRecording {
                         guide::write_resume_marker();
                     }
-                    render(&session.views, step);
+                    if step == GuideStep::Done && session.dock.docked {
+                        undock(&session.views, &mut session.dock, step);
+                    }
+                    render(&session.views, step, session.dock.docked);
                 },
                 GuideEffect::Request(permission) => {
                     if permission == MissingPermission::ScreenRecording {
@@ -523,6 +712,14 @@ extern "C" fn on_poll_tick(_this: *mut AnyObject, _cmd: Sel, _timer: *mut AnyObj
         eprintln!("[cua-driver] permission guide check failed; closing the guide");
         OUTCOME.with(|cell| *cell.borrow_mut() = Some(PanelOutcome::Dismissed));
         stop_modal();
+    }
+}
+
+extern "C" fn on_follow_tick(_this: *mut AnyObject, _cmd: Sel, _timer: *mut AnyObject) {
+    // Following System Settings is a convenience: if it fails, leave the
+    // guide where it is rather than closing it.
+    if std::panic::catch_unwind(follow).is_err() {
+        eprintln!("[cua-driver] permission guide could not follow System Settings");
     }
 }
 
@@ -604,6 +801,10 @@ fn target_class() -> &'static objc2::runtime::AnyClass {
             builder.add_method(
                 objc2::sel!(pollTick:),
                 on_poll_tick as extern "C" fn(_, _, _),
+            );
+            builder.add_method(
+                objc2::sel!(followTick:),
+                on_follow_tick as extern "C" fn(_, _, _),
             );
             builder.add_method(
                 objc2::sel!(windowWillClose:),
@@ -977,6 +1178,21 @@ mod tests {
             let r = rect(PAD, y, CONTENT_W, h);
             assert!(r.origin.y >= 48.0, "row at {y} overlaps the bottom buttons");
             assert!(r.origin.y + r.size.height <= WIN_H);
+        }
+    }
+
+    #[test]
+    fn docked_layout_fits_its_view() {
+        let rows = [(14.0, 18.0), (36.0, 16.0), (54.0, 16.0), (78.0, TILE_H)];
+        for (y, h) in rows {
+            let r = rect_in(DOCK_H, PAD, y, CONTENT_W, h);
+            assert!(r.origin.y >= 0.0, "docked row at {y} leaves the view");
+            assert!(r.origin.y + r.size.height <= DOCK_H);
+        }
+        // Rows do not overlap, top to bottom.
+        for pair in rows.windows(2) {
+            let (y, h) = pair[0];
+            assert!(y + h <= pair[1].0, "docked row at {y} overlaps the next");
         }
     }
 }

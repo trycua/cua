@@ -1927,17 +1927,20 @@ mod tests {
     /// packed record under the caller's control via `arg0`, mirroring the
     /// observed Helium shape without needing a real browser installed.
     ///
-    /// The stand-in executable is a copy of `cat` invoked with zero
+    /// The stand-in executable is a copy of `/bin/sh` invoked with zero
     /// arguments: `packed_helium_arguments` requires the *entire* recovered
     /// argv to be a single NUL-terminated record, so the process must reach
     /// `/proc/<pid>/cmdline` with nothing beyond the spoofed `arg0` in it.
     /// Any additional positional argument -- e.g. a duration passed to
     /// `sleep` -- would itself become a second record and silently defeat
-    /// the very packed-parsing path under test. `cat` blocks on its own
-    /// unclosed stdin instead, needing no arguments to stay alive.
+    /// the very packed-parsing path under test. The shell blocks reading
+    /// commands from its own unclosed stdin instead, needing no arguments to
+    /// stay alive. A coreutils tool such as `cat` cannot stand in: uutils
+    /// coreutils (Ubuntu 26.04) is one multi-call binary that picks the tool
+    /// from `arg0` and exits on the spoofed one.
     struct FakeHeliumProcess {
         child: std::process::Child,
-        // Keeping the child's stdin open is what keeps `cat` blocked; if
+        // Keeping the child's stdin open is what keeps the shell blocked; if
         // this handle is dropped, stdin sees EOF and the process exits.
         _stdin: std::process::ChildStdin,
         _executable_directory: tempfile::TempDir,
@@ -1957,8 +1960,8 @@ mod tests {
             let executable_directory =
                 tempfile::tempdir().expect("temporary fake-helium executable directory");
             let executable = executable_directory.path().join("helium");
-            std::fs::copy(cat_executable_path(), &executable)
-                .expect("stage a `cat` stand-in as the fake Helium executable");
+            std::fs::copy("/bin/sh", &executable)
+                .expect("stage a `/bin/sh` stand-in as the fake Helium executable");
             std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))
                 .expect("make the fake Helium executable runnable");
             let mut child = std::process::Command::new(&executable)
@@ -1990,21 +1993,6 @@ mod tests {
             let _ = self.child.kill();
             let _ = self.child.wait();
         }
-    }
-
-    fn cat_executable_path() -> PathBuf {
-        for candidate in ["/usr/bin/cat", "/bin/cat"] {
-            if std::path::Path::new(candidate).is_file() {
-                return PathBuf::from(candidate);
-            }
-        }
-        for directory in std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()) {
-            let candidate = directory.join("cat");
-            if candidate.is_file() {
-                return candidate;
-            }
-        }
-        panic!("no `cat` executable found to stage as the fake Helium process")
     }
 
     #[test]

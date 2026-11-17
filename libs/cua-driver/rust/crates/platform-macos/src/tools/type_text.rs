@@ -1694,7 +1694,6 @@ fn type_text_in_key_window(
                 focused_accepts_text(element)
                     || focused_is_editor_surface(pid, element)
                     || target_in_web_area(pid, Some((element as usize, None)), window_id)
-                    || opaque_toolkit_key_window(key_window_confirmed, pid, element)
             },
             // No focused element, but the window is the confirmed key window:
             // post the keys to it, as press_key does.
@@ -2014,24 +2013,6 @@ fn is_editor_surface_role(role: &str) -> bool {
 /// key window and the app is not an item browser.
 fn unfocused_window_accepts_keys(key_window_confirmed: bool, bundle_id: &str) -> bool {
     key_window_confirmed && !is_item_browser_app(bundle_id)
-}
-
-/// GTK 3 on Quartz exposes no widgets to accessibility: its focus reads as
-/// the window itself. When that window is the confirmed key window, keys go
-/// to the widget GTK has focused, as they would for a user typing, so the
-/// window counts as a text target.
-///
-/// # Safety
-/// `element` must be a live `AXUIElementRef`.
-unsafe fn opaque_toolkit_key_window(
-    key_window_confirmed: bool,
-    pid: i32,
-    element: AXUIElementRef,
-) -> bool {
-    key_window_confirmed
-        && copy_string_attr(element, "AXRole").as_deref() == Some("AXWindow")
-        && crate::input::pointer_toolkit::detect(pid)
-            == Some(crate::input::pointer_toolkit::PointerReadingToolkit::GdkQuartz)
 }
 
 fn bundle_id_of(pid: i32) -> String {

@@ -43,7 +43,7 @@ import Testing
     ]
 
     @Test func testTheContractIsCompleteTools() {
-        XCTAssertEqual(Self.advertisedTools.count, 122)
+        XCTAssertEqual(Self.advertisedTools.count, 123)
         // The Python server's `local_rcdp` is gone; `stream_endpoint` mints a
         // media ticket for any provider, and `send_file` is new.
         XCTAssertFalse(Self.advertisedTools.contains("local_rcdp"))

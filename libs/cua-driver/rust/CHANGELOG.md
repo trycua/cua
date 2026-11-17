@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.52.13](https://github.com/trycua/cua/compare/cua-driver-rs-v0.52.12...cua-driver-rs-v0.52.13) (2026-11-17)
+
+
+### Bug Fixes
+
+* **cua-driver:** refuse trusted browser ref clicks whose point misses the ref ([#7512](https://github.com/trycua/cua/issues/7512)) ([d4828ba](https://github.com/trycua/cua/commit/d4828ba823ebee34731777d74121171e4dd6ca14)), closes [#2882](https://github.com/trycua/cua/issues/2882)
+
 ## [0.52.12](https://github.com/trycua/cua/compare/cua-driver-rs-v0.52.11...cua-driver-rs-v0.52.12) (2026-11-17)
 
 

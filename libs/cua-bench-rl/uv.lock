@@ -523,7 +523,7 @@ provides-extras = ["computer", "openai", "anthropic", "qwen", "uitars", "uitars-
 
 [[package]]
 name = "cua-bench"
-version = "0.4.9"
+version = "0.4.10"
 source = { editable = "../cua-bench" }
 dependencies = [
     { name = "aiohttp" },

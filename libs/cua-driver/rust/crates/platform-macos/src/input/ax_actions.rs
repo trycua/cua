@@ -339,6 +339,39 @@ pub fn element_has_keyboard_focus(pid: i32, element_ptr: usize) -> bool {
         || unsafe { copy_bool_attr(element_ptr as AXUIElementRef, "AXFocused") } == Some(true)
 }
 
+/// A targeted key post refused because the addressed element never took
+/// keyboard focus. Nothing was dispatched, so the caller may retry safely.
+#[derive(Debug, thiserror::Error)]
+#[error("the addressed element did not acquire keyboard focus; no key was dispatched")]
+pub struct KeyFocusUnconfirmed;
+
+/// Focus `target` and confirm it holds keyboard focus before `dispatch` posts
+/// process-scoped keys, which land in whatever element is focused. A target
+/// that does not take focus within the bound fails with
+/// [`KeyFocusUnconfirmed`] and `dispatch` never runs. `None` (a window-level
+/// key) dispatches directly.
+pub fn with_confirmed_key_focus<T>(
+    target: Option<usize>,
+    mut focus: impl FnMut(usize) -> anyhow::Result<()>,
+    mut is_focused: impl FnMut(usize) -> bool,
+    dispatch: impl FnOnce() -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    if let Some(target) = target {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(200);
+        loop {
+            focus(target)?;
+            if is_focused(target) {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(KeyFocusUnconfirmed.into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+    dispatch()
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

@@ -22,6 +22,7 @@ use crate::ax::bindings::{
     copy_bool_attr, copy_string_attr, focused_element_of_pid, AXUIElementRef,
 };
 use crate::focus_guard;
+use crate::input::ax_actions::{with_confirmed_key_focus, KeyFocusUnconfirmed};
 use crate::window_change_detector::WindowChangeDetector;
 use cua_driver_core::security_prompt::PromptInput;
 
@@ -199,32 +200,6 @@ fn action_record(confirmed: bool, foreground: bool) -> ActionExecutionRecord {
         });
     }
     record.build().expect("press_key record is valid")
-}
-
-#[derive(Debug, thiserror::Error)]
-#[error("the addressed element did not acquire keyboard focus; no key was dispatched")]
-struct KeyFocusUnconfirmed;
-
-fn with_confirmed_key_focus<T>(
-    target: Option<usize>,
-    mut focus: impl FnMut(usize) -> anyhow::Result<()>,
-    mut is_focused: impl FnMut(usize) -> bool,
-    dispatch: impl FnOnce() -> anyhow::Result<T>,
-) -> anyhow::Result<T> {
-    if let Some(target) = target {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(200);
-        loop {
-            focus(target)?;
-            if is_focused(target) {
-                break;
-            }
-            if std::time::Instant::now() >= deadline {
-                return Err(KeyFocusUnconfirmed.into());
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-    }
-    dispatch()
 }
 
 fn delivery_failed(error: anyhow::Error) -> ToolResult {

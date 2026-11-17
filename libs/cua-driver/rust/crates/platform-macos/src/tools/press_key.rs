@@ -159,6 +159,13 @@ fn ax_state_changed(before: &AxKeyState, after: &AxKeyState) -> bool {
         || matches!((before.selected, after.selected), (Some(before), Some(after)) if before != after)
 }
 
+/// Why a foreground key left its target in front: the app ends the inline
+/// edit the key opened (Finder's rename field) when it loses the front.
+const INLINE_EDIT_HOLDS_FRONT: &str = " The app's inline edit field is open, so the app was left \
+     in front: it ends the edit when it loses the front. Finish the edit (type the text, then \
+     Return, or Escape to cancel), then bring_to_front the previous app if it should be in \
+     front again.";
+
 fn action_record(confirmed: bool, foreground: bool) -> ActionExecutionRecord {
     let effect = if confirmed {
         ActionEffect::Confirmed
@@ -563,8 +570,21 @@ impl Tool for PressKeyTool {
                     "effect": if confirmed { "confirmed" } else { "unverifiable" },
                 });
                 changes.add_window_identity(&mut structured);
+                let held_front = match window_id {
+                    Some(wid) if fg && !px_focus => tokio::task::spawn_blocking(move || {
+                        crate::input::skylight::inline_edit_holds_front(pid as libc::pid_t, wid)
+                    })
+                    .await
+                    .unwrap_or(false),
+                    _ => false,
+                };
+                let held_front = if held_front {
+                    INLINE_EDIT_HOLDS_FRONT
+                } else {
+                    ""
+                };
                 ToolResult::text(format!(
-                    "✅ Pressed {display_key} on pid {pid}{label}.{}",
+                    "✅ Pressed {display_key} on pid {pid}{label}.{held_front}{}",
                     changes.result_suffix()
                 ))
                 .with_structured(structured)

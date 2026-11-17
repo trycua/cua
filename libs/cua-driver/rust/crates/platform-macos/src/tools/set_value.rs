@@ -235,14 +235,16 @@ impl Tool for SetValueTool {
         // the renderer never observes it. Reuse type_text's bounded ancestor
         // check so native browser chrome stays trusted but rendered content is
         // always reported as unverified.
-        let ax_echo_surface = super::type_text::target_in_web_area(
+        let web_area = super::type_text::target_in_web_area(
             pid,
             Some((element_ptr, Some(element_index))),
             Some(window_id),
-        ) != Some(false);
+        );
+        let ax_echo_surface = web_area != Some(false);
         // WebKit (not Chromium or Electron) web content: a field that ignores
-        // the write may take it once focused.
-        let webkit_field = ax_echo_surface && !is_chromium_popup_owner(pid);
+        // the write may take it once focused. Unknown ancestry gets no focus
+        // retry, because it may be a native field.
+        let webkit_field = web_area == Some(true) && !is_chromium_popup_owner(pid);
 
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // AXValue writes on popups / sliders can cause reflex activations

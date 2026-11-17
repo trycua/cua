@@ -19,6 +19,7 @@ window) and the bridge to the app core.
 | Menu bar | The Cua mark (template); status line, Open, New Space, Settings, Quit |
 | Launch at login | Settings → General: `SMAppService.mainApp`, showing what macOS reports (on, off, waiting for approval with a button to Login Items, not found); the first run's Done page (the web onboarding's) ticks it. A login launch opens without the main window, and the app's daemon (host Spaces, persistent agents, Cua Volume) starts with it |
 | Join with a code | `host.joinWithCode` runs the bundled `cua host setup --pair <code>` (3 minute limit); `cua://add/<CODE>` opens Machines at `?join=<CODE>` and the page asks before joining |
+| Installer cleanup | A launch from an Applications folder ejects mounted read-only volumes that hold Cua Spaces (`InstallerCleanup`); the downloaded installer is left alone |
 | Notch panel | The "N Spaces" tab, Space tiles with live thumbnails, and the Teleport prompt; hover opens it after 300 ms, a dragged window or file drops on a tile. Window drags need Accessibility; the panel says so with an Open Settings button |
 | Teams billing | Settings shows a failed-payment notice for a Teams plan, and adding a team computer without a paid plan fails at once with an Upgrade button (owner) or "Ask the team owner" (member) |
 
@@ -51,7 +52,7 @@ core's crate docs.
 
 ```sh
 # The cua SDK library (release) for the Swift package:
-cd libs/cua && cargo build --release -p cua-sdk && node scripts/stage-uniffi-library.mjs --only=swift
+cd libs/cua && cargo build --release -p cua-sdk-native && node scripts/stage-uniffi-library.mjs --only=swift
 cd ../../apps/cua-spaces-macos
 swift build                      # the package
 scripts/test.sh                  # unit, parity and snapshot tests (swift-testing)

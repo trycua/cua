@@ -1010,6 +1010,82 @@ pub(crate) mod imp {
             })
         }
 
+        async fn list_stream_windows(
+            &self,
+            req: tonic::Request<pb::ListStreamWindowsRequest>,
+        ) -> R<pb::ListStreamWindowsResponse> {
+            let rows = self.spaces().stream_windows(&req.into_inner().space).await;
+            ok(pb::ListStreamWindowsResponse {
+                windows: rows
+                    .into_iter()
+                    .map(|w| pb::StreamWindow {
+                        window_id: w.window_id,
+                        title: w.title,
+                        app_name: w.app_name,
+                        app_id: w.app_id,
+                        pid: w.pid,
+                        origin: w.origin.map(|o| pb::StreamOrigin {
+                            space_id: o.space_id,
+                            name: o.name,
+                            os: o.os,
+                            window_id: o.window_id,
+                        }),
+                    })
+                    .collect(),
+            })
+        }
+
+        async fn open_stream_entry(
+            &self,
+            req: tonic::Request<pb::OpenStreamEntryRequest>,
+        ) -> R<pb::OpenStreamEntryResponse> {
+            let r = req.into_inner();
+            let options = cua_spaces::stream::StreamOptions {
+                max_fps: r.max_fps,
+                ticket_ttl: (r.ticket_ttl_seconds > 0)
+                    .then(|| std::time::Duration::from_secs(r.ticket_ttl_seconds as u64)),
+                ..Default::default()
+            };
+            let decided = self
+                .spaces()
+                .resolve_stream_entry(&r.window_id)
+                .await
+                .map_err(|e| st(e.into()))?;
+            // The client opens the stream itself: straight from the origin
+            // with its own handle (direct), or through this daemon's media
+            // bridge (proxied, `DaemonService.OpenMediaBridge`). The daemon
+            // mints a ticket here only when asked to.
+            let opened = if r.mint {
+                self.spaces()
+                    .open_stream_entry(&r.window_id, options)
+                    .await
+                    .map_err(|e| st(e.into()))?
+            } else {
+                decided
+            };
+            let route = serde_json::to_value(opened.route)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_default();
+            let access = match &opened.access {
+                cua_spaces::stream_registry::Access::Owner => "owner",
+                cua_spaces::stream_registry::Access::Grant(_) => "grant",
+                cua_spaces::stream_registry::Access::None => "none",
+            };
+            ok(pb::OpenStreamEntryResponse {
+                route,
+                access: access.into(),
+                minted_by: opened.minted_by,
+                ticket_json: match &opened.ticket {
+                    Some(t) => serde_json::to_string(t)
+                        .map_err(|e| tonic::Status::internal(e.to_string()))?,
+                    None => String::new(),
+                },
+                origin_space: opened.entry.origin_space,
+                origin_window_id: opened.entry.window_id,
+            })
+        }
+
         async fn list_orphans(
             &self,
             _: tonic::Request<pb::ListOrphansRequest>,
@@ -1226,7 +1302,8 @@ pub(crate) mod imp {
             let caller = cua_spaces::extension::Caller::from_host(&caller);
             let r = req.into_inner();
             let app_method = cua_spaces::agents::keys::is_app_method(&r.name);
-            if !app_method && cua_spaces::contract::tool(&r.name).is_none() {
+            let reach = cua_spaces::reach::is_app_method(&r.name);
+            if !app_method && !reach && cua_spaces::contract::tool(&r.name).is_none() {
                 return Err(st(Error::NotFound(format!("Spaces tool {}", r.name))));
             }
             let args: serde_json::Value = if r.arguments_json.trim().is_empty() {
@@ -1238,7 +1315,14 @@ pub(crate) mod imp {
             };
             // The app's Settings → Connections methods: not contract tools, so no
             // MCP server lists or forwards them to an agent.
-            let out = if app_method {
+            let out = if reach {
+                // Whether a Space can take work now: the app asks before it hands a job over.
+                cua_spaces::reach::app_call(self.spaces(), &r.name, args)
+                    .await
+                    .unwrap_or_else(|| {
+                        cua_spaces::mcp::ToolOutcome::error_message("not_found", r.name.clone())
+                    })
+            } else if app_method {
                 cua_spaces::agents::keys::app_tool_async(&r.name, args)
                     .await
                     .unwrap_or_else(|| {
@@ -1603,6 +1687,18 @@ mod imp {
             &self,
             _: tonic::Request<pb::GetSpaceNetworkLogRequest>,
         ) -> R<pb::GetSpaceNetworkLogResponse> {
+            off()
+        }
+        async fn list_stream_windows(
+            &self,
+            _: tonic::Request<pb::ListStreamWindowsRequest>,
+        ) -> R<pb::ListStreamWindowsResponse> {
+            off()
+        }
+        async fn open_stream_entry(
+            &self,
+            _: tonic::Request<pb::OpenStreamEntryRequest>,
+        ) -> R<pb::OpenStreamEntryResponse> {
             off()
         }
         async fn list_orphans(

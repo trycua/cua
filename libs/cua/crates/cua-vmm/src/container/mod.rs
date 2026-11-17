@@ -536,12 +536,33 @@ impl ContainerRuntime {
             ledger::PullLedger::default().touch(reference);
             return Ok(());
         }
-        // The engine stores images in its own VM or data root; on this host
-        // that grows the engine's disk image, so the host volume is checked.
-        crate::disk::ensure_space(
-            &crate::host::cua_home(),
+        // The engine writes images under its own data root. For dockerd
+        // directly on this Linux host that root is a host path, so its
+        // filesystem is the one checked. An engine in a VM (Colima, Lima,
+        // Docker Desktop, OrbStack) reports a root inside the VM that is no
+        // host path; the image then grows the VM's disk image on the host
+        // volume holding CUA_HOME, so that volume stays the one checked.
+        let root = self
+            .docker
+            .info()
+            .await
+            .ok()
+            .and_then(|i| i.docker_root_dir);
+        let target = pull_space_path(
+            &self.endpoint.kind,
+            std::env::consts::OS,
+            root.as_deref(),
+            &crate::disk::SystemProbe,
+            crate::host::cua_home(),
+        );
+        let cfg = crate::disk::CacheConfig::load();
+        crate::disk::ensure_space_in(
+            &crate::disk::GlobalProbe,
+            &target,
             crate::disk::CONTAINER_PULL_ESTIMATE,
             &format!("pull {reference}"),
+            cfg.min_free,
+            cfg.warn_free,
         )?;
         let creds = creds
             .filter(|c| c.applies_to(registry_of(reference)))
@@ -1471,7 +1492,9 @@ impl Runtime for ContainerRuntime {
                     match boxed(|| self.start_policed(&spec.name)).await {
                         Ok(()) => break,
                         Err(e) => {
-                            self.unpolice(&spec.name).await;
+                            // Created just now: it has a resolv.conf exactly
+                            // under the secure default (`prepare_resolv`).
+                            self.unpolice(&spec.name, egress::secure()).await;
                             self.remove_force(&spec.name).await;
                             let msg = e.to_string();
                             if attempt < PORT_CONFLICT_ATTEMPTS && is_port_conflict(&msg) {
@@ -1974,13 +1997,16 @@ impl Runtime for ContainerRuntime {
             ..Default::default()
         };
         // A restored container: the engine forgets it, and a fork that never
-        // started still owns its private checkpoint.
-        let (restored, image_id) = match self.inspect(name).await {
+        // started still owns its private checkpoint. Its resolv.conf is
+        // removed only when it mounts one (when it can't be told, as before).
+        let (restored, image_id, resolv) = match self.inspect(name).await {
             Ok(Some(i)) => (
                 restore_dir(&i).map(|d| (i.id.clone().unwrap_or_default(), d)),
                 i.image.clone(),
+                egress::has_resolv_bind(i.host_config.as_ref().and_then(|h| h.binds.as_ref())),
             ),
-            _ => (None, None),
+            Ok(None) => (None, None, false),
+            Err(_) => (None, None, true),
         };
         // Sidecars first: they hold the sandbox's network namespace.
         for sc in self.sidecar_names(name).await.unwrap_or_default() {
@@ -1994,7 +2020,7 @@ impl Runtime for ContainerRuntime {
             }
             Err(e) => return Err(engine_err(e)),
         }
-        self.unpolice(name).await;
+        self.unpolice(name, resolv).await;
         if let Some((id, dir)) = restored {
             let helper = self.helper();
             let _ = helper.forget(&[&id]).await;
@@ -2201,6 +2227,27 @@ fn token_tar(token: &str) -> Result<Vec<u8>> {
     h.set_mtime(host::now_secs());
     b.append_data(&mut h, TOKEN_FILE, body.as_bytes())?;
     Ok(b.into_inner()?)
+}
+
+/// The path whose filesystem receives a pulled image: the engine's data
+/// root when dockerd runs directly on this Linux host and the root is
+/// measurable here, otherwise `home` (an engine in a VM reports a root that
+/// is not a host path, and its disk image lives under the host's home).
+fn pull_space_path(
+    kind: &EngineKind,
+    os: &str,
+    root: Option<&str>,
+    probe: &dyn crate::disk::SpaceProbe,
+    home: std::path::PathBuf,
+) -> std::path::PathBuf {
+    if *kind == EngineKind::NativeLinux
+        && os == "linux"
+        && let Some(root) = root.filter(|r| std::path::Path::new(r).is_absolute())
+        && probe.space(std::path::Path::new(root)).is_ok()
+    {
+        return std::path::PathBuf::from(root);
+    }
+    home
 }
 
 impl ContainerRuntime {
@@ -3299,6 +3346,65 @@ mod tests {
         assert!(!require_gvisor_from(Some("0")));
         assert!(!require_gvisor_from(Some("")));
         assert!(!require_gvisor_from(None));
+    }
+
+    struct NoSpace;
+    impl crate::disk::SpaceProbe for NoSpace {
+        fn space(&self, _: &std::path::Path) -> std::io::Result<crate::disk::Space> {
+            Err(std::io::Error::other("unreadable"))
+        }
+    }
+    struct Roomy;
+    impl crate::disk::SpaceProbe for Roomy {
+        fn space(&self, _: &std::path::Path) -> std::io::Result<crate::disk::Space> {
+            Ok(crate::disk::Space {
+                available: 1 << 40,
+                total: 1 << 41,
+            })
+        }
+    }
+
+    #[test]
+    fn pull_space_follows_the_engine_data_root_only_on_a_native_host() {
+        let home = std::path::PathBuf::from("/home/u/.cua");
+        let root = Some("/var/lib/docker");
+        let pick = |k: &EngineKind, os, r, p: &dyn crate::disk::SpaceProbe| {
+            pull_space_path(k, os, r, p, home.clone())
+        };
+        assert_eq!(
+            pick(&EngineKind::NativeLinux, "linux", root, &Roomy),
+            std::path::PathBuf::from("/var/lib/docker")
+        );
+        // Unknown root, unreadable root, or an engine in a VM: the host check.
+        assert_eq!(pick(&EngineKind::NativeLinux, "linux", None, &Roomy), home);
+        assert_eq!(
+            pick(&EngineKind::NativeLinux, "linux", root, &NoSpace),
+            home
+        );
+        assert_eq!(pick(&EngineKind::NativeLinux, "macos", root, &Roomy), home);
+        let colima = EngineKind::Colima {
+            profile: "default".into(),
+        };
+        assert_eq!(pick(&colima, "linux", root, &Roomy), home);
+        assert_eq!(
+            pick(&EngineKind::DockerDesktop, "macos", root, &Roomy),
+            home
+        );
+    }
+
+    #[test]
+    fn pull_space_path_rejects_a_relative_root() {
+        let home = std::path::PathBuf::from("/h");
+        assert_eq!(
+            pull_space_path(
+                &EngineKind::NativeLinux,
+                "linux",
+                Some("docker"),
+                &Roomy,
+                home.clone()
+            ),
+            home
+        );
     }
 
     #[tokio::test]

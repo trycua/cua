@@ -283,7 +283,6 @@ function toolsPage(manifest: Manifest, page: (typeof PAGES)[number]): string {
     description: page.description,
     generator: REGENERATE,
     source: 'libs/cua/spaces-contract/manifest.json',
-    version: manifest.contract_version,
     body: body.join('\n'),
   });
 }
@@ -333,7 +332,6 @@ function indexPage(manifest: Manifest, protocol: Protocol): string {
     description: 'Every Spaces tool by category, with parameters, results, errors and approval.',
     generator: REGENERATE,
     source: 'libs/cua/spaces-contract/manifest.json',
-    version: manifest.contract_version,
     body: body.join('\n'),
   });
 }

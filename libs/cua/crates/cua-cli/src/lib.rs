@@ -39,10 +39,10 @@ mod ci_app;
 mod ci_cmd;
 mod ci_hosted;
 mod ci_overview;
+mod ci_sdk;
 mod ci_signin;
 mod ci_targets;
 mod cloud_cmd;
-mod compat_cmd;
 mod computer;
 mod config_cmd;
 mod connections_cmd;
@@ -296,7 +296,7 @@ enum Command {
     /// Run another provider's SDK unchanged on Cua Spaces: a local gateway
     /// that speaks its wire protocol (`cua compat serve --provider e2b`).
     #[command(subcommand)]
-    Compat(compat_cmd::CompatCmd),
+    Compat(cua_compat_cmd::CompatCmd),
     /// Disk used by images, sandboxes, builds and logs, and its cleanup.
     #[command(subcommand)]
     Cache(cache::CacheCmd),
@@ -1708,7 +1708,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         Command::Bench(cmd) => return bench_cmd::run(cmd.clone(), json, out),
         Command::Keyvault(cmd) => return extension::keyvault(cmd.clone(), json, out).await,
         Command::Share(args) => return share_cmd::run(args.clone(), json, out).await,
-        Command::Compat(cmd) => return compat_cmd::run(cmd.clone(), json, out).await,
+        Command::Compat(cmd) => return extension::compat(cmd.clone(), json, out).await,
         Command::Cache(cmd) => {
             let state_dir = cli.state_dir.clone();
             return cache::run(cmd.clone(), state_dir.as_deref(), json, out).await;
@@ -2103,6 +2103,18 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         && cli.daemon.is_none()
     {
         daemon_start(&cli, false, None, "127.0.0.1:0", &mut std::io::stderr()).await?;
+    }
+    // A Windows or macOS computer outlives the command only in the daemon:
+    // start one when none runs (`--embedded` is refused by the create itself).
+    if let Command::Sandbox(cmd) = &cli.command
+        && sandbox::creates_vm_here(cmd)
+        && !cli.embedded
+        && cli.daemon.is_none()
+        && cua_daemon::client::live_address().is_none()
+    {
+        cua_daemon::client::ensure_daemon()
+            .await
+            .map_err(|e| CuaError::Internal(format!("the cua daemon: {e}")))?;
     }
     let cua = open(&cli, needs_session).await?;
     match cli.command {
@@ -2598,7 +2610,7 @@ async fn daemon_start(
     if foreground {
         // Job members that ask for `compat:e2b` / `compat:daytona` reach a
         // cua-compat gateway this daemon runs (shared, started on first use).
-        compat_cmd::register_job_services();
+        extension::register_compat_job_services();
     }
     if !foreground {
         if let Some(d) = cua_daemon::Discovery::read(&discovery)
@@ -3569,6 +3581,41 @@ mod tests {
         assert!(!is_advanced_help(&args(&["help"])));
         assert!(ADVANCED_HELP.contains("--relay <URL>"));
         assert!(ADVANCED_HELP.contains("--direct <IP:PORT>"));
+    }
+
+    /// A Windows or macOS computer needs the daemon to outlive the command: a
+    /// plain create starts one, and `--embedded` is refused in plain words.
+    #[tokio::test]
+    async fn a_windows_vm_is_kept_by_the_daemon_and_refused_when_embedded() {
+        let cmd = |args: &[&str]| {
+            let mut v = vec!["cua", "sb", "create"];
+            v.extend_from_slice(args);
+            match Cli::try_parse_from(v).unwrap().command {
+                Command::Sandbox(c) => *c,
+                _ => unreachable!(),
+            }
+        };
+        assert!(sandbox::creates_vm_here(&cmd(&["windows:11"])));
+        assert!(sandbox::creates_vm_here(&cmd(&["macos"])));
+        assert!(!sandbox::creates_vm_here(&cmd(&["linux"])));
+        assert!(!sandbox::creates_vm_here(&cmd(&[
+            "windows:11",
+            "--on",
+            "direct:1.2.3.4:3211"
+        ])));
+        let dir = tempfile::tempdir().unwrap();
+        let cua = Arc::new(
+            Cua::embedded(CuaConfig {
+                state_dir: Some(dir.path().join("sandboxes").display().to_string()),
+                ..Default::default()
+            })
+            .unwrap(),
+        );
+        let mut out = Vec::new();
+        let e = sandbox::run(&cua, cmd(&["windows:11", "--name", "w"]), false, &mut out)
+            .await
+            .unwrap_err();
+        assert!(e.to_string().contains("Leave out --embedded"), "{e}");
     }
 
     /// The Spaces app's launch check (`cua auth keychain`) records no usage

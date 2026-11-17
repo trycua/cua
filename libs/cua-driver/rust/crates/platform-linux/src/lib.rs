@@ -26,7 +26,6 @@ use cua_driver_core::tool::ToolRegistry;
 pub mod health_report;
 pub mod overlay;
 pub mod overlay_capture;
-pub mod pip;
 pub mod tools;
 
 #[cfg(target_os = "linux")]
@@ -263,7 +262,7 @@ pub fn register_tools_with_cursor_and_provider(
 /// read-only commands such as describe/list-tools must not mutate X11 devices.
 #[cfg(target_os = "linux")]
 pub fn recover_orphaned_mpx_devices() {
-    input::reap_orphaned_master_pointers();
+    input::release_orphaned_master_pairs();
 }
 
 #[cfg(test)]

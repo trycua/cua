@@ -9,7 +9,7 @@ import { HostError, type DataAdapter } from "@/bridge/adapter";
 import { createDemoAdapter, type DemoOptions } from "@/bridge/adapters/demo";
 import { unavailableCore } from "@/bridge/core";
 import type { PairingCode } from "@/bridge/contracts/devices";
-import { AddComputerSheet, agentPrompt, METHODS, type AddView } from "@/components/add-computer-sheet";
+import { AddComputerSheet, agentPrompt, METHODS, OTHER_METHODS, type AddView } from "@/components/add-computer-sheet";
 
 afterEach(cleanup);
 
@@ -64,29 +64,53 @@ async function mount(adapter: DataAdapter, props: Parameters<typeof Harness>[0] 
 const sheet = () => document.querySelector<HTMLElement>("[data-add-computer]")!;
 const view = () => sheet()?.getAttribute("data-add-computer");
 const phase = () => sheet()?.getAttribute("data-add-machine");
-const method = (v: string) => document.querySelector<HTMLButtonElement>(`[data-add-method="${v}"]`)!;
+/** One of the other ways, opening "Other ways to add it" first when it is closed. */
+const method = (v: string) => {
+  const row = () => document.querySelector<HTMLButtonElement>(`[data-add-method="${v}"]`);
+  const toggle = document.querySelector<HTMLButtonElement>("[data-add-other-toggle]");
+  if (!row() && toggle?.getAttribute("aria-expanded") === "false") fireEvent.click(toggle);
+  return row()!;
+};
 const status = () => document.querySelector("[data-add-status]")?.textContent ?? "";
 const prompt = () => document.querySelector<HTMLTextAreaElement>("#add-agent-prompt")!;
 const back = () => fireEvent.click(document.querySelector("[data-add-back]")!);
 
 describe("Add a machine: the methods", () => {
-  it("lists one row per method, Sign in there first, and a prompt for an agent with the live code", async () => {
+  // Device test 10 Nov: five equal rows, and "Enter a code" both as a row and in the footer.
+  it("shows the usual way in full, the other ways one tap away, and says Enter a code only for a code made elsewhere", async () => {
     const { adapter, calls } = host({}, neverUsed);
     await mount(adapter);
     await waitFor(() => expect(phase()).toBe("ready"));
     expect(view()).toBe("pick");
+    expect(METHODS[0]!.view).toBe("signin");
+    // The usual way: install there and sign in, with the link to copy, nothing to pick first.
+    const primary = document.querySelector("[data-add-primary]")!;
+    expect(primary.textContent).toMatch(/Install Cua Spaces there and sign in/);
+    expect(primary.textContent).toMatch(/sign in as ada@example\.com/);
+    expect(primary.textContent).toContain("https://cua.ai/install");
+    // The others stay closed until asked for.
+    const toggle = document.querySelector<HTMLButtonElement>("[data-add-other-toggle]")!;
+    expect(toggle.textContent).toBe("Other ways to add it");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(document.querySelectorAll("[data-add-method]")).toHaveLength(0);
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
     expect([...document.querySelectorAll("[data-add-method]")].map((b) => b.textContent)).toEqual([
-      "Sign in there",
       "Open a link",
       "Scan a QR code",
       "Run a command",
-      "Enter a code",
+      "Type a code there",
+      "Ask an agent there",
     ]);
-    expect(METHODS[0]!.view).toBe("signin");
+    expect(OTHER_METHODS.every((m) => m.code)).toBe(true);
+    // "Enter" names only the other side: a code made on another computer.
+    expect(document.body.textContent).not.toMatch(/Enter a code/);
+    expect(screen.getByText("Enter it")).toBeTruthy();
+    fireEvent.click(method("agent"));
+    expect(view()).toBe("agent");
     expect(prompt().readOnly).toBe(true);
     expect(prompt().value).toMatch(/^Add this computer to my Cua Spaces: https:\/\/cua\.ai\/add\/K7QM-4XPB-[0-9A-Z]{4}$/);
     expect(screen.getByLabelText("Copy prompt")).toBeTruthy();
-    expect(screen.getByText("Enter it")).toBeTruthy();
     // No desktop-or-private choice, no by-hand steps on the sheet.
     expect(document.body.textContent).not.toMatch(/keep its screen private|Set it up by hand instead/);
     expect(calls).toEqual(["devices.createPairingCode"].concat(calls.slice(1)));
@@ -103,11 +127,10 @@ describe("Add a machine: the methods", () => {
       },
     }));
     await mount(adapter);
-    fireEvent.click(method("signin"));
-    expect(view()).toBe("signin");
+    // The first page is this way: no click needed.
+    expect(view()).toBe("pick");
     expect(screen.getByText("https://cua.ai/install")).toBeTruthy();
     expect(document.querySelector("[data-add-signin]")?.textContent).toMatch(/sign in as ada@example\.com/);
-    expect(status()).toBe("Waiting for a new computer…");
     // No code here, so no menu.
     expect(document.querySelector("[data-add-more]")).toBeNull();
     // The computers known on opening are read first (they are not new).
@@ -128,10 +151,9 @@ describe("Add a machine: the methods", () => {
       },
     }));
     await mount(adapter, { settleMs: 300 });
-    fireEvent.click(method("signin"));
     late = true;
     await act(() => new Promise((r) => setTimeout(r, 600)));
-    expect(status()).toBe("Waiting for a new computer…");
+    expect(document.querySelector("[data-pairing-added]")).toBeNull();
   });
 
   it("Open a link: the one-time link to copy", async () => {
@@ -170,7 +192,7 @@ describe("Add a machine: the methods", () => {
     expect(view()).toBe("pick");
   });
 
-  it("Enter a code: the code big, with how long it works", async () => {
+  it("Type a code there: the code big, with how long it works", async () => {
     const { adapter } = host({}, neverUsed);
     await mount(adapter);
     await waitFor(() => expect(phase()).toBe("ready"));
@@ -217,6 +239,7 @@ describe("Add a machine: states", () => {
     }));
     await mount(adapter);
     await waitFor(() => expect(phase()).toBe("ready"));
+    fireEvent.click(method("agent"));
     const first = prompt().value;
     expect(first).toContain("K7QM-4XPB-2RHD");
     await waitFor(() => expect(prompt().value).toContain("K7QM-4XPB-9TCW"), { timeout: 4000 });
@@ -268,7 +291,6 @@ describe("Add a machine: states", () => {
     const { adapter } = host({}, { "devices.createPairingCode": () => new Promise(() => {}) });
     await mount(adapter);
     await waitFor(() => expect(phase()).toBe("minting"));
-    expect(prompt().value).toBe("Making a code…");
     fireEvent.click(method("link"));
     expect(screen.getByText("Making a code…")).toBeTruthy();
   });
@@ -278,8 +300,8 @@ describe("Add a machine: without a code", () => {
   it("signed out: only Sign in there, and a way to sign in", async () => {
     const { adapter, calls } = host({ signedIn: false });
     await mount(adapter);
-    expect(method("signin").disabled).toBe(false);
-    for (const m of ["link", "qr", "command", "code"]) expect(method(m).disabled).toBe(true);
+    expect(document.querySelector("[data-add-primary]")?.textContent).toMatch(/sign in with this account/);
+    expect(document.querySelector("[data-add-other-toggle]")).toBeNull();
     expect(document.querySelector("[data-add-signed-out]")?.textContent).toBe("Sign in to make a code.");
     expect(document.querySelector("[data-add-prompt]")).toBeNull();
     expect(calls).toEqual([]);
@@ -298,7 +320,7 @@ describe("Add a machine: without a code", () => {
     );
     await mount(adapter);
     await waitFor(() => expect(document.querySelector("[data-add-no-code-note]")?.textContent).toBe("This Mac can't make codes yet."));
-    expect(method("code").disabled).toBe(true);
+    expect(document.querySelector("[data-add-other-toggle]")).toBeNull();
     expect(calls).toEqual([]);
   });
 
@@ -307,8 +329,8 @@ describe("Add a machine: without a code", () => {
     await mount(adapter);
     await waitFor(() => expect(phase()).toBe("error"));
     expect(document.querySelector("[data-add-code-error]")?.textContent).toMatch(/Codes don't work with your account yet/);
-    expect(method("signin").disabled).toBe(false);
-    expect(method("link").disabled).toBe(true);
+    expect(document.querySelector("[data-add-primary]")).toBeTruthy();
+    expect(document.querySelector("[data-add-other-toggle]")).toBeNull();
   });
 
   it("another failure: says it in words and tries again", async () => {

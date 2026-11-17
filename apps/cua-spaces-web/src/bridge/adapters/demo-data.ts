@@ -66,8 +66,21 @@ const at = (now: number, minutesAgo: number) => new Date(now - minutesAgo * 60_0
 /** The Mac mini and the Linux box sharing their own desktops over the relay (`?demo=desktops`): rows of their own, no
  * host above them. Without these the demo's computers have nowhere to run a task, so Home can't start on one made the
  * default. */
-export function demoDesktopRows(now: number): SpaceRow[] {
+export function demoDesktopRows(now: number, thisMacShares = true): SpaceRow[] {
   return [
+    // This Mac's own desktop (`this-mac`): reachable while it is shared, listed off (suspended) while it is not.
+    {
+      id: "this-mac",
+      name: "This Mac",
+      provider: "local",
+      spacesdVersion: "0.6.0",
+      features: [...STREAMS],
+      addedAt: at(now, 1200),
+      os: "macos",
+      osName: "macOS",
+      arch: "arm64",
+      reachable: thisMacShares,
+    },
     {
       id: "relay:mac-mini",
       name: "Mac mini",
@@ -94,6 +107,54 @@ export function demoDesktopRows(now: number): SpaceRow[] {
       arch: "amd64",
       reachable: true,
     },
+  ];
+}
+
+/** The busy account's extra computers (`?demo=computers-busy`): two Spaces' offline host, a Mac Studio, two idle offline ones. */
+export function demoBusyMachines(now: number): MachineRow[] {
+  const seen = (minutesAgo: number) => Math.floor((now - minutesAgo * 60_000) / 1000);
+  const m = (id: string, name: string, os: MachineRow["os"], online: boolean, minutesAgo: number): MachineRow => ({
+    id,
+    name,
+    via: "relay",
+    online,
+    os,
+    limits: [],
+    lastSeen: seen(minutesAgo),
+  });
+  return [
+    m("ip-172-31-46-222", "ip-172-31-46-222", "linux", false, 95),
+    m("mac-studio", "cua's Mac Studio", "macos", true, 1),
+    m("macbook-pro-2", "Dillon's MacBook Pro", "macos", false, 35 * 24 * 60),
+    m("updmac-vm-host", "updmac-vm-host", "macos", false, 45 * 24 * 60),
+  ];
+}
+
+/** The Spaces of the busy account (`?demo=computers-busy`): two on the offline computer, one on the Mac Studio. */
+export function demoBusyRows(now: number): SpaceRow[] {
+  const row = (host: string, hostName: string, name: string, os: SpaceRow["os"], running: boolean): SpaceRow => ({
+    id: `relay:${host}/${name}`,
+    name,
+    provider: "relay",
+    spacesdVersion: "0.6.0",
+    features: STREAMS,
+    addedAt: at(now, 300),
+    os,
+    osName: os === "linux" ? "Ubuntu" : "macOS",
+    osPrettyName: os === "linux" ? "Ubuntu 24.04.3 LTS" : "macOS Tahoe 26.0",
+    image: os === "linux" ? "ubuntu-xfce" : "macos-tahoe",
+    kind: os === "linux" ? "container" : "vm",
+    arch: "arm64",
+    reachable: running,
+    host,
+    hostName,
+    power: "suspend",
+    powerState: running ? "running" : "suspended",
+  });
+  return [
+    row("ip-172-31-46-222", "ip-172-31-46-222", "ci-runner", "linux", false),
+    row("ip-172-31-46-222", "ip-172-31-46-222", "nightly-build", "linux", false),
+    row("mac-studio", "cua's Mac Studio", "design-qa", "macos", true),
   ];
 }
 

@@ -25,7 +25,7 @@ cd "$(git rev-parse --show-toplevel)/libs/cua/crates"
 fail=0
 say() { echo "check-elastic-layering: $*" >&2; fail=1; }
 
-surfaces=(cua-cli cua-sdk cua-spaces-cli cua-spaces-ffi cua-compat cua-daemon cua-spaces-cluster cua-spaces)
+surfaces=(cua-cli cua-sdk cua-spaces-cli cua-spaces-ffi cua-compat cua-daemon cua-daemon-core cua-spaces-cluster cua-spaces)
 for c in "${surfaces[@]}"; do
   [ -d "$c/src" ] || continue
   if hits=$(grep -rnE 'cua_byoc::(aws|gcp|hetzner|modal)::' "$c/src" 2>/dev/null); then

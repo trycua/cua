@@ -61,6 +61,18 @@
             "https://github.com/astral-sh/uv/releases/download/0.12.18/uv-x86_64-unknown-linux-musl.tar.gz"
           ],
           "sha256": "e38d97460b98ebfd31b197de0fe9fa578add4bc8ba0179b203dd3f87b99f98e6"
+        },
+        "macos-aarch64": {
+          "urls": [
+            "https://github.com/astral-sh/uv/releases/download/0.12.18/uv-aarch64-apple-darwin.tar.gz"
+          ],
+          "sha256": "cf40e0c6a202190ccd9e0406dcfdd5b2d6668a9a5c779b17948963df32aafe5b"
+        },
+        "macos-x86_64": {
+          "urls": [
+            "https://github.com/astral-sh/uv/releases/download/0.12.18/uv-x86_64-apple-darwin.tar.gz"
+          ],
+          "sha256": "2e4108f5395397c8bc5d43bf83d3bdbb2d0e92b90d0efa607756be704905fa33"
         }
       },
       "bins": {

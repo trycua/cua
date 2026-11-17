@@ -9,9 +9,10 @@
 #
 # both routed by stable process identity (with app_id fallback), driven over a tiny line
 # protocol on a unix control socket ($CUA_INJECT_SOCKET). It also exposes
-# foreign-toplevel-management (so cua-driver's list_windows enumerates windows)
-# and screencopy (so grim captures the output) — the same protocols labwc gives
-# the non-nested cells — so the nested-injection cells keep working end to end.
+# foreign-toplevel-management (so cua-driver's list_windows enumerates windows),
+# screencopy (so grim captures the output) and wlr-layer-shell (so the driver's
+# agent cursor overlay is drawn) — the same protocols labwc gives the non-nested
+# cells — so the nested-injection cells keep working end to end.
 #
 # The injection primitives (cua_motion/cua_button/cua_kbd_*) deliver wl_pointer/
 # wl_keyboard straight to a target client's resources, bypassing seat focus —
@@ -40,6 +41,7 @@ INCLUDES = r"""#include <stdint.h>
 #include <unistd.h>
 #include <errno.h>
 #include <time.h>
+#include <math.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -48,8 +50,12 @@ INCLUDES = r"""#include <stdint.h>
 #include <xkbcommon/xkbcommon.h>
 #include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/types/wlr_foreign_toplevel_management_v1.h>
+#include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_screencopy_v1.h>
 #include <wlr/types/wlr_xdg_output_v1.h>
+#include <wlr/render/pass.h>
+#include <wlr/render/swapchain.h>
+#include <wlr/render/wlr_texture.h>
 
 #define CUA_MAXDEV 64
 /* Per-cursor / per-keyboard enter bookkeeping (idx = logical device). */
@@ -66,6 +72,11 @@ static xkb_mod_mask_t g_logo_mask = 0;
 struct cua_keyent { uint32_t keycode; int shift; int valid; };
 static struct cua_keyent g_chartab[128];
 static struct wlr_foreign_toplevel_manager_v1 *g_ftl_mgr = NULL;
+/* Scene trees in stacking order: background and bottom layer surfaces, the
+ * toplevels, then top and overlay layer surfaces. */
+static struct wlr_scene_tree *g_layer_trees[4];
+static struct wlr_scene_tree *g_toplevel_tree = NULL;
+static struct wlr_output_layout *g_output_layout = NULL;
 struct tinywl_toplevel;
 static void cua_ftl_request_activate(struct wl_listener *listener, void *data);
 static void cua_maybe_focus_new_toplevel(struct tinywl_toplevel *toplevel);
@@ -270,8 +281,110 @@ static const char *cua_query_geometry(struct tinywl_server *server, pid_t target
 	int scene_x = x, scene_y = y;
 	struct wlr_box geo = target->xdg_toplevel->base->geometry;
 	x -= geo.x; y -= geo.y;
-	snprintf(out, out_len, "geometry %d %d %d %d", x, y, scene_x, scene_y);
+	/* The window's size is the xdg geometry, not GTK's AT-SPI frame, which
+	 * also counts the client-side shadow. */
+	snprintf(out, out_len, "geometry %d %d %d %d %d %d", x, y, scene_x, scene_y, geo.width, geo.height);
 	return NULL;
+}
+/* ── window capture: render one toplevel's own surfaces, never the output ──── */
+#define CUA_CAPTURE_MAX_EXTENT 16384
+#define CUA_FORMAT_ARGB8888 0x34325241 /* DRM_FORMAT_ARGB8888: B,G,R,A bytes */
+struct cua_capture_pass { struct wlr_render_pass *pass; int x, y; const char *err; };
+static void cua_capture_buffer(struct wlr_scene_buffer *buffer, int sx, int sy, void *data) {
+	struct cua_capture_pass *capture = data;
+	if (!buffer->buffer || capture->err) return;
+	struct wlr_scene_surface *scene_surface = wlr_scene_surface_try_from_buffer(buffer);
+	struct wlr_texture *texture = scene_surface ? wlr_surface_get_texture(scene_surface->surface) : NULL;
+	if (!texture) { capture->err = "untextured-surface"; return; }
+	wlr_render_pass_add_texture(capture->pass, &(struct wlr_render_texture_options){
+		.texture = texture,
+		.src_box = buffer->src_box,
+		.dst_box = {
+			.x = sx - capture->x, .y = sy - capture->y,
+			.width = buffer->dst_width > 0 ? buffer->dst_width : (int)texture->width,
+			.height = buffer->dst_height > 0 ? buffer->dst_height : (int)texture->height,
+		},
+		.alpha = &buffer->opacity,
+		.transform = buffer->transform,
+		.filter_mode = buffer->filter_mode,
+	});
+}
+/* Capture the toplevel owned by `target_pid`'s process family, the same
+ * identity `g` and `root:<pid>` injection resolve. Only the target's scene
+ * subtree is drawn (its surface, subsurfaces and popups, all owned by its
+ * client), so another window stacked above it can never appear and the target
+ * need not be focused, raised or even visible. The frame is the xdg window
+ * geometry, the frame pointer injection uses. On success *fd_out is a memfd of
+ * width*height ARGB8888 pixels with stride width*4. */
+static const char *cua_capture_pid(struct tinywl_server *server, pid_t target_pid,
+		char *out, size_t out_len, int *fd_out) {
+	struct tinywl_toplevel *t, *target = NULL;
+	int matches = 0;
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (cua_pid_in_family(cua_toplevel_pid(t), target_pid)) { target = t; matches++; }
+	}
+	if (!matches) return "target-not-found";
+	if (matches > 1) return "ambiguous-pid";
+	int x = 0, y = 0;
+	if (!wlr_scene_node_coords(&target->scene_tree->node, &x, &y)) return "unmapped-target";
+	struct wlr_box geo = target->xdg_toplevel->base->geometry;
+	if (geo.width <= 0 || geo.height <= 0) return "empty-geometry";
+	if (geo.width > CUA_CAPTURE_MAX_EXTENT || geo.height > CUA_CAPTURE_MAX_EXTENT) return "oversized-geometry";
+	if (wl_list_empty(&server->outputs)) return "no-output";
+	struct tinywl_output *output = wl_container_of(server->outputs.next, output, link);
+	if (!output->wlr_output->swapchain) return "no-render-format";
+	struct wlr_buffer *canvas = wlr_allocator_create_buffer(server->allocator,
+		geo.width, geo.height, &output->wlr_output->swapchain->format);
+	if (!canvas) return "allocation-failed";
+	const char *err = NULL;
+	struct wlr_render_pass *pass = wlr_renderer_begin_buffer_pass(server->renderer, canvas, NULL);
+	if (!pass) { wlr_buffer_drop(canvas); return "render-failed"; }
+	/* Opaque black, the colour the output shows where no surface draws. */
+	wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){
+		.box = { .width = geo.width, .height = geo.height },
+		.color = { .r = 0, .g = 0, .b = 0, .a = 1 },
+		.blend_mode = WLR_RENDER_BLEND_MODE_NONE,
+	});
+	struct cua_capture_pass capture = { .pass = pass, .x = x, .y = y };
+	wlr_scene_node_for_each_buffer(&target->scene_tree->node, cua_capture_buffer, &capture);
+	if (!wlr_render_pass_submit(pass)) err = "render-failed";
+	if (!err) err = capture.err;
+	size_t stride = (size_t)geo.width * 4, size = stride * (size_t)geo.height;
+	int fd = -1;
+	struct wlr_texture *texture = err ? NULL : wlr_texture_from_buffer(server->renderer, canvas);
+	if (!err && !texture) err = "readback-failed";
+	if (!err && ((fd = memfd_create("cua-capture", MFD_CLOEXEC)) < 0 || ftruncate(fd, (off_t)size) < 0))
+		err = "allocation-failed";
+	void *pixels = MAP_FAILED;
+	if (!err && (pixels = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0)) == MAP_FAILED)
+		err = "allocation-failed";
+	if (!err && !wlr_texture_read_pixels(texture, &(struct wlr_texture_read_pixels_options){
+			.data = pixels, .format = CUA_FORMAT_ARGB8888, .stride = (uint32_t)stride }))
+		err = "readback-failed";
+	if (pixels != MAP_FAILED) munmap(pixels, size);
+	if (texture) wlr_texture_destroy(texture);
+	wlr_buffer_drop(canvas);
+	if (err) { if (fd >= 0) close(fd); return err; }
+	snprintf(out, out_len, "image %d %d", geo.width, geo.height);
+	*fd_out = fd;
+	return NULL;
+}
+/* One reply line carrying `payload` as SCM_RIGHTS. */
+static void cua_reply_fd(int fd, const char *line, int payload) {
+	char buf[256];
+	int n = snprintf(buf, sizeof buf, "%s\n", line);
+	if (n < 0 || n >= (int)sizeof buf) return;
+	struct iovec iov = { .iov_base = buf, .iov_len = (size_t)n };
+	union { char buf[CMSG_SPACE(sizeof(int))]; struct cmsghdr align; } control;
+	memset(&control, 0, sizeof control);
+	struct msghdr msg = { .msg_iov = &iov, .msg_iovlen = 1,
+		.msg_control = control.buf, .msg_controllen = sizeof control.buf };
+	struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
+	cmsg->cmsg_level = SOL_SOCKET;
+	cmsg->cmsg_type = SCM_RIGHTS;
+	cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+	memcpy(CMSG_DATA(cmsg), &payload, sizeof(int));
+	sendmsg(fd, &msg, MSG_NOSIGNAL);
 }
 static void cua_ptr_leave(struct wlr_seat *seat, struct wlr_surface *surf) {
 	if (!surf) return;
@@ -602,6 +715,15 @@ static const char *cua_handle_cmd(struct tinywl_server *server, char *line) {
 			if (!cua_button(server, t, 0, btn, false)) return "no-pointer-resource";
 		}
 		return NULL;
+	} else if (!strcmp(cmd, "e")) {
+		/* Desktop wheel: the scene hit-test picks the surface under the point,
+		 * as for `d`. The driver cannot know the stacking order itself. */
+		double x, y, value; unsigned axis;
+		if (sscanf(line, "e %lf %lf %u %lf", &x, &y, &axis, &value) != 4 || axis > 1
+			|| !isfinite(x) || !isfinite(y) || !isfinite(value) || value == 0) return "bad-args";
+		if (!(t = cua_desktop_motion(server, x, y))) return "no-surface-at-point";
+		if (!cua_axis(server, t, 0, axis, value)) return "no-pointer-resource";
+		return NULL;
 	} else if (!strcmp(cmd, "m")) {
 		int idx; double x, y;
 		if (sscanf(line, "m %127s %d %lf %lf", app, &idx, &x, &y) != 4) return "bad-args";
@@ -674,10 +796,19 @@ static int cua_conn_readable(int fd, uint32_t mask, void *data) {
 				return cua_conn_drop(c, fd);
 			}
 		} else {
-			int query_pid, geometry_pid, activate_pid;
+			int query_pid, geometry_pid, activate_pid, capture_pid;
 			if (sscanf(p, "q %d", &query_pid) == 1) {
 				char msg[128]; cua_query_state(c->server, (pid_t)query_pid, msg, sizeof msg);
 				cua_reply(fd, msg);
+			} else if (sscanf(p, "s %d", &capture_pid) == 1) {
+				char msg[128]; int pixels = -1;
+				const char *err = cua_capture_pid(c->server, (pid_t)capture_pid, msg, sizeof msg, &pixels);
+				if (err) {
+					char reply[128]; snprintf(reply, sizeof reply, "err %s", err); cua_reply(fd, reply);
+				} else {
+					cua_reply_fd(fd, msg, pixels);
+					close(pixels);
+				}
 			} else if (sscanf(p, "g %d", &geometry_pid) == 1) {
 				char msg[128];
 				const char *err = cua_query_geometry(c->server, (pid_t)geometry_pid, msg, sizeof msg);
@@ -740,6 +871,51 @@ static void cua_setup_control_socket(struct tinywl_server *server) {
 		WL_EVENT_READABLE, cua_listen_cb, server);
 	wlr_log(WLR_INFO, "[cua] injection control socket on %s", path);
 }
+/* ── wlr-layer-shell: the driver draws its agent cursor on an overlay layer ─ */
+struct cua_layer_surface {
+	struct wlr_scene_layer_surface_v1 *scene;
+	struct wl_listener commit;
+	struct wl_listener destroy;
+};
+static void cua_layer_arrange(struct cua_layer_surface *layer) {
+	struct wlr_box full = {0};
+	wlr_output_layout_get_box(g_output_layout, layer->scene->layer_surface->output, &full);
+	struct wlr_box usable = full;
+	wlr_scene_layer_surface_v1_configure(layer->scene, &full, &usable);
+}
+static void cua_layer_commit(struct wl_listener *listener, void *data) {
+	(void)data;
+	struct cua_layer_surface *layer = wl_container_of(listener, layer, commit);
+	struct wlr_layer_surface_v1 *surface = layer->scene->layer_surface;
+	if (!surface->initialized) return;
+	if (surface->current.committed & WLR_LAYER_SURFACE_V1_STATE_LAYER)
+		wlr_scene_node_reparent(&layer->scene->tree->node, g_layer_trees[surface->current.layer]);
+	if (surface->initial_commit || surface->current.committed)
+		cua_layer_arrange(layer);
+}
+static void cua_layer_destroy(struct wl_listener *listener, void *data) {
+	(void)data;
+	struct cua_layer_surface *layer = wl_container_of(listener, layer, destroy);
+	wl_list_remove(&layer->commit.link);
+	wl_list_remove(&layer->destroy.link);
+	free(layer);
+}
+static void cua_new_layer_surface(struct wl_listener *listener, void *data) {
+	(void)listener;
+	struct wlr_layer_surface_v1 *surface = data;
+	if (!surface->output) {
+		struct wlr_output *output = wlr_output_layout_output_at(g_output_layout, 0, 0);
+		if (!output) { wlr_layer_surface_v1_destroy(surface); return; }
+		surface->output = output;
+	}
+	struct cua_layer_surface *layer = calloc(1, sizeof *layer);
+	layer->scene = wlr_scene_layer_surface_v1_create(g_layer_trees[surface->pending.layer], surface);
+	layer->commit.notify = cua_layer_commit;
+	wl_signal_add(&surface->surface->events.commit, &layer->commit);
+	layer->destroy.notify = cua_layer_destroy;
+	wl_signal_add(&surface->events.destroy, &layer->destroy);
+}
+static struct wl_listener g_new_layer_surface = { .notify = cua_new_layer_surface };
 
 """
 
@@ -846,6 +1022,14 @@ src = repl(src,
     "headless-custom-mode")
 
 # 7) Create the extra managers + the seat caps + the control socket in main.
+# Scene visibility culling would stop frame callbacks to an occluded client,
+# which then stops drawing and leaves `s` a stale buffer. Every mapped window
+# keeps rendering, as background capture and background input both need.
+src = repl(src,
+    "\tserver.scene = wlr_scene_create();",
+    "\tsetenv(\"WLR_SCENE_DISABLE_VISIBILITY\", \"1\", 1);\n\tserver.scene = wlr_scene_create();\n"
+    "\tunsetenv(\"WLR_SCENE_DISABLE_VISIBILITY\");",
+    "scene-visibility")
 src = repl(src,
     "\tserver.output_layout = wlr_output_layout_create(server.wl_display);",
     "\tserver.output_layout = wlr_output_layout_create(server.wl_display);\n"
@@ -866,11 +1050,36 @@ src = repl(src,
     "\twlr_backend_destroy(server.backend);\n"
     "\twl_display_destroy(server.wl_display);\n"
     "\treturn 0;",
+    "\twl_list_remove(&g_new_layer_surface.link);\n"
     "\twlr_backend_destroy(server.backend);\n"
     "\twlr_keyboard_finish(&g_keyboard);\n"
     "\twl_display_destroy(server.wl_display);\n"
     "\treturn 0;",
-    "virtual-keyboard-cleanup")
+    "virtual-keyboard-and-layer-shell-cleanup")
+
+# 8) Layer shell. Layer surfaces stack below and above the toplevels, so the
+#    toplevels move into a tree of their own between them.
+src = repl(src,
+    "\tserver.scene_layout = wlr_scene_attach_output_layout(server.scene, server.output_layout);",
+    "\tserver.scene_layout = wlr_scene_attach_output_layout(server.scene, server.output_layout);\n"
+    "\tg_output_layout = server.output_layout;\n"
+    "\tg_layer_trees[ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND] = wlr_scene_tree_create(&server.scene->tree);\n"
+    "\tg_layer_trees[ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM] = wlr_scene_tree_create(&server.scene->tree);\n"
+    "\tg_toplevel_tree = wlr_scene_tree_create(&server.scene->tree);\n"
+    "\tg_layer_trees[ZWLR_LAYER_SHELL_V1_LAYER_TOP] = wlr_scene_tree_create(&server.scene->tree);\n"
+    "\tg_layer_trees[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY] = wlr_scene_tree_create(&server.scene->tree);\n"
+    "\tstruct wlr_layer_shell_v1 *cua_layer_shell = wlr_layer_shell_v1_create(server.wl_display, 4);\n"
+    "\twl_signal_add(&cua_layer_shell->events.new_surface, &g_new_layer_surface);",
+    "layer-shell")
+src = repl(src,
+    "wlr_scene_xdg_surface_create(&toplevel->server->scene->tree, xdg_toplevel->base);",
+    "wlr_scene_xdg_surface_create(g_toplevel_tree, xdg_toplevel->base);",
+    "toplevel-tree")
+# A layer surface has no toplevel ancestor; a hit on one is not a window.
+src = repl(src,
+    "\treturn tree->node.data;\n",
+    "\treturn tree ? tree->node.data : NULL;\n",
+    "desktop-hit-layer-surface")
 
 io.open(out, "w", encoding="utf-8").write(src)
 sys.stderr.write("cua-compositor.c written (%d bytes)\n" % len(src))

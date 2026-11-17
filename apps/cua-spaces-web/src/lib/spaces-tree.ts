@@ -20,7 +20,7 @@ import { relativeTime } from "@/lib/utils";
 import { thisComputerLabel } from "./host-labels";
 
 /** How a row reads in the Status column (and its dot). */
-export type TreeTone = "online" | "offline" | "stopped" | "waits" | "busy";
+export type TreeTone = "online" | "offline" | "stopped" | "busy";
 
 export interface TreeNode {
   /** A stable key: the computer's Space id, or the Space's. */
@@ -39,14 +39,14 @@ export interface TreeNode {
   /** Usable now: online, and (for a Space) its computer is too. */
   online: boolean;
   tone: TreeTone;
-  /** "Online", "Online, Default", "Offline, seen 20 minutes ago", "Waits for Studio Mac mini", "Stopped". */
+  /** "Online", "Online, Default", "Offline, seen 20 minutes ago", "Offline" (a Space on an offline computer), "Stopped". */
   status: string;
   isDefault: boolean;
   /** Its computer is offline: the row is greyed out until it's back. */
   dim: boolean;
   /** Running agent tasks: its own, and for a computer its Spaces' too. */
   running: number;
-  /** "1 running", "None", or "Paused" while its computer is offline. */
+  /** "1 running", "Paused" while its computer is offline, or "" (an empty cell) when there are none. */
   tasks: string;
   /** Who's on it: the owner (or you) first, then who it's shared with. */
   people: string[];
@@ -56,6 +56,8 @@ export interface TreeNode {
   children: TreeNode[];
   /** 0 for a computer (or a Space with no listed computer), 1 for a Space on a computer, 2 for its children, ... */
   depth: number;
+  /** A computer only: the Space page its row opens. Its own desktop's, while it shares it (or, for This Mac, while it can share it and does not: that page makes it one button to start or stop). Null: the computer's own page (its settings), for a computer that cannot share (a cloud computer, one set up to provide Spaces only, one not set up, one that is offline or not sharing). */
+  opens: string | null;
 }
 
 export interface SpacesTree {
@@ -67,8 +69,8 @@ export interface SpacesTree {
   online: number;
   /** The default, marked "Default" (the setting, else the first computer that isn't this Mac, else This Mac). */
   defaultKey: string | null;
-  /** The first offline computer that has Spaces on it (the page's line says so). */
-  offlineParent: TreeNode | null;
+  /** Spaces that are running now (the page's line counts them). */
+  spacesRunning: number;
 }
 
 export interface TreeInput {
@@ -87,6 +89,8 @@ export interface TreeInput {
   relayOnline?: ReadonlyMap<string, boolean>;
   /** Which Space made which (Child Spaces): child Space id to its parent's. A child whose parent isn't listed sits on its computer like any Space. */
   parents?: ReadonlyMap<string, string>;
+  /** Whether another computer says it shares its desktop (`sharesDesktop`); a computer set up to provide Spaces only does not. Unset: it does. */
+  shares?: (space: Space) => boolean;
 }
 
 /** A computer's own Space id: `relay:<machine>` (This Mac's once it is on the relay), else its list row's. */
@@ -144,7 +148,7 @@ function offlineWord(m: Pick<Machine, "lastSeen">, now: number): string {
 }
 
 function tasksText(running: number, waits: boolean): string {
-  if (running === 0) return t("computers.tree.tasks_none");
+  if (running === 0) return "";
   return waits ? t("computers.tree.tasks_paused") : t("computers.tree.tasks_running", { count: running });
 }
 
@@ -175,6 +179,7 @@ export function buildSpacesTree({
   now = Date.now(),
   relayOnline,
   parents = new Map(),
+  shares = () => true,
 }: TreeInput): SpacesTree {
   const ghosts = ghostMachineIds(spaces, machines);
   const onGhost = (s: Space) => [...ghosts].some((g) => s.id === `relay:${g}` || s.id.startsWith(`relay:${g}/`) || s.host === g);
@@ -227,7 +232,7 @@ export function buildSpacesTree({
     const state = spaceState(s);
     const settingsId = relayId(s.id);
     const isDefault = settingsId !== null && settingsId === defaultKey;
-    const word = waits && computer ? t("computers.tree.waits_for", { name: computer.name }) : spaceWord(state);
+    const word = waits ? t("computers.row.offline") : spaceWord(state);
     const n = runningOf(s.id);
     const node: TreeNode = {
       key: s.id,
@@ -240,7 +245,7 @@ export function buildSpacesTree({
       current: false,
       online: !waits && state === "running",
       tone: waits
-        ? "waits"
+        ? "offline"
         : state === "running"
           ? "online"
           : state === "creating" || state === "deleting"
@@ -256,6 +261,7 @@ export function buildSpacesTree({
       people: peopleOf(s, me),
       parentKey: parent?.key ?? null,
       children: [],
+      opens: null,
       depth: parent ? depth : 0,
     };
     // Its child Spaces (Child Spaces) sit under it; their tasks count on it too, so a computer's total stays whole.
@@ -300,6 +306,8 @@ export function buildSpacesTree({
       people: peopleOf(own, me),
       parentKey: null,
       children: [],
+      // This Mac opens its desktop's page once it is set up (sharing or not: the page has the button); another computer, while it shares.
+      opens: own && (m.current ? Boolean(m.connection) : online && shares(own) && own.sdk?.reachable !== false) ? own.id : null,
       depth: 0,
     };
     // The Spaces no other Space made sit on the computer; the children nest under their parents.
@@ -322,7 +330,7 @@ export function buildSpacesTree({
     spaces: all.length - roots.length,
     online: all.filter((n) => n.online).length,
     defaultKey: all.some((n) => n.key === defaultKey) ? defaultKey : null,
-    offlineParent: roots.find((r) => !r.online && r.children.length > 0) ?? null,
+    spacesRunning: all.filter((n) => n.kind === "space" && n.online).length,
   };
 }
 
@@ -353,20 +361,10 @@ export function treeRows(tree: Pick<SpacesTree, "roots">): TreeNode[] {
   return tree.roots.flatMap((r) => [r, ...descendants(r)]);
 }
 
-/** The Computers page's line under its title. */
+/** The Computers page's line under its title: a plain count of the list, nothing about one computer. */
 export function treeSummary(tree: SpacesTree): string {
-  if (tree.offlineParent) {
-    const p = tree.offlineParent;
-    return t("computers.tree.summary_offline", { name: p.name, count: descendants(p).length });
-  }
-  if (tree.computers === 1 && tree.spaces === 0) {
-    const only = tree.roots[0]!;
-    return t("computers.tree.summary_single", { name: only.name });
-  }
-  const total = tree.computers + tree.spaces;
-  return tree.spaces === 0
-    ? t("computers.tree.summary_computers", { computers: tree.computers, total, online: tree.online })
-    : t("computers.tree.summary_spaces", { computers: tree.computers, spaces: tree.spaces, total, online: tree.online });
+  const computers = t("computers.tree.summary_computers", { computers: tree.computers });
+  return tree.spacesRunning === 0 ? computers : t("computers.tree.summary_running", { computers: tree.computers, running: tree.spacesRunning });
 }
 
 /** A node by key. */

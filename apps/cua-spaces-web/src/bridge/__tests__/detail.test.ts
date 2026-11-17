@@ -11,7 +11,7 @@ import { sanitizeSignals } from "../ops/telemetry";
 import { TelemetryForwarder, telemetryAllowed } from "../telemetry";
 import { toMachineRows } from "../adapters/webkit";
 import { machineIdOf, machinesView, rowsToSpaces, toMachines } from "../derive";
-import { agentRunLines, desktopCover, PIP_CHANGED_EVENT, SpaceDetailStore, spaceDetail } from "../space-detail";
+import { agentRunLines, desktopCover, PIP_CHANGED_EVENT, SpaceDetailStore, spaceDetail, WINDOWS_REFRESH_MS } from "../space-detail";
 import type { CoreClient } from "../core";
 import { parseDropped, sendFiles, splitDrop } from "../space-files";
 import type { MachineAccessNotice } from "../contracts/devices";
@@ -542,5 +542,12 @@ describe("the Machines rows listed here for an older host (machinesView)", () =>
       ],
     );
     expect(labels).toEqual({ solo: "Desktop shared", both: "Desktop and 1 Space", box: "2 Spaces", stopped: "No Spaces" });
+  });
+});
+
+describe("the Stream list", () => {
+  it("picks up an app an agent just opened within two seconds, not five", () => {
+    // The agent's window waits for the next read of the list; the home opens it the moment it is listed.
+    expect(WINDOWS_REFRESH_MS).toBeLessThanOrEqual(2_000);
   });
 });

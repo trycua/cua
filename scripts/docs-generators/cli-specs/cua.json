@@ -3498,7 +3498,7 @@
     },
     {
      "abstract": "The notifications the Cua app shows (turn ends, notify_user, requests)",
-     "after_help": "Examples:\n  cua agent notifications --unread\n  cua agent notifications --mark-read",
+     "after_help": "Examples:\n  cua agent notifications --unread\n  cua agent notifications --mark-read\n  cua agent notifications --delete-all",
      "aliases": [],
      "arguments": [],
      "flags": [
@@ -3520,6 +3520,17 @@
        "help": "Mark every notification read",
        "hidden": false,
        "name": "mark-read",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Delete every notification, for good",
+       "hidden": false,
+       "name": "delete-all",
        "repeatable": false,
        "short_name": null,
        "takes_value": false
@@ -3764,6 +3775,38 @@
        "aliases": [],
        "default_value": null,
        "env": null,
+       "help": "Windows images built here (`windows:11`, `windows:2025`, ...): install from this ISO instead of downloading Microsoft's evaluation media. The first Space of that version builds the image (20 to 40 minutes with hardware acceleration) and later ones reuse it",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "iso",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "path",
+       "value_name": "PATH"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "With --iso: the SHA-256 the ISO must have",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "iso-sha256",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "HEX"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
        "help": "With --browser: open this URL",
        "hidden": false,
        "is_optional": true,
@@ -3830,7 +3873,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Guest network: `default` (outbound network, like a Docker container) or `none` (no egress; published ports still work). `none` needs a local QEMU VM; containers and Lume reject it",
+       "help": "Guest network: `default` (outbound network, like a Docker container) or `none` (no egress; published ports still work). `none` runs on a local QEMU VM, and on a container under the default Secure network mode; containers reject it in legacy mode, and Lume rejects it",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -23313,6 +23356,5 @@
   }
  ],
  "name": "cua",
- "usage": "cua [OPTIONS] <COMMAND>",
- "version": "0.20.0"
+ "usage": "cua [OPTIONS] <COMMAND>"
 }

@@ -148,7 +148,12 @@ pub fn check_guest_support(spec: &StartSpec) -> Result<()> {
             op: "a sandbox command on a non-Linux VM guest (bake it into the image)",
         });
     }
-    if !linux && !workload_env(&spec.env).is_empty() {
+    // The host's telemetry switch is infrastructure, not a workload variable:
+    // a guest with no provisioning channel simply runs without it.
+    let carries_workload_env = workload_env(&spec.env)
+        .keys()
+        .any(|k| k != "CUA_SPACESD_TELEMETRY");
+    if !linux && carries_workload_env {
         // Only Linux guests run cloud-init, and a Windows guest has no other
         // channel the host could write to (no cloud-init, no SSH, no guest
         // agent in the image). Never drop the environment silently. The
@@ -1080,6 +1085,10 @@ mod tests {
             matches!(err, VmmError::Unsupported { backend: "vm", op } if op.contains("environment variables")),
             "{err}"
         );
+        // The host's telemetry switch is not workload env: a Windows guest runs without it.
+        win.env.clear();
+        win.env.insert("CUA_SPACESD_TELEMETRY".into(), "1".into());
+        assert!(seed_for_spec("w1", &win).unwrap().is_none());
         // An empty env keeps today's behavior.
         win.env.clear();
         assert!(seed_for_spec("w1", &win).unwrap().is_none());

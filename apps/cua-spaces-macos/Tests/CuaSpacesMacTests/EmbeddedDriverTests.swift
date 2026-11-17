@@ -58,6 +58,26 @@ struct EmbeddedDriverTests {
         #expect(!d.isOurs(command: "/Applications/CuaDriver.app/Contents/MacOS/cua-driver", args: d.mcpArguments))
     }
 
+    /// Setup's Cua Driver row (CUA-4067) writes the driver this app carries,
+    /// run through its embedded proxy, never a separately installed
+    /// `/Applications/CuaDriver.app`, and says whether its permissions are on.
+    @Test func setupsDriverEntryIsTheBundledDriver() throws {
+        let d = try #require(EmbeddedDriver.make(binary: "/Applications/Cua Spaces.app/Contents/Helpers/cua-driver", info: [:],
+                                                 bundleId: "com.trycua.spaces.macos", home: "/Users/ada"))
+        let entry = DriverConnect.embedded(d, permissionsGranted: false)
+        #expect(entry.command == "/Applications/Cua Spaces.app/Contents/Helpers/cua-driver")
+        #expect(!entry.command.contains("CuaDriver.app"))
+        #expect(entry.args == d.mcpArguments)
+        #expect(entry.args.prefix(2) == ["mcp", "--embedded"])
+        #expect(entry.serverName == "cua-driver")
+        #expect(entry.permissionsGranted == false)
+        #expect(d.isOurs(command: entry.command, args: entry.args))
+        let local = try #require(EmbeddedDriver.make(binary: "/L/Contents/Helpers/cua-driver",
+                                                     info: ["CuaHome": "~/.cua-local", "CuaChannel": "local"],
+                                                     bundleId: "com.trycua.spaces.macos.local", home: "/Users/ada"))
+        #expect(DriverConnect.embedded(local, permissionsGranted: true).serverName == "cua-driver-local")
+    }
+
     @Test func readsClaudeCodesAndCodexsEntries() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("driver-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

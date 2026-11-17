@@ -109,19 +109,42 @@ impl Drop for Accounts {
     }
 }
 
+/// A directory the agent's account can reach, holding the agent's copy of
+/// the binary. Root fills it, so only root can remove it: the guard exists
+/// before the first root write, and removes it however the test ends.
+struct Sandbox {
+    dir: PathBuf,
+    _tmp: tempfile::TempDir,
+}
+
+impl Sandbox {
+    fn new() -> Self {
+        let tmp = tempfile::tempdir().unwrap();
+        Sandbox {
+            dir: tmp.path().join("agent"),
+            _tmp: tmp,
+        }
+    }
+}
+
+impl Drop for Sandbox {
+    fn drop(&mut self) {
+        let _ = root(&["rm", "-rf", &self.dir.display().to_string()]);
+    }
+}
+
 /// A running agent and a client for it.
 struct Agent {
     client: SpacesdClient,
     port: u16,
     pid: String,
     dir: PathBuf,
-    _tmp: tempfile::TempDir,
+    _sandbox: Sandbox,
 }
 
 impl Drop for Agent {
     fn drop(&mut self) {
         let _ = root(&["kill", "-KILL", &self.pid]);
-        let _ = root(&["rm", "-rf", &self.dir.display().to_string()]);
     }
 }
 
@@ -136,9 +159,9 @@ fn free_port() -> u16 {
 /// Starts the agent as `accounts.agent` with `no_new_privs`, a PATH with no
 /// `sudo`, and the capabilities `caps` (a `setpriv` list, empty: none).
 async fn start(accounts: &Accounts, caps: &str) -> Agent {
-    let tmp = tempfile::tempdir().unwrap();
-    // A directory the agent's account can reach (the build tree may not be).
-    let dir = tmp.path().join("agent");
+    // The build tree may not be reachable by the agent's account.
+    let sandbox = Sandbox::new();
+    let dir = sandbox.dir.clone();
     let dir_s = dir.display().to_string();
     ok(&["install", "-d", "-m", "0755", &dir_s]);
     ok(&[
@@ -238,7 +261,7 @@ async fn start(accounts: &Accounts, caps: &str) -> Agent {
         port,
         pid,
         dir,
-        _tmp: tmp,
+        _sandbox: sandbox,
     }
 }
 

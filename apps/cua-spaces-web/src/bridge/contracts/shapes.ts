@@ -89,7 +89,7 @@ import type { AgentSetupOutcome, DriveGrantInput, DriveMountInput, DriveRequestI
 import type { AgentKeysReport } from "../ops/agent-keys";
 import type { GithubAccount, GithubHost, GithubReport, GithubSourceRow } from "../ops/github";
 import type { TelemetryLinkNotice } from "../ops/telemetry";
-import type { SentFileInfo, SpaceThumbnail, SpaceUsage, SpaceWindows } from "../ops/space-detail";
+import type { SentFileInfo, SpaceReach, SpaceThumbnail, SpaceUsage, SpaceWindows } from "../ops/space-detail";
 import type { RelayUsage } from "../ops/relay-usage";
 import type { AppPermissions, DriverActivity, DriverApp, DriverLiveTest, DriverMachine, DriverPermission, DriverStatus, DriverUpdate } from "../ops/driver";
 import type { DefaultSpace, DefaultSpaceStep, SpacesSettings } from "../ops/spaces-settings";
@@ -293,7 +293,18 @@ const ComputerResourcesShape = ref(
   }),
 );
 
-const CreateFixShape = ref("CreateFix", obj<CreateFix>()({ text: str, label: str, action: oneOf("copy-command", "open-url", "details"), value: opt(str) }));
+const CreateFixShape = ref(
+  "CreateFix",
+  obj<CreateFix>()({
+    text: str,
+    label: str,
+    action: oneOf("copy-command", "open-url", "details", "choose-windows-iso"),
+    value: opt(str),
+    linkLabel: opt(str),
+    linkUrl: opt(str),
+    keepRetry: opt(bool),
+  }),
+);
 
 const SpaceProgressShape = ref(
   "SpaceProgress",
@@ -543,6 +554,8 @@ const SettingsShape = ref(
         runtimes: optNull(RuntimesInputShape),
         autoConnect: optNull(bool),
         overflow: optNull(bool),
+        closeWindowKeepsRunning: optNull(bool),
+        closeNotice: optNull(bool),
         keyvaultAutoWipe: optNull(bool),
         keyvaultUnlockPrompt: optNull(bool),
         keyvaultSiteIcons: optNull(bool),
@@ -1051,6 +1064,16 @@ const ConnectResultsShape = list(
           refused: nullable(str),
           line: nullable(str),
         }),
+      ),
+      parts: opt(
+        list(
+          object({
+            part: oneOf("mcp", "skills", "driver", "sign_in"),
+            status: oneOf("done", "needs_permission", "skipped", "failed"),
+            where: nullable(str),
+            line: nullable(str),
+          }),
+        ),
       ),
     }),
   ),
@@ -1881,18 +1904,22 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "notifications.list": list(NotificationShape),
   "notifications.markAllRead": nul,
   "notifications.markRead": nul,
+  "notifications.delete": nul,
+  "notifications.deleteAll": nul,
 
   "telemetry.track": nul,
   "telemetry.linkNotice": nullable(LinkNoticeShape),
   "telemetry.acknowledgeLinkNotice": nul,
   "crashReporting.config": CrashReportingConfigShape,
   "spaces.usage": nullable(obj<SpaceUsage>()({ memoryUsed: num, memoryTotal: num, memoryLimited: bool, diskUsed: num, diskTotal: num, diskLimited: bool })),
+  "spaces.reach": obj<SpaceReach>()({ reachable: bool, listedOffline: bool, reason: nullable(str) }),
   "spaces.windows": obj<SpaceWindows>()({ windows: list(RemoteWindowShape), display: nullable(object({ widthPx: num, heightPx: num })), open: opt(strings) }),
   "stream.pip": strings,
   "spaces.thumbnail": nullable(obj<SpaceThumbnail>()({ url: str, capturedAtMs: num })),
   "spaces.chooseFiles": strings,
   "spaces.droppedFiles": strings,
   "spaces.sendFiles": list(obj<SentFileInfo>()({ name: str, dest: str, bytes: num })),
+  "windows.chooseIso": nullable(object({ name: str })),
   "host.setUp": HostStatusShape,
   "host.joinWithCode": HostStatusShape,
   "host.action": HostStatusShape,
@@ -2335,17 +2362,21 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "notifications.list": list(NotificationShape),
   "notifications.markAllRead": nul,
   "notifications.markRead": nul,
+  "notifications.delete": nul,
+  "notifications.deleteAll": nul,
   "telemetry.track": nul,
   "telemetry.linkNotice": nullable(LinkNoticeShape),
   "telemetry.acknowledgeLinkNotice": nul,
   "crashReporting.config": CrashReportingConfigShape,
   "spaces.usage": OP_SHAPES["spaces.usage"],
+  "spaces.reach": OP_SHAPES["spaces.reach"],
   "spaces.windows": OP_SHAPES["spaces.windows"],
   "stream.pip": strings,
   "spaces.thumbnail": OP_SHAPES["spaces.thumbnail"],
   "spaces.chooseFiles": strings,
   "spaces.droppedFiles": strings,
   "spaces.sendFiles": OP_SHAPES["spaces.sendFiles"],
+  "windows.chooseIso": OP_SHAPES["windows.chooseIso"],
   "host.openSettings": nul,
   "settings.get": WkSettingsShape,
   "settings.choose": WkSettingsShape,

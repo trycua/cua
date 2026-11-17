@@ -167,12 +167,7 @@ impl Tool for StartRecordingTool {
                             The values are held in memory only, never written, and cleared \
                             when recording stops. Screenshots and video are not altered."
                     },
-                    "session": {
-                        "type": "string",
-                        "description": "For multi-call work, prefer a short public session label \
-                            and repeat it on every call that accepts it. Omit it to use the \
-                            authenticated transport's implicit lifecycle session."
-                    }
+                    "session": crate::tool_schema::session_schema()
                 },
                 "additionalProperties": false
             }),

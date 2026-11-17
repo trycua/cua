@@ -26,7 +26,9 @@ const MAX_TIMEOUT_MS: u64 = 10_000;
 const DEFAULT_STABLE_SAMPLES: u64 = 2;
 const MAX_STABLE_SAMPLES: u64 = 5;
 const MAX_PREDICATES: usize = 8;
-const POLL_INTERVAL_MS: u64 = 100;
+/// Interval between reads while a check waits for an element or a state:
+/// `expect` here, and `find`, `wait_for` and `expect` in batches.
+pub(crate) const STATE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone, Default)]
 pub struct ObservationSnapshot {
@@ -327,7 +329,7 @@ impl Tool for VerifyStateTool {
                 break outcomes;
             }
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            tokio::time::sleep(remaining.min(Duration::from_millis(POLL_INTERVAL_MS))).await;
+            tokio::time::sleep(remaining.min(STATE_POLL_INTERVAL)).await;
         };
 
         let last_status = aggregate_status(&last_outcomes);
@@ -1064,6 +1066,35 @@ mod tests {
             .as_deref()
             .unwrap()
             .contains("\"element_index\":1"));
+    }
+
+    #[test]
+    fn display_only_row_satisfies_existence_when_no_control_matches() {
+        let outcomes = evaluate_predicates(
+            &[labelled("Saved", None)],
+            &observed(vec![json!({
+                "role": "AXStaticText",
+                "label": "Saved",
+                "display_only": true
+            })]),
+        );
+        assert_eq!(outcomes[0].status, VerificationStatus::Satisfied);
+    }
+
+    #[test]
+    fn duplicate_display_only_value_is_multi_match() {
+        let caption = json!({
+            "role": "AXStaticText",
+            "label": "Total",
+            "value": "42",
+            "display_only": true
+        });
+        let outcomes = evaluate_predicates(
+            &[labelled("Total", Some("42"))],
+            &observed(vec![caption.clone(), caption]),
+        );
+        assert_eq!(outcomes[0].status, VerificationStatus::Unknown);
+        assert_eq!(outcomes[0].unknown_reason, Some(UnknownReason::MultiMatch));
     }
 
     #[test]

@@ -308,14 +308,12 @@ fn assert_tools_list_schema_shape(mut d: RawDriver) {
             "start_session.capture_scope should advertise {expected}: {capture_scope:?}"
         );
     }
-    assert!(
-        tools.iter().any(|tool| tool["name"] == "escalate_session"),
-        "escalate_session missing from tools/list"
-    );
-    assert!(
-        tools.iter().any(|tool| tool["name"] == "get_session_state"),
-        "get_session_state missing from tools/list"
-    );
+    for removed in ["escalate_session", "get_session_state"] {
+        assert!(
+            !tools.iter().any(|tool| tool["name"] == removed),
+            "{removed} was removed and must not be advertised in tools/list"
+        );
+    }
     assert!(
         properties("set_config")["capture_scope"].is_null(),
         "persistent set_config.capture_scope must remain retired"
@@ -393,6 +391,63 @@ fn assert_tools_list_schema_shape(mut d: RawDriver) {
             sc["inputSchema"]["properties"]
         );
     }
+}
+
+/// Capabilities that mean the tool drives native input or window state. A tool
+/// advertising one sends input whose effect the driver must account for, so
+/// it has to publish the closed `ActionResult`: the dispatch seam then reports
+/// an unproven effect as `unverifiable` instead of a plain success.
+fn drives_native_input(capability: &str) -> bool {
+    capability.starts_with("input.pointer.")
+        || capability.starts_with("input.keyboard.")
+        || capability.starts_with("menu.")
+        || capability == "window.frame.set"
+}
+
+#[test]
+fn every_native_input_tool_publishes_the_action_result() {
+    let mut d = RawDriver::spawn().expect("spawn source-built driver for schema test");
+    d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    d.recv();
+    d.send(&serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}));
+    let list_resp = d.recv();
+    let tools = list_resp["result"]["tools"]
+        .as_array()
+        .expect("tools array");
+
+    let expected_schema = cua_driver_contract::advertised_output_schema(
+        <cua_driver_contract::ActionResult as cua_driver_contract::ToolOutput>::output_schema(),
+    );
+    let mut checked = 0;
+    let mut violations = Vec::new();
+    for tool in tools {
+        let name = tool["name"].as_str().expect("tool name");
+        let native_input = tool["capabilities"].as_array().is_some_and(|capabilities| {
+            capabilities
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .any(drives_native_input)
+        });
+        if !native_input {
+            continue;
+        }
+        checked += 1;
+        if !cua_driver_contract::is_action_result_tool(name) {
+            violations.push(format!("{name} is not an action-result tool"));
+        } else if tool["outputSchema"] != expected_schema {
+            violations.push(format!("{name} does not advertise the ActionResult schema"));
+        }
+    }
+    // click, type_text, press_key, hotkey, scroll and drag exist everywhere.
+    assert!(
+        checked >= 6,
+        "only {checked} native input tools found in tools/list"
+    );
+    assert!(
+        violations.is_empty(),
+        "native input tools that can report success without effect evidence:\n  {}",
+        violations.join("\n  ")
+    );
 }
 
 #[test]

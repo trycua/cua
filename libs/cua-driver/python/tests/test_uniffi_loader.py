@@ -298,10 +298,8 @@ except FileNotFoundError:
             driver = CuaDriver.connect(socket_path)
             expected_methods = {
                 "start_session",
-                "escalate_session",
                 "get_session",
                 "list_sessions",
-                "get_session_state",
                 "end_session",
                 "get_desktop_state",
                 "get_screen_size",

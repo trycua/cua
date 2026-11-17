@@ -18,7 +18,42 @@ use anyhow::Result;
 pub mod native;
 pub mod snapshot;
 pub use native::ensure_listener_active;
+pub use native::InputMayHaveLanded;
 pub use snapshot::Snapshots;
+
+/// Whether `error` reports AT-SPI input that was sent and may have taken
+/// effect ([`InputMayHaveLanded`]). Such input must not be sent again by
+/// another route, and the result must not say that nothing was delivered.
+pub fn input_may_have_landed(error: &anyhow::Error) -> bool {
+    error.is::<InputMayHaveLanded>()
+}
+
+/// The outcome of an action whose effect the caller reads back from the UI
+/// before deciding anything. One that failed after it was sent may have
+/// acted, so it counts as sent and the readback decides; a refusal there
+/// would hide what it did. Other errors are returned.
+pub fn action_sent<T>(result: Result<T>) -> Result<()> {
+    match result {
+        Ok(_) => Ok(()),
+        Err(error) if input_may_have_landed(&error) => {
+            tracing::debug!("action may have acted, reading it back: {error:#}");
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn an_action_that_may_have_acted_is_read_back_not_refused() {
+    let sent = anyhow::Error::new(InputMayHaveLanded(
+        "doAction failed: raised after acting".into(),
+    ));
+    assert!(action_sent(Err::<(), _>(sent.context("the exact checkbox action"))).is_ok());
+    assert!(action_sent(Ok(("click".to_owned(), false, false))).is_ok());
+    let unsent = action_sent(Err::<(), _>(anyhow::anyhow!("no Action interface")));
+    assert_eq!(unsent.unwrap_err().to_string(), "no Action interface");
+}
 
 /// Stable address on one AT-SPI bus connection, including the owning frame.
 /// Unique bus names prevent a restarted process from reusing an observed path.
@@ -42,7 +77,14 @@ pub struct AtspiNode {
     pub enabled: Option<bool>,
     /// Toggle/selection state for selectable controls.
     pub selected: Option<bool>,
+    /// Keyboard-focus state when the native AT-SPI state set is available.
+    /// Browser consent uses this as structural contradiction evidence; it is
+    /// never inferred from a localized accessible name.
+    pub focused: Option<bool>,
     pub description: Option<String>,
+    /// Exact document URI reported by the AT-SPI Document interface. Unlike a
+    /// localized title or accessible name, this identifies the rendered page.
+    pub document_uri: Option<String>,
     pub actions: Vec<String>,
     /// For AT-SPI: element_key = element_index as u64.
     /// For X11 fallback: element_key = xid.
@@ -109,7 +151,7 @@ pub const DEFAULT_WALK_TIMEOUT: std::time::Duration = std::time::Duration::from_
 impl AtspiTreeResult {
     fn from_walked(walked: native::WalkedTree, query: Option<&str>) -> Self {
         let md = match query {
-            Some(q) => filter_tree(&walked.markdown, q),
+            Some(q) => cua_driver_core::element_query::filter_tree(&walked.markdown, q),
             None => walked.markdown,
         };
         let (truncated, truncation_reason, nodes_visited, nodes_pending) = match &walked.truncation
@@ -506,6 +548,7 @@ pub fn perform_action_at_point_in(
                                 object_ref.path.clone(),
                             )))
                         }
+                        Err(error) if input_may_have_landed(&error) => return Err(error),
                         Err(error) => tracing::debug!(
                             "cached hit-test element {idx} (pid {pid}) failed: {error:#}"
                         ),
@@ -514,12 +557,27 @@ pub fn perform_action_at_point_in(
             }
         }
     }
-    match native::perform_action_at_point_in(pid, xid, win_x, win_y, skip_focus_roles) {
+    walk_unless_fired(
+        native::perform_action_at_point_in(pid, xid, win_x, win_y, skip_focus_roles),
+        || native::perform_action_at_point(pid, win_x, win_y, skip_focus_roles),
+    )
+}
+
+/// The `GetAccessibleAtPoint` tier's outcome decides whether the full-walk
+/// tier runs. Only a miss (or a failure before anything was sent) walks: a
+/// hit, which includes a `doAction` that did not answer, or input that may
+/// have landed ends the click, since walking would send the action again.
+fn walk_unless_fired(
+    live: Result<Option<AtPointHit>>,
+    walk: impl FnOnce() -> Result<Option<AtPointHit>>,
+) -> Result<Option<AtPointHit>> {
+    match live {
         Ok(Some(hit)) => return Ok(Some(hit)),
         Ok(None) => {}
+        Err(error) if input_may_have_landed(&error) => return Err(error),
         Err(error) => tracing::debug!("GetAccessibleAtPoint hit-test failed: {error:#}"),
     }
-    native::perform_action_at_point(pid, win_x, win_y, skip_focus_roles)
+    walk()
 }
 
 /// Resolve a *screen* pixel to the indexable element whose reconstructed screen
@@ -696,7 +754,8 @@ impl TokenElement {
             Ok(done) => return Ok(done),
             Err(error) => error,
         };
-        if !self.may_reresolve {
+        // Input that may have landed is never sent again by index.
+        if !self.may_reresolve || input_may_have_landed(&error) {
             return Err(error);
         }
         tracing::debug!(
@@ -850,11 +909,13 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
         checked: None,
         enabled: None,
         selected: None,
+        focused: None,
         description: if wm_class.is_empty() {
             None
         } else {
             Some(wm_class.clone())
         },
+        document_uri: None,
         actions: vec!["activate".into()],
         element_key: xid,
         identity: None,
@@ -871,7 +932,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
 
     let raw_md = md;
     let tree_markdown = if let Some(q) = query {
-        filter_tree(&raw_md, q)
+        cua_driver_core::element_query::filter_tree(&raw_md, q)
     } else {
         raw_md
     };
@@ -940,44 +1001,6 @@ fn get_x11_wm_class(conn: &x11rb::rust_connection::RustConnection, window: u32) 
     Some(s.trim_end_matches('\0').replace('\0', "."))
 }
 
-fn filter_tree(markdown: &str, query: &str) -> String {
-    let needle = query.to_lowercase();
-    let lines: Vec<&str> = markdown.lines().collect();
-    let mut ancestors: Vec<&str> = Vec::new();
-    let mut last_emitted: Vec<Option<&str>> = Vec::new();
-    let mut output: Vec<&str> = Vec::new();
-
-    for line in &lines {
-        let depth = line.chars().take_while(|c| *c == ' ').count() / 2;
-        while ancestors.len() <= depth {
-            ancestors.push("");
-            last_emitted.push(None);
-        }
-        last_emitted[depth + 1..ancestors.len()].fill(None);
-        ancestors[depth] = line;
-        if line.to_lowercase().contains(&needle) {
-            for d in 0..depth {
-                if ancestors[d].is_empty() {
-                    continue;
-                }
-                if last_emitted[d] == Some(ancestors[d]) {
-                    continue;
-                }
-                last_emitted[d] = Some(ancestors[d]);
-                output.push(ancestors[d]);
-            }
-            last_emitted[depth] = Some(line);
-            output.push(line);
-        }
-    }
-    if output.is_empty() {
-        return String::new();
-    }
-    let mut r = output.join("\n");
-    r.push('\n');
-    r
-}
-
 #[cfg(test)]
 mod budget_tests {
     use super::*;
@@ -992,7 +1015,9 @@ mod budget_tests {
                 checked: None,
                 enabled: Some(true),
                 selected: None,
+                focused: None,
                 description: None,
+                document_uri: None,
                 actions,
                 element_key: idx as u64,
                 depth,
@@ -1104,6 +1129,20 @@ mod token_dispatch_tests {
     }
 
     #[test]
+    fn input_that_may_have_landed_is_never_re_sent_by_index() {
+        let sent = |_: &native::ObjectRef| -> Result<String> {
+            Err(InputMayHaveLanded("EditableText.InsertText did not answer in time".into()).into())
+        };
+        let error = token(WindowProof::NotRequired)
+            .act(sent, |_| panic!("re-sent input that may have landed"))
+            .unwrap_err();
+        assert!(input_may_have_landed(&error));
+        // A failure before anything was sent still re-resolves.
+        let retried = token(WindowProof::NotRequired).act(gone, |_| Ok("by index".to_owned()));
+        assert_eq!(retried.unwrap(), "by index");
+    }
+
+    #[test]
     fn a_walked_action_addresses_the_node_it_walked_not_another_window_at_its_index() {
         // Window A's snapshot is retained with an element at the same index
         // as the consent control a walk of window B found.
@@ -1116,7 +1155,9 @@ mod token_dispatch_tests {
             checked: None,
             enabled: Some(true),
             selected: None,
+            focused: None,
             description: None,
+            document_uri: None,
             actions: vec!["click".into()],
             element_key: 0,
             identity: Some(AtspiIdentity {

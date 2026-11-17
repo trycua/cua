@@ -728,12 +728,15 @@ A native `<input type="range">` in Chrome does not follow a background drag
 through CDP `Input.dispatchMouseEvent` with the button held.
 
 A drag that starts a macOS drag-and-drop session (reordering a list by drag
-and drop, moving a file, HTML5 `draggable` content) cannot drop in the
-background: macOS tracks those sessions with the real pointer. The driver
-sees the session start, releases at once, and returns
-`background_unavailable` with `reason: "drag_and_drop_session"`. Look for a
-non-drag route first (Move Up/Down, a menu or context-menu command, a
-shortcut, cut and paste), then foreground if the user allows it.
+and drop, moving a file) drops in the background too. AppKit ends a session
+that window-routed events started soon after it starts, dropping at the last
+dragged point, so the driver moves straight to the drop point once the drag
+image shows and holds it there until the session ends. The result then says
+`drag_session: true`. If the session is still open when the hold runs out,
+no drop landed and the result is `background_unavailable` with
+`reason: "drag_and_drop_session"`. Then look for a non-drag route (Move
+Up/Down, a menu or context-menu command, a shortcut, cut and paste), and
+use foreground only if the user allows it.
 
 In an Electron window, `drag` is sent from the app's main process
 (CDP `Input.dispatchMouseEvent` with the button held, or
@@ -830,13 +833,23 @@ There is no backgrounded path that reaches these apps today.
 
 ### A value write the app does not apply (LibreOffice)
 
-Some apps accept an accessibility value write and ignore it. LibreOffice
-Calc cells do: `set_value` returns success at the AX level and the cell
-keeps its old content. `set_value` re-reads the value, and when it has
-not moved it fails with `code:"write_not_applied"` and
-`effect:"not_applied"`, so a `run_script` stops there. LibreOffice also
-ignores background pointer input, so address it with `window_id` and type
-instead (see "LibreOffice, Numbers and other editors in the background").
+Some apps accept an accessibility value write and ignore it. `set_value`
+re-reads the value, and when it has not moved it fails with
+`code:"write_not_applied"` and `effect:"not_applied"`, so a `run_script`
+stops there.
+
+LibreOffice Calc cells ignore the write too, so `set_value` on a Calc cell
+does not write AXValue. It goes to the cell through the Name Box with keys
+posted to the window (Cmd+Shift+F5, the address, Return), types the value
+and Return, and reads the cell back, with LibreOffice left in the
+background. An empty value clears the cell. The result has `path:"keys"`,
+the `cell` address and `cell_value`, what the cell reads after the write.
+When Calc changes the entry (AutoCorrect capitalising a word, a number or
+date format, a formula's result) the result is `unverifiable`. `set_value` on the Name Box (the combo box named after the
+current cell) takes a cell address and goes there. One call fills one
+cell: a value with Tab or Return is refused. For rows, go to the first cell
+and `type_text` with `\t` and `\n` (see "LibreOffice, Numbers and other
+editors in the background").
 
 ### Known text-input limits (Catalyst + Electron)
 

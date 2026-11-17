@@ -35,7 +35,7 @@ The old computer-use compatibility flag does not add a screenshot tool. Use `get
 
 For multi-call work, prefer a short public label and pass the same label on every call that accepts it. Passing it once is not sticky: omission uses the transport's implicit session. Named CLI state is shared only within the daemon's CLI namespace, not with arbitrary MCP connections or a new daemon generation.
 
-`start_session` is optional: actions can establish the run. Use it to configure the initial cursor theme or revive a name after `end_session`. The default idle TTL is five minutes; do not assume a long human permission wait preserves handles.
+`start_session` is optional: actions can establish the run. Use it to configure the initial cursor theme or revive a name after `end_session`. The default idle TTL is five minutes. After an idle end, the next action or window read with the same label (or none) starts the session again, but its old snapshots and element tokens stay retired, so re-read the window state after a long wait. Only `end_session` makes a label refuse until `start_session`.
 
 ```bash
 cua-driver start_session '{"session":"run-1"}'
@@ -43,7 +43,7 @@ cua-driver start_session '{"session":"run-1"}'
 cua-driver end_session '{"session":"run-1"}'
 ```
 
-Explicit targets own observation/input modality, not session configuration. There is no `deescalate_session`. Do not use retired `capture_scope` settings or legacy escalation-session tools in new workflows. Reserved fields such as `_session_id` belong to the transport, never to an agent.
+Explicit targets own observation/input modality, not session configuration. Do not use retired `capture_scope` settings; the `escalate_session` and `get_session_state` tools were removed, so choose window or desktop on each action and use `get_session` for session state. Reserved fields such as `_session_id` belong to the transport, never to an agent.
 
 Keep one controller per shared desktop. Separate sessions/cursors do not isolate global keyboard focus, physical input, a single-instance application, or another observer's snapshot cache. `creates_new_application_instance:true` requests a separate instance where supported; verify distinct processes/windows before concurrent work. For independent MCP work, use independent connections as well.
 

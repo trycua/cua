@@ -10,15 +10,15 @@
 
 #![cfg(target_os = "windows")]
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use cua_driver_testkit::e2e::{
-    execute_case, recording_evidence, CaseSpec, Delivery, DriverRoute, Evidence, Observation,
-    OracleKind, RefusalCode, Scope, Targeting,
+    execute_case, native_background_case, recording_evidence, CaseSpec, Delivery, DriverRoute,
+    Evidence, Observation, OracleKind, RefusalCode, Scope, Targeting,
 };
 use cua_driver_testkit::observer::TargetWindow;
 use cua_driver_testkit::sentinel::run_with_background_oracles;
@@ -31,6 +31,16 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 // ── workspace paths ──────────────────────────────────────────────────────────
+
+fn webview_exe() -> PathBuf {
+    if let Ok(p) = std::env::var("HARNESS_WEBVIEW_EXE") {
+        let pb = PathBuf::from(p);
+        if pb.exists() {
+            return pb;
+        }
+    }
+    harness_app("harness-webview", "CuaTestHarness.WebView.exe")
+}
 
 fn electron_exe() -> PathBuf {
     if let Ok(p) = std::env::var("HARNESS_ELECTRON_EXE") {
@@ -85,6 +95,7 @@ fn run_web_case_with_preparation<P, F, R, O>(
         };
         let mut cmd = Command::new(&host_exe);
         cmd.env(env_var, &cdp_port_string)
+            .env("CUA_E2E_FORCE_A11Y", "1")
             .env("CUA_E2E_FIXTURE_JOURNAL_URL", journal.url())
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
@@ -184,7 +195,231 @@ fn wait_for_journal_text(journal: &FixtureJournal, id: &str, expected: &str) {
     }
 }
 
-// ── WebView2 page tool ──────────────────────────────────────────────────────
+// ── element geometry from the accessibility tree ───────────────────────────
+//
+// The web hosts used to learn the Increment button position from the `page`
+// tool's DOM actions. Those are gone, so the position now comes from
+// `get_window_state`: every element row carries `screenshot_frame`, its
+// rectangle in pixels of the screenshot returned by the same call, which is
+// the space window-local `x`/`y` clicks use.
+
+/// Index, token and screenshot-pixel centre of the Increment button.
+struct ButtonTarget {
+    token: String,
+    x: f64,
+    y: f64,
+}
+
+fn find_button(driver: &mut McpDriver, pid: i64, wid: u64, label: &str) -> ButtonTarget {
+    // Chromium builds its accessibility tree lazily after the first UIA
+    // client touches it, so the first snapshots can come back without the page.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let state = snapshot(driver, pid, wid);
+        let found = state.structured()["elements"]
+            .as_array()
+            .and_then(|elements| {
+                elements.iter().find(|e| {
+                    e["label"].as_str() == Some(label)
+                        && e["role"]
+                            .as_str()
+                            .is_some_and(|r| r.to_ascii_lowercase().contains("button"))
+                        && e["screenshot_frame"]["w"].as_i64().unwrap_or(0) > 0
+                })
+            })
+            .map(|e| {
+                let f = &e["screenshot_frame"];
+                let c = |a: &str, b: &str| f[a].as_f64().unwrap() + f[b].as_f64().unwrap() / 2.0;
+                ButtonTarget {
+                    token: e["element_token"].as_str().unwrap_or_default().to_owned(),
+                    x: c("x", "w"),
+                    y: c("y", "h"),
+                }
+            });
+        if let Some(target) = found {
+            return target;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no {label:?} button with a screenshot_frame in the accessibility tree: {}",
+            state.tree_text()
+        );
+        std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
+fn click_px(
+    driver: &mut McpDriver,
+    pid: i64,
+    wid: u64,
+    t: &ButtonTarget,
+    mode: &str,
+) -> ToolResponse {
+    let click = driver.call(
+        "click",
+        serde_json::json!({
+            "pid": pid, "window_id": wid, "x": t.x, "y": t.y, "delivery_mode": mode
+        }),
+    );
+    assert!(
+        !click.is_error(),
+        "PX {mode} click failed: {}",
+        click.text()
+    );
+    click
+}
+
+fn assert_page_marker(driver: &mut McpDriver, pid: i64, wid: u64) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let page = driver.call(
+            "page",
+            serde_json::json!({ "pid": pid, "window_id": wid, "action": "get_text" }),
+        );
+        if page.text().contains("WEB_HARNESS_MARKER_v1") {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "page get_text never showed the marker: {:?}",
+            page.text()
+        );
+        std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
+// ── WebView2 ─────────────────────────────────────────────────────────────────
+
+#[test]
+#[ignore]
+fn harness_webview_left_click_px_background() {
+    let case = native_background_case(
+        "webview2",
+        "left_click",
+        Targeting::Px,
+        DriverRoute::Composite,
+    );
+    let target = RefCell::new(None);
+    let fg_done = Cell::new(false);
+    run_web_case_with_preparation(
+        case,
+        "webview2",
+        webview_exe(),
+        "CuaTestHarness WebView [ready",
+        |pid, wid, driver, journal| {
+            wait_for_journal_text(journal, "lbl-counter", "counter=0");
+            let t = find_button(driver, pid, wid, "Increment");
+            // Foreground click proves the tree-derived pixel is on the button.
+            click_px(driver, pid, wid, &t, "foreground");
+            wait_for_journal_text(journal, "lbl-counter", "counter=1");
+            fg_done.set(true);
+            *target.borrow_mut() = Some(t);
+        },
+        |pid, wid, driver, journal| {
+            assert!(fg_done.get(), "foreground geometry probe did not run");
+            let t = target.borrow();
+            let t = t
+                .as_ref()
+                .expect("no PX target from the accessibility tree");
+            let click = click_px(driver, pid, wid, t, "background");
+            wait_for_journal_text(journal, "lbl-counter", "counter=2");
+            let route = click.action_route();
+            assert!(
+                matches!(route, Some("accessibility" | "synthetic_events")),
+                "WebView2 PX background click used an unsupported driver route {route:?}: {}",
+                click.text(),
+            );
+        },
+        |(), passed| Observation::delivered_with_fixture_state(passed),
+    );
+}
+
+#[test]
+#[ignore]
+fn harness_webview_page_tool() {
+    // `page get_text` still reads the page, and the Increment button found in
+    // the accessibility tree still moves the DOM counter.
+    let case = native_background_case(
+        "webview2",
+        "page_roundtrip",
+        Targeting::Px,
+        DriverRoute::Composite,
+    );
+    run_web_case_with_preparation(
+        case,
+        "webview2",
+        webview_exe(),
+        "CuaTestHarness WebView [ready",
+        |_, _, _, _| {},
+        |pid, wid, driver, journal| {
+            assert_page_marker(driver, pid, wid);
+            let t = find_button(driver, pid, wid, "Increment");
+            click_px(driver, pid, wid, &t, "background");
+            wait_for_journal_text(journal, "lbl-counter", "counter=1");
+        },
+        |(), passed| Observation::delivered_with_fixture_state(passed),
+    );
+}
+
+// ── Electron ─────────────────────────────────────────────────────────────────
+
+#[test]
+#[ignore]
+fn harness_electron_page_tool() {
+    let case = native_background_case(
+        "electron",
+        "page_execute",
+        Targeting::Px,
+        DriverRoute::Composite,
+    );
+    run_web_case_with_preparation(
+        case,
+        "electron",
+        electron_exe(),
+        "CuaTestHarness Electron",
+        |_, _, _, _| {},
+        |pid, wid, driver, journal| {
+            assert_page_marker(driver, pid, wid);
+            let t = find_button(driver, pid, wid, "Increment");
+            click_px(driver, pid, wid, &t, "background");
+            wait_for_journal_text(journal, "lbl-counter", "counter=1");
+        },
+        |(), passed| Observation::delivered_with_fixture_state(passed),
+    );
+}
+
+/// Click the Increment button through its snapshot element token (the
+/// replacement for the removed `page click_element` selector click).
+#[test]
+#[ignore]
+fn harness_electron_click_element() {
+    let case = native_background_case(
+        "electron",
+        "click_element_probe",
+        Targeting::Px,
+        DriverRoute::Composite,
+    );
+    run_web_case_with_preparation(
+        case,
+        "electron",
+        electron_exe(),
+        "CuaTestHarness Electron",
+        |_, _, _, _| {},
+        |pid, wid, driver, journal| {
+            let t = find_button(driver, pid, wid, "Increment");
+            let click = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid, "window_id": wid, "element_token": t.token,
+                    "delivery_mode": "background"
+                }),
+            );
+            assert!(!click.is_error(), "element click failed: {}", click.text());
+            wait_for_journal_text(journal, "lbl-counter", "counter=1");
+        },
+        |(), passed| Observation::delivered_with_fixture_state(passed),
+    );
+}
 
 // ── Electron minimized snapshot ──────────────────────────────────────────────
 

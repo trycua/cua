@@ -599,6 +599,22 @@ impl SequentialRequester {
     }
 }
 
+/// Wait one poll interval. The gate waits on the main thread, where AppKit
+/// only acts while the run loop turns: after "Not Now" the guide's
+/// `orderOut:` takes effect on the next turn, so a plain sleep left the
+/// dismissed guide on screen, frozen under a spinning cursor, until the gate
+/// ended. Off the main thread `pump_run_loop_briefly` sleeps.
+fn wait_poll_interval(interval: Duration) {
+    let deadline = Instant::now() + interval;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return;
+        }
+        crate::permissions::panel::pump_run_loop_briefly(remaining.as_secs_f64());
+    }
+}
+
 fn wait_for_grants_with(
     opts: &GateOpts,
     mut probe: impl FnMut() -> Vec<MissingPermission>,
@@ -624,7 +640,7 @@ fn wait_for_grants_with(
             }
         }
 
-        std::thread::sleep(opts.poll_interval);
+        wait_poll_interval(opts.poll_interval);
 
         let new_missing = probe();
         if new_missing != last_missing {

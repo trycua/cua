@@ -1800,7 +1800,7 @@ async fn existing_profile_reconnect_refuses_within_its_bound_when_a_process_chec
     // for the session-end retry.
     stalls.cleanup_failures.store(1, Ordering::SeqCst);
     stalls.hold_cleanup.store(false, Ordering::SeqCst);
-    let queued = || queued_cleanups(&f.engine);
+    let queued = || queued_cleanups(&f.engine, SESSION);
     for _ in 0..500 {
         if queued() > 0 {
             break;
@@ -1811,13 +1811,13 @@ async fn existing_profile_reconnect_refuses_within_its_bound_when_a_process_chec
     assert_eq!(queued(), 1, "a late cleanup failure is queued for retry");
 }
 
-fn queued_cleanups(engine: &BrowserEngine) -> usize {
+fn queued_cleanups(engine: &BrowserEngine, session: &str) -> usize {
     engine
         .setup_cleanups
         .lock()
         .unwrap()
         .failed
-        .get(SESSION)
+        .get(session)
         .map_or(0, Vec::len)
 }
 
@@ -1835,18 +1835,45 @@ async fn wait_for(mut done: impl FnMut() -> bool) -> bool {
 
 #[tokio::test]
 async fn a_cleanup_that_fails_after_its_session_ended_retries_at_once() {
+    // A session end can name either the public session or its transport.
+    const PUBLIC: &str = "cleanup-after-end";
     const TRANSPORT: &str = "transport-v2-cleanup-after-end";
+    cleanup_fails_after_session_end(PUBLIC, TRANSPORT, PUBLIC).await;
+    const PUBLIC_2: &str = "cleanup-after-transport-end";
+    const TRANSPORT_2: &str = "transport-v2-cleanup-after-transport-end";
+    cleanup_fails_after_session_end(PUBLIC_2, TRANSPORT_2, TRANSPORT_2).await;
+}
+
+async fn cleanup_fails_after_session_end(
+    session: &'static str,
+    transport: &'static str,
+    ended_session: &str,
+) {
     let stalls = Arc::new(FixtureStalls::default());
     // Setup turned remote debugging on, so ending the grant turns it back off.
     let (f, _) = existing_profile_setup_fixture_with(stalls.clone()).await;
-    prepare_existing_profile(&f.engine, TRANSPORT).await;
+    let prepare = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": session,
+            "_transport_session_id": transport,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    assert_eq!(
+        structured(&prepare)["status"],
+        "ok",
+        "{}",
+        structured(&prepare)
+    );
 
     stalls.hold_cleanup.store(true, Ordering::SeqCst);
     let revoke = tokio::spawn({
         let engine = f.engine.clone();
         async move {
             engine
-                .revoke_existing_profile_grant(SESSION, Some(TRANSPORT), 1)
+                .revoke_existing_profile_grant(session, Some(transport), 1)
                 .await
         }
     });
@@ -1854,7 +1881,7 @@ async fn a_cleanup_that_fails_after_its_session_ended_retries_at_once() {
 
     // The session ends while its cleanup still runs, then that cleanup fails:
     // the session-end retry has already passed, so it must retry by itself.
-    crate::session::fire_session_end(SESSION);
+    crate::session::fire_session_end(ended_session);
     stalls.cleanup_failures.store(1, Ordering::SeqCst);
     stalls.hold_cleanup.store(false, Ordering::SeqCst);
     assert!(
@@ -1863,7 +1890,11 @@ async fn a_cleanup_that_fails_after_its_session_ended_retries_at_once() {
     );
     revoke.await.unwrap();
     assert!(wait_for(|| f.engine.setup_cleanups.lock().unwrap().running.is_empty()).await);
-    assert_eq!(queued_cleanups(&f.engine), 0, "the retry succeeded");
+    assert_eq!(
+        queued_cleanups(&f.engine, session),
+        0,
+        "the retry succeeded"
+    );
 }
 
 #[tokio::test]

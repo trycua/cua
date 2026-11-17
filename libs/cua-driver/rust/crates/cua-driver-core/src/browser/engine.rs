@@ -286,18 +286,50 @@ pub(crate) struct SetupCleanups {
 }
 
 impl SetupCleanups {
-    fn finish(&mut self, session: &str, failed: Option<ExistingProfileSetupRequest>) {
+    /// The ids a session end can name for this grant's session.
+    fn keys(grant: &ExistingProfileGrant) -> Vec<String> {
+        let mut keys = vec![grant.public_session.clone()];
+        if grant.transport_session != grant.public_session {
+            keys.push(grant.transport_session.clone());
+        }
+        keys
+    }
+
+    /// Count an ended grant's cleanup as running. Callers do this under the
+    /// same lock as removing the grant from the registry, so a session end
+    /// always sees either the grant or its running cleanup.
+    fn start(&mut self, grant: &ExistingProfileGrant) {
+        if grant.cleanup_remote_debugging {
+            for key in Self::keys(grant) {
+                *self.running.entry(key).or_default() += 1;
+            }
+        }
+    }
+
+    fn session_ended(&self, keys: &[String]) -> bool {
+        keys.iter()
+            .any(|key| self.ended_while_running.contains(key))
+    }
+
+    fn finish(
+        &mut self,
+        keys: &[String],
+        session: &str,
+        failed: Option<ExistingProfileSetupRequest>,
+    ) {
         if let Some(request) = failed {
             self.failed
                 .entry(session.to_owned())
                 .or_default()
                 .push(request);
         }
-        if let Some(running) = self.running.get_mut(session) {
-            *running -= 1;
-            if *running == 0 {
-                self.running.remove(session);
-                self.ended_while_running.remove(session);
+        for key in keys {
+            if let Some(running) = self.running.get_mut(key) {
+                *running -= 1;
+                if *running == 0 {
+                    self.running.remove(key);
+                    self.ended_while_running.remove(key);
+                }
             }
         }
     }
@@ -879,10 +911,17 @@ impl BrowserEngine {
         transport_session: Option<&str>,
         pid: i64,
     ) -> Result<Option<ExistingProfileGrant>, BrowserRefusal> {
-        match self
-            .existing_profile_grants
-            .lookup(session, transport_session, pid)
-        {
+        let lookup = {
+            let mut cleanups = self.setup_cleanups.lock().unwrap();
+            let lookup = self
+                .existing_profile_grants
+                .lookup(session, transport_session, pid);
+            if let GrantLookup::Expired(grant) = &lookup {
+                cleanups.start(grant);
+            }
+            lookup
+        };
+        match lookup {
             GrantLookup::Missing => Ok(None),
             GrantLookup::Live(grant) => Ok(Some(grant)),
             GrantLookup::Expired(grant) => {
@@ -903,6 +942,8 @@ impl BrowserEngine {
     /// can stall, so it runs on a blocking thread, the caller waits at most
     /// `SETUP_CLEANUP_TIMEOUT` for it. A failure, however late, is queued for
     /// the session-end retry, or retried at once if the session already ended.
+    /// The caller has already counted the cleanup as running
+    /// (`SetupCleanups::start`) while removing the grant.
     async fn release_ended_grant(&self, session: &str, grant: ExistingProfileGrant) {
         let cleanup = grant.cleanup_remote_debugging.then(|| {
             let request = ExistingProfileSetupRequest {
@@ -912,20 +953,15 @@ impl BrowserEngine {
             };
             let platform = self.platform.clone();
             let cleanups = self.setup_cleanups.clone();
+            let keys = SetupCleanups::keys(&grant);
             let session = session.to_owned();
-            *cleanups
-                .lock()
-                .unwrap()
-                .running
-                .entry(session.clone())
-                .or_default() += 1;
             tokio::spawn(async move {
                 let cleaned = restore_remote_debugging(&platform, &request).await;
                 let missed_session_end_retry = {
                     let mut state = cleanups.lock().unwrap();
-                    let missed = !cleaned && state.ended_while_running.contains(&session);
+                    let missed = !cleaned && state.session_ended(&keys);
                     if !missed {
-                        state.finish(&session, (!cleaned).then_some(request.clone()));
+                        state.finish(&keys, &session, (!cleaned).then_some(request.clone()));
                     }
                     missed
                 };
@@ -934,7 +970,7 @@ impl BrowserEngine {
                     cleanups
                         .lock()
                         .unwrap()
-                        .finish(&session, (!cleaned).then_some(request));
+                        .finish(&keys, &session, (!cleaned).then_some(request));
                 }
             })
         });
@@ -963,10 +999,17 @@ impl BrowserEngine {
         transport_session: Option<&str>,
         pid: i64,
     ) {
-        if let Some(grant) = self
-            .existing_profile_grants
-            .revoke(session, transport_session, pid)
-        {
+        let grant = {
+            let mut cleanups = self.setup_cleanups.lock().unwrap();
+            let grant = self
+                .existing_profile_grants
+                .revoke(session, transport_session, pid);
+            if let Some(grant) = &grant {
+                cleanups.start(grant);
+            }
+            grant
+        };
+        if let Some(grant) = grant {
             self.release_ended_grant(session, grant).await;
         }
     }

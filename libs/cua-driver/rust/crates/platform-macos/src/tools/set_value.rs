@@ -242,7 +242,7 @@ impl Tool for SetValueTool {
         );
         // WebKit (not Chromium or Electron) web content: a field that ignores
         // the write may take it once focused.
-        let webkit_field = ax_echo_surface && !is_chromium_popup_owner(pid);
+        let webkit_field = ax_echo_surface && !super::type_text::is_chromium_embedder(pid);
 
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // AXValue writes on popups / sliders can cause reflex activations

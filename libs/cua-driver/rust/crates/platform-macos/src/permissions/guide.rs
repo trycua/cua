@@ -76,6 +76,38 @@ impl GuideStep {
             },
         }
     }
+
+    /// [`copy`](Self::copy) in `language`.
+    pub fn copy_in(self, language: Language) -> StepCopy {
+        if language == Language::English {
+            return self.copy();
+        }
+        let how = "在“系统设置”中，打开 Cua Driver 旁边的开关。";
+        match self {
+            Self::Accessibility => StepCopy {
+                counter: "第 1 步，共 2 步",
+                title: "允许 Cua Driver 使用鼠标和键盘",
+                why: "这样 Cua Driver 才能替你的智能体在 App 中点按和输入。",
+                how,
+                note: "",
+            },
+            Self::ScreenRecording => StepCopy {
+                counter: "第 2 步，共 2 步",
+                title: "允许 Cua Driver 查看你的屏幕",
+                why: "这样 Cua Driver 才能截屏，让智能体看到自己在做什么。",
+                how,
+                note: "如果 macOS 询问是否退出并重新打开 Cua Driver，请点按“退出并重新打开”。\
+                       之后这个窗口会回来完成设置。",
+            },
+            Self::Done => StepCopy {
+                counter: "",
+                title: Words::of(language).done_title,
+                why: "你可以关闭“系统设置”了。",
+                how: "",
+                note: "",
+            },
+        }
+    }
 }
 
 /// Words a newcomer reads for one step.
@@ -97,6 +129,87 @@ pub const TILE_NAME: &str = "Cua Driver";
 pub const TILE_DRAG_LABEL: &str = "Drag";
 pub const WAITING_LINE: &str = "Waiting for the switch to turn on…";
 pub const TURNED_ON_LINE: &str = "Turned on.";
+
+/// The languages the guide's words come in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Language {
+    #[default]
+    English,
+    SimplifiedChinese,
+}
+
+impl Language {
+    /// The first of the person's preferred languages (BCP 47 tags in
+    /// order, as `NSLocale.preferredLanguages` lists them) that the guide
+    /// has words for; English when none is.
+    pub fn from_preferred<S: AsRef<str>>(tags: &[S]) -> Self {
+        tags.iter()
+            .find_map(|tag| Self::from_tag(tag.as_ref()))
+            .unwrap_or_default()
+    }
+
+    fn from_tag(tag: &str) -> Option<Self> {
+        let tag = tag.replace('_', "-").to_ascii_lowercase();
+        let mut parts = tag.split('-');
+        match parts.next()? {
+            "en" => Some(Self::English),
+            // `zh-Hans-CN`, and the region-only tags older macOS lists for
+            // Simplified Chinese. Traditional Chinese (`zh-Hant`, `zh-TW`,
+            // `zh-HK`, `zh-MO`) has no words here, so the next preferred
+            // language decides.
+            "zh" => match parts.next() {
+                Some("hans" | "cn" | "sg") | None => Some(Self::SimplifiedChinese),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+}
+
+/// The guide's fixed words in one language.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Words {
+    pub window_title: &'static str,
+    pub done_title: &'static str,
+    pub open_settings_button: &'static str,
+    pub not_now_button: &'static str,
+    pub drag_hint: &'static str,
+    pub tile_name: &'static str,
+    pub tile_drag_label: &'static str,
+    pub waiting_line: &'static str,
+    pub turned_on_line: &'static str,
+}
+
+impl Words {
+    pub fn of(language: Language) -> Self {
+        match language {
+            Language::English => Self {
+                window_title: WINDOW_TITLE,
+                done_title: DONE_TITLE,
+                open_settings_button: OPEN_SETTINGS_BUTTON,
+                not_now_button: NOT_NOW_BUTTON,
+                drag_hint: DRAG_HINT,
+                tile_name: TILE_NAME,
+                tile_drag_label: TILE_DRAG_LABEL,
+                waiting_line: WAITING_LINE,
+                turned_on_line: TURNED_ON_LINE,
+            },
+            // System Settings' own Simplified Chinese names: 系统设置,
+            // 辅助功能, 录屏与系统录音, 退出并重新打开.
+            Language::SimplifiedChinese => Self {
+                window_title: "设置 Cua Driver",
+                done_title: "全部设置好了。Cua Driver 现在可以使用这台 Mac。",
+                open_settings_button: "打开“系统设置”",
+                not_now_button: "以后再说",
+                drag_hint: "如果列表中没有 Cua Driver，请把它拖进去：",
+                tile_name: TILE_NAME,
+                tile_drag_label: "拖移",
+                waiting_line: "正在等待开关打开…",
+                turned_on_line: "已打开。",
+            },
+        }
+    }
+}
 
 /// What the guide must do after reading a status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -538,6 +651,71 @@ mod tests {
             .copy()
             .note
             .contains("Quit & Reopen"));
+    }
+
+    #[test]
+    fn the_first_preferred_language_with_words_wins() {
+        let cases: [(&[&str], Language); 9] = [
+            (&["zh-Hans-CN", "en-US"], Language::SimplifiedChinese),
+            (&["zh-Hans"], Language::SimplifiedChinese),
+            (&["zh-CN"], Language::SimplifiedChinese),
+            (&["zh_CN"], Language::SimplifiedChinese),
+            (&["en-GB", "zh-Hans-CN"], Language::English),
+            // No words for Traditional Chinese or Japanese: the next one.
+            (&["zh-Hant-TW", "zh-Hans-CN"], Language::SimplifiedChinese),
+            (&["zh-Hant-HK", "en-US"], Language::English),
+            (&["ja-JP", "fr-FR"], Language::English),
+            (&[], Language::English),
+        ];
+        for (tags, expected) in cases {
+            assert_eq!(Language::from_preferred(tags), expected, "{tags:?}");
+        }
+    }
+
+    #[test]
+    fn simplified_chinese_has_every_word_english_has() {
+        let english = Words::of(Language::English);
+        let chinese = Words::of(Language::SimplifiedChinese);
+        assert_eq!(english.window_title, WINDOW_TITLE);
+        let pairs = [
+            (english.window_title, chinese.window_title),
+            (english.done_title, chinese.done_title),
+            (english.open_settings_button, chinese.open_settings_button),
+            (english.not_now_button, chinese.not_now_button),
+            (english.drag_hint, chinese.drag_hint),
+            (english.tile_drag_label, chinese.tile_drag_label),
+            (english.waiting_line, chinese.waiting_line),
+            (english.turned_on_line, chinese.turned_on_line),
+        ];
+        for (en, zh) in pairs {
+            assert!(!zh.is_empty(), "no Chinese for {en:?}");
+            assert_ne!(en, zh, "{en:?} is not translated");
+        }
+        // The app keeps its name; macOS lists it as Cua Driver.
+        assert_eq!(chinese.tile_name, TILE_NAME);
+        for step in [
+            GuideStep::Accessibility,
+            GuideStep::ScreenRecording,
+            GuideStep::Done,
+        ] {
+            let en = step.copy();
+            let zh = step.copy_in(Language::SimplifiedChinese);
+            assert_eq!(step.copy_in(Language::English), en);
+            for (en, zh) in [
+                (en.counter, zh.counter),
+                (en.title, zh.title),
+                (en.why, zh.why),
+                (en.how, zh.how),
+                (en.note, zh.note),
+            ] {
+                assert_eq!(en.is_empty(), zh.is_empty(), "{en:?} / {zh:?}");
+                assert!(!zh.contains("CuaDriver") && !zh.contains("TCC"));
+            }
+        }
+        assert!(GuideStep::ScreenRecording
+            .copy_in(Language::SimplifiedChinese)
+            .note
+            .contains("退出并重新打开"));
     }
 
     #[test]

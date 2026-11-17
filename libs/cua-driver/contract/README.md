@@ -24,9 +24,10 @@ The typed slice covers the cross-platform session lifecycle tools:
 
 Ordinary calls do not need `start_session`. The runtime creates one implicit
 session for the authenticated transport lease and reuses it until transport
-close, explicit end, or five minutes of inactivity. `escalate_session` and
-`get_session_state` remain deprecated compatibility tools for legacy
-capture-scope sessions. There is no `deescalate_session` tool.
+close, explicit end, or five minutes of inactivity. The deprecated
+`escalate_session` and `get_session_state` tools were removed in 0.48.0; select
+window or desktop modality on each action and use `get_session` for session
+state.
 
 It also covers the portable whole-desktop loop:
 

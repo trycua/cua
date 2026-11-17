@@ -60,4 +60,5 @@ def test_cua_sdk_windows_rust_leg_keeps_its_compile():
     # A job that hits its own timeout is cancelled and skips the save, so the long test step stops first
     # (a step timeout fails only that step).
     test = next(s for s in steps if s.get("name", "").startswith("Test (embedded"))
-    assert test["timeout-minutes"] <= 45
+    job = yaml.safe_load((REPO_ROOT / ".github/workflows/ci-cua-sdk.yml").read_text())["jobs"]["rust"]
+    assert test["timeout-minutes"] + 15 <= job["timeout-minutes"]

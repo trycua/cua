@@ -166,6 +166,7 @@ import Testing
         _ = try await connection.notifications.post("Your research is ready") // notify_user
         _ = try await connection.notifications.list()                        // notifications_list
         _ = try await connection.notifications.markRead()                    // notifications_ack
+        _ = try await connection.notifications.delete(["n-1"])               // notifications_delete
 
         // --- Sharing through the relay -----------------------------------------
         let shared = try await space.share(with: "bob@example.com", role: "editor") // share_space

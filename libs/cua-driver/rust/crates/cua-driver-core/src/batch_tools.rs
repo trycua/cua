@@ -226,7 +226,7 @@ impl Tool for RunStepsTool {
                         "type": "array",
                         "minItems": 1,
                         "maxItems": MAX_STEPS,
-                        "description": "Ordered actions. Execution stops at the first failing step. Each step is {tool, args} or {<tool>: args}, plus optional wait_for / expect / timeout_ms; a step may also be only a wait_for or expect check.",
+                        "description": "Ordered actions. Execution stops at the first failing step. Each step is {tool, args}, {tool, <argument fields beside tool>} or {<tool>: args}, plus optional wait_for / expect / timeout_ms; a step may also be only a wait_for or expect check.",
                         "items": {
                             "type": "object",
                             "properties": {
@@ -545,15 +545,15 @@ impl Plan {
                     }
                 }
             }
-            let names_window = step
-                .action
-                .as_ref()
-                .is_some_and(|action| !action.window.is_empty())
-                || step
-                    .wait_for
-                    .iter()
-                    .chain(step.expect.iter())
-                    .any(|check| !check.window.is_empty());
+            // An `element_token` names its snapshot, and so its window; a
+            // token the runtime no longer holds names nothing (fail closed).
+            let names_window = step.action.as_ref().is_some_and(|action| {
+                !action.window.is_empty() || token_window(registry, &action.args).is_some()
+            }) || step
+                .wait_for
+                .iter()
+                .chain(step.expect.iter())
+                .any(|check| !check.window.is_empty());
             let needs_window = step
                 .action
                 .as_ref()
@@ -971,6 +971,17 @@ async fn run_step(
                 title: None,
                 on_screen: true,
             });
+        } else if let Some(window) = token_window(registry, &args) {
+            // A token-only step: its snapshot names the window later steps
+            // and the end `observe` inherit.
+            if context.is_empty() {
+                *context = WindowSpec {
+                    pid: Some(window.pid),
+                    window_id: Some(window.window_id),
+                    ..Default::default()
+                };
+            }
+            *last_window = Some(window);
         }
 
         let mut result = registry.invoke(tool, args.clone()).await;
@@ -1170,6 +1181,18 @@ fn accepts(registry: &ToolRegistry, tool: &str, field: &str) -> bool {
         .is_some()
 }
 
+/// The window a step's live `element_token` was taken of, when it names one.
+fn token_window(registry: &ToolRegistry, args: &Value) -> Option<Window> {
+    let (pid, window_id) = registry.window_for_token(args)?;
+    Some(Window {
+        pid: i64::from(pid),
+        window_id,
+        app: None,
+        title: None,
+        on_screen: true,
+    })
+}
+
 /// Fill the observation's window from the last window the batch used.
 fn fill_observed_window(args: &mut Value, last: Option<&Window>) -> bool {
     let object = args.as_object_mut().expect("object");
@@ -1348,8 +1371,14 @@ fn fit_error_text(content: &mut Vec<Content>, budget: usize) {
 
 /// Whether a refusal names foreground delivery as the route that works:
 /// the target ignores background input (Electron, LibreOffice VCL, ...).
+/// Only a result that shows nothing was delivered is one, whatever it
+/// recommends: sending input that may have landed again could type or click
+/// twice.
 fn wants_foreground(result: &ToolResult) -> bool {
     let structured = result.structured_content.as_ref();
+    if structured.is_some_and(|structured| !nothing_was_delivered(structured)) {
+        return false;
+    }
     let recommended = structured
         .and_then(|value| {
             value
@@ -1370,6 +1399,18 @@ fn wants_foreground(result: &ToolResult) -> bool {
         .unwrap_or("");
     text.contains("Retry this action with delivery_mode:\"foreground\"")
         || text.contains("Retry with delivery_mode:\"foreground\"")
+}
+
+/// Whether a failed step shows that no input reached the app: no `effect`
+/// or a refusal effect (`refused`, `none`, macOS `no_drop`), and no
+/// `delivery` record. Every other effect, `suspected_noop` and values this
+/// rule does not know included, may have landed.
+fn nothing_was_delivered(structured: &Value) -> bool {
+    let refused = match structured.get("effect") {
+        None => true,
+        Some(effect) => matches!(effect.as_str(), Some("refused" | "none" | "no_drop")),
+    };
+    refused && structured.get("delivery").is_none()
 }
 
 /// Whether an action failed because its element target died: the element
@@ -1542,11 +1583,31 @@ fn parse_step(
         })
         .map(|(key, _)| key)
         .collect();
+    // A flat step `{"tool": "hotkey", "keys": [...]}` carries the arguments
+    // beside `tool`. With no `args`, those fields are the arguments; mixing
+    // them with `args` stays an error.
+    let args_absent = matches!(object.get("args"), None | Some(Value::Null));
+    let flat_args: Option<Value> =
+        (object.get("tool").is_some() && !shorthand.is_empty() && args_absent).then(|| {
+            Value::Object(
+                shorthand
+                    .iter()
+                    .map(|key| ((*key).clone(), object[key.as_str()].clone()))
+                    .collect(),
+            )
+        });
     let (name, raw_args) = match (object.get("tool"), shorthand.as_slice()) {
+        (Some(tool), [_, ..]) if flat_args.is_some() => (
+            Some(
+                tool.as_str()
+                    .ok_or_else(|| PlanError::step(index, "`tool` must be a string"))?,
+            ),
+            flat_args.as_ref(),
+        ),
         (Some(_), [extra, ..]) => {
             return Err(PlanError::step(
                 index,
-                format!("unknown field `{extra}`; a step has `tool` and `args`, or one `{{<tool>: args}}` key, plus optional wait_for/expect/timeout_ms"),
+                format!("unknown field `{extra}` beside `args`; put every argument inside `args` (or drop `args` and write them beside `tool`), plus optional wait_for/expect/timeout_ms"),
             ))
         }
         (Some(tool), []) => (

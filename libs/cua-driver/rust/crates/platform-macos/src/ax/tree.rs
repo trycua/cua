@@ -552,6 +552,18 @@ fn collapse_layout_container(
         && !has_value_or_help
 }
 
+/// Whether a node gets a row of its own. A node with no action and nothing to
+/// show collapses into its parent, except a window or sheet, and a group or
+/// scroll area kept for its help: with no action it is an unindexed display
+/// row, and its help is the content that row shows.
+fn keeps_row(role: &str, is_actionable: bool, has_content: bool, has_help: bool) -> bool {
+    is_actionable
+        || has_content
+        || role == "AXWindow"
+        || role == "AXSheet"
+        || (has_help && is_layout_container(role))
+}
+
 /// The actions a node is addressable by. A named group or scroll area whose
 /// only actions are the generic menu and scroll ones every section carries
 /// (SwiftUI, Catalyst and web content) is a section label, not a target, so
@@ -716,10 +728,7 @@ unsafe fn walk_element(
     let has_content =
         !visible_title.is_empty() || !visible_description.is_empty() || !visible_value.is_empty();
 
-    if !is_actionable && !has_content && role != "AXWindow" && role != "AXSheet" {
-        // A group kept for its help that advertises no action at all has no
-        // row to show it on: it collapses like a layout wrapper, at its
-        // parent's depth.
+    if !keeps_row(&role, is_actionable, has_content, help.is_some()) {
         let (child_depth, child_walk_depth) = if is_layout_container(&role) {
             (depth, walk_depth)
         } else {
@@ -1041,8 +1050,14 @@ fn format_node_line(node: &AXNode) -> String {
         parts.push_str(&format!(" ({})", d));
     }
 
-    // Bracketed metadata block (identifier, help, actions).
-    if node.element_index.is_some() {
+    // Bracketed metadata block (identifier, help, actions). An unindexed row
+    // shows only its help, which a group kept for its help has no other way
+    // to show.
+    if node.element_index.is_none() {
+        if let Some(h) = &node.help {
+            parts.push_str(&format!(" [help=\"{}\"]", h));
+        }
+    } else {
         let mut attrs: Vec<String> = Vec::new();
         if let Some(id) = node
             .identifier
@@ -1247,6 +1262,46 @@ mod tests {
         // Other roles keep every action they advertise.
         let menu_only = layout_group_actions("AXImage", true, actions(&["AXShowMenu"]));
         assert_eq!(menu_only.standard, ["AXShowMenu"]);
+    }
+
+    #[test]
+    fn a_help_only_group_with_no_action_keeps_an_unindexed_row() {
+        for role in ["AXGroup", "AXScrollArea"] {
+            assert!(keeps_row(role, false, false, true));
+            assert!(!keeps_row(role, false, false, false));
+        }
+        // Help alone does not keep a row for another role's empty node.
+        assert!(!keeps_row("AXImage", false, false, true));
+        assert!(keeps_row("AXWindow", false, false, false));
+
+        let node = AXNode {
+            element_index: None,
+            role: "AXGroup".into(),
+            title: None,
+            value: None,
+            description: None,
+            placeholder: None,
+            subrole: None,
+            identifier: Some("grp-help-only".into()),
+            help: Some("Swipe left to archive.".into()),
+            actions: vec![],
+            custom_actions: vec![],
+            element_ptr: 0,
+            depth: 1,
+            parent_element_index: None,
+            frame: None,
+            value_state: None,
+            value_description: None,
+            min_value: None,
+            max_value: None,
+            enabled: None,
+            selected: None,
+            in_web_content: false,
+        };
+        assert_eq!(
+            format_node_line(&node),
+            "- AXGroup [help=\"Swipe left to archive.\"]"
+        );
     }
 
     #[test]

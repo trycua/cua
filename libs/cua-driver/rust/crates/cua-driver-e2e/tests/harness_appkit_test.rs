@@ -1463,6 +1463,24 @@ fn harness_appkit_a_content_bearing_group_stays_addressable() {
                 "the group's own help never reached the tree:\n{}",
                 before.tree_text()
             );
+            // A group with only help and no action is a display row: its
+            // help is published, and it takes no element_index.
+            let help_only_row = before
+                .tree_text()
+                .lines()
+                .find(|line| line.contains("help=\"Rows sync when the window closes.\""))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "the help-only group's help never reached the tree:\n{}",
+                        before.tree_text()
+                    )
+                })
+                .trim()
+                .to_owned();
+            assert_eq!(
+                help_only_row, "- AXGroup [help=\"Rows sync when the window closes.\"]",
+                "the help-only group is not an unindexed row"
+            );
             let pressed = driver.call(
                 "click",
                 serde_json::json!({

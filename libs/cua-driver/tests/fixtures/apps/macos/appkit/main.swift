@@ -175,6 +175,20 @@ final class HelpfulGroupView: NSView {
     }
 }
 
+/// A group kept only for its help: no name, no value and no action, so the
+/// snapshot shows it as an unindexed row that carries the help.
+final class HelpOnlyGroupView: NSView {
+    override func isAccessibilityElement() -> Bool { true }
+
+    override func accessibilityRole() -> NSAccessibility.Role? { .group }
+
+    override func accessibilityHelp() -> String? {
+        "Rows sync when the window closes."
+    }
+
+    override func accessibilityActionNames() -> [NSAccessibility.Action] { [] }
+}
+
 // MARK: - Controller
 
 final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate, NSMenuItemValidation {
@@ -205,6 +219,7 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
     let selectionStateLabel = NSTextField(labelWithString: "selection=none")
     let rowHelpGroup = HelpfulGroupView()
     let rowHelpGroupStateLabel = NSTextField(labelWithString: "group_pressed=0")
+    let helpOnlyGroup = HelpOnlyGroupView()
     var rowHelpGroupPresses = 0
     var rowCustomActions = 0
     let menuActionLabel = NSTextField(labelWithString: "menu_action=none")
@@ -415,9 +430,13 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         groupRow.spacing = 12
         groupRow.addArrangedSubview(rowHelpGroup)
         groupRow.addArrangedSubview(rowHelpGroupStateLabel)
+        helpOnlyGroup.translatesAutoresizingMaskIntoConstraints = false
+        groupRow.addArrangedSubview(helpOnlyGroup)
         NSLayoutConstraint.activate([
             rowHelpGroup.widthAnchor.constraint(equalToConstant: 60),
             rowHelpGroup.heightAnchor.constraint(equalToConstant: 28),
+            helpOnlyGroup.widthAnchor.constraint(equalToConstant: 28),
+            helpOnlyGroup.heightAnchor.constraint(equalToConstant: 28),
         ])
         content.addArrangedSubview(groupRow)
 

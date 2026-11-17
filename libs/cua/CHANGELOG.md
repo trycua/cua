@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.28.1](https://github.com/trycua/cua/compare/cua-sdk-v0.28.0...cua-sdk-v0.28.1) (2026-11-17)
+
+
+### Bug Fixes
+
+* **spaces:** keep a deleted prepared agent home removed ([#7979](https://github.com/trycua/cua/issues/7979)) ([59debb5](https://github.com/trycua/cua/commit/59debb541b94da819fb94869a3cabdec2f7f08b7))
+
 ## [0.28.0](https://github.com/trycua/cua/compare/cua-sdk-v0.27.7...cua-sdk-v0.28.0) (2026-11-16)
 
 

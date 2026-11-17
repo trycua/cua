@@ -33,7 +33,7 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
  *
  * The home is the Space the daemon keeps ready: once the first run is over (done or skipped)
  * the app claims it with a create under the fixed name, resumes a saved record once per page
- * load, rebuilds a removed home and follows the connection. It never shows: no list, count,
+ * load and follows the connection. A removed home stays removed. It never shows: no list, count,
  * the tree or the Machines page lists it until a person writes into it (`useHiddenSpaceIds`).
  * Nothing starts while the first run shows, and nothing starts for a computer with no coding
  * app installed.
@@ -151,7 +151,7 @@ export function PrepareRoot(): null {
         markResumed();
         d.resume();
       }
-    } else if (harness && firstRunOver) {
+    } else if (harness && firstRunOver && d.state?.startedMs == null) {
       markResumed();
       d.start(harness);
     }
@@ -202,7 +202,7 @@ export function PrepareRoot(): null {
     };
   }, [ready]);
 
-  // The list changed, so a home that was removed is made again; a second a tick while it waits.
+  // The list changed, so preparation stops for a removed home; a second a tick while it waits.
   useEffect(() => {
     if (ready) getDriver()?.checkHome();
   }, [ready, spaces]);

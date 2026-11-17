@@ -39,8 +39,6 @@ impl Tool for SetConfigTool {
                   `get_window_state` always returns both the UIA tree and a screenshot. Still \
                   accepted/persisted for back-compat but has no effect.\n\
                 - `max_image_dimension` (integer)\n\
-                - `experimental_pip` (boolean; persisted to config.json, applies on next daemon restart — Windows backend stubbed today, see issue #1729)\n\
-                - `experimental_pip_geometry` (string `WxH` or `WxH+X+Y`; persisted; applies on next daemon restart)\n\n\
                 - `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>` (`on`, `off`, or `default`) — saved default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.\n\
                 - `cursor.badges` (`minimal` default, `verbose`, or `off`) — agent cursor badge; applies to every cursor at once.\n\
                 - `cursor.float` (float at rest and while moving), `cursor.halo` (soft glow): `on` (default), `off`, or `default`. `cursor.rotate`: `heading` (default), `lean`, `off`, or `default`. All apply to every cursor at once. The cursor never draws action marks (`cursor.marks` is retired and ignored).\n\n\
@@ -48,8 +46,6 @@ impl Tool for SetConfigTool {
             input_schema: with_cursor_motion_config_properties(json!({"type":"object","properties":{
                 "capture_mode":{"type":"string","enum":["ax","vision"],"description":"DEPRECATED and ignored — get_window_state always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect. (\"som\"/\"screenshot\" still decode as deprecated aliases.)"},
                 "max_image_dimension":{"type":"integer","description":"Max dimension for screenshot resizing (0 = no limit)."},
-                "experimental_pip":{"type":"boolean","description":"Enables PiP preview (applies next restart)."},
-                "experimental_pip_geometry":{"type":"string","description":"PiP window size + optional position."},
                 "fast_path": cua_driver_core::fast_path::wire::config_schema()
             },"additionalProperties":false})),
             read_only: false, destructive: false, idempotent: true, open_world: false,
@@ -82,16 +78,20 @@ impl Tool for SetConfigTool {
         let mut applied = !motion_keys.is_empty() || badge_key.is_some() || !option_keys.is_empty();
         if let Some(mode) = args.get("capture_mode").and_then(|v| v.as_str()) {
             cfg.capture_mode = mode.to_owned();
-            if let Err(e) =
-                pip_preview::write_config_key("capture_mode", Value::String(mode.to_owned()))
-            {
+            if let Err(e) = cua_driver_core::config_file::write_config_key(
+                "capture_mode",
+                Value::String(mode.to_owned()),
+            ) {
                 tracing::warn!("set_config: failed to persist capture_mode: {e}");
             }
             applied = true;
         }
         if let Some(dim) = args.get("max_image_dimension").and_then(|v| v.as_u64()) {
             cfg.max_image_dimension = dim as u32;
-            if let Err(e) = pip_preview::write_config_key("max_image_dimension", Value::from(dim)) {
+            if let Err(e) = cua_driver_core::config_file::write_config_key(
+                "max_image_dimension",
+                Value::from(dim),
+            ) {
                 tracing::warn!("set_config: failed to persist max_image_dimension: {e}");
             }
             applied = true;
@@ -100,32 +100,6 @@ impl Tool for SetConfigTool {
             Ok(Some(_)) => applied = true,
             Ok(None) => {}
             Err(message) => return ToolResult::error(message),
-        }
-        if let Some(enabled) = args.get("experimental_pip").and_then(|v| v.as_bool()) {
-            if let Err(e) = pip_preview::write_config_key("experimental_pip", Value::Bool(enabled))
-            {
-                return ToolResult::error(format!("failed to persist experimental_pip: {e}"));
-            }
-            applied = true;
-        }
-        if let Some(geom) = args
-            .get("experimental_pip_geometry")
-            .and_then(|v| v.as_str())
-        {
-            if pip_preview::PipGeometry::parse(geom).is_none() {
-                return ToolResult::error(format!(
-                    "experimental_pip_geometry `{geom}` is not a valid WxH or WxH+X+Y string"
-                ));
-            }
-            if let Err(e) = pip_preview::write_config_key(
-                "experimental_pip_geometry",
-                Value::String(geom.to_owned()),
-            ) {
-                return ToolResult::error(format!(
-                    "failed to persist experimental_pip_geometry: {e}"
-                ));
-            }
-            applied = true;
         }
         if !applied {
             return ToolResult::error("set_config did not contain a known field.");
@@ -139,7 +113,6 @@ impl Tool for SetConfigTool {
             .first()
             .map(|s| s.config.enabled)
             .unwrap_or(true);
-        let (pip_enabled, pip_geometry) = pip_preview::read_pip_keys_from_file();
         let payload = json!({
             "schema_version":      1,
             "version":             env!("CARGO_PKG_VERSION"),
@@ -148,8 +121,6 @@ impl Tool for SetConfigTool {
             "capture_mode":        cfg.capture_mode,
             "max_image_dimension": cfg.max_image_dimension,
             "agent_cursor":        { "enabled": cursor_enabled },
-            "experimental_pip":    pip_enabled,
-            "experimental_pip_geometry": pip_geometry,
             "fast_path":           cua_driver_core::fast_path::wire::config_value(),
         });
         let pretty = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string());

@@ -50,6 +50,8 @@
 //! - Codex:       `~/.agents/skills/`
 //! - Cursor:      `~/.agents/skills/` (shared with Codex and Pi; Cursor also reads `~/.claude/skills/`)
 //! - Pi:          `~/.agents/skills/` (shared global location; Pi also reads `~/.pi/agent/skills/`)
+//! - DeepSeek Harness: `~/.agents/skills/` (shared with Codex, Pi and Cursor;
+//!   DSH's built-in filesystem skill provider scans it next to `~/.dsh/skills/`)
 //! - Prime Agent: `~/.prime/agent/skills/`
 //! - OpenClaw:    `~/.openclaw/skills/`
 //! - OpenCode: `~/.config/opencode/skills/` (macOS / Linux),
@@ -66,7 +68,7 @@
 //!   vocabulary; the cua-driver pack provides the platform deep dives.
 //!
 //! Acts on a given agent when its parent skills dir already exists. For
-//! Claude Code, Codex, and Pi, whose fresh installs may not create that directory,
+//! Claude Code, Codex, Pi, Cursor and DeepSeek Harness, whose fresh installs may not create that directory,
 //! the explicit `skills install` verb also creates it when the client's own
 //! home directory proves that client is installed. Never clobbers an existing
 //! `<agent_skills>/cua-driver` link — preserves dev users' hand-rolled symlinks.
@@ -239,6 +241,14 @@ const AGENTS: &[Agent] = &[
         // converge on one managed cua-driver link.
         parent: AgentParent::Home(".agents/skills"),
         install_marker: Some(".cursor"),
+    },
+    Agent {
+        label: "DeepSeek Harness",
+        // The skill provider DSH mounts by default scans ~/.agents/skills as
+        // well as ~/.dsh/skills, and warns when both hold the same skill name.
+        // Sharing the Codex/Pi/Cursor link avoids that duplicate.
+        parent: AgentParent::Home(".agents/skills"),
+        install_marker: Some(".dsh"),
     },
     Agent {
         label: "Prime Agent",
@@ -710,6 +720,7 @@ fn client_agents(client: &str) -> Vec<Agent> {
         "antigravity" | "gemini" => &["Antigravity IDE", "Antigravity CLI"],
         "pi" => &["Pi"],
         "prime-agent" => &["Prime Agent"],
+        "deepseek-harness" => &["DeepSeek Harness"],
         _ => &[],
     };
     AGENTS
@@ -1306,6 +1317,7 @@ mod tests {
         assert_eq!(labels("hermes"), ["Hermes"]);
         assert_eq!(labels("pi"), ["Pi"]);
         assert_eq!(labels("prime-agent"), ["Prime Agent"]);
+        assert_eq!(labels("deepseek-harness"), ["DeepSeek Harness"]);
         assert_eq!(
             labels("antigravity"),
             ["Antigravity IDE", "Antigravity CLI"]
@@ -1792,7 +1804,7 @@ mod tests {
             "pass the same label on every call that accepts it",
             "Passing it once is not sticky",
             "revive a name after",
-            "There is no `deescalate_session`",
+            "tools were removed, so choose window or desktop on each action",
             "--capability-manifest",
             "--approve-capability-manifest",
             "It can remove tools or typed resources",

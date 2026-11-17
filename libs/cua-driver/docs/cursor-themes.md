@@ -136,7 +136,9 @@ cursor tip was last placed on.
 Keyboard actions place a named session's cursor before the input.
 `press_key`, `hotkey`, and `type_text` put it on the targeted element, else
 at its last position, else at the target window's centre, so a session whose
-first action is a keyboard action shows its cursor on that window. Anonymous
+first action is a keyboard action shows its cursor on that window. A
+desktop-scope call (no `pid` or `window_id`) uses the frontmost window, and
+the hardware pointer's position when no window geometry is available. Anonymous
 calls keep their existing cursor behavior.
 
 `set_agent_cursor_motion` changes how the cursor moves and when it hides. It

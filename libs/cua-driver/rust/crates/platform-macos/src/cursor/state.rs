@@ -174,7 +174,7 @@ impl CursorRegistry {
         // cua-driver consumer (the daemon, the CLI, every SDK caller that is not
         // a remote-desktop host) never registers a hook, so that allocation
         // would be pure waste for them. This is what `cursor_hook_enabled` is
-        // for, and it is the same order the `pip_hook` idiom uses.
+        // for.
         if !cua_driver_core::cursor_hook::cursor_hook_enabled() {
             return;
         }

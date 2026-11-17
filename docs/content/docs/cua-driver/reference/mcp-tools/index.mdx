@@ -28,7 +28,7 @@ These parameters have the same shape on macOS, Windows and Linux (composed from 
 
 The `required` sets are the same on every platform: `click` requires nothing, `scroll` requires `direction`, and `zoom` requires `window_id` plus `x1`, `y1`, `x2`, `y2`. Legacy flat calls still check `pid`: a window action needs it, a desktop action omits it.
 
-The first stateful call on a connection creates its implicit lifecycle session; later unnamed calls on that connection share it. The session's idle TTL is five minutes. Closing the connection, `end_session` or the idle timeout run the same cleanup.
+The first stateful call on a connection creates its implicit lifecycle session; later unnamed calls on that connection share it. The session's idle TTL is five minutes. Closing the connection, `end_session` or the idle timeout run the same cleanup. After an idle end, that connection's next session-requiring call starts the session again, with the same `session` label or none (`get_session` only reads state and does not); snapshots and element tokens from before the idle end stay retired. A label ended with `end_session` is refused with `session_ended` until `start_session` starts it again.
 
 Each `get_window_state` read replaces the previous snapshot of that window and lists the replaced ids in `invalidated_snapshot_ids`; a token from a replaced snapshot is refused with `stale_element_token`, which names the current snapshots. Window-relative `x, y` and `zoom` need a screenshot read of that window in the same session first (`screenshot_context_missing` otherwise), so pass one `session` label to the read and the actions of a one-shot `cua-driver call` sequence.
 
@@ -59,7 +59,7 @@ List, launch, quit, front and arrange apps and windows. [Reference](/cua-driver/
 | <span id="kill_app"></span>[`kill_app`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#kill_app) | Force-terminate a process by pid (kill -9 equivalent on macOS / Linux; taskkill /F equivalent on Windows). | macOS, Linux, Windows |
 | <span id="bring_to_front"></span>[`bring_to_front`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#bring_to_front) | Persistently activate an app and leave it in the foreground. | macOS, Linux, Windows |
 | <span id="set_window_frame"></span>[`set_window_frame`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#set_window_frame) | Set one exact top-level window's frame in the desktop-coordinate space reported by list_windows and verify the resulting geometry through an independent readback. | macOS, Linux, Windows |
-| <span id="invoke_menu"></span>[`invoke_menu`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#invoke_menu) | Resolve an exact application-menu path one live native level at a time and invoke its final item through accessibility APIs. | macOS, Linux, Windows |
+| <span id="invoke_menu"></span>[`invoke_menu`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#invoke_menu) | Resolve an exact application-menu path one live native level at a time and normally invoke its final item through accessibility APIs. | macOS, Linux, Windows |
 | <span id="debug_window_info"></span>[`debug_window_info`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#debug_window_info) | Diagnostic: dump everything cua-driver sees about a pid's top-level windows from the daemon's session perspective. | Windows |
 
 ## Window state tools
@@ -161,6 +161,7 @@ Read and act on web pages, and prepare and navigate browsers. [Reference](/cua-d
 | <span id="get_browser_state"></span>[`get_browser_state`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#get_browser_state) | Read-only browser inspection. | macOS, Linux, Windows |
 | <span id="browser_prepare"></span>[`browser_prepare`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#browser_prepare) | Attach the browser tools to a browser. | macOS, Linux, Windows |
 | <span id="browser_navigate"></span>[`browser_navigate`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#browser_navigate) | Navigate one tab of an exactly-bound browser target to a new URL (http/https/about only). | macOS, Linux, Windows |
+| <span id="browser_motion_policy"></span>[`browser_motion_policy`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#browser_motion_policy) | Apply or clear the standard prefers-reduced-motion media emulation for one exactly-bound driver-owned browser tab. | macOS, Linux, Windows |
 
 ## Browser input tools
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.38.8](https://github.com/trycua/cua/compare/cua-spaces-v0.38.7...cua-spaces-v0.38.8) (2026-11-17)
+
+
+### Bug Fixes
+
+* **packaging:** ship LICENSE files in Python distributions ([#8056](https://github.com/trycua/cua/issues/8056)) ([be4ba4b](https://github.com/trycua/cua/commit/be4ba4ba8250e127aebc053b6450eb57710f40d5))
+
 ## [0.38.7](https://github.com/trycua/cua/compare/cua-spaces-v0.38.6...cua-spaces-v0.38.7) (2026-11-17)
 
 

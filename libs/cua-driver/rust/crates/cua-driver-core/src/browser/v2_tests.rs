@@ -1045,6 +1045,9 @@ struct FixtureStalls {
     reproofs: AtomicUsize,
     fingerprints: AtomicUsize,
     dismissals: AtomicUsize,
+    /// Turning remote debugging back off blocks its thread while this holds.
+    hold_cleanup: AtomicBool,
+    cleanup_finished: AtomicBool,
 }
 
 impl Default for FixtureStalls {
@@ -1053,6 +1056,8 @@ impl Default for FixtureStalls {
             reproofs: AtomicUsize::new(usize::MAX),
             fingerprints: AtomicUsize::new(usize::MAX),
             dismissals: AtomicUsize::new(usize::MAX),
+            hold_cleanup: AtomicBool::new(false),
+            cleanup_finished: AtomicBool::new(false),
         }
     }
 }
@@ -1253,6 +1258,20 @@ impl BrowserPlatform for FixturePlatform {
         })
     }
 
+    fn cleanup_existing_profile_setup(
+        &self,
+        _request: ExistingProfileSetupRequest,
+    ) -> Result<bool, BrowserRefusal> {
+        let held_since = std::time::Instant::now();
+        while self.stalls.hold_cleanup.load(Ordering::SeqCst)
+            && held_since.elapsed() < std::time::Duration::from_secs(30)
+        {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        self.stalls.cleanup_finished.store(true, Ordering::SeqCst);
+        Ok(true)
+    }
+
     async fn commit_existing_profile_setup(
         &self,
         _request: ExistingProfileSetupRequest,
@@ -1429,6 +1448,12 @@ async fn protected_existing_profile_fixture_with(
 }
 
 async fn existing_profile_setup_fixture() -> (Fixture, Arc<AtomicBool>) {
+    existing_profile_setup_fixture_with(Default::default()).await
+}
+
+async fn existing_profile_setup_fixture_with(
+    stalls: Arc<FixtureStalls>,
+) -> (Fixture, Arc<AtomicBool>) {
     let state = Arc::new(StdMutex::new(FixtureState::default()));
     let server = MockCdpServer::start(fixture_handler(state.clone())).await;
     let setup_invoked = Arc::new(AtomicBool::new(false));
@@ -1444,7 +1469,7 @@ async fn existing_profile_setup_fixture() -> (Fixture, Arc<AtomicBool>) {
             setup_invoked: setup_invoked.clone(),
             setup_aborted: Arc::new(AtomicBool::new(false)),
             stall_consent: false,
-            stalls: Default::default(),
+            stalls,
             focus: Default::default(),
         }),
         Some(Arc::new(FixtureProtectedProvider {
@@ -1692,7 +1717,8 @@ async fn existing_profile_bind_refuses_when_the_endpoint_reproof_stalls() {
 async fn existing_profile_reconnect_refuses_within_its_bound_when_a_process_check_stalls() {
     const TRANSPORT: &str = "transport-v2-reconnect-stall";
     let stalls = Arc::new(FixtureStalls::default());
-    let (f, _) = protected_existing_profile_fixture_with(stalls.clone()).await;
+    // Setup turned remote debugging on, so ending the grant turns it back off.
+    let (f, _) = existing_profile_setup_fixture_with(stalls.clone()).await;
     prepare_existing_profile(&f.engine, TRANSPORT).await;
 
     // The approved socket is gone, so the bind must reconnect, and neither
@@ -1713,13 +1739,25 @@ async fn existing_profile_reconnect_refuses_within_its_bound_when_a_process_chec
         .await;
     stalls.fingerprints.store(1, Ordering::SeqCst);
     stalls.dismissals.store(0, Ordering::SeqCst);
+    stalls.hold_cleanup.store(true, Ordering::SeqCst);
+    // The clock is advanced by hand: tokio stops auto-advancing a paused
+    // clock while a blocking task runs, and the held cleanup is one.
     tokio::time::pause();
-    let state = tokio::time::timeout(
-        std::time::Duration::from_secs(60),
-        bind_existing_profile(&f.engine, TRANSPORT),
-    )
-    .await
-    .expect("a stalled reconnect must not hang the bind");
+    let bind = tokio::spawn({
+        let engine = f.engine.clone();
+        async move { bind_existing_profile(&engine, TRANSPORT).await }
+    });
+    for _ in 0..120 {
+        if bind.is_finished() {
+            break;
+        }
+        tokio::time::advance(std::time::Duration::from_secs(1)).await;
+    }
+    assert!(
+        bind.is_finished(),
+        "a stalled reconnect must not hang the bind"
+    );
+    let state = bind.await.unwrap();
     assert_eq!(
         state["refusal"]["code"], "browser_reconnect_exhausted",
         "{state}"
@@ -1736,6 +1774,11 @@ async fn existing_profile_reconnect_refuses_within_its_bound_when_a_process_chec
             .is_none(),
         "a reconnect that ran out of time ends the grant"
     );
+    assert!(
+        !stalls.cleanup_finished.load(Ordering::SeqCst),
+        "the refusal must not wait for a stalled remote-debugging cleanup"
+    );
+    stalls.hold_cleanup.store(false, Ordering::SeqCst);
 }
 
 #[tokio::test]

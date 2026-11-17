@@ -87,6 +87,8 @@ const ENDPOINT_REPROOF_TIMEOUT: std::time::Duration = std::time::Duration::from_
 /// Bound for one existing-profile reconnect, from waiting on another caller's
 /// reconnect through the last redial attempt.
 const EXISTING_PROFILE_RECONNECT_BOUND: std::time::Duration = std::time::Duration::from_secs(32);
+/// How long ending a grant waits for remote debugging to be turned back off.
+const SETUP_CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 /// Bound for closing the browser prompt a timed-out reconnect may have left.
 const ABANDONED_CONSENT_DISMISS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
@@ -831,23 +833,7 @@ impl BrowserEngine {
             GrantLookup::Live(grant) => Ok(Some(grant)),
             GrantLookup::Expired(grant) => {
                 if grant.cleanup_remote_debugging {
-                    let request = ExistingProfileSetupRequest {
-                        pid: grant.pid,
-                        window_id: grant.window_id,
-                        browser: grant.browser_product,
-                    };
-                    if self
-                        .platform
-                        .cleanup_existing_profile_setup(request.clone())
-                        .is_err()
-                    {
-                        self.pending_existing_profile_cleanups
-                            .lock()
-                            .unwrap()
-                            .entry(session.to_owned())
-                            .or_default()
-                            .push(request);
-                    }
+                    self.restore_remote_debugging(session, &grant).await;
                 }
                 self.pool
                     .release_existing(
@@ -867,6 +853,34 @@ impl BrowserEngine {
         }
     }
 
+    /// Turn remote debugging back off for a grant that has ended. The
+    /// platform drives browser UI to do it, which can stall, so it runs off
+    /// the async workers and the caller waits at most
+    /// `SETUP_CLEANUP_TIMEOUT`. A failed cleanup is retried at session end;
+    /// one still running is left to finish.
+    async fn restore_remote_debugging(&self, session: &str, grant: &ExistingProfileGrant) {
+        let request = ExistingProfileSetupRequest {
+            pid: grant.pid,
+            window_id: grant.window_id,
+            browser: grant.browser_product,
+        };
+        let platform = self.platform.clone();
+        let cleanup = tokio::task::spawn_blocking({
+            let request = request.clone();
+            move || platform.cleanup_existing_profile_setup(request)
+        });
+        match tokio::time::timeout(SETUP_CLEANUP_TIMEOUT, cleanup).await {
+            Ok(Ok(Ok(_))) | Err(_) => {}
+            Ok(_) => self
+                .pending_existing_profile_cleanups
+                .lock()
+                .unwrap()
+                .entry(session.to_owned())
+                .or_default()
+                .push(request),
+        }
+    }
+
     pub(crate) async fn revoke_existing_profile_grant(
         &self,
         session: &str,
@@ -878,23 +892,7 @@ impl BrowserEngine {
             .revoke(session, transport_session, pid)
         {
             if grant.cleanup_remote_debugging {
-                let request = ExistingProfileSetupRequest {
-                    pid: grant.pid,
-                    window_id: grant.window_id,
-                    browser: grant.browser_product,
-                };
-                if self
-                    .platform
-                    .cleanup_existing_profile_setup(request.clone())
-                    .is_err()
-                {
-                    self.pending_existing_profile_cleanups
-                        .lock()
-                        .unwrap()
-                        .entry(session.to_owned())
-                        .or_default()
-                        .push(request);
-                }
+                self.restore_remote_debugging(session, &grant).await;
             }
             self.pool
                 .release_existing(

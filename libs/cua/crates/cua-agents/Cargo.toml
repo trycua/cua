@@ -16,6 +16,8 @@ cua-agent-setup.workspace = true
 cua-connections.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml_ng = "0.10"
+yaml-edit = "0.3.6"
 thiserror.workspace = true
 tokio = { workspace = true, features = ["time"] }
 futures-util.workspace = true
@@ -27,5 +29,6 @@ flate2 = "1"
 tar = "0.4"
 
 [dev-dependencies]
+cua-spacesd-client = { workspace = true, features = ["testing"] }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["full"] }

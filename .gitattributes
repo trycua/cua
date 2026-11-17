@@ -14,5 +14,7 @@ libs/cua/crates/cua-spaces-ext/tests/fixtures/** text eol=lf
 # The bundled agent skills are embedded in cua-agent-setup and installed as they are, and their tree hash
 # marks a copy cua wrote; a CRLF checkout (Windows) would ship different bytes and fail the front matter checks.
 libs/cua/skills/** text eol=lf
+# cua-agent-setup bundles the cua-driver skill from the folder its release versions.
+libs/cua-driver/rust/Skills/cua-driver/** text eol=lf
 apps/cua-spaces-macos/Sources/CuaSpacesMacKit/Resources/azure-logo_azure.svg -text
 apps/cua-spaces-web/public/cloud-logos/azure-logo_azure.svg -text

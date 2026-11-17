@@ -1,0 +1,97 @@
+---
+title: Snapshots and restore
+description: 'Snapshot a running macOS VM and restore it in about 1.2 seconds, or start a new VM from a snapshot.'
+---
+
+A snapshot saves a running VM: its memory, its open apps and its disk. You can
+go back to it later, or start a new VM from it.
+
+## Snapshots need no setup
+
+Every VM Hoy creates can be snapshotted. There is no flag:
+
+```bash skip="no-runner"
+hoy create dev --image macos-26.5.2
+hoy start dev --wait ready
+```
+
+A VM made by an earlier release becomes snapshot-capable the next time it
+starts, with no change to its data. A VM that was running when you updated needs
+one `hoy stop` and `hoy start`. A VM created with `--gpu-acceleration` (experimental)
+cannot be snapshotted while a program in it has a GPU renderer session open (exit
+5). Stop that program first.
+
+## Take a snapshot
+
+```bash skip="no-runner"
+hoy snapshot dev --name clean
+```
+
+The VM pauses for about 0.77 seconds (on an M4 Pro) while its
+memory and disks are saved, then keeps running. Add `--stop` to shut the VM down
+in order once the snapshot is saved. Without `--name`, the snapshot is named
+after the time in UTC.
+
+```bash skip="no-runner"
+hoy snapshots dev
+hoy snapshot rm dev clean
+```
+
+`hoy snapshots` lists the snapshots of one VM, or of all VMs without a name.
+`hoy snapshot rm` deletes one. A snapshot keeps a copy of the guest's memory, so
+it can grow to the guest's memory size on disk until you remove it. `hoy rm`
+removes a VM's snapshots together with the VM. It asks first and says how many go
+(see [Quickstart](/hoy/quickstart#stop-and-remove)).
+
+## Restore
+
+```bash skip="no-runner"
+hoy stop dev
+hoy restore dev --snapshot clean
+```
+
+A stopped VM resumes from the snapshot, with windows and unsaved text as they
+were. Its disks are replaced by copies of the snapshot's, so changes made since
+the snapshot are gone. Without `--snapshot`, Hoy uses the newest one. Restore
+takes about 1.2 seconds on an M4 Pro, and the command prints the timings.
+
+## Fork
+
+```bash skip="no-runner"
+hoy fork dev dev2 --snapshot clean
+```
+
+A fork is a new VM that starts from the snapshot. The VM you snapshotted can
+keep running. The fork is running in about 1 second.
+
+A fork gets the snapshot's memory, open apps and disk, plus its own hostname,
+ssh host keys and network address. So the fork does not answer as the original
+when you connect with ssh, and the two do not clash on the network.
+
+A fork is a macOS VM like any other, so it counts toward
+[the 2-VM limit](/hoy/concepts/two-vm-limit). With the original running, you
+have room for one fork. A fork starts with the default
+[clipboard settings](/hoy/guides/clipboard-sharing), not its parent's.
+
+## Identity of every VM
+
+Every VM Hoy creates or clones gets its own machine identity, and on its first
+boot its own hostname and ssh host keys. Hoy pins the new host key, so
+`hoy ssh` notices if something else answers at a VM's address.
+
+VMs made before this change share the identity of the image they came from.
+`hoy health` lists them. Give a stopped VM a new identity with:
+
+```bash skip="no-runner"
+hoy reidentify dev
+```
+
+The new hostname and ssh host keys appear the next time the VM starts. Add
+`--keep-mac` to keep the VM's MAC address.
+
+## Limits
+
+- Restore needs a stopped VM. To start a copy while the original runs, use
+  `fork`.
+- Take snapshots of a VM you can spare for a few seconds: the VM is paused
+  while its memory is saved.

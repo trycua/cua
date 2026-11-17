@@ -144,7 +144,14 @@ export function AddAgentSheet({
               <div className="mt-3">
                 {/* Only what this build can do: an option that hasn't shipped isn't shown at all. */}
                 {canStart ? (
-                  <Row data="start" icon={<PlayIcon className="size-3.5" />} title="Start an agent here" detail="Runs inside this Space" disabled={!space} onClick={() => setStage("start")} />
+                  <Row
+                    data="start"
+                    icon={<PlayIcon className="size-3.5" />}
+                    title="Start an agent here"
+                    detail="Runs inside this Space"
+                    disabled={!space}
+                    onClick={() => setStage("start")}
+                  />
                 ) : null}
                 {canConnect ? (
                   <Row
@@ -156,7 +163,9 @@ export function AddAgentSheet({
                     onClick={() => setStage("connect")}
                   />
                 ) : null}
-                {onShare ? <Row data="share" icon={<UserPlusIcon className="size-3.5" />} title="Share with a person" detail="Or with your team" onClick={onShare} /> : null}
+                {onShare ? (
+                  <Row data="share" icon={<UserPlusIcon className="size-3.5" />} title="Share with a person" detail="Or with your team" onClick={onShare} />
+                ) : null}
               </div>
               <div className="mt-4 flex items-center justify-between gap-4">
                 <span className="flex items-center gap-1" data-add-agent-marks="">
@@ -180,7 +189,21 @@ export function AddAgentSheet({
   );
 }
 
-function Row({ icon, title, detail, onClick, disabled, data }: { icon: ReactNode; title: string; detail: string; onClick: () => void; disabled?: boolean; data: string }) {
+function Row({
+  icon,
+  title,
+  detail,
+  onClick,
+  disabled,
+  data,
+}: {
+  icon: ReactNode;
+  title: string;
+  detail: string;
+  onClick: () => void;
+  disabled?: boolean;
+  data: string;
+}) {
   return (
     <button
       type="button"
@@ -248,7 +271,9 @@ function StartAgent({ space, taken, title, onDone }: { space: AddAgentSpace; tak
   return (
     <>
       {title}
-      <DialogDescription className="mt-1 text-[13px] text-muted-foreground">It runs inside {space.name} on your keys, and sleeps until someone @mentions it.</DialogDescription>
+      <DialogDescription className="mt-1 text-[13px] text-muted-foreground">
+        It runs inside {space.name} on your keys, and sleeps until someone @mentions it.
+      </DialogDescription>
       <div className="mt-3" role="radiogroup" aria-label="Agent">
         {START_HARNESSES.map((h) => (
           <button
@@ -258,7 +283,10 @@ function StartAgent({ space, taken, title, onDone }: { space: AddAgentSpace; tak
             aria-checked={harness === h}
             data-start-harness={h}
             onClick={() => pick(h)}
-            className={cn("-mx-2 flex h-11 w-[calc(100%+1rem)] cursor-default items-center gap-3 rounded-lg px-2 text-left outline-none hover:bg-accent focus-visible:bg-accent", harness === h && "bg-accent")}
+            className={cn(
+              "-mx-2 flex h-11 w-[calc(100%+1rem)] cursor-default items-center gap-3 rounded-lg px-2 text-left outline-none hover:bg-accent focus-visible:bg-accent",
+              harness === h && "bg-accent",
+            )}
           >
             <span className="block overflow-hidden rounded-lg">
               <HarnessMark harness={h} px={24} />
@@ -306,7 +334,19 @@ function StartAgent({ space, taken, title, onDone }: { space: AddAgentSpace; tak
 }
 
 /** Connect your own agent: the one line with Copy, its settings, and the wait for the agent. */
-function ConnectAgent({ space, role, open, title, onDone }: { space: AddAgentSpace; role: ThreadRole | null; open: boolean; title: ReactNode; onDone: () => void }) {
+function ConnectAgent({
+  space,
+  role,
+  open,
+  title,
+  onDone,
+}: {
+  space: AddAgentSpace;
+  role: ThreadRole | null;
+  open: boolean;
+  title: ReactNode;
+  onDone: () => void;
+}) {
   const { data } = useBridge();
   const own = role === null || role === "owner";
   // Your own agent in your own Space joins without asking; in someone else's, the owner lets it in.
@@ -329,9 +369,7 @@ function ConnectAgent({ space, role, open, title, onDone }: { space: AddAgentSpa
   return (
     <>
       {title}
-      <DialogDescription className="mt-1 text-[13px] text-muted-foreground">
-        Paste this into your agent.
-      </DialogDescription>
+      <DialogDescription className="mt-1 text-[13px] text-muted-foreground">Paste this into your agent.</DialogDescription>
       <PromptBox
         className="mt-4"
         aria-label="Line to paste into your agent"
@@ -359,7 +397,13 @@ function ConnectAgent({ space, role, open, title, onDone }: { space: AddAgentSpa
           <Select<number> aria-label="Code expires" value={settings.ttlS} options={EXPIRES} onValueChange={(v) => set({ ttlS: v })} className={PICK} />
         </Setting>
         <Setting label="It can take tasks from">
-          <Select<JoinSettings["canTask"]> aria-label="It can take tasks from" value={settings.canTask} options={TASKS} onValueChange={(v) => set({ canTask: v })} className={PICK} />
+          <Select<JoinSettings["canTask"]>
+            aria-label="It can take tasks from"
+            value={settings.canTask}
+            options={TASKS}
+            onValueChange={(v) => set({ canTask: v })}
+            className={PICK}
+          />
         </Setting>
         <Setting label="Ask me before it joins" htmlFor="add-agent-ask">
           <Switch id="add-agent-ask" data-join-ask="" checked={settings.askBeforeJoin} onCheckedChange={(v) => set({ askBeforeJoin: v })} />

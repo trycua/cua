@@ -24,12 +24,14 @@ pub mod media_decode;
 mod presence;
 mod teleport;
 mod teleport_app;
+mod windows_iso;
 
 pub use app_core::*;
 pub use app_core_types::*;
 pub use presence::*;
 pub use teleport::*;
 pub use teleport_app::*;
+pub use windows_iso::*;
 
 uniffi::setup_scaffolding!("cua_spaces_ffi");
 

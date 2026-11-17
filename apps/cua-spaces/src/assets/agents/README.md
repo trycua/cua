@@ -9,10 +9,10 @@ Neither harness ships a mark we could read locally: both are npm CLIs, not
 `space_app_icon` gets a guest app's real icon). These are the official marks,
 taken from Wikimedia Commons:
 
-| file                | source                              | licence       |
-|---------------------|-------------------------------------|---------------|
-| `claude-code.svg`   | Commons `File:Claude AI symbol.svg` | CC0           |
-| `openai-codex.svg`  | Commons `File:OpenAI logo 2025 (symbol).svg` | Public domain |
+| file               | source                                       | licence       |
+| ------------------ | -------------------------------------------- | ------------- |
+| `claude-code.svg`  | Commons `File:Claude AI symbol.svg`          | CC0           |
+| `openai-codex.svg` | Commons `File:OpenAI logo 2025 (symbol).svg` | Public domain |
 
 Both are used nominatively, to identify which harness a run belongs to. Local
 edits are limited to making them themeable: the Claude mark's colour is pinned

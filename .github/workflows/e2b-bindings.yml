@@ -27,6 +27,7 @@ on:
     branches: [main]
     paths:
       - "libs/cua/crates/cua-sdk/**"
+      - "libs/cua/crates/cua-sdk-native/**"
       - "libs/cua/proto/**"
       - "libs/cua/swift/**"
       - "libs/cua/kotlin/**"
@@ -78,7 +79,7 @@ jobs:
           size: 8G
           save-always: "true"
       - name: Release cua-sdk dylib
-        run: cargo build --locked --release -p cua-sdk
+        run: cargo build --locked --release -p cua-sdk-native
       - name: Test fixtures
         run: scripts/build-test-fixtures.sh
       - name: Stage the UniFFI library

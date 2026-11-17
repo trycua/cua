@@ -157,7 +157,8 @@ describe.skipIf(!wasmBuilt)("importing the Claude Code sign-in", () => {
 
 describe.skipIf(!wasmBuilt)("the Space thread's Connect card", () => {
   const path = `/spaces/${encodeURIComponent(DEMO_THREAD_SPACE)}`;
-  const failureReply = () => qa("[data-entry]").find((e) => e.querySelector("[data-failure-connect]") && e.textContent?.includes("Claude"));
+  // The demo thread's Space is another computer, not This Mac (CUA-3907).
+  const failureReply = () => qa("[data-entry]").find((e) => e.querySelector("[data-signin-start]") && e.textContent?.includes("Claude"));
   const reply = (demo: object) =>
     mountApp(path, { failsCreates: false, listsGhost: false, demo: { threadAuthFailed: true, ...demo } }).then(() =>
       waitFor(
@@ -170,20 +171,26 @@ describe.skipIf(!wasmBuilt)("the Space thread's Connect card", () => {
       ),
     );
 
-  it("says Reconnect when the saved sign-in ran out, with the same word as Settings", async () => {
+  it("offers that computer's own sign-in, never Reconnect for a copied sign-in that ran out", async () => {
     const r = await reply({ claudeLogin: "expired" });
-    await waitFor(() => expect(r.querySelector("[data-failure-connect]")?.textContent).toContain("Reconnect"));
-    // Connect opens the same sheet as Settings, on the provider that refused it: the import question.
-    const connect = r.querySelector<HTMLButtonElement>("[data-failure-connect]")!;
-    expect(connect.tagName).toBe("BUTTON");
-    await click(connect);
-    await found("[data-import-sheet=consent]");
+    const start = await waitFor(() => {
+      const b = r.querySelector<HTMLButtonElement>("[data-signin-start]")!;
+      expect(b.disabled).toBe(false);
+      return b;
+    });
+    expect(start.textContent).toContain("Sign in to Claude Code on");
+    expect(r.querySelector("[data-failure-connect]")).toBeNull();
+    expect(r.textContent).not.toContain("Reconnect");
+    // The other way is an API key: the provider's sheet, not the import question.
+    await click(r.querySelector<HTMLButtonElement>("[data-signin-use-key]")!);
+    await found("[data-provider-sheet], [data-import-sheet]");
+    expect(document.querySelector("[data-import-sheet=consent]")).toBeNull();
     expect(r.textContent).not.toContain("\u00b7");
   });
 
-  it("says Connect when there is no sign-in saved", async () => {
+  it("offers the same sign-in when there is no sign-in saved", async () => {
     const r = await reply({});
-    expect(r.querySelector("[data-failure-connect]")?.textContent).toContain("Connect");
-    expect(r.querySelector("[data-failure-connect]")?.textContent).not.toContain("Reconnect");
+    expect(r.querySelector("[data-signin-start]")?.textContent).toContain("Sign in to Claude Code on");
+    expect(r.querySelector("[data-failure-connect]")).toBeNull();
   });
 });

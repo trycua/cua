@@ -105,10 +105,7 @@ describe.skipIf(!wasmBuilt)("tips", () => {
 
   it("on a Space's page: its request first, then Share… (sharing any Space finishes it)", async () => {
     const { h } = host({
-      answer: (op, out) =>
-        op === "spaces.list"
-          ? (out as Array<Record<string, unknown>>).map((space) => ({ ...space, sharing: undefined }))
-          : out,
+      answer: (op, out) => (op === "spaces.list" ? (out as Array<Record<string, unknown>>).map((space) => ({ ...space, sharing: undefined })) : out),
     });
     const app = await mountApp("/spaces/local:design-review", h);
     await shown("try-agent");

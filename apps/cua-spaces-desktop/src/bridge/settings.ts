@@ -83,6 +83,9 @@ export function settingsPage(model: AppModel, parts: HostParts) {
     runtimes: model.runtimesInput(),
     // Settings, General's Show tips (the tips themselves live in `AppSettings.tips`).
     showTips: !model.settings.tips.off,
+    // The close-window rows are the Mac app's (its background service): none here.
+    closeWindowKeepsRunning: undefined,
+    closeNotice: true,
   };
   const page = model.native.appSettingsPage(input);
   return model.native.appSettingsWithStorage(page, parts.storage.section, model.settings.experiments);
@@ -92,12 +95,12 @@ export function experimentsPage(model: AppModel) {
   return model.native.appExperimentsPage(model.settings.experiments);
 }
 
-/** The experiments the daemon enforces (Child Spaces, CI runners, Public TCP shares, Phone app, Warm start) as the cua home keeps them: what `cua experiments enable` set shows the next time Settings is read. */
+/** The experiments the daemon enforces (CI runners, Public TCP shares, Phone app) as the cua home keeps them: what `cua experiments enable` set shows the next time Settings is read. */
 export function refreshDaemonExperiments(model: AppModel): void {
   const kept = model.native.appSettingsLoad(model.settingsPath).experiments;
   const now = model.settings.experiments;
-  if (kept.childSpaces === now.childSpaces && kept.ciRunners === now.ciRunners && kept.tcpShares === now.tcpShares && kept.mobile === now.mobile && kept.warmPools === now.warmPools) return;
-  model.settings = { ...model.settings, experiments: { ...now, childSpaces: kept.childSpaces, ciRunners: kept.ciRunners, tcpShares: kept.tcpShares, mobile: kept.mobile, warmPools: kept.warmPools } };
+  if (kept.ciRunners === now.ciRunners && kept.tcpShares === now.tcpShares && kept.mobile === now.mobile) return;
+  model.settings = { ...model.settings, experiments: { ...now, ciRunners: kept.ciRunners, tcpShares: kept.tcpShares, mobile: kept.mobile } };
 }
 
 /** `settings.get`'s answer: General, Experiments, the update channel (null:
@@ -135,7 +138,8 @@ export function settingsUpdate(args: Record<string, unknown>): Partial<AppModel[
     const t = args.tips;
     if (!t || typeof t !== "object" || Array.isArray(t)) throw Failure.badArgs("tips: {off, done}");
     const { off, done } = t as { off?: unknown; done?: unknown };
-    if (typeof off !== "boolean" || !Array.isArray(done) || !done.every((d) => typeof d === "string")) throw Failure.badArgs("tips: {off: boolean, done: string[]}");
+    if (typeof off !== "boolean" || !Array.isArray(done) || !done.every((d) => typeof d === "string"))
+      throw Failure.badArgs("tips: {off: boolean, done: string[]}");
     patch.tips = { off, done: done as string[] };
   }
   if ("notchPinned" in args) {
@@ -146,7 +150,8 @@ export function settingsUpdate(args: Record<string, unknown>): Partial<AppModel[
   if ("agentMenu" in args) {
     const m = args.agentMenu as { shown?: unknown; hidden?: unknown; seen?: unknown } | null;
     const strings = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === "string");
-    if (!m || typeof m !== "object" || !strings(m.shown) || !strings(m.hidden) || !strings(m.seen)) throw Failure.badArgs("agentMenu: {shown: string[], hidden: string[], seen: string[]}");
+    if (!m || typeof m !== "object" || !strings(m.shown) || !strings(m.hidden) || !strings(m.seen))
+      throw Failure.badArgs("agentMenu: {shown: string[], hidden: string[], seen: string[]}");
     patch.agentMenuShown = m.shown as string[];
     patch.agentMenuHidden = m.hidden as string[];
     patch.agentMenuSeen = m.seen as string[];
@@ -350,7 +355,8 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
       }
       if (args.sizeGb !== undefined) {
         const g = args.sizeGb;
-        if (g !== null && (typeof g !== "number" || !Number.isFinite(g) || g < 0 || g > 100_000)) throw Failure.badArgs("sizeGb: a number of GB, 0 or more, or null for automatic");
+        if (g !== null && (typeof g !== "number" || !Number.isFinite(g) || g < 0 || g > 100_000))
+          throw Failure.badArgs("sizeGb: a number of GB, 0 or more, or null for automatic");
         change.sizeGb = g;
       }
       try {

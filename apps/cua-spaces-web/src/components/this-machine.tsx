@@ -25,6 +25,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
+import { useT } from "@/i18n";
 import { cn, relativeTime } from "@/lib/utils";
 
 /** The permissions `AppPermissionList` draws; any other (Local Network) keeps its own row. */
@@ -42,7 +43,18 @@ type HostLog = "access" | "activity";
  * Remove are `machines_view::view`'s, drawn by the page. `onUseCode` opens
  * "Enter a code": the answer to a failure the account wants proof for.
  */
-export function ThisMachineExtras({ panel, progress, part, onUseCode }: { panel: HostPanelView | null; progress?: string; part?: "alerts" | "logs"; onUseCode?: () => void }) {
+export function ThisMachineExtras({
+  panel,
+  progress,
+  part,
+  onUseCode,
+}: {
+  panel: HostPanelView | null;
+  progress?: string;
+  part?: "alerts" | "logs";
+  onUseCode?: () => void;
+}) {
+  const t = useT();
   const { data: session } = useSession();
   const host = useThisMachine(session?.identity ?? null);
   // Screen Recording and Accessibility: Cua Spaces' own, the same rows and live status as the first run and the Cua Driver page.
@@ -52,12 +64,21 @@ export function ThisMachineExtras({ panel, progress, part, onUseCode }: { panel:
 
   if (!part) {
     return host.formView ? (
-      <HostSetupForm view={host.formView} host={host} failure={host.setupError} progress={progress} onRetry={() => void host.retrySetUp()} onUseCode={onUseCode} />
+      <HostSetupForm
+        view={host.formView}
+        host={host}
+        failure={host.setupError}
+        progress={progress}
+        onRetry={() => void host.retrySetUp()}
+        onUseCode={onUseCode}
+      />
     ) : null;
   }
   if (!panel) return null;
   const openSettings = (url: string) =>
-    host.openSettings(url).catch((e: unknown) => toast("Couldn't open System Settings", { description: e instanceof Error ? e.message : String(e), type: "error" }));
+    host
+      .openSettings(url)
+      .catch((e: unknown) => toast(t("computers.this_mac.settings_open_failed"), { description: e instanceof Error ? e.message : String(e), type: "error" }));
 
   if (part === "alerts") {
     const any = progress || panel.permissionsTitle || host.error || panel.accessWarning || panel.activityWarning;
@@ -71,18 +92,22 @@ export function ThisMachineExtras({ panel, progress, part, onUseCode }: { panel:
             </div>
           </GroupedSection>
         ) : null}
-        {panel.permissionsTitle && perms.available ? <AppPermissionList perms={perms} variant="settings" title={panel.permissionsTitle} className="mb-6" /> : null}
+        {panel.permissionsTitle && perms.available ? (
+          <AppPermissionList perms={perms} variant="settings" title={panel.permissionsTitle} className="mb-6" />
+        ) : null}
         {panel.permissionsTitle && (!perms.available || panel.permissions.some((p) => !GUIDED.has(p.id))) ? (
-          <Group title={perms.available ? "Also in System Settings" : panel.permissionsTitle}>
-            {panel.permissions.filter((p) => !perms.available || !GUIDED.has(p.id)).map((p) => (
-              <Row key={p.id} label={p.title} hint={p.help} data-host-permission={p.id}>
-                {p.settingsUrl ? (
-                  <Button size="sm" variant="secondary" onClick={() => void openSettings(p.settingsUrl!)}>
-                    {panel.openSettingsLabel}
-                  </Button>
-                ) : null}
-              </Row>
-            ))}
+          <Group title={perms.available ? t("computers.this_mac.also_in_settings") : panel.permissionsTitle}>
+            {panel.permissions
+              .filter((p) => !perms.available || !GUIDED.has(p.id))
+              .map((p) => (
+                <Row key={p.id} label={p.title} hint={p.help} data-host-permission={p.id}>
+                  {p.settingsUrl ? (
+                    <Button size="sm" variant="secondary" onClick={() => void openSettings(p.settingsUrl!)}>
+                      {panel.openSettingsLabel}
+                    </Button>
+                  ) : null}
+                </Row>
+              ))}
           </Group>
         ) : null}
         {host.error ? (
@@ -108,12 +133,18 @@ export function ThisMachineExtras({ panel, progress, part, onUseCode }: { panel:
       {access ? (
         // The newest few (repeats collapsed); the rest in a sheet, so the
         // page never grows with the log.
-        <Group title={panel.recentTitle!} more={panel.recentMore ? <ShowAll label={panel.recentMore} data-host-more="access" onClick={() => setFullLog("access")} /> : null}>
+        <Group
+          title={panel.recentTitle!}
+          more={panel.recentMore ? <ShowAll label={panel.recentMore} data-host-more="access" onClick={() => setFullLog("access")} /> : null}
+        >
           <TimedRows rows={panel.recent!} now={now} />
         </Group>
       ) : null}
       {activity ? (
-        <Group title={panel.activityTitle!} more={panel.activityMore ? <ShowAll label={panel.activityMore} data-host-more="activity" onClick={() => setFullLog("activity")} /> : null}>
+        <Group
+          title={panel.activityTitle!}
+          more={panel.activityMore ? <ShowAll label={panel.activityMore} data-host-more="activity" onClick={() => setFullLog("activity")} /> : null}
+        >
           <TimedRows rows={panel.activity!} now={now} keep="head" />
         </Group>
       ) : null}
@@ -302,6 +333,7 @@ export function HostLogDialog({
   /** Which part of a long row stays whole (see `TimedRows`). */
   keep?: LogKeep;
 }) {
+  const t = useT();
   const [withBackground, setWithBackground] = useState(false);
   const shown = withBackground && backgroundRows ? backgroundRows : rows;
   return (
@@ -315,12 +347,12 @@ export function HostLogDialog({
           {backgroundRows ? (
             <label className="flex items-center gap-2 text-[13px]">
               <Checkbox data-host-log-background="" checked={withBackground} onCheckedChange={(on) => setWithBackground(on === true)} />
-              Include background activity
+              {t("computers.this_mac.include_background")}
             </label>
           ) : null}
           <span className="flex-1" />
           <Button data-host-log-done="" onClick={() => onOpenChange(false)}>
-            Done
+            {t("computers.this_mac.done")}
           </Button>
         </div>
       </DialogPopup>
@@ -347,7 +379,18 @@ function Progress({ text }: { text: string }) {
  * pairing code) is not something to retry: it says "Confirm it's you" and
  * its button, "Use a code from another computer", calls `onUseCode` (the
  * page's "Enter a code"). Without `onUseCode` it falls back to Retry. */
-export function FailureView({ failure, retrying, onRetry, onUseCode }: { failure: HostFailure; retrying: boolean; onRetry: () => void; onUseCode?: () => void }) {
+export function FailureView({
+  failure,
+  retrying,
+  onRetry,
+  onUseCode,
+}: {
+  failure: HostFailure;
+  retrying: boolean;
+  onRetry: () => void;
+  onUseCode?: () => void;
+}) {
+  const t = useT();
   const proof = isNeedsProof(failure) && Boolean(onUseCode);
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -375,7 +418,11 @@ export function FailureView({ failure, retrying, onRetry, onUseCode }: { failure
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [failure]);
   const manual = autoRetried.current ? throttleSeconds(failure.details ?? failure.message) : null;
-  const message = manual ? `Wait ${manual} ${manual === 1 ? "second" : "seconds"}, then try again.` : left === null ? failure.message : `Trying again in ${left} ${left === 1 ? "second" : "seconds"}.`;
+  const message = manual
+    ? t("computers.this_mac.wait_then_retry", { count: manual })
+    : left === null
+      ? failure.message
+      : t("computers.this_mac.retrying_in", { count: left });
   return (
     <div data-host-failure={proof ? "needs-proof" : ""} className="text-[13px]">
       <div className="flex items-center gap-2">
@@ -385,11 +432,15 @@ export function FailureView({ failure, retrying, onRetry, onUseCode }: { failure
         </span>
         {proof ? (
           <Button size="sm" variant="secondary" data-host-use-code="" onClick={onUseCode}>
-            {failure.actionLabel ?? "Use a code from another computer"}
+            {failure.actionLabel ?? t("computers.this_mac.use_code")}
           </Button>
         ) : (
           <Button size="sm" variant="secondary" data-host-retry="" disabled={retrying} onClick={onRetry}>
-            {retrying ? "Retrying…" : isNeedsProof(failure) ? "Retry" : (failure.actionLabel ?? "Retry")}
+            {retrying
+              ? t("computers.this_mac.retrying")
+              : isNeedsProof(failure)
+                ? t("computers.this_mac.retry")
+                : (failure.actionLabel ?? t("computers.this_mac.retry"))}
           </Button>
         )}
       </div>
@@ -407,11 +458,14 @@ export function FailureView({ failure, retrying, onRetry, onUseCode }: { failure
             className="flex cursor-default items-center gap-1 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground"
           >
             {open ? <ChevronDownIcon className="size-3.5" /> : <ChevronRightIcon className="size-3.5" />}
-            Details
+            {t("computers.this_mac.details")}
           </button>
           {open ? (
             <div className="mt-1 flex items-start gap-2">
-              <pre data-host-details-text className="max-h-20 min-w-0 flex-1 overflow-y-auto font-mono text-[11px] break-words whitespace-pre-wrap text-muted-foreground select-text">
+              <pre
+                data-host-details-text
+                className="max-h-20 min-w-0 flex-1 overflow-y-auto font-mono text-[11px] break-words whitespace-pre-wrap text-muted-foreground select-text"
+              >
                 {details}
               </pre>
               <Button
@@ -426,7 +480,7 @@ export function FailureView({ failure, retrying, onRetry, onUseCode }: { failure
                 }
               >
                 {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
-                Copy
+                {t("computers.this_mac.copy")}
               </Button>
             </div>
           ) : null}

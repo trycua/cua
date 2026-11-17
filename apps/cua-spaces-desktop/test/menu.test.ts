@@ -65,7 +65,13 @@ describe("the macOS menu", () => {
   });
 
   it("keeps Reload and the developer tools in a development build", () => {
-    expect(names(sub(menuTemplate("darwin", actions().actions, { dev: true }), "View"))).toEqual(["reload", "forceReload", "toggleDevTools", "---", "togglefullscreen"]);
+    expect(names(sub(menuTemplate("darwin", actions().actions, { dev: true }), "View"))).toEqual([
+      "reload",
+      "forceReload",
+      "toggleDevTools",
+      "---",
+      "togglefullscreen",
+    ]);
   });
 
   it("installs with ApplePersistenceIgnoreState, as the Swift app registers it", () => {

@@ -24,7 +24,15 @@ describe("removeBackups", () => {
   it("deletes Cua's copies of that config, and nothing else", () => {
     const d = tmp();
     const config = path.join(d, "config.toml");
-    for (const f of ["config.toml", "config.toml.cua-backup-20261025T101500Z", "config.toml.cua-backup-1", "other.toml.cua-backup-1", "config.toml.bak", "config.toml.cua-backup"]) writeFileSync(path.join(d, f), "x");
+    for (const f of [
+      "config.toml",
+      "config.toml.cua-backup-20261025T101500Z",
+      "config.toml.cua-backup-1",
+      "other.toml.cua-backup-1",
+      "config.toml.bak",
+      "config.toml.cua-backup",
+    ])
+      writeFileSync(path.join(d, f), "x");
     const gone = removeBackups(config);
     expect(gone.map((g) => path.basename(g)).sort()).toEqual(["config.toml.cua-backup-1", "config.toml.cua-backup-20261025T101500Z"]);
     expect(readdirSync(d).sort()).toEqual(["config.toml", "config.toml.bak", "config.toml.cua-backup", "other.toml.cua-backup-1"]);

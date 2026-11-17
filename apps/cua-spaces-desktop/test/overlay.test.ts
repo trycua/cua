@@ -23,7 +23,7 @@ describe("title bar overlay", () => {
   it("matches the web UI's backdrop and colours", () => {
     for (const file of ["components/ui/dialog.tsx", "components/ui/alert-dialog.tsx"]) {
       const src = readFileSync(path.join(web, file), "utf8");
-      const backdrop = src.split("\n").find((l) => l.includes("Backdrop "))!;
+      const backdrop = src.match(/Primitive\.Backdrop\b[^>]*\/>/)?.[0];
       expect(backdrop).toContain(`${DIM_ATTRIBUTE}=""`);
       expect(backdrop).toContain("bg-black/25");
       expect(backdrop).toContain("dark:bg-black/40");

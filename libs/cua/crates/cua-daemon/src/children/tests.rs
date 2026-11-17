@@ -26,8 +26,6 @@ struct World {
 /// other ── o1
 /// owner-dup ("dup", a Space of the owner's own)
 fn world() -> World {
-    // Child Spaces are an experiment; these tests run with it on.
-    cua_vmm::experiments::set_enabled(cua_vmm::experiments::Gate::ChildSpaces, Some(true));
     let home = tempfile::tempdir().unwrap();
     let runtime = Runtime::new(RuntimeConfig {
         state_dir: Some(home.path().join("sandboxes")),
@@ -466,6 +464,71 @@ async fn a_create_becomes_a_child_or_a_plain_refusal() {
             }
         ),
         Code::PermissionDenied
+    );
+}
+
+/// From inside a Space with network rules: a run that would escape them (a
+/// native job, host services, the owner's cloud) is refused with an
+/// actionable reason, on the real channel, and records nothing.
+#[tokio::test]
+async fn a_restricted_space_cannot_start_a_run_that_escapes_its_rules() {
+    let w = world();
+    w.shared
+        .runtime
+        .spaces()
+        .registry()
+        .update_meta("local:a", |m| {
+            m.network = Some(cua_spaces::network::NetworkSettings::none());
+        })
+        .unwrap();
+    let cap = mint(&w.shared, "local:a", "local:root", 1);
+    let mut c = SpaceServiceClient::new(channel(&w.shared, "local:a").await);
+    for (what, params) in [
+        (
+            "a native job",
+            serde_json::json!({"kind": "machine", "command": ["x"]}),
+        ),
+        (
+            "an explicit native job",
+            serde_json::json!({"jobs": [{"spec": {"kind": "machine", "argv": ["x"]}}]}),
+        ),
+        (
+            "host services",
+            serde_json::json!({"services": ["compat:e2b"], "command": ["x"]}),
+        ),
+        (
+            "the owner's cloud",
+            serde_json::json!({"on": "modal", "command": ["x"]}),
+        ),
+        // The Space lies about where it is: the daemon's word wins, so this is
+        // still refused as a native job from a closed Space.
+        (
+            "a forged parent",
+            serde_json::json!({"kind": "machine", "env": {"CUA_PARENT_NETWORK": "{}"}, "command": ["x"]}),
+        ),
+    ] {
+        let e = c
+            .pool_request(with(
+                &cap,
+                pb::PoolRequestRequest {
+                    target: String::new(),
+                    method: "submit".into(),
+                    params_json: params.to_string(),
+                },
+            ))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code(), Code::PermissionDenied, "{what}: {e}");
+        assert!(
+            e.message().contains("owner") || e.message().contains("network rules"),
+            "{what}: the refusal says what to do: {e}"
+        );
+    }
+    // Nothing was recorded for the refused runs.
+    assert!(
+        super::runs::Ledger::load(w.shared.runtime.spaces().home_dir())
+            .runs
+            .is_empty()
     );
 }
 

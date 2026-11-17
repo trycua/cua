@@ -133,7 +133,11 @@ runs:
           echo "key=$prefix$bucket"
         } >> "$GITHUB_OUTPUT"
         echo "sccache plan: family=$fam key=$prefix$bucket save=$save"
+    # The download is a GitHub release asset. When it fails (a 504 from the
+    # release CDN), the next step finds no sccache and cargo compiles without
+    # it. This also covers the action's post step, which then has no binary.
     - name: Install sccache
+      continue-on-error: true
       uses: mozilla-actions/sccache-action@fd02668681acd5f960e1372061bee5e3e987195c # v0.0.11
     - name: Restore the sccache directory
       id: restore

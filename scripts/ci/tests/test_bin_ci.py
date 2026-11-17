@@ -58,6 +58,12 @@ class Routing(unittest.TestCase):
         self.assertIn("actionlint", got)
         self.assertIn("bin-ci-tests", got)
 
+    def test_spaces_app_change_runs_prettier_on_the_changed_files(self):
+        self.assertIn("spaces-prettier", ids(["apps/cua-spaces-web/src/main.tsx"]))
+        self.assertIn("spaces-prettier", ids(["apps/cua-spaces/package.json"]))
+        self.assertNotIn("spaces-prettier", ids(["apps/cua-spaces-macos/README.md"]))
+        self.assertNotIn("spaces-prettier", ids(["apps/cua-spaces-web/gone.ts"]))
+
     def test_nested_cargo_manifest_runs_the_cargo_lockfile_check(self):
         # PR 6358: a libs/cua crate's manifest changed and nested workspaces'
         # Cargo.lock files (examples/, tests/e2e/) drifted.

@@ -10,7 +10,11 @@ import { agentThreadsMethods } from "../src/bridge/agent-threads";
 import type { BridgeContext } from "../src/bridge/context";
 
 const ctx = {} as BridgeContext;
-const LIST = { threads: [{ agent: "claude-code", id: "abc", title: "Kettle timer", cwd: "/Users/sam/code/kettle", last_active_ms: 5, resume: ["claude", "--resume", "abc"] }] };
+const LIST = {
+  threads: [
+    { agent: "claude-code", id: "abc", title: "Kettle timer", cwd: "/Users/sam/code/kettle", last_active_ms: 5, resume: ["claude", "--resume", "abc"] },
+  ],
+};
 
 describe("agents.recentThreads / agents.threadHistory", () => {
   it("lists with the tool's arguments and answers its JSON as-is", async () => {

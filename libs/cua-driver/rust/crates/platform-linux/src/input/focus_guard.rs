@@ -185,6 +185,33 @@ impl X {
             .unwrap_or_default()
     }
 
+    /// `window` says it is a tooltip, notification or drag icon: mapped and
+    /// override-redirect, but it holds no grab.
+    fn passive_popup(&self, window: Window) -> bool {
+        let intern = |name: &[u8]| {
+            self.conn
+                .intern_atom(true, name)
+                .ok()
+                .and_then(|c| c.reply().ok())
+                .map(|r| r.atom)
+                .filter(|atom| *atom != 0)
+        };
+        let Some(window_type) = intern(b"_NET_WM_WINDOW_TYPE") else {
+            return false;
+        };
+        let passive: Vec<u32> = [
+            &b"_NET_WM_WINDOW_TYPE_TOOLTIP"[..],
+            b"_NET_WM_WINDOW_TYPE_NOTIFICATION",
+            b"_NET_WM_WINDOW_TYPE_DND",
+        ]
+        .into_iter()
+        .filter_map(intern)
+        .collect();
+        self.window_property(window, window_type, 8)
+            .iter()
+            .any(|atom| passive.contains(atom))
+    }
+
     /// Mapped override-redirect children of the root: menus, combo popups,
     /// tooltips. Requests are pipelined so a busy desktop costs one round trip.
     fn mapped_popups(&self) -> HashSet<Window> {
@@ -595,19 +622,39 @@ impl FocusSnapshot {
         target_pid: Option<u32>,
         settle_watch: bool,
     ) -> FocusGuardReport {
-        self.restore_guarded(target_pid, settle_watch, true)
+        self.restore_guarded(target_pid, settle_watch, true, Instant::now())
             .unwrap_or_default()
     }
 
     /// The foreground transaction's restore: `target_pid` attributes a new
     /// popup's grab, but the same-app rule is off, since a foreground action
     /// gives the focus back even to a prior window of the target's process.
-    /// `None` when the display could not be opened to restore.
+    /// A menu the input opened may map a beat after `delivered`, so the
+    /// restore waits for one until [`SETTLE_WATCH`] after it: restoring
+    /// first would close it. `None` when the display could not be opened to
+    /// restore.
     pub(crate) fn restore_after_foreground(
         &self,
         target_pid: Option<u32>,
+        delivered: Instant,
     ) -> Option<FocusGuardReport> {
-        self.restore_guarded(target_pid, false, false)
+        let menu_watch =
+            (delivered + SETTLE_WATCH).min(crate::interaction::operation_deadline(SETTLE_WATCH));
+        self.restore_guarded(target_pid, false, false, menu_watch)
+    }
+
+    /// Override-redirect popups mapped since capture that hold a grab: not
+    /// the driver's own cursor overlay, not a tooltip. With `owner`, not a
+    /// popup another process says is its own either.
+    fn new_popups(&self, x: &X, owner: Option<u32>) -> Vec<Window> {
+        let foreign =
+            |w: Window| owner.is_some() && x.window_pid(w).is_some_and(|p| Some(p) != owner);
+        x.mapped_popups()
+            .difference(&self.popups)
+            .copied()
+            .filter(|w| !crate::overlay::is_x11_overlay_window(*w) && !x.passive_popup(*w))
+            .filter(|w| !foreign(*w))
+            .collect()
     }
 
     fn restore_guarded(
@@ -615,6 +662,7 @@ impl FocusSnapshot {
         target_pid: Option<u32>,
         settle_watch: bool,
         same_app: bool,
+        menu_watch: Instant,
     ) -> Option<FocusGuardReport> {
         let started = Instant::now();
         let x = X::open().ok()?;
@@ -653,13 +701,15 @@ impl FocusSnapshot {
         }
 
         // Popups opened by the action: an open GTK/VCL menu grabs the keyboard.
-        // The driver's own agent-cursor overlay grabs nothing.
-        let new_popups: Vec<Window> = x
-            .mapped_popups()
-            .difference(&self.popups)
-            .copied()
-            .filter(|w| !crate::overlay::is_x11_overlay_window(*w))
-            .collect();
+        // A foreground action keeps the focus only for the target's own menu.
+        let popup_owner = target_pid.filter(|_| !same_app);
+        let mut new_popups = self.new_popups(&x, popup_owner);
+        while new_popups.is_empty() && !changes.is_empty() && Instant::now() < menu_watch {
+            std::thread::sleep(
+                SETTLE_POLL.min(menu_watch.saturating_duration_since(Instant::now())),
+            );
+            new_popups = self.new_popups(&x, popup_owner);
+        }
         if !new_popups.is_empty() {
             report.grab_held_by = new_popups
                 .iter()
@@ -828,15 +878,17 @@ impl FocusSnapshot {
 }
 
 /// Run `body` (a background delivery) between a snapshot and a restore.
-/// The body's error still propagates; the guard only adds its report.
+/// The restore runs whether or not the body succeeded: a delivery that fails
+/// after it opened a popup or let the app take the focus must still give the
+/// focus back. The body's error still propagates; the guard only adds its
+/// report on success.
 pub fn guarded<T>(
     target_pid: Option<u32>,
     body: impl FnOnce() -> Result<T>,
 ) -> Result<(T, Option<FocusGuardReport>)> {
-    let snapshot = FocusSnapshot::capture();
-    let value = body()?;
-    let report = snapshot.map(|s| s.restore_if_changed(target_pid));
-    Ok((value, report))
+    restore_after(FocusSnapshot::capture(), body, |s| {
+        s.restore_if_changed(target_pid)
+    })
 }
 
 /// [`guarded`] for a body that has already let the desktop settle (the MPX
@@ -846,10 +898,21 @@ pub fn guarded_settled<T>(
     target_pid: Option<u32>,
     body: impl FnOnce() -> Result<T>,
 ) -> Result<(T, Option<FocusGuardReport>)> {
-    let snapshot = FocusSnapshot::capture();
-    let value = body()?;
-    let report = snapshot.map(|s| s.restore_if_changed_opts(target_pid, false));
-    Ok((value, report))
+    restore_after(FocusSnapshot::capture(), body, |s| {
+        s.restore_if_changed_opts(target_pid, false)
+    })
+}
+
+/// Run `body`, then `restore` the snapshot on every exit path, and only then
+/// propagate the body's error.
+fn restore_after<S, T, R>(
+    snapshot: Option<S>,
+    body: impl FnOnce() -> Result<T>,
+    restore: impl FnOnce(S) -> R,
+) -> Result<(T, Option<R>)> {
+    let outcome = body();
+    let report = snapshot.map(restore);
+    Ok((outcome?, report))
 }
 
 #[cfg(test)]
@@ -957,6 +1020,36 @@ mod tests {
         assert!(evidence["detail"].as_str().unwrap().contains("closed"));
         assert!(report.summary().contains("window_closed"));
         assert!(!report.summary().contains("not_restored"));
+    }
+
+    #[test]
+    fn a_failed_delivery_still_restores_the_focus_and_returns_its_error() {
+        let restored = std::cell::Cell::new(false);
+        let result: Result<((), Option<()>)> = restore_after(
+            Some("snapshot"),
+            || anyhow::bail!("the combo box popup listed no options"),
+            |_| restored.set(true),
+        );
+        assert!(restored.get(), "the focus was not restored after an error");
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "the combo box popup listed no options"
+        );
+    }
+
+    #[test]
+    fn a_successful_delivery_restores_once_and_returns_the_report() {
+        let restores = std::cell::Cell::new(0);
+        let (value, report) = restore_after(
+            Some("snapshot"),
+            || Ok(7),
+            |s| {
+                restores.set(restores.get() + 1);
+                s
+            },
+        )
+        .unwrap();
+        assert_eq!((value, report, restores.get()), (7, Some("snapshot"), 1));
     }
 
     #[test]

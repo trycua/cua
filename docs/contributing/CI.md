@@ -19,6 +19,7 @@ each failure. Run it before you push. It catches in minutes what otherwise costs
 - stale generated reference docs, docs code blocks with no disposition, and image refs outside the catalog;
 - Python isort, black and ruff; TypeScript typecheck, tests and the design lint for the web packages you touched;
 - actionlint for workflows, SPDX headers, and the unit tests of the crates you changed.
+- Prettier on the Cua Spaces app files you changed, with each app's own `.prettierrc.yaml` (double quotes).
 
 `CI: Quick` runs `bin/ci --quick` on every pull request, so these checks have no workflow of their own: SPDX
 headers, lockfiles, actionlint, the larger-runner ban, image refs, Python lint, rustfmt and the docs image
@@ -133,11 +134,22 @@ passed. It runs once per commit: the first `quick` that passes saves a cache mar
 others restore it and finish in seconds. Jobs that start before the marker exists run the checks themselves.
 When you add a heavy workflow, add the `quick` job and the `needs` the same way.
 
-## Path-scoped gate
+The stage also decides whether the calling workflow runs at all (its `scope` job; see the next section). Every
+job of a heavy workflow lists `quick` in its `needs` and adds `needs.quick.outputs.skip != 'true'` to its `if`.
+`test_ci_gate_workflow.py` checks both.
 
-A workflow still starts on its own `paths:` filter. The gate then waits only for the workflows that belong
-to the areas the pull request affects. Slow jobs for other areas (for example the Linux image build on a
-docs-only change) still run, but they no longer hold up the merge.
+## Path-scoped gate and checks
+
+One decision says which workflows a pull request needs, and it is used twice:
+
+- **The gate** waits only for the workflows the pull request needs.
+- **The workflows** skip their jobs when they are not needed. Each heavy workflow's `quick` stage runs the same
+  script with `--workflow <its file>` (the `scope` job in `ci-quick.yml`) and the heavy jobs skip on
+  `skip == 'true'`. A workflow's own `paths:` filter is only a cheap pre-filter that stops it from starting
+  at all; it must stay a superset of what the map requires.
+
+A skipped workflow is one the gate does not wait for, so a lane skipped by scope never blocks the merge. If the
+`scope` job itself fails, the workflow's jobs are skipped and its run fails, so the gate fails.
 
 Two inputs decide the areas:
 
@@ -163,19 +175,60 @@ Rules, in order:
    affected package, outside every area makes the gate wait for every run.
 6. A workflow listed under an area is required only when one of its areas is affected.
 7. A workflow listed under no area (for example the eMudhra and release-metadata checks) is always required. A new workflow is therefore required until someone maps it. The gate never waits for **CI: CLA**, because the required `contributor-attribution` check enforces the CLA.
+8. A workflow under **`narrow`** in the map is required only when one of the packages it builds (`packages`,
+   package directories) is affected under rule 4, or a changed file matches its `paths`. This is the
+   "affected" model of Nx and Turborepo: name the packages a suite builds, and the package graph adds
+   everything they depend on. Narrowing only removes a workflow that rules 6 and 7 required; a shared file
+   still requires it. For example, a change to `cua-spaces-app-core` runs the Rust, web and app lanes that build
+   it or its dependents, but not `CI: Test Python` (which builds only `cua-sdk`) or the openkoalabot examples.
 
-Unaffected workflows still run if their own `paths:` match; the gate just doesn't wait for them. `ci-gate`
-is the only required check, so nothing else needs a placeholder status. Main pushes, nightly and manual runs
-are not scoped: each workflow runs in full on its own `push` and `schedule` triggers.
+`ci-gate` is the only required check, so nothing else needs a placeholder status. Main pushes, nightly and
+manual runs are not scoped: `quick` is skipped there, so each workflow runs in full on its own `push` and
+`schedule` triggers.
 
 **A pull request cannot narrow its own gate.** The gate checks out the map and both scripts from the base
 commit, not from the pull request. It reads the pull request's manifests only to add the dependency edges the
 pull request introduces. Any `.github/**` change (workflows, the map, the scripts) waits for every workflow,
 and `.github/` changes need a code owner's review.
 
-Merge-queue runs (`merge_group`) read the file list of the same pull request through the same API call, so
-the queue and the pull request wait on the same set. If the scope step fails for any reason, the gate fails.
-It never skips on error.
+If the scope step fails for any reason, the gate fails. It never skips on error.
+
+### Merge queue
+
+Every workflow with the `quick` stage also starts on `merge_group`. In the queue the scope is the diff between
+the queue's base and the queue commit, so the lanes that the queued pull requests touch run on the merged
+result. That is cheaper than running everything, and it is the same rule as a pull request, applied to what
+will land on `main`. In a `merge_group` run, `github.event_name` is not `pull_request`, so those lanes run their
+`main` jobs too.
+
+Only the workflows listed under `queue` in `.github/ci-areas.json` (read from the queue's base commit) run in
+the queue, and each runs there only its push-only jobs that fit the queue's 60-minute timeout. The pull
+request already ran the rest. Every other `merge_group` run skips, and the gate reads that workflow's pull
+request run.
+
+| Workflow | Runs in the queue | Waits for the run after merge |
+| --- | --- | --- |
+| `E2E: Cua Driver release gate` (gated paths) | every Linux lane; Windows native, capture and installer | Windows shared Electron + Tauri (the PR's quick lane ran its Electron cells), hosted macOS, standalone browsers |
+
+`CI: cua SDK` is not in the list: its Windows rust leg takes longer than the queue's timeout (its long test step
+compiles for 26 to 31 minutes and runs for about 17), so it runs after merge.
+
+The gate judges each queue run in addition to the pull request's run, never instead of it, so a queue run whose
+jobs were all skipped cannot hide a failing pull request run. The repository variable `CI_QUEUE_RUNS` set to
+`true` runs every workflow the change reaches instead of only the `queue` list.
+
+### When a rerun turns green
+
+The gate is one job that gives one verdict after every other workflow finishes. If a job fails, the gate fails,
+at once: it does not wait for the rest of that job's run (unless the failure is a quarantined flake). In the merge
+queue this drops a failing entry within about a minute, so the entries behind it are not held until the queue's
+60-minute timeout.
+[`ci-gate-recheck.yml`](../../.github/workflows/ci-gate-recheck.yml) reruns the gate when a workflow it waits for
+completes green (a first run or a rerun) or the `local-ci` sign-off turns green, if the newest gate run for that
+commit failed before that result arrived and the commit is still the head of an open pull request without a
+hold label. So rerunning a failed job is enough: the gate turns green by itself when everything is green. The
+rerun keeps the check name `ci-gate`, so branch protection and auto-merge are unchanged. The recheck's list of
+workflows must name every workflow the gate waits for; `test_ci_gate_recheck.py` fails when one is missing.
 
 To see what a change affects locally: `printf '%s\n' <files> | python3 .github/scripts/ci_gate_scope.py`.
 To list a package's dependents: `python3 .github/scripts/ci_graph.py cua-proto`.
@@ -209,15 +262,16 @@ Any file outside every area below also counts as shared.
 | `installers` | `scripts/install/**` | 6 | none of the slow jobs |
 | `examples` | `examples/**` | 5 | `ci-openkoalabot-example-tauri` |
 
-The `relay` area is narrowed by hand to `ci-cua-relay-image`, `ci-cua-spacesd` and the cheap repo checks.
+The `narrow` entries carry a `why`. The `relay` area is also narrowed by hand, to `ci-cua-relay-image`, `ci-cua-spacesd` and the cheap repo checks.
 `cua-spacesd` and `cua-spacesd-server` link `cua-relay`, so the package graph also adds the `spacesd` area
 to a relay change. Every other area lists every workflow whose own `paths:` reach it.
 
 ### Keeping the map correct
 
 `.github/scripts/tests/test_ci_gate_scope.py` (run by `CI: Test Scripts`) fails when a workflow's
-`pull_request` paths reach an area that does not list it. When you add a workflow with a `paths:` filter,
-or add a path to one, add it to the matching areas in `.github/ci-areas.json`. Changing the map or the gate
+`pull_request` paths reach an area that does not list it, or when a `narrow` entry names a directory that is not
+a package. When you add a workflow with a `paths:` filter, or add a path to one, add it to the matching areas in
+`.github/ci-areas.json`. When a narrowed workflow starts building another package, add it to its `packages`. Changing the map or the gate
 is a `.github/**` change, so it waits for every workflow, and it takes effect only once it is on `main`.
 
 ## Heavy bundles run after merge

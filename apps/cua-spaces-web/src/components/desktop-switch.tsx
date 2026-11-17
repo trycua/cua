@@ -58,7 +58,9 @@ export function DesktopSwitchRow() {
       data-desktop-switch=""
       label={toggle.label}
       labelId="desktop-switch-label"
-      control={<Switch checked={toggle.on} disabled={!toggle.editable || !toggle.enabled || busy} aria-labelledby="desktop-switch-label" onCheckedChange={flip} />}
+      control={
+        <Switch checked={toggle.on} disabled={!toggle.editable || !toggle.enabled || busy} aria-labelledby="desktop-switch-label" onCheckedChange={flip} />
+      }
     />
   );
 }

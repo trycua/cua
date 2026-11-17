@@ -82,7 +82,10 @@ export const AGENT_THREADS_COVERAGE = {
 export const AGENT_THREADS_TOOLS = {
   "agents.recentThreads": {
     tool: "agent_threads",
-    args: (a: AgentThreadsOps["agents.recentThreads"]["args"]) => ({ ...(a.limit ? { limit: a.limit } : {}), ...(a.agents?.length ? { agents: [...a.agents] } : {}) }),
+    args: (a: AgentThreadsOps["agents.recentThreads"]["args"]) => ({
+      ...(a.limit ? { limit: a.limit } : {}),
+      ...(a.agents?.length ? { agents: [...a.agents] } : {}),
+    }),
   },
   "agents.threadHistory": {
     tool: "agent_thread_read",
@@ -140,7 +143,8 @@ export function recentThreadsFromTool(v: unknown): RecentThread[] {
 /** `agent_thread_read`'s answer; `asked` names the chat when the answer doesn't. */
 export function pastThreadFromTool(v: unknown, asked?: { agent: ThreadAgent; id: string }): PastThread {
   const o = rec(v);
-  const thread = threadFromTool(o.thread) ?? (asked ? { agent: asked.agent, id: asked.id, title: "Untitled chat", cwd: null, lastActiveMs: 0, resume: [] } : null);
+  const thread =
+    threadFromTool(o.thread) ?? (asked ? { agent: asked.agent, id: asked.id, title: "Untitled chat", cwd: null, lastActiveMs: 0, resume: [] } : null);
   if (!thread) throw new HostError("The chat couldn't be read", "failed");
   const messages = (Array.isArray(o.messages) ? o.messages : [])
     .map((m): PastMessage | null => {
@@ -157,7 +161,9 @@ export function pastThreadFromTool(v: unknown, asked?: { agent: ThreadAgent; id:
 /** A daemon from before these tools: its "unknown tool" is `unsupported`. */
 export function isMissingAgentThreadsTool(e: unknown): boolean {
   const m = (e instanceof Error ? e.message : String(e)).toLowerCase();
-  return ["agent_threads", "agent_thread_read"].some((t) => m.includes(`spaces tool ${t}`) || ((m.includes("unknown tool") || m.includes("no such tool")) && m.includes(t)));
+  return ["agent_threads", "agent_thread_read"].some(
+    (t) => m.includes(`spaces tool ${t}`) || ((m.includes("unknown tool") || m.includes("no such tool")) && m.includes(t)),
+  );
 }
 
 type Request = <T>(method: AgentThreadsOpName, args?: Record<string, unknown>) => Promise<T>;
@@ -173,7 +179,8 @@ export function webkitAgentThreadsOps(request: Request) {
     }
   };
   return {
-    "agents.recentThreads": async (a: AgentThreadsOps["agents.recentThreads"]["args"]) => onlyAgents(recentThreadsFromTool(await call("agents.recentThreads", a)), a.agents),
+    "agents.recentThreads": async (a: AgentThreadsOps["agents.recentThreads"]["args"]) =>
+      onlyAgents(recentThreadsFromTool(await call("agents.recentThreads", a)), a.agents),
     "agents.threadHistory": async (a: AgentThreadsOps["agents.threadHistory"]["args"]) => pastThreadFromTool(await call("agents.threadHistory", a), a),
   };
 }

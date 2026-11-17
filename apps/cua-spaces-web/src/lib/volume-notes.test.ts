@@ -29,7 +29,14 @@ describe("why a Space has no Cua Volume", () => {
   it("reads volume_errors from sync and mount status, one row per Space", () => {
     const errors = spaceVolumeErrors(
       { device_id: "d", device_name: "Mac", feed: "live", volume_errors: [{ space: "e2e-1005", error: "no /dev/fuse" }] },
-      { state: "off", method: "none", volume_errors: [{ space: "e2e-1005", error: "dup" }, { space: "other", error: "x predates y" }] },
+      {
+        state: "off",
+        method: "none",
+        volume_errors: [
+          { space: "e2e-1005", error: "dup" },
+          { space: "other", error: "x predates y" },
+        ],
+      },
     );
     expect(errors.map((e) => e.space)).toEqual(["e2e-1005", "other"]);
     expect(volumeUnavailableNote(errors[0]!.error)).toContain("can't open in this Space");

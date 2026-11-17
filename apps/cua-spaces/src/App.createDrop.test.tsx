@@ -98,7 +98,11 @@ const NEW_SPACE: SpaceRow = {
 
 function makeFakeBridge(
   createSpace: SpacesBridge["createSpace"],
-  defaultLocation: SpacesBridge["defaultLocation"] = async () => ({ value: "local", source: "config", path: "/tmp/cua/config.toml" }),
+  defaultLocation: SpacesBridge["defaultLocation"] = async () => ({
+    value: "local",
+    source: "config",
+    path: "/tmp/cua/config.toml",
+  }),
 ): SpacesBridge {
   let created = false;
   return fakeSpacesBridge({
@@ -123,9 +127,9 @@ function fakeTeleport(openPicker: TeleportBridge["openPicker"]): TeleportBridge 
     listOpenWindows: reject as never,
     captureThumbnail: async () => null,
     appIcon: async () => null,
-  spaceAppIcon: async () => null,
-  spacePrimaryDisplay: async () => null,
-  spaceAppIcons: async (_s: string, requests: unknown[]) => requests.map(() => null),
+    spaceAppIcon: async () => null,
+    spacePrimaryDisplay: async () => null,
+    spaceAppIcons: async (_s: string, requests: unknown[]) => requests.map(() => null),
     listRemoteWindows: reject as never,
     listSpaceAgents: async () => [],
     remoteWindowThumbnail: reject as never,
@@ -141,7 +145,11 @@ afterEach(() => vi.restoreAllMocks());
 describe("drag an app onto the + tile", () => {
   it("creates a Space in the default location and teleports the app into it", async () => {
     const createSpace = vi.fn(async () => NEW_SPACE);
-    const defaultLocation = vi.fn(async () => ({ value: "local" as const, source: "config" as const, path: "/tmp/cua/config.toml" }));
+    const defaultLocation = vi.fn(async () => ({
+      value: "local" as const,
+      source: "config" as const,
+      path: "/tmp/cua/config.toml",
+    }));
     const openPicker = vi.fn(async () => {});
     const drag = fakeWindowDrag();
     let clock = FIXTURE_NOW;

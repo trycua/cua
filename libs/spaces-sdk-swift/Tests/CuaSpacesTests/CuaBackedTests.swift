@@ -230,7 +230,7 @@ struct Fixtures {
         let tools = try await connection.availableTools()
         // Person-only tools (`PERSON_ONLY_TOOLS`) are in the contract but
         // never served as tools.
-        let personOnly: Set<String> = ["cloud_approve", "agent_threads", "agent_thread_read"]
+        let personOnly: Set<String> = ["cloud_approve", "agent_threads", "agent_thread_read", "agent_sign_in"]
         XCTAssertEqual(Set(tools), Set(SpacesConnection.contractTools).subtracting(personOnly))
         try await exercise(connection, fx, work: work, keyvault: false)
     }

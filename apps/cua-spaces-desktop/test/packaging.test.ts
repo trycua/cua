@@ -87,7 +87,14 @@ describe("the Linux install tree", () => {
     dirs.push(root);
     const native = path.join(root, "resources", "native");
     mkdirSync(native, { recursive: true });
-    const files = { "cua-spaces": 0o775, "resources.pak": 0o664, "resources/native/cua": 0o775, "resources/native/libcua_spaces_ffi.so": 0o664, "resources/native/cua_node_runtime.node": 0o664, "resources/native/cua-spacesd-linux-x86_64": 0o775 };
+    const files = {
+      "cua-spaces": 0o775,
+      "resources.pak": 0o664,
+      "resources/native/cua": 0o775,
+      "resources/native/libcua_spaces_ffi.so": 0o664,
+      "resources/native/cua_node_runtime.node": 0o664,
+      "resources/native/cua-spacesd-linux-x86_64": 0o775,
+    };
     for (const [f, m] of Object.entries(files)) {
       writeFileSync(path.join(root, f), "x");
       chmodSync(path.join(root, f), m);

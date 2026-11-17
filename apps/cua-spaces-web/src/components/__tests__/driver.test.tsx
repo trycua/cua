@@ -28,7 +28,13 @@ function mount(adapter: DataAdapter, ui: () => ReactNode) {
 }
 
 function NavLabels() {
-  return <div data-nav="">{useNavItems().map((n) => n.label).join(",")}</div>;
+  return (
+    <div data-nav="">
+      {useNavItems()
+        .map((n) => n.label)
+        .join(",")}
+    </div>
+  );
 }
 
 describe("pointer settings from the driver's get_config", () => {
@@ -120,7 +126,13 @@ describe("Cua Driver in the app", () => {
   it("says a permission is missing, and Allow opens Cua Spaces' guide", async () => {
     const demo = createDemoAdapter({ latencyMs: 0, stepMs: 0 });
     demo.state.host.permissions = [
-      { id: "screen-recording", label: "Screen Recording", instructions: "", settingsUrl: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture", granted: false },
+      {
+        id: "screen-recording",
+        label: "Screen Recording",
+        instructions: "",
+        settingsUrl: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+        granted: false,
+      },
     ];
     const calls: string[] = [];
     const spy = Object.assign(Object.create(demo) as DataAdapter, {

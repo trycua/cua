@@ -34,7 +34,15 @@ export function DiffScreen({ spaceId, onBack, initialPath }: { spaceId: string; 
     try {
       if (!backend.changes) throw new Error(backend.capabilities.why.diff ?? labels?.unavailable ?? "Changes are not available.");
       const set = await backend.changes(spaceId);
-      const view = diffChanges({ repo: set.repo, branch: set.branch, base: set.base, headSha: set.headSha, files: set.files, truncated: set.truncated, verified: set.verified });
+      const view = diffChanges({
+        repo: set.repo,
+        branch: set.branch,
+        base: set.base,
+        headSha: set.headSha,
+        files: set.files,
+        truncated: set.truncated,
+        verified: set.verified,
+      });
       if (!view) throw new Error("The app core is not linked in this build.");
       setChanges({ state: "ready", value: { set, view } });
     } catch (e) {
@@ -48,12 +56,24 @@ export function DiffScreen({ spaceId, onBack, initialPath }: { spaceId: string; 
 
   const header = (title: string, back: () => void, backLabel: string, sub?: string | null) => (
     <View style={{ paddingTop: insets.top + 6, paddingHorizontal: 12, paddingBottom: 8, flexDirection: "row", alignItems: "center", gap: 10 }}>
-      <Pressable onPress={back} accessibilityRole="button" accessibilityLabel={backLabel} testID="diff-back" style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: c.tile, alignItems: "center", justifyContent: "center" }}>
+      <Pressable
+        onPress={back}
+        accessibilityRole="button"
+        accessibilityLabel={backLabel}
+        testID="diff-back"
+        style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: c.tile, alignItems: "center", justifyContent: "center" }}
+      >
         <Icon name="back" size={18} color={c.foreground} weight="semibold" />
       </Pressable>
       <View style={{ flex: 1 }}>
-        <Text variant="headline" numberOfLines={1} accessibilityRole="header">{title}</Text>
-        {sub ? <Text variant="footnote" color="muted" numberOfLines={1}>{sub}</Text> : null}
+        <Text variant="headline" numberOfLines={1} accessibilityRole="header">
+          {title}
+        </Text>
+        {sub ? (
+          <Text variant="footnote" color="muted" numberOfLines={1}>
+            {sub}
+          </Text>
+        ) : null}
       </View>
     </View>
   );
@@ -62,25 +82,62 @@ export function DiffScreen({ spaceId, onBack, initialPath }: { spaceId: string; 
     const f = changes.value.view.files.find((x) => x.path === file);
     return (
       <View style={{ flex: 1, backgroundColor: c.background }}>
-        {header(f?.name ?? file, () => (initialPath ? onBack() : setFile(null)), labels?.back ?? "Back to changes", f ? `${f.dir}${f.statusLabel ? `  ${f.statusLabel}` : ""}`.trim() : null)}
-        <FileView spaceId={spaceId} path={file} meta={f ? { binary: f.binary, preview: f.preview, mime: changes.value.set.files.find((x) => x.path === file)?.mime ?? null, size: changes.value.set.files.find((x) => x.path === file)?.size ?? null } : null} />
+        {header(
+          f?.name ?? file,
+          () => (initialPath ? onBack() : setFile(null)),
+          labels?.back ?? "Back to changes",
+          f ? `${f.dir}${f.statusLabel ? `  ${f.statusLabel}` : ""}`.trim() : null,
+        )}
+        <FileView
+          spaceId={spaceId}
+          path={file}
+          meta={
+            f
+              ? {
+                  binary: f.binary,
+                  preview: f.preview,
+                  mime: changes.value.set.files.find((x) => x.path === file)?.mime ?? null,
+                  size: changes.value.set.files.find((x) => x.path === file)?.size ?? null,
+                }
+              : null
+          }
+        />
       </View>
     );
   }
 
   return (
     <View style={{ flex: 1, backgroundColor: c.background }}>
-      {header(changes.state === "ready" ? changes.value.view.title : (labels?.title ?? "Changes"), onBack, "Back", changes.state === "ready" ? [changes.value.view.repo, changes.value.view.branchLine].filter(Boolean).join("  ") : null)}
+      {header(
+        changes.state === "ready" ? changes.value.view.title : (labels?.title ?? "Changes"),
+        onBack,
+        "Back",
+        changes.state === "ready" ? [changes.value.view.repo, changes.value.view.branchLine].filter(Boolean).join("  ") : null,
+      )}
       {changes.state === "loading" ? (
         <View style={{ padding: 32, alignItems: "center", gap: 10 }} accessibilityLabel={labels?.loading ?? "Loading changes"}>
           <ActivityIndicator color={c.mutedForeground} />
-          <Text variant="footnote" color="muted">{labels?.loading ?? ""}</Text>
+          <Text variant="footnote" color="muted">
+            {labels?.loading ?? ""}
+          </Text>
         </View>
       ) : changes.state === "error" ? (
         <View style={{ padding: 28, alignItems: "center", gap: 10 }}>
-          <Text variant="headline" style={{ textAlign: "center" }}>{labels?.unavailable ?? "Changes are not available."}</Text>
-          <Text variant="subhead" color="muted" style={{ textAlign: "center" }}>{changes.message}</Text>
-          <Pressable onPress={load} accessibilityRole="button" style={{ backgroundColor: c.primary, borderRadius: 10, paddingHorizontal: 16, paddingVertical: 9 }}><Text weight="600" style={{ color: c.primaryForeground }}>{labels?.retry ?? "Try again"}</Text></Pressable>
+          <Text variant="headline" style={{ textAlign: "center" }}>
+            {labels?.unavailable ?? "Changes are not available."}
+          </Text>
+          <Text variant="subhead" color="muted" style={{ textAlign: "center" }}>
+            {changes.message}
+          </Text>
+          <Pressable
+            onPress={load}
+            accessibilityRole="button"
+            style={{ backgroundColor: c.primary, borderRadius: 10, paddingHorizontal: 16, paddingVertical: 9 }}
+          >
+            <Text weight="600" style={{ color: c.primaryForeground }}>
+              {labels?.retry ?? "Try again"}
+            </Text>
+          </Pressable>
         </View>
       ) : (
         <ChangeList view={changes.value.view} onOpen={setFile} bottom={insets.bottom} />
@@ -93,20 +150,41 @@ function Squares({ bar }: { bar: ("add" | "del" | "none")[] }) {
   const { c } = useTheme();
   return (
     <View style={{ flexDirection: "row", gap: 2 }} accessible={false}>
-      {bar.map((s, i) => <View key={i} style={{ width: 8, height: 8, borderRadius: 1.5, backgroundColor: s === "add" ? c.diffAdd : s === "del" ? c.diffDel : c.border }} />)}
+      {bar.map((s, i) => (
+        <View key={i} style={{ width: 8, height: 8, borderRadius: 1.5, backgroundColor: s === "add" ? c.diffAdd : s === "del" ? c.diffDel : c.border }} />
+      ))}
     </View>
   );
 }
 
 function ChangeList({ view, onOpen, bottom }: { view: ChangesView; onOpen(path: string): void; bottom: number }) {
   const { c, mono } = useTheme();
-  if (view.empty) return <View style={{ padding: 32, alignItems: "center" }}><Text color="muted">{view.empty}</Text></View>;
+  if (view.empty)
+    return (
+      <View style={{ padding: 32, alignItems: "center" }}>
+        <Text color="muted">{view.empty}</Text>
+      </View>
+    );
   return (
     <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: bottom + 24 }}>
-      <View style={{ flexDirection: "row", gap: 10, alignItems: "baseline", paddingVertical: 8 }} accessible accessibilityLabel={`${view.filesTotal}, ${view.additions} added, ${view.deletions} removed`}>
-        <Text variant="subhead" weight="600">{view.filesTotal}</Text>
-        {view.additions ? <Text variant="subhead" weight="600" style={{ color: c.diffAdd, fontFamily: mono }}>{view.additions}</Text> : null}
-        {view.deletions ? <Text variant="subhead" weight="600" style={{ color: c.diffDel, fontFamily: mono }}>{view.deletions}</Text> : null}
+      <View
+        style={{ flexDirection: "row", gap: 10, alignItems: "baseline", paddingVertical: 8 }}
+        accessible
+        accessibilityLabel={`${view.filesTotal}, ${view.additions} added, ${view.deletions} removed`}
+      >
+        <Text variant="subhead" weight="600">
+          {view.filesTotal}
+        </Text>
+        {view.additions ? (
+          <Text variant="subhead" weight="600" style={{ color: c.diffAdd, fontFamily: mono }}>
+            {view.additions}
+          </Text>
+        ) : null}
+        {view.deletions ? (
+          <Text variant="subhead" weight="600" style={{ color: c.diffDel, fontFamily: mono }}>
+            {view.deletions}
+          </Text>
+        ) : null}
       </View>
       <View style={{ borderRadius: 12, backgroundColor: c.card, borderWidth: 0.5, borderColor: c.border, overflow: "hidden" }}>
         {view.files.map((f, i) => (
@@ -116,28 +194,70 @@ function ChangeList({ view, onOpen, bottom }: { view: ChangesView; onOpen(path: 
             accessibilityRole="button"
             accessibilityLabel={`${f.dir}${f.name}, ${f.statusLabel}, ${f.additions} ${f.deletions}`.replace(/\s+/g, " ").trim()}
             testID={`diff-file-${f.name}`}
-            style={({ pressed }) => ({ paddingHorizontal: 12, paddingVertical: 10, flexDirection: "row", alignItems: "center", gap: 10, borderTopWidth: i ? 0.5 : 0, borderTopColor: c.border, backgroundColor: pressed ? c.accent : f.status === "added" ? c.diffAddSurface : f.status === "deleted" ? c.diffDelSurface : "transparent" })}
+            style={({ pressed }) => ({
+              paddingHorizontal: 12,
+              paddingVertical: 10,
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 10,
+              borderTopWidth: i ? 0.5 : 0,
+              borderTopColor: c.border,
+              backgroundColor: pressed ? c.accent : f.status === "added" ? c.diffAddSurface : f.status === "deleted" ? c.diffDelSurface : "transparent",
+            })}
           >
             <View style={{ flex: 1 }}>
-              <Text variant="subhead" numberOfLines={1}><Text variant="subhead" color="muted">{f.dir}</Text><Text variant="subhead" weight="600">{f.name}</Text></Text>
-              <Text variant="caption" color="muted">{[f.statusLabel, f.note].filter(Boolean).join(", ")}</Text>
+              <Text variant="subhead" numberOfLines={1}>
+                <Text variant="subhead" color="muted">
+                  {f.dir}
+                </Text>
+                <Text variant="subhead" weight="600">
+                  {f.name}
+                </Text>
+              </Text>
+              <Text variant="caption" color="muted">
+                {[f.statusLabel, f.note].filter(Boolean).join(", ")}
+              </Text>
             </View>
-            {f.additions ? <Text variant="caption" weight="600" style={{ color: c.diffAdd, fontFamily: mono }}>{f.additions}</Text> : null}
-            {f.deletions ? <Text variant="caption" weight="600" style={{ color: c.diffDel, fontFamily: mono }}>{f.deletions}</Text> : null}
+            {f.additions ? (
+              <Text variant="caption" weight="600" style={{ color: c.diffAdd, fontFamily: mono }}>
+                {f.additions}
+              </Text>
+            ) : null}
+            {f.deletions ? (
+              <Text variant="caption" weight="600" style={{ color: c.diffDel, fontFamily: mono }}>
+                {f.deletions}
+              </Text>
+            ) : null}
             <Squares bar={f.bar} />
             <Icon name="forward" size={12} color={c.mutedForeground} />
           </Pressable>
         ))}
       </View>
-      {view.truncatedNote ? <Text variant="caption" color="muted" style={{ marginTop: 6 }}>{view.truncatedNote}</Text> : null}
-      {view.verifiedNote ? <Text variant="caption" color="muted" style={{ marginTop: 6 }} testID="verified-note">{view.verifiedNote}</Text> : null}
+      {view.truncatedNote ? (
+        <Text variant="caption" color="muted" style={{ marginTop: 6 }}>
+          {view.truncatedNote}
+        </Text>
+      ) : null}
+      {view.verifiedNote ? (
+        <Text variant="caption" color="muted" style={{ marginTop: 6 }} testID="verified-note">
+          {view.verifiedNote}
+        </Text>
+      ) : null}
     </ScrollView>
   );
 }
 
 type Tab = "diff" | "preview";
 
-function FileView({ spaceId, path, meta }: { spaceId: string; path: string; meta: { binary: boolean; preview: "image" | "text" | "none"; mime: string | null; size: number | null } | null }) {
+function FileView({
+  spaceId,
+  path,
+  meta,
+}: {
+  spaceId: string;
+  path: string;
+  meta: { binary: boolean; preview: "image" | "text" | "none"; mime: string | null; size: number | null } | null;
+}) {
   const { c } = useTheme();
   const insets = useSafeAreaInsets();
   const backend = useBackend();
@@ -173,7 +293,13 @@ function FileView({ spaceId, path, meta }: { spaceId: string; path: string; meta
     (async () => {
       try {
         const data = await backend.filePreview!(spaceId, path, { rev: "head" });
-        const view = diffPreview({ path, mime: data.mime ?? meta?.mime ?? null, size: data.size ?? meta?.size ?? null, binary: meta?.binary, truncated: data.truncated });
+        const view = diffPreview({
+          path,
+          mime: data.mime ?? meta?.mime ?? null,
+          size: data.size ?? meta?.size ?? null,
+          binary: meta?.binary,
+          truncated: data.truncated,
+        });
         if (!view) throw new Error("The app core is not linked in this build.");
         if (alive) setPreview({ state: "ready", value: { data, view } });
       } catch (e) {
@@ -189,7 +315,17 @@ function FileView({ spaceId, path, meta }: { spaceId: string; path: string; meta
   return (
     <View style={{ flex: 1 }}>
       <View style={{ flexDirection: "row", gap: 8, paddingHorizontal: 16, paddingBottom: 8 }}>
-        {tabs.length > 1 ? tabs.map((t) => <Chip key={t} label={t === "diff" ? (labels?.diffTab ?? "Diff") : (labels?.previewTab ?? "Preview")} on={tab === t} onPress={() => setTab(t)} testID={`tab-${t}`} />) : null}
+        {tabs.length > 1
+          ? tabs.map((t) => (
+              <Chip
+                key={t}
+                label={t === "diff" ? (labels?.diffTab ?? "Diff") : (labels?.previewTab ?? "Preview")}
+                on={tab === t}
+                onPress={() => setTab(t)}
+                testID={`tab-${t}`}
+              />
+            ))
+          : null}
         {tab === "diff" && diff.state === "ready" && diff.value.hasWords ? (
           <>
             <View style={{ flex: 1 }} />
@@ -206,8 +342,16 @@ function FileView({ spaceId, path, meta }: { spaceId: string; path: string; meta
 function Chip({ label, on, onPress, testID }: { label: string; on: boolean; onPress(): void; testID?: string }) {
   const { c } = useTheme();
   return (
-    <Pressable onPress={onPress} accessibilityRole="button" accessibilityState={{ selected: on }} testID={testID} style={{ height: 32, borderRadius: 16, paddingHorizontal: 14, alignItems: "center", justifyContent: "center", backgroundColor: on ? c.primary : c.tile }}>
-      <Text variant="footnote" weight="600" style={{ color: on ? c.primaryForeground : c.foreground }}>{label}</Text>
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityState={{ selected: on }}
+      testID={testID}
+      style={{ height: 32, borderRadius: 16, paddingHorizontal: 14, alignItems: "center", justifyContent: "center", backgroundColor: on ? c.primary : c.tile }}
+    >
+      <Text variant="footnote" weight="600" style={{ color: on ? c.primaryForeground : c.foreground }}>
+        {label}
+      </Text>
     </Pressable>
   );
 }
@@ -223,7 +367,13 @@ function Busy() {
 }
 
 function Failed({ message }: { message: string }) {
-  return <View style={{ padding: 28 }}><Text color="muted" style={{ textAlign: "center" }}>{message}</Text></View>;
+  return (
+    <View style={{ padding: 28 }}>
+      <Text color="muted" style={{ textAlign: "center" }}>
+        {message}
+      </Text>
+    </View>
+  );
 }
 
 function DiffBody({ load, words, bottom }: { load: Load<FileDiffView>; words: boolean; bottom: number }) {
@@ -233,17 +383,37 @@ function DiffBody({ load, words, bottom }: { load: Load<FileDiffView>; words: bo
   const v = load.value;
   return (
     <ScrollView contentContainerStyle={{ paddingBottom: bottom + 24 }}>
-      <View style={{ flexDirection: "row", gap: 10, paddingHorizontal: 16, paddingBottom: 6 }} accessible accessibilityLabel={`${v.additions} added, ${v.deletions} removed`}>
-        {v.additions ? <Text variant="footnote" weight="600" style={{ color: c.diffAdd, fontFamily: mono }}>{v.additions}</Text> : null}
-        {v.deletions ? <Text variant="footnote" weight="600" style={{ color: c.diffDel, fontFamily: mono }}>{v.deletions}</Text> : null}
+      <View
+        style={{ flexDirection: "row", gap: 10, paddingHorizontal: 16, paddingBottom: 6 }}
+        accessible
+        accessibilityLabel={`${v.additions} added, ${v.deletions} removed`}
+      >
+        {v.additions ? (
+          <Text variant="footnote" weight="600" style={{ color: c.diffAdd, fontFamily: mono }}>
+            {v.additions}
+          </Text>
+        ) : null}
+        {v.deletions ? (
+          <Text variant="footnote" weight="600" style={{ color: c.diffDel, fontFamily: mono }}>
+            {v.deletions}
+          </Text>
+        ) : null}
       </View>
-      {v.notes.map((n) => <Text key={n} variant="footnote" color="muted" style={{ paddingHorizontal: 16, paddingVertical: 6 }}>{n}</Text>)}
+      {v.notes.map((n) => (
+        <Text key={n} variant="footnote" color="muted" style={{ paddingHorizontal: 16, paddingVertical: 6 }}>
+          {n}
+        </Text>
+      ))}
       {v.hunks.map((h, i) => (
         <View key={i} style={{ marginBottom: 10 }}>
           <View style={{ backgroundColor: c.tile, paddingHorizontal: 16, paddingVertical: 4 }}>
-            <Text variant="caption" color="muted" style={{ fontFamily: mono }} numberOfLines={1}>{h.header}</Text>
+            <Text variant="caption" color="muted" style={{ fontFamily: mono }} numberOfLines={1}>
+              {h.header}
+            </Text>
           </View>
-          {h.lines.map((l, j) => <Line key={j} line={l} words={words} />)}
+          {h.lines.map((l, j) => (
+            <Line key={j} line={l} words={words} />
+          ))}
         </View>
       ))}
     </ScrollView>
@@ -256,14 +426,34 @@ function Line({ line, words }: { line: DiffLine; words: boolean }) {
   const mark = line.kind === "add" ? "+" : line.kind === "del" ? "-" : " ";
   const tone = line.kind === "add" ? c.diffAdd : line.kind === "del" ? c.diffDel : c.mutedForeground;
   const segs = useMemo(() => (words && line.segments.length ? line.segments : null), [words, line.segments]);
-  const strong = line.kind === "add" ? (c.diffAdd + "40") : (c.diffDel + "40");
+  const strong = line.kind === "add" ? c.diffAdd + "40" : c.diffDel + "40";
   return (
-    <View style={{ flexDirection: "row", backgroundColor: bg, paddingRight: 12 }} accessible accessibilityLabel={`${line.kind === "add" ? "Added" : line.kind === "del" ? "Removed" : "Unchanged"}, line ${line.newNo ?? line.oldNo}: ${line.text}`}>
-      <Text variant="caption" color="muted" style={{ width: 34, textAlign: "right", fontFamily: mono, paddingRight: 4 }}>{line.oldNo ?? ""}</Text>
-      <Text variant="caption" color="muted" style={{ width: 34, textAlign: "right", fontFamily: mono, paddingRight: 6 }}>{line.newNo ?? ""}</Text>
-      <Text variant="caption" weight="700" style={{ width: 12, color: tone, fontFamily: mono }}>{mark}</Text>
+    <View
+      style={{ flexDirection: "row", backgroundColor: bg, paddingRight: 12 }}
+      accessible
+      accessibilityLabel={`${line.kind === "add" ? "Added" : line.kind === "del" ? "Removed" : "Unchanged"}, line ${line.newNo ?? line.oldNo}: ${line.text}`}
+    >
+      <Text variant="caption" color="muted" style={{ width: 34, textAlign: "right", fontFamily: mono, paddingRight: 4 }}>
+        {line.oldNo ?? ""}
+      </Text>
+      <Text variant="caption" color="muted" style={{ width: 34, textAlign: "right", fontFamily: mono, paddingRight: 6 }}>
+        {line.newNo ?? ""}
+      </Text>
+      <Text variant="caption" weight="700" style={{ width: 12, color: tone, fontFamily: mono }}>
+        {mark}
+      </Text>
       <Text variant="caption" style={{ flex: 1, fontFamily: mono }}>
-        {segs ? segs.map((s, k) => (s.changed ? <Text key={k} variant="caption" weight="700" testID="changed-segment" style={{ fontFamily: mono, backgroundColor: strong }}>{s.text}</Text> : s.text)) : line.text}
+        {segs
+          ? segs.map((s, k) =>
+              s.changed ? (
+                <Text key={k} variant="caption" weight="700" testID="changed-segment" style={{ fontFamily: mono, backgroundColor: strong }}>
+                  {s.text}
+                </Text>
+              ) : (
+                s.text
+              ),
+            )
+          : line.text}
       </Text>
     </View>
   );
@@ -278,15 +468,31 @@ function PreviewBody({ load, bottom }: { load: Load<{ data: FilePreviewData; vie
   if (view.kind === "none") return <Failed message={view.note ?? ""} />;
   return (
     <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: bottom + 24, gap: 10 }}>
-      {view.sizeLabel ? <Text variant="caption" color="muted">{view.name}, {view.sizeLabel}</Text> : null}
+      {view.sizeLabel ? (
+        <Text variant="caption" color="muted">
+          {view.name}, {view.sizeLabel}
+        </Text>
+      ) : null}
       {view.kind === "image" && data.encoding === "base64" ? (
-        <Image source={{ uri: `data:${data.mime ?? "image/png"};base64,${data.content}` }} contentFit="contain" accessibilityLabel={`${labels?.imageAlt ?? "Preview"}: ${view.name}`} style={{ width: "100%", aspectRatio: 1.6, borderRadius: 10, backgroundColor: c.tile }} testID="preview-image" />
+        <Image
+          source={{ uri: `data:${data.mime ?? "image/png"};base64,${data.content}` }}
+          contentFit="contain"
+          accessibilityLabel={`${labels?.imageAlt ?? "Preview"}: ${view.name}`}
+          style={{ width: "100%", aspectRatio: 1.6, borderRadius: 10, backgroundColor: c.tile }}
+          testID="preview-image"
+        />
       ) : (
         <View style={{ backgroundColor: c.card, borderRadius: 10, padding: 12, borderWidth: 0.5, borderColor: c.border }}>
-          <Text variant="mono" selectable style={{ fontFamily: mono }} testID="preview-text">{data.content}</Text>
+          <Text variant="mono" selectable style={{ fontFamily: mono }} testID="preview-text">
+            {data.content}
+          </Text>
         </View>
       )}
-      {view.note ? <Text variant="caption" color="muted">{view.note}</Text> : null}
+      {view.note ? (
+        <Text variant="caption" color="muted">
+          {view.note}
+        </Text>
+      ) : null}
     </ScrollView>
   );
 }

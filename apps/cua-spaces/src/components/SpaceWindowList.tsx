@@ -164,7 +164,6 @@ export function SpaceWindowList({
     };
   }, [iconRequests, teleport, spaceId]);
 
-
   const icon = (row: StreamRow) => {
     if (row.icon.kind === "os") return <OsIconMark id={row.icon.id} size={16} className="ssr-os" />;
     const url = icons.get(iconKey(row.icon.appName, row.icon.appId));
@@ -183,6 +182,12 @@ export function SpaceWindowList({
             <span className="ssr-label" title={row.help}>
               {row.label}
             </span>
+            {row.origin ? (
+              <span className="ssr-origin" title={row.origin.name} data-testid="ssr-origin">
+                <OsIconMark id={row.origin.osIcon} size={12} className="ssr-os" />
+                <span className="ssr-origin-name">{row.origin.name}</span>
+              </span>
+            ) : null}
             {row.resolution ? <span className="ssr-resolution">{row.resolution}</span> : null}
             {row.actions.map((action) => (
               <button

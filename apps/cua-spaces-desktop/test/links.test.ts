@@ -13,7 +13,17 @@ import { LiveSpacesBackend } from "../src/model/backend";
 
 const TEAM = "team" as ShareAccess;
 const PUBLIC = "public" as ShareAccess;
-const SHARE = { id: "share-0123456789ab", url: "https://s1.m.relay.example/", name: undefined, access: TEAM, kind: "port", target: "port 3000", owner: "ada@example.com", createdAtUnix: 1000n, expiresAtUnix: undefined };
+const SHARE = {
+  id: "share-0123456789ab",
+  url: "https://s1.m.relay.example/",
+  name: undefined,
+  access: TEAM,
+  kind: "port",
+  target: "port 3000",
+  owner: "ada@example.com",
+  createdAtUnix: 1000n,
+  expiresAtUnix: undefined,
+};
 
 function backend(cua: Record<string, unknown>) {
   return new LiveSpacesBackend({} as never, cua as never);
@@ -87,7 +97,10 @@ describe("links.*", () => {
       waitingText: undefined,
     }));
     const ctx = { model: { backend: backend({ shareTcp }) } } as unknown as BridgeContext;
-    const r = await linksMethods(ctx)["links.create"]!({ target: "space:mc:25565", tcp: true, service: "minecraft", route: "host", allow: ["203.0.113.0/24"], checkHost: true, consent: true }, {});
+    const r = await linksMethods(ctx)["links.create"]!(
+      { target: "space:mc:25565", tcp: true, service: "minecraft", route: "host", allow: ["203.0.113.0/24"], checkHost: true, consent: true },
+      {},
+    );
     expect(shareTcp).toHaveBeenCalledWith("space:mc:25565", "minecraft", undefined, undefined, "host", ["203.0.113.0/24"], true, true);
     expect(r).toMatchObject({ route: "host", routeLine: "Through your AWS account", allow: ["203.0.113.0/24"], waiting: null, waitingText: null });
     expect(validate(OP_SHAPES["links.create"], r, SHAPE_DEFS)).toEqual([]);

@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.53.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.52.13...cua-driver-rs-v0.53.0) (2026-11-17)
+
+
+### Features
+
+* **cua-driver:** background input for GTK 3 apps on macOS through the AppKit activation event ([#7950](https://github.com/trycua/cua/issues/7950)) ([3676074](https://github.com/trycua/cua/commit/36760748305fef4ea25cf4b89df811d13a685cda))
+
+
+### Bug Fixes
+
+* **cua-driver:** keep the agent pointer and badge visible and require them in the recorded video ([#7569](https://github.com/trycua/cua/issues/7569)) ([e2c2cc8](https://github.com/trycua/cua/commit/e2c2cc81f7ce8900d30ccaec1c9333cfd5c8d8e9))
+
 ## [0.52.13](https://github.com/trycua/cua/compare/cua-driver-rs-v0.52.12...cua-driver-rs-v0.52.13) (2026-11-17)
 
 

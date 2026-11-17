@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.52.11](https://github.com/trycua/cua/compare/cua-driver-rs-v0.52.10...cua-driver-rs-v0.52.11) (2026-11-17)
+
+
+### Bug Fixes
+
+* **cua-driver:** attach existing Chrome profiles after one consent, honestly ([#7999](https://github.com/trycua/cua/issues/7999)) ([4f023d7](https://github.com/trycua/cua/commit/4f023d72b4cb9acad4f1ad5fe9d853f6ae33871d))
+
 ## [0.52.10](https://github.com/trycua/cua/compare/cua-driver-rs-v0.52.9...cua-driver-rs-v0.52.10) (2026-11-17)
 
 

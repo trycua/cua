@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.52.12](https://github.com/trycua/cua/compare/cua-driver-rs-v0.52.11...cua-driver-rs-v0.52.12) (2026-11-17)
+
+
+### Bug Fixes
+
+* **cua-driver:** bind driver and testkit test sockets under a short /tmp dir ([#7064](https://github.com/trycua/cua/issues/7064)) ([1e37800](https://github.com/trycua/cua/commit/1e378009d2ca26dc1ac8bd1dff11909ffc3ccac4))
+* **cua-driver:** run one macOS AppKit E2E cell alone from appkit-cells.tsv ([#7229](https://github.com/trycua/cua/issues/7229)) ([26cfef1](https://github.com/trycua/cua/commit/26cfef1c8b31eedf60da7e29e4b815da20480e64))
+
 ## [0.52.11](https://github.com/trycua/cua/compare/cua-driver-rs-v0.52.10...cua-driver-rs-v0.52.11) (2026-11-17)
 
 

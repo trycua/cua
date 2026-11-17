@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.38.2](https://github.com/trycua/cua/compare/cua-spaces-v0.38.1...cua-spaces-v0.38.2) (2026-11-17)
+
+
+### Bug Fixes
+
+* **spaces:** a create's Making line names its step before its bytes ([#6975](https://github.com/trycua/cua/issues/6975)) ([bff492d](https://github.com/trycua/cua/commit/bff492d0b8508462477229ec5ee29336382ea064))
+
+## [0.38.1](https://github.com/trycua/cua/compare/cua-spaces-v0.38.0...cua-spaces-v0.38.1) (2026-11-17)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.28.0 in Cua Spaces ([#7994](https://github.com/trycua/cua/issues/7994)) ([e33d480](https://github.com/trycua/cua/commit/e33d480699974f6dc029b00077165f324c237bfe))
+* **spaces-macos:** the app comes to the front when the browser confirms the sign-in ([#6974](https://github.com/trycua/cua/issues/6974)) ([d67ddfd](https://github.com/trycua/cua/commit/d67ddfd6ffea9bb62155bff689460940186d97b3))
+* **spaces-macos:** the Local Network step waits on macOS's prompt when it is already open ([#6972](https://github.com/trycua/cua/issues/6972)) ([d2ceafb](https://github.com/trycua/cua/commit/d2ceafb1caa2e0cc2f2c6dc940c5612e7e6d5037))
+
 ## [0.38.0](https://github.com/trycua/cua/compare/cua-spaces-v0.37.2...cua-spaces-v0.38.0) (2026-11-16)
 
 

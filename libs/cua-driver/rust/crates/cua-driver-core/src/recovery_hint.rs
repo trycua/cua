@@ -954,6 +954,18 @@ fn background_unavailable(c: &Ctx) -> RecoveryHint {
 }
 
 fn browser_consent_required(c: &Ctx) -> RecoveryHint {
+    let reason = c
+        .refusal_detail()
+        .and_then(|detail| detail.get("reason"))
+        .and_then(Value::as_str);
+    if c.tool == "browser_prepare" && reason == Some("browser_consent_unanswered") {
+        return RecoveryHint::new(
+            "Nobody answered the browser's \"Allow remote debugging?\" prompt in time, so the driver \
+             closed it. Ask the user to click Allow, then retry browser_prepare once. Meanwhile read \
+             the page with get_window_state.",
+        )
+        .call(c.attach_browser());
+    }
     if c.tool == "browser_prepare" {
         return RecoveryHint::new(
             "Attaching to this browser needs authorization from the user or the host. Retrying will not \

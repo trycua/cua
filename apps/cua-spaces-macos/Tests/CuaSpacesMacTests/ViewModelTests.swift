@@ -468,6 +468,52 @@ struct ViewModelTests {
         #expect(steps(telemetry) == ["signed_in"])
     }
 
+    /// Regression (first run): the browser stayed in front after it confirmed,
+    /// covering the app's next step. The app comes forward, once.
+    @Test func aConfirmedSignInBringsTheAppForward() async {
+        let model = makeModel(account: FixtureAccount())
+        var forward = 0
+        model.comeForward = { forward += 1 }
+        await model.beginSignIn()
+        #expect(model.identity == "you@example.com")
+        #expect(forward == 1)
+
+        // A sign-in Cancel superseded still signs in when its browser tab
+        // confirms later, but the app stays where the person left it.
+        let late = makeModel(account: LateAccount())
+        var lateForward = 0
+        late.comeForward = { lateForward += 1 }
+        let run = Task { await late.beginSignIn() }
+        try? await waitUntil { if case .waiting = late.signIn { true } else { false } }
+        late.cancelSignIn()
+        await run.value
+        #expect(late.identity == "you@example.com")
+        #expect(lateForward == 0)
+
+        // The same when a retry replaced it: the first tab confirms while
+        // the second sign-in waits.
+        let retried = makeModel(account: LateAccount())
+        var retriedForward = 0
+        retried.comeForward = { retriedForward += 1 }
+        let first = Task { await retried.beginSignIn() }
+        try? await waitUntil { if case .waiting = retried.signIn { true } else { false } }
+        try? await Task.sleep(for: .milliseconds(100))
+        let second = Task { await retried.beginSignIn() }
+        await first.value
+        #expect(retriedForward == 0, "the replaced sign-in confirmed while the retry waited")
+        await second.value
+        #expect(retried.identity == "you@example.com")
+
+        // The same after the timeout gave up on it.
+        let timedOut = makeModel(account: LateAccount())
+        var timedOutForward = 0
+        timedOut.comeForward = { timedOutForward += 1 }
+        timedOut.signInTimeout = .milliseconds(50)
+        await timedOut.beginSignIn()
+        #expect(timedOut.identity == "you@example.com")
+        #expect(timedOutForward == 0)
+    }
+
     /// "Get a code instead": a sign-in that never came back from the browser
     /// restarts with a code, and the account is asked for exactly that.
     @Test func aSignInThatNeverComesBackCanRestartWithACode() async throws {
@@ -1604,6 +1650,18 @@ final class StuckAccount: AccountRunning, @unchecked Sendable {
         SignInAttempt(userCode: "ABCD-EFGH", url: URL(string: "https://cua.ai/device"), opened: opened) {
             try await Task.sleep(for: .seconds(3600))
             return nil
+        }
+    }
+    func signOut() async throws {}
+}
+
+/// An account whose browser confirms a moment after the sign-in starts.
+final class LateAccount: AccountRunning, @unchecked Sendable {
+    func identity() -> String? { nil }
+    func beginSignIn() async throws -> SignInAttempt {
+        SignInAttempt(userCode: nil, url: URL(string: "https://cua.ai/device"), opened: true) {
+            try await Task.sleep(for: .milliseconds(300))
+            return "you@example.com"
         }
     }
     func signOut() async throws {}

@@ -87,6 +87,8 @@ const ENDPOINT_REPROOF_TIMEOUT: std::time::Duration = std::time::Duration::from_
 /// Bound for one existing-profile reconnect, from waiting on another caller's
 /// reconnect through the last redial attempt.
 const EXISTING_PROFILE_RECONNECT_BOUND: std::time::Duration = std::time::Duration::from_secs(32);
+/// Bound for closing the browser prompt a timed-out reconnect may have left.
+const ABANDONED_CONSENT_DISMISS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 pub struct BrowserEngine {
     pub(crate) platform: Arc<dyn BrowserPlatform>,
@@ -986,14 +988,17 @@ impl BrowserEngine {
         {
             Ok(result) => result,
             Err(_) => {
-                // A redial cut short here may have raised a browser prompt
-                // that approving would no longer attach to anything.
-                let _ = self
-                    .platform
-                    .dismiss_abandoned_existing_profile_consent(pid, window_id)
-                    .await;
                 self.revoke_existing_profile_grant(session, transport_session, pid)
                     .await;
+                // A redial cut short here may have raised a browser prompt
+                // that approving would no longer attach to anything. Closing
+                // it is best effort and must not outlive the refusal.
+                let _ = tokio::time::timeout(
+                    ABANDONED_CONSENT_DISMISS_TIMEOUT,
+                    self.platform
+                        .dismiss_abandoned_existing_profile_consent(pid, window_id),
+                )
+                .await;
                 Err(reconnect_exhausted(Some("timed_out")))
             }
         }

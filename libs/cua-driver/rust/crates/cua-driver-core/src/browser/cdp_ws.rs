@@ -275,6 +275,15 @@ async fn read_loop(mut read: SplitStream<WsStream>, demux: Arc<Demux>) {
 }
 
 /// A single browser-endpoint connection.
+/// Closes the socket when dropped; forgotten once a frame is fully sent.
+struct CloseUnlessSent<'a>(&'a Demux);
+
+impl Drop for CloseUnlessSent<'_> {
+    fn drop(&mut self) {
+        self.0.close();
+    }
+}
+
 pub struct CdpConnection {
     writer: Mutex<SplitSink<WsStream, Message>>,
     demux: Arc<Demux>,
@@ -468,25 +477,32 @@ impl CdpConnection {
         // stalls a send while it holds the writer, which would otherwise keep
         // every later call on this socket waiting with no deadline at all.
         let deadline = tokio::time::Instant::now() + timeout;
-        let sent = tokio::time::timeout_at(deadline, async {
-            let mut writer = self.writer.lock().await;
-            writer.send(Message::Text(msg.to_string())).await
-        })
-        .await;
-        match sent {
-            Ok(Ok(())) => {}
+        let Ok(mut writer) = tokio::time::timeout_at(deadline, self.writer.lock()).await else {
+            self.demux.pending.lock().unwrap().remove(&id);
+            anyhow::bail!("CDP {method} timed out after {timeout:?} waiting to send");
+        };
+        if self.is_closed() {
+            self.demux.pending.lock().unwrap().remove(&id);
+            anyhow::bail!("CDP socket closed before {method}");
+        }
+        // Until the frame is fully written, a cancelled or failed send leaves
+        // a partial frame on the wire. The guard closes the socket before the
+        // writer is released, so no later call frames another command on it.
+        let in_flight = CloseUnlessSent(&self.demux);
+        match tokio::time::timeout_at(deadline, writer.send(Message::Text(msg.to_string()))).await {
+            Ok(Ok(())) => std::mem::forget(in_flight),
             Ok(Err(e)) => {
+                drop(in_flight);
                 self.demux.pending.lock().unwrap().remove(&id);
                 anyhow::bail!("CDP send failed during {method}: {e}");
             }
             Err(_) => {
+                drop(in_flight);
                 self.demux.pending.lock().unwrap().remove(&id);
-                // The cancelled send may have written part of a frame, so
-                // nothing more can be framed on this socket.
-                self.demux.close();
                 anyhow::bail!("CDP {method} timed out after {timeout:?} while sending");
             }
         }
+        drop(writer);
 
         match tokio::time::timeout_at(deadline, rx).await {
             Err(_) => {

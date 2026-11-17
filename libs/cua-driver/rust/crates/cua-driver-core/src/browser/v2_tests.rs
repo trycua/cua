@@ -1044,6 +1044,7 @@ struct FixturePlatform {
 struct FixtureStalls {
     reproofs: AtomicUsize,
     fingerprints: AtomicUsize,
+    dismissals: AtomicUsize,
 }
 
 impl Default for FixtureStalls {
@@ -1051,6 +1052,7 @@ impl Default for FixtureStalls {
         Self {
             reproofs: AtomicUsize::new(usize::MAX),
             fingerprints: AtomicUsize::new(usize::MAX),
+            dismissals: AtomicUsize::new(usize::MAX),
         }
     }
 }
@@ -1279,6 +1281,15 @@ impl BrowserPlatform for FixturePlatform {
             super::refusal::BrowserRefusalCode::BrowserRouteUnavailable,
             "fixture consent prompt is unavailable",
         ))
+    }
+
+    async fn dismiss_abandoned_existing_profile_consent(
+        &self,
+        _pid: i64,
+        _window_id: u64,
+    ) -> Result<bool, BrowserRefusal> {
+        answer_or_stall(&self.stalls.dismissals).await;
+        Ok(false)
     }
 
     async fn process_fingerprint(&self, pid: i64) -> Result<ProcessFingerprint, BrowserRefusal> {
@@ -1684,8 +1695,8 @@ async fn existing_profile_reconnect_refuses_within_its_bound_when_a_process_chec
     let (f, _) = protected_existing_profile_fixture_with(stalls.clone()).await;
     prepare_existing_profile(&f.engine, TRANSPORT).await;
 
-    // The approved socket is gone, so the bind must reconnect, and the
-    // reconnect's own process check never answers.
+    // The approved socket is gone, so the bind must reconnect, and neither
+    // the reconnect's own process check nor closing its prompt ever answers.
     let grant = f
         .engine
         .existing_profile_grant(SESSION, Some(TRANSPORT), 1)
@@ -1701,6 +1712,7 @@ async fn existing_profile_reconnect_refuses_within_its_bound_when_a_process_chec
         )
         .await;
     stalls.fingerprints.store(1, Ordering::SeqCst);
+    stalls.dismissals.store(0, Ordering::SeqCst);
     tokio::time::pause();
     let state = tokio::time::timeout(
         std::time::Duration::from_secs(60),

@@ -600,8 +600,8 @@ fn cursor_check(env: &HostEnv) -> Check {
         .map(PathBuf::from)
         .unwrap_or_else(|| env.home.join(".config"));
     let files = [
-        config.join("cursor/auth.json"),
-        env.home.join(".cursor/auth.json"),
+        config.join("cursor").join("auth.json"),
+        env.home.join(".cursor").join("auth.json"),
     ];
     let state = if files
         .iter()
@@ -626,7 +626,7 @@ fn openclaw_check(env: &HostEnv) -> Check {
         .into_iter()
         .flatten()
         .flatten()
-        .map(|e| e.path().join("agent/auth-profiles.json"))
+        .map(|e| e.path().join("agent").join("auth-profiles.json"))
         .filter_map(|p| read_json(&p))
         .any(|v| {
             v.get("profiles")

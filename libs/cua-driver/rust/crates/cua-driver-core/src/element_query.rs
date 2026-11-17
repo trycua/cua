@@ -268,6 +268,27 @@ mod tests {
     }
 
     #[test]
+    fn an_alternative_query_keeps_observations_matching_either() {
+        let mut structured = json!({});
+        publish_observations(
+            &mut structured,
+            vec![
+                text("AXStaticText", "Total 6"),
+                text("AXStaticText", "4+2"),
+                text("AXStaticText", "Error: none"),
+            ],
+            Some("total|ERROR"),
+        );
+        let values: Vec<&str> = structured["observations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["value"].as_str().unwrap())
+            .collect();
+        assert_eq!(values, vec!["Total 6", "Error: none"]);
+    }
+
+    #[test]
     fn observations_stop_at_the_cap_and_say_so() {
         let mut structured = json!({});
         let rows = (0..MAX_OBSERVATIONS + 3)

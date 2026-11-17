@@ -22,12 +22,14 @@ CRATES_ROOT = REPO_ROOT / "libs/cua-driver/rust/crates"
 TEST_PACKAGES = ("cua-driver", "cua-driver-e2e")
 ALLOWLIST = REPO_ROOT / "libs/cua-driver/tests/manual-e2e-allowlist.txt"
 
-# Canonical runners and the workflows that call them. The Windows Sandbox
-# runner is documented as non-canonical and cannot certify a test.
+# Canonical runners, the workflows that call them, and the manifests a runner
+# reads its test list from. The Windows Sandbox runner is documented as
+# non-canonical and cannot certify a test.
 RUNNER_GLOBS = (
     ".github/workflows/*.yml",
     "scripts/ci/**/*.sh",
     "scripts/ci/**/*.ps1",
+    "scripts/ci/**/*.tsv",
     "libs/cua-driver/tests/runners/macos-lume/*.sh",
     "libs/cua-driver/tests/runners/windows/*.ps1",
 )

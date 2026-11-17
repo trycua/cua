@@ -1040,6 +1040,12 @@ impl BrowserEngine {
                             // consent. Cancel it before grant revocation so no
                             // socket-pool resource can outlive this refusal.
                             drop(reconnect);
+                            // The browser keeps the prompt of the connection
+                            // just abandoned; approving it would attach nothing.
+                            let _ = self
+                                .platform
+                                .dismiss_abandoned_existing_profile_consent(pid, grant.window_id)
+                                .await;
                             if error.code == BrowserRefusalCode::BrowserConsentRevoked {
                                 self.revoke_existing_profile_grant(session, transport_session, pid)
                                     .await;

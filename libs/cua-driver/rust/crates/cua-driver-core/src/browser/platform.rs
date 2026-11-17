@@ -557,6 +557,20 @@ pub trait BrowserPlatform: Send + Sync {
         error
     }
 
+    /// Close the browser-owned connection prompt that a DevTools connection
+    /// the driver has abandoned left on screen. The browser keeps that prompt
+    /// after the connection closes, and answering it then attaches nothing, so
+    /// leaving it would only invite a person to approve a dead request. Must
+    /// use the same exact prompt matching as consent handling and only ever
+    /// choose the prompt's cancel action. Returns whether a prompt was closed.
+    async fn dismiss_abandoned_existing_profile_consent(
+        &self,
+        _pid: i64,
+        _window_id: u64,
+    ) -> Result<bool, BrowserRefusal> {
+        Ok(false)
+    }
+
     /// Handle one pending browser-owned connection prompt. Implementations
     /// must use exact native semantics and may perform at most one declared
     /// consent action for this request. Generic dialog automation is forbidden.

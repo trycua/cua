@@ -315,6 +315,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PermissionGuide.resumeAfterRelaunch()
         // The menu bar's low-disk warning: read now, then every 5 minutes.
         LowDiskMonitor.shared.start()
+        Task.detached(priority: .utility) { InstallerCleanup.ejectInstallers() }
     }
 
     /// The Dock icon (or opening the app again) with no window up: the main

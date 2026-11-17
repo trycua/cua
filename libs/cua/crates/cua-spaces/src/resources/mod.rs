@@ -251,6 +251,7 @@ fn de_known_size<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u64>, 
     Ok(v.and_then(|n| n.as_u64()).and_then(known_size))
 }
 
+#[cfg(feature = "spaces-stream")]
 impl From<crate::stream::Usage> for GuestUsage {
     fn from(u: crate::stream::Usage) -> Self {
         let disk_total = known_size(u.disk_total);

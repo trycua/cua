@@ -38,7 +38,6 @@ pub mod scroll;
 pub mod snapshot;
 pub mod windows_enum;
 pub use snapshot::Snapshots;
-pub use windows_enum::enumerate_top_level_windows;
 
 /// Default cap; callers can override via [`walk_tree_bounded`].
 pub const DEFAULT_MAX_DEPTH: usize = 25;

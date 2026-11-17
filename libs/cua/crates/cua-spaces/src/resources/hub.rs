@@ -400,13 +400,12 @@ impl Spaces {
             }
             let ask = async {
                 let space = self.space(&info.id).await.ok()?;
-                space.usage().await.ok()
+                guest_usage(&space).await
             };
             tokio::time::timeout(METRICS_TIMEOUT, ask)
                 .await
                 .ok()
                 .flatten()
-                .map(GuestUsage::from)
         }))
         .await;
         let mut bases = Vec::with_capacity(infos.len());
@@ -625,6 +624,19 @@ pub(crate) fn totals(c: &mut ComputerResources, spaces: &[SpaceResources]) {
 
 /// How long the container engine gets to say what its containers hold.
 const ENGINE_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// What a running guest reports about its own processor, memory and storage
+/// (`SystemService.Metrics`, which needs the stream feature); a build without
+/// it knows nothing of the guest's own limits.
+#[cfg(feature = "spaces-stream")]
+async fn guest_usage(space: &crate::Space) -> Option<GuestUsage> {
+    space.usage().await.ok().map(GuestUsage::from)
+}
+
+#[cfg(not(feature = "spaces-stream"))]
+async fn guest_usage(_space: &crate::Space) -> Option<GuestUsage> {
+    None
+}
 
 /// What each container Space in `due` costs, by sandbox name, from the
 /// engine this computer's Linux Spaces use when it already runs (never

@@ -9,7 +9,7 @@
  * `state/cloud.tsx` does. Hooks read it with `useSyncExternalStore`.
  */
 
-import { hiddenSpaceIdsNow, onHiddenSpacesChange } from "../lib/prepare/store";
+import { getDriver, hiddenSpaceIdsNow, onHiddenSpacesChange } from "../lib/prepare/store";
 import { cloudsInput, cloudsView } from "./clouds";
 import { spokenName } from "./space-names";
 import { isUnsupported, type DataAdapter } from "./adapter";
@@ -225,6 +225,8 @@ export interface StoreOptions {
 const SIGN_IN_TIMEOUT_MS = 11 * 60_000;
 
 const CREATE_TICK_MS = 1_000;
+/** The Windows image a disc image the person chooses is remembered for. */
+const WINDOWS_ISO_IMAGE = "ghcr.io/trycua/windows:11";
 /** How often a watched run is read while a turn runs, and while it waits. */
 const EVENTS_LIVE_MS = 500;
 const EVENTS_IDLE_MS = 4_000;
@@ -652,6 +654,22 @@ export class BridgeStore {
     return next;
   }
 
+  /** "Choose Windows ISO…": the host's picker for a disc image, checked and
+   * remembered for `image` (default: the Windows 11 image). Its file name;
+   * null when the picker was cancelled. A file that cannot be used rejects
+   * with the reason in plain words. */
+  async chooseWindowsIso(image: string = WINDOWS_ISO_IMAGE): Promise<string | null> {
+    const chosen = await this.adapter.call("windows.chooseIso", { image });
+    return chosen?.name ?? null;
+  }
+
+  /** The same, for a failed create: then the create runs again with that
+   * file (the same request, a new row). Null when cancelled. */
+  async chooseWindowsIsoAndRetry(pendingId: string): Promise<{ name: string; next: string } | null> {
+    const name = await this.chooseWindowsIso(this.createRequests.get(pendingId)?.image);
+    return name ? { name, next: this.retryCreate(pendingId) } : null;
+  }
+
   private beginCreate(req: CreateSpaceRequest, id?: string): { pendingId: string; done: Promise<Space> } {
     if (req.image && !req.appImage) {
       const problem = validateImageRef(this.core, req.image);
@@ -777,6 +795,7 @@ export class BridgeStore {
   }
 
   async cancelCreate(pendingId: string): Promise<void> {
+    getDriver()?.removeHome(pendingId);
     this.dispatch({ type: "cancel-start", id: pendingId });
     try {
       await this.adapter.call("spaces.cancelCreate", { pendingId });
@@ -790,6 +809,7 @@ export class BridgeStore {
    * keeps its own row for the create until it is dismissed: its Delete on a
    * pending id does that), so it doesn't come back as a ghost. */
   async dismissCreate(pendingId: string): Promise<void> {
+    getDriver()?.removeHome(pendingId);
     this.dispatch({ type: "dismiss", id: pendingId });
     this.createFailures.delete(pendingId);
     // A removed row is not followed to a Space it might still become.
@@ -820,6 +840,7 @@ export class BridgeStore {
   /** Deletes the Space; `removeOnly` only forgets it here (it keeps
    * running in your cloud). */
   async deleteSpace(spaceId: string, removeOnly = false): Promise<void> {
+    getDriver()?.removeHome(spaceId);
     this.dispatch({ type: "delete-start", id: spaceId, now: this.now() });
     try {
       await this.adapter.call("spaces.delete", removeOnly ? { spaceId, removeOnly } : { spaceId });
@@ -846,7 +867,10 @@ export class BridgeStore {
 
   private async bulk(op: "spaces.deleteMany" | "spaces.leave", ids: string[]): Promise<BulkResult[]> {
     if (ids.length === 0) return [];
-    for (const id of ids) this.dispatch({ type: "delete-start", id, now: this.now() });
+    for (const id of ids) {
+      getDriver()?.removeHome(id);
+      this.dispatch({ type: "delete-start", id, now: this.now() });
+    }
     let results: BulkResult[];
     try {
       results = (await this.adapter.call(op, { ids })).results;

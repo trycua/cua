@@ -45,6 +45,10 @@ pub enum RuntimeError {
     /// the error lists what would.
     #[error("{0}")]
     InvalidPlacement(crate::placement::PlacementError),
+    /// The backend refused the request itself (an image reference it
+    /// cannot pull, say): the same request fails the same way.
+    #[error("{0}")]
+    InvalidArgument(String),
     /// Anything else.
     #[error("{0}")]
     Other(String),

@@ -266,7 +266,7 @@ async function daemonExercise(cli, teleport) {
       const discovery = JSON.parse(readFileSync(join(home, "daemon.json"), "utf8"))
       const session = new McpSession(new McpHttpTransport({ url: discovery.loopback_url, token: discovery.token }))
       const tools = await session.listTools()
-      assert.equal(tools.length, 118)
+      assert.equal(tools.length, 119)
       const rows = await session.callJson("list_spaces")
       assert.deepEqual(rows.map((r) => r.id), [info.id])
       assert.equal(await session.callText("space_bash", { space: info.id, command: "echo webview" }), "webview\n[exit 0]")

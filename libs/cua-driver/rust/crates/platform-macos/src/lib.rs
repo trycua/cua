@@ -53,7 +53,6 @@ mod permission_observation;
 #[cfg(target_os = "macos")]
 pub mod permissions;
 #[cfg(target_os = "macos")]
-pub mod pip;
 #[cfg(target_os = "macos")]
 pub mod pointer_shape;
 /// AX role -> cursor shape table for the presence hit-test (pure, every host).

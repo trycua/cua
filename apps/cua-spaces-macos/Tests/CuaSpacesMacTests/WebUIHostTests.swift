@@ -187,6 +187,31 @@ struct WebUIHostTests {
         #expect(try await bridge.handle("spaces.sendFiles", ["spaceId": id, "paths": ["/tmp/a.txt"]]) is [Any])
     }
 
+    /// "Choose Windows ISO…": the picked file is checked and remembered for
+    /// the image at once; a wrong file is refused in plain words, a cancelled
+    /// picker answers nothing, and no image means a bad request.
+    @Test func chooseWindowsIsoChecksAndRemembersThePickedFile() async throws {
+        let (bridge, _) = bridge()
+        var remembered: [(String, String)] = []
+        bridge.pickIso = { URL(fileURLWithPath: "/tmp/Win11_ARM64.iso") }
+        bridge.useWindowsIso = { image, path in
+            remembered.append((image, path))
+            return WindowsIsoChoice(ok: true, name: "Win11_ARM64.iso", problem: "")
+        }
+        let chosen = try await bridge.handle("windows.chooseIso", ["image": "ghcr.io/trycua/windows:11"]) as? [String: Any]
+        #expect(chosen?["name"] as? String == "Win11_ARM64.iso")
+        #expect(remembered.count == 1 && remembered[0].0 == "ghcr.io/trycua/windows:11" && remembered[0].1 == "/tmp/Win11_ARM64.iso")
+
+        bridge.useWindowsIso = { _, _ in
+            WindowsIsoChoice(ok: false, name: "", problem: "notes.txt is not a Windows disc image (.iso). Choose the file you downloaded from Microsoft.")
+        }
+        #expect(await failure(bridge, "windows.chooseIso", ["image": "ghcr.io/trycua/windows:11"]) == "bad_iso")
+
+        bridge.pickIso = { nil }
+        #expect(try await bridge.handle("windows.chooseIso", ["image": "ghcr.io/trycua/windows:11"]) is NSNull)
+        #expect(await failure(bridge, "windows.chooseIso", [:]) == "bad_args")
+    }
+
     /// The operations the Electron router answers under the same names.
     @Test func theContractsOperationsAreRouted() {
         for m in ["spaces.cancelCreate", "host.status", "keyvault.approve", "keyvault.deny", "keyvault.revokeGrant",
@@ -410,6 +435,27 @@ struct WebUIHostTests {
         #expect(await failure(bridge, "notifications.markRead", [:]) == "bad_args")
     }
 
+    @Test func notificationsAreDeletedOneAtATimeOrAll() async throws {
+        let backend = BridgeContractTests.ToolBackend(FixtureSpacesBackend())
+        backend.agents.notifications.append(["id": "n2", "at_ms": backend.agents.now - 30_000, "agent": "ada", "kind": "message",
+                                             "title": "ada", "body": "Second.", "read": false])
+        let (bridge, _) = bridge(backend: backend)
+        func ids() async throws -> [String] {
+            let rows = try await bridge.handle("notifications.list", [:]) as? [[String: Any]] ?? []
+            return rows.compactMap { $0["id"] as? String }.sorted()
+        }
+        let all = try await ids()
+        #expect(all.count >= 2)
+        #expect(try await bridge.handle("notifications.delete", ["ids": [all[0]]]) is NSNull)
+        #expect(try await ids() == Array(all.dropFirst()))
+        // No ids deletes nothing (never all).
+        _ = try await bridge.handle("notifications.delete", ["ids": [String]()])
+        #expect(try await ids() == Array(all.dropFirst()))
+        #expect(await failure(bridge, "notifications.delete", [:]) == "bad_args")
+        #expect(try await bridge.handle("notifications.deleteAll", [:]) is NSNull)
+        #expect(try await ids().isEmpty)
+    }
+
     @Test func persistentAgentsListAsCamelCaseRecords() async throws {
         let m = PersistentModel(tools: FakeAgentsTools())
         let agents = try await m.listAgents()
@@ -600,6 +646,7 @@ struct WebUIHostTests {
         #expect(await failure(bridge, "volume.overview", [:]) == "unsupported")
         #expect(await failure(bridge, "notifications.list", [:]) == "unsupported")
         #expect(await failure(bridge, "notifications.markRead", ["ids": ["n1"]]) == "unsupported")
+        #expect(await failure(bridge, "notifications.deleteAll", [:]) == "unsupported")
         #expect(await failure(bridge, "about.set", ["autoCheck": true]) == "unsupported")
         #expect(await failure(bridge, "host.openSettings", ["url": "https://example.com"]) == "bad_args")
         #expect(await failure(bridge, "volume.reveal", ["path": "/etc/hosts"]) == "bad_args")

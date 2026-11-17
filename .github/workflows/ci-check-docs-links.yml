@@ -22,6 +22,8 @@ on:
       - "docs/code-block-baseline.json"
       - "tests/e2e/cua-sdk/docs/**"
       - "scripts/docs-generators/cli-specs/**"
+      # Python driver examples are checked against the generated constructors.
+      - "libs/cua-driver/python/src/cua_driver/_native_contract.py"
       # Tutorial excerpts must match their #region in these sources.
       - "examples/openkoalabot-example-ts/**"
       - "examples/openkoalabot-example-tauri/**"

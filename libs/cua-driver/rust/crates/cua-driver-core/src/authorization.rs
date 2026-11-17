@@ -242,7 +242,6 @@ const PRIVATE_OBSERVATION_OPERATIONS: &[&str] = &[
     "get_browser_state",
     "browser_dialog[action=inspect]",
     "page[action=get_text|query_dom]",
-    "escalate_session",
     "zoom",
     "start_recording",
 ];
@@ -353,6 +352,7 @@ const LEGACY_PAGE_MUTATING_ACTIONS: &[&str] = &[
 
 const BROWSER_BOUND_INPUT_OPERATIONS: &[&str] = &[
     "browser_navigate",
+    "browser_motion_policy",
     "browser_click",
     "browser_type",
     "browser_select",
@@ -784,7 +784,6 @@ pub fn enforcement_adapters_for_call(
             | "list_windows"
             | "debug_window_info"
             | "get_browser_state"
-            | "escalate_session"
             | "zoom"
             | "start_recording"
     ) || (tool == "page"
@@ -913,7 +912,6 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "get_config"
         | "get_session"
         | "list_sessions"
-        | "get_session_state"
         | "get_agent_cursor_state"
         | "get_recording_state"
         | "check_for_update"
@@ -963,11 +961,11 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "get_accessibility_tree"
         | "verify_state"
         | "set_config"
-        | "escalate_session"
         | "start_recording"
         | "get_browser_state"
         | "browser_prepare"
         | "browser_navigate"
+        | "browser_motion_policy"
         | "browser_click"
         | "browser_type"
         | "browser_select"
@@ -1085,7 +1083,6 @@ pub fn classify_tool_call(tool: &str, args: &Value) -> RiskAssessment {
         | "list_windows"
         | "debug_window_info"
         | "get_browser_state"
-        | "escalate_session"
         | "zoom"
         | "clipboard_read" => RiskAssessment {
             class: RiskClass::R2,
@@ -1589,6 +1586,28 @@ mod tests {
     }
 
     #[test]
+    fn motion_policy_is_reviewed_r2_and_bound_without_whitelisting_unknown_tools() {
+        let risk = advertised_risk_for("browser_motion_policy");
+        assert_eq!(risk.class, RiskClass::R2);
+        assert_eq!(risk.enforcement, RiskEnforcement::Active);
+        let adapters = enforcement_adapters_for_call(
+            "browser_motion_policy",
+            &serde_json::json!({"target_id": "t", "tab_id": "tab", "mode": "reduce"}),
+        );
+        assert_eq!(
+            adapters
+                .iter()
+                .map(|adapter| adapter.id)
+                .collect::<Vec<_>>(),
+            vec!["browser_bound_input"]
+        );
+        assert_eq!(
+            advertised_risk_for("browser_motion_policy_unreviewed").class,
+            RiskClass::Unclassified
+        );
+    }
+
+    #[test]
     fn unknown_tools_are_unclassified_and_denied() {
         let error = authorize_tool_call("new_unreviewed_tool", &serde_json::json!({}))
             .expect_err("unknown risk must fail closed");
@@ -2018,10 +2037,6 @@ mod tests {
         assert_eq!(
             ids("start_recording", serde_json::json!({})),
             vec!["private_observation", "file_transfer_and_output"]
-        );
-        assert_eq!(
-            ids("escalate_session", serde_json::json!({})),
-            vec!["private_observation"]
         );
         assert_eq!(
             ids("type_text_chars", serde_json::json!({})),

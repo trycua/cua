@@ -868,6 +868,10 @@ def static_checks(changes: Changes, ctx: "Context") -> List[Check]:
     if changes.touches(r"^(bin/ci$|scripts/ci/|scripts/spdx-headers\.py$|\.github/workflows/|.*\.sh$)"):
         add(Check("bin-ci-tests", "bin/ci tests and workflow sync", "python3 -m unittest discover -s scripts/ci/tests -q && python3 bin/ci --verify-sync",
                   ci=(("ci-test-scripts.yml", "python3 -m unittest discover -s scripts/ci/tests"),)))
+    if changes.touches(r"^libs/cua-driver/examples/action-read-overlap/"):
+        add(Check("read-overlap-tests", "action and read overlap example tests",
+                  "python3 -m unittest discover -s libs/cua-driver/examples/action-read-overlap -p 'test_*.py' -q",
+                  ci=(("ci-test-scripts.yml", "python3 -m unittest discover -s libs/cua-driver/examples/action-read-overlap"),)))
     if changes.touches(r"^\.github/scripts/"):
         add(Check("gh-scripts-tests", ".github/scripts tests",
                   "cd .github/scripts && uv run --no-project -q --with pytest --with cryptography --with jsonschema --with pyyaml --with toml pytest tests/ -q",
@@ -1466,7 +1470,7 @@ def all_check_refs() -> List[Tuple[str, str, str]]:
         def crate_trigger(self, *a):
             return True
 
-    full = Changes("HEAD", "HEAD", ["x.rs", "x.py", ".github/workflows/x.yml", "Cargo.toml", "docs/content/x.mdx", "libs/cua/crates/cua-sdk/x.rs", ".github/scripts/x.py", "libs/cua-driver/x.rs", "scripts/images/x.py", "bin/ci"], full=False)
+    full = Changes("HEAD", "HEAD", ["x.rs", "x.py", ".github/workflows/x.yml", "Cargo.toml", "docs/content/x.mdx", "libs/cua/crates/cua-sdk/x.rs", ".github/scripts/x.py", "libs/cua-driver/x.rs", "scripts/images/x.py", "bin/ci", "libs/cua-driver/examples/action-read-overlap/x.py"], full=False)
     refs = []
     for c in static_checks(full, Dummy()):  # type: ignore[arg-type]
         refs.extend((c.id, wf, text) for wf, text in c.ci)

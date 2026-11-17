@@ -130,6 +130,13 @@ export interface SpacesHook extends Resource<Space[]> {
   retryCreate(pendingId: string): string | undefined;
   /** Whether Try again can run the failed create again. */
   canRetryCreate(pendingId: string): boolean;
+  /** "Choose Windows ISO…" for a Windows image: the host's picker, the file
+   * checked and remembered for the image. Its name; null when cancelled;
+   * rejects with the reason (plain words) for a file that cannot be used. */
+  chooseWindowsIso(image?: string): Promise<string | null>;
+  /** The same on a failed create, which then runs again with that file: the
+   * file's name and the new row's pending id; null when cancelled. */
+  chooseWindowsIsoAndRetry(pendingId: string): Promise<{ name: string; next: string } | null>;
   /** A failed create's diagnostic report, redacted, for the review sheet
    * (null when there is none). Nothing is sent. */
   createReport(pendingId: string): Promise<CreateReport | null>;
@@ -196,6 +203,8 @@ export function useSpaces(): SpacesHook {
     dismissCreate: (id) => run((s) => s.dismissCreate(id)),
     retryCreate: (id) => (ctx.store?.canRetryCreate(id) ? ctx.store.retryCreate(id) : undefined),
     canRetryCreate: (id) => ctx.store?.canRetryCreate(id) ?? false,
+    chooseWindowsIso: async (image) => (ctx.store ? ctx.store.chooseWindowsIso(image) : null),
+    chooseWindowsIsoAndRetry: async (id) => (ctx.store?.canRetryCreate(id) ? ctx.store.chooseWindowsIsoAndRetry(id) : null),
     createReport: async (id) => (ctx.store ? ctx.store.createReport(id) : null),
     sendCreateReport: (send) => run((s) => s.sendCreateReport(send)),
     startSpace: (id) => run((s) => s.setPower(id, true)),

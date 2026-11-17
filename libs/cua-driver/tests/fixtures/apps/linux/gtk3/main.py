@@ -164,6 +164,17 @@ class HarnessWindow(Gtk.Window):
         self.chk_status = Gtk.Label(label="agreed=False", xalign=0)
         root.pack_start(self.chk_status, False, False, 0)
 
+        # ── disabled_control (opt-in) ─────────────────────────────────────
+        # CUA_GTK3_DISABLED_CONTROL=1: an insensitive checkbox, published with
+        # enabled: false, whose token actions must be refused unchanged.
+        if os.environ.get(DISABLED_CONTROL_ENV, "").strip() == "1":
+            self.disabled_chk = aid(Gtk.CheckButton(label="Unavailable option"), "chk-disabled")
+            self.disabled_chk.set_sensitive(False)
+            self.disabled_chk.connect("toggled", self.on_disabled_chk)
+            root.pack_start(self.disabled_chk, False, False, 0)
+            self.disabled_status = Gtk.Label(label="disabled_checked=False", xalign=0)
+            root.pack_start(self.disabled_status, False, False, 0)
+
         # ── multi-selection ───────────────────────────────────────────────
         section(root, "multi selection")
         self.selection = Gtk.ListBox()
@@ -311,6 +322,9 @@ class HarnessWindow(Gtk.Window):
     def on_chk(self, c):
         self.chk_status.set_text(f"agreed={c.get_active()}")
 
+    def on_disabled_chk(self, c):
+        self.disabled_status.set_text(f"disabled_checked={c.get_active()}")
+
     def on_selection_changed(self, list_box):
         values = sorted(
             row.get_child().get_text() for row in list_box.get_selected_rows()
@@ -359,6 +373,7 @@ class HarnessWindow(Gtk.Window):
         self.popover_status.set_text("popover_open=True")
 
 
+DISABLED_CONTROL_ENV = "CUA_GTK3_DISABLED_CONTROL"
 TASK_STATE_ENV = "CUA_GTK3_TASK_STATE"
 TASK_STATE_SCHEMA = "cua.gtk3_task_state_v1"
 TASK_DENSITY_ENV = "CUA_GTK3_TASK_DENSITY"

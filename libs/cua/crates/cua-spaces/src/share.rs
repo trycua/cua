@@ -56,9 +56,7 @@ pub trait ShareConsent: Send + Sync {
     fn confirm(&self, reason: &str) -> std::result::Result<(), String>;
 }
 
-/// The spacesd feature a Space needs to be shared through the relay
-/// (hosts from `cua host setup` are already joined).
-pub const RELAY_ATTACH_FEATURE: &str = "relay_attach";
+pub use crate::relay::RELAY_ATTACH_FEATURE;
 
 /// Relay machine meta: the OS of the Space a machine is (`linux`, `macos`,
 /// `windows`).

@@ -211,6 +211,73 @@ pub(crate) fn on_screen_windows_any_layer() -> Vec<WindowInfo> {
     .windows
 }
 
+/// The popup or menu of `pid` drawn over `target` at screen point `(x, y)`,
+/// if one is.
+///
+/// A background pointer event is routed to `target` by window number, so it
+/// lands on `target` even where another window covers the point. For another
+/// app's window, or a titled sibling window, that is the point of background
+/// input. A popup or menu of the same app is different: the user sees it on
+/// top (Chrome's omnibox dropdown, a context menu), and the click goes to the
+/// window underneath it instead (issue #4242). Such a surface is untitled or
+/// above the normal window layer.
+pub(crate) fn same_app_surface_over(
+    pid: i32,
+    target: u32,
+    x: f64,
+    y: f64,
+) -> Option<WindowDescription> {
+    surface_over_in(on_screen_descriptions(), pid, target, x, y)
+}
+
+/// Every on-screen window, front to back, as WindowServer describes it.
+fn on_screen_descriptions() -> Vec<WindowDescription> {
+    use core_foundation::{
+        array::CFArray,
+        base::{CFTypeRef, TCFType},
+    };
+    let raw_ref = unsafe {
+        CGWindowListCopyWindowInfo(
+            kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+            kCGNullWindowID,
+        )
+    };
+    if raw_ref.is_null() {
+        return Vec::new();
+    }
+    let raw: CFArray<CFTypeRef> = unsafe { CFArray::wrap_under_create_rule(raw_ref as _) };
+    raw.iter()
+        .filter_map(|item| parse_description(*item))
+        .collect()
+}
+
+/// [`same_app_surface_over`] over a front-to-back on-screen window list.
+fn surface_over_in(
+    windows: Vec<WindowDescription>,
+    pid: i32,
+    target: u32,
+    x: f64,
+    y: f64,
+) -> Option<WindowDescription> {
+    let above = windows
+        .iter()
+        .position(|window| window.window_id == target)?;
+    windows
+        .into_iter()
+        .take(above)
+        .filter(|window| window.pid == pid && window.is_on_screen && window.alpha > 0.0)
+        .filter(|window| window.layer != 0 || window.title.trim().is_empty())
+        .find(|window| {
+            let b = &window.bounds;
+            b.width >= 2.0
+                && b.height >= 2.0
+                && x >= b.x
+                && x < b.x + b.width
+                && y >= b.y
+                && y < b.y + b.height
+        })
+}
+
 pub(crate) fn prefer_layer0(windows: &mut Vec<WindowInfo>) {
     if windows.iter().any(|w| w.layer == 0) {
         windows.retain(|w| w.layer == 0);
@@ -256,6 +323,8 @@ pub(crate) struct WindowDescription {
     pub(crate) bounds: WindowBounds,
     pub(crate) layer: i32,
     pub(crate) is_on_screen: bool,
+    /// `kCGWindowAlpha`: 0 is fully transparent.
+    pub(crate) alpha: f64,
 }
 
 /// Parse one CGWindowList description dictionary.
@@ -327,6 +396,7 @@ fn parse_description(item: core_foundation::base::CFTypeRef) -> Option<WindowDes
     let title = get_str("kCGWindowName");
     let layer = get_num("kCGWindowLayer") as i32;
     let is_on_screen = get_bool("kCGWindowIsOnscreen");
+    let alpha = get_bounds_num(&dict, "kCGWindowAlpha");
 
     // Parse bounds dict.
     let bounds = {
@@ -367,6 +437,7 @@ fn parse_description(item: core_foundation::base::CFTypeRef) -> Option<WindowDes
         bounds,
         layer,
         is_on_screen,
+        alpha,
     })
 }
 
@@ -411,6 +482,7 @@ fn enumerate_windows(
             bounds,
             layer,
             is_on_screen,
+            ..
         } = description;
 
         // Only include layer-0 windows, unless the caller asked for every layer.
@@ -911,6 +983,113 @@ mod tests {
             on_current_space: None,
             space_ids: None,
         }
+    }
+
+    fn surface(
+        window_id: u32,
+        pid: i32,
+        title: &str,
+        layer: i32,
+        x: f64,
+        y: f64,
+    ) -> WindowDescription {
+        WindowDescription {
+            window_id,
+            pid,
+            app_name: "Google Chrome".into(),
+            title: title.into(),
+            bounds: WindowBounds {
+                x,
+                y,
+                width: 200.,
+                height: 100.,
+            },
+            layer,
+            is_on_screen: true,
+            alpha: 1.0,
+        }
+    }
+
+    /// Chrome's main window at (0, 0), 1200 x 900.
+    fn chrome_main() -> WindowDescription {
+        WindowDescription {
+            bounds: WindowBounds {
+                x: 0.,
+                y: 0.,
+                width: 1200.,
+                height: 900.,
+            },
+            ..surface(10, 42, "Issue 4242", 0, 0., 0.)
+        }
+    }
+
+    #[test]
+    fn an_untitled_same_app_popup_covers_the_point_under_it() {
+        // The omnibox dropdown: an untitled layer-0 window of Chrome's pid.
+        let popup = surface(11, 42, "", 0, 100., 50.);
+        let windows = vec![popup.clone(), chrome_main()];
+        assert_eq!(
+            surface_over_in(windows.clone(), 42, 10, 150., 80.),
+            Some(popup)
+        );
+        // Outside the popup the main window is on top.
+        assert_eq!(surface_over_in(windows, 42, 10, 150., 400.), None);
+    }
+
+    #[test]
+    fn a_same_app_menu_window_covers_the_point_under_it() {
+        // A context menu sits at kCGPopUpMenuWindowLevel and keeps its title empty.
+        let menu = surface(12, 42, "", MENU_WINDOW_LAYER, 300., 60.);
+        let windows = vec![menu.clone(), chrome_main()];
+        assert_eq!(surface_over_in(windows, 42, 10, 310., 70.), Some(menu));
+    }
+
+    #[test]
+    fn only_surfaces_in_front_of_the_target_and_of_its_app_count() {
+        let behind = surface(11, 42, "", 0, 100., 50.);
+        assert_eq!(
+            surface_over_in(vec![chrome_main(), behind], 42, 10, 150., 80.),
+            None,
+            "a popup behind the target does not cover it"
+        );
+        let other_app = surface(20, 99, "", MENU_WINDOW_LAYER, 100., 50.);
+        assert_eq!(
+            surface_over_in(vec![other_app, chrome_main()], 42, 10, 150., 80.),
+            None,
+            "another app's window is what background input routes past"
+        );
+        let sibling = surface(13, 42, "Second document", 0, 100., 50.);
+        assert_eq!(
+            surface_over_in(vec![sibling, chrome_main()], 42, 10, 150., 80.),
+            None,
+            "a titled sibling window is a target of its own, not a popup"
+        );
+        assert_eq!(
+            surface_over_in(vec![chrome_main()], 42, 99, 150., 80.),
+            None,
+            "a target that is not on screen has nothing over it"
+        );
+    }
+
+    #[test]
+    fn invisible_or_degenerate_surfaces_do_not_cover_the_point() {
+        let transparent = WindowDescription {
+            alpha: 0.0,
+            ..surface(11, 42, "", 0, 100., 50.)
+        };
+        let helper = WindowDescription {
+            bounds: WindowBounds {
+                x: 150.,
+                y: 80.,
+                width: 1.,
+                height: 1.,
+            },
+            ..surface(12, 42, "", 0, 0., 0.)
+        };
+        assert_eq!(
+            surface_over_in(vec![transparent, helper, chrome_main()], 42, 10, 150., 80.),
+            None
+        );
     }
 
     #[test]

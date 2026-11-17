@@ -483,9 +483,7 @@
       "step": "a quit during delivery asks the thread first"
     },
     {
-      "effects": [
-        "create"
-      ],
+      "effects": [],
       "list": [
         "local:build-box",
         "home-pending",
@@ -500,17 +498,17 @@
         "message m2 delivered=100100 first_token=-"
       ],
       "page": [
-        "preparing: Getting your agent ready",
+        "idle: Getting your agent ready",
         "Linux runtime (done)",
         "Agent image (done)",
-        "Home Space (running) - Starting",
-        "Claude Code (pending)",
-        "hint: Your message sends as soon as your agent is ready"
+        "Home Space (pending)",
+        "Claude Code (pending)"
       ],
-      "step": "the home Space was removed and is made again"
+      "step": "the home Space was removed and stays removed"
     },
     {
       "effects": [
+        "create",
         "wakeAt at 1812000",
         "create"
       ],
@@ -537,7 +535,7 @@
         "hint: Your message sends as soon as your agent is ready",
         "button: Try again"
       ],
-      "step": "a failure that will not clear offers Try again"
+      "step": "a new request can prepare again; a failure that will not clear offers Try again"
     },
     {
       "effects": [

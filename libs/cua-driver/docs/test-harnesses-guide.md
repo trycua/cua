@@ -306,6 +306,10 @@ background delivery is tested.
 
 Canonical runner: `libs/cua-driver/tests/runners/macos-lume/run-all.sh`
 
+For focused native development, the maintainer runner also accepts an exact
+AppKit cell in single-cell mode. See [the runner instructions](../tests/runners/macos-lume/README.md#focused-appkit-development).
+This keeps native preflights and evidence checks but does not certify the full matrix.
+
 Canonical Actions wrapper: manually dispatch
 `.github/workflows/e2e-rust-macos.yml` in `lume` mode at the exact source SHA. It runs the
 logged-in Lume wrapper, including its standalone browser matrix, and emits the certification

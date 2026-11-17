@@ -118,6 +118,7 @@ impl Tool for HotkeyTool {
                 Ok(hwnd) => hwnd,
                 Err(error) => return ToolResult::error(error.to_string()),
             };
+            position_keyboard_cursor(&self.state, &args, hwnd, None).await;
             let key_display = full_keys.join("+");
             return match tokio::task::spawn_blocking(move || {
                 let modifiers: Vec<&str> = mods.iter().map(String::as_str).collect();

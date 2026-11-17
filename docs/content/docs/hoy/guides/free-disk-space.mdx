@@ -1,0 +1,89 @@
+---
+title: Free disk space
+description: 'Remove images you no longer need with hoy images rm and hoy images prune: what goes, what always stays, why VMs keep working, and why you may get back less than an image''s size.'
+---
+
+Each image takes about 27 GiB on disk. Hoy never removes one on its own: an
+older version after a rebuild, a failed build and the Apple restore image that
+`hoy image create` downloaded (20 to 26 GB) all stay until you remove them.
+`hoy images` ends with a line telling you what you could remove, once there is
+something.
+
+## Remove what you no longer need
+
+```bash skip="destructive"
+hoy images prune --dry-run          # what would go, with sizes; removes nothing
+hoy images prune                    # lists it, asks, then removes it
+hoy images prune --restore-images   # also the cached Apple restore images and leftover build folders
+```
+
+`hoy images prune` removes:
+
+- images that failed their smoke test,
+- images that were never tested, unless one is being built right now or was made
+  in the last hour (it may be waiting for its test),
+- tested versions that have a newer tested version of the same name.
+
+It always keeps each name's **default** version: the newest tested one, which is
+what a bare name picks (`hoy create --image macos-27.2`). If an image is held,
+being built or being cloned by a `hoy create`, prune skips it and says why.
+
+`--restore-images` also removes the downloaded Apple restore images and the
+working folders of builds that are no longer running (including one that
+`--keep-work` kept). Nothing in the restore-image cache is removed while a build
+runs. A restore image you remove is downloaded again the next time
+`hoy image create` needs it.
+
+At a terminal, prune lists what goes and asks:
+
+```text output
+Remove 3 images (up to 81 GB on disk)? VMs made from images keep working. [y/N]
+```
+
+Only `y` or `yes` removes anything. `--yes` (`-y`) skips the question. Without a
+terminal, or with `--json`, prune needs `--yes` (exit 2). `--dry-run` never asks.
+
+## Remove one image, or every version of a name
+
+```bash skip="destructive"
+hoy images rm macos-27.2:2026.11.01-1    # one version
+hoy images rm macos-27.2                 # every version of that name
+hoy images rm sha256:<digest>            # one image by digest
+```
+
+`hoy images` lists the references. At a terminal Hoy asks first:
+
+```text output
+Remove image macos-27.2 (2 versions, 54 GB on disk)? VMs made from it keep working. [y/N]
+```
+
+Afterwards:
+
+```text output
+removed macos-27.2 (2 versions); up to 54 GB freed (blocks still shared with VMs stay in use)
+```
+
+Hoy exits 4, names the holder and removes nothing if the image is being built,
+is being cloned by a `hoy create`, or has a lease held by another tool.
+
+## VMs keep working, but the space comes back slowly
+
+A VM made from an image is an APFS clone of it: it runs from its own copy of the
+files, so removing the image does not touch the VM. The clone shares disk blocks
+with the image until the guest changes them, so while VMs made from an image
+exist, removing the image gives back less than the size Hoy shows. Blocks a VM
+still uses stay in use. Remove the VM too (`hoy rm <vm>`) to get all of it back.
+
+## For scripts
+
+`--json` prints the same fields for both commands: `removed` (what was removed),
+`would_remove` (what a `--dry-run` would remove), `bytes`, `skipped` (each with
+the reason and the holder), and for prune `kept`.
+
+```bash skip="destructive"
+hoy --json images prune --dry-run
+hoy --json images prune --yes
+hoy --json images rm macos-27.2 --yes
+```
+
+`hoy doctor` suggests `hoy images prune --dry-run` when the disk is low.

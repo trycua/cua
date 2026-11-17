@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.28.2](https://github.com/trycua/cua/compare/cua-sdk-v0.28.1...cua-sdk-v0.28.2) (2026-11-17)
+
+
+### Bug Fixes
+
+* **packaging:** ship LICENSE files in Python distributions ([#8056](https://github.com/trycua/cua/issues/8056)) ([be4ba4b](https://github.com/trycua/cua/commit/be4ba4ba8250e127aebc053b6450eb57710f40d5))
+
 ## [0.28.1](https://github.com/trycua/cua/compare/cua-sdk-v0.28.0...cua-sdk-v0.28.1) (2026-11-17)
 
 

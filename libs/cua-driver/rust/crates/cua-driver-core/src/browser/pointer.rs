@@ -21,7 +21,7 @@ use crate::tool_args::ArgsExt;
 
 use super::cdp_ws::CdpConnection;
 use super::engine::{BrowserEngine, ValidatedTab};
-use super::input::{ref_point, trusted_ref_point, trusted_ref_point_in_place};
+use super::input::{confirm_ref_point, ref_point, trusted_ref_point, trusted_ref_point_in_place};
 use super::platform::BrowserVisualActionKind;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::required_session_schema;
@@ -631,6 +631,29 @@ impl BrowserPointerTool {
             .to_tool_result();
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
+        let rechecks = [
+            origin_ref.map(|reference| (reference, origin)),
+            destination_ref.zip(destination),
+        ];
+        for (reference, point) in rechecks.into_iter().flatten() {
+            if let Err(refusal) = confirm_ref_point(
+                conn,
+                &reference.cdp_session,
+                reference.backend_node_id,
+                point,
+            )
+            .await
+            {
+                let _ = conn
+                    .call(
+                        Some(cdp_session),
+                        "Emulation.setFocusEmulationEnabled",
+                        json!({ "enabled": false }),
+                    )
+                    .await;
+                return refusal.to_tool_result();
+            }
+        }
 
         let delivery = self
             .dispatch_trusted(conn, cdp_session, request, origin, destination)

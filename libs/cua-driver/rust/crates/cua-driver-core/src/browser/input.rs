@@ -121,6 +121,21 @@ pub(crate) async fn trusted_ref_point_in_place(
     }
 }
 
+/// Prove again that a point [`trusted_ref_point`] returned still hits its ref.
+/// Entering focus emulation runs page focus handlers, which can draw an
+/// overlay over the point, so this runs after that and right before dispatch.
+pub(crate) async fn confirm_ref_point(
+    conn: &CdpConnection,
+    cdp_session: &str,
+    backend_node_id: i64,
+    point: (f64, f64),
+) -> Result<(), BrowserRefusal> {
+    match ref_hit(conn, cdp_session, backend_node_id, point).await? {
+        None => Ok(()),
+        Some(miss) => Err(miss_refusal(miss, point)),
+    }
+}
+
 async fn ref_hit(
     conn: &CdpConnection,
     cdp_session: &str,

@@ -102,6 +102,9 @@ pub(super) struct FixtureState {
     layout_scroll_y: f64,
     /// A node rendered over every point, answered by `DOM.getNodeForLocation`.
     covering_node: Option<i64>,
+    /// Entering focus emulation runs a page focus handler that draws this
+    /// node over every point.
+    focus_emulation_covers: Option<i64>,
     /// The covering node is a descendant of the hit-tested ref.
     covering_node_is_descendant: bool,
     /// Scrolling this backend into view moves every main-frame box by `dy`.
@@ -185,6 +188,7 @@ impl Default for FixtureState {
             viewport_css_height: 600.0,
             layout_scroll_y: 0.0,
             covering_node: None,
+            focus_emulation_covers: None,
             covering_node_is_descendant: false,
             scroll_into_view_shifts: None,
             box_shift_y: 0.0,
@@ -884,6 +888,12 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 if st.trusted_click_changes_readback && call.params["type"] == "mouseReleased" {
                     st.dom_click_generation += 1;
                 }
+                MockReply::ok(json!({}))
+            }
+            "Emulation.setFocusEmulationEnabled"
+                if call.params["enabled"] == true && st.focus_emulation_covers.is_some() =>
+            {
+                st.covering_node = st.focus_emulation_covers;
                 MockReply::ok(json!({}))
             }
             "DOM.focus" | "Emulation.setFocusEmulationEnabled" | "Input.insertText" => {
@@ -3561,11 +3571,14 @@ async fn trusted_ref_click_hit_tests_a_scrolled_page_in_document_coordinates() {
     let s = structured(&result);
     assert_eq!(s["status"], "ok", "{s}");
     let hit = recorded_calls(&f, "DOM.getNodeForLocation");
-    assert_eq!(hit.len(), 1);
-    assert_eq!(
-        (hit[0].1["x"].clone(), hit[0].1["y"].clone()),
-        (json!(110), json!(605))
-    );
+    // Once at resolution and once more right before dispatch.
+    assert_eq!(hit.len(), 2);
+    for (_, params) in &hit {
+        assert_eq!(
+            (params["x"].clone(), params["y"].clone()),
+            (json!(110), json!(605))
+        );
+    }
     // The event goes to the hit-tested viewport point.
     assert_eq!(mouse_points(&f), vec![(110.0, 105.0), (110.0, 105.0)]);
     assert_eq!(
@@ -3625,6 +3638,58 @@ async fn trusted_ref_pointer_refuses_when_another_element_is_at_the_point() {
         .await;
 
     assert_trusted_refusal_sent_nothing(&f, &result, "covered");
+}
+
+fn assert_refused_after_focus_cover(f: &Fixture, result: &ToolResult) {
+    let s = structured(result);
+    assert_eq!(s["status"], "refused", "{s}");
+    assert_eq!(s["refusal"]["detail"]["hit_test"], "covered", "{s}");
+    assert_eq!(
+        s["refusal"]["detail"]["trusted_delivery_attempted"], false,
+        "{s}"
+    );
+    assert!(recorded_calls(f, "Input.dispatchMouseEvent").is_empty());
+    // Focus emulation was entered, then restored after the refusal.
+    let focus: Vec<Value> = recorded_calls(f, "Emulation.setFocusEmulationEnabled")
+        .into_iter()
+        .map(|(_, params)| params["enabled"].clone())
+        .collect();
+    assert_eq!(focus, vec![json!(true), json!(false)]);
+}
+
+// A page focus handler that draws an overlay when focus emulation starts
+// would take a trusted event that was hit-tested before it.
+#[tokio::test]
+async fn trusted_ref_click_refuses_an_overlay_drawn_on_focus() {
+    let f = fixture_with(|state| state.focus_emulation_covers = Some(999)).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref, "session": SESSION
+        }))
+        .await;
+
+    assert_refused_after_focus_cover(&f, &result);
+}
+
+#[tokio::test]
+async fn trusted_ref_pointer_refuses_an_overlay_drawn_on_focus() {
+    let f = fixture_with(|state| state.focus_emulation_covers = Some(999)).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserPointerTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref,
+            "action": "double_click", "session": SESSION
+        }))
+        .await;
+
+    assert_refused_after_focus_cover(&f, &result);
 }
 
 fn exact_label_ref(snapshot: &Value, label: &str) -> String {

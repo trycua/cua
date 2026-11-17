@@ -26,7 +26,7 @@ use crate::tool_args::ArgsExt;
 use super::cdp_ws::CdpConnection;
 use super::download::BrowserDownloadTool;
 use super::engine::{BrowserEngine, BrowserTabScreenshot, DIALOG_SUBSCRIPTION_TIMEOUT};
-use super::input::{ref_point, trusted_ref_point};
+use super::input::{confirm_ref_point, ref_point, trusted_ref_point};
 use super::motion_policy::BrowserMotionPolicy;
 use super::platform::{
     BrowserVisualActionKind, PrepareAction, PrepareProfile, PrepareProfileMode, PrepareRequest,
@@ -1756,6 +1756,18 @@ impl Tool for BrowserClickTool {
             .to_tool_result();
         }
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        if let Some(backend) = backend_node_id {
+            if let Err(refusal) = confirm_ref_point(conn, cdp, backend, (x, y)).await {
+                let _ = conn
+                    .call(
+                        Some(cdp),
+                        "Emulation.setFocusEmulationEnabled",
+                        json!({ "enabled": false }),
+                    )
+                    .await;
+                return refusal.to_tool_result();
+            }
+        }
 
         let mut delivery_error = None;
         let mut opened = None;

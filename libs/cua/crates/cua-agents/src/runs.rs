@@ -924,30 +924,9 @@ impl Agents {
     /// into the image, or one with operating system packages, always takes
     /// the script.
     async fn tools_in_place(&self, h: &Harness) -> bool {
-        let mut ids: Vec<&str> = vec!["acp-sdk", "mcp-remote"];
-        ids.extend(h.installs.iter().copied());
-        let Ok(order) = installables::resolve(&ids) else {
+        let Some(script) = tools_in_place_script(&self.home, h) else {
             return false;
         };
-        let mut tests = vec![];
-        for id in &order {
-            let Some(it) = installables::get(id) else {
-                return false;
-            };
-            if !it.apt.is_empty() {
-                return false;
-            }
-            tests.push(format!(
-                "[ -f {} ]",
-                quote(&format!(
-                    "{}/{}/{id}/{}/.cua-installed",
-                    self.home.trim_end_matches('/'),
-                    installables::TOOLS_DIR,
-                    it.version
-                ))
-            ));
-        }
-        let script = format!("{} && echo in-place", tests.join(" && "));
         matches!(
             self.sh(&script, Duration::from_secs(30)).await,
             Ok(out) if out.trim() == "in-place"
@@ -1819,6 +1798,52 @@ pub fn summarize(run_id: &str, status: RunStatus, evs: &[AgentEvent]) -> RunResu
             .and_then(|e| e.text.clone()),
         tool_calls: last.iter().filter(|e| e.kind == "tool_call").count() as u32,
     }
+}
+
+/// The launch shortcut checks writable installs only; baked tools still need
+/// the install script to link their binaries into the guest user's PATH.
+pub(crate) fn tools_in_place_script(home: &str, h: &Harness) -> Option<String> {
+    let mut ids: Vec<&str> = vec!["acp-sdk", "mcp-remote"];
+    ids.extend(h.installs.iter().copied());
+    let order = installables::resolve(&ids).ok()?;
+    let mut tests = vec![];
+    for id in &order {
+        let it = installables::get(id)?;
+        if !it.apt.is_empty() {
+            return None;
+        }
+        tests.push(format!(
+            "[ -f {} ]",
+            quote(&format!(
+                "{}/{}/{id}/{}/{}",
+                home.trim_end_matches('/'),
+                installables::TOOLS_DIR,
+                it.version,
+                it.marker_name()
+            ))
+        ));
+        if matches!(it.how, installables::Source::GitUv { .. }) {
+            // An older client can relink a baked copy while leaving this
+            // writable receipt intact. Let the installer repair those links.
+            for (bin, rel) in &it.bins {
+                tests.push(format!(
+                    "[ \"$(readlink {})\" = {} ]",
+                    quote(&format!(
+                        "{}/{}/{bin}",
+                        home.trim_end_matches('/'),
+                        installables::BIN_DIR
+                    )),
+                    quote(&format!(
+                        "{}/{}/{id}/{}/{rel}",
+                        home.trim_end_matches('/'),
+                        installables::TOOLS_DIR,
+                        it.version
+                    ))
+                ));
+            }
+        }
+    }
+    Some(format!("{} && echo in-place", tests.join(" && ")))
 }
 
 #[cfg(test)]

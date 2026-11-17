@@ -20,6 +20,8 @@
 //! as is, and its binaries are linked into `$HOME/.cua/bin`. It reports
 //! progress as `CUA_PROGRESS {json}` lines on stdout and, when
 //! `CUA_EVENTS_FILE` is set, as `install` events in that run's event log.
+//! Git/uv markers also identify the source and dependency requirements:
+//! changing them at the same version repairs the cached installation.
 //!
 //! An app's OS dependencies (`apt`: the shared-library packages its own
 //! Debian package `Depends` on) are resolved alongside its download: through
@@ -36,8 +38,12 @@
 
 use crate::quote;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
+
+#[cfg(test)]
+mod cache_tests;
 
 /// The manifest, as shipped.
 pub const MANIFEST: &str = include_str!("../installables.json");
@@ -150,6 +156,18 @@ pub fn get(id: &str) -> Option<&'static Installable> {
 }
 
 impl Installable {
+    /// A Git/uv version alone does not identify its commit, extras or Python.
+    /// Both installation and launch must check the same completion marker.
+    /// Legacy markers are cache misses; the existing install lock covers repair.
+    pub(crate) fn marker_name(&self) -> String {
+        if matches!(self.how, Source::GitUv { .. }) {
+            let source = serde_json::to_vec(&self.how).expect("install source serializes");
+            format!(".cua-installed-{}", hex::encode(Sha256::digest(source)))
+        } else {
+            ".cua-installed".into()
+        }
+    }
+
     /// Ids this one depends on, npm's implicit `node` included.
     pub fn deps(&self) -> Vec<String> {
         let mut d = self.needs.clone();
@@ -365,8 +383,8 @@ cua_libcheck() {
   [ -z "$cua_nf" ] || cua_fail "$cua_id" "missing shared libraries: $cua_nf"
 }
 cua_have() {
-  if [ -f "/opt/cua/tools/$1/$2/.cua-installed" ]; then CUA_DIR="/opt/cua/tools/$1/$2"; return 0; fi
-  CUA_DIR="$CUA_TOOLS/$1/$2"; [ -f "$CUA_DIR/.cua-installed" ]
+  if [ -f "/opt/cua/tools/$1/$2/$3" ]; then CUA_DIR="/opt/cua/tools/$1/$2"; return 0; fi
+  CUA_DIR="$CUA_TOOLS/$1/$2"; [ -f "$CUA_DIR/$3" ]
 }
 cua_link() { ln -sfn "$CUA_DIR/$2" "$CUA_BIN/$1"; }
 # A launcher that puts the rootless sysroot on LD_LIBRARY_PATH (a plain link
@@ -395,12 +413,14 @@ cua_fetch_progress() {
 fn step(id: &str, it: &Installable) -> String {
     let v = quote(&it.version);
     let qid = quote(id);
+    let marker = it.marker_name();
+    let qm = quote(&marker);
     let mut s = format!(
         "# ---- {id} {version}\n\
-         if cua_have {qid} {v}; then cua_progress {qid} cached \"$CUA_DIR\"; else\n\
+         if cua_have {qid} {v} {qm}; then cua_progress {qid} cached \"$CUA_DIR\"; else\n\
          cua_progress {qid} check {v}\n\
          cua_lock \"$CUA_TOOLS/{id}-{version}\" || cua_fail {qid} 'install lock timed out'\n\
-         if ! cua_have {qid} {v}; then\n\
+         if ! cua_have {qid} {v} {qm}; then\n\
          CUA_STAGE=\"$CUA_TOOLS/.stage-{id}-$$\"; rm -rf \"$CUA_STAGE\"; mkdir -p \"$CUA_STAGE\"\n",
         version = it.version,
     );
@@ -561,10 +581,10 @@ fn step(id: &str, it: &Installable) -> String {
         String::new()
     };
     s.push_str(&format!(
-        "rm -rf \"$CUA_STAGE\"; printf %s {v} > \"$CUA_TOOLS/{id}/{version}/.cua-installed\"\n\
+        "rm -rf \"$CUA_STAGE\"; printf %s {v} > \"$CUA_TOOLS/{id}/{version}/{marker}\"\n\
          fi\n\
          cua_unlock \"$CUA_TOOLS/{id}-{version}\"\n\
-         cua_have {qid} {v}\n\
+         cua_have {qid} {v} {qm}\n\
          {done}\
          fi\n",
         version = it.version
@@ -600,7 +620,11 @@ fn sysdeps(id: &str, it: &Installable) -> String {
 /// After its OS packages: the `ldd` check, the launchers and `done`.
 fn finish(id: &str, it: &Installable) -> String {
     let qid = quote(id);
-    let mut s = format!("cua_have {qid} {}\n", quote(&it.version));
+    let mut s = format!(
+        "cua_have {qid} {} {}\n",
+        quote(&it.version),
+        quote(&it.marker_name())
+    );
     if matches!(&it.how, Source::Archive { format, .. } if format == "deb") {
         // The package's own Depends, beyond what the manifest declared.
         s.push_str(&format!(

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.38.3](https://github.com/trycua/cua/compare/cua-spaces-v0.38.2...cua-spaces-v0.38.3) (2026-11-17)
+
+
+### Bug Fixes
+
+* **spaces:** keep a deleted prepared agent home removed ([#7979](https://github.com/trycua/cua/issues/7979)) ([59debb5](https://github.com/trycua/cua/commit/59debb541b94da819fb94869a3cabdec2f7f08b7))
+
 ## [0.38.2](https://github.com/trycua/cua/compare/cua-spaces-v0.38.1...cua-spaces-v0.38.2) (2026-11-17)
 
 

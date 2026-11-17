@@ -80,6 +80,13 @@ const MAX_BROWSER_SCREENSHOT_BYTES: usize = 16 * 1024 * 1024;
 /// first attach and retried by `browser_dialog`.
 pub(crate) const DIALOG_SUBSCRIPTION_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(2);
+/// Bound for one platform proof that an approved existing-profile endpoint
+/// still belongs to the browser. On macOS it reads the profile's
+/// DevToolsActivePort file and runs `lsof`, either of which can stall.
+const ENDPOINT_REPROOF_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+/// Bound for one existing-profile reconnect, from waiting on another caller's
+/// reconnect through the last redial attempt.
+const EXISTING_PROFILE_RECONNECT_BOUND: std::time::Duration = std::time::Duration::from_secs(32);
 
 pub struct BrowserEngine {
     pub(crate) platform: Arc<dyn BrowserPlatform>,
@@ -258,6 +265,18 @@ fn embedded_app_without_endpoint(
                 "profile": { "mode": "isolated_new" },
             },
         },
+    }))
+}
+
+fn reconnect_exhausted(last_error: Option<&str>) -> BrowserRefusal {
+    refuse(
+        BrowserRefusalCode::BrowserReconnectExhausted,
+        "the bounded existing-profile reconnect attempts did not establish a proven browser socket",
+    )
+    .with_detail(json!({
+        "attempt_limit": super::grant::MAX_RECONNECT_ATTEMPTS,
+        "last_error": last_error,
+        "retryable": false,
     }))
 }
 
@@ -929,14 +948,19 @@ impl BrowserEngine {
         // One leader owns endpoint reproof and bounded redial. Followers
         // re-check the generation after acquiring this gate and reuse its
         // socket rather than opening another browser-level connection.
-        let _leader = self
-            .reconnect_gates
-            .lock(ReconnectKey::new(
+        let deadline = tokio::time::Instant::now() + EXISTING_PROFILE_RECONNECT_BOUND;
+        let Ok(_leader) = tokio::time::timeout_at(
+            deadline,
+            self.reconnect_gates.lock(ReconnectKey::new(
                 &grant.fingerprint,
                 &grant.endpoint_ws_url,
-            ))
-            .await;
-        let mut grant = self
+            )),
+        )
+        .await
+        else {
+            return Err(reconnect_exhausted(Some("reconnect_in_progress")));
+        };
+        let grant = self
             .existing_profile_grant(session, transport_session, pid)
             .await?
             .ok_or_else(|| {
@@ -953,7 +977,38 @@ impl BrowserEngine {
             return Ok((conn, grant));
         }
 
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(32);
+        let window_id = grant.window_id;
+        match tokio::time::timeout_at(
+            deadline,
+            self.redial_existing_profile(session, transport_session, pid, grant, deadline),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => {
+                // A redial cut short here may have raised a browser prompt
+                // that approving would no longer attach to anything.
+                let _ = self
+                    .platform
+                    .dismiss_abandoned_existing_profile_consent(pid, window_id)
+                    .await;
+                self.revoke_existing_profile_grant(session, transport_session, pid)
+                    .await;
+                Err(reconnect_exhausted(Some("timed_out")))
+            }
+        }
+    }
+
+    /// The reconnect leader's attempt loop. The caller bounds the whole loop
+    /// by `deadline`, including every platform proof it awaits.
+    async fn redial_existing_profile(
+        &self,
+        session: &str,
+        transport_session: Option<&str>,
+        pid: i64,
+        mut grant: ExistingProfileGrant,
+        deadline: tokio::time::Instant,
+    ) -> Result<(Arc<CdpConnection>, ExistingProfileGrant), BrowserRefusal> {
         let mut last_error = None;
         while tokio::time::Instant::now() < deadline && grant.reconnect_attempts_remaining > 0 {
             if grant.pid != pid || grant.browser != "chromium" {
@@ -985,7 +1040,6 @@ impl BrowserEngine {
                 ));
             }
             let endpoint = self
-                .platform
                 .reprove_existing_profile_endpoint(pid, &grant.endpoint_ws_url)
                 .await?
                 .ok_or_else(|| {
@@ -1074,15 +1128,29 @@ impl BrowserEngine {
         }
         self.revoke_existing_profile_grant(session, transport_session, pid)
             .await;
-        Err(refuse(
-            BrowserRefusalCode::BrowserReconnectExhausted,
-            "the bounded existing-profile reconnect attempts did not establish a proven browser socket",
+        Err(reconnect_exhausted(last_error.map(|_| "connection_failed")))
+    }
+
+    async fn reprove_existing_profile_endpoint(
+        &self,
+        pid: i64,
+        expected_ws_url: &str,
+    ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        tokio::time::timeout(
+            ENDPOINT_REPROOF_TIMEOUT,
+            self.platform
+                .reprove_existing_profile_endpoint(pid, expected_ws_url),
         )
-        .with_detail(json!({
-            "attempt_limit": super::grant::MAX_RECONNECT_ATTEMPTS,
-            "last_error": last_error.map(|_| "connection_failed"),
-            "retryable": false,
-        })))
+        .await
+        .unwrap_or_else(|_| {
+            Err(refuse(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!(
+                    "proving the approved browser DevTools endpoint did not finish within {}s",
+                    ENDPOINT_REPROOF_TIMEOUT.as_secs()
+                ),
+            ))
+        })
     }
 
     async fn connection_for_record(
@@ -1144,7 +1212,6 @@ impl BrowserEngine {
         expected_ws_url: &str,
     ) -> Result<OwnedEndpoint, BrowserRefusal> {
         let endpoint = self
-            .platform
             .reprove_existing_profile_endpoint(pid, expected_ws_url)
             .await?
             .ok_or_else(|| {

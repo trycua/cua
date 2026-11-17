@@ -464,16 +464,31 @@ impl CdpConnection {
         if let Some(sid) = session_id {
             msg["sessionId"] = Value::String(sid.to_owned());
         }
-        let sent = {
+        // The deadline covers the writer too. A browser that stops reading
+        // stalls a send while it holds the writer, which would otherwise keep
+        // every later call on this socket waiting with no deadline at all.
+        let deadline = tokio::time::Instant::now() + timeout;
+        let sent = tokio::time::timeout_at(deadline, async {
             let mut writer = self.writer.lock().await;
             writer.send(Message::Text(msg.to_string())).await
-        };
-        if let Err(e) = sent {
-            self.demux.pending.lock().unwrap().remove(&id);
-            anyhow::bail!("CDP send failed during {method}: {e}");
+        })
+        .await;
+        match sent {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                self.demux.pending.lock().unwrap().remove(&id);
+                anyhow::bail!("CDP send failed during {method}: {e}");
+            }
+            Err(_) => {
+                self.demux.pending.lock().unwrap().remove(&id);
+                // The cancelled send may have written part of a frame, so
+                // nothing more can be framed on this socket.
+                self.demux.close();
+                anyhow::bail!("CDP {method} timed out after {timeout:?} while sending");
+            }
         }
 
-        match tokio::time::timeout(timeout, rx).await {
+        match tokio::time::timeout_at(deadline, rx).await {
             Err(_) => {
                 self.demux.pending.lock().unwrap().remove(&id);
                 anyhow::bail!("CDP {method} timed out after {timeout:?}")
@@ -1087,7 +1102,12 @@ mod tests {
         let started = std::time::Instant::now();
         let queued = tokio::time::timeout(
             Duration::from_secs(10),
-            conn.call_with_timeout(None, "Browser.getVersion", json!({}), Duration::from_secs(1)),
+            conn.call_with_timeout(
+                None,
+                "Browser.getVersion",
+                json!({}),
+                Duration::from_secs(1),
+            ),
         )
         .await
         .expect("a call queued behind a stalled send must honor its own timeout");

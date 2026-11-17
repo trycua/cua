@@ -819,9 +819,8 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn macos_proxy_with_reachable_socket_probes_once() {
-        let dir = std::env::temp_dir().join(format!("cua-proxy-ok-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let socket = dir.join("d.sock");
+        let dir = crate::socket_tempdir().unwrap();
+        let socket = dir.path().join("d.sock");
         let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
         listener.set_nonblocking(true).unwrap();
         let stderr = run_proxy_child(&socket);
@@ -829,7 +828,6 @@ mod tests {
         while listener.accept().is_ok() {
             probes += 1;
         }
-        let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(probes, 1);
         assert!(!stderr.contains("not listening"));
     }

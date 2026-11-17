@@ -317,8 +317,41 @@ pub fn plain(f: &Failure, harness: &str) -> String {
             }
         },
         FailureClass::Error => start_problem(&f.message, harness)
+            .or_else(|| connection_problem(&f.message, harness))
             .unwrap_or_else(|| "I couldn't finish that.".into()),
     }
+}
+
+/// A turn that lost its connection to the provider (an HTTP/2 stream reset or GOAWAY, a dropped or
+/// timed-out request, a gateway error): nothing is wrong with the sign-in, and sending the message
+/// again usually works. `None` for any other error.
+fn connection_problem(message: &str, harness: &str) -> Option<String> {
+    let t = message.to_ascii_lowercase();
+    const MARKERS: &[&str] = &[
+        "http2",
+        "http/2",
+        "goaway",
+        "stream disconnected",
+        "stream closed before",
+        "connection reset",
+        "connection closed",
+        "error sending request",
+        "timed out",
+        "bad gateway",
+        "service unavailable",
+        "gateway timeout",
+    ];
+    if !MARKERS.iter().any(|m| t.contains(m)) {
+        return None;
+    }
+    let who = match harness {
+        "claude-code" => "Claude",
+        "openai-codex" => "OpenAI",
+        _ => "the provider",
+    };
+    Some(format!(
+        "I lost my connection to {who} while answering. Your sign-in is fine. Retry sends the message again."
+    ))
 }
 
 /// A start that failed for a reason the person can act on, from the runner's
@@ -368,6 +401,25 @@ mod tests {
             plain(&classify("claude-code", spawn), "claude-code"),
             "I couldn't finish that."
         );
+    }
+
+    #[test]
+    fn a_lost_connection_reads_as_one_not_as_raw_http2() {
+        for t in [
+            "Internal error (code -32603) {\"details\":\"stream disconnected before completion: error sending request for url (https://chatgpt.com/backend-api/codex/responses): http2 error: connection error detected: GOAWAY\"}",
+            "request failed: http2 error",
+        ] {
+            let f = classify("openai-codex", t);
+            assert_eq!(f.class, FailureClass::Error, "{t}");
+            assert!(f.retryable);
+            let say = plain(&f, "openai-codex");
+            assert!(say.starts_with("I lost my connection to OpenAI"), "{say}");
+            assert!(!say.to_ascii_lowercase().contains("http2"), "{say}");
+            assert_eq!(f.message, t, "the details keep the raw text");
+        }
+        // A refused sign-in is still a sign-in problem, whatever else the text says.
+        let f = classify("openai-codex", "401 Unauthorized (http2 stream)");
+        assert_eq!(f.class, FailureClass::NeedsConnect);
     }
 
     #[test]

@@ -14,7 +14,9 @@ export interface DemoSpacesSettingsState {
   spacesSettings: SpacesSettings;
 }
 
-export const demoSpacesSettingsState = (): DemoSpacesSettingsState => ({ spacesSettings: { defaultSpace: null, fallback: [], fallbackOn: true, updatedAt: 0 } });
+export const demoSpacesSettingsState = (): DemoSpacesSettingsState => ({
+  spacesSettings: { defaultSpace: null, fallback: [], fallbackOn: true, updatedAt: 0 },
+});
 
 /** A demo machine's Space id: this Mac's own is `relay:this-mac`. */
 const spaceOf = (m: Pick<MachineRow, "id">) => `relay:${m.id}`;
@@ -30,7 +32,8 @@ export function demoSpacesSettingsHandlers(
       if (!state.identity) return null;
       const ids = [defaultSpace, ...fallback].filter((x): x is string => x !== null);
       if (ids.some((id) => !/^relay:[^/]+(\/[a-z0-9-]{1,63})?$/.test(id))) throw new HostError("That isn't a Space id.", "bad_args");
-      if (new Set(fallback).size !== fallback.length || fallback.length > 16) throw new HostError("The order to try lists a computer twice, or more than 16.", "bad_args");
+      if (new Set(fallback).size !== fallback.length || fallback.length > 16)
+        throw new HostError("The order to try lists a computer twice, or more than 16.", "bad_args");
       state.spacesSettings = { defaultSpace, fallback: [...fallback], fallbackOn, updatedAt: Math.floor(now() / 1000) };
       return copy();
     },

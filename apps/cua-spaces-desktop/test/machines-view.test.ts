@@ -40,7 +40,14 @@ describe.skipIf(!built)("the Machines page on the app core", () => {
 
   beforeAll(async () => {
     home = mkdtempSync(path.join(tmpdir(), "cua-machines-"));
-    Object.assign(process.env, { HOME: home, USERPROFILE: home, CUA_HOME: path.join(home, ".cua"), CUA_TELEMETRY: "0", DO_NOT_TRACK: "1", CUA_KEYCHAIN_NONINTERACTIVE: "1" });
+    Object.assign(process.env, {
+      HOME: home,
+      USERPROFILE: home,
+      CUA_HOME: path.join(home, ".cua"),
+      CUA_TELEMETRY: "0",
+      DO_NOT_TRACK: "1",
+      CUA_KEYCHAIN_NONINTERACTIVE: "1",
+    });
     native = await loadNative(dir);
   });
 
@@ -68,7 +75,14 @@ describe.skipIf(!built)("the Machines page on the app core", () => {
       about: () => ({ computerName: "Ada's MacBook Pro", appVersion: "0.9.1", osVersion: "macOS 26.5.2" }),
     });
     model.devices.signedIn = true;
-    bridge = createBridge({ model, supervisor: null, version: "1.2.3", platform: "darwin", env: {}, ui: { openSpace: () => {}, setBackground: () => {}, activate: () => {} } } as never);
+    bridge = createBridge({
+      model,
+      supervisor: null,
+      version: "1.2.3",
+      platform: "darwin",
+      env: {},
+      ui: { openSpace: () => {}, setBackground: () => {}, activate: () => {} },
+    } as never);
   });
 
   const call = (method: string, args: Record<string, unknown> = {}) => bridge.registry.handle(method, args, { window: "win-1" });
@@ -121,7 +135,18 @@ describe.skipIf(!built)("the Machines page on the app core", () => {
     const url = "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork";
     backend.health.set("this", {
       cuaVersion: "0.4.1",
-      checks: [{ id: "machine.local_network", status: "fail", message: "blocked", remediation: "", facts: new Map([["app", "Cua Spaces"], ["settings_url", url]]) }],
+      checks: [
+        {
+          id: "machine.local_network",
+          status: "fail",
+          message: "blocked",
+          remediation: "",
+          facts: new Map([
+            ["app", "Cua Spaces"],
+            ["settings_url", url],
+          ]),
+        },
+      ],
     });
     const targets = model.machinesView.machines.filter((m) => m.healthTarget !== undefined && m.healthTarget !== null);
     expect(targets.some((m) => m.current)).toBe(true);

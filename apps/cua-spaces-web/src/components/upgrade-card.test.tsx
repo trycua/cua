@@ -97,7 +97,16 @@ describe.skipIf(!wasmBuilt)("<RelayAllowanceNotice> with the cards on", () => {
   });
 
   it("a Pro account at 5 of 5 computers in use at once with empty reasons gets the sessions card", async () => {
-    const { view } = host({ ...reached, plan: "pro", hoursUsed: 10, hoursLimit: 200, liveSessions: 5, liveSessionsLimit: 5, reasons: [], softLimitReached: false });
+    const { view } = host({
+      ...reached,
+      plan: "pro",
+      hoursUsed: 10,
+      hoursLimit: 200,
+      liveSessions: 5,
+      liveSessionsLimit: 5,
+      reasons: [],
+      softLimitReached: false,
+    });
     view();
     const card = await waitFor(() => {
       const el = document.querySelector("[data-upgrade-card]");

@@ -761,6 +761,7 @@ fn run_connect(
             skills: !args.mcp_only,
             mcp: !args.skills_only,
             sign_in: true,
+            driver: false,
         }
     };
     // A sign-in with a code (Codex): the link and the code go to stderr, so

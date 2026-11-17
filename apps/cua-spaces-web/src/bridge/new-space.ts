@@ -104,7 +104,9 @@ export interface EnvInput {
   clouds: CloudStatusWire | null;
   /** Settings' `defaultLocation`: `local`, `host:<id>` or a cloud word. */
   defaultLocation: string | undefined;
-  machines: readonly (Pick<Machine, "id" | "name" | "via" | "online" | "os" | "limits" | "current"> & Pick<Partial<Machine>, "device" | "notSharing">)[] | undefined;
+  machines:
+    | readonly (Pick<Machine, "id" | "name" | "via" | "online" | "os" | "limits" | "current"> & Pick<Partial<Machine>, "device" | "notSharing">)[]
+    | undefined;
 }
 
 function location(core: CoreClient, on: string | undefined): WizardLocation {

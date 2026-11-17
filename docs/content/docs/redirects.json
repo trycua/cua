@@ -608,7 +608,7 @@
     "cua-sdk/reference/spaces/app-core/this-machine": "cua-sdk/reference/spaces",
     "cua-sdk/reference/spaces/app-core/window": "cua-sdk/reference/spaces",
     "cua-sdk/reference/spaces/cloud": "cua-sdk/reference/spaces/persistent-agents#your-cloud",
-    "cua-sdk/reference/spaces/create": "cua-sdk/reference/spaces#create-options",
+    "cua-sdk/reference/spaces/create": "cua-sdk/reference/spaces/lifetime#create-options",
     "cua-sdk/reference/spaces/decoded-media": "cua-sdk/reference/spacesd/computer#media",
     "cua-sdk/reference/spaces/devices": "cua-sdk/reference/spaces/host#this-device-on-the-relay",
     "cua-sdk/reference/spaces/machines-app-core": "cua-sdk/reference/spaces",

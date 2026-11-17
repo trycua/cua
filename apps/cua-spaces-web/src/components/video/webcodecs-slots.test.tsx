@@ -39,7 +39,12 @@ vi.mock("../../../../../libs/cua/crates/cua-spacesd-html5/web/src/core/mediaSess
 
 type Reply = { ok: true; result: { wsUrl: string; expiresAt: string | null } } | { ok: false; error: { message: string; code?: string } };
 
-function fakeDesktop(reply: (args: { spaceId: string; tier: string }) => Reply = ({ spaceId, tier }) => ({ ok: true, result: { wsUrl: `ws://127.0.0.1:5123/v1/bridge/media?ticket=${spaceId}-${tier}`, expiresAt: null } })) {
+function fakeDesktop(
+  reply: (args: { spaceId: string; tier: string }) => Reply = ({ spaceId, tier }) => ({
+    ok: true,
+    result: { wsUrl: `ws://127.0.0.1:5123/v1/bridge/media?ticket=${spaceId}-${tier}`, expiresAt: null },
+  }),
+) {
   type Request = { id: string; method: string; args: { spaceId: string; tier: string } };
   const calls: { channel: string; method: string; args: { spaceId: string; tier: string } }[] = [];
   const desktop: CuaDesktopBridge = {
@@ -368,8 +373,18 @@ describe("a viewer that leaves and comes back", () => {
 
 describe("decoding and input like the Swift app's video tiers", () => {
   it("asks every slot for the hardware decoder; the viewer sends ⌘ as Control to a Linux or Windows Space from a Mac", () => {
-    expect(sessionConfig({ interactive: false, os: "linux" }, "darwin")).toEqual({ hardwareAcceleration: "prefer-hardware", metaAsControl: false, wholeCommandChords: false, scrollNeedsFocus: false });
-    expect(sessionConfig({ interactive: true, os: "linux" }, "darwin")).toEqual({ hardwareAcceleration: "prefer-hardware", metaAsControl: true, wholeCommandChords: true, scrollNeedsFocus: true });
+    expect(sessionConfig({ interactive: false, os: "linux" }, "darwin")).toEqual({
+      hardwareAcceleration: "prefer-hardware",
+      metaAsControl: false,
+      wholeCommandChords: false,
+      scrollNeedsFocus: false,
+    });
+    expect(sessionConfig({ interactive: true, os: "linux" }, "darwin")).toEqual({
+      hardwareAcceleration: "prefer-hardware",
+      metaAsControl: true,
+      wholeCommandChords: true,
+      scrollNeedsFocus: true,
+    });
     // ⌘ chords go whole from a Mac only (Chromium drops their key-up there).
     expect(sessionConfig({ interactive: true, os: "macos" }, "darwin").wholeCommandChords).toBe(true);
     expect(sessionConfig({ interactive: true, os: "linux" }, "linux").wholeCommandChords).toBe(false);
@@ -382,13 +397,24 @@ describe("decoding and input like the Swift app's video tiers", () => {
   it("passes the config to the viewer's session", async () => {
     slotIn({ ...fakeDesktop().desktop, platform: "darwin" }, { ...viewer, os: "linux" });
     await flush();
-    expect(sessions[0]!.options).toMatchObject({ hardwareAcceleration: "prefer-hardware", metaAsControl: true, wholeCommandChords: true, scrollNeedsFocus: true });
+    expect(sessions[0]!.options).toMatchObject({
+      hardwareAcceleration: "prefer-hardware",
+      metaAsControl: true,
+      wholeCommandChords: true,
+      scrollNeedsFocus: true,
+    });
   });
 
   it("asks for one window with its epoch, in the background, and activation only when asked for", () => {
     expect(streamTarget(tile)).toEqual({ spaceId: "local:a", tier: "tile" });
     expect(streamTarget({ ...viewer, windowId: "w-1", epoch: 3 })).toEqual({ spaceId: "local:a", tier: "full", windowId: "w-1", epoch: 3 });
-    expect(streamTarget({ ...viewer, windowId: "w-1", epoch: 3 }, true)).toEqual({ spaceId: "local:a", tier: "full", windowId: "w-1", epoch: 3, activate: true });
+    expect(streamTarget({ ...viewer, windowId: "w-1", epoch: 3 }, true)).toEqual({
+      spaceId: "local:a",
+      tier: "full",
+      windowId: "w-1",
+      epoch: 3,
+      activate: true,
+    });
     expect(streamTarget(viewer, true)).toEqual({ spaceId: "local:a", tier: "full" });
   });
 
@@ -429,7 +455,17 @@ describe("decoding and input like the Swift app's video tiers", () => {
     paints.shift()!(216);
     stats.counts(slots.idOf(el)!, { received: 4, decoded: 3, width: 960, height: 600 });
     const [snap] = stats.snapshot();
-    expect(snap).toMatchObject({ spaceId: "local:a", tier: "tile", received: 4, decoded: 3, presented: 3, painted: 2, dropped: 2, size: "960x600", failure: null });
+    expect(snap).toMatchObject({
+      spaceId: "local:a",
+      tier: "tile",
+      received: 4,
+      decoded: 3,
+      presented: 3,
+      painted: 2,
+      dropped: 2,
+      size: "960x600",
+      failure: null,
+    });
     expect(snap!.latencyMs).toEqual([10, 16]);
     expect(snap!.decodeMs).toEqual([4, 3, 5]);
   });
@@ -527,7 +563,9 @@ describe("<StreamSurface> in the Electron shell", () => {
     it("offers Try again, says why once per attempt, never asks again by itself, then attempts media", async () => {
       let replies = 0;
       const { desktop, calls } = fakeDesktop(({ spaceId, tier }) =>
-        ++replies <= 2 ? { ok: false, error: { message: "scripted provider failure" } } : { ok: true, result: { wsUrl: `ws://127.0.0.1:5123/v1/bridge/media?ticket=${spaceId}-${tier}`, expiresAt: null } },
+        ++replies <= 2
+          ? { ok: false, error: { message: "scripted provider failure" } }
+          : { ok: true, result: { wsUrl: `ws://127.0.0.1:5123/v1/bridge/media?ticket=${spaceId}-${tier}`, expiresAt: null } },
       );
       electron(desktop);
       const demo = createDemoAdapter({ latencyMs: 1 });
@@ -596,7 +634,12 @@ describe("<StreamSurface> in the Electron shell", () => {
   });
 
   // The SwiftUI app's DetailApprovalTests: the open detail follows this device's approval.
-  const NOTICE: MachineAccessNotice = { kind: "needs-enrollment", status: "Not enrolled", text: "Enroll this Mac to connect to your other machines.", actionLabel: "Enroll This Mac…" };
+  const NOTICE: MachineAccessNotice = {
+    kind: "needs-enrollment",
+    status: "Not enrolled",
+    text: "Enroll this Mac to connect to your other machines.",
+    actionLabel: "Enroll This Mac…",
+  };
   const withAccess = () => {
     const adapter = createDemoAdapter({ latencyMs: 1 });
     const ui = (access: MachineAccessNotice | null) => (

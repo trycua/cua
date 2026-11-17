@@ -3,12 +3,7 @@
 
 import { useEffect } from "react";
 
-import {
-  teamName,
-  useFeatureRecorded,
-  useShareSheet,
-  useTeamChoices,
-} from "@/bridge";
+import { teamName, useFeatureRecorded, useShareSheet, useTeamChoices } from "@/bridge";
 import { useAddAgentLauncher } from "@/components/add-agent/add-agent-launcher";
 import { Button } from "@/components/ui/button";
 import { GroupedRow, GroupedSection } from "@/components/ui/grouped";
@@ -86,7 +81,13 @@ export default function ShareSheet() {
               data-share-who
             />
             <span data-share-role={v.role}>
-              <Select aria-label="Role" className="h-8 min-w-28" value={v.role} options={roles} onValueChange={(role) => void send({ type: "set-role", role })} />
+              <Select
+                aria-label="Role"
+                className="h-8 min-w-28"
+                value={v.role}
+                options={roles}
+                onValueChange={(role) => void send({ type: "set-role", role })}
+              />
             </span>
             <Button type="submit" disabled={!v.canShare || closed} data-share-submit>
               {v.shareLabel}

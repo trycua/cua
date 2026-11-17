@@ -18,9 +18,12 @@ export function useInView(ref: RefObject<Element | null>, margin = IN_VIEW_MARGI
   useEffect(() => {
     const el = ref.current;
     if (!el || typeof IntersectionObserver === "undefined") return;
-    const io = new IntersectionObserver((entries) => {
-      for (const e of entries) setInView(e.isIntersecting);
-    }, { rootMargin: margin });
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) setInView(e.isIntersecting);
+      },
+      { rootMargin: margin },
+    );
     io.observe(el);
     return () => io.disconnect();
   }, [ref, margin]);

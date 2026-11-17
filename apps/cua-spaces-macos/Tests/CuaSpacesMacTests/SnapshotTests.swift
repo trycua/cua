@@ -277,7 +277,7 @@ struct SnapshotTests {
                         features: ["desktop_stream"], addedAt: "2026-09-25T08:00:00Z",
                         os: os, osName: osName, osPrettyName: nil, image: nil, imageDigest: nil,
                         kind: nil, arch: "arm64", hidden: false, reachable: true, error: nil, host: host, hostName: hostName,
-                        power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil)
+                        power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil, parent: nil)
         }
         let backend = FixtureSpacesBackend(rows: [
             row("local:dev", "Dev box", .linux, "Ubuntu", provider: "local"),

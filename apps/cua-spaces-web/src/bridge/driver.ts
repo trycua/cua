@@ -72,7 +72,8 @@ class DriverStore {
     this.reading = true;
     try {
       const status = await this.adapter.call("driver.status", this.args);
-      const config = status && (withConfig || !this.snap.config) ? await this.adapter.call("driver.config", this.args).catch(() => this.snap.config) : this.snap.config;
+      const config =
+        status && (withConfig || !this.snap.config) ? await this.adapter.call("driver.config", this.args).catch(() => this.snap.config) : this.snap.config;
       this.set({ status, config, loading: false, error: null });
     } catch (e) {
       // A host without the methods (the Electron shell, an older app) is "not here" too.

@@ -26,7 +26,7 @@ const toIp = (n: number) => [24, 16, 8, 0].map((s) => String((n >>> s) & 0xff)).
 export function subnetHost(ip: string, mask: string): string | null {
   const a = toInt(ip);
   const m = toInt(mask);
-  if (a >>> 16 === 0xa9fe || m === 0 || (~m >>> 0) < 2) return null;
+  if (a >>> 16 === 0xa9fe || m === 0 || ~m >>> 0 < 2) return null;
   let target = ((a & m) >>> 0) + 1;
   if (target === a) target += 1;
   return toIp(target >>> 0);

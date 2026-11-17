@@ -88,7 +88,13 @@ export function watchStreamIntent(doc: Document, options: IntentOptions = {}): (
     if (!id) return cancel();
     if (pending?.id === id) return;
     cancel();
-    pending = { id, timer: setTimer(() => { pending = null; send(id); }, HOVER_MS) };
+    pending = {
+      id,
+      timer: setTimer(() => {
+        pending = null;
+        send(id);
+      }, HOVER_MS),
+    };
   };
   const press = (e: Event): void => {
     const id = intentSpaceId(e.target);

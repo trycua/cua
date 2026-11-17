@@ -199,7 +199,7 @@
           "open: Open [-] ?Open the desktop in its own window (primary)"
         ],
         "canStream": true,
-        "confirm": "Delete research-box? | Delete Permanently deletes it and everything Cua created for it in AWS · us-west-2. Remove from List keeps it running there. | Delete Permanently / Remove from List / Cancel",
+        "confirm": "Delete research-box? | Delete Permanently deletes everything Cua created for it in AWS · us-west-2. Remove from List keeps it running. | Delete Permanently / Remove from List / Cancel",
         "facts": [
           "Status: Running",
           "Location: AWS · us-west-2",
@@ -227,7 +227,7 @@
           "open: Open [-] ?Open the desktop in its own window (disabled) (primary)"
         ],
         "canStream": false,
-        "confirm": "Delete their-box? | It runs in Google Cloud · us-central1 and was created on another machine. Remove from List keeps it running there. | Delete Permanently (disabled: Created on another machine: delete it there, or remove it from this list.) / Remove from List / Cancel",
+        "confirm": "Delete their-box? | Remove from List keeps it running in Google Cloud · us-central1. | Delete Permanently (disabled: Created on another machine: delete it there, or remove it from this list.) / Remove from List / Cancel",
         "facts": [
           "Status: Unreachable ?offline",
           "Location: Google Cloud · us-central1",
@@ -295,7 +295,7 @@
       "detailCopy": [
         "streamLoading: Looking for this Space’s windows…",
         "streamEmpty: No open windows in this Space yet.",
-        "streamFailed: No windows: the Space’s window host is not up.",
+        "streamFailed: Can’t see this Space’s windows yet.",
         "streamNoMatch: No windows match your filter.",
         "agentsLoading: Looking for this Space’s agents…",
         "agentsEmpty: No agents have been started in this Space.",
@@ -320,7 +320,7 @@
           "profile: Use it to [-] = desktop",
           "allow: Share with (optional) [Teammates’ emails] = "
         ],
-        "lede": "You and the people you share with can create Spaces on this computer, and see and control its screen if you turn that on, from other computers. Cua connects them for you, with no network setup. Signed in as ada@example.com.",
+        "lede": "Use this computer from your other computers. Its screen stays private unless you share it. Signed in as ada@example.com.",
         "request": "mode=relay relay=- direct=- name=- allow=-",
         "title": "Set up this computer"
       },
@@ -338,7 +338,7 @@
           "profile: Use it to [-] = desktop",
           "allow: Share with (optional) [Teammates’ emails] = "
         ],
-        "lede": "You and the people you share with can create Spaces on this computer, and see and control its screen if you turn that on, from other computers. Cua connects them for you, with no network setup. Signed in as ada@example.com.",
+        "lede": "Use this computer from your other computers. Its screen stays private unless you share it. Signed in as ada@example.com.",
         "request": "mode=relay relay=- direct=- name=Studio allow=-",
         "title": "Set up this computer"
       },
@@ -356,7 +356,7 @@
           "profile: Use it to [-] = desktop",
           "allow: Share with (optional) [Teammates’ emails] = grace@example.com, bob@example.com"
         ],
-        "lede": "You and the people you share with can create Spaces on this computer, and see and control its screen if you turn that on, from other computers. Cua connects them for you, with no network setup. Signed in as ada@example.com.",
+        "lede": "Use this computer from your other computers. Its screen stays private unless you share it. Signed in as ada@example.com.",
         "request": "mode=relay relay=- direct=- name=Studio allow=grace@example.com,bob@example.com",
         "title": "Set up this computer"
       },
@@ -376,7 +376,7 @@
           "direct: Direct connection = off (advanced)",
           "relay: Relay server [https://relay.example.com] =  (advanced)"
         ],
-        "lede": "For self-hosting teams: joins your own relay at the address below. You and the people you share with can create Spaces on this computer, and see and control its screen if you turn that on, from other computers. Cua connects them for you, with no network setup.",
+        "lede": "For self-hosting teams: joins your own relay at the address below. Use this computer from your other computers. Its screen stays private unless you share it.",
         "request": null,
         "title": "Set up this computer"
       },
@@ -396,7 +396,7 @@
           "direct: Direct connection = off (advanced)",
           "relay: Relay server [https://relay.example.com] = ftp://relay !invalid (advanced)"
         ],
-        "lede": "For self-hosting teams: joins your own relay at the address below. You and the people you share with can create Spaces on this computer, and see and control its screen if you turn that on, from other computers. Cua connects them for you, with no network setup.",
+        "lede": "For self-hosting teams: joins your own relay at the address below. Use this computer from your other computers. Its screen stays private unless you share it.",
         "request": null,
         "title": "Set up this computer"
       },
@@ -416,7 +416,7 @@
           "direct: Direct connection = off (advanced)",
           "relay: Relay server [https://relay.example.com] = https://relay.example/ (advanced)"
         ],
-        "lede": "For self-hosting teams: joins your own relay at the address below. You and the people you share with can create Spaces on this computer, and see and control its screen if you turn that on, from other computers. Cua connects them for you, with no network setup.",
+        "lede": "For self-hosting teams: joins your own relay at the address below. Use this computer from your other computers. Its screen stays private unless you share it.",
         "request": "mode=relay relay=https://relay.example direct=- name=Studio allow=grace@example.com,bob@example.com",
         "title": "Set up this computer"
       },
@@ -526,7 +526,7 @@
           "direct: Direct connection = off (advanced)",
           "relay: Relay server [https://relay.example.com] = https://relay.example/ (advanced)"
         ],
-        "lede": "For self-hosting teams: joins your own relay at the address below. You and the people you share with can create Spaces on this computer, and see and control its screen if you turn that on, from other computers. Cua connects them for you, with no network setup.",
+        "lede": "For self-hosting teams: joins your own relay at the address below. Use this computer from your other computers. Its screen stays private unless you share it.",
         "request": "mode=relay relay=https://relay.example direct=- name=Studio allow=grace@example.com,bob@example.com",
         "title": "Set up this computer"
       },
@@ -544,7 +544,7 @@
           "profile: Use it to [-] = desktop",
           "allow: Share with (optional) [Teammates’ emails] = grace@example.com, bob@example.com"
         ],
-        "lede": "You and the people you share with can create Spaces on this computer, and see and control its screen if you turn that on, from other computers. Cua connects them for you, with no network setup. Signed in as ada@example.com.",
+        "lede": "Use this computer from your other computers. Its screen stays private unless you share it. Signed in as ada@example.com.",
         "request": "mode=relay relay=https://relay.example direct=- name=Studio allow=grace@example.com,bob@example.com",
         "title": "Set up this computer"
       },
@@ -562,7 +562,7 @@
           "profile: Use it to [-] = desktop",
           "allow: Share with (optional) [Teammates’ emails] = grace@example.com, bob@example.com"
         ],
-        "lede": "You and the people you share with can create Spaces on this computer, and see and control its screen if you turn that on, from other computers. Cua connects them for you, with no network setup. Signed in as ada@example.com.",
+        "lede": "Use this computer from your other computers. Its screen stays private unless you share it. Signed in as ada@example.com.",
         "request": "mode=relay relay=https://relay.example direct=- name=Studio allow=grace@example.com,bob@example.com",
         "title": "Set up this computer"
       },
@@ -775,8 +775,8 @@
         "dots": "*Welcome,Sign in,AI agents,Menu bar,This computer,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "Computers for you and your AI agents. Setup takes about a minute.",
-        "notice": "Cua collects usage data, like which features you use and when something goes wrong. When you're signed in, it's linked to your account through a random ID. Never your files, what you type or your screen. Change this here or in Settings, Privacy.",
+        "lede": "Computers for you and your AI agents.",
+        "notice": "Features you use and errors, linked to your account. Never your files, typing or screen.",
         "noticeLink": "What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry",
         "presentations": [],
         "primary": "Get started",
@@ -798,8 +798,8 @@
         "dots": "*Welcome,Sign in,AI agents,Menu bar,This computer,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "Computers for you and your AI agents. Setup takes about a minute.",
-        "notice": "Cua collects usage data, like which features you use and when something goes wrong. When you're signed in, it's linked to your account through a random ID. Never your files, what you type or your screen. Change this here or in Settings, Privacy.",
+        "lede": "Computers for you and your AI agents.",
+        "notice": "Features you use and errors, linked to your account. Never your files, typing or screen.",
         "noticeLink": "What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry",
         "presentations": [],
         "primary": "Get started",
@@ -867,7 +867,7 @@
         "dots": "Welcome,Sign in,*AI agents,Menu bar,This computer,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "Give your coding agents the cua skills and MCP server.",
+        "lede": "Let every coding app on this computer use Cua.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -916,7 +916,7 @@
         "dots": "Welcome,Sign in,*AI agents,Menu bar,This computer,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "Give your coding agents the cua skills and MCP server.",
+        "lede": "Let every coding app on this computer use Cua.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],

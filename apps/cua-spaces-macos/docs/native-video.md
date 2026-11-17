@@ -48,6 +48,7 @@ The page keeps one reporter, with one set of observers and one animation frame. 
 
 **When it measures.**
 - **Events:** the slot's or the page's resize, a scroll in any container (in the capture phase), a window resize, a `devicePixelRatio` change, `visibilitychange`, and DOM mutations (portals mounting and `data-open` or `style` changes).
+- **Layout changes:** the Space page dispatches `cua:layout-change` on `window` after a divider drag, a dock change or a panel fold commits (`LAYOUT_CHANGE_EVENT`). The reporter measures and sends at once, in the same frame as the new layout, then keeps following it, so the host's layer never trails the pane by a frame.
 - **After each event:** every frame for 20 frames, so CSS transitions are followed to the end.
 - **Safety net:** a poll every 400 ms while any slot is mounted.
 

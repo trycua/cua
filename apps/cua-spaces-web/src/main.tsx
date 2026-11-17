@@ -9,6 +9,7 @@ import { BridgeProvider } from "@/bridge";
 import { startCrashReporting } from "@/crash-reporting";
 import { ToastProvider } from "@/components/ui/toast";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { startI18n } from "@/i18n";
 import { routeTree } from "./routeTree.gen";
 import "./index.css";
 
@@ -31,6 +32,8 @@ declare module "@tanstack/react-router" {
 void startCrashReporting();
 
 const root = createRoot(document.getElementById("root")!);
+// The language is loaded before the first render, so nothing flashes in English.
+await startI18n().catch(() => undefined);
 if (pip) {
   void import("./components/pip/pip-view").then(({ PipView, pipParams }) =>
     root.render(

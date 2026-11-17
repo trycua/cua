@@ -301,10 +301,8 @@ pub fn issue_url(input: &AboutInput) -> String {
 /// What `channel` gets, in plain words.
 fn channel_help(channel: UpdateChannel) -> &'static str {
     match channel {
-        UpdateChannel::Stable => "Stable: tested releases. Best for most people.",
-        UpdateChannel::Nightly => {
-            "Nightly builds: get the newest changes from main every day. They may break."
-        }
+        UpdateChannel::Stable => "Tested releases.",
+        UpdateChannel::Nightly => "Daily builds. May break.",
     }
 }
 
@@ -682,10 +680,7 @@ mod tests {
 
         i.channel = UpdateChannel::Nightly;
         let u = view(&i).updates.unwrap();
-        assert_eq!(
-            u.channel_help,
-            "Nightly builds: get the newest changes from main every day. They may break."
-        );
+        assert_eq!(u.channel_help, "Daily builds. May break.");
         assert_eq!(u.channel_note, None);
 
         // Back on Stable from a nightly (or an old beta): it stays, and a download goes back now.

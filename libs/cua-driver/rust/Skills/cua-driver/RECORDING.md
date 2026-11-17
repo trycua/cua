@@ -118,10 +118,12 @@ Each action writes to `turn-NNNNN/` (five-digit zero-padded counter):
 
 ## Replay is a new action sequence
 
-`replay_trajectory` invokes recorded arguments in turn order; it is not a
-semantic task planner. It accepts `dir`, `delay_ms`, and `stop_on_error`.
-Read its live schema before use, and obtain authorization for the actions
-being replayed.
+`replay_trajectory` is deprecated and will be removed in the first Cua Driver
+release after 26 Nov 2026; prefer calling the steps again yourself with
+`run_steps`, which re-checks each target against fresh state. Recording stays.
+Until then, it invokes recorded arguments in turn order; it is not a semantic
+task planner. It accepts `dir`, `delay_ms`, and `stop_on_error`. Read its live
+schema before use, and obtain authorization for the actions being replayed.
 
 Recorded PIDs, window IDs, element tokens, browser refs, and geometry can all
 be stale. Read-only snapshots are not part of the action sequence, so replay

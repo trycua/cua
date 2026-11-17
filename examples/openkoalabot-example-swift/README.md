@@ -13,7 +13,7 @@ source-available under the
 
 ```sh
 git clone https://github.com/trycua/cua && cd cua/examples/openkoalabot-example-swift
-(cd ../../libs/cua && cargo build --release -p cua-sdk && node scripts/stage-uniffi-library.mjs --only=swift)
+(cd ../../libs/cua && cargo build --release -p cua-sdk-native && node scripts/stage-uniffi-library.mjs --only=swift)
 swift build && .build/debug/OpenKoalaBotExample
 ```
 
@@ -138,7 +138,7 @@ Stage the cua SDK library first. The Swift package links the host dylib from
 `libs/cua/swift/lib`:
 
 ```sh
-(cd ../../libs/cua && cargo build --release -p cua-sdk && node scripts/stage-uniffi-library.mjs --only=swift)
+(cd ../../libs/cua && cargo build --release -p cua-sdk-native && node scripts/stage-uniffi-library.mjs --only=swift)
 swift build
 .build/debug/OpenKoalaBotExample export ./renders          # every screen to PNG (no windows)
 .build/debug/OpenKoalaBotExample spaces-probe embedded     # the Spaces contract tools, from the linked SDK

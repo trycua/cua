@@ -33,7 +33,14 @@ describe.skipIf(!built)("the Machines rows on the app core", () => {
 
   beforeAll(async () => {
     home = mkdtempSync(path.join(tmpdir(), "cua-machine-rows-"));
-    Object.assign(process.env, { HOME: home, USERPROFILE: home, CUA_HOME: path.join(home, ".cua"), CUA_TELEMETRY: "0", DO_NOT_TRACK: "1", CUA_KEYCHAIN_NONINTERACTIVE: "1" });
+    Object.assign(process.env, {
+      HOME: home,
+      USERPROFILE: home,
+      CUA_HOME: path.join(home, ".cua"),
+      CUA_TELEMETRY: "0",
+      DO_NOT_TRACK: "1",
+      CUA_KEYCHAIN_NONINTERACTIVE: "1",
+    });
     native = await loadNative(dir);
   });
 
@@ -58,7 +65,14 @@ describe.skipIf(!built)("the Machines rows on the app core", () => {
       servicesIn: () => true,
       cpus: 8,
     });
-    bridge = createBridge({ model, supervisor: null, version: "1.2.3", platform: "darwin", env: {}, ui: { openSpace: () => {}, setBackground: () => {}, activate: () => {} } } as never);
+    bridge = createBridge({
+      model,
+      supervisor: null,
+      version: "1.2.3",
+      platform: "darwin",
+      env: {},
+      ui: { openSpace: () => {}, setBackground: () => {}, activate: () => {} },
+    } as never);
   };
 
   beforeEach(() => {

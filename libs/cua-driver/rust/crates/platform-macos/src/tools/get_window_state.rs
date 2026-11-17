@@ -32,21 +32,21 @@ fn def() -> &'static ToolDef {
         name: "get_window_state".into(),
         description: "Snapshot a window: the accessibility tree plus a screenshot. By default the tree is ONE compact Markdown rendering (`tree_format:\"markdown\"`): a row `[N]` is addressed with `element_token` `<snapshot_id>:N`, where `snapshot_id` is in the response header and in structuredContent. `tree_format:\"elements\"` returns the structured `elements` array instead (`element_index`, `element_token`, `role`, `label`, `value`, `actions`, `frame`, `parent_index`, `depth`); `\"both\"` returns both (about twice the size). Pass the token to click, type_text, press_key, etc.\n\
             \n\
-            START NARROW: a read walks at most 250 nodes by default and says `Tree truncated at max_elements=…` (`truncated:true`) when it stops; raise `max_elements`, or use `query` (case-insensitive substring; matching rows plus ancestors) and `max_depth`. Indices and tokens stay valid for the whole snapshot. `verbose:true` adds `_note` and the full `background_input` report; `full_output:true` restores the previous full response (both representations, all metadata, ≤2 000 nodes).\n\
+            START NARROW: a read walks at most 250 nodes by default and says `Tree truncated at max_elements=…` (`truncated:true`) when it stops; raise `max_elements`, or use `query` (case-insensitive substring, `a|b` for either; matching rows plus ancestors, or a `0 of N elements match` line) and `max_depth`. Indices and tokens stay valid for the whole snapshot. `verbose:true` adds `_note` and the full `background_input` report; `full_output:true` restores the previous full response (both representations, all metadata, ≤2 000 nodes).\n\
             \n\
             DIFF READS (use them for every re-read after acting): `since:\"latest\"`, or `since:<snapshot_id>` from an earlier read of the same window, returns only what changed: `+` added, `~` changed, `-` removed rows (removed ids are the old snapshot's), a `reindexed:` line if indices shifted, or `no change since …; focused element is …`. The response carries a NEW snapshot_id: use it in tokens. An unknown, expired, other-window or differently-scoped (query/max_elements/max_depth) `since` falls back to a full read; `since_status` says why.\n\
             \n\
-            A new snapshot of the same (pid, window_id) replaces the previous one and stales its tokens (`invalidated_snapshot_ids`). `include_screenshot:false` returns the tree only and keeps the last screenshot's pixel frame while the window keeps its size; `include_accessibility_tree:false` returns only the screenshot and keeps the current snapshot's rows and tokens valid (use it, not `max_elements:1`, when you just need to look); adding `display_only:true` (live previews) also leaves the pixel frame alone. The tree can lie on some surfaces (Electron, Catalyst, virtualized rows with `h:1` frames): cross-check the screenshot, and use pixel x,y at action time only for elements missing from the tree.\n\
+            A new snapshot of the same (pid, window_id) replaces this session's previous one and stales its tokens (`invalidated_snapshot_ids`); another session's read leaves them valid. `include_screenshot:false` returns the tree only and keeps the last screenshot's pixel frame while the window keeps its size; `include_accessibility_tree:false` returns only the screenshot and keeps the current snapshot's rows and tokens valid (use it, not `max_elements:1`, when you just need to look); adding `display_only:true` (live previews) also leaves the pixel frame alone. The tree can lie on some surfaces (Electron, Catalyst, virtualized rows with `h:1` frames): cross-check the screenshot, and use pixel x,y at action time only for elements missing from the tree.\n\
             \n\
             Refusals: `window_id_not_found`; `window_owner_pid_mismatch` names the real `owner_pid` (sandboxed Open/Save panels belong to a panel service). `degraded_reason` `ax_window_unresolved` or `ax_app_launching` (the latter with `truncation_reason: app_lookup_timeout`) means an empty tree: re-snapshot, or act with `delivery_mode:\"foreground\"`. `degraded_reason` `screen_locked` means the screen saver, display sleep or a lock hid every window from accessibility: wake and unlock the Mac, then re-snapshot; foreground input would reach the lock screen. `px_frame_mismatch` / `px_capture_unavailable` omit the unprovable screenshot; the AX payload stays valid.".into(),
         input_schema: cua_driver_core::window_state_view::extend_input_schema(serde_json::json!({
             "type": "object",
             "required": ["pid", "window_id"],
             "properties": {
-                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it." },
+                "session": cua_driver_core::tool_schema::session_schema(),
                 "pid": { "type": "integer", "description": "Target process ID." },
                 "window_id": { "type": "integer", "description": "Target window ID from list_windows." },
-                "query": { "type": "string", "description": "Case-insensitive substring filter: returns matching rows plus ancestors; element_index values are not renumbered. Try this before a full read." },
+                "query": { "type": "string", "description": "Case-insensitive substring filter; `a|b` matches rows containing either. Returns matching rows plus ancestors, or says `0 of N elements match` when none does; element_index values are not renumbered. Try this before a full read." },
                 "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
                 "include_accessibility_tree": {
                     "type": "boolean",
@@ -414,7 +414,11 @@ impl Tool for GetWindowStateTool {
         let scope_matched = window_scope.as_ref().is_none_or(|s| s.is_matched());
 
         let removed = (!scope_matched && !observation_only)
-            .then(|| self.state.snapshots.remove(pid, u64::from(window_id)))
+            .then(|| {
+                self.state
+                    .snapshots
+                    .remove(pid, u64::from(window_id), session_id.as_deref())
+            })
             .flatten();
 
         // Capture the screenshot and deliver it alongside the tree — the
@@ -821,16 +825,16 @@ impl Tool for GetWindowStateTool {
                                you cannot wait."
                 });
             }
-            Degradation::AxWindowUnresolved { ax_window_count } => {
+            Degradation::AxWindowUnresolved {
+                ax_window_count,
+                ax_windows_error,
+            } => {
                 structured["degraded"] = serde_json::json!(true);
-                structured["degraded_reason"] = serde_json::json!(format!(
-                    "ax_window_unresolved: window_id {window_id} exists and is owned by \
-                     pid {pid}, but none of the {ax_window_count} AXWindow element(s) \
-                     under that pid reports this CGWindowID. The tree is returned EMPTY \
-                     on purpose: the accessibility elements reachable under this pid \
-                     belong to other surfaces (the menu bar, other windows), not to the \
-                     requested window, so presenting them would misground the next \
-                     action."
+                structured["degraded_reason"] = serde_json::json!(ax_window_unresolved_reason(
+                    window_id,
+                    pid,
+                    ax_window_count,
+                    ax_windows_error,
                 ));
                 structured["escalation"] = serde_json::json!({
                     "recommended": "foreground",
@@ -856,6 +860,9 @@ impl Tool for GetWindowStateTool {
                 cua_driver_core::background_input::background_input_capability_report(
                     cua_driver_core::background_input::ExactWindowTarget { pid, window_id },
                     &facts,
+                    super::window_keyboard_action(
+                        cua_driver_core::background_input::BackgroundAction::GenericKey,
+                    ),
                     Some(capture_available),
                 )
             })
@@ -1069,7 +1076,10 @@ enum Degradation {
     AxTreeEmpty,
     /// The requested window is live and owned by this pid, but no AXWindow
     /// claims its CGWindowID, so the walk deliberately covered nothing.
-    AxWindowUnresolved { ax_window_count: usize },
+    AxWindowUnresolved {
+        ax_window_count: usize,
+        ax_windows_error: Option<crate::ax::bindings::AXError>,
+    },
     /// The window scope is unresolved because the app is still launching and
     /// did not answer accessibility within the caller's budget.
     AxAppLaunching,
@@ -1102,18 +1112,47 @@ fn degradation_for(
     if !walk_attempted {
         return Degradation::None;
     }
-    if let Some(crate::ax::WindowScope::AxUnresolved { ax_window_count }) = scope {
+    if let Some(crate::ax::WindowScope::AxUnresolved {
+        ax_window_count,
+        ax_windows_error,
+    }) = scope
+    {
         if app_lookup_timed_out {
             return Degradation::AxAppLaunching;
         }
         return Degradation::AxWindowUnresolved {
             ax_window_count: *ax_window_count,
+            ax_windows_error: *ax_windows_error,
         };
     }
     if element_count == 0 {
         return Degradation::AxTreeEmpty;
     }
     Degradation::None
+}
+
+fn ax_window_unresolved_reason(
+    window_id: u32,
+    pid: i32,
+    ax_window_count: usize,
+    ax_windows_error: Option<crate::ax::bindings::AXError>,
+) -> String {
+    let evidence = match ax_windows_error {
+        Some(error) => format!(
+            "reading that pid's AXWindows failed with AXError {error} ({})",
+            crate::ax::bindings::ax_error_name(error)
+        ),
+        None => format!(
+            "none of the {ax_window_count} AXWindow element(s) under that pid reports this \
+             CGWindowID"
+        ),
+    };
+    format!(
+        "ax_window_unresolved: window_id {window_id} exists and is owned by pid {pid}, but \
+         {evidence}. The tree is returned EMPTY on purpose: the accessibility elements \
+         reachable under this pid belong to other surfaces (the menu bar, other windows), \
+         not to the requested window, so presenting them would misground the next action."
+    )
 }
 
 /// Render the actionable nodes from the AX walk into the
@@ -1327,8 +1366,15 @@ mod window_scope_contract_tests {
     fn resolvable_scopes_are_not_refused() {
         assert!(window_scope_refusal(800, 11, &WindowScope::Matched).is_none());
         assert!(
-            window_scope_refusal(800, 11, &WindowScope::AxUnresolved { ax_window_count: 2 })
-                .is_none(),
+            window_scope_refusal(
+                800,
+                11,
+                &WindowScope::AxUnresolved {
+                    ax_window_count: 2,
+                    ax_windows_error: None
+                }
+            )
+            .is_none(),
             "a live same-pid window degrades; it does not error"
         );
     }
@@ -1342,11 +1388,42 @@ mod window_scope_contract_tests {
             degradation_for(
                 true,
                 0,
-                Some(&WindowScope::AxUnresolved { ax_window_count: 3 }),
+                Some(&WindowScope::AxUnresolved {
+                    ax_window_count: 3,
+                    ax_windows_error: None
+                }),
                 false
             ),
-            Degradation::AxWindowUnresolved { ax_window_count: 3 }
+            Degradation::AxWindowUnresolved {
+                ax_window_count: 3,
+                ax_windows_error: None
+            }
         );
+    }
+
+    #[test]
+    fn an_ax_windows_read_error_is_named_instead_of_a_zero_window_count() {
+        let error = Some(crate::ax::bindings::kAXErrorCannotComplete);
+        let degradation = degradation_for(
+            true,
+            0,
+            Some(&WindowScope::AxUnresolved {
+                ax_window_count: 0,
+                ax_windows_error: error,
+            }),
+            false,
+        );
+        assert_eq!(
+            degradation,
+            Degradation::AxWindowUnresolved {
+                ax_window_count: 0,
+                ax_windows_error: error
+            }
+        );
+        let reason = ax_window_unresolved_reason(800, 11, 0, error);
+        assert!(reason.contains("AXError -25204 (kAXErrorCannotComplete)"));
+        assert!(!reason.contains("none of the 0 AXWindow"));
+        assert!(ax_window_unresolved_reason(800, 11, 2, None).contains("none of the 2 AXWindow"));
     }
 
     /// A window that exists before its app answers accessibility is not an
@@ -1357,7 +1434,10 @@ mod window_scope_contract_tests {
             degradation_for(
                 true,
                 0,
-                Some(&WindowScope::AxUnresolved { ax_window_count: 0 }),
+                Some(&WindowScope::AxUnresolved {
+                    ax_window_count: 0,
+                    ax_windows_error: None
+                }),
                 true
             ),
             Degradation::AxAppLaunching
@@ -1377,7 +1457,10 @@ mod window_scope_contract_tests {
         let unresolved = degradation_for(
             true,
             0,
-            Some(&WindowScope::AxUnresolved { ax_window_count: 0 }),
+            Some(&WindowScope::AxUnresolved {
+                ax_window_count: 0,
+                ax_windows_error: None,
+            }),
             false,
         );
         assert_eq!(

@@ -210,8 +210,9 @@ fn system_lume(
 /// relies on (forced and bounded stop for detached VMs, running without a VNC
 /// listener, GPU passthrough), and a real 0.5.3 `lume serve` hung booting the
 /// macOS 26 image ("stopped while booting"). It is the pin today; it only
-/// moves when cua starts needing something newer, not with every pin.
-pub const MIN_VERSION: &str = "0.7.0";
+/// moves when cua starts needing something newer, not with every pin. The number
+/// lives in [`crate::kinds::LUME_MIN_VERSION`] (the tool table reads it too).
+pub const MIN_VERSION: &str = crate::kinds::LUME_MIN_VERSION;
 
 /// The first `x.y.z` in `text` (`lume --version` prints `0.6.0`; a
 /// `v0.6.0` or `lume 0.6.0-beta` is read the same way).

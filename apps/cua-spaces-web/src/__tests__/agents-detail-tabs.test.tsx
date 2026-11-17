@@ -20,7 +20,12 @@ describe.skipIf(!wasmBuilt)("Agents, a persistent agent's detail", () => {
   it("shows Memory, adds a routine and lists Access with its audit", { timeout: 20_000 }, async () => {
     await mountApp("/agents/all?agent=ada", { failsCreates: false, listsGhost: false });
     await waitFor(() => expect(tab("memory")).not.toBeNull(), { timeout: 8000 });
-    expect([...document.querySelectorAll("[data-agent-tab]")].map((t) => t.textContent)).toEqual(["Conversation", "Memory", "Routines", "Access to this machine"]);
+    expect([...document.querySelectorAll("[data-agent-tab]")].map((t) => t.textContent)).toEqual([
+      "Conversation",
+      "Memory",
+      "Routines",
+      "Access to this machine",
+    ]);
     expect(tab("run")!.getAttribute("aria-selected")).toBe("true");
 
     fireEvent.click(tab("memory")!);

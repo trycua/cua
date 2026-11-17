@@ -3,7 +3,17 @@
 
 import { describe, expect, it } from "vitest";
 
-import { creatingLine, leavesLine, globalShortcutLine, hostOs, keyvaultUnlockWay, osOfPlatform, showsMacShellSettings, thisComputerLabel, thisComputerText } from "./host-labels";
+import {
+  creatingLine,
+  leavesLine,
+  globalShortcutLine,
+  hostOs,
+  keyvaultUnlockWay,
+  osOfPlatform,
+  showsMacShellSettings,
+  thisComputerLabel,
+  thisComputerText,
+} from "./host-labels";
 
 describe("host labels", () => {
   it("names the local machine after its system", () => {
@@ -50,7 +60,7 @@ describe("host labels", () => {
   });
 
   it("says what the global shortcut does, or why it does nothing", () => {
-    expect(globalShortcutLine({ label: "\u2318\u21e7Space", registered: true })).toBe("Brings Cua Spaces to the front from any app.");
+    expect(globalShortcutLine({ label: "\u2318\u21e7Space", registered: true })).toBeNull();
     expect(globalShortcutLine({ label: "\u2318\u21e7Space", registered: false })).toBe(
       "Another app is using \u2318\u21e7Space, so it does nothing here. Free it in that app, then open Settings again.",
     );

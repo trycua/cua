@@ -47,6 +47,14 @@ pub const LABEL_MENTIONS: &str = "cua.home.mentions";
 /// The machines the agent may use (ids or names, comma separated).
 pub const LABEL_MACHINES: &str = "cua.home.machines";
 
+/// The home warming for Home's box (label `cua.hidden`): no list, count or tree shows it, and an agent's "list every Space"
+/// leaves it out too, whatever it was granted.
+pub fn is_warming_home<S: std::hash::BuildHasher>(
+    labels: &std::collections::HashMap<String, String, S>,
+) -> bool {
+    labels.contains_key("cua.hidden")
+}
+
 /// Where the app writes what the person approved while a home runs.
 pub fn grants_path(cua_home: &Path) -> PathBuf {
     cua_home.join("agent-home").join("grants.json")
@@ -319,5 +327,20 @@ mod tests {
             machines: ["m".to_owned()].into(),
         };
         assert_eq!(HomeScope::from_labels(&s.to_labels()), s);
+    }
+}
+
+#[cfg(test)]
+mod warming_tests {
+    use super::is_warming_home;
+    use std::collections::HashMap;
+
+    #[test]
+    fn the_warming_home_is_not_listed_to_an_agent() {
+        let warming: HashMap<String, String> = [("cua.hidden".to_string(), "home".to_string())]
+            .into_iter()
+            .collect();
+        assert!(is_warming_home(&warming));
+        assert!(!is_warming_home(&HashMap::new()));
     }
 }

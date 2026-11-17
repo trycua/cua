@@ -10,7 +10,7 @@ use cua_driver_core::{
 };
 use serde_json::{json, Value};
 
-use super::impl_::attach_focus_guard;
+use super::impl_::{atspi_outcome_unknown, attach_focus_guard};
 
 // ── invoke_menu (Linux) ──────────────────────────────────────────────────────
 
@@ -42,6 +42,89 @@ fn menu_refusal(message: String) -> ToolResult {
     }))
 }
 
+/// The text for a menu command whose final action did not answer.
+fn menu_answer_note(answered: bool) -> &'static str {
+    if answered {
+        ""
+    } else {
+        "; it did not answer in time, as an item that opens a dialog answers only once the dialog closes"
+    }
+}
+
+fn menu_command_evidence(answered: bool) -> cua_driver_core::action_record::ActionEvidence {
+    cua_driver_core::action_record::ActionEvidence {
+        kind: cua_driver_core::action_record::EvidenceKind::NativeApiResult,
+        detail: if answered {
+            "Every menu hop resolved uniquely and AT-SPI accepted the final action"
+        } else {
+            "Every menu hop resolved uniquely; the final action was sent and did not answer in time"
+        }
+        .into(),
+    }
+}
+
+/// [`atspi_outcome_unknown`] for a menu command whose final action failed
+/// after it was sent ([`crate::atspi::InputMayHaveLanded`]): not a refusal,
+/// which would invite invoking the command again.
+pub(super) fn menu_command_outcome_unknown(
+    delivery: crate::input::delivery::DeliveryMode,
+    error: &anyhow::Error,
+) -> ToolResult {
+    atspi_outcome_unknown(
+        format!(
+            "invoke_menu: the final menu action was sent, but {error}; whether the command \
+             ran is unknown. Refresh state (get_window_state or a screenshot) before invoking \
+             it again."
+        ),
+        cua_driver_core::action_record::ActionTransport::LinuxAtSpiAction,
+        delivery,
+        Some(error.to_string()),
+    )
+}
+
+/// A background menu invocation that would have to open a menu is refused as
+/// `background_unavailable`: an open menu grabs the user's keyboard
+/// (trycua/cua#7371), and nothing was actuated.
+fn background_menu_error(error: anyhow::Error) -> ToolResult {
+    match error.downcast_ref::<crate::atspi::native::MenuMustOpen>() {
+        Some(must_open) => {
+            let mut refusal = crate::input::delivery::background_unavailable_error(
+                crate::input::delivery::BackgroundUnavailable::MenuOpenGrabsKeyboard,
+            );
+            if let Some(structured) = refusal.structured_content.as_mut() {
+                structured["menu_detail"] = json!(must_open.to_string());
+            }
+            refusal
+        }
+        None => menu_refusal(format!("invoke_menu: {error}")),
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn a_menu_that_must_open_is_a_background_refusal_not_a_path_error() {
+    let refusal = background_menu_error(
+        crate::atspi::native::MenuMustOpen {
+            detail: "the app does not publish the item until its menu opens".into(),
+        }
+        .into(),
+    );
+    assert_eq!(refusal.is_error, Some(true));
+    let structured = refusal.structured_content.as_ref().unwrap();
+    assert_eq!(structured["code"], "background_unavailable");
+    assert_eq!(structured["escalation"]["recommended"], "foreground");
+    assert!(structured["detail"]
+        .as_str()
+        .unwrap()
+        .contains("takes the keyboard and pointer from the user"));
+
+    let other = background_menu_error(anyhow::anyhow!("menu path segment 1 is ambiguous"));
+    assert_eq!(
+        other.structured_content.as_ref().unwrap()["refusal"]["code"],
+        "menu_path_unavailable"
+    );
+}
+
 #[async_trait]
 impl Tool for InvokeMenuTool {
     fn def(&self) -> &ToolDef {
@@ -62,8 +145,7 @@ impl Tool for InvokeMenuTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::action_record::{
-            ActionEffect, ActionEvidence, ActionExecutionRecord, ActionTransport, ActualDelivery,
-            EvidenceKind, RequestedDelivery,
+            ActionEffect, ActionExecutionRecord, ActionTransport, ActualDelivery, RequestedDelivery,
         };
 
         // Menu paths are resolved and fired through AT-SPI, which needs no
@@ -71,11 +153,6 @@ impl Tool for InvokeMenuTool {
         // under the focus guard). `delivery_mode:"foreground"` is the explicit
         // escalation that activates the window first, as every other tool.
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
-        let mut args = args;
-        if let Some(object) = args.as_object_mut() {
-            // Not part of the closed InvokeMenuInput contract; consumed above.
-            object.remove("delivery_mode");
-        }
         let input: InvokeMenuInput = match parse_typed_input("invoke_menu", args) {
             Ok(input) => input,
             Err(result) => return result,
@@ -96,15 +173,21 @@ impl Tool for InvokeMenuTool {
         if !crate::wayland::is_wayland() && !delivery.is_foreground() {
             let outcome = tokio::task::spawn_blocking(move || {
                 crate::input::focus_guard::guarded(Some(pid), || {
-                    crate::atspi::native::invoke_menu_path_in(pid, window_id, &path)
+                    crate::atspi::native::invoke_menu_path_in(
+                        pid,
+                        window_id,
+                        &path,
+                        crate::atspi::native::MenuOpening::Forbidden,
+                    )
                 })
             })
             .await;
             return match outcome {
-                Ok(Ok(((), guard))) => attach_focus_guard(
-                    ToolResult::text(
-                        "Resolved the live native menu path and dispatched its final accessibility action (delivery_mode=background, focus untouched); verify the command's semantic effect from fresh state.",
-                    )
+                Ok(Ok((answered, guard))) => attach_focus_guard(
+                    ToolResult::text(format!(
+                        "Resolved the live native menu path and dispatched its final accessibility action (delivery_mode=background, focus untouched){}; verify the command's semantic effect from fresh state.",
+                        menu_answer_note(answered)
+                    ))
                     .with_structured(json!({
                         "path": "ax",
                         "verified": false,
@@ -118,17 +201,16 @@ impl Tool for InvokeMenuTool {
                             RequestedDelivery::Background,
                         )
                         .actual_delivery(ActualDelivery::Background)
-                        .evidence(ActionEvidence {
-                            kind: EvidenceKind::NativeApiResult,
-                            detail: "Every menu hop resolved uniquely and AT-SPI accepted the final action"
-                                .into(),
-                        })
+                        .evidence(menu_command_evidence(answered))
                         .build()
                         .expect("invoke_menu record is valid"),
                     ),
                     guard.as_ref(),
                 ),
-                Ok(Err(error)) => menu_refusal(format!("invoke_menu: {error}")),
+                Ok(Err(error)) if crate::atspi::input_may_have_landed(&error) => {
+                    menu_command_outcome_unknown(delivery, &error)
+                }
+                Ok(Err(error)) => background_menu_error(error),
                 Err(error) => menu_refusal(format!("invoke_menu: blocking task failed: {error}")),
             };
         }
@@ -168,7 +250,12 @@ impl Tool for InvokeMenuTool {
         };
 
         let outcome = tokio::task::spawn_blocking(move || {
-            let result = crate::atspi::native::invoke_menu_path_in(pid, window_id, &path);
+            let result = crate::atspi::native::invoke_menu_path_in(
+                pid,
+                window_id,
+                &path,
+                crate::atspi::native::MenuOpening::Allowed,
+            );
             if let Some(Some(prior_window)) = activation {
                 let _ = crate::input::x11_activate_window_persistent(prior_window);
             }
@@ -177,9 +264,10 @@ impl Tool for InvokeMenuTool {
         .await;
 
         match outcome {
-            Ok(Ok(())) => ToolResult::text(
-                "Resolved the live native menu path and dispatched its final accessibility action (delivery_mode=foreground); verify the command's semantic effect from fresh state.",
-            )
+            Ok(Ok(answered)) => ToolResult::text(format!(
+                "Resolved the live native menu path and dispatched its final accessibility action (delivery_mode=foreground){}; verify the command's semantic effect from fresh state.",
+                menu_answer_note(answered)
+            ))
             .with_structured(json!({
                 "path": "ax",
                 "verified": false,
@@ -193,14 +281,13 @@ impl Tool for InvokeMenuTool {
                     RequestedDelivery::Foreground,
                 )
                 .actual_delivery(ActualDelivery::Foreground)
-                .evidence(ActionEvidence {
-                    kind: EvidenceKind::NativeApiResult,
-                    detail: "Every menu hop resolved uniquely and AT-SPI accepted the final action"
-                        .into(),
-                })
+                .evidence(menu_command_evidence(answered))
                 .build()
                 .expect("invoke_menu record is valid"),
             ),
+            Ok(Err(error)) if crate::atspi::input_may_have_landed(&error) => {
+                menu_command_outcome_unknown(delivery, &error)
+            }
             Ok(Err(error)) => menu_refusal(format!("invoke_menu: {error}")),
             Err(error) => menu_refusal(format!("invoke_menu: blocking task failed: {error}")),
         }

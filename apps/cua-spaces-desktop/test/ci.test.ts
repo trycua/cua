@@ -18,7 +18,7 @@ describe("what each method sends", () => {
     expect(CI_OPS["ci.connectToken"]).toBe("connect_token");
     expect(ciInput("ci.overview", { live: true, extra: "x" })).toEqual({ live: true });
     expect(ciInput("ci.overview", {})).toEqual({ live: false });
-    expect(ciInput("ci.connect", { githubOrg: " acme " , other: 1 })).toEqual({ githubOrg: " acme " });
+    expect(ciInput("ci.connect", { githubOrg: " acme ", other: 1 })).toEqual({ githubOrg: " acme " });
     expect(ciInput("ci.connect", {})).toEqual({});
     expect(ciInput("ci.repositories", { allow: ["a/b", 3, ""], remove: "no" })).toEqual({ allow: ["a/b"], remove: [] });
     expect(ciInput("ci.goal", { target: "aws", goal: "fastest", x: 1 })).toEqual({ target: "aws", goal: "fastest" });
@@ -38,12 +38,19 @@ describe("what comes back", () => {
   });
   it("is cua's own failure, with its code mapped", () => {
     const fail = (code: string) => ({ ok: true, stdout: `${JSON.stringify({ ok: false, error: { code, message: "words" } })}\n`, stderr: "", status: "" });
-    for (const [code, want] of [["invalid", "bad_args"], ["not_found", "not_found"], ["unsupported", "unsupported"], ["service", "failed"]] as const) {
+    for (const [code, want] of [
+      ["invalid", "bad_args"],
+      ["not_found", "not_found"],
+      ["unsupported", "unsupported"],
+      ["service", "failed"],
+    ] as const) {
       expect(() => ciAnswer(fail(code))).toThrowError(expect.objectContaining({ code: want, message: "words" }));
     }
   });
   it("says what a cua that crashed wrote last, and refuses output that is not JSON", () => {
-    expect(() => ciAnswer({ ok: false, stdout: "", stderr: "x\nerror: no home\n", status: "exited with 2" })).toThrowError(expect.objectContaining({ message: "error: no home" }));
+    expect(() => ciAnswer({ ok: false, stdout: "", stderr: "x\nerror: no home\n", status: "exited with 2" })).toThrowError(
+      expect.objectContaining({ message: "error: no home" }),
+    );
     expect(() => ciAnswer({ ok: true, stdout: "hello", stderr: "", status: "" })).toThrow(/not JSON/);
   });
 });

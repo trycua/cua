@@ -53,16 +53,10 @@ export function overlayColors(theme: Theme, dimmed: boolean): { color: string; s
 }
 
 /** The overlay over a dark `surface` (see {@link SURFACE_ATTRIBUTE}) or, with none, the theme's. */
-export function overlayColorsFor(
-  theme: Theme,
-  dimmed: boolean,
-  surface: string | null | undefined,
-): { color: string; symbolColor: string } {
+export function overlayColorsFor(theme: Theme, dimmed: boolean, surface: string | null | undefined): { color: string; symbolColor: string } {
   if (!surface) return overlayColors(theme, dimmed);
   const a = BACKDROP_ALPHA.dark;
-  return dimmed
-    ? { color: darken(surface, a), symbolColor: darken(SYMBOL.dark, a) }
-    : { color: surface, symbolColor: SYMBOL.dark };
+  return dimmed ? { color: darken(surface, a), symbolColor: darken(SYMBOL.dark, a) } : { color: surface, symbolColor: SYMBOL.dark };
 }
 
 export interface OverlayStyle {

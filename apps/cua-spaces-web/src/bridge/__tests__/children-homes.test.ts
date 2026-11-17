@@ -32,7 +32,9 @@ describe("agent homes in the children store", () => {
   });
 
   it("offers no home from a host that does not answer the tree", async () => {
-    const store = createChildrenStore({ call: async () => Promise.reject(Object.assign(new Error("unsupported"), { unsupported: true })) } as unknown as DataAdapter);
+    const store = createChildrenStore({
+      call: async () => Promise.reject(Object.assign(new Error("unsupported"), { unsupported: true })),
+    } as unknown as DataAdapter);
     store.homesOf("claude-code");
     await settle();
     expect(store.homesOf("claude-code")).toEqual([]);

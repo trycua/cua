@@ -318,14 +318,17 @@ export class AppModel {
 
   /** What the Machines page is listed from (`machines::MachinesPageInput`), the same for its rows and its view. */
   get machinesPageInput(): AppMachinesPageInput {
-    const devices = this.devices.snapshot === null ? [] : this.devices.input.devices.map((d) => ({
-      id: d.id,
-      name: d.name,
-      platform: d.platform ?? "",
-      lastSeen: d.lastSeen,
-      current: d.current,
-      state: d.state,
-    }));
+    const devices =
+      this.devices.snapshot === null
+        ? []
+        : this.devices.input.devices.map((d) => ({
+            id: d.id,
+            name: d.name,
+            platform: d.platform ?? "",
+            lastSeen: d.lastSeen,
+            current: d.current,
+            state: d.state,
+          }));
     return {
       hostOs: this.hostOs,
       spaces: this.spaces,
@@ -615,7 +618,9 @@ export class AppModel {
       this.listReaching = list.reaching;
       this.listStale = list.stale;
       // A create this app asked another computer for already has its own pending row.
-      this.creatingElsewhere = (list.creating ?? []).filter((c) => !this.spaces.some((s) => s.name === c.name && (s.host === c.machineId || this.native.appCreatesIsPending(s.id))));
+      this.creatingElsewhere = (list.creating ?? []).filter(
+        (c) => !this.spaces.some((s) => s.name === c.name && (s.host === c.machineId || this.native.appCreatesIsPending(s.id))),
+      );
       // Your other computers could not be read: their rows are the last known ones.
       this.rosterError = list.notice ? "Could not reach your other machines. Their Spaces may be out of date." : null;
       if (this.selectedSpaceId === null) {
@@ -646,7 +651,12 @@ export class AppModel {
 
   /** What Settings, Advanced's runtime rows are laid out from (`runtimes::section`): every kind, "Checking…" until read. */
   runtimesInput(): AppRuntimesInput {
-    const os = process.platform === "darwin" ? this.native.AppSpaceOs.Macos : process.platform === "win32" ? this.native.AppSpaceOs.Windows : this.native.AppSpaceOs.Linux;
+    const os =
+      process.platform === "darwin"
+        ? this.native.AppSpaceOs.Macos
+        : process.platform === "win32"
+          ? this.native.AppSpaceOs.Windows
+          : this.native.AppSpaceOs.Linux;
     return {
       os,
       hostArch: this.hostArch,
@@ -701,7 +711,13 @@ export class AppModel {
       this.runtimeAdvice = {
         reason: managed,
         fix: /Windows feature|wsl --install/i.test(managed)
-          ? { action: "open-windows-features", label: "Open Windows Features", note: "Turn on the listed features, then restart this PC and open Cua Spaces again.", busy: false, termsUrl: null }
+          ? {
+              action: "open-windows-features",
+              label: "Open Windows Features",
+              note: "Turn on the listed features, then restart this PC and open Cua Spaces again.",
+              busy: false,
+              termsUrl: null,
+            }
           : null,
       };
       return;
@@ -848,7 +864,10 @@ export class AppModel {
       return id;
     } catch (error) {
       if (isCancelled(error)) this.sendCreate(new this.native.AppCreateAction.CancelDone({ id: pendingId }));
-      else this.sendCreate(new this.native.AppCreateAction.Fail({ id: pendingId, error: words(error), errorVariant: createErrorVariant(error), now: AppModel.nowMs() }));
+      else
+        this.sendCreate(
+          new this.native.AppCreateAction.Fail({ id: pendingId, error: words(error), errorVariant: createErrorVariant(error), now: AppModel.nowMs() }),
+        );
       throw error;
     }
   }
@@ -1118,5 +1137,12 @@ export class AppModel {
 /** The SDK's storage probe as the wizard env takes it. */
 export function wizardStorage(s: LocalStorage): AppLocalStorage {
   const volume = (v: LocalStorage["lume"]) => (v ? { availableBytes: v.availableBytes, totalBytes: v.totalBytes, name: v.name } : undefined);
-  return { reserveBytes: s.reserveBytes, lume: volume(s.lume), qemu: volume(s.qemu), container: volume(s.container), pulled: s.pulled, linuxRuntimeDownloadBytes: s.linuxRuntimeDownloadBytes };
+  return {
+    reserveBytes: s.reserveBytes,
+    lume: volume(s.lume),
+    qemu: volume(s.qemu),
+    container: volume(s.container),
+    pulled: s.pulled,
+    linuxRuntimeDownloadBytes: s.linuxRuntimeDownloadBytes,
+  };
 }

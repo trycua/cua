@@ -247,6 +247,90 @@ async fn changes_made_on_a_laptop_with_no_owner_are_saved_and_sync_later() {
     sim.shutdown().await;
 }
 
+/// A device writes its presence record every 30 s and keeps only the newest
+/// version of it. While the owner is away, each heartbeat used to be saved
+/// as its own change whose bytes the next one deleted: the owner then asked
+/// for bytes that were gone, again and again, and logged it every time.
+#[tokio::test]
+async fn saved_heartbeats_replace_each_other_instead_of_waiting_for_bytes_that_are_gone() {
+    let sim = Sim::new(&[("studio", 9000), ("laptop", 2000)]).await;
+    group_ready(&sim, "studio").await;
+    sim.cut("studio", "laptop");
+    let laptop = sim.get("laptop");
+    eventually("the laptop sees the studio go", 10, || async {
+        laptop.node.status().await.peers[0].health != "up"
+    })
+    .await;
+    let key = format!("{}laptop.json", cua_volume::feed::DEVICES_PREFIX);
+    for i in 0..4 {
+        laptop
+            .backend
+            .put_durable(
+                &key,
+                format!("{{\"last_seen_ms\":{i}}}").into_bytes(),
+                Condition::None,
+            )
+            .await
+            .unwrap();
+    }
+    assert_eq!(laptop.node.status().await.pending.len(), 1);
+    sim.heal("studio", "laptop");
+    eventually("the studio takes the newest heartbeat", 15, || async {
+        laptop.node.status().await.pending.is_empty()
+            && sim
+                .get("studio")
+                .store
+                .get(&key, None)
+                .await
+                .is_ok_and(|(b, _)| b == b"{\"last_seen_ms\":3}")
+    })
+    .await;
+    sim.shutdown().await;
+}
+
+/// A saved change whose bytes are gone (what an older build left behind for
+/// a presence record) can never be sent: it is forgotten, not retried forever.
+#[tokio::test]
+async fn a_saved_change_whose_bytes_are_gone_is_forgotten() {
+    let sim = Sim::new(&[("studio", 9000), ("laptop", 2000)]).await;
+    group_ready(&sim, "studio").await;
+    sim.cut("studio", "laptop");
+    let laptop = sim.get("laptop");
+    eventually("the laptop sees the studio go", 10, || async {
+        laptop.node.status().await.peers[0].health != "up"
+    })
+    .await;
+    laptop
+        .backend
+        .put_durable("agents/ada/lost.md", b"gone".to_vec(), Condition::None)
+        .await
+        .unwrap();
+    laptop
+        .backend
+        .put_durable("agents/ada/kept.md", b"kept".to_vec(), Condition::None)
+        .await
+        .unwrap();
+    assert_eq!(laptop.node.status().await.pending.len(), 2);
+    let spool = cua_volume::fs::FsBackend::new(laptop.dir.path().join("replica/spool"));
+    let v = spool.versions("agents/ada/lost.md").await.unwrap();
+    assert_eq!(v.len(), 1);
+    std::fs::remove_file(
+        spool
+            .version_file("agents/ada/lost.md", &v[0].version)
+            .unwrap(),
+    )
+    .unwrap();
+    sim.heal("studio", "laptop");
+    eventually("the studio takes the change", 15, || async {
+        laptop.node.status().await.pending.is_empty()
+            && head_etag(sim.get("studio"), "agents/ada/kept.md")
+                .await
+                .is_some()
+    })
+    .await;
+    sim.shutdown().await;
+}
+
 #[tokio::test]
 async fn two_machines_changing_one_file_keep_both_versions() {
     let sim = Sim::new(&[("studio", 9000), ("laptop", 2000)]).await;

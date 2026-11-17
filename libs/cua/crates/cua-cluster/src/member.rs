@@ -123,9 +123,10 @@ pub fn member_env(
     for (k, v) in &job.env {
         env.insert(k.clone(), v.clone());
     }
+    let sep = path_separator(&guest.tools);
     let path = match job.env.get("PATH") {
-        Some(p) if !p.is_empty() => format!("{}:{p}", guest.tools),
-        _ => format!("{}:{}", guest.tools, guest.path),
+        Some(p) if !p.is_empty() => format!("{}{sep}{p}", guest.tools),
+        _ => format!("{}{sep}{}", guest.tools, guest.path),
     };
     env.insert("PATH".into(), path);
     // Always the host's: where this member, its run's data and its control
@@ -146,6 +147,18 @@ pub fn member_env(
         env.insert("CUA_PEERS".into(), r.peers.join(","));
     }
     env
+}
+
+/// The separator of a `PATH` in the guest whose tools directory is `tools`: `;` on Windows (a
+/// drive-letter path), `:` everywhere else.
+pub fn path_separator(tools: &str) -> char {
+    let b = tools.as_bytes();
+    if b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/')
+    {
+        ';'
+    } else {
+        ':'
+    }
 }
 
 /// How a member's command runs in its Space.
@@ -726,5 +739,31 @@ mod tests {
             "/private/tmp/cua/cache/python-downloads"
         );
         assert_eq!(env["CUA_PEERS"], "10.0.0.1:47010,10.0.0.2:47010");
+    }
+    #[test]
+    fn a_windows_member_joins_its_path_with_a_semicolon_and_the_others_with_a_colon() {
+        assert_eq!(path_separator(r"C:\cua\tools"), ';');
+        assert_eq!(path_separator("D:/cua/tools"), ';');
+        assert_eq!(path_separator("/cua/tools"), ':');
+        assert_eq!(path_separator("/private/tmp/cua/tools"), ':');
+        let job = JobSpec {
+            job_id: "acct/j".into(),
+            ..Default::default()
+        };
+        let win = GuestPaths {
+            work: r"C:\cua\job".into(),
+            data: r"C:\cua\data".into(),
+            cache: r"C:\cua\cache".into(),
+            tools: r"C:\cua\tools".into(),
+            path: r"C:\Windows\System32".into(),
+            python_installs: None,
+        };
+        let env = member_env(&job, &win, "machine", None);
+        assert_eq!(env["PATH"], r"C:\cua\tools;C:\Windows\System32");
+        let lin = GuestPaths::under("/cua", LINUX_PATH);
+        assert!(
+            member_env(&job, &lin, "container", None)["PATH"]
+                .starts_with("/cua/tools:/usr/local/sbin")
+        );
     }
 }

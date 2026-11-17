@@ -117,7 +117,7 @@ pub struct BootConfig {
 }
 
 /// Per-instance identity.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Identity {
     /// Hostname.
     #[serde(default)]
@@ -145,6 +145,20 @@ pub struct Identity {
     /// Extra environment for later `exec` requests.
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+}
+
+impl std::fmt::Debug for Identity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Identity")
+            .field("hostname", &self.hostname)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("token_group", &self.token_group)
+            .field("entropy", &self.entropy)
+            .field("unix_nanos", &self.unix_nanos)
+            .field("machine_id", &self.machine_id)
+            .field("env", &self.env)
+            .finish()
+    }
 }
 
 /// A command for [`Request::Exec`].

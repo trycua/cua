@@ -1,10 +1,11 @@
 """Stamp the Sandbox release version into the maintained SDK documentation.
 
-docs/scripts/tests/test_docs_version_facts.py requires the cua-sandbox version
-on several hand-written pages. Release Please does not touch them and the
-generated reference only covers three, so the release PR fails "Docs page
-tests". Only lines that name cua-sandbox change, because the previous version
-number can belong to another package (cua-agent also released 0.9.1).
+Release Please does not touch hand-written pages, so a page that names the
+previous cua-sandbox version would go stale. Install instructions carry no
+version (docs/scripts/tests/test_docs_version_facts.py), because the release
+PR merges before PyPI publishes the package. Only lines that name cua-sandbox
+change, because the previous version number can belong to another package
+(cua-agent also released 0.9.1).
 """
 
 from __future__ import annotations

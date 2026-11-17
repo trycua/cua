@@ -29,6 +29,10 @@ const MAX_ANCESTRY_DEPTH: usize = 40;
 /// Bounded sheet chain followed when mapping a sheet to its parent window.
 const MAX_SHEET_NESTING: usize = 8;
 
+/// Elements a search of the target window's subtree for a detached menu may
+/// visit (see [`in_menu_listed_by_window`]).
+const MAX_MENU_SEARCH_NODES: usize = 4096;
+
 /// Resolve the CGWindowID of the top-level AX window that owns `element`.
 ///
 /// Prefers the element's `AXWindow` attribute and falls back to a bounded
@@ -112,12 +116,14 @@ unsafe fn nearest_window_ancestor(element: AXUIElementRef) -> Option<AxWindowId>
 fn element_ancestry(
     window: Option<AxWindowId>,
     in_app_menu_bar: bool,
+    in_listed_menu: bool,
     requested: u32,
 ) -> ElementAncestry {
     match window {
         Some(id) if id.is(requested) => ElementAncestry::ProvenDescendant,
         Some(_) => ElementAncestry::OutsideTargetWindow,
         None if in_app_menu_bar => ElementAncestry::ProvenDescendant,
+        None if in_listed_menu => ElementAncestry::ProvenSemanticOnly,
         None => ElementAncestry::Unproven,
     }
 }
@@ -317,6 +323,86 @@ pub unsafe fn in_parentless_menu(element: AXUIElementRef) -> bool {
         parent_of,
     )
     .is_some()
+}
+
+/// Whether `element` is an item of a menu that names no window (see
+/// [`parentless_menu`]) and that window `window_id`'s own AX subtree lists.
+/// A Mac Catalyst pop-up's menu is reachable only downward: the window's root
+/// group lists it among its children (issue #4619). The search is breadth
+/// first and stops after [`MAX_MENU_SEARCH_NODES`] elements; a menu not found
+/// within that budget stays unproven.
+///
+/// # Safety
+///
+/// `app` and `element` must be valid `AXUIElementRef`s.
+unsafe fn in_menu_listed_by_window(
+    app: AXUIElementRef,
+    window_id: u32,
+    element: AXUIElementRef,
+) -> bool {
+    let Some(menu) = parentless_menu(
+        RetainedElement::retain(element as usize),
+        role_of,
+        parent_of,
+    ) else {
+        return false;
+    };
+    let mut listed = false;
+    for window in copy_ax_windows(app) {
+        if !listed && ax_get_window_id(window) == Some(window_id) {
+            listed = subtree_contains(
+                RetainedElement::retain(window as usize),
+                &menu,
+                children_of,
+                |a, b| {
+                    core_foundation::base::CFEqual(a.as_ptr() as CFTypeRef, b.as_ptr() as CFTypeRef)
+                        != 0
+                },
+                MAX_MENU_SEARCH_NODES,
+            );
+        }
+        CFRelease(window as CFTypeRef);
+    }
+    listed
+}
+
+fn children_of(element: &RetainedElement) -> Vec<RetainedElement> {
+    // SAFETY: as in parent_of; copy_children returns +1 references.
+    unsafe {
+        copy_children(element.as_ptr() as AXUIElementRef)
+            .into_iter()
+            .map(|child| {
+                let retained = RetainedElement::retain(child as usize);
+                CFRelease(child as CFTypeRef);
+                retained
+            })
+            .collect()
+    }
+}
+
+/// Whether `target` is `root` or one of its descendants, searched breadth
+/// first. At most `max_nodes` elements are taken in; past that the answer is
+/// `false`, never a guess.
+fn subtree_contains<E>(
+    root: E,
+    target: &E,
+    children: impl Fn(&E) -> Vec<E>,
+    same: impl Fn(&E, &E) -> bool,
+    max_nodes: usize,
+) -> bool {
+    let mut queue = std::collections::VecDeque::from([root]);
+    let mut taken = 1;
+    while let Some(node) = queue.pop_front() {
+        if same(&node, target) {
+            return true;
+        }
+        let room = max_nodes.saturating_sub(taken);
+        let next = children(&node).into_iter().take(room);
+        let before = queue.len();
+        queue.extend(next);
+        taken += queue.len() - before;
+    }
+    false
 }
 
 /// Pure sheet-to-parent resolution behind [`owning_window_id`].
@@ -543,7 +629,12 @@ pub fn gather_background_facts(
                 // A menu-bar item has no window ancestor: the menu bar hangs
                 // off the application. It still belongs to this app.
                 let in_menu_bar = window.is_none() && element_in_app_menu_bar(app, element);
-                element_ancestry(window, in_menu_bar, window_id)
+                // A Catalyst pop-up's menu draws in a window of its own and
+                // names none; the target window still lists it.
+                let in_listed_menu = window.is_none()
+                    && !in_menu_bar
+                    && in_menu_listed_by_window(app, window_id, element);
+                element_ancestry(window, in_menu_bar, in_listed_menu, window_id)
             });
             let focused_window_id = copy_element_attr(app, "AXFocusedWindow").and_then(|window| {
                 let window_id = owning_window_id(window);
@@ -578,8 +669,8 @@ pub fn gather_background_facts(
 #[cfg(test)]
 mod tests {
     use super::{
-        count_competing_keyboard_destinations, parentless_menu, resolve_owning_window, AxWindowId,
-        AxWindowRecord, WindowServerRow,
+        count_competing_keyboard_destinations, parentless_menu, resolve_owning_window,
+        subtree_contains, AxWindowId, AxWindowRecord, WindowServerRow,
     };
 
     /// A fake AX node: (role, AXParent index, CGWindowID).
@@ -603,11 +694,54 @@ mod tests {
     fn menu_bar_item_is_proven_only_through_the_app_menu_bar() {
         use super::element_ancestry;
         use cua_driver_core::background_input::ElementAncestry::*;
-        assert_eq!(element_ancestry(None, true, 7), ProvenDescendant);
-        assert_eq!(element_ancestry(None, false, 7), Unproven);
+        assert_eq!(element_ancestry(None, true, false, 7), ProvenDescendant);
+        assert_eq!(element_ancestry(None, false, false, 7), Unproven);
         let window = |id| Some(AxWindowId::window(id));
-        assert_eq!(element_ancestry(window(7), false, 7), ProvenDescendant);
-        assert_eq!(element_ancestry(window(8), true, 7), OutsideTargetWindow);
+        assert_eq!(
+            element_ancestry(window(7), false, false, 7),
+            ProvenDescendant
+        );
+        assert_eq!(
+            element_ancestry(window(8), true, false, 7),
+            OutsideTargetWindow
+        );
+    }
+
+    #[test]
+    fn a_listed_detached_menu_item_is_proven_for_semantic_actions_only() {
+        use super::element_ancestry;
+        use cua_driver_core::background_input::ElementAncestry::*;
+        assert_eq!(element_ancestry(None, false, true, 7), ProvenSemanticOnly);
+        let window = |id| Some(AxWindowId::window(id));
+        assert_eq!(
+            element_ancestry(window(7), false, true, 7),
+            ProvenDescendant
+        );
+        assert_eq!(
+            element_ancestry(window(8), false, true, 7),
+            OutsideTargetWindow
+        );
+    }
+
+    /// A fake AX tree for the subtree search: each node's children.
+    fn listed(tree: &[&[usize]], target: usize, max_nodes: usize) -> bool {
+        subtree_contains(0, &target, |&i| tree[i].to_vec(), |a, b| a == b, max_nodes)
+    }
+
+    #[test]
+    fn a_menu_is_found_only_under_the_window_within_the_budget() {
+        // CatalystProfile as measured: window 0 > root group 1 > the menu 3,
+        // beside the form 2 and its button 4. Node 5 is another window's menu.
+        let tree: &[&[usize]] = &[&[1], &[2, 3], &[4], &[], &[], &[]];
+        assert!(listed(tree, 3, 4096));
+        assert!(!listed(tree, 5, 4096), "a menu the window does not list");
+        assert!(
+            listed(tree, 3, 4),
+            "the budget counts every element taken in"
+        );
+        assert!(!listed(tree, 3, 3), "an exhausted budget is not a proof");
+        let cycle: &[&[usize]] = &[&[1], &[0]];
+        assert!(!listed(cycle, 2, 16), "a cycle ends at the budget");
     }
 
     #[test]

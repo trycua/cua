@@ -1519,6 +1519,7 @@ mod open_menu_refusal_tests {
         for element in [
             ElementAncestry::NotAddressed,
             ElementAncestry::ProvenDescendant,
+            ElementAncestry::ProvenSemanticOnly,
             ElementAncestry::OutsideTargetWindow,
             ElementAncestry::Unproven,
         ] {

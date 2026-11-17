@@ -356,6 +356,81 @@ fn resolve_owning_window<E>(
     }
 }
 
+/// Whether an attached sheet blocks `element` from input.
+///
+/// Element ownership maps a sheet's controls to the window it is attached to
+/// (issue #4392), so a token taken from that window before a sheet opened
+/// still passes the ownership checks while the sheet is modal over it (issue
+/// #4697). This walks `AXParent` from the element and reports a block when a
+/// window or sheet on the way has an `AXSheet` child the element is not
+/// inside. A parentless `AXMenu` ends the walk clear. Which window the element belongs to is the exact-target gate's
+/// question, not this one. `None` means a role, parent or child list could not
+/// be read; callers refuse.
+///
+/// # Safety
+///
+/// `element` must be a valid `AXUIElementRef` for the duration of the call.
+pub unsafe fn element_blocked_by_sheet(element: AXUIElementRef) -> Option<bool> {
+    blocked_by_sheet(
+        RetainedElement::retain(element as usize),
+        role_of,
+        parent_of,
+        |element| unsafe {
+            let children =
+                super::bindings::copy_children_checked(element.as_ptr() as AXUIElementRef).ok()?;
+            Some(
+                children
+                    .into_iter()
+                    .map(|child| {
+                        let retained = RetainedElement::retain(child as usize);
+                        CFRelease(child as CFTypeRef);
+                        retained
+                    })
+                    .collect(),
+            )
+        },
+        |a, b| unsafe {
+            core_foundation::base::CFEqual(a.as_ptr() as CFTypeRef, b.as_ptr() as CFTypeRef) != 0
+        },
+    )
+}
+
+/// The ancestry walk behind [`element_blocked_by_sheet`], over any element
+/// type so tests can drive it with a fake tree.
+fn blocked_by_sheet<E>(
+    start: E,
+    role: impl Fn(&E) -> Option<String>,
+    parent: impl Fn(&E) -> Option<E>,
+    children: impl Fn(&E) -> Option<Vec<E>>,
+    same: impl Fn(&E, &E) -> bool,
+) -> Option<bool> {
+    let mut ancestry = vec![start];
+    for _ in 0..MAX_ANCESTRY_DEPTH {
+        let current = ancestry.last()?;
+        let current_role = role(current)?;
+        if matches!(current_role.as_str(), "AXWindow" | "AXSheet") {
+            for child in children(current)? {
+                if role(&child)? == "AXSheet" && !ancestry.iter().any(|a| same(a, &child)) {
+                    return Some(true);
+                }
+            }
+        }
+        if matches!(current_role.as_str(), "AXWindow" | "AXApplication") {
+            return Some(false);
+        }
+        let Some(next) = parent(current) else {
+            // A context or Catalyst menu has no parent and draws above every
+            // window, so no sheet can cover it.
+            return (current_role == "AXMenu").then_some(false);
+        };
+        if ancestry.iter().any(|a| same(a, &next)) {
+            return None;
+        }
+        ancestry.push(next);
+    }
+    None
+}
+
 /// The process's focused AX element, but only when it provably belongs to the
 /// requested window. Returns a retained element the caller must release.
 ///
@@ -660,6 +735,80 @@ mod tests {
             element_ancestry(Some(AxWindowId::window(200)), false, 15304),
             OutsideTargetWindow
         );
+    }
+
+    /// A fake AX node for the sheet-block checks: (role, AXParent index).
+    type SheetNode = (&'static str, Option<usize>);
+
+    fn blocked(tree: &[SheetNode], start: usize) -> Option<bool> {
+        super::blocked_by_sheet(
+            start,
+            |&i| (tree[i].0 != "?").then(|| tree[i].0.to_owned()),
+            |&i| tree[i].1,
+            |&i| Some((0..tree.len()).filter(|&c| tree[c].1 == Some(i)).collect()),
+            |a, b| a == b,
+        )
+    }
+
+    #[test]
+    fn a_sheet_blocks_the_parent_windows_controls_but_not_its_own() {
+        let tree = [
+            ("AXWindow", None),
+            ("AXButton", Some(0)),
+            ("AXSheet", Some(0)),
+            ("AXButton", Some(2)),
+        ];
+        assert_eq!(blocked(&tree, 1), Some(true));
+        assert_eq!(blocked(&tree, 3), Some(false));
+    }
+
+    #[test]
+    fn a_window_without_a_sheet_blocks_nothing() {
+        let tree = [
+            ("AXWindow", None),
+            ("AXGroup", Some(0)),
+            ("AXButton", Some(1)),
+        ];
+        assert_eq!(blocked(&tree, 2), Some(false));
+    }
+
+    #[test]
+    fn a_nested_sheet_blocks_the_sheet_under_it() {
+        let tree = [
+            ("AXWindow", None),
+            ("AXSheet", Some(0)),
+            ("AXButton", Some(1)),
+            ("AXSheet", Some(1)),
+            ("AXButton", Some(3)),
+        ];
+        assert_eq!(blocked(&tree, 2), Some(true));
+        assert_eq!(blocked(&tree, 4), Some(false));
+    }
+
+    #[test]
+    fn app_menu_items_are_not_behind_a_window_sheet() {
+        let tree = [
+            ("AXApplication", None),
+            ("AXMenuBar", Some(0)),
+            ("AXMenuBarItem", Some(1)),
+            ("AXMenu", Some(2)),
+            ("AXMenuItem", Some(3)),
+            ("AXWindow", Some(0)),
+            ("AXSheet", Some(5)),
+        ];
+        assert_eq!(blocked(&tree, 4), Some(false));
+        let context_menu = [("AXMenu", None), ("AXMenuItem", Some(0))];
+        assert_eq!(blocked(&context_menu, 1), Some(false));
+    }
+
+    #[test]
+    fn unreadable_or_cyclic_ancestry_is_not_proven_clear() {
+        let unreadable = [("AXWindow", None), ("?", Some(0)), ("AXButton", Some(1))];
+        assert_eq!(blocked(&unreadable, 2), None);
+        let orphan = [("AXButton", None)];
+        assert_eq!(blocked(&orphan, 0), None);
+        let cycle = [("AXGroup", Some(1)), ("AXGroup", Some(0))];
+        assert_eq!(blocked(&cycle, 0), None);
     }
 
     #[test]

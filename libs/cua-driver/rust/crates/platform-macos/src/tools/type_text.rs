@@ -1303,6 +1303,20 @@ fn await_front_settled(pid: i32, window_id: u32) -> bool {
 const FRONT_SETTLE_STABLE: std::time::Duration = std::time::Duration::from_millis(250);
 const FRONT_SETTLE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1500);
 
+/// How `cgevent_type_verified` puts focus on the addressed element before
+/// posting keys.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum KeyFocus {
+    /// After a front transition: focus, re-apply once if it did not stick,
+    /// then wait `settle_ms` before the first key.
+    Foreground { settle_ms: u64 },
+    /// Focus best-effort and post at once.
+    Background,
+    /// Post only once the element reads back as focused; otherwise fail with
+    /// `KeyFocusUnconfirmed` before any key is sent.
+    Confirmed,
+}
+
 /// Type via CGEvent keystrokes at the current insertion point, then verify by
 /// read-back. `type_text` is deliberately non-idempotent: it must never clear
 /// an existing value merely because AX cannot read that value back.
@@ -1312,10 +1326,13 @@ fn cgevent_type_verified(
     delay_ms: u64,
     before: Option<&str>,
     element_ptr_and_idx: Option<(usize, Option<usize>)>,
-    settle_ms: u64,
+    key_focus: KeyFocus,
     window_id: Option<u32>,
-    confirm_focus: bool,
 ) -> anyhow::Result<(bool, Option<usize>)> {
+    let settle_ms = match key_focus {
+        KeyFocus::Foreground { settle_ms } => settle_ms,
+        KeyFocus::Background | KeyFocus::Confirmed => 0,
+    };
     // Focus the target element so the keystrokes land in IT. Critical in
     // foreground mode: a freshly-fronted window's keyboard focus may be on the
     // search box or nowhere, so without this the text goes into the void (or the
@@ -1327,13 +1344,13 @@ fn cgevent_type_verified(
     // it rather than being clobbered by it. Re-applying once on a failed
     // read-back covers apps that install their responder slightly late.
     //
-    // With `confirm_focus`, the keys are posted only once the element reads
+    // With `KeyFocus::Confirmed`, the keys are posted only once the element reads
     // back as focused. Process-scoped keys land in whatever element holds
     // focus: when a web field kept focus on its sibling, the text typed for
     // Subject went into To and the Subject read-back saw nothing (#5182).
     // Refusing before any key is sent keeps a retry safe.
     let confirmed_target = match element_ptr_and_idx {
-        Some((ptr, _)) if confirm_focus => Some(ptr),
+        Some((ptr, _)) if key_focus == KeyFocus::Confirmed => Some(ptr),
         Some((ptr, _)) => {
             let _ = crate::input::ax_actions::focus_element(ptr);
             if settle_ms > 0 && !crate::input::ax_actions::is_element_focused(pid, ptr) {
@@ -1344,12 +1361,12 @@ fn cgevent_type_verified(
         }
         None => None,
     };
-    // First-keystroke settle (foreground rung only — caller passes `settle_ms > 0`).
+    // First-keystroke settle (foreground rung only).
     // Even once the window is front and the element focused, the surface isn't
     // ready to accept input for a few tens of ms, so the FIRST synthesized
     // character gets eaten: typing "i love u" rendered "love u" (the leading
     // "i " was dropped). A short sleep here covers that. Background/terminal call
-    // sites pass 0 — they have no front transition and must not pay this latency.
+    // sites have no front transition and must not pay this latency.
     if settle_ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(settle_ms));
     }
@@ -1597,9 +1614,10 @@ fn type_text_in_key_window(
                 delay_ms,
                 before.as_deref(),
                 element,
-                foreground_settle_ms,
+                KeyFocus::Foreground {
+                    settle_ms: foreground_settle_ms,
+                },
                 window_id,
-                /*confirm_focus=*/ false,
             )
         };
         let ((verified, delivered_chars), fronted) = match window_id {
@@ -1725,9 +1743,8 @@ fn type_text_in_key_window(
             delay_ms,
             before.as_deref(),
             element_ptr_and_idx,
-            /*settle_ms=*/ 0,
+            KeyFocus::Background,
             window_id,
-            /*confirm_focus=*/ false,
         )?;
         return Ok(TypeTextDelivery::Typed(TypeTextOutcome {
             detail: format!(" via CGEvent (terminal emulator, {delay_ms}ms delay)"),
@@ -1950,9 +1967,8 @@ fn type_text_in_key_window(
         delay_ms,
         before.as_deref(),
         element_ptr_and_idx,
-        /*settle_ms=*/ 0,
+        KeyFocus::Confirmed,
         window_id,
-        /*confirm_focus=*/ true,
     );
     let (verified, delivered_chars) = match typed {
         Err(error) if error.is::<KeyFocusUnconfirmed>() => {

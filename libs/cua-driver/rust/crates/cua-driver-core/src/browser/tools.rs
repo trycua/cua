@@ -88,6 +88,8 @@ const DOM_CLICK_READBACK_INTERVAL: Duration = Duration::from_millis(25);
 struct DomClickObservation {
     effect: ActionEffect,
     readback_available: bool,
+    /// The click's own handlers changed the page outside the target.
+    page_changed: bool,
 }
 
 async fn read_dom_click_state(
@@ -132,6 +134,7 @@ async fn observe_dom_click(
         return DomClickObservation {
             effect: effect_from_value_readback(false, false, false),
             readback_available: false,
+            page_changed: false,
         };
     };
     let started = Instant::now();
@@ -140,6 +143,7 @@ async fn observe_dom_click(
             return DomClickObservation {
                 effect: ActionEffect::Unverifiable,
                 readback_available: true,
+                page_changed: false,
             };
         }
         // The window only decides whether to start another read; each read
@@ -153,12 +157,14 @@ async fn observe_dom_click(
                 return DomClickObservation {
                     effect: effect_from_value_readback(true, true, true),
                     readback_available: true,
+                    page_changed: false,
                 };
             }
         } else {
             return DomClickObservation {
                 effect: effect_from_value_readback(false, false, false),
                 readback_available: false,
+                page_changed: false,
             };
         }
         tokio::time::sleep(DOM_CLICK_READBACK_INTERVAL).await;
@@ -179,7 +185,9 @@ fn click_readback_action_record(
     if observation.readback_available {
         builder = builder.evidence(ActionEvidence {
             kind: EvidenceKind::BrowserReadback,
-            detail: if observation.effect == ActionEffect::Confirmed {
+            detail: if observation.page_changed {
+                "the click's own handlers changed the page outside the target".to_owned()
+            } else if observation.effect == ActionEffect::Confirmed {
                 "bounded semantic target state changed".to_owned()
             } else {
                 "bounded semantic target state remained unchanged".to_owned()
@@ -1378,8 +1386,9 @@ impl BrowserClickTool {
                         "description": "\"trusted\" (default): Input.dispatchMouseEvent. \
                             It refuses rather than foregrounding a standalone browser. \
                             \"dom_event\": synthetic full-background DOM click, only \
-                            when explicitly requested. Dispatch does not prove the \
-                            control activated; refresh page state and verify the \
+                            when explicitly requested. Its effect is confirmed when the \
+                            target's own state changes or the click's handlers change \
+                            the page; otherwise refresh page state and verify the \
                             expected postcondition."
                     },
                 },
@@ -1626,15 +1635,34 @@ impl Tool for BrowserClickTool {
                 json!({
                     "objectId": object_id,
                     "functionDeclaration": DOM_EVENT_CLICK_SEQUENCE,
+                    "awaitPromise": true,
+                    "returnByValue": true,
                 }),
             );
             let outcome = call_until_dialog(conn, cdp_target_id, click)
                 .await
                 .unwrap_or(Ok(json!({})));
             return match (outcome, conn.dialog_state(cdp_target_id)) {
-                (Ok(_), None) => {
-                    let observation = observe_dom_click(conn, cdp, &object_id, before).await;
+                (Ok(reply), None) => {
+                    let page_changed = reply
+                        .pointer("/result/value/pageMutations")
+                        .and_then(Value::as_u64)
+                        .is_some_and(|count| count > 0);
+                    let observation = if page_changed {
+                        DomClickObservation {
+                            effect: ActionEffect::Confirmed,
+                            readback_available: true,
+                            page_changed,
+                        }
+                    } else {
+                        observe_dom_click(conn, cdp, &object_id, before).await
+                    };
                     let text = match observation.effect {
+                        ActionEffect::Confirmed if observation.page_changed => format!(
+                            "dispatched synthetic DOM click on {} in {tab_id}; its own handlers \
+                             changed the page outside the target",
+                            ext_ref.as_deref().unwrap_or("?")
+                        ),
                         ActionEffect::Confirmed => format!(
                             "dispatched synthetic DOM click on {} in {tab_id}; bounded semantic \
                              readback confirmed a target-state change",
@@ -1851,6 +1879,7 @@ impl Tool for BrowserClickTool {
                 None => DomClickObservation {
                     effect: effect_from_value_readback(false, false, false),
                     readback_available: false,
+                    page_changed: false,
                 },
             };
             let text = match observation.effect {
@@ -1942,7 +1971,14 @@ fn dialog_block(dialog: &super::cdp_ws::CdpDialogState) -> Value {
 /// a real click, `preventDefault()` on `pointerdown` suppresses the
 /// compatibility mouse events, and on `mousedown` suppresses the focus move.
 /// The events stay untrusted (`isTrusted === false`).
-const DOM_EVENT_CLICK_SEQUENCE: &str = "function() { \
+///
+/// It resolves to `{ pageMutations }`: how many DOM mutations outside the
+/// node's own subtree and ancestors' attributes happened from `pointerdown`
+/// until the microtasks queued by the handlers ran. No other task can run in
+/// that span, so those mutations are the handlers' own, for example a button
+/// that reveals fields elsewhere without changing its own state. Mutations
+/// from hover and move are left out, so a hover tooltip does not count.
+const DOM_EVENT_CLICK_SEQUENCE: &str = "async function() { \
     const el = this; \
     const doc = el.ownerDocument; \
     const view = doc.defaultView; \
@@ -1959,9 +1995,13 @@ const DOM_EVENT_CLICK_SEQUENCE: &str = "function() { \
           width: 1, height: 1, pressure: buttons ? 0.5 : 0, ...extra })); \
     const M = (type, buttons, extra) => target.dispatchEvent(new view.MouseEvent(type, \
         { ...base, buttons, detail: 0, ...extra })); \
+    const observer = new view.MutationObserver(() => {}); \
+    for (const scope of new Set([doc, root])) observer.observe(scope, \
+        { subtree: true, childList: true, attributes: true, characterData: true }); \
     P('pointerover', 0); P('pointerenter', 0, { bubbles: false, cancelable: false }); \
     M('mouseover', 0); M('mouseenter', 0, { bubbles: false, cancelable: false }); \
     P('pointermove', 0); M('mousemove', 0); \
+    observer.takeRecords(); \
     const compat = P('pointerdown', 1); \
     if (compat && M('mousedown', 1, { detail: 1 })) { \
         const focusable = target.closest('a[href],button,input,select,textarea,summary,[tabindex],[contenteditable=\"\"],[contenteditable=\"true\"]'); \
@@ -1970,7 +2010,12 @@ const DOM_EVENT_CLICK_SEQUENCE: &str = "function() { \
     P('pointerup', 0); \
     if (compat) M('mouseup', 0, { detail: 1 }); \
     M('click', 0, { detail: 1 }); \
-    return true; \
+    for (let turn = 0; turn < 8; turn++) await null; \
+    const records = observer.takeRecords(); \
+    observer.disconnect(); \
+    const caused = records.filter(m => !el.contains(m.target) \
+        && !(m.type === 'attributes' && m.target.contains(el))); \
+    return { pageMutations: caused.length }; \
 }";
 
 // ── browser_type ─────────────────────────────────────────────────────────────

@@ -834,7 +834,8 @@ impl Tool for GetWindowStateTool {
                                requested window, but background input (including px) is \
                                refused while its AX surface is unresolved — events could \
                                reach a same-process sibling window. Re-snapshot after the \
-                               app settles, or act with delivery_mode:\"foreground\"."
+                               app settles, or act by pixel (x,y) off this screenshot with \
+                               delivery_mode:\"foreground\"."
                 });
             }
         }
@@ -983,7 +984,7 @@ fn update_snapshot(
     screenshot_scale: Option<f64>,
     window_size: Option<(f64, f64)>,
 ) -> SnapshotUpdate {
-    if !scope_matched {
+    if !scope_matched && screenshot_scale.is_none() {
         return SnapshotUpdate {
             invalidated: snapshots
                 .remove(pid, window_id, session)

@@ -23,8 +23,9 @@ fn def() -> &'static ToolDef {
         description: "Create, list or remove a virtual display the agent works on, so app \
              windows can be moved off the user's screen with set_window_frame (use the returned \
              x, y, width, height as the target area; screenshots of a virtual display are 1:1, \
-             not Retina). `create` adds an extra display of width x height pixels that lives \
-             until `remove` or until the daemon exits; `list` returns the displays this daemon \
+             not Retina). `create` adds an extra display of width x height pixels owned by the \
+             calling session, removed by `remove`, when that session ends or idles out, or \
+             when the daemon exits; `list` returns the displays this daemon \
              created; `remove` needs a display_id. Requires no TCC permissions."
             .into(),
         input_schema: json!({
@@ -77,10 +78,11 @@ impl Tool for AgentDisplayTool {
         let action = args.get("action").and_then(Value::as_str).unwrap_or("");
         match action {
             "create" => {
-                let (width, height) = match (edge(&args, "width", 1920), edge(&args, "height", 1080)) {
-                    (Ok(w), Ok(h)) => (w, h),
-                    (Err(e), _) | (_, Err(e)) => return ToolResult::error(e),
-                };
+                let (width, height) =
+                    match (edge(&args, "width", 1920), edge(&args, "height", 1080)) {
+                        (Ok(w), Ok(h)) => (w, h),
+                        (Err(e), _) | (_, Err(e)) => return ToolResult::error(e),
+                    };
                 let name = args
                     .get("name")
                     .and_then(Value::as_str)
@@ -88,16 +90,18 @@ impl Tool for AgentDisplayTool {
                     .unwrap_or("Agent Desktop")
                     .to_owned();
                 let session = args.opt_str("_session_id").unwrap_or_default();
-                match tokio::task::spawn_blocking(move || virtual_display::create(width, height, &name))
-                    .await
+                match tokio::task::spawn_blocking(move || {
+                    virtual_display::create(width, height, &name)
+                })
+                .await
                 {
                     Ok(Ok(info)) => {
                         session_resources::own_display(&session, info.display_id);
                         ToolResult::text(format!(
-                        "✅ Created display {} at ({}, {}) {}x{}.",
-                        info.display_id, info.x, info.y, info.width, info.height
-                    ))
-                    .with_structured(info_json(&info))
+                            "✅ Created display {} at ({}, {}) {}x{}.",
+                            info.display_id, info.x, info.y, info.width, info.height
+                        ))
+                        .with_structured(info_json(&info))
                     }
                     Ok(Err(error)) => ToolResult::error(format!("agent_display: {error}")),
                     Err(error) => ToolResult::error(format!("agent_display: task failed: {error}")),
@@ -108,12 +112,16 @@ impl Tool for AgentDisplayTool {
                 ToolResult::text(format!("{} virtual display(s).", displays.len()))
                     .with_structured(json!({ "displays": displays }))
             }
-            "remove" => match args.get("display_id").and_then(Value::as_u64).and_then(|n| u32::try_from(n).ok()) {
+            "remove" => match args
+                .get("display_id")
+                .and_then(Value::as_u64)
+                .and_then(|n| u32::try_from(n).ok())
+            {
                 Some(id) => match virtual_display::remove(id) {
                     Ok(()) => {
                         session_resources::forget_display(id);
                         ToolResult::text(format!("✅ Removed display {id}."))
-                        .with_structured(json!({ "display_id": id }))
+                            .with_structured(json!({ "display_id": id }))
                     }
                     Err(error) => ToolResult::error(format!("agent_display: {error}")),
                 },

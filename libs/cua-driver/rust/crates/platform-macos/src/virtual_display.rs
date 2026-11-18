@@ -3,12 +3,13 @@
 
 use std::collections::HashMap;
 use std::ffi::c_void;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 
 use core_graphics::display::CGDisplayBounds;
 use objc2::rc::Retained;
-use objc2::runtime::{AnyClass, AnyObject};
-use objc2::{msg_send, msg_send_id};
+use objc2::runtime::{AnyClass, AnyObject, Sel};
+use objc2::{msg_send, msg_send_id, sel};
 use objc2_foundation::{NSArray, NSPoint, NSSize, NSString};
 
 const MAX_DISPLAYS: usize = 8;
@@ -39,6 +40,9 @@ pub struct DisplayInfo {
 }
 
 static DISPLAYS: Mutex<Option<HashMap<u32, Handle>>> = Mutex::new(None);
+// macOS identifies a display by vendor, product and serial, so a serial is
+// never reused while the daemon runs.
+static NEXT_SERIAL: AtomicU32 = AtomicU32::new(0x6001);
 
 pub fn validate_size(width: u32, height: u32) -> Result<(), String> {
     for (label, edge) in [("width", width), ("height", height)] {
@@ -89,7 +93,7 @@ pub fn create(width: u32, height: u32, name: &str) -> Result<DisplayInfo, String
     if map.len() >= MAX_DISPLAYS {
         return Err(format!("at most {MAX_DISPLAYS} virtual displays"));
     }
-    let serial = 0x6000 + map.len() as u32 + 1;
+    let serial = NEXT_SERIAL.fetch_add(1, Ordering::Relaxed);
     let handle = unsafe { build(width, height, name, serial)? };
     let display_id: u32 = unsafe { msg_send![&*handle.0, displayID] };
     if display_id == 0 {
@@ -109,15 +113,73 @@ pub fn remove(display_id: u32) -> Result<(), String> {
     }
 }
 
-unsafe fn class(name: &str) -> Result<&'static AnyClass, String> {
-    AnyClass::get(name).ok_or_else(|| format!("{name} is not available on this macOS build"))
+// CGVirtualDisplay* are private CoreGraphics classes. Check every class and
+// selector before messaging them, so a macOS release that renames or drops one
+// returns an error instead of raising an Objective-C exception.
+fn class(name: &str, selectors: &[Sel]) -> Result<&'static AnyClass, String> {
+    let class = AnyClass::get(name)
+        .ok_or_else(|| format!("{name} is not available on this macOS build"))?;
+    match selectors.iter().find(|sel| !class.responds_to(**sel)) {
+        Some(missing) => Err(format!(
+            "{name} does not respond to {} on this macOS build",
+            missing.name()
+        )),
+        None => Ok(class),
+    }
+}
+
+struct Classes {
+    descriptor: &'static AnyClass,
+    settings: &'static AnyClass,
+    mode: &'static AnyClass,
+    display: &'static AnyClass,
+}
+
+fn classes() -> Result<Classes, String> {
+    Ok(Classes {
+        descriptor: class(
+            "CGVirtualDisplayDescriptor",
+            &[
+                sel!(setName:),
+                sel!(setMaxPixelsWide:),
+                sel!(setMaxPixelsHigh:),
+                sel!(setSizeInMillimeters:),
+                sel!(setWhitePoint:),
+                sel!(setBluePrimary:),
+                sel!(setGreenPrimary:),
+                sel!(setRedPrimary:),
+                sel!(setVendorID:),
+                sel!(setProductID:),
+                sel!(setSerialNum:),
+                sel!(setQueue:),
+            ],
+        )?,
+        settings: class(
+            "CGVirtualDisplaySettings",
+            &[sel!(setHiDPI:), sel!(setModes:)],
+        )?,
+        mode: class(
+            "CGVirtualDisplayMode",
+            &[sel!(initWithWidth:height:refreshRate:)],
+        )?,
+        display: class(
+            "CGVirtualDisplay",
+            &[
+                sel!(initWithDescriptor:),
+                sel!(applySettings:),
+                sel!(displayID),
+            ],
+        )?,
+    })
 }
 
 unsafe fn build(width: u32, height: u32, name: &str, serial: u32) -> Result<Handle, String> {
-    let descriptor_class = class("CGVirtualDisplayDescriptor")?;
-    let settings_class = class("CGVirtualDisplaySettings")?;
-    let mode_class = class("CGVirtualDisplayMode")?;
-    let display_class = class("CGVirtualDisplay")?;
+    let Classes {
+        descriptor: descriptor_class,
+        settings: settings_class,
+        mode: mode_class,
+        display: display_class,
+    } = classes()?;
 
     let descriptor: Retained<AnyObject> = msg_send_id![descriptor_class, new];
     let ns_name = NSString::from_str(name);
@@ -170,6 +232,21 @@ mod tests {
         assert!(validate_size(1920, 1080).is_ok());
         assert!(validate_size(639, 1080).is_err());
         assert!(validate_size(1920, 7681).is_err());
+    }
+
+    #[test]
+    fn a_missing_private_class_or_selector_is_an_error() {
+        assert!(class("CGVirtualDisplayNoSuchClass", &[]).is_err());
+        let err = class("NSObject", &[sel!(applySettings:)]).unwrap_err();
+        assert!(err.contains("applySettings:"), "{err}");
+        assert!(class("NSObject", &[sel!(description)]).is_ok());
+    }
+
+    #[test]
+    fn this_macos_has_every_private_class_and_selector_the_guard_checks() {
+        if let Err(err) = classes() {
+            panic!("{err}");
+        }
     }
 
     #[test]

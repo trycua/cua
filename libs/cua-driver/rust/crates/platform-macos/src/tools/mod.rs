@@ -3,6 +3,7 @@
 
 //! MCP tool implementations for macOS.
 
+mod agent_display;
 mod bring_to_front;
 mod calc_cell;
 mod capture_binding;
@@ -13,7 +14,6 @@ mod drag;
 mod get_window_state;
 mod hotkey;
 mod invoke_menu;
-mod agent_display;
 mod kill_app;
 mod launch_app;
 mod list_apps;

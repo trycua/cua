@@ -3,12 +3,12 @@ title: ActionResult outcome vocabulary
 authors:
   - will-bogusz
 created: 2026-09-20
-last_updated: 2026-09-29
+last_updated: 2026-11-18
 status: accepted
 discussion: https://github.com/trycua/cua/issues/4009
 rfc_pr: https://github.com/trycua/cua/pull/4367
 implementation:
-  - https://github.com/trycua/cua/pull/3858
+  - https://github.com/trycua/cua/pull/8085
   - https://github.com/trycua/cua/pull/3923
   - https://github.com/trycua/cua/pull/3950
   - https://github.com/trycua/cua/issues/3971
@@ -113,7 +113,9 @@ Accepted as the first increment, additive to `0.8.0`:
    and the focus-holder fields stays documented structured content, marked per
    platform, not a typed contract. This answers the second open question for
    now.
-4. **Version**: one contract bump for this increment, `0.8.0` to `0.9.0`.
+4. **Version**: one contract bump for this increment, `0.8.0` to `0.9.0`. #7566
+   made that bump on main for display-only `observations`, and #8085 adds
+   `committed` within `0.9.0`.
 
 Out of scope for this increment, and to be proposed as an amendment on #4009
 with its own review period: `evidence[].signal`, the `element` and `snapshot`
@@ -146,8 +148,8 @@ and codes, never written values or screenshot content.
 
 ## Implementation plan
 
-- #3858: `committed` on macOS value-setting actions, and the `0.8.0` to `0.9.0`
-  bump with the manifest and bindings regenerated.
+- #8085 (salvaged from #3858): `committed` on macOS `set_value` and
+  `type_text`, at contract `0.9.0`, with the manifest and bindings regenerated.
 - #3923: `element_disabled` and its escalation on macOS press and click
   refusals; refusal detail fields documented as macOS-only.
 - #3950: rebased onto this document; its published detail fields documented as
@@ -167,7 +169,7 @@ and codes, never written values or screenshot content.
   `window_change` row; refusal escalation uses only existing `target` and
   `reason` values; `recommended` still normalizes.
 - `cua-contract-gen` and the binding generators run in `--check` mode.
-- The canonical macOS Lume harness runs on #3858 before it is marked ready.
+- The canonical macOS Lume harness runs on #8085 before it merges.
 
 ## Unresolved questions
 

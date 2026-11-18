@@ -62,8 +62,8 @@ Host requirements:
 
 - macOS: Xcode command line tools; Node.js/npm for Electron; Rust for Tauri.
 - Linux: GTK3/PyGObject/AT-SPI; Node.js/npm for Electron; Rust plus WebKitGTK
-  build/runtime deps for Tauri; Rust plus `libwayland-dev` for the Wayland
-  presentation fixture.
+  build/runtime deps for Tauri; Rust for the Wayland presentation fixture
+  (pure-Rust Wayland client, no system Wayland library).
 - Windows: .NET 8 SDK; Node.js/npm for Electron; Rust for Tauri.
 
 ## Test Mapping

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! The Wayland client half of the fixture.
 //!
 //! The fixture owns its own `wl_surface` and requests

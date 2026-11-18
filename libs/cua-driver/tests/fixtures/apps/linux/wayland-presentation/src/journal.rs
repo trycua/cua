@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Append-only evidence files owned by the fixture.
 //!
 //! Two channels, on purpose:

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Wayland presentation-timestamp latency evidence on a controlled lane.
 //!
 //! The Driver already shows when a tool was submitted, when application state

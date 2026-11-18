@@ -12,7 +12,7 @@
 # Runtime deps (NOT installed here): python3-gi, gir1.2-gtk-3.0,
 # gir1.2-gtk-4.0, at-spi2-core,
 # Node.js/npm for Electron, Rust + WebKitGTK build deps for Tauri,
-# Rust + libwayland-dev for wayland-presentation.
+# Rust for wayland-presentation (pure-Rust Wayland client).
 #
 # Usage:
 #   ./linux.sh

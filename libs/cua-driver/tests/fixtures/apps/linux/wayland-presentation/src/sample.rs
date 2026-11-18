@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Presentation accounting for the Wayland latency fixture.
 //!
 //! This module is deliberately platform-independent: it owns the causal row

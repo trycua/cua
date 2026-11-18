@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Surface-local geometry for the three fixture regions.
 //!
 //! The fixture publishes this layout in its startup journal record so the

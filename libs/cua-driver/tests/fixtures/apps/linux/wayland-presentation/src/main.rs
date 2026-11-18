@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Wayland presentation-timestamp latency fixture for cua-driver.
 //!
 //! The fixture owns one `wl_surface` and requests feedback for each content

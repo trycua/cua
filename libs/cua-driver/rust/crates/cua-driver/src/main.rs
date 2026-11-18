@@ -777,13 +777,14 @@ fn main() {
             //
             // The agent-cursor overlay needs the AppKit main run loop
             // (NSApplication.run() plus the cursor command consumer). Run it
-            // whenever the cursor is enabled; otherwise just join the serve
-            // thread so the process stays up as long as the daemon does.
+            // whenever the cursor is enabled. Otherwise still serve the main
+            // dispatch queue, which tools such as the Finder folder handoff
+            // wait on; the serve thread exits the process when it ends.
             if cursor_cfg.enabled {
                 platform_macos::cursor::overlay::run_on_main_thread();
                 let _ = serve_handle.join();
             } else {
-                let _ = serve_handle.join();
+                platform_macos::cursor::overlay::serve_main_queue();
             }
         }
         cli::Command::Stop {

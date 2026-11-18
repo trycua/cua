@@ -1,0 +1,35 @@
+{
+  "assignments": [
+    {
+      "group": "agent",
+      "target": {
+        "on": "new",
+        "index": 0
+      },
+      "count": 1,
+      "sync": false
+    }
+  ],
+  "new_hosts": [
+    {
+      "provider": "hetzner",
+      "type_name": "cx33",
+      "region": "fsn1",
+      "usd_per_hour": 0.0194,
+      "boot_secs": 50,
+      "billed_secs": 2592000,
+      "one_space": false
+    }
+  ],
+  "unplaced": [],
+  "added_usd_per_hour": 0.0194,
+  "projected_usd": 13.968,
+  "lower_bound_usd": 6.261677419354839,
+  "solver": "exact",
+  "elapsed_us": 0,
+  "relay_after": 1,
+  "ready_in_secs": 50,
+  "explain": [
+    "1 x agent -> new hetzner cx33 in fsn1 ($0.0194/h, ready in ~50 s)"
+  ]
+}

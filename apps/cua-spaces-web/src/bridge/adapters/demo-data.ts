@@ -1,0 +1,632 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+/**
+ * Demo fixtures, in the hosts' wire shapes (so they go through the same
+ * app-core mapping as live data). Four machines (This Mac, Mac mini, Linux
+ * box over the relay, and an offline Windows PC added directly), six Spaces across macOS, Windows and Linux, and Keyvault items in
+ * five apps. All synthetic; example.com identities only.
+ */
+
+import type { HostStatus, MachineRow, TelemetryView } from "../contracts/host";
+import type { KeyvaultOverview, KvItem, KvStatus } from "../contracts/keyvault";
+import type { SpaceRow } from "../contracts/spaces";
+import { demoMachine, MAC_DEMO_PLATFORM, type DemoPlatform } from "./demo/platform";
+
+export const DEMO_IDENTITY = "ada@example.com";
+
+export const DEMO_MACHINES: MachineRow[] = [
+  { id: "this-mac", name: "This Mac", via: "local", online: true, os: "macos", current: true, model: "MacBook Pro", arch: "aarch64", limits: [] },
+  {
+    id: "mac-mini",
+    name: "Mac mini",
+    via: "relay",
+    online: true,
+    os: "macos",
+    model: "Mac mini",
+    limits: [
+      { resource: "spaces", used: 1, limit: 4, reason: "This machine's limit." },
+      { resource: "macos-vms", used: 1, limit: 2, reason: "macOS runs at most two VMs per Mac." },
+    ],
+  },
+  { id: "linux-box", name: "Linux box", via: "relay", online: true, os: "linux", model: "ThinkCentre M90q", limits: [] },
+  {
+    id: "studio-pc",
+    name: "Studio PC",
+    via: "direct",
+    online: false,
+    os: "windows",
+    model: "Windows 11 Pro",
+    detail: "Direct at 192.168.1.40:8443",
+    limits: [],
+  },
+];
+
+/** The machine list as the demo host answers `machines.list`: this Mac
+ * carries its host status, the others when they were last seen. */
+export function demoMachineRows(now: number, host: HostStatus = demoHostStatus(now), platform: DemoPlatform = MAC_DEMO_PLATFORM): MachineRow[] {
+  const here = demoMachine(platform);
+  const seen = (minutesAgo: number) => Math.floor((now - minutesAgo * 60_000) / 1000);
+  const lastSeen: Record<string, number> = { "mac-mini": seen(2), "linux-box": seen(8), "studio-pc": seen(2 * 24 * 60 + 30) };
+  return DEMO_MACHINES.map((m) => ({
+    ...m,
+    // This machine is the one the demo runs on.
+    ...(m.current && platform.os !== "macos" ? { name: here.name, os: platform.os, model: here.model, arch: here.rowArch } : {}),
+    limits: [...m.limits],
+    lastSeen: lastSeen[m.id],
+    host: m.current ? { ...host } : undefined,
+  }));
+}
+
+const STREAMS = ["desktop_stream", "window_stream", "audio.desktop", "relay_attach"];
+
+/** `minutesAgo` → RFC 3339, relative to `now`. */
+const at = (now: number, minutesAgo: number) => new Date(now - minutesAgo * 60_000).toISOString();
+
+/** The Mac mini and the Linux box sharing their own desktops over the relay (`?demo=desktops`): rows of their own, no
+ * host above them. Without these the demo's computers have nowhere to run a task, so Home can't start on one made the
+ * default. */
+export function demoDesktopRows(now: number, thisMacShares = true): SpaceRow[] {
+  return [
+    // This Mac's own desktop (`this-mac`): reachable while it is shared, listed off (suspended) while it is not.
+    {
+      id: "this-mac",
+      name: "This Mac",
+      provider: "local",
+      spacesdVersion: "0.6.0",
+      features: [...STREAMS],
+      addedAt: at(now, 1200),
+      os: "macos",
+      osName: "macOS",
+      arch: "arm64",
+      reachable: thisMacShares,
+    },
+    {
+      id: "relay:mac-mini",
+      name: "Mac mini",
+      provider: "relay",
+      spacesdVersion: "0.6.0",
+      features: [...STREAMS, "host_spaces"],
+      addedAt: at(now, 900),
+      os: "macos",
+      osName: "macOS",
+      osPrettyName: "macOS Tahoe 26.0",
+      arch: "arm64",
+      reachable: true,
+    },
+    {
+      id: "relay:linux-box",
+      name: "Linux box",
+      provider: "relay",
+      spacesdVersion: "0.6.0",
+      features: [...STREAMS, "host_spaces"],
+      addedAt: at(now, 600),
+      os: "linux",
+      osName: "Ubuntu",
+      osPrettyName: "Ubuntu 24.04.3 LTS",
+      arch: "amd64",
+      reachable: true,
+    },
+  ];
+}
+
+/** The busy account's extra computers (`?demo=computers-busy`): two Spaces' offline host, a Mac Studio, two idle offline ones. */
+export function demoBusyMachines(now: number): MachineRow[] {
+  const seen = (minutesAgo: number) => Math.floor((now - minutesAgo * 60_000) / 1000);
+  const m = (id: string, name: string, os: MachineRow["os"], online: boolean, minutesAgo: number): MachineRow => ({
+    id,
+    name,
+    via: "relay",
+    online,
+    os,
+    limits: [],
+    lastSeen: seen(minutesAgo),
+  });
+  return [
+    m("ip-172-31-46-222", "ip-172-31-46-222", "linux", false, 95),
+    m("mac-studio", "cua's Mac Studio", "macos", true, 1),
+    m("macbook-pro-2", "Dillon's MacBook Pro", "macos", false, 35 * 24 * 60),
+    m("updmac-vm-host", "updmac-vm-host", "macos", false, 45 * 24 * 60),
+  ];
+}
+
+/** The Spaces of the busy account (`?demo=computers-busy`): two on the offline computer, one on the Mac Studio. */
+export function demoBusyRows(now: number): SpaceRow[] {
+  const row = (host: string, hostName: string, name: string, os: SpaceRow["os"], running: boolean): SpaceRow => ({
+    id: `relay:${host}/${name}`,
+    name,
+    provider: "relay",
+    spacesdVersion: "0.6.0",
+    features: STREAMS,
+    addedAt: at(now, 300),
+    os,
+    osName: os === "linux" ? "Ubuntu" : "macOS",
+    osPrettyName: os === "linux" ? "Ubuntu 24.04.3 LTS" : "macOS Tahoe 26.0",
+    image: os === "linux" ? "ubuntu-xfce" : "macos-tahoe",
+    kind: os === "linux" ? "container" : "vm",
+    arch: "arm64",
+    reachable: running,
+    host,
+    hostName,
+    power: "suspend",
+    powerState: running ? "running" : "suspended",
+  });
+  return [
+    row("ip-172-31-46-222", "ip-172-31-46-222", "ci-runner", "linux", false),
+    row("ip-172-31-46-222", "ip-172-31-46-222", "nightly-build", "linux", false),
+    row("mac-studio", "cua's Mac Studio", "design-qa", "macos", true),
+  ];
+}
+
+export function demoSpaceRows(now: number): SpaceRow[] {
+  return [
+    {
+      id: "local:design-review",
+      name: "design-review",
+      provider: "local",
+      spacesdVersion: "0.6.0",
+      features: STREAMS,
+      addedAt: at(now, 12),
+      os: "macos",
+      osName: "macOS",
+      osPrettyName: "macOS Tahoe 26.0",
+      image: "macos-tahoe",
+      kind: "vm",
+      arch: "arm64",
+      reachable: true,
+      power: "suspend",
+      powerState: "running",
+      // Yours, shared with Sam and Priya (who edit) and three more who watch.
+      sharing: {
+        ownerId: "acct-ada",
+        ownerEmail: "ada@example.com",
+        ownerName: "Ada Park",
+        role: "owner",
+        editors: ["sam@example.com", "priya@example.com"],
+        viewers: ["alex@example.com", "jordan@example.com", "morgan@example.com"],
+      },
+    },
+    {
+      id: "local:agent-sandbox",
+      name: "agent-sandbox",
+      provider: "local",
+      spacesdVersion: "0.6.0",
+      features: STREAMS,
+      addedAt: at(now, 95),
+      os: "linux",
+      osName: "Ubuntu",
+      osPrettyName: "Ubuntu 24.04.3 LTS",
+      image: "ubuntu-xfce",
+      kind: "container",
+      arch: "arm64",
+      reachable: false,
+      power: "stop",
+      powerState: "stopped",
+    },
+    {
+      id: "relay:mac-mini/release-checks",
+      name: "release-checks",
+      provider: "relay",
+      spacesdVersion: "0.6.0",
+      features: STREAMS,
+      addedAt: at(now, 240),
+      os: "macos",
+      osName: "macOS",
+      osPrettyName: "macOS Sequoia 15.6",
+      image: "macos-sequoia",
+      kind: "vm",
+      arch: "arm64",
+      reachable: false,
+      host: "mac-mini",
+      hostName: "Mac mini",
+      power: "suspend",
+      powerState: "suspended",
+    },
+    {
+      id: "relay:mac-mini/qa-windows",
+      name: "qa-windows",
+      provider: "relay",
+      spacesdVersion: "0.6.0",
+      features: STREAMS,
+      addedAt: at(now, 30),
+      os: "windows",
+      osName: "Windows",
+      osPrettyName: "Windows 11 Pro 24H2",
+      image: "windows-11",
+      kind: "vm",
+      arch: "arm64",
+      reachable: true,
+      host: "mac-mini",
+      hostName: "Mac mini",
+      power: "stop",
+      powerState: "running",
+    },
+    {
+      id: "relay:linux-box/ubuntu-build",
+      name: "ubuntu-build",
+      provider: "relay",
+      spacesdVersion: "0.6.0",
+      features: STREAMS,
+      addedAt: at(now, 4),
+      os: "linux",
+      osName: "Ubuntu",
+      osPrettyName: "Ubuntu 24.04.3 LTS",
+      image: "ubuntu-xfce",
+      kind: "container",
+      arch: "amd64",
+      reachable: true,
+      host: "linux-box",
+      hostName: "Linux box",
+      power: "stop",
+      powerState: "running",
+    },
+    {
+      id: "relay:linux-box/windows-legacy",
+      name: "windows-legacy",
+      provider: "relay",
+      spacesdVersion: "0.6.0",
+      features: STREAMS,
+      addedAt: at(now, 1440),
+      os: "windows",
+      osName: "Windows",
+      osPrettyName: "Windows 10 Enterprise LTSC",
+      image: "windows-10",
+      kind: "vm",
+      arch: "amd64",
+      reachable: false,
+      host: "linux-box",
+      hostName: "Linux box",
+      power: "suspend",
+      powerState: "suspended",
+    },
+    // Shared with you by Sam on his Mac mini: you can use it.
+    {
+      id: "relay:space-sam-qa-shared",
+      name: "qa-shared",
+      provider: "relay",
+      spacesdVersion: "0.6.0",
+      features: STREAMS,
+      addedAt: at(now, 600),
+      os: "macos",
+      osName: "macOS",
+      osPrettyName: "macOS Tahoe 26.0",
+      image: "macos-tahoe",
+      kind: "vm",
+      arch: "arm64",
+      reachable: true,
+      hostName: "Mac mini",
+      power: "stop",
+      powerState: "running",
+      sharing: { ownerId: "acct-sam", ownerEmail: "sam@example.com", ownerName: "Sam Rivera", role: "editor" },
+    },
+    // Shared with you by Priya on her PC: you can watch it.
+    {
+      id: "relay:space-priya-checkout",
+      name: "checkout-flow",
+      provider: "relay",
+      spacesdVersion: "0.6.0",
+      features: STREAMS,
+      addedAt: at(now, 2880),
+      os: "windows",
+      osName: "Windows",
+      osPrettyName: "Windows 11 Pro 24H2",
+      image: "windows-11",
+      kind: "vm",
+      arch: "amd64",
+      reachable: false,
+      hostName: "PC",
+      power: "stop",
+      powerState: "stopped",
+      sharing: { ownerId: "acct-priya", ownerEmail: "priya@example.com", ownerName: "Priya Shah", role: "viewer" },
+    },
+    // The QA team's Space (Sam made it; the team can use it).
+    {
+      id: "relay:space-qa-regression",
+      name: "qa-regression",
+      provider: "relay",
+      spacesdVersion: "0.6.0",
+      features: STREAMS,
+      addedAt: at(now, 180),
+      os: "linux",
+      osName: "Ubuntu",
+      osPrettyName: "Ubuntu 24.04.3 LTS",
+      image: "ubuntu-xfce",
+      kind: "container",
+      arch: "amd64",
+      reachable: true,
+      power: "stop",
+      powerState: "running",
+      sharing: { ownerId: "acct-sam", ownerEmail: "sam@example.com", ownerName: "Sam Rivera", role: "editor", team: "org-qa", teamName: "QA team" },
+    },
+  ];
+}
+
+/** "This Mac" as a host. A first run (`?demo=fresh`) is not set up yet and
+ * still has macOS panes to grant. */
+export function demoHostStatus(now = Date.now(), firstRun = false): HostStatus {
+  if (firstRun) {
+    return {
+      configured: false,
+      // What the system calls this computer: the setup form starts with it.
+      name: "Ada’s MacBook Pro",
+      sharing: false,
+      service: { installed: false, running: false, kind: "launchd" },
+      clients: [],
+      permissions: [
+        {
+          id: "screen-recording",
+          label: "Screen Recording",
+          instructions: "Turn on Cua Spaces so you can see and stream this desktop.",
+          settingsUrl: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+          granted: false,
+        },
+        {
+          id: "accessibility",
+          label: "Accessibility",
+          instructions: "Turn on Cua Spaces so agents can click and type in this desktop.",
+          settingsUrl: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+          granted: false,
+        },
+      ],
+    };
+  }
+  return {
+    configured: true,
+    mode: "relay",
+    relayUrl: "https://relay.cua.ai",
+    machineId: "this-mac",
+    name: "This Mac",
+    sharing: true,
+    service: { installed: true, running: true, kind: "launchd" },
+    online: true,
+    clients: [{ id: "acct-ada", email: DEMO_IDENTITY, name: "Ada's iPad", streams: 1 }],
+    permissions: [],
+    shareDesktop: true,
+    provideSpaces: true,
+    maxSpaces: 4,
+    maxMacosVms: 2,
+    maxMemoryGb: 0,
+    maxDiskGb: 0,
+    maxRunMinutes: 0,
+    usedMemoryGb: 8,
+    usedDiskGb: 32,
+    totalMemoryGb: 32,
+    totalDiskGb: 994,
+    providedSpaces: [
+      {
+        relayMachine: "space-build-1",
+        localSpace: "local:build-1",
+        name: "build-1",
+        image: "ghcr.io/trycua/linux",
+        os: "linux",
+        kind: "container",
+        createdBy: "Mac mini",
+        createdAtMs: now - 40 * 60_000,
+      },
+      {
+        relayMachine: "space-build-2",
+        localSpace: "local:build-2",
+        name: "build-2",
+        image: "ghcr.io/trycua/linux",
+        os: "linux",
+        kind: "container",
+        createdBy: "Linux box",
+        createdAtMs: now - 12 * 60_000,
+      },
+    ],
+    recentAccess: [
+      { atMs: now - 4 * 60_000, via: "relay", who: DEMO_IDENTITY, what: "DesktopService" },
+      { atMs: now - 52 * 60_000, via: "relay", who: DEMO_IDENTITY, what: "MCP" },
+    ],
+  };
+}
+
+export function demoTelemetry(enabled: boolean): TelemetryView {
+  return {
+    enabled,
+    source: "config ~/.cua/config.toml",
+    sourceKind: "config",
+    noticeShown: true,
+    noticeText: "Features you use and errors, linked to your account. Never your files, typing or screen.",
+    docsUrl: "https://cua.ai/docs/cua-sdk/concepts/telemetry",
+  };
+}
+
+/* ---- Keyvault ------------------------------------------------------------ */
+
+interface ItemSpec {
+  id: string;
+  kind: KvItem["kind"];
+  provider: string;
+  app: string;
+  key: string;
+  domain?: string;
+  path?: string;
+  unattended?: boolean;
+  idp?: boolean;
+  session?: boolean;
+  bytes?: number;
+  ageMin?: number;
+}
+
+function item(now: number, s: ItemSpec): KvItem {
+  return {
+    id: s.id,
+    kind: s.kind,
+    provider_id: s.provider,
+    app_display: s.app,
+    domain: s.domain,
+    key: s.key,
+    path: s.path,
+    source: s.kind === "file" ? `${s.app}.app` : `${s.app} · Default profile`,
+    session: Boolean(s.session),
+    bytes: s.bytes ?? 256,
+    identity_provider: Boolean(s.idp),
+    policy: { allowed_targets: [], ttl_secs: 3600, unattended: Boolean(s.unattended) },
+    created_ms: now - 6 * 86_400_000,
+    updated_ms: now - (s.ageMin ?? 60) * 60_000,
+    rev: 1,
+    record_digest: `sha256:${s.id}`,
+  };
+}
+
+/** One item per secret, in five apps (Google Chrome, Safari, Slack, Notion, Linear). */
+export function demoKeyvaultItems(now: number): KvItem[] {
+  const chrome = { provider: "chrome", app: "Google Chrome" } as const;
+  const safari = { provider: "safari", app: "Safari" } as const;
+  return [
+    item(now, { id: "kv-gh-session", kind: "cookie", ...chrome, domain: "github.com", key: "user_session", unattended: true, ageMin: 12 }),
+    item(now, { id: "kv-gh-sess", kind: "cookie", ...chrome, domain: "github.com", key: "_gh_sess", unattended: true, session: true, ageMin: 12 }),
+    item(now, { id: "kv-gh-theme", kind: "local_storage", ...chrome, domain: "github.com", key: "color-mode", ageMin: 12 }),
+    item(now, { id: "kv-linear", kind: "cookie", ...chrome, domain: "linear.app", key: "session", ageMin: 40 }),
+    item(now, { id: "kv-google", kind: "cookie", ...chrome, domain: "google.com", key: "SID", idp: true, ageMin: 300 }),
+    item(now, { id: "kv-figma", kind: "cookie", ...safari, domain: "figma.com", key: "figma.authn", ageMin: 90 }),
+    item(now, { id: "kv-apple", kind: "password", ...safari, domain: "developer.apple.com", key: DEMO_IDENTITY, ageMin: 2880 }),
+    item(now, {
+      id: "kv-slack",
+      kind: "file",
+      provider: "slack",
+      app: "Slack",
+      key: "Cookies",
+      path: "~/Library/Application Support/Slack/Cookies",
+      unattended: true,
+      bytes: 44_000,
+      ageMin: 25,
+    }),
+    item(now, {
+      id: "kv-notion",
+      kind: "file",
+      provider: "notion",
+      app: "Notion",
+      key: "Cookies",
+      path: "~/Library/Application Support/Notion/Partitions/notion/Cookies",
+      bytes: 31_000,
+      ageMin: 600,
+    }),
+    item(now, {
+      id: "kv-linear-app",
+      kind: "file",
+      provider: "linear",
+      app: "Linear",
+      key: "Local Storage",
+      path: "~/Library/Application Support/Linear/Local Storage/leveldb",
+      bytes: 12_000,
+      ageMin: 1500,
+    }),
+  ];
+}
+
+export function demoKeyvaultOverview(now: number, items: KvItem[], locked: boolean): KeyvaultOverview {
+  const status: KvStatus = {
+    version: "0.6.0",
+    initialized: true,
+    unlocked: !locked,
+    disabled: false,
+    caller_first_party: true,
+    caller_display: "Cua Spaces",
+    items: items.length,
+    pending: locked ? 0 : 1,
+    unlock_policy: "presence",
+    os_protector_available: true,
+    passphrase_available: true,
+    unlock_protectors: ["macos-keychain", "passphrase"],
+  };
+  const empty = { grants: [], rules: [], deliveries: [], audit: [], partialErrors: [] };
+  if (locked) {
+    return {
+      availability: "locked",
+      message: "The Keyvault is locked.",
+      status,
+      serverVerified: true,
+      items: [],
+      namesVisible: false,
+      itemsTotal: items.length,
+      pending: [],
+      ...empty,
+    };
+  }
+  const caller = {
+    pid: 4242,
+    uid: 501,
+    path: "/usr/local/bin/claude",
+    signing: { kind: "signed" as const, team_id: "Q6L2SF6YDW", identifier: "com.anthropic.claude-code", cdhash: "9f2c" },
+    first_party: false,
+    os_verified: true,
+    launched_by: "Terminal",
+    verified_name: "Claude Code",
+  };
+  const github = items.filter((i) => i.domain === "github.com");
+  return {
+    availability: "ready",
+    status,
+    serverVerified: true,
+    items,
+    namesVisible: true,
+    itemsTotal: items.length,
+    pending: github.length
+      ? [
+          {
+            id: "req-1",
+            caller,
+            caller_fp: "fp-claude",
+            caller_display: "Claude Code",
+            request: {
+              selectors: [{ kind: "site", app: "chrome", site: "github.com" }],
+              targets: ["local:design-review"],
+              actions: ["deliver"],
+              duration_secs: 3600,
+              reason: "Open the pull request in the design-review Space",
+              agent: "claude-code",
+            },
+            items: github,
+            needs_import: [],
+            created_ms: now - 45_000,
+          },
+        ]
+      : [],
+    grants: [
+      {
+        id: "grant-1",
+        request_id: "req-0",
+        caller_fp: "fp-codex",
+        caller_display: "Codex",
+        items: ["kv-linear"],
+        targets: ["relay:linux-box/ubuntu-build"],
+        actions: ["deliver"],
+        created_ms: now - 20 * 60_000,
+        not_after_ms: now + 40 * 60_000,
+        uses_left: null,
+        revoked: false,
+        agent: "codex",
+      },
+    ],
+    rules: [],
+    deliveries: [],
+    audit: [
+      { seq: 1, ts_ms: now - 20 * 60_000, kind: "consent.request", actor: "Codex", caller_fp: "fp-codex", item: "kv-linear", decision: "ok" },
+      {
+        seq: 2,
+        ts_ms: now - 20 * 60_000 + 8_000,
+        kind: "consent.allow",
+        actor: "you",
+        caller_fp: "fp-codex",
+        item: "kv-linear",
+        target: "relay:linux-box/ubuntu-build",
+        decision: "allow",
+      },
+      {
+        seq: 3,
+        ts_ms: now - 19 * 60_000,
+        kind: "teleport.deliver",
+        actor: "Codex",
+        caller_fp: "fp-codex",
+        item: "kv-linear",
+        target: "relay:linux-box/ubuntu-build",
+        decision: "ok",
+      },
+      { seq: 4, ts_ms: now - 45_000, kind: "consent.request", actor: "Claude Code", caller_fp: "fp-claude", item: "kv-gh-session", decision: "ok" },
+    ],
+    auditVerification: { ok: true, entries: 4, unauthenticated: 0 },
+    partialErrors: [],
+  };
+}

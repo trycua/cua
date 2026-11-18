@@ -26,7 +26,9 @@ const MAX_TIMEOUT_MS: u64 = 10_000;
 const DEFAULT_STABLE_SAMPLES: u64 = 2;
 const MAX_STABLE_SAMPLES: u64 = 5;
 const MAX_PREDICATES: usize = 8;
-const POLL_INTERVAL_MS: u64 = 100;
+/// Interval between reads while a check waits for an element or a state:
+/// `expect` here, and `find`, `wait_for` and `expect` in batches.
+pub(crate) const STATE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone, Default)]
 pub struct ObservationSnapshot {
@@ -309,7 +311,7 @@ impl Tool for VerifyStateTool {
                 break outcomes;
             }
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            tokio::time::sleep(remaining.min(Duration::from_millis(POLL_INTERVAL_MS))).await;
+            tokio::time::sleep(remaining.min(STATE_POLL_INTERVAL)).await;
         };
 
         let last_status = aggregate_status(&last_outcomes);
@@ -556,10 +558,23 @@ fn evaluate_element(
             None,
         );
     };
-    let matches: Vec<&Value> = elements
+    let all_matches: Vec<&Value> = elements
         .iter()
         .filter(|element| selector_matches(&predicate.selector, element))
         .collect();
+    // Observations may include display-only rows (static text, read-only
+    // values) next to the addressable controls. A control's visible caption
+    // is usually such a row, so a selector that matches a control keeps
+    // resolving to that control alone; display-only rows are only the target
+    // when no addressable element matches.
+    let (addressable, display_only): (Vec<&Value>, Vec<&Value>) = all_matches
+        .into_iter()
+        .partition(|element| element.get("display_only").and_then(Value::as_bool) != Some(true));
+    let matches = if addressable.is_empty() {
+        display_only
+    } else {
+        addressable
+    };
     if matches.is_empty() {
         let contains_untrusted_region = elements.iter().any(|element| {
             element.get("in_web_content").and_then(Value::as_bool) == Some(true)
@@ -747,6 +762,7 @@ fn project_element(element: &Value) -> Value {
         "value",
         "enabled",
         "selected",
+        "display_only",
         "frame",
     ] {
         if let Some(value) = element.get(key) {
@@ -872,6 +888,124 @@ mod tests {
             },
         );
         assert_eq!(outcomes[0].status, VerificationStatus::Satisfied);
+    }
+
+    fn observed(elements: Vec<Value>) -> ObservationSnapshot {
+        ObservationSnapshot {
+            window: Some(window()),
+            elements: Some(elements),
+            element_source_trusted: true,
+            elements_complete: false,
+        }
+    }
+
+    fn labelled(label: &str, value_equals: Option<&str>) -> StatePredicate {
+        StatePredicate {
+            window: None,
+            element: Some(ElementPredicate {
+                selector: ElementSelector {
+                    role: None,
+                    label_contains: Some(label.into()),
+                },
+                exists: Some(true),
+                value_equals: value_equals.map(Into::into),
+                enabled: None,
+                selected: None,
+            }),
+        }
+    }
+
+    #[test]
+    fn label_less_display_text_value_is_readable() {
+        // #4526: a static text with no title exposes its content via AXValue;
+        // the platform reports it as a display-only row labelled by its value.
+        let outcomes = evaluate_predicates(
+            &[labelled("Saved", Some("Saved"))],
+            &observed(vec![json!({
+                "role": "AXStaticText",
+                "label": "Saved",
+                "value": "Saved",
+                "display_only": true,
+                "parent_index": 0
+            })]),
+        );
+        assert_eq!(outcomes[0].status, VerificationStatus::Satisfied);
+    }
+
+    #[test]
+    fn addressable_match_wins_over_its_display_only_caption() {
+        // The slider's caption is a separate display-only row carrying the
+        // same text. It must not turn a value read into a multi-match.
+        let outcomes = evaluate_predicates(
+            &[labelled("Volume", Some("8"))],
+            &observed(vec![
+                json!({
+                    "role": "AXStaticText",
+                    "label": "Volume",
+                    "display_only": true
+                }),
+                json!({
+                    "element_index": 1,
+                    "role": "AXSlider",
+                    "label": "Volume",
+                    "value": "8"
+                }),
+            ]),
+        );
+        assert_eq!(outcomes[0].status, VerificationStatus::Satisfied);
+        assert!(outcomes[0]
+            .observed_json
+            .as_deref()
+            .unwrap()
+            .contains("\"element_index\":1"));
+    }
+
+    #[test]
+    fn display_only_row_satisfies_existence_when_no_control_matches() {
+        let outcomes = evaluate_predicates(
+            &[labelled("Saved", None)],
+            &observed(vec![json!({
+                "role": "AXStaticText",
+                "label": "Saved",
+                "display_only": true
+            })]),
+        );
+        assert_eq!(outcomes[0].status, VerificationStatus::Satisfied);
+    }
+
+    #[test]
+    fn duplicate_display_only_value_is_multi_match() {
+        let caption = json!({
+            "role": "AXStaticText",
+            "label": "Total",
+            "value": "42",
+            "display_only": true
+        });
+        let outcomes = evaluate_predicates(
+            &[labelled("Total", Some("42"))],
+            &observed(vec![caption.clone(), caption]),
+        );
+        assert_eq!(outcomes[0].status, VerificationStatus::Unknown);
+        assert_eq!(outcomes[0].unknown_reason, Some(UnknownReason::MultiMatch));
+    }
+
+    #[test]
+    fn display_only_web_text_stays_untrusted() {
+        let outcomes = evaluate_predicates(
+            &[labelled("Saved", Some("Saved"))],
+            &observed(vec![json!({
+                "role": "AXStaticText",
+                "label": "Saved",
+                "value": "Saved",
+                "display_only": true,
+                "in_web_content": true
+            })]),
+        );
+        assert_eq!(outcomes[0].status, VerificationStatus::Unknown);
+        assert_eq!(
+            outcomes[0].unknown_reason,
+            Some(UnknownReason::UntrustedSource)
+        );
     }
 
     #[test]

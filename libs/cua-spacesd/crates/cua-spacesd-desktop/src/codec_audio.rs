@@ -61,7 +61,16 @@ impl CodecAudioProvider {
     /// server in the container, for example).
     pub fn new() -> Option<Self> {
         let capture = platform_capture().ok()?;
-        capture.sources().ok()?;
+        // On macOS, listing the sources lists ScreenCaptureKit's shareable
+        // content, which needs Screen Recording: without it macOS shows its
+        // own prompt, at every service start, over whatever the person is
+        // doing (Cua Spaces' first run among them). The app asks for the
+        // permission in its own words, so probe only once it is granted;
+        // until then the provider still exists and a stream lists the
+        // sources when it opens.
+        if screen_capture_allowed() {
+            capture.sources().ok()?;
+        }
         let opus = open_audio_encoder(&AudioEncodingConfig::downlink()).is_ok();
         Some(Self { capture, opus })
     }
@@ -297,5 +306,23 @@ impl AudioProvider for CodecAudioProvider {
             let _ = (config, virtual_source_name, open_audio_decoder);
             Ok(None)
         }
+    }
+}
+
+/// Screen Recording is granted to this process (macOS; elsewhere always),
+/// read without asking (`CGPreflightScreenCaptureAccess` never prompts).
+fn screen_capture_allowed() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        #[link(name = "CoreGraphics", kind = "framework")]
+        unsafe extern "C" {
+            fn CGPreflightScreenCaptureAccess() -> bool;
+        }
+        // SAFETY: no arguments; reads this process's TCC state.
+        unsafe { CGPreflightScreenCaptureAccess() }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
     }
 }

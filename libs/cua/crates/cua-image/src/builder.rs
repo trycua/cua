@@ -54,14 +54,15 @@ impl BuildStep {
 }
 
 /// Convert an Image resource's recipe into ordered steps (env first, as the
-/// Python builder does, then layers, then exposed ports). Fleet `files`
+/// Python builder does, then layers, then exposed ports). Image `files`
 /// reference server-side uploads and cannot be built locally.
 pub fn steps_from_spec(r: &ImageResource) -> Result<Vec<BuildStep>> {
     r.validate()?;
     let recipe = &r.spec.recipe;
     if !recipe.files.is_empty() {
         return Err(ImageError::Spec(
-            "recipe.files reference Fleet uploads; use BuildStep::Copy for local builds".into(),
+            "recipe.files reference server-side uploads; use BuildStep::Copy for local builds"
+                .into(),
         ));
     }
     let mut steps = Vec::new();

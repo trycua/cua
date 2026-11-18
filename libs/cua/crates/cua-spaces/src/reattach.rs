@@ -82,6 +82,62 @@ impl Backoff {
     }
 }
 
+/// How often the same re-attach failure is logged at `warn`. A Space that
+/// cannot be reached (macOS Local Network privacy, say) fails the same way
+/// every few seconds, from every supervisor that watches it; once per
+/// cause in this window keeps the log readable and the cause visible.
+pub const REPEAT_LOG_EVERY: Duration = Duration::from_secs(10 * 60);
+
+/// Whether to log a failure at `warn`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Note {
+    /// Log it; `repeated` identical failures were kept quiet since the
+    /// last time.
+    Log { repeated: u32 },
+    /// Logged within [`REPEAT_LOG_EVERY`]: debug only.
+    Quiet,
+}
+
+/// Rate-limits identical failure messages across every supervisor in this
+/// process. Bounded: at most [`RepeatLimiter::MAX`] distinct messages are
+/// remembered; the oldest go first.
+#[derive(Debug, Default)]
+pub struct RepeatLimiter {
+    seen: std::sync::Mutex<Vec<(String, std::time::Instant, u32)>>,
+}
+
+impl RepeatLimiter {
+    const MAX: usize = 64;
+
+    pub const fn new() -> Self {
+        Self {
+            seen: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Notes a failure `why` at `now`.
+    pub fn note(&self, why: &str, now: std::time::Instant) -> Note {
+        let mut seen = self.seen.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(entry) = seen.iter_mut().find(|(m, _, _)| m == why) {
+            if now.saturating_duration_since(entry.1) < REPEAT_LOG_EVERY {
+                entry.2 = entry.2.saturating_add(1);
+                return Note::Quiet;
+            }
+            let repeated = entry.2;
+            entry.1 = now;
+            entry.2 = 0;
+            return Note::Log { repeated };
+        }
+        if seen.len() >= Self::MAX {
+            seen.remove(0);
+        }
+        seen.push((why.to_string(), now, 0));
+        Note::Log { repeated: 0 }
+    }
+}
+
+static FAILURES: RepeatLimiter = RepeatLimiter::new();
+
 /// Checks a link every `policy.poll` and calls `reattach` while it is
 /// [`Health::Down`], waiting out an exponential backoff after each failure.
 /// The first check is immediate, so a link that was never made is made at
@@ -113,7 +169,20 @@ where
                         Ok(Attempt::Unsupported) => return,
                         Err(why) => {
                             let wait = backoff.fail();
-                            tracing::warn!(error = %why, retry_in = ?wait, "re-attach failed");
+                            match FAILURES.note(&why, std::time::Instant::now()) {
+                                Note::Log { repeated } if repeated > 0 => tracing::warn!(
+                                    error = %why,
+                                    retry_in = ?wait,
+                                    repeated,
+                                    "re-attach still failing"
+                                ),
+                                Note::Log { .. } => {
+                                    tracing::warn!(error = %why, retry_in = ?wait, "re-attach failed")
+                                }
+                                Note::Quiet => {
+                                    tracing::debug!(error = %why, retry_in = ?wait, "re-attach failed")
+                                }
+                            }
                             retry_at = Some(tokio::time::Instant::now() + wait);
                         }
                     }
@@ -136,6 +205,39 @@ mod tests {
             initial_backoff: Duration::from_secs(2),
             max_backoff: Duration::from_secs(8),
         }
+    }
+
+    /// CUA-1807: a blocked Space failed the same way 213 times in the log.
+    #[test]
+    fn the_same_failure_is_logged_once_per_window_and_a_new_one_at_once() {
+        let l = RepeatLimiter::new();
+        let t0 = std::time::Instant::now();
+        let blocked = "Cua Volume not mounted: Local Network access is not available";
+        assert_eq!(l.note(blocked, t0), Note::Log { repeated: 0 });
+        for i in 1..=200 {
+            assert_eq!(
+                l.note(blocked, t0 + Duration::from_secs(2 * i)),
+                Note::Quiet
+            );
+        }
+        // Another cause is news.
+        assert_eq!(
+            l.note(
+                "Cua Volume not mounted: still starting",
+                t0 + Duration::from_secs(5)
+            ),
+            Note::Log { repeated: 0 }
+        );
+        // After the window, once more, with how many were kept quiet.
+        assert_eq!(
+            l.note(blocked, t0 + REPEAT_LOG_EVERY + Duration::from_secs(1)),
+            Note::Log { repeated: 200 }
+        );
+        // Bounded.
+        for i in 0..(RepeatLimiter::MAX * 2) {
+            l.note(&format!("m{i}"), t0);
+        }
+        assert!(l.seen.lock().unwrap().len() <= RepeatLimiter::MAX);
     }
 
     #[test]

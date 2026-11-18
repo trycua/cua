@@ -27,6 +27,8 @@ fn process_events_roundtrip() {
                 started_at: Some(ts(1_767_225_600, 5)),
                 scrollback_start_offset: 0,
                 output_end_offset: 17,
+                deduplicated: true,
+                request_id: "conv-1:call-7:0@3".into(),
             })),
         },
         ProcessEvent {
@@ -47,6 +49,9 @@ fn process_events_roundtrip() {
                 timed_out: false,
                 error: String::new(),
                 ended_at: Some(ts(1_767_225_700, 0)),
+                lost: false,
+                signal_number: 0,
+                signal_name: String::new(),
             })),
         },
     ];
@@ -84,6 +89,32 @@ fn optional_exit_code_distinguishes_zero_from_unset() {
 }
 
 #[test]
+fn raw_signal_survives_for_signals_the_enum_cannot_name() {
+    let segv = ProcessEnd {
+        exit_code: None,
+        signal_number: 11,
+        signal_name: "SEGV".into(),
+        ..Default::default()
+    };
+    let decoded = ProcessEnd::decode(segv.encode_to_vec().as_slice()).unwrap();
+    assert_eq!(decoded.signal(), Signal::Unspecified);
+    assert_eq!(
+        (decoded.signal_number, decoded.signal_name.as_str()),
+        (11, "SEGV")
+    );
+    // An older peer's end (no raw fields) decodes to the unset values.
+    let old = ProcessEnd {
+        signal: Signal::Kill as i32,
+        ..Default::default()
+    };
+    let decoded = ProcessEnd::decode(old.encode_to_vec().as_slice()).unwrap();
+    assert_eq!(
+        (decoded.signal_number, decoded.signal_name.as_str()),
+        (0, "")
+    );
+}
+
+#[test]
 fn start_process_request_roundtrip() {
     let req = StartProcessRequest {
         config: Some(ProcessConfig {
@@ -113,6 +144,8 @@ fn start_process_request_roundtrip() {
         }),
         scrollback_bytes: 1 << 20,
         kill_on_disconnect: false,
+        request_id: "conv-1:call-7:0@3".into(),
+        epoch: 3,
     };
     roundtrip(&req);
     roundtrip(&SendInputRequest {
@@ -143,12 +176,24 @@ fn filesystem_messages_roundtrip() {
             create_parents: true,
             expected_size: 2 << 30,
             expected_sha256: "ab".repeat(32),
+            run_as: "root".into(),
+            metadata: [("owner".to_owned(), "alice".to_owned())].into(),
+            xattr_namespace: "user.e2b.".into(),
         })),
     });
     roundtrip(&UploadChunkRequest {
         upload_id: "u1".into(),
         offset: 3 << 20,
         data: b"chunk".to_vec(),
+        bulk_slot: 0,
+        bulk_len: 0,
+    });
+    roundtrip(&UploadChunkRequest {
+        upload_id: "u1".into(),
+        offset: 3 << 20,
+        data: Vec::new(),
+        bulk_slot: 2,
+        bulk_len: 5 << 20,
     });
     roundtrip(&WatchDirResponse {
         message: Some(watch_dir_response::Message::Event(FsEvent {
@@ -156,6 +201,7 @@ fn filesystem_messages_roundtrip() {
             r#type: FsEventType::Rename as i32,
             old_path: "/home/cua/b.txt".into(),
             observed_at: Some(ts(1, 2)),
+            metadata: [("owner".to_owned(), "alice".to_owned())].into(),
         })),
     });
 }
@@ -392,6 +438,12 @@ fn capabilities_and_error_info_roundtrip() {
             default_scrollback_bytes: 1 << 20,
         }),
         machine_seal_public_key: vec![7; 32],
+        bulk: Some(BulkLane {
+            id: vec![3; 16],
+            slots: 4,
+            slot_bytes: 16 << 20,
+            data_offset: 1 << 20,
+        }),
     });
     roundtrip(&ErrorInfo {
         reason: ErrorReason::OffsetMismatch as i32,
@@ -422,7 +474,9 @@ fn daemon_messages_roundtrip() {
             id: "local:dev".into(),
             kind: "container".into(),
             runtime: "gvisor".into(),
+            stop_reason: "out of memory".into(),
         }),
+        network: String::new(),
     });
     roundtrip(&daemon::CreateSpaceRequest {
         image: "ghcr.io/trycua/linux:24.04".into(),
@@ -450,10 +504,13 @@ fn daemon_messages_roundtrip() {
         socket_path: "/home/u/.cua/cua.sock".into(),
         loopback_url: "http://127.0.0.1:52011".into(),
         loopback_token: "t".into(),
-        features: vec!["env".into(), "fleet".into()],
+        features: vec!["env".into(), "sandboxes".into()],
         started_at: Some(ts(1, 0)),
         executable: "/Applications/Cua Spaces.app/Contents/MacOS/cua".into(),
         build_id: "0.2.0-7a1c-18f2".into(),
+        warm_spaces: 2,
+        warm_memory_bytes: 1_100_000_000,
+        warm_reason: "burst: 12.0 creates/min, 2 kept ready".into(),
     });
 }
 

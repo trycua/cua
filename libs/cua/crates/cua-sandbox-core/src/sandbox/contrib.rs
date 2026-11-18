@@ -18,9 +18,7 @@ const RESOLVE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The contrib provider a state file names.
 pub(super) fn contrib_of(s: &SandboxState) -> Option<(&str, &str)> {
-    let SandboxState::Local(l) = s else {
-        return None;
-    };
+    let SandboxState::Local(l) = s;
     let provider = l.extra.get(CONTRIB_PROVIDER_KEY)?.as_str()?;
     let id = l
         .extra
@@ -31,25 +29,27 @@ pub(super) fn contrib_of(s: &SandboxState) -> Option<(&str, &str)> {
 }
 
 /// Refuses what `caps` cannot run, before any API call.
-fn check_request(word: &str, caps: &ProviderCapabilities, o: &CreateOptions) -> Result<()> {
+fn check_request(
+    word: &str,
+    caps: &ProviderCapabilities,
+    takes_network_rules: bool,
+    o: &CreateOptions,
+) -> Result<()> {
     let unsupported = |op: String| crate::provider::unsupported(word, op);
-    if o.network == NetworkMode::None {
+    if o.network == NetworkMode::None && !takes_network_rules {
         return Err(unsupported(
             "network=\"none\" (only local QEMU VMs run without outbound network)".into(),
         ));
     }
+    if !o.egress.is_empty() && !takes_network_rules {
+        return Err(unsupported(crate::sandbox::EGRESS_LOCAL_ONLY.into()));
+    }
     if !o.sidecars.is_empty() {
         return Err(unsupported("sidecars".into()));
     }
-    if o.fleet.pool.is_some() {
-        return Err(Error::InvalidArgument(format!(
-            "pools are Cua cloud capacity; --on {word} takes an image"
-        )));
-    }
     if !o.os.eq_ignore_ascii_case("linux") {
         return Err(Error::UnsupportedImage(format!(
-            "{word} runs Linux sandboxes only (asked for {}); run {} guests with --on local or \
-             --on cloud",
+            "{word} runs Linux sandboxes only (asked for {}); run {} guests with --on local",
             o.os, o.os
         )));
     }
@@ -120,7 +120,7 @@ pub(super) async fn resolve_image(
         Some(k) if caps.kinds.contains(&k) => vec![k],
         Some(k) => {
             return Err(Error::UnsupportedImage(format!(
-                "{word} does not run {} sandboxes (it runs: {}); use --on local or --on cloud",
+                "{word} does not run {} sandboxes (it runs: {}); use --on local",
                 k.as_str(),
                 caps.kinds
                     .iter()
@@ -134,7 +134,7 @@ pub(super) async fn resolve_image(
     let backend = match kinds.as_slice() {
         [RunKind::Container] => cua_image::Backend::Container,
         [RunKind::Vm] => cua_image::Backend::Vm,
-        _ => cua_image::Backend::Fleet,
+        _ => cua_image::Backend::Provider,
     };
     let arch = caps.arches.first().copied().unwrap_or("amd64");
     let creds = o.scoped_credentials();
@@ -251,7 +251,7 @@ impl Sandboxes {
             })?;
         let provider = self.contrib_provider(word)?.clone();
         let caps = provider.capabilities();
-        check_request(word, &caps, o)?;
+        check_request(word, &caps, provider.takes_network_rules(), o)?;
         provider.check_configured()?;
         let (image, image_info) = resolve_image(word, &caps, o).await?;
         let mut services = o.all_services();
@@ -272,6 +272,12 @@ impl Sandboxes {
             .clone()
             .or_else(|| o.ephemeral_name.clone())
             .unwrap_or_else(|| format!("cua-eph-{:08x}", rand_u32()));
+        if !o.mounts.is_empty() {
+            return Err(Error::Unsupported {
+                provider: ProviderKind::Contrib,
+                op: "host directories mounted into the guest (local Spaces only)".into(),
+            });
+        }
         // A GPU type the provider offers (refused before any API call).
         let gpu = match o.gpu.as_deref() {
             None => None,
@@ -312,16 +318,15 @@ impl Sandboxes {
             env,
             command: o.command.clone().filter(|c| !c.is_empty()),
             ports,
-            ttl: o
-                .fleet
-                .ttl_seconds_after_created
-                .filter(|t| *t > 0)
-                .map(|t| Duration::from_secs(u64::from(t))),
+            ttl: None,
             labels,
             registry_credentials: o.scoped_credentials(),
             timeout: o.ready_timeout,
             runtime: o.runtime.clone(),
             gpu,
+            egress: o.egress.clone(),
+            no_network: o.network == NetworkMode::None,
+            protect: cua_vmm::network::protects(o.network_settings.as_ref()),
         };
         let instance = provider.create(&spec).await?;
         let sandbox = Sandbox {

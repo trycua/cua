@@ -39,7 +39,9 @@ def fake_sdk(monkeypatch):
 @pytest.mark.asyncio
 async def test_client_only_mode_connects_by_url(fake_sdk):
     mod, sb = fake_sdk
-    async with remote.RemoteDesktopSession(api_url="http://h:1234/", transport="spacesd") as session:
+    async with remote.RemoteDesktopSession(
+        api_url="http://h:1234/", transport="spacesd"
+    ) as session:
         assert session.sandbox is sb and session.computer.interface.sandbox is sb
     mod.Sandbox.connect.assert_awaited_once_with(url="http://h:1234")
     sb.disconnect.assert_awaited_once()
@@ -70,7 +72,7 @@ async def test_full_lifecycle_uses_the_runner_lifecycle(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_full_lifecycle_windows_and_cloud(monkeypatch):
+async def test_full_lifecycle_windows(monkeypatch):
     from cua_bench import sandboxes
 
     from .fakes import FakeSDK
@@ -78,12 +80,28 @@ async def test_full_lifecycle_windows_and_cloud(monkeypatch):
     sdk = FakeSDK()
     monkeypatch.setattr(sandboxes, "_sdk", sdk.pair)
     monkeypatch.delenv("CUA_BENCH_IMAGE", raising=False)
-    async with remote.RemoteDesktopSession(os_type="win11", provider_type="cloud"):
+    async with remote.RemoteDesktopSession(os_type="win11"):
         pass
     (call,) = sdk.calls
-    assert call["on"] == "cloud" and call["image"].builtin == "windows"
+    assert call["on"] == "local" and call["image"].builtin == "windows"
     assert call["image"].kind == "vm"
     assert sdk.released == 1
+
+
+@pytest.mark.asyncio
+async def test_the_cloud_provider_type_ends_with_cua_cloud(monkeypatch):
+    from cua_bench import sandboxes
+    from cua_bench.targets import CloudEnded
+
+    from .fakes import FakeSDK
+
+    sdk = FakeSDK()
+    monkeypatch.setattr(sandboxes, "_sdk", sdk.pair)
+    monkeypatch.delenv("CUA_BENCH_IMAGE", raising=False)
+    with pytest.raises(CloudEnded, match="Cua Cloud has ended"):
+        async with remote.RemoteDesktopSession(os_type="win11", provider_type="cloud"):
+            pass
+    assert sdk.calls == []
 
 
 @pytest.mark.asyncio
@@ -232,9 +250,7 @@ async def test_click_element_scrolls_into_view_and_picks_options(monkeypatch):
     assert actions == [ClickAction(x=120, y=210)]
 
     # An <option> is picked in the page; the open native popup is closed.
-    session, scripts, actions = _scripted_session(
-        monkeypatch, [("'OPTION'", "option")], {}
-    )
+    session, scripts, actions = _scripted_session(monkeypatch, [("'OPTION'", "option")], {})
     await session.click_element(7, 'option[value="apple"]')
     assert [type(a).__name__ for a in actions] == ["KeyAction"]
     assert actions[0].key == "Escape"

@@ -77,6 +77,14 @@
                     </Grid>
                 </GroupBox>
 
+                <GroupBox Header="multiline_text_input" Padding="10" Margin="0,0,0,12">
+                    <TextBox x:Name="TxtMultilineInput"
+                             AutomationProperties.AutomationId="txt-multiline-input"
+                             Width="420" Height="100" HorizontalAlignment="Left"
+                             AcceptsReturn="True" TextWrapping="Wrap"
+                             TextChanged="OnMultilineInputChanged"/>
+                </GroupBox>
+
                 <!-- Click target (Button) — also at top for visibility. -->
                 <GroupBox Header="click_target" Padding="10" Margin="0,0,0,12">
                     <StackPanel>

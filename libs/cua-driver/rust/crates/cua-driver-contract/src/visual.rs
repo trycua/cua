@@ -53,16 +53,10 @@ fn visual_regions_schema(_: &mut SchemaGenerator) -> Schema {
 
 fn region_kinds_schema(_: &mut SchemaGenerator) -> Schema {
     json_schema!({
-        "anyOf": [
-            {
-                "type": "array",
-                "minItems": 1,
-                "maxItems": 2,
-                "uniqueItems": true,
-                "items": { "enum": ["text", "icon"] }
-            },
-            { "type": "null" }
-        ]
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 2,
+        "items": { "type": "string", "enum": ["text", "icon"] }
     })
 }
 
@@ -886,7 +880,8 @@ mod tests {
 
         let schema =
             serde_json::to_string(&schemars::schema_for!(ParseVisualRegionsInput)).unwrap();
-        assert!(schema.contains("\"uniqueItems\":true"));
+        assert!(schema.contains("\"enum\":[\"text\",\"icon\"]"));
+        assert!(!schema.contains("uniqueItems"));
     }
 
     #[test]

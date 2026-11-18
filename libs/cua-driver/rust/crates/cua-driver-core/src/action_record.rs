@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Internal, non-wire representation of what an action actually did.
 //!
 //! This deliberately has no serde derives: it is the driver's source of truth,
@@ -64,6 +67,9 @@ pub enum ActionTransport {
     MacosAxWindowFrame,
     MacosCgEventPid,
     MacosCgEventHid,
+    /// An Apple Event to the target app's scripting interface (Finder
+    /// rename, a document save), which never activates the app.
+    MacosAppleEvent,
     WindowsUiaInvoke,
     WindowsUiaToggle,
     WindowsUiaSelection,
@@ -106,6 +112,7 @@ impl ActionTransport {
         Self::MacosAxWindowFrame,
         Self::MacosCgEventPid,
         Self::MacosCgEventHid,
+        Self::MacosAppleEvent,
         Self::WindowsUiaInvoke,
         Self::WindowsUiaToggle,
         Self::WindowsUiaSelection,
@@ -169,7 +176,9 @@ impl ActionTransport {
             | Self::LinuxWaylandVirtualPointer
             | Self::LinuxHyprlandForegroundInput
             | Self::LinuxCuaCompositorInject => ActionRoute::GlobalInput,
-            Self::WindowsSetWindowPos | Self::LinuxX11ConfigureWindow => ActionRoute::SystemApi,
+            Self::WindowsSetWindowPos | Self::LinuxX11ConfigureWindow | Self::MacosAppleEvent => {
+                ActionRoute::SystemApi
+            }
             Self::BrowserCdpRuntimeFunction => ActionRoute::Dom,
             Self::BrowserCdpInputMouse | Self::BrowserCdpInputKey => ActionRoute::TrustedInput,
         }
@@ -451,6 +460,10 @@ impl ActionExecutionRecord {
                 }
                 _ => None,
             },
+            // The dispatch seam adds these after the record is projected.
+            hint: None,
+            next_call: None,
+            fast_path: None,
         })
     }
 
@@ -774,7 +787,13 @@ fn transport_from_legacy(
         "SetCursorPos" => ActionTransport::WindowsSetCursorPos,
         "atspi" | "wayland_atspi" | "x11_atspi" => ActionTransport::LinuxAtSpiAction,
         "pty" => ActionTransport::LinuxPty,
-        "mpx_uinput" | "mpx_pointer" => ActionTransport::LinuxX11MpxUinput,
+        // set_value's keyboard fallback on Linux: the field (or combo box)
+        // is clicked open with the session's MPX pointer, or with XTest in
+        // the foreground, and typed into or picked from.
+        "mpx_uinput" | "mpx_pointer" | "click_type_mpx" | "click_select_mpx" => {
+            ActionTransport::LinuxX11MpxUinput
+        }
+        "click_type_fg" | "click_select_fg" => ActionTransport::LinuxXTest,
         "x11_xsendevent" => ActionTransport::LinuxXSendEvent,
         "x11_pixel" | "x11_pixel_fg" | "x11_xtest_fg" | "xtest" | "xtest_desktop"
         | "xtest_core_grab" => ActionTransport::LinuxXTest,
@@ -784,6 +803,9 @@ fn transport_from_legacy(
             ActionTransport::LinuxCuaCompositorInject
         }
         "hid" | "cgevent_hid" | "cgevent_fg" => ActionTransport::MacosCgEventHid,
+        // A GTK 3 app held AppKit-active by the activation event, with the
+        // click posted to its pid as NSEvent-built events.
+        "appkit_activated" => ActionTransport::MacosCgEventPid,
         "cgevent" => {
             if args
                 .get("delivery_mode")
@@ -957,7 +979,13 @@ fn actual_delivery_from_legacy(
         tool_name,
         "browser_click" | "browser_pointer" | "browser_type"
     ) {
-        return Some(ActualDelivery::Background);
+        return match structured
+            .get("delivery_mode")
+            .and_then(serde_json::Value::as_str)
+        {
+            Some("foreground") => Some(ActualDelivery::Foreground),
+            _ => Some(ActualDelivery::Background),
+        };
     }
     if transport == ActionTransport::AgentCursorOverlay
         || args.get("scope").and_then(serde_json::Value::as_str) == Some("desktop")
@@ -1098,6 +1126,7 @@ fn transport_name(transport: ActionTransport) -> &'static str {
         ActionTransport::MacosAxWindowFrame => "macos_ax_window_frame",
         ActionTransport::MacosCgEventPid => "macos_cg_event_pid",
         ActionTransport::MacosCgEventHid => "macos_cg_event_hid",
+        ActionTransport::MacosAppleEvent => "macos_apple_event",
         ActionTransport::WindowsUiaInvoke => "windows_uia_invoke",
         ActionTransport::WindowsUiaToggle => "windows_uia_toggle",
         ActionTransport::WindowsUiaSelection => "windows_uia_selection",
@@ -1671,6 +1700,48 @@ mod tests {
     }
 
     #[test]
+    fn linux_set_value_keyboard_fallback_paths_normalize() {
+        // A successful set_value fallback must carry an execution record;
+        // without a transport the registry reports action_outcome_mismatch.
+        for (path, mode, transport, delivery) in [
+            (
+                "click_type_fg",
+                "foreground",
+                ActionTransport::LinuxXTest,
+                ActualDelivery::Foreground,
+            ),
+            (
+                "click_select_fg",
+                "foreground",
+                ActionTransport::LinuxXTest,
+                ActualDelivery::Foreground,
+            ),
+            (
+                "click_type_mpx",
+                "background",
+                ActionTransport::LinuxX11MpxUinput,
+                ActualDelivery::Background,
+            ),
+            (
+                "click_select_mpx",
+                "background",
+                ActionTransport::LinuxX11MpxUinput,
+                ActualDelivery::Background,
+            ),
+        ] {
+            let record = ActionExecutionRecord::from_legacy(
+                "set_value",
+                &serde_json::json!({ "delivery_mode": mode }),
+                &serde_json::json!({ "path": path, "verified": false, "effect": "unverifiable" }),
+            )
+            .unwrap_or_else(|| panic!("{path} should normalize"));
+            assert_eq!(record.transport, transport, "{path}");
+            assert_eq!(record.actual_delivery, Some(delivery), "{path}");
+            record.public_result().expect("public result");
+        }
+    }
+
+    #[test]
     fn mpx_pointer_window_change_evidence_publishes_confirmed_effect() {
         // Linux MPX real-pointer click that opened a context menu: the popup
         // appearing is window-change evidence, so `confirmed` survives.
@@ -1766,6 +1837,7 @@ mod tests {
                 "ref": "secret-ref",
                 "destination_ref": "secret-destination",
                 "input_route": input_route,
+                "delivery_mode": "foreground",
             });
             let structured = serde_json::json!({
                 "status": "ok",
@@ -2017,6 +2089,7 @@ mod tests {
             "cgevent_hid",
             "cgevent",
             "cgevent_fg",
+            "appkit_activated",
             "dom_event",
             "trusted",
             "key_events",

@@ -1,0 +1,61 @@
+---
+title: IPv4 options guard for Linux VM Spaces
+description: 'Why Cua Linux VM images drop inbound IPv4 packets that carry IP options, which CVE it mitigates, what it changes, and when it goes away.'
+---
+
+Cua Linux VM images ship a small firewall rule that drops inbound IPv4 packets
+carrying IP options (Record Route, Timestamp, loose and strict source route)
+before they reach TCP. It is an interim mitigation for CVE-2026-98432, a Linux
+kernel use-after-free that a remote peer can trigger by sending a TCP SYN with
+Record Route or Timestamp options to a listening socket and then racing a
+retransmitted SYN. The kernel fix is in upstream releases 5.10.272, 5.15.223,
+6.1.190, 6.6.159, 6.12.113, 6.18.56, 7.2.10 and 7.3. Ubuntu 24.04 has not
+shipped it yet, so the guard closes the gap until the image carries a fixed
+kernel.
+
+## Which Spaces have it
+
+Every Space that boots its own Linux kernel: the Linux image (slim, full and
+docker tiers), the Omarchy VM image and the OSWorld VM image. Container Spaces
+share the kernel of the machine they run on, and gVisor Spaces use gVisor's own
+network stack, so the guard does not apply to them. Update the machine's kernel
+to cover container Spaces.
+
+A default Space accepts no inbound connections, so it is not reachable by this
+bug. The guard matters for a Space that exposes a port, for Spaces on a shared
+network, and for a Space you run in your own cloud account.
+
+## What it does
+
+A systemd unit, `cua-ipopts.service`, loads an nftables table named
+`cua_ipopts` early in boot, before the network comes up. The table has one
+chain on the prerouting hook that drops any IPv4 packet with a header longer
+than 20 bytes, which is the only way a packet can carry IP options. IGMP is
+left alone. Nothing else is changed: TCP, UDP, ICMP and your own firewall rules
+behave as before. The one visible effect is that `ping -R` and `ping -T`, which
+send those options on purpose, get no reply.
+
+The unit only ever adds and removes its own table, so a firewall you configure
+later (ufw, Docker, your own nftables rules) is not disturbed. If you enable
+`nftables.service` with a `flush ruleset` line, the unit is ordered after it so
+the guard is loaded again on boot. The unit also sets
+`net.ipv4.conf.*.accept_source_route` to 0.
+
+## Check it
+
+Inside the Space:
+
+```bash skip="no-runner"
+systemctl is-active cua-ipopts.service
+sudo nft list table ip cua_ipopts
+```
+
+The counter on the drop rule rises when a packet with options arrives.
+
+## When it is removed
+
+The guard is removed from an image once the image's kernel is at or above the
+fixed version for its series: Ubuntu 24.04 `linux-image-virtual` 6.8.0-149 or
+later, and an Omarchy snapshot whose Arch `linux` package is a fixed release.
+Until then, rebuilding an image keeps it in place. To turn it off yourself in a
+Space you control, run `sudo systemctl disable --now cua-ipopts.service`.

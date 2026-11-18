@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS window-scoped pixel clicks on a toolkit that reads the hardware
 //! pointer (D-MAC-6).
 //!
@@ -189,6 +192,7 @@ fn tk_window_pixel_click_foreground_moves_pointer_and_reaches_target() {
     let click = fixture.driver.call(
         "click",
         json!({
+            "session": fixture.session,
             "pid": fixture.pid,
             "window_id": fixture.window_id,
             "x": x,
@@ -247,6 +251,7 @@ fn tk_window_pixel_click_background_is_refused_without_delivery() {
     let click = fixture.driver.call(
         "click",
         json!({
+            "session": fixture.session,
             "pid": fixture.pid,
             "window_id": fixture.window_id,
             "x": x,

@@ -1,6 +1,7 @@
+import Darwin
 import Foundation
 
-/// Prints VM status information in a formatted table
+/// Prints labeled VM fields in terminals and a table when redirected.
 enum VMDetailsPrinter {
     /// Represents a column in the VM status table
     private struct Column: Sendable {
@@ -41,7 +42,8 @@ enum VMDetailsPrinter {
             getValue: { vm in
                 // Only show shared directories if the VM is running
                 if vm.status == "running", let dirs = vm.sharedDirectories, !dirs.isEmpty {
-                    return dirs.map { "\($0.hostPath) (\($0.readOnly ? "ro" : "rw"))" }.joined(separator: ", ")
+                    return dirs.map { "\($0.hostPath) (\($0.readOnly ? "ro" : "rw"))" }.joined(
+                        separator: ", ")
                 } else {
                     return "-"
                 }
@@ -66,10 +68,12 @@ enum VMDetailsPrinter {
             }),
     ]
 
-    /// Prints the status of all VMs in a formatted table
-    /// - Parameter vms: Array of VM status objects to display
+    /// Prints all fields without truncation in terminals.
+    /// JSON and redirected text retain their existing formats.
+    /// - Parameter isTerminal: Whether standard output is a terminal; detected by default.
     static func printStatus(
-        _ vms: [VMDetails], format: FormatOption, print: (String) -> Void = { print($0) }
+        _ vms: [VMDetails], format: FormatOption, isTerminal: Bool = isatty(STDOUT_FILENO) == 1,
+        print: (String) -> Void = { print($0) }
     ) throws {
         if format == .json {
             let jsonEncoder = JSONEncoder()
@@ -77,24 +81,24 @@ enum VMDetailsPrinter {
             let jsonData = try jsonEncoder.encode(vms)
             let jsonString = String(data: jsonData, encoding: .utf8)!
             print(jsonString)
+        } else if isTerminal {
+            let labelWidth = columns.reduce(0) { max($0, $1.header.count) } + 2
+            for (index, vm) in vms.enumerated() {
+                if index > 0 {
+                    print("")
+                }
+                for column in columns {
+                    let label = "\(column.header):".paddedToWidth(labelWidth)
+                    print(label + column.getValue(vm))
+                }
+            }
         } else {
-            printHeader(print: print)
-            vms.forEach({ vm in 
-                printVM(vm, print: print)
-            })
+            print(columns.map { $0.header.paddedToWidth($0.width) }.joined())
+            for vm in vms {
+                let values = columns.map { $0.getValue(vm).paddedToWidth($0.width) }
+                print(values.joined())
+            }
         }
-    }
-
-    private static func printHeader(print: (String) -> Void = { print($0) }) {
-        let paddedHeaders = columns.map { $0.header.paddedToWidth($0.width) }
-        print(paddedHeaders.joined())
-    }
-
-    private static func printVM(_ vm: VMDetails, print: (String) -> Void = { print($0) }) {
-        let paddedColumns = columns.map { column in
-            column.getValue(vm).paddedToWidth(column.width)
-        }
-        print(paddedColumns.joined())
     }
 }
 

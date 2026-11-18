@@ -1,0 +1,21 @@
+id = "opencode-go"
+name = "OpenCode Go"
+icon = "opencode-go"
+tier = "more"
+rank = 230
+kind = "aggregator"
+aliases = ["go"]
+wire = "openai-chat"
+base_url = "https://opencode.ai/zen/go/v1"
+base_url_env = "OPENCODE_GO_BASE_URL"
+default_model = "kimi-k3"
+hermes_id = "opencode-go"
+key_help = "Create a key at opencode.ai."
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "OPENCODE_GO_API_KEY"
+
+[delivery]
+hermes = ["OPENCODE_GO_API_KEY"]

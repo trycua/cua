@@ -24,8 +24,6 @@ def apply(on, **kw):
     args = dict(
         local=None,
         runtime=None,
-        cloud=None,
-        pool=None,
         cpu=None,
         memory_mb=None,
         time_to_start=None,
@@ -36,9 +34,9 @@ def apply(on, **kw):
 
 
 def test_location_words_pass_through_to_the_placement_model():
-    # `_apply_on` only routes contrib providers; `local`, `cloud`, `fleet`,
-    # `direct:` and `relay:` reach `_placement.resolve` unchanged.
-    for on in (None, "local", "cloud", "fleet", "direct:10.0.0.5:3211", "relay:abc"):
+    # `_apply_on` only routes contrib providers; `local`, `cloud`, `direct:`
+    # and `relay:` reach `_placement.resolve` unchanged.
+    for on in (None, "local", "cloud", "direct:10.0.0.5:3211", "relay:abc"):
         assert apply(on) == (on, None, None)
     assert apply("local", local=False) == ("local", False, None)
     # ...which is where contradictions are refused.
@@ -48,8 +46,6 @@ def test_location_words_pass_through_to_the_placement_model():
             local=False,
             kind=None,
             runtime=None,
-            cloud=None,
-            cloud_only=[],
             image_kind=None,
         )
 
@@ -64,7 +60,7 @@ def test_a_contrib_word_runs_through_the_contrib_runtime():
 
 
 def test_contrib_refuses_conflicting_location_options():
-    for kw in ({"local": True}, {"pool": "p"}, {"cloud": object()}):
+    for kw in ({"local": True}, {"runtime": object()}):
         with pytest.raises(InvalidArgument, match="picks the provider"):
             apply("daytona", **kw)
     # An unknown word is not a contrib provider: `_apply_on` leaves it to
@@ -76,8 +72,6 @@ def test_contrib_refuses_conflicting_location_options():
             local=None,
             kind=None,
             runtime=None,
-            cloud=None,
-            cloud_only=[],
             image_kind=None,
         )
 
@@ -90,3 +84,9 @@ async def test_contrib_image_refs_keep_the_variant():
     )
     vm = Image.from_registry("ghcr.io/trycua/linux:24.04", kind="vm")
     assert await rt._image_ref(vm, "x") == "vm:ghcr.io/trycua/linux:24.04"
+
+
+def test_the_known_words_include_every_own_cloud():
+    # The offline fallback list mirrors cua_sandbox_core::CLOUD_LOCATIONS.
+    for word in ("aws", "gcp", "hetzner"):
+        assert word in contrib._KNOWN

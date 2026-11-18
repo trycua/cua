@@ -164,5 +164,48 @@ class Layers(unittest.TestCase):
             self.assertEqual(idx["manifests"][0]["digest"], desc["digest"])
 
 
+class ConsoleCapture(unittest.TestCase):
+    """smoke.py keeps the guest console of a VM whose failed create deletes it."""
+
+    def test_console_outlives_the_vm_and_its_golden_recording(self):
+        import contextlib
+        import smoke
+
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            root = d / "home/.cua/vmm/qemu"
+            vm, rec = root / "cua-e2e-bench-x", root / "_golden/.rec-1"
+            for p, text in ((vm, "booting\ncua-spacesd listening\n"), (rec, "rec boot\nserver never started\n")):
+                p.mkdir(parents=True)
+                (p / "serial.log").write_text(text)
+            (vm / "qemu.log").write_text("qemu-system-x86_64: warning\n")
+            (root / "other-vm").mkdir()
+            (root / "other-vm/serial.log").write_text("not ours\n")
+            tee = smoke.ConsoleTee(d / "evidence", "cua-e2e-bench-x", roots=lambda: [root])
+            tee.sweep()
+            # The failed create removes both directories.
+            for p in (vm / "serial.log", vm / "qemu.log", rec / "serial.log"):
+                p.unlink()
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                tee.dump()
+            text = out.getvalue()
+            self.assertIn("cua-spacesd listening", text)
+            self.assertIn("server never started", text)
+            self.assertIn("qemu-system-x86_64: warning", text)
+            self.assertNotIn("not ours", text)
+            self.assertTrue((d / "evidence/golden-recording.rec-1/serial.log").is_file())
+
+    def test_nothing_launched_says_so(self):
+        import contextlib
+        import smoke
+
+        with tempfile.TemporaryDirectory() as d:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                smoke.ConsoleTee(Path(d) / "evidence", "x", roots=lambda: []).dump()
+            self.assertIn("no guest console was captured", out.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

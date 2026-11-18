@@ -84,6 +84,7 @@ struct Create: AsyncParsableCommand {
                     "Invalid network mode '\(network)'. Expected 'nat', 'bridged', or 'bridged:<interface>'."
                 )
             }
+            try mode.checkStorable()
             return mode
         }
     }

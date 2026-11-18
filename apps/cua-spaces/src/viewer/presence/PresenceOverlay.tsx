@@ -33,7 +33,15 @@ export interface PresenceOverlayProps {
 
 const defaultBridge = createPresenceBridge();
 
-export function PresenceOverlay({ spaceId, windowId, interactive, live = true, bridge, now, onLayer }: PresenceOverlayProps) {
+export function PresenceOverlay({
+  spaceId,
+  windowId,
+  interactive,
+  live = true,
+  bridge,
+  now,
+  onLayer,
+}: PresenceOverlayProps) {
   const anchor = useRef<HTMLSpanElement | null>(null);
   const latestLive = useRef(live);
   latestLive.current = live;

@@ -8,9 +8,8 @@
  * definitions) and writes, through the shared renderers in lib/:
  *
  * - docs/content/docs/lume/reference/index.mdx (the Reference index)
- * - docs/content/docs/lume/reference/cli/ (one page per command group)
- * - docs/content/docs/lume/reference/http-api.mdx
- * - docs/content/docs/lume/reference/mcp-tools.mdx
+ * - docs/content/docs/lume/reference/cli.mdx (every command on one page)
+ * - docs/content/docs/lume/reference/http-api.mdx (the HTTP API, then the MCP tools)
  * - scripts/docs-generators/cli-specs/lume.json (the CLI-shape lane's oracle)
  *
  * Usage:
@@ -36,10 +35,9 @@ import {
   type JsonSchema,
   type McpCategory,
   type McpReference,
-  mcpIndexRows,
-  renderMcpReference,
+  mcpBody,
 } from './lib/mcp-mdx';
-import { DOCS_CONTENT, REPO_ROOT, codeCell, codeFence, escapeMdxText, escapeTableCell, finish, isCheckMode, metaJson, stableJson, syncFiles } from './lib/mdx';
+import { DOCS_CONTENT, REPO_ROOT, codeCell, codeFence, escapeMdxText, escapeTableCell, finish, isCheckMode, metaJson, cliSpecJson, syncFiles } from './lib/mdx';
 import { normalizeEmDashes } from './prose-style';
 
 export type { CLIDocumentation };
@@ -80,8 +78,8 @@ export const CLI_GROUPS: CliGroup[] = [
   {
     slug: 'guest',
     title: 'Guest access',
-    summary: 'Prepare unattended setup, open SSH sessions and change SIP in a guest',
-    commands: ['setup', 'ssh', 'sip'],
+    summary: 'Prepare unattended setup, open SSH sessions, copy files and change SIP in a guest',
+    commands: ['setup', 'ssh', 'cp', 'sip'],
   },
   {
     slug: 'server',
@@ -111,6 +109,7 @@ export function cliReference(cli: CLIDocumentation): CliReference {
     generator: REGENERATE,
     source: 'lume dump-docs --type cli',
     intro: readHeader('lume', 'cli'),
+    singlePage: true,
   };
 }
 
@@ -128,13 +127,12 @@ function mcpCategory(name: string): string {
   return 'maintenance';
 }
 
-export function mcpReference(mcp: NonNullable<LumeDumpDocs['mcp']>, version: string): McpReference {
+export function mcpReference(mcp: NonNullable<LumeDumpDocs['mcp']>): McpReference {
   return {
     product: 'lume',
     server: 'lume serve --mcp',
     generator: REGENERATE,
     source: 'lume dump-docs --type mcp',
-    version,
     description: "Every tool Lume's MCP server exposes, with its parameters.",
     categories: MCP_CATEGORIES,
     tools: mcp.tools.map((t) => ({
@@ -154,22 +152,23 @@ export function mcpReference(mcp: NonNullable<LumeDumpDocs['mcp']>, version: str
 export function renderAll(docs: LumeDumpDocs): Map<string, string> {
   const cli = cliReference(docs.cli);
   const rel = new Map<string, string>(renderCliReference(cli));
-  rel.set('http-api.mdx', normalizeEmDashes(generateHTTPAPIMDX(docs.api)));
+  // The HTTP API and the MCP tools share one page: both are what `lume serve` exposes.
+  const mcp = docs.mcp ? mcpReference(docs.mcp) : undefined;
+  rel.set('http-api.mdx', normalizeEmDashes(generateHTTPAPIMDX(docs.api, mcp ? mcpBody(mcp, 3) : undefined)));
   const sections = [
     { title: 'Commands', column: 'Command group', rows: cliIndexRows(cli) },
     {
-      title: 'HTTP API',
+      title: 'HTTP API and MCP tools',
       column: 'API',
-      rows: [{ name: 'HTTP API', href: '/lume/reference/http-api', description: 'Every endpoint `lume serve` exposes, with parameters and examples.' }],
+      rows: [
+        { name: 'HTTP API', href: '/lume/reference/http-api', description: 'Every endpoint `lume serve` exposes, with parameters and examples.' },
+        ...(mcp
+          ? [{ name: 'MCP tools', href: '/lume/reference/http-api#mcp-tools', description: mcp.description }]
+          : []),
+      ],
     },
   ];
   const pages = ['index', 'cli', 'http-api'];
-  if (docs.mcp) {
-    const mcp = mcpReference(docs.mcp, docs.cli.version);
-    for (const [p, content] of renderMcpReference(mcp)) rel.set(p, content);
-    sections.push({ title: 'MCP tools', column: 'Tools', rows: mcpIndexRows(mcp) });
-    pages.push('mcp-tools');
-  }
   rel.set(
     'index.mdx',
     renderReferenceIndex({
@@ -177,14 +176,13 @@ export function renderAll(docs: LumeDumpDocs): Map<string, string> {
       description: 'Every lume command, HTTP endpoint and MCP tool, generated from the Lume binary.',
       generator: REGENERATE,
       source: 'lume dump-docs --type all',
-      version: docs.cli.version,
       sections,
     })
   );
   rel.set('meta.json', metaJson('Reference', pages));
   const files = new Map<string, string>();
   for (const [p, content] of rel) files.set(path.join(OUT_DIR, p), content);
-  files.set(LUME_CLI_SPEC, stableJson(docs.cli));
+  files.set(LUME_CLI_SPEC, cliSpecJson(docs.cli));
   return files;
 }
 
@@ -272,22 +270,23 @@ export interface APIStatusCodeDoc {
 // HTTP API Reference Generator
 // ============================================================================
 
-export function generateHTTPAPIMDX(docs: HTTPAPIDocumentation): string {
+export function generateHTTPAPIMDX(docs: HTTPAPIDocumentation, mcpTools?: string[]): string {
   const lines: string[] = [];
-
-  const documentedVersion = docs.version;
 
   // Header - frontmatter MUST be at the very beginning of the file
   lines.push('---');
-  lines.push('title: "HTTP API"');
-  lines.push('description: "Every endpoint of the Lume HTTP API server (lume serve)."');
+  lines.push(mcpTools ? 'title: "HTTP API and MCP tools"' : 'title: "HTTP API"');
+  lines.push(
+    mcpTools
+      ? 'description: "Every endpoint of the Lume HTTP API server and every tool of its MCP server (lume serve)."'
+      : 'description: "Every endpoint of the Lume HTTP API server (lume serve)."'
+  );
   lines.push('---');
   lines.push('');
   lines.push(`{/*
   AUTO-GENERATED FILE - DO NOT EDIT DIRECTLY
   Generated by: ${REGENERATE}
   Source: lume dump-docs --type api
-  Version: ${documentedVersion}
 */}`);
   lines.push('');
   lines.push("import { Tabs, Tab } from 'fumadocs-ui/components/tabs';");
@@ -295,10 +294,6 @@ export function generateHTTPAPIMDX(docs: HTTPAPIDocumentation): string {
 
   // Introduction
   lines.push(docs.description);
-  lines.push('');
-  lines.push(
-    `Documented against Lume **${documentedVersion}**. Run \`lume --version\` for your installed version.`
-  );
   lines.push('');
   lines.push('## Default URL');
   lines.push('');
@@ -324,6 +319,8 @@ export function generateHTTPAPIMDX(docs: HTTPAPIDocumentation): string {
       lines.push(...generateEndpointDoc(endpoint));
     }
   }
+
+  if (mcpTools) lines.push('## MCP tools', '', ...mcpTools);
 
   return lines.join('\n');
 }

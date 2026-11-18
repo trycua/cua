@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Wall-clock and node budget for the accessibility walk behind
 //! `get_window_state` (`timeout_ms` / `max_elements`).
 //!
@@ -50,6 +53,8 @@ pub struct WalkBudget {
     time_bounded: bool,
     max_elements: usize,
     visited: usize,
+    /// Nodes held back by [`WalkBudget::reserve`] for siblings not yet walked.
+    reserved: usize,
     pending: usize,
     stop: Option<WalkStop>,
 }
@@ -65,6 +70,7 @@ impl WalkBudget {
             time_bounded: true,
             max_elements,
             visited: 0,
+            reserved: 0,
             pending: 0,
             stop: None,
         }
@@ -91,19 +97,48 @@ impl WalkBudget {
     /// a budget has run out, and the node is counted as pending.
     pub fn admit(&mut self) -> bool {
         let started = *self.started.get_or_insert_with(Instant::now);
-        if self.stop.is_none() {
-            if self.visited >= self.max_elements {
-                self.stop = Some(WalkStop::NodeBudget);
-            } else if started.elapsed() >= self.timeout {
-                self.stop = Some(WalkStop::Timeout);
-            }
-        }
-        if self.stop.is_some() {
+        // Running out of time ends the walk, and the reason says so even
+        // after a node-budget refusal. Running out of nodes refuses only
+        // this node: a sibling may still claim nodes reserved for it.
+        let refused = if matches!(
+            self.stop,
+            Some(WalkStop::Timeout | WalkStop::AppLookupTimeout)
+        ) {
+            true
+        } else if started.elapsed() >= self.timeout {
+            self.stop = Some(WalkStop::Timeout);
+            true
+        } else if self.visited + self.reserved >= self.max_elements {
+            self.stop.get_or_insert(WalkStop::NodeBudget);
+            true
+        } else {
+            false
+        };
+        if refused {
             self.pending += 1;
             return false;
         }
         self.visited += 1;
         true
+    }
+
+    /// Hold back up to `count` nodes of the unreserved node budget and return
+    /// how many were held. A walker holds nodes for the siblings it has not
+    /// walked yet and [`WalkBudget::release`]s each sibling's share before
+    /// walking it, so a deep early sibling cannot use up the nodes the later
+    /// siblings need to be listed at all.
+    pub fn reserve(&mut self, count: usize) -> usize {
+        let free = self
+            .max_elements
+            .saturating_sub(self.visited + self.reserved);
+        let held = count.min(free);
+        self.reserved += held;
+        held
+    }
+
+    /// Return `count` nodes held by [`WalkBudget::reserve`] to the budget.
+    pub fn release(&mut self, count: usize) {
+        self.reserved = self.reserved.saturating_sub(count);
     }
 
     /// Whether the wall-clock budget has run out (for phases that cannot be
@@ -194,33 +229,53 @@ impl WalkOutcome {
     }
 }
 
-/// The note that heads a partial tree, naming why the walk stopped.
+/// The note that heads a partial tree, naming why the walk stopped and the
+/// retry that can get past that stop. Callers follow the remedy literally, so
+/// it must name the knob that lifts this cut and no other.
 pub fn truncation_note(
     reason: Option<&str>,
     timeout_ms: u64,
     visited: usize,
     pending: usize,
 ) -> String {
-    let why = match reason {
-        Some("timeout") => format!("the {timeout_ms} ms timeout_ms budget ran out"),
-        Some("node_budget") => "the max_elements node budget ran out".to_owned(),
-        Some("app_unresponsive") => {
-            "the application stopped answering its accessibility API".to_owned()
-        }
-        Some("app_lookup_timeout") => format!(
-            "the application was not reachable through its accessibility API (AT-SPI, AX) \
-             within {timeout_ms} ms; it may still be launching"
+    const NARROW: &str = "or narrow with query / max_depth";
+    let (why, remedy) = match reason {
+        Some("timeout") => (
+            format!("the {timeout_ms} ms timeout_ms budget ran out"),
+            format!("retry with a larger timeout_ms (e.g. 5000) {NARROW}"),
         ),
-        Some("huge_container") => "a container with more children than can be enumerated \
-            (e.g. a spreadsheet's cell grid) was not expanded"
-            .to_owned(),
-        Some(other) => other.to_owned(),
-        None => "the walk stopped early".to_owned(),
+        Some("node_budget") => (
+            "the max_elements node budget ran out".to_owned(),
+            format!("retry with a larger max_elements {NARROW}"),
+        ),
+        Some("app_unresponsive") => (
+            "the application stopped answering its accessibility API".to_owned(),
+            "retry in a moment or with a larger timeout_ms (e.g. 5000)".to_owned(),
+        ),
+        Some("app_lookup_timeout") => (
+            format!(
+                "the application was not reachable through its accessibility API (AT-SPI, AX) \
+                 within {timeout_ms} ms; it may still be launching"
+            ),
+            "retry in a moment or with a larger timeout_ms (e.g. 5000)".to_owned(),
+        ),
+        Some("huge_container") => (
+            "a container with more children than can be enumerated \
+             (e.g. a spreadsheet's cell grid) was not expanded"
+                .to_owned(),
+            "retry with a max_elements above that container's child count, or act inside it \
+             by pixel (x,y) off the screenshot"
+                .to_owned(),
+        ),
+        other => (
+            other.unwrap_or("the walk stopped early").to_owned(),
+            format!("retry with a larger timeout_ms (e.g. 5000) {NARROW}"),
+        ),
     };
     format!(
         "⚠️ PARTIAL TREE: {why} after {visited} node(s) ({pending} discovered but not visited). \
          Every element listed is real; elements after the cut are missing. If the element you \
-         need is absent, retry with a larger timeout_ms (e.g. 5000) or narrow with query / max_depth."
+         need is absent, {remedy}."
     )
 }
 
@@ -238,6 +293,58 @@ mod tests {
         let outcome = budget.outcome();
         assert_eq!(outcome.reason(), Some("node_budget"));
         assert_eq!((outcome.nodes_visited, outcome.nodes_pending), (2, 2));
+    }
+
+    #[test]
+    fn a_reserved_node_survives_a_deep_earlier_sibling() {
+        // A parent and three siblings fill a budget of 4 exactly; the first
+        // sibling has a deep subtree.
+        let mut budget = WalkBudget::nodes_only(4);
+        assert!(budget.admit(), "parent");
+        assert_eq!(budget.reserve(3), 3);
+        budget.release(1);
+        assert!(budget.admit(), "first sibling");
+        assert!(!budget.admit(), "its subtree stops at the held nodes");
+        budget.release(1);
+        assert!(budget.admit(), "second sibling");
+        budget.release(1);
+        assert!(budget.admit(), "third sibling");
+        assert!(!budget.admit());
+        let outcome = budget.outcome();
+        assert_eq!(outcome.reason(), Some("node_budget"));
+        assert_eq!((outcome.nodes_visited, outcome.nodes_pending), (4, 2));
+    }
+
+    #[test]
+    fn a_timeout_after_a_node_budget_refusal_is_reported_as_timeout() {
+        // Refused for nodes, then past the deadline: with the held node
+        // given back, and with the budget still full.
+        for give_back in [true, false] {
+            let mut budget = WalkBudget::new(30, 2);
+            assert!(budget.admit());
+            assert_eq!(budget.reserve(1), 1);
+            assert!(!budget.admit(), "held node refuses the deep child");
+            std::thread::sleep(Duration::from_millis(40));
+            if give_back {
+                budget.release(1);
+            }
+            assert!(!budget.admit(), "the deadline has passed");
+            assert_eq!(budget.outcome().reason(), Some("timeout"));
+        }
+    }
+
+    #[test]
+    fn a_reservation_never_exceeds_the_free_budget() {
+        let mut budget = WalkBudget::nodes_only(3);
+        assert!(budget.admit());
+        assert_eq!(budget.reserve(10), 2);
+        assert_eq!(budget.reserve(1), 0);
+        budget.release(1);
+        budget.release(1);
+        budget.release(1);
+        assert!(budget.admit());
+        assert!(budget.admit());
+        assert!(!budget.admit());
     }
 
     #[test]
@@ -313,17 +420,19 @@ mod tests {
         assert!(note.starts_with("⚠️ PARTIAL TREE: the 1000 ms timeout_ms budget ran out"));
     }
 
+    /// The advice after "If the element you need is absent,".
+    fn remedy(note: &str) -> &str {
+        note.split_once("If the element you need is absent, ")
+            .expect("note carries a remedy")
+            .1
+    }
+
     #[test]
-    fn truncation_note_names_the_budget_and_the_remedy() {
+    fn truncation_note_names_the_budget_and_the_counts() {
         let note = truncation_note(Some("timeout"), 1000, 240, 88);
-        assert!(note.contains("PARTIAL TREE"));
-        assert!(note.contains("1000 ms"));
+        assert!(note.starts_with("⚠️ PARTIAL TREE: the 1000 ms timeout_ms budget ran out"));
         assert!(note.contains("240 node(s)"));
         assert!(note.contains("88 discovered"));
-        assert!(note.contains("timeout_ms"));
-        assert!(note.contains("query"));
-        let note = truncation_note(Some("node_budget"), 1000, 5000, 3);
-        assert!(note.contains("max_elements"));
         let note = truncation_note(Some("app_unresponsive"), 1000, 3, 0);
         assert!(note.contains("stopped answering"));
         let note = truncation_note(Some("app_lookup_timeout"), 250, 0, 0);
@@ -331,5 +440,75 @@ mod tests {
         assert!(note.contains("still be launching"));
         let note = truncation_note(Some("huge_container"), 1000, 1918, 0);
         assert!(note.contains("not expanded"));
+    }
+
+    /// Each cut names the knob that lifts it, and never one that cannot: a
+    /// caller told to raise timeout_ms after a max_elements cut gets the same
+    /// partial tree back (#4720).
+    #[test]
+    fn truncation_note_remedy_matches_the_cut() {
+        let cases: [(Option<&str>, &str, &[&str]); 6] = [
+            (
+                Some("timeout"),
+                "retry with a larger timeout_ms (e.g. 5000) or narrow with query / max_depth.",
+                &["max_elements"],
+            ),
+            (
+                Some("node_budget"),
+                "retry with a larger max_elements or narrow with query / max_depth.",
+                &["timeout_ms"],
+            ),
+            (
+                Some("app_unresponsive"),
+                "retry in a moment or with a larger timeout_ms (e.g. 5000).",
+                &["max_elements", "query"],
+            ),
+            (
+                Some("app_lookup_timeout"),
+                "retry in a moment or with a larger timeout_ms (e.g. 5000).",
+                &["max_elements", "query"],
+            ),
+            (
+                Some("huge_container"),
+                "retry with a max_elements above that container's child count, or act inside it \
+                 by pixel (x,y) off the screenshot.",
+                &["timeout_ms", "query"],
+            ),
+            (
+                None,
+                "retry with a larger timeout_ms (e.g. 5000) or narrow with query / max_depth.",
+                &["max_elements"],
+            ),
+        ];
+        for (reason, expected, wrong_knobs) in cases {
+            let note = truncation_note(reason, 1000, 20, 15);
+            let advice = remedy(&note);
+            assert_eq!(advice, expected, "{reason:?}");
+            for knob in wrong_knobs {
+                assert!(
+                    !advice.contains(knob),
+                    "{reason:?} advises {knob}: {advice}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_max_elements_cut_advises_max_elements_not_timeout_ms() {
+        let mut budget = WalkBudget::new(1000, 20);
+        for _ in 0..20 {
+            assert!(budget.admit());
+        }
+        for _ in 0..15 {
+            assert!(!budget.admit());
+        }
+        let note = budget.outcome().note().unwrap();
+        assert_eq!(
+            note,
+            "⚠️ PARTIAL TREE: the max_elements node budget ran out after 20 node(s) \
+             (15 discovered but not visited). Every element listed is real; elements after \
+             the cut are missing. If the element you need is absent, retry with a larger \
+             max_elements or narrow with query / max_depth."
+        );
     }
 }

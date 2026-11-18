@@ -1,8 +1,11 @@
 // Offline: exercise the pinned Release Please engine without a GitHub client.
 // Cua Spaces releases are driven by the macOS SwiftUI app: a commit under
 // apps/cua-spaces-macos must produce a `cua-spaces` release PR that also bumps
-// the Tauri app (apps/cua-spaces) as extra files, and a Tauri-only commit
-// must not.
+// the Tauri app (apps/cua-spaces) and the Electron app
+// (apps/cua-spaces-desktop) as extra files. So must a commit under one of its
+// additional paths (libs/cua, the web UI, the Electron app), through
+// release_please_additional_paths.cjs. A Tauri-only commit must not.
+require('../release_please_additional_paths.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -16,9 +19,12 @@ const config = JSON.parse(fs.readFileSync(path.join(root, 'release-please-config
 const manifest = JSON.parse(fs.readFileSync(path.join(root, '.release-please-manifest.json')));
 const packagePath = 'apps/cua-spaces-macos';
 const tauriPath = 'apps/cua-spaces';
+const electronPath = 'apps/cua-spaces-desktop';
 assert.equal(config.packages[packagePath].component, 'cua-spaces');
 assert.equal(config.packages[tauriPath], undefined, 'the Tauri app must not drive releases');
 assert.equal(manifest[tauriPath], undefined);
+assert.equal(config.packages[electronPath], undefined, 'the Electron app must not drive releases');
+assert.equal(manifest[electronPath], undefined);
 const options = Object.fromEntries(
   Object.entries({ ...config, ...config.packages[packagePath] })
     .map(([key, value]) => [key.replace(/-([a-z])/g, (_, c) => c.toUpperCase()), value])
@@ -65,6 +71,7 @@ async function preview(message, files, expectedVersion) {
     `${tauriPath}/src-tauri/Cargo.lock`,
     `${tauriPath}/src-tauri/Cargo.toml`,
     `${tauriPath}/src-tauri/tauri.conf.json`,
+    `${electronPath}/package.json`,
   ].sort());
   assert.equal(updates[`${packagePath}/VERSION`].trim(), expectedVersion);
   assert.ok(updates[`${packagePath}/CHANGELOG.md`].includes(`cua-spaces-v${expectedVersion}`));
@@ -75,6 +82,7 @@ async function preview(message, files, expectedVersion) {
   ));
   assert.equal(JSON.parse(updates[`${tauriPath}/package.json`]).version, expectedVersion);
   assert.equal(JSON.parse(updates[`${tauriPath}/src-tauri/tauri.conf.json`]).version, expectedVersion);
+  assert.equal(JSON.parse(updates[`${electronPath}/package.json`]).version, expectedVersion);
   assert.ok(updates[`${tauriPath}/src-tauri/Cargo.toml`].includes(`version = "${expectedVersion}"`));
   const lock = fs.readFileSync(path.join(root, tauriPath, 'src-tauri/Cargo.lock'), 'utf8');
   assert.equal(updates[`${tauriPath}/src-tauri/Cargo.lock`], lock.replace(
@@ -87,7 +95,7 @@ async function preview(message, files, expectedVersion) {
 
 async function main() {
   const [major, minor, patch] = manifest[packagePath].split('.').map(Number);
-  const swift = [`${packagePath}/Sources/CuaSpacesMacKit/Views/OnboardingView.swift`];
+  const swift = [`${packagePath}/Sources/CuaSpacesMacKit/Views/MainWindow.swift`];
   await preview('fix(spaces-macos): keep the onboarding window in front', swift,
     `${major}.${minor}.${patch + 1}`);
   await preview('feat(spaces-macos): add a menu bar Space switcher', swift,
@@ -95,6 +103,15 @@ async function main() {
   await preview('docs(spaces-macos): clarify setup', swift, null);
   // The Tauri app (not shipped) shares the version but never drives a release.
   await preview('fix(spaces): tauri-only change', [`${tauriPath}/src/main.ts`], null);
+  // The shipped Electron app, web UI and app core each cut a patch (#7038, #7062).
+  const nextPatch = `${major}.${minor}.${patch + 1}`;
+  await preview('fix(spaces): electron-only change', [`${electronPath}/src/main.ts`], nextPatch);
+  await preview('fix(spaces): web-only change', ['apps/cua-spaces-web/src/lib/spaces.ts'], nextPatch);
+  const core = ['libs/cua/crates/cua-agents/src/runs.rs'];
+  await preview('fix(cua-agents): core change', core, nextPatch);
+  // The core commit still counts for cua-sdk too, and nothing else moves.
+  assert.deepEqual(split(core).sort(), ['apps/cua-spaces-macos', 'libs/cua']);
+  assert.deepEqual(split(['libs/cua-spacesd/src/main.rs']), ['libs/cua-spacesd']);
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; });

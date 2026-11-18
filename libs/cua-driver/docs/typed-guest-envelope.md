@@ -2,7 +2,7 @@
 
 This is the receiver foundation for the narrow slice accepted in
 [RFC #2512](https://github.com/trycua/cua/issues/2512#issuecomment-5579029576).
-It is not a released guest endpoint or a Fleet connection recipe.
+It is not a released guest endpoint or a connection recipe.
 
 `DriverEnvelopeReceiver` dispatches the existing version-1 Driver envelopes
 through a canonical `CuaDriverSession`. A trusted guest host creates the session
@@ -25,7 +25,7 @@ The receiver opens no listener and verifies no credentials. A carrier must:
 - Never automatically replay actions or silently reconnect to another guest.
 
 The following carrier/binding changes must supply these properties before any
-Fleet or local-guest capability is advertised. An existing MCP endpoint does
+remote or local-guest capability is advertised. An existing MCP endpoint does
 not implement the typed envelope carrier.
 
 ## First-slice operations
@@ -62,7 +62,7 @@ a native effect may outlive a dropped future. A lost exchange future also
 closes the session. Cancellation cannot promise to undo input already delivered.
 
 Closing a receiver is idempotent. It closes only its session, not the shared
-Driver runtime, cua-spacesd, Fleet claim, pool, or local VM. Existing
+Driver runtime, cua-spacesd, remote guest, or local VM. Existing
 cua-spacesd and Sandbox APIs are unchanged.
 
 ## Verification
@@ -77,5 +77,5 @@ cargo test -p cua-driver-sdk --locked remote_receiver::tests -- --test-threads=1
 Fake-executor tests observe dispatch counts, exact results, cancellation races,
 generation mismatches, replay refusal, ledger capacity, and isolated cleanup.
 They do not prove HTTP authorization, real guest desktop control, cross-platform
-delivery, image packaging, or Fleet cleanup. Those require the subsequent
+delivery, image packaging, or guest cleanup. Those require the subsequent
 carrier and exact-candidate guest qualification steps.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Per-tool `tools/call` integration tests.
 //!
 //! Drives the real tools end-to-end over JSON-RPC: list_apps, get_config /
@@ -286,6 +289,13 @@ fn get_accessibility_tree() {
 
     let content = resp["result"]["content"].as_array().expect("content array");
     assert!(!content.is_empty(), "Expected non-empty content");
+    let notice = content
+        .iter()
+        .filter_map(|item| item["text"].as_str())
+        .find(|text| text.starts_with("Deprecated: "))
+        .expect("a deprecated tool must say so in its response");
+    assert!(notice.contains("26 Nov 2026"), "{notice}");
+    assert!(notice.contains("list_windows"), "{notice}");
 }
 
 #[test]

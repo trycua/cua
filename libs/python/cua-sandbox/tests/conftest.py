@@ -23,42 +23,21 @@ import pytest_asyncio
 from cua_sandbox.sandbox import Sandbox
 from cua_sandbox.transport.env import EnvTransport
 
-# ``fleet``: a fake Fleet API (cua-test-fixtures) for the native pool manager.
-from tests._native_fleet import fleet  # noqa: F401
-
 
 @pytest.fixture(autouse=True)
-def _offline_image_manifests(request, monkeypatch):
-    """Never read a registry for the Fleet runtime rule in unit tests (see
-    ``tests/_image_fixtures.py``). Live suites keep the real resolver, which
-    reads the manifest with the caller's registry credentials."""
-    if str(request.node.path).startswith(_LIVE_DIR):
-        yield
-        return
-    monkeypatch.setenv("CUA_FLEET_IMAGE_INSPECT", "0")
-    # The one image resolver (native cua_image) never reads a registry in
-    # unit tests; tests that need an answer patch ``native().resolve_image``.
-    monkeypatch.setenv("CUA_IMAGE_RESOLVE", "0")
-    try:
-        from cua_sandbox._sdk import native
-
-        n = native()
-    except ImportError:
-        yield
-        return
-    from tests import _image_fixtures
-
-    _image_fixtures.REAL = n.fleet_resolve_runtime
-    monkeypatch.setattr(n, "fleet_resolve_runtime", _image_fixtures.offline_resolver(n))
+def _offline_image_resolver(request, monkeypatch):
+    """The one image resolver (native cua_image) never reads a registry in
+    unit tests; tests that need an answer patch ``native().resolve_image``.
+    Live suites keep the real resolver."""
+    if not str(request.node.path).startswith(_LIVE_DIR):
+        monkeypatch.setenv("CUA_IMAGE_RESOLVE", "0")
     yield
 
 
 class _NoRealLocalSandboxes:
     """``local_runtime()`` in unit tests: creating a real local sandbox
     (container, QEMU, Lume) fails loudly instead of touching this machine.
-    Local is the default now, so a test that forgets ``local=False`` for the
-    fake Fleet lands here. Tests that need a local runtime patch
-    ``local_runtime`` themselves."""
+    Tests that need a local runtime patch ``local_runtime`` themselves."""
 
     def __init__(self, real: Any) -> None:
         self._real = real
@@ -70,8 +49,7 @@ class _NoRealLocalSandboxes:
             def __getattr__(self, name: str) -> Any:
                 if name == "create":
                     raise AssertionError(
-                        "a unit test tried to start a real local sandbox; pass local=False "
-                        "for the fake Fleet, or patch local_runtime"
+                        "a unit test tried to start a real local sandbox; patch local_runtime"
                     )
                 return getattr(real, name)
 
@@ -97,23 +75,16 @@ def _no_real_local_sandboxes(request, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Hermetic env: keep live-gate and cloud-credential env out of unit tests
+# Hermetic env: keep live-gate and credential env out of unit tests
 # ---------------------------------------------------------------------------
 
 # Variables a developer shell (or CI's live lanes) may export that change how
-# unit tests behave: live-E2E knobs, live opt-in gates, Fleet/cloud
-# credentials, the managed-pool scoping the live suites set and the built-in
-# image overrides.
-_LIVE_ENV_PREFIXES = ("CUA_LIVE_E2E_", "CUA_TEST_LOCAL_", "CUA_FLEET_POOL_")
+# unit tests behave: live-E2E knobs, live opt-in gates, API-key credentials and
+# the built-in image overrides.
+_LIVE_ENV_PREFIXES = ("CUA_LIVE_E2E_", "CUA_TEST_LOCAL_")
 _LIVE_ENV_NAMES = frozenset(
     {
-        "CUA_TEST_FLEET_AUTOPOOL_LIVE",
         "CUA_TEST_ANDROID_MULTITOUCH",
-        "CUA_CLIENT_ID",
-        "CUA_CLIENT_SECRET",
-        "CUA_TOKEN_URL",
-        "CUA_FLEET_BASE_URL",
-        "FLEETS_TOKEN",
         "CUA_API_KEY",
         "CUA_BASE_URL",
         "CUA_DEFAULT_LINUX_IMAGE",
@@ -126,7 +97,6 @@ _LIVE_ENV_NAMES = frozenset(
         "CUA_DEFAULT_ON",
         "CUA_DEFAULT_KIND",
         "CUA_DEFAULT_RUNTIME",
-        "CUA_FLEET_WARM",
     }
 )
 _LIVE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "live") + os.sep
@@ -153,8 +123,7 @@ def _isolate_live_env(request, monkeypatch, tmp_path_factory):
     # caches all live under CUA_HOME (cua_sandbox._paths), here a temp dir.
     monkeypatch.setenv("CUA_HOME", str(tmp_path_factory.mktemp("cua-home")))
     # Never read the user's `cua auth login` session (the OS keychain) in
-    # unit tests; tests of the session fallback use a file store in tmp.
-    monkeypatch.setenv("CUA_FLEET_SESSION", "0")
+    # unit tests.
     monkeypatch.setenv("CUA_CREDENTIAL_STORE", "file")
 
 

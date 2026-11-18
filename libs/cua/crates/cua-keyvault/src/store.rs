@@ -235,7 +235,7 @@ impl Vault {
     pub fn open(dir: &Path) -> Result<Vault> {
         let raw = std::fs::read(dir.join("vault.json")).map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
-                Error::NoVault(dir.display().to_string())
+                Error::NoVault(format!("no Keyvault at {}", dir.display()))
             } else {
                 e.into()
             }

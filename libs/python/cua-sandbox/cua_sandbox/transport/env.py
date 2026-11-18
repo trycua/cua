@@ -206,11 +206,11 @@ class EnvTransport(Transport):
     """Drives a sandbox through cua-spacesd.
 
     Args:
-        url: spacesd URL (``http://host:3211``, a relay or Fleet service URL).
+        url: spacesd URL (``http://host:3211`` or a relay URL).
             Ignored when ``env_factory`` is given.
         token: spacesd token, if the driver requires one.
-        env_factory: coroutine returning a ``cua.SpacesdClient`` (used by Fleet and
-            local runtimes, which know how to reach the driver).
+        env_factory: coroutine returning a ``cua.SpacesdClient`` (used by local
+            runtimes, which know how to reach the driver).
         environment: OS hint (``linux``, ``windows``, ``mac``) used before the
             driver has been reached.
         fallback: an agentless transport (QMP/VNC/SSH/ADB) to use when the

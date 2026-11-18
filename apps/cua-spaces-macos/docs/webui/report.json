@@ -1,0 +1,316 @@
+{
+  "answers" : {
+    "about.get" : {
+      "count" : 1,
+      "ok" : true
+    },
+    "agents.list" : {
+      "count" : 0,
+      "ok" : true
+    },
+    "agents.setup" : {
+      "count" : 17,
+      "ok" : true
+    },
+    "devices.get" : {
+      "count" : 1,
+      "ok" : true
+    },
+    "host.status" : {
+      "count" : 1,
+      "ok" : true
+    },
+    "loginItem.get" : {
+      "count" : 1,
+      "ok" : true
+    },
+    "machines.list" : {
+      "host" : true,
+      "ok" : true
+    },
+    "notifications.list" : {
+      "count" : 0,
+      "ok" : true
+    },
+    "settings.get" : {
+      "ok" : true,
+      "updateChannel" : "stable"
+    },
+    "storage.get" : {
+      "count" : 1,
+      "ok" : true
+    },
+    "volume.overview" : {
+      "count" : 1,
+      "ok" : true
+    }
+  },
+  "pages" : [
+    {
+      "bridge" : "webkit",
+      "dark" : false,
+      "file" : "spaces-light.png",
+      "heading" : "Spaces",
+      "route" : "spaces",
+      "text" : 118,
+      "theme" : "light"
+    },
+    {
+      "bridge" : "webkit",
+      "dark" : false,
+      "file" : "machines-light.png",
+      "heading" : "Machines",
+      "route" : "machines",
+      "text" : 627,
+      "theme" : "light"
+    },
+    {
+      "bridge" : "webkit",
+      "dark" : false,
+      "file" : "agents-light.png",
+      "heading" : "Agents",
+      "route" : "agents",
+      "text" : 70,
+      "theme" : "light"
+    },
+    {
+      "bridge" : "webkit",
+      "dark" : false,
+      "file" : "keyvault-light.png",
+      "heading" : "Keyvault",
+      "route" : "keyvault",
+      "text" : 196,
+      "theme" : "light"
+    },
+    {
+      "bridge" : "webkit",
+      "dark" : false,
+      "file" : "notifications-light.png",
+      "heading" : "Notifications",
+      "route" : "notifications",
+      "text" : 31,
+      "theme" : "light"
+    },
+    {
+      "bridge" : "webkit",
+      "dark" : false,
+      "file" : "settings-light.png",
+      "heading" : "Settings",
+      "route" : "settings",
+      "text" : 663,
+      "theme" : "light"
+    },
+    {
+      "bridge" : "webkit",
+      "dark" : false,
+      "file" : "settings-about-light.png",
+      "heading" : "Settings",
+      "route" : "settings\/about",
+      "text" : 317,
+      "theme" : "light"
+    },
+    {
+      "bridge" : "webkit",
+      "dark" : false,
+      "file" : "settings-devices-light.png",
+      "heading" : "Settings",
+      "route" : "settings\/devices",
+      "text" : 106,
+      "theme" : "light"
+    },
+    {
+      "bridge" : "webkit",
+      "dark" : true,
+      "file" : "spaces-dark.png",
+      "heading" : "Spaces",
+      "route" : "spaces",
+      "text" : 118,
+      "theme" : "dark"
+    },
+    {
+      "bridge" : "webkit",
+      "dark" : true,
+      "file" : "machines-dark.png",
+      "heading" : "Machines",
+      "route" : "machines",
+      "text" : 627,
+      "theme" : "dark"
+    },
+    {
+      "bridge" : "webkit",
+      "dark" : true,
+      "file" : "agents-dark.png",
+      "heading" : "Agents",
+      "route" : "agents",
+      "text" : 209,
+      "theme" : "dark"
+    },
+    {
+      "bridge" : "webkit",
+      "dark" : true,
+      "file" : "keyvault-dark.png",
+      "heading" : "Keyvault",
+      "route" : "keyvault",
+      "text" : 196,
+      "theme" : "dark"
+    },
+    {
+      "bridge" : "webkit",
+      "dark" : true,
+      "file" : "notifications-dark.png",
+      "heading" : "Notifications",
+      "route" : "notifications",
+      "text" : 31,
+      "theme" : "dark"
+    },
+    {
+      "bridge" : "webkit",
+      "dark" : true,
+      "file" : "settings-dark.png",
+      "heading" : "Settings",
+      "route" : "settings",
+      "text" : 737,
+      "theme" : "dark"
+    },
+    {
+      "bridge" : "webkit",
+      "dark" : true,
+      "file" : "settings-about-dark.png",
+      "heading" : "Settings",
+      "route" : "settings\/about",
+      "text" : 317,
+      "theme" : "dark"
+    },
+    {
+      "bridge" : "webkit",
+      "dark" : true,
+      "file" : "settings-devices-dark.png",
+      "heading" : "Settings",
+      "route" : "settings\/devices",
+      "text" : 42,
+      "theme" : "dark"
+    }
+  ],
+  "spaces.list" : {
+    "loaded" : true,
+    "selectedId" : "this-mac",
+    "sidebar" : {
+      "emptyText" : "No Spaces yet",
+      "sections" : [
+
+      ],
+      "selectedId" : "this-mac",
+      "thisMachine" : {
+        "detail" : "Set up for access",
+        "dim" : false,
+        "id" : "this-mac",
+        "name" : "This machine",
+        "nested" : false,
+        "osIcon" : "os-macos",
+        "place" : null,
+        "power" : null,
+        "progress" : null,
+        "selected" : true,
+        "status" : "suspended",
+        "statusText" : "This Mac",
+        "trailing" : null
+      }
+    },
+    "spaces" : [
+      {
+        "deleting" : false,
+        "detail" : {
+          "access" : null,
+          "actions" : [
+
+          ],
+          "canStream" : false,
+          "confirm" : {
+            "cancelLabel" : "Keep",
+            "confirmEnabled" : true,
+            "confirmLabel" : "Delete Space",
+            "disabledReason" : null,
+            "message" : "Its sandbox is deleted.",
+            "removeLabel" : null,
+            "title" : "Delete This machine?"
+          },
+          "creditNotice" : null,
+          "deleteLabel" : "Delete Space",
+          "desktopNote" : null,
+          "facts" : [
+            {
+              "copy" : null,
+              "help" : null,
+              "label" : "Status",
+              "value" : "This Mac",
+              "warning" : null
+            },
+            {
+              "copy" : {
+                "confirmMs" : 1500,
+                "doneHelp" : "Copied",
+                "doneSymbol" : "checkmark",
+                "help" : "Copy",
+                "symbol" : "doc.on.doc",
+                "text" : "this-mac"
+              },
+              "help" : null,
+              "label" : "Identifier",
+              "value" : "this-mac",
+              "warning" : null
+            },
+            {
+              "copy" : null,
+              "help" : "macOS",
+              "label" : "System",
+              "value" : "macOS",
+              "warning" : null
+            }
+          ],
+          "id" : "this-mac",
+          "isHost" : true,
+          "newSpace" : null,
+          "powerError" : null,
+          "previewText" : "Not reachable",
+          "progress" : null,
+          "progressText" : null,
+          "removeOnly" : false,
+          "sections" : [
+
+          ],
+          "showSections" : false,
+          "title" : "This machine"
+        },
+        "space" : {
+          "arch" : null,
+          "cloud" : null,
+          "cloudDelete" : null,
+          "cloudPlace" : null,
+          "detail" : "Set up for access",
+          "fleetId" : null,
+          "host" : null,
+          "hostName" : null,
+          "id" : "this-mac",
+          "image" : null,
+          "imageDigest" : null,
+          "kind" : null,
+          "lastUsedAt" : 1791040378257,
+          "name" : "This machine",
+          "os" : "macos",
+          "osName" : null,
+          "osPrettyName" : null,
+          "power" : null,
+          "progress" : null,
+          "provider" : null,
+          "region" : null,
+          "scene" : "macDesktop",
+          "sdk" : null,
+          "size" : null,
+          "startedAt" : null,
+          "status" : "suspended"
+        }
+      }
+    ],
+    "statusLine" : "No Spaces"
+  }
+}

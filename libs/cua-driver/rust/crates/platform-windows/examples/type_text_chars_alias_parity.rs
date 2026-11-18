@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Parity check for the `type_text_chars` → `type_text` deprecated alias.
 //!
 //! Swift's ToolRegistry.swift resolves `type_text_chars` to `type_text` at

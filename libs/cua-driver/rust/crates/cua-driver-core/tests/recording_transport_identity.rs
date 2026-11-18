@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -17,6 +20,10 @@ struct CaptureProvider {
 
 #[async_trait]
 impl ToolProvider for CaptureProvider {
+    fn is_known_tool(&self, _name: &str) -> bool {
+        true
+    }
+
     fn tools_list(&self) -> Value {
         json!({"tools": []})
     }

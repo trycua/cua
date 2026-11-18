@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file cua/env/v1/volume.proto.
  */
 export const file_cua_env_v1_volume: GenFile = /*@__PURE__*/
-  fileDesc("ChdjdWEvZW52L3YxL3ZvbHVtZS5wcm90bxIKY3VhLmVudi52MSJYChNBdHRhY2hWb2x1bWVSZXF1ZXN0EhIKCm1vdW50X3BhdGgYASABKAkSLQoKdGlja2V0X3R0bBgCIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbiJvChRBdHRhY2hWb2x1bWVSZXNwb25zZRIRCgl2b2x1bWVfaWQYASABKAkSDgoGdGlja2V0GAIgASgJEg8KB3dzX3BhdGgYAyABKAkSEgoKbW91bnRfcGF0aBgEIAEoCRIPCgdiYWNrZW5kGAUgASgJIigKE0RldGFjaFZvbHVtZVJlcXVlc3QSEQoJdm9sdW1lX2lkGAEgASgJIhYKFERldGFjaFZvbHVtZVJlc3BvbnNlIhgKFkdldFZvbHVtZVN0YXR1c1JlcXVlc3QixgEKF0dldFZvbHVtZVN0YXR1c1Jlc3BvbnNlEiYKBXN0YXRlGAEgASgOMhcuY3VhLmVudi52MS5Wb2x1bWVTdGF0ZRIRCgl2b2x1bWVfaWQYAiABKAkSEgoKbW91bnRfcGF0aBgDIAEoCRIPCgdiYWNrZW5kGAQgASgJEg4KBmRldGFpbBgFIAEoCRIWCg5hY3RpdmVfc3RyZWFtcxgGIAEoDRIRCglieXRlc19vdXQYByABKAQSEAoIYnl0ZXNfaW4YCCABKAQquAEKC1ZvbHVtZVN0YXRlEhwKGFZPTFVNRV9TVEFURV9VTlNQRUNJRklFRBAAEhkKFVZPTFVNRV9TVEFURV9ERVRBQ0hFRBABEiMKH1ZPTFVNRV9TVEFURV9XQUlUSU5HX0ZPUl9DTElFTlQQAhIZChVWT0xVTUVfU1RBVEVfTU9VTlRJTkcQAxIYChRWT0xVTUVfU1RBVEVfTU9VTlRFRBAEEhYKElZPTFVNRV9TVEFURV9FUlJPUhAFMpECCg1Wb2x1bWVTZXJ2aWNlElEKDEF0dGFjaFZvbHVtZRIfLmN1YS5lbnYudjEuQXR0YWNoVm9sdW1lUmVxdWVzdBogLmN1YS5lbnYudjEuQXR0YWNoVm9sdW1lUmVzcG9uc2USUQoMRGV0YWNoVm9sdW1lEh8uY3VhLmVudi52MS5EZXRhY2hWb2x1bWVSZXF1ZXN0GiAuY3VhLmVudi52MS5EZXRhY2hWb2x1bWVSZXNwb25zZRJaCg9HZXRWb2x1bWVTdGF0dXMSIi5jdWEuZW52LnYxLkdldFZvbHVtZVN0YXR1c1JlcXVlc3QaIy5jdWEuZW52LnYxLkdldFZvbHVtZVN0YXR1c1Jlc3BvbnNlYgZwcm90bzM", [file_google_protobuf_duration]);
+  fileDesc("ChdjdWEvZW52L3YxL3ZvbHVtZS5wcm90bxIKY3VhLmVudi52MSJ/ChNBdHRhY2hWb2x1bWVSZXF1ZXN0EhIKCm1vdW50X3BhdGgYASABKAkSLQoKdGlja2V0X3R0bBgCIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIlCgViaW5kcxgDIAMoCzIWLmN1YS5lbnYudjEuVm9sdW1lQmluZCJNCgtWb2x1bWVNb3VudBIMCgRuYW1lGAEgASgJEgwKBHBhdGgYAiABKAkSEQoJcmVhZF9vbmx5GAMgASgIEg8KB3N1YnBhdGgYBCABKAkiPwoKVm9sdW1lQmluZBIOCgZzb3VyY2UYASABKAkSDgoGdGFyZ2V0GAIgASgJEhEKCXJlYWRfb25seRgDIAEoCCJvChRBdHRhY2hWb2x1bWVSZXNwb25zZRIRCgl2b2x1bWVfaWQYASABKAkSDgoGdGlja2V0GAIgASgJEg8KB3dzX3BhdGgYAyABKAkSEgoKbW91bnRfcGF0aBgEIAEoCRIPCgdiYWNrZW5kGAUgASgJIigKE0RldGFjaFZvbHVtZVJlcXVlc3QSEQoJdm9sdW1lX2lkGAEgASgJIhYKFERldGFjaFZvbHVtZVJlc3BvbnNlIhgKFkdldFZvbHVtZVN0YXR1c1JlcXVlc3Qi1QEKF0dldFZvbHVtZVN0YXR1c1Jlc3BvbnNlEiYKBXN0YXRlGAEgASgOMhcuY3VhLmVudi52MS5Wb2x1bWVTdGF0ZRIRCgl2b2x1bWVfaWQYAiABKAkSEgoKbW91bnRfcGF0aBgDIAEoCRIPCgdiYWNrZW5kGAQgASgJEg4KBmRldGFpbBgFIAEoCRIWCg5hY3RpdmVfc3RyZWFtcxgGIAEoDRIRCglieXRlc19vdXQYByABKAQSEAoIYnl0ZXNfaW4YCCABKAQSDQoFYmluZHMYCSADKAkquAEKC1ZvbHVtZVN0YXRlEhwKGFZPTFVNRV9TVEFURV9VTlNQRUNJRklFRBAAEhkKFVZPTFVNRV9TVEFURV9ERVRBQ0hFRBABEiMKH1ZPTFVNRV9TVEFURV9XQUlUSU5HX0ZPUl9DTElFTlQQAhIZChVWT0xVTUVfU1RBVEVfTU9VTlRJTkcQAxIYChRWT0xVTUVfU1RBVEVfTU9VTlRFRBAEEhYKElZPTFVNRV9TVEFURV9FUlJPUhAFMpECCg1Wb2x1bWVTZXJ2aWNlElEKDEF0dGFjaFZvbHVtZRIfLmN1YS5lbnYudjEuQXR0YWNoVm9sdW1lUmVxdWVzdBogLmN1YS5lbnYudjEuQXR0YWNoVm9sdW1lUmVzcG9uc2USUQoMRGV0YWNoVm9sdW1lEh8uY3VhLmVudi52MS5EZXRhY2hWb2x1bWVSZXF1ZXN0GiAuY3VhLmVudi52MS5EZXRhY2hWb2x1bWVSZXNwb25zZRJaCg9HZXRWb2x1bWVTdGF0dXMSIi5jdWEuZW52LnYxLkdldFZvbHVtZVN0YXR1c1JlcXVlc3QaIy5jdWEuZW52LnYxLkdldFZvbHVtZVN0YXR1c1Jlc3BvbnNlYgZwcm90bzM", [file_google_protobuf_duration]);
 
 /**
  * Request for `VolumeService.AttachVolume`.
@@ -34,6 +34,14 @@ export type AttachVolumeRequest = Message<"cua.env.v1.AttachVolumeRequest"> & {
    * @generated from field: google.protobuf.Duration ticket_ttl = 2;
    */
   ticketTtl?: Duration | undefined;
+
+  /**
+   * Folders of the volume to bind at other paths once it is mounted (Linux:
+   * bind mounts; macOS: symbolic links). Undone with the mount.
+   *
+   * @generated from field: repeated cua.env.v1.VolumeBind binds = 3;
+   */
+  binds: VolumeBind[];
 };
 
 /**
@@ -42,6 +50,85 @@ export type AttachVolumeRequest = Message<"cua.env.v1.AttachVolumeRequest"> & {
  */
 export const AttachVolumeRequestSchema: GenMessage<AttachVolumeRequest> = /*@__PURE__*/
   messageDesc(file_cua_env_v1_volume, 0);
+
+/**
+ * A named volume mounted into a Space: the folder `volumes/<name>/` of
+ * the user's Cua Volume, bound at `path` in the guest.
+ *
+ * @generated from message cua.env.v1.VolumeMount
+ */
+export type VolumeMount = Message<"cua.env.v1.VolumeMount"> & {
+  /**
+   * The volume's name: 1-63 of `a-z`, `0-9`, `.`, `_`, `-`.
+   *
+   * @generated from field: string name = 1;
+   */
+  name: string;
+
+  /**
+   * Absolute path in the guest.
+   *
+   * @generated from field: string path = 2;
+   */
+  path: string;
+
+  /**
+   * Mounted read-only.
+   *
+   * @generated from field: bool read_only = 3;
+   */
+  readOnly: boolean;
+
+  /**
+   * A folder inside the volume to mount instead of the whole volume.
+   *
+   * @generated from field: string subpath = 4;
+   */
+  subpath: string;
+};
+
+/**
+ * Describes the message cua.env.v1.VolumeMount.
+ * Use `create(VolumeMountSchema)` to create a new message.
+ */
+export const VolumeMountSchema: GenMessage<VolumeMount> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_volume, 1);
+
+/**
+ * A folder of the mounted volume made available at another path.
+ *
+ * @generated from message cua.env.v1.VolumeBind
+ */
+export type VolumeBind = Message<"cua.env.v1.VolumeBind"> & {
+  /**
+   * Folder inside the volume, relative to its root (`volumes/shared/`).
+   *
+   * @generated from field: string source = 1;
+   */
+  source: string;
+
+  /**
+   * Absolute path in the guest. Created when missing.
+   *
+   * @generated from field: string target = 2;
+   */
+  target: string;
+
+  /**
+   * Mounted read-only (Linux). A link on macOS cannot enforce it; the
+   * client's view of the folder does.
+   *
+   * @generated from field: bool read_only = 3;
+   */
+  readOnly: boolean;
+};
+
+/**
+ * Describes the message cua.env.v1.VolumeBind.
+ * Use `create(VolumeBindSchema)` to create a new message.
+ */
+export const VolumeBindSchema: GenMessage<VolumeBind> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_volume, 2);
 
 /**
  * Response for `VolumeService.AttachVolume`.
@@ -92,7 +179,7 @@ export type AttachVolumeResponse = Message<"cua.env.v1.AttachVolumeResponse"> & 
  * Use `create(AttachVolumeResponseSchema)` to create a new message.
  */
 export const AttachVolumeResponseSchema: GenMessage<AttachVolumeResponse> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_volume, 1);
+  messageDesc(file_cua_env_v1_volume, 3);
 
 /**
  * Request for `VolumeService.DetachVolume`.
@@ -113,7 +200,7 @@ export type DetachVolumeRequest = Message<"cua.env.v1.DetachVolumeRequest"> & {
  * Use `create(DetachVolumeRequestSchema)` to create a new message.
  */
 export const DetachVolumeRequestSchema: GenMessage<DetachVolumeRequest> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_volume, 2);
+  messageDesc(file_cua_env_v1_volume, 4);
 
 /**
  * Response for `VolumeService.DetachVolume`.
@@ -128,7 +215,7 @@ export type DetachVolumeResponse = Message<"cua.env.v1.DetachVolumeResponse"> & 
  * Use `create(DetachVolumeResponseSchema)` to create a new message.
  */
 export const DetachVolumeResponseSchema: GenMessage<DetachVolumeResponse> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_volume, 3);
+  messageDesc(file_cua_env_v1_volume, 5);
 
 /**
  * Request for `VolumeService.GetVolumeStatus`.
@@ -143,7 +230,7 @@ export type GetVolumeStatusRequest = Message<"cua.env.v1.GetVolumeStatusRequest"
  * Use `create(GetVolumeStatusRequestSchema)` to create a new message.
  */
 export const GetVolumeStatusRequestSchema: GenMessage<GetVolumeStatusRequest> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_volume, 4);
+  messageDesc(file_cua_env_v1_volume, 6);
 
 /**
  * Response for `VolumeService.GetVolumeStatus`.
@@ -206,6 +293,13 @@ export type GetVolumeStatusResponse = Message<"cua.env.v1.GetVolumeStatusRespons
    * @generated from field: uint64 bytes_in = 8;
    */
   bytesIn: bigint;
+
+  /**
+   * Targets of the binds that are in place.
+   *
+   * @generated from field: repeated string binds = 9;
+   */
+  binds: string[];
 };
 
 /**
@@ -213,7 +307,7 @@ export type GetVolumeStatusResponse = Message<"cua.env.v1.GetVolumeStatusRespons
  * Use `create(GetVolumeStatusResponseSchema)` to create a new message.
  */
 export const GetVolumeStatusResponseSchema: GenMessage<GetVolumeStatusResponse> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_volume, 5);
+  messageDesc(file_cua_env_v1_volume, 7);
 
 /**
  * State of the guest mount.

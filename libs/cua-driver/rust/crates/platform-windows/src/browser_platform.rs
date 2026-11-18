@@ -1,9 +1,13 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Windows identity and endpoint evidence for the first-class browser tools.
 
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::os::windows::process::CommandExt as _;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
@@ -22,9 +26,9 @@ use cua_driver_core::browser::types::{
     NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
 };
 use cua_driver_core::browser::{
-    existing_profile_setup_descriptor, is_firefox, parse_devtools_active_port, BrowserCursorTracker,
+    existing_profile_setup_descriptor, fetch_json_version_ws_url, is_electron_app_layout,
+    is_firefox, parse_devtools_active_port, BrowserCursorTracker,
 };
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::browser_installation_path::{
     plain_windows_path, resolve_installation, InstallationEntry, InstallationFs,
@@ -61,8 +65,8 @@ use windows::Win32::Storage::FileSystem::{
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::SystemInformation::GetSystemDirectoryW;
 use windows::Win32::System::Threading::{
-    GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
-    PROCESS_QUERY_LIMITED_INFORMATION,
+    GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, CREATE_NO_WINDOW,
+    PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::Shell::{
@@ -89,10 +93,6 @@ impl Default for WindowsBrowserPlatform {
     fn default() -> Self {
         Self::new(Arc::new(cursor_overlay::CursorRegistry::new()))
     }
-}
-
-fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
-    BrowserRefusal::new(code, message)
 }
 
 fn is_chromium(name: &str) -> bool {
@@ -166,7 +166,7 @@ fn isolated_browser_candidates_from_roots(
 
 fn known_folder_path(id: &windows::core::GUID) -> Result<PathBuf, BrowserRefusal> {
     let raw = unsafe { SHGetKnownFolderPath(id, KF_FLAG_DEFAULT, None) }.map_err(|error| {
-        refusal(
+        BrowserRefusal::new(
             BrowserRefusalCode::BrowserRouteUnavailable,
             format!("could not resolve trusted Windows installation root: {error}"),
         )
@@ -174,7 +174,7 @@ fn known_folder_path(id: &windows::core::GUID) -> Result<PathBuf, BrowserRefusal
     let decoded = unsafe { raw.to_string() };
     unsafe { CoTaskMemFree(Some(raw.0.cast())) };
     decoded.map(PathBuf::from).map_err(|error| {
-        refusal(
+        BrowserRefusal::new(
             BrowserRefusalCode::BrowserRouteUnavailable,
             format!("trusted Windows installation root was not valid Unicode: {error}"),
         )
@@ -391,6 +391,7 @@ fn authenticode_output(executable: &std::path::Path) -> std::io::Result<std::pro
     };
     let powershell = system32.join(r"WindowsPowerShell\v1.0\powershell.exe");
     std::process::Command::new(powershell)
+        .creation_flags(CREATE_NO_WINDOW.0)
         .args([
             "-NoLogo",
             "-NoProfile",
@@ -414,6 +415,7 @@ enum WriteProbe {
     Failed(String),
 }
 
+#[cfg(test)]
 fn current_token_write_denial_reason(path: &std::path::Path, directory: bool) -> Option<String> {
     match current_token_write_probe(path, directory, false) {
         WriteProbe::Denied => None,
@@ -742,11 +744,11 @@ fn user_data_dir_from_command_line(
     match directories.as_slice() {
         [] => Ok(default),
         [path] if is_windows_absolute_path(path) => Ok(Some(path.clone())),
-        [_] => Err(refusal(
+        [_] => Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserRouteUnavailable,
             "the browser uses a relative --user-data-dir that cannot be attested without its launch working directory",
         )),
-        _ => Err(refusal(
+        _ => Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserBindingAmbiguous,
             "browser process has multiple distinct --user-data-dir arguments",
         )),
@@ -763,6 +765,7 @@ async fn browser_command_line(pid: u32) -> Result<String, BrowserRefusal> {
         "$OutputEncoding=[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); (Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}' -ErrorAction Stop).CommandLine"
     );
     let output = tokio::process::Command::new(powershell)
+        .creation_flags(CREATE_NO_WINDOW.0)
         .args([
             "-NoLogo",
             "-NoProfile",
@@ -775,20 +778,20 @@ async fn browser_command_line(pid: u32) -> Result<String, BrowserRefusal> {
         .output()
         .await
         .map_err(|error| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!("could not inspect browser arguments: {error}"),
             )
         })?;
     if !output.status.success() {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserBindingStale,
             format!("browser process {pid} arguments are unavailable"),
         ));
     }
     let command_line = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     if command_line.is_empty() {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserBindingStale,
             format!("browser process {pid} has no command line"),
         ));
@@ -812,14 +815,14 @@ async fn active_port_endpoint(
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!("could not read the browser's DevToolsActivePort file: {error}"),
             ))
         }
     };
     let Some((port, path)) = parse_devtools_active_port(&text) else {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserEndpointOwnerMismatch,
             "the browser's DevToolsActivePort file did not contain one exact browser endpoint",
         ));
@@ -944,7 +947,7 @@ fn canonical_discovered_websocket_url(url: &str, expected_port: u16) -> Option<S
 fn process_identity(pid: u32) -> Result<(u64, Option<String>), BrowserRefusal> {
     let handle =
         unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.map_err(|_| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserBindingStale,
                 format!("browser process {pid} is no longer available"),
             )
@@ -971,7 +974,7 @@ fn process_identity(pid: u32) -> Result<(u64, Option<String>), BrowserRefusal> {
     .map(canonical_process_executable);
     let _ = unsafe { CloseHandle(handle) };
     times.map_err(|error| {
-        refusal(
+        BrowserRefusal::new(
             BrowserRefusalCode::BrowserRouteUnavailable,
             format!("could not fingerprint browser process {pid}: {error}"),
         )
@@ -992,7 +995,7 @@ fn cdp_comparable_window_bounds(window_id: u64) -> Result<Rect, BrowserRefusal> 
     let hwnd = HWND(window_id as *mut _);
     let mut outer = RECT::default();
     unsafe { GetWindowRect(hwnd, &mut outer) }.map_err(|error| {
-        refusal(
+        BrowserRefusal::new(
             BrowserRefusalCode::BrowserBindingStale,
             format!("could not read Windows outer bounds for window {window_id}: {error}"),
         )
@@ -1261,7 +1264,7 @@ unsafe fn decode_owner_table<R: Copy>(
         .get(..4)
         .and_then(|part| part.try_into().ok())
         .ok_or_else(|| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 "Windows returned a truncated TCP owner table",
             )
@@ -1269,7 +1272,7 @@ unsafe fn decode_owner_table<R: Copy>(
     let count = u32::from_ne_bytes(count_bytes) as usize;
     let row_size = std::mem::size_of::<R>();
     if row_offset < count_bytes.len() || row_size == 0 {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserRouteUnavailable,
             "Windows returned an invalid TCP owner table layout",
         ));
@@ -1279,7 +1282,7 @@ unsafe fn decode_owner_table<R: Copy>(
         .and_then(|rows| rows.checked_add(row_offset))
         .filter(|required| *required <= bytes.len())
         .ok_or_else(|| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 "Windows returned an invalid TCP owner table length",
             )
@@ -1300,7 +1303,7 @@ fn query_tcp_owner_table_with(
     let mut size = 0u32;
     let status = query(None, &mut size);
     if status != ERROR_INSUFFICIENT_BUFFER.0 && status != NO_ERROR.0 {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserRouteUnavailable,
             format!("could not size the Windows TCP owner table: error {status}"),
         ));
@@ -1312,7 +1315,7 @@ fn query_tcp_owner_table_with(
     for _ in 0..TCP_OWNER_TABLE_READ_ATTEMPTS {
         let requested = size as usize;
         if requested > MAX_TCP_OWNER_TABLE_BYTES {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!("Windows TCP owner table exceeded {MAX_TCP_OWNER_TABLE_BYTES} bytes"),
             ));
@@ -1325,7 +1328,7 @@ fn query_tcp_owner_table_with(
             let returned = buffer_size as usize;
             let allocated = buffer.len() * std::mem::size_of::<u32>();
             if returned > allocated {
-                return Err(refusal(
+                return Err(BrowserRefusal::new(
                     BrowserRefusalCode::BrowserRouteUnavailable,
                     "Windows returned an oversized TCP owner table",
                 ));
@@ -1335,7 +1338,7 @@ fn query_tcp_owner_table_with(
             return Ok(bytes.to_vec());
         }
         if status != ERROR_INSUFFICIENT_BUFFER.0 {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!("could not read the Windows TCP owner table: error {status}"),
             ));
@@ -1343,7 +1346,7 @@ fn query_tcp_owner_table_with(
         size = buffer_size;
     }
 
-    Err(refusal(
+    Err(BrowserRefusal::new(
         BrowserRefusalCode::BrowserRouteUnavailable,
         format!(
             "Windows TCP owner table changed during {TCP_OWNER_TABLE_READ_ATTEMPTS} consecutive reads"
@@ -1371,7 +1374,7 @@ fn windows_loopback_listeners_with(
     let ipv4 = query(u32::from(AF_INET.0));
     let ipv6 = query(u32::from(AF_INET6.0));
     if let (Err(ipv4), Err(ipv6)) = (&ipv4, &ipv6) {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserRouteUnavailable,
             format!(
                 "could not inspect either Windows TCP owner table: IPv4: {}; IPv6: {}",
@@ -1442,7 +1445,7 @@ fn system_directory_path() -> Result<PathBuf, BrowserRefusal> {
     let mut buffer = [0u16; 32768];
     let length = unsafe { GetSystemDirectoryW(Some(&mut buffer)) } as usize;
     if length == 0 || length >= buffer.len() {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserRouteUnavailable,
             "could not resolve the trusted Windows system directory",
         ));
@@ -1454,10 +1457,10 @@ async fn native_loopback_listeners(
     allowed_pids: &[u32],
 ) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
     let allowed_pids = allowed_pids.to_vec();
-    crate::dpi::spawn_blocking(move || windows_loopback_listeners(&allowed_pids))
+    tokio::task::spawn_blocking(move || windows_loopback_listeners(&allowed_pids))
         .await
         .map_err(|error| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!("could not inspect Windows TCP listener ownership: {error}"),
             )
@@ -1467,16 +1470,17 @@ async fn native_loopback_listeners(
 async fn raw_loopback_listeners_for_process_tree(
     root_pid: u32,
 ) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
-    let allowed_pids = crate::dpi::spawn_blocking(move || crate::win32::list_descendants(root_pid))
-        .await
-        .map_err(|error| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not inspect browser process tree: {error}"),
-            )
-        })?;
+    let allowed_pids =
+        tokio::task::spawn_blocking(move || crate::win32::list_descendants(root_pid))
+            .await
+            .map_err(|error| {
+                BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!("could not inspect browser process tree: {error}"),
+                )
+            })?;
     let observed = native_loopback_listeners(&allowed_pids).await?;
-    crate::dpi::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         observed
             .into_iter()
             .filter(|(_port, owner_pid)| process_identity(*owner_pid).is_ok())
@@ -1484,7 +1488,7 @@ async fn raw_loopback_listeners_for_process_tree(
     })
     .await
     .map_err(|error| {
-        refusal(
+        BrowserRefusal::new(
             BrowserRefusalCode::BrowserRouteUnavailable,
             format!("could not inspect spawned browser listener identities: {error}"),
         )
@@ -1494,7 +1498,7 @@ async fn raw_loopback_listeners_for_process_tree(
 async fn loopback_listeners_for_process_tree(
     root_pid: u32,
 ) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
-    let tree = crate::dpi::spawn_blocking(move || {
+    let tree = tokio::task::spawn_blocking(move || {
         let processes = crate::win32::list_processes();
         lifetime_scoped_descendants_from_processes(root_pid, &processes, |pid| {
             process_identity(pid).ok().map(|identity| identity.0)
@@ -1502,13 +1506,13 @@ async fn loopback_listeners_for_process_tree(
     })
     .await
     .map_err(|error| {
-        refusal(
+        BrowserRefusal::new(
             BrowserRefusalCode::BrowserRouteUnavailable,
             format!("could not inspect browser process lifetimes: {error}"),
         )
     })?
     .ok_or_else(|| {
-        refusal(
+        BrowserRefusal::new(
             BrowserRefusalCode::BrowserBindingStale,
             format!("browser process {root_pid} is no longer available"),
         )
@@ -1516,14 +1520,14 @@ async fn loopback_listeners_for_process_tree(
 
     let observed = native_loopback_listeners(&tree.pids).await?;
     let expected_starts = tree.started_at;
-    crate::dpi::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         retain_identity_matched_listeners(observed, &expected_starts, |pid| {
             process_identity(pid).ok().map(|identity| identity.0)
         })
     })
     .await
     .map_err(|error| {
-        refusal(
+        BrowserRefusal::new(
             BrowserRefusalCode::BrowserRouteUnavailable,
             format!("could not reprove browser listener identities: {error}"),
         )
@@ -1532,16 +1536,16 @@ async fn loopback_listeners_for_process_tree(
 
 async fn loopback_listeners_for_exact_pid(pid: u32) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
     let expected_started =
-        crate::dpi::spawn_blocking(move || process_identity(pid).map(|identity| identity.0))
+        tokio::task::spawn_blocking(move || process_identity(pid).map(|identity| identity.0))
             .await
             .map_err(|error| {
-                refusal(
+                BrowserRefusal::new(
                     BrowserRefusalCode::BrowserRouteUnavailable,
                     format!("could not inspect browser process identity: {error}"),
                 )
             })??;
     let observed = native_loopback_listeners(&[pid]).await?;
-    crate::dpi::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         retain_identity_matched_listeners(
             observed,
             &HashMap::from([(pid, expected_started)]),
@@ -1554,7 +1558,7 @@ async fn loopback_listeners_for_exact_pid(pid: u32) -> Result<Vec<(u16, u32)>, B
     })
     .await
     .map_err(|error| {
-        refusal(
+        BrowserRefusal::new(
             BrowserRefusalCode::BrowserRouteUnavailable,
             format!("could not reprove browser process identity: {error}"),
         )
@@ -1584,47 +1588,8 @@ async fn unfiltered_loopback_ports_for_exact_pid(pid: u32) -> Result<Vec<u16>, B
 }
 
 async fn browser_websocket_url(port: u16) -> Option<String> {
-    tokio::time::timeout(Duration::from_secs(2), async move {
-        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
-            .await
-            .ok()?;
-        let request = format!(
-            "GET /json/version HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
-        );
-        stream.write_all(request.as_bytes()).await.ok()?;
-        let mut bytes = Vec::new();
-        let mut chunk = [0u8; 4096];
-        loop {
-            let read = stream.read(&mut chunk).await.ok()?;
-            if read == 0 {
-                break;
-            }
-            bytes.extend_from_slice(&chunk[..read]);
-            if bytes.len() > 256 * 1024 {
-                return None;
-            }
-            if let Some(header_end) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
-                let headers = String::from_utf8_lossy(&bytes[..header_end]);
-                if let Some(length) = headers.lines().find_map(|line| {
-                    let (name, value) = line.split_once(':')?;
-                    name.eq_ignore_ascii_case("content-length")
-                        .then(|| value.trim().parse::<usize>().ok())
-                        .flatten()
-                }) {
-                    if bytes.len() >= header_end + 4 + length {
-                        break;
-                    }
-                }
-            }
-        }
-        let body_start = bytes.windows(4).position(|part| part == b"\r\n\r\n")? + 4;
-        let value: serde_json::Value = serde_json::from_slice(&bytes[body_start..]).ok()?;
-        let url = value.get("webSocketDebuggerUrl")?.as_str()?;
-        canonical_discovered_websocket_url(url, port)
-    })
-    .await
-    .ok()
-    .flatten()
+    let url = fetch_json_version_ws_url(port).await?;
+    canonical_discovered_websocket_url(&url, port)
 }
 
 fn select_provisional_setup_port(
@@ -1642,13 +1607,13 @@ fn select_provisional_setup_port(
         [] if setup_was_already_enabled => match ports {
             [] => Ok(None),
             [port] => Ok(Some(*port)),
-            _ => Err(refusal(
+            _ => Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserBindingAmbiguous,
                 "the pre-enabled browser setup exposed multiple existing exact-pid loopback listeners",
             )),
         },
         [] => Ok(None),
-        _ => Err(refusal(
+        _ => Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserBindingAmbiguous,
             "the approved setup action exposed multiple newly correlated exact-pid listeners",
         )),
@@ -1713,13 +1678,13 @@ async fn exact_browser_endpoints_for_pid(
 }
 
 async fn root_can_use_embedded_descendant_endpoint(pid: u32) -> Result<bool, BrowserRefusal> {
-    crate::dpi::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let (_started, executable) = process_identity(pid)?;
         Ok(executable.is_some_and(|path| allows_embedded_descendant_endpoint(&path)))
     })
     .await
     .map_err(|error| {
-        refusal(
+        BrowserRefusal::new(
             BrowserRefusalCode::BrowserRouteUnavailable,
             format!("could not classify browser process identity: {error}"),
         )
@@ -1731,7 +1696,7 @@ async fn embedded_browser_endpoints_once(
 ) -> Result<Vec<(u16, String, u32)>, BrowserRefusal> {
     let mut endpoints = Vec::new();
     for (port, listener_pid) in loopback_listeners_for_process_tree(pid).await? {
-        let is_webview_runtime = crate::dpi::spawn_blocking(move || {
+        let is_webview_runtime = tokio::task::spawn_blocking(move || {
             process_identity(listener_pid)
                 .ok()
                 .and_then(|identity| identity.1)
@@ -1739,7 +1704,7 @@ async fn embedded_browser_endpoints_once(
         })
         .await
         .map_err(|error| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!("could not classify embedded browser listener: {error}"),
             )
@@ -1796,7 +1761,7 @@ async fn spawned_browser_endpoints_once(
     expected_ws_url: &str,
 ) -> Result<Vec<(u16, String, u32)>, BrowserRefusal> {
     let Some(expected_port) = literal_loopback_websocket_port(expected_ws_url) else {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserEndpointOwnerMismatch,
             "the driver-spawned browser endpoint is not loopback-only",
         ));
@@ -1873,7 +1838,7 @@ fn select_unique_owned_endpoint(
             context,
             transport,
         ))),
-        _ => Err(refusal(
+        _ => Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserBindingAmbiguous,
             "multiple browser-level DevTools endpoints satisfy the approved ownership scope",
         )
@@ -2006,12 +1971,12 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         }
         match decide_isolated_browser(&facts, context.kind()) {
             IsolatedBrowserDecision::Launch(index) => executables[index].take().ok_or_else(|| {
-                refusal(
+                BrowserRefusal::new(
                     BrowserRefusalCode::BrowserRouteUnavailable,
                     NO_PROTECTED_BROWSER_MESSAGE,
                 )
             }),
-            IsolatedBrowserDecision::Refuse(message) => Err(refusal(
+            IsolatedBrowserDecision::Refuse(message) => Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 message,
             )
@@ -2029,7 +1994,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 .spawn()
                 .map(|child| Box::new(child) as Box<dyn IsolatedBrowserProcess>)
                 .map_err(|error| {
-                    refusal(
+                    BrowserRefusal::new(
                         BrowserRefusalCode::BrowserRouteUnavailable,
                         format!("could not launch an isolated browser process: {error}"),
                     )
@@ -2043,7 +2008,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 spawn_with_token(token, &command)
                     .map(|child| Box::new(child) as Box<dyn IsolatedBrowserProcess>)
                     .map_err(|error| {
-                        refusal(
+                        BrowserRefusal::new(
                             BrowserRefusalCode::BrowserRouteUnavailable,
                             format!(
                                 "could not launch the isolated browser with the standard-user \
@@ -2129,29 +2094,40 @@ impl BrowserPlatform for WindowsBrowserPlatform {
 
     async fn classify_browser(&self, pid: i64) -> Result<BrowserClassification, BrowserRefusal> {
         let pid_u32 = u32::try_from(pid).map_err(|_| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 format!("pid {pid} is outside the Windows process-id range"),
             )
         })?;
-        let name = crate::dpi::spawn_blocking(move || {
-            crate::win32::list_processes()
+        let (name, electron_app) = tokio::task::spawn_blocking(move || {
+            let name = crate::win32::list_processes()
                 .into_iter()
                 .find(|process| process.pid == pid_u32)
-                .map(|process| process.name)
+                .map(|process| process.name)?;
+            let electron_app = process_identity(pid_u32)
+                .ok()
+                .and_then(|(_, executable)| executable)
+                .is_some_and(|executable| {
+                    is_electron_app_layout(std::path::Path::new(&executable))
+                });
+            Some((name, electron_app))
         })
         .await
         .ok()
         .flatten()
         .ok_or_else(|| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserBindingStale,
                 format!("browser process {pid} is no longer available"),
             )
         })?;
-        let chromium = is_chromium(&name);
+        let chromium = electron_app || is_chromium(&name);
         let gecko = is_firefox(&name);
-        let product_kind = browser_product(&name);
+        let product_kind = if electron_app {
+            BrowserProduct::Electron
+        } else {
+            browser_product(&name)
+        };
         let command_line = if chromium {
             browser_command_line(pid_u32).await.ok()
         } else {
@@ -2218,19 +2194,19 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         window_id: u64,
     ) -> Result<NativeWindowInfo, BrowserRefusal> {
         let pid_u32 = u32::try_from(pid).map_err(|_| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 format!("pid {pid} is outside the Windows process-id range"),
             )
         })?;
-        let window = crate::dpi::spawn_blocking(move || {
+        let window = tokio::task::spawn_blocking(move || {
             crate::win32::find_window_by_pid_and_handle(pid_u32, window_id)
         })
         .await
         .ok()
         .flatten()
         .ok_or_else(|| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserBindingStale,
                 format!("Windows window {window_id} is not owned by pid {pid}"),
             )
@@ -2260,12 +2236,12 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         window_id: u64,
     ) -> Result<Option<bool>, BrowserRefusal> {
         let pid_u32 = u32::try_from(pid).map_err(|_| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 format!("pid {pid} is outside the Windows process-id range"),
             )
         })?;
-        let windows = crate::dpi::spawn_blocking(move || {
+        let windows = tokio::task::spawn_blocking(move || {
             crate::win32::list_windows_via_win32(Some(pid_u32))
                 .into_iter()
                 .map(|window| window.hwnd)
@@ -2273,7 +2249,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         })
         .await
         .map_err(|error| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!("could not enumerate Windows browser windows: {error}"),
             )
@@ -2286,7 +2262,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         pid: i64,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
         let pid_u32 = u32::try_from(pid).map_err(|_| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 format!("pid {pid} is outside the Windows process-id range"),
             )
@@ -2305,7 +2281,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         expected_ws_url: &str,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
         let pid_u32 = u32::try_from(pid).map_err(|_| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 format!("pid {pid} is outside the Windows process-id range"),
             )
@@ -2323,7 +2299,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         pid: i64,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
         let pid_u32 = u32::try_from(pid).map_err(|_| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 format!("pid {pid} is outside the Windows process-id range"),
             )
@@ -2346,13 +2322,13 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         expected_ws_url: &str,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
         let pid_u32 = u32::try_from(pid).map_err(|_| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 format!("pid {pid} is outside the Windows process-id range"),
             )
         })?;
         let Some(port) = literal_loopback_websocket_port(expected_ws_url) else {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserEndpointOwnerMismatch,
                 "the approved existing-profile endpoint is not loopback-only",
             ));
@@ -2360,7 +2336,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         let classification = self.classify_browser(pid).await?;
         if let Some(endpoint) = active_port_endpoint(pid_u32, classification.product_kind).await? {
             if endpoint.ws_url != expected_ws_url {
-                return Err(refusal(
+                return Err(BrowserRefusal::new(
                     BrowserRefusalCode::BrowserEndpointOwnerMismatch,
                     "the browser's exact DevTools endpoint changed after approval",
                 ));
@@ -2391,7 +2367,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         request: ExistingProfileSetupRequest,
     ) -> Result<ExistingProfileSetupOutcome, BrowserRefusal> {
         let descriptor = existing_profile_setup_descriptor(request.browser).ok_or_else(|| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!(
                     "approved existing-profile setup is not implemented for {:?}",
@@ -2400,7 +2376,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
             )
         })?;
         let pid_u32 = u32::try_from(request.pid).map_err(|_| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "the approved browser pid is outside the Windows process-id range",
             )
@@ -2411,10 +2387,10 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         // listener appear newly created after the approved setup action.
         let listeners_before = unfiltered_loopback_ports_for_exact_pid(pid_u32).await?;
         let handle =
-            crate::dpi::spawn_blocking(move || crate::browser_setup_ui::enable(hwnd, descriptor))
+            tokio::task::spawn_blocking(move || crate::browser_setup_ui::enable(hwnd, descriptor))
                 .await
                 .map_err(|error| {
-                    refusal(
+                    BrowserRefusal::new(
                         BrowserRefusalCode::BrowserRouteUnavailable,
                         format!(
                             "could not inspect {}'s remote-debugging setup UI: {error}",
@@ -2486,7 +2462,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                         Duration::from_secs(1),
                     ) {
                         if now >= deadline {
-                            break Err(refusal(
+                            break Err(BrowserRefusal::new(
                                 BrowserRefusalCode::BrowserEndpointOwnerMismatch,
                                 format!(
                                     "{} did not keep one exact browser endpoint stable after the approved setup action",
@@ -2513,7 +2489,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
                 [] => {
-                    break Err(refusal(
+                    break Err(BrowserRefusal::new(
                         BrowserRefusalCode::BrowserRequiresSetup,
                         format!(
                             "{} did not expose a uniquely exact-pid-owned loopback endpoint after the exact setup action",
@@ -2522,7 +2498,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                     ))
                 }
                 _ => {
-                    break Err(refusal(
+                    break Err(BrowserRefusal::new(
                         BrowserRefusalCode::BrowserBindingAmbiguous,
                         format!(
                             "{} exposed multiple exact-pid-owned endpoint candidates after the exact setup action",
@@ -2535,10 +2511,10 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         let endpoint = match endpoint_result {
             Ok(endpoint) => endpoint,
             Err(error) => {
-                let error = crate::dpi::spawn_blocking(move || handle.abort(error))
+                let error = tokio::task::spawn_blocking(move || handle.abort(error))
                     .await
                     .map_err(|join_error| {
-                        refusal(
+                        BrowserRefusal::new(
                             BrowserRefusalCode::BrowserRouteUnavailable,
                             format!("could not roll back browser setup: {join_error}"),
                         )
@@ -2564,12 +2540,12 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         &self,
         request: ExistingProfileSetupRequest,
     ) -> Result<bool, BrowserRefusal> {
-        crate::dpi::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || {
             crate::browser_setup_ui::commit_pending(request.window_id)
         })
         .await
         .map_err(|error| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!("could not commit exact browser setup cleanup: {error}"),
             )
@@ -2581,7 +2557,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         request: ExistingProfileSetupRequest,
     ) -> Result<bool, BrowserRefusal> {
         let descriptor = existing_profile_setup_descriptor(request.browser).ok_or_else(|| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!(
                     "existing-profile cleanup is not implemented for {:?}",
@@ -2590,7 +2566,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
             )
         })?;
         let pid = u32::try_from(request.pid).map_err(|_| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "the approved browser pid is outside the Windows process-id range",
             )
@@ -2606,16 +2582,34 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         request: ExistingProfileSetupRequest,
         error: BrowserRefusal,
     ) -> BrowserRefusal {
-        crate::dpi::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || {
             crate::browser_setup_ui::abort_pending(request.window_id, error)
         })
         .await
         .unwrap_or_else(|join_error| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!("could not roll back exact browser setup: {join_error}"),
             )
         })
+    }
+
+    async fn dismiss_abandoned_existing_profile_consent(
+        &self,
+        pid: i64,
+        window_id: u64,
+    ) -> Result<bool, BrowserRefusal> {
+        let Ok(pid) = u32::try_from(pid) else {
+            return Ok(false);
+        };
+        tokio::task::spawn_blocking(move || crate::browser_consent_ui::dismiss(pid, window_id))
+            .await
+            .unwrap_or_else(|join_error| {
+                Err(BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!("could not close the abandoned browser consent prompt: {join_error}"),
+                ))
+            })
     }
 
     async fn handle_existing_profile_consent(
@@ -2627,16 +2621,16 @@ impl BrowserPlatform for WindowsBrowserPlatform {
 
     async fn process_fingerprint(&self, pid: i64) -> Result<ProcessFingerprint, BrowserRefusal> {
         let pid_u32 = u32::try_from(pid).map_err(|_| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 format!("pid {pid} is outside the Windows process-id range"),
             )
         })?;
         let (start_time, executable) =
-            crate::dpi::spawn_blocking(move || process_identity(pid_u32))
+            tokio::task::spawn_blocking(move || process_identity(pid_u32))
                 .await
                 .map_err(|error| {
-                    refusal(
+                    BrowserRefusal::new(
                         BrowserRefusalCode::BrowserRouteUnavailable,
                         format!("process fingerprint task failed: {error}"),
                     )
@@ -2653,7 +2647,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         request: PrepareRequest,
     ) -> Result<PrepareOutcome, BrowserRefusal> {
         let Some(pid) = request.pid else {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRequiresSetup,
                 "pid-free isolated launch is handled by shared core",
             ));
@@ -2668,7 +2662,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 attachment: None,
             });
         }
-        Err(refusal(
+        Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserRequiresSetup,
             "No owned endpoint is available. Acting setup is handled by shared core only for a verified driver-owned isolated profile.",
         ))
@@ -3227,7 +3221,6 @@ mod tests {
             eprintln!(
                 "installed browser correctly refused for this write-capable runner token: {diagnostics:?}"
             );
-            return;
         }
     }
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -3379,7 +3372,7 @@ mod tests {
             if family == u32::from(AF_INET.0) {
                 Ok(ipv4.clone())
             } else {
-                Err(refusal(
+                Err(BrowserRefusal::new(
                     BrowserRefusalCode::BrowserRouteUnavailable,
                     "IPv6 owner table is unsupported",
                 ))
@@ -3392,7 +3385,7 @@ mod tests {
     #[test]
     fn native_listener_discovery_refuses_when_both_families_fail() {
         let error = windows_loopback_listeners_with(&[42], |family| {
-            Err(refusal(
+            Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!("family {family} unavailable"),
             ))
@@ -3892,7 +3885,7 @@ mod tests {
         let result = retry_port_ownership(3, Duration::ZERO, 9222, move || {
             probe_calls.fetch_add(1, Ordering::SeqCst);
             async {
-                Err(refusal(
+                Err(BrowserRefusal::new(
                     BrowserRefusalCode::BrowserRouteUnavailable,
                     "socket inventory failed",
                 ))

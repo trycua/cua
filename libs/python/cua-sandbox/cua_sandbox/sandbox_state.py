@@ -1,8 +1,9 @@
-"""Persistent state tracking for local sandboxes and Fleet claims.
+"""Persistent state tracking for local sandboxes.
 
-Each running local sandbox or named Fleet claim writes a JSON file at
-``$CUA_HOME/sandboxes/{name}.json`` (default ``~/.cua/sandboxes``). This lets later connect and delete commands route
-to the original runtime or pre-created Fleet pool across process restarts.
+Each running local sandbox writes a JSON file at
+``$CUA_HOME/sandboxes/{name}.json`` (default ``~/.cua/sandboxes``). This lets
+later connect and delete commands route to the original runtime across process
+restarts.
 
 Ephemeral sandboxes never write state files.
 """
@@ -118,23 +119,3 @@ def list_all() -> list[dict]:
         except (json.JSONDecodeError, OSError):
             pass
     return result
-
-
-def save_fleet_claim(name: str, pool_name: str, **extra: Any) -> None:
-    """Persist the pool association for a named Fleet claim.
-
-    Claims on managed pools also record ``managed=True``, the pool's
-    ``spec_hash`` and the ``claim_ttl`` they were created with.
-    """
-    guard_write(_state_path(name))
-    state_dir().mkdir(parents=True, exist_ok=True)
-    data: dict[str, Any] = {
-        "name": name,
-        "runtime_type": "fleet",
-        "pool_name": pool_name,
-        "status": "running",
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        **extra,
-    }
-    guard_write(_state_path(name))
-    _state_path(name).write_text(json.dumps(data, indent=2))

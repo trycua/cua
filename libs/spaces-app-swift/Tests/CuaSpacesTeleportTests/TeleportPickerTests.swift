@@ -118,6 +118,16 @@ let safari = fixtureEntry("com.apple.Safari", "Safari", .unsupported, moves: [],
         #expect(InstallCuaPrompt.detect(CuaSDK.CuaError.TeleportRefused(message: "denied")) == nil)
     }
 
+    /// Cua Spaces Local stamps its scheme: "Open Cua" opens its own Keyvault
+    /// page, never the released app's.
+    @Test func openCuaFollowsTheBundlesScheme() {
+        #expect(InstallCuaPrompt.openURL(info: nil) == URL(string: "cua://keyvault"))
+        #expect(InstallCuaPrompt.openURL(info: ["CuaUrlScheme": ""]) == URL(string: "cua://keyvault"))
+        #expect(InstallCuaPrompt.openURL(info: ["CuaUrlScheme": "cua-local"]) == URL(string: "cua-local://keyvault"))
+        // The test bundle is no Local build.
+        #expect(InstallCuaPrompt.openURL == URL(string: "cua://keyvault"))
+    }
+
     @Test func pickOptionsConsentRunDone() async throws {
         let host = FakeTeleportHost(entries: [firefox, vscode, safari])
         let m = TeleportPickerModel(host: host, spaceName: "Dev")

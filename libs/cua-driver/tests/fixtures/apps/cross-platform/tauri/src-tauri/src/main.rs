@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::thread;

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 #[cfg(target_os = "macos")]
 use std::ffi::CString;
 
@@ -10,20 +13,43 @@ unsafe extern "C" {
         attr: *mut libc::posix_spawnattr_t,
         disclaim: libc::c_int,
     ) -> libc::c_int;
+    fn responsibility_get_pid_responsible_for_pid(pid: libc::pid_t) -> libc::pid_t;
+}
+
+/// Whether macOS already treats this process as its own responsible process,
+/// so TCC checks use this executable's identity. True for a daemon started by
+/// LaunchServices or launchd; false for one started from a shell, a terminal,
+/// or an agent host, which TCC attributes to that host. A bundled executable
+/// is no proof: the installed `cua-driver` command links into the bundle.
+#[cfg(target_os = "macos")]
+fn is_own_responsible_process() -> bool {
+    let pid = unsafe { libc::getpid() };
+    let responsible = unsafe { responsibility_get_pid_responsible_for_pid(pid) };
+    if responsible > 0 {
+        return responsible == pid;
+    }
+    // The query failed: only a launchd child is known to be responsible
+    // for itself.
+    unsafe { libc::getppid() == 1 }
 }
 
 #[cfg(target_os = "macos")]
 pub fn already_disclaimed() -> bool {
-    std::env::var_os(cua_driver_core::RESPONSIBILITY_DISCLAIMED_ENV).is_some()
+    crate::env_vars::var_os(cua_driver_core::RESPONSIBILITY_DISCLAIMED_ENV).is_some()
 }
 
 /// Split out from [`reexec_disclaimed_if_needed`] so the decision is
 /// testable without spawning. Embedded mode must skip the disclaim:
 /// disclaiming would make the driver its own responsible process and
-/// break TCC inheritance from the host.
+/// break TCC inheritance from the host. A process that already is its own
+/// responsible process has nothing to disclaim. Whether the executable sits
+/// inside the app bundle does not decide it: `cua-driver serve` run from a
+/// shell through the installed command is bundled, yet TCC would attribute it
+/// to the shell's host, so its Accessibility and Screen Recording checks
+/// would read that host's grants instead of Cua Driver's.
 #[cfg(target_os = "macos")]
-fn should_skip_disclaim(embedded: bool, already_disclaimed: bool, inside_bundle: bool) -> bool {
-    embedded || already_disclaimed || inside_bundle
+fn should_skip_disclaim(embedded: bool, already_disclaimed: bool, own_responsible: bool) -> bool {
+    embedded || already_disclaimed || own_responsible
 }
 
 #[cfg(target_os = "macos")]
@@ -31,7 +57,7 @@ pub fn reexec_disclaimed_if_needed() {
     if should_skip_disclaim(
         cua_driver_core::embedded_mode(),
         already_disclaimed(),
-        crate::bundle::is_executable_inside_cuadriver_app(),
+        is_own_responsible_process(),
     ) {
         return;
     }
@@ -170,9 +196,56 @@ pub fn reexec_disclaimed_if_needed() {
 #[cfg(not(target_os = "macos"))]
 pub fn reexec_disclaimed_if_needed() {}
 
+/// The startup warning for a daemon running outside CuaDriver.app, or `None`
+/// when it is embedded or bundled (CUA-1777).
+#[cfg(target_os = "macos")]
+fn unbundled_warning(embedded: bool, inside_bundle: bool) -> Option<&'static str> {
+    if embedded || inside_bundle {
+        return None;
+    }
+    Some(
+        "warning: running unbundled (outside CuaDriver.app). The daemon is its own responsible \
+         process, so macOS gives it no valid WindowServer connection: background (no-raise) \
+         focus steps fail with status 1002 and background actions will be refused. Run the \
+         app-bundle daemon instead: `cua-driver permissions grant`.",
+    )
+}
+
+/// Print the unbundled warning once at daemon startup.
+#[cfg(target_os = "macos")]
+pub fn warn_if_unbundled() {
+    if let Some(message) = unbundled_warning(
+        cua_driver_core::embedded_mode(),
+        crate::bundle::is_executable_inside_cuadriver_app(),
+    ) {
+        eprintln!("cua-driver: {message}");
+        tracing::warn!("{message}");
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn warn_if_unbundled() {}
+
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unbundled_daemon_gets_a_startup_warning_and_bundled_or_embedded_does_not() {
+        let message = unbundled_warning(false, false).expect("warns when unbundled");
+        assert!(message.contains("cua-driver permissions grant"));
+        assert!(!message.contains("-a CuaDriver"));
+        assert!(unbundled_warning(false, true).is_none());
+        assert!(unbundled_warning(true, false).is_none());
+    }
+
+    #[test]
+    fn a_test_process_started_by_cargo_is_not_its_own_responsible_process() {
+        // cargo, a shell or an agent host started this test binary, so TCC
+        // attributes it to that host: a daemon started the same way must
+        // disclaim, bundled or not.
+        assert!(!is_own_responsible_process());
+    }
 
     #[test]
     fn embedded_mode_skips_disclaim_reexec() {
@@ -186,17 +259,10 @@ mod tests {
     #[test]
     fn already_disclaimed_reflects_env_var() {
         let name = cua_driver_core::RESPONSIBILITY_DISCLAIMED_ENV;
-        let original = std::env::var_os(name);
-
-        std::env::remove_var(name);
+        let mut env = crate::env_vars::Overrides::new();
+        env.unset(name);
         assert!(!already_disclaimed());
-
-        std::env::set_var(name, "1");
+        env.set(name, "1");
         assert!(already_disclaimed());
-
-        match original {
-            Some(value) => std::env::set_var(name, value),
-            None => std::env::remove_var(name),
-        }
     }
 }

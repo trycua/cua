@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Windows.Graphics.Capture (WGC) backend for window screenshots.
 //!
 //! Used when PrintWindow returns black (UWP / DirectComposition) AND/OR

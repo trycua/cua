@@ -91,7 +91,7 @@ async def _provision(image: Image, idx: int) -> tuple[Sandbox, SandboxStats]:
     return sb, SandboxStats(name=name, provision_time=elapsed)
 
 
-async def _provision_fleet(
+async def _provision_all(
     image: Image, n: int
 ) -> tuple[list[Sandbox], list[SandboxStats], list[float]]:
     tasks = [_provision(image, i) for i in range(n)]
@@ -110,7 +110,7 @@ async def _provision_fleet(
     return sandboxes, stats, provision_times
 
 
-async def _destroy_fleet(sandboxes: list[Sandbox]) -> None:
+async def _destroy_all(sandboxes: list[Sandbox]) -> None:
     results = await asyncio.gather(*[sb.destroy() for sb in sandboxes], return_exceptions=True)
     for i, r in enumerate(results):
         if isinstance(r, Exception):
@@ -225,7 +225,7 @@ async def run_benchmark(
 
     # ── Provision ──────────────────────────────────────────────────────────
     print(f"\n── Provisioning {n_sandboxes} sandbox(es) locally ──")
-    sandboxes, all_stats, provision_times = await _provision_fleet(image, n_sandboxes)
+    sandboxes, all_stats, provision_times = await _provision_all(image, n_sandboxes)
 
     if not sandboxes:
         raise RuntimeError("All sandboxes failed to provision — aborting benchmark.")
@@ -264,7 +264,7 @@ async def run_benchmark(
 
     # ── Cleanup ───────────────────────────────────────────────────────────
     print(f"\n── Destroying {actual} sandbox(es) ──")
-    await _destroy_fleet(sandboxes)
+    await _destroy_all(sandboxes)
 
     # ── Aggregate ─────────────────────────────────────────────────────────
     total_reqs = sum(s.requests for s in all_stats)

@@ -748,6 +748,19 @@ impl Tool for GetWindowStateTool {
         if let Some(capture_id) = capture_id {
             structured["capture_id"] = serde_json::json!(capture_id);
         }
+        // Set only when the window scope is unresolved (issue #4039).
+        if let Some(summary) = tree_result
+            .as_ref()
+            .and_then(|result| result.ax_enumeration.as_ref())
+        {
+            structured["ax_enumeration"] = serde_json::json!({
+                "children_count": summary.children_count,
+                "windows_count": summary.windows_count,
+                "union_count": summary.union_count,
+                "ax_window_count": summary.ax_window_count,
+                "mapped_window_count": summary.mapped_window_count,
+            });
+        }
         if let Some(id) = refreshed {
             let sid = cua_driver_core::element_token::format_snapshot_id(id);
             content.push(Content::text(format!(

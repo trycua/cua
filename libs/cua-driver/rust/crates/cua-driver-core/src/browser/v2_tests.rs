@@ -2873,6 +2873,15 @@ async fn semantic_ancestor_scope_is_row_precise_and_continuation_preserves_ancho
     .await;
     assert_eq!(incompatible["status"], "refused", "{incompatible}");
     assert_eq!(incompatible["refusal"]["code"], "browser_ref_stale");
+    let role_only = semantic_snapshot_with(
+        &f,
+        &target,
+        &tab,
+        json!({"continuation": token, "scope_ancestor_role": "row"}),
+    )
+    .await;
+    assert_eq!(role_only["status"], "refused", "{role_only}");
+    assert_eq!(role_only["refusal"]["code"], "browser_ref_stale");
 
     let continued = semantic_snapshot_with(&f, &target, &tab, json!({"continuation": token})).await;
     assert_eq!(continued["status"], "ok", "{continued}");
@@ -2974,6 +2983,52 @@ async fn semantic_ancestor_scope_schema_and_combinations_fail_closed() {
         }))
         .await;
     assert_eq!(whitespace.is_error, Some(true));
+}
+
+#[tokio::test]
+async fn semantic_continuation_token_serves_only_one_concurrent_page() {
+    let f = fixture_with(|state| {
+        state.semantic_scoped_rows = true;
+        state.oopif_present = false;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let seeded = semantic_snapshot_with(&f, &target, &tab, json!({"query": "0.19.89"})).await;
+    let source_ref = seeded["refs"]
+        .as_array()
+        .and_then(|refs| refs.iter().find(|entry| entry["role"] == "link"))
+        .and_then(|entry| entry["ref"].as_str())
+        .expect("version link ref")
+        .to_owned();
+    let first = semantic_snapshot_with(
+        &f,
+        &target,
+        &tab,
+        json!({
+            "scope_ref": source_ref,
+            "scope_ancestor_role": "row",
+            "query": "View release options"
+        }),
+    )
+    .await;
+    let token = first["snapshot"]["continuation"]
+        .as_str()
+        .unwrap_or_else(|| panic!("scoped continuation: {first}"))
+        .to_owned();
+
+    let (left, right) = tokio::join!(
+        semantic_snapshot_with(&f, &target, &tab, json!({"continuation": token})),
+        semantic_snapshot_with(&f, &target, &tab, json!({"continuation": token})),
+    );
+    let mut statuses = [left["status"].clone(), right["status"].clone()];
+    statuses.sort_by_key(|status| status.to_string());
+    assert_eq!(statuses, [json!("ok"), json!("refused")], "{left} {right}");
+    let refused = if left["status"] == "refused" {
+        &left
+    } else {
+        &right
+    };
+    assert_eq!(refused["refusal"]["code"], "browser_ref_stale");
 }
 
 #[tokio::test]

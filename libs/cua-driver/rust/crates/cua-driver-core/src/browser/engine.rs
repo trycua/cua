@@ -2892,12 +2892,18 @@ impl BrowserEngine {
                 start_index,
             );
             let next_token = outcome.continuation.clone();
+            // The frame checks above awaited, so a concurrent snapshot or
+            // continuation may have replaced this one. Serve the page only if
+            // this call is the one that consumes the token.
+            let mut consumed = false;
             self.store.update_target(session, target_id, |record| {
                 if let Some(stored) = record
                     .tabs
                     .get_mut(tab_id)
                     .and_then(|tab| tab.snapshots.get_mut(&snapshot.id))
+                    .filter(|stored| stored.continuations.contains_key(token))
                 {
+                    consumed = true;
                     stored.continuations.remove(token);
                     stored.continuation_anchors.remove(token);
                     stored.refs.extend(new_refs);
@@ -2918,6 +2924,13 @@ impl BrowserEngine {
                     }
                 }
             });
+            if !consumed {
+                return Err(refuse(
+                    BrowserRefusalCode::BrowserRefStale,
+                    "a newer snapshot or continuation replaced this one; re-run \
+                     get_browser_state to start a fresh snapshot",
+                ));
+            }
             return Ok(outcome);
         }
 

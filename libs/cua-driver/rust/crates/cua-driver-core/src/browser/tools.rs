@@ -615,7 +615,10 @@ impl Tool for GetBrowserStateTool {
                         )
                     }
                 };
+                // With a continuation, the engine refuses the combination
+                // as browser_ref_stale like any other new scope or query.
                 if scope_ancestor_role.is_some()
+                    && args.opt_str("continuation").is_none()
                     && (args.opt_str("scope_ref").is_none() || args.opt_str("query").is_none())
                 {
                     return ToolResult::error(

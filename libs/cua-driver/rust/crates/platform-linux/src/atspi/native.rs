@@ -1174,8 +1174,8 @@ fn niri_frame_fits(frame: Option<(i32, i32, i32, i32)>, window: Option<(u32, u32
 /// the compositor title lacks). Chromium reports frame extents in its own
 /// scaled units, so every owned client must pair one-to-one with every
 /// `BrowserRootView` frame under one common scale, and every such pairing must
-/// give the target client the same frame. Any other owned client or frame kind leaves the counts unequal
-/// and refuses.
+/// give the target client the same frame. Any other owned client or frame kind
+/// leaves the counts unequal and refuses.
 fn scaled_hyprland_frame(
     frames: &[HyprlandFrame],
     clients: &[(&str, u32, u32)],

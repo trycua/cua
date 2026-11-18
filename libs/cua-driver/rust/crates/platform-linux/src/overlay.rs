@@ -5034,9 +5034,9 @@ mod tests {
     /// registration is dropped.
     #[tokio::test(start_paused = true)]
     async fn unreported_arrival_releases_the_waiter_after_the_cap() {
-        // This covers the X11 renderer's cap and degraded mode. Under a
-        // Wayland display the X11 overlay is not started, so no glide waits.
-        if !should_start_x11_overlay(std::env::var_os("WAYLAND_DISPLAY").is_some()) {
+        // This covers the X11 renderer's cap and degraded mode. Off an X11
+        // desktop the X11 overlay is not started, so no glide waits.
+        if !should_start_x11_overlay(crate::desktop::desktop() != crate::desktop::Desktop::X11) {
             return;
         }
         init(CursorConfig::default());

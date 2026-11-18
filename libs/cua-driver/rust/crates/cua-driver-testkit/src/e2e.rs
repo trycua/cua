@@ -10,6 +10,7 @@ use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use cua_driver_contract::ActionEffect;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 
@@ -1707,23 +1708,20 @@ fn validate_action_truthfulness(
     let Some(truth) = action.get("action_truth") else {
         return;
     };
-    let Some(effect) = truth.get("effect").and_then(Value::as_str) else {
+    let Some(raw_effect) = truth.get("effect").and_then(Value::as_str) else {
         errors.push(format!(
             "action truth has no effect for {cell_id}/{turn_name}"
         ));
         return;
     };
-    if !matches!(
-        effect,
-        "confirmed" | "partial" | "unverifiable" | "suspected_noop" | "refused"
-    ) {
+    let Ok(effect) = serde_json::from_value::<ActionEffect>(Value::from(raw_effect)) else {
         errors.push(format!(
-            "action truth has unknown effect '{effect}' for {cell_id}/{turn_name}"
+            "action truth has unknown effect '{raw_effect}' for {cell_id}/{turn_name}"
         ));
         return;
-    }
+    };
 
-    if effect == "confirmed"
+    if effect == ActionEffect::Confirmed
         && !truth
             .get("evidence")
             .and_then(Value::as_array)
@@ -1734,25 +1732,27 @@ fn validate_action_truthfulness(
         ));
     }
 
-    let contradiction = match observed_behavior {
-        Some(ObservedBehavior::Delivered) if matches!(effect, "refused" | "suspected_noop") => {
-            Some(format!(
-                "independent oracle observed delivery but action truth claimed {effect}"
-            ))
-        }
-        Some(ObservedBehavior::Refused) if effect != "refused" => Some(format!(
-            "independent oracle observed refusal but action truth claimed {effect}"
-        )),
-        Some(ObservedBehavior::NoEffect) if matches!(effect, "confirmed" | "partial") => {
-            Some(format!(
-                "independent oracle observed no effect but action truth claimed {effect}"
-            ))
-        }
-        _ => None,
+    // Exhaustive so a new effect variant must decide its oracle contradictions.
+    let contradicts = match effect {
+        ActionEffect::Confirmed | ActionEffect::Partial => matches!(
+            observed_behavior,
+            Some(ObservedBehavior::Refused | ObservedBehavior::NoEffect)
+        ),
+        ActionEffect::Unverifiable => observed_behavior == Some(ObservedBehavior::Refused),
+        ActionEffect::SuspectedNoop => matches!(
+            observed_behavior,
+            Some(ObservedBehavior::Delivered | ObservedBehavior::Refused)
+        ),
+        ActionEffect::Refused => observed_behavior == Some(ObservedBehavior::Delivered),
     };
-    if let Some(contradiction) = contradiction {
+    if contradicts {
+        let observed = match observed_behavior {
+            Some(ObservedBehavior::Delivered) => "delivery",
+            Some(ObservedBehavior::Refused) => "refusal",
+            _ => "no effect",
+        };
         errors.push(format!(
-            "action-truth contradiction for {cell_id}/{turn_name}: {contradiction}"
+            "action-truth contradiction for {cell_id}/{turn_name}: independent oracle observed {observed} but action truth claimed {raw_effect}"
         ));
     }
 }
@@ -1997,13 +1997,7 @@ mod tests {
 
     fn truthfulness_errors(action: &Value, observed: ObservedBehavior) -> Vec<String> {
         let mut errors = Vec::new();
-        validate_action_truthfulness(
-            action,
-            Some(observed),
-            "cell",
-            "turn-00001",
-            &mut errors,
-        );
+        validate_action_truthfulness(action, Some(observed), "cell", "turn-00001", &mut errors);
         errors
     }
 
@@ -2026,7 +2020,9 @@ mod tests {
     fn action_truthfulness_rejects_confirmed_without_evidence() {
         let action = action_with_truth("confirmed", serde_json::json!([]));
         let errors = truthfulness_errors(&action, ObservedBehavior::Delivered);
-        assert!(errors.iter().any(|error| error.contains("confirmed action truth has no evidence")));
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("confirmed action truth has no evidence")));
     }
 
     #[test]
@@ -2038,7 +2034,9 @@ mod tests {
             );
             let errors = truthfulness_errors(&action, ObservedBehavior::NoEffect);
             assert!(
-                errors.iter().any(|error| error.contains("action-truth contradiction")),
+                errors
+                    .iter()
+                    .any(|error| error.contains("action-truth contradiction")),
                 "{effect}: {errors:?}"
             );
         }
@@ -2066,7 +2064,9 @@ mod tests {
             let action = action_with_truth(effect, evidence);
             let errors = truthfulness_errors(&action, ObservedBehavior::Refused);
             assert!(
-                errors.iter().any(|error| error.contains("action-truth contradiction")),
+                errors
+                    .iter()
+                    .any(|error| error.contains("action-truth contradiction")),
                 "{effect}: {errors:?}"
             );
         }
@@ -2078,7 +2078,9 @@ mod tests {
             let action = action_with_truth(effect, serde_json::json!([]));
             let errors = truthfulness_errors(&action, ObservedBehavior::Delivered);
             assert!(
-                errors.iter().any(|error| error.contains("action-truth contradiction")),
+                errors
+                    .iter()
+                    .any(|error| error.contains("action-truth contradiction")),
                 "{effect}: {errors:?}"
             );
         }
@@ -2094,18 +2096,10 @@ mod tests {
     fn action_truthfulness_still_checks_internal_claim_without_case_oracle_binding() {
         let confirmed = action_with_truth("confirmed", serde_json::json!([]));
         let mut errors = Vec::new();
-        validate_action_truthfulness(
-            &confirmed,
-            None,
-            "cell",
-            "turn-setup",
-            &mut errors,
-        );
-        assert!(
-            errors
-                .iter()
-                .any(|error| error.contains("confirmed action truth has no evidence"))
-        );
+        validate_action_truthfulness(&confirmed, None, "cell", "turn-setup", &mut errors);
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("confirmed action truth has no evidence")));
 
         let refused = action_with_truth("refused", serde_json::json!([]));
         let mut errors = Vec::new();
@@ -2122,7 +2116,10 @@ mod tests {
         let errors = truthfulness_errors(&action, ObservedBehavior::Delivered);
         assert!(errors.iter().any(|error| error.contains("unknown effect")));
 
-        action["action_truth"].as_object_mut().unwrap().remove("effect");
+        action["action_truth"]
+            .as_object_mut()
+            .unwrap()
+            .remove("effect");
         let errors = truthfulness_errors(&action, ObservedBehavior::Delivered);
         assert!(errors.iter().any(|error| error.contains("has no effect")));
     }

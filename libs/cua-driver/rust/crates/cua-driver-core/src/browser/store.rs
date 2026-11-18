@@ -27,7 +27,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
-use super::semantic::{SemanticDocument, SemanticNodeIdentity, SemanticScopeAnchor};
+use super::semantic::{SemanticDocument, SemanticScopeAnchor};
 use super::types::{
     BindingQuality, EndpointAccessClass, EndpointTransport, ProcessFingerprint, Rect,
 };
@@ -182,14 +182,16 @@ pub struct SnapshotRecord {
     pub(crate) semantic: Option<SemanticDocument>,
     pub(crate) semantic_root_identity: Option<FrameIdentity>,
     pub(crate) continuations: HashMap<String, SemanticContinuation>,
+    /// The `scope_ancestor_role` anchor each continuation token pages,
+    /// keyed like `continuations`.
+    pub(crate) continuation_anchors: HashMap<String, SemanticScopeAnchor>,
 }
 
 #[derive(Debug, Clone)]
 pub struct SemanticContinuation {
     pub offset: usize,
     pub query: Option<String>,
-    pub(crate) scope_identity: Option<SemanticNodeIdentity>,
-    pub(crate) scope_anchor: Option<SemanticScopeAnchor>,
+    pub scope_backend_node_id: Option<i64>,
     pub oopif_supported: bool,
     pub oopif_frames: usize,
 }
@@ -543,6 +545,7 @@ mod tests {
                             semantic: None,
                             semantic_root_identity: None,
                             continuations: HashMap::new(),
+                            continuation_anchors: HashMap::new(),
                         },
                     )]),
                 },

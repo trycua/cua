@@ -394,14 +394,22 @@ fn semantic_ref_value(listed: &super::engine::SemanticListedRef) -> Value {
     })
 }
 
-fn semantic_scope_anchor_value(anchor: &super::semantic::SemanticScopeAnchor) -> Value {
-    json!({
-        "requested_ref": anchor.source_ref,
-        "role": anchor.role,
-        "name": anchor.name,
-        "frame": anchor.identity.frame.kind.as_str(),
-        "distance": anchor.distance,
-    })
+/// Add `scope_anchor` to a semantic snapshot that `scope_ancestor_role`
+/// scoped. Other snapshots keep their shape.
+fn with_scope_anchor(
+    mut snapshot: Value,
+    anchor: Option<&super::semantic::SemanticScopeAnchor>,
+) -> Value {
+    if let Some(anchor) = anchor {
+        snapshot["scope_anchor"] = json!({
+            "requested_ref": anchor.source_ref,
+            "role": anchor.role,
+            "name": anchor.name,
+            "frame": anchor.identity.frame.kind.as_str(),
+            "distance": anchor.distance,
+        });
+    }
+    snapshot
 }
 
 fn with_tab_screenshot(mut result: ToolResult, screenshot: BrowserTabScreenshot) -> ToolResult {
@@ -477,7 +485,7 @@ impl GetBrowserStateTool {
                         "minLength": 1,
                         "maxLength": 128,
                         "pattern": "^[A-Za-z][A-Za-z0-9_-]*$",
-                        "description": "Resolve scope_ref to its nearest strict same-frame ancestor with this exact accessibility role, then apply query inside that subtree. Requires scope_ref and query."
+                        "description": "Resolve scope_ref to its nearest strict ancestor in the same frame whose accessibility role matches this one (case-insensitive), then apply query inside that ancestor's subtree. Requires scope_ref and query with snapshot_format semantic_v2."
                     },
                     "query": {
                         "type": "string",
@@ -493,40 +501,6 @@ impl GetBrowserStateTool {
                         "description": "Capture the exact tab viewport as PNG through CDP without selecting the tab or foregrounding its native window. The request refuses if capture cannot be completed."
                     },
                 },
-                "allOf": [
-                    {
-                        "if": {
-                            "anyOf": [
-                                { "required": ["scope_ref"] },
-                                { "required": ["scope_ancestor_role"] },
-                                { "required": ["query"] },
-                                { "required": ["continuation"] }
-                            ]
-                        },
-                        "then": {
-                            "required": ["target_id", "tab_id", "snapshot_format"],
-                            "properties": {
-                                "snapshot_format": { "const": "semantic_v2" }
-                            }
-                        }
-                    },
-                    {
-                        "if": { "required": ["scope_ancestor_role"] },
-                        "then": { "required": ["scope_ref", "query"] }
-                    },
-                    {
-                        "if": { "required": ["continuation"] },
-                        "then": {
-                            "not": {
-                                "anyOf": [
-                                    { "required": ["scope_ref"] },
-                                    { "required": ["scope_ancestor_role"] },
-                                    { "required": ["query"] }
-                                ]
-                            }
-                        }
-                    }
-                ],
                 "additionalProperties": true
             }),
             read_only: true,
@@ -633,7 +607,7 @@ impl Tool for GetBrowserStateTool {
                                 "scope_ancestor_role must be an ASCII accessibility role of 1 to 128 bytes",
                             );
                         }
-                        Some(role.trim().to_ascii_lowercase())
+                        Some(role.to_ascii_lowercase())
                     }
                     Some(_) => {
                         return ToolResult::error(
@@ -686,12 +660,11 @@ impl Tool for GetBrowserStateTool {
                             "mode": "snapshot",
                             "target_id": target_id,
                             "tab_id": tab_id,
-                            "snapshot": {
+                            "snapshot": with_scope_anchor(json!({
                                 "id": format!("p{}", outcome.snapshot_id),
                                 "format": "semantic_v2",
                                 "complete": outcome.complete,
                                 "scope": outcome.scope,
-                                "scope_anchor": outcome.scope_anchor.as_ref().map(semantic_scope_anchor_value),
                                 "selected_nodes": outcome.selected_nodes,
                                 "total_nodes": outcome.total_nodes,
                                 "node_budget": super::semantic::DEFAULT_SEMANTIC_NODE_BUDGET,
@@ -707,7 +680,7 @@ impl Tool for GetBrowserStateTool {
                                 },
                                 "continuation": outcome.continuation,
                                 "hint": (outcome.omissions.not_rendered > 0).then_some("Chrome has not rendered this background tab, so this tree is partial. Bring the tab to the front in the browser, then re-run get_browser_state; observation never activates tabs."),
-                            },
+                            }), outcome.scope_anchor.as_ref()),
                             "page": {
                                 "url": outcome.url,
                                 "title": outcome.title,
@@ -3955,49 +3928,6 @@ mod tests {
             assert!(def.open_world, "{} can affect open-world state", def.name);
         }
         assert!(BrowserDownloadTool::new(e.clone()).def().destructive);
-    }
-
-    #[test]
-    fn semantic_ancestor_scope_schema_encodes_closed_combinations() {
-        let tool = GetBrowserStateTool::new(engine());
-        let schema = &tool.def().input_schema;
-        let validator = jsonschema::validator_for(schema).expect("browser state schema compiles");
-        let ancestor = json!({
-            "target_id": "bt1",
-            "tab_id": "tab1",
-            "snapshot_format": "semantic_v2",
-            "scope_ref": "p1:0",
-            "scope_ancestor_role": "row",
-            "query": "release options"
-        });
-        assert!(validator.is_valid(&ancestor));
-        assert!(!validator.is_valid(&json!({
-            "target_id": "bt1",
-            "tab_id": "tab1",
-            "snapshot_format": "semantic_v2",
-            "scope_ref": "p1:0",
-            "scope_ancestor_role": "row"
-        })));
-        assert!(!validator.is_valid(&json!({
-            "target_id": "bt1",
-            "tab_id": "tab1",
-            "snapshot_format": "dom_refs_v1",
-            "scope_ref": "p1:0",
-            "scope_ancestor_role": "row",
-            "query": "release options"
-        })));
-        assert!(!validator.is_valid(&json!({
-            "target_id": "bt1",
-            "tab_id": "tab1",
-            "snapshot_format": "semantic_v2",
-            "continuation": "opaque",
-            "query": "release options"
-        })));
-        assert!(!validator.is_valid(&json!({
-            "pid": 42,
-            "window_id": 7,
-            "scope_ancestor_role": "row"
-        })));
     }
 
     #[test]

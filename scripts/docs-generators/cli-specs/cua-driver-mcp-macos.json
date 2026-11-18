@@ -2130,6 +2130,13 @@
       "description": "Read-only semantic match over role, accessible name, and visible text.",
       "type": "string"
      },
+     "scope_ancestor_role": {
+      "description": "Resolve scope_ref to its nearest strict ancestor in the same frame whose accessibility role matches this one (case-insensitive), then apply query inside that ancestor's subtree. Requires scope_ref and query with snapshot_format semantic_v2.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z][A-Za-z0-9_-]*$",
+      "type": "string"
+     },
      "scope_ref": {
       "description": "Current semantic/content ref whose subtree should be observed.",
       "type": "string"

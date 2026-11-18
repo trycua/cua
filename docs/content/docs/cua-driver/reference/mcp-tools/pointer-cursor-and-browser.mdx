@@ -515,6 +515,7 @@ Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
 | <span id="get_browser_state--include_screenshot"></span>`include_screenshot` | `boolean` | `false` | Capture the exact tab viewport as PNG through CDP without selecting the tab or foregrounding its native window. The request refuses if capture cannot be completed. |
 | <span id="get_browser_state--pid"></span>`pid` | `integer` |  | Native browser process id (bind mode). |
 | <span id="get_browser_state--query"></span>`query` | `string` |  | Read-only semantic match over role, accessible name, and visible text. |
+| <span id="get_browser_state--scope_ancestor_role"></span>`scope_ancestor_role` | `string` |  | Resolve scope_ref to its nearest strict ancestor in the same frame whose accessibility role matches this one (case-insensitive), then apply query inside that ancestor's subtree. Requires scope_ref and query with snapshot_format semantic_v2. |
 | <span id="get_browser_state--scope_ref"></span>`scope_ref` | `string` |  | Current semantic/content ref whose subtree should be observed. |
 | <span id="get_browser_state--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session. |
 | <span id="get_browser_state--snapshot_format"></span>`snapshot_format` | `"dom_refs_v1" \| "semantic_v2"` |  | Versioned snapshot contract. dom_refs_v1 remains the compatibility default. |

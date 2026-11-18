@@ -165,6 +165,16 @@ pub(crate) struct SemanticScopeAnchor {
     pub(crate) distance: usize,
 }
 
+/// The subtree a semantic page is restricted to.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum SemanticScope<'a> {
+    /// Direct `scope_ref`: the subtree of the node with this backend id.
+    Backend(i64),
+    /// `scope_ancestor_role`: a root already proven by
+    /// [`SemanticDocument::validate_ancestor_subtree`].
+    Ancestor(&'a SemanticNodeIdentity),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SemanticScopeFailure {
     SourceMissing,
@@ -325,59 +335,33 @@ impl SemanticAncestryIndex {
             .is_some_and(|indices| indices.iter().any(|idx| nodes[*idx].frame != *frame))
     }
 
-    /// Return only uniquely proven descendants connected by the raw AX
-    /// `childIds` graph. Parent-only claims are deliberately not enough to
-    /// enter a scope. Ancestor requests run the strict validator first and
-    /// receive a structured refusal for malformed branches; legacy direct
-    /// scopes keep their historical best-effort empty/partial behavior.
+    /// The root and every descendant reached through raw `childIds` in the
+    /// root's frame. Callers prove the subtree with
+    /// [`SemanticDocument::validate_ancestor_subtree`] first.
     fn descendant_identities(
         &self,
         nodes: &[SemanticAncestryNode],
         root: &SemanticNodeIdentity,
     ) -> HashSet<SemanticNodeIdentity> {
-        let root_matches = self.nodes_for(root);
-        if root_matches.len() > 1 {
-            return HashSet::new();
-        }
-        let mut allowed = HashSet::from([root.clone()]);
-        // DOM-supplemented actions are not present in the raw AX graph. A
-        // direct scope rooted at one still includes the root itself.
-        let [root_idx] = root_matches else {
-            return allowed;
-        };
+        let mut allowed = HashSet::new();
         let mut stack = vec![root.clone()];
-        let mut expanded = HashSet::new();
         while let Some(identity) = stack.pop() {
-            if !expanded.insert(identity.clone()) {
+            let [idx] = self.nodes_for(&identity) else {
+                continue;
+            };
+            let current = &nodes[*idx];
+            if !allowed.insert(identity) {
                 continue;
             }
-            let current_idx = if identity == *root {
-                *root_idx
-            } else {
-                let [idx] = self.nodes_for(&identity) else {
-                    continue;
-                };
-                *idx
-            };
-            let current = &nodes[current_idx];
-            let mut declared = HashSet::new();
-            for child_ax_id in &current.child_ax_ids {
-                if !declared.insert(child_ax_id.as_str()) {
-                    continue;
-                }
-                let child_identity = SemanticNodeIdentity {
-                    ax_id: child_ax_id.clone(),
-                    frame: current.frame.clone(),
-                };
-                let [child_idx] = self.nodes_for(&child_identity) else {
-                    continue;
-                };
-                if nodes[*child_idx].parent_ax_id.as_deref() == Some(current.ax_id.as_str())
-                    && allowed.insert(child_identity.clone())
-                {
-                    stack.push(child_identity);
-                }
-            }
+            stack.extend(
+                current
+                    .child_ax_ids
+                    .iter()
+                    .map(|child_ax_id| SemanticNodeIdentity {
+                        ax_id: child_ax_id.clone(),
+                        frame: current.frame.clone(),
+                    }),
+            );
         }
         allowed
     }
@@ -446,18 +430,17 @@ impl SemanticDocument {
         offset: usize,
         budget: usize,
         query: Option<&str>,
-        scope_identity: Option<&SemanticNodeIdentity>,
+        scope: Option<SemanticScope<'_>>,
     ) -> SemanticPage {
         let tree = SemanticTreeIndex::new(&self.nodes);
-        let ancestry = SemanticAncestryIndex::new(&self.ancestry);
-        let mut candidates = scoped_indices(
-            &self.nodes,
-            &tree,
-            &self.ancestry,
-            &ancestry,
-            query,
-            scope_identity,
-        );
+        let allowed = match scope {
+            None => None,
+            Some(SemanticScope::Backend(backend_node_id)) => {
+                Some(backend_subtree(&self.nodes, backend_node_id))
+            }
+            Some(SemanticScope::Ancestor(root)) => Some(self.ancestor_subtree(&tree, root)),
+        };
+        let mut candidates = scoped_indices(&self.nodes, query, allowed.as_ref());
         candidates.retain(|idx| {
             !matches!(
                 self.nodes[*idx].visibility,
@@ -475,8 +458,28 @@ impl SemanticDocument {
         let start = offset.min(candidates.len());
         let end = (start + budget.max(1)).min(candidates.len());
         let page_slice = &candidates[start..end];
-        let selected = with_ancestors(&self.nodes, &tree, page_slice, scope_identity);
-        let outline = render_outline(&self.nodes, &tree, &selected);
+        let outline = match scope {
+            Some(SemanticScope::Ancestor(root)) => {
+                let parent_of = |idx: usize| framed_parent(&self.nodes, &tree, idx);
+                let anchor = tree.nodes_for(root).first().copied();
+                let selected = with_ancestors(page_slice, parent_of, anchor);
+                render_outline(&self.nodes, &selected, parent_of)
+            }
+            _ => {
+                let by_ax_id: HashMap<&str, usize> = self
+                    .nodes
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, node)| (node.ax_id.as_str(), idx))
+                    .collect();
+                let parent_of = |idx: usize| {
+                    let parent = self.nodes[idx].parent_ax_id.as_deref()?;
+                    by_ax_id.get(parent).copied()
+                };
+                let selected = with_ancestors(page_slice, parent_of, None);
+                render_outline(&self.nodes, &selected, parent_of)
+            }
+        };
         let selected_nodes = page_slice
             .iter()
             .map(|idx| self.nodes[*idx].clone())
@@ -514,15 +517,15 @@ impl SemanticDocument {
         }
     }
 
-    /// Resolve a live semantic ref to either its own subtree root or the
-    /// nearest strict ancestor with the requested role. Every step stays in
-    /// the source ref's exact frame; malformed or ambiguous ancestry refuses
-    /// instead of widening the search.
-    pub(crate) fn resolve_scope(
+    /// Resolve a live semantic ref to the nearest strict ancestor with the
+    /// requested lowercase role. Every step stays in the source ref's exact
+    /// frame; malformed or ambiguous ancestry refuses instead of widening the
+    /// search.
+    pub(crate) fn resolve_ancestor_scope(
         &self,
         source_ref: &str,
         source: &RefEntry,
-        ancestor_role: Option<&str>,
+        requested_role: &str,
     ) -> Result<SemanticScopeAnchor, SemanticScopeFailure> {
         let tree = SemanticTreeIndex::new(&self.nodes);
         let source_idx = match tree.nodes_for_backend(&source.frame, source.backend_node_id) {
@@ -531,19 +534,6 @@ impl SemanticDocument {
             _ => return Err(SemanticScopeFailure::Ambiguous),
         };
         let source_frame = self.nodes[source_idx].frame.clone();
-        let Some(requested_role) = ancestor_role else {
-            let node = &self.nodes[source_idx];
-            return Ok(SemanticScopeAnchor {
-                source_ref: source_ref.to_owned(),
-                identity: SemanticNodeIdentity {
-                    ax_id: node.ax_id.clone(),
-                    frame: node.frame.clone(),
-                },
-                role: node.role.clone(),
-                name: node.name.clone(),
-                distance: 0,
-            });
-        };
         let source_node = &self.nodes[source_idx];
         if !source.semantic {
             return Err(SemanticScopeFailure::SourceNotSemantic);
@@ -554,7 +544,6 @@ impl SemanticDocument {
         if source_frame.identity.is_none() {
             return Err(SemanticScopeFailure::UnprovenFrame);
         }
-        let requested_role = requested_role.trim().to_ascii_lowercase();
         let ancestry = SemanticAncestryIndex::new(&self.ancestry);
         let source_identity = SemanticNodeIdentity {
             ax_id: source_node.ax_id.clone(),
@@ -607,6 +596,62 @@ impl SemanticDocument {
             }
             parent_ax_id = self.ancestry[parent_idx].parent_ax_id.clone();
         }
+    }
+
+    /// Indices inside a proven ancestor scope: the raw AX descendants of
+    /// `root` in its frame, plus DOM-supplemented actions whose same-frame
+    /// parent is already inside.
+    fn ancestor_subtree(
+        &self,
+        tree: &SemanticTreeIndex,
+        root: &SemanticNodeIdentity,
+    ) -> HashSet<usize> {
+        let ancestry = SemanticAncestryIndex::new(&self.ancestry);
+        let mut identities = ancestry.descendant_identities(&self.ancestry, root);
+        let mut allowed: HashSet<usize> = identities
+            .iter()
+            .filter_map(|identity| match tree.nodes_for(identity) {
+                [idx] => Some(*idx),
+                _ => None,
+            })
+            .collect();
+        // A supplemented action has no raw AX node. Admit it only when its
+        // identity is unique and its parent is already inside; repeat so a
+        // supplement under a supplement is reached.
+        loop {
+            let additions = self
+                .nodes
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, node)| {
+                    if allowed.contains(&idx) {
+                        return None;
+                    }
+                    let identity = SemanticNodeIdentity {
+                        ax_id: node.ax_id.clone(),
+                        frame: node.frame.clone(),
+                    };
+                    if !ancestry.nodes_for(&identity).is_empty()
+                        || tree.nodes_for(&identity).len() != 1
+                    {
+                        return None;
+                    }
+                    let parent = SemanticNodeIdentity {
+                        ax_id: node.parent_ax_id.clone()?,
+                        frame: node.frame.clone(),
+                    };
+                    identities.contains(&parent).then_some((idx, identity))
+                })
+                .collect::<Vec<_>>();
+            if additions.is_empty() {
+                break;
+            }
+            for (idx, identity) in additions {
+                allowed.insert(idx);
+                identities.insert(identity);
+            }
+        }
+        allowed
     }
 
     /// Prove that an ancestor-scoped subtree is one unambiguous same-frame AX
@@ -1494,102 +1539,44 @@ fn rank(node: &SemanticNode) -> u8 {
     }
 }
 
-fn scoped_indices(
-    nodes: &[SemanticNode],
-    tree: &SemanticTreeIndex,
-    ancestry_nodes: &[SemanticAncestryNode],
-    ancestry: &SemanticAncestryIndex,
-    query: Option<&str>,
-    scope_identity: Option<&SemanticNodeIdentity>,
-) -> Vec<usize> {
+/// Nodes under the first node with `scope_backend`, following filtered
+/// `childIds` by AX id. This is the direct `scope_ref` contract.
+fn backend_subtree(nodes: &[SemanticNode], scope_backend: i64) -> HashSet<usize> {
+    let by_ax_id: HashMap<&str, usize> = nodes
+        .iter()
+        .enumerate()
+        .map(|(idx, node)| (node.ax_id.as_str(), idx))
+        .collect();
     let mut allowed = HashSet::new();
-    if let Some(scope_identity) = scope_identity {
-        if tree.nodes_for(scope_identity).len() != 1 {
-            return Vec::new();
-        }
-        let mut allowed_identities = ancestry.descendant_identities(ancestry_nodes, scope_identity);
-        if ancestry.nodes_for(scope_identity).is_empty() {
-            // A legacy direct scope can be rooted at a DOM-supplemented
-            // semantic action, which has no raw AX node. Preserve the old
-            // filtered-tree traversal only for that compatibility case. The
-            // ancestor route validates a raw root before page() and can never
-            // enter this fallback.
-            let [scope_idx] = tree.nodes_for(scope_identity) else {
-                return Vec::new();
-            };
-            let mut stack = vec![*scope_idx];
-            let mut expanded = HashSet::new();
-            while let Some(idx) = stack.pop() {
-                if !expanded.insert(idx) {
-                    continue;
-                }
-                let node = &nodes[idx];
-                allowed_identities.insert(SemanticNodeIdentity {
-                    ax_id: node.ax_id.clone(),
-                    frame: node.frame.clone(),
-                });
-                for child_ax_id in &node.child_ax_ids {
-                    let child_identity = SemanticNodeIdentity {
-                        ax_id: child_ax_id.clone(),
-                        frame: node.frame.clone(),
-                    };
-                    if let [child_idx] = tree.nodes_for(&child_identity) {
-                        stack.push(*child_idx);
-                    }
-                }
+    if let Some(scope) = nodes
+        .iter()
+        .find(|node| node.backend_node_id == Some(scope_backend))
+    {
+        let mut stack = vec![scope.ax_id.as_str()];
+        while let Some(ax_id) = stack.pop() {
+            if !allowed.insert(ax_id) {
+                continue;
             }
-        }
-        for identity in &allowed_identities {
-            if let [idx] = tree.nodes_for(identity) {
-                allowed.insert(*idx);
+            if let Some(idx) = by_ax_id.get(ax_id) {
+                stack.extend(nodes[*idx].child_ax_ids.iter().map(String::as_str));
             }
-        }
-
-        // DOM supplementation can add a visible action that has no raw AX
-        // node. Admit it only when its identity is unique, its exact-frame
-        // parent is already proven inside the scope, and no raw node with the
-        // same identity exists. Repeat to support safely chained supplements.
-        loop {
-            let additions = nodes
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, node)| {
-                    if allowed.contains(&idx) {
-                        return None;
-                    }
-                    let identity = SemanticNodeIdentity {
-                        ax_id: node.ax_id.clone(),
-                        frame: node.frame.clone(),
-                    };
-                    if !ancestry.nodes_for(&identity).is_empty()
-                        || tree.nodes_for(&identity).len() != 1
-                    {
-                        return None;
-                    }
-                    let parent = SemanticNodeIdentity {
-                        ax_id: node.parent_ax_id.clone()?,
-                        frame: node.frame.clone(),
-                    };
-                    allowed_identities
-                        .contains(&parent)
-                        .then_some((idx, identity))
-                })
-                .collect::<Vec<_>>();
-            if additions.is_empty() {
-                break;
-            }
-            for (idx, identity) in additions {
-                allowed.insert(idx);
-                allowed_identities.insert(identity);
-            }
-        }
-
-        if allowed.is_empty() {
-            return Vec::new();
         }
     }
+    nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| allowed.contains(node.ax_id.as_str()))
+        .map(|(idx, _)| idx)
+        .collect()
+}
+
+fn scoped_indices(
+    nodes: &[SemanticNode],
+    query: Option<&str>,
+    allowed: Option<&HashSet<usize>>,
+) -> Vec<usize> {
     let query = query.map(|value| value.trim().to_ascii_lowercase());
-    let in_scope = |idx: usize| scope_identity.is_none() || allowed.contains(&idx);
+    let in_scope = |idx: usize| allowed.is_none_or(|allowed| allowed.contains(&idx));
     let exact_match_exists = query.as_ref().is_some_and(|query| {
         !query.is_empty()
             && nodes
@@ -1651,38 +1638,37 @@ fn query_score(node: &SemanticNode, query: &str) -> usize {
         .count()
 }
 
+/// The parent of `idx` in its own frame, or `None` when that parent is
+/// absent or ambiguous.
+fn framed_parent(nodes: &[SemanticNode], tree: &SemanticTreeIndex, idx: usize) -> Option<usize> {
+    let identity = SemanticNodeIdentity {
+        ax_id: nodes[idx].parent_ax_id.clone()?,
+        frame: nodes[idx].frame.clone(),
+    };
+    match tree.nodes_for(&identity) {
+        [parent] => Some(*parent),
+        _ => None,
+    }
+}
+
+/// Add each selected node's ancestors for outline context, stopping at
+/// `anchor` when one is given.
 fn with_ancestors(
-    nodes: &[SemanticNode],
-    tree: &SemanticTreeIndex,
     selected: &[usize],
-    scope_identity: Option<&SemanticNodeIdentity>,
+    parent_of: impl Fn(usize) -> Option<usize>,
+    anchor: Option<usize>,
 ) -> HashSet<usize> {
     let mut keep: HashSet<usize> = selected.iter().copied().collect();
     for idx in selected {
-        let frame = nodes[*idx].frame.clone();
-        if scope_identity
-            .is_some_and(|scope| scope.frame == frame && scope.ax_id == nodes[*idx].ax_id)
-        {
+        if Some(*idx) == anchor {
             continue;
         }
-        let mut parent = nodes[*idx].parent_ax_id.as_deref();
-        let mut visited = HashSet::new();
-        while let Some(parent_id) = parent {
-            let identity = SemanticNodeIdentity {
-                ax_id: parent_id.to_owned(),
-                frame: frame.clone(),
-            };
-            let [parent_idx] = tree.nodes_for(&identity) else {
-                break;
-            };
-            if !visited.insert(*parent_idx) {
+        let mut parent = parent_of(*idx);
+        while let Some(parent_idx) = parent {
+            if !keep.insert(parent_idx) || Some(parent_idx) == anchor {
                 break;
             }
-            keep.insert(*parent_idx);
-            if scope_identity == Some(&identity) {
-                break;
-            }
-            parent = nodes[*parent_idx].parent_ax_id.as_deref();
+            parent = parent_of(parent_idx);
         }
     }
     keep
@@ -1690,8 +1676,8 @@ fn with_ancestors(
 
 fn render_outline(
     nodes: &[SemanticNode],
-    tree: &SemanticTreeIndex,
     selected: &HashSet<usize>,
+    parent_of: impl Fn(usize) -> Option<usize>,
 ) -> String {
     let mut ordered: Vec<usize> = selected.iter().copied().collect();
     ordered.sort_by_key(|idx| nodes[*idx].document_order);
@@ -1702,26 +1688,18 @@ fn render_outline(
             continue;
         }
         let mut depth = 0;
-        let frame = node.frame.clone();
-        let mut parent = node.parent_ax_id.as_deref();
         let mut visited = HashSet::new();
-        while let Some(parent_id) = parent {
-            let identity = SemanticNodeIdentity {
-                ax_id: parent_id.to_owned(),
-                frame: frame.clone(),
-            };
-            let [parent_idx] = tree.nodes_for(&identity) else {
-                break;
-            };
-            if !visited.insert(*parent_idx) {
+        let mut parent = parent_of(idx);
+        while let Some(parent_idx) = parent {
+            if !visited.insert(parent_idx) {
                 break;
             }
-            if selected.contains(parent_idx)
-                && !matches!(nodes[*parent_idx].role.as_str(), "rootwebarea" | "webarea")
+            if selected.contains(&parent_idx)
+                && !matches!(nodes[parent_idx].role.as_str(), "rootwebarea" | "webarea")
             {
                 depth += 1;
             }
-            parent = nodes[*parent_idx].parent_ax_id.as_deref();
+            parent = parent_of(parent_idx);
         }
         let mut line = format!("{}- {}", "  ".repeat(depth), node.role);
         if let Some(name) = &node.name {
@@ -1912,13 +1890,18 @@ mod tests {
         ]);
         let source = document.nodes[2].to_ref_entry().unwrap();
         let anchor = document
-            .resolve_scope("p1:2", &source, Some("row"))
+            .resolve_ancestor_scope("p1:2", &source, "row")
             .expect("nearest row scope");
         assert_eq!(anchor.role, "row");
         assert_eq!(anchor.name.as_deref(), Some("Release 0.19.89"));
         assert_eq!(anchor.distance, 1);
 
-        let page = document.page(0, 300, Some("View release options"), Some(&anchor.identity));
+        let page = document.page(
+            0,
+            300,
+            Some("View release options"),
+            Some(SemanticScope::Ancestor(&anchor.identity)),
+        );
         let backends = page
             .selected
             .iter()
@@ -1994,11 +1977,16 @@ mod tests {
         ]);
         let source = document.nodes[4].to_ref_entry().unwrap();
         let anchor = document
-            .resolve_scope("p1:4", &source, Some("RoW"))
+            .resolve_ancestor_scope("p1:4", &source, "row")
             .expect("nearest nested row");
         assert_eq!(anchor.name.as_deref(), Some("Inner"));
         assert_eq!(anchor.distance, 1);
-        let page = document.page(0, 300, Some("View release options"), Some(&anchor.identity));
+        let page = document.page(
+            0,
+            300,
+            Some("View release options"),
+            Some(SemanticScope::Ancestor(&anchor.identity)),
+        );
         assert_eq!(page.selected.len(), 1);
         assert_eq!(page.selected[0].backend_node_id, Some(22));
         assert!(!page.outline.contains("Outer"), "{}", page.outline);
@@ -2033,24 +2021,24 @@ mod tests {
         let mut missing = source.clone();
         missing.backend_node_id = 999;
         assert_eq!(
-            document.resolve_scope("p1:9", &missing, Some("row")),
+            document.resolve_ancestor_scope("p1:9", &missing, "row"),
             Err(SemanticScopeFailure::SourceMissing)
         );
         assert_eq!(
-            document.resolve_scope("p1:1", &source, Some("row")),
+            document.resolve_ancestor_scope("p1:1", &source, "row"),
             Err(SemanticScopeFailure::AncestorMissing)
         );
 
         let mut changed = source.clone();
         changed.label = Some("previous virtualized version".to_owned());
         assert_eq!(
-            document.resolve_scope("p1:1", &changed, Some("row")),
+            document.resolve_ancestor_scope("p1:1", &changed, "row"),
             Err(SemanticScopeFailure::SourceChanged)
         );
         let mut non_semantic = source.clone();
         non_semantic.semantic = false;
         assert_eq!(
-            document.resolve_scope("p1:1", &non_semantic, Some("row")),
+            document.resolve_ancestor_scope("p1:1", &non_semantic, "row"),
             Err(SemanticScopeFailure::SourceNotSemantic)
         );
 
@@ -2060,7 +2048,7 @@ mod tests {
         }
         let source = unproven.nodes[1].to_ref_entry().unwrap();
         assert_eq!(
-            unproven.resolve_scope("p1:1", &source, Some("row")),
+            unproven.resolve_ancestor_scope("p1:1", &source, "row"),
             Err(SemanticScopeFailure::UnprovenFrame)
         );
     }
@@ -2080,7 +2068,7 @@ mod tests {
         )]);
         let source = broken.nodes[0].to_ref_entry().unwrap();
         assert_eq!(
-            broken.resolve_scope("p1:0", &source, Some("row")),
+            broken.resolve_ancestor_scope("p1:0", &source, "row"),
             Err(SemanticScopeFailure::BrokenParent)
         );
 
@@ -2108,7 +2096,7 @@ mod tests {
         ]);
         let source = cyclic.nodes[0].to_ref_entry().unwrap();
         assert_eq!(
-            cyclic.resolve_scope("p1:0", &source, Some("row")),
+            cyclic.resolve_ancestor_scope("p1:0", &source, "row"),
             Err(SemanticScopeFailure::Cycle)
         );
     }
@@ -2141,7 +2129,7 @@ mod tests {
         ]);
         let source = ambiguous.nodes[0].to_ref_entry().unwrap();
         assert_eq!(
-            ambiguous.resolve_scope("p1:0", &source, Some("row")),
+            ambiguous.resolve_ancestor_scope("p1:0", &source, "row"),
             Err(SemanticScopeFailure::Ambiguous)
         );
 
@@ -2169,7 +2157,7 @@ mod tests {
         ]);
         let source = cross_frame.nodes[0].to_ref_entry().unwrap();
         assert_eq!(
-            cross_frame.resolve_scope("p1:0", &source, Some("row")),
+            cross_frame.resolve_ancestor_scope("p1:0", &source, "row"),
             Err(SemanticScopeFailure::CrossFrame)
         );
     }
@@ -2255,7 +2243,12 @@ mod tests {
             .ancestry
             .retain(|node| !node.ax_id.starts_with("dom-"));
         assert_eq!(supplemented.validate_ancestor_subtree(&root), Ok(()));
-        let page = supplemented.page(0, 300, Some("DOM supplement"), Some(&root));
+        let page = supplemented.page(
+            0,
+            300,
+            Some("DOM supplement"),
+            Some(SemanticScope::Ancestor(&root)),
+        );
         assert_eq!(page.selected.len(), 1);
         assert_eq!(page.selected[0].backend_node_id, Some(2));
     }
@@ -2305,13 +2298,18 @@ mod tests {
             .and_then(SemanticNode::to_ref_entry)
             .expect("retained semantic source");
         let anchor = document
-            .resolve_scope("p1:source", &source, Some("row"))
+            .resolve_ancestor_scope("p1:source", &source, "row")
             .expect("row through ignored wrappers");
         assert_eq!(anchor.name.as_deref(), Some("Release 0.19.89"));
         assert_eq!(anchor.distance, 3);
         assert_eq!(document.validate_ancestor_subtree(&anchor.identity), Ok(()));
 
-        let page = document.page(0, 300, Some("View release options"), Some(&anchor.identity));
+        let page = document.page(
+            0,
+            300,
+            Some("View release options"),
+            Some(SemanticScope::Ancestor(&anchor.identity)),
+        );
         assert_eq!(page.total_nodes, 1);
         assert_eq!(page.selected.len(), 1);
         assert_eq!(page.selected[0].backend_node_id, Some(12));
@@ -2353,7 +2351,7 @@ mod tests {
         ];
         let source = cyclic.nodes[0].to_ref_entry().unwrap();
         assert_eq!(
-            cyclic.resolve_scope("p1:source", &source, Some("row")),
+            cyclic.resolve_ancestor_scope("p1:source", &source, "row"),
             Err(SemanticScopeFailure::Cycle)
         );
 
@@ -2395,7 +2393,7 @@ mod tests {
         ]);
         let source = ambiguous.nodes[1].to_ref_entry().unwrap();
         assert_eq!(
-            ambiguous.resolve_scope("p1:source", &source, Some("row")),
+            ambiguous.resolve_ancestor_scope("p1:source", &source, "row"),
             Err(SemanticScopeFailure::Ambiguous)
         );
         let row = SemanticNodeIdentity {
@@ -2406,6 +2404,156 @@ mod tests {
             ambiguous.validate_ancestor_subtree(&row),
             Err(SemanticScopeFailure::Ambiguous)
         );
+    }
+
+    #[test]
+    fn ancestor_scope_skips_a_source_that_has_the_requested_role() {
+        let main = proven_frame(FrameKind::Main, "main");
+        let nested = scope_document(vec![
+            scope_node(
+                "outer",
+                None,
+                &["source"],
+                Some(1),
+                "row",
+                Some("Outer"),
+                main.clone(),
+                0,
+            ),
+            scope_node(
+                "source",
+                Some("outer"),
+                &["action"],
+                Some(2),
+                "row",
+                Some("Inner"),
+                main.clone(),
+                1,
+            ),
+            scope_node(
+                "action",
+                Some("source"),
+                &[],
+                Some(3),
+                "button",
+                Some("Options"),
+                main.clone(),
+                2,
+            ),
+        ]);
+        let source = nested.nodes[1].to_ref_entry().unwrap();
+        let anchor = nested
+            .resolve_ancestor_scope("p1:1", &source, "row")
+            .expect("the strict ancestor row");
+        assert_eq!(anchor.name.as_deref(), Some("Outer"));
+        assert_eq!(anchor.distance, 1);
+
+        let alone = scope_document(vec![scope_node(
+            "source",
+            None,
+            &[],
+            Some(2),
+            "row",
+            Some("Only"),
+            main,
+            0,
+        )]);
+        let source = alone.nodes[0].to_ref_entry().unwrap();
+        assert_eq!(
+            alone.resolve_ancestor_scope("p1:0", &source, "row"),
+            Err(SemanticScopeFailure::AncestorMissing)
+        );
+    }
+
+    #[test]
+    fn ancestor_subtree_with_a_child_frame_edge_refuses() {
+        let main = proven_frame(FrameKind::Main, "main");
+        let iframe = proven_frame(FrameKind::Iframe, "child");
+        let document = scope_document(vec![
+            scope_node(
+                "row",
+                None,
+                &["frame-root"],
+                Some(1),
+                "row",
+                None,
+                main.clone(),
+                0,
+            ),
+            scope_node(
+                "frame-root",
+                Some("row"),
+                &[],
+                Some(2),
+                "button",
+                Some("Options"),
+                iframe,
+                1,
+            ),
+        ]);
+        let root = SemanticNodeIdentity {
+            ax_id: "row".to_owned(),
+            frame: main,
+        };
+        assert_eq!(
+            document.validate_ancestor_subtree(&root),
+            Err(SemanticScopeFailure::CrossFrame)
+        );
+    }
+
+    #[test]
+    fn direct_scope_still_follows_child_ids_into_same_process_iframes() {
+        let main = proven_frame(FrameKind::Main, "main");
+        let iframe = proven_frame(FrameKind::Iframe, "child");
+        let document = scope_document(vec![
+            scope_node(
+                "region",
+                None,
+                &["frame-root"],
+                Some(1),
+                "region",
+                None,
+                main.clone(),
+                0,
+            ),
+            scope_node(
+                "frame-root",
+                Some("region"),
+                &["frame-action"],
+                Some(2),
+                "rootwebarea",
+                None,
+                iframe.clone(),
+                1,
+            ),
+            scope_node(
+                "frame-action",
+                Some("frame-root"),
+                &[],
+                Some(3),
+                "button",
+                Some("Options"),
+                iframe,
+                2,
+            ),
+            scope_node(
+                "outside",
+                None,
+                &[],
+                Some(4),
+                "button",
+                Some("Options"),
+                main,
+                3,
+            ),
+        ]);
+        let page = document.page(0, 300, Some("Options"), Some(SemanticScope::Backend(1)));
+        let backends = page
+            .selected
+            .iter()
+            .filter_map(|node| node.backend_node_id)
+            .collect::<Vec<_>>();
+        assert_eq!(backends, vec![3]);
     }
 
     #[test]

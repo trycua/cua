@@ -834,6 +834,17 @@ static RULES: &[Rule] = &[
         },
     },
     Rule {
+        codes: &["browser_scope_unavailable"],
+        build: |c| {
+            RecoveryHint::new(
+                "The driver could not prove that ancestor scope, so it returned nothing. Read the page \
+                 again with get_browser_state for a fresh scope_ref. Do not retry the query without \
+                 its scope.",
+            )
+            .call(c.read_page())
+        },
+    },
+    Rule {
         codes: &["browser_reconnect_exhausted"],
         build: |c| {
             RecoveryHint::new(

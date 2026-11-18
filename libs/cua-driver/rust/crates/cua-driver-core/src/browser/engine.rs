@@ -53,7 +53,7 @@ use super::reconnect::{ReconnectGates, ReconnectKey};
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::semantic::{
     build_dom_index, build_layout_index, compose_accessibility_tree, parse_viewport,
-    OmissionCounts, SemanticDocument, SemanticNode, SemanticNodeIdentity, SemanticScopeAnchor,
+    OmissionCounts, SemanticDocument, SemanticNode, SemanticScope, SemanticScopeAnchor,
     SemanticScopeFailure, DEFAULT_SEMANTIC_NODE_BUDGET, SEMANTIC_COMPUTED_STYLES,
 };
 use super::store::{
@@ -102,10 +102,9 @@ fn refuse(code: BrowserRefusalCode, msg: impl Into<String>) -> BrowserRefusal {
 
 fn semantic_scope_refusal(
     source_ref: &str,
-    ancestor_role: Option<&str>,
+    ancestor_role: &str,
     failure: SemanticScopeFailure,
 ) -> BrowserRefusal {
-    let requested = ancestor_role.unwrap_or("the referenced subtree");
     BrowserRefusal::new(
         if failure == SemanticScopeFailure::SourceChanged {
             BrowserRefusalCode::BrowserRefStale
@@ -113,7 +112,7 @@ fn semantic_scope_refusal(
             BrowserRefusalCode::BrowserScopeUnavailable
         },
         format!(
-            "could not prove one same-frame semantic scope for ref {source_ref} and {requested:?}"
+            "could not prove one same-frame {ancestor_role:?} ancestor scope for ref {source_ref}"
         ),
     )
     .with_detail(json!({
@@ -2516,6 +2515,7 @@ impl BrowserEngine {
                         semantic: None,
                         semantic_root_identity: None,
                         continuations: HashMap::new(),
+                        continuation_anchors: HashMap::new(),
                     },
                 );
             }
@@ -2797,6 +2797,7 @@ impl BrowserEngine {
             let (snapshot, continuation) = self
                 .store
                 .resolve_semantic_continuation(session, target_id, tab_id, token)?;
+            let scope_anchor = snapshot.continuation_anchors.get(token).cloned();
             let record = self.store.get_target(session, target_id)?;
             let tab = record.tabs.get(tab_id).cloned().ok_or_else(|| {
                 refuse(
@@ -2807,20 +2808,18 @@ impl BrowserEngine {
             if let Some(identity) = &snapshot.semantic_root_identity {
                 let conn = self.connection_for_record(session, &record).await?;
                 let cdp_session = self.attach(&conn, &tab.cdp_target_id).await?;
-                let tree = self
-                    .local_frame_tree(&conn, &cdp_session)
-                    .await
-                    .map_err(|error| match error {
+                let tree = self.local_frame_tree(&conn, &cdp_session).await.map_err(|error| {
+                    match error {
                         FrameTreeError::Unsupported => refuse(
                             BrowserRefusalCode::BrowserRouteUnavailable,
-                            "the browser no longer reports its frame tree, so the semantic \
-                             continuation's document identity cannot be re-proven",
+                            "the browser no longer reports its frame tree, so the semantic \n+                             continuation's document identity cannot be re-proven",
                         ),
                         FrameTreeError::Failed(error) => route_err(
                             "Page.getFrameTree failed during semantic continuation revalidation",
                             error,
                         ),
-                    })?;
+                    }
+                })?;
                 if !tree.proves(identity) {
                     self.store
                         .invalidate_tab_snapshots(session, target_id, tab_id);
@@ -2831,11 +2830,7 @@ impl BrowserEngine {
                     ));
                 }
             }
-            if let Some(anchor) = continuation
-                .scope_anchor
-                .as_ref()
-                .filter(|anchor| anchor.distance > 0)
-            {
+            if let Some(anchor) = &scope_anchor {
                 let conn = self.connection_for_record(session, &record).await?;
                 let cdp_session = self.attach(&conn, &tab.cdp_target_id).await?;
                 if !self
@@ -2865,7 +2860,12 @@ impl BrowserEngine {
                 continuation.offset,
                 DEFAULT_SEMANTIC_NODE_BUDGET,
                 continuation.query.as_deref(),
-                continuation.scope_identity.as_ref(),
+                match &scope_anchor {
+                    Some(anchor) => Some(SemanticScope::Ancestor(&anchor.identity)),
+                    None => continuation
+                        .scope_backend_node_id
+                        .map(SemanticScope::Backend),
+                },
             );
             let start_index = snapshot
                 .refs
@@ -2887,7 +2887,7 @@ impl BrowserEngine {
                 page,
                 document.complete,
                 "continuation",
-                continuation.scope_anchor.clone(),
+                scope_anchor.clone(),
                 oopif,
                 start_index,
             );
@@ -2899,15 +2899,18 @@ impl BrowserEngine {
                     .and_then(|tab| tab.snapshots.get_mut(&snapshot.id))
                 {
                     stored.continuations.remove(token);
+                    stored.continuation_anchors.remove(token);
                     stored.refs.extend(new_refs);
                     if let (Some(token), Some(offset)) = (next_token, next_offset) {
+                        if let Some(anchor) = scope_anchor {
+                            stored.continuation_anchors.insert(token.clone(), anchor);
+                        }
                         stored.continuations.insert(
                             token,
                             SemanticContinuation {
                                 offset,
                                 query: continuation.query.clone(),
-                                scope_identity: continuation.scope_identity.clone(),
-                                scope_anchor: continuation.scope_anchor.clone(),
+                                scope_backend_node_id: continuation.scope_backend_node_id,
                                 oopif_supported: continuation.oopif_supported,
                                 oopif_frames: continuation.oopif_frames,
                             },
@@ -2918,12 +2921,6 @@ impl BrowserEngine {
             return Ok(outcome);
         }
 
-        if scope_ancestor_role.is_some() && (scope_ref.is_none() || query.is_none()) {
-            return Err(refuse(
-                BrowserRefusalCode::BrowserScopeUnavailable,
-                "scope_ancestor_role requires both scope_ref and query",
-            ));
-        }
         let scope_entry = match scope_ref {
             Some(external) => Some((
                 external,
@@ -3061,50 +3058,31 @@ impl BrowserEngine {
             semantic.complete = false;
         }
 
-        let mut scope_identity = None;
-        let scope_anchor = match &scope_entry {
-            Some((external, entry)) => {
-                match semantic.resolve_scope(external, entry, scope_ancestor_role) {
-                    Ok(anchor) => {
-                        scope_identity = Some(anchor.identity.clone());
-                        Some(anchor)
-                    }
-                    // Legacy direct subtree reads returned an empty successful
-                    // page when their backend node was absent from the fresh
-                    // semantic composition. Preserve that wire behavior while
-                    // keeping ancestor scopes strict.
-                    Err(SemanticScopeFailure::SourceMissing) if scope_ancestor_role.is_none() => {
-                        scope_identity = Some(SemanticNodeIdentity {
-                            ax_id: String::new(),
-                            frame: entry.frame.clone(),
-                        });
-                        None
-                    }
-                    Err(failure) => {
-                        return Err(semantic_scope_refusal(
-                            external,
-                            scope_ancestor_role,
-                            failure,
-                        ))
-                    }
-                }
+        let scope_anchor = match (&scope_entry, scope_ancestor_role) {
+            (Some((external, entry)), Some(role)) => {
+                let refusal = |failure| semantic_scope_refusal(external, role, failure);
+                let anchor = semantic
+                    .resolve_ancestor_scope(external, entry, role)
+                    .map_err(refusal)?;
+                semantic
+                    .validate_ancestor_subtree(&anchor.identity)
+                    .map_err(refusal)?;
+                Some(anchor)
             }
-            None => None,
+            _ => None,
         };
-        if let (Some(external), Some(anchor), Some(_)) =
-            (scope_ref, scope_anchor.as_ref(), scope_ancestor_role)
-        {
-            semantic
-                .validate_ancestor_subtree(&anchor.identity)
-                .map_err(|failure| {
-                    semantic_scope_refusal(external, scope_ancestor_role, failure)
-                })?;
-        }
+        let scope_backend_node_id = scope_entry
+            .as_ref()
+            .filter(|_| scope_anchor.is_none())
+            .map(|(_, entry)| entry.backend_node_id);
         let page = semantic.page(
             0,
             DEFAULT_SEMANTIC_NODE_BUDGET,
             query,
-            scope_identity.as_ref(),
+            match &scope_anchor {
+                Some(anchor) => Some(SemanticScope::Ancestor(&anchor.identity)),
+                None => scope_backend_node_id.map(SemanticScope::Backend),
+            },
         );
         let next_offset = page.next_offset;
         let snapshot_id = self.store.mint_snapshot_id();
@@ -3135,14 +3113,17 @@ impl BrowserEngine {
                     stored_tab.url = url.clone();
                     stored_tab.title = title;
                     let mut continuations = HashMap::new();
+                    let mut continuation_anchors = HashMap::new();
                     if let (Some(token), Some(offset)) = (continuation_token, next_offset) {
+                        if let Some(anchor) = scope_anchor.clone() {
+                            continuation_anchors.insert(token.clone(), anchor);
+                        }
                         continuations.insert(
                             token,
                             SemanticContinuation {
                                 offset,
                                 query: query.map(str::to_owned),
-                                scope_identity: scope_identity.clone(),
-                                scope_anchor: scope_anchor.clone(),
+                                scope_backend_node_id,
                                 oopif_supported: matches!(oopif, OopifStatus::Attached(_)),
                                 oopif_frames: oopif.frames(),
                             },
@@ -3159,6 +3140,7 @@ impl BrowserEngine {
                             semantic: Some(semantic),
                             semantic_root_identity,
                             continuations,
+                            continuation_anchors,
                         },
                     );
                 }
@@ -3582,13 +3564,11 @@ mod tests {
 
     #[test]
     fn semantic_scope_source_drift_is_stale_and_unproven_frames_are_unavailable() {
-        let changed =
-            semantic_scope_refusal("p1:7", Some("row"), SemanticScopeFailure::SourceChanged);
+        let changed = semantic_scope_refusal("p1:7", "row", SemanticScopeFailure::SourceChanged);
         assert_eq!(changed.code, BrowserRefusalCode::BrowserRefStale);
         assert_eq!(changed.detail.unwrap()["reason"], "source_changed");
 
-        let unproven =
-            semantic_scope_refusal("p1:7", Some("row"), SemanticScopeFailure::UnprovenFrame);
+        let unproven = semantic_scope_refusal("p1:7", "row", SemanticScopeFailure::UnprovenFrame);
         assert_eq!(unproven.code, BrowserRefusalCode::BrowserScopeUnavailable);
         assert_eq!(unproven.detail.unwrap()["reason"], "unproven_frame");
     }

@@ -400,7 +400,10 @@ pub fn launch_app(bundle_id: &str) -> anyhow::Result<i32> {
     // NSURL verbatim. Going via a `path` string and back loses the
     // alias/cryptex metadata Safari (and other Cryptex-installed apps)
     // need to relaunch from `/System/Cryptexes/App/...`.
-    let cfg = background_launch_config(Some(bundle_id.to_owned()));
+    let cfg = nsworkspace::OpenConfig {
+        apple_event_bundle_id: Some(bundle_id.to_owned()),
+        ..Default::default()
+    };
     let running = nsworkspace::open_application(bundle_id, &cfg)
         .with_context(|| format!("Failed to launch {bundle_id}"))?;
     let pid: i32 = unsafe { running.processIdentifier() };
@@ -411,18 +414,14 @@ pub fn launch_app(bundle_id: &str) -> anyhow::Result<i32> {
 /// Returns the pid on success.
 pub(crate) fn launch_located(located: AppLocator) -> anyhow::Result<i32> {
     let (app_ref, bid) = located.app_ref_and_bundle_id();
-    let cfg = background_launch_config(bid);
+    let cfg = nsworkspace::OpenConfig {
+        apple_event_bundle_id: bid,
+        ..Default::default()
+    };
     let running = nsworkspace::open_application(&app_ref, &cfg)
         .with_context(|| format!("Failed to launch '{app_ref}'"))?;
     let pid: i32 = unsafe { running.processIdentifier() };
     Ok(pid)
-}
-
-fn background_launch_config(apple_event_bundle_id: Option<String>) -> nsworkspace::OpenConfig {
-    nsworkspace::OpenConfig {
-        apple_event_bundle_id,
-        ..Default::default()
-    }
 }
 
 /// Launch a bundle with URL handoff. Mirrors Swift's
@@ -1393,9 +1392,8 @@ mod tests {
         assert_eq!(super::get_app_name_for_pid(pid), Some(expected));
     }
     use super::{
-        all_pids, background_launch_config, bundle_root_of_executable, bundles_electron,
-        executable_bundles_electron, finder_folder_handoff, merge_app_lists, path_of_pid,
-        running_apps_from_processes, AppInfo,
+        all_pids, bundle_root_of_executable, bundles_electron, executable_bundles_electron,
+        finder_folder_handoff, merge_app_lists, path_of_pid, running_apps_from_processes, AppInfo,
     };
     use std::collections::HashSet;
 
@@ -1410,19 +1408,6 @@ mod tests {
             kind: None,
             last_used: None,
         }
-    }
-
-    #[test]
-    fn bundle_and_name_launches_share_background_launch_config() {
-        let bundle_route = background_launch_config(Some("com.example.App".to_owned()));
-        let name_route = background_launch_config(Some("com.example.App".to_owned()));
-
-        assert_eq!(
-            bundle_route.apple_event_bundle_id,
-            name_route.apple_event_bundle_id
-        );
-        assert!(!bundle_route.creates_new_instance);
-        assert!(!name_route.creates_new_instance);
     }
 
     fn states(pairs: &[(&str, i32, bool, Option<&str>)]) -> super::RunningAppStates {

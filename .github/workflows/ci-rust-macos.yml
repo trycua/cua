@@ -85,6 +85,10 @@ jobs:
           # clipboard round trip that would clobber a developer's clipboard.
           CUA_TEST_ALLOW_CLIPBOARD: "1"
         run: cargo test --locked -p platform-macos --lib
+      # Its own process: it parks the real main thread in serve_main_queue.
+      - name: Run platform-macos main-queue-without-overlay test
+        working-directory: libs/cua-driver/rust
+        run: cargo test --locked -p platform-macos --test main_queue_without_overlay
       - name: Run cua-driver-core unit tests on macOS
         working-directory: libs/cua-driver/rust
         run: cargo test --locked -p cua-driver-core --lib

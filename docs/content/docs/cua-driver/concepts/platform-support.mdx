@@ -80,7 +80,11 @@ outside the normal installer, adds two independent agent seats (`Cua-Agent`,
   user's seat, so drive their pages with the browser tools.
 - Qt 6 apps take background clicks, scrolls and drags but not keys: Qt sends keys
   only to the window the user has active, so background keys refuse
-  (`client_drops_background_keys`).
+  (`client_drops_background_keys`). To admit a Qt app you have checked
+  yourself, list its absolute executable path in
+  `$XDG_CONFIG_HOME/cua-driver/hyprland-apps.txt`, one per line. Its results say
+  the user admitted it (`admission: "user"`). The list does not admit XWayland,
+  Chromium or Electron windows.
 - The plugin's Hyprland ABI and compiler toolchain must match the compositor.
 - Not covered: XWayland raw input; Unicode and IME; multiple layouts; modified
   pointer gestures.

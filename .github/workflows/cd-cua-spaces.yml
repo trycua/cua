@@ -2431,7 +2431,20 @@ jobs:
             # Cua Spaces is the one package allowed to be the repo-wide "Latest".
             # Every other release workflow passes --latest=false (release-latest-policy test).
             flags+=(--prerelease=false)
-            [ "$GITHUB_REPOSITORY" = trycua/cua ] && flags+=(--latest)
+            # Two releases build at once and finish in any order. One that finishes
+            # after a newer published stable release must not take Latest from it
+            # (0.37.0 did, after 0.37.1, on 16 Nov 2026).
+            if [ "$GITHUB_REPOSITORY" = trycua/cua ]; then
+              newer="$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --exclude-pre-releases --limit 30 \
+                --json tagName --jq '.[].tagName' | grep -E '^cua-spaces-v[0-9]+\.[0-9]+\.[0-9]+$' \
+                | sed 's/^cua-spaces-v//' | grep -vxF "$VERSION" | sort -V | tail -1 || true)"
+              if [ -n "$newer" ] && [ "$(printf '%s\n%s\n' "$newer" "$VERSION" | sort -V | tail -1)" = "$newer" ]; then
+                echo "::warning::cua-spaces-v$newer is already published and newer; publishing $VERSION without Latest"
+                flags+=(--latest=false)
+              else
+                flags+=(--latest)
+              fi
+            fi
           fi
           if [ "$GITHUB_REPOSITORY" != trycua/cua ] || grep -q UNSIGNED signing/*.txt; then
             label="staging"; [ "$GITHUB_REPOSITORY" = trycua/cua ] && label="test"

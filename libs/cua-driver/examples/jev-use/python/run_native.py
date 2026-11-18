@@ -35,11 +35,13 @@ from decision_models import DecisionRequest, TypeSafeDecisionModel, choose
 from driver_env import driver_environment
 from jev_adapter import choose_mock_for_task
 from native import NativeObservation, NativeObservationError
+from no_progress import NoProgressGuard
 from native_roles import Platform
 from native_tasks import (
     NATIVE_TASK_IDS,
     NativeTask,
     OracleError,
+    WindowScope,
     check_intermediate_effect,
     has_declared_steps_remaining,
     native_task,
@@ -71,8 +73,10 @@ def host_platform() -> Platform:
 
 
 def is_stale_token_error(error: BaseException) -> bool:
-    if isinstance(error, DriverToolError) and error.code in STALE_TOKEN_CODES:
-        return True
+    if isinstance(error, DriverToolError) and error.code:
+        # Structured codes outrank diagnostic text; a different refusal must
+        # not be turned into stale-token recovery by an incidental message.
+        return error.code in STALE_TOKEN_CODES
     return "element_token is stale" in str(error)
 
 
@@ -129,7 +133,11 @@ async def find_window(driver: Driver, pid: int, title: str) -> dict[str, Any]:
 
 
 async def observe(
-    driver: Driver, task: NativeTask, pid: int, window_id: int, timeout_ms: int | None = None
+    driver: Driver,
+    scope: WindowScope | None,
+    pid: int,
+    window_id: int,
+    timeout_ms: int | None = None,
 ) -> NativeObservation:
     arguments: dict[str, Any] = {
         "pid": pid,
@@ -140,7 +148,7 @@ async def observe(
         # completeness flags of the walk; cua-driver 0.35 returns the lean
         # markdown-only read unless asked for the full response.
         "full_output": True,
-        **task.scope.window_state_arguments(),
+        **(scope.window_state_arguments() if scope else {}),
     }
     if timeout_ms is not None:
         arguments["timeout_ms"] = timeout_ms
@@ -188,7 +196,7 @@ async def observe_step(
         return TaskSources(ax=ax, foreground_ids=foreground_ids)
 
     observe_started = time.perf_counter()
-    first = await observe(driver, task, pid, window_id)
+    first = await observe(driver, task.scope, pid, window_id)
     add_phase(phase_timings, "semantic_observe_ms", observe_started)
     build_started = time.perf_counter()
     sources = build(first)
@@ -200,7 +208,7 @@ async def observe_step(
     if observation.truncated or (observation.partial and native_count == 0):
         record = {"reobserved": True, "reason": "truncated" if observation.truncated else "partial_empty"}
         observe_started = time.perf_counter()
-        second = await observe(driver, task, pid, window_id, timeout_ms=REOBSERVE_TIMEOUT_MS)
+        second = await observe(driver, task.scope, pid, window_id, timeout_ms=REOBSERVE_TIMEOUT_MS)
         add_phase(phase_timings, "semantic_observe_ms", observe_started)
         build_started = time.perf_counter()
         sources = build(second)
@@ -349,6 +357,7 @@ async def run_task(args: argparse.Namespace, task: NativeTask) -> str:
         log_path.write_text("", encoding="utf-8")
     history: list[dict[str, Any]] = []
     foreground_ids: set[str] = set()
+    no_progress = NoProgressGuard(task.id)
     label = f"jev-native-python-{uuid.uuid4().hex[:8]}"
     params = StdioServerParameters(
         command=os.getenv("CUA_DRIVER_BIN", "cua-driver"), args=["mcp"], env=driver_environment()
@@ -368,10 +377,24 @@ async def run_task(args: argparse.Namespace, task: NativeTask) -> str:
                  "platform": platform, "pid": args.pid, "window_id": window_id},
             )
             for step in range(1, task.max_steps + 1):
-                current = task.classify(task.read_oracle(), steps=step - 1)
+                oracle_state = task.read_oracle()
+                current = task.classify(oracle_state, steps=step - 1)
                 if current in {"verified", "refuted"}:
                     write_event(log_path, {"event": "outcome", "outcome": current, "step": step - 1})
                     return current
+                if (stop := no_progress.before_step(oracle_state)) is not None:
+                    write_event(
+                        log_path,
+                        {
+                            "event": "outcome",
+                            "outcome": "abstained",
+                            "reason": "no_progress",
+                            "pattern": stop.pattern,
+                            "streak": stop.streak,
+                            "step": step - 1,
+                        },
+                    )
+                    return "abstained"
 
                 started = time.perf_counter()
                 phase_timings: dict[str, float] = {}
@@ -443,6 +466,7 @@ async def run_task(args: argparse.Namespace, task: NativeTask) -> str:
 
                 if candidate.id == "reobserve":
                     history.append(task.history_entry(step, candidate.id))
+                    no_progress.note("reobserve", candidate.id)
                     write_event(log_path, {**base_event, "tool": None, "act_ms": 0.0, "action_ms": 0.0,
                                            "total_step_ms": round((time.perf_counter() - started) * 1000, 2)})
                     continue
@@ -460,6 +484,7 @@ async def run_task(args: argparse.Namespace, task: NativeTask) -> str:
                     if is_stale_token_error(error):
                         # Nothing else is dispatched; the next step observes again.
                         history.append(task.history_entry(step, candidate.id, stale=True))
+                        no_progress.note("stale", candidate.id)
                         write_event(log_path, {**base_event, "tool": candidate.tool,
                                                "act_ms": act_ms, "action_ms": act_ms,
                                                "total_step_ms": round((time.perf_counter() - started) * 1000, 2),
@@ -469,6 +494,7 @@ async def run_task(args: argparse.Namespace, task: NativeTask) -> str:
                     if refusal is not None:
                         foreground_ids.add(candidate.id)
                         history.append(task.history_entry(step, candidate.id, refusal=refusal))
+                        no_progress.note("refused", candidate.id)
                         write_event(log_path, {**base_event, "tool": candidate.tool, "act_ms": act_ms,
                                                "action_ms": act_ms,
                                                "total_step_ms": round((time.perf_counter() - started) * 1000, 2),
@@ -484,6 +510,7 @@ async def run_task(args: argparse.Namespace, task: NativeTask) -> str:
                 history.append(
                     task.history_entry(step, candidate.id, outcome=plan.outcomes.get(candidate.id))
                 )
+                no_progress.note("performed", candidate.id)
                 write_event(log_path, {**base_event, "tool": candidate.tool, "act_ms": act_ms,
                                        "action_ms": act_ms,
                                        "total_step_ms": round((time.perf_counter() - started) * 1000, 2),

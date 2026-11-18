@@ -372,7 +372,7 @@ When a cua-driver surprises you, diagnose cua-driver first:
   point.
 - **`stale_element_token` / `No cached UIA state`?** You either
   skipped `get_window_state` this turn or used a token from an older
-  snapshot. Snapshots are keyed on `(pid, window_id)`: tokens don't carry across windows of
+  snapshot. Snapshots are keyed on `(session, pid, window_id)`: tokens don't carry across windows of
   the same app. Re-snapshot with the same window_id you're about to
   click in.
 - **`Invalid window handle (0x80070578)`?** The HWND you passed is
@@ -395,11 +395,6 @@ When a cua-driver surprises you, diagnose cua-driver first:
   `capture_mode` param is **deprecated and ignored**: it's still accepted
   so old callers don't error, but both the tree and the image come back
   regardless of what you pass.
-- **`list_windows` returns Win32 windows but misses UWP / WebView2
-  windows?** UIA desktop enumeration may be degraded because a provider
-  is unresponsive. `list_windows` falls back to Win32-only output instead
-  of hanging; run `cua-driver doctor` and retry after the provider
-  recovers.
 - **Need full-display capture?** Use `get_desktop_state` only for a desktop
   coordinate loop. To verify a specific window, use
   `get_window_state(pid, window_id)` instead; it works while backgrounded.
@@ -522,7 +517,7 @@ Do not assume the window array is populated immediately on a cold launch.
 - **Before**: the pre-action snapshot resolves the `element_token`
   you're about to use. Targets from previous turns are stale; the
   server replaces the snapshot on every read, keyed on
-  `(pid, window_id)`, and lists the replaced ids in
+  `(session, pid, window_id)`, and lists the replaced ids in
   `invalidated_snapshot_ids`. Tokens from turn N don't resolve in turn
   N+1, and targets from window A don't resolve against window B of
   the same app. Skip this and element actions fail with

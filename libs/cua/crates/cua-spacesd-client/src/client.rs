@@ -108,6 +108,9 @@ pub struct ConnectOptions {
     pub connect_timeout: Duration,
     /// Timeout of the `GetCapabilities` probe.
     pub probe_timeout: Duration,
+    /// How long a process start waits for `ProcessStart`
+    /// ([`crate::process::PROCESS_START_DEADLINE`] by default).
+    pub start_timeout: Duration,
     /// Connection keepalive.
     pub keepalive: Keepalive,
     /// Reconnect / retry policy.
@@ -131,6 +134,7 @@ impl ConnectOptions {
             gateway: None,
             connect_timeout: Duration::from_secs(10),
             probe_timeout: Duration::from_secs(15),
+            start_timeout: crate::process::PROCESS_START_DEADLINE,
             keepalive: Keepalive::default(),
             retry: RetryPolicy::default(),
             probe: true,
@@ -183,6 +187,12 @@ impl ConnectOptions {
     /// Sets the probe timeout.
     pub fn probe_timeout(mut self, timeout: Duration) -> Self {
         self.probe_timeout = timeout;
+        self
+    }
+
+    /// Sets how long a process start waits for `ProcessStart`.
+    pub fn start_timeout(mut self, timeout: Duration) -> Self {
+        self.start_timeout = timeout;
         self
     }
 

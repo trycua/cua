@@ -37,8 +37,8 @@ export interface Settings {
   autoInstall?: boolean;
   /** The last update check (ms). */
   lastUpdateCheck?: number;
-  /** Update channel; defaults to the one the build was cut for (see updater.ts). */
-  updateChannel?: "stable" | "beta";
+  /** Update channel; defaults to the one the build was cut for (see updater.ts). `beta`, from before Nightly, reads as `nightly` (update-prefs.ts). */
+  updateChannel?: "stable" | "nightly" | "beta";
   /** The channel was picked in this app (Settings → About), not carried over from the Swift app. */
   updateChannelChosen?: boolean;
   /** Where the last picture-in-picture panel was left (pip.ts). */

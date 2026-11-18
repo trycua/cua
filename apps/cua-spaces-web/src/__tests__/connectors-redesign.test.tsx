@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { resetConnectedAppsState } from "@/hooks/use-connected-apps";
-import { resetConnectState } from "@/hooks/use-connectors";
+import { connectFailureLine, resetConnectState } from "@/hooks/use-connectors";
 import { mountApp, stubBrowserApis } from "./app-harness";
 
 stubBrowserApis();
@@ -65,7 +65,16 @@ describe.skipIf(!wasmBuilt)("Settings, Connections", () => {
     expect(claude.querySelector("[data-connector-connect]")?.textContent).toBe("Connect");
     expect(claude.textContent).toContain("Needs a sign-in to Anthropic.");
     expect(qa("[data-connectors-apps] [role=switch]").length).toBe(1); // Set up new apps automatically only
-    expect(qa("[data-connector-provider]").map((r) => r.dataset.connectorProvider)).toEqual(["anthropic", "openai", "openrouter", "google", "xai", "deepseek", "kimi", "custom"]);
+    expect(qa("[data-connector-provider]").map((r) => r.dataset.connectorProvider)).toEqual([
+      "anthropic",
+      "openai",
+      "openrouter",
+      "google",
+      "xai",
+      "deepseek",
+      "kimi",
+      "custom",
+    ]);
     expect(q("[data-connector-provider=anthropic]")!.textContent).toContain("Not connected");
     // Compact rows like the coding apps: a check and Connected, a chevron to the sheet, and nothing else on the row.
     const openai = q("[data-connector-provider=openai]")!;
@@ -81,7 +90,8 @@ describe.skipIf(!wasmBuilt)("Settings, Connections", () => {
     await found("[data-connector-app=claude-code]");
     const ids = qa("[data-connectors-apps] [data-connector-app]").map((r) => r.dataset.connectorApp);
     // Hermes, OpenCode, Goose and the rest are there with Show all still closed.
-    for (const harness of ["claude-code", "codex", "gemini-cli", "antigravity", "opencode", "goose", "pi", "hermes", "openclaw"]) expect(ids).toContain(harness);
+    for (const harness of ["claude-code", "codex", "gemini-cli", "antigravity", "opencode", "goose", "pi", "hermes", "openclaw"])
+      expect(ids).toContain(harness);
     expect(q("[data-connected-show-all]")!.getAttribute("aria-expanded")).toBe("false");
     // Not installed on this machine, not connected: Connect (never a bare Get it) and what it needs.
     const gemini = q("[data-connector-app=gemini-cli]")!;
@@ -111,7 +121,16 @@ describe.skipIf(!wasmBuilt)("Settings, Connections", () => {
     await found("[data-provider-sheet=anthropic]");
     await click(q("[data-provider-switch]")!);
     await found("[data-provider-picker]");
-    expect(qa("[data-provider-choice]").map((b) => b.dataset.providerChoice)).toEqual(["anthropic", "openai", "openrouter", "google", "xai", "deepseek", "kimi", "custom"]);
+    expect(qa("[data-provider-choice]").map((b) => b.dataset.providerChoice)).toEqual([
+      "anthropic",
+      "openai",
+      "openrouter",
+      "google",
+      "xai",
+      "deepseek",
+      "kimi",
+      "custom",
+    ]);
     fireEvent.change(q("[data-provider-picker-search]")!, { target: { value: "openr" } });
     await waitFor(() => expect(qa("[data-provider-choice]").map((b) => b.dataset.providerChoice)).toEqual(["openrouter"]));
     await click(q("[data-provider-choice=openrouter]")!);
@@ -187,6 +206,22 @@ describe.skipIf(!wasmBuilt)("Settings, Connections", () => {
     expect(calls.some((c) => c.op === "agents.signInStart" && (c.args as { agent: string }).agent === "codex")).toBe(true);
   });
 
+  it("a sign-in that can't start says why, in the words the host gave", async () => {
+    const calls: { op: string; args: unknown }[] = [];
+    const h = {
+      ...host(calls),
+      intercept: (op: string) => {
+        if (op === "agents.signInStart") throw new Error("Codex isn't installed on This Mac.");
+        return undefined;
+      },
+    };
+    await mountApp("/settings/connections", h);
+    await disconnect("openai");
+    await waitFor(() => expect(q("[data-connector-app=codex]")!.dataset.state).toBe("not-connected"));
+    await click(q("[data-connector-app=codex] [data-connector-connect]")!);
+    await waitFor(() => expect(connectFailureLine("codex")).toBe("Codex isn't installed on This Mac."));
+  });
+
   it("a key exported in your shell can be used; only its name is read first", async () => {
     const calls: { op: string; args: unknown }[] = [];
     await mountApp("/settings/connections", host(calls));
@@ -195,7 +230,10 @@ describe.skipIf(!wasmBuilt)("Settings, Connections", () => {
     expect(way.textContent).toContain("Use ANTHROPIC_API_KEY from your shell");
     await click(way);
     await waitFor(() => expect(q("[data-connector-provider=anthropic]")!.dataset.state).toBe("connected"));
-    expect(calls.filter((c) => c.op.startsWith("agentKeys.") && c.op !== "agentKeys.list" && c.op !== "agentKeys.check").map((c) => c.op)).toEqual(["agentKeys.shell", "agentKeys.fromShell"]);
+    expect(calls.filter((c) => c.op.startsWith("agentKeys.") && c.op !== "agentKeys.list" && c.op !== "agentKeys.check").map((c) => c.op)).toEqual([
+      "agentKeys.shell",
+      "agentKeys.fromShell",
+    ]);
   });
 
   it("an app's page switches one part off and on, leaving the other", async () => {
@@ -204,7 +242,9 @@ describe.skipIf(!wasmBuilt)("Settings, Connections", () => {
     await click(await found("[data-connector-toggle=mcp]"));
     await waitFor(() => expect(calls.some((c) => c.op === "agents.disconnect")).toBe(true));
     expect(calls.find((c) => c.op === "agents.disconnect")!.args).toEqual({ agents: ["claude-code"], signIn: false, skills: false, mcp: true });
-    await waitFor(() => expect(q("[data-connector-toggle=mcp]")!.getAttribute("aria-checked") ?? q("[data-connector-toggle=mcp]")!.dataset.checked).toMatch(/false|unchecked/));
+    await waitFor(() =>
+      expect(q("[data-connector-toggle=mcp]")!.getAttribute("aria-checked") ?? q("[data-connector-toggle=mcp]")!.dataset.checked).toMatch(/false|unchecked/),
+    );
     expect(q("[data-connector-toggle=skills]")!.getAttribute("aria-checked") ?? "true").not.toBe("false");
   });
 });

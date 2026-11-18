@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Background mouse injection via PostMessage.
 //!
 //! All clicks target the **deepest child** HWND at the click point
@@ -225,6 +228,7 @@ fn post_click_on(hwnd: HWND, x: i32, y: i32, count: usize, button: &str) -> Resu
 /// Post a press-drag-release gesture via PostMessage.
 ///
 /// Coordinates are root-hwnd client-area relative.
+#[allow(clippy::too_many_arguments)]
 pub fn post_drag(
     hwnd: u64,
     from_x: i32,
@@ -282,6 +286,7 @@ pub fn post_drag(
 /// under the start point and targets that HWND for the whole gesture (a drag
 /// stays within one control), with each point converted to the child's own
 /// client space. Endpoints are given in **screen** coordinates.
+#[allow(clippy::too_many_arguments)]
 pub fn post_drag_screen(
     root: u64,
     sx_from: i32,

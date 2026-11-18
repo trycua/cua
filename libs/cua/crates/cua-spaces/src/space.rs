@@ -375,9 +375,10 @@ impl Space {
         let _ = self.inner.image.set((reference, digest));
     }
 
-    /// Container or VM (`container`, `vm`) and CPU architecture (`arm64`,
-    /// `amd64`): what the guest reported at the handshake (its runtime and
-    /// arch), else the local sandbox's record. Empty when unknown.
+    /// Container, VM or microVM (`container`, `vm`, `microvm`) and CPU
+    /// architecture (`arm64`, `amd64`): the kind the local runtime recorded
+    /// (a microVM's guest reports itself as a container), else what the guest
+    /// reported at the handshake. Empty when unknown.
     pub fn platform(&self) -> (String, String) {
         use pb::{Architecture, Runtime};
         let caps = self.capabilities();
@@ -399,7 +400,9 @@ impl Space {
                 live.to_string()
             }
         };
-        (or(kind, recorded.0), or(arch, recorded.1))
+        // What the runtime that runs it recorded wins over what the guest
+        // says of itself (a microVM's guest reports a container).
+        (or(&recorded.0, kind.to_string()), or(arch, recorded.1))
     }
 
     pub(crate) fn set_platform(&self, kind: String, arch: String) {
@@ -687,6 +690,13 @@ pub struct SpaceInfo {
     /// that created the Space.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub labels: std::collections::BTreeMap<String, String>,
+    /// The Space no list shows: the home that warms in the background for
+    /// Home's prompt box until a person writes into it. `ls` and the tools
+    /// still return it, marked here, so it can be found, used, stopped or
+    /// deleted; it is not on the owner's account until then
+    /// ([`crate::registry::HIDDEN_LABEL`]).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hidden: bool,
     /// When the Space ends (Unix seconds), as set by
     /// [`crate::Spaces::set_lifetime`]; 0 when it has no lifetime.
     #[serde(default, skip_serializing_if = "is_zero")]
@@ -708,6 +718,29 @@ pub struct SpaceInfo {
     /// one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub egress_enforced: Option<crate::egress::Enforcement>,
+    /// Its network settings ([`crate::network`]), with a note when its
+    /// network is not what was asked. `None` when this computer keeps no
+    /// record of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<crate::network::SpaceNetwork>,
+    /// Its place in a tree of Spaces ([`crate::tree`]): `None` for a
+    /// top-level Space with nothing recorded about it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree: Option<crate::tree::TreeLink>,
+    /// When viewers may move the clipboard between this computer and the
+    /// Space ([`crate::clipboard`]). `viewing` unless it was set.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::clipboard::ClipboardSetting::is_default"
+    )]
+    pub clipboard: crate::clipboard::ClipboardSetting,
+    /// What it sees of the Cua Volume: its own folder (the default) or
+    /// nothing.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::registry::VolumeSetting::is_own"
+    )]
+    pub volume_setting: crate::registry::VolumeSetting,
     /// A Space that is a machine on the relay: who owns it and who else
     /// has it, as this account sees it ([`crate::sharing`]). `None` for
     /// other Spaces.
@@ -720,6 +753,17 @@ fn is_zero(n: &u64) -> bool {
 }
 
 impl SpaceInfo {
+    /// For a Space one of your computers provides: that computer's Space
+    /// id (`relay:<machine>`, or `direct:<addr>` for a host added by its
+    /// direct address). `None` for a computer and every other Space.
+    pub fn parent_space_id(&self) -> Option<String> {
+        match self.host.as_str() {
+            "" => None,
+            h if h.starts_with("direct:") => Some(h.to_string()),
+            h => Some(format!("relay:{h}")),
+        }
+    }
+
     /// The name people see: [`Self::display_name`] when it was renamed,
     /// else [`Self::name`].
     pub fn shown_name(&self) -> &str {
@@ -768,6 +812,28 @@ impl SpaceInfo {
             on_expire: String::new(),
             egress: Default::default(),
             egress_enforced: None,
+            network: record
+                .network_settings
+                .as_ref()
+                .and_then(|p| crate::network::from_pb(p).ok())
+                .map(|settings| crate::network::SpaceNetwork {
+                    settings,
+                    note: (!record.network_note.is_empty()).then(|| record.network_note.clone()),
+                    notice_pending: record.network_notice_pending,
+                }),
+            tree: (!record.parent.is_empty()).then(|| crate::tree::TreeLink {
+                parent: Some(record.parent.clone()),
+                root: (!record.root.is_empty()).then(|| record.root.clone()),
+                depth: record.depth,
+                origin: if record.origin.is_empty() {
+                    crate::tree::ORIGIN_CHILD.into()
+                } else {
+                    record.origin.clone()
+                },
+            }),
+            clipboard: record.clipboard.parse().unwrap_or_default(),
+            volume_setting: crate::registry::VolumeSetting::parse(&record.volume)
+                .unwrap_or_default(),
             created_at_unix: record
                 .added_at
                 .as_ref()
@@ -777,6 +843,7 @@ impl SpaceInfo {
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
+            hidden: record.labels.contains_key(crate::registry::HIDDEN_LABEL),
             sharing: record.sharing.clone().map(Into::into),
         })
     }

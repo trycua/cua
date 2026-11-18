@@ -1,0 +1,87 @@
+{
+  "name": "@cua/cua-spaces-mobile",
+  "version": "0.1.0",
+  "packageManager": "pnpm@9.0.4",
+  "main": "expo-router/entry",
+  "dependencies": {
+    "@bufbuild/protobuf": "2.15.0",
+    "@connectrpc/connect": "2.2.0",
+    "@connectrpc/connect-web": "2.2.0",
+    "@expo/vector-icons": "^15.0.2",
+    "@react-native-async-storage/async-storage": "^2.2.0",
+    "@shopify/flash-list": "2.3.2",
+    "expo": "~58.0.21",
+    "expo-auth-session": "~58.0.16",
+    "expo-build-properties": "~58.0.11",
+    "expo-clipboard": "~58.0.4",
+    "expo-constants": "~58.0.14",
+    "expo-crypto": "~58.0.7",
+    "expo-dev-client": "~58.0.17",
+    "expo-file-system": "~58.0.13",
+    "expo-font": "~58.0.11",
+    "expo-haptics": "~58.0.7",
+    "expo-image": "~58.0.18",
+    "expo-linking": "~58.0.15",
+    "expo-local-authentication": "~58.0.2",
+    "expo-notifications": "~58.1.7",
+    "expo-router": "~58.0.28",
+    "expo-secure-store": "~58.0.2",
+    "expo-status-bar": "~58.0.4",
+    "expo-symbols": "~58.0.4",
+    "expo-system-ui": "~58.0.7",
+    "expo-web-browser": "~58.0.7",
+    "react": "19.3.0",
+    "react-native": "0.88.1",
+    "react-native-gesture-handler": "~3.3.0",
+    "react-native-keyboard-controller": "1.22.7",
+    "react-native-reanimated": "4.7.1",
+    "react-native-safe-area-context": "~5.10.1",
+    "react-native-screens": "~4.30.0",
+    "react-native-webview": "14.0.1",
+    "react-native-worklets": "0.13.0",
+    "zustand": "^5.0.16"
+  },
+  "devDependencies": {
+    "@noble/curves": "^2.4.0",
+    "@noble/hashes": "^2.4.0",
+    "@testing-library/react-native": "^14.1.0",
+    "@types/jest": "30.0.0",
+    "@types/react": "~19.3.0",
+    "jest": "~30.5.2",
+    "jest-expo": "~58.0.13",
+    "react-test-renderer": "^19.3.1",
+    "tsx": "^4.23.15",
+    "typescript": "~6.0.3"
+  },
+  "scripts": {
+    "start": "expo start",
+    "ios": "expo run:ios",
+    "android": "expo run:android",
+    "core:ios": "scripts/build-core-ios.sh",
+    "proto": "node scripts/sync-proto.mjs",
+    "proto:check": "node scripts/sync-proto.mjs --check",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "jest",
+    "check": "pnpm typecheck && pnpm proto:check && pnpm test"
+  },
+  "private": true,
+  "license": "FSL-1.1-MIT",
+  "description": "Cua Spaces for iPhone, iPad and Android (React Native)",
+  "jest": {
+    "preset": "jest-expo",
+    "setupFiles": [
+      "./__tests__/helpers/setup.ts"
+    ],
+    "setupFilesAfterEnv": [],
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "/ios/",
+      "/android/",
+      "/helpers/"
+    ],
+    "transformIgnorePatterns": [
+      "node_modules/(?!((jest-)?react-native|@react-native(-community)?|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@sentry/react-native|native-base|react-native-svg|@shopify/flash-list|react-native-keyboard-controller|@noble/.*|@connectrpc/.*|@bufbuild/.*|zustand|expo-router|react-native-reanimated|react-native-worklets|react-native-gesture-handler))"
+    ],
+    "forceExit": true
+  }
+}

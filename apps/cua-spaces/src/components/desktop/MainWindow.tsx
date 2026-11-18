@@ -72,7 +72,6 @@ import { ThisMachinePanel } from '../ThisMachinePanel';
 import { THIS_MACHINE_ID } from '../../model/host';
 import { Thumbnail } from '../Thumbnail';
 import { NewSpaceWizard, type CreatePlan, type SpaceHost } from './NewSpaceWizard';
-import type { Experiments } from '../../model/experiments';
 import { useExperiments } from '../../state/experiments';
 import { createLoginItemBridge, type LoginItemBridge } from '../../native/loginItem';
 import { launchPlan, readLaunchChoice, writeLaunchChoice } from '../../model/loginItem';
@@ -117,10 +116,9 @@ function viewerRequest(space: Space): ViewerWindowRequest {
 function detailOf(
   space: Space,
   usage: SpaceUsage | null | undefined,
-  hostArch: string | null | undefined,
-  experiments: Experiments
+  hostArch: string | null | undefined
 ): SpaceDetailView {
-  return spaceDetail(space, usage, hostArch, experiments);
+  return spaceDetail(space, usage, hostArch);
 }
 
 /**
@@ -224,7 +222,7 @@ export function MainWindow({
   const [local, setLocal] = useState<LocalStatus | null>(null);
   const [gpus, setGpus] = useState<GpuChoice[] | null>(null);
   const [hosts, setHosts] = useState<SpaceHost[]>([]);
-  // Settings, Experiments: what the window shows (Share, your clouds).
+  // Settings, Experiments: what the window shows.
   const experiments = useExperiments();
   // `?view=new-space|settings|this-machine|host-setup|drive|onboarding-presentation|onboarding-drive|onboarding-done` opens that
   // view on load (the shell sets it from CUA_SPACES_START_VIEW, for demos
@@ -235,7 +233,8 @@ export function MainWindow({
     startView === 'this-machine' || startView === 'host-setup' ? THIS_MACHINE_ID : null
   );
   const [query, setQuery] = useState('');
-  const [wizard, setWizard] = useState<boolean | 'linux' | 'macos'>(
+  const [newMenu, setNewMenu] = useState(false);
+  const [wizard, setWizard] = useState<boolean | 'linux' | 'macos' | 'address'>(
     startView === 'new-space' || startView === 'new-space-resources'
   );
   useEffect(() => {
@@ -548,8 +547,7 @@ export function MainWindow({
     ? detailOf(
         selected,
         usage?.id === selected.id ? usage.usage : null,
-        sync.hostArch,
-        experiments
+        sync.hostArch
       )
     : null;
   const isHost = Boolean(detail?.isHost);
@@ -595,6 +593,38 @@ export function MainWindow({
           >
             <Sym name="plus" />
           </button>
+          <span className="dw-split-more">
+            <button
+              type="button"
+              className="dw-icon-btn"
+              aria-label={t("spaces.main.new_more")}
+              aria-haspopup="menu"
+              aria-expanded={newMenu}
+              title={t("spaces.main.new_more")}
+              onClick={() => setNewMenu((o) => !o)}
+              onBlur={() => setNewMenu(false)}
+              onKeyDown={(event) => event.key === 'Escape' && setNewMenu(false)}
+            >
+              <Sym name="chevron.down" size={12} />
+            </button>
+            {newMenu && (
+              <div role="menu" className="dw-split-menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="dw-split-item"
+                  // Before the button's blur closes the menu.
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    setNewMenu(false);
+                    setWizard('address');
+                  }}
+                >
+                  {t("spaces.wizard.add_address")}
+                </button>
+              </div>
+            )}
+          </span>
         </div>
         <div className="dw-sidebar-search">
           <Sym name="magnifyingglass" size={14} />
@@ -943,8 +973,8 @@ export function MainWindow({
             storage={live ? local?.storage : undefined}
             gpus={live ? gpus : null}
             onOpenExternal={(url) => void bridge.openExternal(url).catch(() => {})}
-            startActions={startActions}
-            quick={typeof wizard === 'string' ? wizard : undefined}
+            quick={typeof wizard === 'string' && wizard !== 'address' ? wizard : undefined}
+            startActions={wizard === 'address' ? [{ type: 'show-address' }] : startActions}
             onCreate={startCreate}
             onAddByAddress={async (url, token, name) => {
               const id = await sync.addSpace(url, token, name);

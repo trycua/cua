@@ -24,7 +24,8 @@ public struct VZConfig: Codable, Equatable {
     public var sockets: String
     /// The guest's serial console is appended here.
     public var console: String
-    /// Egress through a user-mode network (gvproxy); `nil` leaves the
+    /// Egress through a user-mode network (gvproxy, or the Cua network
+    /// gateway under Secure Spaces); `nil` leaves the
     /// guest's network device unconnected (no network).
     public var network: Network?
     /// Host loopback ports forwarded to guest ports over vsock.
@@ -48,7 +49,9 @@ public struct VZConfig: Codable, Equatable {
     }
 
     public struct Network: Codable, Equatable {
-        /// The gvproxy binary.
+        /// The network program: gvproxy, or under Secure Spaces the Cua
+        /// network gateway (`cua-netgw`, a user-mode network that checks
+        /// every connection). The JSON names it `gvproxy` or `gateway`.
         public var gvproxy: String
         /// Its configuration file (`-config`); it must listen for vfkit
         /// clients on `<sockets>/gv.sock`.
@@ -57,6 +60,26 @@ public struct VZConfig: Codable, Equatable {
         public init(gvproxy: String, config: String) {
             self.gvproxy = gvproxy
             self.config = config
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case gvproxy, gateway, config
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            if let gateway = try c.decodeIfPresent(String.self, forKey: .gateway) {
+                gvproxy = gateway
+            } else {
+                gvproxy = try c.decode(String.self, forKey: .gvproxy)
+            }
+            config = try c.decode(String.self, forKey: .config)
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(gvproxy, forKey: .gvproxy)
+            try c.encode(config, forKey: .config)
         }
     }
 

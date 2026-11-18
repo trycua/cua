@@ -194,6 +194,7 @@ final class LumeController {
     private let imageLoaderFactory: ImageLoaderFactory
     private let vmFactory: VMFactory
     private let runLockProbe: RunLockProbe
+    private let hostVolumeSpaceProbe: HostVolumeSpaceProbe
 
     // MARK: - Initialization
 
@@ -201,12 +202,14 @@ final class LumeController {
         home: Home = Home(),
         imageLoaderFactory: ImageLoaderFactory = DefaultImageLoaderFactory(),
         vmFactory: VMFactory = DefaultVMFactory(),
-        runLockProbe: RunLockProbe = LsofRunLockProbe()
+        runLockProbe: RunLockProbe = LsofRunLockProbe(),
+        hostVolumeSpaceProbe: HostVolumeSpaceProbe = FoundationHostVolumeSpaceProbe()
     ) {
         self.home = home
         self.imageLoaderFactory = imageLoaderFactory
         self.vmFactory = vmFactory
         self.runLockProbe = runLockProbe
+        self.hostVolumeSpaceProbe = hostVolumeSpaceProbe
     }
 
     // MARK: - Public VM Management Methods
@@ -406,7 +409,8 @@ final class LumeController {
             // Try to get IP address from DHCP lease if we have MAC address
             if let config = try? vmDir.loadConfig(),
                let macAddress = config.macAddress {
-                ipAddress = DHCPLeaseParser.getIPAddress(forMAC: macAddress)
+                ipAddress = VM.ipAddress(
+                    forMAC: macAddress, networkMode: runningVM?.activeNetworkMode)
 
                 // Check if SSH is available
                 if let ip = ipAddress {
@@ -1348,6 +1352,7 @@ final class LumeController {
         networkMode: NetworkMode? = nil,
         clipboard: Bool = false,
         vncPolicy: VNCPolicy = .enabled,
+        forwards: [UInt16] = [],
         telemetryTransport: TelemetryTransport = .cli
     ) async throws {
         let normalizedName = normalizeVMName(name: name)
@@ -1470,6 +1475,18 @@ final class LumeController {
                 additionalDiskPaths: additionalDiskPaths
             )
 
+            // The mount and USB images attach read-only; these disks grow on the host.
+            let writableDisks = [diskPath ?? vmDir.diskPath] + (additionalDiskPaths ?? [])
+            if let shortfall = HostDiskSpace.shortfall(
+                writableDisks: writableDisks, probe: hostVolumeSpaceProbe)
+            {
+                throw VMError.insufficientHostSpace(
+                    name: normalizedName,
+                    volume: shortfall.volume,
+                    required: shortfall.requiredBytes,
+                    available: shortfall.availableBytes)
+            }
+
             // Load the VM directly using the located VMDirectory and storage context
             let vm = try self.loadVM(vmDir: vmDir, storage: effectiveStorage, diskPath: diskPath, nvramPath: nvramPath)
             vm.telemetryTransport = telemetryTransport
@@ -1498,7 +1515,8 @@ final class LumeController {
                 additionalDiskPaths: additionalDiskPaths,
                 networkMode: networkMode,
                 clipboard: clipboard,
-                vncPolicy: vncPolicy)
+                vncPolicy: vncPolicy,
+                forwards: forwards)
             // `run` returns once the guest has stopped, including when it shut
             // itself down, so the VM no longer runs in this process.
             SharedVM.shared.removeVM(name: normalizedName, ifSame: vm)
@@ -1553,6 +1571,7 @@ final class LumeController {
             // Set default VM name if not provided
             let vmName = name ?? "\(imageName)_\(tag)"
 
+            Logger.info("Pulling \(image)")
             Logger.debug(
                 "Pulling image",
                 metadata: [
@@ -1596,6 +1615,7 @@ final class LumeController {
                 try vm.setMacAddress(VZMACAddress.randomLocallyAdministered().string)
             }
 
+            Logger.info("Pulled \(image) as VM \(vmName)")
             Logger.debug(
                 "Image pulled successfully",
                 metadata: [

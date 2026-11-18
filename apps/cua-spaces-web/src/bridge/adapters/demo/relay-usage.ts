@@ -48,6 +48,15 @@ export function demoRelayUsageNamed(name: "idle" | "warn" | "limit" | "pro" | "t
     case "pro":
       return { ...free, plan: "pro", liveSessions: 0, liveSessionsLimit: 5, hoursUsed: 38, myHoursUsed: 38, hoursLimit: 200 };
     case "teams":
-      return { ...free, plan: "team", team: { id: "acme", seats: 3 }, liveSessions: 0, liveSessionsLimit: 15, hoursUsed: 120, myHoursUsed: 41, hoursLimit: 600 };
+      return {
+        ...free,
+        plan: "team",
+        team: { id: "acme", seats: 3 },
+        liveSessions: 0,
+        liveSessionsLimit: 15,
+        hoursUsed: 120,
+        myHoursUsed: 41,
+        hoursLimit: 600,
+      };
   }
 }

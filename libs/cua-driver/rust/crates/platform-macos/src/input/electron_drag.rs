@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Background drag for Electron windows through the app's main process.
 //!
 //! A window-routed CGEvent drag reaches an Electron page, but Chromium builds

@@ -35,7 +35,7 @@ pub struct Key {
 }
 
 /// Every setting, in display order.
-pub const KEYS: [Key; 19] = [
+pub const KEYS: [Key; 20] = [
     Key {
         name: "default.on",
         env: "CUA_DEFAULT_ON",
@@ -119,6 +119,12 @@ pub const KEYS: [Key; 19] = [
         env: "CUA_PLACEMENT_OVERFLOW",
         default: "on",
         description: "when no location is given and a linked cloud has a budget (`cua cloud budget`), Spaces go to this machine first and overflow into your clouds when it is full, never past the budget (off: this machine only)",
+    },
+    Key {
+        name: "relay.spaces",
+        env: "CUA_RELAY_SPACES",
+        default: "on",
+        description: "while you are signed in and sharing, list the Spaces running on this computer on your cua.ai account, so your phone and your other computers see and open them (on, off). Only your account reaches them; off takes them off the account at once. A Space can opt out on its own (`--no-relay`)",
     },
     Key {
         name: "cache.repos",
@@ -529,6 +535,20 @@ impl Settings {
             .unwrap_or(true)
     }
 
+    /// Whether this computer's running Spaces are listed on the signed-in
+    /// account's relay (`relay.spaces`, default on).
+    pub fn relay_spaces(&self) -> bool {
+        key("relay.spaces")
+            .map(|k| self.entry(k).value)
+            .map(|v| {
+                !matches!(
+                    v.trim().to_ascii_lowercase().as_str(),
+                    "off" | "false" | "0" | "no"
+                )
+            })
+            .unwrap_or(true)
+    }
+
     /// The repo cache's settings: whether it is on (`cache.repos`, default
     /// on) and its size cap in bytes (`cache.repos_size_gb`; `None`: auto).
     pub fn repo_cache(&self) -> (bool, Option<u64>) {
@@ -595,6 +615,15 @@ pub fn normalize(key: Key, value: &str) -> Result<String, SettingsError> {
             _ => {
                 return Err(SettingsError(format!(
                     "placement.overflow: expected on or off, got {v:?}"
+                )));
+            }
+        },
+        "relay.spaces" => match v.to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => "on".into(),
+            "0" | "false" | "no" | "off" => "off".into(),
+            _ => {
+                return Err(SettingsError(format!(
+                    "relay.spaces: expected on or off, got {v:?}"
                 )));
             }
         },

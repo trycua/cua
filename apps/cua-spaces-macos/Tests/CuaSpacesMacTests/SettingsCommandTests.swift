@@ -22,18 +22,15 @@ struct SettingsCommandTests {
                         telemetry: FixtureTelemetry())
     }
 
-    /// The classic UI too: Settings never falls back to a native window.
-    @Test func settingsIsThePagesWithNewUIOnOrOff() {
-        for webUi in [true, false] {
-            let m = model()
-            m.settings.experiments.webUi = webUi
-            var web: [MainUIRoute] = [], settings: [MainUIRoute] = []
-            let router = MainUIRouter(model: m, web: { web.append($0) }, settings: { settings.append($0) })
-            router.openSettings()
-            router.openSettings(.path("/settings/connectors"))
-            #expect(settings == [.settings, .path("/settings/connectors")], "webUi \(webUi)")
-            #expect(web.isEmpty)
-        }
+    /// Settings never falls back to a native window.
+    @Test func settingsIsThePages() {
+        let m = model()
+        var web: [MainUIRoute] = [], settings: [MainUIRoute] = []
+        let router = MainUIRouter(model: m, web: { web.append($0) }, settings: { settings.append($0) })
+        router.openSettings()
+        router.openSettings(.path("/settings/connectors"))
+        #expect(settings == [.settings, .path("/settings/connectors")])
+        #expect(web.isEmpty)
     }
 
     /// The notch's Settings button goes through the app's hook (the router).

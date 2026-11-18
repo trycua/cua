@@ -3,7 +3,9 @@ name = "cua-agent-setup"
 description = "Detect AI coding agents, install the bundled cua skills into their skills directories and configure the cua MCP server in their MCP configs (idempotent, backed up, reversible)."
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
+# Not the libs/cua workspace's 1.97: cua-driver links this crate, and the
+# driver's Nix package builds with nixpkgs stable's rustc (1.95 in 26.05).
+rust-version = "1.95"
 authors.workspace = true
 license.workspace = true
 repository.workspace = true

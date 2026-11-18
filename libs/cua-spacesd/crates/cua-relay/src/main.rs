@@ -34,6 +34,53 @@ struct Args {
     /// the share's own origin.
     #[arg(long, env = "CUA_RELAY_KEEP_PATH_MODE", default_value = "off")]
     keep_path_mode: String,
+    /// Public TCP shares: the port pool (`26000-26063`). Unset: off.
+    #[arg(long, env = "CUA_RELAY_TCP_PORTS")]
+    tcp_ports: Option<String>,
+    /// Public TCP shares: the host people connect to (`tcp.m.cua.sh`).
+    #[arg(long, env = "CUA_RELAY_TCP_HOST")]
+    tcp_host: Option<String>,
+    /// Public TCP shares: the address the port listeners bind.
+    #[arg(long, env = "CUA_RELAY_TCP_LISTEN", default_value = "0.0.0.0")]
+    tcp_listen: std::net::IpAddr,
+    /// Public TCP shares: every connection starts with a PROXY protocol v2
+    /// header from the TCP proxy in front (`on` / `off`).
+    #[arg(long, env = "CUA_RELAY_TCP_PROXY_PROTOCOL", default_value = "off")]
+    tcp_proxy_protocol: String,
+    /// Public TCP shares one account may hold at once.
+    #[arg(long, env = "CUA_RELAY_TCP_PER_ACCOUNT", default_value_t = 2)]
+    tcp_per_account: usize,
+    /// Public TCP shares one computer may hold at once.
+    #[arg(long, env = "CUA_RELAY_TCP_PER_MACHINE", default_value_t = 4)]
+    tcp_per_machine: usize,
+    /// New connections per second from one address (all TCP shares).
+    #[arg(long, env = "CUA_RELAY_TCP_CONN_RPS_PER_IP", default_value_t = 2.0)]
+    tcp_conn_rps_per_ip: f64,
+    /// Burst of new connections from one address.
+    #[arg(long, env = "CUA_RELAY_TCP_CONN_BURST_PER_IP", default_value_t = 10.0)]
+    tcp_conn_burst_per_ip: f64,
+    /// Open connections one TCP share carries at once.
+    #[arg(long, env = "CUA_RELAY_TCP_MAX_CONNS", default_value_t = 64)]
+    tcp_max_conns: u32,
+    /// Bytes per second one TCP share carries (both directions).
+    #[arg(long, env = "CUA_RELAY_TCP_BYTES_PER_SEC", default_value_t = 4 << 20)]
+    tcp_bytes_per_sec: u64,
+    /// Longest TCP share, in hours.
+    #[arg(long, env = "CUA_RELAY_TCP_MAX_TTL_HOURS", default_value_t = 24)]
+    tcp_max_ttl_hours: u64,
+    /// Domain of TCP shares' SRV names (`m.cua.sh`). Unset: no SRV records.
+    #[arg(long, env = "CUA_RELAY_TCP_SRV_DOMAIN")]
+    tcp_srv_domain: Option<String>,
+    /// Public TCP shares on a share edge in the user's own cloud (`on` /
+    /// `off`): the computer and its port allocations use the static token.
+    #[arg(long, env = "CUA_RELAY_TCP_EDGE", default_value = "off")]
+    tcp_edge: String,
+    /// Cloudflare zone of the SRV records.
+    #[arg(long, env = "CUA_RELAY_DNS_ZONE_ID")]
+    dns_zone_id: Option<String>,
+    /// Cloudflare API token for the SRV records (DNS Write on that zone).
+    #[arg(long, env = "CUA_RELAY_DNS_API_TOKEN", hide_env_values = true)]
+    dns_api_token: Option<String>,
     /// Maximum computers per registration token.
     #[arg(long, env = "CUA_RELAY_MAX_MACHINES_PER_TOKEN", default_value_t = 16)]
     max_machines_per_token: usize,
@@ -108,6 +155,35 @@ struct Args {
     /// Account mode: require enrolled client devices (`on` / `off`).
     #[arg(long, env = "CUA_RELAY_DEVICE_ENROLLMENT", default_value = "on")]
     device_enrollment: String,
+    /// OAuth clients (`azp`) whose account tokens the relay accepts, comma
+    /// separated. Unset accepts any client of the issuer, as before. When
+    /// phone support is on, set it to the clients meant for this relay (the
+    /// CLI, the apps and `cua-spaces-mobile`).
+    #[arg(long, env = "CUA_RELAY_OIDC_AUTHORIZED_PARTIES")]
+    oidc_authorized_parties: Option<String>,
+    /// With `CUA_RELAY_PUSH=on`: whether phones are served (`on`, the default) or
+    /// refused (`off`) while the rest of what `CUA_RELAY_PUSH` turns on stays on.
+    /// The switch for "no phone, now" that keeps the hardening.
+    #[arg(long, env = "CUA_RELAY_PHONES", default_value = "on")]
+    phones: String,
+    /// With `CUA_RELAY_PUSH=on`: the OAuth client ids whose tokens make a
+    /// device a phone (comma separated).
+    #[arg(long, env = "CUA_RELAY_PHONE_CLIENTS", default_value = cua_relay::phone::DEFAULT_PHONE_CLIENT)]
+    phone_clients: String,
+    /// Push notifications for the phone app (`on` / `off`). On needs
+    /// account mode. Alerts are sent when an APNs key is set
+    /// (`CUA_PUSH_APNS_KEY_FILE`, `CUA_PUSH_APNS_KEY_ID`,
+    /// `CUA_PUSH_APNS_TEAM_ID`); without one, phones register and wait.
+    #[arg(long, env = "CUA_RELAY_PUSH", default_value = "off")]
+    push: String,
+    /// Where registered phones and their preferences are kept (default:
+    /// next to the state file, `<state>.push.json`; in memory without one).
+    #[arg(long, env = "CUA_RELAY_PUSH_FILE")]
+    push_file: Option<std::path::PathBuf>,
+    /// For a local run without an Apple key: write each alert (no token)
+    /// to this JSON-lines file instead of sending it. Never set in production.
+    #[arg(long, env = "CUA_PUSH_LOG_FILE")]
+    push_log_file: Option<std::path::PathBuf>,
     /// Days a device enrollment lasts without use (each session renews it)
     /// before a fresh sign-in or one approval re-verifies it.
     #[arg(long, env = "CUA_RELAY_DEVICE_TTL_DAYS", default_value_t = 30)]
@@ -130,9 +206,18 @@ struct Args {
     /// device, a re-key of a computer it already has, or (verified email) a
     /// sign-in proving MFA; any other new device needs an approval from an
     /// enrolled device. Off by default: a fresh sign-in enrolls any device
-    /// of the account.
-    #[arg(long, env = "CUA_RELAY_DEVICE_REQUIRE_APPROVAL")]
-    device_require_approval: bool,
+    /// of the account. `phones` applies the strict rule only to phone-class
+    /// devices (enrolled by a `CUA_RELAY_PHONE_CLIENTS` client or reporting
+    /// a phone platform); every other device keeps the default. It needs
+    /// `CUA_RELAY_PUSH=on` and a non-empty `CUA_RELAY_PHONE_CLIENTS`.
+    #[arg(
+        long,
+        env = "CUA_RELAY_DEVICE_REQUIRE_APPROVAL",
+        num_args = 0..=1,
+        default_missing_value = "true",
+        default_value = "false"
+    )]
+    device_require_approval: String,
     /// Devices and audit log file (default: `<state file>.devices.json`).
     #[arg(long, env = "CUA_RELAY_DEVICES_FILE")]
     devices_file: Option<std::path::PathBuf>,
@@ -342,6 +427,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .filter(|a| !a.is_empty())
             .collect();
         config.account_claim = args.account_claim.clone();
+        // With phone support on, a token that is not valid yet is refused.
+        config.validate_nbf = on_off("CUA_RELAY_PUSH", &args.push).unwrap_or(false);
+        config.authorized_parties = args
+            .oidc_authorized_parties
+            .as_deref()
+            .unwrap_or("")
+            .split(',')
+            .map(|a| a.trim().to_owned())
+            .filter(|a| !a.is_empty())
+            .collect();
         let validator = std::sync::Arc::new(cua_relay::oidc::OidcValidator::new(config));
         validator.spawn_refresher();
         validator
@@ -417,7 +512,123 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         )),
         None => None,
     };
+    let tcp_shares = match args.tcp_ports.as_deref().filter(|p| !p.trim().is_empty()) {
+        None => None,
+        Some(ports) => {
+            let ports = cua_relay::tcp_shares::TcpShareConfig::parse_ports(ports)
+                .map_err(|e| format!("CUA_RELAY_TCP_PORTS={e}"))?;
+            let public_host = args
+                .tcp_host
+                .clone()
+                .filter(|h| !h.trim().is_empty())
+                .ok_or(
+                    "CUA_RELAY_TCP_PORTS needs CUA_RELAY_TCP_HOST (the host people connect to)",
+                )?;
+            let dns = match (
+                args.dns_zone_id.clone().filter(|v| !v.is_empty()),
+                args.dns_api_token.clone().filter(|v| !v.is_empty()),
+            ) {
+                (Some(zone_id), Some(token)) => Some(cua_relay::tcp_shares::DnsConfig {
+                    zone_id,
+                    token,
+                    api_base: "https://api.cloudflare.com/client/v4".into(),
+                }),
+                (None, None) => None,
+                _ => {
+                    return Err(
+                        "CUA_RELAY_DNS_ZONE_ID and CUA_RELAY_DNS_API_TOKEN go together".into(),
+                    )
+                }
+            };
+            let edge = on_off("CUA_RELAY_TCP_EDGE", &args.tcp_edge)?;
+            let proxy_protocol = on_off("CUA_RELAY_TCP_PROXY_PROTOCOL", &args.tcp_proxy_protocol)?;
+            // A share edge takes players directly: a client address comes
+            // only from its own listener, never from a header a client sends.
+            if edge && proxy_protocol {
+                return Err("CUA_RELAY_TCP_EDGE takes connections directly: turn CUA_RELAY_TCP_PROXY_PROTOCOL off".into());
+            }
+            Some(cua_relay::tcp_shares::TcpShareConfig {
+                ports,
+                listen: args.tcp_listen,
+                public_host,
+                proxy_protocol,
+                per_account: args.tcp_per_account.max(1),
+                per_machine: args.tcp_per_machine.max(1),
+                conn_rps_per_ip: args.tcp_conn_rps_per_ip.max(0.01),
+                conn_burst_per_ip: args.tcp_conn_burst_per_ip.max(1.0),
+                max_conns_per_share: args.tcp_max_conns.max(1),
+                bytes_per_sec: args.tcp_bytes_per_sec.max(1024),
+                max_ttl: Duration::from_secs(args.tcp_max_ttl_hours.clamp(1, 24) * 3600),
+                srv_domain: args.tcp_srv_domain.clone().filter(|d| !d.trim().is_empty()),
+                dns,
+                edge,
+                ..cua_relay::tcp_shares::TcpShareConfig::default()
+            })
+        }
+    };
+    let push = if on_off("CUA_RELAY_PUSH", &args.push)? {
+        if oidc.is_none() {
+            return Err("CUA_RELAY_PUSH=on needs account mode (CUA_RELAY_OIDC_ISSUER)".into());
+        }
+        // A public relay with phone support starts only with the two settings that make it safe:
+        // the clients allowed to sign in (a token for any other client of the issuer is refused) and
+        // where the ingress is (every rate limit keys on the caller's address: without it they see
+        // the proxy's own).
+        cua_relay::phone::check_secure_config(
+            args.public_url.as_deref(),
+            args.oidc_authorized_parties.as_deref().unwrap_or(""),
+            &args.trusted_proxies,
+        )?;
+        let registry = match args.push_file.clone().or_else(|| {
+            args.state_file
+                .as_ref()
+                .map(|p| p.with_extension("push.json"))
+        }) {
+            Some(path) => cua_push::Registry::open(path)?,
+            None => cua_push::Registry::in_memory(),
+        };
+        let provider: std::sync::Arc<dyn cua_push::PushProvider> = match (
+            args.push_log_file.clone(),
+            cua_push::apns::ApnsConfig::from_env()?,
+        ) {
+            (Some(path), _) => {
+                tracing::warn!(file = %path.display(), "push alerts are written to a file, not sent");
+                std::sync::Arc::new(cua_push::provider::LogProvider::new(path))
+            }
+            (None, Some(cfg)) => {
+                tracing::info!(topic = %cfg.topic, "push: APNs");
+                std::sync::Arc::new(cua_push::apns::ApnsProvider::new(cfg)?)
+            }
+            (None, None) => {
+                tracing::warn!("push is on but no APNs key is set (CUA_PUSH_APNS_KEY_FILE): phones register, alerts wait");
+                std::sync::Arc::new(cua_push::NoProvider)
+            }
+        };
+        let clients: Vec<String> = args
+            .phone_clients
+            .split(',')
+            .map(|c| c.trim().to_owned())
+            .filter(|c| !c.is_empty())
+            .collect();
+        Some(
+            cua_relay::push_api::PushConfig::new(std::sync::Arc::new(cua_push::PushHub::new(
+                registry, provider,
+            )))
+            .with_phone_clients(clients)
+            .with_phones(on_off("CUA_RELAY_PHONES", &args.phones)?),
+        )
+    } else {
+        None
+    };
+    let (require_approval, approval_phones_only) =
+        cua_relay::devices::DevicePolicy::parse_approval(&args.device_require_approval)?;
+    cua_relay::devices::DevicePolicy::check_approval_scope(
+        approval_phones_only,
+        push.as_ref().map(|p| p.phone_clients()),
+    )?;
     let relay = Relay::try_new(RelayConfig {
+        tcp_shares,
+        push,
         tokens,
         max_machines_per_token: args.max_machines_per_token,
         join_rate_per_sec: args.join_rate_per_sec,
@@ -441,7 +652,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             ttl_secs: args.device_ttl_days.max(1) * 86_400,
             grace_secs: args.device_grace_days * 86_400,
             bootstrap_max_auth_age_secs: args.device_bootstrap_max_auth_age_secs,
-            require_approval: args.device_require_approval,
+            require_approval,
+            approval_phones_only,
             ..cua_relay::devices::DevicePolicy::default()
         },
         devices_file: args.devices_file,
@@ -465,8 +677,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         analytics_key_file: args.analytics_key_file,
         audit_retention_days: args.audit_retention_days,
         mesh_endpoint_retention_days: args.mesh_endpoint_retention_days,
-        trusted_proxies: cua_relay::proxies::TrustedProxies::parse(&args.trusted_proxies)
-            .map_err(|e| format!("--trusted-proxies: {e}"))?,
+        trusted_proxies: cua_relay::proxies::TrustedProxies::parse(
+            cua_relay::phone::proxies_setting(&args.trusted_proxies),
+        )
+        .map_err(|e| format!("--trusted-proxies: {e}"))?,
         share_limits: cua_relay::share_web::ShareLimits {
             per_ip_rps: args.share_public_rps_per_ip.max(0.1),
             per_ip_burst: args.share_public_burst_per_ip.max(1.0),

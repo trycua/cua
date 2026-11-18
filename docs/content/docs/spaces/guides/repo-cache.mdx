@@ -1,12 +1,12 @@
 ---
 title: Repo cache
-description: 'How Cua keeps verified copies of public git repositories on this machine so a repeat git clone in a Space is fast, what it never caches, the setting, how to clear it and what it reports.'
+description: 'How Cua keeps verified copies of public git repositories on this computer so a repeat git clone in a Space is fast, what it never caches, the setting, how to clear it and what it reports.'
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
 The first time a Space clones a public repository, Cua downloads it as usual.
-In the background, the Cua daemon on your machine also keeps a verified copy
+In the background, the Cua daemon on your computer also keeps a verified copy
 of that repository. The next Space that clones it starts from that copy, so a
 repository that took about 5 seconds to clone takes about a second, and only
 what changed since is downloaded. Your agent runs the same `git clone URL` as
@@ -24,12 +24,12 @@ always. There is nothing to set up per repository and no list to maintain.
 - **Repositories, not dependencies yet.** The row in Settings is called
   **Repo and dependency cache** because it will hold more later. Today it holds
   repositories.
-- **This machine's disk only.** Nothing is sent anywhere to fill it, and a
-  copy is never shared with another machine.
+- **This computer's disk only.** Nothing is sent anywhere to fill it, and a
+  copy is never shared with another computer.
 
 ## How a clone uses it
 
-The copies live in a folder that Linux container Spaces on this machine see
+The copies live in a folder that Linux container Spaces on this computer see
 read-only. A small helper that Cua puts next to the Space's git, never the
 agent, makes `git clone` ask the remote for its current tip and take the
 objects it already has from the copy:

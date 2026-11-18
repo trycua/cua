@@ -259,7 +259,7 @@ export async function withDaemon(fn) {
   const home = mkdtempSync(`/tmp/cua-e2e-${RUN}-`)
   const sock = join(home, "cua.sock")
   const child = spawn(cli, ["daemon", "start", "--foreground", "--socket", sock, "--state-dir", join(home, "sandboxes")], {
-    env: { ...process.env, CUA_HOME: home },
+    env: { ...process.env, CUA_HOME: home, CUA_WARM_START: "0" },
     stdio: ["ignore", "ignore", "inherit"],
   })
   try {
@@ -316,7 +316,7 @@ export async function withShareDaemon(fn) {
     writeFileSync(join(home, "host", "host.json"), JSON.stringify({ owner: "acct-owner", owner_email: "owner@example.com" }))
     const sock = join(home, "cua.sock")
     daemon = spawn(cli, ["daemon", "start", "--foreground", "--socket", sock], {
-      env: { ...process.env, CUA_HOME: home, CUA_CREDENTIAL_STORE: "file", CUA_RELAY_URL: relayUrl, CUA_TELEMETRY: "0" },
+      env: { ...process.env, CUA_HOME: home, CUA_CREDENTIAL_STORE: "file", CUA_RELAY_URL: relayUrl, CUA_TELEMETRY: "0", CUA_WARM_START: "0" },
       stdio: ["ignore", "ignore", "inherit"],
     })
     await poll("share gateway", async () => existsSync(join(home, "share", "gateway.sock")) && existsSync(sock), { attempts: 150, delayMs: 100 })
@@ -460,6 +460,9 @@ export async function mcpInitialize(addr, token) {
   return msg.result
 }
 
-export const embeddedLocal = (dir) => cua.embedded({ stateDir: dir })
+// Its own Spaces registry too: the default is the real ~/.cua, which the
+// cua-home guard refuses in a test (a fork's registration fails there).
+export const embeddedLocal = (dir) => cua.embedded({ stateDir: dir, spacesHome: tmpSpaces() })
 export const tmpState = () => mkdtempSync(join(process.env.TMPDIR ?? "/tmp", `cua-e2e-${RUN}-state-`))
+export const tmpSpaces = () => mkdtempSync(join(process.env.TMPDIR ?? "/tmp", `cua-e2e-${RUN}-spaces-`))
 export { execFileSync }

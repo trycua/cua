@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 #[cfg(feature = "review-trust-root")]
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use flate2::{write::GzEncoder, Compression};

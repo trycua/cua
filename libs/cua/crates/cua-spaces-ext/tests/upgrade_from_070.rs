@@ -183,7 +183,14 @@ async fn current_names_read_the_same_070_data() {
     let server = McpServer::new(spaces);
     let old = call(&server, "routine_list", &json!({})).await;
     let new = call(&server, "agent_schedule_list", &json!({})).await;
-    assert_eq!(old, new);
+    // next_fire is computed from the clock, so the two calls can straddle a second.
+    let strip = |mut v: Value| {
+        for r in v["routines"].as_array_mut().unwrap() {
+            r.as_object_mut().unwrap().remove("next_fire");
+        }
+        v
+    };
+    assert_eq!(strip(old), strip(new.clone()));
     assert_eq!(new["routines"].as_array().unwrap().len(), 3);
     // The off routine stays off, the others have a next firing.
     for r in new["routines"].as_array().unwrap() {

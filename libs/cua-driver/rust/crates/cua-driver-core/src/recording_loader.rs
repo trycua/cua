@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Read a `start_recording` output directory into the inputs the
 //! renderer needs: `SessionMetadata` block, sorted `[ClickEvent]`,
 //! sorted `[CursorSample]`, and sorted `[ActionSpan]`. Pure file I/O

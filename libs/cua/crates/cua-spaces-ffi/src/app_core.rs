@@ -67,6 +67,51 @@ pub fn app_creates_reduce(state: AppCreatesState, action: AppCreateAction) -> Ap
     core::spaces::creating::reduce(&state, &action)
 }
 
+/// The actions that make the pending rows show the Spaces agents asked this
+/// computer to make (read from this computer's cua home, which the daemon writes):
+/// run each through `app_creates_reduce` on every list refresh.
+#[uniffi::export]
+pub fn app_agent_creates_actions(state: AppCreatesState, now_ms: i64) -> Vec<AppCreateAction> {
+    let creates: Vec<core::spaces::creating::AgentCreate> =
+        cua_spaces::child_creates::visible(&cua_home::cua_home())
+            .into_iter()
+            .map(|e| core::spaces::creating::AgentCreate {
+                key: e.key,
+                name: e.name,
+                os: e.os,
+                state: match e.state {
+                    cua_spaces::child_creates::State::Creating => "creating",
+                    cua_spaces::child_creates::State::Ready => "ready",
+                    cua_spaces::child_creates::State::Failed => "failed",
+                }
+                .into(),
+                phase: e.code,
+                percent: e.percent,
+                space: e.space,
+                error: e.error,
+                started_ms: e.started_ms,
+                parent: e.parent,
+            })
+            .collect();
+    core::spaces::creating::agent_actions(&state, &creates, now_ms)
+}
+
+/// The person removed an agent's failed create from the list: it is not drawn again.
+#[uniffi::export]
+pub fn app_agent_create_remove(pending_id: String) {
+    for e in cua_spaces::child_creates::visible(&cua_home::cua_home()) {
+        if core::spaces::creating::agent_pending_id(&e.key, e.started_ms) == pending_id {
+            cua_spaces::child_creates::hide(&cua_home::cua_home(), &e.key, e.started_ms);
+        }
+    }
+}
+
+/// Whether the pending row `id` is a create an agent asked for (Cancel and Remove act on the host's record).
+#[uniffi::export]
+pub fn app_agent_create_is_agents(id: String) -> bool {
+    core::spaces::creating::is_agent_pending(&id)
+}
+
 /// The registry's Spaces plus a row per Space being created.
 #[uniffi::export]
 pub fn app_creates_compose(spaces: Vec<AppSpace>, state: AppCreatesState) -> Vec<AppSpace> {
@@ -123,19 +168,7 @@ pub fn app_space_detail_live(
     core::spaces::sidebar::detail_live(&space, usage.as_ref(), host_arch.as_deref())
 }
 
-/// [`app_space_detail_live`] without what Settings, Experiments hides (the
-/// Share button while Sharing is off).
-#[uniffi::export]
-pub fn app_space_detail_with(
-    space: AppSpace,
-    usage: Option<AppSpaceUsage>,
-    host_arch: Option<String>,
-    experiments: AppExperiments,
-) -> AppSpaceDetail {
-    core::spaces::sidebar::detail_with(&space, usage.as_ref(), host_arch.as_deref(), &experiments)
-}
-
-/// [`app_space_detail_with`] as this device sees it: `access` (from
+/// [`app_space_detail_live`] as this device sees it: `access` (from
 /// [`app_machine_access_notice`]) greys out Connect on every Space reached
 /// through the relay while this device is not enrolled; one of your
 /// machines that does not share its desktop shows its note in place of the
@@ -145,14 +178,12 @@ pub fn app_space_detail_for(
     space: AppSpace,
     usage: Option<AppSpaceUsage>,
     host_arch: Option<String>,
-    experiments: AppExperiments,
     access: Option<AppMachineAccessNotice>,
 ) -> AppSpaceDetail {
     core::spaces::sidebar::detail_for(
         &space,
         usage.as_ref(),
         host_arch.as_deref(),
-        &experiments,
         access.as_ref(),
     )
 }
@@ -203,10 +234,27 @@ pub fn app_usage_refresh_ms() -> u64 {
     core::spaces::sidebar::USAGE_REFRESH_MS
 }
 
+/// The system this process runs on, from the platform the library was
+/// built for. The shells run in the same process as the library, so this is
+/// the real host, never a macOS default.
+fn host_space_os() -> core::model::SpaceOs {
+    space_os_of_platform(std::env::consts::OS)
+}
+
+/// Maps Rust's `std::env::consts::OS` to a Space's system.
+fn space_os_of_platform(platform: &str) -> core::model::SpaceOs {
+    match platform {
+        "macos" => core::model::SpaceOs::Macos,
+        "windows" => core::model::SpaceOs::Windows,
+        "linux" => core::model::SpaceOs::Linux,
+        _ => core::model::SpaceOs::Unknown,
+    }
+}
+
 /// The "This machine" roster entry.
 #[uniffi::export]
 pub fn app_this_machine_space(status: Option<AppHostSummaryInput>, now_ms: i64) -> AppSpace {
-    core::host::this_machine_space(status.as_ref(), now_ms, core::model::SpaceOs::Macos)
+    core::host::this_machine_space(status.as_ref(), now_ms, host_space_os())
 }
 
 /// Adds the "This machine" entry to a roster, first.
@@ -216,12 +264,7 @@ pub fn app_with_this_machine(
     status: Option<AppHostSummaryInput>,
     now_ms: i64,
 ) -> Vec<AppSpace> {
-    core::host::with_this_machine(
-        &spaces,
-        status.as_ref(),
-        now_ms,
-        core::model::SpaceOs::Macos,
-    )
+    core::host::with_this_machine(&spaces, status.as_ref(), now_ms, host_space_os())
 }
 
 /// The words of a Space's sections (Stream, Agents, Teleport).
@@ -1061,6 +1104,14 @@ pub fn app_about_view(input: AppAboutInput) -> AppAboutView {
 #[uniffi::export]
 pub fn app_about_allowed_channels(channel: AppUpdateChannel) -> Vec<String> {
     core::about::allowed_channels(channel)
+}
+
+/// The appcast a Sparkle updater on `channel` reads, from the app's own
+/// `SUFeedURL` (`stable_feed`): the nightly appcast for Nightly; `None`
+/// keeps `SUFeedURL` (for Nightly: this feed has no nightly next to it).
+#[uniffi::export]
+pub fn app_about_feed_url(channel: AppUpdateChannel, stable_feed: String) -> Option<String> {
+    core::about::feed_url(channel, &stable_feed)
 }
 
 /// What this launch does (refresh after an update; the version to record).
@@ -2103,6 +2154,21 @@ pub fn app_account_app_url() -> String {
     cua_home::env::account_app_url()
 }
 
+/// Which build and deployment this app runs as: its channel (`stable` or
+/// `local`, `CuaChannel`), its environment (`prod` or `staging`, `CuaEnv`)
+/// and the host of the sign-in server it uses, resolved as every other part
+/// of the app resolves them. The web UI's title bar tag ("Local · Staging",
+/// the app core's `environment.tag`) is drawn from it, so every shell agrees.
+#[uniffi::export]
+pub fn app_target() -> AppTarget {
+    let (channel, env) = cua_home::channel::CuaChannel::current_with_env();
+    AppTarget {
+        channel: channel.name().to_string(),
+        env: env.name().to_string(),
+        auth_host: core::environment_tag::auth_host(&cua_home::env::oidc_issuer()),
+    }
+}
+
 /// Settings' "Relay usage" row and the notice past the allowance; none
 /// when the relay meters nothing.
 #[uniffi::export]
@@ -2169,29 +2235,120 @@ pub fn app_resources_warning(warning: cua_sdk::DiskWarning) -> Option<AppWarning
     core::resources::warning_view(&core_of(&warning))
 }
 
-/// Reads the settings file (defaults when missing or damaged).
+/// Reads the settings file (defaults when missing or damaged). The
+/// experiments the daemon enforces (CI runners, Public TCP shares, Phone app) are what
+/// the cua home keeps, so `cua experiments enable` shows in the app.
 #[uniffi::export]
 pub fn app_settings_load(path: String) -> AppSettings {
-    core::settings::load(std::path::Path::new(&path))
+    let mut settings = core::settings::load(std::path::Path::new(&path));
+    settings.experiments = sync_experiments_from_home(settings.experiments, &cua_home::cua_home());
+    settings
 }
 
-/// Writes the settings file.
+/// The experiments the daemon enforces ([`cua_spaces::experiments::Gate`])
+/// of `experiments`, with the switches `home` keeps laid over them: what
+/// `cua experiments enable` set wins over what the app's file remembers.
+fn sync_experiments_from_home(
+    mut experiments: AppExperiments,
+    home: &std::path::Path,
+) -> AppExperiments {
+    use cua_spaces::experiments::{Gate, switch};
+    if let Some(on) = switch(home, Gate::CiRunners) {
+        experiments.ci_runners = on;
+    }
+    if let Some(on) = switch(home, Gate::TcpShares) {
+        experiments.tcp_shares = on;
+    }
+    if let Some(on) = switch(home, Gate::Mobile) {
+        experiments.mobile = on;
+    }
+    experiments
+}
+
+/// Keeps the daemon's experiments of `experiments` in `home` (only a change
+/// is written).
+fn sync_experiments_to_home(
+    experiments: &AppExperiments,
+    home: &std::path::Path,
+) -> std::io::Result<()> {
+    use cua_spaces::experiments::{Gate, set_switch};
+    set_switch(home, Gate::CiRunners, experiments.ci_runners)?;
+    set_switch(home, Gate::TcpShares, experiments.tcp_shares)?;
+    set_switch(home, Gate::Mobile, experiments.mobile)
+}
+
+/// Writes the settings file, and keeps the experiments the daemon enforces
+/// where it reads them (the cua home).
 #[uniffi::export]
 pub fn app_settings_save(path: String, settings: AppSettings) -> Result<()> {
     core::settings::save(std::path::Path::new(&path), &settings)
-        .map_err(|e| CuaError::Internal(e.to_string()))
+        .map_err(|e| CuaError::Internal(e.to_string()))?;
+    sync_experiments_to_home(&settings.experiments, &cua_home::cua_home())
+        .map_err(|e| CuaError::Internal(format!("keep the experiment switches: {e}")))
 }
 
-/// The settings with the New UI as a launch of `version` shows it: the
-/// user's choice, else the default for the update channel and version
-/// (again after the channel changes).
-#[uniffi::export]
-pub fn app_settings_resolve_new_ui(settings: AppSettings, version: String) -> AppSettings {
-    core::settings::resolve_new_ui(&settings, &version)
+#[cfg(test)]
+mod experiment_sync_tests {
+    use super::*;
+
+    #[test]
+    fn a_switch_off_once_for_an_always_on_feature_is_ignored_and_removed_on_save() {
+        let home = tempfile::tempdir().unwrap();
+        let dir = home.path().join("experiments");
+        std::fs::create_dir_all(&dir).unwrap();
+        for n in ["secure-spaces", "ask-first", "child-spaces", "warm-pools"] {
+            std::fs::write(dir.join(n), "off\n").unwrap();
+        }
+        // Reading ignores them.
+        let seen = sync_experiments_from_home(AppExperiments::default(), home.path());
+        assert_eq!(seen, AppExperiments::default());
+        // Writing removes them.
+        sync_experiments_to_home(&seen, home.path()).unwrap();
+        for n in ["secure-spaces", "ask-first", "child-spaces", "warm-pools"] {
+            assert!(!dir.join(n).exists(), "{n}");
+        }
+    }
+
+    #[test]
+    fn the_daemon_switches_follow_the_cua_home_both_ways() {
+        let home = tempfile::tempdir().unwrap();
+        // Nothing kept: the app's own file decides.
+        let mine = AppExperiments {
+            ci_runners: true,
+            ..Default::default()
+        };
+        assert_eq!(sync_experiments_from_home(mine, home.path()), mine);
+        // What `cua experiments enable` set wins.
+        cua_spaces::experiments::set_switch(
+            home.path(),
+            cua_spaces::experiments::Gate::Mobile,
+            true,
+        )
+        .unwrap();
+        let seen = sync_experiments_from_home(mine, home.path());
+        assert!(seen.mobile && seen.ci_runners);
+        // The app's switches land in the home for the daemon.
+        sync_experiments_to_home(&seen, home.path()).unwrap();
+        assert_eq!(
+            cua_spaces::experiments::switch(home.path(), cua_spaces::experiments::Gate::CiRunners),
+            Some(true)
+        );
+        // Only the daemon's experiments are kept there.
+        let kept: Vec<_> = std::fs::read_dir(home.path().join("experiments"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            kept.iter()
+                .all(|n| n == "ci-runners" || n == "tcp-shares" || n == "mobile"),
+            "{kept:?}"
+        );
+    }
 }
 
 /// The update channel of an install's first launch, from the file's
-/// `channel`: Beta for a prerelease, else unchanged.
+/// `channel`: Nightly for a prerelease, else unchanged.
 #[uniffi::export]
 pub fn app_settings_first_launch_channel(
     channel: AppUpdateChannel,
@@ -3597,7 +3754,7 @@ mod resources_tests {
         assert_eq!(v.this_mac.extra_spaces, rt::words::extra_spaces_use(m));
         assert_eq!(
             v.this_mac.warning.as_ref().map(|w| w.text.as_str()),
-            rt::words::warning(&runtime.warning)
+            rt::words::warning_on(&runtime.warning, rt::words::Host::Mac)
         );
         // A running Space.
         let s = &runtime.spaces[0];
@@ -3611,5 +3768,27 @@ mod resources_tests {
             format!("{} in use", rt::words::computer_memory(c))
         );
         assert_eq!(v.computers[0].rows[2].value, rt::words::computer_disk(c));
+    }
+}
+
+#[cfg(test)]
+mod host_os_tests {
+    use super::*;
+    use crate::app_core::core::model::SpaceOs;
+
+    #[test]
+    fn platform_words_map_to_their_system() {
+        assert_eq!(space_os_of_platform("macos"), SpaceOs::Macos);
+        assert_eq!(space_os_of_platform("windows"), SpaceOs::Windows);
+        assert_eq!(space_os_of_platform("linux"), SpaceOs::Linux);
+        assert_eq!(space_os_of_platform("freebsd"), SpaceOs::Unknown);
+    }
+
+    #[test]
+    fn this_machine_space_carries_the_real_host_system() {
+        let want = space_os_of_platform(std::env::consts::OS);
+        assert_eq!(app_this_machine_space(None, 0).os, want);
+        let roster = app_with_this_machine(Vec::new(), None, 0);
+        assert_eq!(roster[0].os, want);
     }
 }

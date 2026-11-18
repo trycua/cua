@@ -253,6 +253,26 @@ pub const FLOWS: &[(&str, &str, &str)] = &[
         include_str!("../parity/connectors.json"),
         include_str!("../parity/golden/connectors.json"),
     ),
+    (
+        "github-connection",
+        include_str!("../parity/github-connection.json"),
+        include_str!("../parity/golden/github-connection.json"),
+    ),
+    (
+        "thread-cards",
+        include_str!("../parity/thread-cards.json"),
+        include_str!("../parity/golden/thread-cards.json"),
+    ),
+    (
+        "ci-runners",
+        include_str!("../parity/ci-runners.json"),
+        include_str!("../parity/golden/ci-runners.json"),
+    ),
+    (
+        "prepare",
+        include_str!("../parity/prepare.json"),
+        include_str!("../parity/golden/prepare.json"),
+    ),
 ];
 
 /// The core calls a flow makes, over JSON. A host implements it with its
@@ -815,6 +835,424 @@ pub mod frame {
         Value::Array(out)
     }
 
+    /// Settings, Connections, GitHub, as lines: the rows, and the open host's page.
+    pub fn github_connection(v: &Value, open: Option<&str>) -> Value {
+        let list = |x: &Value| x.as_array().cloned().unwrap_or_default();
+        let mut lines = vec![Value::String(format!(
+            "{} / {}",
+            str_of(&v["title"]),
+            str_of(&v["footer"])
+        ))];
+        if let Some(n) = v["notice"].as_str() {
+            lines.push(Value::String(format!("notice: {n}")));
+        }
+        for r in list(&v["rows"]) {
+            lines.push(Value::String(format!(
+                "{} [{}]: {}",
+                str_of(&r["title"]),
+                str_of(&r["tone"]),
+                str_of(&r["line"])
+            )));
+            if let Some(w) = r["warning"].as_str() {
+                lines.push(Value::String(format!("  warning: {w}")));
+            }
+        }
+        lines.push(Value::String(format!("<{}>", str_of(&v["rescanLabel"]))));
+        let mut page = Vec::new();
+        for d in list(&v["details"]) {
+            if Some(str_of(&d["host"])) != open {
+                continue;
+            }
+            page.push(Value::String(format!(
+                "{}: {}",
+                str_of(&d["title"]),
+                str_of(&d["line"])
+            )));
+            page.push(Value::String(format!(
+                "[{}] {} / {}",
+                if d["enabled"] == true { "on" } else { "off" },
+                str_of(&d["switchLabel"]),
+                str_of(&d["switchHelp"])
+            )));
+            if let Some(l) = d["accountsLabel"].as_str() {
+                page.push(Value::String(format!(
+                    "{l}: {}",
+                    str_of(&d["accountsHelp"])
+                )));
+                for a in list(&d["accounts"]) {
+                    page.push(Value::String(format!(
+                        "  {} {}{}{}",
+                        if a["selected"] == true { "*" } else { "-" },
+                        str_of(&a["login"]),
+                        a["tag"]
+                            .as_str()
+                            .map(|t| format!(" ({t})"))
+                            .unwrap_or_default(),
+                        a["note"]
+                            .as_str()
+                            .map(|t| format!(" [{t}]"))
+                            .unwrap_or_default()
+                    )));
+                }
+                if let Some(a) = d["autoLabel"].as_str() {
+                    page.push(Value::String(format!("  <{a}>")));
+                }
+            }
+            page.push(Value::String(str_of(&d["sourcesTitle"]).to_string()));
+            for s in list(&d["sources"]) {
+                page.push(Value::String(format!(
+                    "  {}{}",
+                    str_of(&s["line"]),
+                    s["tag"]
+                        .as_str()
+                        .map(|t| format!(" ({t})"))
+                        .unwrap_or_default()
+                )));
+            }
+            if let Some(hlp) = d["help"].as_str() {
+                page.push(Value::String(format!("help: {hlp}")));
+            }
+            page.push(Value::String(format!(
+                "<{}>{} <{}>",
+                str_of(&d["rescanLabel"]),
+                d["pasteLabel"]
+                    .as_str()
+                    .map(|p| format!(" <{p}>"))
+                    .unwrap_or_default(),
+                str_of(&d["closeLabel"])
+            )));
+        }
+        json!({ "lines": lines, "page": page })
+    }
+
+    /// The CI Runners page, as lines: the checklist, the overview line,
+    /// the tabs, each job (and an open job's detail), the picker, the
+    /// autopilots, the help and the connect sheet.
+    pub fn ci_runners(v: &Value) -> Value {
+        let list = |x: &Value| x.as_array().cloned().unwrap_or_default();
+        let setup: Vec<Value> = match v["setup"].as_object() {
+            None => vec![],
+            Some(_) => {
+                let mut l = vec![Value::String(format!(
+                    "{} {}",
+                    str_of(&v["setup"]["title"]),
+                    str_of(&v["setup"]["progress"])
+                ))];
+                for r in list(&v["setup"]["rows"]) {
+                    l.push(Value::String(format!(
+                        "{} [{}] {}{}",
+                        str_of(&r["title"]),
+                        str_of(&r["state"]),
+                        str_of(&r["detail"]),
+                        r["action"]["label"]
+                            .as_str()
+                            .map(|a| format!(" <{a}>"))
+                            .unwrap_or_default()
+                    )));
+                }
+                l
+            }
+        };
+        let stats: Vec<Value> = list(&v["stats"])
+            .iter()
+            .map(|s| {
+                Value::String(format!(
+                    "{}: {}{}",
+                    str_of(&s["label"]),
+                    str_of(&s["value"]),
+                    s["tone"]
+                        .as_str()
+                        .map(|t| format!(" ({t})"))
+                        .unwrap_or_default()
+                ))
+            })
+            .collect();
+        let tabs: Vec<Value> = list(&v["jobs"]["tabs"])
+            .iter()
+            .map(|t| {
+                Value::String(format!(
+                    "{}{} {}",
+                    if t["selected"] == true { "*" } else { "" },
+                    str_of(&t["label"]),
+                    t["count"]
+                ))
+            })
+            .collect();
+        let mut jobs: Vec<Value> = Vec::new();
+        for r in list(&v["jobs"]["rows"]) {
+            jobs.push(Value::String(format!(
+                "{} / {} / {} / wait {} / run {} / cost {} / {}{}",
+                str_of(&r["title"]),
+                str_of(&r["repo"]),
+                str_of(&r["stateLabel"]),
+                str_of(&r["wait"]),
+                str_of(&r["run"]),
+                str_of(&r["cost"]),
+                str_of(&r["when"]),
+                if r["expanded"] == true { " (open)" } else { "" }
+            )));
+            if let Some(d) = r["detail"].as_object() {
+                if let Some(t) = d.get("timeline").filter(|t| t.is_object()) {
+                    jobs.push(Value::String(format!(
+                        "  timeline {}% {} / {}% {}",
+                        t["waitPct"],
+                        str_of(&t["waitLabel"]),
+                        t["runPct"],
+                        str_of(&t["runLabel"])
+                    )));
+                }
+                for fct in list(&d["facts"]) {
+                    jobs.push(Value::String(format!(
+                        "  {}: {}",
+                        str_of(&fct["label"]),
+                        str_of(&fct["value"])
+                    )));
+                }
+                jobs.push(Value::String(format!(
+                    "  <{}> {} <{}> log {} {} {}",
+                    str_of(&d["openLabel"]),
+                    d["openUrl"].as_str().unwrap_or("no link"),
+                    str_of(&d["logLabel"]),
+                    str_of(&d["log"]["jobKey"]),
+                    str_of(&d["log"]["pool"]),
+                    str_of(&d["log"]["slot"])
+                )));
+            }
+        }
+        if jobs.is_empty() {
+            jobs.push(Value::String(format!(
+                "empty: {}",
+                str_of(&v["jobs"]["empty"])
+            )));
+        }
+        let picker: Vec<Value> = if v["pickerOpen"] == true {
+            let p = &v["repositories"];
+            let mut l = vec![Value::String(format!(
+                "{}: {} <{}> <{}>",
+                str_of(&p["title"]),
+                str_of(&p["summary"]),
+                str_of(&p["chooseLabel"]),
+                str_of(&p["connectLabel"])
+            ))];
+            for r in list(&p["rows"]) {
+                l.push(Value::String(format!(
+                    "{} / {} / {}{}",
+                    str_of(&r["name"]),
+                    str_of(&r["status"]),
+                    str_of(&r["jobs"]),
+                    if r["canToggle"] == true {
+                        " (switch)"
+                    } else {
+                        ""
+                    }
+                )));
+            }
+            if list(&p["rows"]).is_empty() {
+                l.push(Value::String(format!("empty: {}", str_of(&p["empty"]))));
+            }
+            l
+        } else {
+            vec![]
+        };
+        let mut autopilot: Vec<Value> = Vec::new();
+        for a in list(&v["sizing"]) {
+            autopilot.push(Value::String(format!(
+                "{} / {}: {} / {} / {}{}",
+                str_of(&v["sizingTitle"]),
+                str_of(&v["cloudLabel"]),
+                str_of(&a["title"]),
+                list(&a["goals"])
+                    .iter()
+                    .map(|g| format!(
+                        "{}{}",
+                        if g["selected"] == true { "*" } else { "" },
+                        str_of(&g["label"])
+                    ))
+                    .collect::<Vec<_>>()
+                    .join("|"),
+                str_of(&a["budget"]),
+                a["budgetTone"]
+                    .as_str()
+                    .map(|t| format!(" ({t})"))
+                    .unwrap_or_default()
+            )));
+            autopilot.push(Value::String(format!("  {}", str_of(&a["goalNote"]))));
+            for p in list(&a["plans"]) {
+                autopilot.push(Value::String(format!(
+                    "  {}: {}",
+                    str_of(&p["label"]),
+                    str_of(&p["line"])
+                )));
+            }
+            for r in list(&a["reasons"]) {
+                autopilot.push(Value::String(format!("  why: {}", str_of(&r))));
+            }
+        }
+        if list(&v["sizing"]).is_empty() {
+            autopilot.push(Value::String(format!(
+                "{} / none: {}",
+                str_of(&v["sizingTitle"]),
+                str_of(&v["noCloud"])
+            )));
+        }
+        let help: Vec<Value> = list(&v["help"])
+            .iter()
+            .map(|h| {
+                Value::String(format!(
+                    "{}{}{}",
+                    if h["open"] == true { "v " } else { "> " },
+                    str_of(&h["title"]),
+                    h["body"]
+                        .as_str()
+                        .map(|b| format!(": {b}"))
+                        .unwrap_or_default()
+                ))
+            })
+            .collect();
+        let connect: Vec<Value> = match v["connect"].as_object() {
+            None => vec![],
+            Some(c) => {
+                let g = |k: &str| c.get(k).and_then(Value::as_str).unwrap_or("");
+                let mut l = vec![Value::String(format!(
+                    "{} [{}]: {} <{}{}>{} <{}>",
+                    g("title"),
+                    g("phase"),
+                    g("body"),
+                    g("primary"),
+                    if c.get("busy") == Some(&Value::Bool(true)) {
+                        " busy"
+                    } else {
+                        ""
+                    },
+                    c.get("secondary")
+                        .and_then(Value::as_str)
+                        .map(|s| format!(" <{s}>"))
+                        .unwrap_or_default(),
+                    g("close")
+                ))];
+                if let Some(u) = c.get("url").and_then(Value::as_str) {
+                    l.push(Value::String(format!("  page {u}")));
+                }
+                if let Some(e) = c.get("error").and_then(Value::as_str) {
+                    l.push(Value::String(format!("  error {e}")));
+                }
+                if let Some(t) = c.get("token").filter(|t| t.is_object()) {
+                    l.push(Value::String(format!(
+                        "  {} = {} / {} / {} <{}> {}{}",
+                        str_of(&t["orgLabel"]),
+                        str_of(&t["org"]),
+                        str_of(&t["tokenLabel"]),
+                        str_of(&t["tokenHelp"]),
+                        str_of(&t["createLabel"]),
+                        str_of(&t["createUrl"]),
+                        if t["canSubmit"] == true {
+                            " (can connect)"
+                        } else {
+                            " (needs an organization)"
+                        }
+                    )));
+                }
+                l
+            }
+        };
+        json!({
+            "button": v["connectButton"]["label"],
+            "setup": setup,
+            "stats": stats,
+            "tabs": tabs,
+            "jobs": jobs,
+            "repositories": picker,
+            "sizing": autopilot,
+            "help": help,
+            "connect": connect,
+            "note": v["note"],
+        })
+    }
+
+    /// The preparing block, as lines: the headline, a status line only when the
+    /// steps cannot say it, each step with its state, detail and (the current
+    /// one only) its thin bar, each queued
+    /// message with its note, the hint under the box and the button.
+    pub fn prepare(v: &Value) -> Value {
+        let mut out: Vec<Value> = Vec::new();
+        out.push(Value::String(format!(
+            "{}: {}",
+            str_of(&v["phase"]),
+            str_of(&v["title"])
+        )));
+        if let Some(l) = v["line"].as_str() {
+            out.push(Value::String(l.to_string()));
+        }
+        for st in v["steps"].as_array().into_iter().flatten() {
+            let mut l = format!("{} ({})", str_of(&st["label"]), str_of(&st["state"]));
+            if let Some(d) = st["detail"].as_str() {
+                l.push_str(&format!(" - {d}"));
+            }
+            if let Some(f) = st["fraction"].as_f64() {
+                l.push_str(&format!(" [bar {}%]", (f * 100.0).round() as i64));
+            }
+            out.push(Value::String(l));
+        }
+        for q in v["queued"].as_array().into_iter().flatten() {
+            out.push(Value::String(format!(
+                "queued: {} ({})",
+                str_of(&q["text"]),
+                str_of(&q["note"])
+            )));
+        }
+        if let Some(h) = v["composerHint"].as_str() {
+            out.push(Value::String(format!("hint: {h}")));
+        }
+        if let Some(a) = v["action"]["label"].as_str() {
+            out.push(Value::String(format!("button: {a}")));
+        }
+        Value::Array(out)
+    }
+
+    /// What the host was told to do, one line each.
+    pub fn prepare_effects(effects: &[Value]) -> Value {
+        Value::Array(
+            effects
+                .iter()
+                .map(|e| {
+                    let mut l = str_of(&e["type"]).to_string();
+                    if let Some(id) = e["id"].as_str() {
+                        l.push_str(&format!(" {id}"));
+                    }
+                    if let Some(at) = e["atMs"].as_i64() {
+                        l.push_str(&format!(" at {at}"));
+                    }
+                    Value::String(l)
+                })
+                .collect(),
+        )
+    }
+
+    /// The numbers, as `name=value` lines (`-` for not reached).
+    pub fn prepare_metrics(m: &Value) -> Value {
+        let n = |v: &Value| match v.as_i64() {
+            Some(x) => x.to_string(),
+            None => "-".to_string(),
+        };
+        let mut out = vec![Value::String(format!(
+            "runtime={} image={} home={} agent={} prepare={} onboarding_to_ready={}",
+            n(&m["runtimeMs"]),
+            n(&m["imageMs"]),
+            n(&m["homeMs"]),
+            n(&m["agentMs"]),
+            n(&m["prepareMs"]),
+            n(&m["onboardingToReadyMs"])
+        ))];
+        for x in m["messages"].as_array().into_iter().flatten() {
+            out.push(Value::String(format!(
+                "message {} delivered={} first_token={}",
+                str_of(&x["id"]),
+                n(&x["sendToDeliveredMs"]),
+                n(&x["sendToFirstTokenMs"])
+            )));
+        }
+        Value::Array(out)
+    }
     /// One Settings row: `- id kind: label = value ~placeholder [button] {options} (disabled) ?help <link>`.
     pub fn setting_row(r: &Value) -> String {
         let options = r["options"]
@@ -1764,6 +2202,12 @@ pub mod frame {
                     .map(|o| format!("{}{}", str_of(&o["label"]), if o["active"] == true { "*" } else { "" }))
                     .collect::<Vec<_>>().join(" | ")),
                 "help": u["channelHelp"],
+                "note": u["channelNote"],
+                "download": if u["downloadUrl"].is_string() {
+                    json!(format!("{} -> {}", str_of(&u["downloadLabel"]), str_of(&u["downloadUrl"])))
+                } else {
+                    Value::Null
+                },
                 "check": format!("{} {}", str_of(&u["checkLabel"]), if u["checkEnabled"] == true { "on" } else { "off" }),
                 "lastCheck": u["lastCheck"],
                 "sparkleChannels": channels,
@@ -1998,6 +2442,10 @@ pub fn run(name: &str, flow_json: &str, h: &dyn Host) -> Result<Value, String> {
         "tips" => run_tips(&flow, h),
         "pro-banner" => run_pro_banner(&flow, h),
         "connectors" => run_connectors(&flow, h),
+        "github-connection" => run_github_connection(&flow, h),
+        "thread-cards" => run_thread_cards(&flow, h),
+        "ci-runners" => run_ci_runners(&flow, h),
+        "prepare" => run_prepare(&flow, h),
         other => Err(format!("unknown flow {other}")),
     }
 }
@@ -3490,6 +3938,7 @@ fn run_first_run(f: &Value, h: &dyn Host) -> Result<Value, String> {
         // A machine: its one-click offers are the wizard's for that
         // machine's env (`wizard.firstSpaceOffers`), as the page reads them.
         let mut offered = Value::Null;
+        let mut prompts = Value::Null;
         if case["machine"].is_object() {
             let m = &case["machine"];
             let env = patched(&f["machineBase"], &m["env"]);
@@ -3523,6 +3972,20 @@ fn run_first_run(f: &Value, h: &dyn Host) -> Result<Value, String> {
             );
             input["offers"] = json!(list);
             input["hostOs"] = m["hostOs"].clone();
+            // The example jobs for that machine (`firstPrompts.choose`).
+            let p = c(
+                h,
+                "firstPrompts.choose",
+                json!({ "env": env, "hostOs": m["hostOs"] }),
+            )?;
+            prompts = json!({
+                "caps": p["caps"],
+                "lede": p["lede"],
+                "examples": p["examples"].as_array().into_iter().flatten()
+                    .map(|x| x["id"].clone()).collect::<Vec<_>>(),
+                "cards": p["suggestions"].as_array().into_iter().flatten()
+                    .map(|x| x["id"].clone()).collect::<Vec<_>>(),
+            });
         }
         let v = c(h, "firstRun.view", json!({ "input": input }))?;
         let s = |v: &Value| v.as_str().unwrap_or("").to_string();
@@ -3540,6 +4003,9 @@ fn run_first_run(f: &Value, h: &dyn Host) -> Result<Value, String> {
         });
         if !offered.is_null() {
             frame["offers"] = offered;
+        }
+        if !prompts.is_null() {
+            frame["prompts"] = prompts;
         }
         let row = |r: &Value| {
             format!(
@@ -4616,9 +5082,8 @@ fn run_your_cloud(f: &Value, h: &dyn Host) -> Result<Value, String> {
 /// Settings, Experiments: the tab and what every switch decides, after
 /// each change (`changes`: a row's choice). Each frame has the tab, the
 /// events the change sends, Settings (Storage only with Cua Volume), the
-/// first run's pages and its Done page, a Space's buttons (Share only with
-/// Sharing) and New Space's Run on menu and links (clouds only with Your
-/// cloud).
+/// first run's pages and its Done page, a Space's buttons and New Space's
+/// Run on menu and links.
 fn run_experiments(f: &Value, h: &dyn Host) -> Result<Value, String> {
     let storage_state = c(h, "storage.initial", json!({}))?;
     let storage = c(
@@ -4693,11 +5158,7 @@ fn experiments_frame(
         }
     }
     let done = c(h, "onboarding.view", json!({ "state": st }))?;
-    let detail = c(
-        h,
-        "sidebar.detail",
-        json!({ "space": space, "experiments": x }),
-    )?;
+    let detail = c(h, "sidebar.detail", json!({ "space": space }))?;
     let chrome = c(h, "window.chrome", json!({ "input": { "experiments": x } }))?;
     let mut menu_input = f["menu"].clone();
     menu_input["experiments"] = x.clone();
@@ -4730,7 +5191,7 @@ fn experiments_frame(
 }
 
 /// New Space's Run on menu: This Mac, your machines (offline and at a limit
-/// say why) and, with the Your cloud experiment, your clouds. A step may
+/// say why) and your clouds. A step may
 /// patch the wizard's env (`env`: the experiments, the hosts) before its
 /// action; each frame is the wizard and the create's `on`.
 fn run_placement_picker(f: &Value, h: &dyn Host) -> Result<Value, String> {
@@ -5001,6 +5462,102 @@ fn run_tips(f: &Value, h: &dyn Host) -> Result<Value, String> {
     Ok(json!({ "flow": "tips", "frames": frames }))
 }
 
+/// Settings, Connections, GitHub: each step is the daemon's `github.status`
+/// (`githubConnection.view`), with one host's page open.
+fn run_github_connection(f: &Value, h: &dyn Host) -> Result<Value, String> {
+    let mut frames = Vec::new();
+    for step in f["steps"].as_array().into_iter().flatten() {
+        let input = step["input"]
+            .as_str()
+            .map(|n| f["inputs"][n].clone())
+            .unwrap_or(Value::Null);
+        let v = c(h, "githubConnection.view", json!({ "input": input }))?;
+        frames.push(json!({ "step": step["step"], "section": frame::github_connection(&v, step["open"].as_str()) }));
+    }
+    Ok(json!({ "flow": "github-connection", "frames": frames }))
+}
+
+/// The thread's cards: each step calls one core method (the push card, or
+/// how an author shows) and records its view as the core drew it.
+fn run_thread_cards(f: &Value, h: &dyn Host) -> Result<Value, String> {
+    let mut frames = Vec::new();
+    for step in f["steps"].as_array().into_iter().flatten() {
+        let method = step["method"].as_str().ok_or("step without a method")?;
+        let view = c(h, method, step["args"].clone())?;
+        frames.push(json!({ "step": step["step"], "view": view }));
+    }
+    Ok(json!({ "flow": "thread-cards", "frames": frames }))
+}
+
+/// The CI Runners page: each step may set the overview (`cua ci overview`,
+/// by name from the flow's `overviews`) and send page actions
+/// (`ciRunners.reduce`), then draws the page (`ciRunners.view`).
+fn run_ci_runners(f: &Value, h: &dyn Host) -> Result<Value, String> {
+    let mut frames = Vec::new();
+    let mut overview = Value::Null;
+    let mut state = c(
+        h,
+        "ciRunners.reduce",
+        json!({ "action": { "type": "tab", "tab": "all" } }),
+    )?;
+    for step in f["steps"].as_array().into_iter().flatten() {
+        if let Some(name) = step["overview"].as_str() {
+            overview = f["overviews"][name].clone();
+        }
+        for a in step["actions"].as_array().into_iter().flatten() {
+            state = c(
+                h,
+                "ciRunners.reduce",
+                json!({ "state": state, "action": a }),
+            )?;
+        }
+        let v = c(
+            h,
+            "ciRunners.view",
+            json!({ "overview": overview, "state": state }),
+        )?;
+        frames.push(json!({ "step": step["step"], "page": frame::ci_runners(&v) }));
+    }
+    Ok(json!({ "flow": "ci-runners", "frames": frames }))
+}
+
+/// Preparing the ask-first Space: each step sends actions (`prepare.reduce`),
+/// then draws the page (`prepare.view`), what the host is told to do next
+/// and the numbers (`prepare.metrics`).
+fn run_prepare(f: &Value, h: &dyn Host) -> Result<Value, String> {
+    let mut frames = Vec::new();
+    let mut state = Value::Null;
+    let roster = f["roster"].clone();
+    for step in f["steps"].as_array().into_iter().flatten() {
+        // A step may begin on a fresh install.
+        if step["fresh"].as_bool() == Some(true) {
+            state = Value::Null;
+        }
+        let mut effects: Vec<Value> = Vec::new();
+        for a in step["actions"].as_array().into_iter().flatten() {
+            let r = c(h, "prepare.reduce", json!({ "state": state, "action": a }))?;
+            state = r["state"].clone();
+            effects.extend(r["effects"].as_array().cloned().unwrap_or_default());
+        }
+        let v = c(h, "prepare.view", json!({ "state": state }))?;
+        let m = c(h, "prepare.metrics", json!({ "state": state }))?;
+        // What a list shows of the roster: the warming home is not in it until a person wrote into it.
+        let listed = c(
+            h,
+            "prepare.listed",
+            json!({ "state": state, "ids": roster }),
+        )?;
+        frames.push(json!({
+            "step": step["step"],
+            "page": frame::prepare(&v),
+            "list": listed,
+            "effects": frame::prepare_effects(&effects),
+            "metrics": frame::prepare_metrics(&m),
+        }));
+    }
+    Ok(json!({ "flow": "prepare", "frames": frames }))
+}
+
 /// The account area: the Pro banner (Free only, not closable) and the
 /// account menu.
 fn run_pro_banner(f: &Value, h: &dyn Host) -> Result<Value, String> {
@@ -5186,6 +5743,128 @@ fn run_connectors(f: &Value, h: &dyn Host) -> Result<Value, String> {
             "groups": groups,
             "default": line(&[&v["default"]["provider"], &v["default"]["model"]]),
             "connect": line(&[&v["connectLabel"], &v["empty"]]),
+        }));
+    }
+    for step in f["agents"].as_array().into_iter().flatten() {
+        let v = c(h, "connectors.agents", json!({ "input": step["input"] }))?;
+        let groups: Vec<String> = v["groups"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|g| {
+                let accounts: Vec<String> = g["accounts"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|a| {
+                        let models: Vec<String> = a["models"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .map(|m| line(&[&m["id"], &m["fast"], &m["default"]]))
+                            .collect();
+                        format!(
+                            "{} :: {}",
+                            line(&[
+                                &a["provider"],
+                                &a["env"],
+                                &a["slot"],
+                                &a["line"],
+                                &a["via"],
+                                &a["selected"],
+                                &a["defaultModel"]
+                            ]),
+                            models.join(" / ")
+                        )
+                    })
+                    .collect();
+                format!(
+                    "{} :: {}",
+                    line(&[
+                        &g["harness"],
+                        &g["app"],
+                        &g["label"],
+                        &g["state"],
+                        &g["signInLabel"]
+                    ]),
+                    accounts.join(" // ")
+                )
+            })
+            .collect();
+        frames.push(json!({
+            "agents": step["step"],
+            "groups": groups,
+            "default": line(&[&v["default"]["harness"], &v["default"]["env"], &v["default"]["slot"], &v["default"]["model"]]),
+            "empty": v["empty"],
+        }));
+    }
+    // Which coding apps the agent menu shows (`agentMenu.*`, Settings, Connections): what the menu lists,
+    // the rows of the switches and the result of each switch in turn.
+    for step in f["agentMenu"].as_array().into_iter().flatten() {
+        let menu = step.get("menu").cloned().unwrap_or(json!({}));
+        let view = c(
+            h,
+            "connectors.agents",
+            json!({ "input": step["input"], "menu": menu }),
+        )?;
+        let menu_apps: Vec<String> = view["groups"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|g| line(&[&g["app"], &g["state"]]))
+            .collect();
+        let rows = c(
+            h,
+            "agentMenu.view",
+            json!({ "input": step["input"], "menu": menu }),
+        )?;
+        let row_lines: Vec<String> = rows["rows"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|r| {
+                line(&[
+                    &r["app"],
+                    &r["label"],
+                    &r["shown"],
+                    &r["status"],
+                    &r["locked"],
+                ])
+            })
+            .collect();
+        let mut current = menu.clone();
+        let mut choices: Vec<String> = vec![];
+        for ch in step["choose"].as_array().into_iter().flatten() {
+            let r = c(
+                h,
+                "agentMenu.choose",
+                json!({ "input": step["input"], "menu": current, "app": ch["app"], "on": ch["on"] }),
+            )?;
+            choices.push(format!(
+                "{} {} :: shown {} / hidden {} :: {}",
+                ch["app"].as_str().unwrap_or(""),
+                if ch["on"].as_bool().unwrap_or(false) {
+                    "on"
+                } else {
+                    "off"
+                },
+                r["prefs"]["shown"],
+                r["prefs"]["hidden"],
+                line(&[&r["refused"]])
+            ));
+            current = r["prefs"].clone();
+        }
+        frames.push(json!({
+            "agentMenu": step["step"],
+            "menu": menu_apps,
+            "default": line(&[&view["default"]["harness"], &view["default"]["env"], &view["default"]["slot"], &view["default"]["model"]]),
+            "title": rows["title"],
+            "switch": rows["switchLabel"],
+            "help": rows["help"],
+            "rows": row_lines,
+            "lastNote": rows["lastNote"],
+            "choices": choices,
+            "synced": c(h, "agentMenu.sync", json!({ "input": step["input"], "menu": menu }))?,
         }));
     }
     for os in ["macos", "linux"] {

@@ -124,6 +124,8 @@ fn spec(name: &str, runtime: Option<&str>) -> LocalStartSpec {
         headless: false,
         spacesd: None,
         egress: Default::default(),
+        network: None,
+        tree: None,
         gpu: None,
         probes: vec![],
         ephemeral: false,

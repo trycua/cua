@@ -16,7 +16,9 @@ afterEach(() => {
   cleanup();
 });
 
-const SENTENCE = "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams.";
+const SENTENCE = "You have 5 of 5 computers in use at once on Pro. Close one or upgrade to Teams.";
+// What an older relay still says; the core reads both wordings.
+const OLD_SENTENCE = "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams.";
 
 /** A core that answers `relayUsage.planLimit`, `upgrade.link` and
  * `telemetry.planLimit` the way the real one does. */
@@ -26,9 +28,20 @@ const core: CoreClient = {
   call: () => undefined as never,
   tryCall: <T,>(method: string, args?: Record<string, unknown>) => {
     if (method === "relayUsage.planLimit")
-      return (String(args?.error).includes("live sessions on Pro")
-        ? { text: SENTENCE, upgrade: "Upgrade", upgradeUrl: "https://app.cua.ai/buy/teams?from=plan_limit", dismiss: "Dismiss", dismissKey: "refused:Sessions", level: "limit", kind: "sessions", plan: "pro" }
-        : null) as T;
+      return (
+        /computers in use at once on Pro|live sessions on Pro/.test(String(args?.error))
+          ? {
+              text: String(args?.error),
+              upgrade: "Upgrade",
+              upgradeUrl: "https://app.cua.ai/buy/teams?from=plan_limit",
+              dismiss: "Dismiss",
+              dismissKey: "refused:Sessions",
+              level: "limit",
+              kind: "sessions",
+              plan: "pro",
+            }
+          : null
+      ) as T;
     if (method === "upgrade.link") return String(args?.url).replace("from=plan_limit", `from=${String(args?.from)}`) as T;
     if (method === "telemetry.planLimit")
       return [{ type: args?.action === "shown" ? "plan-limit-shown" : "upgrade-link-opened", surface: args?.surface, kind: args?.kind, plan: args?.plan }] as T;
@@ -93,5 +106,12 @@ describe("PlanLimitToastAction", () => {
     await act(() => new Promise((r) => setTimeout(r, 10)));
     act(() => toastError("Couldn't open the Space")(new Error("timed out")));
     expect(document.querySelector("[data-toast-action]")).toBeNull();
+  });
+
+  it("the older relay's wording gets the same Upgrade", async () => {
+    mount();
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+    act(() => toastError("Couldn't open the Space")(new Error(OLD_SENTENCE)));
+    expect(document.querySelector("[data-toast-action]")?.textContent).toBe("Upgrade");
   });
 });

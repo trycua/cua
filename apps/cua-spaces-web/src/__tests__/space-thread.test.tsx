@@ -5,10 +5,12 @@
 // with tasks, replies and an approval, the members on the right. A daemon
 // without the thread keeps the classic page exactly as it was.
 
+import { closeNetworkSheet, openNetworkSheet } from "@/components/network/use-network";
 import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { DEMO_THREAD_SPACE } from "@/bridge/adapters/demo/thread";
+import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { mountApp, stubBrowserApis } from "./app-harness";
 
 afterEach(cleanup);
@@ -55,19 +57,23 @@ describe("a Space's thread", () => {
     expect(done.contains(replyRow)).toBe(false);
     // Each row has its author and time.
     expect(replyRow.querySelector("time")).not.toBeNull();
-    expect(qa("[data-thread-note]").map((n) => n.textContent)).toContain("Hermes woke up and joined");
+    expect(qa("[data-thread-note]").map((n) => n.textContent)).toContain(
+      "Hermes stopped working on \u201cwrite the 2 failures up for the changelog\u201d. It will pick it up again.",
+    );
     expect(qa("[data-unread]")).toHaveLength(1);
     await waitFor(() => expect(q("[data-member='agent:claude']")?.textContent).toContain("Claude Code"));
     // A member's @name draws as a chip once the members are known.
     await waitFor(() => expect(q("[data-mention='claude']")?.textContent).toBe("@claude"));
     expect(q("[data-member='agent:claude']")?.textContent).toContain("bumping the retry timeout");
     expect(q("[data-member='agent:hermes']")?.dataset.memberStatus).toBe("asleep");
-    expect(qa("[data-members] [data-member]").map((m) => m.textContent)).toEqual(expect.arrayContaining([expect.stringContaining("Grace"), expect.stringContaining("Linus")]));
+    expect(qa("[data-members] [data-member]").map((m) => m.textContent)).toEqual(
+      expect.arrayContaining([expect.stringContaining("Grace"), expect.stringContaining("Linus")]),
+    );
     // P1 draws no presence: there is nothing to say who is here yet.
     expect(q("[data-presence]")).toBeNull();
   });
 
-  it("gives an agent a task with @: the picker, the pick, the post, and the agent's answer", async () => {
+  it.skipIf(!wasmBuilt)("gives an agent a task with @: the picker, the pick, the post, and the agent's answer", async () => {
     await mountApp(path, { failsCreates: false, listsGhost: false });
     const box = await waitFor(() => {
       const el = q("[data-composer]") as HTMLTextAreaElement | null;
@@ -76,7 +82,16 @@ describe("a Space's thread", () => {
     });
     fireEvent.change(box, { target: { value: "@", selectionStart: 1 } });
     await waitFor(() => expect(q("[data-mention-picker]")).not.toBeNull());
-    expect(qa("[data-mention-option]").map((o) => o.dataset.mentionOption)).toEqual(["claude", "hermes", "cursor", "codex", "openclaw", "everyone", "grace", "linus"]);
+    expect(qa("[data-mention-option]").map((o) => o.dataset.mentionOption)).toEqual([
+      "claude",
+      "hermes",
+      "cursor",
+      "codex",
+      "openclaw",
+      "everyone",
+      "grace",
+      "linus",
+    ]);
     fireEvent.keyDown(box, { key: "ArrowDown" });
     fireEvent.keyDown(box, { key: "Enter" });
     expect(box.value).toBe("@hermes ");
@@ -148,8 +163,12 @@ describe("a Space's thread", () => {
     // It streamed as whole-text snapshots (each one replaces the last), then the real reply took its place.
     expect(said).toEqual(["Done.", "Done. Nothing else"]);
     expect(q("[data-live-entry]")).toBeNull();
-    // "woke up and joined" came after the agent was up, not before.
-    expect(qa("[data-thread-note]").map((n) => n.textContent)).toContain("Hermes woke up and joined");
+    // A start the person asked for says nothing in the thread: the starting row showed it.
+    expect(
+      qa("[data-thread-note]")
+        .map((n) => n.textContent)
+        .join(" "),
+    ).not.toContain("woke up and joined");
     // No middle dot in the thread or the member list.
     expect(q("[data-thread]")!.textContent).not.toContain("\u00b7");
     expect(q("[data-members]")!.textContent).not.toContain("\u00b7");
@@ -187,13 +206,33 @@ describe("a Space's thread", () => {
     await waitFor(() => expect(q("[data-call-more-sheet] [data-section='stream']")).not.toBeNull());
   });
 
-  it("shows a window on the stage when it is picked, and a post made then says where it was sent from", async () => {
+  it("shows one dialog at a time: the Network sheet replaces the details it was opened from", async () => {
+    await mountApp(path, { failsCreates: false, listsGhost: false });
+    const more = await waitFor(
+      () => {
+        const el = q("[data-call-more]");
+        expect(el).not.toBeNull();
+        return el!;
+      },
+      { timeout: 4000 },
+    );
+    fireEvent.click(more);
+    await waitFor(() => expect(q("[data-call-more-sheet]")).not.toBeNull());
+    act(() => openNetworkSheet(DEMO_THREAD_SPACE));
+    await waitFor(() => expect(q("[data-call-more-sheet]")).toBeNull());
+    act(() => closeNetworkSheet());
+  });
+
+  it.skipIf(!wasmBuilt)("shows a window on the stage when it is picked, and a post made then says where it was sent from", async () => {
     const { demo } = await mountApp(path, { failsCreates: false, listsGhost: false });
-    const firefox = await waitFor(() => {
-      const el = q("[data-stream-window='w-firefox']");
-      expect(el).not.toBeNull();
-      return el!;
-    }, { timeout: 4000 });
+    const firefox = await waitFor(
+      () => {
+        const el = q("[data-stream-window='w-firefox']");
+        expect(el).not.toBeNull();
+        return el!;
+      },
+      { timeout: 4000 },
+    );
     await act(async () => {
       fireEvent.click(firefox);
       await new Promise((r) => setTimeout(r, 20));
@@ -215,7 +254,9 @@ describe("a Space's thread", () => {
       await new Promise((r) => setTimeout(r, 20));
     });
     const line = await waitFor(() => {
-      const el = qa("[data-entry]").find((e) => e.textContent?.includes("is this the right PR?"))?.querySelector("[data-entry-view]");
+      const el = qa("[data-entry]")
+        .find((e) => e.textContent?.includes("is this the right PR?"))
+        ?.querySelector("[data-entry-view]");
       expect(el).toBeTruthy();
       return el!;
     });
@@ -261,7 +302,7 @@ describe("a Space's thread", () => {
     expect(qa('[data-approval-state="open"] button:not([data-author-name]):not([data-profile-trigger])')).toHaveLength(0);
   });
 
-  it("says whose keys a task runs on, and shows rights read-only to a member", async () => {
+  it.skipIf(!wasmBuilt)("says whose keys a task runs on, and shows rights read-only to a member", async () => {
     await mountApp(path, { failsCreates: false, listsGhost: false, demo: { threadRole: "member" } });
     await waitFor(() => expect(qa("[data-entry-footnote]").length).toBeGreaterThan(0), { timeout: 4000 });
     // Grace owns the Space here: Linus's task runs on her keys, hers on nobody else's.
@@ -274,7 +315,7 @@ describe("a Space's thread", () => {
     expect(q("[data-agent-right]")).toBeNull();
   });
 
-  it("lets the owner change who can task an agent", async () => {
+  it.skipIf(!wasmBuilt)("lets the owner change who can task an agent", async () => {
     await mountApp(path, { failsCreates: false, listsGhost: false });
     await openRailCard("hermes");
     await waitFor(() => expect(q("[data-agent-rights='hermes'] [data-agent-right='task'] button")).not.toBeNull());

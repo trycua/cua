@@ -89,19 +89,26 @@ export function isPermissionDenied(detail: string | undefined): boolean {
  * is there but this app cannot use it; null for anything else (not
  * installed, not running), which `noLocalRuntimeReason` words.
  */
-export function linuxRuntimeAdvice(facts: DockerGroupFacts, containerDetail: string | undefined, canRelaunch: boolean, relaunched: boolean): { reason: string; fix: RuntimeFix | null } | null {
+export function linuxRuntimeAdvice(
+  facts: DockerGroupFacts,
+  containerDetail: string | undefined,
+  canRelaunch: boolean,
+  relaunched: boolean,
+): { reason: string; fix: RuntimeFix | null } | null {
   const denied = isPermissionDenied(containerDetail) || (facts.socket && !facts.sessionHas && facts.gid !== null);
   if (!denied) return null;
   if (needsGroupRefresh(facts) && canRelaunch && !relaunched) {
     return {
-      reason: "Docker is ready, and your account is in its group, but Cua Spaces started before that. Restart it to pick the group up (no logout or reboot needed).",
+      reason:
+        "Docker is ready, and your account is in its group, but Cua Spaces started before that. Restart it to pick the group up (no logout or reboot needed).",
       fix: { action: "restart-app", label: "Restart Cua Spaces", note: "Takes a few seconds. Your Spaces keep running.", busy: false, termsUrl: null },
     };
   }
   if (facts.member) {
     // Already restarted under the group and still denied, or no `sg`: only a new login session has it.
     return {
-      reason: "Docker is installed and your account is in its group, but this session doesn't have it yet. Log out of this desktop session completely and back in (or reboot), then open Cua Spaces.",
+      reason:
+        "Docker is installed and your account is in its group, but this session doesn't have it yet. Log out of this desktop session completely and back in (or reboot), then open Cua Spaces.",
       fix: null,
     };
   }

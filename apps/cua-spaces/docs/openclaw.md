@@ -67,7 +67,7 @@ Gateway-spawned MCP processes do **not** inherit the terminal's Accessibility or
 Screen-Recording grants. That does not affect Cua Spaces:
 
 1. **Guest GUI work happens in the Space.** Capture goes through
-   cua-spacesd *inside* the Space, and input through the cua-driver it
+   cua-spacesd _inside_ the Space, and input through the cua-driver it
    delegates to; their TCC grants are baked into the golden image.
 2. **Host GUI work is delegated, not performed.** `show_space_pip`,
    `hide_space_pip`, `open_space_viewer` and `stream_space_window` POST over

@@ -67,7 +67,11 @@ export function updatesModel(ctx: BridgeContext): UpdatesModel {
     model.native,
     system?.updater ?? null,
     { version: ctx.version, build: ctx.build ?? "", os: osLine(platform, undefined, undefined, systemVersion(platform)) },
-    system?.updater?.channel === "beta" ? model.native.AppUpdateChannel.Beta : system?.updater ? model.native.AppUpdateChannel.Stable : model.settings.updateChannel,
+    system?.updater?.channel === "nightly"
+      ? model.native.AppUpdateChannel.Nightly
+      : system?.updater
+        ? model.native.AppUpdateChannel.Stable
+        : model.settings.updateChannel,
     (channel) => {
       model.settings = { ...model.settings, updateChannel: channel };
       model.saveSettings();
@@ -106,10 +110,15 @@ export function hostParts(ctx: BridgeContext): HostParts {
     (feature) => model.recordFeature(feature),
   );
 
-  const storage = new StorageModel(native, (name, args) => {
-    const t = tool();
-    return t ? t(name, args) : Promise.reject(new Error("No cua daemon"));
-  }, platform, system?.home ?? userHome(ctx.env));
+  const storage = new StorageModel(
+    native,
+    (name, args) => {
+      const t = tool();
+      return t ? t(name, args) : Promise.reject(new Error("No cua daemon"));
+    },
+    platform,
+    system?.home ?? userHome(ctx.env),
+  );
   storage.telemetry = telemetry;
 
   const notifications = new NotificationsModel(native, tool, {
@@ -124,8 +133,7 @@ export function hostParts(ctx: BridgeContext): HostParts {
   // Approving a device asks the person here first; a device asking to join is announced.
   if (system) {
     model.devices.presence = (reason) => system.confirmPresence(reason);
-    model.devices.notify = (prompt) =>
-      system.notify({ id: `device-${prompt.deviceId}`, title: prompt.notifyTitle, body: prompt.notifyBody, route: "/machines" });
+    model.devices.notify = (prompt) => system.notify({ id: `device-${prompt.deviceId}`, title: prompt.notifyTitle, body: prompt.notifyBody, route: "/spaces" });
   }
 
   const onboarding = new OnboardingStore(path.join(path.dirname(model.settingsPath), "onboarding.json"));

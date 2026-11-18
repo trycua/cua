@@ -110,7 +110,7 @@ struct DevicesTests {
         live.setCode("k7qxm2rp")
         await live.approve()
         #expect(live.approval != nil, "still open: nothing was approved")
-        #expect(live.approvalView?.error?.contains("pending") == true)
+        #expect(live.approvalView?.error?.contains("new code") == true)
         relay.state = "enrolled"
         await live.approve()
         #expect(live.approval == nil)
@@ -139,7 +139,7 @@ struct DevicesTests {
             "(ids in `cua devices ls`)"
         await m.approve()
         #expect(m.approvalView?.error == "The code expired.")
-        #expect(m.approvalView?.approveLabel == "Add machine")
+        #expect(m.approvalView?.approveLabel == "Add computer")
         #expect(m.approvalView?.canApprove == true)
         fixture.failApprove = nil
         await m.approve()
@@ -233,6 +233,9 @@ final class RelayAnswering: DevicesRunning, @unchecked Sendable {
     func pairingCodes() async throws -> [PairingCode] { try await fixture.pairingCodes() }
     func revokePairingCode(id: String) async throws { try await fixture.revokePairingCode(id: id) }
     func relayUsage() async throws -> AppRelayUsage? { try await fixture.relayUsage() }
+    func spacesSettings() async throws -> SpacesSettings { try await fixture.spacesSettings() }
+    func setSpacesSettings(_ settings: SpacesSettings) async throws -> SpacesSettings { try await fixture.setSpacesSettings(settings) }
+    func resolveDefaultSpace() async throws -> DefaultSpace { try await fixture.resolveDefaultSpace() }
 }
 
 /// Settings' Relay usage row and the notice above the main window: the
@@ -254,7 +257,7 @@ struct RelayUsageTests {
         await m.readRelayUsage()
         let view = try #require(m.relayUsageView)
         #expect(view.label == "Remote use")
-        #expect(view.line == "Live sessions 1 of 2 \u{b7} Remote hours 6.5 of 20 this month")
+        #expect(view.line == "Computers in use 1 of 2 \u{b7} Remote hours 6.5 of 20 this month")
         #expect(view.plan == "Free plan")
         #expect(m.relayNotice == nil)
     }
@@ -265,7 +268,7 @@ struct RelayUsageTests {
         let (m, defaults) = model(fixture)
         await m.readRelayUsage()
         let notice = try #require(m.relayNotice)
-        #expect(notice.text == "You're using 2 of 2 live sessions and 20.4 of 20 remote hours on the free plan. Your Spaces keep working. Pro gives you 5 live sessions and 200 remote hours.")
+        #expect(notice.text == "You have 2 of 2 computers in use at once and 20.4 of 20 remote hours on the free plan. Your Spaces keep working. Pro gives you 5 computers in use at once and 200 remote hours.")
         #expect(notice.upgrade == "Upgrade")
         #expect(notice.upgradeUrl == "https://app.cua.ai/buy/pro?from=app_meter")
         #expect(notice.level == "limit")
@@ -287,9 +290,9 @@ struct RelayUsageTests {
         let (m, _) = model(FixtureDevices())
         m.noteRefusal("timed out")
         #expect(m.relayNotice == nil)
-        m.noteRefusal("relay: You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams.")
+        m.noteRefusal("relay: You have 5 of 5 computers in use at once on Pro. Close one or upgrade to Teams.")
         let notice = try #require(m.relayNotice)
-        #expect(notice.text == "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams.")
+        #expect(notice.text == "You have 5 of 5 computers in use at once on Pro. Close one or upgrade to Teams.")
         #expect(notice.upgrade == "Upgrade")
         #expect(notice.upgradeUrl?.hasSuffix("/buy/teams?from=plan_limit") == true)
         m.dismissRelayNotice()
@@ -303,7 +306,7 @@ struct RelayUsageTests {
         let (m, _) = model(FixtureDevices())
         let telemetry = FixtureTelemetry()
         m.telemetry = telemetry
-        m.noteRefusal("relay: You're using 2 of 2 live sessions on the free plan. Close one or upgrade to Pro.", surface: "app_create")
+        m.noteRefusal("relay: You have 2 of 2 computers in use at once on the free plan. Close one or upgrade to Pro.", surface: "app_create")
         let notice = try #require(m.relayNotice)
         #expect(notice.kind == "sessions")
         #expect(notice.plan == "free")
@@ -338,7 +341,7 @@ struct RelayUsageTests {
         await m.readRelayUsage()
         let notice = try #require(m.relayNotice)
         #expect(notice.level == "warn")
-        #expect(notice.text == "You've used 16.5 of 20 remote hours this month. Nothing stops at the limit. Pro gives you 200 hours and 5 live sessions.")
+        #expect(notice.text == "You've used 16.5 of 20 remote hours this month. Nothing stops at the limit. Pro gives you 200 hours and 5 computers in use at once.")
         #expect(notice.upgradeUrl == "https://app.cua.ai/buy/pro?from=app_meter")
         #expect(notice.dismissKey == "2026-10:warn")
     }

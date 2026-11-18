@@ -26,7 +26,10 @@ const isApp = (path: string) => /\.app\/?$/i.test(path);
 
 /** "Sending notes.txt…" (`transfer::drop_sending_text`). */
 export function dropSendingText(core: CoreClient, paths: string[]): string {
-  return core.tryCall<string>("transfer.dropSendingText", { paths }) ?? `Sending ${paths.length === 1 ? (paths[0]!.split("/").pop() ?? paths[0]) : `${paths.length} files`}…`;
+  return (
+    core.tryCall<string>("transfer.dropSendingText", { paths }) ??
+    `Sending ${paths.length === 1 ? (paths[0]!.split("/").pop() ?? paths[0]) : `${paths.length} files`}…`
+  );
 }
 
 /** "notes.txt (1 KB) verified in …" (`transfer::drop_sent_text`). */

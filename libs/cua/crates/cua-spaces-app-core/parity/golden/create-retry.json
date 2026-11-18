@@ -246,7 +246,7 @@
             ],
             "fix": "It failed twice for the same reason. Run `cua doctor` in Terminal to check what's wrong, or see the details. [Copy cua doctor: copy-command cua doctor]",
             "id": "pending:1",
-            "previewText": "local runtime: the built-in Linux runtime did not start: exiting, status 1",
+            "previewText": "The built-in Linux runtime did not start: exiting, status 1",
             "progress": null,
             "progressText": null
           }
@@ -256,7 +256,7 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Box [spaces.status.failed] - local runtime: the built-in Linux runtime did not start: exiting, status 1"
+          "os-linux Box [spaces.status.failed] - The built-in Linux runtime did not start: exiting, status 1"
         ],
         "tiles": [
           "os-linux Box, Linux, This Mac, Failed - Failed"
@@ -686,8 +686,8 @@
           "os-macos Mac [spaces.status.starting] 1000 100%"
         ],
         "tiles": [
-          "os-macos Mac, macOS, This Mac, Failed - Failed",
-          "os-macos Mac, macOS, This Mac, Starting 1000 Ready"
+          "os-macos Mac, macOS, This Mac, Starting 1000 Ready",
+          "os-macos Mac, macOS, This Mac, Failed - Failed"
         ]
       }
     },
@@ -751,8 +751,8 @@
           "os-macos Mac [spaces.status.starting] 1000 100%"
         ],
         "tiles": [
-          "os-macos Mac, macOS, This Mac, Failed - Failed",
-          "os-macos Mac, macOS, This Mac, Starting 1000 Ready"
+          "os-macos Mac, macOS, This Mac, Starting 1000 Ready",
+          "os-macos Mac, macOS, This Mac, Failed - Failed"
         ]
       }
     }

@@ -3,8 +3,11 @@
   "pages": [
     "index",
     "spaces-and-computers",
+    "computers-and-teams",
+    "sharing-and-networks",
     "files-teleport-and-keys",
     "sandboxes",
+    "ci-runners",
     "images-and-clouds",
     "computer-actions",
     "agents",

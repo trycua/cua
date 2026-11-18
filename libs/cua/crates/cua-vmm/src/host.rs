@@ -358,6 +358,35 @@ pub fn kvm_usable() -> std::io::Result<()> {
         .map(drop)
 }
 
+/// Whether this Mac can run virtual machines: `kern.hv_support`, the
+/// flag Virtualization.framework's `VZVirtualMachineConfiguration.isSupported`
+/// rests on. It is 0 on a Mac that is itself a virtual machine (no nested
+/// virtualization) and on an Intel Mac without hardware virtualization.
+/// `None` off macOS, or when it cannot be read (callers then go ahead).
+pub fn mac_virtualization_supported() -> Option<bool> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut buf = [0u8; 4];
+        let mut len = buf.len();
+        // SAFETY: a NUL-terminated name, an out buffer and its length;
+        // sysctlbyname writes at most `len` bytes and updates `len`.
+        let r = unsafe {
+            libc::sysctlbyname(
+                c"kern.hv_support".as_ptr(),
+                buf.as_mut_ptr().cast(),
+                &mut len,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        (r == 0 && len == 4).then(|| i32::from_ne_bytes(buf) != 0)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
 /// Why `/dev/kvm` could not be opened, and how to fix it.
 pub fn kvm_hint(e: &std::io::Error) -> String {
     match e.kind() {
@@ -482,6 +511,17 @@ pub fn pid_command(pid: u32) -> Option<String> {
 
 /// Send a signal (`TERM`, `KILL`, ...) to a pid.
 pub fn signal(pid: u32, sig: &str) {
+    #[cfg(windows)]
+    {
+        // No `kill` on Windows: a TERM or KILL ends the process (and its children).
+        let _ = sig;
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    #[cfg(not(windows))]
     let _ = std::process::Command::new("kill")
         .args([&format!("-{sig}"), &pid.to_string()])
         .stderr(Stdio::null())

@@ -30,8 +30,7 @@ test.describe("the Electron shell's bridge", () => {
     });
     // The parity flows play a Mac on any OS (host.ts).
     expect(shape).toEqual({ invoke: "function", on: "function", platform: "darwin" });
-    const invoke = (channel: string, args: unknown) =>
-      page.evaluate(([c, a]) => (window as Desktop).cuaDesktop!.invoke(c, a), [channel, args] as const);
+    const invoke = (channel: string, args: unknown) => page.evaluate(([c, a]) => (window as Desktop).cuaDesktop!.invoke(c, a), [channel, args] as const);
     // Under the test switch the shell has no native host: it says so, in the envelope.
     expect(await invoke(ELECTRON_BRIDGE_CHANNEL, { id: "e2e-1", method: "app.info", args: {} })).toMatchObject({
       id: "e2e-1",

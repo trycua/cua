@@ -19,7 +19,7 @@ def test_bundle_is_skipped_on_plain_pull_requests():
     condition = JOBS["bundle"]["if"]
     assert "github.event_name != 'pull_request'" in condition
     assert "contains(github.event.pull_request.labels.*.name, 'ci:full')" in condition
-    assert JOBS["bundle"]["needs"] == "changes"
+    assert JOBS["bundle"]["needs"] == ["quick", "changes"]
 
 
 def test_bundle_still_builds_on_main_and_manual_runs():
@@ -32,5 +32,7 @@ def test_pull_requests_keep_the_cheap_tauri_checks():
     # `rust` compiles and tests src-tauri; `frontend` runs vitest + typecheck.
     for name in ("rust", "frontend"):
         condition = JOBS[name].get("if", "")
+        # Only the draft-skip clause may mention pull_request.
+        condition = condition.replace("github.event_name != 'pull_request' || !github.event.pull_request.draft", "")
         assert "pull_request" not in condition and "ci:full" not in condition
     assert "src-tauri/Cargo.toml" in str(JOBS["rust"]["steps"])

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Windows-specific environment probes used by `cua-driver doctor`.
 //!
 //! These are read-only checks against the process environment + Win32 APIs.
@@ -7,8 +10,8 @@
 //!
 //! ## Why the session-id probe matters
 //!
-//! Window-driving tools (`list_windows`, `click`, `type_text`, `screenshot`,
-//! `get_window_state`) all bottom out in Win32 APIs that are scoped to the
+//! Window-driving tools (`list_windows`, `click`, `type_text`, `get_window_state`,
+//! `get_desktop_state`) all bottom out in Win32 APIs that are scoped to the
 //! calling process's WindowStation + Desktop. A process that lives in
 //! Session 0 (services) — which is where Windows lands all SSH-launched
 //! processes by default — has no attached interactive desktop, so

@@ -134,7 +134,7 @@ struct MachinesViewTests {
             view.groups.flatMap(\.ids).contains(id)
         })
         let me = view.machines.first { $0.current }
-        #expect(me?.toggles.map(\.label) == ["Let other machines control this desktop"])
+        #expect(me?.toggles.map(\.label) == ["Let other computers control this desktop"])
         #expect(me?.toggles.allSatisfy(\.editable) == true)
         #expect(view.summary.contains("online"))
         // Another machine's switches are read-only.
@@ -218,6 +218,52 @@ struct MachinesViewTests {
         await #expect(throws: (any Error).self) { _ = try await bridge.handle("machines.remove", [:]) }
     }
 
+    /// `machines.remove` with `deleteSpaces` deletes the Spaces made on the
+    /// computer too (`relay_unregister_computer`); without it they are only
+    /// detached, as before (CUA-3413).
+    @Test func removeAComputerWithItsSpaces() async throws {
+        let backend = FixtureSpacesBackend()
+        let m = await signedInModel(backend: backend, devices: FixtureDevices())
+        let bridge = WebUIBridge(model: m, allowedOrigins: [])
+        _ = try await bridge.handle("machines.remove", ["machine": "m2"])
+        #expect(backend.unregistered == ["relay:m2"])
+        #expect(backend.unregisteredWithSpaces.isEmpty)
+        _ = try await bridge.handle("machines.remove", ["machine": "m3", "deleteSpaces": true])
+        #expect(backend.unregistered == ["relay:m2", "relay:m3"])
+        #expect(backend.unregisteredWithSpaces == ["relay:m3"])
+    }
+
+    /// The default Space: read, replaced and resolved from this enrolled
+    /// device; a bad id is refused before the relay is asked; signed out,
+    /// each answers null (CUA-3413).
+    @Test func defaultSpaceSettings() async throws {
+        let devices = FixtureDevices()
+        let m = await signedInModel(backend: FixtureSpacesBackend(), devices: devices)
+        let bridge = WebUIBridge(model: m, allowedOrigins: [])
+        for method in ["spaces.settings", "spaces.setSettings", "spaces.resolveDefault"] {
+            #expect(WebUIBridge.methods.contains(method))
+        }
+        let unset = try #require(try await bridge.handle("spaces.settings", [:]) as? [String: Any])
+        #expect(unset["defaultSpace"] is NSNull)
+        #expect(unset["fallbackOn"] as? Bool == true)
+
+        let machine = try #require(devices.current.machines.first).id
+        let saved = try #require(try await bridge.handle(
+            "spaces.setSettings", ["defaultSpace": "relay:\(machine)", "fallback": [String](), "fallbackOn": true]) as? [String: Any])
+        #expect(saved["defaultSpace"] as? String == "relay:\(machine)")
+        #expect(devices.calls.contains("set-spaces-settings:relay:\(machine)"))
+
+        let resolved = try #require(try await bridge.handle("spaces.resolveDefault", [:]) as? [String: Any])
+        let order = try #require(resolved["order"] as? [[String: Any]])
+        #expect(order.first?["role"] as? String == "default")
+        #expect(order.last?["role"] as? String == "here")
+
+        await #expect(throws: (any Error).self) {
+            _ = try await bridge.handle("spaces.setSettings", ["defaultSpace": "local:x", "fallback": [String](), "fallbackOn": true])
+        }
+        await #expect(throws: (any Error).self) { _ = try await bridge.handle("spaces.setSettings", ["fallback": [String]()]) }
+    }
+
     /// `checkMachineHealth` asks only the machines the view says can be
     /// checked: This Mac (through its daemon) and your machines that are
     /// online; never an offline or a team machine.
@@ -269,5 +315,53 @@ struct MachinesViewTests {
         backend.fixtureHealth[""] = nil
         await m.checkMachineHealth()
         #expect(m.machinesView.machines.first { $0.current }?.issues.isEmpty == true)
+    }
+
+    /// Local Network turned on for the app, but the daemon still runs with
+    /// what macOS decided for it before: the app's own connect gets out, so
+    /// the daemon is started again and This Mac checked again, and the issue
+    /// the person just fixed goes (no red dot for it). At most one restart
+    /// in ten minutes; none while the app is blocked too.
+    @Test func aDaemonStillBlockedAfterAccessIsOnIsStartedAgain() async throws {
+        let backend = FixtureSpacesBackend()
+        let blocked = AppMachinesViewHealth(
+            id: "", checks: [
+                AppMachinesViewCheck(id: "machine.local_network", status: "fail", message: "blocked",
+                                     remediation: "", facts: ["app": "Cua Spaces"]),
+            ], cuaVersion: "0.4.1", error: nil)
+        backend.fixtureHealth[""] = blocked
+        let m = await signedInModel(backend: backend)
+        let probe = LocalNetworkPermissionTests.FakeProbe([.blocked])
+        m.localNetworkGate = LocalNetworkGate(probe: probe)
+        var restarts = 0
+        m.restartDaemon = {
+            restarts += 1
+            backend.fixtureHealth[""] = nil
+            return true
+        }
+        var clock = Date()
+        m.listClock = { clock }
+
+        // The app is blocked too: access is off, the issue stays.
+        await m.checkMachineHealth()
+        #expect(restarts == 0)
+        #expect(m.machinesView.machines.first { $0.current }?.health == "fail")
+
+        // Access turned on: the app gets out, the daemon does not.
+        probe.answers = [.allowed]
+        await m.checkMachineHealth()
+        #expect(restarts == 1)
+        let me = try #require(m.machinesView.machines.first { $0.current })
+        #expect(me.issues.isEmpty)
+        #expect(me.health != "fail")
+
+        // Blocked again soon after: no second restart within ten minutes.
+        backend.fixtureHealth[""] = blocked
+        clock += 60
+        await m.checkMachineHealth()
+        #expect(restarts == 1)
+        clock += AppModel.localNetworkRestartEvery
+        await m.checkMachineHealth()
+        #expect(restarts == 2)
     }
 }

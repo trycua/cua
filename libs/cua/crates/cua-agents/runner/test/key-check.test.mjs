@@ -207,6 +207,18 @@ test("a 403 that says the key is invalid also ends the turn", async () => {
   }
 });
 
+test("a gateway's own 401 shape ends the turn when the check is for a custom endpoint", async () => {
+  const body = json(401, { error: { message: "Authentication Error, invalid key", type: "auth_error", code: "401" } });
+  const p = await provider(body);
+  try {
+    const r = await run({ port: p.port, keyCheck: { anyAuthError: true, skipIfEnv: [], provider: "The model endpoint" } });
+    assert.equal(r.prompts, 0);
+    assert.match(r.events.find((e) => e.type === "error").message, /The model endpoint API Error: 401/);
+  } finally {
+    p.close();
+  }
+});
+
 test("an accepted key sends the prompt as before, with no error", async () => {
   const p = await provider(json(200, { data: [], has_more: false }));
   try {

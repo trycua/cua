@@ -6,7 +6,7 @@
         "canBack": true,
         "canSkip": false,
         "choices": [],
-        "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
+        "dots": "Welcome,Sign in,AI agents,Menu bar,This computer,*Done",
         "drive": null,
         "driveStorage": null,
         "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
@@ -24,14 +24,14 @@
         "step": "done",
         "summary": [
           "Shows in: Notch and menu bar",
-          "This machine: Opens your other machines"
+          "This computer: Opens your other computers"
         ],
         "title": "Almost done",
         "todos": [
           "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
-          "[ ] Account ~Reach your machines from any machine. -> Sign in",
+          "[ ] Account ~Reach your computers from any computer. -> Sign in",
           "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
-          "[ ] Cua Volume ~Shared folder: files your agents can share across your machines. -> Turn on (optional)"
+          "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. -> Turn on (optional)"
         ],
         "usage": null
       },
@@ -43,7 +43,7 @@
         "canBack": true,
         "canSkip": false,
         "choices": [],
-        "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
+        "dots": "Welcome,Sign in,AI agents,Menu bar,This computer,*Done",
         "drive": null,
         "driveStorage": null,
         "launchAtLogin": "[ ] Launch at login ~Keeps your Spaces and agents available after a restart.",
@@ -61,14 +61,14 @@
         "step": "done",
         "summary": [
           "Shows in: Notch and menu bar",
-          "This machine: Opens your other machines"
+          "This computer: Opens your other computers"
         ],
         "title": "Almost done",
         "todos": [
           "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
-          "[ ] Account ~Reach your machines from any machine. -> Sign in",
+          "[ ] Account ~Reach your computers from any computer. -> Sign in",
           "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
-          "[ ] Cua Volume ~Shared folder: files your agents can share across your machines. -> Turn on (optional)"
+          "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. -> Turn on (optional)"
         ],
         "usage": null
       },
@@ -80,7 +80,7 @@
         "canBack": true,
         "canSkip": false,
         "choices": [],
-        "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
+        "dots": "Welcome,Sign in,AI agents,Menu bar,This computer,*Done",
         "drive": null,
         "driveStorage": null,
         "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
@@ -98,14 +98,14 @@
         "step": "done",
         "summary": [
           "Shows in: Notch and menu bar",
-          "This machine: Opens your other machines"
+          "This computer: Opens your other computers"
         ],
         "title": "Almost done",
         "todos": [
           "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
-          "[ ] Account ~Reach your machines from any machine. -> Sign in",
+          "[ ] Account ~Reach your computers from any computer. -> Sign in",
           "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
-          "[ ] Cua Volume ~Shared folder: files your agents can share across your machines. -> Turn on (optional)"
+          "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. -> Turn on (optional)"
         ],
         "usage": null
       },
@@ -117,7 +117,7 @@
         "canBack": true,
         "canSkip": false,
         "choices": [],
-        "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
+        "dots": "Welcome,Sign in,AI agents,Menu bar,This computer,*Done",
         "drive": null,
         "driveStorage": null,
         "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
@@ -135,14 +135,14 @@
         "step": "done",
         "summary": [
           "Shows in: Notch and menu bar",
-          "This machine: Your other machines can reach it"
+          "This computer: Your other computers can reach it"
         ],
         "title": "Almost done",
         "todos": [
           "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
-          "[ ] Account ~Reach your machines from any machine. -> Sign in",
+          "[ ] Account ~Reach your computers from any computer. -> Sign in",
           "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
-          "[ ] Cua Volume ~Shared folder: files your agents can share across your machines. -> Turn on (optional)"
+          "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. -> Turn on (optional)"
         ],
         "usage": null
       },
@@ -154,7 +154,7 @@
         "canBack": true,
         "canSkip": false,
         "choices": [],
-        "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
+        "dots": "Welcome,Sign in,AI agents,Menu bar,This computer,*Done",
         "drive": null,
         "driveStorage": null,
         "launchAtLogin": "[ ] Launch at login ~Keeps your Spaces and agents available after a restart.",
@@ -172,14 +172,14 @@
         "step": "done",
         "summary": [
           "Shows in: Notch and menu bar",
-          "This machine: Your other machines can reach it"
+          "This computer: Your other computers can reach it"
         ],
         "title": "Almost done",
         "todos": [
           "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
-          "[ ] Account ~Reach your machines from any machine. -> Sign in",
+          "[ ] Account ~Reach your computers from any computer. -> Sign in",
           "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
-          "[ ] Cua Volume ~Shared folder: files your agents can share across your machines. -> Turn on (optional)"
+          "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. -> Turn on (optional)"
         ],
         "usage": null
       },

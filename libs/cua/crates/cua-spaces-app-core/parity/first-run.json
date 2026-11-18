@@ -31,6 +31,9 @@
     { "name": "07 pick your agent, still looking", "patch": { "step": "connect", "agents": null } },
     { "name": "08 connect your other devices", "patch": { "step": "devices" } },
     { "name": "09 connect your other devices, signing in", "patch": { "step": "devices", "signingIn": true } },
+    { "name": "09b connect your other devices, signing in with a code", "patch": { "step": "devices", "signingIn": true, "signInCode": "4F2-91K" } },
+    { "name": "09c connect your other devices, the browser never confirmed", "patch": { "step": "devices", "signInFailure": "notConfirmed" } },
+    { "name": "09d connect your other devices, the sign-in couldn't be saved", "patch": { "step": "devices", "signInFailure": "couldNotSave" } },
     { "name": "10 this Mac being added to the account", "patch": { "step": "devices", "signedIn": true, "hostSettingUp": true, "host": { "configured": false, "running": false, "permissions": [] } } },
     { "name": "11 this Mac in the account", "patch": { "step": "devices", "signedIn": true, "host": { "configured": true, "running": true, "online": true, "permissions": [{ "id": "accessibility", "granted": false }] } } },
     { "name": "12 try it in Hermes, waiting", "patch": { "step": "setup", "picked": ["hermes", "claude-code"] } },
@@ -62,6 +65,12 @@
     { "name": "33 offers: an Intel Mac shows Linux only", "patch": { "agents": [], "picked": [], "step": "setup" }, "machine": { "hostOs": "macos", "env": { "hostArch": "x86_64", "localBackends": ["managed"] } } },
     { "name": "34 offers: an Intel Mac with QEMU adds Omarchy", "patch": { "agents": [], "picked": [], "step": "setup" }, "machine": { "hostOs": "macos", "env": { "hostArch": "x86_64", "localBackends": ["managed", "qemu"] } } },
     { "name": "35 offers: an amd64 Linux PC shows Linux and Omarchy", "patch": { "hostOs": "linux", "agents": [], "picked": [], "step": "setup" }, "machine": { "hostOs": "linux", "env": { "hostArch": "amd64", "localBackends": ["docker", "qemu"], "storage": { "reserveBytes": 5368709120, "lume": null, "qemu": { "availableBytes": 107374182400, "totalBytes": 536870912000, "name": "/" }, "container": { "availableBytes": 107374182400, "totalBytes": 536870912000, "name": "/" }, "pulled": [], "linuxRuntimeDownloadBytes": 0 } } } },
-    { "name": "36 offers: a Mac still checking shows Linux only", "patch": { "agents": [], "picked": [], "step": "setup" }, "machine": { "hostOs": "macos", "env": { "storage": null } } }
+    { "name": "36 offers: a Mac still checking shows Linux only", "patch": { "agents": [], "picked": [], "step": "setup" }, "machine": { "hostOs": "macos", "env": { "storage": null } } },
+    { "name": "40 ask first: no Try it screen, a Mac kept for Spaces ends on Add your other machines with Open Cua", "patch": { "step": "devices", "askFirst": true, "picked": ["hermes"], "signedIn": true, "host": { "configured": true, "running": true, "online": true, "shareDesktop": false, "permissions": [] } }, "steps": true },
+    { "name": "41 ask first: permissions last, all allowed, Open Cua", "patch": { "step": "permissions", "askFirst": true, "picked": ["hermes"], "signedIn": true, "host": { "configured": true, "running": true, "online": true, "permissions": [] } }, "steps": true },
+    { "name": "42 ask first: not signed in, Not now ends the run", "patch": { "step": "devices", "askFirst": true, "picked": ["hermes"] }, "steps": true },
+    { "name": "43 ask first: a run saved on the Try it screen shows the last screen", "patch": { "step": "setup", "askFirst": true, "picked": ["hermes"], "signedIn": true, "host": { "configured": true, "running": true, "online": true, "shareDesktop": false, "permissions": [] } }, "steps": true },
+    { "name": "44 ask first: Pick your agent keeps its action rows, Continue and Skip", "patch": { "step": "connect", "askFirst": true }, "steps": true },
+    { "name": "45 ask first: Pick your agent after Connect, Continue and Back", "patch": { "step": "connect", "askFirst": true, "picked": ["hermes"] }, "steps": true }
   ]
 }

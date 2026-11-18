@@ -505,15 +505,44 @@ fn step(id: &str, it: &Installable) -> String {
                 .map(|e| format!("--extra {}", quote(e)))
                 .collect::<Vec<_>>()
                 .join(" ");
+            // git when the sandbox has it (the commit is then checked with
+            // `git rev-parse`). A job Space has no git and no root, so for a
+            // GitHub repository the pinned commit's own archive is fetched
+            // instead (the commit is in the URL; the dependencies are still
+            // checked against the project's `uv.lock` hashes).
+            let archive = repo.strip_prefix("https://github.com/").map(|r| {
+                format!(
+                    "https://github.com/{}/archive/{commit}.tar.gz",
+                    r.trim_end_matches('/')
+                )
+            });
+            let no_git = match &archive {
+                Some(url) => format!(
+                    "cua_progress {qid} download {commit_q}\n\
+                     mkdir -p \"$CUA_STAGE\" \"$CUA_DEST\"\n\
+                     (cua_fetch {url} \"$CUA_STAGE/src.tgz\" && tar -xzf \"$CUA_STAGE/src.tgz\" -C \"$CUA_DEST\" --strip-components=1 && [ -f \"$CUA_DEST/uv.lock\" ]) \
+                     || {{ rm -rf \"$CUA_STAGE\" \"$CUA_DEST\"; cua_unlock \"$CUA_TOOLS/{id}-{version}\"; cua_fail {qid} 'download failed'; }}\n",
+                    url = quote(url),
+                    commit_q = quote(commit),
+                    version = it.version,
+                ),
+                None => format!(
+                    "{{ rm -rf \"$CUA_DEST\"; cua_unlock \"$CUA_TOOLS/{id}-{version}\"; cua_fail {qid} 'git is not available'; }}\n",
+                    version = it.version,
+                ),
+            };
             s.push_str(&format!(
-                "command -v git >/dev/null 2>&1 || {{ cua_progress {qid} install 'git (apt)'; cua_apt git; }}\n\
-                 command -v git >/dev/null 2>&1 || {{ cua_unlock \"$CUA_TOOLS/{id}-{version}\"; cua_fail {qid} 'git is not available'; }}\n\
+                "CUA_DEST=\"$CUA_TOOLS/{id}/{version}\"; rm -rf \"$CUA_DEST\"; mkdir -p \"$CUA_TOOLS/{id}\"\n\
+                 command -v git >/dev/null 2>&1 || cua_apt git >/dev/null 2>&1 || true\n\
+                 if command -v git >/dev/null 2>&1; then\n\
                  cua_progress {qid} download {commit_q}\n\
-                 CUA_DEST=\"$CUA_TOOLS/{id}/{version}\"; rm -rf \"$CUA_DEST\"; mkdir -p \"$CUA_TOOLS/{id}\"\n\
                  (git init -q \"$CUA_DEST\" && cd \"$CUA_DEST\" && git fetch -q --depth 1 {repo} {commit_q} && git checkout -q FETCH_HEAD) \
                  || {{ rm -rf \"$CUA_STAGE\" \"$CUA_DEST\"; cua_unlock \"$CUA_TOOLS/{id}-{version}\"; cua_fail {qid} 'git fetch failed'; }}\n\
                  cua_progress {qid} verify commit\n\
                  [ \"$(cd \"$CUA_DEST\" && git rev-parse HEAD)\" = {commit_q} ] || {{ rm -rf \"$CUA_STAGE\" \"$CUA_DEST\"; cua_unlock \"$CUA_TOOLS/{id}-{version}\"; cua_fail {qid} 'commit mismatch'; }}\n\
+                 else\n\
+                 {no_git}\
+                 fi\n\
                  cua_progress {qid} install 'uv sync --frozen'\n\
                  (cd \"$CUA_DEST\" && UV_PYTHON_INSTALL_DIR=\"$CUA_TOOLS/python\" uv sync --quiet --frozen --no-dev {extras} --python {python} >\"$CUA_STAGE/uv.log\" 2>&1) \
                  || {{ tail -5 \"$CUA_STAGE/uv.log\" >&2; rm -rf \"$CUA_STAGE\" \"$CUA_DEST\"; cua_unlock \"$CUA_TOOLS/{id}-{version}\"; cua_fail {qid} 'uv sync failed'; }}\n",
@@ -794,6 +823,24 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&out.stderr)
         );
+    }
+
+    /// A git-uv item installs without git (a job Space has none and no root):
+    /// the pinned commit's own archive is fetched, the commit is in its URL.
+    #[test]
+    fn a_git_uv_item_falls_back_to_the_commit_archive_without_git() {
+        let s = script(&["hermes"]).unwrap();
+        let Source::GitUv { repo, commit, .. } = &get("hermes").unwrap().how else {
+            panic!("hermes is a git-uv item");
+        };
+        assert!(
+            s.contains(&format!("{repo}/archive/{commit}.tar.gz")),
+            "{s}"
+        );
+        assert!(s.contains("--strip-components=1"));
+        assert!(!s.contains("'git is not available'"));
+        // With git present the commit is still checked.
+        assert!(s.contains("git rev-parse HEAD"));
     }
 
     /// Against a temp HOME with a fake cached install: nothing is fetched,
@@ -1223,6 +1270,47 @@ done < "$FAKE/needs.txt"
         };
         for key in ["aarch64", "x86_64", "macos-aarch64", "macos-x86_64"] {
             assert_eq!(archives[key].sha256.len(), 64, "{key}");
+        }
+    }
+
+    /// A fresh Hermes install must reach the macOS uv download on both CPUs.
+    /// Refuse the fetch so this exercises platform selection without network access.
+    #[test]
+    #[cfg(unix)]
+    fn hermes_downloads_uv_for_the_macos_guest_cpu() {
+        use std::os::unix::fs::PermissionsExt;
+
+        for (cpu, target) in [("arm64", "aarch64"), ("x86_64", "x86_64")] {
+            let f = Fake::new();
+            for (name, body) in [
+                (
+                    "uname",
+                    format!(
+                        "#!/bin/sh\ncase \"$1\" in -s) echo Darwin ;; -m) echo {cpu} ;; esac\n"
+                    ),
+                ),
+                ("curl", "#!/bin/sh\nexit 1\n".to_string()),
+            ] {
+                let path = f.dir.join("bin").join(name);
+                std::fs::write(&path, body).unwrap();
+                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+            let (ok, progress, log) = f.run(&script(&["hermes"]).unwrap(), 1000);
+            assert!(!ok, "{log}");
+            let error = progress.iter().find(|p| p.phase == "error").unwrap();
+            assert_eq!(
+                (&*error.id, &*error.detail),
+                ("uv", "download failed"),
+                "{log}"
+            );
+            assert_eq!(
+                details(&progress, "download"),
+                [format!(
+                    "https://github.com/astral-sh/uv/releases/download/{}/uv-{target}-apple-darwin.tar.gz",
+                    get("uv").unwrap().version
+                )],
+                "{log}"
+            );
         }
     }
 

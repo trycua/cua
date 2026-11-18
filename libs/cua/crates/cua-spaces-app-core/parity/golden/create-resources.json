@@ -18,8 +18,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/linux:24.04",
@@ -135,8 +134,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/linux:24.04",
@@ -196,8 +194,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/linux:24.04-slim",
@@ -313,8 +310,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/linux:24.04-slim",
@@ -374,8 +370,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/linux:24.04-disk",
@@ -1340,8 +1335,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/linux:24.04-disk",
@@ -1400,8 +1394,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/omarchy:edge",
@@ -1514,8 +1507,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/omarchy:edge",
@@ -1793,8 +1785,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/omarchy:edge",
@@ -1843,7 +1834,7 @@
           "submit": null,
           "submitLabel": "Add Space"
         },
-        "canContinue": false,
+        "canContinue": true,
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
@@ -1852,17 +1843,16 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
-        "image": "ghcr.io/trycua/windows:2022",
+        "image": "ghcr.io/trycua/windows:11",
         "imageField": {
           "custom": false,
           "error": null,
           "open": false,
           "rows": [],
-          "text": "ghcr.io/trycua/windows:2022"
+          "text": "ghcr.io/trycua/windows:11"
         },
         "kinds": [
           "vm"
@@ -1880,8 +1870,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Virtual machine",
-          "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 6.4 GB)",
+          "Architecture: ARM",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1902,7 +1891,7 @@
           "submit": null,
           "submitLabel": "Add Space"
         },
-        "canContinue": false,
+        "canContinue": true,
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
@@ -1911,17 +1900,16 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
-        "image": "ghcr.io/trycua/windows:2022",
+        "image": "ghcr.io/trycua/windows:11",
         "imageField": {
           "custom": false,
           "error": null,
           "open": false,
           "rows": [],
-          "text": "ghcr.io/trycua/windows:2022"
+          "text": "ghcr.io/trycua/windows:11"
         },
         "kinds": [
           "vm"
@@ -1939,8 +1927,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Virtual machine",
-          "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 6.4 GB)",
+          "Architecture: ARM",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1961,26 +1948,21 @@
           "submit": null,
           "submitLabel": "Add Space"
         },
-        "canContinue": false,
+        "canContinue": true,
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
-          "os: System",
-          "image: Image [ghcr.io/org/app:tag]",
-          "placement: Run on",
-          "kind: Kind (advanced)",
-          "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "cpus: CPU cores",
+          "memory: Memory"
         ],
         "gpu": null,
-        "image": "ghcr.io/trycua/windows:2022",
+        "image": "ghcr.io/trycua/windows:11",
         "imageField": {
           "custom": false,
           "error": null,
           "open": false,
           "rows": [],
-          "text": "ghcr.io/trycua/windows:2022"
+          "text": "ghcr.io/trycua/windows:11"
         },
         "kinds": [
           "vm"
@@ -1998,8 +1980,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Virtual machine",
-          "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 6.4 GB)",
+          "Architecture: ARM",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -2008,7 +1989,7 @@
           "auto",
           "qemu"
         ],
-        "step": 0
+        "step": 1
       },
       "wizard": "next"
     },
@@ -2020,7 +2001,7 @@
           "submit": null,
           "submitLabel": "Add Space"
         },
-        "canContinue": false,
+        "canContinue": true,
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
@@ -2029,17 +2010,16 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
-        "image": "ghcr.io/trycua/windows:2022",
+        "image": "ghcr.io/trycua/windows:11",
         "imageField": {
           "custom": false,
           "error": null,
           "open": false,
           "rows": [],
-          "text": "ghcr.io/trycua/windows:2022"
+          "text": "ghcr.io/trycua/windows:11"
         },
         "kinds": [
           "vm"
@@ -2057,8 +2037,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Virtual machine",
-          "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 6.4 GB)",
+          "Architecture: ARM",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -2088,8 +2067,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/macos:26",
@@ -2362,7 +2340,7 @@
         "cpusText": "4 cores",
         "disk": "200 GB (150-500) [Reset] ~The disk will be resized to 200 GB after downloading. Uses about 33 GB on this Mac at first, up to 200 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
         "fields": [
-          "name: Name [space-000000002a]",
+          "name: Name [dapper-mole]",
           "open-when-ready: Open when ready"
         ],
         "gpu": null,
@@ -2463,12 +2441,12 @@
           "image": "ghcr.io/trycua/macos:26",
           "kind": "vm",
           "memoryMb": 8192,
-          "name": "space-000000002a",
+          "name": "dapper-mole",
           "on": "local",
           "runtime": "auto",
           "spacesd": true
         },
-        "creating": "Creating space-000000002a. It appears in the list when it is ready.",
+        "creating": "Creating dapper-mole. It appears in the list when it is ready.",
         "failed": "Could not create the Space: Not enough disk space for this Space. Free up space on this Mac (or run `cua cache prune` in Terminal), then try again.",
         "openDesktop": true,
         "summary": [
@@ -2479,7 +2457,7 @@
           "Architecture: ARM",
           "Runtime: Lume virtual machine (Apple silicon)",
           "Resources: 4 cores, 8 GB memory, 200 GB disk",
-          "Name: space-000000002a",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ]
       }

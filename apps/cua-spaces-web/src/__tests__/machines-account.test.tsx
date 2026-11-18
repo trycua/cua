@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 // One list of machines (CUA-2621): the machines waiting to be added are the top group with
-// "Add machine" and "Not me" and a count on the sidebar, a machine that is only signed in is a row
+// "Add computer" and "Not me" and a count on the sidebar, a machine that is only signed in is a row
 // in the state "Signed in, not sharing" that Revoke removes, each page has Rename, Revoke, recent
 // access and (this machine) its trust, and the old Settings tab lands on Machines.
 
@@ -36,7 +36,16 @@ function host(calls: Calls, extra?: (d: DevicesInput) => DevicesInput): TestHost
 async function mockupHost(calls: Calls): Promise<TestHost> {
   const fixture = JSON.parse(readFileSync(resolve(process.cwd(), "../../libs/cua/crates/cua-spaces-app-core/parity/machines.json"), "utf8"));
   const view = (await testCore()).call<MachinesView>("machines.view", { input: fixture.views[0].input });
-  const rows: MachineRow[] = view.machines.map((m) => ({ id: m.id, name: m.name, via: m.current ? "local" : "relay", online: m.online, os: m.os, current: m.current || undefined, limits: [] }));
+  const rows: MachineRow[] = view.machines.map((m) => ({
+    id: m.id,
+    name: m.name,
+    via: m.current ? "local" : "relay",
+    online: m.online,
+    os: m.os,
+    current: m.current || undefined,
+    limits: [],
+    ...(m.id.startsWith("dev_") ? { device: true } : {}),
+  }));
   return {
     failsCreates: false,
     listsGhost: false,
@@ -56,29 +65,29 @@ const q = (sel: string) => document.querySelector<HTMLElement>(sel);
 const names = () => [...document.querySelectorAll("[data-pending-machine]")].map((e) => e.querySelector("span.truncate")?.textContent);
 const sentFor = (calls: Calls, op: string) => calls.filter(([o]) => o === op).map(([, a]) => a);
 
-describe.skipIf(!wasmBuilt)("one list of machines (real routes, wasm core)", () => {
+describe.skipIf(!wasmBuilt)("one list of computers (real routes, wasm core)", () => {
   it("puts the machines waiting to be added first, each with Add machine and Not me, and counts them in the sidebar", async () => {
-    await mountApp("/machines", host([]));
-    await waitFor(() => expect(q('[data-machine-group="pending"]')).not.toBeNull());
+    await mountApp("/spaces", host([]));
+    await waitFor(() => expect(q("[data-tree-pending]")).not.toBeNull());
     expect(names()).toEqual(["Work laptop", "Old laptop"]);
-    // First in the list, above the clouds and the machines.
-    expect(document.querySelector("[data-machine-group], [data-cloud-group]")?.getAttribute("data-machine-group")).toBe("pending");
+    // First, above the list of computers and the clouds.
+    expect(q("[data-tree-pending]")!.compareDocumentPosition(q("[data-spaces-tree]")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     for (const row of document.querySelectorAll("[data-pending-machine]")) {
-      expect(within(row as HTMLElement).getByRole("button", { name: "Add machine" })).toBeTruthy();
+      expect(within(row as HTMLElement).getByRole("button", { name: "Add computer" })).toBeTruthy();
       expect(within(row as HTMLElement).getByRole("button", { name: "Not me" })).toBeTruthy();
     }
     expect(q("[data-pending-badge]")?.textContent).toBe("2");
-    // The count is on every page, not only on Machines.
+    // The count is on every page, not only on Computers.
     cleanup();
-    await mountApp("/spaces", host([]));
+    await mountApp("/keyvault", host([]));
     await waitFor(() => expect(q("[data-pending-badge]")?.textContent).toBe("2"));
   });
 
   it("Add machine adds the waiting machine by its id, with no code to type, and it leaves the waiting group", async () => {
     const calls: Calls = [];
-    await mountApp("/machines", host(calls));
+    await mountApp("/spaces", host(calls));
     await waitFor(() => expect(names()).toContain("Work laptop"));
-    fireEvent.click(within(q('[data-pending-machine="dev_work"]')!).getByRole("button", { name: "Add machine" }));
+    fireEvent.click(within(q('[data-pending-machine="dev_work"]')!).getByRole("button", { name: "Add computer" }));
     await waitFor(() => expect(sentFor(calls, "devices.approve")).toEqual([{ code: null, deviceId: "dev_work" }]));
     await waitFor(() => expect(names()).toEqual(["Old laptop"]));
     expect(q("[data-pending-badge]")?.textContent).toBe("1");
@@ -86,7 +95,7 @@ describe.skipIf(!wasmBuilt)("one list of machines (real routes, wasm core)", () 
 
   it("Not me refuses the waiting machine, and it leaves the list", async () => {
     const calls: Calls = [];
-    await mountApp("/machines", host(calls));
+    await mountApp("/spaces", host(calls));
     await waitFor(() => expect(names()).toContain("Work laptop"));
     fireEvent.click(within(q('[data-pending-machine="dev_work"]')!).getByRole("button", { name: "Not me" }));
     await waitFor(() => expect(sentFor(calls, "devices.revoke")).toEqual([{ id: "dev_work" }]));
@@ -98,15 +107,15 @@ describe.skipIf(!wasmBuilt)("one list of machines (real routes, wasm core)", () 
 
   it("a machine that registered without proof is confirmed with Add machine", async () => {
     const calls: Calls = [];
-    await mountApp("/machines", host(calls, withUnknown));
+    await mountApp("/spaces", host(calls, withUnknown));
     await waitFor(() => expect(names()).toContain("unknown-box"));
-    fireEvent.click(within(q('[data-pending-machine="m3"]')!).getByRole("button", { name: "Add machine" }));
+    fireEvent.click(within(q('[data-pending-machine="m3"]')!).getByRole("button", { name: "Add computer" }));
     await waitFor(() => expect(sentFor(calls, "devices.confirmMachine")).toEqual([{ id: "m3" }]));
   });
 
   it("Not me on a machine that registered without proof asks first, then removes it from the account", async () => {
     const calls: Calls = [];
-    await mountApp("/machines", host(calls, withUnknown));
+    await mountApp("/spaces", host(calls, withUnknown));
     await waitFor(() => expect(names()).toContain("unknown-box"));
     fireEvent.click(within(q('[data-pending-machine="m3"]')!).getByRole("button", { name: "Not me" }));
     const dialog = await screen.findByRole("alertdialog");
@@ -115,29 +124,26 @@ describe.skipIf(!wasmBuilt)("one list of machines (real routes, wasm core)", () 
     await waitFor(() => expect(sentFor(calls, "machines.remove")).toEqual([{ machine: "m3", device: null }]));
   });
 
-  it("the waiting machine's page asks 'Add this machine?' with its name and system and two buttons", async () => {
-    await mountApp("/machines", host([]));
+  it("each waiting computer says its name and how it came, in plain words", async () => {
+    await mountApp("/spaces", host([]));
     await waitFor(() => expect(names()).toContain("Work laptop"));
-    act(() => q('[data-pending-machine="dev_work"] button')!.click());
-    const page = await waitFor(() => q('[data-pending-detail="dev_work"]')!);
-    expect(within(page).getByRole("heading", { name: "Add this machine?" })).toBeTruthy();
-    expect(page.textContent).toContain("Work laptop");
-    expect(page.textContent).toContain("Windows");
-    expect(within(page).getByRole("button", { name: "Add machine" })).toBeTruthy();
-    expect(within(page).getByRole("button", { name: "Not me" })).toBeTruthy();
-    expect(page.textContent).not.toMatch(/device|computer|enroll/i);
+    const row = q('[data-pending-machine="dev_work"]')!;
+    expect(row.querySelector("[data-pending-line]")?.textContent).toBeTruthy();
+    expect(row.textContent).not.toMatch(/device|machine|enroll/i);
   });
 
   it("a machine that is only signed in is a row 'Signed in, not sharing', with no Spaces switches, and Revoke asks first", async () => {
     const calls: Calls = [];
-    await mountApp("/machines", await mockupHost(calls));
+    await mountApp("/spaces", await mockupHost(calls));
     const row = await waitFor(() => {
       const r = q('[data-machine-id="dev_lap"]');
       if (!r) throw new Error("no row");
       return r;
     });
     expect(row.querySelector("[data-machine-line]")?.textContent).toBe("Signed in, not sharing");
-    expect(q('[data-machine-group="yours"]')?.contains(row)).toBe(true);
+    // Not a computer of the list: listed apart, under Also signed in.
+    expect(q("[data-tree-signed-in]")?.contains(row)).toBe(true);
+    expect(q("[data-spaces-tree]")?.contains(row)).toBe(false);
     expect(document.body.textContent).not.toMatch(/Your devices|Signed-in device/);
     act(() => row.click());
     const page = await screen.findByRole("region", { name: "Ana's laptop details" });
@@ -156,7 +162,7 @@ describe.skipIf(!wasmBuilt)("one list of machines (real routes, wasm core)", () 
   });
 
   it("each machine's page has its recent access, and this machine's page says how far it is trusted", async () => {
-    await mountApp("/machines", host([]));
+    const { router } = await mountApp("/spaces/computer/this-mac", host([]));
     // The trust lines live under Details, not on the page itself.
     await waitFor(() => expect(q("[data-machine-details-toggle]")).toBeTruthy());
     expect(q("[data-machine-trust]")).toBeNull();
@@ -169,7 +175,9 @@ describe.skipIf(!wasmBuilt)("one list of machines (real routes, wasm core)", () 
     expect(trust.getAttribute("data-machine-trust")).toBe("enrolled");
     expect(trust.querySelector("[data-machine-trust-status]")?.textContent).toMatch(/^Trusted until/);
     // The demo's relay says studio-mac and mac-mini were reached.
-    act(() => q('[data-machine-id="mac-mini"]')?.click());
+    await act(async () => {
+      await router.navigate({ to: "/spaces/computer/$computerId", params: { computerId: "mac-mini" } });
+    });
     // Recent access is a plain text link by Remove from account, not a block on the page.
     const link = await waitFor(() => {
       const l = q("[data-machine-recent-link]");
@@ -185,11 +193,11 @@ describe.skipIf(!wasmBuilt)("one list of machines (real routes, wasm core)", () 
       if (!r) throw new Error("no recent access");
       return r;
     });
-    expect(recent.textContent).not.toMatch(/device|computer|enrolled/i);
+    expect(recent.textContent).not.toMatch(/device|machine|enrolled/i);
   });
 
-  it("the old Trusted machines address lands on Machines", async () => {
+  it("the old Trusted machines address lands on This Mac's page", async () => {
     const { router } = await mountApp("/settings/devices", host([]));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/machines"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/spaces/computer/this-mac"));
   });
 });

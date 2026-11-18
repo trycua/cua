@@ -134,7 +134,7 @@ async def main() -> None:
             pid=app.pid, window_id=window.window_id, session=None, query=None,
             include_accessibility_tree=True, include_screenshot=True,
             screenshot_out_file=None, max_elements=None, max_depth=None,
-            max_dimension=None,
+            max_dimension=None, max_image_dimension=None,
         )
 
         async def snapshot():

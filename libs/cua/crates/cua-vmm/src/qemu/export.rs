@@ -240,6 +240,8 @@ impl QemuRuntime {
         st.name = name.to_string();
         st.pid = None;
         st.qmp_port = None;
+        st.qmp_socket = None;
+        st.vnc_password = None;
         st.vnc_display = None;
         st.ports.clear();
         st.paused = false;

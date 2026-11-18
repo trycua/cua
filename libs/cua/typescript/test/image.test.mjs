@@ -30,7 +30,11 @@ import { readFileSync } from "node:fs"
 const catalog = JSON.parse(
   readFileSync(new URL("../../../images/sandbox-images.json", import.meta.url), "utf8"),
 )
-const published = (ref) => catalog.images.find((i) => i.ref === ref)?.published ?? true
+// An entry built on the user's own machine (derived_from) resolves while unpublished.
+const published = (ref) => {
+  const entry = catalog.images.find((i) => i.ref === ref)
+  return (entry?.published ?? true) || Boolean(entry?.derived_from)
+}
 const expectRef = (fn, ref) => {
   if (published(ref)) {
     assert.equal(fn(), ref)

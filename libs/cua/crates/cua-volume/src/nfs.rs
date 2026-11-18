@@ -26,7 +26,7 @@ use nfsserve::nfs::{
 use nfsserve::tcp::{NFSTcp, NFSTcpListener};
 use nfsserve::vfs::{DirEntry, NFSFileSystem, ReadDirResult, VFSCapabilities};
 
-use crate::vfs::{Attr, Vfs, errno, libc_errno};
+use crate::vfs::{Attr, OP_DEADLINE, Vfs, errno, libc_errno};
 use crate::{Error, Result};
 
 /// The first component of a per-mount export name: `/cua-volume-<id>`
@@ -120,6 +120,23 @@ fn time(ms: u64) -> nfstime3 {
 }
 
 impl NfsFs {
+    /// Runs one operation on the filesystem within [`OP_DEADLINE`]: a
+    /// store that does not answer (sync stalled) fails the request with
+    /// EIO instead of leaving the kernel's client waiting.
+    async fn op<T, F, Fut>(&self, what: &'static str, f: F) -> std::result::Result<T, nfsstat3>
+    where
+        T: Send + 'static,
+        F: FnOnce(Arc<Vfs>) -> Fut,
+        Fut: std::future::Future<Output = Result<T>> + Send + 'static,
+    {
+        crate::vfs::bounded(OP_DEADLINE, what, f(self.vfs.clone()))
+            .await
+            .map_err(|e| {
+                tracing::debug!(op = what, error = %e, "nfs: answered with an error");
+                stat(e)
+            })
+    }
+
     /// The file system id this server reports: distinct per server, and
     /// below 2^31. The generation itself (milliseconds since 1970, past
     /// 2^40) made the Windows NFS client refuse every rename on the mount
@@ -245,31 +262,34 @@ impl NFSFileSystem for NfsFs {
                 return Ok(crate::vfs::ROOT);
             }
             return self
-                .vfs
-                .lookup_path(&parent)
+                .op(
+                    "lookup",
+                    move |v| async move { v.lookup_path(&parent).await },
+                )
                 .await
-                .map(|a| a.ino)
-                .map_err(stat);
+                .map(|a| a.ino);
         }
-        self.vfs
-            .lookup(dirid, &n)
+        self.op("lookup", move |v| async move { v.lookup(dirid, &n).await })
             .await
             .map(|a| a.ino)
-            .map_err(stat)
     }
 
     async fn getattr(&self, id: fileid3) -> std::result::Result<fattr3, nfsstat3> {
-        self.vfs
-            .getattr(id)
+        self.op("getattr", move |v| async move { v.getattr(id).await })
             .await
             .map(|a| self.fattr(&a))
-            .map_err(stat)
     }
 
     async fn setattr(&self, id: fileid3, setattr: sattr3) -> std::result::Result<fattr3, nfsstat3> {
         let a = match setattr.size {
-            set_size3::size(s) => self.vfs.truncate(id, s).await.map_err(stat)?,
-            set_size3::Void => self.vfs.getattr(id).await.map_err(stat)?,
+            set_size3::size(s) => {
+                self.op("setattr", move |v| async move { v.truncate(id, s).await })
+                    .await?
+            }
+            set_size3::Void => {
+                self.op("setattr", move |v| async move { v.getattr(id).await })
+                    .await?
+            }
         };
         Ok(self.fattr(&a))
     }
@@ -280,7 +300,10 @@ impl NFSFileSystem for NfsFs {
         offset: u64,
         count: u32,
     ) -> std::result::Result<(Vec<u8>, bool), nfsstat3> {
-        self.vfs.read(id, offset, count as u64).await.map_err(stat)
+        self.op("read", move |v| async move {
+            v.read(id, offset, count as u64).await
+        })
+        .await
     }
 
     async fn write(
@@ -289,11 +312,13 @@ impl NFSFileSystem for NfsFs {
         offset: u64,
         data: &[u8],
     ) -> std::result::Result<fattr3, nfsstat3> {
-        self.vfs
-            .write(id, offset, data)
-            .await
-            .map(|a| self.fattr(&a))
-            .map_err(stat)
+        let data = data.to_vec();
+        self.op(
+            "write",
+            move |v| async move { v.write(id, offset, &data).await },
+        )
+        .await
+        .map(|a| self.fattr(&a))
     }
 
     async fn create(
@@ -302,15 +327,21 @@ impl NFSFileSystem for NfsFs {
         filename: &filename3,
         attr: sattr3,
     ) -> std::result::Result<(fileid3, fattr3), nfsstat3> {
-        let a = self
-            .vfs
-            .create(dirid, &name(filename)?)
-            .await
-            .map_err(stat)?;
-        let a = match attr.size {
-            set_size3::size(s) if s > 0 => self.vfs.truncate(a.ino, s).await.map_err(stat)?,
-            _ => a,
+        let n = name(filename)?;
+        let size = match attr.size {
+            set_size3::size(s) => s,
+            set_size3::Void => 0,
         };
+        let a = self
+            .op("create", move |v| async move {
+                let a = v.create(dirid, &n).await?;
+                if size > 0 {
+                    v.truncate(a.ino, size).await
+                } else {
+                    Ok(a)
+                }
+            })
+            .await?;
         Ok((a.ino, self.fattr(&a)))
     }
 
@@ -320,14 +351,14 @@ impl NFSFileSystem for NfsFs {
         filename: &filename3,
     ) -> std::result::Result<fileid3, nfsstat3> {
         let n = name(filename)?;
-        if self.vfs.lookup(dirid, &n).await.is_ok() {
-            return Err(nfsstat3::NFS3ERR_EXIST);
-        }
-        self.vfs
-            .create(dirid, &n)
-            .await
-            .map(|a| a.ino)
-            .map_err(stat)
+        self.op("create", move |v| async move {
+            if v.lookup(dirid, &n).await.is_ok() {
+                return Err(Error::Precondition(format!("{n} exists")));
+            }
+            v.create(dirid, &n).await
+        })
+        .await
+        .map(|a| a.ino)
     }
 
     async fn mkdir(
@@ -335,7 +366,10 @@ impl NFSFileSystem for NfsFs {
         dirid: fileid3,
         dirname: &filename3,
     ) -> std::result::Result<(fileid3, fattr3), nfsstat3> {
-        let a = self.vfs.mkdir(dirid, &name(dirname)?).await.map_err(stat)?;
+        let n = name(dirname)?;
+        let a = self
+            .op("mkdir", move |v| async move { v.mkdir(dirid, &n).await })
+            .await?;
         Ok((a.ino, self.fattr(&a)))
     }
 
@@ -345,12 +379,15 @@ impl NFSFileSystem for NfsFs {
         filename: &filename3,
     ) -> std::result::Result<(), nfsstat3> {
         let n = name(filename)?;
-        let a = self.vfs.lookup(dirid, &n).await.map_err(stat)?;
-        if a.is_dir {
-            self.vfs.rmdir(dirid, &n).await.map_err(stat)
-        } else {
-            self.vfs.unlink(dirid, &n).await.map_err(stat)
-        }
+        self.op("remove", move |v| async move {
+            let a = v.lookup(dirid, &n).await?;
+            if a.is_dir {
+                v.rmdir(dirid, &n).await
+            } else {
+                v.unlink(dirid, &n).await
+            }
+        })
+        .await
     }
 
     async fn rename(
@@ -361,17 +398,17 @@ impl NFSFileSystem for NfsFs {
         to_filename: &filename3,
     ) -> std::result::Result<(), nfsstat3> {
         let (from, to) = (name(from_filename)?, name(to_filename)?);
-        // Replacing an existing file (an editor's safe save): remove it
-        // first so the rename lands as the new current version.
-        if let Ok(existing) = self.vfs.lookup(to_dirid, &to).await
-            && !existing.is_dir
-        {
-            let _ = self.vfs.unlink(to_dirid, &to).await;
-        }
-        self.vfs
-            .rename(from_dirid, &from, to_dirid, &to)
-            .await
-            .map_err(stat)
+        self.op("rename", move |v| async move {
+            // Replacing an existing file (an editor's safe save): remove it
+            // first so the rename lands as the new current version.
+            if let Ok(existing) = v.lookup(to_dirid, &to).await
+                && !existing.is_dir
+            {
+                let _ = v.unlink(to_dirid, &to).await;
+            }
+            v.rename(from_dirid, &from, to_dirid, &to).await
+        })
+        .await
     }
 
     async fn readdir(
@@ -380,7 +417,9 @@ impl NFSFileSystem for NfsFs {
         start_after: fileid3,
         max_entries: usize,
     ) -> std::result::Result<ReadDirResult, nfsstat3> {
-        let all = self.vfs.readdir(dirid).await.map_err(stat)?;
+        let all = self
+            .op("readdir", move |v| async move { v.readdir(dirid).await })
+            .await?;
         let start = if start_after == 0 {
             0
         } else {
@@ -763,6 +802,75 @@ mod tests {
         assert!(
             opts.starts_with(&format!("port={port},mountport={port},")),
             "{opts}"
+        );
+    }
+
+    /// A store that never answers: the other computer while sync has
+    /// stalled.
+    struct Stalled;
+
+    #[async_trait::async_trait]
+    impl crate::Backend for Stalled {
+        fn kind(&self) -> &'static str {
+            "stalled"
+        }
+        async fn put(&self, _: &str, _: Vec<u8>, _: crate::Condition) -> Result<crate::ObjectMeta> {
+            std::future::pending().await
+        }
+        async fn get(&self, _: &str, _: Option<&str>) -> Result<(Vec<u8>, crate::ObjectMeta)> {
+            std::future::pending().await
+        }
+        async fn head(&self, _: &str) -> Result<Option<crate::ObjectMeta>> {
+            std::future::pending().await
+        }
+        async fn list(&self, _: &str) -> Result<Vec<crate::ObjectMeta>> {
+            std::future::pending().await
+        }
+        async fn delete(&self, _: &str, _: crate::Condition) -> Result<()> {
+            std::future::pending().await
+        }
+        async fn versions(&self, _: &str) -> Result<Vec<crate::VersionInfo>> {
+            std::future::pending().await
+        }
+    }
+
+    /// CUA-4002: with sync stalled, every request still gets an answer
+    /// within [`OP_DEADLINE`] (an I/O error), below the guest client's
+    /// 5 s `timeo`. Before, a `mkdir` waited as long as the store did, the
+    /// kernel kept the folder busy, an agent start's `mkdir -p` was killed
+    /// at 30 s ("guest command failed (None)") and the mount was declared
+    /// dead.
+    #[tokio::test(start_paused = true)]
+    async fn a_stalled_store_fails_each_request_in_time_instead_of_hanging_the_mount() {
+        let dir = tempfile::tempdir().unwrap();
+        let drive = Drive::new(Arc::new(Stalled), dir.path().join("state"));
+        let fs = NfsFs {
+            vfs: Vfs::new(&drive, Context::user(), None, None, &dir.path().join("m")).unwrap(),
+            uid: 0,
+            gid: 0,
+            shared: true,
+            generation: next_generation(),
+            boot: next_generation(),
+        };
+        // The root answers without the store: the client sees a live server.
+        assert!(fs.getattr(ROOT).await.is_ok());
+        let io = nfsstat3::NFS3ERR_IO as u32;
+        let t0 = tokio::time::Instant::now();
+        let mkdir = fs.mkdir(ROOT, &b"agents".to_vec().into()).await;
+        assert_eq!(mkdir.map(|_| ()).map_err(|e| e as u32), Err(io));
+        let listing = fs.readdir(ROOT, 0, 100).await;
+        assert_eq!(listing.map(|_| ()).map_err(|e| e as u32), Err(io));
+        let lookup = fs.lookup(ROOT, &b"public".to_vec().into()).await;
+        assert_eq!(lookup.map_err(|e| e as u32), Err(io));
+        // Three requests, each answered at its deadline, not at the store's.
+        let took = t0.elapsed();
+        assert!(
+            took >= OP_DEADLINE * 3 && took < OP_DEADLINE * 3 + Duration::from_secs(1),
+            "{took:?}"
+        );
+        assert!(
+            OP_DEADLINE < Duration::from_secs(5),
+            "below the guest's timeo"
         );
     }
 }

@@ -76,8 +76,7 @@ export function DiagnosticReportDialog({
       setBusy(false);
     }
   };
-  const edit = (id: string, change: Partial<{ text: string; kept: boolean }>) =>
-    setParts((all) => all.map((p) => (p.id === id ? { ...p, ...change } : p)));
+  const edit = (id: string, change: Partial<{ text: string; kept: boolean }>) => setParts((all) => all.map((p) => (p.id === id ? { ...p, ...change } : p)));
 
   return (
     <Dialog open={open} onOpenChange={(next) => (busy ? undefined : onOpenChange(next))}>

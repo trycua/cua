@@ -3,7 +3,9 @@ name: "Release: Pipeline guard"
 # Fails and keeps ONE tracking issue up to date when the release pipeline is
 # stuck: a merged release PR still labelled `autorelease: pending` for more
 # than 30 minutes (release-please refuses to open the next release PR), or a
-# draft release with no assets older than 24 hours (empty duplicate drafts).
+# draft release with no assets older than 24 hours (empty duplicate drafts), or
+# the installer feed (cua-install-latest) still naming an older CLI than the
+# newest published cua-sdk release (#6923).
 
 on:
   schedule:
@@ -26,6 +28,10 @@ jobs:
   guard:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+          persist-credentials: false
       - name: Check release pipeline state
         env:
           GH_TOKEN: ${{ github.token }}
@@ -56,6 +62,15 @@ jobs:
             fi
           done <<< "$drafts"
 
+          # The installer feed must follow the newest stable CLI release.
+          feed_rc=0
+          feed=$(python3 .github/scripts/check_cli_feed_follows_release.py --repo "$REPO") || feed_rc=$?
+          if [ "$feed_rc" -eq 1 ]; then
+            problems+="$feed"$'\n'
+          elif [ "$feed_rc" -ne 0 ]; then
+            echo "::warning::$feed"
+          fi
+
           existing=$(gh issue list -R "$REPO" --state open --search "\"$TITLE\" in:title" --json number,title \
             --jq "[.[]|select(.title==\"$TITLE\")][0].number // empty")
 
@@ -67,7 +82,7 @@ jobs:
             exit 0
           fi
 
-          body="Found by the release pipeline guard ($(date -u +%FT%TZ)):"$'\n\n'"$problems"$'\n'"Fix: relabel the merged PR \`autorelease: tagged\` if its release exists, and delete empty drafts. Check the latest \"Release: Prepare component releases\" run on main."
+          body="Found by the release pipeline guard ($(date -u +%FT%TZ)):"$'\n\n'"$problems"$'\n'"Fix: relabel the merged PR \`autorelease: tagged\` if its release exists, and delete empty drafts. Check the latest \"Release: Prepare component releases\" run on main. If the installer feed lags, re-run the failed \"Update the rolling installer manifest\" step of the cd-cua-sdk run for the newest cua-sdk tag."
           if [ -n "$existing" ]; then
             gh issue edit "$existing" -R "$REPO" --body "$body"
           else

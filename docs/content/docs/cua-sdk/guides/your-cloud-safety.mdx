@@ -30,15 +30,7 @@ to a dedicated IAM user or role, then connect with that identity's profile
     {
       "Sid": "CuaIdentityAndRead",
       "Effect": "Allow",
-      "Action": [
-        "sts:GetCallerIdentity",
-        "ec2:DescribeImages",
-        "ec2:DescribeInstances",
-        "ec2:DescribeInstanceTypeOfferings",
-        "ec2:DescribeSecurityGroups",
-        "ec2:DescribeSubnets",
-        "ec2:DescribeVpcs"
-      ],
+      "Action": ["sts:GetCallerIdentity", "ec2:DescribeAvailabilityZones", "ec2:DescribeImages", "ec2:DescribeInstanceTypeOfferings", "ec2:DescribeInstances", "ec2:DescribeInternetGateways", "ec2:DescribeRouteTables", "ec2:DescribeSecurityGroups", "ec2:DescribeSubnets", "ec2:DescribeVpcs", "ec2:DescribeAddresses", "ec2:DescribeSecurityGroupRules"],
       "Resource": "*"
     },
     {
@@ -51,10 +43,7 @@ to a dedicated IAM user or role, then connect with that identity's profile
       "Sid": "CuaLaunchTaggedInstancesAndVolumes",
       "Effect": "Allow",
       "Action": "ec2:RunInstances",
-      "Resource": [
-        "arn:aws:ec2:*:*:instance/*",
-        "arn:aws:ec2:*:*:volume/*"
-      ],
+      "Resource": ["arn:aws:ec2:*:*:instance/*", "arn:aws:ec2:*:*:volume/*"],
       "Condition": {
         "StringEquals": {
           "aws:RequestTag/cua-managed": "true"
@@ -76,12 +65,7 @@ to a dedicated IAM user or role, then connect with that identity's profile
       "Sid": "CuaLaunchUsesExistingNetworkAndImages",
       "Effect": "Allow",
       "Action": "ec2:RunInstances",
-      "Resource": [
-        "arn:aws:ec2:*::image/*",
-        "arn:aws:ec2:*:*:subnet/*",
-        "arn:aws:ec2:*:*:network-interface/*",
-        "arn:aws:ec2:*:*:security-group/*"
-      ]
+      "Resource": ["arn:aws:ec2:*::image/*", "arn:aws:ec2:*:*:subnet/*", "arn:aws:ec2:*:*:network-interface/*", "arn:aws:ec2:*:*:security-group/*"]
     },
     {
       "Sid": "CuaCreateTaggedSecurityGroups",
@@ -101,20 +85,46 @@ to a dedicated IAM user or role, then connect with that identity's profile
       "Resource": "arn:aws:ec2:*:*:vpc/*"
     },
     {
+      "Sid": "CuaCreateItsOwnVpcAndParts",
+      "Effect": "Allow",
+      "Action": ["ec2:CreateVpc", "ec2:CreateSubnet", "ec2:CreateInternetGateway", "ec2:CreateRouteTable"],
+      "Resource": ["arn:aws:ec2:*:*:vpc/*", "arn:aws:ec2:*:*:subnet/*", "arn:aws:ec2:*:*:internet-gateway/*", "arn:aws:ec2:*:*:route-table/*"],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/cua-managed": "true"
+        }
+      }
+    },
+    {
+      "Sid": "CuaCreateSubnetsAndRouteTablesInItsOwnVpc",
+      "Effect": "Allow",
+      "Action": ["ec2:CreateSubnet", "ec2:CreateRouteTable"],
+      "Resource": "arn:aws:ec2:*:*:vpc/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/cua-managed": "true"
+        }
+      }
+    },
+    {
+      "Sid": "CuaWireItsOwnNetwork",
+      "Effect": "Allow",
+      "Action": ["ec2:AttachInternetGateway", "ec2:DetachInternetGateway", "ec2:CreateRoute", "ec2:AssociateRouteTable", "ec2:DisassociateRouteTable"],
+      "Resource": ["arn:aws:ec2:*:*:vpc/*", "arn:aws:ec2:*:*:subnet/*", "arn:aws:ec2:*:*:internet-gateway/*", "arn:aws:ec2:*:*:route-table/*"],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/cua-managed": "true"
+        }
+      }
+    },
+    {
       "Sid": "CuaTagOnlyWhatItCreates",
       "Effect": "Allow",
       "Action": "ec2:CreateTags",
-      "Resource": [
-        "arn:aws:ec2:*:*:instance/*",
-        "arn:aws:ec2:*:*:volume/*",
-        "arn:aws:ec2:*:*:security-group/*"
-      ],
+      "Resource": ["arn:aws:ec2:*:*:instance/*", "arn:aws:ec2:*:*:volume/*", "arn:aws:ec2:*:*:security-group/*", "arn:aws:ec2:*:*:vpc/*", "arn:aws:ec2:*:*:subnet/*", "arn:aws:ec2:*:*:internet-gateway/*", "arn:aws:ec2:*:*:route-table/*", "arn:aws:ec2:*:*:elastic-ip/*", "arn:aws:ec2:*:*:security-group-rule/*"],
       "Condition": {
         "StringEquals": {
-          "ec2:CreateAction": [
-            "RunInstances",
-            "CreateSecurityGroup"
-          ],
+          "ec2:CreateAction": ["RunInstances", "CreateSecurityGroup", "CreateVpc", "CreateSubnet", "CreateInternetGateway", "CreateRouteTable", "AllocateAddress", "AuthorizeSecurityGroupIngress"],
           "aws:RequestTag/cua-managed": "true"
         }
       }
@@ -122,12 +132,7 @@ to a dedicated IAM user or role, then connect with that identity's profile
     {
       "Sid": "CuaManageItsOwnInstances",
       "Effect": "Allow",
-      "Action": [
-        "ec2:StartInstances",
-        "ec2:StopInstances",
-        "ec2:TerminateInstances",
-        "ec2:GetConsoleOutput"
-      ],
+      "Action": ["ec2:StartInstances", "ec2:StopInstances", "ec2:TerminateInstances", "ec2:GetConsoleOutput"],
       "Resource": "arn:aws:ec2:*:*:instance/*",
       "Condition": {
         "StringEquals": {
@@ -138,14 +143,70 @@ to a dedicated IAM user or role, then connect with that identity's profile
     {
       "Sid": "CuaManageItsOwnSecurityGroups",
       "Effect": "Allow",
-      "Action": [
-        "ec2:AuthorizeSecurityGroupIngress",
-        "ec2:DeleteSecurityGroup"
-      ],
+      "Action": ["ec2:AuthorizeSecurityGroupIngress", "ec2:DeleteSecurityGroup", "ec2:RevokeSecurityGroupIngress"],
       "Resource": "arn:aws:ec2:*:*:security-group/*",
       "Condition": {
         "StringEquals": {
           "aws:ResourceTag/cua-managed": "true"
+        }
+      }
+    },
+    {
+      "Sid": "CuaDeleteItsOwnNetwork",
+      "Effect": "Allow",
+      "Action": ["ec2:DeleteVpc", "ec2:DeleteSubnet", "ec2:DeleteInternetGateway", "ec2:DeleteRouteTable"],
+      "Resource": ["arn:aws:ec2:*:*:vpc/*", "arn:aws:ec2:*:*:subnet/*", "arn:aws:ec2:*:*:internet-gateway/*", "arn:aws:ec2:*:*:route-table/*"],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/cua-managed": "true"
+        }
+      }
+    },
+    {
+      "Sid": "CuaOpenTaggedShareRules",
+      "Effect": "Allow",
+      "Action": "ec2:AuthorizeSecurityGroupIngress",
+      "Resource": "arn:aws:ec2:*:*:security-group-rule/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/cua-managed": "true"
+        }
+      }
+    },
+    {
+      "Sid": "CuaReserveTaggedAddresses",
+      "Effect": "Allow",
+      "Action": "ec2:AllocateAddress",
+      "Resource": "arn:aws:ec2:*:*:elastic-ip/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/cua-managed": "true"
+        }
+      }
+    },
+    {
+      "Sid": "CuaManageItsOwnAddresses",
+      "Effect": "Allow",
+      "Action": ["ec2:AssociateAddress", "ec2:DisassociateAddress", "ec2:ReleaseAddress"],
+      "Resource": ["arn:aws:ec2:*:*:elastic-ip/*", "arn:aws:ec2:*:*:instance/*"],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/cua-managed": "true"
+        }
+      }
+    },
+    {
+      "Sid": "CuaRenewItsOwnShareEdges",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": ["arn:aws:ec2:*:*:instance/*", "arn:aws:ec2:*:*:security-group/*", "arn:aws:ec2:*:*:elastic-ip/*"],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/cua-managed": "true",
+          "aws:ResourceTag/cua-role": "share-edge"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["cua-expires"]
         }
       }
     }
@@ -160,9 +221,10 @@ Why it is shaped this way:
   change nothing.
 - **Creates require the tag.** `ec2:RunInstances` for instances and volumes
   and `ec2:CreateSecurityGroup` require the request to carry
-  `cua-managed=true` (`aws:RequestTag`). `ec2:CreateTags` is allowed only as
-  part of those two creates (`ec2:CreateAction`), so Cua cannot re-tag an
-  existing resource to claim it.
+  `cua-managed=true` (`aws:RequestTag`), and so do the creates of its VPC,
+  subnets, gateway and route table. `ec2:CreateTags` is allowed only as part
+  of those creates (`ec2:CreateAction`), so Cua cannot re-tag an existing
+  resource to claim it.
 - **Changes require the tag on the resource.** Start, stop, terminate, read
   the console, authorize ingress and delete a security group all check
   `aws:ResourceTag/cua-managed`.
@@ -171,12 +233,32 @@ Why it is shaped this way:
   `RunInstances` call and cannot carry the request tag, so they are their own
   statement. Cua only ever adds a rule to a security group it created, and
   the dry run in `cua cloud test` runs before that group exists.
+- **A network of its own.** Cua never launches into your default VPC. It
+  creates one VPC per region, `cua-sb-<owner>` (a /16, one public subnet per
+  zone it uses, an internet gateway and one route table with the way out),
+  tags every part, and reuses it from then on. There is no peering, no
+  endpoint and no NAT. Creating the VPC and its parts requires the tag in
+  the request, and wiring, routing and deleting them require it on the
+  resource, so Cua cannot change a VPC, subnet, gateway or route table it
+  did not create. Hosts Cua launched earlier stay in the default VPC
+  until they end; `cua cloud sweep` lists them.
 - **IMDSv2 only.** A second statement denies launching an instance without
-  `HttpTokens=required`, which is how Cua always launches.
+  `HttpTokens=required`, which is how Cua always launches, with a hop limit
+  of 1 and instance tags off in the metadata service.
 - **Image lookup.** `ssm:GetParameters` on `/aws/service/*` resolves the
   public image names (Deep Learning and others) AWS publishes.
 - **No `iam:*`.** The policy cannot create or pass a role, so a Cua instance
   never has an instance profile.
+- **Public game shares.** For
+  [a public TCP share](/spaces/guides/share-a-game-server), Cua adds one
+  ingress rule for one share port to a security group it created, tagged
+  with the share and its end time (`CuaOpenTaggedShareRules`), and revokes
+  it when the share ends. Its one share server is an instance, a security
+  group and an Elastic IP address, all tagged `cua-role=share-edge`; the
+  address can be associated, disassociated or released only while tagged
+  (`CuaManageItsOwnAddresses`), and renewing the server can change only its
+  `cua-expires` tag (`CuaRenewItsOwnShareEdges`). A sweep removes rules and
+  servers whose share or lease ended.
 
 To narrow it further, add a `StringEquals` condition on `aws:RequestedRegion`
 to every statement that has a condition.
@@ -186,7 +268,9 @@ to every statement that has a condition.
 The `cua-spaces` CloudFormation stack you create for
 [a link without a key](/cua-sdk/guides/your-cloud#link-aws-without-a-key) gives
 its role exactly this policy, plus `ce:GetCostAndUsage` (read-only, for the
-spend Cua shows). A test keeps the stack's policy identical to the JSON above.
+spend Cua shows), under a permissions boundary that also denies every
+`iam:*`, `organizations:*` and `account:*` action. A test keeps the stack's
+policy identical to the JSON above.
 The role trusts only tokens from your Cua account's issuer
 (`https://oidc.cua.ai/a/<account>`) with the audience `sts.amazonaws.com` and
 the subject `account:<account>`, so another Cua account's tokens are refused.
@@ -252,6 +336,35 @@ credential accepts only tokens from your Cua account's issuer with the subject
 `cua cloud test azure` reads the group's permissions and lists any action Cua
 needs that they do not allow, then validates a machine deployment without
 creating it. To remove the trust, delete the `cua-spaces` identity.
+
+## What a Space on a cloud host can reach
+
+A Space is untrusted code, so each computer Cua starts in your cloud blocks its
+containers from the places they should never see. The rules are the computer's
+own firewall, installed on its first boot before any container runs, so a
+Space cannot change them. They apply to every provider.
+
+A container can reach the public internet and DNS, and nothing else:
+
+- **The cloud's metadata services** (`169.254.169.254`, `169.254.170.2`,
+  `fd00:ec2::254`, `168.63.129.16`, `100.100.100.200`), which hold the
+  host's credentials and start-up data. Only DNS on port 53 to the
+  host's own resolver passes.
+- **The computer's own network**: the VPC or virtual network and subnet it
+  sits in, read at boot.
+- **Private and reserved ranges**: `10.0.0.0/8`, `172.16.0.0/12`,
+  `192.168.0.0/16`, `100.64.0.0/10`, loopback, link-local, multicast and
+  the IPv6 equivalents.
+- **The computer itself**: a container may only get replies on connections
+  the computer made.
+
+On Azure the wire server at `168.63.129.16` also answers DNS, so Spaces never
+get it. The computer runs a small resolver instead, which forwards to the wire
+server and drops private answers, and Docker uses it.
+
+A Space's own network settings can only be stricter than these rules. A
+private-network preset such as "Lan" is not available on a computer in your
+cloud, because the private network there is your VPC.
 
 ### When a machine does not come online
 

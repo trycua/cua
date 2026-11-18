@@ -21,7 +21,7 @@ struct MainUIRouteTests {
                          onboarding: OnboardingModel(statePath: dir.appendingPathComponent("onboarding.json").path),
                          settingsPath: dir.appendingPathComponent("settings.json").path,
                          telemetry: FixtureTelemetry())
-        m.settings.experiments = AppExperiments(cuaVolume: true, yourCloud: false, sharing: false, webUi: true)
+        m.settings.experiments = AppExperiments(cuaVolume: true, ciRunners: false, tcpShares: false, mobile: false)
         return m
     }
 
@@ -39,11 +39,10 @@ struct MainUIRouteTests {
         #expect(MainUIRoute.home.dropped.isEmpty)
     }
 
-    /// Every route opens the web UI window, whatever an older build saved
-    /// for the New UI (there is no native window to fall back to).
+    /// Every route opens the web UI window (there is no native window to
+    /// fall back to).
     @Test func everyRouteOpensTheWebWindow() {
         let m = model()
-        m.settings.experiments.webUi = false
         var web: [MainUIRoute] = []
         let router = MainUIRouter(model: m, web: { web.append($0) })
         router.open(.space("s1"))
@@ -59,8 +58,10 @@ struct MainUIRouteTests {
         router.openMain()
         m.onboarding.finish()
         router.openMain()
-        #expect(web == [.firstRunDue, .home])
+        // The model's state file does not exist yet: the app's first launch here.
+        #expect(web == [.firstLaunch, .home])
         #expect(MainUIRouter.launchRoute(onboarded: false) == .firstRunDue)
+        #expect(MainUIRouter.launchRoute(onboarded: false, firstLaunch: true) == .firstLaunch)
         #expect(MainUIRouter.launchRoute(onboarded: true) == nil)
     }
 
@@ -68,7 +69,7 @@ struct MainUIRouteTests {
     @Test func aNotificationOpensItsPage() {
         let ready = SpaceReadyNote.identifierPrefix + "local:aurora"
         #expect(MainUIRouter.route(forNotification: ready) == .space("local:aurora"))
-        #expect(MainUIRouter.route(forNotification: "device-abc").webPath == "/machines")
+        #expect(MainUIRouter.route(forNotification: "device-abc") == .home)
         #expect(MainUIRouter.route(forNotification: "agent-42") == .agents)
         #expect(MainUIRouter.route(forNotification: "other") == .home)
     }
@@ -150,51 +151,22 @@ struct MainUIRouteTests {
 
     @Test func theViewMenusPagesHaveTheirRoutes() {
         #expect(MainUIRouter.route(forNav: "nav.spaces") == .home)
-        #expect(MainUIRouter.route(forNav: "nav.machines")?.webPath == "/machines")
+        #expect(MainUIRouter.route(forNav: "nav.machines") == nil)
         #expect(MainUIRouter.route(forNav: "nav.agents")?.webPath == "/agents")
         #expect(MainUIRouter.route(forNav: "nav.keyvault")?.webPath == "/keyvault")
         #expect(MainUIRouter.route(forNav: "nav.settings") == .settings)
         #expect(MainUIRouter.route(forNav: "nav.nope") == nil)
     }
 
-    /// An app at `version` over the settings file `json` in a fresh
-    /// directory (nil: none, a fresh install).
-    func launched(_ json: String?, version: String, dir: URL? = nil) -> AppModel {
-        let dir = dir ?? FileManager.default.temporaryDirectory.appendingPathComponent("cua-newui-\(UUID().uuidString)")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let path = dir.appendingPathComponent("settings.json").path
-        if let json { FileManager.default.createFile(atPath: path, contents: Data(json.utf8)) }
-        return AppModel(backend: FixtureSpacesBackend(), keyvault: KeyvaultModel(client: nil),
-                        onboarding: OnboardingModel(statePath: dir.appendingPathComponent("onboarding.json").path),
-                        settingsPath: path, telemetry: FixtureTelemetry(), appVersion: version)
-    }
-
-    /// The migration: whatever an older build saved ("Use classic UI" on, a
-    /// never-chosen `webUi: false`, nothing), every launch reports the web
-    /// UI, and Settings has no "Use classic UI" row to turn it off.
-    @Test func everyInstallIsOnTheWebUIAndThereIsNoClassicSwitch() {
-        for json in [#"{"updateChannel":"stable","newUi":false,"experiments":{"webUi":false}}"#,
-                     #"{"updateChannel":"beta","experiments":{"cuaVolume":true,"webUi":false}}"#,
-                     nil] {
-            for version in ["0.8.0", "0.16.1"] {
-                let m = launched(json, version: version)
-                #expect(m.settings.experiments.webUi, "\(json ?? "none") \(version)")
-                #expect(!m.experimentsPage.sections.flatMap(\.rows).contains { $0.id.contains("classic_ui") })
-                m.chooseExperiment(row: "experiment:classic_ui", option: "on")
-                m.setUpdateChannel(.stable)
-                #expect(m.settings.experiments.webUi)
-            }
-        }
-    }
-
-    /// A prerelease's first launch starts on the Beta channel; a release's
-    /// on Stable; a later launch keeps the channel.
-    @Test func aBetasFirstLaunchIsOnBeta() {
+    /// A prerelease's first launch (a nightly, or a beta from before
+    /// Nightly) starts on Nightly; a release's on Stable; a later launch
+    /// keeps the channel.
+    @Test func aPrereleasesFirstLaunchIsOnNightly() {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cua-newui-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let path = dir.appendingPathComponent("settings.json").path
         UpdateRefresh.record(settingsPath: path, version: "0.8.1-beta.1", build: "1", onboarded: false)
-        #expect(appSettingsLoad(path: path).updateChannel == .beta)
+        #expect(appSettingsLoad(path: path).updateChannel == .nightly)
         // A later launch keeps the channel the user set.
         var s = appSettingsLoad(path: path)
         s.updateChannel = .stable

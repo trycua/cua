@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Keep synthetic delivery seats out of the existing foreground input path.
 //! Preserve the legacy last-advertised-seat choice among ordinary seats.
 

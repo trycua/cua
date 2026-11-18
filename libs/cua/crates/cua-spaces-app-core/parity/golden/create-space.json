@@ -18,8 +18,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/linux:24.04",
@@ -74,11 +73,10 @@
         "fields": [
           "os: System",
           "image: Image [ghcr.io/org/app:tag]",
-          "placement: Run on !This Mac cannot run QEMU Spaces.",
+          "placement: Run on !Needs QEMU, which is not installed on this Mac.",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/windows:2022",
@@ -96,7 +94,7 @@
         "memoryText": "8 GB",
         "nameInvalid": false,
         "placement": "local",
-        "placementError": "This Mac cannot run QEMU Spaces.",
+        "placementError": "Needs QEMU, which is not installed on this Mac.",
         "placements": [
           "local"
         ],
@@ -134,8 +132,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/linux:24.04",
@@ -193,8 +190,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/linux:24.04",
@@ -252,8 +248,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/linux:24.04",
@@ -311,8 +306,7 @@
           "placement: Run on !This Mac cannot run QEMU Spaces.",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/linux:24.04-disk",
@@ -368,8 +362,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/linux:24.04",
@@ -427,8 +420,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/linux:24.04",
@@ -486,8 +478,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/linux:24.04",
@@ -552,8 +543,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/linux:24.04",
@@ -618,8 +608,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/linux:24.04",
@@ -684,8 +673,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/linux:24.04",
@@ -743,8 +731,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "win",
@@ -753,7 +740,11 @@
           "error": null,
           "open": true,
           "rows": [
-            "Desktop images: ghcr.io/trycua/windows:2022 (Windows Server 2022)"
+            "Desktop images: ghcr.io/trycua/windows:2022 (Windows Server 2022)",
+            "Distribution images: ghcr.io/trycua/windows:11 (Windows 11)",
+            "Distribution images: ghcr.io/trycua/windows:2025 (Windows Server 2025 Evaluation)",
+            "Distribution images: ghcr.io/trycua/windows:2019 (Windows Server 2019 Evaluation)",
+            "Distribution images: ghcr.io/trycua/windows:10 (Windows 10 Enterprise Evaluation)"
           ],
           "text": "win"
         },
@@ -803,8 +794,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "win",
@@ -813,7 +803,11 @@
           "error": null,
           "open": true,
           "rows": [
-            "Desktop images: ghcr.io/trycua/windows:2022 (Windows Server 2022) highlighted"
+            "Desktop images: ghcr.io/trycua/windows:2022 (Windows Server 2022) highlighted",
+            "Distribution images: ghcr.io/trycua/windows:11 (Windows 11)",
+            "Distribution images: ghcr.io/trycua/windows:2025 (Windows Server 2025 Evaluation)",
+            "Distribution images: ghcr.io/trycua/windows:2019 (Windows Server 2019 Evaluation)",
+            "Distribution images: ghcr.io/trycua/windows:10 (Windows 10 Enterprise Evaluation)"
           ],
           "text": "win"
         },
@@ -860,11 +854,10 @@
         "fields": [
           "os: System",
           "image: Image [ghcr.io/org/app:tag]",
-          "placement: Run on !This Mac cannot run QEMU Spaces.",
+          "placement: Run on !Needs QEMU, which is not installed on this Mac.",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/windows:2022",
@@ -882,7 +875,7 @@
         "memoryText": "8 GB",
         "nameInvalid": false,
         "placement": "local",
-        "placementError": "This Mac cannot run QEMU Spaces.",
+        "placementError": "Needs QEMU, which is not installed on this Mac.",
         "placements": [
           "local"
         ],
@@ -917,11 +910,10 @@
         "fields": [
           "os: System",
           "image: Image [ghcr.io/org/app:tag] !Use lowercase letters in the image name.",
-          "placement: Run on !This Mac cannot run QEMU Spaces.",
+          "placement: Run on !Needs QEMU, which is not installed on this Mac.",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/Acme/desktop",
@@ -939,7 +931,7 @@
         "memoryText": "8 GB",
         "nameInvalid": false,
         "placement": "local",
-        "placementError": "This Mac cannot run QEMU Spaces.",
+        "placementError": "Needs QEMU, which is not installed on this Mac.",
         "placements": [
           "local"
         ],
@@ -973,11 +965,10 @@
         "fields": [
           "os: System",
           "image: Image [ghcr.io/org/app:tag] !An image reference has no spaces.",
-          "placement: Run on !This Mac cannot run QEMU Spaces.",
+          "placement: Run on !Needs QEMU, which is not installed on this Mac.",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/acme/desktop:1.2 x",
@@ -995,7 +986,7 @@
         "memoryText": "8 GB",
         "nameInvalid": false,
         "placement": "local",
-        "placementError": "This Mac cannot run QEMU Spaces.",
+        "placementError": "Needs QEMU, which is not installed on this Mac.",
         "placements": [
           "local"
         ],
@@ -1029,11 +1020,10 @@
         "fields": [
           "os: System",
           "image: Image [ghcr.io/org/app:tag] !This image is not published yet.",
-          "placement: Run on !This Mac cannot run QEMU Spaces.",
+          "placement: Run on !Needs QEMU, which is not installed on this Mac.",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/windows:2022-disk",
@@ -1051,7 +1041,7 @@
         "memoryText": "8 GB",
         "nameInvalid": false,
         "placement": "local",
-        "placementError": "This Mac cannot run QEMU Spaces.",
+        "placementError": "Needs QEMU, which is not installed on this Mac.",
         "placements": [
           "local"
         ],
@@ -1088,8 +1078,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/linux:24.04",
@@ -1152,8 +1141,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/acme/desktop:1.2",
@@ -1210,8 +1198,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/acme/desktop:1.2",
@@ -1484,8 +1471,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…",
-          "connect-by-address: Connect by address…"
+          "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
         "image": "ghcr.io/acme/desktop:1.2",
@@ -1696,7 +1682,7 @@
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
-          "name: Name [space-000000002a]",
+          "name: Name [dapper-mole]",
           "open-when-ready: Open when ready"
         ],
         "gpu": null,
@@ -1749,7 +1735,7 @@
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
-          "name: Name [space-000000002a] !Lowercase letters, digits and dashes",
+          "name: Name [dapper-mole] !Lowercase letters, digits and dashes",
           "open-when-ready: Open when ready"
         ],
         "gpu": null,
@@ -1802,7 +1788,7 @@
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
-          "name: Name [space-000000002a] !Lowercase letters, digits and dashes",
+          "name: Name [dapper-mole] !Lowercase letters, digits and dashes",
           "open-when-ready: Open when ready"
         ],
         "gpu": null,
@@ -1855,7 +1841,7 @@
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
-          "name: Name [space-000000002a]",
+          "name: Name [dapper-mole]",
           "open-when-ready: Open when ready"
         ],
         "gpu": null,
@@ -1908,7 +1894,7 @@
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
-          "name: Name [space-000000002a]",
+          "name: Name [dapper-mole]",
           "open-when-ready: Open when ready"
         ],
         "gpu": null,
@@ -2011,7 +1997,7 @@
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
-          "name: Name [space-000000002a]",
+          "name: Name [dapper-mole]",
           "open-when-ready: Open when ready"
         ],
         "gpu": null,

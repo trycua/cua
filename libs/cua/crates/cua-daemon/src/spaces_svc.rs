@@ -43,7 +43,7 @@ pub(crate) fn network_word(n: cua_sandbox_core::NetworkMode) -> &'static str {
 }
 
 #[cfg(feature = "spaces")]
-mod imp {
+pub(crate) mod imp {
     use super::*;
     use crate::convert::from_dur;
     use crate::passthrough;
@@ -51,11 +51,46 @@ mod imp {
     use cua_sandbox_core::placement::{Kind, On, Runtime};
     use prost::Message;
 
+    /// The top-level Space of `space`'s tree.
+    fn tree_root(spaces: &cua_spaces::Spaces, space: &str) -> Result<String, tonic::Status> {
+        let id = spaces.resolve(space).map_err(|e| st(e.into()))?.to_string();
+        Ok(crate::children::api::position(spaces, &id).0)
+    }
+
+    /// Sets `Space.children` from the setting.
+    pub(crate) fn mark_children(spaces: &cua_spaces::Spaces, records: &mut [pb::Space]) {
+        let on: std::collections::BTreeSet<String> =
+            spaces.children_enabled().into_iter().collect();
+        for r in records {
+            r.children = on.contains(&r.id);
+        }
+    }
+
+    /// Turns children on for `space`: only a Space this computer runs can
+    /// hold a channel to it.
+    fn turn_on_children(
+        spaces: &cua_spaces::Spaces,
+        space: &mut pb::Space,
+    ) -> Result<(), tonic::Status> {
+        if !space.id.starts_with("local:") {
+            return Err(tonic::Status::failed_precondition(
+                "child Spaces are available for Spaces this computer runs; turn them on \
+                 on the machine that runs this Space",
+            ));
+        }
+        spaces
+            .set_children(&space.id, true)
+            .map_err(|e| st(e.into()))?;
+        space.children = true;
+        Ok(())
+    }
+
     async fn record(spaces: &cua_spaces::Spaces, id: &str) -> Result<pb::Space, Error> {
         if let Some(r) = spaces.registry().get(id).map_err(Error::from)? {
             let mut r = [r];
             spaces.fill_records(&mut r);
-            let [r] = r;
+            let [mut r] = r;
+            r.children = spaces.children_on(&r.id);
             return Ok(r);
         }
         Ok(info_record(&spaces.find(id).await.map_err(Error::from)?))
@@ -100,8 +135,43 @@ mod imp {
                 .egress_enforced
                 .map(|e| e.as_str().to_string())
                 .unwrap_or_default(),
+            clipboard: info.clipboard.as_str().into(),
+            volume: info.volume_setting.as_str().into(),
             volumes: info.volumes.iter().map(Into::into).collect(),
             sharing: info.sharing.as_ref().map(Into::into),
+            network_settings: info
+                .network
+                .as_ref()
+                .map(|n| cua_spaces::network::to_pb(&n.settings)),
+            network_note: info
+                .network
+                .as_ref()
+                .and_then(|n| n.note.clone())
+                .unwrap_or_default(),
+            network_notice_pending: info.network.as_ref().is_some_and(|n| n.notice_pending),
+            parent: info
+                .tree
+                .as_ref()
+                .and_then(|t| t.parent.clone())
+                .unwrap_or_default(),
+            root: info
+                .tree
+                .as_ref()
+                .and_then(|t| t.root.clone())
+                .unwrap_or_default(),
+            depth: info.tree.as_ref().map_or(0, |t| t.depth),
+            origin: info
+                .tree
+                .as_ref()
+                .map(|t| t.origin.clone())
+                .unwrap_or_default(),
+            children: false,
+            tree_address: info
+                .id
+                .strip_prefix("local:")
+                .and_then(cua_vmm::tree::address_by_name)
+                .map(|a| a.to_string())
+                .unwrap_or_default(),
         }
     }
 
@@ -163,6 +233,8 @@ mod imp {
             labels: r.labels.into_iter().collect(),
             instance_type: opt(r.instance_type),
             region: opt(r.region),
+            // A tree of another computer is joined only through a host create.
+            tree: None,
             egress: r
                 .egress
                 .map(|e| cua_spaces::egress::EgressPolicy {
@@ -170,6 +242,16 @@ mod imp {
                     deny: e.deny,
                 })
                 .unwrap_or_default(),
+            network_settings: r
+                .network_settings
+                .as_ref()
+                .map(cua_spaces::network::from_pb)
+                .transpose()
+                .map_err(|e| st(e.into()))?,
+            parent: opt(r.parent),
+            widen: r.widen,
+            // Opting out travels as the `cua.relay=off` label.
+            relay: None,
         })
     }
 
@@ -349,6 +431,7 @@ mod imp {
                 s.stop_reason = self.spaces().stop_reason_of(&s.id);
             }
             self.spaces().fill_records(&mut spaces);
+            mark_children(self.spaces(), &mut spaces);
             // Plus the signed-in account's relay machines: refreshed, or
             // (`known_now`) as far as they answered, never holding up this
             // machine's own Spaces.
@@ -631,14 +714,20 @@ mod imp {
             &self,
             req: tonic::Request<pb::CreateSpaceRequest>,
         ) -> R<pb::CreateSpaceResponse> {
-            let create = create_args(req.into_inner())?;
+            let r = req.into_inner();
+            let children = r.children.unwrap_or(false);
+            let create = create_args(r)?;
             let network = create.network;
             let created = self
                 .spaces()
                 .create(create)
                 .await
                 .map_err(|e| st(e.into()))?;
-            ok(create_response(self.spaces(), created, network).await?)
+            let mut resp = create_response(self.spaces(), created, network).await?;
+            if children && let Some(s) = resp.space.as_mut() {
+                turn_on_children(self.spaces(), s)?;
+            }
+            ok(resp)
         }
 
         type CreateSpaceStreamStream = std::pin::Pin<
@@ -657,6 +746,7 @@ mod imp {
             let mut r = req.into_inner().create.unwrap_or_default();
             // The stream runs until the Space is ready.
             r.wait = Some(true);
+            let children = r.children.unwrap_or(false);
             let mut create = create_args(r)?;
             // Bounded: a slow reader drops progress, never the result (which
             // goes out on the same channel after every report).
@@ -671,11 +761,18 @@ mod imp {
             let network = create.network;
             tokio::spawn(async move {
                 let result = match spaces.create(create).await {
-                    Ok(created) => create_response(&spaces, created, network).await.map(|r| {
-                        pb::CreateSpaceStreamResponse {
-                            event: Some(Event::Result(r)),
+                    Ok(created) => match create_response(&spaces, created, network).await {
+                        Ok(mut r) => {
+                            let on = match r.space.as_mut() {
+                                Some(s) if children => turn_on_children(&spaces, s),
+                                _ => Ok(()),
+                            };
+                            on.map(|()| pb::CreateSpaceStreamResponse {
+                                event: Some(Event::Result(r)),
+                            })
                         }
-                    }),
+                        Err(e) => Err(e),
+                    },
                     Err(e) => Err(st(e.into())),
                 };
                 let _ = tx.send(result).await;
@@ -769,6 +866,260 @@ mod imp {
             ok(pb::SetSpaceEgressResponse {})
         }
 
+        async fn get_space_network(
+            &self,
+            req: tonic::Request<pb::GetSpaceNetworkRequest>,
+        ) -> R<pb::GetSpaceNetworkResponse> {
+            let r = req.into_inner();
+            let info = self
+                .spaces()
+                .network_info(&r.space)
+                .await
+                .map_err(|e| st(e.into()))?;
+            if r.ack_notice {
+                self.spaces()
+                    .ack_network_notice(&r.space)
+                    .map_err(|e| st(e.into()))?;
+            }
+            ok(pb::GetSpaceNetworkResponse {
+                network: Some(cua_spaces::network::info_to_pb(&info)),
+            })
+        }
+
+        async fn get_space_network_log(
+            &self,
+            req: tonic::Request<pb::GetSpaceNetworkLogRequest>,
+        ) -> R<pb::GetSpaceNetworkLogResponse> {
+            let r = req.into_inner();
+            let events = self
+                .spaces()
+                .network_events(&r.space)
+                .await
+                .map_err(|e| st(e.into()))?;
+            ok(pb::GetSpaceNetworkLogResponse {
+                events: events
+                    .into_iter()
+                    .map(|e| pb::NetworkEvent {
+                        reason: e.reason,
+                        dst: e.dst,
+                        proto: e.proto.unwrap_or_default(),
+                        count: e.count,
+                        last_unix: e.last_unix.unwrap_or(0),
+                    })
+                    .collect(),
+            })
+        }
+
+        async fn set_space_network(
+            &self,
+            req: tonic::Request<pb::SetSpaceNetworkRequest>,
+        ) -> R<pb::SetSpaceNetworkResponse> {
+            let r = req.into_inner();
+            let settings = cua_spaces::network::from_pb(&r.settings.unwrap_or_default())
+                .map_err(|e| st(e.into()))?;
+            let applied = self
+                .spaces()
+                .set_network(&r.space, &settings, r.widen, r.tree)
+                .await
+                .map_err(|e| st(e.into()))?;
+            let info = self
+                .spaces()
+                .network_info(&r.space)
+                .await
+                .map_err(|e| st(e.into()))?;
+            ok(pb::SetSpaceNetworkResponse {
+                applied: match applied {
+                    cua_vmm::network::Applied::Now => "now",
+                    cua_vmm::network::Applied::NextStart => "next_start",
+                }
+                .into(),
+                network: Some(cua_spaces::network::info_to_pb(&info)),
+            })
+        }
+
+        async fn set_space_clipboard(
+            &self,
+            req: tonic::Request<pb::SetSpaceClipboardRequest>,
+        ) -> R<pb::SetSpaceClipboardResponse> {
+            let r = req.into_inner();
+            let setting: cua_spaces::clipboard::ClipboardSetting = r
+                .clipboard
+                .parse()
+                .map_err(|e: cua_spaces::Error| st(e.into()))?;
+            self.spaces()
+                .set_clipboard(&r.space, setting)
+                .map_err(|e| st(e.into()))?;
+            ok(pb::SetSpaceClipboardResponse {})
+        }
+
+        async fn set_space_volume(
+            &self,
+            req: tonic::Request<pb::SetSpaceVolumeRequest>,
+        ) -> R<pb::SetSpaceVolumeResponse> {
+            let r = req.into_inner();
+            let setting =
+                cua_spaces::registry::VolumeSetting::parse(&r.volume).map_err(|e| st(e.into()))?;
+            self.spaces()
+                .set_volume_setting(&r.space, setting)
+                .await
+                .map_err(|e| st(e.into()))?;
+            ok(pb::SetSpaceVolumeResponse {})
+        }
+
+        async fn get_tree_budget(
+            &self,
+            req: tonic::Request<pb::GetTreeBudgetRequest>,
+        ) -> R<pb::GetTreeBudgetResponse> {
+            let root = tree_root(self.spaces(), &req.into_inner().space)?;
+            ok(pb::GetTreeBudgetResponse {
+                budget: Some(crate::children::api::tree_budget(&self.0, &root)),
+            })
+        }
+
+        async fn set_tree_budget(
+            &self,
+            req: tonic::Request<pb::SetTreeBudgetRequest>,
+        ) -> R<pb::SetTreeBudgetResponse> {
+            let r = req.into_inner();
+            let root = tree_root(self.spaces(), &r.space)?;
+            let l = r.limits.unwrap_or_default();
+            for (what, v) in [("usd_per_hour", l.usd_per_hour), ("usd_total", l.usd_total)] {
+                if v.is_some_and(|v| !v.is_finite() || v < 0.0) {
+                    return Err(tonic::Status::invalid_argument(format!(
+                        "{what} must be a number of dollars, 0 or more"
+                    )));
+                }
+            }
+            let budget = crate::children::budget::Budget {
+                max_spaces: l.max_spaces,
+                max_vcpus: l.max_vcpus,
+                max_memory_mb: l.max_memory_mb,
+                usd_per_hour: l.usd_per_hour,
+                usd_total: l.usd_total,
+            };
+            let Some(c) = self.0.children.as_deref() else {
+                return Err(tonic::Status::failed_precondition(
+                    "child Spaces are unavailable in this daemon",
+                ));
+            };
+            c.budget
+                .set_budget(&root, budget)
+                .map_err(|e| tonic::Status::internal(format!("save the budget: {e}")))?;
+            ok(pb::SetTreeBudgetResponse {
+                budget: Some(crate::children::api::tree_budget(&self.0, &root)),
+            })
+        }
+
+        async fn list_stream_windows(
+            &self,
+            req: tonic::Request<pb::ListStreamWindowsRequest>,
+        ) -> R<pb::ListStreamWindowsResponse> {
+            let rows = self.spaces().stream_windows(&req.into_inner().space).await;
+            ok(pb::ListStreamWindowsResponse {
+                windows: rows
+                    .into_iter()
+                    .map(|w| pb::StreamWindow {
+                        window_id: w.window_id,
+                        title: w.title,
+                        app_name: w.app_name,
+                        app_id: w.app_id,
+                        pid: w.pid,
+                        origin: w.origin.map(|o| pb::StreamOrigin {
+                            space_id: o.space_id,
+                            name: o.name,
+                            os: o.os,
+                            window_id: o.window_id,
+                        }),
+                    })
+                    .collect(),
+            })
+        }
+
+        async fn open_stream_entry(
+            &self,
+            req: tonic::Request<pb::OpenStreamEntryRequest>,
+        ) -> R<pb::OpenStreamEntryResponse> {
+            let r = req.into_inner();
+            let options = cua_spaces::stream::StreamOptions {
+                max_fps: r.max_fps,
+                ticket_ttl: (r.ticket_ttl_seconds > 0)
+                    .then(|| std::time::Duration::from_secs(r.ticket_ttl_seconds as u64)),
+                ..Default::default()
+            };
+            let decided = self
+                .spaces()
+                .resolve_stream_entry(&r.window_id)
+                .await
+                .map_err(|e| st(e.into()))?;
+            // The client opens the stream itself: straight from the origin
+            // with its own handle (direct), or through this daemon's media
+            // bridge (proxied, `DaemonService.OpenMediaBridge`). The daemon
+            // mints a ticket here only when asked to.
+            let opened = if r.mint {
+                self.spaces()
+                    .open_stream_entry(&r.window_id, options)
+                    .await
+                    .map_err(|e| st(e.into()))?
+            } else {
+                decided
+            };
+            let route = serde_json::to_value(opened.route)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_default();
+            let access = match &opened.access {
+                cua_spaces::stream_registry::Access::Owner => "owner",
+                cua_spaces::stream_registry::Access::Grant(_) => "grant",
+                cua_spaces::stream_registry::Access::None => "none",
+            };
+            ok(pb::OpenStreamEntryResponse {
+                route,
+                access: access.into(),
+                minted_by: opened.minted_by,
+                ticket_json: match &opened.ticket {
+                    Some(t) => serde_json::to_string(t)
+                        .map_err(|e| tonic::Status::internal(e.to_string()))?,
+                    None => String::new(),
+                },
+                origin_space: opened.entry.origin_space,
+                origin_window_id: opened.entry.window_id,
+            })
+        }
+
+        async fn list_orphans(
+            &self,
+            _: tonic::Request<pb::ListOrphansRequest>,
+        ) -> R<pb::ListOrphansResponse> {
+            ok(pb::ListOrphansResponse {
+                orphans: crate::children::orphans(&self.0),
+            })
+        }
+
+        async fn set_space_children(
+            &self,
+            req: tonic::Request<pb::SetSpaceChildrenRequest>,
+        ) -> R<pb::SetSpaceChildrenResponse> {
+            let r = req.into_inner();
+            let id = self
+                .spaces()
+                .resolve(&r.space)
+                .map_err(|e| st(e.into()))?
+                .to_string();
+            let mut space = record(self.spaces(), &id).await.map_err(st)?;
+            if r.enabled {
+                turn_on_children(self.spaces(), &mut space)?;
+            } else {
+                self.spaces()
+                    .set_children(&id, false)
+                    .map_err(|e| st(e.into()))?;
+                if let Some(a) = self.0.spawn_authority() {
+                    a.revoke(&id);
+                }
+                space.children = false;
+            }
+            ok(pb::SetSpaceChildrenResponse { space: Some(space) })
+        }
+
         async fn rename_space(
             &self,
             req: tonic::Request<pb::RenameSpaceRequest>,
@@ -787,15 +1138,31 @@ mod imp {
             &self,
             req: tonic::Request<pb::DeleteSpaceRequest>,
         ) -> R<pb::DeleteSpaceResponse> {
-            let space = req.into_inner().space;
+            let req = req.into_inner();
+            let space = req.space;
+            // Its child Spaces go first, unless it keeps them.
+            let gone = if req.keep_children {
+                vec![]
+            } else {
+                self.spaces().descendants(&space).unwrap_or_default()
+            };
             let message = self
                 .spaces()
-                .delete(&space)
+                .delete_tree(&space, req.keep_children)
                 .await
                 .map_err(|e| st(e.into()))?;
+            for child in &gone {
+                self.rt().detach(child).await;
+            }
             // Drop the connection an exec or a call cached for it: a new
             // Space of the same name must not reach the deleted one.
             self.rt().detach(&space).await;
+            // Its capability ends with it (the channel loop also notices).
+            if let Ok(id) = self.spaces().resolve(&space)
+                && let Some(a) = self.0.spawn_authority()
+            {
+                a.revoke(&id.to_string());
+            }
             ok(pb::DeleteSpaceResponse { message })
         }
 
@@ -832,11 +1199,20 @@ mod imp {
             &self,
             req: tonic::Request<pb::ConnectSpaceRequest>,
         ) -> R<pb::ConnectSpaceResponse> {
+            let started = std::time::Instant::now();
             let space = self
                 .spaces()
                 .space(&req.into_inner().space)
                 .await
                 .map_err(|e| st(e.into()))?;
+            // `stream.open` timing (debug): resolving the Space, which is the
+            // first hop of every stream a viewer opens.
+            tracing::debug!(
+                target: "cua::stream::timing",
+                hop = "connect_space",
+                ms = started.elapsed().as_secs_f64() * 1e3,
+                "stream.open"
+            );
             let id = space.id().to_string();
             let (base, token) = {
                 let info = self.0.info.lock().unwrap();
@@ -926,7 +1302,8 @@ mod imp {
             let caller = cua_spaces::extension::Caller::from_host(&caller);
             let r = req.into_inner();
             let app_method = cua_spaces::agents::keys::is_app_method(&r.name);
-            if !app_method && cua_spaces::contract::tool(&r.name).is_none() {
+            let reach = cua_spaces::reach::is_app_method(&r.name);
+            if !app_method && !reach && cua_spaces::contract::tool(&r.name).is_none() {
                 return Err(st(Error::NotFound(format!("Spaces tool {}", r.name))));
             }
             let args: serde_json::Value = if r.arguments_json.trim().is_empty() {
@@ -938,7 +1315,14 @@ mod imp {
             };
             // The app's Settings → Connections methods: not contract tools, so no
             // MCP server lists or forwards them to an agent.
-            let out = if app_method {
+            let out = if reach {
+                // Whether a Space can take work now: the app asks before it hands a job over.
+                cua_spaces::reach::app_call(self.spaces(), &r.name, args)
+                    .await
+                    .unwrap_or_else(|| {
+                        cua_spaces::mcp::ToolOutcome::error_message("not_found", r.name.clone())
+                    })
+            } else if app_method {
                 cua_spaces::agents::keys::app_tool_async(&r.name, args)
                     .await
                     .unwrap_or_else(|| {
@@ -1266,6 +1650,63 @@ mod imp {
         ) -> R<pb::SetSpaceEgressResponse> {
             off()
         }
+        async fn set_space_children(
+            &self,
+            _: tonic::Request<pb::SetSpaceChildrenRequest>,
+        ) -> R<pb::SetSpaceChildrenResponse> {
+            off()
+        }
+        async fn get_tree_budget(
+            &self,
+            _: tonic::Request<pb::GetTreeBudgetRequest>,
+        ) -> R<pb::GetTreeBudgetResponse> {
+            off()
+        }
+        async fn set_tree_budget(
+            &self,
+            _: tonic::Request<pb::SetTreeBudgetRequest>,
+        ) -> R<pb::SetTreeBudgetResponse> {
+            off()
+        }
+
+        async fn get_space_network(
+            &self,
+            _: tonic::Request<pb::GetSpaceNetworkRequest>,
+        ) -> R<pb::GetSpaceNetworkResponse> {
+            off()
+        }
+
+        async fn set_space_network(
+            &self,
+            _: tonic::Request<pb::SetSpaceNetworkRequest>,
+        ) -> R<pb::SetSpaceNetworkResponse> {
+            off()
+        }
+
+        async fn get_space_network_log(
+            &self,
+            _: tonic::Request<pb::GetSpaceNetworkLogRequest>,
+        ) -> R<pb::GetSpaceNetworkLogResponse> {
+            off()
+        }
+        async fn list_stream_windows(
+            &self,
+            _: tonic::Request<pb::ListStreamWindowsRequest>,
+        ) -> R<pb::ListStreamWindowsResponse> {
+            off()
+        }
+        async fn open_stream_entry(
+            &self,
+            _: tonic::Request<pb::OpenStreamEntryRequest>,
+        ) -> R<pb::OpenStreamEntryResponse> {
+            off()
+        }
+        async fn list_orphans(
+            &self,
+            _: tonic::Request<pb::ListOrphansRequest>,
+        ) -> R<pb::ListOrphansResponse> {
+            off()
+        }
 
         async fn delete_space(
             &self,
@@ -1283,6 +1724,18 @@ mod imp {
             &self,
             _: tonic::Request<pb::LeaveSpacesRequest>,
         ) -> R<pb::LeaveSpacesResponse> {
+            off()
+        }
+        async fn set_space_clipboard(
+            &self,
+            _: tonic::Request<pb::SetSpaceClipboardRequest>,
+        ) -> R<pb::SetSpaceClipboardResponse> {
+            off()
+        }
+        async fn set_space_volume(
+            &self,
+            _: tonic::Request<pb::SetSpaceVolumeRequest>,
+        ) -> R<pb::SetSpaceVolumeResponse> {
             off()
         }
         async fn rename_space(

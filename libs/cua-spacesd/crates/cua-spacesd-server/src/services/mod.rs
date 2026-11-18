@@ -6,6 +6,9 @@
 
 pub mod diagnose;
 pub mod driver;
+pub mod share_slots;
+pub mod spawn;
+pub mod spawn_tools;
 pub mod system;
 pub mod teleport;
 pub mod tunnel;

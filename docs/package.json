@@ -1,6 +1,7 @@
 {
   "name": "docs",
   "version": "0.0.0",
+  "packageManager": "pnpm@9.0.4",
   "private": true,
   "scripts": {
     "build": "next build",

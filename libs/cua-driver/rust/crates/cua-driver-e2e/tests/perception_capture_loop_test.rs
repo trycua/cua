@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Canonical desktop rows for the optional perception loop.
 //!
 //! The documented loop is `get_window_state` (retain `capture_id`) ->

@@ -210,6 +210,19 @@ fn capture_error(error: impl std::fmt::Display) -> ProviderError {
 impl Grabber {
     fn new(source: StreamSource) -> Result<Self, ProviderError> {
         let (conn, root) = linux_x11::connect()?;
+        if matches!(source, StreamSource::Display { .. }) && linux_x11::root_unreadable(&conn, root)
+        {
+            return Err(ProviderError::new(
+                ProviderErrorCode::Unsupported,
+                format!(
+                    "the X server (DISPLAY={:?}) is the rootless Xwayland of a Wayland \
+                     session: its root window holds no desktop pixels, so the desktop \
+                     would stream black. Stream an X11 window instead, or point \
+                     cua-spacesd at an X11 session",
+                    std::env::var("DISPLAY").ok()
+                ),
+            ));
+        }
         let shm_supported = conn
             .shm_query_version()
             .ok()

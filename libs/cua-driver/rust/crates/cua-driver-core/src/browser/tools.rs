@@ -1994,7 +1994,10 @@ fn dialog_block(dialog: &super::cdp_ws::CdpDialogState) -> Value {
 /// `pointerdown` until the microtasks its handlers queued ran. No other task
 /// can run in that span, so those mutations are the handlers' own, for
 /// example a button that reveals fields elsewhere without changing its own
-/// state.
+/// state. The click call waits a bounded 256 microtask turns, not for a later
+/// task: a task boundary would let unrelated timers and network callbacks
+/// change the page inside the count. A handler whose change comes later than
+/// that leaves the click `unverifiable`, never falsely `confirmed`.
 macro_rules! dom_event_pointer_prelude {
     () => {
         "const el = this; \
@@ -2041,7 +2044,7 @@ const DOM_EVENT_CLICK_SEQUENCE: &str = concat!(
     P('pointerup', 0); \
     if (compat) M('mouseup', 0, { detail: 1 }); \
     M('click', 0, { detail: 1 }); \
-    for (let turn = 0; turn < 8; turn++) await null; \
+    for (let turn = 0; turn < 256; turn++) await null; \
     records.push(...observer.takeRecords()); \
     observer.disconnect(); \
     const caused = records.filter(m => !el.contains(m.target) \

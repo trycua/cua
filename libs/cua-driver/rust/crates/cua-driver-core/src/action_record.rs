@@ -303,6 +303,19 @@ impl ActionExecutionRecord {
         ActionExecutionRecordBuilder::new(effect, transport, requested_delivery)
     }
 
+    /// A `move_cursor` record. A cursor move gives an app nothing to confirm,
+    /// so the effect is unverifiable and no app delivery applies, whether the
+    /// user's real pointer or only the drawn agent cursor moved.
+    pub fn cursor_move(transport: ActionTransport, args: &serde_json::Value) -> Self {
+        let mut record = Self::new(
+            ActionEffect::Unverifiable,
+            transport,
+            requested_delivery("move_cursor", args),
+        );
+        record.actual_delivery = Some(ActualDelivery::NotApplicable);
+        record
+    }
+
     pub fn validate(&self) -> Result<(), ActionRecordValidationError> {
         match self.effect {
             ActionEffect::Confirmed if projected_evidence(&self.evidence).is_none() => {
@@ -490,7 +503,7 @@ impl ActionExecutionRecord {
         let transport = transport_from_legacy(tool_name, args, raw_path)?;
         let effect = legacy_effect(structured);
         let actual_delivery =
-            actual_delivery_from_legacy(tool_name, args, structured, raw_path, transport, effect);
+            actual_delivery_from_legacy(tool_name, args, structured, raw_path, effect);
 
         let mut record = Self::new(effect, transport, requested_delivery);
         record.actual_delivery = actual_delivery;
@@ -784,7 +797,6 @@ fn transport_from_legacy(
         "msaa" => ActionTransport::WindowsMsaaAction,
         "post_message" | "PostMessage" => ActionTransport::WindowsPostMessage,
         "SendInput" => ActionTransport::WindowsSendInput,
-        "SetCursorPos" => ActionTransport::WindowsSetCursorPos,
         "atspi" | "wayland_atspi" | "x11_atspi" => ActionTransport::LinuxAtSpiAction,
         "pty" => ActionTransport::LinuxPty,
         // set_value's keyboard fallback on Linux: the field (or combo box)
@@ -878,11 +890,6 @@ fn transport_from_legacy(
             }
         }
         "" if tool_name == "browser_type" => ActionTransport::BrowserCdpInputKey,
-        "" if tool_name == "move_cursor"
-            && args.get("scope").and_then(serde_json::Value::as_str) != Some("desktop") =>
-        {
-            ActionTransport::AgentCursorOverlay
-        }
         "" if args.get("scope").and_then(serde_json::Value::as_str) == Some("desktop") => {
             if cfg!(target_os = "macos") {
                 ActionTransport::MacosCgEventHid
@@ -969,7 +976,6 @@ fn actual_delivery_from_legacy(
     args: &serde_json::Value,
     structured: &serde_json::Value,
     raw_path: Option<&str>,
-    transport: ActionTransport,
     effect: ActionEffect,
 ) -> Option<ActualDelivery> {
     if effect == ActionEffect::Refused {
@@ -987,9 +993,7 @@ fn actual_delivery_from_legacy(
             _ => Some(ActualDelivery::Background),
         };
     }
-    if transport == ActionTransport::AgentCursorOverlay
-        || args.get("scope").and_then(serde_json::Value::as_str) == Some("desktop")
-    {
+    if args.get("scope").and_then(serde_json::Value::as_str) == Some("desktop") {
         return Some(ActualDelivery::NotApplicable);
     }
     if let Some(delivery) = structured_delivery_mode(args, structured) {
@@ -1624,11 +1628,6 @@ mod tests {
     /// drawn agent cursor, including window-target hover moves.
     #[test]
     fn move_cursor_publishes_the_pinned_cursor_projection() {
-        let public = |args: serde_json::Value, structured: serde_json::Value| {
-            let record = ActionExecutionRecord::from_legacy("move_cursor", &args, &structured)
-                .expect("move_cursor normalizes");
-            serde_json::to_value(record.public_result().unwrap()).unwrap()
-        };
         let projection = |route: &str| {
             serde_json::json!({
                 "effect": "unverifiable",
@@ -1636,38 +1635,36 @@ mod tests {
                 "delivery": {"mode": "not_applicable"},
             })
         };
-        let desktop = serde_json::json!({"scope": "desktop", "x": 1, "y": 1});
-        for path in [
-            None,
-            Some("SetCursorPos"),
-            Some("wayland_desktop"),
-            Some("xtest_desktop"),
-        ] {
-            let mut structured = serde_json::json!({"scope": "desktop", "effect": "unverifiable"});
-            if let Some(path) = path {
-                structured["path"] = path.into();
-            }
+        let cases = [
+            (ActionTransport::MacosCgEventHid, "global_input"),
+            (ActionTransport::WindowsSetCursorPos, "global_input"),
+            (ActionTransport::LinuxWaylandVirtualPointer, "global_input"),
+            (ActionTransport::LinuxXTest, "global_input"),
+            (ActionTransport::AgentCursorOverlay, "synthetic_events"),
+        ];
+        for (transport, route) in cases {
+            let record = ActionExecutionRecord::cursor_move(transport, &serde_json::json!({}));
             assert_eq!(
-                public(desktop.clone(), structured),
-                projection("global_input"),
-                "{path:?}"
+                serde_json::to_value(record.public_result().unwrap()).unwrap(),
+                projection(route),
+                "{transport:?}"
             );
         }
+    }
+
+    /// A `move_cursor` producer builds its own record; a text-only result
+    /// no longer normalizes, so a producer that drops its record fails at
+    /// the dispatch seam instead of publishing a guessed route.
+    #[test]
+    fn move_cursor_is_not_interpreted_from_legacy_payloads() {
         assert_eq!(
-            public(serde_json::json!({"x": 1, "y": 1}), serde_json::Value::Null),
-            projection("synthetic_events")
+            ActionExecutionRecord::from_legacy(
+                "move_cursor",
+                &serde_json::json!({"x": 1, "y": 1}),
+                &serde_json::Value::Null,
+            ),
+            None
         );
-        let window = serde_json::json!({"pid": 1, "window_id": 2, "x": 1, "y": 1});
-        for effect in ["unverifiable", "unknown", "confirmed"] {
-            assert_eq!(
-                public(
-                    window.clone(),
-                    serde_json::json!({"scope": "window", "hover_delivered": true, "effect": effect}),
-                ),
-                projection("synthetic_events"),
-                "{effect}"
-            );
-        }
     }
 
     #[test]
@@ -2121,7 +2118,6 @@ mod tests {
             "post_message",
             "PostMessage",
             "SendInput",
-            "SetCursorPos",
             "atspi",
             "wayland_atspi",
             "x11_atspi",
@@ -2190,7 +2186,6 @@ mod tests {
             "drag",
             "mouse_drag",
             "parallel_mouse_drag",
-            "move_cursor",
             "mouse_button_down",
             "mouse_button_up",
             "type_text",

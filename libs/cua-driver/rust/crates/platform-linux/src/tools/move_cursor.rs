@@ -4,6 +4,7 @@
 use async_trait::async_trait;
 use cua_driver_contract::MoveCursorInput;
 use cua_driver_core::{
+    action_record::{ActionExecutionRecord, ActionTransport},
     protocol::ToolResult,
     tool::{Tool, ToolDef},
     tool_args::parse_typed_projection,
@@ -65,10 +66,10 @@ impl Tool for MoveCursorTool {
             let xi = x.round() as i32;
             let yi = y.round() as i32;
             let wayland = crate::wayland::is_wayland();
-            let path = if wayland {
-                "wayland_desktop"
+            let transport = if wayland {
+                ActionTransport::LinuxWaylandVirtualPointer
             } else {
-                "xtest_desktop"
+                ActionTransport::LinuxXTest
             };
             let result = if wayland {
                 spawn_blocking_bounded("move_cursor", foreground_budget(0), move || {
@@ -83,12 +84,10 @@ impl Tool for MoveCursorTool {
                 .await
             };
             return match result {
-                Ok(Ok(())) => ToolResult::text(format!(
-                    "Moved the real desktop pointer to ({xi}, {yi})."
-                ))
-                .with_structured(
-                    json!({"scope":"desktop","path":path,"x":xi,"y":yi,"effect":"unverifiable"}),
-                ),
+                Ok(Ok(())) => {
+                    ToolResult::text(format!("Moved the real desktop pointer to ({xi}, {yi})."))
+                        .with_action_record(ActionExecutionRecord::cursor_move(transport, &args))
+                }
                 Ok(Err(error)) if crate::input::foreground::error_code(&error).is_some() => {
                     input_error_result(error)
                 }
@@ -113,6 +112,10 @@ impl Tool for MoveCursorTool {
         reveal_pointer_action_for(&self.state, &cursor_id, x, y, false).await;
         ToolResult::text(format!(
             "Agent cursor '{cursor_id}' moved to ({x:.1}, {y:.1}); the user pointer was unchanged."
+        ))
+        .with_action_record(ActionExecutionRecord::cursor_move(
+            ActionTransport::AgentCursorOverlay,
+            &args,
         ))
     }
 }
@@ -166,7 +169,7 @@ impl MoveCursorTool {
         );
         let delivery = crate::input::delivery::DeliveryMode::from_args(args);
         if !isolated_hyprland_background(delivery) {
-            return window_hover_result(&moved, xid, screen, HoverOutcome::Unavailable);
+            return window_hover_result(&moved, args, HoverOutcome::Unavailable);
         }
         let owner = named_session_cursor_key(args);
         let action = crate::wayland::hyprland_input::Action::Hover { x, y };
@@ -174,23 +177,15 @@ impl MoveCursorTool {
             crate::wayland::hyprland_input::execute(owner, pid, xid, action, cancellation)
         }) {
             Ok(dispatch) => dispatch,
-            Err(refusal) => {
-                let reason = refusal_reason(refusal.structured_content.as_ref());
-                return window_hover_result(&moved, xid, screen, HoverOutcome::Refused(reason));
-            }
+            Err(_) => return window_hover_result(&moved, args, HoverOutcome::Unavailable),
         };
         let outcome = match dispatch.await {
             Ok(Ok(reply)) if reply["ok"] == true => HoverOutcome::Delivered,
-            Ok(Ok(reply)) => HoverOutcome::Refused(
-                reply["code"]
-                    .as_str()
-                    .unwrap_or("background_unavailable")
-                    .to_owned(),
-            ),
+            Ok(Ok(_)) => HoverOutcome::Unavailable,
             Ok(Err(error)) => HoverOutcome::Unknown(error.to_string()),
             Err(error) => HoverOutcome::Unknown(error.to_string()),
         };
-        window_hover_result(&moved, xid, screen, outcome)
+        window_hover_result(&moved, args, outcome)
     }
 }
 
@@ -199,65 +194,39 @@ enum HoverOutcome {
     /// The app received pointer enter and motion on Cua's agent seat.
     Delivered,
     /// No background hover route on this desktop (not Hyprland with the
-    /// Cua plugin, or a foreground request).
+    /// Cua plugin, or a foreground request), or the route refused before
+    /// sending anything.
     Unavailable,
-    /// The route refused before sending anything; carries the reason code.
-    Refused(String),
     /// The route failed after it may have sent input.
     Unknown(String),
-}
-
-fn refusal_reason(structured: Option<&Value>) -> String {
-    structured
-        .and_then(|value| value.get("reason").or_else(|| value.get("code")))
-        .and_then(Value::as_str)
-        .unwrap_or("background_unavailable")
-        .to_owned()
 }
 
 /// What to tell the agent after a window-target move. An app that saw no
 /// hover must be named as such: the 6 Nov Omarchy run showed agents trusting
 /// an overlay-only move and clicking without the hover the task needed.
-fn window_hover_result(
-    moved: &str,
-    xid: u64,
-    screen: Option<(f64, f64)>,
-    outcome: HoverOutcome,
-) -> ToolResult {
-    let screen_point = screen.map(|(x, y)| json!([x, y]));
-    let mut structured = json!({
-        "scope": "window",
-        "window_id": xid,
-        "screen_point": screen_point,
-        "effect": "unverifiable",
-    });
-    let text = match &outcome {
-        HoverOutcome::Delivered => {
-            structured["hover_delivered"] = json!(true);
-            structured["hover_route"] = json!("linux_hyprland_agent_seat");
+fn window_hover_result(moved: &str, args: &Value, outcome: HoverOutcome) -> ToolResult {
+    let (text, transport) = match outcome {
+        HoverOutcome::Delivered => (
             format!(
                 "{moved}, and hovered the app there through Cua's own input seat; the user's \
-                 pointer, focus and windows did not change. Hover styles, hover-only controls and \
-                 tooltips react to it. Call get_window_state to see them."
-            )
-        }
-        HoverOutcome::Unknown(error) => {
-            structured["hover_delivered"] = json!("unknown");
-            structured["effect"] = json!("unknown");
+                 pointer, focus and windows did not change. Hover styles, hover-only controls \
+                 and tooltips react to it. Call get_window_state to see them."
+            ),
+            ActionTransport::LinuxHyprlandIsolatedInput,
+        ),
+        HoverOutcome::Unknown(error) => (
             format!(
                 "{moved}. The background hover may or may not have reached the app ({error}); \
                  read the window again before relying on it."
-            )
-        }
-        HoverOutcome::Unavailable | HoverOutcome::Refused(_) => {
-            structured["hover_delivered"] = json!(false);
-            if let HoverOutcome::Refused(reason) = &outcome {
-                structured["reason"] = json!(reason);
-            }
-            format!("{moved}; the user's pointer did not move.{NO_HOVER_NOTE}")
-        }
+            ),
+            ActionTransport::LinuxHyprlandIsolatedInput,
+        ),
+        HoverOutcome::Unavailable => (
+            format!("{moved}; the user's pointer did not move.{NO_HOVER_NOTE}"),
+            ActionTransport::AgentCursorOverlay,
+        ),
     };
-    ToolResult::text(text).with_structured(structured)
+    ToolResult::text(text).with_action_record(ActionExecutionRecord::cursor_move(transport, args))
 }
 
 /// What a window-target move that delivered no hover means for the agent.
@@ -268,55 +237,46 @@ const NO_HOVER_NOTE: &str = " The app saw no hover: only the drawn agent cursor 
 
 #[cfg(test)]
 mod window_hover_result_tests {
-    use super::{refusal_reason, window_hover_result, HoverOutcome};
+    use super::{window_hover_result, HoverOutcome};
+    use cua_driver_core::action_record::{ActionExecutionRecord, ActionTransport};
     use serde_json::json;
 
-    fn structured(outcome: HoverOutcome) -> (String, serde_json::Value) {
-        let result = window_hover_result("moved", 9, Some((10.0, 20.0)), outcome);
-        let text = serde_json::to_string(&result.content).unwrap();
-        (text, result.structured_content.unwrap())
+    fn text(outcome: HoverOutcome, transport: ActionTransport) -> String {
+        let args = json!({"pid": 1, "window_id": 9, "x": 10, "y": 20});
+        let result = window_hover_result("moved", &args, outcome);
+        assert_eq!(
+            result.action_record,
+            Some(ActionExecutionRecord::cursor_move(transport, &args))
+        );
+        serde_json::to_string(&result.content).unwrap()
     }
 
     #[test]
     fn delivered_hover_names_its_route() {
-        let (_, value) = structured(HoverOutcome::Delivered);
-        assert_eq!(value["hover_delivered"], true);
-        assert_eq!(value["hover_route"], "linux_hyprland_agent_seat");
-        assert_eq!(value["screen_point"], json!([10.0, 20.0]));
-        assert_eq!(value["window_id"], 9);
+        let text = text(
+            HoverOutcome::Delivered,
+            ActionTransport::LinuxHyprlandIsolatedInput,
+        );
+        assert!(text.contains("through Cua's own input seat"), "{text}");
     }
 
     #[test]
     fn an_overlay_only_move_says_the_app_saw_no_hover() {
-        for outcome in [
+        let text = text(
             HoverOutcome::Unavailable,
-            HoverOutcome::Refused("hover_unsupported".into()),
-        ] {
-            let refused = matches!(outcome, HoverOutcome::Refused(_));
-            let (text, value) = structured(outcome);
-            assert_eq!(value["hover_delivered"], false);
-            assert!(text.contains("saw no hover"), "{text}");
-            assert_eq!(value.get("reason").is_some(), refused);
-        }
+            ActionTransport::AgentCursorOverlay,
+        );
+        assert!(text.contains("saw no hover"), "{text}");
     }
 
     #[test]
     fn an_uncertain_dispatch_is_not_reported_as_no_hover() {
-        let (_, value) = structured(HoverOutcome::Unknown("timeout".into()));
-        assert_eq!(value["hover_delivered"], "unknown");
-        assert_eq!(value["effect"], "unknown");
-    }
-
-    #[test]
-    fn refusal_reason_prefers_the_specific_reason() {
-        assert_eq!(
-            refusal_reason(Some(
-                &json!({"code":"background_unavailable","reason":"client_xwayland"})
-            )),
-            "client_xwayland"
+        let text = text(
+            HoverOutcome::Unknown("timeout".into()),
+            ActionTransport::LinuxHyprlandIsolatedInput,
         );
-        assert_eq!(refusal_reason(Some(&json!({"code":"x"}))), "x");
-        assert_eq!(refusal_reason(None), "background_unavailable");
+        assert!(text.contains("may or may not have reached"), "{text}");
+        assert!(!text.contains("saw no hover"), "{text}");
     }
 }
 

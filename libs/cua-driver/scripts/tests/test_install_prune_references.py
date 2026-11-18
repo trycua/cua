@@ -89,7 +89,7 @@ def _current(home: Path, version: str) -> Path:
     return link
 
 
-def _prune(runner: Path, home: Path, keep: int) -> subprocess.CompletedProcess[str]:
+def _prune(runner: Path, home: Path, keep: int, **env: str) -> subprocess.CompletedProcess[str]:
     packages = home / ".cua-driver/packages"
     return subprocess.run(
         [str(runner), str(packages / "releases"), str(packages / "current"), TARGET, str(keep)],
@@ -97,9 +97,10 @@ def _prune(runner: Path, home: Path, keep: int) -> subprocess.CompletedProcess[s
         text=True,
         check=True,
         env={
-            **os.environ,
+            **{key: value for key, value in os.environ.items() if key != "XDG_DATA_HOME"},
             "HOME": str(home),
             "XDG_CONFIG_HOME": str(home / ".config"),
+            **env,
         },
     )
 
@@ -194,3 +195,17 @@ def test_active_release_is_never_pruned_even_with_a_reference(runner: Path, tmp_
     assert active.exists()
     assert current.exists()
     assert "warning:" not in completed.stderr
+
+
+def test_desktop_entry_under_xdg_data_home_is_reported(runner: Path, tmp_path: Path) -> None:
+    home = _home(tmp_path)
+    oldest, _ = _three_releases(home)
+    data_home = tmp_path / "data"
+    desktop = data_home / "applications/cua-driver.desktop"
+    desktop.parent.mkdir(parents=True)
+    desktop.write_text(f"Exec={oldest}/cua-driver serve\n", encoding="utf-8")
+
+    completed = _prune(runner, home, keep=2, XDG_DATA_HOME=str(data_home))
+
+    assert not oldest.exists()
+    assert str(desktop) in completed.stderr

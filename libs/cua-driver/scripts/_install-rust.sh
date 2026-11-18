@@ -458,6 +458,7 @@ warn_referenced_release_dirs() {
     shift
     local stable="${current_link%/}/$BINARY_NAME"
     local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+    local data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
     local dir file needle referenced
     for dir in "$@"; do
         needle="packages/releases/${dir##*/}"
@@ -466,7 +467,7 @@ warn_referenced_release_dirs() {
             "$config_home"/systemd/user/*.service \
             "$config_home"/systemd/user/*.socket \
             "$config_home"/systemd/user/*.timer \
-            "$HOME"/.local/share/applications/*.desktop \
+            "$data_home"/applications/*.desktop \
             "$config_home"/autostart/*.desktop; do
             [[ -f "$file" ]] || continue
             grep -qF -- "$needle" "$file" 2>/dev/null || continue

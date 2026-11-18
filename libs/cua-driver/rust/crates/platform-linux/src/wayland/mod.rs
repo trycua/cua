@@ -1209,22 +1209,6 @@ fn wayland_window_crop(xid: u64) -> anyhow::Result<WaylandWindowCrop> {
             window.visible,
         );
     }
-    // GNOME helpers before API 9 have no per-window capture, so the stage is
-    // cropped to the window's frame. GetRects proves geometry, not occlusion:
-    // a covering window shows in the crop. API 9+ helpers never reach this
-    // (see `screenshot_dispatch_for_pid`).
-    if let Some(window) = shell_helper::list_windows(None)
-        .and_then(|windows| windows.into_iter().find(|window| window.xid == xid))
-    {
-        return attested_wayland_crop(
-            xid,
-            window.x,
-            window.y,
-            window.width,
-            window.height,
-            window.is_on_screen,
-        );
-    }
     Err(surface_identity_unproven(
         xid,
         "no compositor-attested window geometry is available",
@@ -1289,20 +1273,8 @@ fn screenshot_dispatch_for_pid(xid: u64, pid: Option<u32>) -> anyhow::Result<Vec
             .map_err(|error| surface_identity_unproven(xid, format!("cua-compositor: {error:#}")));
     }
     if is_wayland() {
-        // A GNOME helper with API 9+ snapshots the window's own actor, so a
-        // covering window never shows. It is then the only GNOME route: a
-        // refused capture (minimized window, locked screen) must not fall
-        // back to a stage crop that could show another app.
-        match shell_helper::screenshot_window(xid, pid) {
-            shell_helper::WindowCapture::Png(png) => return Ok(png),
-            shell_helper::WindowCapture::Unavailable => {
-                return Err(surface_identity_unproven(
-                    xid,
-                    "the GNOME helper could not capture this window (minimized, closed, \
-                     or the screen is locked)",
-                ))
-            }
-            shell_helper::WindowCapture::Unsupported => {}
+        if let Some(result) = gnome_window_capture(xid, shell_helper::screenshot_window(xid, pid)) {
+            return result;
         }
     }
     screenshot_window_bytes_with_dispatch(
@@ -1311,6 +1283,42 @@ fn screenshot_dispatch_for_pid(xid: u64, pid: Option<u32>) -> anyhow::Result<Vec
         wayland_window_crop,
         screenshot_display_dispatch,
         crate::capture::screenshot_window_bytes,
+    )
+}
+
+/// A verified GNOME helper is the only GNOME window route: its `CaptureWindow`
+/// (API 9) snapshots the window's own actor, so a covering window never shows.
+/// An older helper and a refused capture both refuse; a stage crop would show
+/// whatever covers the window. `None` means no verified helper, so the caller
+/// takes another route.
+fn gnome_window_capture(
+    xid: u64,
+    capture: shell_helper::WindowCapture,
+) -> Option<anyhow::Result<Vec<u8>>> {
+    match capture {
+        shell_helper::WindowCapture::Png(png) => Some(Ok(png)),
+        shell_helper::WindowCapture::Unavailable => Some(Err(surface_identity_unproven(
+            xid,
+            "the GNOME helper could not capture this window (minimized, closed, \
+             or the screen is locked)",
+        ))),
+        shell_helper::WindowCapture::HelperTooOld { api } => Some(Err(surface_identity_unproven(
+            xid,
+            gnome_helper_too_old_reason(api),
+        ))),
+        shell_helper::WindowCapture::NoHelper => None,
+    }
+}
+
+fn gnome_helper_too_old_reason(api: Option<u32>) -> String {
+    let loaded = match api {
+        Some(api) => format!("the loaded GNOME helper is API {api}"),
+        None => "the loaded GNOME helper did not report its API version".to_owned(),
+    };
+    format!(
+        "{loaded}; window capture needs API {} or newer. Re-run the Cua Driver \
+         installer, then log out and back in so GNOME Shell loads the new helper",
+        shell_helper::WINDOW_CAPTURE_API_VERSION
     )
 }
 
@@ -5278,6 +5286,40 @@ mod tests {
         assert!(error.to_string().contains("window 10594"));
         assert!(!display_called.get());
         assert!(!x11_called.get());
+    }
+
+    #[test]
+    fn gnome_window_capture_refuses_helpers_below_api_9() {
+        for (api, loaded) in [
+            (Some(8), "the loaded GNOME helper is API 8;"),
+            (
+                None,
+                "the loaded GNOME helper did not report its API version;",
+            ),
+        ] {
+            let error =
+                gnome_window_capture(0x2962, shell_helper::WindowCapture::HelperTooOld { api })
+                    .expect("an older helper must not fall through to another route")
+                    .expect_err("an older helper has no per-window capture");
+            assert!(is_surface_identity_unproven(&error));
+            let message = error.to_string();
+            assert!(message.contains(loaded), "{message}");
+            assert!(message.contains("needs API 9 or newer"), "{message}");
+            assert!(
+                message.contains("Re-run the Cua Driver installer, then log out and back in"),
+                "{message}"
+            );
+        }
+        let refused = gnome_window_capture(0x2962, shell_helper::WindowCapture::Unavailable)
+            .expect("a refused capture must not fall through to another route")
+            .expect_err("a refused capture has no image");
+        assert!(is_surface_identity_unproven(&refused));
+        assert_eq!(
+            gnome_window_capture(0x2962, shell_helper::WindowCapture::Png(vec![1]))
+                .map(Result::unwrap),
+            Some(vec![1])
+        );
+        assert!(gnome_window_capture(0x2962, shell_helper::WindowCapture::NoHelper).is_none());
     }
 
     #[test]

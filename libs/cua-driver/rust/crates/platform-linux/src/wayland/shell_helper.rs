@@ -177,8 +177,10 @@ fn attest_shell_owner<P: ShellOwnerProbe>(
         return None;
     }
 
+    // A verified helper whose `GetVersion` fails still attests, with no
+    // version, so a version-gated caller can tell it from no helper at all.
     let version = if read_version {
-        Some(probe.helper_version(&owner)?)
+        probe.helper_version(&owner)
     } else {
         None
     };
@@ -302,19 +304,28 @@ fn is_trusted_gnome_shell(pid: u32) -> bool {
 }
 
 /// The outcome of a per-window capture through the GNOME helper.
+#[derive(Debug, PartialEq, Eq)]
 pub enum WindowCapture {
-    /// No verified helper, or one older than API 9: use another route.
-    Unsupported,
+    /// No verified helper: the caller may take another route.
+    NoHelper,
+    /// A verified helper older than API 9, or one whose `GetVersion` failed
+    /// (`api: None`). It cannot capture one window's own actor.
+    HelperTooOld {
+        api: Option<u32>,
+    },
     /// The helper can capture windows but refused this one (minimized,
-    /// closed, wrong owner, locked screen). Do not fall back to a stage crop.
+    /// closed, wrong owner, locked screen).
     Unavailable,
     Png(Vec<u8>),
 }
 
-/// The verified helper owner and the API version that same owner reported.
-fn attested_owner_with_version(deadline: Instant) -> Option<(String, u32)> {
-    let (owner, version) = attest_shell_owner(&SessionShellProbe { deadline }, true)?;
-    Some((owner, version?))
+/// The verified helper owner, if that owner reports API 9 or newer.
+fn window_capture_owner<P: ShellOwnerProbe>(probe: &P) -> Result<String, WindowCapture> {
+    match attest_shell_owner(probe, true) {
+        None => Err(WindowCapture::NoHelper),
+        Some((owner, Some(api))) if api >= WINDOW_CAPTURE_API_VERSION => Ok(owner),
+        Some((_, api)) => Err(WindowCapture::HelperTooOld { api }),
+    }
 }
 
 /// Capture one window's compositor actor without activating it. Covered
@@ -322,12 +333,10 @@ fn attested_owner_with_version(deadline: Instant) -> Option<(String, u32)> {
 /// the window's logical frame, the frame its window coordinates are in.
 pub fn screenshot_window(id: u64, pid: Option<u32>) -> WindowCapture {
     let deadline = operation_deadline(CAPTURE_CAP);
-    let Some((owner, version)) = attested_owner_with_version(deadline) else {
-        return WindowCapture::Unsupported;
+    let owner = match window_capture_owner(&SessionShellProbe { deadline }) {
+        Ok(owner) => owner,
+        Err(outcome) => return outcome,
     };
-    if version < WINDOW_CAPTURE_API_VERSION {
-        return WindowCapture::Unsupported;
-    }
     let Ok(id) = u32::try_from(id) else {
         return WindowCapture::Unavailable;
     };
@@ -1119,7 +1128,41 @@ mod tests {
             select_shell_owner(&silent_api, Some(BROWSER_HELPER_API_VERSION)),
             None
         );
-        assert_eq!(attest_shell_owner(&silent_api, true), None);
+        assert_eq!(
+            attest_shell_owner(&silent_api, true),
+            Some((":1.97".to_owned(), None))
+        );
+    }
+
+    #[test]
+    fn window_capture_needs_a_verified_helper_at_api_9() {
+        let with_api = |version| FakeShellBus {
+            version,
+            ..FakeShellBus::genuine()
+        };
+        assert_eq!(
+            window_capture_owner(&with_api(Some(WINDOW_CAPTURE_API_VERSION))).as_deref(),
+            Ok(":1.97")
+        );
+        assert_eq!(
+            window_capture_owner(&with_api(Some(8))),
+            Err(WindowCapture::HelperTooOld { api: Some(8) })
+        );
+        assert_eq!(
+            window_capture_owner(&with_api(None)),
+            Err(WindowCapture::HelperTooOld { api: None })
+        );
+        let no_helper = FakeShellBus::genuine().with_names(vec![], vec![":1.97"]);
+        assert_eq!(
+            window_capture_owner(&no_helper),
+            Err(WindowCapture::NoHelper)
+        );
+        let moved_after_version =
+            FakeShellBus::genuine().with_names(vec![":1.97", ":1.42"], vec![":1.97"]);
+        assert_eq!(
+            window_capture_owner(&moved_after_version),
+            Err(WindowCapture::NoHelper)
+        );
     }
 
     // Two windows of one PID: 363 at x=0 and 438 at x=600, plus another

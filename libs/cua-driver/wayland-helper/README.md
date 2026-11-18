@@ -94,11 +94,14 @@ still work when it is absent, but pixel geometry, the Shell cursor, and safe
 foreground portal input are unavailable. cua-driver refuses focus-bound input
 instead of injecting into an unverified target.
 
-With helper API 9 or newer, cua-driver captures GNOME windows only through
-`CaptureWindow`; if the helper refuses a window, the screenshot fails rather
-than falling back to a stage crop that could show another app. With an older
-helper it still crops the stage to the window frame, which shows whatever
-covers the window. Re-run the installer to get per-window capture.
+cua-driver captures GNOME windows only through `CaptureWindow` (helper API 9
+or newer); it never crops the stage, which would show whatever covers the
+window. If the helper refuses a window, or the loaded helper is older than
+API 9 or does not report its version, `get_window_state` keeps the
+accessibility tree and returns `screenshot_error.code`
+`surface_identity_unproven` with no image; the reason names the loaded API.
+Re-run the installer, then log out and back in so GNOME Shell loads the new
+helper.
 
 The semantic cursor requires helper v8. When an older helper is still loaded,
 cua-driver does not draw its legacy cursor. Re-run the helper installer, then

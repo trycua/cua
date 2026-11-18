@@ -307,7 +307,7 @@ impl Spaces {
             .update_meta(&id, |m| m.volume = setting)?;
         // Without the Cua Volume extension there is nothing mounted to
         // change; the setting applies whenever it is there.
-        if self.inner.extensions.iter().any(|e| e.name() == "drive") {
+        if self.has_extension("drive") {
             self.call_extension(
                 "Cua Volume",
                 "volume.refresh",
@@ -359,7 +359,7 @@ impl Spaces {
     /// Refuses mounts this runtime cannot serve: no Cua Volume extension.
     pub(crate) fn require_volumes(&self, mounts: &[VolumeMount]) -> Result<()> {
         validate(mounts)?;
-        if !mounts.is_empty() && !self.inner.extensions.iter().any(|e| e.name() == "drive") {
+        if !mounts.is_empty() && !self.has_extension("drive") {
             return Err(Error::needs_cua_spaces("Cua Volume (volumes in Spaces)"));
         }
         Ok(())

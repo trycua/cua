@@ -609,7 +609,6 @@ fn capture_window_from_plan(
     cgimage_to_rgba(&image, &format!("window {window_id}")).map(CapturedImage::Rgba)
 }
 
-/// Encode a ScreenCaptureKit `CGImage` as PNG after checking its geometry.
 /// Read a ScreenCaptureKit `CGImage`'s RGBA pixels after checking its geometry.
 fn cgimage_to_rgba(
     image: &screencapturekit::screenshot_manager::CGImage,
@@ -1376,12 +1375,15 @@ pub fn png_dimensions(data: &[u8]) -> anyhow::Result<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+    use std::rc::Rc;
+    use std::sync::Arc;
 
     #[test]
     fn a_capture_plan_is_kept_until_it_is_stale_or_its_capture_fails() {
-        let kept: Mutex<Option<std::sync::Arc<(u32, u32)>>> = Mutex::new(None);
-        let builds = std::cell::Cell::new(0_u32);
-        let broken = std::cell::Cell::new(None::<u32>);
+        let kept: Mutex<Option<Arc<(u32, u32)>>> = Mutex::new(None);
+        let builds = Cell::new(0_u32);
+        let broken = Cell::new(None::<u32>);
         let capture = |identity: u32| {
             capture_with_kept_plan(
                 &kept,
@@ -1407,9 +1409,6 @@ mod tests {
         assert_eq!(capture(2), 3, "a plan whose capture fails is replaced");
         assert_eq!(capture(2), 3);
     }
-    use std::cell::Cell;
-    use std::rc::Rc;
-    use std::sync::Arc;
 
     fn png(bytes: Vec<u8>) -> CapturedImage {
         CapturedImage::Png(bytes)

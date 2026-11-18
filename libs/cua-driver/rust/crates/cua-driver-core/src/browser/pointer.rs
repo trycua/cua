@@ -461,7 +461,67 @@ impl BrowserPointerTool {
                     unreachable!("drag destination validated")
                 };
                 (
-                    "function(destination,x,y) { const doc=this.ownerDocument; const dest=destination || doc.elementFromPoint(x,y); if (!dest || dest.ownerDocument !== doc) return false; let data=null; try { data=new DataTransfer(); } catch (_) {} const common={bubbles:true,cancelable:true,composed:true}; this.dispatchEvent(new PointerEvent('pointerdown',{...common,button:0,buttons:1})); this.dispatchEvent(new MouseEvent('mousedown',{...common,button:0,buttons:1})); this.dispatchEvent(new DragEvent('dragstart',{...common,dataTransfer:data})); dest.dispatchEvent(new DragEvent('dragenter',{...common,dataTransfer:data})); dest.dispatchEvent(new DragEvent('dragover',{...common,dataTransfer:data})); dest.dispatchEvent(new DragEvent('drop',{...common,dataTransfer:data})); this.dispatchEvent(new DragEvent('dragend',{...common,dataTransfer:data})); dest.dispatchEvent(new MouseEvent('mouseup',{...common,button:0,buttons:0})); dest.dispatchEvent(new PointerEvent('pointerup',{...common,button:0,buttons:0})); return true; }",
+                    r#"function(destination, x, y) {
+                        const doc = this.ownerDocument;
+                        const dest = destination || doc.elementFromPoint(x, y);
+                        if (!dest || dest.ownerDocument !== doc) return false;
+                        const data = new DataTransfer();
+                        // Chromium ignores native effect setters on script-created transfers.
+                        // Keep negotiation on this gesture's transfer; payloads still use native APIs.
+                        const effects = {
+                            none: [], copy: ['copy'], link: ['link'], move: ['move'],
+                            copyLink: ['copy', 'link'], copyMove: ['copy', 'move'], linkMove: ['link', 'move'],
+                            all: ['copy', 'link', 'move'], uninitialized: ['copy', 'link', 'move'],
+                        };
+                        let allowed = 'uninitialized', effect = 'none', phase;
+                        Object.defineProperties(data, {
+                            effectAllowed: {
+                                get: () => allowed,
+                                set(value) {
+                                    if (phase === 'dragstart' && typeof value === 'string' &&
+                                        Object.hasOwn(effects, value)) allowed = value;
+                                },
+                            },
+                            dropEffect: {
+                                get: () => effect,
+                                set(value) {
+                                    if ((phase === 'dragenter' || phase === 'dragover') &&
+                                        ['none', 'copy', 'link', 'move'].includes(value)) effect = value;
+                                },
+                            },
+                        });
+                        const common = { bubbles: true, cancelable: true, composed: true };
+                        const dispatchDrag = (node, type) => {
+                            phase = type;
+                            return node.dispatchEvent(new DragEvent(type, { ...common, dataTransfer: data }));
+                        };
+                        this.dispatchEvent(new PointerEvent('pointerdown', { ...common, button: 0, buttons: 1 }));
+                        this.dispatchEvent(new MouseEvent('mousedown', { ...common, button: 0, buttons: 1 }));
+                        dispatchDrag(this, 'dragstart');
+                        const available = effects[allowed];
+                        const preferred = available[0] || 'none';
+                        effect = preferred;
+                        dispatchDrag(dest, 'dragenter');
+                        effect = preferred;
+                        const handled = !dispatchDrag(dest, 'dragover');
+                        // An editable text target can accept plain text without a dragover handler.
+                        const textTarget = dest.matches('textarea, input')
+                            ? !dest.matches(':disabled') && !dest.readOnly && (dest.localName === 'textarea' ||
+                                ['text', 'search', 'tel', 'url', 'email', 'password', 'number'].includes(dest.type))
+                            : dest.isContentEditable;
+                        const defaultTextDrop = textTarget &&
+                            Array.from(data.items).some(item => item.kind === 'string' && item.type === 'text/plain');
+                        if (!handled && defaultTextDrop && effect !== 'none') {
+                            effect = available.find(value => value === 'copy' || value === 'move') || 'none';
+                        }
+                        const accepted = available.includes(effect) && (handled || defaultTextDrop);
+                        if (!accepted) effect = 'none';
+                        dispatchDrag(dest, accepted ? 'drop' : 'dragleave');
+                        dispatchDrag(this, 'dragend');
+                        dest.dispatchEvent(new MouseEvent('mouseup', { ...common, button: 0, buttons: 0 }));
+                        dest.dispatchEvent(new PointerEvent('pointerup', { ...common, button: 0, buttons: 0 }));
+                        return accepted ? true : 'drop_not_accepted';
+                    }"#,
                     destination_argument,
                 )
             }
@@ -481,6 +541,18 @@ impl BrowserPointerTool {
             )
             .await
         {
+            Ok(value)
+                if request.action == PointerAction::Drag
+                    && value.get("exceptionDetails").is_none()
+                    && value.pointer("/result/value").and_then(Value::as_str)
+                        == Some("drop_not_accepted") =>
+            {
+                BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserActionUnavailable,
+                    "the destination did not accept the drag; no drop was dispatched",
+                )
+                .to_tool_result()
+            }
             Ok(value)
                 if value.get("exceptionDetails").is_none()
                     && (!matches!(request.action, PointerAction::Scroll | PointerAction::Drag)

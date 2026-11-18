@@ -53,6 +53,24 @@ private final class RecordingProvider: SpaceStreamSourceProviding, @unchecked Se
         lock.lock(); sink = frames; sources.append(source); policies.append(policy); lock.unlock()
         return media
     }
+
+    /// Whether the Space's clipboard setting lets a paste send the clipboard.
+    var sendsClipboard = true
+    /// How long the clipboard takes to reach the Space.
+    var clipboardDelay: Duration = .zero
+    private var clipboardTexts: [String] = []
+    private var framesBefore: [Int] = []
+    /// The clipboard texts the Space received, in order.
+    var clipboards: [String] { lock.lock(); defer { lock.unlock() }; return clipboardTexts }
+    /// How many input frames the Space had when each clipboard arrived.
+    var framesAtClipboard: [Int] { lock.lock(); defer { lock.unlock() }; return framesBefore }
+
+    func sendClipboard(_ text: String) async throws -> Bool {
+        try? await Task.sleep(for: clipboardDelay)
+        guard sendsClipboard else { return false }
+        lock.lock(); clipboardTexts.append(text); framesBefore.append(media.sent.count); lock.unlock()
+        return true
+    }
     func joinPresence(name: String, color: String?) async throws -> SpacePresence {
         throw StreamError.noStream("no presence in this test")
     }
@@ -83,6 +101,31 @@ private func offscreenWindow(_ size: CGSize) -> NSWindow {
                           styleMask: [.titled], backing: .buffered, defer: true)
     window.isReleasedWhenClosed = false
     return window
+}
+
+/// A key event for `window`, handed to the view directly.
+@MainActor
+private func key(_ characters: String, _ flags: NSEvent.ModifierFlags, keyCode: UInt16,
+                 in window: NSWindow) -> NSEvent {
+    NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0,
+                     windowNumber: window.windowNumber, context: nil, characters: characters,
+                     charactersIgnoringModifiers: characters, isARepeat: false, keyCode: keyCode)!
+}
+
+/// The key and text events of each input frame the Space received, as
+/// `key` names and `text:` commits.
+private func typed(in texts: [String]) -> [[String]] {
+    texts.map { text in
+        guard let root = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
+              let message = root["message"] as? [String: Any],
+              let payload = message["payload"] as? [String: Any],
+              let events = payload["events"] as? [[String: Any]] else { return [] }
+        return events.compactMap { e in
+            if let key = e["key"] as? String { return key }
+            if let commit = e["text"] as? String { return "text:\(commit)" }
+            return nil
+        }
+    }
 }
 
 private func pointerEvents(in text: String) -> [[String: Any]] {
@@ -295,6 +338,61 @@ private func pointerEvents(in text: String) -> [[String: Any]] {
         await session.select(.desktop)
         #expect(!session.activatesOnInput)
         #expect(provider.policies.last == "allow_activation")
+        await session.stop()
+    }
+
+    /// #7589: ⌘V in the viewer of a Linux Space reached it as Control+V, but
+    /// nothing put this Mac's clipboard on the Space, so the paste inserted
+    /// nothing. The clipboard goes first; a key typed right after waits
+    /// behind the paste.
+    @Test func pasteSendsTheClipboardBeforeTheChord() async throws {
+        let provider = RecordingProvider()
+        provider.clipboardDelay = .milliseconds(50)
+        let session = LiveStreamSession(provider: provider)
+        await session.start()
+        let window = offscreenWindow(CGSize(width: 400, height: 300))
+        let view = LiveStreamInputView(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+        window.contentView = view
+        defer { window.close() }
+        view.onInput = { [weak session] in session?.send($0) }
+        view.onPaste = { [weak session] in session?.paste($0, text: $1) }
+        view.pasteboardText = { "copied on the Mac" }
+        #expect(window.makeFirstResponder(view))
+
+        #expect(view.performKeyEquivalent(with: key("v", .command, keyCode: 9, in: window)))
+        view.keyDown(with: key("x", [], keyCode: 7, in: window))
+        await eventually("the paste and the key") { provider.media.sent.count == 2 }
+        #expect(provider.clipboards == ["copied on the Mac"])
+        #expect(provider.framesAtClipboard == [0], "the clipboard reached the Space before any key")
+        #expect(typed(in: provider.media.sent) == [["v", "v"], ["text:x"]])
+        await session.stop()
+    }
+
+    /// Under `ask` or `off` (or with no clipboard behind the provider)
+    /// nothing is sent, and a clipboard that never arrives does not keep
+    /// the keys: the chord goes after `pasteWait`.
+    @Test func aPasteTheSpaceDoesNotTakeStillSendsTheChord() async throws {
+        #expect(SpaceStreamProvider.pasteSendsClipboard(setting: "viewing"))
+        #expect(SpaceStreamProvider.pasteSendsClipboard(setting: ""))
+        #expect(!SpaceStreamProvider.pasteSendsClipboard(setting: "ask"))
+        #expect(!SpaceStreamProvider.pasteSendsClipboard(setting: "off"))
+        #expect(LiveStreamInputView.isPasteChord(characters: "v", flags: [.command, .shift]))
+        #expect(!LiveStreamInputView.isPasteChord(characters: "v", flags: [.command, .option]))
+        #expect(!LiveStreamInputView.isPasteChord(characters: "c", flags: .command))
+
+        let provider = RecordingProvider()
+        provider.sendsClipboard = false
+        let session = LiveStreamSession(provider: provider)
+        await session.start()
+        session.paste([.key(key: "v", down: true, modifiers: [.command], repeatKey: false)], text: "a")
+        await eventually("the chord") { provider.media.sent.count == 1 }
+        #expect(provider.clipboards.isEmpty)
+
+        provider.sendsClipboard = true
+        provider.clipboardDelay = .seconds(30)
+        session.pasteWait = .milliseconds(20)
+        session.paste([.key(key: "v", down: true, modifiers: [.command], repeatKey: false)], text: "b")
+        await eventually("the chord without the clipboard") { provider.media.sent.count == 2 }
         await session.stop()
     }
 

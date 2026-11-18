@@ -121,6 +121,11 @@ public final class LiveStreamSession: ObservableObject {
     /// would-require-activation are resent after the activation reopen.
     private var sentBatches: [(first: UInt64, events: [InteractiveInputEvent])] = []
     private static let resendableBatches = 32
+    /// Input waiting for a paste's clipboard to reach the Space (`paste`).
+    private var heldInput: [[InteractiveInputEvent]]?
+    private var pasteGeneration: UInt64 = 0
+    /// How long a paste waits for the clipboard before its keys go anyway.
+    var pasteWait: Duration = .seconds(2)
     private var lastKeyframeRequest = Date.distantPast
     /// Bumped by every open, stop and source switch. An `open` that finds it
     /// changed after its `await` was superseded: it closes what it opened and
@@ -666,6 +671,10 @@ public final class LiveStreamSession: ObservableObject {
     /// On a Linux or Windows guest ⌘ chords go as Control chords
     /// (`SpaceStreamSourceProviding.commandAsControl`), whichever view sent them.
     public func send(_ events: [InteractiveInputEvent]) {
+        if heldInput != nil {
+            heldInput?.append(events)
+            return
+        }
         let mapped = provider.commandAsControl ? InputEncoder.commandAsControl(events) : events
         let batch = mapped.filter(\.isDispatchable)
         guard !batch.isEmpty, let media, let sessionID else { return }
@@ -676,6 +685,32 @@ public final class LiveStreamSession: ObservableObject {
         nextInputSequence += UInt64(batch.count)
         inputEventsSent += batch.count
         try? media.sendText(json: text)
+    }
+
+    /// Send a paste chord after putting this Mac's clipboard `text` on the
+    /// Space: the Space's own clipboard is what its paste inserts.
+    /// Input sent meanwhile waits behind the chord, for at most `pasteWait`,
+    /// so a slow or failed transfer still delivers the keys, in order.
+    public func paste(_ events: [InteractiveInputEvent], text: String?) {
+        guard let text, !text.isEmpty, heldInput == nil else { return send(events) }
+        heldInput = [events]
+        pasteGeneration &+= 1
+        let generation = pasteGeneration
+        let provider = provider
+        Task { @MainActor [weak self] in
+            _ = try? await provider.sendClipboard(text)
+            self?.releaseHeldInput(generation)
+        }
+        Task { @MainActor [weak self, pasteWait] in
+            try? await Task.sleep(for: pasteWait)
+            self?.releaseHeldInput(generation)
+        }
+    }
+
+    private func releaseHeldInput(_ generation: UInt64) {
+        guard generation == pasteGeneration, let held = heldInput else { return }
+        heldInput = nil
+        for events in held { send(events) }
     }
 
     /// The Space can reach the streamed window only by activating it: reopen

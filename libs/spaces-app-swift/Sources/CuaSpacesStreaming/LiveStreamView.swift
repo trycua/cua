@@ -30,6 +30,7 @@ public struct LiveStreamView: NSViewRepresentable {
         view.onInput = { [weak session] events in
             session?.send(events)
         }
+        view.onPaste = { [weak session] events, text in session?.paste(events, text: text) }
         // FRICTION.md §18: the fact that a stream is *presented* is a
         // view-layer fact, and only the view can report it.
         session.presentation.viewDidAttach()
@@ -67,6 +68,11 @@ public struct LiveStreamView: NSViewRepresentable {
 /// once off one decode.
 public final class LiveStreamInputView: NSView {
     public var onInput: (([InteractiveInputEvent]) -> Void)?
+    /// A paste chord with this Mac's clipboard text (``isPasteChord``);
+    /// without it a paste goes to `onInput` like any chord.
+    public var onPaste: (([InteractiveInputEvent], String?) -> Void)?
+    /// This Mac's clipboard text (a test sets its own).
+    public var pasteboardText: () -> String? = { NSPasteboard.general.string(forType: .string) }
     /// Called when SwiftUI tears this view down, so the presentation count
     /// falls back to zero (§18).
     public var onDetach: (() -> Void)?
@@ -372,7 +378,18 @@ public final class LiveStreamInputView: NSView {
     /// view, and a press with no release is a stuck key on the Space: send
     /// the chord whole. A late real key-up is a harmless repeat.
     private func sendChord(_ event: NSEvent) {
-        onInput?(encoder.keyEvents(for: event, down: true) + encoder.keyEvents(for: event, down: false))
+        let chord = encoder.keyEvents(for: event, down: true) + encoder.keyEvents(for: event, down: false)
+        if let onPaste, Self.isPasteChord(characters: event.charactersIgnoringModifiers, flags: event.modifierFlags) {
+            onPaste(chord, pasteboardText())
+        } else {
+            onInput?(chord)
+        }
+    }
+
+    /// ⌘V, or ⌘⇧V (a Linux terminal's paste once ⌘ goes as Control).
+    public static func isPasteChord(characters: String?, flags: NSEvent.ModifierFlags) -> Bool {
+        let held = flags.intersection([.command, .shift, .option, .control])
+        return characters?.lowercased() == "v" && (held == .command || held == [.command, .shift])
     }
 
     public override func keyDown(with event: NSEvent) {

@@ -160,6 +160,41 @@ fn read_identity_attrs(
     }
 }
 
+/// AXTitle, or, for a control with neither AXTitle nor AXDescription, the
+/// text of its AXTitleUIElement. A SwiftUI grouped `Form` names its toggles
+/// only through that separate label (#6697), and VoiceOver reads it the same
+/// way. Following it costs round trips only for unnamed controls.
+pub(crate) fn title_or_title_element(
+    title: Option<&str>,
+    description: Option<&str>,
+    title_element_text: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    let named = |text: Option<&str>| text.is_some_and(|t| !t.trim().is_empty());
+    if named(title) || named(description) {
+        return title.map(str::to_owned);
+    }
+    title_element_text()
+        .map(|text| text.trim().to_owned())
+        .filter(|text| !text.is_empty())
+}
+
+/// The text of `element`'s AXTitleUIElement: its AXValue (a static text
+/// label), else its AXTitle.
+///
+/// # Safety
+///
+/// `element` must be a valid `AXUIElementRef`.
+pub(crate) unsafe fn copy_title_element_text(
+    element: AXUIElementRef,
+    timeout_seconds: f32,
+) -> Option<String> {
+    let label = copy_element_attr(element, "AXTitleUIElement")?;
+    AXUIElementSetMessagingTimeout(label, timeout_seconds);
+    let [value, title] = copy_string_attrs(label, ["AXValue", "AXTitle"]);
+    CFRelease(label as CFTypeRef);
+    value.filter(|v| !v.trim().is_empty()).or(title)
+}
+
 fn role_supports_value_addressing(role: &str) -> bool {
     matches!(
         role,
@@ -723,6 +758,13 @@ unsafe fn walk_element(
         None
     };
     let is_actionable = is_addressable(!actions.is_empty(), value_settable);
+    let title = if is_actionable {
+        title_or_title_element(title.as_deref(), description.as_deref(), || {
+            copy_title_element_text(element, AX_MESSAGING_TIMEOUT_SECONDS)
+        })
+    } else {
+        title
+    };
     let identity = read_identity_attrs(is_actionable, value.is_none(), |attr| attrs.string(attr));
     let value = value.or_else(|| identity.placeholder.clone());
 
@@ -1333,6 +1375,34 @@ mod tests {
             Some("raw AXPlaceholderValue")
         );
         assert_eq!(identity.subrole, None);
+    }
+
+    #[test]
+    fn an_unnamed_control_takes_its_title_element_text() {
+        let label = || Some(" Launch at login ".to_owned());
+        assert_eq!(
+            title_or_title_element(None, None, label).as_deref(),
+            Some("Launch at login")
+        );
+        assert_eq!(
+            title_or_title_element(Some(" "), Some(""), label).as_deref(),
+            Some("Launch at login")
+        );
+        assert_eq!(title_or_title_element(None, None, || None), None);
+        assert_eq!(
+            title_or_title_element(None, None, || Some("  ".into())),
+            None
+        );
+    }
+
+    #[test]
+    fn a_named_control_never_reads_its_title_element() {
+        let unread = || -> Option<String> { panic!("AXTitleUIElement read for a named control") };
+        assert_eq!(
+            title_or_title_element(Some("Save"), None, unread).as_deref(),
+            Some("Save")
+        );
+        assert_eq!(title_or_title_element(None, Some("2"), unread), None);
     }
 
     #[test]

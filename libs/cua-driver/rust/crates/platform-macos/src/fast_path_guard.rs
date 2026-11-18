@@ -13,7 +13,7 @@ use crate::ax::bindings::{
     kAXErrorInvalidUIElement, AXUIElementCopyAttributeValue, AXUIElementCopyElementAtPosition,
     AXUIElementCreateApplication, AXUIElementRef, AXUIElementSetMessagingTimeout,
 };
-use crate::ax::tree::AXNode;
+use crate::ax::tree::{copy_title_element_text, title_or_title_element, AXNode};
 use core_foundation::base::{CFEqual, CFRelease, CFTypeRef, TCFType};
 use core_foundation::string::CFString;
 use cua_driver_core::fast_path::{
@@ -160,8 +160,12 @@ unsafe fn observe(element: AXUIElementRef) -> ElementObservation {
         CFRelease(value);
     }
     let role = copy_string_attr(element, "AXRole");
-    let title = copy_string_attr(element, "AXTitle");
     let description = copy_string_attr(element, "AXDescription");
+    let title = title_or_title_element(
+        copy_string_attr(element, "AXTitle").as_deref(),
+        description.as_deref(),
+        || copy_title_element_text(element, CHECK_TIMEOUT_S),
+    );
     ElementObservation {
         valid: true,
         role,

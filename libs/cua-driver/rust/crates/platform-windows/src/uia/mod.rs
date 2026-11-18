@@ -948,42 +948,54 @@ fn effective_enabled(
 
 /// The live counterpart of [`effective_enabled`]: `false` when the element or
 /// any control-view ancestor up to the nearest `Window` reports
-/// `IsEnabled=false`. A `Window` element starts its own scope, so only its own
-/// state counts. `None` when the element's own state cannot be read; an
-/// unreadable ancestor ends the climb.
+/// `IsEnabled=false`. `None` when the element's own state cannot be read.
 pub(crate) unsafe fn live_effective_enabled(element: &IUIAutomationElement) -> Option<bool> {
-    if !element.CurrentIsEnabled().ok()?.as_bool() {
-        return Some(false);
-    }
-    if element
-        .CurrentControlType()
-        .is_ok_and(|id| id == UIA_WindowControlTypeId)
-    {
-        return Some(true);
-    }
     let walker = ensure_com()
         .ok()
         .and_then(|()| {
             CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()
         })
         .and_then(|automation| automation.ControlViewWalker().ok());
-    let Some(walker) = walker else {
-        return Some(true);
-    };
-    let mut current = element.clone();
-    while let Ok(parent) = walker.GetParentElement(&current) {
-        match parent.CurrentIsEnabled() {
-            Ok(enabled) if !enabled.as_bool() => return Some(false),
-            Ok(_) => {}
-            Err(_) => break,
-        }
-        if parent
-            .CurrentControlType()
-            .is_ok_and(|id| id == UIA_WindowControlTypeId)
-        {
+    scoped_enabled(
+        element.clone(),
+        |element| {
+            element
+                .CurrentIsEnabled()
+                .ok()
+                .map(|enabled| enabled.as_bool())
+        },
+        |element| {
+            element
+                .CurrentControlType()
+                .is_ok_and(|id| id == UIA_WindowControlTypeId)
+        },
+        |element| walker.as_ref()?.GetParentElement(element).ok(),
+    )
+}
+
+/// Climb from `element` through `parent` and return `false` at the first
+/// disabled element. A `Window` starts its own scope, so the climb ends at the
+/// first `Window`, the target included, as in [`effective_enabled`]. An
+/// unreadable ancestor or a missing parent ends the climb.
+fn scoped_enabled<E>(
+    element: E,
+    enabled: impl Fn(&E) -> Option<bool>,
+    is_window: impl Fn(&E) -> bool,
+    parent: impl Fn(&E) -> Option<E>,
+) -> Option<bool> {
+    if !enabled(&element)? {
+        return Some(false);
+    }
+    let mut current = element;
+    while !is_window(&current) {
+        let Some(next) = parent(&current) else {
             break;
+        };
+        match enabled(&next) {
+            Some(false) => return Some(false),
+            Some(true) => current = next,
+            None => break,
         }
-        current = parent;
     }
     Some(true)
 }
@@ -1338,6 +1350,52 @@ mod tests {
             effective_enabled("Window", Some(true), false),
             (Some(true), true)
         );
+    }
+
+    /// A toy control-view chain, child first: (control type, IsEnabled).
+    fn live_scope(chain: &[(&str, Option<bool>)]) -> Option<bool> {
+        scoped_enabled(
+            0,
+            |&i| chain[i].1,
+            |&i| chain[i].0 == "Window",
+            |&i| (i + 1 < chain.len()).then_some(i + 1),
+        )
+    }
+
+    #[test]
+    fn the_live_check_stops_at_the_nearest_window() {
+        let disabled_owner = ("Window", Some(false));
+        assert_eq!(
+            live_scope(&[("Window", Some(true)), disabled_owner]),
+            Some(true),
+            "an owned Window target must not inherit its disabled owner"
+        );
+        assert_eq!(
+            live_scope(&[
+                ("Button", Some(true)),
+                ("Window", Some(true)),
+                disabled_owner
+            ]),
+            Some(true)
+        );
+        assert_eq!(
+            live_scope(&[
+                ("CheckBox", Some(true)),
+                ("Group", Some(false)),
+                ("Window", Some(true))
+            ]),
+            Some(false)
+        );
+        assert_eq!(
+            live_scope(&[("Button", Some(true)), disabled_owner]),
+            Some(false)
+        );
+        assert_eq!(
+            live_scope(&[("Button", Some(true)), ("Pane", None), disabled_owner]),
+            Some(true)
+        );
+        assert_eq!(live_scope(&[("Button", None), disabled_owner]), None);
+        assert_eq!(live_scope(&[("Window", Some(false))]), Some(false));
     }
 
     #[test]

@@ -7,16 +7,16 @@
  * machine") and Cua Volume's sync, sent to the shell after each roster
  * change and each sync read, so the menu and the notch say the same number.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from "react";
 
-import type { DriveStorageInput } from '../model/driveSettings';
-import type { DriveSyncInput } from '../model/persistent';
-import type { Space } from '../model/types';
-import { trayMenu } from '../model/window';
-import { answerOrNull } from '../native/drive';
-import type { ToolCall } from '../native/persistent';
-import type { SetTrayMenu } from '../native/tray';
-import { useExperiments } from './experiments';
+import type { DriveStorageInput } from "../model/driveSettings";
+import type { DriveSyncInput } from "../model/persistent";
+import type { Space } from "../model/types";
+import { trayMenu } from "../model/window";
+import { answerOrNull } from "../native/drive";
+import type { ToolCall } from "../native/persistent";
+import type { SetTrayMenu } from "../native/tray";
+import { useExperiments } from "./experiments";
 
 /** How often the menu reads Cua Volume's sync status. */
 export const TRAY_SYNC_POLL_MS = 5000;
@@ -42,8 +42,8 @@ export function useTrayMenu(
     let stopped = false;
     const read = () =>
       void Promise.all([
-        answerOrNull<DriveSyncInput>(call, 'volume_sync_status'),
-        answerOrNull<DriveStorageInput>(call, 'volume_storage'),
+        answerOrNull<DriveSyncInput>(call, "volume_sync_status"),
+        answerOrNull<DriveStorageInput>(call, "volume_storage"),
       ]).then(([next, storage]) => {
         if (!stopped) setRead({ sync: next, backend: storage?.backend ?? null, nowMs: now() });
       });

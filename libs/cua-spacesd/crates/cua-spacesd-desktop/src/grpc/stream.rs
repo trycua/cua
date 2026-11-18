@@ -39,7 +39,13 @@ use cua_spacesd_server::TicketScope;
 pub(crate) struct Stream(pub Arc<DesktopState>);
 
 const DEFAULT_TICKET_TTL: Duration = Duration::from_secs(60);
+/// The longest a media session a phone opened lasts (the phone's viewer ticket).
+const PHONE_SESSION_MAX: Duration = Duration::from_secs(300);
 const MAX_TICKET_TTL: Duration = Duration::from_secs(600);
+/// A guest's media ticket (a relayed caller other than the owner) only has
+/// to last until the attach: kept short so it can't outlive a revoke for
+/// long, whatever the client asks (CUA-1416). The guest reopens to refresh.
+const GUEST_TICKET_TTL: Duration = Duration::from_secs(60);
 
 fn media_codec(codec: &VideoCodec) -> MediaCodec {
     match codec {
@@ -287,6 +293,7 @@ impl StreamService for Stream {
     ) -> Result<Response<OpenMediaResponse>, Status> {
         let principal = caller_principal(&request);
         let viewer = cua_spacesd_server::caller(&request).viewer;
+        let relayed = cua_spacesd_server::caller(&request).account;
         // A principal the server authenticated (relay-asserted or a viewer
         // ticket), as opposed to one the caller merely declared.
         let authenticated = cua_spacesd_server::caller(&request).principal;
@@ -340,6 +347,10 @@ impl StreamService for Stream {
             .filter(|duration| !duration.is_zero())
             .unwrap_or(DEFAULT_TICKET_TTL)
             .min(MAX_TICKET_TTL);
+        let ttl = match &relayed {
+            Some(account) if account.role != "owner" => ttl.min(GUEST_TICKET_TTL),
+            _ => ttl,
+        };
         // A window's paired audio source is its app's stream when the audio
         // backend can capture per app; otherwise the desktop mix.
         let paired_source = match (&request.audio, &target) {
@@ -425,10 +436,48 @@ impl StreamService for Stream {
             .map_err(join_error)?
             .map_err(status::media)?;
         let session_id = opened.session.id().to_owned();
-        let (ticket, expires_at) =
-            self.0
-                .ctx
-                .mint_ticket(TicketScope::Media, &session_id, principal.as_ref(), ttl);
+        // A session a phone opened ends the moment this computer stops
+        // answering phones or stops sharing the desktop it shows, and when the
+        // phone's ticket ends (five minutes: the viewer asks for a new one and
+        // opens a new session); a phone that opens one with its account
+        // credentials has the same five minutes.
+        let phone_caller = match (&relayed, viewer.as_deref()) {
+            (Some(a), _) if a.phone.is_some() => Some((
+                a.clone(),
+                Some(std::time::SystemTime::now() + PHONE_SESSION_MAX),
+            )),
+            (_, Some(grant)) if grant.phone => Some((
+                cua_spacesd_server::auth::RelayCaller::default(),
+                grant.expires_at,
+            )),
+            _ => None,
+        };
+        if let Some((phone_caller, until)) = phone_caller {
+            let (media, id, session) = (
+                self.0.media.clone(),
+                session_id.clone(),
+                opened.session.clone(),
+            );
+            self.0.ctx.auth().watch_phone(
+                phone_caller,
+                "/cua.env.v1.StreamService/OpenMedia",
+                until,
+                {
+                    let session = session.clone();
+                    move || session.is_closed()
+                },
+                move |_why| {
+                    media.close(&id, cua_media_protocol::v2::close_code::TARGET_GONE);
+                },
+            );
+        }
+        let (ticket, expires_at) = self.0.ctx.mint_ticket_issued(
+            TicketScope::Media,
+            &session_id,
+            principal.as_ref(),
+            relayed.as_ref().map(|a| a.issued_at),
+            ttl,
+        );
         self.0
             .ctx
             .media_sessions()

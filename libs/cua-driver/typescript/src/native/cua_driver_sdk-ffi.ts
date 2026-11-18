@@ -533,11 +533,6 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
-    "uniffi_cua_driver_sdk_fn_method_cuadriver_escalate_session": {
-      args: [FfiType.Handle, FfiType.RustBuffer],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
     "uniffi_cua_driver_sdk_fn_method_cuadriver_execution_mode": {
       args: [FfiType.Handle],
       ret: FfiType.RustBuffer,
@@ -564,11 +559,6 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_driver_sdk_fn_method_cuadriver_get_session": {
-      args: [FfiType.Handle, FfiType.RustBuffer],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_driver_sdk_fn_method_cuadriver_get_session_state": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
@@ -728,11 +718,6 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
-    "uniffi_cua_driver_sdk_fn_method_cuadriversession_escalate_session": {
-      args: [FfiType.Handle, FfiType.RustBuffer],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
     "uniffi_cua_driver_sdk_fn_method_cuadriversession_get_agent_cursor_state": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -754,11 +739,6 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_driver_sdk_fn_method_cuadriversession_get_session": {
-      args: [FfiType.Handle, FfiType.RustBuffer],
-      ret: FfiType.Handle,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_driver_sdk_fn_method_cuadriversession_get_session_state": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
@@ -924,6 +904,11 @@ const DEFINITIONS = {
       hasRustCallStatus: true,
     },
     "uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_connection": {
+      args: [FfiType.Handle],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_last_diagnostics": {
       args: [FfiType.Handle],
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
@@ -1168,11 +1153,6 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
-    "uniffi_cua_driver_sdk_checksum_method_cuadriver_escalate_session": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
     "uniffi_cua_driver_sdk_checksum_method_cuadriver_execution_mode": {
       args: [],
       ret: FfiType.UInt16,
@@ -1199,11 +1179,6 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_driver_sdk_checksum_method_cuadriver_get_session": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_driver_sdk_checksum_method_cuadriver_get_session_state": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -1363,11 +1338,6 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
-    "uniffi_cua_driver_sdk_checksum_method_cuadriversession_escalate_session": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
     "uniffi_cua_driver_sdk_checksum_method_cuadriversession_get_agent_cursor_state": {
       args: [],
       ret: FfiType.UInt16,
@@ -1389,11 +1359,6 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_driver_sdk_checksum_method_cuadriversession_get_session": {
-      args: [],
-      ret: FfiType.UInt16,
-      hasRustCallStatus: false,
-    },
-    "uniffi_cua_driver_sdk_checksum_method_cuadriversession_get_session_state": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -1559,6 +1524,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_connection": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_last_diagnostics": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -1898,14 +1868,12 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_fn_method_cuadriver_clipboard_write(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_drag(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_end_session(uniffiSelf: bigint, input: Uint8Array): bigint;
-    uniffi_cua_driver_sdk_fn_method_cuadriver_escalate_session(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_execution_mode(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_method_cuadriver_get_agent_cursor_state(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_get_cursor_position(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_get_desktop_state(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_get_screen_size(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_get_session(uniffiSelf: bigint, input: Uint8Array): bigint;
-    uniffi_cua_driver_sdk_fn_method_cuadriver_get_session_state(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_get_window_state(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_hotkey(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_invoke_menu(uniffiSelf: bigint, input: Uint8Array): bigint;
@@ -1937,13 +1905,11 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_fn_method_cuadriversession_close(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_drag(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_end_session(uniffiSelf: bigint, input: Uint8Array): bigint;
-    uniffi_cua_driver_sdk_fn_method_cuadriversession_escalate_session(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_get_agent_cursor_state(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_get_cursor_position(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_get_desktop_state(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_get_screen_size(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_get_session(uniffiSelf: bigint, input: Uint8Array): bigint;
-    uniffi_cua_driver_sdk_fn_method_cuadriversession_get_session_state(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_get_window_state(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_hotkey(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_invoke_menu(uniffiSelf: bigint, input: Uint8Array): bigint;
@@ -1977,6 +1943,7 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_fn_constructor_embeddedcuadriverhost_new(binaryPath: Uint8Array, hostBundleId: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_constructor_embeddedcuadriverhost_with_options(options: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_connection(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_last_diagnostics(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_restart(uniffiSelf: bigint): bigint;
     uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_start(uniffiSelf: bigint): bigint;
     uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_state(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -2025,14 +1992,12 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_checksum_method_cuadriver_clipboard_write(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_drag(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_end_session(): number;
-    uniffi_cua_driver_sdk_checksum_method_cuadriver_escalate_session(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_execution_mode(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_get_agent_cursor_state(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_get_cursor_position(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_get_desktop_state(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_get_screen_size(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_get_session(): number;
-    uniffi_cua_driver_sdk_checksum_method_cuadriver_get_session_state(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_get_window_state(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_hotkey(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_invoke_menu(): number;
@@ -2064,13 +2029,11 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_close(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_drag(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_end_session(): number;
-    uniffi_cua_driver_sdk_checksum_method_cuadriversession_escalate_session(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_get_agent_cursor_state(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_get_cursor_position(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_get_desktop_state(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_get_screen_size(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_get_session(): number;
-    uniffi_cua_driver_sdk_checksum_method_cuadriversession_get_session_state(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_get_window_state(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_hotkey(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_invoke_menu(): number;
@@ -2104,6 +2067,7 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_checksum_constructor_embeddedcuadriverhost_new(): number;
     uniffi_cua_driver_sdk_checksum_constructor_embeddedcuadriverhost_with_options(): number;
     uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_connection(): number;
+    uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_last_diagnostics(): number;
     uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_restart(): number;
     uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_start(): number;
     uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_state(): number;

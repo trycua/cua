@@ -31,56 +31,6 @@ def normalize_execute_result(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-class OSWorldOverServiceMixin:
-    """OSWorld Flask API spoken through a Fleet named service.
-
-    Mixed into a ``FleetTransport`` (whose ``_request`` routes HTTP through the
-    Fleet service proxy) so a Fleet claim on an OSWorld disk offers the same
-    ``Sandbox`` surface as the local :class:`OSWorldTransport`: screenshots,
-    screen size, shell commands, and the raw OSWorld actions.
-    """
-
-    async def send(self, action: str, **params: Any) -> Any:
-        if action == "run_command":
-            timeout = float(params.get("timeout", 30))
-            resp = await self._request(
-                "POST",
-                "/execute",
-                json_body={"command": params["command"], "shell": True},
-                timeout=timeout + 5,
-            )
-            resp.raise_for_status()
-            return normalize_execute_result(resp.json())
-        if action in ("execute", "run_bash_script", "run_python"):
-            resp = await self._request("POST", f"/{action}", json_body=params)
-            resp.raise_for_status()
-            return resp.json()
-        if action in ("accessibility", "terminal"):
-            resp = await self._request("GET", f"/{action}")
-            resp.raise_for_status()
-            return resp.json()
-        raise ValueError(f"Unknown action: {action}")
-
-    async def screenshot(self, format: str = "png", quality: int = 95) -> bytes:
-        resp = await self._request("GET", "/screenshot")
-        resp.raise_for_status()
-        from cua_sandbox.transport.base import convert_screenshot
-
-        return convert_screenshot(resp.content, format, quality)
-
-    async def get_screen_size(self) -> Dict[str, int]:
-        resp = await self._request("POST", "/screen_size", json_body={})
-        resp.raise_for_status()
-        data = resp.json()
-        return {"width": int(data["width"]), "height": int(data["height"])}
-
-    async def get_environment(self) -> str:
-        return "linux"
-
-    async def pty_create(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
-        raise NotImplementedError("the OSWorld server has no PTY endpoint")
-
-
 class OSWorldTransport(Transport):
     """Transport for VMs running the OSWorld Flask server (pyautogui-based)."""
 

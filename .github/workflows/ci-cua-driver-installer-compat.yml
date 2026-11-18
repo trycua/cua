@@ -50,7 +50,7 @@ jobs:
               "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" \
               --jq '.[].filename')
             if ! grep -Eq \
-              '^(\.github/release-state/cua-driver-rs-(published-version|withdrawn-versions)|\.github/scripts/verify_cua_driver_release_archives\.py|\.github/scripts/tests/test_verify_cua_driver_release_archives\.py|\.github/workflows/(cd-rust-cua-driver|ci-cua-driver-installer-compat)\.yml|libs/cua-driver/scripts/(_install-common|_install-rust|install)\.sh|libs/cua-driver/scripts/(_install-common\.psm1|install\.ps1)|release-please-config\.json)$' \
+              '^(\.github/release-state/cua-driver-rs-(published-version|withdrawn-versions)|\.github/scripts/verify_cua_driver_release_archives\.py|\.github/scripts/tests/test_verify_cua_driver_release_archives\.py|\.github/workflows/(cd-rust-cua-driver|ci-cua-driver-installer-compat)\.yml|libs/cua-driver/scripts/(_install-common|_install-rust|install)\.sh|libs/cua-driver/scripts/(_install-common\.psm1|install\.ps1)|libs/cua-driver/scripts/tests/install-junction-fallback\.ps1|release-please-config\.json)$' \
               <<< "$CHANGED_FILES"; then
               SHOULD_RUN=false
             fi
@@ -133,6 +133,9 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
+          # libpipewire-0.3-0 is left out on purpose: cua-driver loads it only
+          # when a portal ScreenCast recording starts, so the install and
+          # --version must work without it.
           sudo apt-get install -y --no-install-recommends \
             libx11-6 libxi6 libxtst6 libxext6 libwayland-client0 libxkbcommon0
 
@@ -149,12 +152,21 @@ jobs:
           VERSION_OUTPUT=$("$INSTALLED" --version)
           echo "$VERSION_OUTPUT"
           grep -Fq "${CUA_DRIVER_RS_VERSION}" <<< "$VERSION_OUTPUT"
+          if [[ "$RUNNER_OS" == "Linux" ]] && readelf -d "$INSTALLED" | grep -F NEEDED | grep -Fq libpipewire; then
+            echo "::error::cua-driver links libpipewire; it must load it at runtime so hosts without PipeWire can install it"
+            exit 1
+          fi
           if [[ "$RUNNER_OS" == "macOS" ]]; then
             test -x /Applications/CuaDriver.app/Contents/MacOS/cua-driver
             /usr/libexec/PlistBuddy -c Print:CFBundleIdentifier \
               /Applications/CuaDriver.app/Contents/Info.plist |
               grep -Fx com.trycua.driver
           fi
+
+      - name: Validate the locale-safe junction rollback
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: .\libs\cua-driver\scripts\tests\install-junction-fallback.ps1
 
       - name: Run the current Windows installer against the release
         if: runner.os == 'Windows'

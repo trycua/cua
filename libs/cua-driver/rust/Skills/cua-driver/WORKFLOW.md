@@ -39,7 +39,7 @@ These objects are argument fragments for tools advertising `target`, not standal
 
 By default the tree comes back **once**, as compact `tree_markdown` (`tree_format:"markdown"`). A row `[N]` is addressed with `element_token` `<snapshot_id>:N`; the `snapshot_id` is in the response header and in `structuredContent`. Use `tree_format:"elements"` for the structured `elements` array when you need explicit tokens, frames, parents, or values, or `"both"` for the old double payload (about twice the size). `full_output:true` restores the previous full response, including the platform's walk limits. In `elements`, rows may contain `element_token`, role, label, value, actions, parent, depth, enabled/selected state, `frame` (screen coordinates, the space of `scope:"desktop"` actions), and `screenshot_frame` (pixels of the screenshot in the same response, the space of window-local pointer `x`/`y`). Missing fields are unknown.
 
-- Use `query` to project matching rows plus ancestors without renumbering their indices.
+- Use `query` to project matching rows plus ancestors without renumbering their indices. It is a case-insensitive substring; `a|b` matches rows containing either. A query that matches nothing says `0 of N elements match query "…"`: change the words rather than repeating it.
 - A read walks at most 250 nodes by default. When it stops there the response says `Tree truncated at max_elements=…` (`truncated:true`, `truncation_hint`). Pass a larger `max_elements`, or narrow with `query` / `max_depth`. Truncation does not prove absence.
 - After the first read, pass `since:"latest"` (or `since:<snapshot_id>`) to get only what changed. `latest` is this window's most recent read with the same `query`, `max_elements` and `max_depth`. You get: `+` added, `~` changed, `-` removed rows (removed ids are the old snapshot's), or `no change since …; focused element is …` (focus is reported on macOS only). The response carries a new `snapshot_id`: use it in tokens (`<new id>:N`). Rows not listed keep their `[N]` unless a `reindexed:` line says otherwise. An unknown, expired, other-window, or differently-scoped `since` returns a full read, and `since_status` says why. A diff reads the rendered tree rows only; it does not prove the screenshot is unchanged.
 - `_note`, `background_input`, and (Linux) `frame_note` are omitted unless `verbose:true`; a degraded snapshot keeps `background_input`.
@@ -53,7 +53,7 @@ The accessibility model may lag or disagree with rendered state: Electron text s
 
 ## Act once
 
-Use the `element_token` `<snapshot_id>:N` for row `[N]` of the latest snapshot of the intended window, for example `"s0000002a:11"`. A bare `"11"` is accepted only together with `window_id` and then means row 11 of that window's current snapshot. Do not mix a row number from one read with the `snapshot_id` of another. A later snapshot can invalidate a pending action, including when another agent observes the same window.
+Use the `element_token` `<snapshot_id>:N` for row `[N]` of the latest snapshot of the intended window, for example `"s0000002a:11"`. A bare `"11"` is accepted only together with `window_id`, and only while the current snapshot is the one your read printed: as soon as that window is read again the number no longer says which read it came from, and the call is refused with `stale_bare_row` naming the current token for that row. It is never re-pointed at whatever element now sits at row 11. Do not mix a row number from one read with the `snapshot_id` of another. A later snapshot can invalidate a pending action, including when another agent observes the same window.
 
 Example CLI window action, with IDs and token replaced from the preceding response:
 
@@ -144,7 +144,7 @@ For an expressible exact-window postcondition, use `verify_state` with bounded p
 cua-driver verify_state '{"pid":844,"window_id":10725,"expect":[{"element":{"selector":{"label_contains":"Saved"},"exists":true}}],"include_screenshot":true,"session":"run-1"}'
 ```
 
-This example proves a matching trusted element exists, not that every application has a meaningful “Saved” indicator. `label_contains` matches an element's accessible name, which for label-less text is its value. On macOS a selector also reaches display-only text (static text, read-only values) when no addressable control matches it. Text inside web content stays `unknown` with `untrusted_source`; read it from a fresh snapshot instead. Choose predicates that establish this task. Use fresh `get_window_state` for outcomes the predicate language cannot express, and fresh `get_desktop_state` for desktop proof. `verify_state` remains an exact-window tool; a previous desktop action does not disable it.
+This example proves a matching trusted element exists, not that every application has a meaningful “Saved” indicator. `label_contains` matches an element's accessible name, which for label-less text is its value. A selector also reaches display-only text (static text, read-only values, the `observations` of `get_window_state`) when no addressable control matches it. Values compare exactly: copy `value` from `observations`, including invisible marks such as U+200E. Text inside web content stays `unknown` with `untrusted_source`; read it from a fresh snapshot instead. Choose predicates that establish this task. Use fresh `get_window_state` for outcomes the predicate language cannot express, and fresh `get_desktop_state` for desktop proof. `verify_state` remains an exact-window tool; a previous desktop action does not disable it.
 
 Action facts are not task outcomes:
 
@@ -157,8 +157,23 @@ Action facts are not task outcomes:
 | `refused`            | The route deliberately did not deliver                                                                |
 | `route`              | Public actuator class: `accessibility`, `synthetic_events`, `global_input`, `dom`, or `trusted_input` |
 | `escalation`         | Suggested next route/reason, never authorization or an automatic retry                                |
+| `hint`               | One sentence on what to do next; see [Refusals and hints](#refusals-and-hints)                        |
+| `next_call`          | `{tool, arguments}` safe to run as is; see [Refusals and hints](#refusals-and-hints)                  |
 
 Successful action escalation uses `target` (`pixel`, `foreground`, or `page`) and `reason` (`route_unavailable`, `delivery_failed`, `effect_unconfirmed`, `suspected_noop`, or `permission_required`). Error diagnostics may have a different shape; inspect their code and current schema. Missing action facts are not confirmation.
+
+### Refusals and hints
+
+A refusal, an `unverifiable` action and a `suspected_noop` carry two fields that say what to try next, on every tool:
+
+- `hint`: one short sentence. Read it before you give up or reach for pixels.
+- `next_call`: `{tool, arguments}`, a call that is safe to run as is. It is a read (`get_window_state`, `list_windows`, `get_browser_state`, `check_permissions`) or a call that keeps the user's window where it is. Make it, then decide.
+
+A foreground retry is never a `next_call`. When the `hint` names `delivery_mode:"foreground"`, it comes with a condition: only if the user allows the window to come forward. Without that, the step is blocked: say so and why; do not force it.
+
+The fields sit next to `code` on an error result, next to `refusal` on a browser refusal, and on the `ActionResult` itself. In `run_steps` a failed step's report carries them; in `run_script` the hint is appended to the failed call's error message. A tool that already set its own `hint` or `next_call` keeps it. `next_call` is advice, not an automatic retry: never replay a partial or unknown action without a fresh read.
+
+After two single action calls in a row in one session (not counting reads), the result of the second also carries a `hint` with a ready `run_steps` call for that window (add `observe:{}` instead of a separate read), and again after every second one. It is advice with no `next_call`, and it is never sent for a step that already runs inside `run_steps` or `run_script`. Every model turn costs seconds, so chain actions whenever you already know the next few steps.
 
 When the postcondition is visibly satisfied, stop acting. For media, selection alone is not playback: check the title, playing/pause indicator, and elapsed progress after preroll/buffering. For closure, verify the requested window disappeared. State only what the evidence proves.
 

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 // cua-driver-uia: Windows uiAccess-elevated tool worker.
 //
 // Listens on \\.\pipe\cua-driver-uia for line-delimited JSON requests with the

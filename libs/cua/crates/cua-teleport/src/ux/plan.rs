@@ -275,7 +275,7 @@ pub struct TeleportPlan {
     pub save_to_keyvault: bool,
     /// This Space is reached through `cua-relay` and reported no sealed-
     /// delivery key: a secret this plan sends would cross the relay in the
-    /// clear (S1). `false` for a direct connection, a Fleet Gateway, or a
+    /// clear (S1). `false` for a direct connection, a gateway, or a
     /// relay-routed Space whose image already seals. The caller computing
     /// the plan sets this (`plan::build` leaves it `false`; it has no
     /// network access to check). Defaults to `false` on deserializing an
@@ -295,6 +295,13 @@ pub struct TeleportPlan {
     /// Also send the saved passwords ([`Consent::include_passwords`]).
     #[serde(default, skip_serializing_if = "is_false")]
     pub include_passwords: bool,
+    /// The sites whose saved passwords to send
+    /// ([`Consent::password_domains`]); `None`: those of `cookie_domains`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password_domains: Option<Vec<String>>,
+    /// The browser profile to read ([`Consent::profile`]); `None`: `Default`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -341,6 +348,15 @@ pub struct Consent {
     /// browser's own key.
     #[serde(default)]
     pub include_passwords: bool,
+    /// The review's per-site choice of saved passwords (reading the live
+    /// app): the registrable domains whose passwords to send. `None` sends
+    /// those of `cookie_domains` (every site when that is `None` too).
+    #[serde(default)]
+    pub password_domains: Option<Vec<String>>,
+    /// The browser profile to read (`Profile 1`), as chosen in the setup
+    /// sheet's picker. `None` reads `Default`.
+    #[serde(default)]
+    pub profile: Option<String>,
 }
 
 /// A plan the user approved. Only [`TeleportPlan::approve`] makes one.
@@ -418,6 +434,15 @@ impl TeleportPlan {
         self.cookie_domains = consent.cookie_domains.clone();
         self.from_vault = consent.from_vault.clone();
         self.include_passwords = consent.include_passwords;
+        self.password_domains = consent
+            .password_domains
+            .clone()
+            .filter(|_| consent.include_passwords);
+        self.profile = consent
+            .profile
+            .clone()
+            .map(|p| p.trim().to_string())
+            .filter(|p| !p.is_empty());
         self.save_to_keyvault = self.sensitive && consent.save_to_keyvault;
         Ok(ApprovedPlan(self))
     }
@@ -591,7 +616,16 @@ pub fn build(
             }
         };
         if selected.is_empty() {
-            return Err(UxError::Invalid("select at least one state item".into()));
+            // Nothing to pick from: the app has no profile where Cua looks (a
+            // sandboxed or relocated install), which is not the user's choice.
+            return Err(UxError::Invalid(if m.items.is_empty() {
+                format!(
+                    "no {} sign-in data was found on this computer; move just the app instead",
+                    m.app_display_name
+                )
+            } else {
+                "select at least one state item".into()
+            }));
         }
         for i in &selected {
             let count = match (i.count, &i.count_noun) {
@@ -661,6 +695,8 @@ pub fn build(
         cookie_domains: None,
         from_vault: None,
         include_passwords: false,
+        password_domains: None,
+        profile: None,
     })
 }
 
@@ -1171,6 +1207,26 @@ mod tests {
                 a.plan().consent.iter().any(|c| c.key == ck),
                 "a chosen domain keeps the store"
             );
+        }
+        // The chosen browser profile rides along, trimmed; blank or absent is
+        // `Default` (None), never invented.
+        let named = p
+            .clone()
+            .approve(Consent {
+                profile: Some(" Profile 1 ".into()),
+                ..ok.clone()
+            })
+            .unwrap();
+        assert_eq!(named.plan().profile.as_deref(), Some("Profile 1"));
+        for blank in [None, Some("  ".to_string())] {
+            let a = p
+                .clone()
+                .approve(Consent {
+                    profile: blank,
+                    ..ok.clone()
+                })
+                .unwrap();
+            assert_eq!(a.plan().profile, None);
         }
         // The vault source is carried, never invented.
         let v = p

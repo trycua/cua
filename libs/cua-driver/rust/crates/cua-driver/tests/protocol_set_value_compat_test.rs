@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Linux wire-argument compatibility, without any desktop input.
 //! Missing element tokens force the real handler to refuse before AT-SPI or
 //! keyboard delivery. This certifies argument admission, not value delivery.
@@ -53,9 +56,12 @@ fn numeric_set_value_reaches_the_same_handler_directly_and_in_a_batch() {
             direct["result"]["structuredContent"]["code"], "invalid_arguments",
             "{direct}"
         );
-        assert_eq!(
-            direct["result"]["content"][0]["text"],
-            "set_value: 'value' must be a string or a number.",
+        // Refusals append a `Next:` recovery hint; the reason comes first.
+        let text = direct["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(
+            text.starts_with("set_value: 'value' must be a string or a number."),
             "{direct}"
         );
     }

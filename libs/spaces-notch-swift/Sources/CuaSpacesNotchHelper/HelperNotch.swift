@@ -37,12 +37,22 @@ public final class HelperNotch: NotchSurface {
     /// Search texts sent and not yet echoed by a state, oldest first: a
     /// state carrying an older one never undoes newer typing.
     @ObservationIgnored private var sentQueries: [String] = []
+    /// The last text from the core: another state with it is not a new echo.
+    @ObservationIgnored private var hostQuery = ""
     @ObservationIgnored private let emit: (HelperMessage) -> Void
     @ObservationIgnored private var panel: NotchPanel?
     @ObservationIgnored private var outsideClick: Any?
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     /// Tests and `--selftest` turn this off so nothing goes on screen.
     @ObservationIgnored public var makesPanel = true
+    /// The window at a global top-left point under window `below` (any
+    /// app's; the system's hit test, as the SwiftUI app's
+    /// `SidebarDropTargets.windowUnder`). Tests set their own.
+    @ObservationIgnored public var windowUnder: (Double, Double, Int?) -> Int? = { x, y, below in
+        let primaryTop = NSScreen.screens.first?.frame.maxY ?? 0
+        let n = NSWindow.windowNumber(at: NSPoint(x: x, y: primaryTop - y), belowWindowWithWindowNumber: below ?? 0)
+        return n > 0 ? n : nil
+    }
 
     public init(emit: @escaping (HelperMessage) -> Void) {
         self.emit = emit
@@ -80,6 +90,8 @@ public final class HelperNotch: NotchSurface {
             thumbnails[id] = image.flatMap(NSImage.init(data:))
         case .ghost(let image):
             ghost = image.flatMap(NSImage.init(data:))
+        case .windowUnder(let id, let x, let y, let below):
+            emit(.windowUnder(id: id, window: windowUnder(x, y, below)))
         case .quit:
             return false
         }
@@ -176,10 +188,16 @@ public final class HelperNotch: NotchSurface {
         emit(.event(.search(query: query)))
     }
 
-    /// A state's search text: an echo of typing still in flight is skipped;
-    /// anything else (the core cleared it) wins.
+    /// Repeated text is not a new acknowledgement. A closed panel always
+    /// forgets its search; otherwise a new text echoes typing or clears it.
     private func acceptQuery(_ q: String) {
-        if let i = sentQueries.firstIndex(of: q) {
+        let repeated = q == hostQuery
+        hostQuery = q
+        if q.isEmpty && view.phase == .closed {
+            sentQueries.removeAll()
+        } else if repeated {
+            return
+        } else if let i = sentQueries.firstIndex(of: q) {
             sentQueries.removeFirst(i + 1)
             if !sentQueries.isEmpty { return }
         } else {

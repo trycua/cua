@@ -5,28 +5,28 @@ import { app, BrowserWindow, ipcMain, screen, shell, type BrowserWindowConstruct
 import { existsSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
 import { captureRoutes } from "./capture";
+import { channel } from "./channel";
+import { opensOutside } from "./external-url";
 import { windowIconPath } from "./icon";
 import { APP_ORIGIN } from "./protocol";
 import { readSettings, writeSettings, type WindowBounds } from "./settings";
-import { DIM_CHANNEL, overlayColors, overlaySteps } from "./overlay";
+import { DIM_CHANNEL, SURFACE_CHANNEL, overlayColors, overlayColorsFor, overlaySteps, parseSurface } from "./overlay";
 import { KEYBOARD_CHANNEL, applyKeyboard } from "./keyboard";
 import { BACKGROUND, resolvedTheme } from "./theme";
+import { showWhenReady } from "./show-when-ready";
 
-const TITLEBAR_HEIGHT = 40;
+const TITLEBAR_HEIGHT = 48;
 // Room for the macOS traffic lights at x=16 plus a gap.
 const MAC_TITLEBAR_LEFT_INSET = 78;
 const DEFAULT_SIZE = { width: 1280, height: 820 };
 
 export let readyToShowMs: number | null = null;
 
-function titleBarOptions(): Pick<
-  BrowserWindowConstructorOptions,
-  "titleBarStyle" | "trafficLightPosition" | "titleBarOverlay"
-> {
+function titleBarOptions(): Pick<BrowserWindowConstructorOptions, "titleBarStyle" | "trafficLightPosition" | "titleBarOverlay"> {
   if (process.platform === "darwin") {
     return {
       titleBarStyle: "hiddenInset",
-      // Vertically centred on the 40px top bar (button radius ~6px).
+      // Vertically centred on the 48px top bar (button radius ~6px).
       trafficLightPosition: { x: 16, y: TITLEBAR_HEIGHT / 2 - 6 },
     };
   }
@@ -96,13 +96,16 @@ function syncTitlebarInset(win: BrowserWindow): void {
 // Windows whose page shows a dialog backdrop (see overlay.ts).
 const dimmed = new WeakSet<BrowserWindow>();
 
+// The dark surface a window's page marked (see SURFACE_ATTRIBUTE), if any.
+const surfaces = new WeakMap<BrowserWindow, string>();
+
 // Each window's pending second overlay step (overlaySteps); a newer style replaces it.
 const overlayNext = new WeakMap<BrowserWindow, NodeJS.Timeout>();
 
 /** The title bar overlay (Windows, Linux) in `theme`, dimmed while the page shows a backdrop. */
 function applyOverlay(win: BrowserWindow, theme: "dark" | "light"): void {
   if (process.platform === "darwin") return;
-  const { now, next } = overlaySteps(process.platform, overlayColors(theme, dimmed.has(win)), TITLEBAR_HEIGHT);
+  const { now, next } = overlaySteps(process.platform, overlayColorsFor(theme, dimmed.has(win), surfaces.get(win)), TITLEBAR_HEIGHT);
   clearTimeout(overlayNext.get(win));
   for (const style of now) win.setTitleBarOverlay(style);
   if (next) {
@@ -145,6 +148,19 @@ export function handleOverlayDim(): void {
     if (!win || !event.senderFrame?.url.startsWith(`${APP_ORIGIN}/`)) return;
     if (dim === true) dimmed.add(win);
     else dimmed.delete(win);
+    applyThemeToWindow(win);
+  });
+}
+
+// The preload reports a page's marked dark surface (the first run) and when
+// it goes; the overlay follows it, then the theme again.
+export function handleOverlaySurface(): void {
+  ipcMain.on(SURFACE_CHANNEL, (event, value: unknown) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || !event.senderFrame?.url.startsWith(`${APP_ORIGIN}/`)) return;
+    const surface = parseSurface(value);
+    if (surface) surfaces.set(win, surface);
+    else surfaces.delete(win);
     applyThemeToWindow(win);
   });
 }
@@ -193,13 +209,13 @@ export function appWindow(options: BrowserWindowConstructorOptions): BrowserWind
   });
   syncTitlebarInset(win);
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//.test(url)) void shell.openExternal(url);
+    if (opensOutside(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
   win.webContents.on("will-navigate", (event, url) => {
     if (!url.startsWith(`${APP_ORIGIN}/`)) {
       event.preventDefault();
-      if (/^https?:\/\//.test(url)) void shell.openExternal(url);
+      if (opensOutside(url)) void shell.openExternal(url);
     }
   });
   return win;
@@ -210,14 +226,18 @@ export function appWindow(options: BrowserWindowConstructorOptions): BrowserWind
  * itself): the saved bounds are neither used nor overwritten. */
 export function createMainWindow({ demo = false, remember = true }: { demo?: boolean; remember?: boolean } = {}): BrowserWindow {
   const bounds = hidden() ? { ...DEFAULT_SIZE, width: 1440, height: 900 } : remember ? restoredBounds() : { ...DEFAULT_SIZE };
-  const win = appWindow({ ...bounds, title: "Cua Spaces" });
+  const win = appWindow({ ...bounds, title: channel.appName });
+  // The page's own <title> is "Cua Spaces": Cua Spaces Local keeps its name, so the two apps differ in the taskbar and Alt+Tab.
+  if (channel.isLocal) win.on("page-title-updated", (event) => event.preventDefault());
 
+  // performance.now() counts from process start.
   win.once("ready-to-show", () => {
-    // performance.now() counts from process start.
     readyToShowMs = performance.now();
     if (process.env.CUA_SPACES_LOG_STARTUP) {
       console.log(`[cua-spaces] ready-to-show ${readyToShowMs.toFixed(0)}ms after process start`);
     }
+  });
+  showWhenReady(win, () => {
     if (hidden()) return;
     if (bounds.maximized) win.maximize();
     win.show();
@@ -228,13 +248,16 @@ export function createMainWindow({ demo = false, remember = true }: { demo?: boo
   const capturePath = process.env.CUA_SPACES_CAPTURE;
   if (capturePath || process.env.CUA_SPACES_QUIT_AFTER_LOAD) {
     win.webContents.once("did-finish-load", () => {
-      setTimeout(async () => {
-        if (capturePath) {
-          const image = await win.webContents.capturePage();
-          writeFileSync(capturePath, image.toPNG());
-        }
-        app.quit();
-      }, capturePath ? 1500 : 0);
+      setTimeout(
+        async () => {
+          if (capturePath) {
+            const image = await win.webContents.capturePage();
+            writeFileSync(capturePath, image.toPNG());
+          }
+          app.quit();
+        },
+        capturePath ? 1500 : 0,
+      );
     });
   }
 

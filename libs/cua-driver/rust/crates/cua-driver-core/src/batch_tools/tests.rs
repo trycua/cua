@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -15,10 +18,12 @@ use crate::{
 };
 
 /// A stand-in platform tool that records every call it receives and fails
-/// when asked to (`{"fail": true}`).
+/// when asked to (`{"fail": true}`, or `fail_message` with optional
+/// `fail_structured` content).
 struct Probe {
     def: ToolDef,
     calls: Arc<Mutex<Vec<Value>>>,
+    pacings: Arc<Mutex<Vec<(String, crate::step_pacing::StepPacing)>>>,
 }
 
 #[async_trait]
@@ -29,8 +34,16 @@ impl Tool for Probe {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         self.calls.lock().unwrap().push(args.clone());
+        self.pacings
+            .lock()
+            .unwrap()
+            .push((self.def.name.clone(), crate::step_pacing::current()));
         if let Some(message) = args["fail_message"].as_str() {
-            return ToolResult::error(message.to_owned());
+            let result = ToolResult::error(message.to_owned());
+            return match args.get("fail_structured") {
+                Some(structured) => result.with_structured(structured.clone()),
+                None => result,
+            };
         }
         if args["fail"] == true {
             ToolResult::error(format!("{} refused: probe asked to fail", self.def.name))
@@ -43,12 +56,14 @@ impl Tool for Probe {
 struct Harness {
     registry: Arc<ToolRegistry>,
     calls: std::collections::HashMap<&'static str, Arc<Mutex<Vec<Value>>>>,
+    pacings: Arc<Mutex<Vec<(String, crate::step_pacing::StepPacing)>>>,
 }
 
 impl Harness {
     fn new() -> Self {
         let mut registry = ToolRegistry::new();
         let mut calls = std::collections::HashMap::new();
+        let pacings: Arc<Mutex<Vec<(String, crate::step_pacing::StepPacing)>>> = Arc::default();
         for name in super::BATCHABLE_TOOLS.iter().copied().chain([
             "get_window_state",
             "zoom",
@@ -68,6 +83,7 @@ impl Harness {
                             "text": {"type": "string"},
                             "fail": {"type": "boolean"},
                             "fail_message": {"type": "string"},
+                            "fail_structured": {"type": "object"},
                             "element_token": {"type": "string"},
                             "value": {"type": "string"},
                             "key": {"type": "string"},
@@ -98,12 +114,25 @@ impl Harness {
                     open_world: false,
                 },
                 calls: log,
+                pacings: pacings.clone(),
             }));
         }
+        // Snapshot 1 is live and was taken of window 9 of pid 42; any other
+        // token is stale.
+        registry.set_token_window_resolver(Arc::new(|args| {
+            args["element_token"]
+                .as_str()
+                .filter(|token| token.starts_with("s00000001:"))
+                .map(|_| (42, 9))
+        }));
         registry.register_session_tools();
         let registry = Arc::new(registry);
         registry.init_self_weak();
-        Self { registry, calls }
+        Self {
+            registry,
+            calls,
+            pacings,
+        }
     }
 
     fn hits(&self, tool: &str) -> usize {
@@ -162,13 +191,59 @@ fn text(result: &ToolResult) -> String {
 }
 
 #[tokio::test]
+async fn every_step_but_the_last_is_paced_as_a_batched_step() {
+    use crate::step_pacing::StepPacing::{Batched, Single};
+    // Each batch that types uses its own pid: text input admission is a
+    // process-wide per-pid lock, so parallel tests sharing one pid refuse
+    // each other with `input_busy`.
+    let harness = Harness::new();
+    let result = harness
+        .run(json!({"steps": [
+            {"tool": "click", "args": {"pid": 43, "window_id": 7}},
+            {"tool": "type_text", "args": {"pid": 43, "text": "b"}},
+            {"tool": "press_key", "args": {"pid": 43}},
+        ]}))
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    let pacings: Vec<_> = harness
+        .pacings
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(tool, pacing)| (tool.clone(), *pacing))
+        .collect();
+    assert_eq!(
+        pacings,
+        vec![
+            ("click".to_owned(), Batched),
+            ("type_text".to_owned(), Batched),
+            ("press_key".to_owned(), Single),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_one_step_batch_keeps_the_full_waits() {
+    use crate::step_pacing::StepPacing::Single;
+    let harness = Harness::new();
+    let result = harness
+        .run(json!({"steps": [
+            {"tool": "click", "args": {"pid": 42, "window_id": 7}},
+        ]}))
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    let pacings = harness.pacings.lock().unwrap().clone();
+    assert_eq!(pacings, vec![("click".to_owned(), Single)]);
+}
+
+#[tokio::test]
 async fn runs_steps_in_order_and_reports_each() {
     let harness = Harness::new();
     let result = harness
         .run(json!({"steps": [
-            {"tool": "set_value", "args": {"pid": 42, "window_id": 7, "text": "a"}},
-            {"tool": "type_text", "args": {"pid": 42, "text": "b"}},
-            {"tool": "press_key", "args": {"pid": 42}},
+            {"tool": "set_value", "args": {"pid": 44, "window_id": 7, "text": "a"}},
+            {"tool": "type_text", "args": {"pid": 44, "text": "b"}},
+            {"tool": "press_key", "args": {"pid": 44}},
         ]}))
         .await;
     assert_ne!(result.is_error, Some(true), "{}", text(&result));
@@ -242,7 +317,7 @@ async fn validates_every_step_before_running_any() {
             json!({"tool": "click", "args": {"session": "other"}}),
             "differs from the batch",
         ),
-        (json!({"tool": "click", "extra": 1}), "unknown field"),
+        (json!({"tool": "click", "extra": 1}), "invalid arguments"),
         (json!({"tool": "click", "args": 5}), "must be an object"),
     ];
     for (bad, expected) in cases {
@@ -291,15 +366,15 @@ async fn observation_inherits_the_window_and_stays_bounded() {
     let result = harness
         .run(json!({
             "steps": [
-                {"tool": "click", "args": {"pid": 42, "window_id": 7}},
-                {"tool": "type_text", "args": {"pid": 42, "text": "x"}},
+                {"tool": "click", "args": {"pid": 45, "window_id": 7}},
+                {"tool": "type_text", "args": {"pid": 45, "text": "x"}},
             ],
             "observe": {}
         }))
         .await;
     assert_ne!(result.is_error, Some(true), "{}", text(&result));
     let observed = harness.last("get_window_state");
-    assert_eq!(observed["pid"], 42);
+    assert_eq!(observed["pid"], 45);
     assert_eq!(observed["window_id"], 7);
     assert_eq!(observed["include_screenshot"], false);
     assert_eq!(
@@ -328,10 +403,12 @@ async fn observation_inherits_the_window_and_stays_bounded() {
     );
 }
 
-#[tokio::test]
+// The paused clock moves only when the batch sleeps, so a slow runner cannot
+// push the elapsed time past the upper bound.
+#[tokio::test(start_paused = true)]
 async fn pauses_between_steps_but_not_after_the_last() {
     let harness = Harness::new();
-    let started = std::time::Instant::now();
+    let started = tokio::time::Instant::now();
     harness
         .run(json!({"delay_ms": 120, "steps": [
             {"tool": "click", "args": {"pid": 42}},
@@ -359,6 +436,7 @@ async fn every_step_runs_in_the_batch_session() {
     }
 }
 
+#[cfg(feature = "yaml")]
 #[tokio::test]
 async fn each_step_is_held_to_the_capability_manifest() {
     let harness = Harness::new();
@@ -387,6 +465,7 @@ async fn each_step_is_held_to_the_capability_manifest() {
     assert_eq!(harness.hits("set_value"), 0, "later steps never run");
 }
 
+#[cfg(feature = "yaml")]
 #[tokio::test]
 async fn the_batch_itself_needs_the_manifest_to_allow_it() {
     let harness = Harness::new();
@@ -456,6 +535,7 @@ async fn the_old_name_run_actions_still_runs_but_is_not_listed() {
     assert!(!text(&current).contains("deprecated"), "{}", text(&current));
 }
 
+#[cfg(feature = "yaml")]
 #[tokio::test]
 async fn a_manifest_that_allows_run_actions_allows_run_steps() {
     let harness = Harness::new();
@@ -731,4 +811,94 @@ async fn non_scalar_set_value_is_rejected_before_any_batch_action() {
             .starts_with("set_value: invalid arguments at /value:"));
         assert_eq!(harness.hits("set_value"), 0);
     }
+}
+
+#[tokio::test]
+async fn a_token_only_batch_observes_the_tokens_window() {
+    let harness = Harness::new();
+    for observe in [json!({}), json!(true)] {
+        let result = harness
+            .run(json!({"steps": [
+                {"tool": "click", "args": {"element_token": "s00000001:38"}},
+                {"tool": "press_key", "args": {"key": "return"}},
+            ], "observe": observe}))
+            .await;
+        assert_ne!(result.is_error, Some(true), "{}", text(&result));
+        let read = harness.last("get_window_state");
+        assert_eq!(read["pid"], 42);
+        assert_eq!(read["window_id"], 9);
+    }
+    // The next step inherits the token's window as well.
+    assert_eq!(harness.last("press_key")["pid"], 42);
+}
+
+#[tokio::test]
+async fn a_stale_token_still_gives_observe_no_window() {
+    let harness = Harness::new();
+    let result = harness
+        .run(json!({"steps": [
+            {"tool": "click", "args": {"element_token": "s000000ff:3"}},
+        ], "observe": {}}))
+        .await;
+    assert_eq!(result.is_error, Some(true));
+    assert!(
+        text(&result).contains("`pid` and `window_id` are required"),
+        "{}",
+        text(&result)
+    );
+    assert_eq!(
+        harness.hits("click"),
+        0,
+        "a rejected batch executes nothing"
+    );
+}
+
+#[tokio::test]
+async fn a_flat_step_means_the_same_as_the_nested_form() {
+    let nested = Harness::new();
+    let flat = Harness::new();
+    let nested_result = nested
+        .run(json!({"steps": [
+            {"tool": "hotkey", "args": {"pid": 42, "keys": ["cmd", "s"]}},
+            {"tool": "press_key", "args": {"pid": 42, "key": "return"}, "timeout_ms": 500},
+        ]}))
+        .await;
+    let flat_result = flat
+        .run(json!({"steps": [
+            {"tool": "hotkey", "pid": 42, "keys": ["cmd", "s"]},
+            {"tool": "press_key", "pid": 42, "key": "return", "timeout_ms": 500},
+        ]}))
+        .await;
+    assert_ne!(
+        nested_result.is_error,
+        Some(true),
+        "{}",
+        text(&nested_result)
+    );
+    assert_ne!(flat_result.is_error, Some(true), "{}", text(&flat_result));
+    let args_of = |harness: &Harness, tool: &str| {
+        let mut args = harness.last(tool);
+        let object = args.as_object_mut().unwrap();
+        object.retain(|key, _| !key.starts_with('_'));
+        args
+    };
+    assert_eq!(args_of(&flat, "hotkey"), args_of(&nested, "hotkey"));
+    assert_eq!(args_of(&flat, "press_key"), args_of(&nested, "press_key"));
+}
+
+#[tokio::test]
+async fn args_mixed_with_a_stray_field_is_still_refused() {
+    let harness = Harness::new();
+    let result = harness
+        .run(json!({"steps": [
+            {"tool": "press_key", "args": {"pid": 42}, "key": "return"},
+        ]}))
+        .await;
+    assert_eq!(result.is_error, Some(true));
+    assert!(
+        text(&result).contains("unknown field `key`"),
+        "{}",
+        text(&result)
+    );
+    assert_eq!(harness.hits("press_key"), 0);
 }

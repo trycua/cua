@@ -8,6 +8,8 @@ import base64
 import io
 from unittest.mock import MagicMock, patch
 
+import pytest
+import requests
 from cua_bench_rl.workers.worker_client import CBEnvWorkerClient
 from PIL import Image
 
@@ -361,6 +363,67 @@ class TestCBEnvWorkerClientStep:
         assert client.done is True
         assert env_ret["done"] is True
         assert env_ret["reward"] == 1.0
+
+    @patch("requests.post")
+    def test_step_starts_a_new_episode_when_the_env_was_released(self, mock_post):
+        """A 404 from /step means the server released the env (its timeout passed).
+
+        Re-sending the step can never succeed then; step() starts a new episode.
+        """
+        img_b64 = create_test_image(1024, 768)
+        resets = []
+        steps = []
+
+        class GaveUp(BaseException):
+            """Ends the old retry-forever loop (step_attempt catches Exception only)."""
+
+        def mock_post_side_effect(url, **kwargs):
+            mock_resp = MagicMock()
+            if "/reset" in url:
+                resets.append(kwargs["json"])
+                mock_resp.json.return_value = {
+                    "screenshot": img_b64,
+                    "instruction": "Test",
+                    "env_id": len(resets) - 1,
+                }
+                return mock_resp
+            steps.append(kwargs["json"])
+            if len(steps) > 20:
+                raise GaveUp
+            mock_resp.status_code = 404
+            mock_resp.raise_for_status.side_effect = requests.HTTPError(
+                "404 Client Error: Not Found for url: http://localhost:8001/step",
+                response=mock_resp,
+            )
+            return mock_resp
+
+        mock_post.side_effect = mock_post_side_effect
+
+        task_configs = [{"env_path": "./task", "task_index": 0, "split": "train"}]
+        env_config = {
+            "server_url": "http://localhost:8001",
+            "task_configs": task_configs,
+            "max_step": 50,
+            "max_hist": 10,
+            "timeout": 300,
+        }
+        client = CBEnvWorkerClient(env_config)
+        _, first = client.reset()
+
+        try:
+            env_ret, meta_info = client.step("<|action_start|>click(500,500)<|action_end|>")
+        except GaveUp:
+            pytest.fail(
+                f"step() re-sent the step {len(steps) - 1} times for an env the server released"
+            )
+
+        assert len(steps) == 1
+        assert len(resets) == 2
+        assert env_ret["is_init"] is True
+        assert env_ret["done"] is False
+        assert meta_info["uid"] != first["uid"]
+        assert client.env_id == 1
+        assert client.step_count == 0
 
 
 class TestCBEnvWorkerClientActions:

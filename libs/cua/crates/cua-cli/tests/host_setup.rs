@@ -245,3 +245,40 @@ async fn remote_is_documented_and_conflicts_with_direct() {
     );
     assert!(!h.cua_home().join("host").exists());
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pair_never_signs_in_and_keeps_the_code_when_the_download_fails() {
+    let oidc = issuer(None).await;
+    let relay = FakeHttp::start(|_| (500, json!({"error": "must not register"}))).await;
+    let h = home(&oidc, &relay);
+    // A pasted link works as well as the typed code (any case). The driver
+    // is installed before the code is used, so a failed download spends
+    // nothing: the relay is never asked.
+    let o = setup(&h, &["--pair", "https://cua.ai/add/k7qm-4xpb-2rhd"]).await;
+    assert_eq!(o.code, 2, "{o:?}");
+    assert!(o.stderr.contains("host setup failed at download:"), "{o:?}");
+    assert!(!o.stderr.contains("Sign in"), "{o:?}");
+    assert!(oidc.requests().is_empty(), "no sign-in with a pairing code");
+    assert!(relay.requests().is_empty(), "code not spent");
+    assert!(!h.cua_home().join("host/machine-token").exists());
+    no_account_state(&h);
+
+    // A malformed code stops before anything else.
+    let o = setup(&h, &["--pair", "not-a-code"]).await;
+    assert_ne!(o.code, 0, "{o:?}");
+    assert!(o.stderr.contains("is not a pairing code"), "{o:?}");
+    assert!(relay.requests().is_empty());
+
+    let o = h
+        .run(&[
+            "host",
+            "setup",
+            "--pair",
+            "K7QM4XPB2RHD",
+            "--direct",
+            "127.0.0.1:3211",
+        ])
+        .await;
+    assert_eq!(o.code, 2, "{o:?}");
+    assert!(o.stderr.contains("cannot be used with"), "{o:?}");
+}

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Normalized tool response — the common shape both transports return.
 
 use serde_json::Value;
@@ -93,15 +96,6 @@ impl ToolResponse {
             .get("delivery")
             .and_then(|delivery| delivery.get("mode"))
             .and_then(Value::as_str)
-    }
-
-    /// `get_window_state` degraded flag: an AX walk that ran but returned zero
-    /// actionable elements (non-AX surface / tree not ready). `false` when absent.
-    pub fn degraded(&self) -> bool {
-        self.structured
-            .get("degraded")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
     }
 
     pub fn snapshot_id(&self) -> &str {

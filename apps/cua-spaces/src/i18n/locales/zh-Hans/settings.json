@@ -1,0 +1,10 @@
+{
+  "settings.this_machine.sharing_label": "共享",
+  "settings.cloud.clouds_label": "云",
+  "settings.cloud.sign_in_found": "已找到登录信息",
+  "settings.cloud.touches_label": "Cua 将访问的内容",
+  "settings.cloud.checks_label": "检查",
+  "settings.accessibility.enable_window_drag": "在“系统设置 → 隐私与安全性 → 辅助功能”中启用窗口拖动",
+  "settings.language.label": "语言",
+  "settings.language.system_default": "系统默认"
+}

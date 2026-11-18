@@ -52,7 +52,7 @@ with `capturePage`, so the native traffic lights are not in the images.
 ## Measurements
 
 Measured on 2026-10-03 on an Apple silicon Mac (macOS 26.6) with Electron
-44.5.1, an unsigned build, and the placeholder page.
+44.9.1, an unsigned build, and the placeholder page.
 
 | | |
 |---|---|
@@ -97,7 +97,7 @@ numbers will grow once the real web UI replaces the placeholder.
 | `src/system.ts`, `src/login-item.ts` | The bridge's system services: links and settings panes, Show in Finder / Explorer, notifications, the owner check before approving a device, launch at login on each system |
 | `src/migrate-swift.ts` | macOS: takes over the Swift app's settings once (files, defaults domain) |
 | `src/notch.ts`, `src/notch/` | The macOS notch: the app core's notch model and the Swift helper that draws it (see "The macOS notch") |
-| `src/updater.ts` | electron-updater behind Settings → About (automatic checks and installs, the channel, Check Now with its own windows), beta channel only until the Sparkle cutover, off by default |
+| `src/updater.ts` | electron-updater behind Settings → About (checks on launch and every few hours, on by default; background download; the in-app "Restart to update" indicator through `update.get` and `update.install`; the channel; Check Now), beta channel only until the Sparkle cutover on macOS |
 | `scripts/sparkle/` | Sparkle's own update checks against an Electron build (`accepts.sh`, `selftest.sh`; [docs/sparkle-cutover.md](docs/sparkle-cutover.md)) |
 | `scripts/feed-urls.mjs` | Makes a feed's installer URLs absolute (CI) |
 | `scripts/smoke/` | Linux and Windows package checks in Docker |
@@ -293,9 +293,10 @@ and the Keyvault broker.
   the copies dismissed (`src/notch-feed.ts`); Dismiss hides and revokes or
   wipes nothing. The app reads the broker every 10 s while it runs, so access
   is never silent. An app dropped on a tile opens that Space's Teleport review
-  at the app (the page's `?dropped=` names; the host holds the paths). A window
-  dragged onto the notch is not wired yet (no window-drag monitor in this
-  host).
+  at the app (the page's `?dropped=` names; the host holds the paths). A real
+  window dragged onto a tile (the SDK's window-drag monitor, which the notch
+  model follows; it needs the Accessibility permission) does the same for
+  that window's app.
 - **Presence prompts** are the system's, shown by the daemon (Touch ID's
   sheet, Windows Hello, the desktop's polkit dialog). On Windows and Linux the
   host brings the app forward first, so the dialog opens over it.
@@ -378,8 +379,11 @@ chose, whether the keychain prompt is still on screen). Per system:
   Sparkle's relaunch prompt for a copy replaced on disk has no Electron
   counterpart (electron-updater installs on quit or relaunch).
 - **The first run** is the page's (`routes/onboarding`, the app core's
-  flow); `onboarding.json` is the Swift app's file, and Settings' Welcome
-  "Show again" makes it due again.
+  flow), the same page the SwiftUI app now opens for its own; `onboarding.json`
+  is the Swift app's file, and Settings' Welcome "Show again" makes it due
+  again. A Space it creates (`spaces.create` with `notifyWhenReady`) posts a
+  "<Space> is ready" notification with the Cua key (`cua-key-128.png` from the
+  web build); clicking it opens the Space's page.
 
 ## Live video
 
@@ -432,10 +436,22 @@ measures both on one Space.
    only. Scrolls go to the page until the viewer has the keyboard. On a Mac,
    ⌘ goes to a Linux or Windows Space as Control (⌘C arrives as Ctrl+C), and
    a ⌘ chord goes whole (press and release: Chromium drops its key-up).
-5. **Pausing.** Every session closes while the page is hidden (the window is
+5. **Presence.** The viewer and the picture-in-picture panels draw the
+   other participants' cursors over the picture, and yours at the pointer,
+   as the SwiftUI app's `PresenceOverlay` does: the SDK's cursor art and
+   presence colors, a name pill for everyone but you, placed over the
+   letterboxed picture, shown only while the stream is live. The page joins
+   with `presence.join` (`src/bridge/presence.ts`: `Space.joinPresence` as
+   the signed-in account, else this computer's user, with the app core's
+   name and id), the events go to that window only, and the page draws with
+   the shared `PresenceLayer`
+   (`libs/cua/crates/cua-spacesd-html5/web/src/core/presenceLayer.ts`).
+   `CUA_SPACES_TEST_PRESENCE=1` joins every Space as two synthetic
+   participants circling the picture, for screenshots.
+6. **Pausing.** Every session closes while the page is hidden (the window is
    minimized or on another desktop). They reopen with fresh tickets when it
    shows again.
-6. **Picture in picture.** A Stream section row's PiP button (`stream.pip`)
+7. **Picture in picture.** A Stream section row's PiP button (`stream.pip`)
    opens a floating window (`src/pip.ts`): on top of every window and
    desktop, no frame, the stream's shape, 480 px wide where the last one was
    left. It shows the web UI's `/pip` view, a session of its own on the
@@ -673,7 +689,7 @@ report is in `dist/smoke/windows/report.txt`. All checks pass.
   the overlay's titlebar area, and the WebCodecs path (above). Still
   untested on Windows: the window chrome and overlay colours as drawn, the
   tray icon and close-to-tray, the AppUserModelID in the taskbar,
-  SmartScreen for the unsigned installer, and the arm64 build on real ARM64
+  SmartScreen for the signed installer, and the arm64 build on real ARM64
   hardware.
 - **Linux desktops.** Xvfb with openbox in Docker, and XFCE (xfwm4, its
   panel and tray) on Xvfb on an Ubuntu 24.04 VM. On the VM the deb and the
@@ -696,14 +712,17 @@ time, default `trycua/cua`, baked into `app-update.yml`). GitHub's own
 provider does not fit this monorepo: it needs semver tags and reads the
 repository-wide latest release.
 
-Electron builds ship as Cua Spaces prereleases only (`X.Y.Z-suffix`, built
-and published by `cd-cua-spaces.yml`, see "Releases" below), so the only
-feed is the beta channel (`beta.yml`, `beta-mac.yml`, `beta-linux*.yml`).
-The updater is **off by default**: set `CUA_SPACES_AUTO_UPDATE=1` or put
-`"autoUpdate": true` in `settings.json` to opt in. A build follows the
-channel it was cut for; `"updateChannel": "beta"` or `"stable"` in
-`settings.json` overrides it. The stable channel is served only after the
-Sparkle cutover (`STABLE_FEED` in `src/updater.ts`,
+Two channels (Settings, Advanced, Updates): Stable reads `latest.yml` and
+`latest-linux*.yml` on the rolling `cua-spaces-latest` release; Nightly reads
+`nightly.yml` and `nightly-linux*.yml` on the rolling `cua-spaces-nightly`
+release (`nightly-cua-spaces.yml` builds main every night). The updater sets
+the chosen channel's feed before each check, whatever URL the build baked into
+app-update.yml. A build follows the channel it was cut for (`X.Y.Z-suffix`:
+Nightly); `"updateChannel": "nightly"` or `"stable"` in `settings.json`
+overrides it, and a saved `"beta"` (there are no betas any more) is Nightly.
+Both channels are served on Windows and Linux; on macOS the Mac app is the
+Swift app, and this app's Stable feed waits for the Sparkle cutover
+(`STABLE_FEED` in `src/updater.ts`,
 [docs/sparkle-cutover.md](docs/sparkle-cutover.md)). Nothing downgrades.
 
 ## Releases
@@ -746,4 +765,59 @@ Swift app's files stay as they are.
 | `CUA_SPACES_NO_FUSES=1` | Build time: leave the Electron fuses as Electron ships them (QA builds only) |
 | `CUA_SPACES_ARCHS` | Build time: `native` packs only the arches with a native folder, or a list (`x64`, `arm64,x64`); unset packs all (a release) |
 | `CUA_SPACES_TEST_STREAM_URL` | Answer every `spaces.openStream` with this URL (`{id}`, `{tier}` filled in), for the WebCodecs harness |
+| `CUA_SPACES_TEST_PRESENCE=1` | Answer every `presence.join` with two synthetic participants circling the picture (screenshots, the WebCodecs harness) |
 | `CUA_BIN`, `CUA_HOME` | Where to find `cua` and `~/.cua`. A `CUA_BIN` that doesn't exist means no cua (demo data) |
+
+## Run a Local build next to the released app (Windows)
+
+`scripts/install-local.ps1` builds this checkout and installs it as **Cua Spaces
+Local**, beside a released Cua Spaces, so you can try a branch (a new UI, the
+`windows:*` images) without touching the app you use. It is the Windows
+counterpart of `apps/cua-spaces-macos/scripts/install-local.sh`, and unsigned.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-local.ps1
+powershell -File scripts\install-local.ps1 -NoLaunch        # install without starting it
+powershell -File scripts\install-local.ps1 -Release         # build with the release Electron fuses
+powershell -File scripts\install-local.ps1 -Prefix D:\apps  # app in D:\apps\Programs\Cua Spaces Local
+powershell -File scripts\install-local.ps1 -SkipRustBuild   # use native\win32-<arch> as it is
+powershell -File scripts\install-local.ps1 -SkipWebBuild    # use apps\cua-spaces-web\dist as it is
+powershell -File scripts\install-local.ps1 -NoIntegration   # files only: no Start Menu, PATH or scheme
+powershell -File scripts\uninstall-local.ps1 [-Purge]       # remove it (-Purge also its state)
+```
+
+It first lists, in one message, everything the build needs that is missing:
+Rust (rustup, MSVC) with the Visual Studio C++ Build Tools, CMake, Node 22 or
+later, pnpm, and for the web UI the `wasm32` Rust target and `wasm-bindgen-cli`
+(the versions the release build pins). Nothing is built before they are all
+there. Builds run at BelowNormal priority (`-NormalPriority` opts out). On a
+cold machine the Rust build takes a while.
+
+| | Cua Spaces | Cua Spaces Local |
+|---|---|---|
+| App | `%LOCALAPPDATA%\Programs\cua-spaces` | `%LOCALAPPDATA%\Programs\Cua Spaces Local` (`Cua Spaces Local.exe`) |
+| App id, AppUserModelID | `ai.cua.spaces.desktop` | `ai.cua.spaces.desktop.local` (own taskbar group and Run entry) |
+| CLI | `cua` | `cua-local` (`...\Cua Spaces Local\bin`, added to the user PATH) |
+| Cua home | `%USERPROFILE%\.cua` | `%USERPROFILE%\.cua-local` (the app sets `CUA_HOME`) |
+| Channel, ports, sign-in | `CUA_CHANNEL=stable` | `CUA_CHANNEL=local`, set by the app (`CuaChannel::Local`) |
+| Backend | production | staging (`CUA_ENV=prod` opts in) |
+| User data | `%APPDATA%\Cua Spaces` | `%APPDATA%\Cua Spaces Local` |
+| URL scheme | `cua://` | `cua-local://` |
+| Updates | electron-updater feed | none (no `app-update.yml`) |
+
+The shell knows it is Local from its executable name or `CUA_CHANNEL=local`
+(`src/channel.ts`); the packaging is `packaging/electron-builder.local.cjs`
+(`electron-builder --win dir`, no installer). The build is staged next to the
+install and verified (`cua-local --version`, the native layer, the web UI, no
+update feed) before the live copy is swapped, and the old copy is put back if the
+swap fails. The script refuses a `-Prefix` that would put the app on, inside or
+above anything the released Cua Spaces owns, and a folder at the Local path that
+the installer did not make (it keeps a `.cua-spaces-local.json` marker there).
+It stops only processes running from the Local folder.
+
+`scripts/tests/install-local.tests.ps1` tests the path, refusal and PATH checks
+and that the names match `src/channel.ts`, the builder config and
+`CuaChannel::Local`; it builds nothing and touches no registry or PATH.
+
+Not covered: the unattended-access host service (`cua host setup`) still
+downloads the pinned `cua-spacesd`, which does not know the Local ports.

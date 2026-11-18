@@ -2,18 +2,20 @@
   "title": "Protocol",
   "pages": [
     "env-system",
-    "env-diagnose",
-    "env-common",
     "env-process",
-    "env-filesystem",
     "env-computer",
-    "env-windows",
     "env-stream",
-    "env-teleport-tunnel",
     "env-host-spaces",
-    "daemon-sandboxes",
-    "daemon-runtimes",
+    "env-host-capacity",
+    "env-host-warm",
+    "env-host-snapshots",
+    "daemon-resize",
+    "daemon-fork-batch",
+    "daemon-shares",
+    "daemon-builds",
+    "daemon-egress",
+    "daemon",
     "daemon-spaces",
-    "daemon-service"
+    "daemon-resources"
   ]
 }

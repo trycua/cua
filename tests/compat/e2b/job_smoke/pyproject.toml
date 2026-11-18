@@ -1,0 +1,5 @@
+[project]
+name = "compat-job-smoke"
+version = "0"
+requires-python = ">=3.10"
+dependencies = ["e2b==2.42.0"]

@@ -7,12 +7,13 @@ import { SPACES_CONFIG } from "../model/spaces";
 import { getScreenshot, rememberScreenshot } from "../model/screenshotCache";
 import type { Space } from "../model/types";
 import { powerButton } from "../model/window";
-import { useFleet } from "../state/cloud";
+import { useSpaces } from "../state/cloud";
 import { HotspotGlyph } from "./HotspotGlyph";
 import { OsIcon } from "./OsIcon";
 import { SfIcon } from "./SfIcon";
 import { STATUS_LABEL, StatusDot } from "./StatusDot";
 import { Thumbnail } from "./Thumbnail";
+import { tMsg, useT } from "../i18n";
 
 interface SpaceTileProps {
   space: Space;
@@ -51,7 +52,7 @@ const HOVER_PRELOAD_DEBOUNCE_MS = 1500;
  * not live) never poll and their preload is a no-op.
  */
 function useLiveThumbnail(space: Space): { shot: string | null; preload: () => void } {
-  const { live, bridge } = useFleet();
+  const { live, bridge } = useSpaces();
   // Seed from the shared cache so an established Space shows its last frame
   // immediately (no "connecting" flash) instead of the synthetic scene.
   const [shot, setShot] = useState<string | null>(() => getScreenshot(space.id)?.dataUrl ?? null);
@@ -106,7 +107,21 @@ function useLiveThumbnail(space: Space): { shot: string | null; preload: () => v
   return { shot, preload };
 }
 
-export function SpaceTile({ space, focused, onFocus, onSelect, onPin, onShareApp, hotspot = false, onDelete, onPower, dropMode = false, dropTarget = false, dropGhost = null }: SpaceTileProps) {
+export function SpaceTile({
+  space,
+  focused,
+  onFocus,
+  onSelect,
+  onPin,
+  onShareApp,
+  hotspot = false,
+  onDelete,
+  onPower,
+  dropMode = false,
+  dropTarget = false,
+  dropGhost = null,
+}: SpaceTileProps) {
+  const t = useT("spaces");
   const ref = useRef<HTMLButtonElement>(null);
   const { shot, preload } = useLiveThumbnail(space);
   // The core's Deleting row: shows the instant Delete is pressed.
@@ -125,17 +140,12 @@ export function SpaceTile({ space, focused, onFocus, onSelect, onPin, onShareApp
   // In drop mode the tile is a clean drop target: hover controls are hidden.
   const pinnable = Boolean(onPin && space.sdk) && !dropMode;
   const shareable = Boolean(onShareApp && space.status !== "local") && !dropMode;
-  const deletable =
-    Boolean(onDelete && space.sdk && space.status !== "local") && !dropMode;
+  const deletable = Boolean(onDelete && space.sdk && space.status !== "local") && !dropMode;
   // The core's power button: only for a Space that turns off and on.
   const power = onPower && space.power && !dropMode ? powerButton(space) : null;
 
   return (
-    <span
-      className="tile-wrap"
-      data-drop-target={dropTarget ? "true" : undefined}
-      onMouseEnter={preload}
-    >
+    <span className="tile-wrap" data-drop-target={dropTarget ? "true" : undefined} onMouseEnter={preload}>
       <button
         ref={ref}
         type="button"
@@ -166,7 +176,7 @@ export function SpaceTile({ space, focused, onFocus, onSelect, onPin, onShareApp
             local={space.provider === "local"}
           />
           {hotspot && (
-            <span className="tile-hotspot-badge" title="Browsing through your network" aria-hidden="true">
+            <span className="tile-hotspot-badge" title={t("spaces.tile.hotspot_badge")} aria-hidden="true">
               <SfIcon
                 name="personalhotspot"
                 size={11}
@@ -182,7 +192,11 @@ export function SpaceTile({ space, focused, onFocus, onSelect, onPin, onShareApp
         <span className="tile-caption">
           <span className="tile-name">
             <OsIcon space={space} />
-            {space.status === "local" ? <span className="tile-check" aria-hidden="true" /> : <StatusDot status={space.status} />}
+            {space.status === "local" ? (
+              <span className="tile-check" aria-hidden="true" />
+            ) : (
+              <StatusDot status={space.status} />
+            )}
             {space.name}
           </span>
         </span>
@@ -193,8 +207,8 @@ export function SpaceTile({ space, focused, onFocus, onSelect, onPin, onShareApp
           className="tile-action tile-delete"
           data-owns-enter
           tabIndex={-1}
-          aria-label={`Delete ${space.name}`}
-          title="Delete this Space"
+          aria-label={t("spaces.tile.delete_label", { name: space.name })}
+          title={t("spaces.tile.delete_hint")}
           onClick={(event) => {
             event.stopPropagation();
             onDelete?.();
@@ -210,8 +224,8 @@ export function SpaceTile({ space, focused, onFocus, onSelect, onPin, onShareApp
           data-owns-enter
           data-busy={power.busy ? "true" : undefined}
           tabIndex={-1}
-          aria-label={`${power.help} ${space.name}`}
-          title={power.help}
+          aria-label={t("spaces.tile.power_label", { action: tMsg(power.help), name: space.name })}
+          title={tMsg(power.help)}
           disabled={!power.enabled}
           onClick={(event) => {
             event.stopPropagation();
@@ -231,8 +245,8 @@ export function SpaceTile({ space, focused, onFocus, onSelect, onPin, onShareApp
           className="tile-action tile-share"
           data-owns-enter
           tabIndex={-1}
-          aria-label={`Teleport an app to ${space.name}`}
-          title="Teleport an app to this sandbox"
+          aria-label={t("spaces.tile.teleport_label", { name: space.name })}
+          title={t("spaces.tile.teleport_hint")}
           onClick={(event) => {
             event.stopPropagation();
             onShareApp?.();
@@ -247,8 +261,8 @@ export function SpaceTile({ space, focused, onFocus, onSelect, onPin, onShareApp
           className="tile-action tile-pin"
           data-owns-enter
           tabIndex={-1}
-          aria-label={`Pin ${space.name} as picture-in-picture`}
-          title="Pin as picture-in-picture"
+          aria-label={t("spaces.tile.pin_label", { name: space.name })}
+          title={t("spaces.tile.pin_hint")}
           onClick={(event) => {
             event.stopPropagation();
             onPin?.();
@@ -301,10 +315,36 @@ function ShareGlyph() {
         strokeWidth="1.2"
         strokeLinejoin="round"
       />
-      <path d="M6 8.7a1.9 1.9 0 0 1 3.15-.85l.55.5" fill="none" stroke="currentColor" strokeWidth="1.15" strokeLinecap="round" />
-      <path d="M10 6.9v1.6H8.4" fill="none" stroke="currentColor" strokeWidth="1.15" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M10 10.1a1.9 1.9 0 0 1-3.15.85l-.55-.5" fill="none" stroke="currentColor" strokeWidth="1.15" strokeLinecap="round" />
-      <path d="M6 11.9v-1.6h1.6" fill="none" stroke="currentColor" strokeWidth="1.15" strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M6 8.7a1.9 1.9 0 0 1 3.15-.85l.55.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.15"
+        strokeLinecap="round"
+      />
+      <path
+        d="M10 6.9v1.6H8.4"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.15"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M10 10.1a1.9 1.9 0 0 1-3.15.85l-.55-.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.15"
+        strokeLinecap="round"
+      />
+      <path
+        d="M6 11.9v-1.6h1.6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.15"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }

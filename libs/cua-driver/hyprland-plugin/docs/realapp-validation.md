@@ -1,5 +1,8 @@
 # Concurrent real-app input validation
 
+> Note (18 Oct 2026): Cua Cloud (Fleets) ended on 18 Oct 2026. This is a dated
+> record of validation run on it; the Fleet references below are historical.
+
 On 2026-09-05, two independent Cua Driver MCP connections edited LibreOffice
 Calc and Inkscape in an Omarchy Fleet VM while a foreground fixture retained
 the primary pointer grab. Concurrent drags overlapped for 1.49-1.77 seconds.

@@ -16,7 +16,7 @@ import { NotchModel, type NotchHost, type NotchModelOptions } from "./notch/mode
 import { NotchProcess, type NotchProcessOptions } from "./notch/process";
 import { NOTCH_PROTOCOL_VERSION, type HelperMessage, type HostMessage } from "./notch/protocol";
 
-export type { NotchHost, NotchActions, NotchTeleport, WindowDragEvent } from "./notch/model";
+export type { NotchHost, NotchActions, NotchTeleport, WindowDragEvent, WindowTargets, WindowTargetHit } from "./notch/model";
 export type { NotchCore } from "./notch/core";
 
 /** The helper's bundle and executable name. */
@@ -35,9 +35,7 @@ export function notchSupported(platform: NodeJS.Platform, osRelease: string): bo
  * Contents/Resources), `native/notch` (`pnpm notch`) in development.
  */
 export function helperPath(o: { packaged: boolean; resourcesPath: string; appPath: string }): string {
-  const bundle = o.packaged
-    ? path.join(o.resourcesPath, "..", "Helpers", HELPER_APP)
-    : path.join(o.appPath, "native", "notch", HELPER_APP);
+  const bundle = o.packaged ? path.join(o.resourcesPath, "..", "Helpers", HELPER_APP) : path.join(o.appPath, "native", "notch", HELPER_APP);
   return path.join(bundle, "Contents", "MacOS", HELPER_EXECUTABLE);
 }
 
@@ -47,6 +45,8 @@ export interface Notch {
   setSpaces(spaces: readonly unknown[]): void;
   /** Live Keyvault sign-ins: the core's sharing label less dismissed copies, and the Space ids that carry the key. */
   setKeyvault(label: string | null | undefined, signedIn?: string[]): void;
+  /** The Spaces and desktops pinned to the notch, in pin order (`AppSettings.notchPinned`). */
+  setPinned(ids: readonly string[]): void;
   /** The hotspot, or a transfer (bytes; both unknown while one starts). */
   setActivity(hotspot: boolean, transfer?: { sent?: number | bigint; total?: number | bigint } | null): void;
   /** The "Spaces tab in the notch" setting (`!settings.menuBar`). */
@@ -60,8 +60,8 @@ export interface Notch {
 export interface StartNotchOptions extends NotchModelOptions {
   /** The helper's executable (`helperPath`). */
   path: string;
-  /** Logs every protocol message both ways (`CUA_SPACES_NOTCH_DEBUG`; images left out). */
-  trace?: (line: string) => void;
+  /** How long a `windowUnder` question waits for the helper (ms; default 300). */
+  windowUnderTimeoutMs?: number;
   /** Process options for tests (spawn, timers, backoff). */
   process?: Partial<Omit<NotchProcessOptions, "path" | "onMessage" | "onStart">>;
 }
@@ -77,6 +77,26 @@ export function startNotch(host: NotchHost, options: StartNotchOptions): Notch {
     trace?.(`-> ${describe(m)}`);
     helper?.send(m);
   };
+  // Questions to the helper about the window under a point, by id; one that
+  // goes unanswered (no helper, a restart) resolves to none.
+  const asked = new Map<number, (window: number | null) => void>();
+  let lastAsk = 0;
+  const windowUnder = (x: number, y: number, below: number | undefined) =>
+    new Promise<number | null>((resolve) => {
+      if (!helper?.running) return resolve(null);
+      const id = ++lastAsk;
+      const timer = setTimeout(() => answer(id, null), options.windowUnderTimeoutMs ?? 300);
+      asked.set(id, (w) => {
+        clearTimeout(timer);
+        resolve(w);
+      });
+      send(below === undefined ? { type: "windowUnder", id, x, y } : { type: "windowUnder", id, x, y, below });
+    });
+  const answer = (id: number, window: number | null) => {
+    const done = asked.get(id);
+    asked.delete(id);
+    done?.(window);
+  };
   const model = new NotchModel(
     host,
     {
@@ -89,7 +109,7 @@ export function startNotch(host: NotchHost, options: StartNotchOptions): Notch {
       },
       ghost: (image) => send({ type: "ghost", image: image ? Buffer.from(image).toString("base64") : undefined }),
     },
-    { ...options, log },
+    { ...options, log, windowUnder },
   );
 
   const onMessage = (m: HelperMessage) => {
@@ -106,6 +126,8 @@ export function startNotch(host: NotchHost, options: StartNotchOptions): Notch {
         return model.stageChanged(m.open);
       case "error":
         return log(`helper: ${m.message}`);
+      case "windowUnder":
+        return answer(m.id, m.window ?? null);
       case "action":
         switch (m.action) {
           case "openSpace":
@@ -136,20 +158,25 @@ export function startNotch(host: NotchHost, options: StartNotchOptions): Notch {
       send({ type: "hello", v: NOTCH_PROTOCOL_VERSION, ...model.motion() });
       model.resend();
       for (const [id, image] of thumbnails) send({ type: "thumbnail", id, image });
+      // Connected (or reconnected): follow window drags if they are not followed yet.
+      model.recheckPermission();
     },
   });
   helper.start();
+  // Also when the helper did not start (it restarts later).
   model.recheckPermission();
 
   return {
     setSpaces: (spaces) => model.setSpaces(spaces),
     setKeyvault: (label, signedIn) => model.setKeyvault(label, signedIn),
+    setPinned: (ids) => model.setPinned(ids),
     setActivity: (hotspot, transfer) => model.setActivity(hotspot, transfer),
     setShown: (shown) => model.setShown(shown),
     recheckPermission: () => model.recheckPermission(),
     stop: () => {
       model.dispose();
       helper?.stop();
+      for (const id of [...asked.keys()]) answer(id, null);
     },
   };
 }
@@ -195,13 +222,16 @@ export async function connectNotch(host: NotchHost): Promise<Notch | null> {
     teleport: forward(a.teleport.bind(a)),
     drop: forward(a.drop.bind(a)),
   };
-  const notch = startNotch({ ...host, actions }, {
-    path: executable,
-    openURL: (url) => void shell.openExternal(url),
-    highlight: process.env.CUA_SPACES_NOTCH_HIGHLIGHT || undefined,
-    // Diagnosing the notch (`CUA_SPACES_NOTCH_DEBUG=1`): the protocol both ways in the app's log.
-    trace: process.env.CUA_SPACES_NOTCH_DEBUG ? (line) => console.log(`[cua-spaces] notch ${line}`) : undefined,
-  });
+  const notch = startNotch(
+    { ...host, actions },
+    {
+      path: executable,
+      openURL: (url) => void shell.openExternal(url),
+      highlight: process.env.CUA_SPACES_NOTCH_HIGHLIGHT || undefined,
+      // Diagnosing the notch (`CUA_SPACES_NOTCH_DEBUG=1`): the protocol both ways in the app's log.
+      trace: process.env.CUA_SPACES_NOTCH_DEBUG ? (line) => console.log(`[cua-spaces] notch ${line}`) : undefined,
+    },
+  );
   app.on("did-become-active", () => notch.recheckPermission());
   app.on("will-quit", () => notch.stop());
   return notch;

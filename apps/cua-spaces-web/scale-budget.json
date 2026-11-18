@@ -1,0 +1,26 @@
+{
+  "100": {
+    "firstTile": 1277,
+    "filterKey": 50,
+    "selectAll": 50,
+    "pickOne": 50,
+    "longTasks": 50,
+    "drawn": 27
+  },
+  "1000": {
+    "firstTile": 1340,
+    "filterKey": 50,
+    "selectAll": 50,
+    "pickOne": 50,
+    "longTasks": 50,
+    "drawn": 27
+  },
+  "3000": {
+    "firstTile": 1509,
+    "filterKey": 50,
+    "selectAll": 50,
+    "pickOne": 50,
+    "longTasks": 150,
+    "drawn": 27
+  }
+}

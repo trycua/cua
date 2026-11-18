@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Pure selection rules for attributing an X11 toplevel to a local process
 //! when the client does not publish `_NET_WM_PID`.
 //!

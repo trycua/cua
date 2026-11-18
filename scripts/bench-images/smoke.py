@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 """Smoke one variant of a benchmark image through the cua SDK (the path
-``cb run`` uses), locally or on Fleet.
+``cb run`` uses), on this machine.
 
     smoke.py ID --variant rootfs|containerdisk [--image REF | --disk PATH]
-             [--cloud] [--evidence DIR] [--memory-mb N]
+             [--evidence DIR] [--memory-mb N]
 
-Local: rootfs defaults to ``cua-e2e-local/bench-ID:docker-local-<host arch>``
+Rootfs defaults to ``cua-e2e-local/bench-ID:docker-local-<host arch>``
 (the SDK runs it under gVisor); containerdisk defaults to
 ``$CUA_BENCH_WORK/ID/out/<arch>/disk.img`` under QEMU (one VM, at most
-4 GiB). ``--cloud`` applies a pool ``cua-e2e-bench-ID-<rand>`` (gVisor for
-rootfs, KubeVirt for containerdisk) from ``--image`` (a registry ref),
-claims once and deletes the pool in ``finally``.
+4 GiB).
 
 Checks, recorded in ``EVIDENCE/<variant>-<where>.json`` with screenshots:
   server       the bench server's health probe (bench.json server.health)
@@ -217,16 +215,92 @@ def child_for(index_ref: str, variant: str, arch: str) -> tuple[str, str]:
     raise SystemExit(f"{index_ref} has no {arch} child")
 
 
+def qemu_roots() -> list[Path]:
+    """The local QEMU runtime's state roots (``<cua home>/vmm/qemu``):
+    ``$CUA_HOME`` when set, else every ``~/.cua*`` channel home."""
+    homes = ([Path(os.environ["CUA_HOME"])] if os.environ.get("CUA_HOME")
+             else sorted(Path.home().glob(".cua*")))
+    return [h / "vmm" / "qemu" for h in homes if (h / "vmm" / "qemu").is_dir()]
+
+
+class ConsoleTee:
+    """Keeps copies of the guest serial console and QEMU log of this smoke's
+    VM, and of any golden-snapshot recording the runtime boots first
+    (``_golden/.rec-*``), in ``DEST``. A create that fails deletes the VM's
+    directory with its logs, so they are copied while it starts; on failure
+    :meth:`dump` prints their tails (the job log then says why the guest
+    never answered) and the files stay in the evidence."""
+
+    FILES = ("serial.log", "qemu.log")
+
+    def __init__(self, dest: Path, name: str, roots=qemu_roots) -> None:
+        self.dest, self.name, self.roots = dest, name, roots
+        self.seen: dict[Path, int] = {}
+
+    def sources(self) -> list[tuple[str, Path]]:
+        out = []
+        for root in self.roots():
+            dirs = [(self.name, root / self.name)]
+            dirs += [(f"golden-recording{d.name}", d) for d in sorted((root / "_golden").glob(".rec-*"))]
+            for label, d in dirs:
+                out += [(label, d / f) for f in self.FILES if (d / f).is_file()]
+        return out
+
+    def sweep(self) -> None:
+        for label, src in self.sources():
+            try:
+                size = src.stat().st_size
+                if self.seen.get(src) == size:
+                    continue
+                dst = self.dest / label / src.name
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                dst.write_bytes(src.read_bytes()[-(8 << 20):])  # bounded: the last 8 MiB
+                self.seen[src] = size
+            except OSError:
+                pass  # removed between the listing and the copy
+
+    async def run(self, every: float = 5.0) -> None:
+        while True:
+            self.sweep()
+            await asyncio.sleep(every)
+
+    def dump(self, lines: int = 60) -> None:
+        self.sweep()
+        files = sorted(self.dest.glob("*/*.log")) if self.dest.is_dir() else []
+        if not files:
+            print("   (no guest console was captured: the VM never launched)", flush=True)
+        for f in files:
+            tail = f.read_text(errors="replace").splitlines()[-lines:]
+            print(f"   --- {f.parent.name}/{f.name} (last {len(tail)} lines; full copy in {f}) ---", flush=True)
+            for line in tail:
+                print(f"   | {line[:300]}", flush=True)
+
+
+def require_kvm_preflight(variant: str, arch: str) -> None:
+    """With CUA_REQUIRE_KVM=1, a same-arch VM must have a usable /dev/kvm: fail
+    now, with the reason, instead of booting under TCG (900-1300+ s on a hosted
+    runner) and timing out half an hour later. The runtime enforces the same
+    switch when it picks QEMU's accelerator."""
+    if variant != "containerdisk" or os.environ.get("CUA_REQUIRE_KVM", "").strip() not in ("1", "true", "yes"):
+        return
+    if sys.platform != "linux" or arch != host_arch():
+        return
+    if not os.access("/dev/kvm", os.R_OK | os.W_OK):
+        print("::error::CUA_REQUIRE_KVM is set but /dev/kvm is missing or not writable: "
+              "the VM would run under slow TCG emulation (scripts/images/enable-kvm.sh --require)", flush=True)
+        sys.exit(3)
+    print("   /dev/kvm is usable: QEMU runs with KVM", flush=True)
+
+
 async def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("id")
     ap.add_argument("--variant", required=True, choices=["rootfs", "containerdisk"])
     ap.add_argument("--image", help="registry ref (default: the local build)")
     ap.add_argument("--disk", help="local disk.img for the containerdisk variant")
-    ap.add_argument("--cloud", action="store_true", help="run on Fleet (needs --image)")
     ap.add_argument("--memory-mb", type=int, default=None)
     ap.add_argument("--cpu", type=int, default=None,
-                    help="vCPUs (default 4; locally capped at the host's CPU count, e.g. 2 on private-repo CI runners)")
+                    help="vCPUs (default 4, capped at the host's CPU count, e.g. 2 on private-repo CI runners)")
     ap.add_argument("--evidence", default=None)
     ap.add_argument("--arch", choices=["amd64", "arm64"],
                     help="local: run this arch (a foreign one is emulated; rootfs then needs --runc)")
@@ -235,29 +309,27 @@ async def main() -> int:
                          "runsc cannot run an emulated amd64 image on an arm64 host)")
     args = ap.parse_args()
     if args.cpu is None:
-        args.cpu = 4 if args.cloud else max(1, min(4, os.cpu_count() or 1))
+        args.cpu = max(1, min(4, os.cpu_count() or 1))
 
     from cua_sandbox import Image, Sandbox
 
     b = benchlib.load(args.id)
     hooks = load_hooks(args.id)
-    where = "fleet" if args.cloud else "local"
+    where = "local"
     evidence = Path(args.evidence or (benchlib.BENCH_ROOT / args.id / "evidence"))
     evidence.mkdir(parents=True, exist_ok=True)
     server = b.get("server") or {}
     ports = sorted(set((b.get("extra_ports") or {}).values()) | ({server["port"]} if server else set()))
     kind = "container" if args.variant == "rootfs" else "vm"
-    # Fleet runs amd64; locally the host arch when the benchmark has it, else
-    # its only arch under emulation (OSWorld is amd64-only).
-    arch = "amd64" if args.cloud else (args.arch or (host_arch() if host_arch() in b["arch"] else b["arch"][0]))
+    # The host arch when the benchmark has it, else its only arch under
+    # emulation (OSWorld is amd64-only).
+    arch = args.arch or (host_arch() if host_arch() in b["arch"] else b["arch"][0])
     tag = f"{args.variant}-{where}-{arch}"
     work = Path(os.environ.get("CUA_BENCH_WORK", "~/.cache/cua-bench-images")).expanduser()
 
-    if args.cloud and not args.image:
-        ap.error("--cloud needs --image (a pushed registry ref)")
     child = None
     index_ref = args.image
-    if args.image and args.arch and not args.cloud and "@sha256:" in args.image:
+    if args.image and args.arch and "@sha256:" in args.image:
         # The SDK runs the host arch of an index; for another arch, run that
         # arch's child by digest (for the disk: in the index its
         # ai.cua.image.variants names) and record which index it belongs to.
@@ -265,11 +337,10 @@ async def main() -> int:
         print(f"   {args.arch} {args.variant} child of {index_ref}: {child}", flush=True)
     if args.variant == "rootfs" or args.image:
         ref = child or args.image or f"cua-e2e-local/bench-{args.id}:docker-local-{arch}"
-        # A private package pulled locally: CUA_REGISTRY_USERNAME/PASSWORD
-        # (RegistrySecret.from_env) go to the local pull only. Never attached
-        # to a Fleet pool here (that would store them in the cloud).
+        # A private package: CUA_REGISTRY_USERNAME/PASSWORD
+        # (RegistrySecret.from_env) go to the pull only.
         secret = None
-        if not args.cloud and os.environ.get("CUA_REGISTRY_PASSWORD"):
+        if os.environ.get("CUA_REGISTRY_PASSWORD"):
             from cua_sandbox import RegistrySecret
             secret = RegistrySecret.from_env()
         image = Image.from_registry(ref, os_type=b["os"], kind=kind, secret=secret)
@@ -279,46 +350,37 @@ async def main() -> int:
         image = Image.from_file(str(disk), os_type=b["os"], kind="vm")
     for p in ports:
         image = image.expose(p)
-    mem = args.memory_mb or (8192 if args.cloud else 4096)
-    if not args.cloud and mem > 4096:
+    mem = args.memory_mb or 4096
+    if mem > 4096:
         ap.error("local smokes stay at or under 4096 MiB (AGENT_BRIEF memory rule)")
+    require_kvm_preflight(args.variant, arch)
     report = Report()
     pinned = None
     print(f"== smoke {args.id} {args.variant} {where}: {ref}", flush=True)
     started = time.monotonic()
-    if args.cloud:
-        from cua_sandbox import Pool, PoolOptions, SandboxSpec, generate_claim_token
-
-        name = f"cua-e2e-bench-{args.id}-{uuid.uuid4().hex[:6]}"
-        runtime = "gvisor" if args.variant == "rootfs" else "kubevirt"
-        services = {"env": 3211, "server": server["port"]}
-        services.update({f"port-{p}": p for p in ports if p != server["port"]})
-        print(f"   pool {name} ({runtime})", flush=True)
-        pool = await Pool.apply(
-            name,
-            SandboxSpec(image=image, cpu=args.cpu, memory_mb=mem, services=services, claim_secrets=True),
-            PoolOptions(runtime=runtime, replicas=0, max_pool_size=1),
-        )
-        try:
-            async with pool.claim(name=f"{name}-c1", claim_token=generate_claim_token(),
-                                  time_to_start=1500, ttl_seconds_after_created=3600) as sb:
-                report.add("claim", True, f"bound after {time.monotonic() - started:.0f}s")
-                info = getattr(sb, "image_info", None)
-                pinned = getattr(info, "pinned_ref", None)
-                report.add("image_info", "sha256:" in str(pinned or ""), pinned)
-                await run_checks(sb, b, hooks, report, evidence, tag)
-        finally:
-            print(f"   deleting pool {name}", flush=True)
-            await pool.delete()
-    else:
-        extra = {"runtime": "runc"} if args.runc else {}
-        async with Sandbox.ephemeral(image, local=True, name=f"cua-e2e-bench-{args.id}-{uuid.uuid4().hex[:6]}", **extra,
+    extra = {"runtime": "runc"} if args.runc else {}
+    name = f"cua-e2e-bench-{args.id}-{uuid.uuid4().hex[:6]}"
+    console = ConsoleTee(evidence / f"{tag}-console", name) if args.variant == "containerdisk" else None
+    tee = asyncio.create_task(console.run()) if console else None
+    try:
+        async with Sandbox.ephemeral(image, local=True, name=name, **extra,
                                      server_port=server.get("port"), cpu=args.cpu, memory_mb=mem,
                                      time_to_start=1500, telemetry_enabled=False) as sb:
             report.add("ready", True, f"after {time.monotonic() - started:.0f}s")
             info = getattr(sb, "image_info", None)
             pinned = getattr(info, "pinned_ref", None)
             await run_checks(sb, b, hooks, report, evidence, tag)
+            if console and not report.ok:
+                console.dump()
+    except BaseException:
+        print(f"== FAIL {args.id} {tag}: the sandbox failed after "
+              f"{time.monotonic() - started:.0f}s; guest console:", flush=True)
+        if console:
+            console.dump()
+        raise
+    finally:
+        if tee:
+            tee.cancel()
     if child:
         # Evidence is keyed by the index the child was read from.
         pinned = index_ref

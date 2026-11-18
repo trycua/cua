@@ -15,8 +15,8 @@ body:
         or sensitive screenshots in a public issue.
 
         The issue is the discussion and decision record. If the proposal needs a longer
-        specification or diagrams, add a linked `rfcs/<issue>-<short-name>.md` pull request
-        using the repository's `rfcs/0000-template.md`.
+        specification or diagrams, add a linked `docs/rfcs/<issue>-<short-name>.md` pull request
+        using the repository's `docs/rfcs/0000-template.md`.
 
   - type: dropdown
     id: area

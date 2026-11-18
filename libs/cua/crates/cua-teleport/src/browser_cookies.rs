@@ -316,6 +316,49 @@ impl ChromeCookies {
         })
     }
 
+    /// The profile names present next to this reader's profile (a directory
+    /// holding `Preferences`), `Default` first.
+    pub fn available_profiles(&self) -> Vec<String> {
+        let Some(root) = self
+            .profile_dir()
+            .ok()
+            .and_then(|d| d.parent().map(Path::to_path_buf))
+        else {
+            return Vec::new();
+        };
+        let Ok(entries) = std::fs::read_dir(&root) else {
+            return Vec::new();
+        };
+        let mut names: Vec<String> = entries
+            .flatten()
+            .filter(|e| e.path().join("Preferences").is_file())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect();
+        names.sort_by_key(|n| (n != "Default", n.clone()));
+        names
+    }
+
+    /// The error for a profile with no Cookies database: it names the profile
+    /// and the profiles that do exist, so a wrong `--profile` (or a Default
+    /// that is not the one signed in) is not mistaken for "no cookies".
+    fn missing_store(&self, dir: &Path) -> TeleportError {
+        let name = dir
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| dir.display().to_string());
+        let available = self.available_profiles();
+        let others = if available.is_empty() {
+            "no browser profiles were found there".to_string()
+        } else {
+            format!("profiles found: {}", available.join(", "))
+        };
+        TeleportError::Provider(format!(
+            "the browser profile {name:?} has no Cookies database ({}); {others}. \
+             Pick one with --profile",
+            dir.display()
+        ))
+    }
+
     /// Every cookie, decrypted, optionally restricted to the registrable
     /// domains in `sites` (empty reads every cookie). A row that fails to
     /// decrypt fails the whole read: a partial import would silently drop a
@@ -331,10 +374,7 @@ impl ChromeCookies {
         // `Default/Cookies` or `Default/Network/Cookies`, whichever is newer.
         let db = cua_teleport_bundle::layout::chrome::cookies_store(&dir);
         if !db.is_file() {
-            return Err(TeleportError::Provider(format!(
-                "no cookies: {} has no Cookies database",
-                dir.display()
-            )));
+            return Err(self.missing_store(&dir));
         }
         let service = match self.platform {
             Platform::MacOS if self.service.is_some() => self.service.unwrap_or_default(),
@@ -350,7 +390,7 @@ impl ChromeCookies {
             // libsecret application); Windows is refused before it matters.
             Platform::Linux | Platform::Windows => "",
         };
-        let rows = read_rows(&db)?;
+        let rows = read_rows(&db).map_err(plain)?;
         let wanted: Vec<String> = sites
             .iter()
             .map(|s| s.trim().to_ascii_lowercase())
@@ -418,12 +458,10 @@ impl ChromeCookies {
         let dir = self.profile_dir()?;
         let db = cua_teleport_bundle::layout::chrome::cookies_store(&dir);
         if !db.is_file() {
-            return Err(TeleportError::Provider(format!(
-                "no cookies: {} has no Cookies database",
-                dir.display()
-            )));
+            return Err(self.missing_store(&dir));
         }
-        Ok(read_rows(&db)?
+        Ok(read_rows(&db)
+            .map_err(plain)?
             .into_iter()
             .map(|r| CookieHostRow {
                 host_key: r.host_key,
@@ -573,14 +611,25 @@ fn tempfile_copy(src: &Path) -> Result<TempCopy, TeleportError> {
         from.push(suffix);
         let from = PathBuf::from(from);
         if from.is_file() {
-            let _ = std::fs::copy(&from, dir.join(format!("Cookies{suffix}")));
+            let _ = crate::plain_copy::copy_data_only(&from, &dir.join(format!("Cookies{suffix}")));
         }
     }
-    std::fs::copy(src, &dst).map_err(|e| {
+    crate::plain_copy::copy_named("Cookies", src, &dst).inspect_err(|_| {
         let _ = std::fs::remove_dir_all(&dir);
-        TeleportError::Provider(format!("copying Cookies failed: {e}"))
     })?;
     Ok(TempCopy(dst))
+}
+
+/// A macOS privacy refusal in `e` said in plain words (what to turn on and
+/// that the daemon must restart); any other error as it was.
+fn plain(e: TeleportError) -> TeleportError {
+    match &e {
+        TeleportError::Provider(m) => match crate::privacy::plain_words(m) {
+            Some(say) => TeleportError::Provider(say),
+            None => e,
+        },
+        _ => e,
+    }
 }
 
 /// One row for [`write_cookies_db_for_tests`] (tests and e2e fixtures).
@@ -725,6 +774,62 @@ fn write_cookies_db_at(
 
 #[cfg(test)]
 mod tests {
+
+    #[cfg(target_os = "macos")]
+    fn set_xattr(path: &Path, name: &str, value: &[u8]) -> i32 {
+        use std::os::unix::ffi::OsStrExt;
+        let p = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        let n = std::ffi::CString::new(name).unwrap();
+        unsafe {
+            libc::setxattr(
+                p.as_ptr(),
+                n.as_ptr(),
+                value.as_ptr().cast(),
+                value.len(),
+                0,
+                0,
+            )
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn list_xattrs(path: &Path) -> Vec<String> {
+        use std::os::unix::ffi::OsStrExt;
+        let p = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        let mut buf = vec![0u8; 4096];
+        let n = unsafe { libc::listxattr(p.as_ptr(), buf.as_mut_ptr().cast(), buf.len(), 0) };
+        assert!(n >= 0);
+        buf[..n as usize]
+            .split(|b| *b == 0)
+            .filter(|s| !s.is_empty())
+            .map(|s| String::from_utf8_lossy(s).into_owned())
+            .collect()
+    }
+
+    /// macOS 27 refuses (EPERM) the metadata-preserving copy of a Cookies file
+    /// that carries `com.apple.provenance` / `com.apple.quarantine`, while a
+    /// plain read+write succeeds. A user-set xattr stands in for those: the
+    /// export copy must be data only, so none of them may travel into it.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_cookies_copy_carries_no_xattrs_from_the_source() {
+        let src_dir = tempfile::tempdir().unwrap();
+        let src = src_dir.path().join("Cookies");
+        std::fs::write(&src, b"SQLite format 3\0 not really").unwrap();
+        for attr in ["com.apple.quarantine", "user.cua-test"] {
+            assert_eq!(set_xattr(&src, attr, b"0081;00000000;Chrome;"), 0, "{attr}");
+        }
+        let copy = tempfile_copy(&src).unwrap();
+        assert_eq!(
+            std::fs::read(copy.path()).unwrap(),
+            std::fs::read(&src).unwrap()
+        );
+        let listed = list_xattrs(copy.path());
+        assert!(
+            listed.is_empty(),
+            "the export copy carries xattrs: {listed:?}"
+        );
+    }
 
     #[test]
     fn a_chrome_130_value_loses_its_host_key_digest() {
@@ -1205,5 +1310,27 @@ mod tests {
             err.contains("did not decrypt") || err.contains("padding"),
             "{err}"
         );
+    }
+
+    /// A profile with no Cookies database is named, with the profiles that do
+    /// exist, instead of reading like an account with no cookies.
+    #[test]
+    fn a_profile_without_cookies_names_itself_and_the_profiles_that_exist() {
+        let root = tempfile::tempdir().unwrap();
+        for p in ["Default", "Profile 1"] {
+            std::fs::create_dir_all(root.path().join(p)).unwrap();
+            std::fs::write(root.path().join(p).join("Preferences"), "{}").unwrap();
+        }
+        let reader = ChromeCookies::new(Arc::new(FakeHost::new()))
+            .with_platform(Platform::Linux)
+            .with_profile_dir(root.path().join("Profile 2"));
+        for err in [
+            reader.read(&[]).unwrap_err().to_string(),
+            reader.host_rows().unwrap_err().to_string(),
+        ] {
+            assert!(err.contains("Profile 2"), "{err}");
+            assert!(err.contains("profiles found: Default, Profile 1"), "{err}");
+            assert!(err.contains("--profile"), "{err}");
+        }
     }
 }

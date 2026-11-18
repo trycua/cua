@@ -65,7 +65,7 @@ describe.skipIf(!built)("Teleport's run on the native layer", () => {
   });
 
   it("lowers the bridge's arguments, listener included, and reaches the run", async () => {
-    const cua = native.Cua.auto(native.CuaConfig.create({ fleetFromEnv: false, fleetFromSession: false, spacesHome: process.env.CUA_HOME }));
+    const cua = native.Cua.auto(native.CuaConfig.create({ spacesHome: process.env.CUA_HOME }));
     expect(cua.mode()).toBe(native.CuaMode.Embedded);
     const space = await cua.spaces().space(SPACE);
     const teleport = native.teleport(cua);

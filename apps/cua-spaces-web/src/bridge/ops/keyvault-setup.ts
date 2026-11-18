@@ -11,9 +11,10 @@
  * |---|---|---|
  * | `keyvault.setup {passphrase?}` | `keyvault_setup`, `keyvault_setup_passphrase` | `keyvault.setup` → `KeyvaultModel.submitCredential` |
  *
- * A passphrase never crosses the SwiftUI bridge (`native_only`: the host
- * opens its own form), as for `keyvault.unlock`; the Electron shell answers
- * the same method.
+ * A passphrase never crosses the webkit bridge: called without one, the
+ * host asks in its own prompt (the Mac app's sheet, the Electron shell's
+ * window) and a passphrase from the page is refused with `native_only`, as
+ * for `keyvault.unlock`.
  */
 
 import type { OpCoverage } from "../coverage";
@@ -39,7 +40,7 @@ export const KEYVAULT_SETUP_WEBKIT_METHODS = KEYVAULT_SETUP_OPERATIONS;
 
 export const KEYVAULT_SETUP_COVERAGE = {
   "keyvault.setup": {
-    webkit: { methods: ["keyvault.setup"], byDesign: "a passphrase never crosses the bridge: native_only" },
+    webkit: { methods: ["keyvault.setup"], byDesign: "the host asks for the passphrase itself: native_only" },
     tauri: ["keyvault_setup", "keyvault_setup_passphrase"],
   },
 } as const satisfies Record<KeyvaultSetupOp, OpCoverage>;
@@ -71,7 +72,7 @@ export function tauriKeyvaultSetupOps(invoke: Invoke): Handlers {
   };
 }
 
-/** The SwiftUI host: Touch ID setup only; it answers `{ recoveryKey }`. */
+/** The Mac app and the Electron shell: the host asks for Touch ID or the passphrase itself; it answers `{ recoveryKey }`. */
 export function webkitKeyvaultSetupOps(request: Request, nativeOnly: () => Error): Handlers {
   return {
     "keyvault.setup": async ({ passphrase }) => {

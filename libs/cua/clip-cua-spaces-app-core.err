@@ -1,0 +1,11 @@
+    Checking cua-telemetry v0.27.0 (/Users/dillondupont/projects/.cua-work/win6631/wt/libs/cua/crates/cua-telemetry)
+    Checking cua-vmm v0.27.0 (/Users/dillondupont/projects/.cua-work/win6631/wt/libs/cua/crates/cua-vmm)
+    Checking cua-agent-setup v0.27.0 (/Users/dillondupont/projects/.cua-work/win6631/wt/libs/cua/crates/cua-agent-setup)
+    Checking cua-host v0.27.0 (/Users/dillondupont/projects/.cua-work/win6631/wt/libs/cua/crates/cua-host)
+    Checking cua-repo-cache v0.27.0 (/Users/dillondupont/projects/.cua-work/win6631/wt/libs/cua/crates/cua-repo-cache)
+    Checking cua-keyvault v0.27.0 (/Users/dillondupont/projects/.cua-work/win6631/wt/libs/cua/crates/cua-keyvault)
+    Checking cua-agents v0.27.0 (/Users/dillondupont/projects/.cua-work/win6631/wt/libs/cua/crates/cua-agents)
+    Checking cua-image v0.27.0 (/Users/dillondupont/projects/.cua-work/win6631/wt/libs/cua/crates/cua-image)
+    Checking cua-sandbox-core v0.27.0 (/Users/dillondupont/projects/.cua-work/win6631/wt/libs/cua/crates/cua-sandbox-core)
+    Checking cua-spaces-app-core v0.27.0 (/Users/dillondupont/projects/.cua-work/win6631/wt/libs/cua/crates/cua-spaces-app-core)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 35.83s

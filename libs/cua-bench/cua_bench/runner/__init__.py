@@ -1,4 +1,4 @@
-"""Task execution: one runner for local and cloud sandboxes."""
+"""Task execution: one runner for every sandbox target."""
 
 from .batch_runner import BatchRunner, Job, JobResult
 from .episode import AgentOptions, EpisodeResult, run_episode

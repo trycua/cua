@@ -25,6 +25,9 @@ export interface CuaDesktopBridge {
   /** Subscribes to a pushed event channel; returns the unsubscribe. */
   on?(channel: string, listener: (payload: unknown) => void): () => void;
   platform?: string;
+  /** The system's preferred languages (`app.getPreferredSystemLanguages()`),
+   * read by `src/i18n/host-languages.ts`. */
+  languages?: readonly string[];
   /** The video bench reads the page's video counters (`CUA_SPACES_VIDEO_STATS`). */
   videoStats?: boolean;
 }

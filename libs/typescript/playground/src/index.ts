@@ -2,7 +2,7 @@
 // @trycua/playground
 // =============================================================================
 // Reusable playground UI for Cua computer-use agents.
-// Supports both local (localStorage + user-provided URLs) and cloud (CUA API) usage.
+// Runs against your own machines: localStorage + user-provided agent and VNC URLs.
 
 // Types
 export * from './types';
@@ -10,7 +10,6 @@ export * from './adapters/types';
 
 // Adapters
 export { createLocalAdapter } from './adapters/local';
-export { createCloudAdapter } from './adapters/cloud';
 
 // Utilities
 export * from './utils';

@@ -17,6 +17,9 @@ use cua_spaces::{Error, Result};
 
 /// Entries kept (oldest dropped first).
 pub const MAX_ENTRIES: usize = 500;
+/// Read entries older than this are dropped when a new one is posted
+/// (30 days). Unread ones stay until the cap pushes them out.
+pub const READ_RETENTION_MS: u64 = 30 * 24 * 60 * 60 * 1000;
 /// Longest title and body stored.
 const MAX_TITLE: usize = 120;
 const MAX_BODY: usize = 1000;
@@ -31,7 +34,8 @@ pub struct Notification {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
     /// `turn_ended`, `message` (the agent called `notify_user`), `error`,
-    /// `approval` (something waits for the user).
+    /// `approval` (something waits for the user), `budget` (a cloud passed
+    /// 50, 80 or 100% of its monthly budget).
     pub kind: String,
     pub title: String,
     pub body: String,
@@ -41,6 +45,9 @@ pub struct Notification {
     pub space: Option<String>,
     #[serde(default)]
     pub read: bool,
+    /// The Space thread entry it is about (an agent member's reply).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_seq: Option<u64>,
 }
 
 /// Longest reason in a failure's title.
@@ -48,6 +55,10 @@ const MAX_REASON: usize = 80;
 
 /// The title of a failed run or turn: "<agent> stopped: <short reason>".
 pub fn stopped_title(agent: &str, error: &str) -> String {
+    // A rejected or missing sign-in is said in words, not as the provider's error.
+    if cua_agents::failure::is_auth_failure(error) {
+        return format!("{agent} needs you to connect it");
+    }
     format!("{agent} stopped: {}", short_reason(error))
 }
 
@@ -55,6 +66,17 @@ pub fn stopped_title(agent: &str, error: &str) -> String {
 /// error object (`API Error: 401 {"error":{"message":"invalid x-api-key"}}`)
 /// reduced to its message.
 pub fn short_reason(error: &str) -> String {
+    let r = reason(error);
+    if r == "unknown error" {
+        r
+    } else {
+        clip(&r, MAX_REASON)
+    }
+}
+
+/// [`short_reason`] without the clip: the error's first line as it is
+/// (surfaces that draw errors never cut them).
+pub fn reason(error: &str) -> String {
     let first = error
         .lines()
         .map(str::trim)
@@ -80,8 +102,20 @@ pub fn short_reason(error: &str) -> String {
     if short.is_empty() {
         "unknown error".into()
     } else {
-        clip(short, MAX_REASON)
+        short.to_string()
     }
+}
+
+/// Called with each notification as it is added to a feed. One per
+/// process; the daemon uses it to push to the person's phone
+/// ([`crate::push_client`]). It must return at once.
+pub type Sink = Box<dyn Fn(&Notification) + Send + Sync>;
+
+static SINK: std::sync::OnceLock<Sink> = std::sync::OnceLock::new();
+
+/// Sets the process's sink. Only the first call counts.
+pub fn set_sink(sink: Sink) -> bool {
+    SINK.set(sink).is_ok()
 }
 
 /// The feed file (`<home>/persistent/notifications.json`).
@@ -125,6 +159,21 @@ impl Feed {
         run_id: Option<&str>,
         space: Option<&str>,
     ) -> Result<Notification> {
+        self.post_anchored(agent, kind, title, body, run_id, space, None)
+    }
+
+    /// [`Feed::post`], anchored to a thread entry (`entry_seq`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn post_anchored(
+        &self,
+        agent: Option<&str>,
+        kind: &str,
+        title: &str,
+        body: &str,
+        run_id: Option<&str>,
+        space: Option<&str>,
+        entry_seq: Option<u64>,
+    ) -> Result<Notification> {
         let title = clip(title, MAX_TITLE);
         if title.is_empty() {
             return Err(Error::invalid("a notification needs a title"));
@@ -139,13 +188,19 @@ impl Feed {
             run_id: run_id.map(str::to_string),
             space: space.map(str::to_string),
             read: false,
+            entry_seq,
         };
         let out = n.clone();
         self.with(move |all| {
+            let cutoff = n.at_ms.saturating_sub(READ_RETENTION_MS);
+            all.retain(|e| !e.read || e.at_ms >= cutoff);
             all.push(n);
             let extra = all.len().saturating_sub(MAX_ENTRIES);
             all.drain(..extra);
         })?;
+        if let Some(sink) = SINK.get() {
+            sink(&out);
+        }
         Ok(out)
     }
 
@@ -175,6 +230,21 @@ impl Feed {
             n
         })
     }
+
+    /// Deletes `ids`, or every entry when `all`. Ids that are not there are
+    /// ignored; an empty `ids` without `all` deletes nothing. Returns how
+    /// many were deleted.
+    pub fn delete(&self, ids: &[String], all: bool) -> Result<usize> {
+        self.with(|entries| {
+            let before = entries.len();
+            if all {
+                entries.clear();
+            } else {
+                entries.retain(|e| !ids.contains(&e.id));
+            }
+            before - entries.len()
+        })
+    }
 }
 
 #[cfg(test)]
@@ -184,16 +254,16 @@ mod tests {
     #[test]
     fn a_failure_title_names_the_agent_and_a_short_reason() {
         assert_eq!(
-            stopped_title("Claude Code", "Invalid API key · Please run /login"),
-            "Claude Code stopped: Invalid API key · Please run /login"
+            stopped_title("Claude Code", "rate limit reached for this model"),
+            "Claude Code stopped: rate limit reached for this model"
         );
-        assert_eq!(
-            stopped_title(
-                "ada",
-                r#"API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}"#
-            ),
-            "ada stopped: API Error: 401 invalid x-api-key"
-        );
+        // A rejected or missing sign-in is said in words, never as the provider's error.
+        for raw in [
+            "Invalid API key · Please run /login",
+            r#"API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}"#,
+        ] {
+            assert_eq!(stopped_title("ada", raw), "ada needs you to connect it");
+        }
         assert_eq!(
             short_reason("Authentication required.\nsee the log"),
             "Authentication required"
@@ -239,5 +309,78 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(f.list(false, None).unwrap().len(), MAX_ENTRIES);
+    }
+
+    #[test]
+    fn delete_one_all_and_unread_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = Feed::new(dir.path());
+        let ids: Vec<String> = (0..4)
+            .map(|i| {
+                f.post(None, "message", &format!("n{i}"), "", None, None)
+                    .unwrap()
+                    .id
+            })
+            .collect();
+        f.ack(&ids[..1]).unwrap();
+        assert_eq!(f.list(true, None).unwrap().len(), 3);
+        // One entry goes; the others keep their ids and order.
+        assert_eq!(f.delete(&ids[1..2], false).unwrap(), 1);
+        let left: Vec<String> = f
+            .list(false, None)
+            .unwrap()
+            .into_iter()
+            .map(|n| n.id)
+            .collect();
+        assert_eq!(left, vec![ids[3].clone(), ids[2].clone(), ids[0].clone()]);
+        assert_eq!(f.list(true, None).unwrap().len(), 2, "unread count follows");
+        // Unknown ids and an empty list delete nothing (an empty list is not "all").
+        assert_eq!(f.delete(&["nope".into()], false).unwrap(), 0);
+        assert_eq!(f.delete(&[], false).unwrap(), 0);
+        assert_eq!(f.list(false, None).unwrap().len(), 3);
+        assert_eq!(f.delete(&[], true).unwrap(), 3);
+        assert!(f.list(false, None).unwrap().is_empty());
+        assert_eq!(f.delete(&[], true).unwrap(), 0);
+        // A new entry after deleting everything still posts.
+        f.post(None, "message", "again", "", None, None).unwrap();
+        assert_eq!(f.list(false, None).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn old_read_entries_are_pruned_on_post_but_unread_stay() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = Feed::new(dir.path());
+        let now = cua_volume::now_ms();
+        let old = now - READ_RETENTION_MS - 1000;
+        let mk = |id: &str, read: bool, at_ms: u64| Notification {
+            id: id.into(),
+            at_ms,
+            agent: None,
+            kind: "message".into(),
+            title: id.into(),
+            body: String::new(),
+            run_id: None,
+            space: None,
+            read,
+            entry_seq: None,
+        };
+        let seeded = vec![
+            mk("old-read", true, old),
+            mk("old-unread", false, old),
+            mk("new-read", true, now),
+        ];
+        std::fs::write(f.path(), serde_json::to_vec(&seeded).unwrap()).unwrap();
+        f.post(None, "message", "fresh", "", None, None).unwrap();
+        let mut ids: Vec<String> = f
+            .list(false, None)
+            .unwrap()
+            .into_iter()
+            .map(|n| n.id)
+            .collect();
+        ids.sort();
+        assert!(!ids.contains(&"old-read".to_string()));
+        assert!(ids.contains(&"old-unread".to_string()));
+        assert!(ids.contains(&"new-read".to_string()));
+        assert_eq!(ids.len(), 3);
     }
 }

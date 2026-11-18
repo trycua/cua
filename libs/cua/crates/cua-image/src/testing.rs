@@ -1,7 +1,7 @@
 //! Test helpers: [`FakeRegistry`], an in-memory [`ManifestSource`] with
 //! builders for the canonical layouts (multi-arch rootfs and containerDisk
 //! indexes, Lume and other darwin artifacts). Used by this crate's resolver
-//! tests and by the daemon, cua-fleet and SDK tests, so none of them needs a
+//! tests and by the daemon and SDK tests, so none of them needs a
 //! network.
 
 use std::collections::BTreeMap;
@@ -30,15 +30,18 @@ pub struct FakeRegistry {
 #[async_trait::async_trait]
 impl ManifestSource for FakeRegistry {
     async fn manifest(&self, reference: &str) -> Result<(Manifest, String)> {
-        let full = NormalizedRef::parse(reference)?.full();
+        let r = NormalizedRef::parse(reference)?;
+        let full = r.full();
         if let Some(kind) = self.refuse.get(&full) {
             assert_eq!(*kind, "unauthorized");
             return Err(ImageError::Unauthorized(format!("url https://x/v2/{full}")));
         }
+        // Like a registry, `repo:tag@digest` is served by its digest.
+        let key = r.digest.as_deref().map_or(full, |d| r.pinned(d));
         let raw = self
             .manifests
-            .get(&full)
-            .ok_or_else(|| ImageError::NotFound(full.clone()))?;
+            .get(&key)
+            .ok_or_else(|| ImageError::NotFound(key.clone()))?;
         Ok((Manifest::parse(raw)?, sha256_bytes(raw)))
     }
     async fn blob(&self, _reference: &str, desc: &Descriptor) -> Result<Vec<u8>> {

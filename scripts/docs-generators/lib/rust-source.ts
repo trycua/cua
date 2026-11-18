@@ -1,7 +1,6 @@
 /**
  * Small, deterministic readers for Rust and Go source, for generators whose
- * source of truth is code rather than a dump (the read-only `libs/fleet`
- * mirror cannot grow a `dump-docs` command).
+ * source of truth is code rather than a dump.
  *
  * They only handle the shapes they are used on and throw when a shape they
  * rely on is missing, so a refactor of the source fails the generator loudly

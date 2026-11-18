@@ -6,12 +6,11 @@
 
 Sandbox.ephemeral() auto-selects DockerRuntime for container images,
 provisions the environment, and tears it down on exit. Use local=True to run on
-your machine; drop it to run on the Cua cloud instead.
+your machine.
 
 Contrast:
     Image.linux()            + local=True  -> Docker container (fast, no VM overhead)
     Image.linux(kind="vm")   + local=True  -> QEMU VM (full kernel isolation)
-    Image.linux()            + local=False -> Cua cloud container
 """
 
 from __future__ import annotations

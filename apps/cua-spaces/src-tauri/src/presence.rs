@@ -245,8 +245,8 @@ pub async fn presence_join(
     sessions: State<'_, Arc<PresenceSessions>>,
     space_id: String,
 ) -> CmdResult<JoinInfo> {
-    // The account's claims only while signed in as a user (not an API key).
-    let signed_in = state.0.fleet_status(false).await.identity.is_some();
+    // The account's claims only while a user is signed in.
+    let signed_in = state.0.account_status().await.identity.is_some();
     let account = signed_in.then(|| state.0.session().profile()).flatten();
     let os_user = std::env::var("USER").ok();
     let space = state

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Background input synthesis for Windows.
 //!
 //! Strategy:
@@ -22,12 +25,13 @@ pub use inject::{
 pub use keyboard::{
     is_xaml_host_hwnd, post_char, post_key, post_type_text, post_type_text_with_delay,
     send_key_synthesized, send_key_synthesized_after_focus, send_text_synthesized,
-    send_text_synthesized_after_focus, wait_for_focused_descendant,
+    send_text_synthesized_after_focus, send_text_synthesized_paced_after_focus,
+    wait_for_focused_descendant,
 };
 pub use mouse::{
     has_chromium_descendant, is_chromium_target_window, post_click, post_click_screen,
-    send_click_synthesized, send_click_synthesized_active_mods, send_click_synthesized_mods,
-    send_wheel_synthesized,
+    send_click_synthesized, send_click_synthesized_active_mods,
+    send_click_synthesized_desktop_mods, send_click_synthesized_mods, send_wheel_synthesized,
 };
 
 use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND};

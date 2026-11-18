@@ -90,7 +90,7 @@ fn element_token_schema(_: &mut SchemaGenerator) -> Schema {
 
 pub const MULTI_CALL_SESSION_DESCRIPTION: &str =
     "For multi-call work, prefer a short public session label and repeat it on every call that \
-     accepts it. Omit it to use the authenticated transport's implicit lifecycle session.";
+     accepts it.";
 
 fn string_list_schema(generator: &mut SchemaGenerator) -> Schema {
     Vec::<String>::json_schema(generator)
@@ -131,6 +131,10 @@ fn click_button_schema(generator: &mut SchemaGenerator) -> Schema {
     ClickButton::json_schema(generator)
 }
 
+fn input_delivery_mode_schema(generator: &mut SchemaGenerator) -> Schema {
+    InputDeliveryMode::json_schema(generator)
+}
+
 fn scroll_by_schema(generator: &mut SchemaGenerator) -> Schema {
     ScrollBy::json_schema(generator)
 }
@@ -153,10 +157,6 @@ fn scroll_amount_schema(_: &mut SchemaGenerator) -> Schema {
 
 fn cursor_theme_id_schema(_: &mut SchemaGenerator) -> Schema {
     json_schema!({ "type": "string", "minLength": 1, "maxLength": 200 })
-}
-
-fn escalation_detail_schema(_: &mut SchemaGenerator) -> Schema {
-    json_schema!({ "type": "string", "maxLength": 200 })
 }
 
 fn capture_scope_schema(_: &mut SchemaGenerator) -> Schema {
@@ -202,39 +202,6 @@ impl std::fmt::Display for CaptureScope {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
-#[serde(rename_all = "snake_case")]
-pub enum EscalationReason {
-    AxTreePixelMismatch,
-    BackgroundDeliveryFailed,
-    ForegroundIneffective,
-    NoWindowTarget,
-    Other,
-}
-
-impl EscalationReason {
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "ax_tree_pixel_mismatch" => Some(Self::AxTreePixelMismatch),
-            "background_delivery_failed" => Some(Self::BackgroundDeliveryFailed),
-            "foreground_ineffective" => Some(Self::ForegroundIneffective),
-            "no_window_target" => Some(Self::NoWindowTarget),
-            "other" => Some(Self::Other),
-            _ => None,
-        }
-    }
-
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::AxTreePixelMismatch => "ax_tree_pixel_mismatch",
-            Self::BackgroundDeliveryFailed => "background_delivery_failed",
-            Self::ForegroundIneffective => "foreground_ineffective",
-            Self::NoWindowTarget => "no_window_target",
-            Self::Other => "other",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, uniffi::Enum)]
 pub enum DesktopScope {
     #[serde(rename = "desktop")]
@@ -268,10 +235,10 @@ impl JsonSchema for ActionTarget {
             "description": "Exact window (kind \"window\", with pid and window_id) or desktop (kind \"desktop\", with display_id). \"primary\" is the portable desktop target.",
             "required": ["kind"],
             "properties": {
-                "kind": {"type": "string", "enum": ["window", "desktop"], "description": "window requires pid and window_id; desktop requires display_id."},
-                "pid": {"type": "integer", "minimum": 0, "description": "Process id. Required when kind is window."},
-                "window_id": {"type": "integer", "minimum": 0, "description": "Window id from list_windows. Required when kind is window."},
-                "display_id": {"type": "string", "description": "Display id. Required when kind is desktop; use \"primary\"."}
+                "kind": {"type": "string", "enum": ["window", "desktop"]},
+                "pid": {"type": "integer", "minimum": 0},
+                "window_id": {"type": "integer", "minimum": 0},
+                "display_id": {"type": "string"}
             }
         })
     }
@@ -370,35 +337,6 @@ impl ToolInput for StartSessionInput {
     const TOOL_NAME: &'static str = "start_session";
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
-pub struct EscalateSessionInput {
-    /// Public label of the legacy capture-scope session to escalate.
-    pub session: String,
-    /// Why the window-scoped attempt failed and desktop capture is needed.
-    pub reason: EscalationReason,
-    /// Optional bounded diagnostic detail. Never use secrets or page content.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(schema_with = "escalation_detail_schema")]
-    pub detail: Option<String>,
-}
-
-impl ToolInput for EscalateSessionInput {
-    const TOOL_NAME: &'static str = "escalate_session";
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
-pub struct GetSessionStateInput {
-    /// Optional public label. When omitted, inspect the caller's attached
-    /// implicit session.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(schema_with = "string_schema")]
-    pub session: Option<String>,
-}
-
-impl ToolInput for GetSessionStateInput {
-    const TOOL_NAME: &'static str = "get_session_state";
-}
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 pub struct GetSessionInput {
     /// Optional public label. When omitted, inspect the caller's attached
@@ -464,8 +402,11 @@ pub struct CursorMotionSelection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "cursor_motion_style_schema")]
     pub style: Option<crate::CursorMotionStyle>,
+    /// `steady` (default) keeps the style's timing but makes every move take at least 600 ms,
+    /// with a gentler ease; `relaxed` and `calm` do the same with a 450 or 750 ms floor.
     /// `native` uses the style's own timing; `fitts` scales the move time with distance and
-    /// target size; `fixed` uses glide_duration_ms (1430 ms when 0).
+    /// target size; `deliberate` is a slower Fitts curve (450..1300 ms); `fixed` uses
+    /// glide_duration_ms (1430 ms when 0).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "cursor_motion_timing_schema")]
     pub timing: Option<crate::CursorMotionTiming>,
@@ -493,7 +434,8 @@ pub struct CursorMotionSelection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spring: Option<f64>,
     /// Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A
-    /// nonzero value with `native` timing also fixes the duration. Clamped to 0..5000.
+    /// nonzero value with `native` or the default `steady` timing also fixes the duration.
+    /// Clamped to 0..5000.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub glide_duration_ms: Option<f64>,
     /// Pause after a click animation, in milliseconds. Clamped to 0..5000 (default 80).
@@ -523,8 +465,11 @@ pub struct SetAgentCursorMotionInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "cursor_motion_style_schema")]
     pub style: Option<crate::CursorMotionStyle>,
+    /// `steady` (default) keeps the style's timing but makes every move take at least 600 ms,
+    /// with a gentler ease; `relaxed` and `calm` do the same with a 450 or 750 ms floor.
     /// `native` uses the style's own timing; `fitts` scales the move time with distance and
-    /// target size; `fixed` uses glide_duration_ms (1430 ms when 0).
+    /// target size; `deliberate` is a slower Fitts curve (450..1300 ms); `fixed` uses
+    /// glide_duration_ms (1430 ms when 0).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "cursor_motion_timing_schema")]
     pub timing: Option<crate::CursorMotionTiming>,
@@ -552,7 +497,8 @@ pub struct SetAgentCursorMotionInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spring: Option<f64>,
     /// Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A
-    /// nonzero value with `native` timing also fixes the duration. Clamped to 0..5000.
+    /// nonzero value with `native` or the default `steady` timing also fixes the duration.
+    /// Clamped to 0..5000.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub glide_duration_ms: Option<f64>,
     /// Pause after a click animation, in milliseconds. Clamped to 0..5000 (default 80).
@@ -609,7 +555,7 @@ impl ToolInput for EndSessionInput {
 #[serde(deny_unknown_fields)]
 pub struct GetDesktopStateInput {
     /// For multi-call work, prefer a short public session label and repeat it on every call that
-    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+    /// accepts it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
@@ -638,7 +584,7 @@ impl ToolInput for GetDesktopStateInput {
 #[serde(deny_unknown_fields)]
 pub struct GetScreenSizeInput {
     /// For multi-call work, prefer a short public session label and repeat it on every call that
-    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+    /// accepts it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
@@ -652,7 +598,7 @@ impl ToolInput for GetScreenSizeInput {
 #[serde(deny_unknown_fields)]
 pub struct GetCursorPositionInput {
     /// For multi-call work, prefer a short public session label and repeat it on every call that
-    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+    /// accepts it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
@@ -681,7 +627,7 @@ pub struct MoveCursorInput {
     #[schemars(schema_with = "desktop_scope_schema")]
     pub scope: Option<DesktopScope>,
     /// For multi-call work, prefer a short public session label and repeat it on every call that
-    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+    /// accepts it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
@@ -709,7 +655,7 @@ pub struct SetWindowFrameInput {
     #[schemars(schema_with = "positive_number_schema")]
     pub height: f64,
     /// For multi-call work, prefer a short public session label and repeat it on every call that
-    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+    /// accepts it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
@@ -737,8 +683,15 @@ pub struct InvokeMenuInput {
     /// (1 to 16 labels).
     #[schemars(schema_with = "menu_path_schema")]
     pub path: Vec<String>,
+    /// `background` (default) never takes the user's keyboard or pointer and refuses with
+    /// `background_unavailable` when the item can only be reached by opening a menu. `foreground`
+    /// is the explicit escalation that may activate the window and open menus. Linux honors it;
+    /// macOS and Windows accept it and keep their existing menu behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "input_delivery_mode_schema")]
+    pub delivery_mode: Option<InputDeliveryMode>,
     /// For multi-call work, prefer a short public session label and repeat it on every call that
-    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+    /// accepts it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
@@ -768,7 +721,7 @@ pub struct LegacyClickInput {
     #[schemars(schema_with = "desktop_scope_schema")]
     pub scope: Option<DesktopScope>,
     /// For multi-call work, prefer a short public session label and repeat it on every call that
-    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+    /// accepts it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
@@ -839,7 +792,7 @@ struct ClickWireInput {
     #[schemars(schema_with = "nonempty_string_schema")]
     capture_id: Option<String>,
     /// For multi-call work, prefer a short public session label and repeat it on every call that
-    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+    /// accepts it.
     #[serde(default)]
     #[schemars(schema_with = "string_schema")]
     session: Option<String>,
@@ -947,7 +900,7 @@ pub struct DragInput {
     #[schemars(schema_with = "desktop_scope_schema")]
     pub scope: Option<DesktopScope>,
     /// For multi-call work, prefer a short public session label and repeat it on every call that
-    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+    /// accepts it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
@@ -986,7 +939,7 @@ pub struct ScrollInput {
     #[schemars(schema_with = "desktop_scope_schema")]
     pub scope: Option<DesktopScope>,
     /// For multi-call work, prefer a short public session label and repeat it on every call that
-    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+    /// accepts it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
@@ -1015,7 +968,7 @@ pub struct TypeTextInput {
     #[schemars(schema_with = "desktop_scope_schema")]
     pub scope: Option<DesktopScope>,
     /// For multi-call work, prefer a short public session label and repeat it on every call that
-    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+    /// accepts it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
@@ -1033,7 +986,7 @@ pub struct ClipboardReadInput {
     #[serde(default)]
     pub include_text: bool,
     /// For multi-call work, prefer a short public session label and repeat it on every call that
-    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+    /// accepts it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
@@ -1059,7 +1012,7 @@ pub struct ClipboardWriteInput {
     #[schemars(schema_with = "string_schema")]
     pub file_path: Option<String>,
     /// For multi-call work, prefer a short public session label and repeat it on every call that
-    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+    /// accepts it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
@@ -1082,7 +1035,7 @@ pub struct PressKeyInput {
     #[schemars(schema_with = "desktop_scope_schema")]
     pub scope: Option<DesktopScope>,
     /// For multi-call work, prefer a short public session label and repeat it on every call that
-    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+    /// accepts it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
@@ -1114,7 +1067,7 @@ pub struct HotkeyInput {
     #[schemars(schema_with = "desktop_scope_schema")]
     pub scope: Option<DesktopScope>,
     /// For multi-call work, prefer a short public session label and repeat it on every call that
-    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+    /// accepts it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,

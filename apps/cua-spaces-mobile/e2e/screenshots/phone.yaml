@@ -1,0 +1,35 @@
+# Real screenshots on an iPhone Simulator (sample data). Run by scripts/screenshots.sh with -e OUT=<dir> -e NAME=<iphone-light>.
+appId: ai.cua.spaces.mobile
+---
+- launchApp
+- assertVisible: "Sample data. Not your account."
+- extendedWaitUntil:
+    visible: ".*Needs you.*"
+    timeout: 10000
+- takeScreenshot: home-${NAME}
+- tapOn:
+    text: "Claude Code.*"
+    index: 0
+- assertVisible: ".*wants to push a branch.*"
+- takeScreenshot: thread-approval-${NAME}
+- tapOn:
+    id: "card-expander"
+- assertVisible: ".*test_ws_reconnect.*"
+- takeScreenshot: thread-approval-changes-${NAME}
+- tapOn: "Open the live desktop of checkout-api"
+- assertVisible: "Sample screen"
+- takeScreenshot: thread-stream-${NAME}
+- tapOn: "Full screen"
+- assertVisible: "Take control.*"
+- takeScreenshot: stream-full-${NAME}
+- tapOn: "Close the live desktop"
+- tapOn: "Back to Spaces"
+- tapOn: "Search Spaces, apps or agents"
+- inputText: "design-review"
+- tapOn:
+    text: "Reviewer.*"
+    index: 0
+- extendedWaitUntil:
+    visible: ".*Asleep, a message wakes it.*"
+    timeout: 10000
+- takeScreenshot: thread-asleep-${NAME}

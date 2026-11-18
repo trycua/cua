@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Smoke check for the recording tools via the Windows named-pipe daemon.
 //!
 //! Renamed from the old "Swift-parity" check — the API split into

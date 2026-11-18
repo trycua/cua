@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Host-chosen gap between synthesized key events (macOS only).
 //!
 //! The macOS keyboard adapter sleeps a fixed gap between each key down and

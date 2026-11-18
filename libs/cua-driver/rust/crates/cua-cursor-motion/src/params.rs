@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! The tunable knobs of the built-in styles (Cua Driver's
 //! `set_agent_cursor_motion` fields that shape motion).
 
@@ -25,8 +28,8 @@ pub struct MotionParams {
     /// `classic` arrival spring damping: 1.0 = critical, 0.3 = bouncy.
     pub spring: f64,
     /// Fixed move time in ms; 0 means [`DEFAULT_FIXED_MS`](crate::DEFAULT_FIXED_MS)
-    /// for `fixed` timing. A positive value with `native` timing also fixes
-    /// the time (the driver's legacy behaviour).
+    /// for `fixed` timing. A positive value with `native` or the default
+    /// (`steady`) timing also fixes the time (the driver's legacy behaviour).
     pub glide_duration_ms: f64,
     /// `classic` peak speed, pt/s.
     pub peak_speed: f64,

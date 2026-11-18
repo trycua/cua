@@ -30,7 +30,11 @@ import { readFileSync } from "node:fs"
 const catalog = JSON.parse(
   readFileSync(new URL("../../../images/sandbox-images.json", import.meta.url), "utf8"),
 )
-const published = (ref) => catalog.images.find((i) => i.ref === ref)?.published ?? true
+// An entry built on the user's own machine (derived_from) resolves while unpublished.
+const published = (ref) => {
+  const entry = catalog.images.find((i) => i.ref === ref)
+  return (entry?.published ?? true) || Boolean(entry?.derived_from)
+}
 const expectRef = (fn, ref) => {
   if (published(ref)) {
     assert.equal(fn(), ref)
@@ -52,6 +56,8 @@ test("Image tiers pick <os-version>[-<tier>] and Image.omarchy() is edge", () =>
     expectRef(() => cua.Image.linux({ tier: "slim" }), "ghcr.io/trycua/linux:24.04-slim")
     expectRef(() => cua.Image.macos(undefined, "xcode"), "ghcr.io/trycua/macos:26-xcode")
     expectRef(() => cua.Image.omarchy(), "ghcr.io/trycua/omarchy:edge")
+    expectRef(() => cua.Image.linux({ tier: "docker" }), "ghcr.io/trycua/linux:24.04-docker-disk")
+    assert.throws(() => cua.Image.macos(undefined, "docker"))
     assert.throws(() => cua.Image.linux({ tier: "xcode" }))
     assert.throws(() => cua.Image.linux({ tier: "tiny" }))
   } finally {

@@ -3,7 +3,7 @@
 
 /**
  * Notifications: the daemon's feed (`notifications_list`) and marking it
- * read (`notifications_ack`), the same Spaces tools the SwiftUI app's
+ * read (`notifications_ack`) or deleting it (`notifications_delete`), the same Spaces tools the SwiftUI app's
  * `PersistentModel` polls. `protocol.ts` registers them.
  */
 
@@ -16,11 +16,23 @@ export interface NotificationsOperations {
   "notifications.list": { args: Empty; result: NotificationInput[] };
   /** Marks every entry read (`notifications_ack` with no ids). */
   "notifications.markAllRead": { args: Empty; result: null };
+  /** Marks these entries read (`notifications_ack` with their ids). */
+  "notifications.markRead": { args: { ids: string[] }; result: null };
+  /** Deletes these entries for good (`notifications_delete` with their ids). */
+  "notifications.delete": { args: { ids: string[] }; result: null };
+  /** Deletes every entry (`notifications_delete` with `all`). */
+  "notifications.deleteAll": { args: Empty; result: null };
 }
 
 export type NotificationsOpName = keyof NotificationsOperations;
 
-export const NOTIFICATIONS_OPERATIONS = ["notifications.list", "notifications.markAllRead"] as const satisfies readonly NotificationsOpName[];
+export const NOTIFICATIONS_OPERATIONS = [
+  "notifications.list",
+  "notifications.markAllRead",
+  "notifications.markRead",
+  "notifications.delete",
+  "notifications.deleteAll",
+] as const satisfies readonly NotificationsOpName[];
 
 type Handlers = { [K in NotificationsOpName]: (args: NotificationsOperations[K]["args"]) => Promise<NotificationsOperations[K]["result"]> };
 type Invoke = <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
@@ -38,16 +50,31 @@ export function notificationsFromTool(answer: unknown): NotificationInput[] {
       title: String(n.title ?? ""),
       body: String(n.body ?? ""),
       read: Boolean(n.read),
+      space: typeof n.space === "string" && n.space ? n.space : null,
     };
   });
 }
 
-/** Tauri: both tools through `agents_tool` (already on its allow-list). */
+/** Tauri: the tools through `agents_tool` (already on its allow-list). */
 export function tauriNotificationsOps(invoke: Invoke): Handlers {
   return {
     "notifications.list": async () => notificationsFromTool(await invoke("agents_tool", { tool: "notifications_list", args: {} })),
     "notifications.markAllRead": async () => {
       await invoke("agents_tool", { tool: "notifications_ack", args: { ids: [] } });
+      return null;
+    },
+    "notifications.markRead": async ({ ids }) => {
+      // An empty list would mark every entry read.
+      if (ids.length) await invoke("agents_tool", { tool: "notifications_ack", args: { ids } });
+      return null;
+    },
+    "notifications.delete": async ({ ids }) => {
+      // An empty list deletes nothing (the tool never reads it as "all").
+      if (ids.length) await invoke("agents_tool", { tool: "notifications_delete", args: { ids } });
+      return null;
+    },
+    "notifications.deleteAll": async () => {
+      await invoke("agents_tool", { tool: "notifications_delete", args: { ids: [], all: true } });
       return null;
     },
   };
@@ -56,4 +83,7 @@ export function tauriNotificationsOps(invoke: Invoke): Handlers {
 export const NOTIFICATIONS_TAURI_COMMANDS = {
   "notifications.list": ["agents_tool"],
   "notifications.markAllRead": ["agents_tool"],
+  "notifications.markRead": ["agents_tool"],
+  "notifications.delete": ["agents_tool"],
+  "notifications.deleteAll": ["agents_tool"],
 } as const satisfies Record<NotificationsOpName, readonly string[]>;

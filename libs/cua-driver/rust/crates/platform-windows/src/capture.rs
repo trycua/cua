@@ -340,16 +340,62 @@ unsafe fn target_is_obscured(target: HWND) -> bool {
     covered_samples >= 2
 }
 
+fn monitor_bounds() -> Vec<Bounds> {
+    use windows::Win32::Foundation::{BOOL, LPARAM, RECT};
+    use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, HDC, HMONITOR};
+
+    unsafe extern "system" fn collect(
+        _monitor: HMONITOR,
+        _hdc: HDC,
+        rect: *mut RECT,
+        data: LPARAM,
+    ) -> BOOL {
+        let bounds = &mut *(data.0 as *mut Vec<Bounds>);
+        if let Some(rect) = rect.as_ref() {
+            bounds.push((rect.left, rect.top, rect.right, rect.bottom));
+        }
+        BOOL(1)
+    }
+
+    let mut bounds = Vec::new();
+    unsafe {
+        let _ = EnumDisplayMonitors(
+            HDC::default(),
+            None,
+            Some(collect),
+            LPARAM(&mut bounds as *mut Vec<Bounds> as isize),
+        );
+    }
+    bounds
+}
+
+/// Monitors never overlap, so `target` lies on real displays exactly when the
+/// areas of its intersections with them add up to its own area. The virtual
+/// screen's bounding box is not enough: staggered monitors leave gaps in it
+/// that BitBlt reads as black.
+fn monitors_cover(target: Bounds, monitors: &[Bounds]) -> bool {
+    let area = |(left, top, right, bottom): Bounds| {
+        (i64::from(right) - i64::from(left)).max(0) * (i64::from(bottom) - i64::from(top)).max(0)
+    };
+    let covered: i64 = monitors
+        .iter()
+        .map(|&(left, top, right, bottom)| {
+            area((
+                left.max(target.0),
+                top.max(target.1),
+                right.min(target.2),
+                bottom.min(target.3),
+            ))
+        })
+        .sum();
+    area(target) > 0 && covered == area(target)
+}
+
 /// Fallback capture path: BitBlt the desktop DC over the rectangle covered
 /// by `hwnd`'s on-screen bounds. Works for UWP / WinUI3 / DirectComposition
 /// surfaces that PrintWindow can't reach, as long as the window is on-screen
 /// (the daemon's typical case — see module docs).
 unsafe fn screenshot_via_screen_region(hwnd: HWND) -> Result<(Vec<u8>, i32, i32, FrameGeometry)> {
-    use windows::Win32::UI::WindowsAndMessaging::{
-        GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
-        SM_YVIRTUALSCREEN,
-    };
-
     // Under Per-Monitor V2 DPI awareness, GetWindowRect already returns
     // PHYSICAL pixels (coordinate virtualization only applies to
     // DPI-unaware/system-aware processes), and BitBlt operates in physical
@@ -366,15 +412,13 @@ unsafe fn screenshot_via_screen_region(hwnd: HWND) -> Result<(Vec<u8>, i32, i32,
     let w = geometry.width;
     let h = geometry.height;
 
-    let screen_left = i64::from(GetSystemMetrics(SM_XVIRTUALSCREEN));
-    let screen_top = i64::from(GetSystemMetrics(SM_YVIRTUALSCREEN));
-    let screen_right = screen_left + i64::from(GetSystemMetrics(SM_CXVIRTUALSCREEN));
-    let screen_bottom = screen_top + i64::from(GetSystemMetrics(SM_CYVIRTUALSCREEN));
-    if i64::from(physical_left) < screen_left
-        || i64::from(physical_top) < screen_top
-        || i64::from(physical_left) + i64::from(w) > screen_right
-        || i64::from(physical_top) + i64::from(h) > screen_bottom
-    {
+    let target = (
+        physical_left,
+        physical_top,
+        physical_left + w,
+        physical_top + h,
+    );
+    if !monitors_cover(target, &monitor_bounds()) {
         bail!(
             "screen-region fallback: window is partly off-screen; bring it fully on-screen first"
         );
@@ -969,7 +1013,19 @@ pub fn png_dimensions_pub(data: &[u8]) -> Result<(u32, u32)> {
 
 #[cfg(test)]
 mod wgc_validation_tests {
-    use super::{normalize_wgc_frame, validate_wgc_frame, FrameGeometry};
+    use super::{monitors_cover, normalize_wgc_frame, validate_wgc_frame, FrameGeometry};
+
+    #[test]
+    fn screen_region_must_lie_on_real_monitors() {
+        // A 1920x1080 primary beside a 1280x1024 secondary that starts 200 px
+        // lower leaves a gap above the secondary inside the virtual screen.
+        let monitors = [(0, 0, 1920, 1080), (1920, 200, 3200, 1224)];
+        assert!(monitors_cover((100, 100, 900, 700), &monitors));
+        assert!(monitors_cover((1800, 300, 2200, 900), &monitors));
+        assert!(!monitors_cover((1800, 100, 2200, 600), &monitors));
+        assert!(!monitors_cover((-10, 100, 500, 600), &monitors));
+        assert!(!monitors_cover((100, 100, 900, 700), &[]));
+    }
 
     #[test]
     fn black_frames_do_not_depend_on_alpha() {

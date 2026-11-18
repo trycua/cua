@@ -6207,7 +6207,7 @@ export type WindowElement = {
     selected?: boolean,
     /**
      * Whether the element is a password field. Windows reports it from UIA
-     * `IsPassword` on text-entry elements; absent means unknown.
+     * `IsPassword`: `false` only on `Edit` controls, absent when unknown.
      */
     isPassword?: boolean,
     inWebContent?: boolean,

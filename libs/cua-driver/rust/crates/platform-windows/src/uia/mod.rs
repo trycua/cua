@@ -14,7 +14,7 @@
 
 use cua_driver_core::walk_budget::WalkBudget;
 use windows::core::{Interface, BSTR, HRESULT};
-use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
+use windows::Win32::Foundation::{RPC_E_CHANGED_MODE, TRUE};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
 };
@@ -860,10 +860,7 @@ fn emit_cached_node(
     // macOS: enablement is state the caller needs to read, not a reason to hide
     // the row. The token writers refuse it (`tools::impl_::refuse_if_disabled`).
     let actions = detect_cached_actions(element, &control_type);
-    let is_password = text_entry_is_password(
-        read_cached_bool(element, UIA_IsPasswordPropertyId),
-        &actions,
-    );
+    let is_password = text_entry_is_password(read_cached_is_password(element), &actions);
     // Providers are expected to blank Value on password fields, but that is a
     // convention, not something UIA enforces. Never echo it once the element
     // says it is a password field.
@@ -1018,13 +1015,30 @@ fn read_cached_bool(
     element: &IUIAutomationElement,
     property_id: windows::Win32::UI::Accessibility::UIA_PROPERTY_ID,
 ) -> Option<bool> {
+    unsafe { variant_bool(&element.GetCachedPropertyValue(property_id).ok()?) }
+}
+
+/// UIA `IsPassword`, or `None` when the provider does not support it. The
+/// plain `GetCachedPropertyValue` substitutes the property's default `false`
+/// for an unsupported property, which would report an unknown field as known
+/// not to be a password field.
+fn read_cached_is_password(element: &IUIAutomationElement) -> Option<bool> {
     unsafe {
-        let variant = element.GetCachedPropertyValue(property_id).ok()?;
-        if variant.as_raw().Anonymous.Anonymous.vt == 11 {
-            Some(variant.as_raw().Anonymous.Anonymous.Anonymous.boolVal != 0)
-        } else {
-            None
-        }
+        variant_bool(
+            &element
+                .GetCachedPropertyValueEx(UIA_IsPasswordPropertyId, TRUE)
+                .ok()?,
+        )
+    }
+}
+
+/// A `VT_BOOL` variant's value; `None` for any other type, including the
+/// not-supported sentinel.
+unsafe fn variant_bool(variant: &windows::core::VARIANT) -> Option<bool> {
+    if variant.as_raw().Anonymous.Anonymous.vt == 11 {
+        Some(variant.as_raw().Anonymous.Anonymous.Anonymous.boolVal != 0)
+    } else {
+        None
     }
 }
 

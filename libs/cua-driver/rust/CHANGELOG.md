@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.53.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.53.1...cua-driver-rs-v0.53.2) (2026-11-18)
+
+
+### Bug Fixes
+
+* **cua-driver:** add started_at_unix_ms to recording session.json ([#8118](https://github.com/trycua/cua/issues/8118)) ([7737d7d](https://github.com/trycua/cua/commit/7737d7db7139cbd2687de6f2d8581bfaa16758aa))
+
 ## [0.53.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.53.0...cua-driver-rs-v0.53.1) (2026-11-18)
 
 

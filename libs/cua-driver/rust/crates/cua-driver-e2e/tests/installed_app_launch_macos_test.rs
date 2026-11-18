@@ -47,6 +47,7 @@ impl TestOwnedApp {
             .spawn()
             .unwrap_or_else(|error| panic!("launch AppKit harness {executable:?}: {error}"));
         let pid = child.id();
+        let app = Self { child, pid };
         let deadline = Instant::now() + Duration::from_secs(20);
         while !cua_driver_testkit::observer::macos::application_presented(pid) {
             assert!(
@@ -55,7 +56,7 @@ impl TestOwnedApp {
             );
             sleep(Duration::from_millis(50));
         }
-        Self { child, pid }
+        app
     }
 }
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.38.11](https://github.com/trycua/cua/compare/cua-spaces-v0.38.10...cua-spaces-v0.38.11) (2026-11-18)
+
+
+### Bug Fixes
+
+* **cua-spacesd:** probe hardware encoders off the GetCapabilities path ([#8161](https://github.com/trycua/cua/issues/8161)) ([9346cab](https://github.com/trycua/cua/commit/9346cabc2e0614a2ec9d9b629ab0db39b44db4bb))
+
 ## [0.38.10](https://github.com/trycua/cua/compare/cua-spaces-v0.38.9...cua-spaces-v0.38.10) (2026-11-18)
 
 

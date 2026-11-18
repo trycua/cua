@@ -72,6 +72,8 @@ syncBuiltinESMExports();
     environment = os.environ.copy()
     environment.pop("CARGO_TARGET_DIR", None)
     environment["CUA_TEST_CALLS"] = str(calls)
+    # os.tmpdir() reads TEMP once process.platform reports win32.
+    environment["TEMP"] = str(tmp_path)
     for arguments in ([], ["--check"]):
         result = subprocess.run(
             [node, "--import", preload.as_uri(), str(script), *arguments],

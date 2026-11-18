@@ -100,7 +100,8 @@ export interface MediaSessionOptions {
    * rebuilt in software from the next keyframe. */
   hardwareAcceleration?: HardwareAcceleration;
   /** Send the host's ⌘ as Control (a Mac viewing a Linux or Windows guest,
-   * where ⌘ would arrive as Super: ⌘C would type "c"). */
+   * where ⌘ would arrive as Super: ⌘C would type "c"). The right ⌘ held
+   * without the left one still goes as Super, for Super shortcuts. */
   metaAsControl?: boolean;
   /** Send a ⌘ chord's press and release together (a Mac host): Chromium
    * does not fire the key-up of a key pressed with ⌘ held, and a press with
@@ -759,24 +760,32 @@ export class MediaSession {
       },
       { passive: false },
     );
+    // The ⌘ keys held (`MetaLeft`, `MetaRight`): the right one alone is Super.
+    const commands = new Set<string>();
     const send = (input: InteractiveInputEvent | null) => {
-      if (input) this.queueInput(this.options.metaAsControl ? commandAsControl(input) : input);
+      if (!input) return;
+      const superKey = commands.has("MetaRight") && !commands.has("MetaLeft");
+      this.queueInput(this.options.metaAsControl && !superKey ? commandAsControl(input) : input);
     };
     on("keydown", (event) => {
       event.preventDefault();
+      if (!event.metaKey) commands.clear();
+      if (COMMAND_CODES.has(event.code)) commands.add(event.code);
       send(keyEventToInput(event, "down"));
       if (this.options.wholeCommandChords && event.metaKey && !MODIFIER_KEYS.has(event.key)) send(keyEventToInput(event, "up"));
     });
     on("keyup", (event) => {
       event.preventDefault();
-      const input = keyEventToInput(event, "up");
-      if (input) this.queueInput(this.options.metaAsControl ? commandAsControl(input) : input);
+      send(keyEventToInput(event, "up"));
+      commands.delete(event.code);
     });
   }
 }
 
 /** Keys that only change the modifiers. */
 const MODIFIER_KEYS = new Set(["Meta", "OS", "Shift", "Alt", "Control"]);
+
+const COMMAND_CODES = new Set(["MetaLeft", "MetaRight"]);
 
 /** A key as a Linux or Windows guest takes it from a Mac: ⌘ as Control. */
 export function commandAsControl(input: InteractiveInputEvent): InteractiveInputEvent {

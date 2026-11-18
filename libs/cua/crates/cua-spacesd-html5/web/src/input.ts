@@ -73,7 +73,8 @@ const MODIFIER_KEYS = new Set(["Shift", "Control", "Alt", "Meta", "AltGraph"]);
 
 /** Options for mapping one key event. */
 export interface KeyMapOptions {
-  /** Send the host's Cmd as Ctrl (a Mac viewing a Linux or Windows guest). */
+  /** Send the host's Cmd as Ctrl (a Mac viewing a Linux or Windows guest).
+   * The input controller keeps the right Cmd held alone as Super. */
   metaAsControl: boolean;
 }
 
@@ -245,6 +246,14 @@ export class InputController {
     this.heldKeys.clear();
   }
 
+  /** The key options for a key with `code`: the right ⌘ held without the
+   * left one is the guest's Super, never Control. */
+  private keyOptions(code: string): KeyMapOptions {
+    const options = this.options.keyOptions();
+    const held = (meta: string) => code === meta || this.heldKeys.has(meta);
+    return held("MetaRight") && !held("MetaLeft") ? { ...options, metaAsControl: false } : options;
+  }
+
   private send(event: InteractiveInputEvent): void {
     if (!this.enabled) return;
     this.options.emit(event);
@@ -270,7 +279,7 @@ export class InputController {
     const textarea = this.textarea;
 
     this.on(textarea, "keydown", (event) => {
-      const mapped = mapKey(event, "down", this.options.keyOptions());
+      const mapped = mapKey(event, "down", this.keyOptions(event.code));
       if (!mapped) return; // text arrives through beforeinput
       const isPaste = mapped.kind === "key" && mapped.key === "v" && mapped.modifiers.length > 0 && this.options.onPaste;
       if (isPaste) {
@@ -296,7 +305,7 @@ export class InputController {
         this.send({ ...held, state: "up", repeat: false });
         return;
       }
-      const mapped = mapKey(event, "up", this.options.keyOptions());
+      const mapped = mapKey(event, "up", this.keyOptions(event.code));
       if (!mapped || !MODIFIER_KEYS.has(event.key)) return;
       event.preventDefault();
       this.send(mapped);

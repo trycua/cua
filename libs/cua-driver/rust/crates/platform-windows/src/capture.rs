@@ -369,26 +369,36 @@ fn monitor_bounds() -> Vec<Bounds> {
     bounds
 }
 
-/// Monitors never overlap, so `target` lies on real displays exactly when the
-/// areas of its intersections with them add up to its own area. The virtual
-/// screen's bounding box is not enough: staggered monitors leave gaps in it
-/// that BitBlt reads as black.
+/// Whether every pixel of `target` lies on some monitor. The virtual screen's
+/// bounding box is not enough: staggered monitors leave gaps in it that BitBlt
+/// reads as black. Mirroring drivers can add overlapping pseudo-monitors, so
+/// test the union of the rectangles cell by cell rather than summing areas.
 fn monitors_cover(target: Bounds, monitors: &[Bounds]) -> bool {
-    let area = |(left, top, right, bottom): Bounds| {
-        (i64::from(right) - i64::from(left)).max(0) * (i64::from(bottom) - i64::from(top)).max(0)
-    };
-    let covered: i64 = monitors
+    let (left, top, right, bottom) = target;
+    if left >= right || top >= bottom {
+        return false;
+    }
+    let clipped: Vec<Bounds> = monitors
         .iter()
-        .map(|&(left, top, right, bottom)| {
-            area((
-                left.max(target.0),
-                top.max(target.1),
-                right.min(target.2),
-                bottom.min(target.3),
-            ))
+        .map(|&(l, t, r, b)| (l.max(left), t.max(top), r.min(right), b.min(bottom)))
+        .filter(|&(l, t, r, b)| l < r && t < b)
+        .collect();
+    let edges = |pick: fn(&Bounds) -> [i32; 2], low: i32, high: i32| {
+        let mut edges: Vec<i32> = clipped.iter().flat_map(pick).collect();
+        edges.extend([low, high]);
+        edges.sort_unstable();
+        edges.dedup();
+        edges
+    };
+    let xs = edges(|r| [r.0, r.2], left, right);
+    let ys = edges(|r| [r.1, r.3], top, bottom);
+    xs.windows(2).all(|x| {
+        ys.windows(2).all(|y| {
+            clipped
+                .iter()
+                .any(|&(l, t, r, b)| l <= x[0] && x[1] <= r && t <= y[0] && y[1] <= b)
         })
-        .sum();
-    area(target) > 0 && covered == area(target)
+    })
 }
 
 /// Fallback capture path: BitBlt the desktop DC over the rectangle covered
@@ -1025,6 +1035,20 @@ mod wgc_validation_tests {
         assert!(!monitors_cover((1800, 100, 2200, 600), &monitors));
         assert!(!monitors_cover((-10, 100, 500, 600), &monitors));
         assert!(!monitors_cover((100, 100, 900, 700), &[]));
+    }
+
+    #[test]
+    fn overlapping_monitors_neither_double_count_nor_hide_a_gap() {
+        // A mirroring pseudo-monitor duplicates the primary's rectangle.
+        let mirrored = [(0, 0, 1920, 1080), (0, 0, 1920, 1080)];
+        assert!(monitors_cover((100, 100, 900, 700), &mirrored));
+        // The doubled 920 px overlap must not stand in for the 920 px strip
+        // right of x = 1920 that no monitor covers.
+        assert!(!monitors_cover((1000, 100, 2840, 600), &mirrored));
+        assert!(monitors_cover(
+            (500, 100, 1500, 600),
+            &[(0, 0, 1200, 1080), (800, 0, 1920, 1080)]
+        ));
     }
 
     #[test]

@@ -5,7 +5,8 @@
 // chosen in Settings, General) brings the main window to the front from any
 // app, through Electron's globalShortcut.
 // Another app may already hold the keys; then the registration fails, and
-// Settings says so and tries again each time it opens (`ensure`).
+// Settings says so and tries again each time it opens (`ensure`). Settings
+// may also turn it off (saved as no keys, an empty accelerator).
 import { app, globalShortcut } from "electron";
 
 export const DEFAULT_ACCELERATOR = "Command+Shift+Space";
@@ -41,6 +42,9 @@ const ACCELERATOR =
 
 export const isAccelerator = (value: string): boolean => ACCELERATOR.test(value);
 
+/** Settings' option that turns the shortcut off. */
+export const OFF = "off";
+
 export class GlobalShortcut {
   private registered = false;
 
@@ -52,17 +56,25 @@ export class GlobalShortcut {
     private readonly save: (accelerator: string) => void = () => {},
   ) {}
 
-  /** Registers the keys unless they already are; what the system answered. */
+  /** Registers the keys unless they already are; what the system answered. Off: an empty label. */
   ensure(): GlobalShortcutState {
+    if (this.accelerator === "") return { label: "", registered: false };
     if (!this.registered) this.registered = this.register(this.accelerator, this.onPress);
     return { label: shortcutLabel(this.accelerator), registered: this.registered };
   }
 
   /**
-   * Moves the shortcut to `next`. The new keys are tried first: when another
-   * app holds them the old ones stay, and this throws why.
+   * Moves the shortcut to `next`, or turns it off. The new keys are tried
+   * first: when another app holds them the old ones stay, and this throws why.
    */
   change(next: string): GlobalShortcutState {
+    if (next === OFF) {
+      if (this.registered) this.unregister(this.accelerator);
+      this.accelerator = "";
+      this.registered = false;
+      this.save("");
+      return { label: "", registered: false };
+    }
     if (!isAccelerator(next)) throw new Error(`Not a shortcut Cua Spaces can use: ${next}`);
     if (next === this.accelerator) return this.ensure();
     if (!this.register(next, this.onPress)) throw new Error(`Another app is using ${shortcutLabel(next)}. Pick other keys.`);
@@ -76,7 +88,7 @@ export class GlobalShortcut {
 
 /** The shortcut on macOS (the Windows and Linux shells have none), registered
  * once the app is ready and released when it quits. `saved` is the keys the
- * person chose last time (none: the default). */
+ * person chose last time (none: the default; empty: turned off). */
 export function installGlobalShortcut(
   platform: NodeJS.Platform,
   onPress: () => void,
@@ -84,7 +96,8 @@ export function installGlobalShortcut(
 ): GlobalShortcut | null {
   if (platform !== "darwin") return null;
   const stored = saved.read();
-  const shortcut = new GlobalShortcut(onPress, undefined, stored && isAccelerator(stored) ? stored : DEFAULT_ACCELERATOR, undefined, saved.write);
+  const keys = stored !== undefined && (stored === "" || isAccelerator(stored)) ? stored : DEFAULT_ACCELERATOR;
+  const shortcut = new GlobalShortcut(onPress, undefined, keys, undefined, saved.write);
   shortcut.ensure();
   app.on("will-quit", () => globalShortcut.unregisterAll());
   return shortcut;

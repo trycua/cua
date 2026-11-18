@@ -205,8 +205,11 @@ speaks it as is:
   shell); one sent from the page fails with `native_only`.
   Onboarding stays native. Appearance is kept in the page, and an appearance
   change calls `window.setBackgroundColor`. The host registers ⌘⇧Space
-  itself; `settings.get` carries `globalShortcut: {label, registered}`, and
-  each read tries the registration again when the system refused it.
+  itself (or the settings file's `hotkey`); `settings.get` carries
+  `globalShortcut: {label, registered}`, and each read tries the
+  registration again when the system refused it. `settings.choose` with row
+  `global-shortcut` takes recorded keys (`Control+Alt+Command+F`) or `off`,
+  which leaves an empty label.
 - `settings.get` also carries `accountUrl`, the host's account app
   (`app_account_app_url`: `CUA_ENV`, `CUA_ACCOUNT_APP_URL`). The page's wasm
   core has no environment, so the relay notice's Upgrade falls back to that

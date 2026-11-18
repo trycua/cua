@@ -37,6 +37,9 @@ its owner drops and exits on its own after 90 seconds.
   with the exact `no_value_route` error; ASCII is still inserted.
 - `SetTextContents` accepted or raising, a caret read error, and an
   `InsertText` error or `false` answer.
+- Typing (`insert_text`, `type_into_editable_at`) sends no write to a
+  single-line field of a Qt application and fails with `QtLineEditSetsText`;
+  a multi-line Qt field and every other toolkit's field still take it.
 
 It is protocol evidence against a scripted application, not a run against real
 GTK or Qt widgets. The fixture counts caret offsets in characters for every

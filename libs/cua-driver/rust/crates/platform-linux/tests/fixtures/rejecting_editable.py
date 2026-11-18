@@ -7,8 +7,9 @@ It registers with the real AT-SPI registry on the accessibility bus of the
 session it runs in, so the driver finds it the way it finds any application.
 `ToolkitName` and the unit `InsertText` reads its length in follow the toolkit
 the test names: GTK reads UTF-8 bytes, Qt resizes the string to exactly that
-many UTF-16 units, and with no toolkit the property is absent. The test reads
-the text, caret and calls back over stdin/stdout, not over AT-SPI.
+many UTF-16 units, and with no toolkit the property is absent. The editable is
+multi-line unless the test asks for a single-line one. The test reads the
+text, caret and calls back over stdin/stdout, not over AT-SPI.
 """
 
 import json
@@ -32,7 +33,8 @@ T = "org.a11y.atspi.Text"
 E = "org.a11y.atspi.EditableText"
 ROOT = "/org/a11y/atspi/accessible/root"
 ENTRY = "/org/a11y/atspi/accessible/entry"
-state: dict[str, Any] = dict(text="", caret=0, mode="reject", toolkit=None, sets=0, inserts=[])
+state: dict[str, Any] = dict(text="", caret=0, mode="reject", toolkit=None, multiline=True, sets=0, inserts=[])
+MULTI_LINE = 1 << 17
 
 
 def unknown_property():
@@ -68,7 +70,8 @@ class Accessible(dbus.service.Object):
 
     @dbus.service.method(A, in_signature="", out_signature="au")
     def GetState(self):
-        return [256 | (1 << 30), 0]  # Enabled and Showing; not focused.
+        states = 256 | (1 << 30)  # Enabled and Showing; not focused.
+        return [states | (MULTI_LINE if state["multiline"] and not self.root else 0), 0]
 
     @dbus.service.method("org.freedesktop.DBus.Properties", in_signature="ss", out_signature="v")
     def Get(self, interface, prop):
@@ -136,6 +139,7 @@ def command(source, condition):
             caret=request.get("caret", 0),
             mode=request.get("mode", "reject"),
             toolkit=request["toolkit"],
+            multiline=request.get("multiline", True),
             sets=0,
             inserts=[],
         )

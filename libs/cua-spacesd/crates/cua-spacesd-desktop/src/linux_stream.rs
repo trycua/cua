@@ -744,3 +744,23 @@ pub(crate) fn grab_once(source: StreamSource) -> Result<(Vec<u8>, u32, u32), Pro
     let bgra = grabber.grab()?;
     Ok((bgra, grabber.width, grabber.height))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Run under `scripts/ci/linux/with-rootless-xwayland.sh`.
+    #[test]
+    #[ignore = "requires a rootless Xwayland DISPLAY"]
+    fn rootless_xwayland_desktop_is_refused_not_streamed_black() {
+        let source = StreamSource::Display {
+            x: 0,
+            y: 0,
+            width: 64,
+            height: 64,
+        };
+        let error = grab_once(source).expect_err("a rootless Xwayland root grabs black");
+        assert_eq!(error.code, ProviderErrorCode::Unsupported, "{error}");
+        assert!(error.message.contains("rootless Xwayland"), "{error}");
+    }
+}

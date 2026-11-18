@@ -3,7 +3,8 @@
 
 use crate::element_token::{
     current_snapshots_json, current_snapshots_phrase, format_snapshot_id, parse_token, refusal,
-    token_for, CurrentSnapshot, ResolvedElement, TokenOwner, LRU_CAP_PER_PID, STALE_TOKEN_ERROR,
+    token_for, CurrentSnapshot, ResolvedElement, TokenOwner, LRU_CAP_PER_PID,
+    SESSION_SCOPED_SNAPSHOTS, STALE_TOKEN_ERROR,
 };
 use crate::protocol::ToolResult;
 use std::any::Any;
@@ -152,9 +153,8 @@ fn screenshot_context_refusal(
 fn stale_token_refusal(pid: i32, current: &[CurrentSnapshot]) -> ToolResult {
     let message = if current.is_empty() {
         format!(
-            "{STALE_TOKEN_ERROR}; pid {pid} has no current snapshot on this connection. \
-             Snapshots belong to the connection that took them, so one-shot CLI calls must \
-             pass the same \"session\" label to get_window_state and to this call"
+            "{STALE_TOKEN_ERROR}; pid {pid} has no current snapshot in this session. \
+             {SESSION_SCOPED_SNAPSHOTS}"
         )
     } else {
         format!(
@@ -1146,7 +1146,7 @@ mod tests {
     }
 
     #[test]
-    fn stale_token_for_a_process_with_no_snapshot_says_snapshots_are_per_connection() {
+    fn stale_token_for_a_process_with_no_snapshot_says_snapshots_are_per_session() {
         let cache = SnapshotStore::<Payload>::new();
         let error = cache
             .resolve(7, &serde_json::json!({ "element_token": token_for(0, 0) }))
@@ -1159,23 +1159,6 @@ mod tests {
             "{message}"
         );
         assert!(message.contains("\"session\" label"), "{message}");
-    }
-
-    #[test]
-    fn stale_token_for_a_process_with_snapshots_still_lists_them() {
-        let cache = SnapshotStore::new();
-        let id = cache.publish(7, 42, Payload(vec![1]));
-        let error = cache
-            .resolve(
-                7,
-                &serde_json::json!({ "element_token": token_for(id + 1000, 0) }),
-            )
-            .unwrap_err();
-        let structured = error.structured_content.unwrap();
-        assert_eq!(structured["refusal"]["code"], "stale_element_token");
-        let message = structured["refusal"]["message"].as_str().unwrap();
-        assert!(message.contains("current snapshots for pid 7"), "{message}");
-        assert!(!message.contains("\"session\" label"), "{message}");
     }
 
     #[test]
@@ -1361,6 +1344,7 @@ mod tests {
             text.contains("pid 7 has no current snapshot"),
             "a known pid with nothing current says so: {text}"
         );
+        assert!(text.contains(SESSION_SCOPED_SNAPSHOTS), "{text}");
         assert_eq!(
             refusal.structured_content.unwrap()["current_snapshots"],
             serde_json::json!([])
@@ -1376,6 +1360,12 @@ mod tests {
         assert_eq!(
             structured["current_snapshots"],
             serde_json::json!([{ "snapshot_id": format_snapshot_id(current), "window_id": 555 }])
+        );
+        let message = structured["refusal"]["message"].as_str().unwrap();
+        assert!(message.contains("current snapshots for pid 1"), "{message}");
+        assert!(
+            !message.contains(SESSION_SCOPED_SNAPSHOTS),
+            "a caller with snapshots needs no session hint: {message}"
         );
     }
 

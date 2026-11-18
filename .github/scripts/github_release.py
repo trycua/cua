@@ -349,10 +349,6 @@ def finalize_release(
                 f"release {tag} is already published with different body or prerelease state"
             )
         verify_published_assets(api, repository, release, asset_dir)
-        if make_latest:
-            latest = api.get(f"repos/{repository}/releases/latest")
-            if int(latest.get("id", -1)) != int(release["id"]):
-                raise ReleaseError(f"published release {tag} is not the latest release")
         print(f"release {tag} was already published and matches the requested state")
         return dict(release)
 

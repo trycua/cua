@@ -1,0 +1,1167 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+//! Modal Sandboxes as your cloud (`--on modal`): one Modal sandbox per
+//! sandbox, in the environment `cua cloud connect modal` names.
+//!
+//! - **API**: Modal documents no HTTP API, so every call goes through Modal's
+//!   official Go SDK in `cua-modal-helper` (the contrib provider's helper,
+//!   `libs/cua/crates/cua-contrib/modal-helper`): one JSON request and
+//!   answer per call. `CUA_MODAL_HELPER`, else next to the running
+//!   executable, else on `PATH`.
+//! - **Credentials**: the Modal CLI's own sign-in: the profile in
+//!   `~/.modal.toml` (the SDK reads it), or `MODAL_TOKEN_ID` +
+//!   `MODAL_TOKEN_SECRET`. Cua stores only the profile and environment
+//!   names. Or the account's token sealed to its devices
+//!   ([`crate::model::Auth::Sealed`]): opened in memory for each call and
+//!   handed to the helper in its environment only ([`ModalToken`]).
+//! - **Runtimes**: gVisor (the default) or Modal's VM runtime
+//!   (`--runtime microvm`; nested virtualization there is Team and
+//!   Enterprise only, so VM images still do not run).
+//! - **Relay join**: images whose driver predates the join variables
+//!   (`CUA_ENV_MACHINE_ID`, ...) read the join from files, so the sandbox
+//!   command is a small `sh` wrapper that writes them from the environment
+//!   (0600, owned by the image's `cua` user), drops the variables and
+//!   `exec`s the image's own entrypoint.
+//! - **Lifetime**: Modal's sandbox `timeout` is the connection's ttl (at
+//!   most 24 hours). A Modal sandbox cannot stop and start again; delete it.
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use async_trait::async_trait;
+use cua_sandbox_core::Error;
+use cua_sandbox_core::byoc::{CloudCredentials, CloudKind};
+use cua_sandbox_core::placement::Runtime;
+use serde::{Deserialize, Serialize};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+use crate::api::{CloudApi, Result, Secret, SecretSource, Target, Tested, cloud_err};
+use crate::model::{
+    self, Billing, Capabilities, Connection, HostType, ProvisionSpec, Resource, Supplies, Tier,
+};
+
+/// The helper's file name.
+pub const HELPER: &str = "cua-modal-helper";
+/// The Modal App Cua's sandboxes belong to in the environment.
+pub const APP: &str = "cua-sandboxes";
+/// Modal's longest sandbox lifetime.
+pub const MAX_TTL: Duration = Duration::from_secs(24 * 3600);
+/// The runtime word of Modal's VM runtime.
+pub const MICROVM: &str = "microvm";
+/// Tag with the unix seconds of the create (Modal reports no creation time).
+const TAG_CREATED: &str = "cua-created";
+
+/// Sandbox pricing (Modal, 2026): a physical core (two vCPUs) per second
+/// and a GiB of memory per second.
+const USD_PER_CORE_SEC: f64 = 0.000_039_42;
+const USD_PER_GIB_SEC: f64 = 0.000_006_67;
+
+/// The estimated hourly cost of `vcpus` and `memory_mb`.
+pub fn usd_per_hour(vcpus: u32, memory_mb: u64) -> f64 {
+    let cores = (f64::from(vcpus) / 2.0).max(0.125);
+    let gib = memory_mb as f64 / 1024.0;
+    (cores * USD_PER_CORE_SEC + gib * USD_PER_GIB_SEC) * 3600.0
+}
+
+/// The sandbox command: writes the relay join files from the environment
+/// (as `cua-spacesd join` of every image version reads them), then runs
+/// the image's entrypoint (`"$@"`).
+pub const JOIN_WRAPPER: &str = r#"set -eu
+# Modal's VM runtime mounts an empty /run: restore what the image's
+# desktop expects there (images from before their entrypoint does it).
+mkdir -p /run/systemd/seats /run/systemd/sessions /run/systemd/users 2>/dev/null || true
+d=/run/cua-relay
+umask 077
+mkdir -p "$d"
+printf '%s' "${CUA_RELAY_TOKEN:?}" > "$d/machine-token"
+printf '%s\n' "${CUA_ENV_MACHINE_ID:?}" > "$d/machine-id"
+printf '%s' "${CUA_RELAY_JWKS_JSON:-}" > "$d/jwks.json"
+printf '%s' "${CUA_HOST_POLICY_JSON:?}" > "$d/policy.json"
+chown -R 1000:1000 "$d" 2>/dev/null || true
+export CUA_RELAY_TOKEN_FILE="$d/machine-token" CUA_ENV_MACHINE_ID_FILE="$d/machine-id" CUA_RELAY_JWKS="$d/jwks.json" CUA_HOST_POLICY="$d/policy.json"
+[ -s "$d/jwks.json" ] || unset CUA_RELAY_JWKS
+unset CUA_RELAY_TOKEN CUA_ENV_MACHINE_ID CUA_RELAY_JWKS_JSON CUA_HOST_POLICY_JSON
+exec "$@"
+"#;
+
+/// A Modal API token: its id (`ak-…`) and secret (`as-…`). Written as
+/// `<id>:<secret>` (or the two separated by spaces or a newline) where Cua
+/// takes one token string (`--token-stdin`, the sealed token).
+#[derive(Clone, PartialEq, Eq)]
+pub struct ModalToken {
+    /// `ak-…`.
+    pub id: String,
+    /// `as-…`.
+    pub secret: Secret,
+}
+
+impl std::fmt::Debug for ModalToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ModalToken")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ModalToken {
+    /// `<id>:<secret>`, `<id> <secret>` or the two on their own lines.
+    pub fn parse(s: &str) -> Option<ModalToken> {
+        let s = s.trim();
+        let (id, secret) = s
+            .split_once(':')
+            .or_else(|| s.split_once(char::is_whitespace))?;
+        let (id, secret) = (id.trim(), secret.trim());
+        let ok = |v: &str| !v.is_empty() && !v.chars().any(|c| c.is_whitespace() || c == ':');
+        (ok(id) && ok(secret)).then(|| ModalToken {
+            id: id.to_string(),
+            secret: Secret::new(secret),
+        })
+    }
+
+    /// As one string (`<id>:<secret>`), to seal.
+    pub fn to_secret(&self) -> Secret {
+        Secret::new(format!("{}:{}", self.id, self.secret.expose()))
+    }
+}
+
+/// Carries one helper request and its answer (JSON). The process one runs
+/// `cua-modal-helper`; tests answer in process with the same protocol.
+#[async_trait]
+pub trait HelperTransport: Send + Sync {
+    /// Sends `request`; `profile_only` keeps a `MODAL_TOKEN_*` of this
+    /// process from overriding the connection's profile.
+    async fn call(
+        &self,
+        request: serde_json::Value,
+        profile_only: bool,
+        deadline: Duration,
+    ) -> Result<serde_json::Value>;
+
+    /// Sends `request` signed in with `token` (a sealed connection's, or
+    /// one a connect checks): the helper gets it in its environment, never
+    /// in the request. A transport that cannot refuses (fails closed).
+    async fn call_with_token(
+        &self,
+        request: serde_json::Value,
+        token: &ModalToken,
+        deadline: Duration,
+    ) -> Result<serde_json::Value> {
+        let _ = (request, token, deadline);
+        Err(cloud_err(
+            "modal",
+            "sign in",
+            "this helper cannot use the account's sealed token",
+        ))
+    }
+}
+
+/// The `cua-modal-helper` process.
+pub struct ProcessHelper {
+    helper: Option<PathBuf>,
+}
+
+/// Modal as a [`CloudApi`].
+pub struct ModalApi {
+    transport: Arc<dyn HelperTransport>,
+    app: String,
+    images: Arc<dyn cua_contrib::image_config::ImageConfigSource>,
+    /// `~/.modal.toml` (tests point it elsewhere).
+    config_file: Option<PathBuf>,
+    /// A token from a connect or test in flight.
+    staged: Mutex<Option<ModalToken>>,
+    /// Sealed connections' tokens.
+    secrets: Mutex<Option<Arc<dyn SecretSource>>>,
+}
+
+impl Default for ModalApi {
+    fn default() -> Self {
+        Self::from_env()
+    }
+}
+
+impl ModalApi {
+    /// `CUA_MODAL_HELPER`, `CUA_MODAL_APP` (default `cua-sandboxes`), image
+    /// configs from the registry.
+    pub fn from_env() -> Self {
+        ModalApi {
+            transport: Arc::new(ProcessHelper {
+                helper: std::env::var_os("CUA_MODAL_HELPER")
+                    .filter(|v| !v.is_empty())
+                    .map(PathBuf::from),
+            }),
+            app: std::env::var("CUA_MODAL_APP")
+                .ok()
+                .filter(|a| !a.trim().is_empty())
+                .unwrap_or_else(|| APP.into()),
+            images: cua_contrib::image_config::registry(),
+            config_file: std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".modal.toml")),
+            staged: Mutex::new(None),
+            secrets: Mutex::new(None),
+        }
+    }
+
+    /// With this transport, image configs and `~/.modal.toml` (tests).
+    pub fn with(
+        transport: Arc<dyn HelperTransport>,
+        images: Arc<dyn cua_contrib::image_config::ImageConfigSource>,
+        config_file: Option<PathBuf>,
+    ) -> Self {
+        ModalApi {
+            transport,
+            app: APP.into(),
+            images,
+            config_file,
+            staged: Mutex::new(None),
+            secrets: Mutex::new(None),
+        }
+    }
+
+    /// The profiles in `~/.modal.toml`: (name, active, environment). Only
+    /// names are read; tokens are left to the SDK.
+    fn profiles(&self) -> Vec<(String, bool, String)> {
+        let Some(text) = self
+            .config_file
+            .as_ref()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+        else {
+            return vec![];
+        };
+        parse_profiles(&text)
+    }
+
+    fn sealed_source(&self) -> Option<Arc<dyn SecretSource>> {
+        self.secrets.lock().unwrap().clone()
+    }
+
+    /// The token a call signs in with: the one a connect checks, else the
+    /// sealed one when the connection is sealed (`None`: the CLI's own
+    /// sign-in).
+    async fn token(&self) -> Result<Option<ModalToken>> {
+        if let Some(t) = self.staged.lock().unwrap().clone() {
+            return Ok(Some(t));
+        }
+        let Some(src) = self.sealed_source() else {
+            return Ok(None);
+        };
+        match src.secret("modal").await {
+            None => Ok(None),
+            Some(Err(e)) => Err(e),
+            Some(Ok(s)) => ModalToken::parse(s.expose()).map(Some).ok_or_else(|| {
+                cloud_err(
+                    "modal",
+                    "sign in",
+                    "the sealed token is not a Modal token (<id>:<secret>); replace it with                      `cua cloud connect modal --token-stdin`",
+                )
+            }),
+        }
+    }
+
+    /// The token of `profile` (or the active one) in `~/.modal.toml`.
+    fn profile_token(&self, profile: Option<&str>) -> Option<ModalToken> {
+        let text = std::fs::read_to_string(self.config_file.as_ref()?).ok()?;
+        profile_token(&text, profile)
+    }
+
+    async fn call(&self, conn: &Connection, req: Request<'_>) -> Result<Reply> {
+        let op = req.op;
+        let token = self.token().await?;
+        let deadline = Duration::from_secs(req.deadline_secs + 30);
+        let req = Request {
+            profile: &conn.profile,
+            environment: &conn.environment,
+            app: &self.app,
+            ..req
+        };
+        let mut tries = 0;
+        let reply = loop {
+            let answer = match &token {
+                Some(t) => {
+                    self.transport
+                        .call_with_token(serde_json::to_value(&req)?, t, deadline)
+                        .await?
+                }
+                None => {
+                    self.transport
+                        .call(
+                            serde_json::to_value(&req)?,
+                            !conn.profile.is_empty(),
+                            deadline,
+                        )
+                        .await?
+                }
+            };
+            let reply: Reply = serde_json::from_value(answer).map_err(|e| {
+                cloud_err(
+                    "modal",
+                    op,
+                    format!("an answer the helper should not give: {e}"),
+                )
+            })?;
+            // Rate limited or briefly unavailable: ask again a few times.
+            // A create is never repeated (it may have happened).
+            if op != "create"
+                && reply
+                    .error
+                    .as_ref()
+                    .is_some_and(|e| e.kind == "unavailable")
+            {
+                tries += 1;
+                if let Some(wait) = crate::api::retry_backoff(tries) {
+                    tokio::time::sleep(wait).await;
+                    continue;
+                }
+            }
+            break reply;
+        };
+        if let Some(e) = reply.error {
+            return Err(match e.kind.as_str() {
+                "not_found" => Error::NotFound(format!("modal: {}", e.message)),
+                "invalid" => Error::InvalidArgument(format!("modal {op}: {}", e.message)),
+                "timeout" => Error::Timeout(format!("modal {op}: {}", e.message)),
+                "auth" => cloud_err(
+                    "modal",
+                    "sign in",
+                    format!(
+                        "{} (sign in with `modal token new`, or pick a profile with \
+                         `cua cloud connect modal --profile <name>`)",
+                        e.message
+                    ),
+                ),
+                _ => cloud_err("modal", op, e.message),
+            });
+        }
+        Ok(reply)
+    }
+}
+
+impl ProcessHelper {
+    fn helper(&self) -> Result<PathBuf> {
+        if let Some(h) = &self.helper {
+            return if h.is_file() {
+                Ok(h.clone())
+            } else {
+                Err(helper_missing(Some(h)))
+            };
+        }
+        let exe = if cfg!(windows) {
+            format!("{HELPER}.exe")
+        } else {
+            HELPER.to_string()
+        };
+        if let Some(dir) = std::env::current_exe()
+            .ok()
+            .and_then(|e| e.parent().map(Path::to_path_buf))
+            && dir.join(&exe).is_file()
+        {
+            return Ok(dir.join(&exe));
+        }
+        std::env::var_os("PATH")
+            .into_iter()
+            .flat_map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
+            .map(|d| d.join(&exe))
+            .find(|p| p.is_file())
+            .ok_or_else(|| helper_missing(None))
+    }
+}
+
+#[async_trait]
+impl HelperTransport for ProcessHelper {
+    async fn call(
+        &self,
+        request: serde_json::Value,
+        profile_only: bool,
+        budget: Duration,
+    ) -> Result<serde_json::Value> {
+        self.run(request, budget, |cmd| {
+            if profile_only {
+                cmd.env_remove("MODAL_TOKEN_ID")
+                    .env_remove("MODAL_TOKEN_SECRET")
+                    .env_remove("MODAL_PROFILE");
+            }
+        })
+        .await
+    }
+
+    async fn call_with_token(
+        &self,
+        request: serde_json::Value,
+        token: &ModalToken,
+        budget: Duration,
+    ) -> Result<serde_json::Value> {
+        // The SDK reads the token from its environment before any profile:
+        // only the child gets it, never its arguments or the request.
+        let (id, secret) = (token.id.clone(), token.secret.clone());
+        self.run(request, budget, move |cmd| {
+            cmd.env_remove("MODAL_PROFILE")
+                .env("MODAL_TOKEN_ID", &id)
+                .env("MODAL_TOKEN_SECRET", secret.expose());
+        })
+        .await
+    }
+}
+
+impl ProcessHelper {
+    async fn run(
+        &self,
+        request: serde_json::Value,
+        budget: Duration,
+        env: impl FnOnce(&mut tokio::process::Command),
+    ) -> Result<serde_json::Value> {
+        let op = request["op"].as_str().unwrap_or_default().to_string();
+        let helper = self.helper()?;
+        let body = serde_json::to_vec(&request)?;
+        let mut cmd = tokio::process::Command::new(&helper);
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        env(&mut cmd);
+        let mut child = cmd.spawn().map_err(|e| {
+            cloud_err(
+                "modal",
+                "run the helper",
+                format!("{}: {e}", helper.display()),
+            )
+        })?;
+        let mut stdin = child.stdin.take().expect("piped");
+        stdin.write_all(&body).await?;
+        drop(stdin);
+        let mut stdout = child.stdout.take().expect("piped").take(4 << 20);
+        let mut stderr = child.stderr.take().expect("piped").take(64 << 10);
+        let run = async {
+            let mut out = Vec::new();
+            let mut err = Vec::new();
+            let (a, b) = tokio::join!(stdout.read_to_end(&mut out), stderr.read_to_end(&mut err));
+            a?;
+            b?;
+            let status = child.wait().await?;
+            Ok::<_, std::io::Error>((status, out, err))
+        };
+        let (status, out, err) = tokio::time::timeout(budget, run)
+            .await
+            .map_err(|_| Error::Timeout(format!("modal {op} within {budget:?}")))??;
+        serde_json::from_slice(&out).map_err(|e| {
+            cloud_err(
+                "modal",
+                &op,
+                format!(
+                    "the helper exited with {status} and no answer ({e}): {}",
+                    String::from_utf8_lossy(&err)
+                        .chars()
+                        .take(300)
+                        .collect::<String>()
+                ),
+            )
+        })
+    }
+}
+
+impl ModalApi {
+    fn resource(&self, conn: &Connection, s: &SandboxDoc) -> Resource {
+        let created = s
+            .tags
+            .get(TAG_CREATED)
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        Resource {
+            provider: "modal".into(),
+            id: s.id.clone(),
+            resource_type: "sandbox".into(),
+            name: s.name.clone(),
+            project: conn.environment.clone(),
+            created,
+            expires: model::tag_expires(&s.tags),
+            tags: s.tags.clone(),
+            state: state_of(&s.status).into(),
+            ..Default::default()
+        }
+    }
+}
+
+/// A finished Modal sandbox never runs again: it is terminated.
+fn state_of(status: &str) -> &'static str {
+    match status {
+        "running" => "running",
+        _ => "terminated",
+    }
+}
+
+fn helper_missing(at: Option<&Path>) -> Error {
+    cloud_err(
+        "modal",
+        "find the helper",
+        format!(
+            "Modal runs through its official Go SDK in {HELPER}{}; build it with `go build` in \
+             libs/cua/crates/cua-contrib/modal-helper and put it next to cua, on PATH, or in \
+             CUA_MODAL_HELPER",
+            at.map(|p| format!(" (not at {})", p.display()))
+                .unwrap_or_default()
+        ),
+    )
+}
+
+/// The token (`token_id`, `token_secret`) of `profile`, or of the active
+/// profile (else the first), in a `.modal.toml`.
+pub fn profile_token(text: &str, profile: Option<&str>) -> Option<ModalToken> {
+    // (name, active, id, secret)
+    let mut all: Vec<(String, bool, String, String)> = vec![];
+    for line in text.lines() {
+        let l = line.trim();
+        if let Some(name) = l.strip_prefix('[').and_then(|r| r.strip_suffix(']')) {
+            all.push((
+                name.trim().trim_matches('"').to_string(),
+                false,
+                String::new(),
+                String::new(),
+            ));
+            continue;
+        }
+        let (Some((k, v)), Some(cur)) = (l.split_once('='), all.last_mut()) else {
+            continue;
+        };
+        let v = v.trim().trim_matches('"').trim_matches('\'').to_string();
+        match k.trim() {
+            "active" => cur.1 = v == "true",
+            "token_id" => cur.2 = v,
+            "token_secret" => cur.3 = v,
+            _ => {}
+        }
+    }
+    let p = match profile.filter(|p| !p.is_empty()) {
+        Some(name) => all.iter().find(|p| p.0 == name)?,
+        None => all.iter().find(|p| p.1).or(all.first())?,
+    };
+    ModalToken::parse(&format!("{}:{}", p.2, p.3))
+}
+
+/// `(name, active, environment)` of each `[profile]` in a `.modal.toml`.
+pub fn parse_profiles(text: &str) -> Vec<(String, bool, String)> {
+    let mut out: Vec<(String, bool, String)> = vec![];
+    for line in text.lines() {
+        let l = line.trim();
+        if let Some(name) = l.strip_prefix('[').and_then(|r| r.strip_suffix(']')) {
+            out.push((
+                name.trim().trim_matches('"').to_string(),
+                false,
+                String::new(),
+            ));
+            continue;
+        }
+        let Some((k, v)) = l.split_once('=') else {
+            continue;
+        };
+        let Some(cur) = out.last_mut() else { continue };
+        let v = v.trim().trim_matches('"').trim_matches('\'');
+        match k.trim() {
+            "active" => cur.1 = v == "true",
+            "environment" => cur.2 = v.to_string(),
+            _ => {}
+        }
+    }
+    out
+}
+
+#[derive(Serialize, Default)]
+struct Request<'a> {
+    op: &'a str,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    app: &'a str,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    profile: &'a str,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    environment: &'a str,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    image: &'a str,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    argv: Vec<String>,
+    #[serde(skip_serializing_if = "is_zero_f")]
+    cpus: f64,
+    #[serde(skip_serializing_if = "is_zero_u")]
+    memory_mib: u64,
+    #[serde(skip_serializing_if = "is_zero_u")]
+    timeout_secs: u64,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    env: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    tags: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    runtime: &'a str,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    name: &'a str,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    id: &'a str,
+    deadline_secs: u64,
+    /// The sandbox's outbound allow-list (absent: open).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    outbound: Option<OutboundWire>,
+}
+
+/// Modal's outbound network access: only these CIDRs and domains.
+#[derive(Serialize, Debug, PartialEq, Eq)]
+struct OutboundWire {
+    cidrs: Vec<String>,
+    domains: Vec<String>,
+}
+
+fn outbound_wire(n: Option<&crate::modal_net::NetworkRequest>) -> Result<Option<OutboundWire>> {
+    Ok(match n.map(crate::modal_net::outbound).transpose()? {
+        Some(crate::modal_net::Outbound::Allowlist { cidrs, domains }) => {
+            Some(OutboundWire { cidrs, domains })
+        }
+        Some(crate::modal_net::Outbound::Open) | None => None,
+    })
+}
+
+fn is_zero_f(v: &f64) -> bool {
+    *v == 0.0
+}
+fn is_zero_u(v: &u64) -> bool {
+    *v == 0
+}
+
+#[derive(Deserialize, Default)]
+struct Reply {
+    #[serde(default)]
+    account: Option<AccountDoc>,
+    #[serde(default)]
+    sandbox: Option<SandboxDoc>,
+    #[serde(default)]
+    sandboxes: Vec<SandboxDoc>,
+    #[serde(default)]
+    error: Option<HelperError>,
+}
+
+#[derive(Deserialize)]
+struct AccountDoc {
+    #[serde(default)]
+    sandboxes: usize,
+}
+
+#[derive(Deserialize)]
+struct SandboxDoc {
+    id: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    status: String,
+    #[serde(default)]
+    tags: BTreeMap<String, String>,
+}
+
+#[derive(Deserialize)]
+struct HelperError {
+    kind: String,
+    message: String,
+}
+
+fn ours(tags: &BTreeMap<String, String>, owner: &str, what: &str, id: &str) -> Result<()> {
+    if model::is_ours(tags, owner) {
+        Ok(())
+    } else {
+        Err(cloud_err(
+            "modal",
+            what,
+            format!("refusing: sandbox {id} is not tagged as this Cua home's"),
+        ))
+    }
+}
+
+#[async_trait]
+impl CloudApi for ModalApi {
+    fn takes_network_rules(&self) -> bool {
+        true
+    }
+
+    fn name(&self) -> &'static str {
+        "modal"
+    }
+
+    fn title(&self) -> &'static str {
+        "Modal"
+    }
+
+    fn tier(&self) -> Tier {
+        Tier::Sandbox
+    }
+
+    fn arches(&self) -> Vec<&'static str> {
+        vec!["amd64"]
+    }
+
+    fn runtimes(&self) -> Vec<Runtime> {
+        vec![Runtime::Gvisor, Runtime::Other(MICROVM.into())]
+    }
+
+    fn detect(&self) -> CloudCredentials {
+        if self.staged.lock().unwrap().is_none()
+            && self.sealed_source().is_some_and(|s| s.sealed("modal"))
+        {
+            return CloudCredentials {
+                found: true,
+                source: "the account's token, sealed to your devices".into(),
+            };
+        }
+        if std::env::var_os("MODAL_TOKEN_ID").is_some() {
+            return CloudCredentials {
+                found: true,
+                source: "MODAL_TOKEN_ID".into(),
+            };
+        }
+        let profiles = self.profiles();
+        match profiles.iter().find(|p| p.1).or(profiles.first()) {
+            Some((name, ..)) => CloudCredentials {
+                found: true,
+                source: format!("~/.modal.toml profile {name}"),
+            },
+            None => CloudCredentials::default(),
+        }
+    }
+
+    fn resolve(&self, t: &Target) -> Result<Connection> {
+        let profiles = self.profiles();
+        let profile = t
+            .profile
+            .clone()
+            .or_else(|| profiles.iter().find(|p| p.1).map(|p| p.0.clone()))
+            .unwrap_or_default();
+        if !profile.is_empty() && !profiles.is_empty() && !profiles.iter().any(|p| p.0 == profile) {
+            return Err(Error::InvalidArgument(format!(
+                "modal: no profile {profile:?} in ~/.modal.toml (profiles: {})",
+                profiles
+                    .iter()
+                    .map(|p| p.0.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
+        let environment = t
+            .environment
+            .clone()
+            .or_else(|| {
+                profiles
+                    .iter()
+                    .find(|p| p.0 == profile)
+                    .map(|p| p.2.clone())
+                    .filter(|e| !e.is_empty())
+            })
+            .unwrap_or_else(|| "main".into());
+        Ok(Connection {
+            provider: "modal".into(),
+            profile,
+            environment,
+            ..Default::default()
+        })
+    }
+
+    fn kinds(&self, _: &Connection) -> Vec<CloudKind> {
+        let sandbox = |image: &str, mb: u64| CloudKind {
+            image: image.into(),
+            kind: "container".into(),
+            supported: true,
+            reason: "one Modal sandbox (gVisor; --runtime microvm for Modal's VM runtime)".into(),
+            machine_type: format!("1 core (2 vCPU) / {} GiB", mb / 1024),
+            usd_per_hour: (usd_per_hour(2, mb) * 1000.0).round() / 1000.0,
+        };
+        let no = |image: &str, reason: &str| CloudKind {
+            image: image.into(),
+            kind: "vm".into(),
+            supported: false,
+            reason: reason.into(),
+            ..Default::default()
+        };
+        vec![
+            sandbox("linux", 4096),
+            sandbox("linux-slim", 4096),
+            no(
+                "windows",
+                "Windows is a VM image; Modal sandboxes run container images",
+            ),
+            no(
+                "omarchy",
+                "Omarchy is a VM image; Modal sandboxes run container images",
+            ),
+            no("macos", "macOS runs on Apple hardware only"),
+        ]
+    }
+
+    fn stage_secret(&self, t: &Target) {
+        // Held for the checks of a connect that seals it.
+        if let Some(tok) = t.token.as_deref().and_then(ModalToken::parse) {
+            *self.staged.lock().unwrap() = Some(tok);
+        }
+    }
+
+    fn persist_secret(&self) -> Result<()> {
+        // A CLI link signs in with the profile; nothing to keep.
+        *self.staged.lock().unwrap() = None;
+        Ok(())
+    }
+
+    fn forget_secret(&self) {
+        *self.staged.lock().unwrap() = None;
+    }
+
+    fn seals(&self) -> bool {
+        true
+    }
+
+    fn unstage_secret(&self) {
+        *self.staged.lock().unwrap() = None;
+    }
+
+    fn local_secret(&self, t: &Target) -> Option<Secret> {
+        if let Some(tok) = t.token.as_deref().filter(|s| !s.trim().is_empty()) {
+            return ModalToken::parse(tok).map(|m| m.to_secret());
+        }
+        if let (Ok(id), Ok(secret)) = (
+            std::env::var("MODAL_TOKEN_ID"),
+            std::env::var("MODAL_TOKEN_SECRET"),
+        ) && let Some(m) = ModalToken::parse(&format!("{}:{}", id.trim(), secret.trim()))
+        {
+            return Some(m.to_secret());
+        }
+        self.profile_token(t.profile.as_deref())
+            .map(|m| m.to_secret())
+    }
+
+    fn attach_secrets(&self, source: Arc<dyn SecretSource>) {
+        *self.secrets.lock().unwrap() = Some(source);
+    }
+
+    async fn test(&self, conn: &Connection) -> Tested {
+        let mut t = Tested::default();
+        let staged = self.staged.lock().unwrap().is_some();
+        let sealed = !staged && self.sealed_source().is_some_and(|s| s.sealed("modal"));
+        let who = if staged {
+            "the token you gave".to_string()
+        } else if sealed {
+            "the account's token, sealed to your devices".to_string()
+        } else if conn.profile.is_empty() {
+            "MODAL_TOKEN_ID".to_string()
+        } else {
+            format!("profile {}", conn.profile)
+        };
+        match self
+            .call(
+                conn,
+                Request {
+                    op: "check",
+                    tags: [(model::tag::MANAGED.to_string(), "true".to_string())].into(),
+                    deadline_secs: 60,
+                    ..Default::default()
+                },
+            )
+            .await
+        {
+            Ok(r) => {
+                t.account = who.clone();
+                t.check("credentials", true, who.clone());
+                t.check(
+                    "environment",
+                    true,
+                    format!(
+                        "{} ({} Cua sandboxes running)",
+                        conn.environment,
+                        r.account.map(|a| a.sandboxes).unwrap_or(0)
+                    ),
+                );
+            }
+            Err(Error::NotFound(m)) => {
+                t.check("credentials", true, who);
+                t.check(
+                    "environment",
+                    false,
+                    format!("{m} (create it with `modal environment create`)"),
+                );
+            }
+            Err(e) => t.check("credentials", false, e.to_string()),
+        }
+        t
+    }
+
+    async fn provision(&self, conn: &Connection, spec: &ProvisionSpec) -> Result<Vec<Resource>> {
+        if spec.is_host() {
+            return Err(Error::InvalidArgument(
+                "modal runs Spaces itself: it supplies no hosts to the pool".into(),
+            ));
+        }
+        let image = cua_sandbox_core::ProviderImage {
+            reference: spec.image.clone(),
+            pinned_ref: spec.image.clone(),
+            digest: String::new(),
+            kind: cua_sandbox_core::provider::RunKind::Container,
+            arch: "amd64".into(),
+            spacesd: None,
+        };
+        let cfg = self.images.config(&image, None).await?;
+        let inner = cfg.argv(spec.command.as_deref());
+        if inner.is_empty() {
+            return Err(Error::UnsupportedImage(format!(
+                "{} has no ENTRYPOINT or CMD: pass a command for Modal",
+                spec.image
+            )));
+        }
+        let mut argv = vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            JOIN_WRAPPER.to_string(),
+            "cua-join".to_string(),
+        ];
+        argv.extend(inner);
+        let ttl = Duration::from_secs(spec.ttl_secs)
+            .min(MAX_TTL)
+            .max(Duration::from_secs(600));
+        let mut tags = spec.tags.clone();
+        tags.insert(TAG_CREATED.into(), model::now().to_string());
+        let runtime = match spec.runtime.as_str() {
+            "gvisor" => "gvisor",
+            MICROVM => "vm",
+            "" => "",
+            other => {
+                return Err(Error::InvalidArgument(format!(
+                    "modal: unknown runtime {other:?} (gvisor or {MICROVM})"
+                )));
+            }
+        };
+        let mut env = spec.env.clone();
+        if runtime == "vm" {
+            // Modal's VM runtime boots the rootfs as a microVM's root with
+            // its container agent as PID 1: a container, which drivers from
+            // before they detect that report as a bare host.
+            env.insert("CUA_ENV_RUNTIME".into(), "container".into());
+        }
+        let outbound = outbound_wire(spec.network.as_ref())?;
+        let r = self
+            .call(
+                conn,
+                Request {
+                    op: "create",
+                    image: &spec.image,
+                    argv,
+                    cpus: f64::from(spec.cpus.unwrap_or(2)),
+                    memory_mib: spec.memory_mb.unwrap_or(4096),
+                    timeout_secs: ttl.as_secs(),
+                    env,
+                    tags,
+                    runtime,
+                    name: &spec.name,
+                    deadline_secs: 15 * 60,
+                    outbound,
+                    ..Default::default()
+                },
+            )
+            .await?;
+        let doc = r
+            .sandbox
+            .ok_or_else(|| cloud_err("modal", "create", "no sandbox in the answer"))?;
+        let mut res = self.resource(conn, &doc);
+        res.name = spec.name.clone();
+        // The engine in the placement model's words (`gvisor`, `microvm`).
+        res.extra.insert(
+            "runtime".into(),
+            if spec.runtime.is_empty() {
+                "gvisor".into()
+            } else {
+                spec.runtime.clone()
+            },
+        );
+        Ok(vec![res])
+    }
+
+    async fn describe(
+        &self,
+        conn: &Connection,
+        r: &Resource,
+    ) -> Result<Option<(String, BTreeMap<String, String>)>> {
+        match self
+            .call(
+                conn,
+                Request {
+                    op: "get",
+                    id: &r.id,
+                    deadline_secs: 60,
+                    ..Default::default()
+                },
+            )
+            .await
+        {
+            Ok(rep) => Ok(rep
+                .sandbox
+                .map(|s| (state_of(&s.status).to_string(), s.tags))),
+            Err(Error::NotFound(_)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn stop(&self, _: &Connection, _: &Resource, _: &str) -> Result<()> {
+        Err(Error::InvalidArgument(
+            "modal: a Modal sandbox cannot stop and start again (Modal ends a sandbox for good \
+             when it stops); delete it, and create a new one from the image"
+                .into(),
+        ))
+    }
+
+    async fn start(&self, c: &Connection, r: &Resource, o: &str) -> Result<()> {
+        self.stop(c, r, o).await
+    }
+
+    async fn delete(&self, conn: &Connection, r: &Resource, owner: &str) -> Result<()> {
+        match self.describe(conn, r).await? {
+            None => return Ok(()),
+            Some((state, tags)) => {
+                ours(&tags, owner, "delete", &r.id)?;
+                if state == "terminated" && tags.is_empty() {
+                    return Ok(());
+                }
+            }
+        }
+        match self
+            .call(
+                conn,
+                Request {
+                    op: "delete",
+                    id: &r.id,
+                    deadline_secs: 60,
+                    ..Default::default()
+                },
+            )
+            .await
+        {
+            Ok(_) | Err(Error::NotFound(_)) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn list_owned(&self, conn: &Connection, owner: &str) -> Result<Vec<Resource>> {
+        let r = self
+            .call(
+                conn,
+                Request {
+                    op: "list",
+                    tags: [
+                        (model::tag::MANAGED.to_string(), "true".to_string()),
+                        (model::tag::OWNER.to_string(), model::label_value(owner)),
+                    ]
+                    .into(),
+                    deadline_secs: 120,
+                    ..Default::default()
+                },
+            )
+            .await?;
+        Ok(r.sandboxes
+            .iter()
+            .filter(|s| model::is_ours(&s.tags, owner))
+            .map(|s| self.resource(conn, s))
+            .collect())
+    }
+
+    fn capabilities(&self, conn: &Connection) -> Capabilities {
+        Capabilities {
+            // Modal runs Spaces itself: there is no host the pool controls.
+            supplies: Supplies::Spaces,
+            billing: Billing {
+                granularity_secs: 1,
+                minimum_secs: 0,
+                stopped_bills: false,
+            },
+            regions: vec![if conn.environment.is_empty() {
+                "modal".into()
+            } else {
+                conn.environment.clone()
+            }],
+            max_machines: 100,
+            vcpu_quotas: Default::default(),
+            self_deletes: true,
+        }
+    }
+
+    async fn host_types(&self, conn: &Connection) -> Result<Vec<HostType>> {
+        // Modal list prices (modal.com/pricing, 2026-10-21): $0.0000131 per
+        // physical core-second (1 physical core = 2 vCPU) and $0.00000222
+        // per GiB-second. Each "type" is one Space of that size.
+        let regions = self.capabilities(conn).regions;
+        let size = |vcpus: u32, gib: u64| {
+            let usd =
+                (f64::from(vcpus) / 2.0) * 0.0000131 * 3600.0 + gib as f64 * 0.00000222 * 3600.0;
+            HostType {
+                name: format!("{vcpus}x{gib}"),
+                arch: "amd64".into(),
+                vcpus,
+                memory_mb: gib * 1024,
+                disk_gb: 0,
+                kvm: false,
+                gpu: String::new(),
+                usd_per_hour: (usd * 10_000.0).round() / 10_000.0,
+                regions: regions.clone(),
+                boot_secs: 3,
+                quota_pool: String::new(),
+            }
+        };
+        Ok(vec![size(1, 1), size(2, 4), size(4, 8)])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn profiles_and_prices() {
+        let p = parse_profiles(
+            "[cuaai]\ntoken_id = \"ak-x\"\ntoken_secret = \"as-y\"\nactive = true\n\n[other]\nenvironment = \"dev\"\n",
+        );
+        assert_eq!(
+            p,
+            vec![
+                ("cuaai".to_string(), true, String::new()),
+                ("other".to_string(), false, "dev".to_string())
+            ]
+        );
+        // 1 core + 4 GiB at sandbox rates.
+        let h = usd_per_hour(2, 4096);
+        assert!((0.23..0.25).contains(&h), "{h}");
+    }
+
+    #[test]
+    fn the_wrapper_writes_the_join_files_and_execs_the_entrypoint() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = JOIN_WRAPPER.replace("/run/cua-relay", &dir.path().display().to_string());
+        let out = std::process::Command::new("/bin/sh")
+            .args(["-c", &script, "cua-join", "sh", "-c", "env"])
+            .env("CUA_RELAY_TOKEN", "cmt_x")
+            .env("CUA_ENV_MACHINE_ID", "cloud-0123456789abcdef")
+            .env("CUA_RELAY_JWKS_JSON", "{\"keys\":[]}")
+            .env("CUA_HOST_POLICY_JSON", "{\"owner\":\"a\"}")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let env = String::from_utf8(out.stdout).unwrap();
+        assert!(env.contains("CUA_RELAY_TOKEN_FILE="), "{env}");
+        assert!(
+            !env.contains("CUA_RELAY_TOKEN=cmt_x"),
+            "the token is not left in the env"
+        );
+        assert!(!env.contains("CUA_RELAY_JWKS_JSON="));
+        let read = |f: &str| std::fs::read_to_string(dir.path().join(f)).unwrap();
+        assert_eq!(read("machine-token"), "cmt_x");
+        assert_eq!(read("machine-id").trim(), "cloud-0123456789abcdef");
+        assert_eq!(read("policy.json"), "{\"owner\":\"a\"}");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mode = std::fs::metadata(dir.path().join("machine-token"))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o077, 0, "{mode:o}");
+        }
+    }
+}

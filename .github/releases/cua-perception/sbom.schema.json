@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/trycua/cua/.github/releases/cua-perception/sbom.schema.json",
+  "title": "Cua Perception candidate SPDX SBOM",
+  "type": "object",
+  "required": ["spdxVersion", "dataLicense", "SPDXID", "name", "documentNamespace", "packages", "files", "relationships"],
+  "properties": {
+    "spdxVersion": { "const": "SPDX-2.3" },
+    "dataLicense": { "const": "CC0-1.0" },
+    "SPDXID": { "const": "SPDXRef-DOCUMENT" },
+    "packages": { "type": "array", "minItems": 1 },
+    "files": { "type": "array", "minItems": 1 },
+    "relationships": { "type": "array", "minItems": 1 }
+  }
+}

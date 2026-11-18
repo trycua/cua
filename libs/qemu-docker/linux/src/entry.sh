@@ -18,7 +18,7 @@ echo "Starting Ubuntu VM..."
 VM_PID=$!
 echo "Live stream accessible at localhost:8006"
 
-echo "Waiting for Ubuntu to boot and Cua computer-server to start..."
+echo "Waiting for Ubuntu to boot and cua-spacesd to start..."
 
 VM_IP=""
 while true; do
@@ -34,20 +34,21 @@ while true; do
     fi
   fi
 
-  # Check if server is ready
-  response=$(curl --write-out '%{http_code}' --silent --output /dev/null $VM_IP:5000/status)
+  # Ready once cua-spacesd answers HTTP on its port (any status, e.g. 401
+  # without a token, means the daemon is up).
+  response=$(curl --write-out '%{http_code}' --silent --output /dev/null "http://$VM_IP:${CUA_ENV_PORT:-3211}/health")
 
-  if [ "${response:-0}" -eq 200 ]; then
+  if [ "${response:-000}" != "000" ]; then
     break
   fi
 
-  echo "Waiting for Cua computer-server to be ready. This might take a while..."
+  echo "Waiting for cua-spacesd to be ready. This might take a while..."
   sleep 5
 done
 
-echo "VM is up and running, and the Cua Computer Server is ready!"
+echo "VM is up and running, and cua-spacesd is ready!"
 
-echo "Computer server accessible at localhost:5000"
+echo "cua-spacesd accessible at localhost:${CUA_ENV_PORT:-3211} (token: /etc/cua/env-token in the VM)"
 
 # Detect initial setup by presence of custom ISO
 CUSTOM_ISO=$(find / -maxdepth 1 -type f -iname "*.iso" -print -quit 2>/dev/null || true)

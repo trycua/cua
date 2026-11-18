@@ -17,6 +17,7 @@ const SUPPORTED_KEYWORDS: &[&str] = &[
     "type",
     "const",
     "enum",
+    "pattern",
     "minimum",
     "maximum",
     "minLength",
@@ -60,11 +61,23 @@ fn compare_schema(path: &str, portable: &Value, live: &Value, violations: &mut V
         return;
     };
 
-    check_keywords(path, "portable", portable_object.keys(), violations);
+    // A proof for the base schema also proves the subset for a conjunction
+    // with extra union constraints. Ignore only portable unions here: the
+    // base must independently imply every live constraint. Never discard a
+    // live union, which would broaden the schema we are proving against.
+    check_keywords(
+        path,
+        "portable",
+        portable_object
+            .keys()
+            .filter(|key| !matches!(key.as_str(), "anyOf" | "oneOf")),
+        violations,
+    );
     check_keywords(path, "live", live_object.keys(), violations);
 
     compare_type(path, portable, live, violations);
     compare_allowed_values(path, portable, live, violations);
+    compare_pattern(path, portable, live, violations);
     compare_lower_bound(path, "minimum", portable, live, violations);
     compare_upper_bound(path, "maximum", portable, live, violations);
     compare_lower_bound(path, "minLength", portable, live, violations);
@@ -178,6 +191,35 @@ fn compare_allowed_values(
                 "{path}: portable value {value} is not accepted by the live schema"
             ));
         }
+    }
+}
+
+fn compare_pattern(path: &str, portable: &Value, live: &Value, violations: &mut Vec<String>) {
+    let Some(live_pattern) = live.get("pattern") else {
+        // A portable-only pattern narrows the client domain and is therefore
+        // still a subset of an unconstrained live string.
+        return;
+    };
+    let Some(live_pattern) = live_pattern.as_str() else {
+        violations.push(format!("{path}.pattern: live pattern must be a string"));
+        return;
+    };
+    let Some(portable_pattern) = portable.get("pattern") else {
+        violations.push(format!(
+            "{path}: live defines pattern {live_pattern:?} but portable does not"
+        ));
+        return;
+    };
+    let Some(portable_pattern) = portable_pattern.as_str() else {
+        violations.push(format!("{path}.pattern: portable pattern must be a string"));
+        return;
+    };
+    // This intentionally small implication checker does not attempt regex
+    // language inclusion. Equality is the only pattern relation we claim.
+    if portable_pattern != live_pattern {
+        violations.push(format!(
+            "{path}: portable pattern {portable_pattern:?} is not proven to be a subset of live pattern {live_pattern:?}"
+        ));
     }
 }
 
@@ -313,6 +355,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn portable_union_is_safe_only_when_base_schema_proves_subset() {
+        let portable = json!({"type":"object","properties":{"x":{"type":"number"}},"additionalProperties":false,
+            "anyOf":[{"required":["x"]}]});
+        let live = json!({"type":"object","properties":{"x":{"type":"number"}},"additionalProperties":false});
+        assert!(schema_subset_violations(&portable, &live).is_empty());
+        let mut requiring = live.clone();
+        requiring["required"] = json!(["x"]);
+        assert!(!schema_subset_violations(&portable, &requiring).is_empty());
+        assert!(!schema_subset_violations(&live, &portable).is_empty());
+        assert!(!schema_subset_violations(
+            &json!({"anyOf":[{"type":"number"}]}),
+            &json!({"type":"number"})
+        )
+        .is_empty());
+    }
+
+    #[test]
     fn narrower_portable_object_is_accepted() {
         let portable = json!({
             "type": "object",
@@ -370,12 +429,38 @@ mod tests {
     }
 
     #[test]
+    fn pattern_constraints_are_compared_conservatively() {
+        let portable = json!({ "type": "string", "pattern": "^s[0-9a-f]{8}:[0-9]+$" });
+        let same =
+            json!({ "type": "string", "pattern": "^s[0-9a-f]{8}:[0-9]+$", "description": "live" });
+        assert!(schema_subset_violations(&portable, &same).is_empty());
+
+        let live_only = json!({ "type": "string", "pattern": "^s[0-9a-f]{8}:[0-9]+$" });
+        let no_portable_pattern = json!({ "type": "string" });
+        assert!(schema_subset_violations(&no_portable_pattern, &live_only)
+            .iter()
+            .any(|value| value.contains("live defines pattern")));
+
+        let different = json!({ "type": "string", "pattern": "^s[0-9A-F]{8}:[0-9]+$" });
+        assert!(schema_subset_violations(&different, &live_only)
+            .iter()
+            .any(|value| value.contains("not proven to be a subset")));
+    }
+
+    #[test]
+    fn portable_only_pattern_is_safe_narrowing() {
+        let portable = json!({ "type": "string", "pattern": "^s[0-9a-f]{8}:[0-9]+$" });
+        let unconstrained_live = json!({ "type": "string", "description": "free text" });
+        assert!(schema_subset_violations(&portable, &unconstrained_live).is_empty());
+    }
+
+    #[test]
     fn unknown_validation_keyword_fails_closed() {
-        let portable = json!({ "type": "string", "pattern": "^[a-z]+$" });
+        let portable = json!({ "type": "string", "format": "uuid" });
         let live = json!({ "type": "string" });
         let violations = schema_subset_violations(&portable, &live);
         assert_eq!(violations.len(), 1);
-        assert!(violations[0].contains("unsupported portable schema keyword `pattern`"));
+        assert!(violations[0].contains("unsupported portable schema keyword `format`"));
     }
 
     #[test]

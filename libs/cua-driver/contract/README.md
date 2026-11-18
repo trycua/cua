@@ -1,16 +1,16 @@
 # Experimental cua-driver SDK contract
 
-This directory contains the checked-in, generated contract for the first
-portable cua-driver SDK slice. The Rust crate at
+This directory contains the checked-in, generated portable cua-driver SDK
+contract. The Rust crate at
 `rust/crates/cua-driver-contract` is the source of truth. It generates this
 manifest and exports the request/result records consumed by the live daemon and
 the UniFFI SDK. Python and TypeScript bindings are generated from the compiled
 Rust library by `scripts/generate-uniffi-bindings.mjs`.
 
-The prototype intentionally keeps execution, platform integration, policy, and
-permission handling in the native Cua Driver process. Imported SDKs call the
-daemon through the shared Rust socket client; they do not route through MCP or
-embed platform code. Agents independently use the public `cua-driver mcp`
+Execution, platform integration, policy, and permission handling remain in
+Rust. `CuaDriver.create()` owns that runtime in the importing process;
+`connect()` uses an existing daemon through the shared Rust socket client.
+Agents independently use the public `cua-driver mcp`
 surface through their runtime's existing MCP client.
 
 ## Scope and compatibility
@@ -24,9 +24,10 @@ The typed slice covers the cross-platform session lifecycle tools:
 
 Ordinary calls do not need `start_session`. The runtime creates one implicit
 session for the authenticated transport lease and reuses it until transport
-close, explicit end, or five minutes of inactivity. `escalate_session` and
-`get_session_state` remain deprecated compatibility tools for legacy
-capture-scope sessions. There is no `deescalate_session` tool.
+close, explicit end, or five minutes of inactivity. The deprecated
+`escalate_session` and `get_session_state` tools were removed in 0.48.0; select
+window or desktop modality on each action and use `get_session` for session
+state.
 
 It also covers the portable whole-desktop loop:
 
@@ -41,6 +42,15 @@ It also covers the portable whole-desktop loop:
 - `type_text`, `press_key`, and `hotkey` against the foreground application
 - `clipboard_read` for available types and opt-in plain-text readback
 - `clipboard_write` for text, image, and file-URL clipboard content
+
+The typed native-window flow includes `list_apps`, `list_windows`, and
+`get_window_state`, with discovery records, snapshot-bound element tokens,
+optional accessibility metadata, and screenshot images attached to the typed
+snapshot. `click` accepts one `ClickPosition` (coordinates or element token), an
+explicit `ActionTarget`, and an explicit `InputDeliveryMode`, and returns
+`ActionResult` directly. Native refusals become `DriverError.Tool`.
+See the [0.8 SDK contract migration](../docs/native-window-sdk-migration.md)
+for the intentional SDK break and unchanged CLI/MCP wire forms.
 
 The canonical session-owned cursor slice is shared exactly by MCP and both
 generated SDKs:
@@ -74,8 +84,9 @@ target is a tagged union: `{kind:"window", pid, window_id}` or
 be mixed with `target`. Desktop contracts
 are marked `portable_subset`: their typed Rust inputs are a deliberately
 narrower projection of the richer macOS, Linux, and Windows runtime schemas.
-Each platform's desktop branch deserializes that projection before acting,
-while window/element-only fields remain in the richer live schema. Successful
+Platform handlers retain their existing wire parsers, including the legacy
+desktop-coordinate click projection. The SDK serializes its stricter click
+addressing to those same native fields. Successful
 SDK-path structured payloads are validated against the shared Rust output
 types in the live registry.
 
@@ -99,14 +110,14 @@ Compatibility is tracked separately at each boundary:
 
 | Field | Current | Meaning |
 | --- | --- | --- |
-| `contract_version` | `0.7.0` | Generated manifest and typed SDK shape |
+| `contract_version` | `0.8.0` | Generated manifest and typed SDK shape |
 | `tools_list_schema_version` | `1` | cua-driver `tools/list` extension shape |
 | `capability_version` | `1` | Additive capability-token vocabulary |
-| `mcp_protocol_version` | `2025-06-18` | MCP initialization protocol served to agent runtimes |
+| `mcp_protocol_version` | `2025-06-18` | Legacy `initialize.params.protocolVersion` and loopback HTTP compatibility version; modern stdio negotiation is endpoint-owned |
 
-This implementation does not use WASM. UniFFI distributes one Rust
-daemon-client implementation to Python and Node while preserving the daemon's
-permission identity and runtime ownership. The language packages do not
+This implementation does not use WASM. UniFFI distributes the shared Rust
+implementation to Python and Node. Permission identity follows the selected
+runtime host. The language packages do not
 generate or maintain separate MCP transports.
 
 ## Generate and verify

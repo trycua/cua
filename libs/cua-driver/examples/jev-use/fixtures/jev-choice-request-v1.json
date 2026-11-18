@@ -1,0 +1,30 @@
+{
+  "schema": "cua.jev_choice_request_v1",
+  "goal": "Submit the verified form.",
+  "capture_id": "capture-fixture-1",
+  "regions": [
+    {
+      "id": "submit-text",
+      "kind": "text",
+      "bounds": { "x": 300, "y": 240, "width": 100, "height": 40 },
+      "text": "Submit",
+      "confidence": 0.96,
+      "interactive": true
+    }
+  ],
+  "history": [],
+  "candidates": [
+    {
+      "id": "submit-form",
+      "description": "Submit using the unique validated visual region."
+    },
+    {
+      "id": "reobserve",
+      "description": "Discard this decision set and obtain a fresh observation."
+    },
+    {
+      "id": "abstain",
+      "description": "Stop without acting if no supplied action is safe."
+    }
+  ]
+}

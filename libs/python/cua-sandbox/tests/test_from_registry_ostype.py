@@ -1,11 +1,10 @@
 """A registry image must be able to say it is Windows.
 
-os_type selects the firmware: Windows guest disks are built UEFI-only, and both
-the local QEMU runtime and the Fleet transport read os_type to decide. With
-from_registry hardcoding "linux", a Windows containerDisk pulled from any
-registry was handed BIOS and could not boot — the same failure fixed for Fleet
-in #3125, through a different door. The only escape was reaching past the
-constructor with dataclasses.replace().
+os_type selects the firmware: Windows guest disks are built UEFI-only, and the
+local QEMU runtime reads os_type to decide. With from_registry hardcoding
+"linux", a Windows containerDisk pulled from any registry was handed BIOS and
+could not boot. The only escape was reaching past the constructor with
+dataclasses.replace().
 """
 
 import inspect
@@ -49,12 +48,3 @@ def test_it_offers_the_same_knobs_as_from_file():
 @pytest.mark.parametrize("os_type", ["windows", "linux", "macos"])
 def test_os_type_is_passed_through_verbatim(os_type):
     assert Image.from_registry(REF, os_type=os_type).os_type == os_type
-
-
-def test_windows_registry_image_gets_uefi_on_fleet():
-    """The end the bug was actually felt at: firmware selection."""
-    from cua_sandbox.transport.fleet_cloud import FleetCloudTransport
-
-    image = Image.from_registry(REF, os_type="windows", kind="vm")
-    template = FleetCloudTransport(image=image, name="demo")._template_request().spec.vm_template
-    assert template.firmware is not None, "a Windows containerDisk must not be handed BIOS"

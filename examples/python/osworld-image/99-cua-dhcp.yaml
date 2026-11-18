@@ -1,0 +1,13 @@
+# DHCP on whatever NIC the hypervisor presents (ens3/enp0s3 under plain QEMU).
+# Without it the guest never gets a lease.
+network:
+  version: 2
+  ethernets:
+    all-en:
+      match: {name: "en*"}
+      dhcp4: true
+      dhcp-identifier: mac
+    all-eth:
+      match: {name: "eth*"}
+      dhcp4: true
+      dhcp-identifier: mac

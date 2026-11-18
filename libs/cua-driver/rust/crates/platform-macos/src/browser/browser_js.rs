@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! BrowserJS: run JavaScript in Chrome/Brave/Edge/Safari via AppleScript/osascript.
 
 use anyhow::Context;
@@ -11,6 +14,7 @@ const CHROME_APP_BUNDLE_PREFIX: &str = "com.google.Chrome.app.";
 
 #[derive(Clone, Debug)]
 struct NativeWindowTarget {
+    pid: i32,
     title: String,
     bounds: WindowBounds,
     same_bounds_ordinal: usize,
@@ -37,10 +41,14 @@ impl BrowserJs {
     pub async fn execute(
         javascript: &str,
         bundle_id: &str,
+        expected_pid: i32,
         window_id: u32,
     ) -> anyhow::Result<String> {
         let app_name = app_name_for_bundle(bundle_id)
             .ok_or_else(|| anyhow::anyhow!("Unsupported browser bundle: {bundle_id}"))?;
+
+        crate::apple_events::ensure_permitted(bundle_id, app_name)
+            .map_err(|r| anyhow::anyhow!("{}: {}", r.code, r.reason))?;
 
         // Resolve the WindowServer CGWindowID to stable properties that can be
         // matched against the browser's AppleScript window model.
@@ -48,6 +56,14 @@ impl BrowserJs {
             let wid = window_id;
             tokio::task::spawn_blocking(move || native_window_target(wid)).await?
         }?;
+
+        if target.pid != expected_pid {
+            anyhow::bail!(
+                "browser_window_owner_pid_mismatch: window_id {window_id} is owned by pid {}, not requested pid {expected_pid}",
+                target.pid
+            );
+        }
+        ensure_applescript_process_identity(bundle_id, expected_pid)?;
 
         let escaped_js = escape_js_for_applescript(javascript);
 
@@ -74,54 +90,6 @@ end tell"#
 
         run_osascript(&script).await
     }
-
-    /// Patch the browser Preferences JSON to enable Allow JavaScript from Apple Events,
-    /// then relaunch the browser.
-    pub async fn enable_javascript_apple_events(bundle_id: &str) -> anyhow::Result<()> {
-        let app_name = app_name_for_bundle(bundle_id)
-            .ok_or_else(|| anyhow::anyhow!("Unsupported browser bundle: {bundle_id}"))?;
-
-        // Quit the browser.
-        let quit_script = format!("tell application \"{app_name}\" to quit");
-        let _ = tokio::process::Command::new("/usr/bin/osascript")
-            .arg("-e")
-            .arg(&quit_script)
-            .output()
-            .await;
-
-        tokio::time::sleep(Duration::from_secs(1)).await;
-
-        // Find profile directory.
-        let home = std::env::var("HOME").unwrap_or_default();
-        let profiles_dir = match bundle_id {
-            "com.google.Chrome" => format!("{home}/Library/Application Support/Google/Chrome"),
-            _ if bundle_id.starts_with(CHROME_APP_BUNDLE_PREFIX) => {
-                format!("{home}/Library/Application Support/Google/Chrome")
-            }
-            "com.brave.Browser" => {
-                format!("{home}/Library/Application Support/BraveSoftware/Brave-Browser")
-            }
-            "com.microsoft.edgemac" => format!("{home}/Library/Application Support/Microsoft Edge"),
-            _ => anyhow::bail!("No profiles directory for {bundle_id}"),
-        };
-
-        // Find all Preferences files.
-        let prefs_files = find_preferences_files(&profiles_dir);
-
-        for path in prefs_files {
-            if let Err(e) = patch_preferences_file(&path) {
-                tracing::warn!("Failed to patch {path}: {e}");
-            }
-        }
-
-        // Relaunch.
-        tokio::process::Command::new("open")
-            .arg("-a")
-            .arg(app_name)
-            .spawn()?;
-
-        Ok(())
-    }
 }
 
 fn native_window_target(window_id: u32) -> anyhow::Result<NativeWindowTarget> {
@@ -141,10 +109,58 @@ fn native_window_target(window_id: u32) -> anyhow::Result<NativeWindowTarget> {
         .unwrap_or(0);
 
     Ok(NativeWindowTarget {
+        pid: target.pid,
         title: target.title.clone(),
         bounds: target.bounds.clone(),
         same_bounds_ordinal,
     })
+}
+
+fn ensure_applescript_process_identity(bundle_id: &str, expected_pid: i32) -> anyhow::Result<()> {
+    let matching_pids = crate::apps::list_running_apps()
+        .into_iter()
+        .filter(|app| app.bundle_id.as_deref() == Some(bundle_id))
+        .map(|app| app.pid)
+        .filter(|pid| process_is_alive(*pid))
+        .collect::<Vec<_>>();
+    ensure_applescript_process_identity_in(bundle_id, expected_pid, &matching_pids)
+}
+
+fn process_is_alive(pid: i32) -> bool {
+    if pid <= 0 {
+        return false;
+    }
+    // Signal zero checks process existence without delivering a signal.
+    // EPERM still proves that the pid exists; only ESRCH proves it is gone.
+    if unsafe { libc::kill(pid, 0) } == 0 {
+        return true;
+    }
+    std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+}
+
+fn ensure_applescript_process_identity_in(
+    bundle_id: &str,
+    expected_pid: i32,
+    matching_pids: &[i32],
+) -> anyhow::Result<()> {
+    let unique = matching_pids
+        .iter()
+        .copied()
+        .filter(|pid| *pid > 0)
+        .collect::<std::collections::BTreeSet<_>>();
+
+    if !unique.contains(&expected_pid) {
+        anyhow::bail!(
+            "browser_process_not_running: requested pid {expected_pid} is not a live regular application for bundle {bundle_id}"
+        );
+    }
+    if unique.len() != 1 {
+        anyhow::bail!(
+            "browser_applescript_process_ambiguous: bundle {bundle_id} has {} live regular application instances; AppleScript cannot prove requested pid {expected_pid}. Use an exact CDP target or close the other instance.",
+            unique.len()
+        );
+    }
+    Ok(())
 }
 
 fn chromium_window_script(
@@ -210,61 +226,6 @@ fn rounded_i64(value: f64) -> i64 {
     value.round() as i64
 }
 
-fn find_preferences_files(profiles_dir: &str) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(profiles_dir) else {
-        return vec![];
-    };
-    let mut result = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let prefs = path.join("Preferences");
-        if prefs.exists() {
-            if let Some(s) = prefs.to_str() {
-                result.push(s.to_owned());
-            }
-        }
-    }
-    result
-}
-
-fn patch_preferences_file(path: &str) -> anyhow::Result<()> {
-    let content = std::fs::read_to_string(path).with_context(|| format!("Reading {path}"))?;
-    let mut json: serde_json::Value =
-        serde_json::from_str(&content).with_context(|| format!("Parsing {path}"))?;
-
-    // Set browser.allow_javascript_apple_events = true.
-    if let Some(obj) = json.as_object_mut() {
-        let browser = obj
-            .entry("browser")
-            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
-        if let Some(b) = browser.as_object_mut() {
-            b.insert(
-                "allow_javascript_apple_events".to_owned(),
-                serde_json::Value::Bool(true),
-            );
-        }
-        // Also set account_values.browser.allow_javascript_apple_events.
-        let account_values = obj
-            .entry("account_values")
-            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
-        if let Some(av) = account_values.as_object_mut() {
-            let av_browser = av
-                .entry("browser")
-                .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
-            if let Some(avb) = av_browser.as_object_mut() {
-                avb.insert(
-                    "allow_javascript_apple_events".to_owned(),
-                    serde_json::Value::Bool(true),
-                );
-            }
-        }
-    }
-
-    let new_content = serde_json::to_string(&json)?;
-    std::fs::write(path, new_content).with_context(|| format!("Writing {path}"))?;
-    Ok(())
-}
-
 /// Escape a plain string value for embedding inside an AppleScript double-quoted string.
 fn escape_for_applescript_string(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
@@ -314,8 +275,9 @@ pub async fn run_osascript(script: &str) -> anyhow::Result<String> {
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stderr.contains("turned off") || stderr.contains("AppleScript is turned off") {
         anyhow::bail!(
-            "JavaScript from Apple Events is disabled. Use action=enable_javascript_apple_events \
-             to enable it (requires browser restart)."
+            "JavaScript from Apple Events is disabled. Turn on \"Allow JavaScript from Apple Events\" \
+             in the browser's Develop (Safari) or View > Developer (Chromium) menu, or use \
+             get_browser_state and the browser_* tools."
         );
     }
 
@@ -347,6 +309,7 @@ mod tests {
 
     fn target(title: &str, same_bounds_ordinal: usize) -> NativeWindowTarget {
         NativeWindowTarget {
+            pid: 4242,
             title: title.to_owned(),
             bounds: WindowBounds {
                 x: 22.0,
@@ -356,6 +319,34 @@ mod tests {
             },
             same_bounds_ordinal,
         }
+    }
+
+    #[test]
+    fn applescript_process_identity_accepts_only_the_requested_single_instance() {
+        assert!(ensure_applescript_process_identity_in("com.google.Chrome", 4242, &[4242]).is_ok());
+    }
+
+    #[test]
+    fn process_liveness_filters_departed_running_application_rows() {
+        assert!(process_is_alive(std::process::id() as i32));
+        assert!(!process_is_alive(i32::MAX));
+    }
+
+    #[test]
+    fn applescript_process_identity_refuses_same_bundle_ambiguity() {
+        let error =
+            ensure_applescript_process_identity_in("com.google.Chrome", 4242, &[4242, 9001])
+                .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("browser_applescript_process_ambiguous"));
+    }
+
+    #[test]
+    fn applescript_process_identity_refuses_missing_requested_instance() {
+        let error =
+            ensure_applescript_process_identity_in("com.google.Chrome", 4242, &[9001]).unwrap_err();
+        assert!(error.to_string().contains("browser_process_not_running"));
     }
 
     #[test]

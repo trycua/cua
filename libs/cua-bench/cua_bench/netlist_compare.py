@@ -263,7 +263,11 @@ def compare_kicad_netlists(
         weighted average (0.5 each when both required).
     """
     ref = parse_kicad_netlist(reference_content)
-    cand = _override_candidate if _override_candidate is not None else parse_kicad_netlist(candidate_content)
+    cand = (
+        _override_candidate
+        if _override_candidate is not None
+        else parse_kicad_netlist(candidate_content)
+    )
 
     if not ref["components"] and not ref["nets"]:
         # Reference is empty/invalid: treat as no reference
@@ -364,12 +368,14 @@ def parse_kicad_schematic(content: str) -> dict[str, Any]:
                 value = prop_val
 
         if ref is not None and not ref.startswith("#"):
-            components.append({
-                "ref": ref,
-                "value": value or "",
-                "lib": lib,
-                "part": part or value or "",
-            })
+            components.append(
+                {
+                    "ref": ref,
+                    "value": value or "",
+                    "lib": lib,
+                    "part": part or value or "",
+                }
+            )
         # Power symbols define net names (e.g. lib_id "power:+5V" → net "+5V")
         if lib == "power" and value and not value.startswith("PWR_FLAG"):
             net_names.append(value)

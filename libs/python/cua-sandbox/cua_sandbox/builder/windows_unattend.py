@@ -7,9 +7,12 @@ from scratch via Autounattend.xml + CUA server setup script.
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 from pathlib import Path
 from typing import Optional
+
+from cua_sandbox._paths import cua_home
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +39,7 @@ def _resolve_server_eval_url(
 ) -> str:
     """Resolve Windows Server evaluation ISO download URL from Microsoft's eval center.
 
-    Adapted from quickemu/quickget's download_windows_server() which is itself
-    adapted from the Mido project (https://github.com/ElliotKillick/Mido).
+    Derived from quickemu (MIT) and Mido (MIT); see THIRD_PARTY_NOTICES.md.
 
     Args:
         server_version: e.g. "windows-server-2022", "windows-server-2025"
@@ -102,7 +104,7 @@ def download_windows_iso(
             raise FileNotFoundError(f"Windows ISO not found: {iso_path}")
         return p
 
-    dest_dir = dest or Path.home() / ".cua" / "cua-sandbox" / "iso"
+    dest_dir = dest or cua_home() / "cua-sandbox" / "iso"
     dest_dir.mkdir(parents=True, exist_ok=True)
     iso_file = dest_dir / f"windows-{version}.iso"
 
@@ -155,8 +157,12 @@ def generate_autounattend_xml(
     *,
     include_virtio_drivers: bool = True,
     version: str = "11",
+    username: Optional[str] = None,
 ) -> str:
     """Generate a Windows Autounattend.xml for unattended installation.
+
+    The local administrator account is ``username``, else the CUA_WINDOWS_USER environment variable, else "User"
+    (Windows Agent Arena tasks assume the user Docker, so a benchmark image sets CUA_WINDOWS_USER=Docker).
 
     Args:
         product_key: Windows product key. If None, uses generic key for edition.
@@ -236,6 +242,7 @@ def generate_autounattend_xml(
       </DriverPaths>
     </component>"""
 
+    account = username or os.environ.get("CUA_WINDOWS_USER") or "User"
     return f"""<?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
   <settings pass="windowsPE">
@@ -368,7 +375,7 @@ def generate_autounattend_xml(
       <UserAccounts>
         <LocalAccounts>
           <LocalAccount wcm:action="add">
-            <Name>User</Name>
+            <Name>{account}</Name>
             <Group>Administrators</Group>
             <Password>
               <Value />
@@ -378,7 +385,7 @@ def generate_autounattend_xml(
         </LocalAccounts>
       </UserAccounts>
       <AutoLogon>
-        <Username>User</Username>
+        <Username>{account}</Username>
         <Enabled>true</Enabled>
         <LogonCount>65432</LogonCount>
         <Password>
@@ -425,8 +432,8 @@ def generate_autounattend_xml(
         </SynchronousCommand>
         <SynchronousCommand wcm:action="add">
           <Order>5</Order>
-          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "foreach ($d in [System.IO.DriveInfo]::GetDrives()) {{ $f = Join-Path $d.Name 'setup-cua-server.ps1'; if (Test-Path $f) {{ &amp; $f; break }} }}"</CommandLine>
-          <Description>Install CUA Computer Server</Description>
+          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "foreach ($d in [System.IO.DriveInfo]::GetDrives()) {{ $f = Join-Path $d.Name 'setup-spacesd.ps1'; if (Test-Path $f) {{ &amp; $f; break }} }}"</CommandLine>
+          <Description>Install cua-spacesd</Description>
         </SynchronousCommand>
       </FirstLogonCommands>
     </component>
@@ -460,15 +467,15 @@ def create_unattend_iso(
     xml_path = work_dir / "Autounattend.xml"
     xml_path.write_text(xml, encoding="utf-8")
 
-    from cua_sandbox.builder.build import SETUP_COMPUTER_SERVER_PS1
+    from cua_sandbox.builder.build import SETUP_SPACESD_PS1
 
-    setup_path = work_dir / "setup-cua-server.ps1"
-    setup_path.write_text(SETUP_COMPUTER_SERVER_PS1, encoding="utf-8")
+    setup_path = work_dir / "setup-spacesd.ps1"
+    setup_path.write_text(SETUP_SPACESD_PS1, encoding="utf-8")
 
     iso_src = work_dir / "unattend-iso"
     iso_src.mkdir(parents=True, exist_ok=True)
     shutil.copy2(xml_path, iso_src / "Autounattend.xml")
-    shutil.copy2(setup_path, iso_src / "setup-cua-server.ps1")
+    shutil.copy2(setup_path, iso_src / "setup-spacesd.ps1")
 
     if include_startup_nsh:
         startup_nsh = work_dir / "startup.nsh"

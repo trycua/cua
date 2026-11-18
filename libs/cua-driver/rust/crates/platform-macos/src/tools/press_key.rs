@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use core_foundation::base::CFRelease;
 use cua_driver_contract::PressKeyInput;
@@ -20,6 +23,7 @@ use crate::ax::bindings::{
 };
 use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
+use cua_driver_core::security_prompt::PromptInput;
 
 use super::ToolState;
 
@@ -108,19 +112,46 @@ fn dispatch_with_ax_oracle(
     let before = element_ptr.and_then(|ptr| read_ax_key_state(pid, window_id, ptr));
     let result = dispatch();
     // Native controls normally publish their new value/selection on the next
-    // run-loop turn. Keep this bounded and reuse the exact retained element so
-    // a focus move cannot become false confirmation from a different control.
-    if before.is_some() {
-        std::thread::sleep(std::time::Duration::from_millis(60));
-    }
-    let after = element_ptr.and_then(|ptr| read_ax_key_state(pid, window_id, ptr));
+    // run-loop turn. Read the exact retained element until it changes, so a
+    // focus move cannot become false confirmation from a different control,
+    // and give up after the bound.
+    let changed = match (&before, element_ptr) {
+        (Some(before), Some(ptr)) => poll_until(AX_ORACLE_WAIT, AX_ORACLE_POLL, || {
+            read_ax_key_state(pid, window_id, ptr)
+                .is_some_and(|after| ax_state_changed(before, &after))
+        }),
+        _ => false,
+    };
     if owns_element {
         if let Some(ptr) = element_ptr {
             unsafe { CFRelease(ptr as _) };
         }
     }
     result?;
-    Ok(matches!((before, after), (Some(before), Some(after)) if ax_state_changed(&before, &after)))
+    Ok(changed)
+}
+
+/// Longest the oracle waits for the element to publish the key's effect.
+const AX_ORACLE_WAIT: std::time::Duration = std::time::Duration::from_millis(60);
+/// Interval between the oracle's reads of the element.
+const AX_ORACLE_POLL: std::time::Duration = std::time::Duration::from_millis(5);
+
+/// Read `done` every `poll` until it holds or `wait` passes; whether it held.
+fn poll_until(
+    wait: std::time::Duration,
+    poll: std::time::Duration,
+    mut done: impl FnMut() -> bool,
+) -> bool {
+    let deadline = std::time::Instant::now() + wait;
+    loop {
+        std::thread::sleep(poll.min(deadline.saturating_duration_since(std::time::Instant::now())));
+        if done() {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+    }
 }
 
 fn ax_state_changed(before: &AxKeyState, after: &AxKeyState) -> bool {
@@ -170,7 +201,42 @@ fn action_record(confirmed: bool, foreground: bool) -> ActionExecutionRecord {
     record.build().expect("press_key record is valid")
 }
 
-fn delivery_failed(error: impl std::fmt::Display) -> ToolResult {
+#[derive(Debug, thiserror::Error)]
+#[error("the addressed element did not acquire keyboard focus; no key was dispatched")]
+struct KeyFocusUnconfirmed;
+
+fn with_confirmed_key_focus<T>(
+    target: Option<usize>,
+    mut focus: impl FnMut(usize) -> anyhow::Result<()>,
+    mut is_focused: impl FnMut(usize) -> bool,
+    dispatch: impl FnOnce() -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    if let Some(target) = target {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(200);
+        loop {
+            focus(target)?;
+            if is_focused(target) {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(KeyFocusUnconfirmed.into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+    dispatch()
+}
+
+fn delivery_failed(error: anyhow::Error) -> ToolResult {
+    if let Some(refusal) = crate::security_prompt::tool_result(&error) {
+        return refusal;
+    }
+    if error.is::<KeyFocusUnconfirmed>() {
+        return ToolResult::error(error.to_string()).with_structured(serde_json::json!({
+            "code": "target_focus_unconfirmed", "effect": "refused", "dispatched": false,
+            "message": error.to_string(),
+        }));
+    }
     let message = format!("press_key delivery failed: {error}");
     ToolResult::error(&message).with_structured(serde_json::json!({
         "code": "delivery_failed",
@@ -181,41 +247,30 @@ fn delivery_failed(error: impl std::fmt::Display) -> ToolResult {
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "press_key".into(),
-        description: "Press and release a single key. Follows the same `delivery_mode` ladder as click/type_text \
-            — it does NOT raise the window by default:\n\
-            • `background` (default): post to the pid WITHOUT fronting/raising — the \
-              auth-message path (Chromium-safe). With element_index it focuses that AX \
-              element first. `window_id` only targets; it does not raise.\n\
-            • `foreground`: guard and briefly front the exact window, focus an addressed AX \
-              element when supplied, send a genuine HID key transition so Chromium content, \
-              inline editors, and native menu equivalents receive it, then restore prior \
-              frontmost. Requires window_id.\n\n\
-            A key press is confirmed only when a bounded native AX value/selection read-back \
-            changes on the same control. Otherwise a successfully attempted post remains \
-            effect:\"unverifiable\" without implying delivery failure or recommending foreground. \
-            Key names: return, tab, escape, up/down/left/right, space, delete, \
-            home, end, pageup, pagedown, f1-f12, plus any letter or digit. \
-            Modifiers array: cmd, shift, option/alt, ctrl, fn.".into(),
+        description: "Press and release one key. `delivery_mode` as in click/type_text.\n\
+            - `background` (default): posts to the pid without raising the window; with `element_token` it focuses that element first.\n\
+            - `foreground`: fronts the exact window (needs `window_id`), sends a real HID key transition (Chromium content, inline editors, menu equivalents), then restores the prior app.\n\
+            \n\
+            An element target whose focus cannot be confirmed is refused with `target_focus_unconfirmed`, effect \"refused\", and no key dispatched.\n\
+            Confirmed only when a native AX value/selection read-back changes; otherwise `effect:\"unverifiable\"` (not a delivery failure). Keys: return, tab, escape, up/down/left/right, space, delete, home, end, pageup, pagedown, f1-f12, any letter or digit.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "required": ["key"],
             "properties": {
-                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
-                "pid": { "type": "integer" },
-                "key": { "type": "string", "description": "Key name: return, tab, escape, up, down, etc." },
+                "session": cua_driver_core::tool_schema::session_schema(),
+                "pid": { "type": "integer", "description": "Target process ID." },
+                "key": { "type": "string", "description": "Key name." },
                 "modifiers": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Modifier keys: cmd, shift, option/alt, ctrl, fn."
+                    "description": "cmd, shift, option/alt, ctrl, fn."
                 },
-                "window_id": { "type": "integer", "description": "Target window. Required for delivery_mode:\"foreground\". Does NOT itself raise the window — raising is gated on delivery_mode." },
-                "element_index": cua_driver_core::tool_schema::element_index_schema(),
+                "window_id": { "type": "integer", "description": "Target window; required for foreground. Does not raise by itself." },
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
-                "x": { "type": "number", "description": "Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the AX path can't focus. Pass with y, no element_index." },
+                "x": { "type": "number", "description": "Screenshot-pixel X: pixel-click to focus, then send the key. With y, no element_token." },
                 "y": { "type": "number", "description": "Screenshot-pixel Y (see x)." },
-                "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "Use desktop with no pid/window_id to send the key to the frontmost application." },
-                "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
+                "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "\"desktop\" with no pid/window_id sends to the frontmost app." },
+                "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema_with("Default \"background\": no fronting or focus steal. \"foreground\": briefly front the window, act, restore the prior app; last resort when background did not land.")
             },
             "additionalProperties": false
         }),
@@ -245,9 +300,11 @@ impl Tool for PressKeyTool {
             let key = input.key;
             let modifiers = input.modifiers.unwrap_or_default();
             let key_for_input = key.clone();
+            super::cursor_tools::position_desktop_keyboard_cursor(&self.state, &args).await;
+            let prompt = PromptInput::from_args(&args);
             let result = tokio::task::spawn_blocking(move || {
                 let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-                crate::input::keyboard::press_key_global(&key_for_input, &modifier_refs)
+                crate::input::keyboard::press_key_global(prompt, &key_for_input, &modifier_refs)
             })
             .await;
             return match result {
@@ -257,11 +314,15 @@ impl Tool for PressKeyTool {
                         "path": "hid",
                         "effect": "unverifiable"
                     })),
-                Ok(Err(error)) => ToolResult::error(format!("desktop press_key failed: {error}")),
+                Ok(Err(error)) => {
+                    crate::security_prompt::tool_result(&error).unwrap_or_else(|| {
+                        ToolResult::error(format!("desktop press_key failed: {error}"))
+                    })
+                }
                 Err(error) => ToolResult::error(format!("desktop press_key task failed: {error}")),
             };
         }
-        let pid = match args.require_i32("pid") {
+        let pid = match super::target_pid(&self.state, &args) {
             Ok(v) => v,
             Err(e) => return e,
         };
@@ -270,28 +331,15 @@ impl Tool for PressKeyTool {
             Err(e) => return e,
         };
         let mut modifiers: Vec<String> = args.str_array("modifiers");
-        // Surface 6: element_token / element_index precedence resolution.
-        let element_token_arg = args.opt_str("element_token");
-        let window_id_arg = args.opt_u64("window_id").map(|v| v as u32);
-        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match cua_driver_core::element_token::resolve_element_args(
-            pid,
-            element_index_arg,
-            element_token_arg.as_deref(),
-            args.opt_str("snapshot_id").as_deref(),
-            window_id_arg,
-            "press_key",
-        ) {
+        let window_id_arg = args.opt_u64("window_id");
+        let resolved = match self.state.snapshots.resolve(pid, &args) {
             Ok(r) => r,
             Err(e) => return e,
         };
-        let (element_index, window_id) = match resolved {
-            cua_driver_core::element_token::ResolvedElement::None => (None, window_id_arg),
-            cua_driver_core::element_token::ResolvedElement::Element {
-                window_id: wid,
-                element_index: idx,
-                via_token: _,
-            } => (Some(idx), wid),
+        let (element_index, window_id, pre_focus_guard) = resolved.into_parts(window_id_arg);
+        let window_id = match super::native_window_id(window_id) {
+            Ok(window_id) => window_id,
+            Err(error) => return error,
         };
 
         if let Err(error) = validate_post_target(pid) {
@@ -321,28 +369,10 @@ impl Tool for PressKeyTool {
         let py = args.get("y").and_then(|v| v.as_f64());
         if px.is_some() && py.is_some() && element_index.is_some() {
             return ToolResult::error(
-                "Pass either element_index (ax) or x,y (px) to press_key, not both.",
+                "Pass either element_token (ax) or x,y (px) to press_key, not both.",
             );
         }
 
-        // Resolve the pre-focus element pointer (if requested) outside
-        // the suppression closure — only the focus_element() write itself
-        // needs to run under suppression, the cache lookup does not.
-        // Retain out of the cache so a concurrent get_window_state can't free
-        // the element before the suppressed focus below dereferences it
-        // (use-after-free → daemon crash). Guard lives to method end.
-        let pre_focus_guard = if let (Some(idx), Some(wid)) = (element_index, window_id) {
-            match self.state.element_cache.get_element_retained(pid, wid, idx) {
-                Some(guard) => Some(guard),
-                None => {
-                    return ToolResult::error(format!(
-                        "Element index {idx} not found. Call get_window_state first."
-                    ));
-                }
-            }
-        } else {
-            None
-        };
         let pre_focus_ptr: Option<usize> = pre_focus_guard.as_ref().map(|g| g.as_ptr());
 
         // ── Exact-target background gate (macOS background input v1) ──
@@ -358,7 +388,9 @@ impl Tool for PressKeyTool {
                     pid,
                     wid,
                     pre_focus_ptr,
-                    cua_driver_core::background_input::BackgroundAction::GenericKey,
+                    super::window_keyboard_action(
+                        cua_driver_core::background_input::BackgroundAction::GenericKey,
+                    ),
                 )
                 .await
                 {
@@ -370,6 +402,13 @@ impl Tool for PressKeyTool {
             }
         } else {
             None
+        };
+
+        // The addressed window must be the app's confirmed key window before
+        // any key (or focus click) goes out; otherwise refuse (window_not_key).
+        let _key_scope = match super::acquire_key_scope(pid, window_id, fg).await {
+            Ok(scope) => scope,
+            Err(refusal) => return refusal,
         };
 
         // px form: pixel-click to focus, then the key goes to the focused element.
@@ -403,6 +442,30 @@ impl Tool for PressKeyTool {
             }
         };
 
+        // The px form's focus click already moved the cursor. Otherwise place
+        // a named session's cursor on the element, or its remembered position,
+        // or the window centre, so a keyboard-first session stays visible.
+        if !px_focus {
+            let element_center = match pre_focus_guard.clone() {
+                Some(guard) => tokio::task::spawn_blocking(move || unsafe {
+                    crate::ax::bindings::element_screen_center(
+                        guard.as_ptr() as crate::ax::bindings::AXUIElementRef
+                    )
+                })
+                .await
+                .ok()
+                .flatten(),
+                None => None,
+            };
+            super::cursor_tools::position_keyboard_cursor(
+                &self.state,
+                &args,
+                window_id,
+                element_center,
+            )
+            .await;
+        }
+
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // Single-key presses can fire autocomplete (Return on a search
         // box opens a results popover) or trigger menu shortcuts that
@@ -413,23 +476,15 @@ impl Tool for PressKeyTool {
         // wildcard snapshot suppressor and the targeted FocusGuard lease.
         let prior_front = apps::frontmost_pid();
         let snapshot = WindowChangeDetector::snapshot(prior_front);
+        let prompt = PromptInput::from_args(&args);
 
         let result = focus_guard::with_focus_suppressed(
             Some(pid),
             prior_front,
             "press_key.CGEvent",
             || async move {
-                // Pre-focus the element under suppression so its
-                // side-effects are captured by the snapshot + lease.
-                if let Some(element_ptr) = pre_focus_ptr {
-                    let _ = tokio::task::spawn_blocking(move || {
-                        crate::input::ax_actions::focus_element(element_ptr)
-                    })
-                    .await;
-                    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
-                }
-
                 tokio::task::spawn_blocking(move || {
+                    let pre_focus_ptr = pre_focus_guard.as_ref().map(|guard| guard.as_ptr());
                     let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
                     // Foreground rung: keep the exact target frontmost through a genuine
                     // physical HID key down/up pair, then restore. PID-routed events without the
@@ -448,22 +503,35 @@ impl Tool for PressKeyTool {
                                 pid as libc::pid_t,
                                 wid,
                                 || {
-                                    // Activation can change the first responder, so
-                                    // repeat the best-effort AX focus write inside
-                                    // the guarded foreground interval immediately
-                                    // before the physical key transition.
-                                    if let Some(element_ptr) = pre_focus_ptr {
-                                        let _ =
-                                            crate::input::ax_actions::focus_element(element_ptr);
-                                    }
-                                    crate::input::keyboard::press_key_bare_global(&key, &m)
+                                    // Activation may replace the first responder; confirm inside the HID guard.
+                                    with_confirmed_key_focus(
+                                        pre_focus_ptr,
+                                        crate::input::ax_actions::focus_element,
+                                        |target| {
+                                            crate::input::ax_actions::element_has_keyboard_focus(
+                                                pid, target,
+                                            )
+                                        },
+                                        || {
+                                            crate::input::keyboard::press_key_bare_global(
+                                                prompt, pid, &key, &m,
+                                            )
+                                        },
+                                    )
                                 },
                             )
                         });
                     }
                     // background (default): auth-envelope post, no raise.
                     dispatch_with_ax_oracle(pid, window_id, pre_focus_ptr, || {
-                        crate::input::keyboard::press_key(pid, &key, &m)
+                        with_confirmed_key_focus(
+                            pre_focus_ptr,
+                            crate::input::ax_actions::focus_element,
+                            |target| {
+                                crate::input::ax_actions::element_has_keyboard_focus(pid, target)
+                            },
+                            || crate::input::keyboard::press_key(pid, &key, &m),
+                        )
                     })
                 })
                 .await
@@ -471,7 +539,7 @@ impl Tool for PressKeyTool {
         )
         .await;
 
-        let changes = super::finish_window_observation(snapshot, &args).await;
+        let changes = super::finish_window_observation(snapshot).await;
 
         let delivery_outcome = match result {
             Ok(result) => map_delivery_outcome(result),
@@ -489,11 +557,12 @@ impl Tool for PressKeyTool {
                 } else {
                     ""
                 };
-                let structured = serde_json::json!({
+                let mut structured = serde_json::json!({
                     "path": if fg { "key_events_fg" } else { "key_events" },
                     "verified": confirmed,
                     "effect": if confirmed { "confirmed" } else { "unverifiable" },
                 });
+                changes.add_window_identity(&mut structured);
                 ToolResult::text(format!(
                     "✅ Pressed {display_key} on pid {pid}{label}.{}",
                     changes.result_suffix()
@@ -509,6 +578,129 @@ impl Tool for PressKeyTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_oracle_returns_on_the_first_changed_read() {
+        let mut reads = 0;
+        assert!(poll_until(
+            std::time::Duration::from_secs(5),
+            AX_ORACLE_POLL,
+            || {
+                reads += 1;
+                reads == 2
+            }
+        ));
+        assert_eq!(reads, 2, "no read after the change");
+    }
+
+    #[test]
+    fn the_oracle_gives_up_at_its_bound() {
+        let started = std::time::Instant::now();
+        assert!(!poll_until(AX_ORACLE_WAIT, AX_ORACLE_POLL, || false));
+        assert!(started.elapsed() >= AX_ORACLE_WAIT);
+    }
+
+    #[test]
+    fn targeted_key_requires_focus_readback_before_dispatch() {
+        use std::cell::RefCell;
+        let events = RefCell::new(Vec::new());
+        let result = with_confirmed_key_focus(
+            Some(42),
+            |target| {
+                events.borrow_mut().push(("focus", target));
+                Ok(())
+            },
+            |target| {
+                events.borrow_mut().push(("verify", target));
+                false
+            },
+            || {
+                events.borrow_mut().push(("dispatch", 0));
+                Ok(())
+            },
+        );
+        let failure = delivery_failed(result.unwrap_err());
+        assert_eq!(
+            failure.structured_content.as_ref().unwrap()["code"],
+            "target_focus_unconfirmed"
+        );
+        assert_eq!(
+            failure.structured_content.as_ref().unwrap()["effect"],
+            "refused"
+        );
+        let events = events.borrow();
+        assert!(events.len() >= 4);
+        for pair in events.chunks(2) {
+            assert_eq!(pair, &[("focus", 42), ("verify", 42)]);
+        }
+    }
+
+    #[test]
+    fn targeted_key_retries_focus_before_dispatch() {
+        use std::cell::RefCell;
+        let events = RefCell::new(Vec::new());
+        let mut checks = 0;
+        with_confirmed_key_focus(
+            Some(42),
+            |target| {
+                events.borrow_mut().push(("focus", target));
+                Ok(())
+            },
+            |target| {
+                events.borrow_mut().push(("verify", target));
+                checks += 1;
+                checks == 2
+            },
+            || {
+                events.borrow_mut().push(("dispatch", 0));
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            *events.borrow(),
+            vec![
+                ("focus", 42),
+                ("verify", 42),
+                ("focus", 42),
+                ("verify", 42),
+                ("dispatch", 0)
+            ]
+        );
+    }
+
+    #[test]
+    fn confirmed_target_dispatches_once_and_window_keys_do_not_focus() {
+        use std::cell::Cell;
+        let sent = Cell::new(0);
+        for target in [Some(42), None] {
+            with_confirmed_key_focus(
+                target,
+                |_| Ok(()),
+                |_| true,
+                || {
+                    sent.set(sent.get() + 1);
+                    Ok(())
+                },
+            )
+            .unwrap();
+        }
+        assert_eq!(sent.get(), 2);
+        let failed = with_confirmed_key_focus(
+            Some(42),
+            |_| anyhow::bail!("focus unavailable"),
+            |_| panic!("must not confirm failed focus"),
+            || -> anyhow::Result<()> { panic!("must not dispatch") },
+        );
+        assert_eq!(failed.unwrap_err().to_string(), "focus unavailable");
+        with_confirmed_key_focus(
+            None,
+            |_| panic!("window key has no element"),
+            |_| panic!("window key has no element"),
+            || Ok(()),
+        )
+        .unwrap();
+    }
 
     #[test]
     fn delivery_outcome_mapper_distinguishes_confirmed_unverifiable_and_failed() {

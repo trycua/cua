@@ -3,6 +3,8 @@
 # macOS harness tests use the installed, TCC-authorized cua-driver daemon path.
 # The install must embed CUA_DRIVER_SOURCE_SHA; the Lume wrapper owns that step.
 set -euo pipefail
+# macOS shells default to 256 open files, too few for the cua-spaces test binaries (see scripts/ci/tests/test_nofile_limit.py).
+[ "$(ulimit -Sn)" = unlimited ] || [ "$(ulimit -Sn)" -ge 10240 ] || ulimit -Sn 10240 2>/dev/null || ulimit -Sn "$(ulimit -Hn)" 2>/dev/null || true # nofile-limit
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
@@ -121,13 +123,16 @@ write_failure_record() {
     > "${failures_file}"
 }
 
+# shellcheck source=../lib/e2e-retry-once.sh
+source "${REPO_ROOT}/scripts/ci/lib/e2e-retry-once.sh"
+export CUA_E2E_PLATFORM=macos
+
 run_test() {
   local name="$1"; shift
+  local log_name="${name//[^a-zA-Z0-9._-]/_}"
   echo "[RUN] ${name}"
-  set +e
-  (cd "${RUST_ROOT}" && "$@") 2>&1 | tee "${ARTIFACT_DIR}/${name}.log"
-  local exit_code=${PIPESTATUS[0]}
-  set -e
+  local exit_code=0
+  cua_e2e_run_case "${name}" "${ARTIFACT_DIR}/${log_name}.log" "${RUST_ROOT}" "$@" || exit_code=$?
   if [[ "${exit_code}" != 0 ]]; then
     note_lane_failure "${name}"
   fi
@@ -148,6 +153,20 @@ filter_contains_exact() {
 
 native_retry_filter_active() {
   [[ -n "${CUA_E2E_CELL_FILTER:-}" || -n "${CUA_E2E_HARNESS_FILTER:-}" ]]
+}
+
+# scripts/ci/macos/appkit-cells.tsv maps each AppKit cell id to the exact Rust
+# test that owns it. The full native lane and a single-cell selection both read it.
+run_appkit_cells() {
+  local cell test_name
+  while IFS=$'\t' read -r cell test_name; do
+    if filter_contains_exact "${CUA_E2E_HARNESS_FILTER:-}" appkit \
+        && filter_contains_exact "${CUA_E2E_CELL_FILTER:-}" "${cell}"; then
+      NATIVE_FILTER_MATCHES=$((NATIVE_FILTER_MATCHES + 1))
+      run_test "appkit-${test_name}" cargo test -p cua-driver-e2e --test harness_appkit_test -- \
+        --ignored --exact "${test_name}" --nocapture --test-threads=1
+    fi
+  done < "${SCRIPT_DIR}/appkit-cells.tsv"
 }
 
 native_swiftui_test_selected() {
@@ -302,7 +321,7 @@ run_report() {
 
 echo "[PREFLIGHT] macOS daemon identity, fixture, AX, capture, and video"
 set +e
-(cd "${RUST_ROOT}" && cargo test -p cua-driver --test e2e_environment_preflight_test -- \
+(cd "${RUST_ROOT}" && cargo test -p cua-driver-e2e --test e2e_environment_preflight_test -- \
   --ignored --exact canonical_e2e_environment_is_ready --nocapture --test-threads=1) \
   2>&1 | tee "${ARTIFACT_DIR}/environment-preflight.log"
 PREFLIGHT_EXIT=${PIPESTATUS[0]}
@@ -328,47 +347,33 @@ if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
     --test runtime_configuration -- --test-threads=1
   run_test private-worker-lifecycle cargo test -p cua-driver \
     --test private_worker_test -- --test-threads=1
-  run_test shared-app-matrix cargo test -p cua-driver --test cross_platform_behavior_test -- \
+  # macOS private workers host the agent-cursor overlay window, so these rows
+  # are ignored under plain `cargo test` and run only on this desktop.
+  run_test private-worker-overlay cargo test -p cua-driver \
+    --test private_worker_test -- --ignored --exact \
+    private_worker_owns_one_runtime_without_a_reconnect_endpoint \
+    dropping_the_host_closes_and_terminates_the_private_worker \
+    private_worker_owns_the_macos_cursor_overlay_facility --test-threads=1
+  run_test shared-app-matrix cargo test -p cua-driver-e2e --test cross_platform_behavior_test -- \
     --ignored --exact shared_web_action_matrix_is_state_verified \
     --nocapture --test-threads=1
-  run_test embedded-browser-routes cargo test -p cua-driver --test cross_platform_behavior_test -- \
+  run_test embedded-browser-routes cargo test -p cua-driver-e2e --test cross_platform_behavior_test -- \
     --ignored --exact embedded_browser_routes_are_exact_or_refused \
     --nocapture --test-threads=1
 fi
 if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
   NATIVE_FILTER_MATCHES=0
   if ! native_retry_filter_active; then
-    run_test agent-cursor-showcase cargo test -p cua-driver \
+    run_test agent-cursor-showcase cargo test -p cua-driver-e2e \
       --test agent_cursor_showcase_test -- \
       --ignored --nocapture --test-threads=1
-    for appkit_test in \
-    harness_appkit_smoke \
-    harness_appkit_query_projects_structured_elements \
-    harness_appkit_stale_element_token_fails_closed \
-    harness_appkit_invoke_menu_live_path \
-    harness_appkit_text_input \
-    harness_appkit_element_foreground_press_key_commits_edit \
-    harness_appkit_modified_click_preserves_selection \
-    harness_appkit_type_text_background \
-    harness_appkit_scroll_foreground \
-    harness_appkit_scroll_background \
-    harness_appkit_counter \
-    harness_appkit_counter_px_background \
-    harness_appkit_right_click_px_foreground \
-    harness_appkit_right_click_px_background \
-    harness_appkit_double_click_px_foreground \
-    harness_appkit_double_click_px_background \
-    harness_appkit_slider_drag_px_foreground \
-      harness_appkit_slider_drag_px_background; do
-      run_test "appkit-${appkit_test}" cargo test -p cua-driver --test harness_appkit_test -- \
-        --ignored --exact "${appkit_test}" --nocapture --test-threads=1
-    done
   fi
+  run_appkit_cells
 
   while IFS='|' read -r swiftui_cell swiftui_test; do
     if native_swiftui_test_selected "${swiftui_cell}"; then
       NATIVE_FILTER_MATCHES=$((NATIVE_FILTER_MATCHES + 1))
-      run_test "swiftui-${swiftui_test}" cargo test -p cua-driver --test harness_swiftui_test -- \
+      run_test "swiftui-${swiftui_test}" cargo test -p cua-driver-e2e --test harness_swiftui_test -- \
         --ignored --exact "${swiftui_test}" --nocapture --test-threads=1
     fi
   done <<'EOF'
@@ -385,17 +390,54 @@ EOF
       note_lane_failure native-filter-selection
     fi
   else
-    run_test installed-app-launch cargo test -p cua-driver --test installed_app_launch_macos_test -- \
+    run_test installed-app-launch cargo test -p cua-driver-e2e --test installed_app_launch_macos_test -- \
       --ignored --nocapture --test-threads=1
-    run_test installed-app-textedit cargo test -p cua-driver --test installed_app_textedit_macos_test -- \
+    run_test installed-app-textedit cargo test -p cua-driver-e2e --test installed_app_textedit_macos_test -- \
       --ignored --exact background_type_on_native_cocoa_is_ax_verified \
       --nocapture --test-threads=1
+    run_test installed-app-textedit-hotkey cargo test -p cua-driver-e2e --test installed_app_textedit_macos_test -- \
+      --ignored --exact foreground_window_hotkey_selects_all_behind_another_app \
+      --nocapture --test-threads=1
+    run_test installed-app-textedit-hotkey-sibling cargo test -p cua-driver-e2e --test installed_app_textedit_macos_test -- \
+      --ignored --exact foreground_window_hotkey_reaches_an_unfocused_sibling_of_the_frontmost_app \
+      --nocapture --test-threads=1
+    run_test installed-app-screen-sharing cargo test -p cua-driver-e2e --test screen_sharing_macos_test -- \
+      --ignored --exact foreground_type_text_reaches_a_minimized_screen_sharing_window \
+      --nocapture --test-threads=1
+    # These rows assert through System Events and CoreGraphics oracles rather
+    # than typed matrix results, so they must not leave unowned trajectories.
+    run_test bring-to-front env -u CUA_E2E_RECORDINGS_ROOT \
+      cargo test -p cua-driver-e2e --test bring_to_front_macos_test -- \
+      --ignored --nocapture --test-threads=1
+    run_test frontmost-app env -u CUA_E2E_RECORDINGS_ROOT \
+      cargo test -p cua-driver-e2e --test frontmost_app_macos_test -- \
+      --ignored --nocapture --test-threads=1
+    # Tk derives click locations from the hardware pointer. The rows skip with
+    # an explicit reason when python3 lacks tkinter (hosted images may not ship
+    # it); set CUA_TEST_REQUIRE_TK=1 where Tk is provisioned.
+    run_test tk-pointer-click env -u CUA_E2E_RECORDINGS_ROOT \
+      cargo test -p cua-driver-e2e --test tk_pointer_click_macos_test -- \
+      --ignored --nocapture --test-threads=1
+    run_test tk-pointer-toolkit-detect cargo test -p platform-macos --lib \
+      input::pointer_toolkit::tests:: -- --ignored --nocapture --test-threads=1
   fi
 fi
 if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then
-  run_test capture-contract cargo test -p cua-driver --test capture_contract_test -- \
+  run_test capture-contract cargo test -p cua-driver-e2e --test capture_contract_test -- \
     --ignored --nocapture --test-threads=1
-  run_test desktop-scope cargo test -p cua-driver --test desktop_scope_macos_test -- \
+  run_test capture-environment env CUA_TEST_DRIVER_BIN="${MACOS_DAEMON_BIN}" \
+    cargo test -p cua-driver-e2e --test macos_capture_environment_test -- \
+    --ignored --nocapture --test-threads=1
+  run_test desktop-scope cargo test -p cua-driver-e2e --test desktop_scope_macos_test -- \
+    --ignored --nocapture --test-threads=1
+  run_test observer-native-snapshot cargo test -p cua-driver-testkit --lib \
+    observer::macos::tests:: -- --ignored --nocapture --test-threads=1
+  # Runs a dedicated instance of the installed app with an isolated extension
+  # home, so the shared daemon never gains the developer-only E2E extension or
+  # the published cua-perception release. The published-catalog row downloads
+  # the pinned release assets and needs python3 with tkinter.
+  run_test perception-capture-loop cargo test -p cua-driver-e2e \
+    --test perception_capture_loop_test -- \
     --ignored --nocapture --test-threads=1
 fi
 

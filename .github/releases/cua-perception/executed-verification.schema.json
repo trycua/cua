@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/trycua/cua/.github/releases/cua-perception/executed-verification.schema.json",
+  "title": "Cua Perception executed candidate verification",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "evidenceKind", "sourceSha", "target", "protocolVersion", "workerSha256", "runtimeSha256", "gates"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schemaVersion": { "const": 1 },
+    "evidenceKind": { "const": "executed" },
+    "sourceSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "target": { "type": "string", "minLength": 1 },
+    "protocolVersion": { "type": "integer", "minimum": 1 },
+    "workerSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "runtimeSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "gates": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["gate", "arguments", "status", "exitCode", "stdoutSha256", "stderrSha256"],
+        "properties": {
+          "gate": { "enum": ["health", "self-test", "real-parse", "mismatch-rejection"] },
+          "arguments": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+          "status": { "const": "passed" },
+          "exitCode": { "const": 0 },
+          "stdoutSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "stderrSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        }
+      }
+    }
+  }
+}

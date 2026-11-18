@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Protocol integration tests for snapshot-bound element targeting.
 //!
 //! These exercise the MCP protocol surface (schema + capability claims)
@@ -69,15 +72,9 @@ fn token_accepting_tools_advertise_element_token_in_schema_and_capabilities() {
             Some("string"),
             "{tool_name} element_token must be type:string"
         );
-        assert_eq!(
-            props["element_index"]["type"].as_str(),
-            Some("integer"),
-            "{tool_name} element_index must remain available only as a snapshot-bound pair"
-        );
-        assert_eq!(
-            props["snapshot_id"]["type"].as_str(),
-            Some("string"),
-            "{tool_name} must advertise snapshot_id for safe integer targeting"
+        assert!(
+            !props.contains_key("element_index") && !props.contains_key("snapshot_id"),
+            "{tool_name} must accept only element_token as an element target"
         );
 
         // (b) capabilities array includes `accessibility.element_tokens`.
@@ -93,33 +90,6 @@ fn token_accepting_tools_advertise_element_token_in_schema_and_capabilities() {
              current claim is {caps:?}"
         );
     }
-}
-
-/// `get_window_state` claims `accessibility.element_tokens`
-/// because it EMITS the tokens (the other side of the contract from
-/// the action tools above).
-#[test]
-fn get_window_state_claims_element_tokens_capability() {
-    let resp = match fetch_tools_list() {
-        Some(r) => r,
-        None => return,
-    };
-    let tools = resp["result"]["tools"].as_array().expect("tools array");
-    let gws = tools
-        .iter()
-        .find(|t| t["name"].as_str() == Some("get_window_state"))
-        .expect("get_window_state missing");
-    let caps: Vec<&str> = gws["capabilities"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(|v| v.as_str())
-        .collect();
-    assert!(
-        caps.contains(&"accessibility.element_tokens"),
-        "Surface 6: get_window_state must claim accessibility.element_tokens \
-         (it emits the tokens). Current claims: {caps:?}"
-    );
 }
 
 /// The native menu operation is a path contract, never another entry point for

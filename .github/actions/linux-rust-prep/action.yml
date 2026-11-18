@@ -1,0 +1,68 @@
+name: "Prepare a Linux runner for Rust builds"
+description: >-
+  On Linux runners only (a no-op elsewhere): free disk the hosted image spends
+  on toolchains Cua never uses, then install the system libraries the cua SDK,
+  cua-spacesd and cua-driver crates link against (X11 for the x11 crate,
+  Wayland, xkbcommon, PipeWire, D-Bus, udev). Big debug test binaries otherwise
+  exhaust the 14 GB free disk (the linker dies with SIGBUS) and the x11 build
+  script fails without x11.pc.
+
+inputs:
+  free-disk:
+    description: "Remove unused preinstalled toolchains and Docker images first."
+    default: "true"
+  install-deps:
+    description: "Install the Linux build dependencies."
+    default: "true"
+  free-more:
+    description: >-
+      Also remove the JVMs, cloud CLIs, browsers and extra tool caches (about
+      11 GB more), for jobs whose builds outgrow the default cleanup and use
+      none of them. The swap file stays: linking the big test binaries needs it.
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Free runner disk
+      if: runner.os == 'Linux' && inputs.free-disk == 'true'
+      shell: bash
+      run: |
+        df -h / | tail -1
+        # Deleting these takes 5-8 minutes on the hosted disk. Do it in the
+        # background, in parallel, while the job checks out and compiles; the
+        # space is back long before the first big link needs it.
+        (
+          printf '%s\0' /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost \
+            /usr/share/swift /usr/local/julia* /opt/az /usr/local/share/powershell |
+            xargs -0 -P 8 -n 1 sudo rm -rf
+        ) >/dev/null 2>&1 &
+        disown
+        # Not in the background: a later docker pull must not race the prune.
+        sudo docker image prune --all --force >/dev/null 2>&1 || true
+    - name: Free more runner disk
+      if: runner.os == 'Linux' && inputs.free-disk == 'true' && inputs.free-more == 'true'
+      shell: bash
+      run: |
+        (
+          printf '%s\0' /usr/lib/jvm /usr/lib/google-cloud-sdk \
+            /opt/microsoft /opt/google /usr/local/share/chromium /opt/pipx \
+            /usr/local/share/vcpkg /usr/share/miniconda /usr/local/aws-cli \
+            /usr/local/aws-sam-cli /opt/hostedtoolcache/go /opt/hostedtoolcache/PyPy \
+            /opt/hostedtoolcache/Ruby /opt/hostedtoolcache/Java_* /opt/mssql-tools \
+            /usr/share/kotlinc /usr/local/share/edge_driver /usr/local/share/gecko_driver \
+            /usr/local/share/chromedriver-linux64 /usr/lib/firefox |
+            xargs -0 -P 8 -n 1 sudo rm -rf
+        ) >/dev/null 2>&1 &
+        disown
+    - name: Install Linux build dependencies
+      if: runner.os == 'Linux' && inputs.install-deps == 'true'
+      uses: ./.github/actions/apt-install
+      with:
+        packages: >-
+          build-essential cmake clang pkg-config
+          libx11-dev libx11-xcb-dev libxcb1-dev libxext-dev libxi-dev
+          libxtst-dev libxrandr-dev libxkbcommon-dev libxkbcommon-x11-dev
+          libwayland-dev libdbus-1-dev libudev-dev
+          libpipewire-0.3-dev libspa-0.2-dev libei-dev

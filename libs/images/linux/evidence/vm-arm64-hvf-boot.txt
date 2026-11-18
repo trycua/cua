@@ -1,0 +1,30 @@
+==> booting ~/.cache/cua-images/cua-desktop-linux/arm64/disk.img (arm64, accel=hvf, firmware=uefi)
+    serial log: /var/folders/mp/xhws5p750g337t5l74_r3nsw0000gn/T//cua-e2e-boot.NlEkOw/serial.log
+  ok   serial login prompt after 13s: cua-vm login: 
+  ok   guest :5901 reachable after 13s
+  ok   guest :6080 reachable after 15s
+  ok   guest :3211 reachable after 17s
+desktop='cua' size=1280x800 sampled_colors=92 png=<scratchpad>/vm-arm64-desktop2.png
+  ok   RFB frame -> <scratchpad>/vm-arm64-desktop2.png
+running
+UNIT                   LOAD   ACTIVE SUB     DESCRIPTION
+cua-audio.service      loaded active running Headless PipeWire (pipewire + wireplumber + pipewire-pulse) for the cua desktop user
+cua-desktop.service    loaded active running Xvnc :1 + XFCE session for the cua desktop user
+cua-env-driver.service loaded active running cua-env-driver (gRPC + gRPC-Web on :3211)
+cua-novnc.service      loaded active running noVNC (websockify :6080 -> Xvnc :5901)
+
+Default Sample Specification: float32le 2ch 48000Hz
+Default Channel Map: front-left,front-right
+Default Sink: cua_desktop
+Default Source: cua_mic
+LISTEN 0      100          0.0.0.0:6080      0.0.0.0:*          
+LISTEN 0      5            0.0.0.0:5901      0.0.0.0:*          
+LISTEN 0      128          0.0.0.0:3211      0.0.0.0:*          
+LISTEN 0      5               [::]:5901         [::]:*          
+vmtokHint: You are currently not seeing messages from other users and the system.
+      Users in groups 'adm', 'systemd-journal' can see all messages.
+      Pass -q to turn off this notice.
+Sep 23 00:36:54 cua-vm start-env-driver.sh[419]: [2026-09-23T00:36:54+00:00] starting /usr/local/bin/cua-env-driver on 0.0.0.0:3211 (DISPLAY=:1)
+Sep 23 00:36:54 cua-vm start-env-driver.sh[419]: cua-env-driver listening on ws://0.0.0.0:3211/ws (shared-token auth)
+  ok   ssh as cua
+==> boot smoke rc=0 in 17s

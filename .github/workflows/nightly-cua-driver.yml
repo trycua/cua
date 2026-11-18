@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       source_sha:
-        description: "Exact main SHA (defaults to the workflow revision)"
+        description: "Exact main SHA (defaults to, and for the macOS E2E gate must equal, the workflow revision)"
         required: false
         type: string
       force:
@@ -16,14 +16,28 @@ on:
         type: boolean
 
 permissions:
+  # actions: read lets the reusable builder run its desktop E2E gate jobs.
+  # Nightly builds run them against source_sha; a failed suite fails `build`,
+  # so `publish` never runs. Nightly runs never publish a stable release.
+  # statuses: read is for the builder's `staging-gate` job. It never runs here
+  # (tag pushes only), but GitHub checks every called job's permissions when
+  # the run starts, so a missing scope ends the whole run as startup_failure
+  # (nightly runs 20 to 24 Oct 2026, after #5539 added that job).
+  actions: read
   contents: write
   id-token: write
   issues: write
   pull-requests: read
+  statuses: read
 
 concurrency:
   group: nightly-cua-driver
   cancel-in-progress: false
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
 
 jobs:
   plan:
@@ -86,6 +100,9 @@ jobs:
             cd release-upload
             shasum -a 256 * | sort > checksums.txt
           )
+
+      - name: Fetch the attribution base tag read-only
+        run: .github/scripts/ensure_upstream_tag.sh "${{ needs.plan.outputs.attribution_base_tag }}"
 
       - name: Collect PR-first attribution and render nightly body
         env:

@@ -1,0 +1,56 @@
+---
+title: Cleanup, disconnect and audit in your cloud
+description: How Cua cleans up what it created in your cloud account, when it refuses to disconnect, and the log of what it did there.
+---
+
+Details for [Use your own cloud](/cua-sdk/guides/your-cloud) and
+[Your cloud resources and costs](/cua-sdk/guides/your-cloud#what-cua-creates).
+
+## The automatic sweep
+
+While the Cua daemon runs, it does a sweep
+with `--delete` (not `--all`) every 15 minutes, starting a minute after it
+starts, in every connected cloud. It deletes only expired sandboxes and
+resources whose sandbox is gone, never a sandbox that is still within its
+time limit. One cloud that cannot be reached does not stop the others. It
+logs one line when it deletes something and nothing otherwise. Set
+`CUA_CLOUD_SWEEP_SECS` to change the interval in seconds, or to `0` to turn
+it off (then run `cua cloud sweep --delete` yourself).
+
+## Disconnecting
+
+A cloud that is not connected is not swept, so Cua will not disconnect one
+while sandboxes it created still run there. They would keep billing without
+Cua seeing them. `cua cloud disconnect` stops and lists them (how many, what
+kind, and their ids), and tells you what to do:
+
+```bash test="cli-shape" id="cua-cloud-disconnect"
+cua cloud disconnect aws
+cua cloud disconnect aws --delete
+```
+
+`--delete` deletes everything Cua created in that account, then asks the cloud
+again. It forgets the connection only when nothing of Cua's is left. If
+something could not be deleted, the connection stays, the error names what is
+left, and you can run it again. It prints the ids it deleted. Without
+`--delete` the other way out is `cua cloud sweep --all --delete`, then
+disconnect. Resources that Cua did not create are never touched or counted.
+
+## The audit log
+
+`~/.cua/cloud/state.json` holds only what exists now. The history is in
+`~/.cua/cloud/audit.jsonl`, an append-only file (readable only by you) with
+one line for each connect, disconnect, resource recorded before it is created,
+created, confirmed and deleted, and who did it: you, a sweep, the automatic
+sweep, `disconnect --delete`, or the clean-up after a failed create. It holds
+names and ids, never a key or a token. At 5 MB it moves to `audit.jsonl.1`
+(one old file is kept) and a new file starts.
+
+```bash test="cli-shape" id="cua-cloud-audit"
+cua cloud audit
+cua cloud audit --limit 200 --json
+```
+
+Each line has `ts`, `action`, `provider`, `kind`, `id`, `space`, `actor`,
+`outcome` (`ok`, `failed` or `refused`) and `detail`. The newest is last.
+Agents read the same log with the `cloud_audit` tool.

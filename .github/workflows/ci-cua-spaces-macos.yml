@@ -1,0 +1,491 @@
+name: "CI: Cua Spaces for macOS (SwiftUI)"
+
+# The native SwiftUI shell (apps/cua-spaces-macos) and the app core it
+# shares with the Tauri app (libs/cua/crates/cua-spaces-app-core): core
+# tests and parity flows, the UniFFI mirror drift gate, the app export
+# (libs/cua/crates/cua-spaces-ffi) and its Swift binding
+# (libs/spaces-app-swift: drift gate and tests), the notch package shared
+# with the Electron app's notch helper (libs/spaces-notch-swift), the Swift package's unit,
+# parity and snapshot tests, the app bundle (with Sparkle, and a launch
+# check), and the XCUITests (the bundle and the XCUITests run on a pull request
+# only when it changes a packaging path, see `changes`; always on main). Unsigned; the only secret is the optional
+# Sparkle key, for the appcast dry run. The Keyvault's live paths need a daemon and are not
+# exercised here (the view models run against a fake broker).
+#
+# Shape: the Rust library is built once (`ffi`; 20 to 60 minutes cold) and the
+# Swift checks download it and run side by side (`swift-tests`, `bindings`,
+# `app-bundle`), so the wall clock is the build plus the slowest of them, not
+# the sum of every step. `ffi` takes main's compiled library from the Actions
+# cache (the one ci-cua-spaces-rust-slice.yml produces, see
+# .github/actions/spaces-rust-slice) when the pull request leaves the Rust
+# inputs as they are on main, and compiles otherwise. `core` runs beside them
+# (the macOS jobs do not wait for it).
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "apps/cua-spaces-macos/**"
+      - "libs/cua/crates/cua-spaces-app-core/**"
+      # The shared keyboard shortcuts the core reads (palette.rs).
+      - "apps/cua-spaces-web/src/lib/keybindings.json"
+      - "libs/cua/crates/cua-spaces-ffi/**"
+      - "libs/cua/crates/cua-spaces-ext/**"
+      - "libs/cua/crates/cua-teleport/**"
+      - "libs/cua/crates/cua-keyvault/**"
+      - "libs/cua/crates/cua-sdk/**"
+      - "libs/cua/crates/cua-sdk-native/**"
+      # The channel names the Local bundle is stamped from (CuaChannel).
+      - "libs/cua/crates/cua-home/**"
+      - "libs/cua/scripts/generate-app-core-ffi.py"
+      - "libs/cua/swift/**"
+      - "libs/spaces-sdk-swift/**"
+      - "libs/spaces-app-swift/**"
+      - "libs/spaces-notch-swift/**"
+      - "libs/images/sandbox-images.json"
+      - "libs/cua/crates/cua-icon-cache/**"
+      # `ffi` restores main's compiled library through this action, keyed by
+      # what that script says the build reads.
+      - ".github/actions/spaces-rust-slice/**"
+      - ".github/scripts/spaces_rust_slice_inputs.py"
+      - ".github/actions/push-generated/**"
+      - ".github/workflows/ci-cua-spaces-macos.yml"
+  merge_group:
+  push:
+    branches: [main]
+    paths:
+      - "apps/cua-spaces-macos/**"
+      - "libs/cua/crates/cua-spaces-app-core/**"
+      # The shared keyboard shortcuts the core reads (palette.rs).
+      - "apps/cua-spaces-web/src/lib/keybindings.json"
+      - "libs/cua/crates/cua-spaces-ffi/**"
+      - "libs/cua/crates/cua-spaces-ext/**"
+      - "libs/cua/crates/cua-teleport/**"
+      - "libs/cua/crates/cua-keyvault/**"
+      - "libs/cua/crates/cua-sdk/**"
+      - "libs/cua/crates/cua-sdk-native/**"
+      # The channel names the Local bundle is stamped from (CuaChannel).
+      - "libs/cua/crates/cua-home/**"
+      - "libs/cua/scripts/generate-app-core-ffi.py"
+      - "libs/cua/swift/**"
+      - "libs/spaces-sdk-swift/**"
+      - "libs/spaces-app-swift/**"
+      - "libs/spaces-notch-swift/**"
+      - "libs/images/sandbox-images.json"
+      - "libs/cua/crates/cua-icon-cache/**"
+      # `ffi` restores main's compiled library through this action, keyed by
+      # what that script says the build reads.
+      - ".github/actions/spaces-rust-slice/**"
+      - ".github/scripts/spaces_rust_slice_inputs.py"
+      - ".github/workflows/ci-cua-spaces-macos.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cua-spaces-macos-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
+
+jobs:
+  quick:
+    name: quick
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    uses: ./.github/workflows/ci-quick.yml
+
+  # What the app bundle job (bundle, launch check, XCUITest; about an hour on a
+  # cold runner) must prove is packaging: the build scripts, the bundle's
+  # resources and plists, the XcodeGen project and the UI tests, the Swift
+  # package manifests and the pinned driver. A pull request runs that job only
+  # when it changes one of those paths. Every push to main and every manual run
+  # runs it, so any other change is checked after it merges, and a failure there
+  # alerts and opens an issue (ci-postmerge-issue.yml).
+  changes:
+    name: changes
+    needs: quick
+    if: ${{ !failure() && !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && needs.quick.outputs.skip != 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    defaults:
+      run:
+        working-directory: /tmp
+    outputs:
+      packaging: ${{ steps.scope.outputs.packaging }}
+    steps:
+      - id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          packaging=true
+          if [[ "$EVENT" == pull_request ]]; then
+            files=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --jq '.[].filename')
+            if grep -Eq '^(apps/cua-spaces-macos/(scripts/|Support/|UITests/|project\.yml$|Package\.swift$|Package\.resolved$|cua-driver\.release\.json$|BUNDLED_CUA_VERSION$|VERSION$)|libs/spaces-app-swift/scripts/|\.github/workflows/ci-cua-spaces-macos\.yml$)' <<<"$files"; then
+              packaging=true
+            else
+              packaging=false
+            fi
+          fi
+          echo "packaging=$packaging" | tee -a "$GITHUB_OUTPUT" "$GITHUB_STEP_SUMMARY"
+
+  core:
+    needs: quick
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) && needs.quick.outputs.skip != 'true' }}
+    name: app core (Rust) + FFI mirror gate
+    runs-on: ubuntu-24.04
+    env:
+      AUTOFIX: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && 'true' || 'false' }}
+    defaults:
+      run:
+        working-directory: libs/cua
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust (toolchain from rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: ./.github/actions/rust-cache
+        with:
+          workspaces: libs/cua
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      # The mirrors are generated from the core and committed. On a pull
+      # request from this repository a stale file is regenerated and pushed
+      # to the branch (CI restarts on it); elsewhere it fails.
+      - name: Generate release GitHub App token
+        id: app-token
+        if: ${{ env.AUTOFIX == 'true' }}
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+      - name: FFI mirrors match the core
+        if: ${{ env.AUTOFIX != 'true' }}
+        run: python3 scripts/generate-app-core-ffi.py --check
+      - name: Regenerate the FFI mirrors
+        if: ${{ env.AUTOFIX == 'true' }}
+        run: python3 scripts/generate-app-core-ffi.py
+      - name: Push the regenerated FFI mirrors to the pull request branch
+        if: ${{ env.AUTOFIX == 'true' }}
+        uses: ./.github/actions/push-generated
+        with:
+          paths: libs/cua/crates/cua-spaces-ffi/src/app_core_types.rs
+          token: ${{ steps.app-token.outputs.token }}
+          message: "chore(spaces): regenerate the app core FFI mirrors"
+      - name: No UI keeps its own icon cache
+        run: scripts/check-icon-caches.sh
+      # notarize.sh against a fake xcrun: a notarytool that dies from a signal
+      # before it returns a submission id is submitted again, a wait that dies
+      # resumes on the same id, anything else is not repeated. Needs no
+      # certificate, network or Apple account (#5837).
+      - name: notarize.sh retries a crashed notarytool (fake xcrun)
+        working-directory: apps/cua-spaces-macos
+        run: scripts/tests/notarize-test.sh
+      - name: The SDK icon cache (hit/miss, single flight, negatives, eviction)
+        run: cargo test --locked -p cua-icon-cache -- --test-threads=4
+      - name: Core tests and parity flows
+        run: cargo test --locked -p cua-spaces-app-core --features keyvault-client -- --test-threads=4
+      - name: Clippy and fmt
+        run: |
+          cargo fmt -p cua-spaces-app-core -- --check
+          cargo clippy --locked -p cua-spaces-app-core --all-targets --features keyvault-client -- -D warnings
+
+  # Builds libcua_spaces_ffi once. The Swift jobs below download it instead of
+  # each compiling it (the checks that need the Rust toolchain compile only
+  # the small bindgen tools).
+  ffi:
+    needs: quick
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) && needs.quick.outputs.skip != 'true' }}
+    name: Cua Spaces app library (built once)
+    runs-on: macos-26
+    # Last 26 successful runs: median 57 minutes, p95 about 90, longest 93 (a
+    # full cold build when both caches miss). 45 cancelled steady progress and
+    # 90 cancelled a Cargo.lock PR, so the ceiling is 120: a stalled job now
+    # frees the runner and the merge queue in two hours, not three. The cache
+    # restores inside the action give up after 4 minutes per segment.
+    timeout-minutes: 120
+    env:
+      CARGO_BUILD_JOBS: 4
+      # The slice cache key names the repository (same value as the producer).
+      CUA_RELEASE_REPOSITORY: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      # One definition of the build, shared with the producer on main
+      # (ci-cua-spaces-rust-slice.yml). Exact key hit (the pull request leaves
+      # the Rust inputs as they are on main): main's compiled library, seconds.
+      # Miss: the action builds with the same `--target` command and the same
+      # Swatinem cache family main saves, so a pull request compiles only the
+      # workspace crates it changed (minutes) and not the whole dependency tree
+      # (73 minutes cold). The old miss path built `cargo build --release`
+      # without `--target`, into a different target directory and an sccache
+      # family warmed by debug test builds, so it never reused main's work.
+      - name: Restore main's compiled library, or build on top of main's dependency cache
+        id: slice
+        uses: ./.github/actions/spaces-rust-slice
+        with:
+          triple: aarch64-apple-darwin
+      - name: Stage the library where the Swift jobs expect it
+        run: |
+          mkdir -p libs/cua/target/release
+          cp libs/cua/target/aarch64-apple-darwin/release/libcua_spaces_ffi.dylib libs/cua/target/release/
+      - name: Upload the library for the Swift jobs
+        uses: actions/upload-artifact@v4
+        with:
+          name: cua-spaces-ffi-dylib
+          path: libs/cua/target/release/libcua_spaces_ffi.dylib
+          if-no-files-found: error
+          retention-days: 1
+
+  swift-tests:
+    if: ${{ !failure() && !cancelled() && needs.ffi.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft)) && needs.quick.outputs.skip != 'true' }}
+    name: SwiftUI app (swift tests, bridge contract)
+    needs: [quick, ffi]
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the Cua Spaces app library
+        uses: actions/download-artifact@v4
+        with:
+          name: cua-spaces-ffi-dylib
+          path: libs/cua/target/release
+      - name: Stage the Cua Spaces app library
+        working-directory: libs/cua
+        run: ../spaces-app-swift/scripts/stage-library.sh
+      # swift test has no retry flag, so flaky.sh runs the failed tests once
+      # more. A test that passes only then is reported and gets a `flaky`
+      # issue (.github/flaky/).
+      - name: spaces-app-swift tests
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite spaces-swift-app --format log --rerun-failed -- libs/spaces-app-swift/scripts/test.sh
+      - name: Notch package tests (the views and the Electron helper's protocol)
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite spaces-swift-notch --format log --rerun-failed -- libs/spaces-notch-swift/scripts/test.sh
+      - name: Swift tests (view models, parity, snapshots)
+        working-directory: apps/cua-spaces-macos
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite spaces-swift-mac --format log --rerun-failed -- scripts/test.sh
+      # The bundled Cua Driver is checked against the size and SHA-256
+      # committed in cua-driver.release.json and the Cua team's signature;
+      # a mismatched, incomplete or unsigned download is refused.
+      - name: fetch-cua-driver.sh refuses a download that isn't the pinned release
+        working-directory: apps/cua-spaces-macos
+        run: scripts/tests/fetch-cua-driver-test.sh
+      # install-local.sh and uninstall-local.sh against a fake HOME and a fake
+      # build: a Stable install stays byte-identical, a wrong bundle id is
+      # refused. Needs no build, certificate or network.
+      - name: install-local and uninstall-local (fake HOME)
+        working-directory: apps/cua-spaces-macos
+        run: scripts/tests/install-local-test.sh
+      # BridgeContractTests (above) checked every answer against
+      # apps/cua-spaces-web/src/bridge/contracts/bridge-shapes.json; its
+      # answers then go through the web UI's webkit adapter.
+      # pnpm from the Electron shell's packageManager (pnpm@11.20.0); the
+      # root package.json pins pnpm 9 for the rest of the repo.
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          package_json_file: apps/cua-spaces-desktop/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Bridge contract (the Swift host's answers through the webkit adapter)
+        run: |
+          (cd apps/cua-spaces-web && pnpm install --ignore-workspace --frozen-lockfile)
+          answers="$RUNNER_TEMP/bridge-answers.json"
+          (cd apps/cua-spaces-macos && CUA_BRIDGE_ANSWERS="$answers" scripts/test.sh --filter BridgeContractTests)
+          (cd apps/cua-spaces-web && CUA_BRIDGE_ANSWERS="$answers" npx vitest run src/bridge/__tests__/contract.test.ts)
+      - uses: ./.github/actions/flaky-upload
+        if: always()
+        with:
+          suite: spaces-swift
+      - name: Upload snapshot differences
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cua-spaces-macos-snapshot-diffs
+          path: apps/cua-spaces-macos/Tests/CuaSpacesMacTests/Snapshots/*.actual.png
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # The generated bindings checked in next to the apps (Swift and the Electron
+  # shell's TypeScript) still match the library. These run the bindgen tools
+  # with cargo, so this job has the Rust toolchain; the other Swift jobs do not.
+  bindings:
+    if: ${{ !failure() && !cancelled() && needs.ffi.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft)) && needs.quick.outputs.skip != 'true' }}
+    name: SwiftUI and Electron bindings are up to date
+    needs: [quick, ffi]
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: 4
+      AUTOFIX: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && 'true' || 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust (toolchain from rust-toolchain.toml)
+        working-directory: libs/cua
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      # Restore only (main's other macOS jobs save this family).
+      - uses: ./.github/actions/rust-cache
+        with:
+          workspaces: libs/cua
+          save-if: "false"
+      - name: Download the Cua Spaces app library
+        uses: actions/download-artifact@v4
+        with:
+          name: cua-spaces-ffi-dylib
+          path: libs/cua/target/release
+      # Generated bindings stay committed (the Swift package and the Electron
+      # shell build without cargo), so a change to the FFI on main makes every
+      # open pull request stale. On a pull request from this repository the
+      # job regenerates them against the merged result, pushes them to the
+      # branch as the release app (CI restarts on the new head) and passes;
+      # main, the merge queue and forks keep the strict check.
+      - name: Generate release GitHub App token
+        id: app-token
+        if: ${{ env.AUTOFIX == 'true' }}
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+      - name: The Cua Spaces app binding is up to date
+        if: ${{ env.AUTOFIX != 'true' }}
+        run: node libs/spaces-app-swift/scripts/generate-bindings.mjs --check --skip-build
+      - name: Regenerate the Cua Spaces app binding
+        if: ${{ env.AUTOFIX == 'true' }}
+        run: node libs/spaces-app-swift/scripts/generate-bindings.mjs --skip-build
+      # pnpm from the Electron shell's packageManager (pnpm@11.20.0); the
+      # root package.json pins pnpm 9 for the rest of the repo.
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          package_json_file: apps/cua-spaces-desktop/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # The Electron shell's TypeScript binding of the same library
+      # (apps/cua-spaces-desktop/src/native/generated). A stale one used to
+      # surface only in the release build; this fails the PR instead.
+      - name: The Electron TypeScript app core binding is up to date
+        if: ${{ env.AUTOFIX != 'true' }}
+        working-directory: apps/cua-spaces-desktop
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm native -- --skip-build --check-bindings
+      - name: Regenerate the Electron TypeScript app core binding
+        if: ${{ env.AUTOFIX == 'true' }}
+        working-directory: apps/cua-spaces-desktop
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm native -- --skip-build --bindings
+      - name: Push the regenerated bindings to the pull request branch
+        if: ${{ env.AUTOFIX == 'true' }}
+        uses: ./.github/actions/push-generated
+        with:
+          paths: libs/spaces-app-swift/Sources/CuaSpacesFFI libs/spaces-app-swift/Sources/cua_spaces_ffiFFI apps/cua-spaces-desktop/src/native/generated
+          token: ${{ steps.app-token.outputs.token }}
+          message: "chore(spaces): regenerate the SwiftUI and Electron bindings"
+
+  app-bundle:
+    # On a pull request only when it changes a packaging path (see `changes`);
+    # always on main and on a manual run.
+    if: ${{ !failure() && !cancelled() && needs.ffi.result == 'success' && needs.changes.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'pull_request' || needs.changes.outputs.packaging == 'true')) && needs.quick.outputs.skip != 'true' }}
+    name: SwiftUI app (bundle, launch check, XCUITest)
+    needs: [quick, ffi, changes]
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the Cua Spaces app library
+        uses: actions/download-artifact@v4
+        with:
+          name: cua-spaces-ffi-dylib
+          path: libs/cua/target/release
+      - name: Stage the Cua Spaces app library
+        working-directory: libs/cua
+        run: ../spaces-app-swift/scripts/stage-library.sh
+      # Embeds Sparkle and ends with scripts/check-launch.sh: every library
+      # resolves inside the bundle and loads, and the app starts and exits.
+      - name: Build the app bundle (and its launch check)
+        working-directory: apps/cua-spaces-macos
+        run: scripts/build-app.sh release
+      # macOS 26 puts icons without their own background on a grey plate: the
+      # bundle must carry the compiled Icon Composer icon (CUA-2244).
+      - name: The bundle has the macOS 26 app icon
+        working-directory: apps/cua-spaces-macos
+        run: |
+          app=".build/app/Cua Spaces.app"
+          test -s "$app/Contents/Resources/Assets.car"
+          test -s "$app/Contents/Resources/AppIcon.icns"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$app/Contents/Info.plist")" = AppIcon
+      # The host service never checks in with LaunchServices as the app:
+      # while a windowless helper held the app's entry, opening Cua Spaces
+      # failed with error -600 (0.17.0-beta.3/beta.4, through the Sentry SDK).
+      - name: The host service is not an app
+        working-directory: apps/cua-spaces-macos
+        run: scripts/tests/helper-not-an-app.sh ".build/app/Cua Spaces.app"
+      # Cua Spaces Local (--channel local) runs beside an installed Cua
+      # Spaces and must not be able to touch it (CUA-1776): the Local bundle
+      # id, helper, URL scheme and home, staging, and no Sparkle feed. The
+      # build ends with scripts/check-local-bundle.sh; the second step proves
+      # the check fails on the production bundle (its id, its feed, its
+      # `cua` scheme).
+      - name: Build the Local bundle (Cua Spaces Local) and check it
+        working-directory: apps/cua-spaces-macos
+        run: |
+          scripts/build-app.sh --channel local release "$RUNNER_TEMP/local-app"
+          scripts/check-local-bundle.sh "$RUNNER_TEMP/local-app/Cua Spaces Local.app"
+      - name: The Local check rejects the production bundle
+        working-directory: apps/cua-spaces-macos
+        run: |
+          if scripts/check-local-bundle.sh ".build/app/Cua Spaces.app" 2>"$RUNNER_TEMP/local-check.log"; then
+            echo "check-local-bundle.sh accepted the production bundle" >&2
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/local-check.log"
+          for want in "production one" "SUFeedURL is set" "'cua' URL scheme is registered"; do
+            grep -F "$want" "$RUNNER_TEMP/local-check.log" >/dev/null ||
+              { echo "the check did not report: $want" >&2; exit 1; }
+          done
+      # With the release key only (it is absent on forks): two fake releases
+      # through make-appcast.sh, checked with Sparkle's sign_update and the
+      # public key the app ships (catches a secret that does not match it).
+      - name: Sparkle key available
+        id: sparkle
+        env:
+          CUA_SPACES_SPARKLE_ED_PRIVATE_KEY: ${{ secrets.CUA_SPACES_SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          if [ -n "$CUA_SPACES_SPARKLE_ED_PRIVATE_KEY" ]; then echo "enabled=true"; else echo "enabled=false"; fi >> "$GITHUB_OUTPUT"
+      - name: Sparkle appcast dry run
+        if: steps.sparkle.outputs.enabled == 'true'
+        working-directory: apps/cua-spaces-macos
+        env:
+          CUA_SPACES_SPARKLE_ED_PRIVATE_KEY: ${{ secrets.CUA_SPACES_SPARKLE_ED_PRIVATE_KEY }}
+        run: scripts/appcast-dry-run.sh ".build/app/Cua Spaces.app"
+      - name: UI tests (XCUITest)
+        working-directory: apps/cua-spaces-macos
+        run: |
+          brew install xcodegen
+          xcodegen generate
+          # -retry-tests-on-failure with 2 iterations: one retry.
+          "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite spaces-xcuitest --format log -- \
+            xcodebuild test -project CuaSpacesMac.xcodeproj -scheme CuaSpacesMacUITests \
+            -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO \
+            -retry-tests-on-failure -test-iterations 2
+      - uses: ./.github/actions/flaky-upload
+        if: always()
+        with:
+          suite: spaces-xcuitest

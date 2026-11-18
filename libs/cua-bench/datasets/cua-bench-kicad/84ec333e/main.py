@@ -1,4 +1,5 @@
 """Auto-generated cb task for KiCad submission 84ec333e-3a9d-4aa6-ab8b-8575bbf2dbab."""
+
 from __future__ import annotations
 
 import asyncio
@@ -15,8 +16,8 @@ _HARNESS_DIR = Path(__file__).parent
 def tasks() -> list[cb.Task]:
     return [
         cb.Task(
-            description='''Modify the circuit to set the pole frequency to 4kHz but keep the passband gain the same.''',
-            metadata={"difficulty": 'easy', "submission_id": _SUBMISSION_ID},
+            description="""Modify the circuit to set the pole frequency to 4kHz but keep the passband gain the same.""",
+            metadata={"difficulty": "easy", "submission_id": _SUBMISSION_ID},
         )
     ]
 
@@ -36,7 +37,9 @@ async def start(task_cfg: cb.Task, session: cb.DesktopSession) -> None:
         await session.write_bytes(remote_path, local_path.read_bytes())
 
     try:
-        await session.apps.kicad.launch(project_path='/home/cua/kicad_project/kicad_activelowpass_circuit/kicad_activelowpass_circuit.kicad_pro')
+        await session.apps.kicad.launch(
+            project_path="/home/cua/kicad_project/kicad_activelowpass_circuit/kicad_activelowpass_circuit.kicad_pro"
+        )
     except Exception:
         pass
     await asyncio.sleep(5)

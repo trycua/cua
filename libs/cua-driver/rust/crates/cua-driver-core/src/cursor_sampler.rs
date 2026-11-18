@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Cross-platform cursor-position sampler. Runs on a dedicated thread
 //! during recording, polls the OS for the current mouse position every
 //! ~33 ms (≈30 Hz to match the video framerate), and writes one

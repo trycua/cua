@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Shared MCP request dispatch and privacy-bounded observations.
 
 use std::sync::{Arc, OnceLock};
@@ -5,6 +8,7 @@ use std::time::Instant;
 use tracing::warn;
 
 use crate::authorization::authorize_tool_call;
+use crate::mcp_result::{conforming_tool_result, tool_error_result};
 use crate::protocol::{initialize_result, InitializeMetadata, Request, Response, ResponseBody};
 use crate::tool::ToolRegistry;
 
@@ -17,6 +21,10 @@ use crate::tool::ToolRegistry;
 #[async_trait::async_trait]
 pub trait ToolProvider: Send + Sync {
     fn tools_list(&self) -> serde_json::Value;
+    fn is_known_tool(&self, _name: &str) -> bool {
+        true
+    }
+
     async fn invoke_tool(
         &self,
         name: &str,
@@ -28,6 +36,10 @@ pub trait ToolProvider: Send + Sync {
 impl ToolProvider for ToolRegistry {
     fn tools_list(&self) -> serde_json::Value {
         ToolRegistry::tools_list(self)
+    }
+
+    fn is_known_tool(&self, name: &str) -> bool {
+        ToolRegistry::is_known_tool(self, name)
     }
 
     async fn invoke_tool(
@@ -255,6 +267,9 @@ impl From<crate::browser::refusal::BrowserRefusalCode> for ToolRefusalCode {
             BrowserRefusalCode::BrowserInputIncomplete => Self::BrowserInputIncomplete,
             BrowserRefusalCode::BrowserActionUnavailable => Self::BrowserActionUnavailable,
             BrowserRefusalCode::BrowserOriginOutsideScope => Self::BrowserOriginOutsideScope,
+            // Not a browser-specific code: the shared background refusal is
+            // classified through `ToolErrorClass::BackgroundUnavailable`.
+            BrowserRefusalCode::BackgroundUnavailable => Self::Other,
         }
     }
 }
@@ -284,13 +299,8 @@ pub struct ToolCompletionObservation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolOperation {
     NotApplicable,
-    ExecuteJavascript,
     GetText,
     QueryDom,
-    ClickElement,
-    InsertText,
-    TypeKeystrokes,
-    EnableJavascriptAppleEvents,
     BrowserBind,
     BrowserSnapshotDomRefsV1,
     BrowserSnapshotSemanticV2,
@@ -322,13 +332,8 @@ impl ToolOperation {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::NotApplicable => "not_applicable",
-            Self::ExecuteJavascript => "execute_javascript",
             Self::GetText => "get_text",
             Self::QueryDom => "query_dom",
-            Self::ClickElement => "click_element",
-            Self::InsertText => "insert_text",
-            Self::TypeKeystrokes => "type_keystrokes",
-            Self::EnableJavascriptAppleEvents => "enable_javascript_apple_events",
             Self::BrowserBind => "browser_bind",
             Self::BrowserSnapshotDomRefsV1 => "browser_snapshot_dom_refs_v1",
             Self::BrowserSnapshotSemanticV2 => "browser_snapshot_semantic_v2",
@@ -363,15 +368,10 @@ pub fn tool_operation(tool_name: &str, args: Option<&serde_json::Value>) -> Tool
         args.and_then(|value| value.get(key))
             .and_then(serde_json::Value::as_str)
     };
-    match tool_name {
+    match crate::tool::renamed_tool(tool_name).unwrap_or(tool_name) {
         "page" => match string_arg("action") {
-            Some("execute_javascript") => ToolOperation::ExecuteJavascript,
             Some("get_text") => ToolOperation::GetText,
             Some("query_dom") => ToolOperation::QueryDom,
-            Some("click_element") => ToolOperation::ClickElement,
-            Some("insert_text") => ToolOperation::InsertText,
-            Some("type_keystrokes") => ToolOperation::TypeKeystrokes,
-            Some("enable_javascript_apple_events") => ToolOperation::EnableJavascriptAppleEvents,
             _ => ToolOperation::Other,
         },
         "get_browser_state" => {
@@ -454,13 +454,8 @@ pub fn tool_operation(tool_name: &str, args: Option<&serde_json::Value>) -> Tool
 /// or any other tool argument.
 pub fn is_computer_action(tool_name: &str, operation: ToolOperation) -> bool {
     if tool_name == "page" {
-        return matches!(
-            operation,
-            ToolOperation::ClickElement
-                | ToolOperation::InsertText
-                | ToolOperation::TypeKeystrokes
-                | ToolOperation::EnableJavascriptAppleEvents
-        );
+        // `page` only reads, so it is never a computer action.
+        return false;
     }
     if tool_name == "browser_dialog" {
         return matches!(
@@ -486,6 +481,7 @@ pub fn is_computer_action(tool_name: &str, operation: ToolOperation) -> bool {
                         | "window.activate"
                         | "window.frame.set"
                         | "browser.navigate"
+                        | "browser.motion.policy"
                         | "browser.input.click"
                         | "browser.input.type"
                 )
@@ -599,29 +595,6 @@ pub fn tool_observation_timer(
     ))
 }
 
-/// Build a private aggregate-session context from a valid, known tool call.
-/// Only the public `session` argument is considered; reserved fallback keys
-/// and all other arguments remain outside the observer seam.
-pub fn session_tool_context(
-    req: &Request,
-    is_known_tool: impl Fn(&str) -> bool,
-    transport: crate::session::SessionTransport,
-) -> Option<crate::session::SessionToolContext> {
-    if req.method != "tools/call" {
-        return None;
-    }
-    let call = req.tool_call().ok()?;
-    let known_tool = call.name == "type_text_chars" || is_known_tool(&call.name);
-    let client_kind = match transport {
-        crate::session::SessionTransport::Cli => crate::session::SessionClientKind::Cli,
-        crate::session::SessionTransport::Daemon => crate::session::SessionClientKind::Direct,
-        crate::session::SessionTransport::McpStdio | crate::session::SessionTransport::McpHttp => {
-            crate::session::SessionClientKind::Mcp
-        }
-    };
-    crate::session::begin_tool_call(&call.name, &call.args, known_tool, transport, client_kind)
-}
-
 fn notify_session_started(metadata: InitializeMetadata) {
     if let Some(observer) = STDIO_OBSERVER.get() {
         observer.on_session_started(metadata);
@@ -718,6 +691,7 @@ fn structured_refusal_code(tool_name: &str, result: Option<&serde_json::Value>) 
         "get_browser_state"
             | "browser_prepare"
             | "browser_navigate"
+            | "browser_motion_policy"
             | "browser_click"
             | "browser_type"
             | "browser_dialog"
@@ -879,8 +853,38 @@ async fn handle_request_inner(
     provider: &dyn ToolProvider,
     transport_session: Option<&str>,
 ) -> Response {
+    let era = match crate::mcp_wire::classify_request(&req) {
+        Ok(era) => era,
+        Err(response) => return response,
+    };
+    if req.method == "tools/call" {
+        if let Err(response) =
+            crate::mcp_wire::validate_tool_call(&req, id.clone(), era, &provider.tools_list())
+        {
+            return response;
+        }
+    }
+    let method = req.method.clone();
+    let response =
+        if let Some(response) = crate::mcp_wire::handle_metadata_request(&req, id.clone()) {
+            response
+        } else {
+            dispatch_request(req, id, provider, transport_session, era).await
+        };
+    crate::mcp_wire::finish_response(era, &method, response)
+}
+
+async fn dispatch_request(
+    req: Request,
+    id: serde_json::Value,
+    provider: &dyn ToolProvider,
+    transport_session: Option<&str>,
+    era: crate::mcp_wire::ProtocolEra,
+) -> Response {
     match req.method.as_str() {
-        "initialize" => Response::ok(id, initialize_result()),
+        "initialize" if era == crate::mcp_wire::ProtocolEra::Legacy => {
+            Response::ok(id, initialize_result())
+        }
 
         "tools/list" => Response::ok(id, provider.tools_list()),
 
@@ -891,9 +895,22 @@ async fn handle_request_inner(
                 if let Err(error) = authorize_tool_call(&call.name, &call.args) {
                     return Response::ok(
                         id,
+                        conforming_tool_result(
+                            &call.name,
+                            tool_error_result(
+                                error.to_string(),
+                                serde_json::json!({"code": "permission_denied"}),
+                            ),
+                        ),
+                    );
+                }
+
+                if !provider.is_known_tool(&call.name) {
+                    return Response::ok(
+                        id,
                         tool_error_result(
-                            error.to_string(),
-                            serde_json::json!({"code": "permission_denied"}),
+                            format!("Unknown tool: {}", call.name),
+                            serde_json::json!({"code": "unknown_tool"}),
                         ),
                     );
                 }
@@ -927,13 +944,14 @@ async fn handle_request_inner(
                     }
                 }
 
-                match provider.invoke_tool(&call.name, call.args).await {
-                    Ok(result) => Response::ok(id, result),
-                    Err(error) => Response::ok(
-                        id,
-                        tool_error_result(error, serde_json::json!({"exit_code": 1})),
-                    ),
-                }
+                // Both arms answer through the shared boundary, so a tool
+                // payload and an invocation failure are held to the same
+                // advertised `outputSchema`.
+                let result = match provider.invoke_tool(&call.name, call.args).await {
+                    Ok(result) => result,
+                    Err(error) => tool_error_result(error, serde_json::json!({"exit_code": 1})),
+                };
+                Response::ok(id, conforming_tool_result(&call.name, result))
             }
         },
 
@@ -944,12 +962,166 @@ async fn handle_request_inner(
     }
 }
 
-fn tool_error_result(message: String, structured: serde_json::Value) -> serde_json::Value {
-    serde_json::json!({
-        "content": [{"type": "text", "text": message}],
-        "isError": true,
-        "structuredContent": structured,
-    })
+#[cfg(test)]
+mod dispatch_contract_tests {
+    //! The boundary itself is unit-tested in `crate::mcp_result`; these pin
+    //! that `tools/call` dispatch actually routes through it, on the path a
+    //! strict MCP client exercises.
+
+    use super::*;
+    use cua_driver_contract::{advertised_tool_output_schema, TOOL_INVOCATION_FAILED_CODE};
+
+    struct NeverInvokeProvider;
+
+    #[async_trait::async_trait]
+    impl ToolProvider for NeverInvokeProvider {
+        fn is_known_tool(&self, name: &str) -> bool {
+            name == "get_config"
+        }
+
+        fn tools_list(&self) -> serde_json::Value {
+            serde_json::json!({"tools": [{"name": "get_config"}]})
+        }
+
+        async fn invoke_tool(
+            &self,
+            _name: &str,
+            _arguments: serde_json::Value,
+        ) -> Result<serde_json::Value, String> {
+            panic!("invalid requests must not execute tools")
+        }
+    }
+
+    #[tokio::test]
+    async fn modern_invalid_requests_never_execute_tools() {
+        for (version, capabilities, name, arguments, expected_code) in [
+            (
+                "2026-07-28",
+                serde_json::json!({}),
+                "unknown",
+                serde_json::json!({}),
+                -32602,
+            ),
+            (
+                "2026-07-28",
+                serde_json::json!({}),
+                "get_config",
+                serde_json::json!([]),
+                -32602,
+            ),
+            (
+                "2026-07-28",
+                serde_json::Value::Null,
+                "get_config",
+                serde_json::json!({}),
+                -32602,
+            ),
+            (
+                "unknown",
+                serde_json::json!({}),
+                "get_config",
+                serde_json::json!({}),
+                -32022,
+            ),
+        ] {
+            let req = serde_json::from_value(serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": name, "arguments": arguments, "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": version,
+                    "io.modelcontextprotocol/clientCapabilities": capabilities
+                }}
+            }))
+            .unwrap();
+            let response = handle_request(req, serde_json::json!(1), &NeverInvokeProvider).await;
+            let wire = serde_json::to_value(response).unwrap();
+            assert_eq!(wire["error"]["code"], expected_code);
+        }
+    }
+
+    struct StubProvider(Result<serde_json::Value, String>);
+
+    #[async_trait::async_trait]
+    impl ToolProvider for StubProvider {
+        fn is_known_tool(&self, _name: &str) -> bool {
+            true
+        }
+
+        fn tools_list(&self) -> serde_json::Value {
+            serde_json::json!({"tools": []})
+        }
+
+        async fn invoke_tool(
+            &self,
+            _name: &str,
+            _arguments: serde_json::Value,
+        ) -> Result<serde_json::Value, String> {
+            self.0.clone()
+        }
+    }
+
+    fn call_request(name: &str) -> Request {
+        serde_json::from_value(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": { "name": name, "arguments": {} }
+        }))
+        .expect("request parses")
+    }
+
+    fn result_of(response: Response) -> serde_json::Value {
+        match response.body {
+            ResponseBody::Result { result } => result,
+            ResponseBody::Error { error } => panic!("expected a result, got {}", error.message),
+        }
+    }
+
+    #[track_caller]
+    fn assert_conforms(tool: &str, structured: &serde_json::Value) {
+        let schema = advertised_tool_output_schema(tool).expect("tool advertises a schema");
+        assert!(
+            jsonschema::validator_for(&schema)
+                .expect("schema compiles")
+                .is_valid(structured),
+            "advertised schema rejected {structured}"
+        );
+    }
+
+    /// Reverting the boundary call fails this with the bug as the message:
+    /// the advertised schema rejects the bare `{"exit_code": 1}` diagnostic.
+    #[tokio::test]
+    async fn an_invocation_failure_is_dispatched_as_a_conforming_refusal() {
+        let provider = StubProvider(Err("daemon transport closed".to_owned()));
+
+        let result =
+            result_of(handle_request(call_request("click"), serde_json::json!(1), &provider).await);
+
+        assert_conforms("click", &result["structuredContent"]);
+        // The diagnostic survives the normalization; only the marker is added.
+        assert_eq!(result["structuredContent"]["exit_code"], 1);
+        assert_eq!(
+            result["structuredContent"]["code"],
+            TOOL_INVOCATION_FAILED_CODE
+        );
+    }
+
+    /// The class of failure the two `exit_code` paths were only one instance
+    /// of: a provider result that is invalid under the advertised schema no
+    /// longer reaches the client as a success.
+    #[tokio::test]
+    async fn a_provider_success_that_violates_the_schema_is_replaced() {
+        let provider = StubProvider(Ok(serde_json::json!({"content": [], "isError": false})));
+
+        let result =
+            result_of(handle_request(call_request("click"), serde_json::json!(1), &provider).await);
+
+        assert_conforms("click", &result["structuredContent"]);
+        assert_eq!(result["isError"], true);
+        assert_eq!(
+            result["structuredContent"]["code"],
+            crate::mcp_result::TOOL_OUTPUT_INVALID_CODE
+        );
+    }
 }
 
 #[cfg(test)]
@@ -965,6 +1137,10 @@ mod observation_tests {
     impl ToolProvider for CapturingProvider {
         fn tools_list(&self) -> serde_json::Value {
             serde_json::json!({"tools": []})
+        }
+
+        fn is_known_tool(&self, _name: &str) -> bool {
+            true
         }
 
         async fn invoke_tool(
@@ -1112,20 +1288,17 @@ mod observation_tests {
     #[test]
     fn page_operation_is_closed_and_retains_no_argument_content() {
         for (action, expected, computer_action) in [
-            (
-                "execute_javascript",
-                ToolOperation::ExecuteJavascript,
-                false,
-            ),
             ("get_text", ToolOperation::GetText, false),
             ("query_dom", ToolOperation::QueryDom, false),
-            ("click_element", ToolOperation::ClickElement, true),
-            ("insert_text", ToolOperation::InsertText, true),
-            ("type_keystrokes", ToolOperation::TypeKeystrokes, true),
+            // Removed page actions classify as `Other`, never as a computer action.
+            ("execute_javascript", ToolOperation::Other, false),
+            ("click_element", ToolOperation::Other, false),
+            ("insert_text", ToolOperation::Other, false),
+            ("type_keystrokes", ToolOperation::Other, false),
             (
                 "enable_javascript_apple_events",
-                ToolOperation::EnableJavascriptAppleEvents,
-                true,
+                ToolOperation::Other,
+                false,
             ),
             ("private-custom-action", ToolOperation::Other, false),
         ] {
@@ -1263,6 +1436,28 @@ mod observation_tests {
                 Some(&serde_json::json!({"url": "https://private.example"})),
             ),
             ToolOperation::NotApplicable
+        );
+    }
+
+    #[test]
+    fn motion_policy_wrong_target_refusal_has_closed_telemetry_without_private_details() {
+        let response = serde_json::json!({
+            "structuredContent": {
+                "status": "refused",
+                "refusal": {
+                    "code": "browser_wrong_target_refused",
+                    "message": "private target description",
+                    "detail": {"target": "private target id"}
+                }
+            }
+        });
+        assert_eq!(
+            structured_refusal_code("browser_motion_policy", Some(&response)),
+            ToolRefusalCode::BrowserWrongTargetRefused
+        );
+        assert_eq!(
+            structured_refusal_code("unknown_motion_policy", Some(&response)),
+            ToolRefusalCode::None
         );
     }
 

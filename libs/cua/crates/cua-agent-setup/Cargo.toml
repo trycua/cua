@@ -1,0 +1,34 @@
+[package]
+name = "cua-agent-setup"
+description = "Detect AI coding agents, install the bundled cua skills into their skills directories and configure the cua MCP server in their MCP configs (idempotent, backed up, reversible)."
+version.workspace = true
+edition.workspace = true
+# Not the libs/cua workspace's 1.97: cua-driver links this crate, and the
+# driver's Nix package builds with nixpkgs stable's rustc (1.95 in 26.05).
+rust-version = "1.95"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# The channel (Stable, Local) names the MCP server, the skills and the state folder.
+cua-home.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+sha2.workspace = true
+hex.workspace = true
+# Comment- and format-preserving edits of JSON / JSONC / JSON5-ish configs.
+jsonc-parser = { version = "0.33", features = ["cst", "serde_json"] }
+# Comment- and format-preserving edits of TOML configs (Codex).
+toml_edit = "0.25"
+# Reading a JWT `exp` (only to tell an expired sign-in copy).
+base64.workspace = true
+# Goose's YAML config (edited only when it has no comments to lose).
+serde_yaml_ng = "0.10"
+# The default skills, bundled into the binary.
+include_dir = "0.7"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+[dev-dependencies]
+tempfile.workspace = true

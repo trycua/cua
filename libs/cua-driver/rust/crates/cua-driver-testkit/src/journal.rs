@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -151,7 +154,7 @@ mod tests {
     #[test]
     fn receives_fixture_state_over_loopback() {
         let journal = FixtureJournal::start();
-        let body = r#"{"status":{"text":"last_action=left_click"}}"#;
+        let body = r#"{"status":{"text":"last_action=left_click"},"scroll-tall":{"scrollTop":208.5,"clientHeight":128},"lbl-scroll-offset":{"text":"scroll_offset=104"}}"#;
         let address = journal
             .url()
             .strip_prefix("http://")
@@ -172,5 +175,9 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         assert!(journal.contains("last_action=left_click"));
+        let state = journal.snapshot();
+        assert_eq!(state["scroll-tall"]["scrollTop"].as_f64(), Some(208.5));
+        assert_eq!(state["scroll-tall"]["clientHeight"].as_u64(), Some(128));
+        assert_eq!(state["lbl-scroll-offset"]["text"], "scroll_offset=104");
     }
 }

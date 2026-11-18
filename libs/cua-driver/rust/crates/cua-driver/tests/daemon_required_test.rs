@@ -1,6 +1,8 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Public tool transports must fail closed when no daemon is reachable.
 
-#[cfg(not(target_os = "macos"))]
 use std::io::Write as _;
 use std::process::Command;
 
@@ -124,6 +126,28 @@ fn direct_mcp_rejects_admin_disabled_unrestricted_mode_before_requests() {
     );
 }
 
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn direct_mcp_refuses_startup_when_configured_policy_path_is_missing() {
+    let output = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
+        .arg("mcp")
+        .env("CUA_DRIVER_POLICY_FILE", "/nonexistent/cua-policy.yaml")
+        .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("run direct MCP with a missing policy path");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("configured permission policy path does not exist"),
+        "unexpected stderr: {stderr}"
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "policy rejection must precede protocol output"
+    );
+}
+
 #[test]
 fn embedded_mcp_without_private_endpoint_fails_closed() {
     let output = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
@@ -161,7 +185,7 @@ fn named_session_survives_across_one_shot_cli_calls() {
     );
     assert!(!started.is_error(), "start failed: {}", started.text());
 
-    let state = driver.call("get_session_state", serde_json::json!({"session": session}));
+    let state = driver.call("get_session", serde_json::json!({"session": session}));
     assert!(
         !state.is_error(),
         "named session did not survive the next CLI process: {}",
@@ -212,6 +236,50 @@ fn named_session_survives_across_one_shot_cli_calls() {
 }
 
 #[test]
+fn cli_call_strips_a_utf8_bom_from_piped_stdin_arguments() {
+    // PowerShell 5.1 `Set-Content -Encoding utf8` prepends a BOM. The piped
+    // arguments must still parse; otherwise the call silently runs with
+    // default arguments and the named session below is never created.
+    let mut driver = CliDriver::new();
+    assert!(driver.available(), "test daemon failed to start");
+    let session = format!("synthetic-cli-bom-{}", std::process::id());
+    let socket = driver
+        .daemon_socket()
+        .expect("test daemon socket")
+        .to_owned();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
+        .args(["call", "start_session", "--socket", &socket])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn cua-driver call");
+    let payload = serde_json::json!({"session": session, "capture_scope": "window"});
+    {
+        let mut stdin = child.stdin.take().expect("piped stdin");
+        write!(stdin, "\u{feff}{payload}").expect("write BOM-prefixed arguments");
+    }
+    let started = child.wait_with_output().expect("wait for cua-driver call");
+    assert!(
+        started.status.success(),
+        "BOM-prefixed start_session failed: {}",
+        String::from_utf8_lossy(&started.stderr)
+    );
+
+    let state = driver.call("get_session", serde_json::json!({"session": session}));
+    assert!(
+        !state.is_error(),
+        "BOM-prefixed arguments were not applied: {}",
+        state.text()
+    );
+    assert_eq!(state.structured()["session"], session);
+
+    let ended = driver.call("end_session", serde_json::json!({"session": session}));
+    assert!(!ended.is_error(), "end failed: {}", ended.text());
+}
+
+#[test]
 fn implicitly_started_named_session_survives_across_one_shot_cli_calls() {
     let mut driver = CliDriver::new();
     assert!(driver.available(), "test daemon failed to start");
@@ -224,7 +292,7 @@ fn implicitly_started_named_session_survives_across_one_shot_cli_calls() {
         first_action.text()
     );
 
-    let state = driver.call("get_session_state", serde_json::json!({"session": session}));
+    let state = driver.call("get_session", serde_json::json!({"session": session}));
     assert!(
         !state.is_error(),
         "implicitly started session did not survive the next CLI process: {}",
@@ -261,7 +329,7 @@ fn named_cli_session_cleanup_is_isolated() {
         anonymous.text()
     );
 
-    let state = driver.call("get_session_state", serde_json::json!({"session": second}));
+    let state = driver.call("get_session", serde_json::json!({"session": second}));
     assert!(
         !state.is_error(),
         "ending another named session or cleaning an anonymous call ended the survivor: {}",
@@ -300,7 +368,7 @@ fn revoke_cli_ends_the_exact_live_session() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let state = driver.call("get_session_state", serde_json::json!({"session": session}));
+    let state = driver.call("get_session", serde_json::json!({"session": session}));
     assert!(state.is_error());
 }
 
@@ -432,11 +500,7 @@ fn capability_manifest_narrows_standard_mode() {
         driver.available(),
         "standard manifest daemon failed to start"
     );
-    assert!(!driver.call("get_config", serde_json::json!({})).is_error());
-    assert!(driver.call("list_apps", serde_json::json!({})).is_error());
-    assert!(driver
-        .call("get_screen_size", serde_json::json!({}))
-        .is_error());
+    assert_manifest_narrows(&mut driver);
 }
 
 #[test]
@@ -459,9 +523,37 @@ fn capability_manifest_narrows_unrestricted_mode() {
         driver.available(),
         "unrestricted manifest daemon failed to start"
     );
-    assert!(!driver.call("get_config", serde_json::json!({})).is_error());
-    assert!(driver.call("list_apps", serde_json::json!({})).is_error());
-    assert!(driver
-        .call("get_screen_size", serde_json::json!({}))
-        .is_error());
+    assert_manifest_narrows(&mut driver);
+}
+
+/// The allow-listed tool runs, while the denied and undeclared tools are
+/// refused by the capability manifest itself rather than by a scope or consent
+/// guard that would also refuse them without a manifest.
+fn assert_manifest_narrows(driver: &mut CliDriver) {
+    let allowed = driver.call("get_config", serde_json::json!({}));
+    assert!(
+        !allowed.is_error(),
+        "allowed call failed: {}",
+        allowed.text()
+    );
+
+    let denied = driver.call("list_apps", serde_json::json!({}));
+    assert!(denied.is_error());
+    assert!(
+        denied
+            .text()
+            .contains("capability manifest denies tool 'list_apps'"),
+        "unexpected denial: {}",
+        denied.text()
+    );
+
+    let undeclared = driver.call("get_screen_size", serde_json::json!({}));
+    assert!(undeclared.is_error());
+    assert!(
+        undeclared
+            .text()
+            .contains("tool 'get_screen_size' is outside the capability manifest"),
+        "unexpected undeclared refusal: {}",
+        undeclared.text()
+    );
 }

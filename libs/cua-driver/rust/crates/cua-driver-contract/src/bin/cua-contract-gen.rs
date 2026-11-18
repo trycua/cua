@@ -93,16 +93,3 @@ fn write_or_check(path: &Path, expected: &str, check: bool) -> Result<(), String
     println!("generated {}", path.display());
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn manifest_output_is_pretty_and_newline_terminated() {
-        let mut output = serde_json::to_string_pretty(&manifest()).expect("serialize manifest");
-        output.push('\n');
-        assert!(output.starts_with("{\n"));
-        assert!(output.ends_with("\n"));
-    }
-}

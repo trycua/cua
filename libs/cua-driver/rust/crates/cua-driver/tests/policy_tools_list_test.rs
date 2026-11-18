@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Permission policy must shape the MCP tool roster as well as invocation.
 
 #![cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -12,13 +15,13 @@ fn tools_list_hides_policy_denied_tools_and_calls_stay_denied() {
     let directory = tempfile::tempdir().expect("temporary policy directory");
     let policy_path = directory.path().join("policy.yaml");
     // `get_config` is unconditionally allowed via `allow.tools`.
-    // `screenshot` is conditionally allowed via `allow.rules` with a
+    // `zoom` is conditionally allowed via `allow.rules` with a
     // constraint.  Both must appear in `tools/list` because `tools/list`
     // should not hide tools that are *potentially* allowed.
     // `list_apps` is explicitly denied and must be absent.
     std::fs::write(
         &policy_path,
-        "allow:\n  tools: [get_config]\n  rules:\n    - tool: screenshot\n      constraints:\n        display_id: {\"const\": 0}\ndeny:\n  tools: [list_apps]\n",
+        "allow:\n  tools: [get_config]\n  rules:\n    - tool: zoom\n      constraints:\n        window_id: {\"allowed\": [0]}\ndeny:\n  tools: [list_apps]\n",
     )
     .expect("write permission policy");
     let policy = policy_path.display().to_string();
@@ -43,7 +46,7 @@ fn tools_list_hides_policy_denied_tools_and_calls_stay_denied() {
         "unconditionally allowed tool must remain listed"
     );
     assert!(
-        names.contains("screenshot"),
+        names.contains("zoom"),
         "rule-conditionally allowed tool must remain listed even though empty-arg evaluation would deny it"
     );
     assert!(

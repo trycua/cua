@@ -1,39 +1,10 @@
-"""Regression tests for cua-cloud release automation wiring."""
-
-from pathlib import Path
-import unittest
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-
-
-class TestCuaCloudReleaseWiring(unittest.TestCase):
-    """Verify cua-cloud is wired into the release automation."""
-
-    def read(self, relative_path: str) -> str:
-        return (REPO_ROOT / relative_path).read_text()
-
-    def test_release_on_merge_tracks_cua_cloud(self) -> None:
-        workflow = self.read(".github/workflows/release-on-merge.yml")
-
-        self.assertIn('["libs/python/cua-cloud/"]="pypi/cloud"', workflow)
-
-    def test_release_bump_version_supports_cua_cloud(self) -> None:
-        workflow = self.read(".github/workflows/release-bump-version.yml")
-
-        self.assertIn("- pypi/cloud", workflow)
-        self.assertIn('"pypi/cloud")', workflow)
-        self.assertIn('echo "directory=libs/python/cua-cloud" >> $GITHUB_OUTPUT', workflow)
-
-    def test_unreleased_digest_tracks_cua_cloud(self) -> None:
-        workflow = self.read(".github/workflows/release-unreleased-digest.yml")
-
-        self.assertIn('SERVICE_TAG_DIR["pypi/cloud"]="cloud-v|libs/python/cua-cloud/"', workflow)
-
-    def test_package_release_files_exist(self) -> None:
-        self.assertTrue((REPO_ROOT / ".github/workflows/cd-py-cloud.yml").exists())
-        self.assertTrue((REPO_ROOT / "libs/python/cua-cloud/.bumpversion.cfg").exists())
-
-
-if __name__ == "__main__":
-    unittest.main()
+def test_docs_pin_dispatch_uses_the_release_app_not_aws():
+    """The Copybara App behind AWS secret copybara/github-app has no installation,
+    so the docs pin dispatch must mint its trycua/cloud token from the release App."""
+    from pathlib import Path
+    wf = (Path(__file__).resolve().parents[3] / ".github/workflows/cd-docs-pin-dispatch.yml").read_text()
+    assert "secrets.RELEASE_APP_ID" in wf and "secrets.RELEASE_APP_PRIVATE_KEY" in wf
+    assert "role-to-assume" not in wf and "id-token" not in wf
+    assert "repositories: cloud" in wf and "permission-contents: write" in wf

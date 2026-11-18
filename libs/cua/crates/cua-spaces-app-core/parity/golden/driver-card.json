@@ -1,0 +1,35 @@
+{
+  "flow": "driver-card",
+  "frames": [
+    {
+      "driverCopy": [
+        "agentsDriver: cua-driver skill for background computer-use",
+        "agentsDriverImage: An agent clicking in a background window while you keep working"
+      ]
+    },
+    {
+      "driverPreview": [
+        "back 14,10 132x80; front 90,34 128x70; boxes 3; lines 4 (selects 1); agent #5EC0E8 28 points, 3 rays; 232x112 loop 4800",
+        "0: user 1960,880 pressed false selection 0; agent 660,800 pressed false ripple 0; checked 0,0,0",
+        "600: user 1302,733 pressed false selection 0; agent 470,570 pressed false ripple 0; checked 0,0,0",
+        "950: user 1000,665 pressed false selection 0; agent 280,340 pressed true ripple 125; checked 0,0,0",
+        "1200: user 1024,665 pressed true selection 28; agent 280,340 pressed false ripple 750; checked 1000,0,0",
+        "1500: user 1378,665 pressed true selection 430; agent 280,425 pressed false ripple 0; checked 1000,0,0",
+        "1750: user 1710,665 pressed true selection 806; agent 280,510 pressed true ripple 125; checked 1000,0,0",
+        "2000: user 1757,665 pressed false selection 860; agent 280,510 pressed false ripple 750; checked 1000,1000,0",
+        "2600: user 1757,665 pressed false selection 860; agent 280,680 pressed true ripple 250; checked 1000,1000,0",
+        "3150: user 1757,665 pressed true selection 0; agent 281,680 pressed false ripple 0; checked 1000,1000,1000",
+        "3500: user 1757,665 pressed false selection 0; agent 540,762 pressed false ripple 0; checked 1000,1000,1000",
+        "4350: user 1960,880 pressed false selection 0; agent 660,800 pressed false ripple 0; checked 500,500,500",
+        "4799: user 1960,880 pressed false selection 0; agent 660,800 pressed false ripple 0; checked 0,0,0",
+        "still: user 1757,665 pressed false selection 860; agent 280,680 pressed false ripple 500; checked 1000,1000,0"
+      ]
+    },
+    {
+      "summaries": [
+        "Claude Code: done | cua-driver configured, 1 skill installed | ",
+        "Codex: failed | cua MCP server configured, 2 skills installed | cua-driver: config.toml is not valid TOML"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 2,
+  "mediaType": "application/vnd.oci.image.index.v1+json",
+  "manifests": [
+    {
+      "mediaType": "application/vnd.oci.image.manifest.v1+json",
+      "digest": "sha256:c015b11ed49737f4533cb44a3af620d59181f7ffceef7f6b4ee85c79eff4a8a3",
+      "size": 407,
+      "annotations": {
+        "ai.cua.doctor.report": "ghcr.io/x/linux@sha256:8c480d8a13570c61ffc7bcc7d71445f64f78cf8b67c6351104165900823faca2,ghcr.io/x/linux@sha256:e7f8985bd629b7b5c84f6c06a8cb7eabf4cc551f6fb08cb1b606d5858cef779c",
+        "ai.cua.doctor.status": "pass"
+      },
+      "platform": {
+        "architecture": "amd64",
+        "os": "linux"
+      }
+    },
+    {
+      "mediaType": "application/vnd.oci.image.manifest.v1+json",
+      "digest": "sha256:bce21bf479017ff409845fac7a6aab720d320ae443a49959eee4b9f1a2b52bb5",
+      "size": 407,
+      "platform": {
+        "architecture": "arm64",
+        "os": "linux"
+      }
+    }
+  ],
+  "annotations": {
+    "ai.cua.doctor.report": "https://github.com/trycua/cua-staging/actions/runs/36208119058",
+    "ai.cua.doctor.status": "pass",
+    "ai.cua.env-driver": "true",
+    "ai.cua.image.content-digest": "sha256:c0e39398ca797085d3c85bd78e00a279f7cb127d11af0c662d80bf0288fa2de1",
+    "ai.cua.image.os": "linux",
+    "ai.cua.image.tier": "slim",
+    "ai.cua.image.variant": "containerdisk",
+    "ai.cua.image.variants": "{\"rootfs\":\"ghcr.io/x/linux:24.04-slim-20260926-b5f5f61\"}",
+    "ai.cua.spacesd": "true",
+    "org.opencontainers.image.revision": "b5f5f61c4109f62c0ca365f533829b536461ae3c",
+    "org.opencontainers.image.source": "https://github.com/trycua/cua",
+    "org.opencontainers.image.version": "24.04-slim"
+  }
+}

@@ -27,31 +27,42 @@ class ConfigLoader:
         self._config: CuaConfig | None = None
         self._agents: AgentsConfig | None = None
 
+    def is_project_config_dir(self, path: Path) -> bool:
+        """Whether ``path`` is a project's ``.cua/`` (it holds config.yaml or
+        agents.yaml). A bare ``.cua/`` (such as the cua CLI's state dir) is not."""
+        return path.is_dir() and (
+            (path / self.CONFIG_FILE_NAME).is_file() or (path / self.AGENTS_FILE_NAME).is_file()
+        )
+
     def find_config_dir(self) -> Path | None:
-        """Walk up directory tree to find .cua/ directory.
+        """Walk up from ``search_path`` to the nearest project ``.cua/``.
+
+        The search stops below the home directory: ``~/.cua`` is the cua CLI's
+        state directory, never a project config, and nothing above ``$HOME``
+        belongs to the project either. Outside ``$HOME`` it walks to the root.
 
         Returns:
-            Path to .cua/ directory if found, None otherwise.
+            Path to the ``.cua/`` directory if found, None otherwise.
         """
         if self._config_dir is not None:
             return self._config_dir
 
         current = self.search_path.resolve()
+        try:
+            home: Path | None = Path.home().resolve()
+        except (KeyError, RuntimeError):  # no resolvable home directory
+            home = None
 
-        while current != current.parent:
+        while True:
+            if home is not None and current == home:
+                return None
             config_dir = current / self.CONFIG_DIR_NAME
-            if config_dir.is_dir():
+            if self.is_project_config_dir(config_dir):
                 self._config_dir = config_dir
                 return config_dir
+            if current == current.parent:
+                return None
             current = current.parent
-
-        # Check root
-        config_dir = current / self.CONFIG_DIR_NAME
-        if config_dir.is_dir():
-            self._config_dir = config_dir
-            return config_dir
-
-        return None
 
     def load_config(self) -> CuaConfig | None:
         """Load .cua/config.yaml if it exists.
@@ -146,6 +157,7 @@ class ConfigLoader:
             effective["output_dir"] = config.defaults.output_dir
 
         # 2. Apply agent config from config.yaml
+        env_overrides: dict[str, Any] = {}
         if config and config.agent:
             if config.agent.name:
                 effective["agent"] = config.agent.name
@@ -156,24 +168,28 @@ class ConfigLoader:
             if config.agent.max_steps:
                 effective["max_steps"] = config.agent.max_steps
 
-            # 3. Apply environment-specific overrides
             if env_type and config.agent.environments:
                 env_overrides = config.agent.environments.get(env_type, {})
-                for key, value in env_overrides.items():
-                    if value is not None:
-                        effective[key] = value
 
-        # 4. Apply agent defaults from agents.yaml (if agent is specified)
-        agent_name = effective.get("agent") or cli_args.get("agent")
+        # 3. Resolve the selected agent before applying its defaults.
+        agent_name = cli_args.get("agent") or env_overrides.get("agent") or effective.get("agent")
+        if agent_name != effective.get("agent"):
+            effective.pop("agent_import_path", None)
         if agent_name:
             agent_entry = self.get_agent_by_name(agent_name)
             if agent_entry:
                 # Use import_path from agents.yaml
-                effective["agent_import_path"] = agent_entry.import_path
+                if agent_entry.import_path is not None:
+                    effective["agent_import_path"] = agent_entry.import_path
                 # Apply defaults from agents.yaml
                 for key, value in agent_entry.defaults.items():
-                    if key not in effective or effective[key] is None:
+                    if value is not None:
                         effective[key] = value
+
+        # 4. Environment-specific overrides take precedence over agent defaults.
+        for key, value in env_overrides.items():
+            if value is not None:
+                effective[key] = value
 
         # 5. Override with CLI arguments (highest priority)
         for key, value in cli_args.items():

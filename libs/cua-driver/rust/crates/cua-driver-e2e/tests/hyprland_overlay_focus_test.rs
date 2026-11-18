@@ -7,7 +7,12 @@
 //! in a disposable native Hyprland desktop.
 #![cfg(target_os = "linux")]
 
+use std::io::{BufRead, BufReader};
+use std::net::Shutdown;
+use std::os::unix::net::UnixStream;
+use std::path::PathBuf;
 use std::process::Command;
+use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use cua_driver_testkit::{Driver, McpDriver};
@@ -15,11 +20,16 @@ use serde_json::{json, Value};
 
 const SESSION: &str = "hyprland-overlay-focus";
 
-#[derive(Debug, PartialEq)]
-struct HyprState {
-    workspace: String,
-    active_window: String,
-}
+/// Hyprland event-socket events that mean focus, workspace or a client moved.
+const FOCUS_EVENTS: &[&str] = &[
+    "activewindow",
+    "activewindowv2",
+    "workspace",
+    "workspacev2",
+    "focusedmon",
+    "focusedmonv2",
+    "openwindow",
+];
 
 fn hypr_json(query: &str) -> Value {
     let output = Command::new("hyprctl")
@@ -30,16 +40,37 @@ fn hypr_json(query: &str) -> Value {
     serde_json::from_slice(&output.stdout).expect("parse hyprctl JSON")
 }
 
-fn hypr_state() -> HyprState {
-    HyprState {
-        workspace: hypr_json("activeworkspace")["name"]
-            .as_str()
-            .expect("active workspace name")
-            .to_owned(),
-        active_window: hypr_json("activewindow")["address"]
-            .as_str()
-            .unwrap_or_default()
-            .to_owned(),
+/// Records every focus event Hyprland broadcasts until `finish`, so a change
+/// that reverts before the end still fails the test.
+struct FocusEvents {
+    stream: UnixStream,
+    reader: JoinHandle<Vec<String>>,
+}
+
+impl FocusEvents {
+    fn start() -> Self {
+        let socket = PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").expect("XDG_RUNTIME_DIR"))
+            .join("hypr")
+            .join(std::env::var("HYPRLAND_INSTANCE_SIGNATURE").unwrap())
+            .join(".socket2.sock");
+        let stream = UnixStream::connect(&socket).expect("connect to Hyprland event socket");
+        let reader = BufReader::new(stream.try_clone().expect("clone event socket"));
+        let reader = thread::spawn(move || {
+            reader
+                .lines()
+                .map_while(Result::ok)
+                .filter(|line| {
+                    line.split_once(">>")
+                        .is_some_and(|(event, _)| FOCUS_EVENTS.contains(&event))
+                })
+                .collect::<Vec<_>>()
+        });
+        Self { stream, reader }
+    }
+
+    fn finish(self) -> Vec<String> {
+        let _ = self.stream.shutdown(Shutdown::Both);
+        self.reader.join().expect("event reader")
     }
 }
 
@@ -56,7 +87,7 @@ fn native_overlay_never_maps_an_active_hyprland_client() {
         std::env::var("CUA_DRIVER_RS_ENABLE_WAYLAND").as_deref(),
         Ok("1")
     );
-    let before = hypr_state();
+    let events = FocusEvents::start();
     let mut driver = McpDriver::spawn_named_with_overlay("hyprland-overlay-focus")
         .expect("exact-candidate Driver is required");
     let pid = u64::from(driver.daemon_pid().expect("test-owned daemon"));
@@ -79,7 +110,6 @@ fn native_overlay_never_maps_an_active_hyprland_client() {
     );
     std::thread::sleep(Duration::from_secs(1));
 
-    let after = hypr_state();
     let monitor_count = hypr_json("monitors")
         .as_array()
         .expect("Hyprland monitors array")
@@ -102,14 +132,15 @@ fn native_overlay_never_maps_an_active_hyprland_client() {
         .filter(|layer| layer["namespace"] == "cua-agent-cursor")
         .count();
     drop(driver);
+    let focus_events = events.finish();
 
     assert!(
         daemon_clients.is_empty(),
         "overlay daemon mapped a focusable Hyprland client: {daemon_clients:#?}"
     );
-    assert_eq!(
-        after, before,
-        "cursor activity changed the Hyprland workspace or active client"
+    assert!(
+        focus_events.is_empty(),
+        "overlay startup or cursor activity moved Hyprland focus: {focus_events:#?}"
     );
     assert_eq!(
         overlay_layers, monitor_count,

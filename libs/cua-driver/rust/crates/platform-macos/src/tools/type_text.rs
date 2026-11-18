@@ -647,6 +647,33 @@ impl AxAttempt {
     }
 }
 
+/// What follows an AX write that did not read back as landed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UnlandedAxWrite {
+    /// Nothing landed or the write was refused: type the text as keys.
+    TypeKeys(AxAttempt),
+    /// The write may have landed where AX cannot see it yet: report it
+    /// unverified and send no keys, which would insert the text again.
+    MayHaveLanded,
+}
+
+/// `progress` is `None` when the write was refused. `unchanged_web_readback`
+/// is an unchanged read-back from inside an `AXWebArea`.
+fn after_unlanded_ax_write(
+    progress: Option<TypedProgress>,
+    unchanged_web_readback: bool,
+) -> UnlandedAxWrite {
+    match progress {
+        Some(TypedProgress::Unchanged) if unchanged_web_readback => {
+            UnlandedAxWrite::TypeKeys(AxAttempt::Unverifiable)
+        }
+        Some(TypedProgress::Unchanged) => UnlandedAxWrite::TypeKeys(AxAttempt::Unchanged),
+        Some(TypedProgress::Unverifiable) => UnlandedAxWrite::TypeKeys(AxAttempt::Unverifiable),
+        None => UnlandedAxWrite::TypeKeys(AxAttempt::Rejected),
+        Some(TypedProgress::Complete | TypedProgress::Partial(_)) => unreachable!(),
+    }
+}
+
 fn synthesis_preflight(
     route: TextDeliveryRoute,
     requested_chars: usize,
@@ -1839,12 +1866,27 @@ fn type_text_in_key_window(
                 delivered_chars: Some(delivered_chars),
             }));
         }
-        ax_attempt = match ax_progress {
-            Some(TypedProgress::Unchanged) if unchanged_web_readback => AxAttempt::Unverifiable,
-            Some(TypedProgress::Unchanged) => AxAttempt::Unchanged,
-            Some(TypedProgress::Unverifiable) => AxAttempt::Unverifiable,
-            None => AxAttempt::Rejected,
-            Some(TypedProgress::Complete | TypedProgress::Partial(_)) => unreachable!(),
+        ax_attempt = match after_unlanded_ax_write(ax_progress, unchanged_web_readback) {
+            UnlandedAxWrite::TypeKeys(attempt) => attempt,
+            // Firefox accepts the write but updates AXValue later (#5383).
+            UnlandedAxWrite::MayHaveLanded => {
+                let idx_str = idx_opt.map(|i| format!(" [{i}]")).unwrap_or_default();
+                let return_note = if submit_body.is_some() {
+                    "; Return was not sent"
+                } else {
+                    ""
+                };
+                return Ok(TypeTextDelivery::Typed(TypeTextOutcome {
+                    detail: format!(
+                        " via AX write into{idx_str} {role} \"{title}\", which the page \
+                         accepted but has not read back yet, so it was not typed again \
+                         as keys{return_note}; read the field before retrying"
+                    ),
+                    path: PATH_AX,
+                    verified: false,
+                    delivered_chars: None,
+                }));
+            }
         };
         tracing::debug!(
             "AX write did not land for {role} \"{title}\" (err={err}); \
@@ -2292,6 +2334,29 @@ mod tests {
         assert_eq!(indeterminate["synthesized_chars"], 0);
         assert_eq!(indeterminate["retryable"], false);
         assert_eq!(indeterminate["escalation"]["recommended"], "verify_state");
+    }
+
+    #[test]
+    fn an_accepted_web_write_is_never_typed_again_as_keys() {
+        use TypedProgress::{Unchanged, Unverifiable};
+        // Firefox took the write and showed it a moment later; typing it as
+        // keys too left "plain-17plain-17" in the field (#5383).
+        assert_eq!(
+            after_unlanded_ax_write(Some(Unchanged), true),
+            UnlandedAxWrite::MayHaveLanded
+        );
+        assert_eq!(
+            after_unlanded_ax_write(Some(Unchanged), false),
+            UnlandedAxWrite::TypeKeys(AxAttempt::Unchanged)
+        );
+        assert_eq!(
+            after_unlanded_ax_write(Some(Unverifiable), false),
+            UnlandedAxWrite::TypeKeys(AxAttempt::Unverifiable)
+        );
+        assert_eq!(
+            after_unlanded_ax_write(None, true),
+            UnlandedAxWrite::TypeKeys(AxAttempt::Rejected)
+        );
     }
 
     #[test]

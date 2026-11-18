@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! DPI context for threads owned by an embedded Cua Driver runtime.
 //!
 //! The standalone driver executable declares Per-Monitor V2 awareness in its

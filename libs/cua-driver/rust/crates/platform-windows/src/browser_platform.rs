@@ -1441,7 +1441,7 @@ fn windows_loopback_listeners(allowed_pids: &[u32]) -> Result<Vec<(u16, u32)>, B
     windows_loopback_listeners_with(allowed_pids, query_tcp_owner_table)
 }
 
-fn system_directory_path() -> Result<PathBuf, BrowserRefusal> {
+pub(crate) fn system_directory_path() -> Result<PathBuf, BrowserRefusal> {
     let mut buffer = [0u16; 32768];
     let length = unsafe { GetSystemDirectoryW(Some(&mut buffer)) } as usize;
     if length == 0 || length >= buffer.len() {

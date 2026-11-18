@@ -1291,6 +1291,9 @@ pub fn build_registry_with_provider(
         let state = state.clone();
         r.set_token_window_resolver(Arc::new(move |args| state.snapshots.window_for_token(args)));
     }
+    r.set_window_identity_resolver(Arc::new(|pid, window_id| {
+        crate::win32::hosted_app_pid(u32::try_from(pid).ok()?, window_id).map(i64::from)
+    }));
     let cursor_outcome_reader = {
         let cursor_registry = state.cursor_registry.clone();
         cua_driver_core::session::register_scoped_cursor_outcome_reader(std::sync::Arc::new(
